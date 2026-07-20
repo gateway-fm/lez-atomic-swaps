@@ -295,6 +295,174 @@ async fn checked_preflight(
 }
 
 #[tokio::test]
+async fn m4_local_mode_deploys_only_the_exact_checked_program_once() {
+    let (mock, client, handle) = start_mock(SubmitMode::Include).await;
+    let historical_manifest = checked_manifest();
+    let m4_manifest: M4DeploymentManifest =
+        toml::from_str(M4_MANIFEST).expect("checked M4 manifest");
+    let rpc_url = "http://127.0.0.1:4545/";
+    let channel_id = "01".repeat(32);
+
+    let preflight = preflight_m4_local_with_client(
+        &historical_manifest,
+        &m4_manifest,
+        &client,
+        rpc_url,
+        &channel_id,
+    )
+    .await
+    .expect("exact M4 artifact and isolated runtime pass preflight");
+    let evidence =
+        deploy_once_and_observe_with_timeout(client, preflight, Duration::from_millis(100))
+            .await
+            .expect("one exact M4 deployment is canonically included");
+
+    assert_eq!(evidence.preflight.rpc_url, rpc_url);
+    assert_eq!(evidence.preflight.channel_id, channel_id);
+    assert_eq!(evidence.preflight.elf_sha256, M4_CHECKED_ELF_SHA256);
+    assert_eq!(evidence.preflight.image_id, M4_CHECKED_PROGRAM_ID);
+    assert_eq!(
+        program_id_hex(evidence.preflight.program_id_words),
+        M4_CHECKED_PROGRAM_ID
+    );
+    let submissions = mock.submissions();
+    assert_eq!(submissions.len(), 1);
+    let LeeTransaction::ProgramDeployment(deployment) = &submissions[0] else {
+        panic!("the sole M4 submission must be a ProgramDeployment");
+    };
+    assert_eq!(
+        deployment.clone().into_message().into_bytecode(),
+        ZEC_ESCROW_V02_ELF
+    );
+    let included = mock.blocks().pop().expect("canonical inclusion block");
+    assert_eq!(evidence.inclusion_block_id, included.header.block_id);
+    assert_eq!(
+        evidence.inclusion_block_hash,
+        included.header.hash.to_string()
+    );
+    handle.stop().unwrap();
+}
+
+#[test]
+fn m4_local_cli_exposes_no_artifact_identity_override() {
+    let channel_id = "01".repeat(32);
+    let arguments = Arguments::try_parse_from([
+        "deployer",
+        "deploy-m4-local",
+        "--rpc-url",
+        "http://127.0.0.1:4545/",
+        "--channel-id",
+        &channel_id,
+    ])
+    .expect("local-only M4 CLI");
+    let Command::DeployM4Local {
+        rpc_url,
+        channel_id: parsed_channel_id,
+        timeout_seconds,
+    } = arguments.command
+    else {
+        panic!("expected the explicit M4 local command");
+    };
+    assert_eq!(rpc_url, "http://127.0.0.1:4545/");
+    assert_eq!(parsed_channel_id, channel_id);
+    assert_eq!(timeout_seconds, 300);
+
+    assert!(
+        Arguments::try_parse_from([
+            "deployer",
+            "deploy-m4-local",
+            "--rpc-url",
+            "http://127.0.0.1:4545/",
+            "--channel-id",
+            &channel_id,
+            "--elf-sha256",
+            M4_CHECKED_ELF_SHA256,
+        ])
+        .is_err(),
+        "artifact identity must not be caller-configurable"
+    );
+}
+
+#[tokio::test]
+async fn any_m4_manifest_or_runtime_identity_mutation_causes_zero_rpc_effects() {
+    for mutation in 0..19 {
+        let (mock, client, handle) = start_mock(SubmitMode::Pending).await;
+        let mut runtime_manifest = checked_manifest();
+        let mut m4_manifest: M4DeploymentManifest =
+            toml::from_str(M4_MANIFEST).expect("checked M4 manifest");
+        match mutation {
+            0 => runtime_manifest.target.rpc_url.push_str("/mutated"),
+            1 => runtime_manifest.target.channel_id.replace_range(0..2, "ff"),
+            2 => runtime_manifest.target.authenticated_transfer_program_id[0] ^= 1,
+            3 => runtime_manifest.target.token_program_id[0] ^= 1,
+            4 => runtime_manifest.target.associated_token_account_program_id[0] ^= 1,
+            5 => runtime_manifest
+                .target
+                .associated_token_account_identity_source
+                .push_str("-mutated"),
+            6 => m4_manifest.format_version += 1,
+            7 => m4_manifest.milestone.push_str("-mutated"),
+            8 => m4_manifest.program.push_str("-mutated"),
+            9 => m4_manifest.artifact_status.push_str("-mutated"),
+            10 => m4_manifest.public_deployment = true,
+            11 => m4_manifest.artifact.elf_sha256.replace_range(0..2, "ff"),
+            12 => m4_manifest.artifact.image_id.replace_range(0..2, "ff"),
+            13 => m4_manifest.interface.instruction_count -= 1,
+            14 => m4_manifest.interface.initialize_native_xmr_variant -= 1,
+            15 => m4_manifest.interface.authorize_native_xmr_claim_variant -= 1,
+            16 => m4_manifest.interface.claim_native_xmr_variant -= 1,
+            17 => m4_manifest.interface.refund_native_xmr_variant -= 1,
+            18 => m4_manifest.interface.punish_native_xmr_variant -= 1,
+            _ => unreachable!(),
+        }
+
+        let error = preflight_m4_local_with_client(
+            &runtime_manifest,
+            &m4_manifest,
+            &client,
+            "http://127.0.0.1:4545/",
+            &"01".repeat(32),
+        )
+        .await
+        .expect_err("mutated immutable M4 target must fail locally");
+
+        assert!(error.to_string().contains("immutable M4"));
+        assert_eq!(mock.rpc_calls(), 0, "local rejection must precede all RPC");
+        handle.stop().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn m4_local_mode_rejects_every_nonliteral_loopback_target_before_rpc() {
+    for rpc_url in [
+        "https://testnet.lez.logos.co/",
+        "http://localhost:4545/",
+        "http://192.0.2.1:4545/",
+    ] {
+        let (mock, client, handle) = start_mock(SubmitMode::Pending).await;
+        let m4_manifest: M4DeploymentManifest =
+            toml::from_str(M4_MANIFEST).expect("checked M4 manifest");
+        let error = preflight_m4_local_with_client(
+            &checked_manifest(),
+            &m4_manifest,
+            &client,
+            rpc_url,
+            &"01".repeat(32),
+        )
+        .await
+        .expect_err("M4 deployment must reject every nonliteral-loopback target");
+
+        assert!(
+            error
+                .to_string()
+                .contains("explicit uncredentialed loopback")
+        );
+        assert_eq!(mock.rpc_calls(), 0, "endpoint rejection must precede RPC");
+        handle.stop().unwrap();
+    }
+}
+
+#[tokio::test]
 async fn any_local_preflight_identity_mutation_causes_zero_rpc_effects() {
     for mutation in 0..14 {
         let (mock, client, handle) = start_mock(SubmitMode::Pending).await;

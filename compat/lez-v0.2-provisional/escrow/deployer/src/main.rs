@@ -25,6 +25,11 @@ use url::{Host, Url};
 use zeroize::Zeroizing;
 
 const MANIFEST: &str = include_str!("../../methods/guest/deployment-manifest.toml");
+const M4_MANIFEST: &str = include_str!("../../methods/guest/m4-deployment-manifest.toml");
+const M4_CHECKED_ELF_SHA256: &str =
+    "dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292";
+const M4_CHECKED_PROGRAM_ID: &str =
+    "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82";
 const OFFICIAL_RPC_URL: &str = "https://testnet.lez.logos.co";
 const OFFICIAL_CHANNEL_ID: &str =
     "0101010101010101010101010101010101010101010101010101010101010101";
@@ -149,6 +154,18 @@ enum Command {
         #[arg(long, default_value_t = 300)]
         timeout_seconds: u64,
     },
+    /// Submit the exact checked M4 guest to one explicit isolated local sequencer.
+    DeployM4Local {
+        /// Dynamic loopback HTTP endpoint emitted by the local stack manifest.
+        #[arg(long)]
+        rpc_url: String,
+        /// Exact nonzero channel identity emitted by the local stack manifest.
+        #[arg(long)]
+        channel_id: String,
+        /// Maximum wall time for observation after the one submission attempt.
+        #[arg(long, default_value_t = 300)]
+        timeout_seconds: u64,
+    },
     /// Verify retained deployment evidence offline and write an exact no-clobber runtime identity.
     ProvisionIdentity {
         /// Bounded authenticated JSON emitted by this exact deployer after canonical inclusion.
@@ -169,6 +186,33 @@ struct DeploymentManifest {
     target: Target,
     artifact: Artifact,
     interface: InterfaceArtifact,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct M4DeploymentManifest {
+    format_version: u16,
+    milestone: String,
+    program: String,
+    artifact_status: String,
+    public_deployment: bool,
+    artifact: M4Artifact,
+    interface: M4Interface,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct M4Artifact {
+    elf_sha256: String,
+    image_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct M4Interface {
+    instruction_count: usize,
+    initialize_native_xmr_variant: u32,
+    authorize_native_xmr_claim_variant: u32,
+    claim_native_xmr_variant: u32,
+    refund_native_xmr_variant: u32,
+    punish_native_xmr_variant: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -444,6 +488,28 @@ async fn main() -> Result<()> {
             let client = bounded_client(&rpc_url)?;
             let preflight =
                 preflight_local_with_client(&manifest, &client, &rpc_url, &channel_id).await?;
+            let evidence = deploy_once_and_observe(client, preflight, timeout_seconds).await?;
+            println!("{}", serde_json::to_string_pretty(&evidence)?);
+        }
+        Command::DeployM4Local {
+            rpc_url,
+            channel_id,
+            timeout_seconds,
+        } => {
+            ensure!(timeout_seconds > 0, "timeout-seconds must be non-zero");
+            validate_local_rpc_url(&rpc_url)?;
+            validate_channel_id(&channel_id)?;
+            let m4_manifest: M4DeploymentManifest =
+                toml::from_str(M4_MANIFEST).context("parse checked M4 deployment manifest")?;
+            let client = bounded_client(&rpc_url)?;
+            let preflight = preflight_m4_local_with_client(
+                &manifest,
+                &m4_manifest,
+                &client,
+                &rpc_url,
+                &channel_id,
+            )
+            .await?;
             let evidence = deploy_once_and_observe(client, preflight, timeout_seconds).await?;
             println!("{}", serde_json::to_string_pretty(&evidence)?);
         }
@@ -808,6 +874,83 @@ fn validate_immutable_target(manifest: &DeploymentManifest) -> Result<(String, S
     Ok((elf_sha256, image_id))
 }
 
+fn validate_m4_local_target(
+    runtime_manifest: &DeploymentManifest,
+    manifest: &M4DeploymentManifest,
+) -> Result<(String, String)> {
+    ensure!(
+        runtime_manifest.target.rpc_url == OFFICIAL_RPC_URL
+            && runtime_manifest.target.channel_id == OFFICIAL_CHANNEL_ID
+            && runtime_manifest.target.authenticated_transfer_program_id
+                == OFFICIAL_AUTHENTICATED_TRANSFER_PROGRAM_ID
+            && runtime_manifest.target.token_program_id == OFFICIAL_TOKEN_PROGRAM_ID
+            && runtime_manifest.target.associated_token_account_program_id
+                == OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_PROGRAM_ID
+            && runtime_manifest
+                .target
+                .associated_token_account_identity_source
+                == OFFICIAL_ASSOCIATED_TOKEN_ACCOUNT_IDENTITY_SOURCE,
+        "immutable M4 runtime program identities differ from checked LEZ v0.2"
+    );
+    ensure!(
+        manifest.format_version == 1
+            && manifest.milestone == "M4"
+            && manifest.program == "zec_escrow_v02"
+            && manifest.artifact_status == "local-checked-artifact"
+            && !manifest.public_deployment,
+        "immutable M4 manifest does not authorize local-only checked deployment"
+    );
+    ensure!(
+        manifest.interface.instruction_count == 18
+            && manifest.interface.initialize_native_xmr_variant == 13
+            && manifest.interface.authorize_native_xmr_claim_variant == 14
+            && manifest.interface.claim_native_xmr_variant == 15
+            && manifest.interface.refund_native_xmr_variant == 16
+            && manifest.interface.punish_native_xmr_variant == 17,
+        "immutable M4 manifest instruction boundary differs from tags 13 through 17"
+    );
+    ensure!(
+        manifest.artifact.elf_sha256 == M4_CHECKED_ELF_SHA256
+            && manifest.artifact.image_id == M4_CHECKED_PROGRAM_ID,
+        "immutable M4 manifest artifact identity differs from the checked M4 guest"
+    );
+    let (elf_sha256, image_id) = checked_artifact()?;
+    ensure!(
+        elf_sha256 == M4_CHECKED_ELF_SHA256,
+        "embedded M4 ELF SHA-256 differs from the exact checked artifact"
+    );
+    ensure!(
+        image_id == M4_CHECKED_PROGRAM_ID
+            && program_id_hex(ZEC_ESCROW_V02_ID) == M4_CHECKED_PROGRAM_ID,
+        "embedded M4 ImageID or ProgramId differs from the exact checked program"
+    );
+
+    let idl: serde_json::Value =
+        serde_json::from_str(PROGRAM_IDL_JSON).context("parse generated M4 public SpEL IDL")?;
+    let instructions = idl
+        .get("instructions")
+        .and_then(serde_json::Value::as_array)
+        .context("generated M4 public SpEL IDL omitted instructions")?;
+    let xmr_names = [
+        "initialize_native_xmr",
+        "authorize_native_xmr_claim",
+        "claim_native_xmr",
+        "refund_native_xmr",
+        "punish_native_xmr",
+    ];
+    ensure!(
+        instructions.len() == manifest.interface.instruction_count
+            && xmr_names.iter().enumerate().all(|(offset, expected)| {
+                instructions[13 + offset]
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(*expected)
+            }),
+        "generated M4 public SpEL IDL differs from exact append-only tags 13 through 17"
+    );
+    Ok((elf_sha256, image_id))
+}
+
 fn trusted_expected_target(manifest: &DeploymentManifest) -> Result<TrustedExpectedTarget> {
     let (elf_sha256, image_id) = validate_immutable_target(manifest)?;
     let transaction = ProgramDeploymentTransaction::new(
@@ -854,13 +997,51 @@ async fn preflight_local_with_client(
     preflight_checked_target(manifest, client, rpc_url, channel_id).await
 }
 
+async fn preflight_m4_local_with_client(
+    runtime_manifest: &DeploymentManifest,
+    m4_manifest: &M4DeploymentManifest,
+    client: &SequencerClient,
+    rpc_url: &str,
+    channel_id: &str,
+) -> Result<PreflightEvidence> {
+    validate_local_rpc_url(rpc_url)?;
+    validate_channel_id(channel_id)?;
+    let artifact_identity = validate_m4_local_target(runtime_manifest, m4_manifest)?;
+    preflight_verified_target(
+        runtime_manifest,
+        client,
+        rpc_url,
+        channel_id,
+        artifact_identity,
+    )
+    .await
+}
+
 async fn preflight_checked_target(
     manifest: &DeploymentManifest,
     client: &SequencerClient,
     rpc_url: &str,
     expected_channel_id: &str,
 ) -> Result<PreflightEvidence> {
-    let (elf_sha256, image_id) = validate_immutable_target(manifest)?;
+    let artifact_identity = validate_immutable_target(manifest)?;
+    preflight_verified_target(
+        manifest,
+        client,
+        rpc_url,
+        expected_channel_id,
+        artifact_identity,
+    )
+    .await
+}
+
+async fn preflight_verified_target(
+    manifest: &DeploymentManifest,
+    client: &SequencerClient,
+    rpc_url: &str,
+    expected_channel_id: &str,
+    artifact_identity: (String, String),
+) -> Result<PreflightEvidence> {
+    let (elf_sha256, image_id) = artifact_identity;
     client
         .check_health()
         .await
