@@ -246,15 +246,18 @@ key-order, binding, or branch cross-wiring. ADR 0072 requires lifecycle actors
 to validate canonical Stage-A and Stage-B wires and derive tag-13 terms from
 the activation plan rather than accept independent protocol strings. Unsigned
 Stage-A/Stage-B body validation and role-indexed signature attachment are also
-GREEN. The role-fixed Taker tag-13 executable is component-GREEN with 12 actor tests plus 5 reusable finalized-facts tests:
+GREEN. The role-fixed Taker tag-13 executable is component-GREEN with 12 actor
+tests plus 5 reusable finalized-facts tests:
 it binds the checked deployment and actor identity, recomputes exact future
 messages from a stable finalized nonce snapshot, and rejects a stale signed
 Maker-funding cutoff before any submission. It submits Initialize once, requires
 exact finalized `Found`, rechecks that cutoff before Fund, then submits Fund
-once; an after-cutoff finalized Fund cannot become success evidence. It has not
-yet been
-run against the local node because independent Maker/Taker material generation
-remains pending; no actor effect or swap is claimed.
+once; an after-cutoff finalized Fund cannot become success evidence. It has not yet been run against the local node. Fresh independent Maker/Taker
+provisioning is GREEN in four focused tests, including a two-process CLI E2E:
+each role atomically publishes one manifest-bound owner-only bundle with distinct
+agreement/claim/refund keys and one DLEQ-backed Monero share, while Maker imports
+Taker's view key privately. Stage-A/B countersigning, journal rounds, and chain
+effects remain pending; no swap is claimed.
 
 The fresh checked guest and current host components can be repeated
 independently before the full actor exists; the exact deployer and tag-15

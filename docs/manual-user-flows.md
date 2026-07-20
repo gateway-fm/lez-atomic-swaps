@@ -2646,20 +2646,87 @@ cutoff fails before submission; a cutoff crossed while Initialize finalizes
 prevents Fund; and an after-cutoff finalized Fund cannot become success evidence.
 Host wall clock is never cutoff authority.
 
-This is still a one-shot PoC component after any submission. A failed run leaves
-a no-clobber evidence reservation; never delete it until exact chain state and
-submission outcome are reconciled. Use a fresh, dedicated per-swap Maker and
-Taker LEZ account and send no unrelated transactions from them, because future
-nonces are checked but not leased. Crash resume, ambiguous-outcome recovery, and
-durable nonce leasing are tracked for post-PoC hardening.
+### Provision fresh independent M4 role material
+
+The first user-facing material step is now reproducible. Supply the exact raw
+32-byte LEZ owner identities that correspond to the dedicated funded accounts;
+do not paste private LEZ keys into this command. Run Taker first, transfer only
+`monero-view.key` through an owner-private out-of-band channel, then run Maker:
+
+```sh
+cargo +1.96.0 build --locked --offline -p xmr-reference-actor
+
+export XMR_MATERIAL_ROOT=/absolute/owner-private/m4-material-run
+export TAKER_LEZ_OWNER_HEX=replace_with_64_lowercase_hex
+export MAKER_LEZ_OWNER_HEX=replace_with_64_lowercase_hex
+install -d -m 700 "$XMR_MATERIAL_ROOT" \
+  "$XMR_MATERIAL_ROOT/material" "$XMR_MATERIAL_ROOT/exchange" \
+  "$XMR_MATERIAL_ROOT/handoff"
+
+target/debug/xmr-reference-actor provision taker \
+  --private-root "$XMR_MATERIAL_ROOT/material/taker" \
+  --lez-owner-account "$TAKER_LEZ_OWNER_HEX" \
+  --public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json"
+
+# Emulate the private handoff on one PoC host. A real role-separated deployment
+# transfers this file through its authenticated owner-private channel.
+install -m 600 "$XMR_MATERIAL_ROOT/material/taker/monero-view.key" \
+  "$XMR_MATERIAL_ROOT/handoff/monero-view.key"
+
+target/debug/xmr-reference-actor provision maker \
+  --private-root "$XMR_MATERIAL_ROOT/material/maker" \
+  --lez-owner-account "$MAKER_LEZ_OWNER_HEX" \
+  --shared-view-key-file "$XMR_MATERIAL_ROOT/handoff/monero-view.key" \
+  --public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json"
+
+jq -e -s '
+  length == 2 and
+  .[0].role == "taker" and .[1].role == "maker" and
+  .[0].public_view_key == .[1].public_view_key and
+  .[0].lez_owner_account != .[1].lez_owner_account and
+  .[0].agreement_public_key != .[1].agreement_public_key and
+  .[0].claim_session_public_key != .[1].claim_session_public_key and
+  .[0].refund_session_public_key != .[1].refund_session_public_key
+' "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  "$XMR_MATERIAL_ROOT/exchange/maker.json"
+```
+
+Expected result is `true`. Each role root contains six mode-`0600` files:
+three independent BIP340 keys, one canonical Monero spend share, the shared
+private view key, and a canonical private manifest binding role, LEZ owner, and
+the SHA-256 of the exact public packet. The adaptor scalar is derived from the
+share in memory and is not duplicated at rest. Each canonical public packet
+contains only the role identity, verified DLEQ proof, and public view key.
+
+The target role roots must not exist. Each command stages and syncs a complete
+bundle under its exact mode-`0700` parent, publishes that directory with an
+atomic no-replace rename, syncs the parent, then publishes the already-staged
+public packet last with another no-replace rename. The two destinations are not
+one filesystem transaction: a post-bundle collision or sync error can leave a
+complete manifest-bound private root without a final public packet. Quarantine
+that root and start with new destination names; never merge or partially reuse
+it. No partially populated role root is published.
+
+The same-host commands and process E2E prove separate invocations and private
+root interfaces, not different-UID isolation. The command uses OS entropy only:
+no Docker, RPC, node, faucet, peer, public funds, or external finality service.
+A successful fresh development run produced two distinct 113,942-byte packets;
+proof bytes are random, so exact packet hashes are not reproducibility
+requirements.
+
+This provisioning step performs no submission. Use a fresh, dedicated per-swap
+Maker and Taker LEZ account and send no unrelated transactions from them,
+because future nonces are checked but not leased. Crash resume,
+ambiguous-outcome recovery, and durable nonce leasing apply after stage
+composition and remain tracked for post-PoC hardening.
 
 Do not fabricate agreement/activation wires from unit-test constants to run the
-binary. A real user flow requires two independent role processes to validate
-and countersign fresh Stage-A/Stage-B material while withholding the Taker
-claim partial until finalized tag 14. That material command is the next M4
-slice; its arrival will add the actual actor invocation and evidence assertions
-here. Until then, the manually repeatable node-backed boundary stops at checked
-deployment and two-role Vault onboarding above.
+tag-13 binary. Provisioning above is GREEN, but the next M4 slice must still use
+the two public packets plus stable actual-local facts to build, independently
+validate, and countersign Stage A; execute both journal packet rounds; and
+countersign Stage B while withholding the Taker claim partial until finalized
+tag 14. Until those commands land, the manually repeatable effect-bearing
+boundary still stops at checked deployment and two-role Vault onboarding.
 
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and

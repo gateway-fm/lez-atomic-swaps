@@ -43,7 +43,7 @@ validated Stage-A agreement, rederive the purpose-separated session identity
 inside the SDK, reconstruct the exact retained context, and reject every public
 field mutation plus refund-into-claim cross-wiring. ADR 0072 requires actors to
 derive protocol inputs from canonical validated Stage-A/Stage-B material. This
-is now nine-test SDK evidence, including unsigned semantic validation before
+is now 16-test SDK evidence, including unsigned semantic validation before
 role-indexed signature attachment. It is not an independent role-material
 process, chain execution, finality, or an end-to-end swap.
 The role-fixed Taker tag-13 executable retains 12 GREEN local tests around canonical
@@ -51,6 +51,15 @@ stage input, exact actor/deployment identity, stable finalized nonces,
 no-clobber owner-only evidence, the finalized Initialize-before-Fund barrier,
 and three finalized-consensus funding-cutoff checks. It has not executed a node effect and does not change the 0-of-1 M4
 happy-swap count. Five focused reusable-finality tests separately prove stable advancement, moving/regressing finalized views, wrong genesis, and one-bit ProgramID rejection.
+The role-fixed `xmr-reference-actor provision` boundary is GREEN in four tests,
+including a true two-process CLI E2E. Separate Taker and Maker invocations each
+receive one new root; Maker imports the Taker-generated private view key while
+only canonical identity/DLEQ packets are public. Atomic no-replace directory
+publication prevents partial private roots, and a private manifest binds role,
+owner, and exact packet digest. Readers use one no-symlink descriptor and reject
+zero owners plus compressed, x-only, and DLEQ/signing-key aliases. Provisioning
+uses OS entropy and no RPC, node, Docker service, faucet, peer, or external
+finality resource. It is not Stage-A/B composition or a chain effect.
 The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,

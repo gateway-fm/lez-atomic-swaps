@@ -15,6 +15,7 @@ members = [
     "crates/swap-store",
     "crates/xmr-monero-adapter",
     "crates/xmr-release-authority",
+    "crates/xmr-reference-actor",
     "crates/xmr-swap-sdk",
     "crates/zebra-node-adapter",
     "crates/zec-reference-actor",

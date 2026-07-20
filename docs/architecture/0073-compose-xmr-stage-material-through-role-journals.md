@@ -1,14 +1,16 @@
 # ADR 0073: Compose XMR stage material through separate role journals
 
-Status: Accepted as the M4 happy-PoC material route; implementation pending.
+Status: Accepted; provisioning and foundation APIs are GREEN, stage composition pending.
 
 Date: 2026-07-20
 
 ## Context
 
 The role-fixed tag-13 actor accepts only canonical validated Stage-A and
-Stage-B wires. Tests can construct those records, but no user-facing process
-currently lets independent Maker and Taker roles produce them. Copying the
+Stage-B wires. Tests can construct those records. The role-fixed provisioning
+command now lets independent Maker and Taker processes generate private roots,
+DLEQ-backed shares, and public identity packets, but no user-facing process yet
+completes Stage-A/Stage-B countersigning and journal rounds. Copying the
 test fixture or running both private roles in one process would not prove the
 privacy, nonce, or actor boundaries required by issue 112.
 
@@ -25,6 +27,16 @@ have distinct owner-only roots, LEZ identities, agreement keys, claim/refund
 keys, XMR spend shares, and SQLite adaptor journals. No command may accept both
 private roots.
 
+Provisioning requires an absent role root below an exact owner-only parent. It
+stages and syncs all private files, atomically publishes the complete directory
+with no replacement, syncs its parent, and publishes the pre-staged public
+packet last. A private canonical manifest binds role, LEZ owner, and exact
+public-packet digest. Only the canonical Monero share is stored; the role-correct
+adaptor scalar is derived in memory. Private-root and public-packet publication
+cannot be one cross-directory filesystem transaction, so a late public collision
+or parent-sync ambiguity preserves the complete private root and fails closed.
+A partially populated role root is never published.
+
 Each role uses one long-lived journal for both claim and refund sessions. The
 journal reserves a secret nonce before its commitment is exposed, atomically
 consumes it when the role partial is persisted, and rejects a repeated secret
@@ -37,13 +49,21 @@ and one stable finalized LEZ view. It calls the existing Stage-A future-message
 planner and SDK validators; it does not implement a second wire or session
 formula.
 
+Keep actual-node Stage-A composition in the isolated `compat/lez-v0_2-sidecar`
+graph, where the official RPC clients, checked deployment, stable finalized
+facts, and future-message planner already live. That graph may depend one way on
+`xmr-reference-actor` to read validated public packets. The root actor must not
+depend on the sidecar and pull its Logos/Risc0 graph into the root lockfile;
+private signing, assembly, and locally derived runner sessions remain in the
+root actor.
+
 ```mermaid
 flowchart LR
-    TakerPrivate["Taker private root and journal"] --> TakerProc["Role fixed Taker process"]
-    MakerPrivate["Maker private root and journal"] --> MakerProc["Role fixed Maker process"]
+    TakerPrivate["Atomic Taker bundle<br/>keys share view manifest"] --> TakerProc["Role fixed Taker process"]
+    MakerPrivate["Atomic Maker bundle<br/>keys share view manifest"] --> MakerProc["Role fixed Maker process"]
     TakerProc --> TakerPublic["Taker public packet"]
     MakerProc --> MakerPublic["Maker public packet"]
-    ViewKey["Owner private shared view key handoff"] --> TakerProc
+    TakerPrivate --> ViewKey["Owner private shared view key handoff"]
     ViewKey --> MakerProc
     TakerPublic --> Planner["Public Stage A planner"]
     MakerPublic --> Planner
@@ -135,27 +155,36 @@ leasing.
 
 ## Required implementation slices
 
-1. Add canonical checked unsigned Stage-A and Stage-B wire codecs to the XMR
+1. **GREEN:** Add canonical checked unsigned Stage-A and Stage-B wire codecs to the XMR
    SDK plus activation/transcript comparison APIs.
-2. Expose an opaque Stage-A-descriptor-to-runner session constructor and a
+2. **GREEN:** Expose an opaque Stage-A-descriptor-to-runner session constructor and a
    create-new session writer; retain the runner's existing packet schema.
-3. Extract the stable four-account finalized nonce snapshot and checked M4
+3. **GREEN:** Extract the stable four-account finalized nonce snapshot and checked M4
    program identity from the tag-13 binary into the sidecar library.
-4. Add the role-fixed XMR reference actor commands and a process E2E that spawns
-   separate Maker/Taker roots.
-5. Add a narrow Taker-journal loader for tag-14 preparation; do not add a
+4. **IN PROGRESS:** Add the role-fixed XMR reference actor commands and a process
+   E2E that spawns separate Maker/Taker roots. Provisioning is GREEN through
+   fresh separate process invocations and four focused tests, including one
+   two-process CLI E2E; Stage-A/B signing, session export, and Stage-B journal
+   assembly remain.
+5. **PENDING:** Add a narrow Taker-journal loader for tag-14 preparation; do not add a
    plaintext partial store.
 
-Fresh scalar/view-key convenience constructors belong in the XMR SDK so actors
-do not reproduce scalar rejection rules. Agreement signatures reuse the
+Fresh scalar/view-key convenience constructors are implemented in the XMR SDK,
+so actors do not reproduce scalar rejection rules. Agreement signatures reuse the
 existing BIP340 signing path. There is no external Logos dependency blocking
 these slices.
 
 ## Consequences
 
 - The user flow becomes reproducible without fixture secrets or merged roles.
+  The first GREEN step atomically creates two owner-only, manifest-bound roots
+  and canonical public packets; it deliberately makes no Stage-A/B or
+  chain-effect claim.
 - Interactive nonces remain durable and purpose-separated through existing
   code rather than a new store.
 - Public packets can be inspected and copied; private roots and the view-key
   handoff remain owner-only.
+- Same-host process evidence does not claim different-UID isolation. Cross-output
+  publication ambiguity and upstream CSPRNG-state zeroization remain explicit
+  PoC-to-production hardening items.
 - The material process does not itself submit a chain effect.

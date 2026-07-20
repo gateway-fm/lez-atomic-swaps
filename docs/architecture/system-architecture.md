@@ -2113,8 +2113,10 @@ output. XMR-first is rejected because the reviewed COMIT construction does not
 supply that direction's safe recovery path.
 
 The shared signing, two-stage XMR SDK, and focused guest-source boundaries are
-executable without routing XMR through the BTC SDK. Solid edges below are component-tested or proved actual-local edges; dotted
-edges are still M4 swap-effect, finality, or actor composition work:
+executable without routing XMR through the BTC SDK. Independent role
+provisioning is GREEN; stage countersigning and journal composition remain
+pending. Solid edges below are component-tested or proved actual-local edges;
+dotted edges are still M4 swap-effect, finality, or actor composition work:
 
 ```mermaid
 flowchart LR
@@ -2125,6 +2127,11 @@ flowchart LR
     XmrSdk --> Dleq["Two bounded DLEQ envelopes"]
     Dleq --> SharedKey["Shared Monero spend key"]
     XmrActor["Fresh XMR lifecycle actors<br/>pending"] -.-> RoleRunner
+    RoleProvisioner["Independent role provisioner<br/>four tests green including process E2E"] --> RoleBundles[("Atomic manifest-bound Maker and Taker bundles")]
+    RoleBundles -.-> XmrActor
+    RoleBundles --> StageACompose["Stage A countersigning and session initialization<br/>pending"]
+    StageACompose -.-> RoleRunner
+    FuturePlan --> StageACompose
     XmrActor -.-> XmrSdk
     XmrActor -.-> OrdinaryClient["Ordinary BridgeClient<br/>eight methods green"]
     ActorSigners[("Independent owner-private Maker and Taker signers<br/>not committed")] --> VaultCli["Actual local Vault Claim CLI<br/>two identities finalized once"]

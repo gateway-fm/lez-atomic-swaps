@@ -99,7 +99,7 @@ rejects wrong purpose, session, message, adaptor, key order, binding, and a
 refund-into-claim cross-wire. The unsigned-body API separately began with eight
 expected missing-type errors and proves semantic rejection before signature
 attachment, wrong view-key/cross-agreement rejection, role-indexed signatures,
-and byte-identical canonical wires. All nine SDK tests, strict Clippy,
+and byte-identical canonical wires. All 16 SDK tests, strict Clippy,
 warning-fatal Rustdoc, formatting, and diff checks pass.
 
 The tag-13 actor retains 12 GREEN unit tests for the checked deployment identity,
