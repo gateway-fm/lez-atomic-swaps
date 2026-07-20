@@ -2138,6 +2138,10 @@ flowchart LR
     OrdinaryClient --> ClaimBuilder["Official durable claim-authorization builder<br/>tag 14 component green"]
     Reservation --> ClaimBuilder
     ClaimBuilder --> ClaimReservation[("Owner-only exact authorization reservation<br/>Fund nonce plus one; restart replay green")]
+    FinalizedNonces["Caller-supplied stable finalized nonce snapshot"] --> FuturePlan["Pure Stage-A future-message planner<br/>exact generated tags 15 16 17 and hashes green<br/>zero RPC reservation persistence signing or send"]
+    XmrSdk --> FuturePlan
+    FuturePlan --> Tag15Prepare
+    FuturePlan -.-> BridgeRuntime
     OrdinaryRoutes --> Tag15Prepare["Maker tag-15 prepare<br/>exact nonce ABI accounts and message hash green"]
     AuthorizationFinality -.-> Tag15Prepare
     Tag15Prepare --> Tag15Reservation[("Owner-only unsigned tag-15 reservation<br/>restart replay green")]
@@ -2315,7 +2319,7 @@ sequenceDiagram
     participant Release as One-shot release worker process proof green
     participant Monero as monerod and wallet RPC
 
-    Note over Maker,Taker: Stage A base terms derive distinct claim refund sessions
+    Note over Maker,Taker: Stage A pure planner fixes distinct generated tag 15 16 17 messages and hashes
     Note over Maker,Taker: Stage B activation binds nonces partial commitments and exact LEZ initialization
     Note over Maker,Taker: Taker first lock starts the protocol
     Taker->>LezSeq: Submit exact Initialize with transaction-ID request key
@@ -2497,6 +2501,15 @@ both reservations and returns byte-identically; wrong partial, request drift,
 mutation, missing state, and nonce overflow fail closed. The generic submission
 route still rejects these bytes with zero sends.
 
+The pure Stage-A future-message planner is component-green in three focused
+tests. It accepts one caller-supplied stable finalized snapshot, derives the
+claim/refund aggregate authorities and the full nonce schedule, then constructs
+exact generated official tag-15 claim, tag-16 signed-refund, and tag-17
+punishment messages and distinct NSSA hashes. The existing tag-15 path accepts
+the planned claim message/hash byte-identically. This boundary performs no RPC,
+reservation, persistence, signing, or submission; tag-16/tag-17 builders remain
+unavailable.
+
 The Maker-only tag-15 prepare/complete pair is component-green. Preparation
 binds the aggregate-authority account and nonce, exact generated tag-15 ABI and
 account order, and the Stage-A immutable claim-message hash before owner-only
@@ -2548,8 +2561,9 @@ end before returning `Found`. Missing is always `Uncertain`, never `Absent`;
 finality, history, moving-tip, and conflicting-match failures stay typed. The
 focused E2E uses a synthetic `FinalizedIndexerApi` and makes zero sends. The
 separate exact-genesis stable-clock tests reject wrong genesis and tip movement.
-The three refund/completion/punishment builders and non-Initialize/Fund
-discovery remain unavailable. No positive actual-local-indexer evidence,
+Exact tag-16 signed-refund and tag-17 punishment future messages/hashes are now
+planned, but the three refund/completion/punishment builders and
+non-Initialize/Fund discovery remain unavailable. No positive actual-local-indexer evidence,
 tag-15 chain submission, or claim PoC exists; preparation/completion create no
 chain state.
 

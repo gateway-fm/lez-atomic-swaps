@@ -97,6 +97,16 @@ the exact official returned ID. Its loopback fixture records byte-identical
 and a wrong returned ID retained as unknown. Same-request accepted and unknown
 replays perform no second node I/O, while deletion makes a fresh request ID fail
 closed without another send.
+A pure Stage-A future-message planner is now component-GREEN in three focused
+tests. From one caller-supplied stable finalized nonce snapshot it derives the
+claim and refund aggregate authorities, checks the Taker
+Initialize/Fund/Authorize schedule and independent claim/refund/punishment
+nonces, and constructs the exact generated official tag-15 claim, tag-16 signed
+refund, and tag-17 punishment messages plus their distinct NSSA hashes. The
+existing tag-15 prepare/complete path accepts the planned claim hash and message
+byte-identically. Planning performs no RPC, reservation, persistence, signing,
+or submission; the tag-16/tag-17 sidecar builders remain typed `Unavailable`.
+
 The Maker-only tag-15 prepare/complete pair is also component-GREEN. It derives
 the exact aggregate-authority nonce, generated ABI/account order, and immutable
 claim-message hash, then accepts only the valid aggregate BIP340 signature into

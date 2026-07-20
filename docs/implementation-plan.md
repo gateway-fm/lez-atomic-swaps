@@ -2903,8 +2903,15 @@ official returned ID as unknown after one lookup and one send. Same-request
 accepted and unknown replay performs no additional node I/O; deleting the
 durable file makes a fresh dedicated request ID fail closed.
 This is component transport evidence, not release-service or actual-node
-authority. The Maker-only tag-15 prepare/complete pair is now separately
-component-green. It validates the exact aggregate authority, nonce, generated
+authority. A new pure Stage-A future-message planner is separately GREEN in
+three focused tests. It consumes one caller-supplied stable finalized snapshot,
+derives claim/refund aggregate authorities and the complete nonce schedule, and
+constructs exact generated official tag-15 claim, tag-16 signed-refund, and
+tag-17 punishment messages plus distinct NSSA hashes. The existing tag-15
+prepare/complete path accepts the planned claim message and hash byte-identically.
+The planner performs no RPC, reservation, persistence, signing, or submission;
+tag-16/tag-17 builders remain typed `Unavailable`. The Maker-only tag-15
+prepare/complete pair is now separately component-green. It validates the exact aggregate authority, nonce, generated
 ABI/accounts, and immutable message hash before durably reserving one unsigned
 claim message. Completion reloads that reservation, verifies the aggregate
 BIP340 signature, and durably records the canonical signed transaction without
@@ -2964,9 +2971,9 @@ non-retry state. The clone-enabling authorization borrow is removed; consuming
 cross-crate preparation remains an explicit trusted-process PoC residual until
 the dedicated service also owns preparation.
 The repository now has release-journal-to-client composition but no
-release-service process or exclusive bearer/network ownership. Exact checked
-local deployment and two-account Vault onboarding are GREEN. Five functional
-builders, actual-local tag-13/indexer classifier execution, actual-chain trusted
+release-service process or exclusive bearer/network ownership. Exact checked local deployment, two-account Vault onboarding, and exact pure
+Stage-A future-message/hash planning are GREEN. Five functional builders,
+actual-local tag-13/indexer classifier execution, actual-chain trusted
 finalized LEZ swap capability, tag-14/tag-15 node submission/finality, lifecycle
 role actors, the full swap, U9 guide, D1 videos, and stagenet CI evidence remain.
 
@@ -3014,8 +3021,10 @@ and 32-byte markers into chain authority.
 - [ ] Pin and execute the exact adaptor pre-signature, adaptation, extraction,
   retained-share addition, and reconstructed Monero spend equations. Both
   DLEQ-bound shares, canonical proof wire, symmetric addition, shared address,
-  and official-wallet reconstructed spend are green; exact LEZ claim/refund
-  pre-signature, adaptation, and extraction remain.
+  and official-wallet reconstructed spend are green. Exact generated future
+  tag-15/tag-16/tag-17 messages and hashes now replace placeholders and are
+  byte-identical with existing tag-15 prepare/complete; exact LEZ claim/refund
+  pre-signature, adaptation, extraction, and tag-16/tag-17 builders remain.
 - [x] Lock the current crypto-slice graph and pass strict lint, Rustdoc,
   advisories, bans, licenses, and source policy. The rejected unmaintained
   bincode feature was replaced by pinned postcard rather than allowlisted.
@@ -3120,6 +3129,14 @@ and 32-byte markers into chain authority.
   finalized ABI/account/signer facts plus state-specific metadata/custody and
   candidate/tip/window repins gate `Found`, missing stays `Uncertain`, typed
   failures are preserved, and zero sends occur.
+  The pure Stage-A future-message planner is GREEN in 3 of 3 focused tests. A
+  caller-supplied stable finalized nonce snapshot deterministically yields the
+  generated tag-15 claim, tag-16 signed-refund, and tag-17 punishment messages,
+  distinct official hashes, derived claim/refund authorities, and the exact
+  Initialize/Fund/Authorize plus claim/refund/punishment nonce schedule. The
+  existing tag-15 prepare/complete path accepts its claim message/hash
+  byte-identically. This planner performs no RPC, durable reservation,
+  persistence, signing, or send; tag-16/tag-17 builders remain unavailable.
   The Maker-only tag-15 prepare/complete route is also GREEN. It durably binds the
   exact aggregate-authority nonce and immutable claim-message hash, verifies the
   aggregate BIP340 signature, persists canonical bytes without submission, and
@@ -3252,11 +3269,13 @@ onboarding prerequisites, not role-process or swap effects.
 
 The immediate critical path is now:
 
-1. compose the GREEN canonical at-most-once tag-13 route with the already proved
-   exact local deployment and funded Taker identity, execute Initialize, require
-   its exact finalized classifier capability before Fund, then feed actual
-   finalized Fund through the typed issuer together with actual Monero
-   output/topology capabilities;
+1. wire the pure future-message plan into fresh lifecycle activation using one
+   exact stable finalized nonce snapshot, persist the resulting Stage-A
+   commitments before any lock, then compose the GREEN canonical at-most-once
+   tag-13 route with the proved local deployment and funded Taker identity.
+   Execute Initialize, require its exact finalized classifier capability before
+   Fund, then feed actual finalized Fund through the typed issuer together with
+   actual Monero output/topology capabilities;
 2. run the release worker against the actual local indexer and sidecar to submit
    exact tag 14, require its finality before the GREEN Maker tag-15
    prepare/complete pair, then add exact tag-15 submission and finalized
@@ -3286,11 +3305,11 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 3 to 5 focused engineering hours
+The checkpoint ETA carried by this push is 2.5 to 4.5 focused engineering hours
 to the first reproducible independent-actor claim-path PoC and 8 to 16
 additional hours to the local claim/refund/punishment PoC. Exact checked local
 deployment and funded two-identity Vault onboarding are now actual-local GREEN;
-the canonical tag-13 executor, exact finalized-Initialize/Fund classifier and
+the pure exact Stage-A future-message/hash planner, canonical tag-13 executor, exact finalized-Initialize/Fund classifier and
 consuming Fund barrier, and durable Maker tag-15 prepare/complete path are
 component-GREEN. Initialize/Fund execution, release-worker actual-local tag-14
 submission, finalized tag-14/tag-15 classification, exact tag-15 submission,

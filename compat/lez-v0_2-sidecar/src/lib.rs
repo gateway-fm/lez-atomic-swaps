@@ -18,6 +18,7 @@ mod native_prepare;
 mod runtime;
 mod server;
 mod vault_claim_prepare;
+mod xmr_stage_a_future_messages;
 
 #[cfg(target_os = "linux")]
 pub use durable_reservation::DurableReservationError;
@@ -46,6 +47,11 @@ pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,
     compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,
     prepared_from_transaction, program_id_from_hex, program_id_to_hex,
+};
+
+pub use xmr_stage_a_future_messages::{
+    M4StageAFinalizedNonces, M4StageAFutureMessageInput, M4StageAFutureMessagePlan,
+    M4StageAFutureMessagePlanError, M4StageAPlannedNonces, plan_m4_stage_a_future_messages,
 };
 
 pub use runtime::{

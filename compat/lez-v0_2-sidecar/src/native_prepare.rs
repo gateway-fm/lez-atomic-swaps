@@ -46,7 +46,8 @@ mod generated_escrow_client {
 }
 
 pub use generated_escrow_client::{
-    ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
+    ClaimNativeXmrAccounts, PunishNativeXmrAccounts, RefundNativeXmrAccounts, ZecEscrowInstruction,
+    compute_custody_pda, compute_metadata_pda,
 };
 
 /// Fail-closed errors while preparing official v0.2 native escrow transactions.
