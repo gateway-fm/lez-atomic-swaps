@@ -2527,10 +2527,11 @@ official returned ID as `UnknownSubmissionOutcome` after one lookup/one send
 with unchanged same-request replay counters; it does not mutate an actual LEZ
 devnet. None of these components publishes
 a finalized claim partial, proves an actual-local-indexer `Found`, supplies
-release-service isolation or restart reconciliation, or replaces the
-role-correct swap journey.
-The separately locked one-shot worker source checkpoint is independently
-repeatable without Docker or live chain services:
+actual-node finality, or replaces the role-correct swap journey. The process
+suite below separately proves real-worker input consumption, route wiring, and restart
+reconciliation against official v0.2 indexer-wire plus typed bridge-protocol loopbacks.
+The separately locked one-shot worker process checkpoint is independently
+repeatable without Docker or live chain services after dependencies are cached:
 
 ```sh
 cd compat/lez-v0_2-xmr-release-service
@@ -2540,9 +2541,17 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked --offline --no-deps --document-pri
 cargo deny --locked --all-features check --config deny.toml advisories bans licenses sources
 cargo run --locked --offline -- --help
 cd ../..
+M4_RELEASE_PROCESS_OFFLINE=1 ./scripts/test-m4-xmr-release-worker-process.sh
 ```
 
-The test command must report four passing library tests. The help output
+The unit command must report four passing library tests. The process runner
+must report one passing ignored integration and
+`M4 typed-issuer release-process admission and restart proof passed`. It seeds
+the journal only through the public typed issuer, first requires a redacted
+zero-RPC rejection for a group-writable route config, then observes exactly one
+accepted submission after 4 finalized-ID, 8 block-by-ID, and 8 block-by-hash
+calls. A fresh worker must add zero calls. Every worker child is kill-on-drop
+bounded to 15 seconds. The help output
 exposes only `--public-config-file`, `--state-directory`,
 `--sidecar-capability-file`, and `--protection-key-file`; it exposes no
 bearer, key, authorization, transaction ID, request ID, deadline, timeout, or
@@ -2556,16 +2565,19 @@ the worker therefore requires it to be a regular file owned by the worker UID,
 linked once, and not writable by group or others. Mode `0644` or stricter is
 accepted; `0664` and hard-linked config are rejected before credentials are
 read. CI runs these same locked compile, test, Clippy, Rustdoc, and dependency
-audit gates against the standalone lockfile.
+audit gates plus the process runner against the standalone lockfile.
 
-This is currently a build/configuration reproduction, not the manual swap
-flow. A successful worker invocation requires a sealed journal produced
-through the typed issuer plus compatible finalized-indexer and authenticated
-sidecar services. The subprocess fixture and composed local-devnet command are
-the next planned update; inventing a raw journal or authorization flag would
-bypass the authority being proved. These commands make no RPC and use no
-faucet, chain funds, peer, or external finality service. A cold Cargo cache can
-require crates.io and the pinned Logos execution-zone Git tag.
+This is a checked process reproduction, not the manual swap flow. The process
+runner supplies an ephemeral official v0.2 indexer-wire loopback and an
+authenticated typed bridge-protocol sidecar mock; it uses no Docker,
+public RPC, faucet, chain funds, peer, or external finality service. Those
+fixtures prove client decoding, exact call counts, one-attempt publication, and
+durable restart behavior, but cannot prove actual-node consensus or finality.
+The composed actual-local-devnet command is the next planned update. Inventing
+a raw journal or authorization flag would bypass the authority being proved.
+A cold Cargo cache can require crates.io and the pinned Logos execution-zone
+Git tag; `M4_RELEASE_PROCESS_OFFLINE=1` deliberately fails if that cache is
+not already warm.
 
 The exact safety boundary matters when reviewing intermediate results. The
 Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with

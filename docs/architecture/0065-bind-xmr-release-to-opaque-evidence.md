@@ -87,8 +87,8 @@ flowchart LR
     Topology --> Issuer
     Issuer --> Journal["Private schema v3 release journal"]
     Journal --> Publisher["One attempt journal publisher"]
-    ReleaseService["ADR 0068 one-shot worker<br/>source green process proof pending"] --> Publisher
-    FinalClock["Official finalized indexer client<br/>source green process proof pending"] --> ReleaseService
+    ReleaseService["ADR 0068 one-shot worker<br/>typed issuer and process proof green"] --> Publisher
+    FinalClock["Official finalized indexer client<br/>official-wire process proof green<br/>actual-local pending"] --> ReleaseService
     ReleaseService --> ReleaseClient["Release-intended type-narrowed client"]
     ReleaseClient --> Route["ADR 0067 dedicated tag 14 route"]
     Route --> Fixture["Official-type loopback fixture"]

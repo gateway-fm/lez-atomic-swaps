@@ -299,6 +299,7 @@ jobs:
       - run: cargo fmt --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml --all --check
       - run: cargo clippy --locked --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml --all-targets --all-features --no-deps -- -D warnings
       - run: cargo test --locked --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml --all-targets --all-features
+      - run: ./scripts/test-m4-xmr-release-worker-process.sh
       - name: Reject release-worker documentation warnings
         env:
           RUSTDOCFLAGS: -D warnings

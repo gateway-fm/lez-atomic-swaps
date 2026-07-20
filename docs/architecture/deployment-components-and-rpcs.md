@@ -217,7 +217,7 @@ flowchart LR
     RuntimeGenesis["Immutable runtime genesis"] --> FinalizedClock["Genesis-bound stable finalized clock<br/>component green"]
     Indexer -->|"finalized ID and block by ID and hash"| FinalizedClock
     TakerSidecar --> FinalizedClock
-    ReleaseService["Isolated one-shot release worker<br/>source and unit gates green<br/>process E2E pending"] --> Publisher
+    ReleaseService["Isolated one-shot release worker<br/>source and process proof green<br/>actual-local chain pending"] --> Publisher
     ReleaseService --> ReleaseStore
     ReleaseService --> ReleaseFactory
     ReleaseService --> KeyLoader
@@ -261,15 +261,19 @@ The separate official finalized-clock primitive and dedicated sidecar route are
 component-green. The clock binds official indexer genesis and an unchanged tip;
 the route reloads the durable tag-14 reservation, persists unknown before node
 I/O, calls official lookup/send types, and requires the canonical returned ID.
-The generic sidecar route remains closed. Process ownership, actual clock/route
-wiring, actor isolation, and authorization finality remain pending.
+The generic sidecar route remains closed. Real-worker input consumption,
+clock/route wiring, and restart reconciliation are process-GREEN against an
+official v0.2 indexer-wire loopback and typed bridge-protocol sidecar mock.
+Exclusive ownership, different-UID/network isolation, actual-local clock/route
+execution, and authorization finality remain pending.
 
 The release-authority SQLite journal grants one semantic publisher, while the
 sidecar idempotency journal grants at most one attempt for one RPC request ID.
-No transaction spans them. The PoC deployment therefore still needs one
-dedicated release-service process and capability owner that reconciles both
-stores conservatively and keeps signed authorization bytes and the release
-bearer away from actors. Actual-local Fund evidence, clock/route wiring,
+No transaction spans them. The checked one-shot process reconciles both stores
+conservatively against fixtures without accepting authorization material from
+an actor. The actual-local PoC deployment still needs a separately privileged
+supervisor and capability owner that keeps signed authorization bytes and the
+release bearer away from actors. Actual-local Fund evidence, clock/route execution,
 actual-sequencer execution, authorization finality, and definitive-absence
 handling remain. Admission is not finality. The one-host private-directory,
 no-clone/no-rollback, and same-UID threat-model limits remain until production

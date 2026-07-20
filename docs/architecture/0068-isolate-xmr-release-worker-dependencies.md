@@ -1,6 +1,6 @@
 # ADR 0068: Isolate the XMR release worker from the full LEZ sidecar graph
 
-- Status: Accepted for the M4 process-source checkpoint
+- Status: Accepted for the M4 process checkpoint
 - Date: 2026-07-20
 
 ## Context
@@ -120,6 +120,10 @@ sequenceDiagram
     Worker->>Journal: Persist Admitted Ambiguous or Suppressed
     Worker->>Journal: Reload authenticated terminal state
     Worker-->>Supervisor: Payload-free JSON report
+    Supervisor->>Worker: Start fresh process with the same four paths
+    Worker->>Journal: Authenticate terminal release
+    Journal-->>Worker: Admitted
+    Worker-->>Supervisor: Observe-only report with zero RPC
 ```
 
 The first and second finalized-clock samples each read the finalized ID before
@@ -165,18 +169,24 @@ At this checkpoint:
   that mirrors the root rules and adds only the official Logos repository;
 - CI independently runs locked test, Clippy, Rustdoc, and dependency-audit
   gates for this separately locked graph;
+- one checked integration seeds the journal through the public typed issuer,
+  first requires a redacted rejection and zero RPC for a group-writable route
+  config, then starts the real worker binary and observes exactly one accepted
+  submission after four finalized-ID, eight block-by-ID, and eight block-by-hash
+  calls; a fresh process reports observe-only with zero additional RPC or
+  submission calls, and every child is kill-on-drop bounded to 15 seconds;
 - the official source is allowlisted only at the exact Logos execution-zone
   repository in the worker policy and remains pinned by manifest and lockfile
   to tag v0.2.0; the root graph has no Git-source exception.
 
 No Docker, public RPC, faucet, public funds, peer, or external finality service
-is used by these compile and unit gates. Cold cache setup can require crates.io
-and the pinned official Git source.
+is used by these compile, unit, or process gates. The process proof uses
+ephemeral authenticated official v0.2 indexer-wire and typed bridge-protocol loopback services and deterministic
+typed fixtures; it does not claim actual-node behavior. Cold cache setup can
+require crates.io and the pinned official Git source.
 
 ## Residuals
 
-- The first typed-issuer-seeded subprocess admission and fresh-process
-  observe-only replay are not yet proved.
 - Preparation still occurs outside this one-shot publication worker.
 - The source boundary does not by itself prove a different UID, mount
   namespace, or network namespace. The later isolated runtime lane must deny the

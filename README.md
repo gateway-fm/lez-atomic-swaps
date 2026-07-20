@@ -131,12 +131,14 @@ run/runtime/terms binding, uses the exact official v0.2 finalized-indexer RPC,
 and emits only a payload-free durable outcome. Its non-secret route config is
 integrity-controlled before credential reads. Its four unit tests, all-target
 compile, strict Clippy/Rustdoc, vulnerability/license/source gates, and
-explicit standalone CI contract are green. A typed-issuer-seeded
-subprocess admission/restart proof, different-UID
-and network isolation, actual-node execution, authorization finality, actors,
-and an actual swap remain absent. Preparation still extracts bytes in the
-trusted test process and must move behind the service boundary before an
-actor-isolation claim.
+explicit standalone CI contract are green. The checked process proof now seeds
+the journal only through the typed issuer, starts the real worker, observes one
+admitted sidecar submission after the official v0.2 indexer-wire finalized-clock reads, and
+starts a fresh worker that reports observe-only without another RPC or
+submission. CI runs that proof. Different-UID and network isolation,
+actual-local node execution, authorization finality, actors, and an actual swap
+remain absent. Preparation still extracts bytes in the trusted test process and
+must move behind the service boundary before an actor-isolation claim.
 
 The Monero output observation is deliberately not claim-partial release
 authority. The one-command topology

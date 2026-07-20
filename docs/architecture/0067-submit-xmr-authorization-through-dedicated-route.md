@@ -65,7 +65,7 @@ unknown and is never retried for that request ID.
 
 ```mermaid
 flowchart LR
-    Actor["Taker actor"] -.->|"no release inputs"| Service["ADR 0068 one-shot release worker<br/>source green process proof pending"]
+    Actor["Taker actor"] -.->|"no release inputs"| Service["ADR 0068 one-shot release worker<br/>typed issuer and process proof green"]
     Service -->|"compiled process wiring"| Authority["Sealed release publisher"]
     Authority --> ReleaseJournal[("Release CAS journal")]
     Authority --> Clock["Clock-only finalized indexer capability"]
@@ -86,11 +86,11 @@ flowchart LR
     Actor -.->|"must have no route"| Sequencer
 ```
 
-ADR 0068 supplies the separately locked one-shot worker source, strict public
+ADR 0068 supplies the separately locked one-shot worker process, strict public
 configuration, official-indexer adapter, credential ownership path, durable
-report, and compile/unit/dependency gates. The typed-issuer-seeded subprocess
-admission/restart proof, redacted actor API, actual node, and network isolation
-remain pending.
+report, compile/unit/dependency gates, and checked typed-issuer-seeded
+admission/restart proof. A redacted role-actor API, actual node, different-UID
+boundary, and network isolation remain pending.
 
 The sidecar route itself does not consume Fund, Monero output, topology, or
 deadline evidence. The release wrapper consumes the authenticated journal

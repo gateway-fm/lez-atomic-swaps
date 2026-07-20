@@ -39,7 +39,7 @@ static_assertions = "=1.1.0"
 tower = "0.5.2"
 tower-http = { version = "0.7.0", features = ["auth"] }
 tempfile = "=3.27.0"
-tokio = { version = "=1.52.3", features = ["io-util", "macros", "net", "rt", "sync"] }
+tokio = { version = "=1.52.3", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 
 [lints]
 workspace = true

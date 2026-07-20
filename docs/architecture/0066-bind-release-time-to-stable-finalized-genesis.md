@@ -135,6 +135,7 @@ before the checkpoint is pushed.
   ID/hash/genesis consistency checks pass. Production should independently
   review rollback anchoring, indexer compromise, and cross-source finality.
 - ADR 0067's sealed publisher now consumes a clock-only trait and narrow client
-  in its loopback integration. The official indexer implementation remains
-  unwired until the dedicated service process owns preparation, key, journal,
-  sidecar capability, and this official boundary.
+  in its loopback integration. ADR 0068 wires the official v0.2 indexer client
+  into the real worker against an indexer-wire fixture. Actual-local execution,
+  exclusive different-UID ownership, and moving preparation behind the service
+  boundary remain.

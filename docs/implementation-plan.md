@@ -3178,35 +3178,40 @@ plus genesis and tip by both ID and hash, binds genesis to the immutable
 runtime, and rereads the complete sample. Wrong genesis, zero tip facts, or any
 tip movement fails closed; two focused tests and the complete 142-test sidecar
 suite pass. ADR 0066 records why movement rejection is required for deadline
-safety. The dedicated service process must now own preparation, key, journal,
-bearer and routes, then adapt this official clock to the already-green sealed
-publisher wrapper.
+safety. The dedicated process now consumes the restricted key, journal, bearer,
+and route inputs. It adapts the official clock through the sealed publisher
+against an official v0.2 indexer-wire loopback and typed bridge-protocol sidecar
+mock. Preparation remains trusted-fixture work and actual-local wiring is still
+pending.
 
+The process entry checkpoint is complete. The journal is seeded only through
+the public typed issuer, the real separately locked worker performs exactly one
+admitted submission after four finalized-ID, eight block-by-ID, and eight
+block-by-hash official v0.2 indexer-wire reads, and a fresh process reports observe-only
+with no additional RPC or submission. The checked runner is part of CI. This is
+process and restart evidence against authenticated loopbacks, not actual-node,
+different-UID, authorization-finality, or swap evidence.
 
 The immediate critical path is now:
 
-1. finish the subprocess proof for the source-GREEN one-shot release worker.
-   ADR 0068 isolates its 432-package lock from the full LEZ wallet/program
-   graph while retaining the exact official v0.2 indexer RPC. All worker
-   targets compile; four unit tests, strict Clippy/Rustdoc, dependency policy,
-   and explicit standalone CI pass. Its route config is integrity-controlled.
-   The worker accepts only a public config, fixed 0700 state
-   directory, bearer file, and protection-key file; it emits a payload-free
-   authenticated durable outcome. Seed the journal through the public typed
-   issuer, then prove one admitted send plus a fresh-process zero-call
-   observe-only restart. Preparation remains a trusted fixture until the
-   following service-owned preparation slice;
-2. connect the component-green exact-Fund classifier to the actual local
-   indexer and fresh checked artifact, then drive the typed issuer with the
-   first actual-local Fund, Monero output, and topology capabilities. Route the
-   service-owned exact authorization to the actual local sequencer, classify it
-   as finalized, and define definitive-absence handling. Keep generic tag-14
-   submission closed and keep signed refund/punishment in the following
-   recovery slice. Pre-funding proof of hidden-partial validity remains the
-   disclosed GW-M4-003 production-review item;
-3. add fresh Maker/Taker role processes with durable share/effect records;
-4. compose the sole supported LEZ-first claim path through both actual local
-   chains, then seal the happy-PoC evidence and manual reproduction.
+1. deploy the current checked M4 guest with the existing isolated LEZ v0.2
+   deployer, add the genuinely missing durable one-attempt tag-13
+   Initialize/Fund executor, and feed its actual finalized Fund through the
+   existing classifier and typed issuer together with actual Monero
+   output/topology capabilities;
+2. run the existing release worker against the actual local indexer and sidecar
+   to submit exact tag 14, add finalized tag-14/tag-15 classification, and
+   implement the currently unavailable concrete tag-15 claim planner and
+   bridge route. Keep generic tag-14 submission closed and define
+   definitive-absence handling;
+3. add fresh Maker/Taker role processes with durable share/effect records and
+   integrate the existing pair-neutral adaptor primitives so the finalized
+   tag-15 signature extracts the exact Maker scalar;
+4. reconstruct the shared Monero spend key, claim through the official wallet
+   RPC, then seal the sole supported LEZ-first happy-path evidence and manual
+   reproduction. Signed refund and punishment remain the next progressive
+   slice. Pre-funding proof of hidden-partial validity remains disclosed as
+   GW-M4-003 for production review.
 
 The signed-refund and punishment recovery paths follow in the next progressive
 slice after the reproducible happy PoC; they do not delay that first vertical
@@ -3222,18 +3227,20 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 3 to 5.5 focused engineering
+The checkpoint ETA carried by this push is 5 to 9 focused engineering
 hours to the first reproducible independent-actor claim-path PoC and 8 to 16
 additional hours to the local claim/refund/punishment PoC. The concrete issuer,
 exact signed exclusive-deadline binding, sealed publisher-to-client composition,
 genesis-bound finalized-clock primitive, dedicated route/returned-ID component,
 release-only client factory, owner-private key loaders, and compile-green
-isolated one-shot worker are removed from the remaining list. The typed-issuer
-subprocess admission/restart proof, actual-local Fund evidence,
-actual official-clock/node wiring, authorization finality, claim completion,
-and fresh actors dominate the next vertical slice. Mocked transports and
-checked recursive cases still do not count as runtime evidence. The ETA must be
-refreshed again at the next verified push.
+isolated one-shot worker plus its typed-issuer process/restart proof are removed
+from the remaining list. Actual-local Fund execution/evidence, tag-14/tag-15
+finality classification, concrete tag-15 claim planning, adaptor extraction
+integration, official-wallet claim completion, and fresh actors dominate the
+next vertical slice. The range increased after a read-only route audit
+distinguished these missing implementations from orchestration. Mocked
+transports and checked recursive cases still do not count as runtime evidence.
+The ETA must be refreshed again at the next verified push.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
 disclosures and do not block the private local implementation.
 

@@ -1089,3 +1089,382 @@ async fn authenticated_capabilities_prepare_and_restart_exact_release() {
     assert_eq!(restart_clock.calls, 0);
     assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 1);
 }
+const M4_RELEASE_WORKER_BIN_ENV: &str = "M4_XMR_RELEASE_WORKER_BIN";
+const M4_RELEASE_KEY_HEX: &str = "5858585858585858585858585858585858585858585858585858585858585858";
+
+#[derive(Clone)]
+struct ProcessIndexerData {
+    genesis: Value,
+    tip: Value,
+    finalized_calls: Arc<AtomicUsize>,
+    by_id_calls: Arc<AtomicUsize>,
+    by_hash_calls: Arc<AtomicUsize>,
+}
+
+struct ProcessIndexer {
+    endpoint: String,
+    finalized_calls: Arc<AtomicUsize>,
+    by_id_calls: Arc<AtomicUsize>,
+    by_hash_calls: Arc<AtomicUsize>,
+    _handle: jsonrpsee::server::ServerHandle,
+}
+
+async fn spawn_process_indexer(genesis_hash: [u8; 32]) -> ProcessIndexer {
+    let finalized_calls = Arc::new(AtomicUsize::new(0));
+    let by_id_calls = Arc::new(AtomicUsize::new(0));
+    let by_hash_calls = Arc::new(AtomicUsize::new(0));
+    let tip_hash = [73; 32];
+    let data = ProcessIndexerData {
+        genesis: process_indexer_block(1, [0; 32], genesis_hash, 1),
+        tip: process_indexer_block(111, genesis_hash, tip_hash, 13_000),
+        finalized_calls: Arc::clone(&finalized_calls),
+        by_id_calls: Arc::clone(&by_id_calls),
+        by_hash_calls: Arc::clone(&by_hash_calls),
+    };
+    let server = jsonrpsee::server::ServerBuilder::default()
+        .build("127.0.0.1:0")
+        .await
+        .expect("process indexer binds");
+    let address = server.local_addr().expect("process indexer address");
+    let mut module = RpcModule::new(data);
+    module
+        .register_async_method("getLastFinalizedBlockId", |_params, data, _| async move {
+            data.finalized_calls.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, jsonrpsee::types::ErrorObjectOwned>(Some(111_u64))
+        })
+        .expect("register finalized ID");
+    module
+        .register_async_method("getBlockById", |params, data, _| async move {
+            let block_id: u64 = params.one()?;
+            data.by_id_calls.fetch_add(1, Ordering::SeqCst);
+            let block = match block_id {
+                1 => Some(data.genesis.clone()),
+                111 => Some(data.tip.clone()),
+                _ => None,
+            };
+            Ok::<_, jsonrpsee::types::ErrorObjectOwned>(block)
+        })
+        .expect("register block by ID");
+    module
+        .register_async_method("getBlockByHash", |params, data, _| async move {
+            let block_hash: String = params.one()?;
+            data.by_hash_calls.fetch_add(1, Ordering::SeqCst);
+            let block = if block_hash == data.genesis["header"]["hash"] {
+                Some(data.genesis.clone())
+            } else if block_hash == data.tip["header"]["hash"] {
+                Some(data.tip.clone())
+            } else {
+                None
+            };
+            Ok::<_, jsonrpsee::types::ErrorObjectOwned>(block)
+        })
+        .expect("register block by hash");
+    let handle = server.start(module);
+    ProcessIndexer {
+        endpoint: format!("http://{address}"),
+        finalized_calls,
+        by_id_calls,
+        by_hash_calls,
+        _handle: handle,
+    }
+}
+
+fn process_indexer_block(
+    block_id: u64,
+    previous_hash: [u8; 32],
+    hash: [u8; 32],
+    timestamp: u64,
+) -> Value {
+    json!({
+        "header": {
+            "block_id": block_id,
+            "prev_block_hash": hex::encode(previous_hash),
+            "hash": hex::encode(hash),
+            "timestamp": timestamp,
+            "signature": "00".repeat(64)
+        },
+        "body": {
+            "transactions": []
+        },
+        "bedrock_status": "Finalized"
+    })
+}
+
+fn write_process_private_file(path: &std::path::Path, contents: &[u8]) {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .expect("create owner-private process input");
+    std::io::Write::write_all(&mut file, contents).expect("write owner-private process input");
+}
+
+async fn run_release_worker(
+    worker: std::ffi::OsString,
+    public_config: std::path::PathBuf,
+    state_directory: std::path::PathBuf,
+    capability_file: std::path::PathBuf,
+    protection_key_file: std::path::PathBuf,
+) -> std::process::Output {
+    let mut command = tokio::process::Command::new(worker);
+    command
+        .arg("--public-config-file")
+        .arg(public_config)
+        .arg("--state-directory")
+        .arg(state_directory)
+        .arg("--sidecar-capability-file")
+        .arg(capability_file)
+        .arg("--protection-key-file")
+        .arg(protection_key_file)
+        .kill_on_drop(true);
+    tokio::time::timeout(Duration::from_secs(15), command.output())
+        .await
+        .expect("release worker exceeded 15-second bound")
+        .expect("spawn isolated release worker")
+}
+
+fn assert_process_output_redacted(output: &std::process::Output, private_root: &std::path::Path) {
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for forbidden in [
+        CAPABILITY,
+        M4_RELEASE_KEY_HEX,
+        &hex::encode([70; 32]),
+        &private_root.display().to_string(),
+    ] {
+        assert!(
+            !rendered.contains(forbidden),
+            "process output leaked private material"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "run through scripts/test-m4-xmr-release-worker-process.sh"]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one ignored process test keeps typed issuance and two fresh processes visibly joined"
+)]
+async fn subprocess_worker_admits_once_and_restart_observes_only() {
+    let worker = std::env::var_os(M4_RELEASE_WORKER_BIN_ENV)
+        .expect("process runner supplies the exact built worker");
+    let stage = stage_b();
+    let bridge = spawn_bridge_sidecar().await;
+    let adapter = LezBridgeAdapter::new(
+        bridge_client(&bridge.endpoint, stage.runtime.clone()),
+        run_id(),
+        stage.runtime.clone(),
+        Participant::Taker,
+    )
+    .expect("Taker adapter");
+
+    let authorization = adapter
+        .prepare_xmr_claim_authorization_v3(
+            &stage.agreement,
+            &stage.activation,
+            &stage.binding,
+            RequestId::new("m4-process-release-authorization").expect("request ID"),
+            stage.taker_claim_partial,
+        )
+        .await
+        .expect("authenticated authorization capability");
+    let first_lock = adapter
+        .prove_finalized_xmr_first_lock_v3(
+            &stage.binding,
+            RequestId::new("m4-process-finalized-fund").expect("request ID"),
+            exact_funding(),
+            DiscoveryWindow::new(90, 21).expect("scan window"),
+        )
+        .await
+        .expect("authenticated finalized-Fund capability");
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 2);
+
+    let shared_address =
+        MoneroAddress::from_str(stage.agreement.body().monero().address()).expect("shared address");
+    let daemon = spawn_rpc_server(
+        RpcRole::Daemon,
+        "process-daemon-user",
+        "process-daemon-secret",
+        shared_address.to_string(),
+    )
+    .await;
+    let target_wallet = spawn_rpc_server(
+        RpcRole::TargetWallet,
+        "process-wallet-user",
+        "process-wallet-secret",
+        shared_address.to_string(),
+    )
+    .await;
+    let foreign_wallet = spawn_rpc_server(
+        RpcRole::ForeignWallet,
+        "process-foreign-user",
+        "process-foreign-secret",
+        shared_address.to_string(),
+    )
+    .await;
+    let identity =
+        MoneroChainIdentity::new(MoneroNetwork::Regtest, MONERO_GENESIS).expect("chain identity");
+    let expected = ExpectedMoneroOutput::new(
+        MoneroTransactionId(MONERO_TX),
+        shared_address,
+        MONERO_AMOUNT,
+    )
+    .expect("expected output");
+    let observation =
+        MoneroOutputVerifier::new(identity, &daemon.endpoint, &target_wallet.endpoint)
+            .expect("output verifier")
+            .verify(&expected)
+            .await
+            .expect("typed exact output observation");
+    let topology = MoneroTopologyVerifier::new(
+        run_id(),
+        identity,
+        &daemon.endpoint,
+        &target_wallet.endpoint,
+        &foreign_wallet.endpoint,
+    )
+    .expect("topology verifier")
+    .verify()
+    .await
+    .expect("run-bound authenticated topology");
+
+    let directory = tempfile::tempdir().expect("process-private directory");
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("process-private directory mode");
+    let journal_path = directory.path().join("xmr-release.sqlite3");
+    let capability_path = directory.path().join("sidecar-capability");
+    let protection_key_path = directory.path().join("journal-key");
+    let public_config_path = directory.path().join("release.json");
+    write_process_private_file(&capability_path, CAPABILITY.as_bytes());
+    write_process_private_file(&protection_key_path, M4_RELEASE_KEY_HEX.as_bytes());
+
+    let key =
+        PublicationProtectionKey::new("m4-process-release-key", [88; 32]).expect("journal key");
+    let terms = stage.binding.terms();
+    let store = ReleaseStore::open(&journal_path).expect("release journal");
+    let prepared = store
+        .prepare_xmr_claim_release(
+            &stage.agreement,
+            &stage.activation,
+            first_lock,
+            authorization,
+            observation,
+            topology,
+            &key,
+        )
+        .expect("typed process release preparation");
+    assert_eq!(prepared.state(), ReleaseState::Prepared);
+    drop(store);
+
+    let indexer = spawn_process_indexer(*stage.runtime.genesis_block_hash.as_bytes()).await;
+    let config = json!({
+        "schema_version": 1,
+        "sidecar_endpoint": bridge.endpoint,
+        "indexer_endpoint": indexer.endpoint,
+        "node_profile": "local",
+        "run_id": run_id(),
+        "runtime": stage.runtime,
+        "terms": terms,
+        "protection_key_id": "m4-process-release-key"
+    });
+    std::fs::write(
+        &public_config_path,
+        serde_json::to_vec_pretty(&config).expect("encode process config"),
+    )
+    .expect("write process config");
+    std::fs::set_permissions(&public_config_path, std::fs::Permissions::from_mode(0o664))
+        .expect("deliberately mutable public config");
+
+    let rejected = run_release_worker(
+        worker.clone(),
+        public_config_path.clone(),
+        directory.path().to_path_buf(),
+        capability_path.clone(),
+        protection_key_path.clone(),
+    )
+    .await;
+    assert_process_output_redacted(&rejected, directory.path());
+    assert!(
+        !rejected.status.success(),
+        "group-writable config unexpectedly reached release authority"
+    );
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.finalized_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.by_id_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.by_hash_calls.load(Ordering::SeqCst), 0);
+
+    std::fs::set_permissions(&public_config_path, std::fs::Permissions::from_mode(0o644))
+        .expect("integrity-controlled public config");
+    let first = run_release_worker(
+        worker.clone(),
+        public_config_path.clone(),
+        directory.path().to_path_buf(),
+        capability_path.clone(),
+        protection_key_path.clone(),
+    )
+    .await;
+    assert_process_output_redacted(&first, directory.path());
+    assert!(
+        first.status.success(),
+        "first release worker failed with status: {}",
+        first.status
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&first.stdout).expect("first report"),
+        json!({
+            "schema_version": 1,
+            "event": "xmr_claim_authorization_publication",
+            "outcome": "admitted_accepted",
+            "durable_state": "admitted",
+            "node_profile": "local"
+        })
+    );
+    assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(indexer.finalized_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(indexer.by_id_calls.load(Ordering::SeqCst), 8);
+    assert_eq!(indexer.by_hash_calls.load(Ordering::SeqCst), 8);
+
+    let second = run_release_worker(
+        worker,
+        public_config_path,
+        directory.path().to_path_buf(),
+        capability_path,
+        protection_key_path,
+    )
+    .await;
+    assert_process_output_redacted(&second, directory.path());
+    assert!(
+        second.status.success(),
+        "restart release worker failed with status: {}",
+        second.status
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&second.stdout).expect("restart report"),
+        json!({
+            "schema_version": 1,
+            "event": "xmr_claim_authorization_publication",
+            "outcome": "observe_only",
+            "durable_state": "admitted",
+            "node_profile": "local"
+        })
+    );
+    assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(indexer.finalized_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(indexer.by_id_calls.load(Ordering::SeqCst), 8);
+    assert_eq!(indexer.by_hash_calls.load(Ordering::SeqCst), 8);
+
+    let restarted = ReleaseStore::open(&journal_path).expect("post-process restart");
+    let admitted = restarted
+        .load_xmr_claim_release(*terms.to_input().swap_id.as_bytes(), &run_id(), &key)
+        .expect("authenticated post-process load");
+    assert_eq!(admitted.state(), ReleaseState::Admitted);
+}
