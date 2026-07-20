@@ -236,6 +236,15 @@ exact components/RPCs and both target and bootstrap sequences are in
 manual run, live inspection, scoped cleanup, and cold-resource flakiness are in
 [Flow 0](docs/manual-user-flows.md#flow-0-m4-official-monero-regtest-topology).
 
+The XMR SDK now exposes checked claim/refund session descriptors only from an
+already validated Stage-A agreement. Each descriptor reconstructs the exact
+retained session inside the SDK and rejects purpose, session, message, adaptor,
+key-order, binding, or branch cross-wiring. ADR 0072 requires lifecycle actors
+to validate canonical Stage-A and Stage-B wires and derive tag-13 terms from
+the activation plan rather than accept independent protocol strings. This is a
+GREEN SDK composition checkpoint; role countersigning, an actual actor effect,
+and the swap remain pending.
+
 The fresh checked guest and current host components can be repeated
 independently before the full actor exists; the exact deployer and tag-15
 commands and expected results are in the linked Flow 0:

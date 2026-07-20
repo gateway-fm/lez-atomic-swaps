@@ -163,6 +163,9 @@ flowchart TB
     XmrActivation --> XmrInitializeBarrier["0070 Finalized Initialize before Fund"]
     XmrInitializeBarrier --> XmrFundClassifier
     XmrActivation --> XmrTag15["0071 Durable exact tag 15 completion"]
+    XmrActivation --> XmrActorInputs["0072 Validated stage derived actor inputs"]
+    XmrActorInputs --> XmrInitializeBarrier
+    XmrActorInputs --> XmrTag15
     XmrOfficialBuilder --> XmrTag15
     XmrReleaseRoute -.-> XmrTag15
 ```
@@ -240,3 +243,4 @@ flowchart TB
 | [0069](0069-bind-xmr-tag13-attempts-to-transaction-identity.md) | Bind each exact XMR tag-13 submission attempt to its canonical transaction ID and require initialization presence before funding | Accepted as an M4 component checkpoint: arbitrary fresh IDs and missing durable state fail before node I/O; exact Initialize then Fund uses cumulative lookup/send counters 3/2 and same-request replay changes neither. Finalized-Initialize actor gating, actual-local submission, remaining effects, actors, and a claim PoC remain |
 | [0070](0070-require-finalized-xmr-initialize-before-fund.md) | Mint a non-cloneable exact finalized-Initialize capability and consume it before the Taker may submit Fund | Accepted as an M4 pre-funding component checkpoint: the sidecar classifies only exact durable Initialize/Fund targets with effect-specific historical state, stable finalized re-pins, and missing-as-Uncertain; the concrete adapter binds and consumes exact Initialize evidence before authenticated Fund submission. Actual-local indexer/sequencer execution, tag-14/tag-15 finality, actors, and the claim PoC remain |
 | [0071](0071-durably-prepare-and-complete-xmr-tag15.md) | Durably prepare the exact nonce-bound tag-15 message and complete it only with the valid aggregate BIP340 witness before any submission authority exists | Accepted as an M4 component checkpoint: generated ABI/accounts/hash checks, separate owner-only prepare/complete records, fresh-server rederivation, exact replay, fail-closed mutation, and zero tag-15 sends are GREEN. Actual-local tag-14 finality, tag-15 submission/finality, adaptor extraction, actors, and the claim PoC remain |
+| [0072](0072-derive-xmr-actor-inputs-from-validated-stage-material.md) | Derive actor protocol inputs and adaptor sessions only from canonical validated Stage-A/Stage-B material | Accepted as an M4 SDK composition checkpoint: validated agreements mint private-field checked claim/refund descriptors, which reconstruct the exact retained sessions and reject field mutation or branch cross-wiring. The tag-13 actor refactor, staged countersigning, actual-node execution, and the claim PoC remain |

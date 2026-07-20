@@ -2830,8 +2830,8 @@ as completed.
 ## Milestone 4 entry plan: XMR spend-key-share end to end
 
 Active phase: **progressive local-functional PoC**. The authoritative deliverable
-set is the live RFP plus accepted replacement issue #112, rechecked on
-2026-07-20. The old ETH-scoped submission and issue #61 are not authorities.
+set is the retained RFP snapshot plus accepted replacement issue #112 snapshot,
+inspected on 2026-07-20. The old ETH-scoped issue #61 is not authoritative.
 
 ### Actual entry state
 
@@ -2970,12 +2970,14 @@ after the winning CAS, and maps every uncertain post-CAS result to a terminal
 non-retry state. The clone-enabling authorization borrow is removed; consuming
 cross-crate preparation remains an explicit trusted-process PoC residual until
 the dedicated service also owns preparation.
-The repository now has release-journal-to-client composition but no
-release-service process or exclusive bearer/network ownership. Exact checked local deployment, two-account Vault onboarding, and exact pure
-Stage-A future-message/hash planning are GREEN. Five functional builders,
-actual-local tag-13/indexer classifier execution, actual-chain trusted
-finalized LEZ swap capability, tag-14/tag-15 node submission/finality, lifecycle
-role actors, the full swap, U9 guide, D1 videos, and stagenet CI evidence remain.
+The repository now has a checked release-worker process against authenticated
+loopbacks, but not actor-owned preparation, actual-local service wiring, or
+exclusive bearer/network ownership. Exact checked local deployment,
+two-account Vault onboarding, and pure Stage-A future-message/hash planning are
+GREEN. Exact Initialize, Fund, tag-14, and tag-15 builders are component-GREEN;
+tag-16/tag-17 recovery builders, actual-local tag-13 classification,
+actual-chain finalized tag-14/tag-15 effects, lifecycle role actors, the full
+swap, U9 guide, D1 videos, and Stagenet CI evidence remain.
 
 The service credential prerequisite is now GREEN but is not a process claim.
 `CapabilityFileXmrReleaseClientFactory` constructs only the narrow client and
@@ -3050,8 +3052,8 @@ and 32-byte markers into chain authority.
   mint boundary. The same concrete adapter now exposes the Taker-only Stage-B
   claim-authorization capability: it re-derives exact Stage B, verifies the
   committed partial and signed runtime binding before wire, and mints a private-field
-   non-`Clone` result after exactly one authenticated success. All 94
-  adapter tests, 3 authenticated cases, 2 compile-fail-inclusive doctests, and
+  non-`Clone` result after exactly one authenticated success. All 96 non-doc
+  adapter tests plus three doctests pass; the authenticated matrix is 3 of 3 and
   strict gates pass. Wrong pre-wire bindings make zero calls; wrong response
   context, terms, or empty bytes makes one call and fails closed. Its
   literal-loopback server is a mock. The official sidecar builder is separately
@@ -3160,13 +3162,13 @@ and 32-byte markers into chain authority.
   inventory, and scorecard are now current; swap sequencing, atomicity evidence,
   and terminal role repetition remain.
 
-The local-PoC gate is not met by a wallet-to-wallet transfer. The canonical LEZ
-claim must reveal Maker share `s_a`, which a fresh Taker process adds to
-retained `s_b` to spend the exact Maker-funded Monero output. The timeout branch
-must use a distinct signed LEZ refund that reveals `s_b` for Maker recovery;
-the current unsigned generic refund reveals no share. Until those branches and
-the punishment disposition in ADR 0055 are executable, a composed success is a
-linked happy transfer rather than certified atomicity.
+The local happy-PoC gate is not met by a wallet-to-wallet transfer. The
+canonical LEZ claim must reveal Maker share `s_a`, which a fresh Taker process
+adds to retained `s_b` to spend the exact Maker-funded Monero output after the
+confirmed Maker lock. That first vertical proves only the successful claim
+branch and its conditional atomicity; it does not certify complete F6 recovery.
+The next progressive slice must execute the distinct signed tag-16 refund that
+reveals `s_b` for Maker recovery and the ADR 0055 tag-17 punishment disposition.
 
 ### Actual-node checkpoint and next implementation slice
 
@@ -3267,6 +3269,16 @@ count is not independently proved. Independent Taker and Maker Vault Claims then
 finalized once in blocks 228 and 240 from separate owner-private roots; these are
 onboarding prerequisites, not role-process or swap effects.
 
+ADR 0072 closes the public-SDK session-derivation gap without widening actor
+authority. An already validated agreement now mints immutable checked claim and
+refund descriptors; their context reconstruction rederives the private SDK
+session domain and rejects purpose, session, message, adaptor, key-order,
+binding, and branch cross-wiring. The full SDK suite is 7 of 7 GREEN with strict
+Clippy and warning-fatal Rustdoc. This is a composition prerequisite, not an
+actor, signature exchange, chain effect, or swap. Role-correct unsigned-body
+validation and countersigning remain before independent Stage-A/Stage-B
+material can be produced without duplicating private protocol logic.
+
 The immediate critical path is now:
 
 1. wire the pure future-message plan into fresh lifecycle activation using one
@@ -3305,17 +3317,19 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 2.5 to 4.5 focused engineering hours
+The checkpoint ETA carried by this push is 3 to 6 focused engineering hours
 to the first reproducible independent-actor claim-path PoC and 8 to 16
 additional hours to the local claim/refund/punishment PoC. Exact checked local
 deployment and funded two-identity Vault onboarding are now actual-local GREEN;
-the pure exact Stage-A future-message/hash planner, canonical tag-13 executor, exact finalized-Initialize/Fund classifier and
-consuming Fund barrier, and durable Maker tag-15 prepare/complete path are
-component-GREEN. Initialize/Fund execution, release-worker actual-local tag-14
-submission, finalized tag-14/tag-15 classification, exact tag-15 submission,
-adaptor extraction integration, official-wallet claim completion, and fresh
-lifecycle actors dominate the next vertical slice. Mocked transports and
-checked recursive cases still do not count as swap runtime evidence.
+the pure exact Stage-A future-message/hash planner, validated-session
+descriptors, canonical tag-13 component, exact finalized-Initialize/Fund
+classifier and consuming Fund barrier, and durable Maker tag-15
+prepare/complete path are component-GREEN. Role-correct stage countersigning,
+Initialize/Fund execution, release-worker actual-local tag-14 submission,
+finalized tag-14/tag-15 classification, exact tag-15 submission, adaptor
+extraction integration, official-wallet claim completion, and fresh lifecycle
+actors dominate the next vertical slice. Mocked transports and checked
+recursive cases still do not count as swap runtime evidence.
 The ETA must be refreshed again at the next verified push.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
 disclosures and do not block the private local implementation.

@@ -754,6 +754,117 @@ impl XmrAgreementRecordV1 {
     }
 }
 
+/// Purpose of one purpose-separated Monero adaptor-signature session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum XmrAdaptorSessionPurposeV1 {
+    /// Claim session adapted to the Maker-owned Monero spend share.
+    Claim,
+    /// Refund session adapted to the Taker-owned Monero spend share.
+    Refund,
+}
+
+impl XmrAdaptorSessionPurposeV1 {
+    const fn session_label(self) -> &'static [u8] {
+        match self {
+            Self::Claim => b"claim",
+            Self::Refund => b"refund",
+        }
+    }
+}
+
+/// Immutable public inputs for reconstructing one validated adaptor session.
+///
+/// All fields are copied from an already-validated agreement. The context
+/// method revalidates both the purpose-separated session identity and the
+/// durable context binding before returning a signing context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrAdaptorSessionDescriptorV1 {
+    purpose: XmrAdaptorSessionPurposeV1,
+    agreement_commitment: [u8; 32],
+    session_id: [u8; 32],
+    exact_message: [u8; 32],
+    adaptor_point: [u8; 33],
+    ordered_public_keys: [[u8; 33]; 2],
+    context_binding: [u8; 32],
+}
+
+impl XmrAdaptorSessionDescriptorV1 {
+    fn from_validated_context(
+        purpose: XmrAdaptorSessionPurposeV1,
+        agreement_commitment: [u8; 32],
+        context: &AdaptorSessionContext,
+    ) -> Self {
+        Self {
+            purpose,
+            agreement_commitment,
+            session_id: context.session_id(),
+            exact_message: context.message(),
+            adaptor_point: context.adaptor_point(),
+            ordered_public_keys: context.ordered_public_keys(),
+            context_binding: context.durable_context_binding(),
+        }
+    }
+
+    /// Purpose assigned by the validated agreement.
+    #[must_use = "the session purpose must select the matching protocol branch"]
+    pub const fn purpose(&self) -> XmrAdaptorSessionPurposeV1 {
+        self.purpose
+    }
+
+    /// Purpose-separated session identity.
+    #[must_use]
+    pub const fn session_id(&self) -> [u8; 32] {
+        self.session_id
+    }
+
+    /// Exact 32-byte chain message signed by this session.
+    #[must_use]
+    pub const fn exact_message(&self) -> [u8; 32] {
+        self.exact_message
+    }
+
+    /// Public adaptor point for this session.
+    #[must_use]
+    pub const fn adaptor_point(&self) -> [u8; 33] {
+        self.adaptor_point
+    }
+
+    /// Compressed participant keys in canonical Maker/Taker order.
+    #[must_use]
+    pub const fn ordered_public_keys(&self) -> [[u8; 33]; 2] {
+        self.ordered_public_keys
+    }
+
+    /// Durable binding to every public input that affects signing.
+    #[must_use]
+    pub const fn context_binding(&self) -> [u8; 32] {
+        self.context_binding
+    }
+
+    /// Reconstructs and validates the exact untweaked adaptor context.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a descriptor whose purpose/session identity is crossed or whose
+    /// public signing fields no longer produce the retained durable binding.
+    pub fn context(&self) -> Result<AdaptorSessionContext, XmrAgreementV1Error> {
+        if self.session_id != session_id(self.agreement_commitment, self.purpose.session_label()) {
+            return Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch);
+        }
+        let context = AdaptorSessionContext::untweaked(
+            self.ordered_public_keys,
+            self.exact_message,
+            self.adaptor_point,
+            self.session_id,
+        )?;
+        if context.durable_context_binding() != self.context_binding {
+            return Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch);
+        }
+        Ok(context)
+    }
+}
 /// Fully validated agreement with exact claim and signed-refund sessions.
 pub struct XmrAgreementV1 {
     record: XmrAgreementRecordV1,
@@ -940,6 +1051,25 @@ impl XmrAgreementV1 {
     #[must_use]
     pub fn refund_context_binding(&self) -> [u8; 32] {
         self.refund_context.durable_context_binding()
+    }
+    /// Immutable public descriptor for the exact validated claim session.
+    #[must_use = "the validated claim descriptor must be used or explicitly discarded"]
+    pub fn claim_session_descriptor(&self) -> XmrAdaptorSessionDescriptorV1 {
+        XmrAdaptorSessionDescriptorV1::from_validated_context(
+            XmrAdaptorSessionPurposeV1::Claim,
+            self.record.agreement_commitment,
+            &self.claim_context,
+        )
+    }
+
+    /// Immutable public descriptor for the exact validated refund session.
+    #[must_use = "the validated refund descriptor must be used or explicitly discarded"]
+    pub fn refund_session_descriptor(&self) -> XmrAdaptorSessionDescriptorV1 {
+        XmrAdaptorSessionDescriptorV1::from_validated_context(
+            XmrAdaptorSessionPurposeV1::Refund,
+            self.record.agreement_commitment,
+            &self.refund_context,
+        )
     }
 
     /// Derives the exact guest-stored context binding for a future on-chain
@@ -1816,6 +1946,9 @@ pub enum XmrAgreementV1Error {
     /// Purpose-separated claim/refund contexts unexpectedly collided.
     #[error("claim and refund adaptor contexts are not distinct")]
     AdaptorContextsNotDistinct,
+    /// A public adaptor descriptor no longer matches its validated session.
+    #[error("XMR adaptor session descriptor does not match its validated context")]
+    AdaptorSessionDescriptorMismatch,
     /// Stage-B activation schema is unsupported.
     #[error("unsupported XMR activation schema {0}")]
     UnsupportedActivationSchema(u16),
@@ -2690,6 +2823,104 @@ mod tests {
         )
     }
 
+    #[test]
+    fn adaptor_session_descriptors_reconstruct_exact_contexts_and_fail_closed() {
+        let agreement = XmrAgreementV1::validate(signed_record(body())).expect("agreement");
+        let claim = agreement.claim_session_descriptor();
+        let refund = agreement.refund_session_descriptor();
+
+        assert_eq!(claim.purpose(), XmrAdaptorSessionPurposeV1::Claim);
+        assert_eq!(refund.purpose(), XmrAdaptorSessionPurposeV1::Refund);
+        assert_ne!(claim, refund);
+        assert_ne!(claim.session_id(), refund.session_id());
+        assert_ne!(claim.exact_message(), refund.exact_message());
+        assert_ne!(claim.adaptor_point(), refund.adaptor_point());
+        assert_ne!(claim.ordered_public_keys(), refund.ordered_public_keys());
+        assert_ne!(claim.context_binding(), refund.context_binding());
+
+        for (descriptor, retained) in [
+            (&claim, &agreement.claim_context),
+            (&refund, &agreement.refund_context),
+        ] {
+            let reconstructed = descriptor.context().expect("checked reconstruction");
+            assert_eq!(descriptor.session_id(), retained.session_id());
+            assert_eq!(descriptor.exact_message(), retained.message());
+            assert_eq!(descriptor.adaptor_point(), retained.adaptor_point());
+            assert_eq!(
+                descriptor.ordered_public_keys(),
+                retained.ordered_public_keys()
+            );
+            assert_eq!(
+                descriptor.context_binding(),
+                retained.durable_context_binding()
+            );
+            assert_eq!(reconstructed.session_id(), retained.session_id());
+            assert_eq!(reconstructed.message(), retained.message());
+            assert_eq!(reconstructed.adaptor_point(), retained.adaptor_point());
+            assert_eq!(
+                reconstructed.ordered_public_keys(),
+                retained.ordered_public_keys()
+            );
+            assert_eq!(
+                reconstructed.durable_context_binding(),
+                retained.durable_context_binding()
+            );
+        }
+
+        let mut wrong_purpose = claim;
+        wrong_purpose.purpose = XmrAdaptorSessionPurposeV1::Refund;
+        assert!(matches!(
+            wrong_purpose.context(),
+            Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch)
+        ));
+
+        let mut changed_message = agreement.claim_session_descriptor();
+        changed_message.exact_message[0] ^= 1;
+        assert!(matches!(
+            changed_message.context(),
+            Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch)
+        ));
+
+        let mut changed_session_id = agreement.claim_session_descriptor();
+        changed_session_id.session_id[0] ^= 1;
+        assert!(matches!(
+            changed_session_id.context(),
+            Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch)
+        ));
+
+        let mut changed_adaptor_point = agreement.claim_session_descriptor();
+        changed_adaptor_point.adaptor_point = refund.adaptor_point;
+        assert!(matches!(
+            changed_adaptor_point.context(),
+            Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch)
+        ));
+
+        let mut changed_key_order = agreement.claim_session_descriptor();
+        changed_key_order.ordered_public_keys.swap(0, 1);
+        assert!(matches!(
+            changed_key_order.context(),
+            Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch)
+        ));
+
+        let mut changed_binding = agreement.claim_session_descriptor();
+        changed_binding.context_binding[0] ^= 1;
+        assert!(matches!(
+            changed_binding.context(),
+            Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch)
+        ));
+
+        let mut crosswired = agreement.claim_session_descriptor();
+        let refund = agreement.refund_session_descriptor();
+        crosswired.session_id = refund.session_id;
+        crosswired.exact_message = refund.exact_message;
+        crosswired.adaptor_point = refund.adaptor_point;
+        crosswired.ordered_public_keys = refund.ordered_public_keys;
+        crosswired.context_binding = refund.context_binding;
+        assert!(matches!(
+            crosswired.context(),
+            Err(XmrAgreementV1Error::AdaptorSessionDescriptorMismatch)
+        ));
+    }
     #[test]
     fn canonical_stage_b_activation_enables_lez_init_and_candidate_validation() {
         let record = signed_record(body());
