@@ -122,7 +122,7 @@ The focused integration gate proves:
 - a finalized-tip advance exposed only by the final RPC is rejected; and
 - exactly two finalized-tip ID reads occur, with the equality read last.
 
-The complete pinned sidecar suite passes 142 of 142 tests. Strict Clippy,
+The complete pinned sidecar suite passes 145 of 145 tests. Strict Clippy,
 warning-free Rustdoc, dependency policy, and repository gates remain required
 before the checkpoint is pushed.
 

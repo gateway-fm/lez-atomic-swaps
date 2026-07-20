@@ -322,6 +322,13 @@ impl TransactionId {
     pub const fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
+
+    /// Derives the canonical one-attempt submission request identity.
+    ///
+    /// Its lowercase hexadecimal form is exactly 64 bytes and satisfies `RequestId`'s grammar.
+    pub fn submission_request_id(&self) -> RequestId {
+        RequestId(self.0.encode_hex())
+    }
 }
 
 /// Nonempty inner official `PublicTransaction::to_bytes()` with a 2 MB hard limit.

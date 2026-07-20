@@ -33,8 +33,8 @@ use crate::{
     NativeEscrowPlanner, NativePrepareError, OfficialNativeEscrowFacts, OfficialNodeRpc,
     RuntimeBoundaryError, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
     decode_prepared_for_signer, finalized_asset_observation::FinalizedAssetObserver,
-    finalized_xmr_observation::FinalizedNativeXmrEffectObserver, prepared_from_transaction,
-    program_id_from_hex, program_id_to_hex,
+    finalized_xmr_observation::FinalizedNativeXmrEffectObserver, native_prepare::OwnedSubmission,
+    prepared_from_transaction, program_id_from_hex, program_id_to_hex,
 };
 
 /// Fail-closed failures at the `PoC` bridge observation and submission boundary.
@@ -957,9 +957,15 @@ impl BridgeRuntime {
         &self,
         request: &SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
-        self.planner
-            .validate_owned_submission(&request.transaction)
-            .await?;
+        let ownership = self.planner.validate_submission_request(request).await?;
+        if let OwnedSubmission::XmrFunding { initialization } = ownership
+            && !self
+                .node
+                .prepared_transaction_is_included(&initialization)
+                .await?
+        {
+            return Err(BridgeRuntimeError::Planner);
+        }
         if self
             .node
             .prepared_transaction_is_included(&request.transaction)

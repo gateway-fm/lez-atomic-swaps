@@ -68,6 +68,16 @@ sidecar routes now include two functional Taker-only preparation routes.
 signed byte strings before returning them. Identical replay, including after a
 fresh planner and server, returns the same bytes without another nonce read or
 sequencer send.
+The established generic route now submits those two tag-13 effects under
+canonical request IDs derived from their transaction IDs. It reloads the
+owner-only pair before node I/O, persists unknown before the exact lookup/send,
+rejects the same transaction under an arbitrary fresh ID, and requires exact
+initialization presence before a funding attempt. The focused official-type
+loopback admits Initialize then Fund with cumulative lookup/send counters
+`3/2`; identical request replay changes neither. Premature Fund becomes a terminal
+zero-send error at `1/0`, while missing durable state fails at `0/0`. This is at-most-once component evidence. The actual actor must
+still wait for finalized Initialize before Fund, and no actual-local effect or
+swap is claimed.
 `prepare_native_xmr_claim_authorization_v3` separately recomputes the exact
 NUL-terminated partial commitment, requires and revalidates that durable Fund,
 derives nonce `Fund + 1` without an RPC, builds generated tag 14 with the sole
@@ -90,7 +100,7 @@ before any indexer read, returns `Found` only after canonical/final metadata and
 custody checks plus candidate/tip/window repins, and keeps every missing case
 `Uncertain` rather than `Absent`. Its focused E2E is trait-backed with a
 synthetic finalized indexer, typed failure cases, and zero sequencer sends. The
-complete sidecar suite passes 142 of 142 with strict Clippy, warning-free
+complete sidecar suite passes 145 of 145 with strict Clippy, warning-free
 Rustdoc, and dependency policy. This is preparation, synthetic classification,
 and official-type loopback submission evidence, not actual local-devnet
 classification, release-service isolation, or actual-chain mutation. The

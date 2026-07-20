@@ -2355,6 +2355,17 @@ counts at one. After deleting the durable authorization reservation, a fresh req
 before node I/O and leaves the established send count unchanged. The other five builders and
 non-Fund/discovery classification return typed `Unavailable`.
 
+The same route binary also proves the tag-13 component. Initialize and Fund use
+request IDs derived from their exact transaction IDs. A fresh arbitrary ID for
+the same Initialize is rejected without changing node counters; Fund first
+checks the exact Initialize predecessor; successful ordered submission ends at
+three lookups and two sends; identical request replay changes neither. A
+premature canonical Fund terminates after one predecessor lookup and zero sends,
+and its replay performs no I/O. A separate case deletes the owner-only pair before first submission and observes
+zero lookup and zero send. These are official-type loopback calls, not an actual
+LEZ node. The future role actor must classify Initialize as finalized before it
+calls Fund; accepted admission is insufficient.
+
 The Taker-only exact-`Fund` classifier validates the durable target before
 indexer reads, gates `Found` on canonical finalized transaction plus
 metadata/custody and candidate/tip/window repins, preserves typed failures, and
@@ -2480,7 +2491,10 @@ valid transaction semantics; the official sidecar tests immediately above do.
 They must prove exact tag 14, account order, sole depositor signer,
 Fund-plus-one nonce, commitment mismatch rejection, missing/corrupt durable
 state rejection, byte-identical restart/cache replay, and generic submission
-rejection with zero sequencer sends. The same route binary's release-intended submission matrix must report 3 of 3. It
+rejection with zero sequencer sends. The same route binary must report 6 of 6:
+three tag-13 cases plus the release-intended tag-14 matrix. The tag-13 cases prove
+canonical request identity, ordered `3/2` lookup/send counters, premature-Fund
+terminal `1/0`, replay, and missing-durable `0/0`. The tag-14 matrix remains 3 of 3. It
 proves accepted with one lookup/one send and unchanged replay counters; exact
 byte-identical `AlreadyKnown` with one lookup/zero sends; and a wrong official
 returned ID as `UnknownSubmissionOutcome` after one lookup/one send, with
@@ -2496,7 +2510,7 @@ metadata and custody, candidate/tip/window repins, typed finality, history, movi
 It starts only ephemeral literal-loopback in-process fixtures and a synthetic
 trait-backed `FinalizedIndexerApi`: no actual LEZ node, chain RPC, faucet, public
 fund, peer, or external finality resource participates. The full sidecar command
-must report 142 of 142 tests; strict Clippy, warning-free Rustdoc, and dependency
+must report 145 of 145 tests; strict Clippy, warning-free Rustdoc, and dependency
 policy must remain green. These commands use only ephemeral literal-loopback
 fixtures and owner-only temporary directories after dependencies are cached.
 Neither result is an actual local-devnet classifier run or a claim PoC.
@@ -2511,9 +2525,10 @@ need the pinned circuits release, crates.io and locked Git sources, the
 digest-pinned guest-builder image, and Risc0 tool releases; default run-owned
 cleanup reclaimed about 3.49 GiB in the certification runs. The Rust suites use
 no node, RPC, faucet, peer, or public endpoint after dependencies are present.
-They prove the exact host contracts only: 52 protocol tests, 53 bridge-client
-tests, 16 Monero observation/topology tests, the dedicated route matrix at 3 of
-3, and the complete sidecar gate at 142 of 142. The topology
+They prove the exact host contracts only: 53 protocol tests, 53 bridge-client
+tests, 16 Monero observation/topology tests, the tag-13 matrix at 3 of 3,
+the dedicated tag-14 route matrix at 3 of 3, and the complete sidecar gate at
+145 of 145. The topology
 capability closes
 the configured-auth residual only for local Regtest; it is not public/Stagenet trust, Stage-B release authority, or a claim
 PoC. The focused sidecar commands cover the retained v2 route set and the three XMR

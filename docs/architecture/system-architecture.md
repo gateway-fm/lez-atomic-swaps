@@ -2452,6 +2452,18 @@ both reservations and returns byte-identically; wrong partial, request drift,
 mutation, missing state, and nonce overflow fail closed. The generic submission
 route still rejects these bytes with zero sends.
 
+ADR 0069 reuses that generic route for the exact durable tag-13 pair only. The
+protocol derives each request ID from the exact transaction ID, so a caller
+cannot rearm the same transaction with a fresh ID. Every call revalidates the
+owner-only pair before the existing journal persists unknown and performs an
+exact official lookup or at most one send. Fund also checks exact Initialize
+presence before its own lookup/send. The component sequence is therefore
+Initialize reservation, lookup/send, actor finality barrier, then an independent
+Fund reservation and lookup/send. The current official-type fixture proves
+cumulative lookup/send counters `3/2` and unchanged replay. The finalized
+Initialize classifier and actor barrier remain implementation work; accepted
+sequencer admission is not treated as finality.
+
 ADR 0067 adds a distinct Taker-only submission boundary. Every Linux call
 reloads the exact durable tag-14 reservation, exact-compares cached planner
 state, and accepts a distinct submission request ID only when run, runtime,
@@ -2463,7 +2475,7 @@ route verifies that ID, records `Accepted`, and same-request replay performs no
 second send. Deleting the planner reservation makes a fresh request fail before
 node I/O. This is literal-loopback component evidence, not release-journal
 wiring, actual-sequencer execution, actor isolation, or finality. The complete
-sidecar suite remains green across 142 of 142 tests with strict Clippy,
+sidecar suite remains green across 145 of 145 tests with strict Clippy,
 warning-free Rustdoc, formatting, and advisory/ban/license/source policy.
 The exact `FundNative` classifier is now component-green behind the
 authenticated Taker-only route. It reloads and matches the durable reservation
@@ -2474,7 +2486,7 @@ end before returning `Found`. Missing is always `Uncertain`, never
 `Absent`; finality, history, moving-tip, and conflicting-match failures stay
 typed. The focused E2E uses a synthetic `FinalizedIndexerApi`, makes zero
 sends. The separate exact-genesis stable-clock tests reject wrong genesis and
-tip movement, contributing to the full 142-of-142 sidecar pass with strict Clippy.
+tip movement, contributing to the full 145-of-145 sidecar pass with strict Clippy.
 The other five builders and non-Fund/discovery classification remain
 unavailable. No positive actual-local-indexer evidence or claim PoC exists, and
 the preparation route creates no chain state.

@@ -2896,7 +2896,7 @@ prepared target before any indexer read, authenticates canonical finalized
 transaction plus metadata/custody facts, re-pins the candidate, tip, and window
 end, and returns missing as `Uncertain`, never `Absent`. Its focused E2E uses a
 synthetic trait-backed finalized indexer and zero sends; the complete sidecar
-suite passes 142 of 142 with strict Clippy, warning-free Rustdoc, and dependency
+suite passes 145 of 145 with strict Clippy, warning-free Rustdoc, and dependency
 policy. The main-process adapter is separately component-green. Its first-lock boundary
 derives exact v3 terms from validated Stage A and Stage B, rejects a non-Taker
 before transport, and mints private-field non-`Clone` finalized-`Fund` evidence
@@ -2950,7 +2950,7 @@ bounds, rotation, hard links, symlinks, invalid material, and redaction.
 
 The standalone strict v3 bridge protocol binds nine additive methods and six
 finalized effects. The ordinary client exposes eight methods while the narrow
-release client exposes only the ninth; all 52 protocol tests preserve the 44
+release client exposes only the ninth; all 53 protocol tests preserve the 44
 legacy v1/v2 cases.
 
 The first implementation may reuse the existing LEZ v0.2 bridge, role stores,
@@ -3076,12 +3076,20 @@ and 32-byte markers into chain authority.
   `already_known` after one lookup and zero sends; a miss permits one send and
   requires the canonical returned ID. A wrong returned ID remains unknown, and
   same-request accepted or unknown replay performs no additional node I/O. The
+  generic tag-13 route is also component-green. Each exact Initialize/Fund
+  request ID is derived from its transaction ID, arbitrary fresh IDs fail before
+  node I/O, every call reloads the owner-only pair, and Fund requires exact
+  initialization presence as a defense-in-depth predecessor check. The happy
+  component reaches cumulative lookup/send counters `3/2` and replay changes
+  neither; deleting the durable pair before first submission yields `0/0`.
+  Finalized-Initialize actor gating and actual-local submission remain pending
+  under ADR 0069. The
   exact
   durable-`Fund` classifier is also
   component-green: Taker-only ownership validates before indexer reads, canonical
   finalized transaction/metadata/custody facts and candidate/tip/window repins
   gate `Found`, missing stays `Uncertain`, typed failures are preserved, and zero
-  sends occur. The full sidecar suite passes 142 of 142 with strict Clippy,
+  sends occur. The full sidecar suite passes 145 of 145 with strict Clippy,
   warning-free Rustdoc, and dependency policy. The other five builders and
   non-Fund/discovery classification remain typed
   `Unavailable`; release-service ownership, actual-local-indexer evidence,
@@ -3176,7 +3184,7 @@ The pinned sidecar exposes the reusable genesis-bound stable finalized-clock
 primitive needed by the service. It reads the official indexer's finalized ID
 plus genesis and tip by both ID and hash, binds genesis to the immutable
 runtime, and rereads the complete sample. Wrong genesis, zero tip facts, or any
-tip movement fails closed; two focused tests and the complete 142-test sidecar
+tip movement fails closed; two focused tests and the complete 145-test sidecar
 suite pass. ADR 0066 records why movement rejection is required for deadline
 safety. The dedicated process now consumes the restricted key, journal, bearer,
 and route inputs. It adapts the official clock through the sealed publisher
@@ -3195,10 +3203,11 @@ different-UID, authorization-finality, or swap evidence.
 The immediate critical path is now:
 
 1. deploy the current checked M4 guest with the existing isolated LEZ v0.2
-   deployer, add the genuinely missing durable one-attempt tag-13
-   Initialize/Fund executor, and feed its actual finalized Fund through the
-   existing classifier and typed issuer together with actual Monero
-   output/topology capabilities;
+   deployer, compose the now-GREEN canonical at-most-once tag-13 route with the
+   actual local sequencer, add finalized Initialize classification as the actor
+   Fund barrier, and feed the actual finalized Fund through the existing
+   classifier and typed issuer together with actual Monero output/topology
+   capabilities;
 2. run the existing release worker against the actual local indexer and sidecar
    to submit exact tag 14, add finalized tag-14/tag-15 classification, and
    implement the currently unavailable concrete tag-15 claim planner and
@@ -3227,17 +3236,19 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 5 to 9 focused engineering
+The checkpoint ETA carried by this push is 4 to 8 focused engineering
 hours to the first reproducible independent-actor claim-path PoC and 8 to 16
 additional hours to the local claim/refund/punishment PoC. The concrete issuer,
 exact signed exclusive-deadline binding, sealed publisher-to-client composition,
 genesis-bound finalized-clock primitive, dedicated route/returned-ID component,
 release-only client factory, owner-private key loaders, and compile-green
 isolated one-shot worker plus its typed-issuer process/restart proof are removed
-from the remaining list. Actual-local Fund execution/evidence, tag-14/tag-15
-finality classification, concrete tag-15 claim planning, adaptor extraction
-integration, official-wallet claim completion, and fresh actors dominate the
-next vertical slice. The range increased after a read-only route audit
+from the remaining list. The canonical tag-13 attempt executor is now also
+component-GREEN. Actual-local Initialize/Fund execution/evidence, finalized
+Initialize and tag-14/tag-15 classification, concrete tag-15 claim planning,
+adaptor extraction integration, official-wallet claim completion, and fresh
+actors dominate the next vertical slice. The earlier range increased after a
+read-only route audit
 distinguished these missing implementations from orchestration. Mocked
 transports and checked recursive cases still do not count as runtime evidence.
 The ETA must be refreshed again at the next verified push.

@@ -19,8 +19,8 @@ use lez_bridge_protocol::{
     PrepareWitnessedAssetRefundV2Result, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
     PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
     PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
-    SubmitNativeXmrClaimAuthorizationV3Request, TransactionId, WitnessedAssetPrepareStepV2,
-    WitnessedAssetPreparedEffectV2, XmrNativeEscrowTermsV3,
+    SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest, TransactionId,
+    WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, XmrNativeEscrowTermsV3,
 };
 use nssa::{
     AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
@@ -261,13 +261,23 @@ struct ActiveWitnessedAssetRefundV2 {
     result: PrepareWitnessedAssetRefundV2Result,
 }
 
+/// Planner-owned class of a generic transaction submission.
+pub(crate) enum OwnedSubmission {
+    /// An established non-XMR planner path.
+    Legacy,
+    /// The exact durable native-XMR initialization effect.
+    XmrInitialization,
+    /// The exact durable native-XMR funding effect and its required predecessor.
+    XmrFunding { initialization: PreparedTransaction },
+}
+
 /// One-role, one-signer official v0.2 native escrow planner.
 ///
 /// Signed operations and permissionless refunds are prepared as exact official
 /// bytes. On Linux, an owner-only durable store can reserve those bytes before
 /// exposure. The generic submission validator admits only active, revalidated
-/// preparations; chain eligibility and one-attempt authority remain actor
-/// concerns.
+/// preparations. Native-XMR init/fund submissions additionally use their
+/// transaction IDs as canonical one-attempt request identities.
 pub struct NativeEscrowPlanner {
     role: Participant,
     signer_key_bytes: Zeroizing<[u8; 32]>,
@@ -1458,13 +1468,83 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
+    /// Classifies an exact generic submission and binds XMR effects to one
+    /// canonical transaction-derived request identity.
+    ///
+    /// # Errors
+    ///
+    /// Rejects arbitrary request IDs for native-XMR effects, missing or changed
+    /// owner-only durable state, and every unowned or invalid transaction.
+    pub(crate) async fn validate_submission_request(
+        &self,
+        request: &SubmitTransactionRequest,
+    ) -> Result<OwnedSubmission, NativePrepareError> {
+        let state = self.state.lock().await;
+        if let Some(active) = state.active_xmr_escrow_v3.as_ref()
+            && (active.result.initialization == request.transaction
+                || active.result.funding == request.transaction)
+        {
+            self.validate_prepared_native_xmr_escrow_v3(&active.request, &active.result)?;
+            if request.context.request_id
+                != request.transaction.transaction_id.submission_request_id()
+                || request.context.run_id != active.request.context.run_id
+                || request.context.sidecar_role != Participant::Taker
+                || active.request.context.sidecar_role != request.context.sidecar_role
+                || request.runtime != self.expected_runtime
+                || active.request.runtime != request.runtime
+            {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                let store = self
+                    .durable_store
+                    .as_ref()
+                    .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                let (stored_request, stored_result) = store
+                    .load::<PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result>(
+                        ReservationKind::XmrNativeEscrowV3,
+                    )?
+                    .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                if active.request != stored_request
+                    || active.result != stored_result
+                    || stored_request.context.run_id != request.context.run_id
+                    || stored_request.context.sidecar_role != request.context.sidecar_role
+                    || stored_request.runtime != request.runtime
+                {
+                    return Err(NativePrepareError::InvalidTransactionBytes);
+                }
+                self.validate_prepared_native_xmr_escrow_v3(&stored_request, &stored_result)?;
+                if stored_result.initialization == request.transaction {
+                    return Ok(OwnedSubmission::XmrInitialization);
+                }
+                if stored_result.funding == request.transaction {
+                    return Ok(OwnedSubmission::XmrFunding {
+                        initialization: stored_result.initialization,
+                    });
+                }
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        drop(state);
+
+        self.validate_owned_submission(&request.transaction).await?;
+        Ok(OwnedSubmission::Legacy)
+    }
+
     /// Checks that a generic submission is one of this actor's exact active
     /// durable preparations, without reconstructing or re-signing it.
     ///
     /// # Errors
     ///
-    /// Rejects every byte sequence not owned by an active escrow, claim, or
-    /// refund reservation and revalidates official canonical bytes and signatures.
+    /// Rejects every byte sequence not owned by an active native or witnessed
+    /// escrow, claim, or refund reservation and revalidates official canonical
+    /// bytes and signatures. Native-XMR tag-13 effects use the request-aware
+    /// validator above.
     pub async fn validate_owned_submission(
         &self,
         prepared: &PreparedTransaction,

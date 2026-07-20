@@ -193,6 +193,14 @@ fn context(role: Participant, request_id: &str) -> MessageContext {
     )
 }
 
+fn submission_context(role: Participant, transaction_id: TransactionId) -> MessageContext {
+    MessageContext::new(
+        RunId::new(RUN_ID).expect("run id"),
+        transaction_id.submission_request_id(),
+        role,
+    )
+}
+
 fn transcript(bytes: Vec<u8>, request_id: &str) -> PreparedWitnessedClaim {
     PreparedWitnessedClaim::new(
         RequestId::new(request_id).expect("reservation id"),
@@ -651,6 +659,209 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
     );
 
     maker.server.stop().await.expect("maker stop");
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+#[tokio::test]
+async fn durable_xmr_escrow_pair_uses_actor_ordered_one_attempt_route() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let prepared = taker
+        .fresh_client()
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, "prepare-actor-ordered-escrow"),
+            taker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("prepare exact durable XMR escrow pair");
+
+    let initialization_request = SubmitTransactionRequest::new(
+        submission_context(Participant::Taker, prepared.initialization.transaction_id),
+        taker_runtime.clone(),
+        prepared.initialization.clone(),
+    );
+    let initialization = taker
+        .fresh_client()
+        .submit_transaction(initialization_request.clone())
+        .await
+        .expect("submit durable XMR initialization");
+    assert_eq!(
+        initialization.transaction_id,
+        prepared.initialization.transaction_id
+    );
+    assert_eq!(initialization.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(
+        taker
+            .fresh_client()
+            .submit_transaction(initialization_request)
+            .await
+            .expect("replay XMR initialization"),
+        initialization
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 1);
+
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(SubmitTransactionRequest::new(
+                context(Participant::Taker, "fresh-id-cannot-rearm-xmr-init"),
+                taker_runtime.clone(),
+                prepared.initialization.clone(),
+            ))
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 1);
+
+    fixture.include_exact(&prepared.initialization);
+
+    let funding_request = SubmitTransactionRequest::new(
+        submission_context(Participant::Taker, prepared.funding.transaction_id),
+        taker_runtime.clone(),
+        prepared.funding.clone(),
+    );
+    let funding = taker
+        .fresh_client()
+        .submit_transaction(funding_request.clone())
+        .await
+        .expect("submit durable XMR funding");
+    assert_eq!(funding.transaction_id, prepared.funding.transaction_id);
+    assert_eq!(funding.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(fixture.lookup_count(), 3);
+    assert_eq!(fixture.send_count(), 2);
+    assert_eq!(
+        taker
+            .fresh_client()
+            .submit_transaction(funding_request)
+            .await
+            .expect("replay XMR funding"),
+        funding
+    );
+    assert_eq!(fixture.lookup_count(), 3);
+    assert_eq!(fixture.send_count(), 2);
+
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+#[tokio::test]
+async fn xmr_escrow_submission_requires_the_owner_only_durable_pair() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let prepared = taker
+        .fresh_client()
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, "prepare-missing-durable-pair"),
+            taker_runtime.clone(),
+            terms(depositor, claimant, 42),
+        ))
+        .await
+        .expect("prepare exact durable XMR escrow pair");
+    fs::remove_file(
+        taker
+            .directory
+            .path()
+            .join("planner/xmr-native-escrow-reservation.v3.json"),
+    )
+    .expect("delete durable XMR escrow reservation");
+
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(SubmitTransactionRequest::new(
+                submission_context(Participant::Taker, prepared.initialization.transaction_id),
+                taker_runtime,
+                prepared.initialization,
+            ))
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_eq!(fixture.lookup_count(), 0);
+    assert_eq!(fixture.send_count(), 0);
+
+    taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+#[tokio::test]
+async fn xmr_funding_before_initialization_is_terminal_and_zero_send() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let prepared = taker
+        .fresh_client()
+        .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
+            context(Participant::Taker, "prepare-fund-before-init"),
+            taker_runtime.clone(),
+            terms(depositor, claimant, 42),
+        ))
+        .await
+        .expect("prepare exact durable XMR escrow pair");
+    let funding_request = SubmitTransactionRequest::new(
+        submission_context(Participant::Taker, prepared.funding.transaction_id),
+        taker_runtime,
+        prepared.funding,
+    );
+
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(funding_request.clone())
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 0);
+
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(funding_request)
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 0);
+
     taker.server.stop().await.expect("taker stop");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;

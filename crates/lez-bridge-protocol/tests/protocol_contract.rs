@@ -1748,6 +1748,27 @@ fn exact_submit_and_typed_error_replies_roundtrip() {
 }
 
 #[test]
+fn transaction_id_derives_exact_stable_submission_request_id() {
+    let transaction_id = TransactionId::from_bytes([0xab; 32]);
+
+    let first = transaction_id.submission_request_id();
+    let second = transaction_id.submission_request_id();
+
+    assert_eq!(first, second);
+    assert_eq!(
+        first.as_str(),
+        "abababababababababababababababababababababababababababababababab"
+    );
+    assert_eq!(first.as_str().len(), 64);
+    assert!(
+        first
+            .as_str()
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+}
+
+#[test]
 fn rejects_invalid_versions_identifiers_hex_unknown_fields_and_semantics() {
     for bad in [
         "short",
