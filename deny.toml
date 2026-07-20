@@ -65,3 +65,9 @@ wildcards = "deny"
 unknown-git = "deny"
 unknown-registry = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Exact official LEZ v0.2 RPC types used by the separately locked M4 release
+# worker. The package pins tag v0.2.0 and keeps the larger wallet/program graph
+# out of the worker so this exception cannot silently select another source.
+allow-git = [
+    "https://github.com/logos-blockchain/logos-execution-zone.git",
+]

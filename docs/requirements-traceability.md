@@ -3,7 +3,10 @@
 Last reconciled: 2026-07-18 against the live RFP-003 and Gateway's accepted
 replacement proposal #112. Issue #61 is superseded. M4 component evidence was
 synchronized on 2026-07-20 without treating the component route as actor or
-actual-node evidence. IDs below follow the RFP's
+actual-node evidence. ADR 0068 adds the separately locked, compile-green
+one-shot release-worker source plus three unit tests; the typed-issuer
+subprocess admission/restart proof is still pending, so this is not process,
+isolation, finality, or actual-node evidence. IDs below follow the RFP's
 Functionality, Usability, Reliability, Performance, Supportability, and Demo
 ordering. A row is not acceptance: `Passing` requires the named evidence at the
 real actor and chain boundary described by the requirement.

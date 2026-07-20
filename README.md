@@ -124,12 +124,17 @@ The release-only client factory and protection-key loader now require the
 current owner, exact mode `0600`, one link, stable descriptor/path identity,
 bounded contents, and post-read metadata equality. Nine focused tests cover
 rotation, bounds, hard links, symlinks, invalid material, and redaction. This is
-the credential entry prerequisite for the pending release-service process, not
-process isolation or actual-node evidence.
-Release-service process ownership and actual official-clock/node wiring,
-authorization finality, actors, and an actual swap remain absent. Preparation
-still extracts bytes in the trusted test process; the dedicated service must
-own that step before an actor-isolation claim.
+the credential entry prerequisite for the release-service process.
+ADR 0068 now records a separately locked one-shot worker that owns the fixed
+journal location, loads only those two credentials, validates the signed
+run/runtime/terms binding, uses the exact official v0.2 finalized-indexer RPC,
+and emits only a payload-free durable outcome. Its three unit tests, all-target
+compile, strict Clippy/Rustdoc, and vulnerability/license/source gates are
+green. A typed-issuer-seeded subprocess admission/restart proof, different-UID
+and network isolation, actual-node execution, authorization finality, actors,
+and an actual swap remain absent. Preparation still extracts bytes in the
+trusted test process and must move behind the service boundary before an
+actor-isolation claim.
 
 The Monero output observation is deliberately not claim-partial release
 authority. The one-command topology

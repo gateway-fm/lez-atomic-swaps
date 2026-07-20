@@ -2529,6 +2529,36 @@ devnet. None of these components publishes
 a finalized claim partial, proves an actual-local-indexer `Found`, supplies
 release-service isolation or restart reconciliation, or replaces the
 role-correct swap journey.
+The separately locked one-shot worker source checkpoint is independently
+repeatable without Docker or live chain services:
+
+```sh
+cd compat/lez-v0_2-xmr-release-service
+cargo test --locked --offline --all-targets
+cargo clippy --locked --offline --all-targets --all-features --no-deps -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --offline --no-deps --document-private-items
+cargo deny --all-features check advisories bans licenses sources
+cargo run --locked --offline -- --help
+cd ../..
+```
+
+The test command must report three passing library tests. The help output
+exposes only `--public-config-file`, `--state-directory`,
+`--sidecar-capability-file`, and `--protection-key-file`; it exposes no
+bearer, key, authorization, transaction ID, request ID, deadline, timeout, or
+journal-name value. The fixed journal is
+`STATE_DIRECTORY/xmr-release.sqlite3`. Local endpoints must be literal
+loopback HTTP URLs with explicit nonzero ports; the dormant public profile
+accepts only `https://testnet.lez.logos.co/`.
+
+This is currently a build/configuration reproduction, not the manual swap
+flow. A successful worker invocation requires a sealed journal produced
+through the typed issuer plus compatible finalized-indexer and authenticated
+sidecar services. The subprocess fixture and composed local-devnet command are
+the next planned update; inventing a raw journal or authorization flag would
+bypass the authority being proved. These commands make no RPC and use no
+faucet, chain funds, peer, or external finality service. A cold Cargo cache can
+require crates.io and the pinned Logos execution-zone Git tag.
 
 The exact safety boundary matters when reviewing intermediate results. The
 Maker claim must reveal Maker share `s_a`, allowing the Taker to combine it with

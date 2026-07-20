@@ -217,8 +217,11 @@ flowchart LR
     RuntimeGenesis["Immutable runtime genesis"] --> FinalizedClock["Genesis-bound stable finalized clock<br/>component green"]
     Indexer -->|"finalized ID and block by ID and hash"| FinalizedClock
     TakerSidecar --> FinalizedClock
-    ReleaseService["Dedicated release-service process<br/>ownership and actual wiring pending"] -.-> Publisher
-    FinalizedClock -.-> ReleaseService
+    ReleaseService["Isolated one-shot release worker<br/>source and unit gates green<br/>process E2E pending"] --> Publisher
+    ReleaseService --> ReleaseStore
+    ReleaseService --> ReleaseFactory
+    ReleaseService --> KeyLoader
+    FinalizedClock --> ReleaseService
     ReleaseClient --> ReleaseRoute["Dedicated tag-14 sidecar route<br/>component green"]
     AuthReservation --> ReleaseRoute
     ReleaseRoute --> SidecarJournal[("Sidecar idempotency journal<br/>request-scoped outcome")]

@@ -3185,12 +3185,14 @@ publisher wrapper.
 
 The immediate critical path is now:
 
-1. finish the one-shot release-service process on the newly GREEN credential
-   boundary. The release-only factory can construct no ordinary bridge client;
-   both the bearer and protection-key loaders now require the current owner,
-   exact mode 0600, one link, stable descriptor/path identity, and post-read
-   metadata. Wire only the official genesis-bound finalized clock, emit a
-   payload-free outcome, and prove one admitted send plus zero-call
+1. finish the subprocess proof for the source-GREEN one-shot release worker.
+   ADR 0068 isolates its 432-package lock from the full LEZ wallet/program
+   graph while retaining the exact official v0.2 indexer RPC. All worker
+   targets compile; three unit tests, strict Clippy/Rustdoc, and dependency
+   policy pass. The worker accepts only a public config, fixed 0700 state
+   directory, bearer file, and protection-key file; it emits a payload-free
+   authenticated durable outcome. Seed the journal through the public typed
+   issuer, then prove one admitted send plus a fresh-process zero-call
    observe-only restart. Preparation remains a trusted fixture until the
    following service-owned preparation slice;
 2. connect the component-green exact-Fund classifier to the actual local
@@ -3219,13 +3221,14 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 2.5 to 4.5 focused engineering
+The checkpoint ETA carried by this push is 3 to 5.5 focused engineering
 hours to the first reproducible independent-actor claim-path PoC and 8 to 16
 additional hours to the local claim/refund/punishment PoC. The concrete issuer,
 exact signed exclusive-deadline binding, sealed publisher-to-client composition,
 genesis-bound finalized-clock primitive, dedicated route/returned-ID component,
-release-only client factory, and owner-private key loaders are removed from the
-remaining list. The one-shot process proof, actual-local Fund evidence,
+release-only client factory, owner-private key loaders, and compile-green
+isolated one-shot worker are removed from the remaining list. The typed-issuer
+subprocess admission/restart proof, actual-local Fund evidence,
 actual official-clock/node wiring, authorization finality, claim completion,
 and fresh actors dominate the next vertical slice. Mocked transports and
 checked recursive cases still do not count as runtime evidence. The ETA must be

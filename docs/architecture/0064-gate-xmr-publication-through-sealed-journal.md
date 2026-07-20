@@ -56,8 +56,8 @@ flowchart LR
     Store --> Publisher["Internal transaction-scoped publisher"]
     Publisher --> TestClock["In-process finalized clock seam"]
     Publisher --> TestTransport["In-process submission seam"]
-    Publisher -.-> ReleaseService["Dedicated release service pending"]
-    ReleaseService -.-> ReleaseClient["Release-intended type-narrowed client"]
+    ReleaseService["ADR 0068 one-shot worker<br/>source green process proof pending"] --> Publisher
+    ReleaseService --> ReleaseClient["Release-intended type-narrowed client"]
     ReleaseClient --> Route["ADR 0067 dedicated tag 14 route"]
     Route --> SideJournal["Sidecar request journal"]
     Route --> Fixture["Official-type loopback fixture"]

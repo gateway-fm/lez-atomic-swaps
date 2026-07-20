@@ -87,9 +87,9 @@ flowchart LR
     Topology --> Issuer
     Issuer --> Journal["Private schema v3 release journal"]
     Journal --> Publisher["One attempt journal publisher"]
-    Publisher -.-> FinalClock["Finalized indexer clock route pending"]
-    Publisher -.-> ReleaseService["Dedicated release service pending"]
-    ReleaseService -.-> ReleaseClient["Release-intended type-narrowed client"]
+    ReleaseService["ADR 0068 one-shot worker<br/>source green process proof pending"] --> Publisher
+    FinalClock["Official finalized indexer client<br/>source green process proof pending"] --> ReleaseService
+    ReleaseService --> ReleaseClient["Release-intended type-narrowed client"]
     ReleaseClient --> Route["ADR 0067 dedicated tag 14 route"]
     Route --> Fixture["Official-type loopback fixture"]
     Route -.-> ActualNode["Actual LEZ sequencer pending"]

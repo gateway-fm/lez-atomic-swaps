@@ -2169,8 +2169,11 @@ flowchart LR
     KeyLoader --> Publisher
     RuntimeGenesis["Immutable runtime genesis"] --> FinalizedClock["Stable finalized-clock primitive<br/>component green"]
     ActualIndexer -->|"finalized ID and block by ID and hash"| FinalizedClock
-    ReleaseService["Dedicated release-service process<br/>ownership and actual wiring pending"] -.-> Publisher
-    FinalizedClock -.-> ReleaseService
+    ReleaseService["Isolated one-shot release worker<br/>source and unit gates green<br/>process E2E pending"] --> Publisher
+    ReleaseService --> ReleaseStore
+    ReleaseService --> ReleaseFactory
+    ReleaseService --> KeyLoader
+    FinalizedClock --> ReleaseService
     ReleaseClient --> ReleaseRoute["Dedicated tag-14 submission route<br/>component green"]
     ClaimReservation --> ReleaseRoute
     ReleaseRoute --> BridgeJournal[("Sidecar idempotency journal<br/>request-scoped durable outcome")]
@@ -2291,7 +2294,7 @@ sequenceDiagram
     participant LezSeq as LEZ sequencer
     participant LezIdx as LEZ indexer
     participant LezSidecar as Taker LEZ sidecar
-    participant Release as Dedicated release service pending
+    participant Release as One-shot release worker source green
     participant Monero as monerod and wallet RPC
 
     Note over Maker,Taker: Stage A base terms derive distinct claim refund sessions

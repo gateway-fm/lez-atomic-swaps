@@ -156,6 +156,9 @@ flowchart TB
     XmrJournal --> XmrPublisher["0064 Transaction-scoped journal publisher"]
     XmrPublisher --> XmrFinalClock["0066 Stable finalized genesis clock"]
     XmrOfficialBuilder --> XmrReleaseRoute["0067 Dedicated tag 14 submission"]
+    XmrPublisher --> XmrReleaseWorker["0068 Isolated release worker"]
+    XmrReleaseWorker --> XmrFinalClock
+    XmrReleaseWorker --> XmrReleaseRoute
     XmrPublisher -.-> XmrReleaseRoute
 ```
 
@@ -228,3 +231,4 @@ flowchart TB
 | [0065](0065-bind-xmr-release-to-opaque-evidence.md) | Consume opaque Fund, authorization, Monero-output, and topology evidence into one release bound to the signed checked-guest deadline | Accepted as a component checkpoint: the public issuer derives every private plan field and exact half-open journal interval, and a public authenticated-loopback integration test proves publication identity plus restart reload in the 35-test suite. ADR 0067 supplies the narrow node-route component; the dedicated release-service process, clock/submission wiring, finalized classification, role actors, and actual swap remain |
 | [0066](0066-bind-release-time-to-stable-finalized-genesis.md) | Bind release-time authority to an unchanged official finalized-indexer sample whose genesis equals the immutable runtime | Accepted as an M4 component checkpoint: exact expected-genesis time succeeds, wrong genesis and a moving finalized tip fail closed, bridge readiness consumes the primitive, and the full pinned sidecar suite passes 142 of 142. ADR 0067 supplies a separate submission component; dedicated release-service clock/route wiring, actual-node finality, actors, and the claim PoC remain |
 | [0067](0067-submit-xmr-authorization-through-dedicated-route.md) | Submit only the exact durably owned tag-14 authorization through a separate release-intended type-narrowed client and one-attempt sidecar route | Accepted as an M4 component checkpoint: the ninth strict method is absent from the ordinary eight-method client, generic tag-14 submission remains closed, the sidecar persists an unknown outcome before exact lookup/send, and an official-type loopback fixture proves Accepted, AlreadyKnown, wrong-ID Unknown, and no resend for the same request. Release-service bearer ownership, server/planner restart, actual-sequencer execution, authorization finality, actors, and a claim PoC remain absent |
+| [0068](0068-isolate-xmr-release-worker-dependencies.md) | Keep the one-shot XMR release worker on a separately locked official-indexer-only graph instead of merging the full LEZ wallet stack with the release-authority graph | Accepted as an M4 process-source checkpoint: the 432-package lock resolves, all targets compile, three unit tests plus strict Clippy/Rustdoc and dependency policy pass. Typed-issuer subprocess admission/restart, actual nodes, isolation, finality, actors, and a claim PoC remain |

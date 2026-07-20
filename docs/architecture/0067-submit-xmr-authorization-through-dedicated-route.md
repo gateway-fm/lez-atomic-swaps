@@ -65,8 +65,8 @@ unknown and is never retried for that request ID.
 
 ```mermaid
 flowchart LR
-    Actor["Taker actor"] -.->|"pending redacted API"| Service["Release service process pending"]
-    Service -.->|"pending process ownership"| Authority["Sealed release publisher"]
+    Actor["Taker actor"] -.->|"no release inputs"| Service["ADR 0068 one-shot release worker<br/>source green process proof pending"]
+    Service -->|"compiled process wiring"| Authority["Sealed release publisher"]
     Authority --> ReleaseJournal[("Release CAS journal")]
     Authority --> Clock["Clock-only finalized indexer capability"]
     Authority --> Client["Release-intended XmrReleaseClient"]
@@ -74,7 +74,7 @@ flowchart LR
     ReleaseFactory --> Client
     KeyFile[("Owner-private protection-key file<br/>stable loader green")] --> KeyLoader["Zeroizing key loader<br/>component green"]
     KeyLoader --> Authority
-    Clock -.->|"official actual-local wiring pending"| Indexer["LEZ finalized indexer"]
+    Clock -->|"official v0.2 RPC source green<br/>actual-local proof pending"| Indexer["LEZ finalized indexer"]
     Client -->|"dedicated v3 RPC"| Sidecar["Taker LEZ v0.2 sidecar"]
     Sidecar --> Planner["Durable authorization planner"]
     Sidecar --> BridgeJournal[("Bridge idempotency journal")]
@@ -86,9 +86,11 @@ flowchart LR
     Actor -.->|"must have no route"| Sequencer
 ```
 
-The pending service box is deliberate. This checkpoint supplies the sealed
-publisher-to-client composition and component proof, not the process, redacted
-actor API, official-indexer adapter, actual node, or network isolation.
+ADR 0068 supplies the separately locked one-shot worker source, strict public
+configuration, official-indexer adapter, credential ownership path, durable
+report, and compile/unit/dependency gates. The typed-issuer-seeded subprocess
+admission/restart proof, redacted actor API, actual node, and network isolation
+remain pending.
 
 The sidecar route itself does not consume Fund, Monero output, topology, or
 deadline evidence. The release wrapper consumes the authenticated journal
