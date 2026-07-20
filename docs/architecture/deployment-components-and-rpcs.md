@@ -132,8 +132,9 @@ service, opens no RPC connection, and proves neither `LezClaimPort` nor
 
 ## M4 checked guest artifact lane
 
-This build/test component is complete independently of the still-pending M4
-bridge, actors, and actual on-chain deployment. Solid edges below are locally executed;
+This build/test component is complete, and its exact checked ELF now has a
+separate actual local deployment proof. Bridge swap effects and lifecycle actors
+remain pending. Solid edges below are locally executed;
 the dotted cold-cache edge is a setup availability dependency, not a runtime
 RPC.
 
@@ -147,7 +148,8 @@ flowchart LR
     Elf --> Identity["r0vm 3.0.5 identity check<br/>ImageID 4d6590...2c82"]
     Identity --> Recursive["Five serial recursive guest tests<br/>one native compatibility plus four XMR"]
     Identity --> Deployer["Exact deploy-m4-local validator and one-send path<br/>component green"]
-    Deployer -.-> LocalStack["Actual isolated LEZ v0.2 sequencer and indexer<br/>execution pending"]
+    Deployer --> DeploymentEvidence[("Exact ELF finalized once<br/>transaction 8bb883...63f9 in block 86")]
+    DeploymentEvidence --> LocalStack["Actual isolated LEZ v0.2 sequencer and indexer<br/>deployment green; swap effects pending"]
     Recursive --> Evidence["Small retained local evidence ELF"]
     Recursive --> RuntimeBoundary["Runtime RPCs, faucets, peers, public chains<br/>none"]
     Runner --> Cleanup["Exact run-owned target and tool cleanup<br/>about 3.49 GiB removed"]
@@ -161,7 +163,9 @@ then passed all five recursive cases. No sequencer, indexer, Monero daemon,
 wallet RPC, faucet, peer, or public endpoint participates after setup. Cold
 caches may fetch the pinned circuits archive, Cargo/Git sources, digest-pinned
 builder image, and Risc0 tools; network availability and rate limits can make
-that setup flaky. This is a checked local artifact, not a deployment or a swap.
+that setup flaky. The checked-artifact run itself is not a chain effect. A separate isolated-stack
+run now proves that same exact ELF deployed once; neither result is a swap or a
+public deployment.
 
 ## M4 integration component and RPC status
 
@@ -177,15 +181,21 @@ flowchart LR
     CheckedElf["Checked M4 ELF<br/>dc370bc...b7292"] --> MakerSidecar["Maker LEZ sidecar<br/>tag 15 prepare and complete green"]
     CheckedElf --> TakerSidecar["Taker LEZ sidecar<br/>durable builders and Initialize or Fund classifier green"]
     CheckedElf --> M4Deployer["Exact deploy-m4-local preflight and one-send deployer<br/>component green"]
-    M4Deployer -.-> Sequencer
+    M4Deployer --> DeploymentEvidence[("Exact M4 ELF finalized once<br/>block 86")]
+    DeploymentEvidence --> Sequencer["Actual local LEZ v0.2 sequencer<br/>deployment green; swap effects pending"]
     TakerSidecar --> XmrReservation[("Owner-only exact initialize and fund bytes<br/>restart replay")]
     TakerSidecar --> FinalizedClassifier["Exact finalized Initialize and Fund classifier<br/>Taker-only and zero-send"]
     XmrReservation --> FinalizedClassifier
     FinalizedClassifier --> InitCapability["Non-cloneable finalized Initialize evidence"]
     InitCapability --> FundGate["Typed Fund submission gate"]
     FundGate --> OrdinaryClient
-    MakerActor["Maker actor<br/>pending"] -.-> OrdinaryClient
-    TakerActor["Taker actor<br/>pending"] -.-> OrdinaryClient
+    MakerActor["Maker lifecycle actor<br/>pending"] -.-> OrdinaryClient
+    TakerActor["Taker lifecycle actor<br/>pending"] -.-> OrdinaryClient
+    ActorSigners[("Independent owner-private Maker and Taker signers<br/>not committed")] --> VaultCli["Actual local Vault Claim CLI"]
+    VaultCli --> Sequencer
+    Sequencer --> VaultFinality[("Taker block 228 and Maker block 240<br/>funded identity and nonce readiness green")]
+    VaultFinality -.-> MakerActor
+    VaultFinality -.-> TakerActor
     OrdinaryClient --> MakerSidecar
     OrdinaryClient --> TakerSidecar
     StageB["Validated Stage B"] --> ClaimAdapter["Taker claim-authorization and pre-Fund adapter<br/>99 tests green"]
@@ -203,7 +213,7 @@ flowchart LR
     Tag15Transaction -.-> Sequencer
     ClaimAdapter --> ClaimEvidence["Private-field non-Clone authorization evidence"]
     ClaimEvidence -.-> ReleaseStore
-    MakerSidecar -.-> Sequencer["Actual local LEZ v0.2 sequencer<br/>dynamic loopback execution pending"]
+    MakerSidecar -.-> Sequencer
     TakerSidecar -.-> Sequencer
     MakerSidecar -.-> Indexer["Actual local LEZ v0.2 indexer<br/>dynamic loopback composition pending"]
     TakerSidecar -.-> Indexer
@@ -285,11 +295,11 @@ The release-authority SQLite journal grants one semantic publisher, while the
 sidecar idempotency journal grants at most one attempt for one RPC request ID.
 No transaction spans them. The checked one-shot process reconciles both stores
 conservatively against fixtures without accepting authorization material from
-an actor. The actual-local PoC deployment still needs a separately privileged
-supervisor and capability owner that keeps signed authorization bytes and the
-release bearer away from actors. Actual-local Fund evidence, clock/route execution,
-actual-sequencer execution, authorization finality, and definitive-absence
-handling remain. Admission is not finality. The one-host private-directory,
+an actor. The actual-local PoC still needs a separately privileged supervisor and
+capability owner that keeps signed authorization bytes and the release bearer
+away from actors. Exact deployment and two-account Vault onboarding are GREEN;
+actual-local Fund evidence, clock/route execution, tag-14/tag-15 sequencer
+execution, authorization finality, and definitive-absence handling remain. Admission is not finality. The one-host private-directory,
 no-clone/no-rollback, and same-UID threat-model limits remain until production
 hardening and a monotonic rollback anchor.
 
@@ -322,7 +332,8 @@ sequence is `3/2` lookups/sends with unchanged replay. ADR 0070 now implements
 the actor-side barrier: exact stable finalized Initialize `Found` mints a
 private-field non-`Clone` capability, and the typed Taker method consumes it
 before Fund transport. Missing, moving, unavailable, or mismatched evidence
-cannot attempt Fund. Actual-local indexer/sequencer execution remains pending;
+cannot attempt Fund. Actual-local tag-13 indexer/sequencer execution remains pending even though the
+exact guest deployment and two-account Vault onboarding are actual-local GREEN;
 accepted admission is not finality.
 
 The ninth method is exposed only by `XmrReleaseClient`. Its dedicated sidecar
@@ -352,9 +363,9 @@ drift makes zero; response context, terms, or empty-byte drift makes one then
 fails closed. All 94 adapter tests, 3 authenticated cases, 2 doctests, and strict
 gates pass. ADR 0063 supplies the separate official ABI-validating builder, but
 neither the adapter nor builder is journal or submission authority. ADR 0067
-supplies a separate submission component only. Actual-local-indexer execution,
-release-service clock/route wiring, actual-sequencer publication, finality, and
-actor effects remain; this is not a functional claim PoC.
+supplies a separate submission component only. Actual-local tag-13 indexer execution, release-service clock/route wiring,
+tag-14/tag-15 sequencer publication/finality, and lifecycle actor effects
+remain; this is not a functional claim PoC.
 
 ## M2 SDK/reference-demo target topology
 
@@ -662,8 +673,9 @@ revalidation, propagation, and finality evidence before release.
 
 | Component | Status | Transport and bind | Authentication / authority | Methods exercised or required | Lifecycle and isolation |
 |---|---|---|---|---|---|
-| M4 checked LEZ guest artifact | Local build/identity and recursive branch execution GREEN twice | Digest-pinned Docker guest builder during cold/fresh build; checked execution opens no socket or RPC | Manifest pins source files, historical M2/M3 boundaries, Risc0 3.0.5/Rust 1.94.1, builder digest, ELF SHA-256 `dc370bc...b7292`, and ImageID `4d6590...2c82` | Fresh methods embedding; exact ELF/ImageID verification; one native aggregate-witness compatibility test plus four XMR initialize/fund/claim, signed-refund, punishment, negative, and rollback tests | Both fresh runs passed 5 of 5. Runtime resources are `[]`; cold setup may use GitHub, Cargo/Git, Docker, and Risc0 endpoints. Default exact cleanup retained the small evidence ELF and removed about 3.49 GiB. No local/public deployment or actor execution is claimed |
-| M4 exact local guest deployer | `deploy-m4-local` component-GREEN; 4 focused tests pass | Caller supplies only a literal-loopback HTTP sequencer RPC, nonzero 32-byte channel ID, and bounded timeout; no public endpoint or artifact override is accepted | Current M4 manifest status/public flag/tags 13..17, generated append-only IDL, embedded ELF SHA `dc370bc...b7292`, decoded ImageID/ProgramId `4d6590...2c82`, and exact runtime channel/genesis/built-ins validate before RPC | Official health, genesis, program map, and tip preflight; exactly one `ProgramDeployment`; exact returned ID; bounded canonical inclusion scan | Nineteen manifest/runtime mutations and three non-loopback endpoint classes make zero RPC calls. Historical deploy commands remain intact. Actual isolated-stack deployment evidence is pending; focused tests use deterministic loopback fixtures and no Docker, faucet, peer, public funds, or external finality service |
+| M4 checked LEZ guest artifact | Local build/identity and recursive branch execution GREEN twice | Digest-pinned Docker guest builder during cold/fresh build; checked execution opens no socket or RPC | Manifest pins source files, historical M2/M3 boundaries, Risc0 3.0.5/Rust 1.94.1, builder digest, ELF SHA-256 `dc370bc...b7292`, and ImageID `4d6590...2c82` | Fresh methods embedding; exact ELF/ImageID verification; one native aggregate-witness compatibility test plus four XMR initialize/fund/claim, signed-refund, punishment, negative, and rollback tests | Both fresh runs passed 5 of 5. Runtime resources are `[]`; cold setup may use GitHub, Cargo/Git, Docker, and Risc0 endpoints. Default exact cleanup retained the small evidence ELF and removed about 3.49 GiB. The artifact run itself is not a chain effect; the same exact checked ELF now has separate actual-local deployment evidence. No actor lifecycle, swap, or public deployment is claimed |
+| M4 exact local guest deployer and deployment | Component and actual-local GREEN; 4 focused tests plus one fresh exact deployment pass | Caller supplies only a literal-loopback HTTP sequencer RPC, nonzero 32-byte channel ID, and bounded timeout; no public endpoint or artifact override is accepted | Current M4 manifest status/public flag/tags 13..17, generated append-only IDL, embedded ELF SHA `dc370bc...b7292`, decoded ImageID/ProgramId `4d6590...2c82`, and exact runtime channel/genesis/built-ins validate before RPC | Official health, genesis, program map, and tip preflight; exactly one `ProgramDeployment`; exact returned ID; bounded canonical inclusion scan | Nineteen manifest/runtime mutations and three non-loopback endpoint classes make zero RPC calls. Historical deploy commands remain intact. Transaction `8bb883f1...63f9` finalized in block 86, hash `b49b347a...61fb`. A full finalized genesis-through-86 scan proves zero prior and one total exact-ELF occurrence, decoded ELF/ImageID equality, sequencer/indexer inclusion equality, and stable ID/hash/ID rereads. Runtime external resources are `[]`. The code has one send per invocation and no automatic retry; no sequencer-side global attempt count, swap effect, or public deployment is claimed |
+| M4 actor Vault onboarding | 2 of 2 independent deterministic-genesis identities finalized once | Actual `lez-v02-vault-claim-poc` processes used the isolated stack sequencer on dynamic literal loopback; no public RPC, faucet, peer, public funds, or external finality service | Separate owner-private signer files and mode-`0700` actor roots; no keys, reservations, or raw runtime state are committed. The initial group-writable-ancestor attempt failed before reservation/submission and the security check stayed enforced | Taker and Maker Vault Claims finalized once in blocks 228 and 240. Their allocated owner balances remained 200000 and 100000 with nonce one; both Vault balances remained zero | Closes funded identity and nonce prerequisites only. It is not tag-13 execution, a lifecycle actor, a Monero lock, an M4 swap, or swap-atomicity proof |
 | M4 ordinary strict v3 bridge client | The ordinary `BridgeClient` retains all eight actor/observer methods; its prior 51-target evidence remains, and the package passes 53 targets including the separate release surface | Capability-bearing literal-loopback HTTP, exact run and role headers, one attempt, finite timeout, bounded response body, no redirect/proxy/retry | Dedicated Maker/Taker runtime, signer, ProgramId, terms, request context, and role matrix are checked before transport. Invalid local bindings make zero calls | Prepare/complete claim and refund; prepare punishment, escrow, and claim authorization; classify finalized effect. Exact context/terms/effect/target/window echoes and coverage are required | No dedicated tag-14 submit method is exposed here. Client-only tests do not claim actor completion or node publication |
 | M4 release-intended type-narrowed client and dedicated tag-14 sidecar route | `XmrReleaseClient` exposes only the ninth strict method; protocol 53 tests, client package 53 targets, and the focused authenticated sidecar routes pass | Taker-only capability-bearing literal-loopback RPC to the real sidecar route; official `getTransaction` and `sendTransaction` types terminate at official-type loopback fixtures | Exact run/runtime/terms/prepared ID and bytes; every Linux call reloads the durable tag-14 reservation; sidecar journal stores unknown before node I/O; returned ID must equal the canonical transaction hash | Generic submit rejects tag 14 with zero sends; Accepted sends once; exact AlreadyKnown performs one lookup and zero sends; wrong official ID becomes Unknown and replay stays one lookup/one send; missing durable state fails before node I/O | Type narrowing is not bearer isolation. A checked worker consumes the bearer and restarts against mocks; different-UID/network isolation, actual server/planner restart, sequencer, authorization finality, and cross-journal reconciliation are pending. Lookup transport failure is Unavailable; admission is not finality; no transaction spans the journals |
 | M4 typed Stage-B authorization and pre-Fund gate | Two private-field non-`Clone` adapter capabilities are component-GREEN; 96 non-doc tests plus 3 doctests and strict gates pass | Authenticated literal-loopback bridge calls after Taker-only preflight; synthetic finalized response for Initialize; no node, public RPC, or external resource | Only `LezBridgeAdapter<BridgeClient>` can mint either capability. Stage-B authorization binds the committed partial; ADR 0070 binds exact finalized Initialize facts and consumes them before Fund. Run/role/runtime/terms/bytes drift fails before transport | Prepare tag-14 authorization; classify exact Initialize; submit exact Fund under its transaction-ID-derived request key | Official sidecar builders/classifier independently validate durable ABI and ownership. This row does not claim actual-local finality, node effect, or claim PoC |
@@ -1141,6 +1153,16 @@ nine typed `moving_tip` results delayed `TakerSellsLez`, but each was
 payload-free, granted no send authority, and caused only bounded fresh-process
 read retries before the one stable proof. These are availability/flakiness
 facts, not weakened canonicality checks.
+
+The retained M4 deployment and actor-onboarding runtime likewise used only a
+run-owned LEZ v0.2 Bedrock, sequencer, and indexer on dynamic literal-loopback
+ports plus deterministic genesis allocations. The deployment packet records
+`runtime_external_resources == []`; no public RPC, peer, faucet, public funds,
+public deployment, or external finality service participated. A full finalized
+history scan and exact block-ID/hash rereads prove local consensus/indexer
+behavior rather than treating loopback transport as a chain emulator. This
+closes deployment and identity prerequisites only; actual swap effects are
+still 0 of 1.
 
 Cold setup can still depend on crates.io, GitHub, container registries, Risc0
 tool distribution, and the checksummed Logos circuits release. CPU, memory,

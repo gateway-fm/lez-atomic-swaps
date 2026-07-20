@@ -2113,9 +2113,8 @@ output. XMR-first is rejected because the reviewed COMIT construction does not
 supply that direction's safe recovery path.
 
 The shared signing, two-stage XMR SDK, and focused guest-source boundaries are
-executable without routing XMR through the BTC SDK. Solid edges below are
-component-tested; dotted edges are still M4 process, actual-local-node,
-finality, or actor composition work:
+executable without routing XMR through the BTC SDK. Solid edges below are component-tested or proved actual-local edges; dotted
+edges are still M4 swap-effect, finality, or actor composition work:
 
 ```mermaid
 flowchart LR
@@ -2125,9 +2124,13 @@ flowchart LR
     Adaptor --> Musig["Pinned MuSig2"]
     XmrSdk --> Dleq["Two bounded DLEQ envelopes"]
     Dleq --> SharedKey["Shared Monero spend key"]
-    XmrActor["Fresh XMR role actors"] -.-> RoleRunner
+    XmrActor["Fresh XMR lifecycle actors<br/>pending"] -.-> RoleRunner
     XmrActor -.-> XmrSdk
     XmrActor -.-> OrdinaryClient["Ordinary BridgeClient<br/>eight methods green"]
+    ActorSigners[("Independent owner-private Maker and Taker signers<br/>not committed")] --> VaultCli["Actual local Vault Claim CLI<br/>two identities finalized once"]
+    VaultCli --> ActualSequencer
+    ActualSequencer --> VaultFinality[("Taker block 228 and Maker block 240<br/>funded identity and nonce readiness green")]
+    VaultFinality -.-> XmrActor
     XmrActor -.-> ClaimAuthorization["Taker Stage-B claim authorization<br/>typed adapter component green"]
     XmrSdk --> ClaimAuthorization
     ClaimAuthorization -->|exactly one authenticated success| OrdinaryClient
@@ -2161,7 +2164,8 @@ flowchart LR
     BridgeProtocol -->|binds exact tags and effects| Guest["XMR guest source tags 13 through 17"]
     Guest --> CheckedArtifact["Checked local M4 guest<br/>ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"]
     CheckedArtifact --> M4Deployer["Exact deploy-m4-local preflight and one-send deployer<br/>component green"]
-    M4Deployer -.-> ActualSequencer
+    M4Deployer --> DeploymentEvidence[("Exact M4 ELF finalized once<br/>transaction 8bb883...63f9 in block 86")]
+    DeploymentEvidence --> ActualSequencer["Actual local LEZ v0.2 sequencer<br/>deployment green; swap effects pending"]
     CheckedArtifact -->|five recursive branch tests| Transfer["Authenticated native transfer"]
     XmrActor -.-> Issuer["Public typed Stage-B release issuer<br/>component green"]
     XmrObservation["Origin-retaining non-cloneable XMR observation<br/>component green"] --> Resource["Internal stable-resource identity<br/>used by typed issuer"]
@@ -2190,7 +2194,7 @@ flowchart LR
     ClaimReservation --> ReleaseRoute
     ReleaseRoute --> BridgeJournal[("Sidecar idempotency journal<br/>request-scoped durable outcome")]
     ReleaseRoute --> OfficialFixture["Official-type sequencer loopback fixture<br/>exact get and send component E2E"]
-    ReleaseRoute -.-> ActualSequencer["Actual local LEZ sequencer<br/>execution pending"]
+    ReleaseRoute -.-> ActualSequencer
     ReleaseRoute -.-> AuthorizationFinality["Exact authorization finality<br/>pending"]
     ReleaseJournal -.-> JournalBoundary["No transaction spans the two journals"]
     BridgeJournal -.-> JournalBoundary
@@ -2443,7 +2447,15 @@ digest-pinned builds reproduce checked ELF
 `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`
 and ImageID
 `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
-all five recursive cases pass in both builds. The ordinary `BridgeClient`
+all five recursive cases pass in both builds. The exact checked ELF is also
+proved once on a fresh isolated LEZ v0.2 finalized history: transaction
+`8bb883f18a2a8869e57f31e0791fc6736100e11058038e85c8d226e874ff63f9`
+finalized in block 86 after a genesis-through-86 scan established zero prior
+and one total exact-ELF occurrence, exact decoded ELF/ImageID equality, and
+stable block-by-ID/hash/ID reads. Two independent deterministic-genesis actor
+accounts then finalized Vault Claims once in blocks 228 and 240. These are
+deployment and funded identity/nonce prerequisites, not tag-13 effects,
+lifecycle actors, or swap atomicity. The ordinary `BridgeClient`
 retains eight XMR methods. The separate Taker-only `XmrReleaseClient` exposes
 only the ninth dedicated submission method; the client package now passes 53
 targets in total. The exact Monero receipt observation plus its local topology
@@ -2509,8 +2521,10 @@ the component classifier and typed actor gate. Exact Initialize classification
 now requires the durable target, generated ABI/accounts/signer, historical
 `Empty` metadata, zero custody, and stable finalized re-pins. The concrete
 adapter mints and consumes a non-`Clone` capability before Fund transport.
-These proofs use synthetic/literal-loopback fixtures; actual-local execution is
-pending, and accepted sequencer admission is not treated as finality.
+These tag-13 proofs use synthetic/literal-loopback fixtures; actual-local
+Initialize/Fund execution is pending even though the exact guest deployment and
+two-account Vault onboarding are actual-local GREEN. Accepted sequencer
+admission is not treated as finality.
 
 ADR 0067 adds a distinct Taker-only submission boundary. Every Linux call
 reloads the exact durable tag-14 reservation, exact-compares cached planner
@@ -2565,10 +2579,10 @@ journal publisher does not call it. Because Rust has no cross-crate friend
 visibility, the consuming extraction remains a trusted-single-process PoC seam;
 production requires a dedicated release-service process and UID so actors never
 receive authorization bytes or the release bearer. The release and sidecar
-journals have no shared transaction. The remaining builders, actual-local
-indexer evidence, release-service clock/route ownership and wiring,
-actual-sequencer execution, authorization finality and definitive-absence
-handling, role actors, and composed E2E remain pending. The component tests do
+journals have no shared transaction. The remaining builders, actual-local tag-13/indexer evidence, release-service
+clock/route ownership and wiring, tag-14/tag-15 sequencer execution,
+authorization finality and definitive-absence handling, lifecycle role actors,
+and composed E2E remain pending. The component tests do
 not establish live replay prevention or a claim PoC; admitted is not finalized.
 The Monero observation does not prove old-output unspent state from a view-only
 wallet.
@@ -2577,8 +2591,9 @@ origin binding only for the local Regtest PoC; it is not public/Stagenet trust,
 node publication authority, or a claim PoC. Maintained `monero-rpc` lacks the two
 topology methods, so the project-owned bounded adapter remains a production and
 upstream-review item. The additive v3 protocol and all 44
-legacy bridge protocol cases are green. The checked artifact uses no runtime
-RPC or external resource and is not an on-chain or public deployment.
+legacy bridge protocol cases are green. The checked-artifact run uses no runtime RPC or external resource. A separate
+private-local run now proves the same exact ELF on chain, but no public
+deployment or swap is claimed.
 
 The XMR construction’s atomicity argument differs from the deadline-bearing
 pairs:

@@ -2852,8 +2852,21 @@ SHA-256 `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`
 and ImageID
 `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
 two fresh executions each passed all five recursive guest tests: one preserved
-native aggregate-witness case and four XMR branch/rollback cases. This is a
-local checked artifact, not a public deployment. The ordinary eight-call
+native aggregate-witness case and four XMR branch/rollback cases. A separate fresh private-local LEZ v0.2 run now proves that exact checked ELF
+finalized once: transaction
+`8bb883f18a2a8869e57f31e0791fc6736100e11058038e85c8d226e874ff63f9`
+appears in block 86. The genesis-through-86 scan proves zero prior and one total
+exact-ELF occurrence, decoded ELF/ImageID equality, finalized canonical headers,
+sequencer/indexer inclusion equality, and stable ID/hash/ID rereads. Runtime
+external resources are `[]`; this is an actual local deployment, not a public
+deployment or a swap. Two independent deterministic-genesis actor accounts also
+finalized Vault onboarding once in blocks 228 and 240. Their allocated balances
+remain 200000 and 100000 and their owner nonces are one. These close deployment,
+funding, and nonce prerequisites only; lifecycle actors and actual swaps remain
+0 of 1. The strict summaries are
+[`m4-local-deployment-poc-20260720.json`](evidence/m4-local-deployment-poc-20260720.json)
+and
+[`m4-local-actor-onboarding-20260720.json`](evidence/m4-local-actor-onboarding-20260720.json). The ordinary eight-call
 `BridgeClient`, narrow one-call `XmrReleaseClient`, authenticated nine-route
 sidecar boundary, and non-cloneable exact Monero output observation adapter are
 also component-green. The local Regtest
@@ -2951,11 +2964,11 @@ non-retry state. The clone-enabling authorization borrow is removed; consuming
 cross-crate preparation remains an explicit trusted-process PoC residual until
 the dedicated service also owns preparation.
 The repository now has release-journal-to-client composition but no
-release-service process or exclusive bearer/network ownership. Five functional
-builders, actual-local-indexer classifier execution, actual-chain trusted
-finalized LEZ capability, actual-node submission, authorization finality
-observer, role actor, full swap, U9 guide, D1 videos, and stagenet CI evidence
-remain.
+release-service process or exclusive bearer/network ownership. Exact checked
+local deployment and two-account Vault onboarding are GREEN. Five functional
+builders, actual-local tag-13/indexer classifier execution, actual-chain trusted
+finalized LEZ swap capability, tag-14/tag-15 node submission/finality, lifecycle
+role actors, the full swap, U9 guide, D1 videos, and stagenet CI evidence remain.
 
 The service credential prerequisite is now GREEN but is not a process claim.
 `CapabilityFileXmrReleaseClientFactory` constructs only the narrow client and
@@ -3048,8 +3061,9 @@ and 32-byte markers into chain authority.
   observes only with zero further calls. The generic byte-bearing publisher
   remains private. The dedicated node route and exact returned-ID component are
   green against an official-type loopback fixture.
-  Actor composition, actual-local finalized evidence, a release-service process
-  owning preparation/key/journal/bearer/routes, actual-node submission, and
+  Funded identity onboarding is actual-local GREEN. Lifecycle actor composition,
+  actual-local tag-13 finalized evidence, a release-service process owning
+  preparation/key/journal/bearer/routes, tag-14/tag-15 node submission, and
   finality observation remain.
 - [ ] Build the official Monero 0.18.5.1 CLI artifact from its signed hash list
   into a digest-pinned runtime and scan the final image fail-hard.
@@ -3099,8 +3113,9 @@ and 32-byte markers into chain authority.
   initialization presence as a defense-in-depth predecessor check. The happy
   component reaches cumulative lookup/send counters `3/2` and replay changes
   neither; deleting the durable pair before first submission yields `0/0`.
-  ADR 0070 makes finalized Initialize an implemented typed actor gate; actual-local
-  execution remains pending. The exact durable Initialize/Fund classifier is
+  ADR 0070 makes finalized Initialize an implemented typed actor gate. The exact
+  checked program deployment and two-account Vault onboarding are actual-local
+  GREEN; tag-13 Initialize/Fund execution remains pending. The exact durable Initialize/Fund classifier is
   component-green: Taker-only ownership validates before indexer reads, canonical
   finalized ABI/account/signer facts plus state-specific metadata/custody and
   candidate/tip/window repins gate `Found`, missing stays `Uncertain`, typed
@@ -3122,9 +3137,11 @@ and 32-byte markers into chain authority.
   endpoint inventory, roles, ordered effects, transaction/block identities,
   balances, zero LEZ custody, zero replay, no public resources, timings, and
   scoped cleanup.
-- [ ] Publish and execute the one-command runner plus a manual operator guide;
-  update global README, component/RPC architecture, happy sequence, atomicity
-  conditions, external-resource/flakiness inventory, and scorecard.
+- [ ] Publish and execute the full-swap one-command runner plus its terminal
+  operator guide. The narrower no-clobber exact local deployment runner, manual
+  build/execute recipe, global README, component/RPC diagrams, external-resource
+  inventory, and scorecard are now current; swap sequencing, atomicity evidence,
+  and terminal role repetition remain.
 
 The local-PoC gate is not met by a wallet-to-wallet transfer. The canonical LEZ
 claim must reveal Maker share `s_a`, which a fresh Taker process adds to
@@ -3219,28 +3236,34 @@ with no additional RPC or submission. The checked runner is part of CI. This is
 process and restart evidence against authenticated loopbacks, not actual-node,
 different-UID, authorization-finality, or swap evidence.
 
-The exact M4 local deployer is now component-green. `deploy-m4-local` accepts
-only a literal-loopback HTTP sequencer URL, a nonzero channel ID, and a bounded
-timeout. Before its first RPC it validates the pinned M4 manifest, generated
-append-only IDL, ELF SHA, ImageID, runtime health/channel/genesis/built-ins, and
-tip. It then submits exactly one deployment and requires bounded canonical
-inclusion of the exact returned ID. Four focused tests include 19 manifest/runtime
-mutations and three non-loopback endpoint classes that make zero RPC calls.
-Actual isolated-stack deployment evidence remains pending.
+The exact M4 local deployer is component-green and actual-local GREEN.
+`deploy-m4-local` accepts only a literal-loopback HTTP sequencer URL, a nonzero
+channel ID, and a bounded timeout. Before its first RPC it validates the pinned
+M4 manifest, generated append-only IDL, ELF SHA, ImageID, runtime
+health/channel/genesis/built-ins, and tip. Its code has one send per invocation
+and no automatic retry. Four focused tests include 19 manifest/runtime mutations
+and three non-loopback endpoint classes that make zero RPC calls. The retained
+fresh run finalized exact transaction `8bb883f1...63f9` in block 86 and proved
+zero prior/one total exact-ELF occurrence across the complete finalized history,
+with decoded identity and ID/hash/ID equality. A sequencer-side global RPC-attempt
+count is not independently proved. Independent Taker and Maker Vault Claims then
+finalized once in blocks 228 and 240 from separate owner-private roots; these are
+onboarding prerequisites, not role-process or swap effects.
 
 The immediate critical path is now:
 
-1. execute the exact checked `deploy-m4-local` command against a fresh isolated
-   LEZ v0.2 stack, compose the GREEN canonical at-most-once tag-13 route with
-   that sequencer, exercise the finalized-Initialize Fund barrier, and feed the
-   actual finalized Fund through the classifier and typed issuer together with
-   actual Monero output/topology capabilities;
+1. compose the GREEN canonical at-most-once tag-13 route with the already proved
+   exact local deployment and funded Taker identity, execute Initialize, require
+   its exact finalized classifier capability before Fund, then feed actual
+   finalized Fund through the typed issuer together with actual Monero
+   output/topology capabilities;
 2. run the release worker against the actual local indexer and sidecar to submit
    exact tag 14, require its finality before the GREEN Maker tag-15
    prepare/complete pair, then add exact tag-15 submission and finalized
    tag-14/tag-15 classification. Keep generic tag-14 submission closed and
    define definitive-absence handling;
-3. add fresh Maker/Taker role processes with durable share/effect records and
+3. promote the two onboarded identities into fresh Maker/Taker lifecycle
+   processes with durable share/effect records and
    integrate the existing pair-neutral adaptor primitives so the finalized
    tag-15 signature extracts the exact Maker scalar;
 4. reconstruct the shared Monero spend key, claim through the official wallet
@@ -3263,16 +3286,17 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 3 to 6 focused engineering
-hours to the first reproducible independent-actor claim-path PoC and 8 to 16
-additional hours to the local claim/refund/punishment PoC. The checked deployer,
-canonical tag-13 executor, exact finalized-Initialize/Fund classifier and
-consuming Fund barrier, and durable Maker tag-15 prepare/complete path are now
-component-GREEN. Actual deployment and Initialize/Fund execution, release-worker
-actual-local tag-14 submission, finalized tag-14/tag-15 classification, exact
-tag-15 submission, adaptor extraction integration, official-wallet claim
-completion, and fresh actors dominate the next vertical slice. Mocked
-transports and checked recursive cases still do not count as runtime evidence.
+The checkpoint ETA carried by this push is 3 to 5 focused engineering hours
+to the first reproducible independent-actor claim-path PoC and 8 to 16
+additional hours to the local claim/refund/punishment PoC. Exact checked local
+deployment and funded two-identity Vault onboarding are now actual-local GREEN;
+the canonical tag-13 executor, exact finalized-Initialize/Fund classifier and
+consuming Fund barrier, and durable Maker tag-15 prepare/complete path are
+component-GREEN. Initialize/Fund execution, release-worker actual-local tag-14
+submission, finalized tag-14/tag-15 classification, exact tag-15 submission,
+adaptor extraction integration, official-wallet claim completion, and fresh
+lifecycle actors dominate the next vertical slice. Mocked transports and
+checked recursive cases still do not count as swap runtime evidence.
 The ETA must be refreshed again at the next verified push.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
 disclosures and do not block the private local implementation.

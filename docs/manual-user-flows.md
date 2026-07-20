@@ -2492,33 +2492,124 @@ RISC0_SKIP_BUILD=1 CARGO_NET_OFFLINE=true RUSTDOCFLAGS="-D warnings" \
   --no-deps --document-private-items
 ```
 
-With a uniquely named isolated LEZ v0.2 stack already running and its
-owner-only trusted manifest available, deploy only the repository-pinned M4
-artifact:
+With a fresh checked-artifact proof retained and a uniquely named isolated LEZ
+v0.2 stack running, use the no-clobber deployment runner. The runner scans the
+entire finalized pre-deployment history before its sole mutating command, so it
+must run against a fresh stack on which the exact M4 ELF is absent:
 
 ```sh
-manifest=".e2e/${LEZ_RUN_ID}/lez-v02/run.env"
-rpc="$(sed -n 's/^LEZ_SEQUENCER_RPC_URL=//p' "$manifest")"
-channel="$(sed -n 's/^LEZ_V02_CHANNEL_PUBLIC_KEY=//p' "$manifest")"
-deployer="compat/lez-v0.2-provisional/escrow/deployer/target/debug/lez-zec-escrow-v02-deployer"
-umask 077
-"$deployer" deploy-m4-local \
-  --rpc-url "$rpc" \
-  --channel-id "$channel" \
-  --timeout-seconds 300 \
-  >".e2e/${LEZ_RUN_ID}/m4-deployment.json"
+export M4_LEZ_RUN_ID=m4-manual-lez-20260720a
+export M4_ARTIFACT_RUN=${M4_LEZ_RUN_ID}-artifact
+export M4_ARTIFACT_ROOT=/tmp/lez-m4-artifact-${M4_ARTIFACT_RUN}
+export LEZ_M4_TOOL_DIR=/tmp/lez-atomic-swaps-tools/risc0-3.0.5
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+
+RUN_ID="$M4_ARTIFACT_RUN" \
+LEZ_M4_ARTIFACT_ROOT="$M4_ARTIFACT_ROOT" \
+LEZ_M4_KEEP_BUILD=1 \
+LEZ_M4_TOOL_DIR="$LEZ_M4_TOOL_DIR" \
+  ./scripts/run-m4-lez-artifact-tests.sh
+
+# For Vault onboarding, export the four public actor/Vault ID overrides here.
+RUN_ID="$M4_LEZ_RUN_ID" ./scripts/run-lez-v02-stack.sh
+
+export RISC0_HOME="$LEZ_M4_TOOL_DIR/home"
+export RISC0_SERVER_PATH="$RISC0_HOME/extensions/v3.0.5-cargo-risczero-x86_64-unknown-linux-gnu/r0vm"
+export RISC0_DOCKER_CONTAINER_TAG=r0.1.94.1
+export LOGOS_BLOCKCHAIN_CIRCUITS=/tmp/lez-atomic-swaps-tools/logos-blockchain-circuits-v0.4.2
+export BINDGEN_EXTRA_CLANG_ARGS="-I$(gcc -print-file-name=include)"
+export PATH="$LEZ_M4_TOOL_DIR/cargo-home/bin:$LEZ_M4_TOOL_DIR/bin:$PATH"
+export CARGO_TARGET_DIR="$M4_ARTIFACT_ROOT/target"
+CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo +1.96.0 build --locked --offline \
+  --manifest-path compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+  --bin lez-zec-escrow-v02-deployer
+
+export M4_LEZ_STACK_MANIFEST="$PWD/.e2e/$M4_LEZ_RUN_ID/lez-v02/run.env"
+export M4_LEZ_ARTIFACT_EVIDENCE="$M4_ARTIFACT_ROOT/evidence/artifact.toml"
+export M4_LEZ_DEPLOYER="$CARGO_TARGET_DIR/debug/lez-zec-escrow-v02-deployer"
+export M4_LEZ_EXPECTED_DEPLOYER_SHA256="$(sha256sum "$M4_LEZ_DEPLOYER" | cut -d' ' -f1)"
+export M4_LEZ_EVIDENCE_ROOT="$PWD/.e2e/$M4_LEZ_RUN_ID/m4-deployment"
+
+./scripts/run-m4-lez-local-deployment.sh contract | jq .
+./scripts/run-m4-lez-local-deployment.sh self-test-finality-selector
+./scripts/run-m4-lez-local-deployment.sh execute
+jq . "$M4_LEZ_EVIDENCE_ROOT/finality.json"
 ```
 
-The command accepts no artifact path, digest, program-ID, or public-endpoint
-override. It verifies the exact checked M4 manifest and artifact before the
-first RPC, accepts only a literal loopback HTTP sequencer endpoint, submits
-exactly once, and requires bounded canonical inclusion of the returned ID.
-This checkpoint validates those command boundaries; an actual local deployment
-and its retained evidence are still pending. Runtime uses only the isolated
-local sequencer RPC and deterministic local genesis state: no public RPC,
-faucet, peer, public funds, or external finality service participates. A cold
-build can still need the pinned Cargo/Git and Risc0 resources listed above, so
-cache/network availability can affect setup but not runtime finality.
+All path variables are absolute and every run/evidence name is fresh. The
+artifact proof, stack manifest, checked ELF, and deployer are hashed before and
+after their points of use. The runner accepts only distinct literal-loopback
+sequencer/indexer endpoints, checks the pinned source/channel/genesis/program
+map, proves a stable pre-tip anchor, scans every finalized block, and requires
+zero exact-ELF occurrences before the deployment and exactly one afterward.
+It verifies the containing block by ID, hash, and ID again and requires the
+sequencer and indexer inclusion identities to agree. It has one send in this
+invocation and no automatic retry, but it does not claim a sequencer-side
+global RPC-attempt counter or prevent a separate process from being invoked.
+
+The retained actual run finalized transaction
+`8bb883f18a2a8869e57f31e0791fc6736100e11058038e85c8d226e874ff63f9`
+in block 86, hash
+`b49b347aa4f8f0a83c04602037787ed3903e4f6114ed4fbfb48c009cb36161fb`.
+The strict committed summary is
+[`docs/evidence/m4-local-deployment-poc-20260720.json`](evidence/m4-local-deployment-poc-20260720.json).
+That result proves one atomic `ProgramDeployment` inclusion. It does not prove
+tag-13 execution, either chain leg, cross-chain swap atomicity, or production
+readiness. Runtime external resources are empty: only the run-owned Bedrock,
+sequencer, and indexer on dynamic loopback plus deterministic genesis state
+participate. Cold build setup can still need pinned Cargo/Git sources, circuits,
+Risc0 tools, and the digest-pinned builder image; cache, DNS, registry, or
+source availability can delay setup without participating in runtime finality.
+
+To repeat actor onboarding, provision two independent owner-private LEZ signer
+files first and pass their public account and official Vault IDs through
+`LEZ_V02_MAKER_ACCOUNT_ID`, `LEZ_V02_MAKER_VAULT_ACCOUNT_ID`,
+`LEZ_V02_TAKER_ACCOUNT_ID`, and `LEZ_V02_TAKER_VAULT_ACCOUNT_ID` when starting
+the fresh stack above. The private keys are deliberately absent from committed
+evidence. Build the existing CLI and submit each role only from a dedicated
+mode-`0700` root under sticky `/tmp`:
+
+```sh
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+CARGO_NET_OFFLINE=true cargo +1.96.0 build --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --bin lez-v02-vault-claim-poc
+VAULT_CLI="$PWD/compat/lez-v0_2-sidecar/target/debug/lez-v02-vault-claim-poc"
+CHAIN_ID="$(sed -n 's/^LEZ_V02_CHANNEL_PUBLIC_KEY=//p' "$M4_LEZ_STACK_MANIFEST")"
+SEQUENCER_URL="$(sed -n 's/^LEZ_SEQUENCER_RPC_URL=//p' "$M4_LEZ_STACK_MANIFEST")"
+ESCROW_PROGRAM_ID=4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82
+ACTOR_ROOT="/tmp/${M4_LEZ_RUN_ID}-actors"
+umask 077
+install -d -m 0700 "$ACTOR_ROOT" "$ACTOR_ROOT/maker" "$ACTOR_ROOT/taker" \
+  "$ACTOR_ROOT/evidence"
+
+"$VAULT_CLI" --role taker --run-id "$M4_LEZ_RUN_ID" \
+  --request-id "$M4_LEZ_RUN_ID-taker-vault" \
+  --state-directory "$ACTOR_ROOT/taker" \
+  --private-key-file /absolute/owner-private/taker/lez-signer.key \
+  --sequencer-url "$SEQUENCER_URL" --chain-id "$CHAIN_ID" \
+  --escrow-program-id "$ESCROW_PROGRAM_ID" --allocation 200000 \
+  >"$ACTOR_ROOT/evidence/taker-vault-claim.json"
+
+"$VAULT_CLI" --role maker --run-id "$M4_LEZ_RUN_ID" \
+  --request-id "$M4_LEZ_RUN_ID-maker-vault" \
+  --state-directory "$ACTOR_ROOT/maker" \
+  --private-key-file /absolute/owner-private/maker/lez-signer.key \
+  --sequencer-url "$SEQUENCER_URL" --chain-id "$CHAIN_ID" \
+  --escrow-program-id "$ESCROW_PROGRAM_ID" --allocation 100000 \
+  >"$ACTOR_ROOT/evidence/maker-vault-claim.json"
+```
+
+Do not place actor state below a repository ancestor that is writable by group
+or others. `SecureStateDirectory` intentionally rejected that layout before a
+reservation or submission in the retained run; a fresh owner-only `/tmp` root
+succeeded without relaxing the check. Finalized-indexer scans must then prove
+each exact Vault Claim once. The retained Taker and Maker claims finalized in
+blocks 228 and 240; owner balances remained 200000 and 100000 with nonce one,
+and both Vault balances remained zero. The strict
+[onboarding summary](evidence/m4-local-actor-onboarding-20260720.json) proves
+funded identity/nonce readiness only. Actual role-process lifecycle actors and
+M4 swaps remain 0 of 1.
 
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and

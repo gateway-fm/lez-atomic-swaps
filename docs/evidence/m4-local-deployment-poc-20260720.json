@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-20",
+  "classification": "m4_private_actual_local_checked_program_deployment_not_swap",
+  "result": "passed",
+  "repository": {
+    "base_commit": "23593fc4a96cf50f825b231e01231750e480ff60",
+    "base_was_clean_before_run_artifacts": true,
+    "evidence_commit": "self",
+    "milestone_tag_claimed": false
+  },
+  "runs": {
+    "lez_stack": "m4actual-23593fc-20260720a-lez",
+    "checked_artifact": "m4actual-23593fc-20260720a-artifact"
+  },
+  "source_and_runtime_identity": {
+    "lez_version": "v0.2.0",
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "sequencer_sha256": "3727e9aa10600d04d0cdfda6eb39df146ef4cc14f5b09ad33bcf076a8f2c412f",
+    "indexer_sha256": "6ed54f04ae018f3554898a9f0aef6decd6930c4e8609326d146ca164e48d7442",
+    "r0vm_sha256": "36c016a5bb2ded5bd1f8f92cc487e6ffaeb1e95ec05850c983081a0f716b515b",
+    "stack_runner_sha256": "ed41ab63ddf694bc472a2adee8ffc40b116ac237ab9fb48a55aa4d97602748df",
+    "run_manifest_sha256": "4ba597e43fca883343947bb1ad485681953a689a0b3c97fc5a7cf5de030c109a",
+    "channel_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_block_id": 1,
+    "genesis_block_hash": "8aa42f94d48a342304dd599b194454d4aa4a59182d23e3527e02983a4d31b714",
+    "slot_duration_seconds": 1.0,
+    "service_readiness_finalized_block_id": 2,
+    "components": [
+      "Bedrock",
+      "non-standalone LEZ sequencer",
+      "LEZ indexer"
+    ]
+  },
+  "fresh_checked_artifact": {
+    "artifact_runner_sha256": "7bceb2d172315a2d97bdda816fdc49b51d82ef2b943b071024a9db82b87a6ad9",
+    "m4_manifest_sha256": "f781c4983bd50410e798409d246fdb2ae5be5ff93aaccc8e399e7be35a890c40",
+    "artifact_manifest_sha256": "401f1c58d21ce9df6632093d904b4e32020009f71d91341c36a7a72b24cfdb7f",
+    "artifact_test_log_sha256": "ab2e66850712b596712f73d87472d862c4b2d95100062fa6126eed1b24ad8ec4",
+    "elf_sha256": "dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292",
+    "image_id_and_program_id": "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82",
+    "recursive_test_target": "recursive_witnessed_claim",
+    "recursive_tests_passed": 5,
+    "recursive_tests_failed": 0,
+    "run_owned_target_retained_for_deployer_build": true,
+    "builder_image": "risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be",
+    "runtime_external_resources": []
+  },
+  "deployer": {
+    "source_sha256": "984fea91c249877ad897194371ca7f764a25495a045588b8db31e61b95481ed3",
+    "cargo_manifest_sha256": "712b92e0d23e0607acfc997ddd54017883f9f8cb370c5cbf1c8819f156eba4e3",
+    "cargo_lock_sha256": "73f4c047c0262aed409cf7fca97a11304699f0f35075d370c1f7c5e5813b74a1",
+    "binary_sha256_before_submission": "84ded76df14974cb740af9d44e78f4892391f0c92595c4ce5747bb7ba6317f4b",
+    "binary_sha256_after_submission": "84ded76df14974cb740af9d44e78f4892391f0c92595c4ce5747bb7ba6317f4b",
+    "command": "deploy-m4-local",
+    "one_send_per_invocation_code_path": true,
+    "automatic_retry_allowed": false,
+    "actual_rpc_attempt_count_independently_observed": false,
+    "actual_operator_invocation_observation": "one no-clobber command invocation; no sequencer-side send counter was retained",
+    "cross_process_reinvocation_prevented_by_deployer": false
+  },
+  "deployment": {
+    "transaction_id": "8bb883f18a2a8869e57f31e0791fc6736100e11058038e85c8d226e874ff63f9",
+    "pre_deployment_finalized_tip_record": 80,
+    "sequencer_preflight_last_block_id": 85,
+    "inclusion_block_id": 86,
+    "inclusion_block_hash": "b49b347aa4f8f0a83c04602037787ed3903e4f6114ed4fbfb48c009cb36161fb",
+    "ordered_bounds_80_le_85_lt_86": true,
+    "sequencer_indexer_inclusion_equal": true,
+    "bedrock_status": "Finalized",
+    "deployment_json_sha256": "1dea46391dbd32fb1f7b511429bb53151da2b526f166d2f8690034f314c103aa",
+    "bounded_window_finality_json_sha256": "f49cbd230d44a88e10bf087b7fe6bbcd5b60ffedb011d1d4894687ca246a8383"
+  },
+  "full_finalized_history_proof": {
+    "scanned_from_genesis_block": 1,
+    "scanned_through_finalized_block": 86,
+    "every_requested_header_id_equal": true,
+    "every_block_hash_canonical_nonzero_hex32": true,
+    "every_block_bedrock_status_finalized": true,
+    "exact_m4_elf_occurrences": 1,
+    "exact_m4_elf_first_and_only_height": 86,
+    "exact_m4_elf_transaction_id": "8bb883f18a2a8869e57f31e0791fc6736100e11058038e85c8d226e874ff63f9",
+    "indexed_bytecode_decodes_to_checked_elf": true,
+    "indexed_bytecode_image_id_matches_checked_image_id": true,
+    "id_hash_id_rereads_equal": true,
+    "post_proof_finalized_tip": 167,
+    "tip_not_regressed_below_inclusion": true,
+    "raw_block_sha256_manifest_sha256": "03fac313f43897d2d1c0944339a1392677f5e05269ac573e69cd46307f4e2445",
+    "program_deployment_payload_index_sha256": "c1278f645ada8c76ad05c1802a7cff06054b1123f3165849587194b54e2974a5",
+    "containing_block_by_id_sha256": "0600cad9c365c3fc6389dbb6ddab6c36ebfb99ffdec84bde76b2ffa18333f037",
+    "containing_block_by_hash_sha256": "0600cad9c365c3fc6389dbb6ddab6c36ebfb99ffdec84bde76b2ffa18333f037",
+    "containing_block_id_reread_sha256": "0600cad9c365c3fc6389dbb6ddab6c36ebfb99ffdec84bde76b2ffa18333f037",
+    "decoded_indexed_elf_sha256": "dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292",
+    "post_proof_tip_response_sha256": "0b1eef45b32ea76c78ac86b900b8290e47865ad3a49c11f385a26db61d5aea2b"
+  },
+  "scope_and_resources": {
+    "profile": "private_local_functional_stealth",
+    "transport": "ephemeral_literal_loopback",
+    "endpoints_retained_as_reusable_configuration": false,
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_peer_used": false,
+    "runtime_external_resources": [],
+    "funding_source": "deterministic local genesis allocations",
+    "cold_setup_external_resources": [
+      "digest-pinned RISC Zero guest-builder image when absent locally",
+      "pinned Cargo and Git sources when caches are cold",
+      "RISC Zero release endpoints when the pinned tools are absent",
+      "Logos blockchain circuits v0.4.2 release when the pinned local copy is absent"
+    ],
+    "cold_setup_flakiness": "Cold-cache registry, DNS, source-host, or rate-limit failures can block setup; they do not participate in local deployment or finality."
+  },
+  "evidence_safety": {
+    "committed_evidence_file_allowlist": [
+      "docs/evidence/m4-local-deployment-poc-20260720.json"
+    ],
+    "raw_runtime_evidence_mode": "0600",
+    "raw_runtime_directory_mode": "0700",
+    "raw_run_manifest_committed": false,
+    "elf_or_deployer_binary_committed": false,
+    "private_keys_committed": false,
+    "capabilities_committed": false,
+    "wallet_material_committed": false,
+    "private_material_disclosed": false
+  },
+  "atomicity_and_limitations": {
+    "program_deployment_transaction_atomic_inclusion": true,
+    "m4_swap_atomicity_proved": false,
+    "tag_13_effects_executed": false,
+    "tag_14_effect_executed": false,
+    "tag_15_effect_executed": false,
+    "monero_claim_executed_as_part_of_swap": false,
+    "global_rpc_submission_count_proved": false,
+    "residuals": [
+      "The checked deployer sends once per invocation but does not itself durably prevent a separate process from invoking it again.",
+      "The pre-deployment finalized tip was retained as a height record; the reproducible runner adds a complete pre-tip ID/hash/finality anchor.",
+      "This evidence proves a fresh exact checked program deployment, not actor execution, cross-chain settlement, refund, punishment, or production readiness."
+    ]
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-20",
+  "classification": "m4_private_actual_local_actor_onboarding_prerequisite_not_swap",
+  "result": "passed",
+  "repository": {
+    "base_commit": "23593fc4a96cf50f825b231e01231750e480ff60",
+    "evidence_commit": "self",
+    "milestone_tag_claimed": false
+  },
+  "runtime": {
+    "lez_version": "v0.2.0",
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "run_id": "m4actual-23593fc-20260720a-lez",
+    "channel_and_chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_block_hash": "8aa42f94d48a342304dd599b194454d4aa4a59182d23e3527e02983a4d31b714",
+    "escrow_program_id": "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82",
+    "authenticated_transfer_program_id": "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71",
+    "transport": "ephemeral_literal_loopback",
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false
+  },
+  "actor_binary": {
+    "binary_sha256": "cbe511b98f57241e212e64f587e662025aa42f6fd742b4eae0f1b6e9a2d23a8e",
+    "source_sha256": "dddbc58467fa3ae8c67d88631071b07f0594f737edcd387b6162d2741eb2d2be",
+    "cargo_manifest_sha256": "81dfdbe1422fdf2e81dd58134e1de0c4411f4696b721fcdf283f915285dec652",
+    "cargo_lock_sha256": "4ac68aa59b6c4f0388b828fd00979f691db655604f94100c199737500fc36760",
+    "build": "cargo +1.96.0 build --locked --offline --bin lez-v02-vault-claim-poc",
+    "cold_build_external_resources": "none because all pinned Cargo and Git sources were cached"
+  },
+  "failed_pre_submission_attempt": {
+    "role": "taker",
+    "count": 1,
+    "reason": "durable state path inherited a group-writable repository ancestor and was rejected by SecureStateDirectory",
+    "durable_reservation_created": false,
+    "output_bytes": 0,
+    "transaction_submission_reached": false,
+    "chain_mutation": false,
+    "correction": "fresh owner-only run root below sticky /tmp; no security check relaxed"
+  },
+  "actors": {
+    "taker": {
+      "account_id_hex": "15a53503615a30c8b7fcc48f6fa6857da4e2e234680a3482b13366e2d513d2c3",
+      "account_id_base58": "2TVfxNxZQyar34fZTxzeS2gTD2yEwGT5berurSnRKJPt",
+      "vault_account_id_hex": "02427b8411ca7a96f0d0d236638b38388fe0ad758b723771051546794a1f81bc",
+      "vault_account_id_base58": "9pcYbhvbTYg5CHtP837u8vtpqf2svFrrkJs2ZXN1vtj",
+      "allocation": 200000,
+      "transaction_id": "58c84f3b652e7a3c58fdd95ac6f1011c967a60223d7995bf5389ec4f47ee79f2",
+      "submission_decision": "admitted",
+      "durable_attempt_count": 1,
+      "finalized_block_id": 228,
+      "finalized_block_hash": "3779d352cdd986926e0282ec852d314a0b8648a5fc601f993bfecfccbe266432",
+      "occurrences_in_scanned_finalized_window": 1,
+      "block_id_hash_lookup_equal": true,
+      "owner_after": {
+        "balance": 200000,
+        "nonce": 1
+      },
+      "vault_after": {
+        "balance": 0,
+        "nonce": 0
+      },
+      "raw_evidence_sha256": "8600b44e571412dcbc7f7d05ffa228b4e5b661f2a3de740fadc16c49a7d38b29",
+      "finality_summary_sha256": "e60c3c83711820c14d8d0afc958a3d724f48fb1e64add5dc07bd9e14b634e98f",
+      "finalized_block_response_sha256": "a963413a90b1b3d13c668df39d489973c94dc7d013a86c7f42169ffa7052a5d9",
+      "owner_response_sha256": "0ba46dc3b6707a83f689d70075291b75a8543bbb54bf79453f691882f78c2f5a",
+      "vault_response_sha256": "8edb12635fbe6b531d9b476c1b130463c66137443837d6b2745d3dd2300210f5"
+    },
+    "maker": {
+      "account_id_hex": "d8f695e45e50c70bd6a99d2c39b9eca8dc81de5d6b5b9a51c5819cd71f35ff4f",
+      "account_id_base58": "Fbw9N5WSecWwV2dnD1LYorystRU8Wt7qvbYcwKRfUUBg",
+      "vault_account_id_hex": "59c301f630eadfea9df566ab54a8940e54df47a691d2171cf13362180ea0aa41",
+      "vault_account_id_base58": "73PkYv2kabhH1EWem8fHGzvq7w2KHJ48762bKNpusNor",
+      "allocation": 100000,
+      "transaction_id": "de71e99c38d5af1bf967aef1862868cd2ffd968848b22fed532f2089b664572c",
+      "submission_decision": "admitted",
+      "durable_attempt_count": 1,
+      "pre_submission_finalized_tip": 237,
+      "finalized_block_id": 240,
+      "finalized_block_hash": "73e3788602e2ea9c78f8f2bf2f37a07409630dbcf4d20cd94139f383ba34d2e2",
+      "occurrences_in_scanned_finalized_window": 1,
+      "block_id_hash_lookup_equal": true,
+      "owner_after": {
+        "balance": 100000,
+        "nonce": 1
+      },
+      "vault_after": {
+        "balance": 0,
+        "nonce": 0
+      },
+      "raw_evidence_sha256": "78459dc1c72be00c90932fe0d7e70863ac7a18105112c353ac64153ef111d36f",
+      "finality_summary_sha256": "335be90f716897046504e4b07464f93d102e9e58faaa5e35f754ec5dee99dbbe",
+      "finalized_block_response_sha256": "2c34244a0747d0b733930eb7f674fd461c50070366b9718abe6ade264b74c1fe",
+      "owner_response_sha256": "1e3532c175812143d6c5628273829a86bef57625c7fd3a41f83d4d3fd9625508",
+      "vault_response_sha256": "8edb12635fbe6b531d9b476c1b130463c66137443837d6b2745d3dd2300210f5"
+    }
+  },
+  "evidence_safety": {
+    "committed_evidence_file_allowlist": [
+      "docs/evidence/m4-local-actor-onboarding-20260720.json"
+    ],
+    "private_actor_state_root_mode": "0700",
+    "private_actor_state_location_committed": false,
+    "raw_evidence_mode": "0600",
+    "signing_key_contents_read_into_summary": false,
+    "signing_keys_committed": false,
+    "durable_reservations_committed": false,
+    "private_material_disclosed": false
+  },
+  "scope_and_limitations": {
+    "deterministic_genesis_allocations_claimed": 2,
+    "owner_nonces_ready_for_future_message_planning": true,
+    "tag_13_executed": false,
+    "m4_swap_executed": false,
+    "swap_atomicity_proved": false,
+    "statement": "Both independent actor accounts are funded and nonce-pinned prerequisites for an honest Stage-A plan; this is not an XMR escrow or cross-chain settlement."
+  }
+}

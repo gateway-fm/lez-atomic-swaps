@@ -197,8 +197,26 @@ fixture. The exact local-only `deploy-m4-local` route and tag-15
 prepare/complete builder are component-GREEN. The deployer permits only a
 literal-loopback sequencer URL, trusted channel ID, and timeout; it validates
 the pinned M4 manifest, ELF, ImageID, runtime, channel, genesis, built-ins, and
-tip before exactly one send and bounded canonical inclusion. Actual deployment,
-actual-local tag-13 execution/classification, release-worker clock/route wiring,
+tip before its one-send-per-invocation code path and bounded canonical
+inclusion. The exact checked M4 ELF is now deployed on a fresh isolated LEZ
+v0.2 stack: transaction
+`8bb883f18a2a8869e57f31e0791fc6736100e11058038e85c8d226e874ff63f9`
+is finalized in block 86, and a genesis-through-86 scan proves zero prior and
+one total exact-ELF occurrence, decoded ELF/ImageID equality, finalized headers,
+and stable block-by-ID/hash/ID reads. The retained
+[deployment packet](docs/evidence/m4-local-deployment-poc-20260720.json)
+records an empty runtime-external-resource list. It proves atomic inclusion of
+one program-deployment transaction, not cross-chain swap atomicity or a global
+RPC-attempt count.
+
+Two independent deterministic-genesis actor accounts also completed actual
+local Vault onboarding: Taker transaction `58c84f3b...ee79f2` finalized once in
+block 228 and Maker transaction `de71e99c...4572c` finalized once in block 240.
+Both owner nonces are now one and their allocations remain 200000 and 100000;
+the [actor-onboarding packet](docs/evidence/m4-local-actor-onboarding-20260720.json)
+contains no signing material. This closes funding/nonce prerequisites only;
+fresh role-process lifecycle execution and actual swaps remain 0 of 1.
+Actual-local tag-13 execution/classification, release-worker clock/route wiring,
 tag-14/tag-15 submission and finality, adaptor extraction, official-wallet
 claim, and fresh terminal roles remain before the happy PoC. Refund/punishment
 follow as the next progressive slice. Full sidecar, security, architecture, and
@@ -216,6 +234,8 @@ commands and expected results are in the linked Flow 0:
 RUN_ID=m4-readme-artifact-20260719a \
 LEZ_M4_TOOL_DIR=/tmp/lez-atomic-swaps-tools/risc0-3.0.5 \
   ./scripts/run-m4-lez-artifact-tests.sh
+
+./scripts/run-m4-lez-local-deployment.sh contract
 
 cargo test --locked -p lez-bridge-client -p lez-xmr-monero-adapter \
   --all-targets --all-features
