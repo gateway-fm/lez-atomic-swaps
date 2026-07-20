@@ -1,10 +1,15 @@
 //! M4 authenticated Stage-B claim-authorization adapter contract.
 
-use std::sync::{
-    Arc, Mutex, OnceLock,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt as _,
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
-use std::time::Duration;
 
 use jsonrpsee::RpcModule;
 use lez_adaptor_signature::{AdaptorSessionContext, AdaptorSigner, SigningRole};
@@ -22,6 +27,11 @@ use lez_bridge_protocol::{
     PreparedTransaction, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, TransactionId,
 };
 use lez_swap_core::Participant;
+use lez_swap_store::{
+    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
+    AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, SecretNonceBytes,
+    SqliteAdaptorSessionJournal,
+};
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
     MoneroSharedAddressV1, XMR_ACTIVATION_SCHEMA_V1, XMR_AGREEMENT_SCHEMA_V1,
@@ -51,6 +61,34 @@ const VIEW_KEY_BYTES: [u8; 32] = {
     bytes
 };
 const SESSION_DOMAIN: &[u8] = b"logos.gateway.lez-xmr.adaptor-session.v1\0";
+
+static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
+
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new() -> Self {
+        let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "lez-m4-claim-journal-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).expect("create journal directory");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+            .expect("protect journal directory");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).expect("remove journal directory");
+    }
+}
 
 struct ProofFixture {
     maker_wire: Vec<u8>,
@@ -313,6 +351,90 @@ fn signer_round(
     )
 }
 
+#[derive(Clone, Copy)]
+enum ClaimJournalMutation {
+    ExactTaker,
+    IncompleteTaker,
+    MakerRole,
+    CrossedCommitment,
+}
+
+fn write_claim_journal(path: &Path, stage: &StageBFixture, mutation: ClaimJournalMutation) {
+    let descriptor = stage.agreement.claim_session_descriptor();
+    let transcript = stage.activation.body().claim_transcript();
+    let (
+        role,
+        mut own_commitment,
+        peer_commitment,
+        own_nonce,
+        peer_nonce,
+        own_partial,
+        peer_partial,
+    ) = match mutation {
+        ClaimJournalMutation::MakerRole => (
+            AdaptorSessionRole::Maker,
+            transcript.maker_nonce_commitment(),
+            transcript.taker_nonce_commitment(),
+            transcript.maker_public_nonce(),
+            transcript.taker_public_nonce(),
+            stage.activation.body().maker_claim_partial(),
+            stage.taker_claim_partial,
+        ),
+        ClaimJournalMutation::ExactTaker
+        | ClaimJournalMutation::IncompleteTaker
+        | ClaimJournalMutation::CrossedCommitment => (
+            AdaptorSessionRole::Taker,
+            transcript.taker_nonce_commitment(),
+            transcript.maker_nonce_commitment(),
+            transcript.taker_public_nonce(),
+            transcript.maker_public_nonce(),
+            stage.taker_claim_partial,
+            stage.activation.body().maker_claim_partial(),
+        ),
+    };
+    if matches!(mutation, ClaimJournalMutation::CrossedCommitment) {
+        own_commitment[0] ^= 1;
+    }
+    let identity = AdaptorSessionIdentity::new(
+        descriptor.session_id(),
+        role,
+        descriptor.context_binding(),
+        descriptor.exact_message(),
+        descriptor.adaptor_point(),
+        descriptor.ordered_public_keys(),
+    );
+    let mut journal = SqliteAdaptorSessionJournal::open(path).expect("claim journal");
+    let _ = journal
+        .reserve(AdaptorSessionReservation::new(
+            identity.clone(),
+            SecretNonceBytes::new([0x91; 97]),
+            AdaptorPublicNonce::new(own_nonce),
+            AdaptorNonceCommitment::new(own_commitment),
+        ))
+        .expect("reserve claim nonce");
+    if matches!(mutation, ClaimJournalMutation::IncompleteTaker) {
+        return;
+    }
+    let _ = journal
+        .record_peer_commitment(&identity, AdaptorNonceCommitment::new(peer_commitment))
+        .expect("record claim peer commitment");
+    let _ = journal
+        .reveal_own_public_nonce(&identity)
+        .expect("reveal claim nonce");
+    let _ = journal
+        .record_verified_peer_public_nonce(&identity, AdaptorPublicNonce::new(peer_nonce))
+        .expect("record claim peer nonce");
+    let _ = journal
+        .sign_and_persist_partial(&identity, |_| Ok(AdaptorPartialSignature::new(own_partial)))
+        .expect("persist claim partial");
+    let _ = journal
+        .record_verified_peer_partial(&identity, AdaptorPartialSignature::new(peer_partial))
+        .expect("record claim peer partial");
+    let _ = journal
+        .record_verified_presignature(&identity, AdaptorPresignature::new([0x92; 65]))
+        .expect("record claim presignature");
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Behavior {
     Happy,
@@ -453,6 +575,118 @@ async fn valid_stage_b_partial_routes_once_and_mints_exact_linear_capability() {
         evidence.into_unsubmitted_authorization(),
         authorization_transaction()
     );
+}
+
+#[tokio::test]
+async fn completed_taker_claim_journal_routes_the_exact_committed_partial_once() {
+    let stage = stage_b(1);
+    let directory = TestDirectory::new();
+    let journal_path = directory.path().join("taker.sqlite3");
+    write_claim_journal(&journal_path, stage, ClaimJournalMutation::ExactTaker);
+    let sidecar = spawn_sidecar(BridgeParticipant::Taker, Behavior::Happy).await;
+    let adapter = taker_adapter(
+        &sidecar.endpoint,
+        run_id(),
+        stage.runtime.clone(),
+        run_id(),
+        stage.runtime.clone(),
+    );
+
+    let evidence = adapter
+        .prepare_xmr_claim_authorization_from_taker_journal_v3(
+            &stage.agreement,
+            &stage.activation,
+            &stage.binding,
+            request_id("journal-happy"),
+            &journal_path,
+        )
+        .await
+        .expect("journal-authorized preparation");
+
+    assert_eq!(sidecar.fixture.calls.load(Ordering::SeqCst), 1);
+    let requests = sidecar.fixture.requests.lock().expect("request recorder");
+    let [request] = requests.as_slice() else {
+        panic!("exactly one request")
+    };
+    assert_eq!(
+        request.claim_partial.expose_secret(),
+        &stage.taker_claim_partial
+    );
+    assert_eq!(evidence.preparer(), Participant::Taker);
+    assert_eq!(
+        evidence.into_unsubmitted_authorization(),
+        authorization_transaction()
+    );
+}
+
+#[tokio::test]
+async fn missing_incomplete_role_crossed_and_transcript_crossed_journals_make_zero_calls() {
+    let stage = stage_b(1);
+    let directory = TestDirectory::new();
+    let sidecar = spawn_sidecar(BridgeParticipant::Taker, Behavior::Happy).await;
+    let adapter = taker_adapter(
+        &sidecar.endpoint,
+        run_id(),
+        stage.runtime.clone(),
+        run_id(),
+        stage.runtime.clone(),
+    );
+
+    let missing = directory.path().join("missing.sqlite3");
+    let error = adapter
+        .prepare_xmr_claim_authorization_from_taker_journal_v3(
+            &stage.agreement,
+            &stage.activation,
+            &stage.binding,
+            request_id("journal-missing"),
+            &missing,
+        )
+        .await
+        .expect_err("missing journal fails closed");
+    assert!(matches!(
+        error,
+        PreparedXmrClaimAuthorizationErrorV3::ClaimJournal(_)
+    ));
+    assert!(!missing.exists(), "read path must not create a journal");
+
+    for (name, mutation, expected) in [
+        (
+            "incomplete",
+            ClaimJournalMutation::IncompleteTaker,
+            "incomplete",
+        ),
+        ("maker-role", ClaimJournalMutation::MakerRole, "binding"),
+        (
+            "crossed-transcript",
+            ClaimJournalMutation::CrossedCommitment,
+            "binding",
+        ),
+    ] {
+        let path = directory.path().join(format!("{name}.sqlite3"));
+        write_claim_journal(&path, stage, mutation);
+        let error = adapter
+            .prepare_xmr_claim_authorization_from_taker_journal_v3(
+                &stage.agreement,
+                &stage.activation,
+                &stage.binding,
+                request_id(&format!("journal-{name}")),
+                &path,
+            )
+            .await
+            .expect_err("invalid claim journal fails closed");
+        match expected {
+            "incomplete" => assert!(matches!(
+                error,
+                PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete
+            )),
+            "binding" => assert!(matches!(
+                error,
+                PreparedXmrClaimAuthorizationErrorV3::ClaimJournalBinding
+            )),
+            _ => unreachable!(),
+        }
+    }
+    assert_eq!(sidecar.fixture.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

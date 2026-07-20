@@ -1,8 +1,9 @@
 # ADR 0072: Derive XMR actor inputs from validated stage material
 
 Status: Accepted as an M4 composition rule; SDK boundaries and the role-fixed
-tag-13 actor are implemented, while independent material exchange and actual
-role-process execution remain pending.
+tag-13 actor, independent material provisioning, and the completed Taker
+claim-journal-to-tag-14 handoff are implemented, while Stage-A/B process
+composition and actual role-process chain execution remain pending.
 
 Date: 2026-07-20
 
@@ -39,10 +40,13 @@ untweaked adaptor context, and rechecks the durable binding. Descriptors can be
 created only from contexts retained by an already validated agreement.
 
 The SDK now validates each unsigned Stage-A/Stage-B body before either role
-signs and attaches only correctly indexed Maker/Taker signatures. What remains
-is an independent role-process packet exchange and durable material owner. It
-must preserve the rule that Maker never receives the Taker claim partial before
-finalized tag 14.
+signs and attaches only correctly indexed Maker/Taker signatures. Independent
+role provisioning now binds each private bundle to its public packet. The
+authenticated bridge handoff opens the existing Taker claim journal, requires
+its completed signing phase, rebinds its exact transcript and withheld partial
+to Stage B, and creates no plaintext side store. The composed processes must
+still preserve the rule that Maker never receives the Taker claim partial
+before finalized tag 14.
 
 ## Component view
 
@@ -56,6 +60,10 @@ flowchart LR
     Agreement --> Refund["Checked refund descriptor"]
     Claim --> ClaimActor["Role owned claim session"]
     Refund --> RefundActor["Role owned refund session"]
+    ClaimActor --> TakerJournal["Completed Taker claim journal"]
+    TakerJournal --> Handoff["Authenticated Stage B handoff"]
+    Activation --> Handoff
+    Handoff --> Tag14["Exact tag 14 preparation"]
     Activation --> Plan["Validated LEZ initialize plan"]
     Plan --> Taker["Role fixed Taker tag 13 actor"]
     Signer["Owner private Taker LEZ key"] --> Taker
@@ -90,6 +98,25 @@ sequenceDiagram
 
 Finality reads are observation, not submission retries. This sequence proves
 ordered LEZ funding only; it is not cross-chain atomicity.
+
+The claim-publication handoff is independently constrained as follows:
+
+```mermaid
+sequenceDiagram
+    participant TakerJournal as Taker claim journal
+    participant Adapter as Typed bridge adapter
+    participant StageB as Validated Stage B
+    participant Sidecar as Authenticated sidecar
+
+    Adapter->>TakerJournal: open existing exact session
+    TakerJournal-->>Adapter: completed transcript and withheld partial
+    Adapter->>StageB: rebind identity, transcript, Maker partial, and commitment
+    StageB-->>Adapter: exact published-partial validation
+    Adapter->>Sidecar: prepare exact tag 14 once
+```
+
+This flow does not reveal the partial to the Maker or submit it by itself; it
+only removes the unsafe manual/plaintext handoff from the later actor route.
 
 ## TDD evidence
 

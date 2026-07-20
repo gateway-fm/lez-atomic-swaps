@@ -60,6 +60,15 @@ owner, and exact packet digest. Readers use one no-symlink descriptor and reject
 zero owners plus compressed, x-only, and DLEQ/signing-key aliases. Provisioning
 uses OS entropy and no RPC, node, Docker service, faucet, peer, or external
 finality resource. It is not Stage-A/B composition or a chain effect.
+The authenticated Taker-journal handoff closes the repository-controlled
+plaintext-copy gap before tag 14. It opens only an existing durable claim
+journal, derives the sole Taker session identity from validated Stage A,
+requires the completed signing phase, exact-compares the transcript, nonces,
+commitments, Maker partial, and withheld-partial commitment with Stage B, then
+passes the independently revalidated partial directly to the existing typed
+preparation route. Its 5 focused and 98 full package tests are GREEN; invalid
+journals make zero RPC calls. This is still preparation, not publication,
+finality, Maker observation, or a swap effect.
 The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,

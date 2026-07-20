@@ -12,8 +12,14 @@ use lez_bridge_protocol::{
     XmrNativeEscrowTermsV3,
 };
 use lez_swap_core::Participant;
-use lez_xmr_swap_sdk::{XmrActivatedAgreementV1, XmrAgreementV1, XmrAgreementV1Error};
-use std::fmt;
+use lez_swap_store::{
+    AdaptorSessionIdentity, AdaptorSessionJournalError, AdaptorSessionPhase, AdaptorSessionRole,
+    SqliteAdaptorSessionJournal,
+};
+use lez_xmr_swap_sdk::{
+    XmrActivatedAgreementV1, XmrAgreementV1, XmrAgreementV1Error, XmrSessionTranscriptV1,
+};
+use std::{fmt, path::Path};
 use thiserror::Error;
 
 use crate::{LezBridgeAdapter, XmrLezBridgeBindingV3, XmrLezBridgeBindingV3Error};
@@ -109,6 +115,15 @@ pub enum PreparedXmrClaimAuthorizationErrorV3 {
     /// The response contradicted the caller-owned request after transport.
     #[error("XMR claim authorization response changed its request binding")]
     ResponseBinding,
+    /// The existing Taker claim journal could not be opened or decoded safely.
+    #[error("XMR Taker claim journal is unavailable")]
+    ClaimJournal(#[source] AdaptorSessionJournalError),
+    /// The exact Taker claim session has not completed every durable signing phase.
+    #[error("XMR Taker claim journal is incomplete")]
+    ClaimJournalIncomplete,
+    /// The durable claim transcript differs from the validated Stage-B activation.
+    #[error("XMR Taker claim journal differs from Stage B")]
+    ClaimJournalBinding,
 }
 
 impl LezBridgeAdapter<BridgeClient> {
@@ -122,6 +137,9 @@ impl LezBridgeAdapter<BridgeClient> {
     ///
     /// Rejects role, Stage-B, binding, partial, run, runtime, protocol, bridge,
     /// response-context, terms, or empty/oversized prepared-transaction bytes.
+    ///
+    /// Prefer [`Self::prepare_xmr_claim_authorization_from_taker_journal_v3`]
+    /// when the partial was produced by the durable role runner.
     pub async fn prepare_xmr_claim_authorization_v3(
         &self,
         agreement: &XmrAgreementV1,
@@ -171,4 +189,123 @@ impl LezBridgeAdapter<BridgeClient> {
             authorization: result.authorization,
         })
     }
+
+    /// Loads the withheld claim partial from one completed Taker journal and
+    /// prepares its exact Stage-B-authorized tag-14 publication.
+    ///
+    /// The journal must already exist. This method derives its sole accepted
+    /// session identity from the validated agreement, requires the terminal
+    /// `PresignatureVerified` signing phase, and exact-compares every durable
+    /// commitment, nonce, context, and Maker partial with Stage B. The Taker
+    /// partial is copied only into process memory, independently revalidated,
+    /// and passed directly to the existing authenticated preparation boundary.
+    /// It is never written to a second file or database.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-Taker adapter, invalid Stage-B binding, missing, unsafe,
+    /// incomplete, role-crossed, session-crossed, or transcript-crossed journal,
+    /// an invalid committed Taker partial, or any existing preparation error.
+    pub async fn prepare_xmr_claim_authorization_from_taker_journal_v3(
+        &self,
+        agreement: &XmrAgreementV1,
+        activation: &XmrActivatedAgreementV1,
+        binding: &XmrLezBridgeBindingV3,
+        request_id: RequestId,
+        taker_journal_path: impl AsRef<Path>,
+    ) -> Result<PreparedXmrClaimAuthorizationEvidenceV3, PreparedXmrClaimAuthorizationErrorV3> {
+        if self.local_participant != Participant::Taker {
+            return Err(PreparedXmrClaimAuthorizationErrorV3::WrongPreparer);
+        }
+        let rederived = XmrLezBridgeBindingV3::new(agreement, activation)
+            .map_err(PreparedXmrClaimAuthorizationErrorV3::StageB)?;
+        if &rederived != binding {
+            return Err(PreparedXmrClaimAuthorizationErrorV3::BindingMismatch);
+        }
+        let taker_claim_partial =
+            load_taker_claim_partial(agreement, activation, taker_journal_path.as_ref())?;
+        self.prepare_xmr_claim_authorization_v3(
+            agreement,
+            activation,
+            binding,
+            request_id,
+            taker_claim_partial,
+        )
+        .await
+    }
+}
+
+fn load_taker_claim_partial(
+    agreement: &XmrAgreementV1,
+    activation: &XmrActivatedAgreementV1,
+    journal_path: &Path,
+) -> Result<[u8; 32], PreparedXmrClaimAuthorizationErrorV3> {
+    let descriptor = agreement.claim_session_descriptor();
+    let expected_identity = AdaptorSessionIdentity::new(
+        descriptor.session_id(),
+        AdaptorSessionRole::Taker,
+        descriptor.context_binding(),
+        descriptor.exact_message(),
+        descriptor.adaptor_point(),
+        descriptor.ordered_public_keys(),
+    );
+    let journal = SqliteAdaptorSessionJournal::open_existing(journal_path)
+        .map_err(PreparedXmrClaimAuthorizationErrorV3::ClaimJournal)?;
+    let snapshot = journal
+        .load(&descriptor.session_id())
+        .map_err(PreparedXmrClaimAuthorizationErrorV3::ClaimJournal)?
+        .ok_or(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete)?;
+    if snapshot.identity() != &expected_identity {
+        return Err(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalBinding);
+    }
+    if snapshot.phase() != AdaptorSessionPhase::PresignatureVerified {
+        return Err(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete);
+    }
+    let own_nonce = snapshot
+        .own_public_nonce()
+        .ok_or(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete)?;
+    let peer_commitment = snapshot
+        .peer_commitment()
+        .ok_or(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete)?;
+    let peer_nonce = snapshot
+        .peer_public_nonce()
+        .ok_or(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete)?;
+    let taker_partial = snapshot
+        .own_partial()
+        .ok_or(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete)?;
+    let maker_partial = snapshot
+        .peer_partial()
+        .ok_or(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete)?;
+    let _ = snapshot
+        .presignature()
+        .ok_or(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalIncomplete)?;
+
+    let transcript = XmrSessionTranscriptV1::new(
+        *peer_commitment.bytes(),
+        *snapshot.own_commitment().bytes(),
+        *peer_nonce.bytes(),
+        *own_nonce.bytes(),
+    );
+    let body = activation.body();
+    if descriptor.context_binding() != body.claim_context_binding()
+        || &transcript != body.claim_transcript()
+        || *maker_partial.bytes() != body.maker_claim_partial()
+    {
+        return Err(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalBinding);
+    }
+    let partial_context = agreement
+        .claim_partial_context_binding(&transcript, *maker_partial.bytes())
+        .map_err(|_| PreparedXmrClaimAuthorizationErrorV3::ClaimJournalBinding)?;
+    let partial_commitment = agreement
+        .commit_taker_claim_partial(&transcript, *maker_partial.bytes(), *taker_partial.bytes())
+        .map_err(|_| PreparedXmrClaimAuthorizationErrorV3::ClaimJournalBinding)?;
+    if partial_context != body.claim_partial_context_binding()
+        || partial_commitment != body.claim_partial_commitment()
+    {
+        return Err(PreparedXmrClaimAuthorizationErrorV3::ClaimJournalBinding);
+    }
+    activation
+        .verify_published_taker_claim_partial(agreement, *taker_partial.bytes())
+        .map_err(PreparedXmrClaimAuthorizationErrorV3::PublishedPartial)?;
+    Ok(*taker_partial.bytes())
 }

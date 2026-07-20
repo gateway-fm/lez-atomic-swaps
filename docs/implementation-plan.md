@@ -3337,9 +3337,12 @@ The immediate critical path is now:
    existing claim/refund runner sessions. Run both purpose-separated journal
    packet rounds, keep the Taker claim partial private, persist the complete
    signed-refund presignature, then build and countersign exact Stage B;
-3. add the narrow Taker-journal-to-tag-14 loader without a plaintext partial
-   store, then compose the GREEN tag-13 route with the proved local deployment
-   and funded Taker identity. Execute Initialize once, require its exact
+3. compose the now-GREEN narrow Taker-journal-to-tag-14 loader with the GREEN
+   tag-13 route, the proved local deployment, and the funded Taker identity. The
+   loader opens only the existing role-bound journal, requires its terminal
+   signing phase, rebinds every transcript field and the withheld partial to
+   Stage B, and creates no plaintext side store. Execute Initialize once,
+   require its exact
    finalized classifier capability before Fund, execute Fund once, and feed
    actual finalized Fund plus actual Monero output/topology capabilities through
    the typed issuer;
@@ -3371,7 +3374,7 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 2 to 5 focused engineering hours to the first reproducible independent-actor claim-path PoC and 8 to 16
+The checkpoint ETA carried by this push is 2 to 4 focused engineering hours to the first reproducible independent-actor claim-path PoC and 8 to 16
 additional hours to the local claim/refund/punishment PoC. A direct source audit
 found two previously untracked repository gaps. Exact completed tag-15
 admission is now GREEN; bounded finalized discovery for the non-owned
@@ -3382,11 +3385,14 @@ the pure exact Stage-A future-message/hash planner, validated-session
 descriptors, tested role-fixed tag-13 executable, exact finalized-Initialize/Fund
 classifier and consuming Fund barrier, and durable Maker tag-15
 prepare/complete path are component-GREEN. Independent role-process material
-provisioning is GREEN; Stage-A/B countersigning, journal packet rounds,
+provisioning and the authenticated completed-Taker-journal-to-tag-14 handoff are
+GREEN; Stage-A/B countersigning, the remaining journal packet rounds,
 Initialize/Fund execution, release-worker actual-local tag-14 submission,
 actual tag-15 execution, finalized tag-14/tag-15 discovery, adaptor
 extraction integration, official-wallet claim completion, and fresh lifecycle
-actors dominate the next vertical slice. Mocked transports and checked
+actors dominate the next vertical slice. The handoff's 5 focused and 98 full
+package tests, strict Clippy, formatting, and warning-fatal Rustdoc are GREEN;
+mocked transports and checked
 recursive cases still do not count as swap runtime evidence.
 The ETA must be refreshed again at the next verified push.
 GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
