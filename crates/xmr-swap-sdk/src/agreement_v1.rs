@@ -865,6 +865,171 @@ impl XmrAdaptorSessionDescriptorV1 {
         Ok(context)
     }
 }
+
+/// Semantically validated unsigned Stage-A body ready for role countersigning.
+///
+/// All fields are private so an untrusted XMR agreement body cannot be
+/// mistaken for a body whose bounds, roles, proofs, derived address, windows,
+/// and purpose-separated adaptor contexts have been checked.
+#[must_use = "a validated Stage-A body must be countersigned or explicitly discarded"]
+pub struct ValidatedXmrAgreementBodyV1 {
+    body: XmrAgreementBodyV1,
+    commitment: [u8; 32],
+    maker_agreement_key: PublicKey,
+    taker_agreement_key: PublicKey,
+    maker_proof: CrossCurveDleqProofV1,
+    taker_proof: CrossCurveDleqProofV1,
+    shared_address: MoneroSharedAddressV1,
+    claim_context: AdaptorSessionContext,
+    refund_context: AdaptorSessionContext,
+}
+
+impl std::fmt::Debug for ValidatedXmrAgreementBodyV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ValidatedXmrAgreementBodyV1")
+            .field("swap_id", &self.body.swap_id)
+            .field("direction", &self.body.direction)
+            .field("commitment", &self.commitment)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ValidatedXmrAgreementBodyV1 {
+    /// Validates every unsigned Stage-A field before either role signs it.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsupported directions, oversized fields, malformed or aliased
+    /// identities, invalid proofs, derived-address or LEZ-authority drift,
+    /// invalid messages/windows, and invalid purpose-separated adaptor contexts.
+    pub fn validate(body: XmrAgreementBodyV1) -> Result<Self, XmrAgreementV1Error> {
+        validate_wire_field_bounds(&body)?;
+        validate_cheap_body_invariants(&body)?;
+        let (maker_agreement_key, taker_agreement_key) =
+            validate_participant_keys(&body.participants)?;
+        let commitment = body.commitment();
+        let maker_proof =
+            CrossCurveDleqProofV1::from_wire_bytes(&body.monero.maker_dleq_proof_wire)?;
+        let taker_proof =
+            CrossCurveDleqProofV1::from_wire_bytes(&body.monero.taker_dleq_proof_wire)?;
+        if maker_proof.ed25519_public_key() == taker_proof.ed25519_public_key()
+            || maker_proof.secp256k1_public_key() == taker_proof.secp256k1_public_key()
+        {
+            return Err(XmrAgreementV1Error::DuplicateSpendShares);
+        }
+        if body.lez.maker_dleq_transcript_commitment != maker_proof.transcript_commitment()
+            || body.lez.taker_dleq_transcript_commitment != taker_proof.transcript_commitment()
+        {
+            return Err(XmrAgreementV1Error::LezDleqCommitmentMismatch);
+        }
+        reject_dleq_signing_key_reuse(
+            &body.participants,
+            [
+                maker_proof.secp256k1_public_key(),
+                taker_proof.secp256k1_public_key(),
+            ],
+        )?;
+        let shared_address = MoneroSharedAddressV1::derive_from_public_view_key(
+            body.monero.network,
+            &maker_proof,
+            &taker_proof,
+            body.monero.public_view_key,
+        )?;
+        if shared_address.public_view_key() != body.monero.public_view_key
+            || shared_address.public_spend_key() != body.monero.public_spend_key
+            || shared_address.address_string() != body.monero.address
+        {
+            return Err(XmrAgreementV1Error::MoneroAddressDerivationMismatch);
+        }
+
+        let claim_context = AdaptorSessionContext::untweaked(
+            [
+                body.participants.maker.claim_session_public_key,
+                body.participants.taker.claim_session_public_key,
+            ],
+            body.messages.claim,
+            maker_proof.secp256k1_public_key(),
+            session_id(commitment, b"claim"),
+        )?;
+        let refund_context = AdaptorSessionContext::untweaked(
+            [
+                body.participants.maker.refund_session_public_key,
+                body.participants.taker.refund_session_public_key,
+            ],
+            body.messages.refund,
+            taker_proof.secp256k1_public_key(),
+            session_id(commitment, b"refund"),
+        )?;
+        if claim_context.durable_context_binding() == refund_context.durable_context_binding() {
+            return Err(XmrAgreementV1Error::AdaptorContextsNotDistinct);
+        }
+        validate_lez_authorities(&body.lez, &claim_context, &refund_context)?;
+
+        Ok(Self {
+            body,
+            commitment,
+            maker_agreement_key,
+            taker_agreement_key,
+            maker_proof,
+            taker_proof,
+            shared_address,
+            claim_context,
+            refund_context,
+        })
+    }
+
+    /// Exact semantically validated body that both roles must inspect and sign.
+    #[must_use]
+    pub const fn body(&self) -> &XmrAgreementBodyV1 {
+        &self.body
+    }
+
+    /// Domain-separated commitment that both agreement-role keys must sign.
+    #[must_use]
+    pub const fn commitment(&self) -> [u8; 32] {
+        self.commitment
+    }
+
+    /// Attaches role-indexed signatures and returns the existing validated Stage A.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed, wrong, or crossed Maker/Taker signatures.
+    pub fn attach_signatures(
+        self,
+        maker_signature: [u8; 64],
+        taker_signature: [u8; 64],
+    ) -> Result<XmrAgreementV1, XmrAgreementV1Error> {
+        verify_role_signature(
+            XmrRoleV1::Maker,
+            self.maker_agreement_key,
+            maker_signature,
+            self.commitment,
+        )?;
+        verify_role_signature(
+            XmrRoleV1::Taker,
+            self.taker_agreement_key,
+            taker_signature,
+            self.commitment,
+        )?;
+        Ok(XmrAgreementV1 {
+            record: XmrAgreementRecordV1 {
+                schema_version: XMR_AGREEMENT_SCHEMA_V1,
+                body: self.body,
+                agreement_commitment: self.commitment,
+                maker_signature,
+                taker_signature,
+            },
+            maker_proof: self.maker_proof,
+            taker_proof: self.taker_proof,
+            shared_address: self.shared_address,
+            claim_context: self.claim_context,
+            refund_context: self.refund_context,
+        })
+    }
+}
+
 /// Fully validated agreement with exact claim and signed-refund sessions.
 pub struct XmrAgreementV1 {
     record: XmrAgreementRecordV1,
@@ -896,98 +1061,21 @@ impl XmrAgreementV1 {
     /// drift, invalid windows, changed commitments, either invalid BIP340
     /// signature, or invalid purpose-separated adaptor contexts.
     pub fn validate(record: XmrAgreementRecordV1) -> Result<Self, XmrAgreementV1Error> {
-        if record.schema_version != XMR_AGREEMENT_SCHEMA_V1 {
-            return Err(XmrAgreementV1Error::UnsupportedSchema(
-                record.schema_version,
-            ));
+        let XmrAgreementRecordV1 {
+            schema_version,
+            body,
+            agreement_commitment,
+            maker_signature,
+            taker_signature,
+        } = record;
+        if schema_version != XMR_AGREEMENT_SCHEMA_V1 {
+            return Err(XmrAgreementV1Error::UnsupportedSchema(schema_version));
         }
-        validate_wire_field_bounds(&record.body)?;
-        validate_cheap_body_invariants(&record.body)?;
-        let (maker_agreement_key, taker_agreement_key) =
-            validate_participant_keys(&record.body.participants)?;
-        let expected_commitment = record.body.commitment();
-        if record.agreement_commitment != expected_commitment {
+        let validated = ValidatedXmrAgreementBodyV1::validate(body)?;
+        if agreement_commitment != validated.commitment() {
             return Err(XmrAgreementV1Error::CommitmentMismatch);
         }
-        verify_role_signature(
-            XmrRoleV1::Maker,
-            maker_agreement_key,
-            record.maker_signature,
-            expected_commitment,
-        )?;
-        verify_role_signature(
-            XmrRoleV1::Taker,
-            taker_agreement_key,
-            record.taker_signature,
-            expected_commitment,
-        )?;
-
-        let maker_proof =
-            CrossCurveDleqProofV1::from_wire_bytes(&record.body.monero.maker_dleq_proof_wire)?;
-        let taker_proof =
-            CrossCurveDleqProofV1::from_wire_bytes(&record.body.monero.taker_dleq_proof_wire)?;
-        if maker_proof.ed25519_public_key() == taker_proof.ed25519_public_key()
-            || maker_proof.secp256k1_public_key() == taker_proof.secp256k1_public_key()
-        {
-            return Err(XmrAgreementV1Error::DuplicateSpendShares);
-        }
-        if record.body.lez.maker_dleq_transcript_commitment != maker_proof.transcript_commitment()
-            || record.body.lez.taker_dleq_transcript_commitment
-                != taker_proof.transcript_commitment()
-        {
-            return Err(XmrAgreementV1Error::LezDleqCommitmentMismatch);
-        }
-        reject_dleq_signing_key_reuse(
-            &record.body.participants,
-            [
-                maker_proof.secp256k1_public_key(),
-                taker_proof.secp256k1_public_key(),
-            ],
-        )?;
-        let shared_address = MoneroSharedAddressV1::derive_from_public_view_key(
-            record.body.monero.network,
-            &maker_proof,
-            &taker_proof,
-            record.body.monero.public_view_key,
-        )?;
-        if shared_address.public_view_key() != record.body.monero.public_view_key
-            || shared_address.public_spend_key() != record.body.monero.public_spend_key
-            || shared_address.address_string() != record.body.monero.address
-        {
-            return Err(XmrAgreementV1Error::MoneroAddressDerivationMismatch);
-        }
-
-        let claim_context = AdaptorSessionContext::untweaked(
-            [
-                record.body.participants.maker.claim_session_public_key,
-                record.body.participants.taker.claim_session_public_key,
-            ],
-            record.body.messages.claim,
-            maker_proof.secp256k1_public_key(),
-            session_id(expected_commitment, b"claim"),
-        )?;
-        let refund_context = AdaptorSessionContext::untweaked(
-            [
-                record.body.participants.maker.refund_session_public_key,
-                record.body.participants.taker.refund_session_public_key,
-            ],
-            record.body.messages.refund,
-            taker_proof.secp256k1_public_key(),
-            session_id(expected_commitment, b"refund"),
-        )?;
-        if claim_context.durable_context_binding() == refund_context.durable_context_binding() {
-            return Err(XmrAgreementV1Error::AdaptorContextsNotDistinct);
-        }
-        validate_lez_authorities(&record.body.lez, &claim_context, &refund_context)?;
-
-        Ok(Self {
-            record,
-            maker_proof,
-            taker_proof,
-            shared_address,
-            claim_context,
-            refund_context,
-        })
+        validated.attach_signatures(maker_signature, taker_signature)
     }
 
     /// Parses, validates, and canonically re-encodes the only accepted wire.
@@ -1283,45 +1371,49 @@ impl XmrActivationRecordV1 {
     }
 }
 
-/// Fully validated Stage-B activation. Stage A exposes no LEZ init plan.
-pub struct XmrActivatedAgreementV1 {
-    record: XmrActivationRecordV1,
+/// Semantically validated unsigned Stage-B body ready for role countersigning.
+///
+/// The capability can only be created against an already validated Stage A and
+/// a local private view key that opens the agreement's shared Monero address.
+/// Its private fields prevent an untrusted activation body from reaching the
+/// signature-attachment path without transcript, partial, and presignature checks.
+#[must_use = "a validated Stage-B body must be countersigned or explicitly discarded"]
+pub struct ValidatedXmrActivationBodyV1 {
+    body: XmrActivationBodyV1,
+    commitment: [u8; 32],
+    maker_agreement_key: PublicKey,
+    taker_agreement_key: PublicKey,
 }
 
-impl std::fmt::Debug for XmrActivatedAgreementV1 {
+impl std::fmt::Debug for ValidatedXmrActivationBodyV1 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("XmrActivatedAgreementV1")
+            .debug_struct("ValidatedXmrActivationBodyV1")
             .field(
                 "base_agreement_commitment",
-                &self.record.body.base_agreement_commitment,
+                &self.body.base_agreement_commitment,
             )
-            .field("activation_commitment", &self.record.activation_commitment)
+            .field("commitment", &self.commitment)
             .finish_non_exhaustive()
     }
 }
 
-impl XmrActivatedAgreementV1 {
-    /// Validates Stage B against Stage A and the caller's local private view key.
+impl ValidatedXmrActivationBodyV1 {
+    /// Validates every unsigned Stage-B field before either role signs it.
     ///
     /// # Errors
     ///
-    /// Rejects any schema, base, view-key, transcript, partial, presignature,
-    /// commitment, or role-signature mismatch.
+    /// Rejects a wrong local view key, a different Stage-A base, crossed session
+    /// bindings, invalid nonce transcripts or partials, and a refund
+    /// presignature that does not aggregate from the validated refund session.
     pub fn validate(
         agreement: &XmrAgreementV1,
-        record: XmrActivationRecordV1,
+        body: XmrActivationBodyV1,
         local_view_key: &MoneroPrivateViewKey,
     ) -> Result<Self, XmrAgreementV1Error> {
-        if record.schema_version != XMR_ACTIVATION_SCHEMA_V1 {
-            return Err(XmrAgreementV1Error::UnsupportedActivationSchema(
-                record.schema_version,
-            ));
-        }
         if local_view_key.public_key() != agreement.body().monero.public_view_key {
             return Err(XmrAgreementV1Error::LocalViewKeyMismatch);
         }
-        let body = &record.body;
         if body.base_agreement_commitment != agreement.agreement_commitment()
             || body.claim_context_binding != agreement.claim_context.durable_context_binding()
             || body.refund_context_binding != agreement.refund_context.durable_context_binding()
@@ -1373,34 +1465,119 @@ impl XmrActivatedAgreementV1 {
             return Err(XmrAgreementV1Error::RefundPresignatureMismatch);
         }
 
-        let expected_commitment = body.commitment();
-        if record.activation_commitment != expected_commitment {
-            return Err(XmrAgreementV1Error::ActivationCommitmentMismatch);
-        }
         let participants = &agreement.record.body.participants;
-        let maker_key = parse_key(
+        let maker_agreement_key = parse_key(
             participants.maker.agreement_public_key,
             XmrRoleV1::Maker,
             "agreement",
         )?;
-        let taker_key = parse_key(
+        let taker_agreement_key = parse_key(
             participants.taker.agreement_public_key,
             XmrRoleV1::Taker,
             "agreement",
         )?;
+        let commitment = body.commitment();
+        Ok(Self {
+            body,
+            commitment,
+            maker_agreement_key,
+            taker_agreement_key,
+        })
+    }
+
+    /// Exact semantically validated activation body both roles must sign.
+    #[must_use]
+    pub const fn body(&self) -> &XmrActivationBodyV1 {
+        &self.body
+    }
+
+    /// Domain-separated commitment that both agreement-role keys must sign.
+    #[must_use]
+    pub const fn commitment(&self) -> [u8; 32] {
+        self.commitment
+    }
+
+    /// Attaches role-indexed signatures and returns the existing validated Stage B.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed, wrong, or crossed Maker/Taker signatures.
+    pub fn attach_signatures(
+        self,
+        maker_signature: [u8; 64],
+        taker_signature: [u8; 64],
+    ) -> Result<XmrActivatedAgreementV1, XmrAgreementV1Error> {
         verify_role_signature(
             XmrRoleV1::Maker,
-            maker_key,
-            record.maker_signature,
-            expected_commitment,
+            self.maker_agreement_key,
+            maker_signature,
+            self.commitment,
         )?;
         verify_role_signature(
             XmrRoleV1::Taker,
-            taker_key,
-            record.taker_signature,
-            expected_commitment,
+            self.taker_agreement_key,
+            taker_signature,
+            self.commitment,
         )?;
-        Ok(Self { record })
+        Ok(XmrActivatedAgreementV1 {
+            record: XmrActivationRecordV1 {
+                schema_version: XMR_ACTIVATION_SCHEMA_V1,
+                body: self.body,
+                activation_commitment: self.commitment,
+                maker_signature,
+                taker_signature,
+            },
+        })
+    }
+}
+
+/// Fully validated Stage-B activation. Stage A exposes no LEZ init plan.
+pub struct XmrActivatedAgreementV1 {
+    record: XmrActivationRecordV1,
+}
+
+impl std::fmt::Debug for XmrActivatedAgreementV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("XmrActivatedAgreementV1")
+            .field(
+                "base_agreement_commitment",
+                &self.record.body.base_agreement_commitment,
+            )
+            .field("activation_commitment", &self.record.activation_commitment)
+            .finish_non_exhaustive()
+    }
+}
+
+impl XmrActivatedAgreementV1 {
+    /// Validates Stage B against Stage A and the caller's local private view key.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any schema, base, view-key, transcript, partial, presignature,
+    /// commitment, or role-signature mismatch.
+    pub fn validate(
+        agreement: &XmrAgreementV1,
+        record: XmrActivationRecordV1,
+        local_view_key: &MoneroPrivateViewKey,
+    ) -> Result<Self, XmrAgreementV1Error> {
+        let XmrActivationRecordV1 {
+            schema_version,
+            body,
+            activation_commitment,
+            maker_signature,
+            taker_signature,
+        } = record;
+        if schema_version != XMR_ACTIVATION_SCHEMA_V1 {
+            return Err(XmrAgreementV1Error::UnsupportedActivationSchema(
+                schema_version,
+            ));
+        }
+        let validated = ValidatedXmrActivationBodyV1::validate(agreement, body, local_view_key)?;
+        if activation_commitment != validated.commitment() {
+            return Err(XmrAgreementV1Error::ActivationCommitmentMismatch);
+        }
+        validated.attach_signatures(maker_signature, taker_signature)
     }
 
     /// Parses and validates the canonical fixed-width activation wire.
@@ -2821,6 +2998,172 @@ mod tests {
             sign(MAKER_AGREEMENT_SECRET, commitment),
             sign(TAKER_AGREEMENT_SECRET, commitment),
         )
+    }
+
+    #[test]
+    fn unsigned_stage_a_is_semantically_validated_before_role_signatures_are_attached() {
+        let unsigned = body();
+        let expected_record = signed_record(unsigned.clone());
+        let expected_wire = expected_record.encode_wire().expect("signed Stage-A wire");
+        let validated =
+            ValidatedXmrAgreementBodyV1::validate(unsigned).expect("validated unsigned Stage A");
+        let commitment = validated.commitment();
+
+        assert_eq!(validated.body(), expected_record.body());
+        assert_eq!(commitment, expected_record.body().commitment());
+        let agreement = validated
+            .attach_signatures(
+                sign(MAKER_AGREEMENT_SECRET, commitment),
+                sign(TAKER_AGREEMENT_SECRET, commitment),
+            )
+            .expect("role-correct countersignatures");
+        assert_eq!(
+            agreement.encode_wire().expect("canonical Stage A"),
+            expected_wire
+        );
+
+        let mut invalid = body();
+        invalid.monero.public_spend_key[0] ^= 1;
+        assert_eq!(
+            ValidatedXmrAgreementBodyV1::validate(invalid)
+                .expect_err("derived-address mutation before signing"),
+            XmrAgreementV1Error::MoneroAddressDerivationMismatch
+        );
+
+        let wrong =
+            ValidatedXmrAgreementBodyV1::validate(body()).expect("validated unsigned Stage A");
+        let commitment = wrong.commitment();
+        assert_eq!(
+            wrong
+                .attach_signatures(
+                    sign(MAKER_AGREEMENT_SECRET, [99; 32]),
+                    sign(TAKER_AGREEMENT_SECRET, commitment),
+                )
+                .expect_err("wrong Maker agreement signature"),
+            XmrAgreementV1Error::SignatureMismatch(XmrRoleV1::Maker)
+        );
+
+        let crossed =
+            ValidatedXmrAgreementBodyV1::validate(body()).expect("validated unsigned Stage A");
+        let commitment = crossed.commitment();
+        assert_eq!(
+            crossed
+                .attach_signatures(
+                    sign(TAKER_AGREEMENT_SECRET, commitment),
+                    sign(MAKER_AGREEMENT_SECRET, commitment),
+                )
+                .expect_err("crossed agreement-role signatures"),
+            XmrAgreementV1Error::SignatureMismatch(XmrRoleV1::Maker)
+        );
+    }
+
+    #[test]
+    fn unsigned_stage_b_requires_validated_stage_a_and_view_key_before_countersigning() {
+        let stage_a =
+            ValidatedXmrAgreementBodyV1::validate(body()).expect("validated unsigned Stage A");
+        let stage_a_commitment = stage_a.commitment();
+        let agreement = stage_a
+            .attach_signatures(
+                sign(MAKER_AGREEMENT_SECRET, stage_a_commitment),
+                sign(TAKER_AGREEMENT_SECRET, stage_a_commitment),
+            )
+            .expect("validated Stage A");
+        let (expected_record, _) = activation_record(&agreement);
+        let expected_wire = expected_record.encode_wire().expect("signed Stage-B wire");
+        let validated = ValidatedXmrActivationBodyV1::validate(
+            &agreement,
+            expected_record.body.clone(),
+            &view_key(),
+        )
+        .expect("validated unsigned Stage B");
+        let commitment = validated.commitment();
+
+        assert_eq!(validated.body(), &expected_record.body);
+        assert_eq!(commitment, expected_record.body.commitment());
+        let activation = validated
+            .attach_signatures(
+                sign(MAKER_AGREEMENT_SECRET, commitment),
+                sign(TAKER_AGREEMENT_SECRET, commitment),
+            )
+            .expect("role-correct activation countersignatures");
+        assert_eq!(
+            activation.encode_wire().expect("canonical Stage B"),
+            expected_wire
+        );
+
+        let mut invalid = expected_record.body.clone();
+        invalid.refund_presignature[0] ^= 1;
+        assert_eq!(
+            ValidatedXmrActivationBodyV1::validate(&agreement, invalid, &view_key())
+                .expect_err("refund mutation before signing"),
+            XmrAgreementV1Error::RefundPresignatureMismatch
+        );
+
+        let mut other_view_bytes = [0; 32];
+        other_view_bytes[0] = 18;
+        let other_view = MoneroPrivateViewKey::from_monero_little_endian(other_view_bytes)
+            .expect("other private view key");
+        assert_eq!(
+            ValidatedXmrActivationBodyV1::validate(
+                &agreement,
+                expected_record.body.clone(),
+                &other_view,
+            )
+            .expect_err("wrong local view key before signing"),
+            XmrAgreementV1Error::LocalViewKeyMismatch
+        );
+
+        let mut other_body = body();
+        other_body.swap_id[0] ^= 1;
+        let other_stage_a =
+            ValidatedXmrAgreementBodyV1::validate(other_body).expect("other validated Stage A");
+        let other_commitment = other_stage_a.commitment();
+        let other_agreement = other_stage_a
+            .attach_signatures(
+                sign(MAKER_AGREEMENT_SECRET, other_commitment),
+                sign(TAKER_AGREEMENT_SECRET, other_commitment),
+            )
+            .expect("other countersigned Stage A");
+        assert_eq!(
+            ValidatedXmrActivationBodyV1::validate(
+                &other_agreement,
+                expected_record.body.clone(),
+                &view_key(),
+            )
+            .expect_err("activation body crossed with another validated Stage A"),
+            XmrAgreementV1Error::ActivationBindingMismatch
+        );
+
+        let wrong = ValidatedXmrActivationBodyV1::validate(
+            &agreement,
+            expected_record.body.clone(),
+            &view_key(),
+        )
+        .expect("validated unsigned Stage B");
+        let commitment = wrong.commitment();
+        assert_eq!(
+            wrong
+                .attach_signatures(
+                    sign(MAKER_AGREEMENT_SECRET, [99; 32]),
+                    sign(TAKER_AGREEMENT_SECRET, commitment),
+                )
+                .expect_err("wrong Maker activation signature"),
+            XmrAgreementV1Error::SignatureMismatch(XmrRoleV1::Maker)
+        );
+
+        let crossed =
+            ValidatedXmrActivationBodyV1::validate(&agreement, expected_record.body, &view_key())
+                .expect("validated unsigned Stage B");
+        let commitment = crossed.commitment();
+        assert_eq!(
+            crossed
+                .attach_signatures(
+                    sign(TAKER_AGREEMENT_SECRET, commitment),
+                    sign(MAKER_AGREEMENT_SECRET, commitment),
+                )
+                .expect_err("crossed activation-role signatures"),
+            XmrAgreementV1Error::SignatureMismatch(XmrRoleV1::Maker)
+        );
     }
 
     #[test]

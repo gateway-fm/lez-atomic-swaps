@@ -3269,15 +3269,17 @@ count is not independently proved. Independent Taker and Maker Vault Claims then
 finalized once in blocks 228 and 240 from separate owner-private roots; these are
 onboarding prerequisites, not role-process or swap effects.
 
-ADR 0072 closes the public-SDK session-derivation gap without widening actor
-authority. An already validated agreement now mints immutable checked claim and
-refund descriptors; their context reconstruction rederives the private SDK
-session domain and rejects purpose, session, message, adaptor, key-order,
-binding, and branch cross-wiring. The full SDK suite is 7 of 7 GREEN with strict
-Clippy and warning-fatal Rustdoc. This is a composition prerequisite, not an
-actor, signature exchange, chain effect, or swap. Role-correct unsigned-body
-validation and countersigning remain before independent Stage-A/Stage-B
-material can be produced without duplicating private protocol logic.
+ADR 0072 closes the public-SDK session-derivation and pre-signing validation
+gaps without widening actor authority. An already validated agreement mints
+immutable checked claim/refund descriptors; context reconstruction rederives
+the private SDK domain and rejects purpose, session, message, adaptor,
+key-order, binding, and branch cross-wiring. Each unsigned Stage-A/Stage-B body
+is now semantically validated before either role signs, and attachment accepts
+only correctly indexed Maker/Taker signatures while preserving canonical wire.
+The full SDK suite is 9 of 9 GREEN with strict Clippy and warning-fatal Rustdoc.
+These are composition prerequisites, not a signature-exchange process, actor,
+chain effect, or swap. An independent role-owned material/countersigning
+process remains before fresh Stage-A/Stage-B wires can be produced safely.
 
 The immediate critical path is now:
 
@@ -3317,14 +3319,19 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 3 to 6 focused engineering hours
+The checkpoint ETA carried by this push is 5 to 9 focused engineering hours
 to the first reproducible independent-actor claim-path PoC and 8 to 16
-additional hours to the local claim/refund/punishment PoC. Exact checked local
+additional hours to the local claim/refund/punishment PoC. A direct source audit
+found two previously untracked repository gaps: bounded finalized discovery
+for the non-owned tag-14/tag-15 effects and generic admission of the completed
+tag-15 claim. This estimate correction reflects actual composition work, not a
+regression. Exact checked local
 deployment and funded two-identity Vault onboarding are now actual-local GREEN;
 the pure exact Stage-A future-message/hash planner, validated-session
 descriptors, canonical tag-13 component, exact finalized-Initialize/Fund
 classifier and consuming Fund barrier, and durable Maker tag-15
-prepare/complete path are component-GREEN. Role-correct stage countersigning,
+prepare/complete path are component-GREEN. Independent role-process material
+exchange,
 Initialize/Fund execution, release-worker actual-local tag-14 submission,
 finalized tag-14/tag-15 classification, exact tag-15 submission, adaptor
 extraction integration, official-wallet claim completion, and fresh lifecycle

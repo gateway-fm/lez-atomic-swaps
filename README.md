@@ -242,8 +242,9 @@ retained session inside the SDK and rejects purpose, session, message, adaptor,
 key-order, binding, or branch cross-wiring. ADR 0072 requires lifecycle actors
 to validate canonical Stage-A and Stage-B wires and derive tag-13 terms from
 the activation plan rather than accept independent protocol strings. This is a
-GREEN SDK composition checkpoint; role countersigning, an actual actor effect,
-and the swap remain pending.
+Unsigned Stage-A/Stage-B body validation and role-indexed signature attachment
+are also GREEN. An independent role countersigning/material process, an actual
+actor effect, and the swap remain pending.
 
 The fresh checked guest and current host components can be repeated
 independently before the full actor exists; the exact deployer and tag-15

@@ -43,8 +43,9 @@ validated Stage-A agreement, rederive the purpose-separated session identity
 inside the SDK, reconstruct the exact retained context, and reject every public
 field mutation plus refund-into-claim cross-wiring. ADR 0072 requires actors to
 derive protocol inputs from canonical validated Stage-A/Stage-B material. This
-is seven-test SDK evidence, not staged role countersigning, an actor process,
-chain execution, finality, or an end-to-end swap.
+is now nine-test SDK evidence, including unsigned semantic validation before
+role-indexed signature attachment. It is not an independent role-material
+process, chain execution, finality, or an end-to-end swap.
 The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,

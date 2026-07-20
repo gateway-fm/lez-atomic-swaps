@@ -13,8 +13,9 @@ mod cross_curve;
 mod shared_spend;
 
 pub use agreement_v1::{
-    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XMR_ACTIVATION_SCHEMA_V1,
-    XMR_AGREEMENT_SCHEMA_V1, XmrActivatedAgreementV1, XmrActivationBodyV1, XmrActivationRecordV1,
+    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, ValidatedXmrActivationBodyV1,
+    ValidatedXmrAgreementBodyV1, XMR_ACTIVATION_SCHEMA_V1, XMR_AGREEMENT_SCHEMA_V1,
+    XmrActivatedAgreementV1, XmrActivationBodyV1, XmrActivationRecordV1,
     XmrAdaptorSessionDescriptorV1, XmrAdaptorSessionPurposeV1, XmrAgreementBodyV1,
     XmrAgreementRecordV1, XmrAgreementV1, XmrAgreementV1Error, XmrLezInitializePlanV1,
     XmrLezLockCandidateV1, XmrLezLockStatusV1, XmrLezTermsV1, XmrMessagesV1, XmrMoneroTermsV1,

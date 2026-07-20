@@ -37,9 +37,11 @@ method rederives the purpose-separated ID inside the SDK, rebuilds the exact
 untweaked adaptor context, and rechecks the durable binding. Descriptors can be
 created only from contexts retained by an already validated agreement.
 
-This decision does not define how independent actors validate and countersign
-unsigned Stage-A/Stage-B bodies. That is the next composition boundary, and it
-must not give Maker the Taker claim partial before finalized tag 14.
+The SDK now validates each unsigned Stage-A/Stage-B body before either role
+signs and attaches only correctly indexed Maker/Taker signatures. What remains
+is an independent role-process packet exchange and durable material owner. It
+must preserve the rule that Maker never receives the Taker claim partial before
+finalized tag 14.
 
 ## Component view
 
@@ -88,8 +90,11 @@ ordered LEZ funding only; it is not cross-chain atomicity.
 The descriptor API began with an expected compile failure for eleven missing
 API items. The GREEN suite proves exact equality with retained contexts and
 rejects wrong purpose, session, message, adaptor, key order, binding, and a
-refund-into-claim cross-wire. All seven SDK tests, strict Clippy, warning-fatal
-Rustdoc, formatting, and diff checks pass.
+refund-into-claim cross-wire. The unsigned-body API separately began with eight
+expected missing-type errors and proves semantic rejection before signature
+attachment, wrong view-key/cross-agreement rejection, role-indexed signatures,
+and byte-identical canonical wires. All nine SDK tests, strict Clippy,
+warning-fatal Rustdoc, formatting, and diff checks pass.
 
 ## Consequences and remaining work
 
@@ -98,8 +103,8 @@ Rustdoc, formatting, and diff checks pass.
 - Stable finalized nonces remain live inputs and must be checked before tag 13.
 - Descriptors are not signing/release authority or actual-swap evidence.
 
-Add role-correct unsigned-body validation and countersigning packets; refactor
-the tag-13 executable to accept canonical wires; then compose actual finalized
-tags 13, 14, and 15, adaptor extraction, and the official-wallet Monero spend.
+Build independent role-process countersigning/material packets on the validated
+API, finish the canonical-wire tag-13 actor, then compose actual finalized tags
+13, 14, and 15, adaptor extraction, and the official-wallet Monero spend.
 Recovery, chaos, and production/Stagenet hardening follow the happy PoC under
 ADR 0027.
