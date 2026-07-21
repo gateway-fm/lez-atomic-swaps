@@ -1,9 +1,9 @@
 # ADR 0055: Preserve XMR atomicity with dual reveal branches
 
-Status: Accepted for the M4 local-PoC design. Both DLEQ-bound reconstruction
-equations, an official-wallet claim-path spend, and focused XMR-specific LEZ
-source branches are executable. Checked guest/bridge/actual-node branch
-execution remains work. No complete atomic swap is claimed yet.
+Status: Accepted for the M4 local-PoC design. The successful claim branch now
+has actual local working-tree evidence through finalized LEZ claim, adaptor
+extraction, and official-wallet sweep. The dual-reveal recovery branch, exact
+committed replay, and milestone certification remain open.
 
 ## Context
 
@@ -152,5 +152,13 @@ behavior, not the missing LEZ branches or an atomic swap.
   the leaf without importing the BTC SDK.
 - Claim-partial release becomes a signed, canonical LEZ effect after XMR
   confirmation, not an off-chain post-lock message.
-- A linked happy transfer may be demonstrated before refund/punish completion,
-  but documentation, evidence, metrics, and tags must call it non-atomic.
+- A linked happy transfer may be documented as conditionally atomic for the
+  successful branch, but not as complete recovery atomicity or milestone
+  certification before refund and punishment execution.
+
+
+## Working-tree actual-local evidence update
+
+The successful reveal branch is now actual local working-tree evidence: finalized Maker tag 15 exposed the Maker adaptor share, and the Taker extracted it before reconstructing and sweeping the Stage-A Monero output. The signed tag-16 Taker-refund reveal and tag-17 punishment paths remain unexecuted, so literal both-refund conformance and full recovery atomicity are not claimed.
+
+This is not milestone certification. The public packet is [m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json), explicitly pending exact committed-tree replay and scoped cleanup. Signed recovery, F7, U9, D1 XMR, and post-PoC hardening remain.

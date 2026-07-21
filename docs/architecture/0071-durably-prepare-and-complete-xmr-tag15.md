@@ -1,6 +1,6 @@
 # ADR 0071: Durably prepare and complete the exact XMR tag-15 claim before submission
 
-- Status: Accepted; exact durable tag-15 submission is component-GREEN, finalized composition pending
+- Status: Accepted; exact tag-15 submission/finality and role composition are working-tree GREEN, exact committed replay pending
 - Date: 2026-07-20
 - Milestone: M4 progressive local-functional PoC
 
@@ -159,8 +159,8 @@ flakiness, not chain-finality evidence.
 
 - Four of seven transaction-building routes are now functional; refund prepare,
   refund complete, and punishment prepare remain fail-closed `Unavailable`.
-- Actual-local tag-14 discovery/finality, tag-15 effect/finality, adaptor
-  extraction, and fresh Maker/Taker actor ownership remain required for the PoC.
+- Working-tree tag-14/tag-15 finality, fresh role ownership, and adaptor
+  extraction are GREEN. Exact committed replay and signed recovery remain.
 - Stage A construction must coordinate or pre-reserve the aggregate-authority
   nonce before the immutable claim-message hash is signed.
 - The bridge journal's inherited same-request-ID concurrent overwrite race is a
@@ -168,8 +168,8 @@ flakiness, not chain-finality evidence.
   one in-flight request per swap.
 - Generic tag-14 submission stays closed and dedicated-release-only. Exact
   durable tag-15 publication uses the ordinary authenticated generic route;
-  finalized tag-14/tag-15 discovery remains a separate, still-pending authority
-  boundary.
+  finalized tag-14/tag-15 discovery remains a separate authority boundary and
+  executed in the working-tree claim.
 
 ## Verification
 
@@ -183,3 +183,10 @@ generic tag-14 submission remains zero-send rejected. The three focused planner
 tests, all seven authenticated XMR route tests, the sidecar library suite,
 strict Clippy, warning-fatal Rustdoc, formatting, dependency policy, and diff
 hygiene remain milestone gates.
+
+
+## Working-tree actual-local evidence update
+
+Maker tag-15 prepare/complete, submission, role-local finality, Taker ingestion, and extraction executed in the working-tree claim. The exact transaction finalized at height 4208 with terminal custody zero. The three recovery builders remain unavailable, and the clean committed replay plus signed recovery paths remain open.
+
+This is not milestone certification. The public packet is [m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json), explicitly pending exact committed-tree replay and scoped cleanup. Signed recovery, F7, U9, D1 XMR, and post-PoC hardening remain.

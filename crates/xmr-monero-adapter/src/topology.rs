@@ -494,7 +494,7 @@ struct GetInfoResult {
 
 #[derive(Debug, Deserialize)]
 struct GetConnectionsResult {
-    #[serde(rename = "connections")]
+    #[serde(default, rename = "connections")]
     _connections: EmptyArray,
     status: String,
     untrusted: bool,
@@ -506,7 +506,7 @@ struct GetVersionResult {
     version: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct EmptyArray;
 
 impl<'de> Deserialize<'de> for EmptyArray {
@@ -1113,7 +1113,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_wrong_type_nonempty_connections_and_conflicting_envelopes_fail_closed() {
+    fn official_omitted_empty_connections_and_malformed_responses_are_distinguished() {
         let missing_offline = success(
             r#"{"status":"OK","untrusted":false,"nettype":"fakechain","mainnet":false,"testnet":false,"stagenet":false,"incoming_connections_count":0,"outgoing_connections_count":0,"version":"0.18.5.1-release"}"#,
         );
@@ -1129,6 +1129,13 @@ mod tests {
             serde_json::from_str::<RpcEnvelope<GetInfoResult>>(&wrong_type).is_err(),
             "a string must not substitute for the required boolean"
         );
+
+        let omitted_connections = success(r#"{"status":"OK","untrusted":false}"#);
+        let omitted =
+            serde_json::from_str::<RpcEnvelope<GetConnectionsResult>>(&omitted_connections)
+                .expect("official Monero omits the field for an empty connection set");
+        validate_connections(&omitted.into_result("fixture.omitted").unwrap())
+            .expect("omitted plus trusted OK is the official empty-set encoding");
 
         let nonempty_connections =
             success(r#"{"connections":[{"address":"127.0.0.1"}],"status":"OK","untrusted":false}"#);

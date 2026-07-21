@@ -1,6 +1,6 @@
 # ADR 0067: Submit XMR claim authorization through a dedicated one-attempt route
 
-- Status: Accepted for the M4 component checkpoint
+- Status: Accepted; dedicated-route actual-local working-tree checkpoint GREEN, exact committed replay pending
 - Date: 2026-07-20
 
 ## Context
@@ -235,16 +235,22 @@ evidence.
   until exact finalized authorization evidence exists.
 - Crash after journal reservation can sacrifice liveness by replaying unknown;
   this is the safe PoC choice.
-- Actual-local sequencer submission, server-restart unknown replay, exact
-  authorization finality, and definitive absence remain unproved.
+- Working-tree sequencer submission and authorization finality executed. Exact
+  committed replay, server-restart unknown replay, and definitive absence remain.
 - Same-host rollback, journal clone, cancellation-after-CAS hardening, public
   node trust, and operational recovery remain production work.
 
 ## Consequences
 
 The authority now offers a small sealed publisher over the typed client rather
-than exposing its byte-bearing transport. The next actual-local slice is the
-dedicated process owning preparation, key, journal, bearer, official finalized
-clock, and sidecar route. Authorization finality and claim execution remain
-separate subsequent effects. The `m4-complete` tag remains forbidden until the
+than exposing its byte-bearing transport. The working-tree claim exercised the dedicated process, official finalized
+clock, sidecar route, later authorization finality, and claim. They remain
+separate causal effects and require exact committed replay. The `m4-complete` tag remains forbidden until the
 full milestone evidence and closure gates pass.
+
+
+## Working-tree actual-local evidence update
+
+The dedicated route was exercised by the separate release-only worker in the working-tree claim. Fresh state `release3` moved Prepared to Admitted; Maker-side classification later found exact tag 14 finalized at height 4107. Admission remains distinct from finality, and exact committed replay, different-UID/network isolation, rollback, definitive-absence, and cancellation-after-CAS hardening remain.
+
+This is not milestone certification. The public packet is [m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json), explicitly pending exact committed-tree replay and scoped cleanup. Signed recovery, F7, U9, D1 XMR, and post-PoC hardening remain.

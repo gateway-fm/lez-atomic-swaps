@@ -16,6 +16,7 @@ use lez_swap_store::{
     AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionSnapshot, SecretNonceBytes,
     SqliteAdaptorSessionJournal,
 };
+use subtle::ConstantTimeEq as _;
 use thiserror::Error;
 
 mod files;
@@ -257,6 +258,75 @@ pub fn accept_published_peer_partial_and_adapt(
     let final_signature = adapt_presignature(session.context(), presignature, adaptor_secret)
         .map_err(|_| RunnerError::CryptographicValidation)?;
     protocol::write_aggregate_packet(output, PacketKind::FinalSignature, session, final_signature)
+}
+
+/// Opaque adaptor scalar whose supplied bytes were verified against a durable transcript.
+#[must_use = "consume the verified scalar explicitly when reconstructing the shared spend key"]
+pub struct VerifiedAdaptorSecret {
+    bytes: zeroize::Zeroizing<[u8; 32]>,
+}
+
+impl VerifiedAdaptorSecret {
+    /// Consumes this verifier boundary and returns the canonical secp256k1 big-endian bytes.
+    ///
+    /// The returned buffer remains zeroizing and must not be logged or persisted again.
+    #[must_use]
+    pub fn into_big_endian_bytes(self) -> zeroize::Zeroizing<[u8; 32]> {
+        self.bytes
+    }
+}
+
+impl fmt::Debug for VerifiedAdaptorSecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("VerifiedAdaptorSecret(REDACTED)")
+    }
+}
+
+/// Verifies one owner-private extracted scalar against the exact durable transcript.
+///
+/// The role-fixed existing journal supplies the aggregate presignature. The final
+/// signature is cryptographically verified under the supplied session, extraction
+/// is recomputed, and the owner-private file is compared in constant time with the
+/// recomputed canonical secp256k1 big-endian scalar. Only the recomputed value is
+/// returned, wrapped in an opaque zeroizing type.
+///
+/// # Errors
+///
+/// Rejects an unsafe scalar file, a missing or role/session-crossed journal, an
+/// incomplete transcript, an invalid or unrelated final signature, or any scalar
+/// mismatch. Errors and `Debug` output never contain secret bytes.
+pub fn verify_extracted_adaptor_secret(
+    journal_path: &std::path::Path,
+    session: &ValidatedSession,
+    role: Role,
+    final_signature: [u8; 64],
+    extracted_scalar_file: &std::path::Path,
+) -> Result<VerifiedAdaptorSecret, RunnerError> {
+    let identity = session.identity(role);
+    let journal = SqliteAdaptorSessionJournal::open_existing(journal_path)?;
+    let presignature = required_snapshot(&journal, &identity)?
+        .presignature()
+        .ok_or(RunnerError::PresignatureUnavailable)?;
+    let extracted =
+        extract_adaptor_secret(session.context(), *presignature.bytes(), final_signature)
+            .map_err(|_| RunnerError::CryptographicValidation)?;
+    let supplied = files::read_secret_scalar(extracted_scalar_file)?;
+    if extracted[..].ct_eq(&supplied[..]).unwrap_u8() != 1 {
+        return Err(RunnerError::CryptographicValidation);
+    }
+    Ok(VerifiedAdaptorSecret { bytes: extracted })
+}
+
+/// Reads and validates one canonical aggregate final-signature packet.
+///
+/// # Errors
+///
+/// Rejects an unsafe file, wrong packet kind, or any session/context drift.
+pub fn read_final_signature_packet(
+    path: &std::path::Path,
+    session: &ValidatedSession,
+) -> Result<[u8; 64], RunnerError> {
+    protocol::read_aggregate_packet(path, PacketKind::FinalSignature, session)
 }
 
 /// Converts an authenticated on-chain aggregate signature into the exact

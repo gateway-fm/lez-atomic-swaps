@@ -53,280 +53,73 @@ below; final repository-wide gates still precede any `m3-complete` tag.
 
 ## Current status
 
-M3 is complete, tagged `m3-complete`, and pushed. M4 is now the active
-progressive local-functional PoC. Component-green checkpoints include bounded
-canonical proofs for both cross-curve spend-key shares, an official Monero
-0.18.5.1 actual-node topology and reconstructed-key spend, the pair-neutral
-adaptor leaf, canonical two-stage XMR activation, guest tags 13 through 17, a
-twice-reproduced checked guest artifact, the strict nine-method protocol,
-ordinary eight-call `BridgeClient`, narrow release-intended `XmrReleaseClient`,
-authenticated nine-route sidecar boundary, and a non-cloneable exact Monero
-output observation. Four of the seven transaction-building sidecar routes are
-now functional across the Taker preparation and Maker claim-completion path.
-`prepare_native_xmr_escrow_v3` checks the generated v0.2
-`InitializeNativeXmr` plus `FundNative` pair and durably reserves both exact
-signed byte strings before returning them. Identical replay, including after a
-fresh planner and server, returns the same bytes without another nonce read or
-sequencer send.
-The established generic route now submits those two tag-13 effects under
-canonical request IDs derived from their transaction IDs. It reloads the
-owner-only pair before node I/O, persists unknown before the exact lookup/send,
-rejects the same transaction under an arbitrary fresh ID, and requires exact
-initialization presence before a funding attempt. The focused official-type
-loopback admits Initialize then Fund with cumulative lookup/send counters
-`3/2`; identical request replay changes neither. Premature Fund becomes a terminal
-zero-send error at `1/0`, while missing durable state fails at `0/0`. This is
-at-most-once component evidence. ADR 0070 now supplies the missing typed actor
-barrier: only an exact stable finalized Initialize `Found` mints a private-field
-non-`Clone` capability, and the Taker Fund method consumes it before transport.
-Missing, moving, unavailable, or mismatched evidence cannot attempt Fund. The
-focused proof is synthetic/literal-loopback component evidence. A separate
-role-fixed actual-local run later finalized Initialize in block 3008 and Fund in
-block 3023; that retained run is historical because its signed continuation
-expired, and no swap is claimed.
-`prepare_native_xmr_claim_authorization_v3` separately recomputes the exact
-NUL-terminated partial commitment, requires and revalidates that durable Fund,
-derives nonce `Fund + 1` without an RPC, builds generated tag 14 with the sole
-depositor signer, and durably reserves the exact authorization before return.
-Fresh-server and cached-response replay revalidate the durable prerequisites and
-return byte-identical bytes; missing, corrupt, conflicting, mutated, or
-overflowing state fails closed. Generic submission rejects this reservation with
-zero `sendTransaction` calls. The dedicated Taker-bound route reloads and
-exact-compares the durable authorization, persists unknown before node I/O,
-performs an official exact lookup, permits one send per request ID, and requires
-the exact official returned ID. Its loopback fixture records byte-identical
-`already_known` with one lookup and zero sends, one accepted send after a miss,
-and a wrong returned ID retained as unknown. Same-request accepted and unknown
-replays perform no second node I/O, while deletion makes a fresh request ID fail
-closed without another send.
-A pure Stage-A future-message planner is now component-GREEN in three focused
-tests. From one caller-supplied stable finalized nonce snapshot it derives the
-claim and refund aggregate authorities, checks the Taker
-Initialize/Fund/Authorize schedule and independent claim/refund/punishment
-nonces, and constructs the exact generated official tag-15 claim, tag-16 signed
-refund, and tag-17 punishment messages plus their distinct NSSA hashes. The
-existing tag-15 prepare/complete path accepts the planned claim hash and message
-byte-identically. Planning performs no RPC, reservation, persistence, signing,
-or submission; the tag-16/tag-17 sidecar builders remain typed `Unavailable`.
+M3 is complete, tagged `m3-complete`, and pushed. M4 remains in its
+progressive local-functional PoC phase. The first role-correct native-XMR happy
+claim has now executed through actual isolated local services, but it is a
+**working-tree checkpoint pending exact committed-tree replay**, not milestone
+certification and not authority for an `m4-complete` tag.
 
-The Maker-only tag-15 prepare/complete pair is also component-GREEN. It derives
-the exact aggregate-authority nonce, generated ABI/account order, and immutable
-claim-message hash, then accepts only the valid aggregate BIP340 signature into
-a separately durable canonical transaction. Exact restart replay revalidates
-both durable records and neither preparation step submits. The generic route
-now admits only that exact completed durable tag-15 claim; an authenticated
-fresh-sidecar test performs its one accepted send, while drift or missing
-durable state fails before node I/O. Tag 14 remains dedicated-release-only.
-Actual-local tag-14/tag-15 execution and finalized discovery remain. Exact
-role-local actor bridges are component-GREEN: Maker consumes Maker-side tag-14
-`DiscoverByTerms` and adapts the existing claim presignature; Taker consumes
-Taker-side tag-15 discovery and emits the extraction packet. Cross-role and
-owner-side exact evidence is rejected. The three refund/completion/punishment
-builders still fail closed with typed `Unavailable`.
+Run `m4happy-40cbac3-20260721a` used the checked M4 LEZ guest, an isolated
+source-audited LEZ v0.2 Bedrock/sequencer/indexer stack, separate authenticated
+Maker and Taker sidecars, and official Monero 0.18.5.1 Regtest daemon and wallet
+processes. Independent role material produced canonical Stage A and Stage B.
+The Taker then finalized LEZ Initialize transaction `a85d7850...e234d388` at
+height 3953 and Fund transaction `324cbbc4...ff34eb0e` at height 3960.
 
-The finalized classifier now covers four exact effects. Owner-side Taker
-classification accepts durable Initialize/Fund; role-local discovery exposes
-only tag 14 to Maker and tag 15 to Taker after checking generated ABI, accounts,
-signer, state, committed partial or aggregate signature, and stable
-candidate/tip/window re-pins. Missing remains `Uncertain`; cross-role or
-owner-side evidence is rejected by the lifecycle commands. The full pinned
-sidecar package, strict Clippy, warning-free Rustdoc, and dependency policy
-pass. Tag-14/tag-15 coverage is synthetic component evidence, not an actual
-local-devnet claim read.
+Only after that scriptable LEZ lock was canonical did the Maker-side funding
+boundary pay exactly 1 XMR to the Stage-A shared address. Monero transaction
+`de02209c...a8ef8017` was contained at height 111 and reached the ten-confirmation
+local policy at tip 120. The exclusive preparer proved the exact finalized Fund,
+peerless authenticated Monero topology, confirmed output, and completed Taker
+claim journal. A fresh sealed release database reached `Prepared`; the one-shot
+worker admitted dedicated tag 14, which Maker-side role discovery found as
+transaction `13f9d56e...d37e7f1f` finalized at height 4107.
 
-The main-process adapter exposes two Taker-only non-cloneable authorities.
-Stage-B claim authorization re-derives the committed partial and signed
-runtime binding. The ADR-0070 pre-Fund boundary mints exact finalized-Initialize
-evidence only through `LezBridgeAdapter<BridgeClient>` and consumes it after
-run, role, runtime, terms, facts, ID, and bytes checks. A mismatch fails before
-transport. The package passes 98 non-doc tests plus three doctests, strict
-Clippy, Rustdoc, formatting, and diff gates. Its authenticated servers and
-indexer are literal-loopback/synthetic fixtures with zero external resources.
-The official sidecar builder independently validates the generated ABI,
-canonical transaction, signature, accounts, nonce, and durable replay. The
-adapter and builder are still preparation capabilities: no actual-node effect
-or claim PoC is claimed. The schema-v3 release-authority crate passes 35 of 35
-tests. Its public integration mints finalized Fund, prepared authorization,
-Monero output, and authenticated topology capabilities through their loopback
-factories, consumes all four, proves the exact
-`[finalized Fund time, signed refund_at)` interval, and then drives the sealed
-publisher. A misbound client causes zero clock/RPC calls and preserves
-`Prepared`; the exact binding samples finalized time twice, makes one dedicated
-submission, persists `Admitted`, and restart observes only with zero further
-calls. The raw publisher transport and decrypted bytes remain private.
-Generic sidecar tag-14 submission stays closed; ADR 0067 records the dedicated
-route, narrow client, release-journal wrapper, component and flow diagrams.
-The official sidecar has a genesis-bound stable finalized-clock primitive.
-The release-only client factory and protection-key loader now require the
-current owner, exact mode `0600`, one link, stable descriptor/path identity,
-bounded contents, and post-read metadata equality. Nine focused tests cover
-rotation, bounds, hard links, symlinks, invalid material, and redaction. This is
-the credential entry prerequisite for the release-service process.
-ADR 0068 now records a separately locked one-shot worker that owns the fixed
-journal location, loads only those two credentials, validates the signed
-run/runtime/terms binding, uses the exact official v0.2 finalized-indexer RPC,
-and emits only a payload-free durable outcome. Its non-secret route config is
-integrity-controlled before credential reads. Its four unit tests, all-target
-compile, strict Clippy/Rustdoc, vulnerability/license/source gates, and
-explicit standalone CI contract are green. The checked process proof now seeds
-the journal only through the typed issuer, starts the real worker, observes one
-admitted sidecar submission after the official v0.2 indexer-wire finalized-clock reads, and
-starts a fresh worker that reports observe-only without another RPC or
-submission. CI runs that proof. Different-UID and network isolation, actual-local node execution,
-authorization finality, and an actual swap remain absent. ADR 0074 now adds a
-separate redacted one-shot preparer in the same locked package. It re-derives
-Stage A/B, recovers the exact tag-13 bytes using the original durable request
-ID, proves finalized Fund and authenticated Monero topology/output, loads the
-completed Taker journal, then descriptor-exclusively creates a mode-`0600`
-one-link release database and authenticates it after drop/reopen. The combined
-standalone suite is 8 of 8; strict Clippy, warning-fatal Rustdoc, and
-advisory/ban/license/source gates pass. The preparer has no publication client,
-and its actual-local invocation remains pending.
+The Maker adapted its retained claim presignature, completed the exact durable
+tag-15 claim, and submitted transaction `32c0135b...2585f8d`, finalized at
+height 4208 with terminal LEZ custody zero. Taker-side role discovery recovered
+that canonical aggregate signature, the Taker extracted the Maker share only
+from that finalized evidence, combined it with its retained share, restored the
+exact Stage-A wallet, and confirmed Monero sweep
+`6c8c7bca...70e8e21a` at tip 130. The public
+[working-tree evidence packet](docs/evidence/m4-actual-claim-poc-20260721.json)
+contains no credentials, capability, wallet password, or private scalar. It
+deliberately omits execution-binary hashes because post-run rebuilds changed
+the evidence schemas; that omission and the explicit source limitation prevent
+the run name from being misread as clean commit `40cbac3` evidence.
 
-The Monero output observation is deliberately not claim-partial release
-authority. The one-command topology
-runner starts one offline
-`monerod` Regtest daemon plus independently authenticated funding, Maker, and
-Taker wallet RPCs; mines funds locally; submits a real two-destination
-transaction; requires ten confirmations, unlocked role balances, wallet/daemon
-height agreement, role isolation, secret-safe evidence, and exact cleanup.
+This executes the successful-claim branch of the conditional atomicity
+argument: the Maker cannot receive the LEZ custody balance without finalizing
+the signature that reveals Maker share `s_a`, which the Taker combines with
+retained `s_b` to spend the exact confirmed XMR output. It is not a distributed
+cross-chain transaction. The tag-16 signed-refund and tag-17 punishment paths,
+native plus two custom-token F7 parity, U9 Stagenet guide/CI, D1 XMR videos,
+repeatability, QA, chaos, information-security, production readiness, and
+independent review remain open.
 
-The deterministic SDK spike can be repeated without Docker or network access:
+The implementation retains the two-stage XMR SDK, pair-neutral adaptor leaf,
+checked guest tags 13 through 17, nine-method strict bridge boundary, durable
+tag-13/tag-14/tag-15 planners and journals, exclusive release preparer, sealed
+publisher, role-local finalized classifier, and typed Monero funding and sweep
+effects. The two failed preparer databases from the live audit remain
+quarantined; only a genuinely fresh third database was published. Official
+Monero 0.18.5.1 may omit `connections` when its connection list is empty, so
+the typed decoder accepts omission as empty only while `get_info` independently
+proves zero incoming and outgoing peers; any nonempty list or nonzero count is
+rejected.
 
-```sh
-cargo run --locked -p lez-xmr-swap-sdk --example dleq-spike
-```
-
-It verifies Maker share `s_a` and Taker share `s_b`, derives their shared public
-spend key and address, and proves both reconstruction orders without printing
-private bytes. Development evidence also funds and spends that reconstructed
-key through the official wallet RPC. This is still not an atomic swap: the LEZ
-Maker-claim branch must reveal `s_a`, the Taker signed-refund branch must reveal
-`s_b`, and the Maker punishment branch must be explicit. The Taker's claim
-partial remains private until the exact XMR lock reaches the signed confirmation
-policy, then is published through canonical LEZ tag 14 rather than an off-chain
-message. The design and atomicity argument are in
-[ADR 0055](docs/architecture/0055-preserve-xmr-atomicity-with-dual-reveal-branches.md).
-
-```sh
-RUN_ID=m4-readme-monero-20260719a ./scripts/run-monero-e2e.sh
-```
-
-Measured run `m4-monero-poc-20260719c` passed in 53 seconds before cleanup
-with no public RPC, peer, faucet, public funds, stagenet, or external finality
-service. This is infrastructure evidence, not an atomic swap. The
-genesis-bound stable finalized-clock primitive is component-green and rejects
-a moving sample rather than returning stale deadline authority. The dedicated
-route/returned-ID component is green only against an official-type loopback
-fixture. The exact local-only `deploy-m4-local` route and tag-15
-prepare/complete builder are component-GREEN. The deployer permits only a
-literal-loopback sequencer URL, trusted channel ID, and timeout; it validates
-the pinned M4 manifest, ELF, ImageID, runtime, channel, genesis, built-ins, and
-tip before its one-send-per-invocation code path and bounded canonical
-inclusion. The exact checked M4 ELF is now deployed on a fresh isolated LEZ
-v0.2 stack: transaction
-`8bb883f18a2a8869e57f31e0791fc6736100e11058038e85c8d226e874ff63f9`
-is finalized in block 86, and a genesis-through-86 scan proves zero prior and
-one total exact-ELF occurrence, decoded ELF/ImageID equality, finalized headers,
-and stable block-by-ID/hash/ID reads. The retained
-[deployment packet](docs/evidence/m4-local-deployment-poc-20260720.json)
-records an empty runtime-external-resource list. It proves atomic inclusion of
-one program-deployment transaction, not cross-chain swap atomicity or a global
-RPC-attempt count.
-
-Two independent deterministic-genesis actor accounts also completed actual
-local Vault onboarding: Taker transaction `58c84f3b...ee79f2` finalized once in
-block 228 and Maker transaction `de71e99c...4572c` finalized once in block 240.
-Both owner nonces are now one and their allocations remain 200000 and 100000;
-the [actor-onboarding packet](docs/evidence/m4-local-actor-onboarding-20260720.json)
-contains no signing material. This closes funding/nonce prerequisites only;
-fresh role-process lifecycle execution and actual swaps remain 0 of 1.
-The first actual-local Stage-A replay is now GREEN. A read-only composer used
-the retained official LEZ sequencer/indexer and a fresh isolated official
-Monero 0.18.5.1 Regtest daemon, cross-checked finalized block 2281, and emitted
-one canonical unsigned agreement. Independent Maker and Taker processes then
-signed it, assembled commitment `170c23ad...66009`, and atomically published
-byte-identical claim/refund session files. The
-[Stage-A packet](docs/evidence/m4-actual-stage-a-poc-20260720.json) records the
-non-secret identities and hashes. No public RPC, peer, faucet, public funds, or
-external finality service participated. This is real RPC-backed pre-effect
-composition, not a chain mutation or completed swap.
-The role-journal and Stage-B continuation is now GREEN on the same agreement.
-Maker and Taker each used one long-lived owner-private SQLite journal across
-both claim and refund. Both commitment/opening rounds completed; Maker exposed
-its claim and refund partials, Taker exposed only its refund partial, and the
-exact Taker claim partial stayed in its private journal/outbox. The two refund
-presignatures were byte-identical. A Taker-only actor composed the 747-byte
-canonical unsigned Stage B from its single journal, separate Maker and Taker
-processes countersigned it, and assembly produced an 875-byte activation that
-revalidated through `XmrActivatedAgreementV1`. An exact-current replay was
-byte-identical. The
-[Stage-B packet](docs/evidence/m4-actual-stage-b-poc-20260721.json) records only
-non-secret hashes and safety facts. This remains pre-effect evidence: actual
-swaps are still 0 of 1.
-The first effect-bearing M4 actor run is now GREEN. The role-fixed Taker actor
-validated the retained Stage A/B and private view key, derived the funded Taker
-account before RPC, sampled one stable finalized nonce snapshot, and submitted
-Initialize and Fund exactly once each. Initialize transaction `8013ad91...7676`
-finalized in block 3008 before Fund transaction `9b643629...da46` finalized in
-block 3023, both before the signed Maker-XMR funding cutoff. The
-[tag-13 packet](docs/evidence/m4-actual-tag13-poc-20260721.json) binds those
-effects to the actual local chain, checked ProgramID, Stage A, Stage B, stable
-nonce snapshot, and containing block hashes. It explicitly records no Monero
-lock and no atomic-swap claim. Its signed continuation expires at
-`2026-07-21T05:05:40Z`; because the live audit found missing tag-14/tag-15
-composition, it is historical tag-13 evidence only. The happy E2E must use a
-fresh wider-window Stage A/B/tag-13 run after those own-code gaps close.
-The official-wallet effect boundary is now component-GREEN without a custom
-RPC schema: pinned `monero-rpc` 0.5.1 performs one exact funding transfer,
-fixed Regtest confirmations, `generate_from_keys` from the SDK's consumed
-point-checked key, exact unlocked-balance validation, one sweep, and final
-confirmations. The next fresh topology emits separate owner-only RPC and wallet
-password files for each role; credentials and key bytes never enter evidence or
-argv. This 18-test adapter checkpoint has not yet funded the agreement address.
-Fresh actual-local preparer/worker execution, tag-14 submission/finality,
-tag-15 submission/finality, role-local adaptor extraction, and the reconstructed
-official-wallet claim remain before the happy PoC. Refund/punishment
-follow as the next progressive slice. Full sidecar, security, architecture, and
-diff gates remain mandatory before each pushed checkpoint. The
-exact components/RPCs and both target and bootstrap sequences are in
-[ADR 0053](docs/architecture/0053-enter-m4-through-isolated-monero-regtest.md);
-manual run, live inspection, scoped cleanup, and cold-resource flakiness are in
+The exact component/RPC topology and role sequence are in
+[the deployment inventory](docs/architecture/deployment-components-and-rpcs.md)
+and [system architecture](docs/architecture/system-architecture.md). The
+conditional claim argument and evidence boundary are recorded in
+[ADR 0075](docs/architecture/0075-complete-xmr-claim-from-finalized-role-evidence.md).
+The complete fresh-ID operator procedure, external resources, inspection, and
+scoped-cleanup rules are in
 [Flow 0](docs/manual-user-flows.md#flow-0-m4-official-monero-regtest-topology).
 
-The XMR SDK now exposes checked claim/refund session descriptors only from an
-already validated Stage-A agreement. Each descriptor reconstructs the exact
-retained session inside the SDK and rejects purpose, session, message, adaptor,
-key-order, binding, or branch cross-wiring. ADR 0072 requires lifecycle actors
-to validate canonical Stage-A and Stage-B wires and derive tag-13 terms from
-the activation plan rather than accept independent protocol strings. Unsigned
-Stage-A/Stage-B body validation and role-indexed signature attachment are also
-GREEN. The role-fixed Taker tag-13 executable is component-GREEN with 12 actor
-tests plus 5 reusable finalized-facts tests:
-it binds the checked deployment and actor identity, recomputes exact future
-messages from a stable finalized nonce snapshot, and rejects a stale signed
-Maker-funding cutoff before any submission. It submits Initialize once, requires
-exact finalized `Found`, rechecks that cutoff before Fund, then submits Fund
-once; an after-cutoff finalized Fund cannot become success evidence. The retained
-actual-local run finalized Initialize in block 3008 and Fund in block 3023 with
-one accepted submission per effect. Fresh independent Maker/Taker
-provisioning is GREEN in four focused tests, including a two-process CLI E2E:
-each role atomically publishes one manifest-bound owner-only bundle with distinct
-agreement/claim/refund keys and one DLEQ-backed Monero share, while Maker imports
-Taker's view key privately. The same role-fixed binary now validates both
-packets and every private binding before signing Stage A; its public assembler
-accepts only correctly indexed BIP340 signatures. Each role then derives the
-same purpose-separated claim/refund contexts into one complete owner-only
-session directory published by a single no-replace rename. Six actor tests are
-GREEN, including two separate-process Stage-A tests. A third process test now
-drives both sessions through one journal per role, rejects incomplete journals
-and crossed signatures, proves the private Taker claim partial is absent from
-both Stage-B wires, and preserves create-new outputs. Public actual-local Stage A, canonical Stage B, and actual tag 13 have passed;
-tag 14 remains the next chain effect. No swap is claimed.
-
-The fresh checked guest and current host components can be repeated
-independently before the full actor exists; the exact deployer and tag-15
-commands and expected results are in the linked Flow 0:
+The checked guest and focused host components can be repeated independently of
+the actual two-devnet journey. The deployer, focused component commands, and
+full role-correct claim procedure are in the linked Flow 0:
 
 ```sh
 RUN_ID=m4-readme-artifact-20260719a \
@@ -1859,7 +1652,9 @@ identity lookup. DNS, TLS, download host, registry, or Git host outages can
 therefore delay a cold run. The clearsigned hash manifest and signer key are
 retained locally; the 85 MB verified archive cache avoids repeated downloads
 without bypassing provenance checks. Public stagenet peers, sync, funding, and
-reorg behavior remain unmeasured and are not inferred from Regtest.
+reorg behavior remain unmeasured and are not inferred from Regtest. The actual
+M4 claim checkpoint used those real official local processes through loopback,
+not daemon or wallet mocks; its LEZ and Monero runtime resource list is empty.
 
 The M4 checked-artifact runner also records runtime resources as empty. Its
 fresh recursive test opens no RPC or public service, but cold setup can require

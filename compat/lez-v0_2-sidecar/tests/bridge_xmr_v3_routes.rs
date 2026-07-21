@@ -23,15 +23,14 @@ use lez_bridge_client::{
 use lez_bridge_protocol::{
     AggregateBip340Signature, ClassifyFinalizedNativeXmrEffectV3Request,
     CompleteNativeXmrClaimV3Request, CompleteNativeXmrRefundV3Request, DiscoveryWindow, ErrorCode,
-    ExactMessageBytes, ExactTransactionBytes, FinalizedNativeXmrScanOutcomeV3,
-    FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3, Hex32,
-    MessageContext, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
-    PrepareNativeXmrClaimV3Request, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrPunishV3Request, PrepareNativeXmrRefundV3Request, PreparedTransaction,
-    PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest,
-    TransactionId, XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
-    XmrNativeEscrowTermsV3Input,
+    ExactMessageBytes, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
+    FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant,
+    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimV3Request,
+    PrepareNativeXmrEscrowV3Request, PrepareNativeXmrPunishV3Request,
+    PrepareNativeXmrRefundV3Request, PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest, TransactionId,
+    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -236,13 +235,6 @@ fn official_message_hash(bytes: &[u8]) -> Hex32 {
     hasher.update(b"/LEE/v0.3/Message/Public/\x00\x00\x00\x00\x00\x00\x00");
     hasher.update(bytes);
     Hex32::from_bytes(hasher.finalize().into())
-}
-
-fn transaction(byte: u8) -> PreparedTransaction {
-    PreparedTransaction::new(
-        TransactionId::from_bytes([byte; 32]),
-        ExactTransactionBytes::new(vec![byte]).expect("transaction bytes"),
-    )
 }
 
 #[derive(Clone, Copy)]
@@ -982,14 +974,14 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
     );
     assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
 
-    let classification = maker
+    let classification = taker
         .client
         .classify_finalized_native_xmr_effect_v3(ClassifyFinalizedNativeXmrEffectV3Request::new(
-            context(Participant::Maker, "classify-claim"),
-            maker_runtime.clone(),
+            context(Participant::Taker, "classify-claim"),
+            taker_runtime.clone(),
             xmr_terms,
             XmrNativeEffectV3::Claim,
-            FinalizedNativeXmrTransactionTargetV3::exact(transaction(80)),
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
             DiscoveryWindow::new(1, 1).expect("window"),
         ))
         .await
@@ -997,7 +989,7 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
     assert_eq!(
         classification.outcome,
         FinalizedNativeXmrScanOutcomeV3::unavailable(
-            FinalizedNativeXmrUnavailableReasonV3::HistoryUnavailable,
+            FinalizedNativeXmrUnavailableReasonV3::FinalityUnavailable,
         )
     );
 

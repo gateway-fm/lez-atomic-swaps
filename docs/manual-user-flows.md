@@ -2287,132 +2287,43 @@ test-only `--shutdown-on-stdin` flag so the process waits for Ctrl-C.
 
 ## Flow 0: M4 official Monero Regtest topology
 
-First reproduce the deterministic two-share cryptographic component. It uses
-no Docker, node, RPC, peer, faucet, funds, or external network:
+The M4 manual journey has two layers. The deterministic DLEQ spike and focused
+component suites remain useful diagnostics, while the complete happy claim must
+use one same-run Stage A/B, LEZ stack, Monero topology, role journals, and role
+sidecars through every effect:
 
 ```sh
 cargo run --locked -p lez-xmr-swap-sdk --example dleq-spike
 ```
 
 Expected output includes `dleq_verified=true`,
-`both_spend_shares_dleq_verified=true`,
-`reconstructed_spend_key_matches=true`, and
-`private_key_bytes_emitted=false`. The example verifies bounded canonical proof
-exchange for Maker share `s_a` and Taker share `s_b`, derives the same shared
-Monero address from both proofs, and proves both scalar-addition orders. It is a
-component checkpoint, not a node-backed swap.
+`both_spend_shares_dleq_verified=true`, and
+`reconstructed_spend_key_matches=true`. That command is not a chain flow.
 
-Then reproduce the current M4 actual-node infrastructure checkpoint. It
-starts one official Monero 0.18.5.1 `monerod`, plus independent funding,
-Maker, and Taker `monero-wallet-rpc` processes. It mines local Regtest funds,
-submits a real two-destination Monero transaction, requires ten confirmations
-and unlocked 10 XMR balances, seals evidence, and cleans only its run-owned
-resources.
+Working-tree run `m4happy-40cbac3-20260721a` subsequently executed the complete
+native successful-claim branch through real isolated LEZ v0.2 and official
+Monero 0.18.5.1 Regtest processes. The public
+[checkpoint packet](evidence/m4-actual-claim-poc-20260721.json) is explicitly
+pending exact committed-tree replay and cleanup; do not use it as an
+`m4-complete` certification packet.
 
-It is deliberately **not** an atomic-swap demonstration. A separate development
-experiment has already funded the SDK-derived address, reconstructed the spend
-key through official wallet RPC `generate_from_keys`, and submitted a real
-spend after ten confirmations. That proves official-wallet behavior but is not
-yet exposed as a stable one-command user flow. The current component checkpoint
-also has a twice-reproduced checked guest artifact, a strict nine-method
-protocol/server boundary split across the eight ordinary `BridgeClient`
-operations and one release-intended `XmrReleaseClient` operation, an exact
-non-cloneable origin-retaining Monero output observation, and a private-field
-non-`Clone` local-Regtest topology capability. The topology gate
-binds exact run/chain/daemon/target-wallet/foreign-wallet origins, requires
-correct-origin Digest access and exact foreign-credential HTTP 401 at the
-target, and uses bounded 64 KiB typed reads to prove offline trusted fakechain,
-zero peers, empty connections, and typed height-zero genesis. All 16 adapter
-tests plus strict Clippy/Rustdoc/format/diff gates pass. The authenticated
-sidecar server now registers all nine v3 methods and preserves the legacy v2
-routes. The ordinary actor-facing Rust client remains limited to its original
-eight methods; the type-narrowed Taker-bound `XmrReleaseClient` exposes the
-ninth as release-intended. This is not method-level capability enforcement:
-any holder of the raw Taker sidecar bearer can invoke the authenticated RPC
-until the release-service process and network boundary own that capability.
-Its Taker-only `prepare_native_xmr_escrow_v3` route now checks the
-generated v0.2 ABI, exact PDAs/accounts/terms/signers, and consecutive nonces,
-then atomically owner-only persists the exact signed `InitializeNativeXmr` and
-`FundNative` bytes before return. Identical replay after a fresh planner/server
-uses zero nonce reads, and the sequencer send count remains zero. Its official
-`prepare_native_xmr_claim_authorization_v3` route then recomputes the exact
-NUL-terminated commitment, requires and revalidates the durable Fund, derives
-nonce `Fund + 1` without an RPC, checks generated tag 14 and the sole depositor
-signer, and owner-only persists exact authorization bytes before return.
-Fresh/cached replay revalidates durable state; deletion, corruption, drift,
-mutation, conflict, and overflow fail closed. Generic submission rejects this
-reservation, so preparation still makes zero sends. The dedicated
-`submit_native_xmr_claim_authorization_v3` route remains separate: the
-type-narrowed `XmrReleaseClient` presents the release-intended API, while the
-sidecar independently accepts only the exact durable tag-14 authorization and
-writes the request's unknown one-attempt state before node I/O. Raw bearer
-access remains a PoC residual until service and network isolation. Its focused
-matrix passes 3 of 3. Accepted uses one lookup and one send, then same-request
-replay leaves both counters unchanged. Exact byte-identical `AlreadyKnown`
-uses one lookup and zero sends. A wrong official returned ID becomes
-`UnknownSubmissionOutcome` after one lookup and one send; replay leaves both
-counts at one. After deleting the durable authorization reservation, a fresh request ID fails
-before node I/O and leaves the established send count unchanged.
+The actual order was LEZ Initialize/Fund, exact shared-address XMR funding and
+ten confirmations, sealed tag-14 publication/finality, Maker tag-15
+adaptation/publication/finality, Taker extraction, and reconstructed-wallet
+Monero sweep. Only that same-swap causal chain is the successful-claim atomicity
+checkpoint. The signed-refund and punishment branches remain unexecuted.
 
-The Maker-only `prepare_native_xmr_claim_v3` and
-`complete_native_xmr_claim_v3` routes are also component-GREEN. Preparation
-binds the aggregate-authority account/nonce, generated tag-15 ABI and ordered
-accounts, and the immutable claim-message hash before owner-only persistence.
-Completion reloads that exact record, verifies the aggregate BIP340 signature,
-and durably persists one canonical transaction; neither preparation operation
-submits. Generic submission now admits only this exact completed durable tag-15
-claim. The authenticated restart test makes one accepted sequencer send; byte
-or transaction-ID drift and missing/corrupt durable state fail before node I/O.
-Tag 14 remains rejected by generic submission and exclusive to the dedicated
-release route. A fresh server/planner rederives both successful preparation
-results. Wrong reservation, terms, signature, role, runtime, nonce, or hash
-fails closed. The three refund/completion/punishment builders and
-non-Initialize/Fund discovery classification return typed `Unavailable`.
+Every effect command below uses create-new outputs and has no automatic
+submission retry. Use a fresh lowercase run ID, source the fresh LEZ and Monero
+manifests, keep Maker/Taker roots and capabilities separate, and never substitute
+the retained example ports for manifest values. The retained run happened to
+use LEZ ports 33145/33146/33147, sidecars 36967/58993, and Monero ports
+39185/41189/46769/58393; those are evidence facts, not defaults.
 
-The same route binary also proves the tag-13 component. Initialize and Fund use
-request IDs derived from their exact transaction IDs. A fresh arbitrary ID for
-the same Initialize is rejected without changing node counters; Fund first
-checks the exact Initialize predecessor; successful ordered submission ends at
-three lookups and two sends; identical request replay changes neither. A
-premature canonical Fund terminates after one predecessor lookup and zero sends,
-and its replay performs no I/O. A separate case deletes the owner-only pair before first submission and observes
-zero lookup and zero send. These are official-type loopback calls, not an actual
-LEZ node. ADR 0070 now makes that ordering a concrete adapter barrier: an exact
-synthetic finalized-Initialize `Found` mints a private-field non-`Clone`
-capability, and the typed Taker Fund method consumes that capability before
-transport. Accepted admission is insufficient. An actual-local actor still has
-to exercise the same barrier against the official indexer before this counts as
-swap evidence.
-
-The Taker-only exact Initialize/Fund classifier validates the durable target
-before indexer reads. Initialize requires the generated ABI, six ordered
-accounts, the sole depositor signer, historical `Empty` metadata, zero custody,
-and stable candidate/tip/window repins. Fund requires `Funded` metadata and the
-exact amount under the same canonical-finalized and stable-history rules. The
-classifier preserves typed failures and returns every missing case as
-`Uncertain`, never `Absent`. Its focused E2E is trait-backed with a synthetic
-finalized indexer and zero sends. The concrete
-main-process adapter separately has a Taker-only Stage-B claim-authorization
-capability. It re-derives exact Stage B, verifies the committed partial and
-signed runtime before wire, and mints private-field non-`Clone` evidence only
-after one authenticated success. Its literal-loopback server is a mock; ADR
-0063 separately proves the official ABI-validating builder. The public
-schema-v3 release-authority crate passes 35 tests. Its authenticated-loopback
-integration consumes exact Fund, authorization, output, and topology
-capabilities, derives the `[finalized Fund time, signed refund time)` interval,
-and drives the sealed release publisher. A client-runtime mismatch leaves
-`Prepared` with zero clock and RPC calls. The exact binding takes two finalized
-samples, makes one dedicated submission, persists `Admitted`, and a fresh
-store/client restart returns `ObserveOnly` with zero further calls. Raw
-authorization bytes and the generic publication transport never cross the
-public API.
-
-The clock and sidecar in this proof remain in-process literal-loopback fixtures.
-The separate official clock and dedicated submission route are
-component-GREEN, but a release-service process does not yet own preparation,
-key, journal, bearer, and the clock/sidecar paths. Actual-local Fund evidence,
-actual official-indexer and node calls, authorization finality, fresh role
-actors, and both terminal stores remain required before an atomic happy PoC.
+Loopback here is authenticated transport to actual local daemon, wallet,
+sequencer, indexer, and sidecar processes. It is not a mock-chain claim. Runtime
+uses deterministic local genesis/Regtest funds and no public RPC, peer, faucet,
+public funds, or external finality service.
 
 Reproduce the checked LEZ artifact and focused host boundaries with a fresh run
 ID. The optional shared tool directory below is safe only when it already
@@ -2611,8 +2522,9 @@ each exact Vault Claim once. The retained Taker and Maker claims finalized in
 blocks 228 and 240; owner balances remained 200000 and 100000 with nonce one,
 and both Vault balances remained zero. The strict
 [onboarding summary](evidence/m4-local-actor-onboarding-20260720.json) proves
-funded identity/nonce readiness only. Actual role-process lifecycle actors and
-M4 swaps remain 0 of 1.
+funded identity and nonce readiness only. The later working-tree claim packet
+records the separate complete role-process journey; onboarding alone must never
+be relabeled as swap evidence.
 
 ### Verify the M4 tag-13 Taker actor component
 
@@ -2960,8 +2872,8 @@ Expected result is 3 of 3 passed in addition to the four provisioning tests.
 These tests use no Docker, node, RPC, peer, faucet, public endpoint, funds, or
 external finality service. Actual-local Stage A, the canonical role-journal Stage B, and tag 13 are GREEN.
 The exclusive release preparer and both role-local finalized-effect bridges are
-source/component-GREEN; actual Monero funding and tag 14 remain the next pending
-effects.
+source/component-GREEN. The later same-run steps below now execute actual Monero
+funding, tag 14, tag 15, extraction, and the sweep.
 
 ### Execute the one-shot M4 tag-13 effect
 
@@ -2971,7 +2883,8 @@ before its first RPC, validates Stage A/B and the private view-key binding, and
 does not retry either submission automatically:
 
 ```sh
-export M4_TAG13_RUN=m4-tag13-manual-$(git rev-parse --short HEAD)
+export M4_RUN_ID="$RUN_ID"
+export M4_TAG13_RUN="$M4_RUN_ID"
 export M4_TAG13_STATE=/tmp/lez-${M4_TAG13_RUN}
 test ! -e "$M4_TAG13_STATE"
 install -d -m 700 "$M4_TAG13_STATE"
@@ -3030,12 +2943,88 @@ exports separate mode-`0600` RPC username/password and wallet-password file
 paths for funding, Maker, and Taker. Never place those contents on argv or in
 evidence.
 
+### Fund and verify the exact Stage-A Monero output
+
+Continue only with the same fresh Stage A/B and live Monero manifest. Bind the paths produced above, build the typed effect commands, source dynamic endpoints, and reserve new evidence names:
+
+```sh
+export M4_RUN_ID="$RUN_ID"
+export MONERO_RUN_ID="$RUN_ID"
+export M4_PRIVATE_ROOT="$XMR_MATERIAL_ROOT"
+export AGREEMENT_STAGE_A="$XMR_MATERIAL_ROOT/exchange/agreement-stage-a.bin"
+export ACTIVATION_STAGE_B="$XMR_MATERIAL_ROOT/stage-b/stage-b.bin"
+export MAKER_PRIVATE_ROOT="$XMR_MATERIAL_ROOT/material/maker"
+export TAKER_PRIVATE_ROOT="$XMR_MATERIAL_ROOT/material/taker"
+export TAKER_MONERO_VIEW_KEY="$TAKER_PRIVATE_ROOT/monero-view.key"
+export MAKER_CLAIM_JOURNAL="$XMR_MATERIAL_ROOT/stage-b/private/maker.sqlite"
+export TAKER_CLAIM_JOURNAL="$XMR_MATERIAL_ROOT/stage-b/private/taker.sqlite"
+
+test -f "$AGREEMENT_STAGE_A"
+test -f "$ACTIVATION_STAGE_B"
+test -f "$TAKER_CLAIM_JOURNAL"
+test -f ".e2e/${MONERO_RUN_ID}/monero/run.env"
+RAPIDSNARK_LIB_DIR=/absolute/path/to/rapidsnark/lib \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
+cargo +1.96.0 build --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --bin lez-v02-xmr-regtest-fund \
+  --bin lez-v02-xmr-regtest-verify \
+  --bin lez-v02-xmr-regtest-sweep
+
+source ".e2e/${MONERO_RUN_ID}/monero/run.env"
+export MONERO_FUNDING_EVIDENCE="$M4_PRIVATE_ROOT/monero-funding.json"
+test ! -e "$MONERO_FUNDING_EVIDENCE"
+
+compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-fund \
+  --agreement-wire-file "$AGREEMENT_STAGE_A" \
+  --monero-view-key-file "$TAKER_MONERO_VIEW_KEY" \
+  --daemon-url "$MONERO_DAEMON_ENDPOINT" \
+  --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
+  --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
+  --funding-wallet-url "$MONERO_FUNDING_WALLET_ENDPOINT" \
+  --funding-wallet-username-file "$MONERO_FUNDING_RPC_USERNAME_FILE" \
+  --funding-wallet-password-file "$MONERO_FUNDING_RPC_PASSWORD_FILE" \
+  --shared-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
+  --shared-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
+  --shared-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
+  --shared-wallet-file-password-file "$MONERO_MAKER_WALLET_PASSWORD_FILE" \
+  --shared-wallet-filename "${M4_RUN_ID}_shared_view" \
+  --restore-height 0 \
+  --output-evidence "$MONERO_FUNDING_EVIDENCE"
+
+export MONERO_FUNDING_TXID="$(jq -er '.transaction_id' "$MONERO_FUNDING_EVIDENCE")"
+export MONERO_LOCK_VERIFICATION="$M4_PRIVATE_ROOT/monero-lock-verification.json"
+test ! -e "$MONERO_LOCK_VERIFICATION"
+
+compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-verify \
+  --agreement-wire-file "$AGREEMENT_STAGE_A" \
+  --monero-transaction-id "$MONERO_FUNDING_TXID" \
+  --run-id "$M4_RUN_ID" \
+  --daemon-url "$MONERO_DAEMON_ENDPOINT" \
+  --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
+  --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
+  --target-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
+  --target-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
+  --target-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
+  --foreign-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
+  --foreign-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
+  --foreign-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
+  --output-evidence "$MONERO_LOCK_VERIFICATION"
+```
+
+Require exact Stage-A address and amount, at least ten confirmations, one stable
+tip, `peer_count == 0`, and matching authenticated origins. Official Monero
+0.18.5.1 may omit `connections` when it is empty; the verifier accepts that
+wire form only while `get_info` independently reports zero incoming and outgoing
+peers. Do not proceed from transaction submission alone or from a generic Maker
+wallet balance.
+
 ### Prepare one sealed M4 tag-14 release journal
 
-This step is source/component-reproducible now. Its actual-local invocation is
-still pending the fresh happy-path run, so do not count the commands below as a
-swap unless the inputs were produced by the same live two-devnet journey. Build
-the separately locked preparer and publisher:
+This step executed in the working-tree happy claim, but it counts only when every
+input belongs to the same fresh two-devnet journey. Build the separately locked
+preparer and publisher. Existing failed release databases are poison/quarantine
+evidence and must never be deleted and retried as the same attempt:
 
 ```sh
 RAPIDSNARK_LIB_DIR=/absolute/path/to/rapidsnark/lib \
@@ -3055,18 +3044,19 @@ Monero manifest for the daemon/foreign credentials and set the remaining
 same-run values explicitly:
 
 ```sh
-export TAG13_EVIDENCE=/absolute/path/to/m4-xmr-stage-a-tag13-evidence.v2.json
-export TAKER_SIDECAR_URL=http://127.0.0.1:TAKER_SIDECAR_PORT
-export TAKER_SIDECAR_CAPABILITY=/absolute/path/to/taker-sidecar.capability
-export INDEXER_URL=http://127.0.0.1:INDEXER_PORT
-export SHARED_WALLET_ENDPOINT=http://127.0.0.1:SHARED_WALLET_PORT
-export SHARED_WALLET_USERNAME_FILE=/absolute/path/to/shared-wallet.username
-export SHARED_WALLET_PASSWORD_FILE=/absolute/path/to/shared-wallet.password
-export MONERO_FUNDING_TXID=64_lowercase_hex_characters
-export AGREEMENT_STAGE_A=/absolute/path/to/stage-a.bin
-export ACTIVATION_STAGE_B=/absolute/path/to/stage-b.bin
-export TAKER_CLAIM_JOURNAL=/absolute/path/to/taker/claim.json
-export TAKER_MONERO_VIEW_KEY=/absolute/path/to/taker/monero-view.key
+export TAG13_EVIDENCE="$M4_TAG13_STATE/m4-xmr-stage-a-tag13-evidence.v2.json"
+
+# Source the same-run Maker and Taker sidecar manifests. They assign dynamic
+# literal-loopback endpoints, runtime files, and capability-file paths.
+source /absolute/owner-private/maker-sidecar/run.env
+source /absolute/owner-private/taker-sidecar/run.env
+export SHARED_WALLET_ENDPOINT="$MONERO_MAKER_WALLET_ENDPOINT"
+export SHARED_WALLET_USERNAME_FILE="$MONERO_MAKER_RPC_USERNAME_FILE"
+export SHARED_WALLET_PASSWORD_FILE="$MONERO_MAKER_RPC_PASSWORD_FILE"
+
+# Reuse INDEXER_URL, MONERO_FUNDING_TXID, AGREEMENT_STAGE_A,
+# ACTIVATION_STAGE_B, TAKER_CLAIM_JOURNAL, and TAKER_MONERO_VIEW_KEY from the
+# same-run blocks above. Do not substitute a different journal, key, or wire.
 
 export RELEASE_ROOT=/tmp/lez-m4-release-$(git rev-parse --short HEAD)-001
 test ! -e "$RELEASE_ROOT"
@@ -3150,27 +3140,207 @@ compat/lez-v0_2-xmr-release-service/target/debug/lez-v0-2-xmr-release-service \
   --protection-key-file "$RELEASE_ROOT/protection.key"
 ```
 
-Admission is not finality. After exact tag-14 `DiscoverByTerms` finality from
-the Maker sidecar, use `xmr-reference-actor
-complete-claim-from-finalized-authorization`; after exact tag-15
-`DiscoverByTerms` finality from the Taker sidecar, use `xmr-reference-actor
-ingest-finalized-claim-signature`. Each command revalidates the role, Stage A/B,
-journal transcript, run, canonical accounts/message/signature, and rejects
-owner-side `Exact` or cross-role discovery results. Inspect their exact current
-arguments with:
+### Finalize tag 14, publish tag 15, extract, and sweep
+
+Admission is never finality. Build the result-only classifier and role tools,
+then continue from the same role roots and sidecars:
 
 ```sh
-cargo run --locked --offline -p xmr-reference-actor --features sessions -- \
-  complete-claim-from-finalized-authorization --help
-cargo run --locked --offline -p xmr-reference-actor --features sessions -- \
-  ingest-finalized-claim-signature --help
+RAPIDSNARK_LIB_DIR=/absolute/path/to/rapidsnark/lib \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
+cargo +1.96.0 build --locked --offline \
+  --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml \
+  --bin lez-v02-xmr-classify-finalized
+cargo build --locked --offline -p xmr-reference-actor --features sessions \
+  --bin xmr-reference-actor --bin xmr-reference-tag15
+cargo build --locked --offline -p lez-adaptor-role-runner \
+  --bin lez-adaptor-role-runner
+
+export CLASSIFIER=compat/lez-v0_2-xmr-release-service/target/debug/lez-v02-xmr-classify-finalized
+export REFERENCE_ACTOR=target/debug/xmr-reference-actor
+export TAG15_DRIVER=target/debug/xmr-reference-tag15
+export ROLE_RUNNER=target/debug/lez-adaptor-role-runner
+
+# These are same-run paths established by the earlier provisioning and Stage-B steps.
+export XMR_TERMS_JSON="$M4_PRIVATE_ROOT/sidecars/terms.json"
+export MAKER_RUNTIME_JSON="$M4_PRIVATE_ROOT/sidecars/maker-runtime.json"
+export TAKER_RUNTIME_JSON="$M4_PRIVATE_ROOT/sidecars/taker-runtime.json"
+export MAKER_SIDECAR_CAPABILITY="$M4_PRIVATE_ROOT/sidecars/maker.capability"
+export MAKER_PUBLIC_PACKET="$M4_PRIVATE_ROOT/exchange/maker.json"
+export TAKER_PUBLIC_PACKET="$M4_PRIVATE_ROOT/exchange/taker.json"
+export MAKER_CLAIM_JOURNAL="$M4_PRIVATE_ROOT/stage-b/private/maker.sqlite"
+export TAKER_CLAIM_JOURNAL="$M4_PRIVATE_ROOT/stage-b/private/taker.sqlite"
+export TAKER_CLAIM_SESSION_JSON="$M4_PRIVATE_ROOT/material/taker-sessions/claim.json"
+export TAKER_CLAIM_PRESIGNATURE="$M4_PRIVATE_ROOT/stage-b/private/taker-outbox/claim-presignature.json"
 ```
 
-These steps use only literal-loopback LEZ v0.2 and official Monero 0.18.5.1
-Regtest services with deterministic local genesis/Regtest funds. They use no
-public RPC, peer, faucet, public funds, or external finality service. Local node
-cadence and process startup can affect duration; they cannot introduce public
-network flakiness. Cold dependency caches remain a separate availability input.
+Classify tag 14 only through the Maker sidecar and a finite window beginning
+after the finalized Fund. A missing result is `Uncertain`, not evidence of
+absence; repeat a read-only scan only with a new request ID and output file:
+
+```sh
+export TAG14_FINALIZED="$M4_PRIVATE_ROOT/sidecars/tag14-finalized.json"
+export TAG14_SCAN_START="$(jq -er '.funding.containing_block_id + 1' "$TAG13_EVIDENCE")"
+test ! -e "$TAG14_FINALIZED"
+
+"$CLASSIFIER" \
+  --sidecar-endpoint "$MAKER_SIDECAR_URL" \
+  --capability-file "$MAKER_SIDECAR_CAPABILITY" \
+  --runtime-file "$MAKER_RUNTIME_JSON" \
+  --terms-file "$XMR_TERMS_JSON" \
+  --run-id "$M4_RUN_ID" \
+  --request-id "${M4_RUN_ID}-tag14-finality-001" \
+  --role maker --effect authorize-claim \
+  --start-height "$TAG14_SCAN_START" --max-blocks 512 \
+  --output-result "$TAG14_FINALIZED"
+jq -e '.outcome.status == "found" and
+       .outcome.facts.instruction.effect == "authorize_claim"' \
+  "$TAG14_FINALIZED"
+```
+
+The Maker now consumes only that role-correct finalized result, adapts its
+existing journaled claim presignature, and gives the exact final signature to
+the Maker tag-15 driver:
+
+```sh
+export MAKER_FINAL_SIGNATURE="$M4_PRIVATE_ROOT/sidecars/maker-claim-final-signature.json"
+export TAG15_SUBMISSION="$M4_PRIVATE_ROOT/sidecars/tag15-submission.json"
+test ! -e "$MAKER_FINAL_SIGNATURE"
+test ! -e "$TAG15_SUBMISSION"
+
+"$REFERENCE_ACTOR" complete-claim-from-finalized-authorization \
+  --private-root "$MAKER_PRIVATE_ROOT" \
+  --own-public-packet "$MAKER_PUBLIC_PACKET" \
+  --peer-public-packet "$TAKER_PUBLIC_PACKET" \
+  --agreement-stage-a "$AGREEMENT_STAGE_A" \
+  --activation-stage-b "$ACTIVATION_STAGE_B" \
+  --journal "$MAKER_CLAIM_JOURNAL" \
+  --run-id "$M4_RUN_ID" \
+  --finalized-authorization "$TAG14_FINALIZED" \
+  --output-final-signature "$MAKER_FINAL_SIGNATURE"
+
+"$TAG15_DRIVER" \
+  --sidecar-endpoint "$MAKER_SIDECAR_URL" \
+  --capability-file "$MAKER_SIDECAR_CAPABILITY" \
+  --runtime-file "$MAKER_RUNTIME_JSON" \
+  --agreement-wire-file "$AGREEMENT_STAGE_A" \
+  --activation-wire-file "$ACTIVATION_STAGE_B" \
+  --monero-view-key-file "$TAKER_MONERO_VIEW_KEY" \
+  --final-signature-file "$MAKER_FINAL_SIGNATURE" \
+  --run-id "$M4_RUN_ID" \
+  --prepare-request-id "${M4_RUN_ID}-tag15-prepare-001" \
+  --complete-request-id "${M4_RUN_ID}-tag15-complete-001" \
+  --output-evidence "$TAG15_SUBMISSION"
+```
+
+The submission result is admission only. The Taker must independently discover
+the exact tag 15 and prove terminal `claimed` metadata with custody zero:
+
+```sh
+export TAG15_FINALIZED="$M4_PRIVATE_ROOT/sidecars/tag15-finalized.json"
+export TAG15_SCAN_START="$(jq -er '.outcome.facts.containing_block.block_id + 1' "$TAG14_FINALIZED")"
+test ! -e "$TAG15_FINALIZED"
+
+"$CLASSIFIER" \
+  --sidecar-endpoint "$TAKER_SIDECAR_URL" \
+  --capability-file "$TAKER_SIDECAR_CAPABILITY" \
+  --runtime-file "$TAKER_RUNTIME_JSON" \
+  --terms-file "$XMR_TERMS_JSON" \
+  --run-id "$M4_RUN_ID" \
+  --request-id "${M4_RUN_ID}-tag15-finality-001" \
+  --role taker --effect claim \
+  --start-height "$TAG15_SCAN_START" --max-blocks 512 \
+  --output-result "$TAG15_FINALIZED"
+jq -e '.outcome.status == "found" and
+       .outcome.facts.instruction.effect == "claim" and
+       .outcome.facts.metadata.state == "claimed" and
+       .outcome.facts.custody.balance == "0"' "$TAG15_FINALIZED"
+```
+
+Only now may the Taker produce the extraction packet and owner-private scalar.
+Never print, hash into public evidence, or pass that scalar on argv:
+
+```sh
+export TAKER_OBSERVED_SIGNATURE="$M4_PRIVATE_ROOT/sidecars/taker-observed-final-signature.json"
+export EXTRACTED_MAKER_SCALAR="$M4_PRIVATE_ROOT/sidecars/extracted-maker-adaptor.key"
+test ! -e "$TAKER_OBSERVED_SIGNATURE"
+test ! -e "$EXTRACTED_MAKER_SCALAR"
+
+"$REFERENCE_ACTOR" ingest-finalized-claim-signature \
+  --private-root "$TAKER_PRIVATE_ROOT" \
+  --own-public-packet "$TAKER_PUBLIC_PACKET" \
+  --peer-public-packet "$MAKER_PUBLIC_PACKET" \
+  --agreement-stage-a "$AGREEMENT_STAGE_A" \
+  --activation-stage-b "$ACTIVATION_STAGE_B" \
+  --journal "$TAKER_CLAIM_JOURNAL" \
+  --run-id "$M4_RUN_ID" \
+  --finalized-claim "$TAG15_FINALIZED" \
+  --output-final-signature "$TAKER_OBSERVED_SIGNATURE"
+
+"$ROLE_RUNNER" \
+  --journal "$TAKER_CLAIM_JOURNAL" \
+  --session "$TAKER_CLAIM_SESSION_JSON" \
+  taker extract-adaptor-secret \
+  --presignature "$TAKER_CLAIM_PRESIGNATURE" \
+  --final-signature "$TAKER_OBSERVED_SIGNATURE" \
+  --output "$EXTRACTED_MAKER_SCALAR"
+test "$(stat -c %a "$EXTRACTED_MAKER_SCALAR")" = 600
+test "$(stat -c %h "$EXTRACTED_MAKER_SCALAR")" = 1
+```
+
+Finally reconstruct the exact Stage-A key through the SDK and perform one
+official-wallet sweep. The command reserves its evidence before RPC, verifies
+the Taker destination receipt and fee conservation, and emits no scalar:
+
+```sh
+export MONERO_SWEEP_EVIDENCE="$M4_PRIVATE_ROOT/monero-claim-sweep.json"
+test ! -e "$MONERO_SWEEP_EVIDENCE"
+
+compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-sweep \
+  --run-id "$M4_RUN_ID" \
+  --agreement-wire-file "$AGREEMENT_STAGE_A" \
+  --taker-share-file "$TAKER_PRIVATE_ROOT/xmr-share.key" \
+  --extracted-maker-adaptor-scalar-file "$EXTRACTED_MAKER_SCALAR" \
+  --monero-view-key-file "$TAKER_MONERO_VIEW_KEY" \
+  --daemon-url "$MONERO_DAEMON_ENDPOINT" \
+  --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
+  --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
+  --shared-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
+  --shared-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
+  --shared-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
+  --shared-wallet-file-password-file "$MONERO_MAKER_WALLET_PASSWORD_FILE" \
+  --taker-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
+  --taker-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
+  --taker-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
+  --funding-wallet-url "$MONERO_FUNDING_WALLET_ENDPOINT" \
+  --funding-wallet-username-file "$MONERO_FUNDING_RPC_USERNAME_FILE" \
+  --funding-wallet-password-file "$MONERO_FUNDING_RPC_PASSWORD_FILE" \
+  --reconstructed-wallet-filename "${M4_RUN_ID}_reconstructed_claim" \
+  --restore-height 0 \
+  --output-evidence "$MONERO_SWEEP_EVIDENCE"
+
+jq -e '.confirmations >= .required_confirmations and
+       .peer_count == 0 and
+       .funded_amount_piconero ==
+         (.received_amount_piconero + .fee_piconero) and
+       .public_rpc_used == false and .faucet_used == false' \
+  "$MONERO_SWEEP_EVIDENCE"
+```
+
+Assemble a public packet by selecting only transaction IDs, heights, public
+addresses/keys, role/effect order, runtime identities, resource booleans, and
+explicit nonclaims. Exclude capabilities, credential paths and contents,
+wallet passwords, journals, private packets, and the extracted scalar. The
+working-tree example is
+[`m4-actual-claim-poc-20260721.json`](evidence/m4-actual-claim-poc-20260721.json).
+
+After copying and independently verifying the packet, execute only the exact
+cleanup commands printed by the retained LEZ runner and the Monero manifest's
+exact Compose project/file/network/image names. Assert every captured resource
+is absent and the foreign-resource sentinel survives. Never use a global prune,
+label-wide deletion, guessed port, or unrelated container selection. The
+working-tree checkpoint intentionally has `cleanup_attested == false`; do not
+change that field until the fresh committed-tree replay cleans exactly.
 
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and
@@ -3310,9 +3480,10 @@ authenticated typed bridge-protocol sidecar mock; it uses no Docker,
 public RPC, faucet, chain funds, peer, or external finality service. Those
 fixtures prove client decoding, exact call counts, one-attempt publication, and
 durable restart behavior, but cannot prove actual-node consensus or finality.
-The exclusive preparer command above is the current composition boundary; its
-fresh actual-local execution is the next evidence update. Inventing a raw
-journal or authorization flag would bypass the authority being proved.
+The exclusive preparer command above remains the only valid composition
+boundary. The working-tree actual claim executed it before the publisher;
+inventing a raw journal or authorization flag would bypass the authority being
+proved.
 A cold Cargo cache can require crates.io and the pinned Logos execution-zone
 Git tag; `M4_RELEASE_PROCESS_OFFLINE=1` deliberately fails if that cache is
 not already warm.

@@ -1,6 +1,6 @@
 # ADR 0074: Seal XMR release only through exclusive preparation
 
-- Status: Accepted for the M4 progressive PoC component boundary
+- Status: Accepted; exclusive preparation actual-local working-tree GREEN, exact committed replay pending
 - Date: 2026-07-21
 
 ## Context
@@ -132,7 +132,8 @@ transaction spans LEZ and Monero.
   advisories, bans, licenses, and sources pass under the separate lockfile.
 - The CLI exposes paths only and returns a fixed redacted failure message.
 - No public RPC, faucet, peer, public funds, or external finality service is
-  used by these component gates. Actual-local execution remains required.
+  used by these component gates. Working-tree actual-local execution is now
+  evidenced separately.
 
 ## Residuals
 
@@ -147,6 +148,13 @@ transaction spans LEZ and Monero.
 - Existing endpoint construction copies credential text into ordinary strings.
   Short-lived same-host PoC process isolation is accepted; zeroizing transport
   ownership remains production hardening.
-- The actual-local preparer, tag-14 publication/finality, tag-15 effect/finality,
-  adaptor extraction, and reconstructed official-wallet sweep are not yet
-  evidenced, so M4 is not tagged.
+- The working-tree claim evidenced the preparer, tag 14 and tag 15 finality,
+  extraction, and reconstructed-wallet sweep. Exact committed replay, cleanup,
+  signed recovery, literal outputs, and closure gates remain, so M4 is not tagged.
+
+
+## Working-tree actual-local evidence update
+
+The exclusive preparer executed successfully once as fresh state `release3` in the working-tree claim. It proved same-run Stage A/B, finalized Fund, authenticated peerless topology, the exact confirmed Monero output, and the completed Taker journal before creating Prepared state; the separate worker then reached Admitted. Official Monero omitted the empty `connections` field, so the bounded compatibility decoder now treats omission only as empty while `get_info` independently requires zero incoming and outgoing peers. Two failed states are quarantined and were not deleted or reused.
+
+This is not milestone certification. The public packet is [m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json), explicitly pending exact committed-tree replay and scoped cleanup. Signed recovery, F7, U9, D1 XMR, and post-PoC hardening remain.

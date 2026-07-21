@@ -67,15 +67,15 @@ struct Arguments {
 #[tokio::main]
 async fn main() {
     if Box::pin(execute(Arguments::parse())).await.is_err() {
-        eprintln!("XMR release preparation failed");
         std::process::exit(1);
     }
 }
 
 async fn execute(arguments: Arguments) -> Result<(), ()> {
-    let release = read_xmr_release_service_config(&arguments.public_config_file).map_err(|_| ())?;
-    let preparation =
-        read_xmr_release_preparation_config(&arguments.preparation_config_file).map_err(|_| ())?;
+    let release =
+        read_xmr_release_service_config(&arguments.public_config_file).map_err(report_failure)?;
+    let preparation = read_xmr_release_preparation_config(&arguments.preparation_config_file)
+        .map_err(report_failure)?;
     let paths = XmrReleasePreparationPaths {
         agreement_wire_file: arguments.agreement_wire_file,
         activation_wire_file: arguments.activation_wire_file,
@@ -93,8 +93,16 @@ async fn execute(arguments: Arguments) -> Result<(), ()> {
     };
     let report = Box::pin(prepare_xmr_release_service(release, preparation, &paths))
         .await
-        .map_err(|_| ())?;
-    serde_json::to_writer(io::stdout().lock(), &report).map_err(|_| ())?;
+        .map_err(report_failure)?;
+    serde_json::to_writer(io::stdout().lock(), &report).map_err(|_| report_output_failure())?;
     println!();
     io::stdout().flush().map_err(|_| ())
+}
+
+fn report_failure(error: impl std::fmt::Display) {
+    eprintln!("XMR release preparation failed: {error}");
+}
+
+fn report_output_failure() {
+    eprintln!("XMR release preparation result write failed");
 }

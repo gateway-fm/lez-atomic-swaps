@@ -16,8 +16,8 @@ use std::{
 };
 
 use lez_adaptor_role_runner::{
-    Role, ValidatedSession, accept_published_peer_partial_and_adapt,
-    write_observed_final_signature_packet,
+    Role, RunnerError, ValidatedSession, accept_published_peer_partial_and_adapt,
+    verify_extracted_adaptor_secret, write_observed_final_signature_packet,
 };
 use lez_adaptor_signature::{
     AdaptorSessionContext, adapt_presignature, aggregate_adaptor_presignature,
@@ -661,6 +661,82 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
         fs::read(&extracted_adaptor_secret).expect("read extracted scalar"),
         format!("{}\n", hex::encode(ADAPTOR_SECRET)).as_bytes()
     );
+    if matches!(domain, Domain::Lez) {
+        let session =
+            ValidatedSession::from_untweaked_context(fixture.context.clone()).expect("session");
+        let verified = verify_extracted_adaptor_secret(
+            &fixture.taker_journal,
+            &session,
+            Role::Taker,
+            final_signature,
+            &extracted_adaptor_secret,
+        )
+        .expect("exact extracted scalar verifies against durable transcript");
+        let redacted = format!("{verified:?}");
+        assert_eq!(redacted, "VerifiedAdaptorSecret(REDACTED)");
+        assert!(!redacted.contains(&hex::encode(ADAPTOR_SECRET)));
+        assert_eq!(*verified.into_big_endian_bytes(), ADAPTOR_SECRET);
+
+        let mut wrong_signature = final_signature;
+        wrong_signature[63] ^= 1;
+        assert!(matches!(
+            verify_extracted_adaptor_secret(
+                &fixture.taker_journal,
+                &session,
+                Role::Taker,
+                wrong_signature,
+                &extracted_adaptor_secret,
+            ),
+            Err(RunnerError::CryptographicValidation)
+        ));
+
+        let wrong_scalar = directory.join("wrong-extracted-adaptor.key");
+        write_private(
+            &wrong_scalar,
+            format!("{}\n", hex::encode([0x54; 32])).as_bytes(),
+        );
+        assert!(matches!(
+            verify_extracted_adaptor_secret(
+                &fixture.taker_journal,
+                &session,
+                Role::Taker,
+                final_signature,
+                &wrong_scalar,
+            ),
+            Err(RunnerError::CryptographicValidation)
+        ));
+
+        let wrong_context = AdaptorSessionContext::untweaked(
+            fixture.context.ordered_public_keys(),
+            fixture.context.message(),
+            fixture.context.adaptor_point(),
+            [0xfe; 32],
+        )
+        .expect("alternate session context");
+        let wrong_session =
+            ValidatedSession::from_untweaked_context(wrong_context).expect("alternate session");
+        assert!(matches!(
+            verify_extracted_adaptor_secret(
+                &fixture.taker_journal,
+                &wrong_session,
+                Role::Taker,
+                final_signature,
+                &extracted_adaptor_secret,
+            ),
+            Err(RunnerError::SessionUnavailable)
+        ));
+        assert!(matches!(
+            verify_extracted_adaptor_secret(
+                &fixture.taker_journal,
+                &session,
+                Role::Maker,
+                final_signature,
+                &extracted_adaptor_secret,
+            ),
+            Err(RunnerError::JournalRoleOrSessionCrosswire)
+        ));
+    }
+
     let extracted_before_replay =
         fs::read(&extracted_adaptor_secret).expect("read extracted scalar before replay");
     let mut replay_extract = command("taker", &fixture.taker_journal, &fixture.session);

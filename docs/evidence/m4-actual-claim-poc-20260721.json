@@ -1,0 +1,178 @@
+{
+  "schema": "lez-atomic-swaps-m4-actual-local-claim-poc",
+  "version": 1,
+  "result": "passed_working_tree_checkpoint",
+  "date_utc": "2026-07-21",
+  "milestone": "M4",
+  "scope": "one role-correct LEZ-first native-XMR successful-claim journey through actual isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest processes",
+  "certification_status": "pending_exact_committed_tree_replay",
+  "source_binding": {
+    "base_commit": "40cbac3dcdab1e256823387039c9068bc0468e49",
+    "working_tree_used": true,
+    "exact_committed_tree_replay_completed": false,
+    "limitation": "the run exercised later uncommitted source files on top of the named base commit; this packet is a public working-tree checkpoint and must not be treated as clean-commit milestone certification",
+    "implementation_binding": "the future commit containing this packet and the exercised source must be replayed exactly before certification"
+  },
+  "run_id": "m4happy-40cbac3-20260721a",
+  "direction": "taker_sells_lez",
+  "asset": {
+    "lez_kind": "native",
+    "lez_amount": "700",
+    "monero_amount_piconero": 1000000000000
+  },
+  "agreement": {
+    "swap_id": "c89e831abc827033df542fb6f76f992818d90d492fde6686ce2958009d12ffd6",
+    "agreement_commitment": "4e9250289583b54bf5c6708e7e95f2994cd0d573552a2bddbf76c45820ee8cff",
+    "activation_commitment": "23af51cb6fd9e7cf7faa14603517bdb46c05d10373a13e0a6ef7691df3f36d3b",
+    "stage_a_wire_sha256": "09bbf6002b5e98413ad8c2d3ffd544249c81ac7ab9cd9ee553559ae347d17f93",
+    "stage_b_wire_sha256": "826123fbe807c1eb5bf2f65fd4f6bcbb34f5cffc7b668f2c592272b77d752f1d",
+    "claim_message_hash": "98d290f7cd6edd1187abc85580253f0a9141cf5beaa1372e05c6644231dd5a4c",
+    "taker_claim_partial_committed_before_effects": true,
+    "taker_claim_partial_withheld_until_confirmed_monero_funding": true
+  },
+  "runtime": {
+    "lez": {
+      "version": "v0.2 local source-audited stack",
+      "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+      "genesis_block_hash": "8aa42f94d48a342304dd599b194454d4aa4a59182d23e3527e02983a4d31b714",
+      "escrow_program_id": "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82",
+      "example_retained_loopback_ports": {
+        "bedrock": 33145,
+        "sequencer": 33146,
+        "indexer": 33147,
+        "maker_sidecar": 36967,
+        "taker_sidecar": 58993
+      }
+    },
+    "monero": {
+      "version": "0.18.5.1",
+      "network": "fakechain",
+      "offline": true,
+      "peer_count": 0,
+      "example_retained_loopback_ports": {
+        "daemon": 39185,
+        "funding_wallet": 41189,
+        "shared_or_maker_wallet": 46769,
+        "taker_wallet": 58393
+      }
+    },
+    "ports_are_run_specific_examples": true,
+    "runtime_external_resources": []
+  },
+  "ordered_effects": [
+    {
+      "order": 1,
+      "chain": "lez",
+      "effect": "initialize_native_xmr",
+      "role": "taker",
+      "transaction_id": "a85d7850052595f74748e8544b0ac24d287a9f935520a57b65fad226e234d388",
+      "finalized_height": 3953,
+      "submission_outcome": "accepted",
+      "automatic_submission_retry": false
+    },
+    {
+      "order": 2,
+      "chain": "lez",
+      "effect": "fund_native",
+      "role": "taker",
+      "transaction_id": "324cbbc4dce6ac6200c3081281b84efaffcda61b18c462621d1c1a85ff34eb0e",
+      "finalized_height": 3960,
+      "submission_outcome": "accepted",
+      "automatic_submission_retry": false
+    },
+    {
+      "order": 3,
+      "chain": "monero",
+      "effect": "fund_stage_a_shared_address",
+      "role": "maker_funding_boundary",
+      "transaction_id": "de02209c528d10b5b27f922cadd90d7f04dc7e8bf3aded09cdc32a82a8ef8017",
+      "containing_height": 111,
+      "confirmation_tip_height": 120,
+      "required_confirmations": 10,
+      "amount_piconero": 1000000000000,
+      "automatic_submission_retry": false
+    },
+    {
+      "order": 4,
+      "chain": "lez",
+      "effect": "authorize_native_xmr_claim",
+      "role": "taker_release_worker",
+      "transaction_id": "13f9d56e91ed5ed3addf63b4c166ba6619b64e08375f687749193598d37e7f1f",
+      "finalized_height": 4107,
+      "maker_discovery_finalized_tip": 4130,
+      "release_journal_state_after_publication": "admitted",
+      "generic_tag14_submission_closed": true
+    },
+    {
+      "order": 5,
+      "chain": "lez",
+      "effect": "claim_native_xmr",
+      "role": "maker",
+      "transaction_id": "32c0135bdcdd41f5b54dc680257a98269b899bec150c9de93726d4ea12585f8d",
+      "finalized_height": 4208,
+      "taker_discovery_finalized_tip": 4220,
+      "submission_outcome": "accepted",
+      "metadata_state": "claimed",
+      "terminal_custody_balance": "0",
+      "automatic_submission_retry": false
+    },
+    {
+      "order": 6,
+      "chain": "monero",
+      "effect": "reconstructed_spend_key_sweep",
+      "role": "taker",
+      "transaction_id": "6c8c7bca4ea51fbeafd22b5396efc2c631948ca893385d4cebb436d070e8e21a",
+      "confirmation_tip_height": 130,
+      "required_confirmations": 10,
+      "funded_principal_piconero": 1000000000000,
+      "automatic_submission_retry": false
+    }
+  ],
+  "role_and_atomicity_evidence": {
+    "taker_first_lez_lock_finalized_before_monero_funding": true,
+    "tag14_published_only_after_exact_monero_output_confirmation": true,
+    "maker_consumed_canonical_finalized_tag14": true,
+    "tag15_finalized_signature_matched_maker_packet": true,
+    "final_signature_packet_sha256": "c408333ed4d25536eeae5d2bc1f812c1dc2edefbd371f1fdc92d79a5b17b1ea3",
+    "maker_adaptor_share_extracted_only_after_finalized_tag15": true,
+    "extracted_scalar_or_hash_in_public_evidence": false,
+    "reconstructed_public_spend_key": "9a02c56a882319b4f7bd1306d4e42c3af27c57c970ce47f90d24e410040eb955",
+    "successful_claim_branch_conditionally_atomic": true,
+    "distributed_cross_chain_transaction_claimed": false,
+    "signed_refund_branch_executed": false,
+    "punishment_branch_executed": false,
+    "literal_both_refund_conformance_claimed": false
+  },
+  "release_preparation": {
+    "successful_fresh_state": "release3",
+    "successful_durable_state_before_worker": "prepared",
+    "successful_durable_state_after_worker": "admitted",
+    "quarantined_failed_state_directories": 2,
+    "quarantined_states_reused_or_deleted": false,
+    "compatibility_fix": "official Monero 0.18.5.1 may omit the connections field when the list is empty; omission is accepted only as empty while get_info independently proves zero incoming and outgoing peers"
+  },
+  "artifact_binding": {
+    "execution_binary_hashes_retained": false,
+    "reason": "post-run rebuilds changed the wallet-effect evidence schemas, so current binary hashes are not asserted as the hashes of the binaries that produced this working-tree packet; exact source and binary binding is deferred to the committed-tree replay"
+  },
+  "resource_and_secret_boundary": {
+    "public_rpc_used": false,
+    "peer_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "external_finality_service_used": false,
+    "credentials_or_private_keys_in_packet": false,
+    "cleanup_attested": false,
+    "cleanup_status": "retained_for_exact_committed_tree_replay_and_review"
+  },
+  "remaining_before_m4_completion_tag": [
+    "exact committed-tree replay and clean pushed-commit evidence",
+    "reproducible one-command or fully rehearsed operator runner with scoped cleanup attestation",
+    "signed tag-16 refund and tag-17 punishment actual-node paths",
+    "native plus two independent custom-token F7 parity",
+    "self-hosted and public Monero Stagenet U9 guide and CI lane",
+    "happy refund and concurrent XMR D1 videos",
+    "post-PoC QA chaos information-security production-readiness and review gates"
+  ],
+  "m4_complete_tag_authorized": false
+}

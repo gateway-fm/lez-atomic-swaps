@@ -1,6 +1,6 @@
 # ADR 0068: Isolate the XMR release worker from the full LEZ sidecar graph
 
-- Status: Accepted for the M4 process checkpoint
+- Status: Accepted; process gates and one actual-local working-tree publication GREEN
 - Date: 2026-07-20
 
 ## Context
@@ -187,16 +187,23 @@ require crates.io and the pinned official Git source.
 
 ## Residuals
 
-- ADR 0074 supplies a separate exclusive one-shot preparer; its actual-local
-  execution and different-UID isolation remain pending.
+- ADR 0074 supplies the exclusive preparer; working-tree actual-local execution
+  is GREEN, while exact committed replay and different-UID isolation remain.
 - The source boundary does not by itself prove a different UID, mount
   namespace, or network namespace. The later isolated runtime lane must deny the
   actor access to the credential paths, sidecar, indexer, and sequencer.
 - The pinned official v0.2 genesis block ID is one. A later Logos version
   requires an explicit compatibility update and fresh tests, not silent reuse.
-- Actual-local tag 13 is GREEN. Fresh Monero funding, preparer/publisher
-  execution, authorization finality, LEZ tag-15 completion, the reconstructed
-  wallet sweep, and the M4 swap remain.
+- The working-tree claim executed fresh Monero funding, preparer/publisher,
+  authorization finality, LEZ tag 15, extraction, and the wallet sweep. Exact
+  committed replay, signed recovery, and M4 closure remain.
 - The root adapter graph still carries pre-existing upstream deprecation
   warnings. The worker is clean under strict no-deps lint; dependency warnings
   remain tracked separately from worker-owned code.
+
+
+## Working-tree actual-local evidence update
+
+The separately locked worker now has one actual local working-tree publication in addition to its fixture gates. It consumed the fresh sealed `release3` database and made the tag-14 attempt used by the successful claim. Two failed preparation states remain quarantined. This does not prove different-UID/network isolation or production custody.
+
+This is not milestone certification. The public packet is [m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json), explicitly pending exact committed-tree replay and scoped cleanup. Signed recovery, F7, U9, D1 XMR, and post-PoC hardening remain.

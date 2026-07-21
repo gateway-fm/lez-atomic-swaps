@@ -1,9 +1,9 @@
 # ADR 0053: Enter M4 through isolated Monero Regtest
 
-Status: Accepted. The official-node Regtest topology, its run/chain/origin-bound
-authentication capability, and locally mined wallet-to-wallet funding
-checkpoint are executable and evidenced. No atomic LEZ/XMR swap is claimed
-yet.
+Status: Accepted. The official-node topology now supports one actual local
+working-tree successful-claim checkpoint. Exact committed-tree replay, scoped
+cleanup, signed recovery, and milestone closure remain; only the successful
+LEZ-first branch is evidenced.
 
 ## Context
 
@@ -316,3 +316,10 @@ timeouts, fees, and flake/coverage measurement. The literal M4 gate then adds
 the U9 self-hosted/public stagenet guide, self-hosted stagenet CI lane, three D1
 videos, synchronized traceability/review evidence, all security/license/image
 gates, clean push, and annotated `m4-complete` tag.
+
+
+## Working-tree actual-local evidence update
+
+The official-node topology is now consumed by one same-run working-tree successful claim. Actual LEZ Initialize/Fund, exact confirmed Monero funding, sealed tag 14, finalized Maker tag 15, Taker extraction, and the official-wallet sweep all executed. This supersedes the earlier no-complete-swap status only for the successful local branch.
+
+This is not milestone certification. The public packet is [m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json), explicitly pending exact committed-tree replay and scoped cleanup. Signed recovery, F7, U9, D1 XMR, and post-PoC hardening remain.

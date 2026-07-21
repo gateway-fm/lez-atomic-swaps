@@ -62,6 +62,8 @@ impl ConfirmedMoneroFunding {
 pub struct ConfirmedMoneroSweep {
     transaction_id: MoneroTransactionId,
     funded_amount_piconero: u64,
+    received_amount_piconero: u64,
+    fee_piconero: u64,
     confirmation_tip_height: u64,
 }
 
@@ -76,6 +78,18 @@ impl ConfirmedMoneroSweep {
     #[must_use]
     pub const fn funded_amount_piconero(&self) -> u64 {
         self.funded_amount_piconero
+    }
+
+    /// Exact amount delivered to the Taker destination after the fee.
+    #[must_use]
+    pub const fn received_amount_piconero(&self) -> u64 {
+        self.received_amount_piconero
+    }
+
+    /// Exact fee charged by the sole sweep transaction.
+    #[must_use]
+    pub const fn fee_piconero(&self) -> u64 {
+        self.fee_piconero
     }
 
     /// Height returned after generating the fixed local confirmation count.
@@ -121,6 +135,28 @@ impl MoneroRegtestWalletEffects {
             daemon_origin: daemon.base_url.clone(),
             wallet_origin: wallet.base_url.clone(),
         })
+    }
+
+    /// Returns the currently open wallet's primary standard address.
+    ///
+    /// The typed wallet RPC is restricted to account zero and address index
+    /// zero. The returned account address is then rejected unless it is a
+    /// standard address, making it suitable for the destination and local
+    /// Regtest-mining boundaries in this module.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed if the typed wallet query fails or the wallet returns a
+    /// non-standard primary address.
+    pub async fn primary_standard_address(&self) -> Result<Address, MoneroWalletEffectError> {
+        let address = self
+            .wallet
+            .get_address(WALLET_ACCOUNT_INDEX, Some(vec![0]))
+            .await
+            .map_err(|_| MoneroWalletEffectError::Rpc("current wallet primary address"))?
+            .address;
+        validate_standard_address(&address)?;
+        Ok(address)
     }
 
     /// Submits one exact transfer and locally generates ten confirmation blocks.
@@ -173,6 +209,104 @@ impl MoneroRegtestWalletEffects {
         })
     }
 
+    /// Funds the exact Stage-A shared address and locally generates ten
+    /// confirmation blocks.
+    ///
+    /// This is the typed shared-address counterpart to
+    /// [`Self::fund_exact_and_confirm`]. It keeps callers from reparsing the
+    /// SDK-validated address through a second public API boundary.
+    ///
+    /// # Errors
+    ///
+    /// Fails before submission if the validated SDK address cannot be parsed as
+    /// a standard Monero address, and otherwise preserves the exact funding
+    /// method's fail-closed behavior.
+    pub async fn fund_shared_exact_and_confirm(
+        &self,
+        destination: &MoneroSharedAddressV1,
+        amount_piconero: u64,
+    ) -> Result<ConfirmedMoneroFunding, MoneroWalletEffectError> {
+        let destination = parse_shared_standard_address(destination)?;
+        self.fund_exact_and_confirm(destination, amount_piconero)
+            .await
+    }
+
+    /// Closes the current wallet and restores the exact Stage-A shared address
+    /// as an official view-only wallet.
+    ///
+    /// All caller-controlled configuration and the private/public view-key
+    /// binding are validated before the current wallet is closed. The private
+    /// view key is consumed and handed directly to the typed wallet client;
+    /// `spendkey` is deliberately `None`, so the resulting wallet cannot spend.
+    /// This method does not refresh. Call [`Self::refresh_from_height`] after
+    /// the funding transfer has been confirmed.
+    ///
+    /// # Errors
+    ///
+    /// Fails before the first RPC for an unsafe filename/password, malformed or
+    /// non-standard shared address, mismatched private view key, or invalid key
+    /// representation. Fails closed if closing or generating the wallet fails,
+    /// or if wallet RPC returns an address other than the exact Stage-A address.
+    pub async fn restore_shared_view_only(
+        &self,
+        expected_address: &MoneroSharedAddressV1,
+        private_view_key: MoneroPrivateViewKey,
+        wallet_filename: String,
+        wallet_password: String,
+        restore_height: u64,
+    ) -> Result<(), MoneroWalletEffectError> {
+        validate_wallet_filename(&wallet_filename)?;
+        if !valid_credential(&wallet_password, true) {
+            return Err(MoneroWalletEffectError::InvalidWalletPassword);
+        }
+        let address = parse_shared_standard_address(expected_address)?;
+        validate_shared_view_key(expected_address.public_view_key(), &private_view_key)?;
+        let view_bytes = private_view_key.into_monero_little_endian();
+        let view_key = PrivateKey::from_slice(&*view_bytes)
+            .map_err(|_| MoneroWalletEffectError::InvalidPrivateKey)?;
+
+        self.wallet
+            .close_wallet()
+            .await
+            .map_err(|_| MoneroWalletEffectError::Rpc("close current wallet"))?;
+        let created = self
+            .wallet
+            .generate_from_keys(GenerateFromKeysArgs {
+                restore_height: Some(restore_height),
+                filename: wallet_filename,
+                address,
+                spendkey: None,
+                viewkey: view_key,
+                password: wallet_password,
+                autosave_current: Some(true),
+            })
+            .await
+            .map_err(|_| MoneroWalletEffectError::Rpc("generate shared view-only wallet"))?;
+        if created.address != address {
+            return Err(MoneroWalletEffectError::RestoredAddressMismatch);
+        }
+        Ok(())
+    }
+
+    /// Refreshes the currently open wallet from one exact chain height.
+    ///
+    /// This separate effect lets an operator fund and confirm the shared output
+    /// before asking the newly created view-only wallet to scan for it.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed if the typed wallet refresh operation fails.
+    pub async fn refresh_from_height(
+        &self,
+        restore_height: u64,
+    ) -> Result<(), MoneroWalletEffectError> {
+        self.wallet
+            .refresh(Some(restore_height))
+            .await
+            .map_err(|_| MoneroWalletEffectError::Rpc("refresh current wallet"))?;
+        Ok(())
+    }
+
     /// Restores the point-checked shared wallet, verifies its sole unlocked
     /// principal, submits one sweep, and locally mines ten confirmation blocks.
     ///
@@ -205,11 +339,8 @@ impl MoneroRegtestWalletEffects {
         validate_standard_address(&mining_address)?;
         let expected_amount =
             NonZeroU64::new(expected_amount_piconero).ok_or(MoneroWalletEffectError::ZeroAmount)?;
-        let address: Address = expected_address
-            .address_string()
-            .parse()
-            .map_err(|_| MoneroWalletEffectError::InvalidSharedAddress)?;
-        validate_standard_address(&address)?;
+        let address = parse_shared_standard_address(expected_address)?;
+        validate_shared_view_key(expected_address.public_view_key(), &private_view_key)?;
 
         let spend_bytes = reconstructed_spend_key.into_monero_little_endian();
         let view_bytes = private_view_key.into_monero_little_endian();
@@ -278,6 +409,8 @@ impl MoneroRegtestWalletEffects {
         if sweep.tx_hash_list.len() != 1 {
             return Err(MoneroWalletEffectError::SplitSweepUnsupported);
         }
+        let (received_amount_piconero, fee_piconero) =
+            validate_sweep_accounting(&sweep.amount_list, &sweep.fee_list, expected_amount.get())?;
         let transaction_id = sweep
             .tx_hash_list
             .into_iter()
@@ -288,6 +421,8 @@ impl MoneroRegtestWalletEffects {
         Ok(ConfirmedMoneroSweep {
             transaction_id,
             funded_amount_piconero: expected_amount.get(),
+            received_amount_piconero,
+            fee_piconero,
             confirmation_tip_height,
         })
     }
@@ -353,6 +488,9 @@ pub enum MoneroWalletEffectError {
     /// Point-checked private key could not be represented by the maintained client.
     #[error("reconstructed Monero private key is invalid")]
     InvalidPrivateKey,
+    /// Private view key does not open the exact Stage-A shared address.
+    #[error("private Monero view key differs from the agreed shared address")]
+    PrivateViewKeyMismatch,
     /// Official wallet returned an address different from the agreed address.
     #[error("restored Monero wallet address differs from the agreed shared address")]
     RestoredAddressMismatch,
@@ -365,14 +503,57 @@ pub enum MoneroWalletEffectError {
     /// Sweep response was empty or exceeded the semantic bound.
     #[error("Monero sweep transaction count is invalid")]
     InvalidSweepTransactionCount,
+    /// Sweep amount and fee vectors must each describe the sole transaction.
+    #[error("Monero sweep accounting entry count is invalid")]
+    InvalidSweepAccountingCount,
+    /// The sole delivered amount plus fee must equal the exact unlocked principal.
+    #[error("Monero sweep amount and fee do not partition the exact principal")]
+    SweepAccountingMismatch,
     /// A multi-transaction sweep is outside the first vertical `PoC`.
     #[error("split Monero sweep is unsupported by the first vertical PoC")]
     SplitSweepUnsupported,
 }
 
+fn validate_sweep_accounting(
+    amounts: &[Amount],
+    fees: &[Amount],
+    expected_principal: u64,
+) -> Result<(u64, u64), MoneroWalletEffectError> {
+    if amounts.len() != 1 || fees.len() != 1 {
+        return Err(MoneroWalletEffectError::InvalidSweepAccountingCount);
+    }
+    let amount = amounts[0].as_pico();
+    let fee = fees[0].as_pico();
+    if amount == 0 || fee == 0 || amount.checked_add(fee) != Some(expected_principal) {
+        return Err(MoneroWalletEffectError::SweepAccountingMismatch);
+    }
+    Ok((amount, fee))
+}
+
 fn validate_standard_address(address: &Address) -> Result<(), MoneroWalletEffectError> {
     if address.addr_type != AddressType::Standard {
         return Err(MoneroWalletEffectError::NonStandardAddress);
+    }
+    Ok(())
+}
+
+fn parse_shared_standard_address(
+    address: &MoneroSharedAddressV1,
+) -> Result<Address, MoneroWalletEffectError> {
+    let parsed = address
+        .address_string()
+        .parse()
+        .map_err(|_| MoneroWalletEffectError::InvalidSharedAddress)?;
+    validate_standard_address(&parsed)?;
+    Ok(parsed)
+}
+
+fn validate_shared_view_key(
+    expected_public_view_key: [u8; 32],
+    private_view_key: &MoneroPrivateViewKey,
+) -> Result<(), MoneroWalletEffectError> {
+    if private_view_key.public_key() != expected_public_view_key {
+        return Err(MoneroWalletEffectError::PrivateViewKeyMismatch);
     }
     Ok(())
 }
@@ -393,6 +574,34 @@ fn validate_wallet_filename(filename: &str) -> Result<(), MoneroWalletEffectErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use monero_rpc::monero::{Network, PublicKey};
+
+    fn address(address_type: AddressType) -> Address {
+        let mut spend = [0_u8; 32];
+        spend[0] = 1;
+        let mut view = [0_u8; 32];
+        view[0] = 2;
+        let spend = PrivateKey::from_slice(&spend).expect("canonical private spend scalar");
+        let view = PrivateKey::from_slice(&view).expect("canonical private view scalar");
+        Address {
+            network: Network::Mainnet,
+            addr_type: address_type,
+            public_spend: PublicKey::from_private_key(&spend),
+            public_view: PublicKey::from_private_key(&view),
+        }
+    }
+
+    #[test]
+    fn primary_wallet_address_must_be_standard() {
+        assert_eq!(
+            validate_standard_address(&address(AddressType::Standard)),
+            Ok(())
+        );
+        assert_eq!(
+            validate_standard_address(&address(AddressType::SubAddress)),
+            Err(MoneroWalletEffectError::NonStandardAddress)
+        );
+    }
 
     #[test]
     fn wallet_filename_is_one_safe_component() {
@@ -403,5 +612,76 @@ mod tests {
                 Err(MoneroWalletEffectError::InvalidWalletFilename)
             );
         }
+        assert_eq!(
+            validate_wallet_filename(&"a".repeat(MAX_WALLET_FILENAME_BYTES + 1)),
+            Err(MoneroWalletEffectError::InvalidWalletFilename)
+        );
+    }
+
+    #[test]
+    fn shared_private_view_key_must_match_stage_a_public_key() {
+        let mut first_bytes = [0_u8; 32];
+        first_bytes[0] = 1;
+        let first = MoneroPrivateViewKey::from_monero_little_endian(first_bytes)
+            .expect("canonical first private view key");
+        let expected_public = first.public_key();
+        assert_eq!(validate_shared_view_key(expected_public, &first), Ok(()));
+
+        let mut second_bytes = [0_u8; 32];
+        second_bytes[0] = 2;
+        let second = MoneroPrivateViewKey::from_monero_little_endian(second_bytes)
+            .expect("canonical second private view key");
+        assert_eq!(
+            validate_shared_view_key(expected_public, &second),
+            Err(MoneroWalletEffectError::PrivateViewKeyMismatch)
+        );
+    }
+
+    #[test]
+    fn shared_wallet_password_uses_bounded_printable_credential_policy() {
+        assert!(valid_credential("view-only:password", true));
+        for invalid in ["", "contains space", "contains\nnewline"] {
+            assert!(!valid_credential(invalid, true));
+        }
+        assert!(!valid_credential(
+            &"x".repeat(super::super::MAX_CREDENTIAL_BYTES + 1),
+            true
+        ));
+    }
+
+    #[test]
+    fn sweep_accounting_requires_one_exact_principal_partition() {
+        let amount = Amount::from_pico(999_000);
+        let fee = Amount::from_pico(1_000);
+        assert_eq!(
+            validate_sweep_accounting(&[amount], &[fee], 1_000_000),
+            Ok((999_000, 1_000))
+        );
+    }
+
+    #[test]
+    fn sweep_accounting_rejects_missing_split_and_mismatched_values() {
+        let amount = Amount::from_pico(999_000);
+        let fee = Amount::from_pico(1_000);
+        assert_eq!(
+            validate_sweep_accounting(&[], &[fee], 1_000_000),
+            Err(MoneroWalletEffectError::InvalidSweepAccountingCount)
+        );
+        assert_eq!(
+            validate_sweep_accounting(&[amount, amount], &[fee, fee], 1_000_000),
+            Err(MoneroWalletEffectError::InvalidSweepAccountingCount)
+        );
+        assert_eq!(
+            validate_sweep_accounting(&[amount], &[fee], 2_000_000),
+            Err(MoneroWalletEffectError::SweepAccountingMismatch)
+        );
+        assert_eq!(
+            validate_sweep_accounting(
+                &[Amount::from_pico(u64::MAX)],
+                &[Amount::from_pico(1)],
+                u64::MAX
+            ),
+            Err(MoneroWalletEffectError::SweepAccountingMismatch)
+        );
     }
 }
