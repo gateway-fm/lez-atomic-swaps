@@ -1324,10 +1324,19 @@ publish_tag14_release() {
 classify_tag14_finality() {
   record_phase tag14_finality started
   readonly tag14_finality_result="${evidence_root}/tag14-finalized.json"
-  local maker_endpoint start_height
+  local maker_endpoint start_height attempt result_tmp
   maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
   start_height="$(jq -er '.funding.containing_block_id + 1' "$tag13_internal")"
-  "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag14-finality-001" --role maker --effect authorize-claim --start-height "$start_height" --max-blocks 8 --output-result "$tag14_finality_result"
+  result_tmp="${tag14_finality_result}.attempt"
+  for attempt in {1..120}; do
+    rm -f "$result_tmp"
+    "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag14-finality-${attempt}" --role maker --effect authorize-claim --start-height "$start_height" --max-blocks 8 --output-result "$result_tmp" || true
+    if jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="authorize_claim"' "$result_tmp" >/dev/null 2>&1; then
+      mv "$result_tmp" "$tag14_finality_result"
+      break
+    fi
+    sleep .25
+  done
   require_owner_file "$tag14_finality_result" "Tag14 finality result"
   jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="authorize_claim"' "$tag14_finality_result" >/dev/null || fail "Tag14 finality result is incomplete"
   record_phase tag14_finality completed
@@ -1355,10 +1364,19 @@ publish_tag15() {
 classify_tag15_finality() {
   record_phase tag15_finality started
   readonly tag15_finality_result="${evidence_root}/tag15-finalized.json"
-  local taker_endpoint start_height
+  local taker_endpoint start_height attempt result_tmp
   taker_endpoint="$(jq -er '.endpoint' "$taker_sidecar_root/pid-manifest.json")"
   start_height="$(jq -er '.outcome.facts.containing_block.block_id + 1' "$tag14_finality_result")"
-  "$classifier_binary" --sidecar-endpoint "$taker_endpoint" --capability-file "$taker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/taker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag15-finality-001" --role taker --effect claim --start-height "$start_height" --max-blocks 8 --output-result "$tag15_finality_result"
+  result_tmp="${tag15_finality_result}.attempt"
+  for attempt in {1..120}; do
+    rm -f "$result_tmp"
+    "$classifier_binary" --sidecar-endpoint "$taker_endpoint" --capability-file "$taker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/taker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag15-finality-${attempt}" --role taker --effect claim --start-height "$start_height" --max-blocks 8 --output-result "$result_tmp" || true
+    if jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="claim" and .outcome.facts.metadata.state=="claimed" and .outcome.facts.custody.balance=="0"' "$result_tmp" >/dev/null 2>&1; then
+      mv "$result_tmp" "$tag15_finality_result"
+      break
+    fi
+    sleep .25
+  done
   require_owner_file "$tag15_finality_result" "Tag15 finality result"
   jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="claim" and .outcome.facts.metadata.state=="claimed" and .outcome.facts.custody.balance=="0"' "$tag15_finality_result" >/dev/null || fail "Tag15 finality result is incomplete"
   record_phase tag15_finality completed
