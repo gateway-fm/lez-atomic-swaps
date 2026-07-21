@@ -211,11 +211,12 @@ inspect_deployments() {
   printf '%s\n' "$count"
 }
 
-for _ in {1..1200}; do
+for _ in {1..3600}; do
   pre_tip="$(tip)"
   (( pre_tip >= 80 )) && break
   sleep .25
 done
+(( pre_tip >= 80 )) || fail "finalized prehistory did not reach 80 blocks"
 readonly pre_tip
 readonly scan_file="$M4_LEZ_EVIDENCE_ROOT/.scan-block.json"
 ((pre_tip<=max_finality_blocks)) || fail "pre-deployment finalized history exceeded scan bound"
