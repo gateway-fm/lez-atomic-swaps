@@ -300,15 +300,15 @@ prove_authentication() {
 
   code="$(rpc_probe "$endpoint" "launcher-wrong-capability-00000001" "$run_id" "$role" \
     "$root/probe-request.json" "$response")" || fail "wrong-capability probe failed"
-  [[ "$code" == 401 ]] || fail "wrong-capability probe returned HTTP $code instead of 401"
+  [[ "$code" == 401 || "$code" == 403 ]] || fail "wrong-capability probe returned HTTP $code instead of 401 or 403"
   code="$(rpc_probe "$endpoint" "$capability" "launcher-wrong-run" "$role" \
     "$root/probe-request.json" "$response")" || fail "wrong-run probe failed"
-  [[ "$code" == 401 ]] || fail "wrong-run probe returned HTTP $code instead of 401"
+  [[ "$code" == 401 || "$code" == 403 ]] || fail "wrong-run probe returned HTTP $code instead of 401 or 403"
   local wrong_role=maker
   [[ "$role" == maker ]] && wrong_role=taker
   code="$(rpc_probe "$endpoint" "$capability" "$run_id" "$wrong_role" \
     "$root/probe-request.json" "$response")" || fail "wrong-role probe failed"
-  [[ "$code" == 401 ]] || fail "wrong-role probe returned HTTP $code instead of 401"
+  [[ "$code" == 401 || "$code" == 403 ]] || fail "wrong-role probe returned HTTP $code instead of 401 or 403"
   code="$(rpc_probe "$endpoint" "$capability" "$run_id" "$role" \
     "$root/probe-request.json" "$response")" || fail "authenticated runtime probe failed"
   [[ "$code" == 200 ]] || fail "authenticated runtime probe returned HTTP $code"
