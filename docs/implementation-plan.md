@@ -3034,9 +3034,9 @@ complete. The replay runner source/contract now composes the official Monero chi
 agreement and separate role journals, durable tag-13 no-retry latch, exact
 finalized tag 13, typed four-artifact handoff, both role sidecars through
 readiness, and local Monero fund/verify evidence. It has not been cleanly
-replayed from the current commit. Next, wire release/Tag14 and the retained
+replayed from the current commit. Next, generate the same-run release configuration and wire release/Tag14 and the retained
 successful-claim tail, publish synchronized
-evidence, and prove ledgered/label-revalidated scoped cleanup. Remaining
+evidence, and prove ledgered/label-revalidated scoped cleanup. The remaining work is implementation-owned; no Logos or external dependency is currently blocking it. Remaining
 runner/PoC implementation is estimated at 1 to 3 focused hours. After that
 implementation is complete,
 budget 25 to 45 minutes for one warm exact-commit replay or 1 to 3 hours for a
