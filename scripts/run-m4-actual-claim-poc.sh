@@ -673,7 +673,7 @@ build_identity_and_artifact() {
   record_resource ephemeral_path "$workspace_target" "$workspace_target"
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
-      --bin xmr-reference-actor
+      --bin xmr-reference-actor --bin xmr-reference-tag15
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p lez-adaptor-role-runner \
       --bin lez-adaptor-role-runner
@@ -688,6 +688,7 @@ build_identity_and_artifact() {
   record_resource ephemeral_path "$staged_binary_root" "$staged_binary_root"
   mkdir -m 0700 "$staged_binary_root"
   readonly agreement_actor_binary="${staged_binary_root}/xmr-reference-actor"
+  readonly tag15_binary="${staged_binary_root}/xmr-reference-tag15"
   readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
   readonly agreement_composer_binary="${staged_binary_root}/lez-v02-xmr-stage-a-compose"
   readonly tag13_binary="${staged_binary_root}/lez-v02-xmr-stage-a-poc"
@@ -700,6 +701,7 @@ build_identity_and_artifact() {
   readonly classifier_binary="${staged_binary_root}/lez-v02-xmr-classify-finalized"
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
+  stage_executable "${workspace_target}/debug/xmr-reference-tag15" "$tag15_binary" "Tag15 driver"
   stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
     "$agreement_role_runner_binary" "agreement role runner"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-stage-a-compose" \
