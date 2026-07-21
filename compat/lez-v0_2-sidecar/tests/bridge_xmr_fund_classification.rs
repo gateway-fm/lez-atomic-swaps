@@ -14,7 +14,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use borsh::to_vec;
+use borsh::{BorshDeserialize as _, to_vec};
 use indexer_service_protocol::{
     Account as IndexedAccount, AccountId as IndexedAccountId, BedrockStatus, Block, BlockBody,
     BlockHeader, Data as IndexedData, HashType, ProgramId as IndexedProgramId,
@@ -25,23 +25,27 @@ use indexer_service_protocol::{
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability};
 use lez_bridge_protocol::{
-    ClassifyFinalizedNativeXmrEffectV3Request, DiscoveryWindow, ErrorCode,
-    FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant,
-    PrepareNativeXmrEscrowV3Request, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    AggregateBip340Signature, ClassifyFinalizedNativeXmrEffectV3Request,
+    CompleteNativeXmrClaimV3Request, DiscoveryWindow, ErrorCode, FinalizedNativeXmrScanOutcomeV3,
+    FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3, Hex32,
+    MessageContext, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrClaimV3Request, PrepareNativeXmrEscrowV3Request, RequestId, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, XmrClaimPartialV3, XmrNativeEffectV3,
+    XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3, XmrNativeEscrowTermsV3,
+    XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
     FinalizedIndexerApi, HistoricalAccount, NativeEscrowPlanner, NativePrepareError, NonceSource,
-    OfficialNodeRpc, compute_custody_pda, compute_metadata_pda, decode_prepared_for_signer,
-    prepared_from_transaction, program_id_to_hex, start_bridge_server,
+    OfficialNodeRpc, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
+    decode_prepared_for_signer, prepared_from_transaction, program_id_to_hex, start_bridge_server,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{
-    AccountId, PrivateKey, PublicKey, PublicTransaction, Signature, public_transaction::WitnessSet,
+    AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
+    public_transaction::{Message, WitnessSet},
 };
+use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
 const CAPABILITY: &str = "xmr-fund-classifier-capability-0001";
@@ -51,6 +55,8 @@ const TRANSFER_PROGRAM: [u32; 8] = [0x5060_7080; 8];
 const SWAP_ID: [u8; 32] = [51; 32];
 const FUNDING_BLOCK: u64 = 10;
 const FINALIZED_END: u64 = 11;
+const CLAIM_PARTIAL_COMMITMENT_DOMAIN: &[u8] =
+    b"logos.gateway.lez-xmr.claim-partial-commitment.v1\0";
 
 #[derive(Debug)]
 struct CountingNonce {
@@ -260,36 +266,49 @@ fn runtime(signer: AccountId) -> RuntimeDescriptor {
     runtime_for(Participant::Taker, signer)
 }
 
+fn claim_partial_commitment(context_binding: Hex32, claim_partial: [u8; 32]) -> Hex32 {
+    let mut hasher = Sha256::new();
+    hasher.update(CLAIM_PARTIAL_COMMITMENT_DOMAIN);
+    hasher.update(context_binding.as_bytes());
+    hasher.update(claim_partial);
+    Hex32::from_bytes(hasher.finalize().into())
+}
+
 fn terms(depositor: AccountId, claimant: AccountId) -> XmrNativeEscrowTermsV3 {
-    let (claim_authority, _, claim_key) = account(23);
-    let (refund_authority, _, refund_key) = account(24);
+    let (claim_authority, _, claim_public) = account(23);
+    let (refund_authority, _, refund_public) = account(24);
+    let metadata = compute_metadata_pda(&ESCROW_PROGRAM, &SWAP_ID);
+    let custody = compute_custody_pda(&ESCROW_PROGRAM, &SWAP_ID);
+    let claim_message = Message::try_new(
+        ESCROW_PROGRAM,
+        vec![metadata, custody, claimant, claim_authority],
+        vec![41_u128.into()],
+        ZecEscrowInstruction::ClaimNativeXmr { swap_id: SWAP_ID },
+    )
+    .expect("canonical tag-15 message");
     XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
         swap_id: Hex32::from_bytes(SWAP_ID),
         activation_commitment: h(2),
         escrow_program_id: program_id_to_hex(ESCROW_PROGRAM),
         authenticated_transfer_program_id: program_id_to_hex(TRANSFER_PROGRAM),
-        metadata_account_id: Hex32::from_bytes(
-            compute_metadata_pda(&ESCROW_PROGRAM, &SWAP_ID).into_value(),
-        ),
-        custody_account_id: Hex32::from_bytes(
-            compute_custody_pda(&ESCROW_PROGRAM, &SWAP_ID).into_value(),
-        ),
+        metadata_account_id: Hex32::from_bytes(metadata.into_value()),
+        custody_account_id: Hex32::from_bytes(custody.into_value()),
         depositor: Participant::Taker,
         depositor_account_id: Hex32::from_bytes(depositor.into_value()),
         claimant: Participant::Maker,
         claimant_account_id: Hex32::from_bytes(claimant.into_value()),
-        claim_aggregate_x_only_public_key: Hex32::from_bytes(*claim_key.value()),
+        claim_aggregate_x_only_public_key: Hex32::from_bytes(*claim_public.value()),
         claim_authority_account_id: Hex32::from_bytes(claim_authority.into_value()),
-        refund_aggregate_x_only_public_key: Hex32::from_bytes(*refund_key.value()),
+        refund_aggregate_x_only_public_key: Hex32::from_bytes(*refund_public.value()),
         refund_authority_account_id: Hex32::from_bytes(refund_authority.into_value()),
         maker_dleq_transcript_commitment: h(13),
         taker_dleq_transcript_commitment: h(14),
         claim_partial_context_binding: h(15),
-        claim_partial_commitment: h(16),
+        claim_partial_commitment: claim_partial_commitment(h(15), [77; 32]),
         amount: 75,
         refund_at_ms: 10_000,
         punish_at_ms: 20_000,
-        claim_message_hash: h(17),
+        claim_message_hash: Hex32::from_bytes(claim_message.hash()),
         refund_message_hash: h(18),
         punish_message_hash: h(19),
     })
@@ -436,6 +455,54 @@ fn metadata(xmr_terms: &XmrNativeEscrowTermsV3, status: EscrowStatus) -> EscrowM
         refund_at: input.refund_at_ms,
         status,
     }
+}
+
+fn finalized_effect_indexer(
+    prepared: &lez_bridge_protocol::PreparedTransaction,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    signer: AccountId,
+    status: EscrowStatus,
+    custody_balance: u128,
+) -> Arc<FixtureIndexer> {
+    let public = decode_prepared_for_signer(prepared, signer).expect("exact public transaction");
+    let effect_block = finalized_block(
+        FUNDING_BLOCK,
+        vec![Transaction::Public(indexed_public(&public))],
+    );
+    let end_block = finalized_block(FINALIZED_END, Vec::new());
+    let input = xmr_terms.to_input();
+    let accounts = BTreeMap::from([
+        (
+            (*input.metadata_account_id.as_bytes(), FUNDING_BLOCK),
+            HistoricalAccount::Present(IndexedAccount {
+                program_owner: IndexedProgramId(ESCROW_PROGRAM),
+                balance: 0,
+                data: IndexedData(to_vec(&metadata(xmr_terms, status)).expect("metadata encoding")),
+                nonce: 0,
+            }),
+        ),
+        (
+            (*input.custody_account_id.as_bytes(), FUNDING_BLOCK),
+            HistoricalAccount::Present(IndexedAccount {
+                program_owner: IndexedProgramId(TRANSFER_PROGRAM),
+                balance: custody_balance,
+                data: IndexedData(Vec::new()),
+                nonce: 0,
+            }),
+        ),
+    ]);
+    Arc::new(FixtureIndexer {
+        blocks: BTreeMap::from([
+            (FUNDING_BLOCK, effect_block.clone()),
+            (FINALIZED_END, end_block.clone()),
+        ]),
+        by_hash: BTreeMap::from([
+            (effect_block.header.hash.0, effect_block),
+            (end_block.header.hash.0, end_block),
+        ]),
+        accounts,
+        calls: Mutex::new(Vec::new()),
+    })
 }
 
 fn finalized_indexer(
@@ -1611,6 +1678,274 @@ async fn authenticated_exact_persisted_fund_requires_stable_finalized_history() 
 
     assert_eq!(sends.load(Ordering::SeqCst), 0);
 
+    node.stop().expect("node stops");
+    node.stopped().await;
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one actor-realistic journey keeps both owner and counterparty finalized paths joined"
+)]
+async fn tag_14_and_tag_15_are_classified_by_owner_and_counterparty() {
+    let directory = TempDir::new().expect("state root");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).expect("private root");
+    let taker_directory = directory.path().join("taker-planner");
+    let maker_directory = directory.path().join("maker-planner");
+    for planner_directory in [&taker_directory, &maker_directory] {
+        fs::create_dir(planner_directory).expect("planner directory");
+        fs::set_permissions(planner_directory, fs::Permissions::from_mode(0o700))
+            .expect("private planner directory");
+    }
+
+    let (depositor, depositor_key, _) = account(21);
+    let (claimant, claimant_key, _) = account(22);
+    let (claim_authority, claim_authority_key, _) = account(23);
+    let taker_runtime = runtime_for(Participant::Taker, depositor);
+    let maker_runtime = runtime_for(Participant::Maker, claimant);
+    let xmr_terms = terms(depositor, claimant);
+    let taker_nonce = Arc::new(CountingNonce {
+        value: 41,
+        calls: AtomicUsize::new(0),
+    });
+    let maker_nonce = Arc::new(CountingNonce {
+        value: 41,
+        calls: AtomicUsize::new(0),
+    });
+    let taker_planner = Arc::new(
+        NativeEscrowPlanner::new_durable(
+            Participant::Taker,
+            depositor_key,
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            taker_runtime.clone(),
+            Arc::clone(&taker_nonce),
+            &taker_directory,
+        )
+        .expect("taker planner"),
+    );
+    let maker_planner = Arc::new(
+        NativeEscrowPlanner::new_durable(
+            Participant::Maker,
+            claimant_key,
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            maker_runtime.clone(),
+            Arc::clone(&maker_nonce),
+            &maker_directory,
+        )
+        .expect("maker planner"),
+    );
+
+    let _ = taker_planner
+        .prepare_native_xmr_escrow_v3(&prepare_request(taker_runtime.clone(), &xmr_terms))
+        .await
+        .expect("durable tag-13 prerequisite");
+    let authorization_request = PrepareNativeXmrClaimAuthorizationV3Request::new(
+        MessageContext::new(
+            RunId::new(RUN_ID).expect("run id"),
+            RequestId::new("tag14-prepare").expect("request id"),
+            Participant::Taker,
+        ),
+        taker_runtime.clone(),
+        xmr_terms,
+        XmrClaimPartialV3::new([77; 32]).expect("claim partial"),
+    );
+    let authorization = taker_planner
+        .prepare_native_xmr_claim_authorization_v3(&authorization_request)
+        .await
+        .expect("durable tag-14 authorization")
+        .authorization;
+
+    let claim_prepare_request = PrepareNativeXmrClaimV3Request::new(
+        MessageContext::new(
+            RunId::new(RUN_ID).expect("run id"),
+            RequestId::new("tag15-prepare").expect("request id"),
+            Participant::Maker,
+        ),
+        maker_runtime.clone(),
+        xmr_terms,
+    );
+    let claim_prepare = maker_planner
+        .prepare_native_xmr_claim_v3(&claim_prepare_request)
+        .await
+        .expect("durable tag-15 preparation");
+    let claim_message = Message::try_from_slice(claim_prepare.claim.exact_message_bytes.as_slice())
+        .expect("canonical tag-15 message");
+    let aggregate_signature = AggregateBip340Signature::from_bytes(
+        Signature::new(&claim_authority_key, &claim_message.hash()).value,
+    );
+    let claim_completion_request = CompleteNativeXmrClaimV3Request::new(
+        MessageContext::new(
+            RunId::new(RUN_ID).expect("run id"),
+            RequestId::new("tag15-complete").expect("request id"),
+            Participant::Maker,
+        ),
+        maker_runtime.clone(),
+        xmr_terms,
+        claim_prepare.claim,
+        aggregate_signature,
+    )
+    .expect("tag-15 completion request");
+    let claim = maker_planner
+        .complete_native_xmr_claim_v3(&claim_completion_request)
+        .await
+        .expect("durable completed tag-15 claim")
+        .claim;
+
+    let (node_endpoint, node, sends) = start_node().await;
+    for (id, descriptor, planner, target) in [
+        (
+            "tag14-owner-exact",
+            taker_runtime.clone(),
+            Arc::clone(&taker_planner),
+            FinalizedNativeXmrTransactionTargetV3::exact(authorization.clone()),
+        ),
+        (
+            "tag14-counterparty-discovery",
+            maker_runtime.clone(),
+            Arc::clone(&maker_planner),
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        ),
+    ] {
+        let indexer = finalized_effect_indexer(
+            &authorization,
+            &xmr_terms,
+            depositor,
+            EscrowStatus::XmrClaimAuthorized,
+            xmr_terms.to_input().amount,
+        );
+        let (client, bridge) = start_classifier_sidecar(
+            directory.path(),
+            id,
+            descriptor.clone(),
+            planner,
+            &node_endpoint,
+            indexer,
+        )
+        .await;
+        let classified = client
+            .classify_finalized_native_xmr_effect_v3(
+                ClassifyFinalizedNativeXmrEffectV3Request::new(
+                    MessageContext::new(
+                        RunId::new(RUN_ID).expect("run id"),
+                        RequestId::new(id).expect("request id"),
+                        descriptor.sidecar_role,
+                    ),
+                    descriptor,
+                    xmr_terms,
+                    XmrNativeEffectV3::AuthorizeClaim,
+                    target,
+                    DiscoveryWindow::new(FUNDING_BLOCK, 2).expect("window"),
+                ),
+            )
+            .await
+            .expect("tag-14 finalized classification");
+        let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = classified.outcome else {
+            panic!("tag-14 must be found")
+        };
+        let input = xmr_terms.to_input();
+        assert_eq!(
+            facts.transaction.transaction_id,
+            authorization.transaction_id
+        );
+        assert_eq!(facts.transaction.exact_bytes, authorization.exact_bytes);
+        assert_eq!(facts.instruction.effect, XmrNativeEffectV3::AuthorizeClaim);
+        assert_eq!(facts.instruction.published_claim_partial, Some(h(77)));
+        assert_eq!(
+            facts.instruction.ordered_account_ids.as_slice(),
+            [input.metadata_account_id, input.depositor_account_id]
+        );
+        assert_eq!(
+            facts.transaction.signer_account_ids.as_slice(),
+            [input.depositor_account_id]
+        );
+        assert_eq!(facts.aggregate_signature, None);
+        assert_eq!(
+            facts.metadata.state,
+            XmrNativeEscrowStateV3::ClaimAuthorized
+        );
+        assert_eq!(facts.custody.balance.as_u128(), input.amount);
+        bridge.stop().await.expect("tag-14 sidecar stops");
+    }
+
+    for (id, descriptor, planner, target) in [
+        (
+            "tag15-owner-exact",
+            maker_runtime.clone(),
+            Arc::clone(&maker_planner),
+            FinalizedNativeXmrTransactionTargetV3::exact(claim.clone()),
+        ),
+        (
+            "tag15-counterparty-discovery",
+            taker_runtime.clone(),
+            Arc::clone(&taker_planner),
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        ),
+    ] {
+        let indexer = finalized_effect_indexer(
+            &claim,
+            &xmr_terms,
+            claim_authority,
+            EscrowStatus::Claimed,
+            0,
+        );
+        let (client, bridge) = start_classifier_sidecar(
+            directory.path(),
+            id,
+            descriptor.clone(),
+            planner,
+            &node_endpoint,
+            indexer,
+        )
+        .await;
+        let classified = client
+            .classify_finalized_native_xmr_effect_v3(
+                ClassifyFinalizedNativeXmrEffectV3Request::new(
+                    MessageContext::new(
+                        RunId::new(RUN_ID).expect("run id"),
+                        RequestId::new(id).expect("request id"),
+                        descriptor.sidecar_role,
+                    ),
+                    descriptor,
+                    xmr_terms,
+                    XmrNativeEffectV3::Claim,
+                    target,
+                    DiscoveryWindow::new(FUNDING_BLOCK, 2).expect("window"),
+                ),
+            )
+            .await
+            .expect("tag-15 finalized classification");
+        let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = classified.outcome else {
+            panic!("tag-15 must be found")
+        };
+        let input = xmr_terms.to_input();
+        assert_eq!(facts.transaction.transaction_id, claim.transaction_id);
+        assert_eq!(facts.transaction.exact_bytes, claim.exact_bytes);
+        assert_eq!(facts.instruction.effect, XmrNativeEffectV3::Claim);
+        assert_eq!(facts.instruction.message_hash, input.claim_message_hash);
+        assert_eq!(
+            facts.instruction.ordered_account_ids.as_slice(),
+            [
+                input.metadata_account_id,
+                input.custody_account_id,
+                input.claimant_account_id,
+                input.claim_authority_account_id,
+            ]
+        );
+        assert_eq!(
+            facts.transaction.signer_account_ids.as_slice(),
+            [input.claim_authority_account_id]
+        );
+        assert_eq!(facts.aggregate_signature, Some(aggregate_signature));
+        assert_eq!(facts.metadata.state, XmrNativeEscrowStateV3::Claimed);
+        assert_eq!(facts.custody.balance.as_u128(), 0);
+        bridge.stop().await.expect("tag-15 sidecar stops");
+    }
+
+    assert_eq!(taker_nonce.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(maker_nonce.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 0);
     node.stop().expect("node stops");
     node.stopped().await;
 }

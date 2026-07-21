@@ -35,6 +35,19 @@ use zeroize::{Zeroize as _, Zeroizing};
 const XMR_CLAIM_PARTIAL_COMMITMENT_DOMAIN: &[u8] =
     b"logos.gateway.lez-xmr.claim-partial-commitment.v1\0";
 
+pub(crate) fn xmr_claim_partial_matches_terms(
+    terms: &XmrNativeEscrowTermsV3,
+    claim_partial: &[u8; 32],
+) -> bool {
+    let terms = terms.to_input();
+    let mut hasher = Sha256::new();
+    hasher.update(XMR_CLAIM_PARTIAL_COMMITMENT_DOMAIN);
+    hasher.update(terms.claim_partial_context_binding.as_bytes());
+    hasher.update(claim_partial);
+    let commitment: [u8; 32] = hasher.finalize().into();
+    commitment == *terms.claim_partial_commitment.as_bytes()
+}
+
 #[cfg(target_os = "linux")]
 use crate::durable_reservation::{
     DurableReservationError, DurableReservationStore, ReservationKind,
@@ -177,6 +190,18 @@ pub trait NonceSource: Send + Sync {
 struct ActivePrepare {
     request: PrepareNativeEscrowRequest,
     result: PrepareNativeEscrowResult,
+}
+
+fn xmr_effect_owner(effect: XmrNativeEffectV3) -> Result<Participant, NativePrepareError> {
+    match effect {
+        XmrNativeEffectV3::Initialize
+        | XmrNativeEffectV3::Fund
+        | XmrNativeEffectV3::AuthorizeClaim => Ok(Participant::Taker),
+        XmrNativeEffectV3::Claim => Ok(Participant::Maker),
+        XmrNativeEffectV3::Refund | XmrNativeEffectV3::Punish => {
+            Err(NativePrepareError::InvalidTransactionBytes)
+        }
+    }
 }
 
 #[derive(Default)]
@@ -3007,12 +3032,7 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::WrongDepositorRole);
         }
         self.validate_xmr_terms_v3_binding(&request.context, &request.runtime, &request.terms)?;
-        let mut hasher = Sha256::new();
-        hasher.update(XMR_CLAIM_PARTIAL_COMMITMENT_DOMAIN);
-        hasher.update(terms.claim_partial_context_binding.as_bytes());
-        hasher.update(request.claim_partial.expose_secret());
-        let commitment: [u8; 32] = hasher.finalize().into();
-        if commitment != *terms.claim_partial_commitment.as_bytes() {
+        if !xmr_claim_partial_matches_terms(&request.terms, request.claim_partial.expose_secret()) {
             return Err(NativePrepareError::WrongXmrClaimPartial);
         }
         Ok(())
@@ -3117,8 +3137,8 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
-    /// Proves that an exact XMR Initialize or Fund target is retained by this
-    /// Taker owner-only durable v3 escrow reservation.
+    /// Proves that an exact XMR effect target is retained by this actor's
+    /// owner-only durable v3 reservation.
     ///
     /// The classification request has its own request identifier, so ownership
     /// is bound by run, role, runtime, terms, effect, and exact prepared bytes
@@ -3128,7 +3148,7 @@ impl NativeEscrowPlanner {
     ///
     /// # Errors
     ///
-    /// Rejects an unsupported effect, non-Taker planner, missing or invalid
+    /// Rejects an unsupported effect, wrong-role planner, missing or invalid
     /// durable state, run, runtime, terms, transaction-ID, or exact-byte drift.
     pub(crate) fn validate_owned_xmr_effect_v3(
         &self,
@@ -3138,17 +3158,18 @@ impl NativeEscrowPlanner {
         effect: XmrNativeEffectV3,
         target: &PreparedTransaction,
     ) -> Result<(), NativePrepareError> {
-        if self.role != Participant::Taker
-            || context.sidecar_role != Participant::Taker
-            || runtime.sidecar_role != Participant::Taker
+        self.validate_xmr_terms_v3_binding(context, runtime, terms)?;
+        let expected_role = xmr_effect_owner(effect)?;
+        if self.role != expected_role
+            || context.sidecar_role != expected_role
+            || runtime.sidecar_role != expected_role
         {
             return Err(NativePrepareError::WrongRole);
         }
-        self.validate_xmr_terms_v3_binding(context, runtime, terms)?;
-        if !matches!(
-            effect,
-            XmrNativeEffectV3::Initialize | XmrNativeEffectV3::Fund
-        ) {
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = target;
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
 
@@ -3158,33 +3179,108 @@ impl NativeEscrowPlanner {
                 .durable_store
                 .as_ref()
                 .ok_or(NativePrepareError::InvalidTransactionBytes)?;
-            let (stored_request, stored_result) = store
-                .load::<PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result>(
-                    ReservationKind::XmrNativeEscrowV3,
-                )?
-                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
-            self.validate_prepared_native_xmr_escrow_v3(&stored_request, &stored_result)?;
-            let stored_target = match effect {
-                XmrNativeEffectV3::Initialize => &stored_result.initialization,
-                XmrNativeEffectV3::Fund => &stored_result.funding,
-                _ => return Err(NativePrepareError::InvalidTransactionBytes),
-            };
-            if stored_request.context.run_id != context.run_id
-                || stored_request.context.sidecar_role != context.sidecar_role
-                || &stored_request.runtime != runtime
-                || &stored_request.terms != terms
-                || stored_target != target
-            {
-                return Err(NativePrepareError::InvalidTransactionBytes);
+            match effect {
+                XmrNativeEffectV3::Initialize | XmrNativeEffectV3::Fund => {
+                    let (stored_request, stored_result) = store
+                        .load::<PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result>(
+                            ReservationKind::XmrNativeEscrowV3,
+                        )?
+                        .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                    self.validate_prepared_native_xmr_escrow_v3(&stored_request, &stored_result)?;
+                    let stored_target = match effect {
+                        XmrNativeEffectV3::Initialize => &stored_result.initialization,
+                        XmrNativeEffectV3::Fund => &stored_result.funding,
+                        _ => unreachable!("effect is narrowed above"),
+                    };
+                    if stored_request.context.run_id != context.run_id
+                        || stored_request.context.sidecar_role != context.sidecar_role
+                        || &stored_request.runtime != runtime
+                        || &stored_request.terms != terms
+                        || stored_target != target
+                    {
+                        return Err(NativePrepareError::InvalidTransactionBytes);
+                    }
+                }
+                XmrNativeEffectV3::AuthorizeClaim => {
+                    let (stored_request, stored_result) = store
+                        .load::<
+                            PrepareNativeXmrClaimAuthorizationV3Request,
+                            PrepareNativeXmrClaimAuthorizationV3Result,
+                        >(ReservationKind::XmrNativeClaimAuthorizationV3)?
+                        .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                    self.validate_prepared_native_xmr_claim_authorization_v3(
+                        &stored_request,
+                        &stored_result,
+                    )?;
+                    if stored_request.context.run_id != context.run_id
+                        || stored_request.context.sidecar_role != context.sidecar_role
+                        || &stored_request.runtime != runtime
+                        || &stored_request.terms != terms
+                        || &stored_result.authorization != target
+                    {
+                        return Err(NativePrepareError::InvalidTransactionBytes);
+                    }
+                }
+                XmrNativeEffectV3::Claim => {
+                    let (prepare_request, prepare_result) = store
+                        .load::<PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result>(
+                            ReservationKind::XmrNativeClaimV3,
+                        )?
+                        .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                    let (completion_request, completion_result) = store
+                        .load::<CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result>(
+                            ReservationKind::XmrNativeClaimCompletionV3,
+                        )?
+                        .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                    let active = ActiveXmrClaimPrepareV3 {
+                        request: prepare_request,
+                        result: prepare_result,
+                    };
+                    self.validate_completed_native_xmr_claim_v3(
+                        &active,
+                        &completion_request,
+                        &completion_result,
+                    )?;
+                    if active.request.context.run_id != context.run_id
+                        || active.request.context.sidecar_role != context.sidecar_role
+                        || &active.request.runtime != runtime
+                        || &active.request.terms != terms
+                        || &completion_result.claim != target
+                    {
+                        return Err(NativePrepareError::InvalidTransactionBytes);
+                    }
+                }
+                XmrNativeEffectV3::Refund | XmrNativeEffectV3::Punish => {
+                    return Err(NativePrepareError::InvalidTransactionBytes);
+                }
             }
             Ok(())
         }
+    }
 
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = target;
-            Err(NativePrepareError::InvalidTransactionBytes)
+    /// Proves that this actor may discover the counterparty-owned effect by
+    /// exact terms without claiming ownership of the transaction bytes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid bindings and all role/effect pairs except Maker reading
+    /// tag 14 and Taker reading tag 15.
+    pub(crate) fn validate_xmr_effect_discovery_v3(
+        &self,
+        context: &MessageContext,
+        runtime: &RuntimeDescriptor,
+        terms: &XmrNativeEscrowTermsV3,
+        effect: XmrNativeEffectV3,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_xmr_terms_v3_binding(context, runtime, terms)?;
+        if !matches!(
+            (self.role, effect),
+            (Participant::Maker, XmrNativeEffectV3::AuthorizeClaim)
+                | (Participant::Taker, XmrNativeEffectV3::Claim)
+        ) {
+            return Err(NativePrepareError::WrongRole);
         }
+        Ok(())
     }
 
     fn validate_request(
