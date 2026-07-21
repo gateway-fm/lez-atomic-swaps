@@ -1330,7 +1330,7 @@ classify_tag14_finality() {
   result_tmp="${tag14_finality_result}.attempt"
   for attempt in {1..600}; do
     rm -f "$result_tmp"
-    "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag14-finality-${attempt}" --role maker --effect authorize-claim --start-height "$start_height" --max-blocks 64 --output-result "$result_tmp" || true
+    "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag14-finality-${attempt}" --role maker --effect authorize-claim --start-height "$start_height" --max-blocks 16 --output-result "$result_tmp" || true
     if jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="authorize_claim"' "$result_tmp" >/dev/null 2>&1; then
       mv "$result_tmp" "$tag14_finality_result"
       break
@@ -1370,7 +1370,7 @@ classify_tag15_finality() {
   result_tmp="${tag15_finality_result}.attempt"
   for attempt in {1..600}; do
     rm -f "$result_tmp"
-    "$classifier_binary" --sidecar-endpoint "$taker_endpoint" --capability-file "$taker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/taker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag15-finality-${attempt}" --role taker --effect claim --start-height "$start_height" --max-blocks 64 --output-result "$result_tmp" || true
+    "$classifier_binary" --sidecar-endpoint "$taker_endpoint" --capability-file "$taker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/taker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag15-finality-${attempt}" --role taker --effect claim --start-height "$start_height" --max-blocks 16 --output-result "$result_tmp" || true
     if jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="claim" and .outcome.facts.metadata.state=="claimed" and .outcome.facts.custody.balance=="0"' "$result_tmp" >/dev/null 2>&1; then
       mv "$result_tmp" "$tag15_finality_result"
       break
