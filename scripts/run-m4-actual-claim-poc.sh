@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "tag14_finality",
+      implemented_execute_through: "tag15_signature",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -77,6 +77,9 @@ emit_contract() {
       tag14_finality_implemented: true,
       tag14_finality_reachable_in_execute: true,
       tag14_finality_executed_in_certifying_replay: false,
+      tag15_signature_implemented: true,
+      tag15_signature_reachable_in_execute: true,
+      tag15_signature_executed_in_certifying_replay: false,
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
@@ -1304,6 +1307,14 @@ classify_tag14_finality() {
   record_phase tag14_finality completed
 }
 
+prepare_tag15_signature() {
+  record_phase tag15_prepare started
+  readonly maker_final_signature="${private_root}/tag14-release/maker-final-signature.json"
+  "$agreement_actor_binary" complete-claim-from-finalized-authorization --private-root "${agreement_root}/material/maker" --own-public-packet "${agreement_root}/exchange/maker.json" --peer-public-packet "${agreement_root}/exchange/taker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/maker.sqlite" --run-id "$run_id" --finalized-authorization "$tag14_finality_result" --output-final-signature "$maker_final_signature"
+  require_owner_file "$maker_final_signature" "Maker final-signature packet"
+  record_phase tag15_prepare completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1328,7 +1339,8 @@ execute_run() {
   prepare_tag14_release
   publish_tag14_release
   classify_tag14_finality
-  fail "tag15 phase is not implemented; Tag14 finality completed; do not retry this run"
+  prepare_tag15_signature
+  fail "tag15 publication is not implemented; Maker final signature prepared; do not retry this run"
 }
 
 mode="${1:-}"
