@@ -3034,8 +3034,8 @@ complete. The replay runner source/contract now composes the official Monero chi
 agreement and separate role journals, durable tag-13 no-retry latch, exact
 finalized tag 13, typed four-artifact handoff, both role sidecars through
 readiness, and local Monero fund/verify evidence. It has not been cleanly
-replayed from the current commit. Next, generate the same-run release configuration and wire release/Tag14 and the retained
-successful-claim tail, publish synchronized
+replayed from the current commit. The runner now generates same-run release configuration and invokes the typed Tag14 preparer; publisher, finalized-Tag14 observation, and the retained
+successful-claim tail remain, publish synchronized
 evidence, and prove ledgered/label-revalidated scoped cleanup. The remaining work is implementation-owned; no Logos or external dependency is currently blocking it. Remaining
 runner/PoC implementation is estimated at 1 to 3 focused hours. After that
 implementation is complete,
