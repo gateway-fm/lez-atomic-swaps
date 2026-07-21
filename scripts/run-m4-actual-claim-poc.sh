@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "extraction",
+      implemented_execute_through: "extraction_scalar",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -89,6 +89,9 @@ emit_contract() {
       extraction_implemented: true,
       extraction_reachable_in_execute: true,
       extraction_executed_in_certifying_replay: false,
+      extraction_scalar_implemented: true,
+      extraction_scalar_reachable_in_execute: true,
+      extraction_scalar_executed_in_certifying_replay: false,
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
@@ -1357,6 +1360,14 @@ extract_claim_signature() {
   record_phase extraction completed
 }
 
+extract_adaptor_scalar() {
+  record_phase extraction_scalar started
+  readonly extracted_maker_scalar="${private_root}/tag14-release/extracted-maker-adaptor.key"
+  "$agreement_role_runner_binary" taker --journal "${agreement_root}/stage-b/private/taker.sqlite" --session "${agreement_root}/material/taker-sessions/claim.json" extract-adaptor-secret --presignature "${agreement_root}/stage-b/private/taker-outbox/claim-presignature.json" --final-signature "$observed_final_signature" --output "$extracted_maker_scalar"
+  require_owner_file "$extracted_maker_scalar" "extracted Maker adaptor scalar"
+  record_phase extraction_scalar completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1385,7 +1396,8 @@ execute_run() {
   publish_tag15
   classify_tag15_finality
   extract_claim_signature
-  fail "sweep phase is not implemented; Taker extraction completed; do not retry this run"
+  extract_adaptor_scalar
+  fail "sweep phase is not implemented; adaptor scalar extraction completed; do not retry this run"
 }
 
 mode="${1:-}"

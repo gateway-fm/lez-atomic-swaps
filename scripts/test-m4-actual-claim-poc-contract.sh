@@ -108,7 +108,7 @@ jq -e '
   and .automatic_submission_retry == false
   and .dynamic_literal_loopback_ports == true
   and .public_runtime_resources == []
-  and .implemented_execute_through == "extraction"
+  and .implemented_execute_through == "extraction_scalar"
   and .actor_onboarding_implemented == true
   and .successful_claim_tail_implemented == false
   and .monero_launcher_implemented == true
@@ -311,7 +311,7 @@ rg -Fq 'compose_xmr_agreement' <<<"$execute_source" ||
   fail "execute omits the agreement helper"
 rg -Fq 'submit_tag13' <<<"$execute_source" ||
   fail "execute omits the tag-13 runner"
-readonly post_tag13_fail='fail "sweep phase is not implemented; Taker extraction completed; do not retry this run"'
+readonly post_tag13_fail='fail "sweep phase is not implemented; adaptor scalar extraction completed; do not retry this run"'
 rg -Fq "$post_tag13_fail" <<<"$execute_source" ||
   fail "execute omits the post-tag13 fail-closed boundary"
 execute_tag13_line="$(rg -n -m1 -F 'submit_tag13' <<<"$execute_source")"
