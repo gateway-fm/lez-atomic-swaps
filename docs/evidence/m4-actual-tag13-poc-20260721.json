@@ -1,0 +1,128 @@
+{
+  "schema": "lez_v02_m4_xmr_stage_a_tag13_poc_v1",
+  "role": "taker",
+  "run_id": "m4-tag13-8d01f1a-20260721a",
+  "runtime": {
+    "sidecar_role": "taker",
+    "compatibility": "lee_v0_2_0",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "channel_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_block_hash": "8aa42f94d48a342304dd599b194454d4aa4a59182d23e3527e02983a4d31b714",
+    "escrow_program_id": "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82",
+    "signer_account_id": "15a53503615a30c8b7fcc48f6fa6857da4e2e234680a3482b13366e2d513d2c3"
+  },
+  "terms": {
+    "version": 3,
+    "swap_id": "74cd98f1dd6143be0169f9fd0aa269f08a15a0d862519fe37c3f02c36ea98210",
+    "activation_commitment": "cf45ff68f863f7be67b57ba5080fbc54160dfa0059d63dddbc76f19b5b26b827",
+    "escrow_program_id": "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82",
+    "authenticated_transfer_program_id": "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71",
+    "metadata_account_id": "f0b7fd08399c8a7333814efb22ec2ef96a091a9835c25629d1bbabb74d430842",
+    "custody_account_id": "0fccbbd9a95ab405ebece82daa2976c7e09c74effbde3b44101283cfd2a8895b",
+    "depositor": "taker",
+    "depositor_account_id": "15a53503615a30c8b7fcc48f6fa6857da4e2e234680a3482b13366e2d513d2c3",
+    "claimant": "maker",
+    "claimant_account_id": "d8f695e45e50c70bd6a99d2c39b9eca8dc81de5d6b5b9a51c5819cd71f35ff4f",
+    "claim_aggregate_x_only_public_key": "578fb59bc8e64a223a9c7235526afa6e5747e7c4570400ee32401d48cdaef072",
+    "claim_authority_account_id": "c143abc12d3f7e623877caa01cd6829cd7a0cb53c2c6ee3888484ef89bc5ca40",
+    "refund_aggregate_x_only_public_key": "378aa0e1f213caf22cb2531516f49ab82ee8fae90ec327028225080e76580f12",
+    "refund_authority_account_id": "14492efb922a5e9cc1af12a797d3bcda5476a0433b73069da3df40870a447ce6",
+    "maker_dleq_transcript_commitment": "031cfa7a861b78eda75684aa4d11f6f6dd61f3d6f8e3e8af2d8bdf9f9fbe8e3c",
+    "taker_dleq_transcript_commitment": "22d829c4d29b2174259c5c2647e9b47a4ce9643deb4cecdccebd8ee1c5999a3b",
+    "claim_partial_context_binding": "fc08e9ca6aa8af3dfad6f674dc945911524deff99073e1e10ec994981daeb3ff",
+    "claim_partial_commitment": "46cea191ed3cfdf5b06893f3fd39ada9a375bce775ab9b2990f05ed739fcbbc8",
+    "amount": "700",
+    "refund_at_ms": 1784610340000,
+    "punish_at_ms": 1784610350000,
+    "claim_message_hash": "2b2009a19e5975d0b08bdb2698726c0b7713e7e0699d0d5e25027eb5b287f97e",
+    "refund_message_hash": "f504c87fde08bcbc488298f2be3b79653eac3c4895c771d08463ce3a041c8c55",
+    "punish_message_hash": "13ef5aad32eb1258620c49ea796abfcfe10575628a81be41a93058926474b0fb"
+  },
+  "stage_a_agreement_wire_sha256": "dc1de615b74a4eb3cb2fe94647d1d5fe2da02f35c526c187e9db4e3f1b1b5bb6",
+  "stage_b_activation_wire_sha256": "df65d354ecc5acb2655c23e5fb7684ded0dac410af1f59ba602ba7ac7fa55da2",
+  "finalized_nonce_snapshot": {
+    "finalized_clock": {
+      "block_hash": "befe23866997f58878db8f93a8743ae36a90d52989adb8ad4d8aa2a522b0219d",
+      "height": 2997,
+      "timestamp_ms": 1784603224424
+    },
+    "genesis_block_hash": "8aa42f94d48a342304dd599b194454d4aa4a59182d23e3527e02983a4d31b714",
+    "maker_owner": {
+      "account_id": "d8f695e45e50c70bd6a99d2c39b9eca8dc81de5d6b5b9a51c5819cd71f35ff4f",
+      "nonce": 1,
+      "presence": "present"
+    },
+    "taker_owner": {
+      "account_id": "15a53503615a30c8b7fcc48f6fa6857da4e2e234680a3482b13366e2d513d2c3",
+      "nonce": 1,
+      "presence": "present"
+    },
+    "claim_authority": {
+      "account_id": "c143abc12d3f7e623877caa01cd6829cd7a0cb53c2c6ee3888484ef89bc5ca40",
+      "nonce": 0,
+      "presence": "absent_default_nonce"
+    },
+    "refund_authority": {
+      "account_id": "14492efb922a5e9cc1af12a797d3bcda5476a0433b73069da3df40870a447ce6",
+      "nonce": 0,
+      "presence": "absent_default_nonce"
+    },
+    "bracket": "fixed_finalized_anchor_genesis_and_tip_reread_by_id_and_hash_latest_tip_monotonic"
+  },
+  "maker_xmr_funding_cutoff_ms": 1784610330000,
+  "cutoff_authority": "signed_stage_a_agreement_and_stable_finalized_lez_consensus_timestamps",
+  "agreement_source": "canonical_validated_stage_a_wire",
+  "activation_source": "canonical_validated_stage_b_wire_and_owner_private_view_key",
+  "claim_message_hash_source": "generated_official_tag15_message",
+  "refund_message_hash_source": "generated_official_tag16_message",
+  "punish_message_hash_source": "generated_official_tag17_message",
+  "initialization": {
+    "effect": "initialize",
+    "transaction_id": "8013ad910a5542e5c3b405e757a0d2e5372adee127815491a3fd888008267676",
+    "submission_outcome": "accepted",
+    "finalized_clock": {
+      "block_hash": "4516bb34e34b64a5c0c5ec605e212c1890c0e7fc3a1c9ce325b75ea2a7153fad",
+      "height": 3008,
+      "timestamp_ms": 1784603335782
+    },
+    "scanned_window": {
+      "start_height": 3008,
+      "max_blocks": 1
+    },
+    "containing_block_id": 3008,
+    "containing_block_hash": "4516bb34e34b64a5c0c5ec605e212c1890c0e7fc3a1c9ce325b75ea2a7153fad",
+    "transaction_index": 0,
+    "classifier_calls": 388
+  },
+  "funding": {
+    "effect": "fund",
+    "transaction_id": "9b643629a7cbdc674903c640aad6e7b80e2cea099e43470ad0bf587e1ffbda46",
+    "submission_outcome": "accepted",
+    "finalized_clock": {
+      "block_hash": "8ef83101a7e9064bf7d10008936d7d99cf19562e7f422b1682c6cb60d17791fc",
+      "height": 3023,
+      "timestamp_ms": 1784603488142
+    },
+    "scanned_window": {
+      "start_height": 3023,
+      "max_blocks": 1
+    },
+    "containing_block_id": 3023,
+    "containing_block_hash": "8ef83101a7e9064bf7d10008936d7d99cf19562e7f422b1682c6cb60d17791fc",
+    "transaction_index": 0,
+    "classifier_calls": 15
+  },
+  "execution_scope": "m4_tag13_lez_initialize_and_fund_only",
+  "funding_barrier": "exact_initialize_found_and_initialize_and_fund_finalized_at_or_before_signed_maker_xmr_funding_cutoff",
+  "public_rpc_used": false,
+  "automatic_submission_retry": false,
+  "send_attempt_ceiling_per_effect_per_process": 1,
+  "finality_polling_is_submission_retry": false,
+  "crash_atomic_submission": false,
+  "public_stage_a_input_snapshot_durably_journaled": false,
+  "recovery_limitation": "wire_files_and_raw_finalized_nonce_provenance_require_operator_reentry_after_a_crash",
+  "monero_lock_observed": false,
+  "swap_completed": false,
+  "atomic_swap_proven": false,
+  "atomicity_claim": "none_tag13_only_proves_ordered_finalized_lez_escrow_funding"
+}

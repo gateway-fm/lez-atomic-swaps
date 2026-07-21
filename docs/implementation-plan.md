@@ -3292,11 +3292,21 @@ exact stable-finalized `Found` capability permits its single Fund submission.
 The signed Maker funding cutoff is checked against finalized consensus before
 Initialize, again after finalized Initialize before Fund, and on finalized Fund
 before success evidence; host wall clock has no authority. Its 12 actor tests plus five reusable finalized-facts tests and strict Clippy pass with the pinned local rapidsnark libraries.
+The retained actual-local tag-13 run is now GREEN. Transaction
+`8013ad91...7676` finalized Initialize in block 3008 and transaction
+`9b643629...da46` finalized Fund in block 3023, in protocol order and before
+the signed cutoff. The owner-only raw evidence and repository packet bind the
+exact Stage-A/Stage-B hashes, checked ProgramID, signer, stable nonce snapshot,
+transaction IDs, containing block hashes, and consensus timestamps. It records
+no Monero lock, completion, or atomicity claim. Its exclusive tag-14/tag-15
+window ends at `2026-07-21T05:05:40Z`. The live audit proved the remaining
+composition cannot safely be completed inside that window, so this run remains
+historical tag-13 evidence; the composed happy E2E will regenerate Stage A/B
+and tag 13 with a wider bounded interval.
 The sidecar dependency gate explicitly allows the permissive `0BSD` license
 used by three SDK transitive crates; advisories, bans, licenses, and sources
-remain enforced. No actual node submission has been made with the actor because
-the independent Maker/Taker material process is the next prerequisite; this is
-not swap evidence. The current executable is intentionally one-shot after a
+remain enforced. This is actual chain-effect evidence but not swap evidence.
+The current executable is intentionally one-shot after a
 submission and its future nonces are not leased: the private PoC must use
 dedicated per-swap owner accounts with no unrelated transactions. Durable
 crash/ambiguous-outcome resume and nonce leasing remain post-PoC hardening.
@@ -3333,11 +3343,10 @@ not a chain mutation or swap.
 
 The immediate critical path is now:
 
-1. execute the component-GREEN tag-13 actor with the retained funded Taker key,
-   canonical Stage A/B, proved checked deployment, and actual local sequencer and
-   indexer. Submit Initialize once, require exact finalized `Found`, submit Fund
-   once, and retain exact finality evidence before the signed cutoff;
-2. compose the GREEN Taker-journal loader with the actual finalized Fund,
+1. **GREEN:** execute tag 13 with the retained funded Taker key and canonical
+   Stage A/B; retain exact finalized Initialize block 3008 followed by Fund
+   block 3023 before the signed cutoff;
+2. compose the GREEN Taker-journal loader with that actual finalized Fund,
    authenticated Monero output/topology observations, typed issuer, stable
    finalized clock, and release worker. Submit tag 14 once and require exact
    finalized authorization before Maker use;
@@ -3370,12 +3379,13 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 1 to 2.5 focused engineering hours
-to the first reproducible independent-actor claim-path PoC and 6 to 12
-additional hours to the local claim/refund/punishment PoC. This is based on the
-observed Stage-A and Stage-B slice history, not a production-hardening estimate.
-Exact deployment, funded identities, future-message planning, journal handoff,
-and all pre-effect Stage-A/B material are GREEN. Run
+The checkpoint ETA carried by the next push is 6 to 10 focused engineering
+hours to the first reproducible independent-actor happy claim and 6 to 12
+additional hours to the local refund/punishment PoC. This is based on the
+observed Stage-A and Stage-B slice history plus the tag-13 live-path audit, not
+a production-hardening estimate. Exact deployment, funded identities,
+future-message planning, journal handoff, all Stage-A/B material, and actual
+tag-13 Initialize/Fund are GREEN. Run
 `m4stagea-fb67fe1-20260720b` used the actual isolated LEZ and Monero RPC stacks.
 Its current one-journal-per-role continuation produced unsigned Stage-B SHA-256
 `85cee706...afaf4` and signed Stage-B SHA-256 `df65d354...5da2`; the exact CLI
@@ -3384,8 +3394,8 @@ stage.
 
 The remaining happy-path implementation order is:
 
-1. execute/classify tag-13 Initialize and Fund through the retained local LEZ
-   stack before the signed funding cutoff;
+1. **GREEN:** execute/classify tag-13 Initialize and Fund through the retained
+   local LEZ stack before the signed funding cutoff;
 2. drive the existing Taker journal handoff through actual tag-14 submission
    and finality, then complete, submit, and finalize tag 15;
 3. ingest the finalized aggregate signature, extract and point-check Maker's

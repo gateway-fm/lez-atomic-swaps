@@ -3,8 +3,8 @@
 Status: Accepted as an M4 composition rule; SDK boundaries, the role-fixed
 tag-13 actor, independent material provisioning, the completed Taker-journal
 handoff, private Stage-A signing/assembly/session roots, one-journal-per-role
-adaptor rounds, and canonical countersigned Stage B are implemented. Actual
-role-process chain execution remains pending.
+adaptor rounds, canonical countersigned Stage B, and actual-local tag-13
+Initialize/Fund execution are implemented. Tag 14 onward remains pending.
 
 Date: 2026-07-20
 

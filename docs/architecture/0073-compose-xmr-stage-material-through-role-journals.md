@@ -2,7 +2,8 @@
 
 Status: Accepted; actual-local public Stage-A composition, independent private
 signing, atomic session-root derivation, one-journal-per-role adaptor rounds,
-and canonical countersigned Stage B are GREEN. Chain effects remain.
+canonical countersigned Stage B, and actual-local tag-13 Initialize/Fund are
+GREEN. Monero lock and tags 14 onward remain.
 
 Date: 2026-07-20
 Updated: 2026-07-21

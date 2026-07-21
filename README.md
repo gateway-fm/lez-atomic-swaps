@@ -252,8 +252,20 @@ byte-identical. The
 [Stage-B packet](docs/evidence/m4-actual-stage-b-poc-20260721.json) records only
 non-secret hashes and safety facts. This remains pre-effect evidence: actual
 swaps are still 0 of 1.
-Actual-local tag-13 execution/classification, release-worker clock/route wiring,
-tag-14 submission and tag-14/tag-15 finalized discovery, adaptor extraction, official-wallet
+The first effect-bearing M4 actor run is now GREEN. The role-fixed Taker actor
+validated the retained Stage A/B and private view key, derived the funded Taker
+account before RPC, sampled one stable finalized nonce snapshot, and submitted
+Initialize and Fund exactly once each. Initialize transaction `8013ad91...7676`
+finalized in block 3008 before Fund transaction `9b643629...da46` finalized in
+block 3023, both before the signed Maker-XMR funding cutoff. The
+[tag-13 packet](docs/evidence/m4-actual-tag13-poc-20260721.json) binds those
+effects to the actual local chain, checked ProgramID, Stage A, Stage B, stable
+nonce snapshot, and containing block hashes. It explicitly records no Monero
+lock and no atomic-swap claim. Its signed continuation expires at
+`2026-07-21T05:05:40Z`; because the live audit found missing tag-14/tag-15
+composition, it is historical tag-13 evidence only. The happy E2E must use a
+fresh wider-window Stage A/B/tag-13 run after those own-code gaps close.
+Release-worker clock/route wiring, tag-14 submission and tag-14/tag-15 finalized discovery, adaptor extraction, official-wallet
 claim, and fresh terminal roles remain before the happy PoC. Refund/punishment
 follow as the next progressive slice. Full sidecar, security, architecture, and
 diff gates remain mandatory before each pushed checkpoint. The
@@ -275,7 +287,9 @@ it binds the checked deployment and actor identity, recomputes exact future
 messages from a stable finalized nonce snapshot, and rejects a stale signed
 Maker-funding cutoff before any submission. It submits Initialize once, requires
 exact finalized `Found`, rechecks that cutoff before Fund, then submits Fund
-once; an after-cutoff finalized Fund cannot become success evidence. It has not yet been run against the local node. Fresh independent Maker/Taker
+once; an after-cutoff finalized Fund cannot become success evidence. The retained
+actual-local run finalized Initialize in block 3008 and Fund in block 3023 with
+one accepted submission per effect. Fresh independent Maker/Taker
 provisioning is GREEN in four focused tests, including a two-process CLI E2E:
 each role atomically publishes one manifest-bound owner-only bundle with distinct
 agreement/claim/refund keys and one DLEQ-backed Monero share, while Maker imports
@@ -287,8 +301,8 @@ session directory published by a single no-replace rename. Six actor tests are
 GREEN, including two separate-process Stage-A tests. A third process test now
 drives both sessions through one journal per role, rejects incomplete journals
 and crossed signatures, proves the private Taker claim partial is absent from
-both Stage-B wires, and preserves create-new outputs. Public actual-local Stage A
-and canonical Stage B have passed; chain effects remain pending. No swap is claimed.
+both Stage-B wires, and preserves create-new outputs. Public actual-local Stage A, canonical Stage B, and actual tag 13 have passed;
+tag 14 remains the next chain effect. No swap is claimed.
 
 The fresh checked guest and current host components can be repeated
 independently before the full actor exists; the exact deployer and tag-15

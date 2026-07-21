@@ -2958,8 +2958,52 @@ cargo +1.96.0 test --locked --offline \
 
 Expected result is 3 of 3 passed in addition to the four provisioning tests.
 These tests use no Docker, node, RPC, peer, faucet, public endpoint, funds, or
-external finality service. Actual-local Stage A and the canonical role-journal
-Stage B are GREEN; tag-13 remains the first pending chain effect.
+external finality service. Actual-local Stage A, the canonical role-journal Stage B, and tag 13 are GREEN;
+tag 14 remains the next pending chain effect.
+
+### Execute the one-shot M4 tag-13 effect
+
+Use a fresh owner-only state directory and the funded Taker signer belonging to
+the same isolated LEZ run. The actor derives and compares the signer account
+before its first RPC, validates Stage A/B and the private view-key binding, and
+does not retry either submission automatically:
+
+```sh
+export M4_TAG13_RUN=m4-tag13-manual-$(git rev-parse --short HEAD)
+export M4_TAG13_STATE=/tmp/lez-${M4_TAG13_RUN}
+test ! -e "$M4_TAG13_STATE"
+install -d -m 700 "$M4_TAG13_STATE"
+
+RAPIDSNARK_LIB_DIR=/absolute/path/to/rapidsnark/lib \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
+cargo +1.96.0 build --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --bin lez-v02-xmr-stage-a-poc
+
+compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-stage-a-poc \
+  --state-directory "$M4_TAG13_STATE" \
+  --private-key-file /absolute/path/to/taker/lez-signer.key \
+  --sequencer-url http://127.0.0.1:SEQUENCER_PORT \
+  --indexer-url http://127.0.0.1:INDEXER_PORT \
+  --agreement-wire-file /absolute/path/to/stage-a.bin \
+  --activation-wire-file /absolute/path/to/stage-b.bin \
+  --monero-view-key-file /absolute/path/to/taker/monero-view.key \
+  --run-id "$M4_TAG13_RUN" \
+  --prepare-request-id "${M4_TAG13_RUN}-prepare"
+```
+
+Expected output names the owner-only evidence file and prints its non-secret
+JSON. Verify `initialization.effect == "initialize"`, `funding.effect ==
+"fund"`, strictly increasing finalized heights, both timestamps no later than
+`maker_xmr_funding_cutoff_ms`, and `atomic_swap_proven == false`. This flow uses
+only the suite-specific loopback LEZ sequencer/indexer and deterministic local
+genesis funds. It uses no public RPC, peer, faucet, public funds, or external
+finality service. The retained run took about 2.5 minutes per finalized effect;
+that local LEZ v0.2 cadence can slow iteration but cannot create network
+flakiness. Never rerun after an ambiguous submission; inspect the node and the
+owner-only evidence/journal first. Never continue a retained run after its
+signed refund boundary; regenerate Stage A/B and tag 13 with a new bounded
+window instead.
 
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and

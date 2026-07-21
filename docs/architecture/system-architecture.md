@@ -2116,7 +2116,7 @@ The shared signing, two-stage XMR SDK, and focused guest-source boundaries are
 executable without routing XMR through the BTC SDK. Independent provisioning,
 actual-local public Stage-A composition, private signing/assembly, and atomic
 session roots are GREEN. The one-journal-per-role claim/refund rounds and
-canonical countersigned Stage B are now GREEN too. Solid edges are
+canonical countersigned Stage B and actual-local tag 13 are now GREEN too. Solid edges are
 component-tested or actual-local; dotted edges remain effect work:
 
 ```mermaid
@@ -2137,14 +2137,17 @@ flowchart LR
     ActualComposer --> StageACompose["Independent Stage A signing assembly and atomic sessions<br/>actual replay plus six tests green"]
     StageACompose --> RoleRunner
     RoleRunner --> StageBActivation["One journal per role claim and refund rounds<br/>canonical Stage B actual replay green"]
-    StageBActivation -.-> XmrActor
+    StageBActivation --> Tag13Actor["Role fixed Taker tag 13<br/>actual Initialize block 3008 then Fund block 3023 green"]
+    Tag13Actor --> ActualSequencer
+    ActualIndexer --> Tag13Actor
+    Tag13Actor -.-> XmrActor
     FuturePlan --> ActualComposer
     XmrActor -.-> XmrSdk
     XmrActor -.-> OrdinaryClient["Ordinary BridgeClient<br/>eight methods green"]
     ActorSigners[("Independent owner-private Maker and Taker signers<br/>not committed")] --> VaultCli["Actual local Vault Claim CLI<br/>two identities finalized once"]
     VaultCli --> ActualSequencer
     ActualSequencer --> VaultFinality[("Taker block 228 and Maker block 240<br/>funded identity and nonce readiness green")]
-    VaultFinality -.-> XmrActor
+    VaultFinality --> Tag13Actor
     XmrActor -.-> ClaimAuthorization["Taker Stage-B claim authorization<br/>typed adapter component green"]
     XmrSdk --> ClaimAuthorization
     ClaimAuthorization -->|exactly one authenticated success| OrdinaryClient
@@ -2351,7 +2354,7 @@ sequenceDiagram
     LezIdx-->>LezSidecar: Canonical finalized Initialize facts
     LezSidecar->>LezIdx: Re-pin candidate tip and requested end
     LezSidecar-->>Taker: Non-cloneable exact finalized Initialize capability
-    Note over Taker,LezSidecar: ADR 0070 component green actual local execution pending
+    Note over Taker,LezSidecar: ADR 0070 component and actual local execution green Initialize block 3008
     Taker->>LezSidecar: Consume capability and submit exact Fund
     LezSidecar->>LezSeq: Recheck exact Initialize then one Fund lookup or send
     LezSeq-->>Taker: Fund admission only
@@ -2374,7 +2377,7 @@ sequenceDiagram
         LezIdx-->>LezSidecar: Canonical candidate state and finalized tip
         LezSidecar->>LezIdx: Re-pin candidate final tip and requested end
         LezSidecar-->>Taker: Found exact stable finalized Fund
-        Note over Taker,LezSidecar: Synthetic component E2E green actual local-indexer composition pending
+        Note over Taker,LezSidecar: Actual local classification green Fund block 3023
         Note over Taker,LezSidecar: Missing exact Fund is Uncertain never Absent
         Note over Maker,Taker: Taker must consume observation once against the exact Stage B activation
         Note over Maker,Taker: Sealed journal and dedicated route are separately green but live composition is pending
