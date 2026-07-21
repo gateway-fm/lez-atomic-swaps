@@ -38,8 +38,8 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
-const EVIDENCE_SCHEMA: &str = "lez_v02_m4_xmr_stage_a_tag13_poc_v1";
-const EVIDENCE_FILENAME: &str = "m4-xmr-stage-a-tag13-evidence.v1.json";
+const EVIDENCE_SCHEMA: &str = "lez_v02_m4_xmr_stage_a_tag13_poc_v2";
+const EVIDENCE_FILENAME: &str = "m4-xmr-stage-a-tag13-evidence.v2.json";
 const DEFAULT_MAX_FINALITY_SCANS: u32 = 512;
 const DEFAULT_FINALITY_SCAN_INTERVAL_MS: u64 = 250;
 
@@ -137,6 +137,7 @@ struct StageAEvidence {
     schema: &'static str,
     role: Participant,
     run_id: RunId,
+    prepare_request_id: RequestId,
     runtime: RuntimeDescriptor,
     terms: XmrNativeEscrowTermsV3,
     stage_a_agreement_wire_sha256: Hex32,
@@ -416,8 +417,11 @@ async fn execute(arguments: Arguments) -> Result<(StageAEvidence, PathBuf)> {
         .verify_health()
         .await
         .context("official local runtime health binding failed")?;
-    let prepare_context =
-        MessageContext::new(run_id.clone(), prepare_request_id, Participant::Taker);
+    let prepare_context = MessageContext::new(
+        run_id.clone(),
+        prepare_request_id.clone(),
+        Participant::Taker,
+    );
     let prepared = runtime
         .prepare_native_xmr_escrow_v3(&PrepareNativeXmrEscrowV3Request::new(
             prepare_context,
@@ -499,6 +503,7 @@ async fn execute(arguments: Arguments) -> Result<(StageAEvidence, PathBuf)> {
         schema: EVIDENCE_SCHEMA,
         role: Participant::Taker,
         run_id,
+        prepare_request_id,
         runtime: runtime_descriptor,
         terms,
         stage_a_agreement_wire_sha256: agreement_wire_sha256,
