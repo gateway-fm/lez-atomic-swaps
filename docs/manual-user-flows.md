@@ -2334,15 +2334,15 @@ ID. The role-sidecar launcher now supports exact Taker adoption of the existing
 tag-13 state. Adoption requires the owner-private fixed siblings
 `tag13-handoff-receipt.json`, `taker-runtime.json`, and `terms.json` under one
 canonical artifact directory; cross-swap terms, aliases, and state/output overlap
-are rejected before supervisor-root creation. The typed exporter and bridge
-receipt gate are source/component-GREEN, but the parent runner is not yet wired
-through this continuation and the exact committed-tree replay remains pending.
+are rejected before supervisor-root creation. The typed exporter and bridge receipt gate are source/component-GREEN. The
+parent runner now exports the four artifacts, starts Taker adoption and a fresh
+Maker sidecar, records PID/start/binary cleanup identities, and stops before
+Monero funding; the exact committed-tree replay remains pending.
 The agreement helper receipt truthfully records CLI values as `requested_terms`
 and does not claim independent helper-level term binding; the role actors remain
 the canonical wire validation and signing boundary. Do not advertise the runner
-as a one-command successful-claim replay. The remaining runner/PoC work is
-estimated at 2 to 5 focused hours; once complete, allow 25 to 45 minutes for a
-warm replay or 1 to 3 hours for a cold replay. Full functional M4 is estimated
+as a one-command successful-claim replay. The remaining runner/PoC work is estimated at 1 to 3 focused hours;
+once complete, allow 25 to 45 minutes for a warm replay or 1 to 3 hours for a cold replay. Full functional M4 is estimated
 at 15 to 27 focused hours.
 
 Every effect command below uses create-new outputs and has no automatic

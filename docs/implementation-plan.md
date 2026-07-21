@@ -3030,13 +3030,14 @@ The next certification order is:
    then QA, chaos, information-security, and production-readiness hardening.
 
 The direct finalized-Claim-to-sweep binder and its retained-run invocation are
-complete. The replay runner source/contract now composes the official Monero
-child, agreement and separate role journals, durable tag-13 no-retry latch, and
-exact finalized tag 13. It has not been cleanly replayed from the current
-commit. Next, wire the role-sidecar launcher to adopt the existing tag-13 state,
-export typed tag-13 evidence into tag-14 preparation, continue through the
-retained successful-claim tail, publish synchronized evidence, and prove the
-ledgered/label-revalidated scoped cleanup. Remaining runner/PoC implementation is estimated at 2 to 5 focused hours. After that implementation is complete,
+complete. The replay runner source/contract now composes the official Monero child,
+agreement and separate role journals, durable tag-13 no-retry latch, exact
+finalized tag 13, typed four-artifact handoff, and both role sidecars through
+readiness. It has not been cleanly replayed from the current commit. Next, wire
+Monero funding and the retained successful-claim tail, publish synchronized
+evidence, and prove ledgered/label-revalidated scoped cleanup. Remaining
+runner/PoC implementation is estimated at 1 to 3 focused hours. After that
+implementation is complete,
 budget 25 to 45 minutes for one warm exact-commit replay or 1 to 3 hours for a
 cold replay, evidence rebinding, and scoped cleanup. Full M4 functional closure,
 including actual tag-16/tag-17 recovery, F7 native-plus-two-token parity, U9

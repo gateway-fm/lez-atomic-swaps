@@ -171,7 +171,7 @@
   },
   "remaining_before_m4_completion_tag": [
     "exact committed-tree replay and clean pushed-commit evidence",
-    "cleanly replay the contract-green runner through finalized tag 13, then wire the now-green sidecar adoption and tag-13-to-tag-14 export through every remaining actor handoff, terminal assertion, and scoped cleanup attestation",
+    "cleanly replay the contract-green runner through finalized tag 13 and sidecar readiness, then wire Monero funding through every remaining actor handoff, terminal assertion, and scoped cleanup attestation",
     "signed tag-16 refund and tag-17 punishment actual-node paths",
     "native plus two independent custom-token F7 parity",
     "self-hosted and public Monero Stagenet U9 guide and CI lane",

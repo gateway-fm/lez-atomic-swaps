@@ -59,6 +59,6 @@ sequenceDiagram
 
 - Seven handoff adversarial tests and one bridge omission regression pass.
 - Cargo check, strict Clippy, warning-fatal Rustdoc, formatting, and diff checks pass at the component checkpoint.
-- The parent runner is not yet wired through sidecar readiness, Monero funding, Tag 14, terminal cleanup, and clean committed-tree replay.
+- The parent runner now reaches sidecar readiness and records exact cleanup identities; Monero funding, Tag 14, terminal cleanup attestation, and clean committed-tree replay remain pending.
 - The receipt is owner-private; public evidence may disclose hashes and chain facts but not private paths, credentials, or scalars.
 - Logos/RFP cryptographic interpretation issues GW-M4-001 through GW-M4-003 remain documented upstream production dispositions.

@@ -39,13 +39,13 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "tag13_finality",
+      implemented_execute_through: "sidecar_readiness",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
       monero_launcher_executed_in_certifying_replay: false,
       role_sidecar_launcher_contract_green: true,
-      role_sidecar_launcher_reachable_in_execute: false,
+      role_sidecar_launcher_reachable_in_execute: true,
       agreement_helper_contract_green: true,
       agreement_helper_implemented_through: "countersigned_stage_b",
       agreement_helper_submission_performed: false,
@@ -54,6 +54,9 @@ emit_contract() {
       tag13_runner_implemented: true,
       tag13_runner_reachable_in_execute: true,
       tag13_runner_executed_in_certifying_replay: false,
+      tag13_handoff_exporter_implemented: true,
+      tag13_handoff_exporter_reachable_in_execute: true,
+      tag13_handoff_exporter_executed_in_certifying_replay: false,
       available_unwired_launchers: [
         "run-m4-lez-sidecar.sh"
       ],
@@ -61,7 +64,7 @@ emit_contract() {
       successful_claim_tail_implemented: false,
       phases: [
         "preflight", "build", "identity", "lez_stack", "deployment",
-        "actor_onboarding", "monero_stack", "agreement", "journals", "tag13",
+        "actor_onboarding", "monero_stack", "agreement", "journals", "tag13", "tag13_handoff",
         "monero_funding", "sidecars", "release", "tag14_finality", "tag15",
         "tag15_finality", "extraction", "monero_sweep", "evidence", "cleanup"
       ],
@@ -638,7 +641,7 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$sidecar_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
       --bin lez-v02-vault-claim-poc --bin lez-v02-xmr-stage-a-compose \
-      --bin lez-v02-xmr-stage-a-poc --example lez-v02-local-actor-identity
+      --bin lez-v02-xmr-stage-a-poc --bin lez-v02-bridge-poc --bin lez-v02-xmr-tag13-export --example lez-v02-local-actor-identity
   readonly identity_binary="${sidecar_target}/debug/examples/lez-v02-local-actor-identity"
   [[ -x "$identity_binary" && ! -L "$identity_binary" ]] || fail "identity binary build is unavailable"
   readonly vault_claim_binary="${sidecar_target}/debug/lez-v02-vault-claim-poc"
@@ -660,6 +663,8 @@ build_identity_and_artifact() {
   readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
   readonly agreement_composer_binary="${staged_binary_root}/lez-v02-xmr-stage-a-compose"
   readonly tag13_binary="${staged_binary_root}/lez-v02-xmr-stage-a-poc"
+  readonly bridge_binary="${staged_binary_root}/lez-v02-bridge-poc"
+  readonly tag13_export_binary="${staged_binary_root}/lez-v02-xmr-tag13-export"
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
@@ -668,6 +673,8 @@ build_identity_and_artifact() {
     "$agreement_composer_binary" "stage-a composer"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-stage-a-poc" \
     "$tag13_binary" "tag13 runner"
+  stage_executable "${sidecar_target}/debug/lez-v02-bridge-poc" "$bridge_binary" "LEZ sidecar bridge"
+  stage_executable "${sidecar_target}/debug/lez-v02-xmr-tag13-export" "$tag13_export_binary" "Tag13 handoff exporter"
 
   readonly artifact_root="${build_root}/m4-artifact"
   record_resource ephemeral_path "${artifact_root}/target" "${artifact_root}/target"
@@ -721,6 +728,7 @@ write_build_manifest() {
     --arg agreement_role_runner "$(sha256_file "$agreement_role_runner_binary")" \
     --arg agreement_composer "$(sha256_file "$agreement_composer_binary")" \
     --arg tag13 "$(sha256_file "$tag13_binary")" \
+    --arg bridge "$(sha256_file "$bridge_binary")" --arg tag13_export "$(sha256_file "$tag13_export_binary")" \
     --arg deployer "$(sha256_file "$deployer_binary")" --arg guest "$guest_actual" \
     '{schema_version:1,source_commit:$commit,binary_sha256:{runner:$runner,
       artifact_runner:$artifact_runner,lez_stack_runner:$stack_runner,
@@ -728,7 +736,7 @@ write_build_manifest() {
       monero_runner:$monero_runner,agreement_runner:$agreement_runner,
       identity_provisioner:$identity,vault_claim:$vault_claim,
       agreement_actor:$agreement_actor,agreement_role_runner:$agreement_role_runner,
-      agreement_composer:$agreement_composer,tag13_runner:$tag13,
+      agreement_composer:$agreement_composer,tag13_runner:$tag13,bridge:$bridge,tag13_export:$tag13_export,
       deployer:$deployer,checked_guest:$guest}}' >"$output"
   chmod 0600 "$output"
 }
@@ -1146,6 +1154,53 @@ submit_tag13() {
   record_phase tag13 completed
 }
 
+export_tag13_handoff() {
+  record_phase tag13_handoff started
+  readonly tag13_handoff_root="${private_root}/tag13-handoff"
+  mkdir -m 0700 "$tag13_handoff_root"
+  "$tag13_export_binary" --state-directory "$tag13_state" --output-directory "$tag13_handoff_root" \
+    --run-id "$run_id" --stage-a-agreement-wire-sha256 "$(sha256_file "$agreement_stage_a")" \
+    --stage-b-activation-wire-sha256 "$(sha256_file "$agreement_stage_b")" \
+    --authenticated-transfer-program-id "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71"
+  for artifact in taker-runtime.json maker-runtime.json terms.json tag13-handoff-receipt.json; do
+    require_owner_file "$tag13_handoff_root/$artifact" "Tag13 handoff $artifact"
+  done
+  record_resource ephemeral_path "$tag13_handoff_root" "$tag13_handoff_root"
+  record_phase tag13_handoff completed
+}
+
+start_role_sidecars() {
+  record_phase sidecars started
+  readonly sidecar_parent="${private_root}/role-sidecars"
+  readonly taker_sidecar_root="${sidecar_parent}/taker"
+  readonly maker_sidecar_root="${sidecar_parent}/maker"
+  mkdir -m 0700 "$sidecar_parent"
+  record_resource ephemeral_path "$sidecar_parent" "$sidecar_parent"
+  local sequencer indexer
+  sequencer="$(manifest_value LEZ_SEQUENCER_RPC_URL "$lez_stack_manifest")"
+  indexer="$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")"
+  "$repo_root/scripts/run-m4-lez-sidecar.sh" start --root "$taker_sidecar_root" --role taker --run-id "$run_id" \
+    --sidecar-bin "$bridge_binary" --sequencer-url "$sequencer" --indexer-url "$indexer" \
+    --runtime-file "$tag13_handoff_root/taker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" \
+    --private-key-file "${private_root}/lez-identities/taker/lez-signer.key" \
+    --authenticated-transfer-program-id "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71" \
+    --adopt-state-directory "$tag13_state" --tag13-handoff-receipt "$tag13_handoff_root/tag13-handoff-receipt.json" >/dev/null
+  "$repo_root/scripts/run-m4-lez-sidecar.sh" start --root "$maker_sidecar_root" --role maker --run-id "$run_id" \
+    --sidecar-bin "$bridge_binary" --sequencer-url "$sequencer" --indexer-url "$indexer" \
+    --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" \
+    --private-key-file "${private_root}/lez-identities/maker/lez-signer.key" \
+    --authenticated-transfer-program-id "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71" >/dev/null
+  local sidecar_root manifest pid start binary_sha
+  for sidecar_root in "$taker_sidecar_root" "$maker_sidecar_root"; do
+    manifest="$sidecar_root/pid-manifest.json"
+    require_owner_file "$manifest" "sidecar PID manifest"
+    pid="$(jq -er .pid "$manifest")"
+    start="$(jq -er .start_ticks "$manifest")"
+    binary_sha="$(jq -er .binary_sha256 "$manifest")"
+    record_resource process "$pid" "$sidecar_root" "$start" "$binary_sha"
+  done
+  record_phase sidecars completed
+}
 execute_run() {
   run_preflight
   require_command docker
@@ -1163,7 +1218,9 @@ execute_run() {
   start_monero_child
   compose_xmr_agreement
   submit_tag13
-  fail "monero_funding phase is not implemented; tag13 effects may have been submitted; do not retry this run"
+  export_tag13_handoff
+  start_role_sidecars
+  fail "monero_funding phase is not implemented; Tag13 handoff and sidecar readiness completed; do not retry this run"
 }
 
 mode="${1:-}"

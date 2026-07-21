@@ -108,14 +108,14 @@ jq -e '
   and .automatic_submission_retry == false
   and .dynamic_literal_loopback_ports == true
   and .public_runtime_resources == []
-  and .implemented_execute_through == "tag13_finality"
+  and .implemented_execute_through == "sidecar_readiness"
   and .actor_onboarding_implemented == true
   and .successful_claim_tail_implemented == false
   and .monero_launcher_implemented == true
   and .monero_launcher_reachable_in_execute == true
   and .monero_launcher_executed_in_certifying_replay == false
   and .role_sidecar_launcher_contract_green == true
-  and .role_sidecar_launcher_reachable_in_execute == false
+  and .role_sidecar_launcher_reachable_in_execute == true
   and .agreement_helper_contract_green == true
   and .agreement_helper_implemented_through == "countersigned_stage_b"
   and .agreement_helper_submission_performed == false
@@ -124,6 +124,9 @@ jq -e '
   and .tag13_runner_implemented == true
   and .tag13_runner_reachable_in_execute == true
   and .tag13_runner_executed_in_certifying_replay == false
+  and .tag13_handoff_exporter_implemented == true
+  and .tag13_handoff_exporter_reachable_in_execute == true
+  and .tag13_handoff_exporter_executed_in_certifying_replay == false
   and .available_unwired_launchers == ["run-m4-lez-sidecar.sh"]
   and .composed_launchers == [
     "run-m4-lez-artifact-tests.sh", "run-lez-v02-stack.sh",
@@ -143,7 +146,7 @@ jq -e '
   and .cleanup.tag13_no_retry_latch_before_submission == true
   and .cleanup.broad_cleanup_forbidden == true
   and .phases == ["preflight","build","identity","lez_stack","deployment",
-    "actor_onboarding","monero_stack","agreement","journals","tag13",
+    "actor_onboarding","monero_stack","agreement","journals","tag13", "tag13_handoff",
     "monero_funding","sidecars","release","tag14_finality","tag15",
     "tag15_finality","extraction","monero_sweep","evidence","cleanup"]
 ' <<<"$contract" >/dev/null || fail "runner does not expose the required phase/safety contract"
@@ -195,7 +198,7 @@ for required in \
   run-m4-lez-artifact-tests.sh run-lez-v02-stack.sh \
   run-m4-lez-local-deployment.sh run-m4-lez-actor-onboarding.sh \
   run-m4-lez-sidecar.sh run-m4-xmr-agreement.sh run-monero-e2e.sh lez-v02-vault-claim-poc \
-  lez-v02-xmr-stage-a-compose lez-v02-xmr-stage-a-poc \
+  lez-v02-bridge-poc lez-v02-xmr-tag13-export lez-v02-xmr-stage-a-compose lez-v02-xmr-stage-a-poc \
   lez-v02-xmr-regtest-fund lez-v02-xmr-regtest-verify \
   lez-v02-xmr-release-prepare lez-v0-2-xmr-release-service \
   lez-v02-xmr-classify-finalized xmr-reference-tag15 \
@@ -302,7 +305,7 @@ rg -Fq 'compose_xmr_agreement' <<<"$execute_source" ||
   fail "execute omits the agreement helper"
 rg -Fq 'submit_tag13' <<<"$execute_source" ||
   fail "execute omits the tag-13 runner"
-readonly post_tag13_fail='fail "monero_funding phase is not implemented; tag13 effects may have been submitted; do not retry this run"'
+readonly post_tag13_fail='fail "monero_funding phase is not implemented; Tag13 handoff and sidecar readiness completed; do not retry this run"'
 rg -Fq "$post_tag13_fail" <<<"$execute_source" ||
   fail "execute omits the post-tag13 fail-closed boundary"
 execute_tag13_line="$(rg -n -m1 -F 'submit_tag13' <<<"$execute_source")"
@@ -311,6 +314,12 @@ post_tag13_fail_line="$(rg -n -m1 -F "$post_tag13_fail" <<<"$execute_source")"
 post_tag13_fail_line="${post_tag13_fail_line%%:*}"
 (( execute_tag13_line < post_tag13_fail_line )) ||
   fail "post-tag13 no-retry boundary appears before the tag-13 call"
+export_line="$(rg -n -m1 -F 'export_tag13_handoff' <<<"$execute_source")"
+export_line="${export_line%%:*}"
+sidecar_line="$(rg -n -m1 -F 'start_role_sidecars' <<<"$execute_source")"
+sidecar_line="${sidecar_line%%:*}"
+[[ "$export_line" =~ ^[0-9]+$ && "$sidecar_line" =~ ^[0-9]+$ ]] || fail "sidecar continuation boundaries are unavailable"
+(( execute_tag13_line < export_line && export_line < sidecar_line && sidecar_line < post_tag13_fail_line )) || fail "tag13 handoff/sidecar readiness ordering is not fail-closed"
 
 tag13_source="$(function_source submit_tag13)"
 [[ -n "$tag13_source" ]] || fail "tag-13 submission function is unavailable"
@@ -352,15 +361,6 @@ agreement_complete_line="${agreement_complete_line%%:*}"
    journal_complete_line < agreement_complete_line )) ||
   fail "journal phase evidence does not bracket the combined agreement helper truthfully"
 
-for reachable_source in "$execute_source" "$agreement_source" "$tag13_source"; do
-  for forbidden_sidecar in \
-    'run-m4-lez-sidecar.sh' 'lez-v02-bridge-poc' 'start_role_sidecars' \
-    'start_sidecar' 'sidecar_runner'; do
-    if rg -Fq -- "$forbidden_sidecar" <<<"$reachable_source"; then
-      fail "pre-sidecar execute path reaches forbidden sidecar boundary: ${forbidden_sidecar}"
-    fi
-  done
-done
 
 for forbidden in \
   'docker system prune' 'docker container prune' 'docker network prune' \
