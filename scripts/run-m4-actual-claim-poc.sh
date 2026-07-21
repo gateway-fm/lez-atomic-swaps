@@ -6,10 +6,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export LC_ALL=C
 umask 077
 
-readonly repo_root="$(pwd)"
+repo_root="$(pwd)"
+readonly repo_root
 readonly artifact_runner="scripts/run-m4-lez-artifact-tests.sh"
 readonly lez_stack_runner="scripts/run-lez-v02-stack.sh"
 readonly deployment_runner="scripts/run-m4-lez-local-deployment.sh"
+readonly onboarding_runner="scripts/run-m4-lez-actor-onboarding.sh"
 readonly monero_runner="scripts/run-monero-e2e.sh"
 readonly sidecar_manifest="compat/lez-v0_2-sidecar/Cargo.toml"
 readonly deployer_manifest="compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml"
@@ -36,11 +38,20 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "deployment",
-      actor_onboarding_implemented: false,
+      implemented_execute_through: "actor_onboarding",
+      actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: false,
       monero_launcher_executed_in_certifying_replay: false,
+      role_sidecar_launcher_contract_green: true,
+      role_sidecar_launcher_reachable_in_execute: false,
+      agreement_helper_contract_green: true,
+      agreement_helper_implemented_through: "countersigned_stage_b",
+      agreement_helper_submission_performed: false,
+      agreement_helper_reachable_in_execute: false,
+      available_unwired_launchers: [
+        "run-m4-lez-sidecar.sh", "run-m4-xmr-agreement.sh"
+      ],
       monero_owned_volume_count: 4,
       successful_claim_tail_implemented: false,
       phases: [
@@ -58,7 +69,8 @@ emit_contract() {
       },
       composed_launchers: [
         "run-m4-lez-artifact-tests.sh", "run-lez-v02-stack.sh",
-        "run-m4-lez-local-deployment.sh", "run-monero-e2e.sh"
+        "run-m4-lez-local-deployment.sh", "run-m4-lez-actor-onboarding.sh",
+        "run-monero-e2e.sh"
       ],
       required_future_binaries: [
         "lez-v02-xmr-stage-a-compose", "lez-v02-xmr-stage-a-poc",
@@ -167,7 +179,8 @@ environment_preflight() {
     fail "LEZ_M4_TOOL_DIR must be an existing absolute pinned tool directory"
   [[ "${LOGOS_BLOCKCHAIN_CIRCUITS:-}" == /* && -d "$LOGOS_BLOCKCHAIN_CIRCUITS" ]] ||
     fail "LOGOS_BLOCKCHAIN_CIRCUITS must be an existing absolute directory"
-  for path in "$artifact_runner" "$lez_stack_runner" "$deployment_runner" "$monero_runner"; do
+  for path in "$artifact_runner" "$lez_stack_runner" "$deployment_runner" \
+      "$onboarding_runner" "$monero_runner"; do
     [[ -x "$path" && ! -L "$path" ]] || fail "composed launcher is unavailable: ${path}"
   done
   verify_native_library librapidsnark.a "$expected_rapidsnark_sha256"
@@ -357,9 +370,11 @@ build_identity_and_artifact() {
   record_resource ephemeral_path "$sidecar_target" "$sidecar_target"
   CARGO_TARGET_DIR="$sidecar_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
-      --example lez-v02-local-actor-identity
+      --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity
   readonly identity_binary="${sidecar_target}/debug/examples/lez-v02-local-actor-identity"
   [[ -x "$identity_binary" && ! -L "$identity_binary" ]] || fail "identity binary build is unavailable"
+  readonly vault_claim_binary="${sidecar_target}/debug/lez-v02-vault-claim-poc"
+  [[ -x "$vault_claim_binary" && ! -L "$vault_claim_binary" ]] || fail "Vault Claim binary build is unavailable"
 
   readonly artifact_root="${build_root}/m4-artifact"
   record_resource ephemeral_path "${artifact_root}/target" "${artifact_root}/target"
@@ -404,13 +419,16 @@ write_build_manifest() {
     --arg artifact_runner "$(sha256_file "$artifact_runner")" \
     --arg stack_runner "$(sha256_file "$lez_stack_runner")" \
     --arg deployment_runner "$(sha256_file "$deployment_runner")" \
+    --arg onboarding_runner "$(sha256_file "$onboarding_runner")" \
     --arg monero_runner "$(sha256_file "$monero_runner")" \
     --arg identity "$(sha256_file "$identity_binary")" \
+    --arg vault_claim "$(sha256_file "$vault_claim_binary")" \
     --arg deployer "$(sha256_file "$deployer_binary")" --arg guest "$guest_actual" \
     '{schema_version:1,source_commit:$commit,binary_sha256:{runner:$runner,
       artifact_runner:$artifact_runner,lez_stack_runner:$stack_runner,
-      deployment_runner:$deployment_runner,monero_runner:$monero_runner,
-      identity_provisioner:$identity,deployer:$deployer,checked_guest:$guest}}' >"$output"
+      deployment_runner:$deployment_runner,onboarding_runner:$onboarding_runner,
+      monero_runner:$monero_runner,identity_provisioner:$identity,
+      vault_claim:$vault_claim,deployer:$deployer,checked_guest:$guest}}' >"$output"
   chmod 0600 "$output"
 }
 
@@ -496,8 +514,27 @@ deploy_m4_program() {
 }
 
 actor_onboarding() {
-  record_phase actor_onboarding not_implemented
-  fail "actor_onboarding phase is not implemented; no Monero or swap effect was started"
+  record_phase actor_onboarding started
+  readonly actor_onboarding_evidence="${evidence_root}/lez-actor-onboarding"
+  M4_ONBOARD_RUN_ID="$run_id" \
+    M4_ONBOARD_STACK_MANIFEST="$lez_stack_manifest" \
+    M4_ONBOARD_DEPLOYMENT_FINALITY="${deployment_evidence}/finality.json" \
+    M4_ONBOARD_EVIDENCE_ROOT="$actor_onboarding_evidence" \
+    M4_ONBOARD_PRIVATE_ROOT="$private_root" \
+    M4_ONBOARD_MAKER_IDENTITY="${evidence_root}/maker-lez-identity.json" \
+    M4_ONBOARD_TAKER_IDENTITY="${evidence_root}/taker-lez-identity.json" \
+    M4_ONBOARD_MAKER_PRIVATE_KEY="${private_root}/lez-identities/maker/lez-signer.key" \
+    M4_ONBOARD_TAKER_PRIVATE_KEY="${private_root}/lez-identities/taker/lez-signer.key" \
+    M4_ONBOARD_VAULT_CLAIM_BIN="$vault_claim_binary" \
+    M4_ONBOARD_EXPECTED_VAULT_CLAIM_SHA256="$(sha256_file "$vault_claim_binary")" \
+    "$onboarding_runner" execute
+  require_owner_file "${actor_onboarding_evidence}/summary.json" "actor-onboarding summary"
+  jq -e '.result=="passed" and .total_submission_count==2
+    and .actors.maker.submission_count==1 and .actors.taker.submission_count==1
+    and .monero_or_swap_effects_started==false and .runtime_external_resources==[]
+    and .public_rpc_used==false and .faucet_used==false' \
+    "${actor_onboarding_evidence}/summary.json" >/dev/null || fail "actor-onboarding evidence is incomplete"
+  record_phase actor_onboarding completed
 }
 
 capture_monero_resources() {
@@ -565,8 +602,7 @@ execute_run() {
   start_lez_stack
   deploy_m4_program
   actor_onboarding
-  start_monero_child
-  fail "agreement and later M4 phases are not implemented"
+  fail "monero_stack phase is not implemented; no Monero or swap effect was started"
 }
 
 mode="${1:-}"

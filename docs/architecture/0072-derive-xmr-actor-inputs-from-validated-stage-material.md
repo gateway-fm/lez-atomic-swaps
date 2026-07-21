@@ -136,7 +136,17 @@ before node access, strict CLI schema, stable-anchor policy, and effect-specific
 classification requests. It also rejects a stale finalized preflight before any
 submission, rechecks the signed Maker funding cutoff after finalized Initialize
 before Fund, and refuses success evidence when Fund finalizes after the cutoff.
-Five additional focused reusable-finality tests cover stable advancement, pinned-view mutation, finalized-height regression, wrong genesis, and ProgramID mutation. Only finalized LEZ consensus timestamps carry cutoff authority. Locked/offline actor tests and strict Clippy pass with
+Five additional focused reusable-finality tests cover stable advancement,
+pinned-view mutation, finalized-height regression, wrong genesis, and ProgramID
+mutation. The reusable `scripts/run-m4-xmr-agreement.sh` helper is now
+fixture-GREEN across independent role provisioning, owner-private atomic
+view-key handoff, read-only Stage A composition, byte-equal claim/refund
+sessions, one journal per role, withheld Taker claim material, equal refund
+presignatures, and countersigned Stage B. Its fake-process gate proves exact
+argv/order/role/path boundaries, create-new refusal, unsafe-binary rejection,
+and mismatch-before-journal failure; actual cryptographic/devnet execution
+remains the parent-runner gate. Only finalized LEZ consensus timestamps carry
+cutoff authority. Locked/offline actor tests and strict Clippy pass with
 the pinned local rapidsnark libraries. This is component evidence only; no node
 effect was executed by that test gate.
 

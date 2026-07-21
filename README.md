@@ -142,15 +142,21 @@ scoped-cleanup rules are in
 
 `scripts/run-m4-actual-claim-poc.sh` is deliberately partial. Its contract and
 source/environment preflight are implemented; `execute` builds the checked
-artifact, provisions identities, starts the LEZ stack, and deploys the M4
-program, then fails closed at unimplemented `actor_onboarding` before starting
-Monero or any swap effect. The Monero child launcher exists but is unreachable
-from `execute`, and the agreement-through-cleanup claim tail is not implemented.
-Do not describe this script as a one-command replay yet. Completing that
-orchestration is estimated at 6 to 10 focused hours; after it exists, a warm
-replay is expected to take 25 to 45 minutes and a cold replay 1 to 3 hours. Full
-functional M4 remains 18 to 30 focused hours; later owner-selected hardening is
-separate.
+artifact, provisions identities, starts the LEZ stack, deploys the M4 program,
+and drives fresh Maker and Taker Vault Claims through exact finalized `Public`
+membership and exact-block owner/Vault state checks. It then fails closed at
+`monero_stack` before starting Monero or any swap effect. The run-scoped Monero
+child, role-sidecar, and agreement/session launchers exist but are not yet reachable from `execute`. The role-sidecar launcher has
+Docker-free contract coverage for authenticated runtime probes, PID identity,
+atomic create-new artifacts, and exact stop. The agreement helper independently
+proves role provisioning, read-only Stage A composition, equal claim/refund
+sessions, one journal per role, withheld Taker claim material, equal refund
+presignatures, and countersigned Stage B through fake-process fixtures. The
+tag-13-through-cleanup claim tail is not implemented. Do not describe this
+script as a one-command replay yet. Completing that orchestration is estimated
+at 4 to 8 focused hours; after it exists, a warm replay is expected to take 25
+to 45 minutes and a cold replay 1 to 3 hours. Full functional M4 remains 16 to
+28 focused hours; later owner-selected hardening is separate.
 
 The checked guest and focused host components can be repeated independently of
 the actual two-devnet journey. The deployer, focused component commands, and

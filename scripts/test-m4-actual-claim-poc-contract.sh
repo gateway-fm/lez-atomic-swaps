@@ -103,12 +103,21 @@ jq -e '
   and .automatic_submission_retry == false
   and .dynamic_literal_loopback_ports == true
   and .public_runtime_resources == []
-  and .implemented_execute_through == "deployment"
-  and .actor_onboarding_implemented == false
+  and .implemented_execute_through == "actor_onboarding"
+  and .actor_onboarding_implemented == true
   and .successful_claim_tail_implemented == false
   and .monero_launcher_implemented == true
   and .monero_launcher_reachable_in_execute == false
   and .monero_launcher_executed_in_certifying_replay == false
+  and .role_sidecar_launcher_contract_green == true
+  and .role_sidecar_launcher_reachable_in_execute == false
+  and .agreement_helper_contract_green == true
+  and .agreement_helper_implemented_through == "countersigned_stage_b"
+  and .agreement_helper_submission_performed == false
+  and .agreement_helper_reachable_in_execute == false
+  and .available_unwired_launchers == [
+    "run-m4-lez-sidecar.sh", "run-m4-xmr-agreement.sh"
+  ]
   and .monero_owned_volume_count == 4
   and .cleanup.exact_resource_ledger == true
   and .cleanup.pid_start_time_binary_binding == true
@@ -123,7 +132,8 @@ jq -e '
 
 for required in \
   run-m4-lez-artifact-tests.sh run-lez-v02-stack.sh \
-  run-m4-lez-local-deployment.sh run-monero-e2e.sh \
+  run-m4-lez-local-deployment.sh run-m4-lez-actor-onboarding.sh \
+  run-m4-lez-sidecar.sh run-m4-xmr-agreement.sh run-monero-e2e.sh lez-v02-vault-claim-poc \
   lez-v02-xmr-stage-a-compose lez-v02-xmr-stage-a-poc \
   lez-v02-xmr-regtest-fund lez-v02-xmr-regtest-verify \
   lez-v02-xmr-release-prepare lez-v0-2-xmr-release-service \
@@ -151,6 +161,14 @@ container_record_line="${container_record_line%%:*}"
 (( volume_record_line < container_record_line )) ||
   fail "Monero volumes must be recorded before containers for reverse cleanup"
 
+execute_source="$(sed -n '/^execute_run() {$/,/^}$/p' "$runner")"
+rg -Fq 'actor_onboarding' <<<"$execute_source" ||
+  fail "execute omits actor onboarding"
+rg -Fq 'fail "monero_stack phase is not implemented; no Monero or swap effect was started"' \
+  <<<"$execute_source" || fail "execute omits the post-onboarding fail-closed boundary"
+if rg -Fq 'start_monero_child' <<<"$execute_source"; then
+  fail "execute can reach the Monero launcher before that phase is implemented"
+fi
 
 for forbidden in \
   'docker system prune' 'docker container prune' 'docker network prune' \

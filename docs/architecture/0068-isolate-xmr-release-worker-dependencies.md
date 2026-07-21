@@ -180,7 +180,13 @@ At this checkpoint:
   to tag v0.2.0; the root graph has no Git-source exception.
 
 No Docker, public RPC, faucet, public funds, peer, or external finality service
-is used by these compile, unit, or process gates. The process proof uses
+is used by these compile, unit, or process gates. The reusable
+`scripts/run-m4-lez-sidecar.sh` supervisor is now separately contract-GREEN for
+dynamic literal-loopback allocation, exact authenticated runtime probes,
+owner-private create-new manifests, PID start-time plus executable identity,
+and exact scoped stop. It explicitly records that the ordinary bearer covers
+the full role-sidecar RPC surface and is not a server-enforced release-only
+capability. Its actual-node parent-runner integration remains pending. The process proof uses
 ephemeral authenticated official v0.2 indexer-wire and typed bridge-protocol loopback services and deterministic
 typed fixtures; it does not claim actual-node behavior. Cold cache setup can
 require crates.io and the pinned official Git source.

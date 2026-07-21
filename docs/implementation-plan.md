@@ -2937,9 +2937,18 @@ Only a genuinely fresh third database was eligible for publication.
   handoff, terminal assertion, evidence publication, and scoped cleanup. The
   manual procedure now includes the cross-chain binder, but
   `scripts/run-m4-actual-claim-poc.sh` is deliberately partial: contract and
-  preflight work; `execute` reaches deployment then fails closed at unimplemented
-  actor onboarding; its Monero launcher is unreachable and its successful-claim
-  tail is absent.
+  preflight work; `execute` now reaches two exact finalized fresh-actor Vault
+  Claims after deployment, then fails closed at `monero_stack` before any Monero
+  or swap effect. The run-scoped Monero, role-sidecar, and agreement/session launchers
+  exist but are not yet wired into `execute`. The agreement helper is fixture-GREEN
+  through countersigned Stage B. Its receipt calls CLI values `requested_terms`
+  and explicitly records that the helper itself does not decode and rebind those
+  terms from Stage A; the role actors remain the canonical validation and
+  signing boundary. The tag-13-through-cleanup tail is absent.
+  Parent-runner integration must stage each checked actor, role-runner, and
+  composer binary as an owner-held, mode-`0755`, single-link run artifact; the
+  shared `target/debug` cache is mode `0775` with two links and is intentionally
+  rejected by the helper trust boundary.
 - [ ] Build and scan the final distributable Monero runtime image fail-hard;
   the current official archive and local runtime remain PoC infrastructure.
 
@@ -3010,13 +3019,16 @@ The next certification order is:
    then QA, chaos, information-security, and production-readiness hardening.
 
 The direct finalized-Claim-to-sweep binder and its retained-run invocation are
-complete. Remaining runner/orchestration implementation is estimated at 6 to
-10 focused hours. After that implementation is complete, budget 25 to 45
-minutes for one warm exact-commit replay or 1 to 3 hours for a cold replay,
-evidence rebinding, and scoped cleanup. Full M4 functional closure, including
-actual tag-16/tag-17 recovery, F7 native-plus-two-token parity, U9 guidance/CI,
-D1 XMR recordings, and synchronized closure gates, remains estimated at 18 to
-30 focused hours from this checkpoint. These ranges exclude owner-selected
+complete. The partial exact replay now proves its fresh Maker/Taker onboarding
+contract. The reusable role-sidecar launcher and complete agreement/session choreography
+through countersigned Stage B are contract-GREEN but not yet wired. Remaining
+runner/orchestration implementation is estimated at 4 to 8 focused hours. After that implementation is complete, budget 25 to
+45 minutes
+for one warm exact-commit replay or 1 to 3 hours for a cold replay, evidence
+rebinding, and scoped cleanup. Full M4 functional closure, including actual
+tag-16/tag-17 recovery, F7 native-plus-two-token parity, U9 guidance/CI, D1 XMR
+recordings, and synchronized closure gates, remains estimated at 16 to 28
+focused hours from this checkpoint. These ranges exclude owner-selected
 post-PoC QA, chaos, information-security, and production-readiness phases and do not let
 Logos-owned external gaps block local certification. No ETA authorizes an
 `m4-complete` tag before the recorded gates are true.

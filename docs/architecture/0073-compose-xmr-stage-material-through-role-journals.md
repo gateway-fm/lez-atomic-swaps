@@ -200,7 +200,16 @@ leasing.
    journal path, reconstructs both canonical transcripts from its completed
    snapshots, commits rather than emits its claim partial, and writes Stage B
    create-new. Separate processes validate/sign; assembly rejects crossed
-   signatures. The focused process test and actual-local replay are GREEN.
+   signatures. The focused process test and actual-local replay are GREEN. The reusable
+   `scripts/run-m4-xmr-agreement.sh` wrapper and its fake-process contract now
+   make the exact role/order/path choreography independently repeatable without
+   Docker or node effects. Its receipt labels CLI values `requested_terms` and
+   explicitly declines helper-level term binding because the composer receipt
+   exposes identity metadata and wire length, not decoded terms; role actors
+   remain the canonical wire validation and signing boundary. Parent-runner
+   integration remains. That integration must stage the three
+   checked executables as owner-held, non-group-writable, single-link run
+   artifacts rather than pass the shared mode-`0775`, two-link target cache.
 
 Fresh scalar/view-key convenience constructors are implemented in the XMR SDK,
 so actors do not reproduce scalar rejection rules. Agreement signatures reuse the

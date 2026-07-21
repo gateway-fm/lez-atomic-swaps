@@ -171,11 +171,17 @@ public deployment.
 
 Status: actual local successful-claim checkpoint from a working tree; exact committed-tree replay, cleanup attestation, recovery paths, and milestone certification remain open.
 
-The retained run used actual isolated LEZ v0.2 services and official Monero 0.18.5.1 Regtest processes. Solid arrows in both diagrams were exercised in one same-run journey. The port numbers are retained evidence examples only; every new run must read fresh dynamic literal-loopback endpoints from its owner-only manifests.
+The retained run used actual isolated LEZ v0.2 services and official Monero 0.18.5.1 Regtest processes. Solid arrows in both diagrams were exercised in one same-run journey. Dashed arrows belong to the replay-orchestration overlay, which has not completed a clean replay. The runner-to-onboarding route is wired and contract-GREEN; the agreement and sidecar routes are implemented and contract-GREEN but are not yet reachable from the parent runner's `execute` path. The port numbers are retained evidence examples only; every new run must read fresh dynamic literal-loopback endpoints from its owner-only manifests.
 
 ```mermaid
 flowchart LR
     Operator["Operator"]
+    subgraph ReplayOverlay["Replay orchestration overlay, not yet clean-replayed"]
+        ReplayRunner["Actual-claim replay runner<br/>implemented through actor onboarding"]
+        OnboardingHelper["Actor-onboarding helper<br/>wired and contract-GREEN"]
+        AgreementHelper["Agreement helper<br/>implemented through countersigned Stage B; unwired"]
+        SidecarLauncher["Role-sidecar launcher<br/>authenticated lifecycle; unwired"]
+    end
     Maker["Maker actor"]
     Taker["Taker actor"]
     Preparer["Exclusive tag 14 preparer"]
@@ -198,6 +204,23 @@ flowchart LR
 
     Operator --> Maker
     Operator --> Taker
+    Operator -.-> ReplayRunner
+    ReplayRunner -.-> OnboardingHelper
+    OnboardingHelper -.-> Maker
+    OnboardingHelper -.-> Taker
+    OnboardingHelper -.-> Sequencer
+    OnboardingHelper -.-> Indexer
+    ReplayRunner -.-> AgreementHelper
+    AgreementHelper -.-> Maker
+    AgreementHelper -.-> Taker
+    AgreementHelper -.-> MakerJournal
+    AgreementHelper -.-> TakerJournal
+    AgreementHelper -.-> Sequencer
+    AgreementHelper -.-> Indexer
+    AgreementHelper -.-> Monerod
+    ReplayRunner -.-> SidecarLauncher
+    SidecarLauncher -.-> MakerSidecar
+    SidecarLauncher -.-> TakerSidecar
     Taker --> TakerJournal
     Maker --> MakerJournal
     Taker --> TakerSidecar
@@ -288,11 +311,23 @@ public guidance, D1 XMR video evidence, and all post-PoC hardening remain before
 an `m4-complete` tag.
 
 `scripts/run-m4-actual-claim-poc.sh` is not yet a one-command journey. Its
-contract/preflight and execution through M4 deployment are implemented; it then
-fails closed at unimplemented actor onboarding. The Monero launcher exists but
-is unreachable, and all agreement-through-cleanup phases remain to be wired.
-The orchestration estimate is 6 to 10 focused hours, followed by a 25-to-45
-minute warm or 1-to-3 hour cold replay.
+contract/preflight and execution through M4 deployment plus fresh Maker/Taker
+Vault Claims are implemented. Onboarding proves exact finalized `Public`
+membership, block ID/hash/ID equality, and exact-block owner/Vault state before
+the runner fails closed at `monero_stack`. The Monero launcher exists but is
+unreachable. `scripts/run-m4-lez-sidecar.sh` separately provides run-scoped
+dynamic-loopback Maker/Taker startup, exact authenticated runtime probing, PID
+start-time/executable identity, owner-private manifests, and exact stop; it
+deliberately records that its bearer covers the full role RPC surface and that
+terms are launcher-bound rather than server route-enforced. It is contract-GREEN but not yet integrated with actual nodes in the
+parent runner. `scripts/run-m4-xmr-agreement.sh` is independently fixture-GREEN for
+separate role provisioning, read-only Stage A composition, claim/refund sessions
+and journals, private Taker claim material, equal refund presignatures, and
+countersigned Stage B. It performs no submission, has no retry, and requires
+incomplete roots to be quarantined. Tag 13 through cleanup remains to be wired.
+The orchestration estimate is 4 to 8 focused hours, followed by a 25-to-45 minute warm or 1-to-3 hour
+cold
+replay.
 
 ## M2 SDK/reference-demo target topology
 

@@ -2316,12 +2316,19 @@ checkpoint. The signed-refund and punishment branches remain unexecuted.
 The repository runner is not yet the replay for this manual flow.
 `scripts/run-m4-actual-claim-poc.sh contract` and its preflight modes are
 implemented. `execute` currently reaches checked artifact build, identity
-provisioning, the LEZ stack, and M4 deployment, then deliberately fails closed
-at `actor_onboarding` before Monero or any swap effect. Its Monero launcher is
-implemented but unreachable, and the agreement-through-cleanup tail is absent.
-Do not invoke or advertise it as a one-command successful-claim replay. The
-remaining orchestration is estimated at 6 to 10 focused hours; once complete,
-allow 25 to 45 minutes for a warm replay or 1 to 3 hours for a cold replay.
+provisioning, the LEZ stack, M4 deployment, and fresh Maker/Taker Vault Claims.
+It independently proves each exact `Public` transaction once in a bounded
+finalized window, checks the containing block by ID/hash/ID, and reads the owner
+and Vault state at that exact block. It then deliberately fails closed at
+`monero_stack` before Monero or any swap effect. Its Monero launcher and the separately contract-tested
+role-sidecar and agreement/session launchers are not yet reachable. The agreement helper covers
+role provisioning through countersigned Stage B. Its receipt truthfully records CLI values as
+`requested_terms` and does not claim independent helper-level term binding; the
+role actors remain the canonical wire validation and signing boundary. The
+tag-13-through-cleanup tail is absent. Do not invoke or advertise it as a
+one-command successful-claim replay. The remaining orchestration is estimated
+at 4 to 8 focused hours; once complete, allow 25 to 45 minutes for a warm replay
+or 1 to 3 hours for a cold replay.
 
 Every effect command below uses create-new outputs and has no automatic
 submission retry. Use a fresh lowercase run ID, source the fresh LEZ and Monero
