@@ -2822,6 +2822,133 @@ root after an error and never merge files. The runner's path-only writer can
 leave an unpublished orphan only under a hostile same-UID parent-path race;
 held inode and exact-entry checks prevent that orphan from becoming canonical.
 
+### Complete the claim/refund journals and countersign Stage B
+
+Use one long-lived database per role for both purposes. Do not create four
+per-session databases: the store's nonce-fingerprint reuse guard is
+database-wide. The following helper invokes the existing one-shot runner in a
+fresh process for every monotonic transition and keeps the Taker claim partial
+outside the exchange:
+
+```sh
+set -euo pipefail
+cargo +1.96.0 build --locked --offline \
+  -p lez-adaptor-role-runner -p xmr-reference-actor
+
+RUNNER=target/debug/lez-adaptor-role-runner
+ACTOR=target/debug/xmr-reference-actor
+STAGE_B_ROOT="$XMR_MATERIAL_ROOT/stage-b"
+MAKER_JOURNAL="$STAGE_B_ROOT/private/maker.sqlite"
+TAKER_JOURNAL="$STAGE_B_ROOT/private/taker.sqlite"
+install -d -m 700 "$STAGE_B_ROOT" "$STAGE_B_ROOT/exchange" \
+  "$STAGE_B_ROOT/private" "$STAGE_B_ROOT/private/taker-outbox" \
+  "$STAGE_B_ROOT/signatures"
+
+run_m4_round() {
+  purpose="$1"
+  round="$STAGE_B_ROOT/exchange/$purpose"
+  maker_session="$XMR_MATERIAL_ROOT/material/maker-sessions/$purpose.json"
+  taker_session="$XMR_MATERIAL_ROOT/material/taker-sessions/$purpose.json"
+  maker_key="$XMR_MATERIAL_ROOT/material/maker/$purpose.key"
+  taker_key="$XMR_MATERIAL_ROOT/material/taker/$purpose.key"
+  install -d -m 700 "$round"
+
+  "$RUNNER" maker --journal "$MAKER_JOURNAL" --session "$maker_session" \
+    reserve --secret-key-file "$maker_key" \
+    --output "$round/maker-commitment.json"
+  "$RUNNER" taker --journal "$TAKER_JOURNAL" --session "$taker_session" \
+    reserve --secret-key-file "$taker_key" \
+    --output "$round/taker-commitment.json"
+  "$RUNNER" maker --journal "$MAKER_JOURNAL" --session "$maker_session" \
+    accept-commitment --input "$round/taker-commitment.json"
+  "$RUNNER" taker --journal "$TAKER_JOURNAL" --session "$taker_session" \
+    accept-commitment --input "$round/maker-commitment.json"
+
+  "$RUNNER" maker --journal "$MAKER_JOURNAL" --session "$maker_session" \
+    reveal-nonce --output "$round/maker-nonce.json"
+  "$RUNNER" taker --journal "$TAKER_JOURNAL" --session "$taker_session" \
+    reveal-nonce --output "$round/taker-nonce.json"
+
+  "$RUNNER" maker --journal "$MAKER_JOURNAL" --session "$maker_session" \
+    accept-nonce-sign --input "$round/taker-nonce.json" \
+    --secret-key-file "$maker_key" --output "$round/maker-partial.json"
+  if [ "$purpose" = claim ]; then
+    taker_partial="$STAGE_B_ROOT/private/taker-outbox/claim-partial.json"
+    taker_presignature="$STAGE_B_ROOT/private/taker-outbox/claim-presignature.json"
+  else
+    taker_partial="$round/taker-partial.json"
+    taker_presignature="$round/taker-presignature.json"
+  fi
+  "$RUNNER" taker --journal "$TAKER_JOURNAL" --session "$taker_session" \
+    accept-nonce-sign --input "$round/maker-nonce.json" \
+    --secret-key-file "$taker_key" --output "$taker_partial"
+  "$RUNNER" taker --journal "$TAKER_JOURNAL" --session "$taker_session" \
+    accept-peer-partial --input "$round/maker-partial.json" \
+    --output "$taker_presignature"
+
+  if [ "$purpose" = refund ]; then
+    "$RUNNER" maker --journal "$MAKER_JOURNAL" --session "$maker_session" \
+      accept-peer-partial --input "$round/taker-partial.json" \
+      --output "$round/maker-presignature.json"
+    cmp "$round/maker-presignature.json" "$round/taker-presignature.json"
+  fi
+}
+
+run_m4_round claim
+run_m4_round refund
+test ! -e "$STAGE_B_ROOT/exchange/claim/taker-partial.json"
+test "$(stat -c '%a' "$MAKER_JOURNAL")" = 600
+test "$(stat -c '%a' "$TAKER_JOURNAL")" = 600
+
+"$ACTOR" compose-stage-b \
+  --private-root "$XMR_MATERIAL_ROOT/material/taker" \
+  --own-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --peer-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --agreement-stage-a "$XMR_MATERIAL_ROOT/exchange/agreement-stage-a.bin" \
+  --journal "$TAKER_JOURNAL" \
+  --output-unsigned-stage-b "$STAGE_B_ROOT/unsigned-stage-b.bin"
+
+"$ACTOR" sign-stage-b maker \
+  --private-root "$XMR_MATERIAL_ROOT/material/maker" \
+  --own-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --peer-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --agreement-stage-a "$XMR_MATERIAL_ROOT/exchange/agreement-stage-a.bin" \
+  --unsigned-stage-b "$STAGE_B_ROOT/unsigned-stage-b.bin" \
+  --output-signature "$STAGE_B_ROOT/signatures/maker.sig"
+"$ACTOR" sign-stage-b taker \
+  --private-root "$XMR_MATERIAL_ROOT/material/taker" \
+  --own-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --peer-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --agreement-stage-a "$XMR_MATERIAL_ROOT/exchange/agreement-stage-a.bin" \
+  --unsigned-stage-b "$STAGE_B_ROOT/unsigned-stage-b.bin" \
+  --output-signature "$STAGE_B_ROOT/signatures/taker.sig"
+
+"$ACTOR" assemble-stage-b taker \
+  --private-root "$XMR_MATERIAL_ROOT/material/taker" \
+  --own-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --peer-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --agreement-stage-a "$XMR_MATERIAL_ROOT/exchange/agreement-stage-a.bin" \
+  --unsigned-stage-b "$STAGE_B_ROOT/unsigned-stage-b.bin" \
+  --maker-signature "$STAGE_B_ROOT/signatures/maker.sig" \
+  --taker-signature "$STAGE_B_ROOT/signatures/taker.sig" \
+  --output-stage-b "$STAGE_B_ROOT/stage-b.bin"
+
+test "$(stat -c '%a' "$STAGE_B_ROOT/unsigned-stage-b.bin")" = 600
+test "$(stat -c '%a' "$STAGE_B_ROOT/stage-b.bin")" = 600
+sha256sum "$STAGE_B_ROOT/unsigned-stage-b.bin" "$STAGE_B_ROOT/stage-b.bin"
+```
+
+Every output is create-new, mode `0600`, and single-link. Do not delete or reset
+a journal to retry a swap. The Maker claim journal intentionally stops after
+its own partial; the Taker claim journal and both refund views are complete.
+Stage B contains a commitment to—not the bytes of—the Taker claim partial.
+The actor revalidates canonical Stage A, private manifest/key/view bindings,
+both journal identities/transcripts/partials, the refund presignature, and both
+role-indexed Stage-B signatures. This stage uses no node, RPC, peer, faucet,
+public endpoint, public funds, or external finality service and submits no
+transaction. Retained non-secret hashes and modes are in
+[the Stage-B packet](evidence/m4-actual-stage-b-poc-20260721.json).
+
 The component replay is:
 
 ```sh
@@ -2829,10 +2956,10 @@ cargo +1.96.0 test --locked --offline \
   -p xmr-reference-actor --test stage_a
 ```
 
-Expected result is 2 of 2 passed in addition to the four provisioning tests.
+Expected result is 3 of 3 passed in addition to the four provisioning tests.
 These tests use no Docker, node, RPC, peer, faucet, public endpoint, funds, or
-external finality service. The actual-local public composer is now GREEN;
-interactive journal packet rounds and Stage B still precede any tag-13 effect.
+external finality service. Actual-local Stage A and the canonical role-journal
+Stage B are GREEN; tag-13 remains the first pending chain effect.
 
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and

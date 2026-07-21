@@ -20,11 +20,19 @@ use std::{
 use anyhow::{Context as _, Result, anyhow, ensure};
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "sessions")]
-use lez_adaptor_role_runner::ValidatedSession;
+use lez_adaptor_role_runner::{Role as RunnerRole, ValidatedSession};
+#[cfg(feature = "sessions")]
+use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal};
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MAX_XMR_AGREEMENT_WIRE_BYTES,
     MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES, MoneroPrivateViewKey, ValidatedXmrAgreementBodyV1,
     XmrAgreementBodyV1, XmrAgreementV1, XmrParticipantIdentityV1, XmrRoleV1,
+};
+#[cfg(feature = "sessions")]
+use lez_xmr_swap_sdk::{
+    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES,
+    ValidatedXmrActivationBodyV1, XmrActivatedAgreementV1, XmrActivationBodyV1,
+    XmrSessionTranscriptV1,
 };
 #[cfg(feature = "sessions")]
 use rustix::fs::Dir;
@@ -48,6 +56,8 @@ const ROLE_PACKET_MAX_HEX_CHARS: usize = 270 * 1024 * 2;
 const PRIVATE_MANIFEST_MAX_BYTES: u64 = 1024;
 const PRIVATE_KEY_MAX_BYTES: u64 = 66;
 const STAGE_A_SIGNATURE_BYTES: usize = 64;
+#[cfg(feature = "sessions")]
+const STAGE_B_SIGNATURE_BYTES: usize = 64;
 #[cfg(feature = "sessions")]
 const SESSION_FILE_MAX_BYTES: u64 = 8 * 1024;
 #[cfg(feature = "sessions")]
@@ -171,6 +181,84 @@ pub enum Action {
         /// New atomic role-local directory containing claim.json and refund.json.
         #[arg(long, value_name = "NEW_DIRECTORY")]
         session_root: PathBuf,
+    },
+    /// Compose canonical unsigned Stage B from the Taker's completed journals.
+    #[cfg(feature = "sessions")]
+    ComposeStageB {
+        /// Existing owner-only Taker role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// Taker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// Maker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// Existing owner-private Taker journal containing claim and refund.
+        #[arg(long, value_name = "PRIVATE_SQLITE")]
+        journal: PathBuf,
+        /// New canonical unsigned Stage-B wire.
+        #[arg(long, value_name = "NEW_UNSIGNED_STAGE_B")]
+        output_unsigned_stage_b: PathBuf,
+    },
+    /// Sign one canonical unsigned Stage-B wire with this role's agreement key.
+    #[cfg(feature = "sessions")]
+    SignStageB {
+        /// Fixed role bound by the private manifest.
+        #[arg(value_enum)]
+        role: ActorRole,
+        /// Existing owner-only role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// This role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// The other role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// Canonical validated unsigned Stage-B wire.
+        #[arg(long, value_name = "UNSIGNED_STAGE_B")]
+        unsigned_stage_b: PathBuf,
+        /// New raw fixed-width BIP340 signature.
+        #[arg(long, value_name = "NEW_SIGNATURE")]
+        output_signature: PathBuf,
+    },
+    /// Assemble two role signatures into the canonical signed Stage-B wire.
+    #[cfg(feature = "sessions")]
+    AssembleStageB {
+        /// Fixed role supplying the private view key for final validation.
+        #[arg(value_enum)]
+        role: ActorRole,
+        /// Existing owner-only role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// This role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// The other role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// Canonical validated unsigned Stage-B wire.
+        #[arg(long, value_name = "UNSIGNED_STAGE_B")]
+        unsigned_stage_b: PathBuf,
+        /// Raw fixed-width Maker BIP340 signature.
+        #[arg(long, value_name = "SIGNATURE")]
+        maker_signature: PathBuf,
+        /// Raw fixed-width Taker BIP340 signature.
+        #[arg(long, value_name = "SIGNATURE")]
+        taker_signature: PathBuf,
+        /// New canonical signed Stage-B wire.
+        #[arg(long, value_name = "NEW_STAGE_B")]
+        output_stage_b: PathBuf,
     },
 }
 
@@ -342,6 +430,7 @@ impl PrivateManifestV1 {
 ///
 /// Returns a redacted error when private-file, randomness, proof, or
 /// public-packet validation fails.
+#[allow(clippy::too_many_lines)] // Explicit CLI dispatch keeps every role action auditable.
 pub fn execute(cli: Cli) -> Result<()> {
     match cli.action {
         Action::Provision {
@@ -402,6 +491,62 @@ pub fn execute(cli: Cli) -> Result<()> {
             &peer_public_packet,
             &agreement_stage_a,
             &session_root,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::ComposeStageB {
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            journal,
+            output_unsigned_stage_b,
+        } => compose_stage_b(
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &journal,
+            &output_unsigned_stage_b,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::SignStageB {
+            role,
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            unsigned_stage_b,
+            output_signature,
+        } => sign_stage_b(
+            role,
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &unsigned_stage_b,
+            &output_signature,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::AssembleStageB {
+            role,
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            unsigned_stage_b,
+            maker_signature,
+            taker_signature,
+            output_stage_b,
+        } => assemble_stage_b(
+            role,
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &unsigned_stage_b,
+            &maker_signature,
+            &taker_signature,
+            &output_stage_b,
         ),
     }
 }
@@ -514,6 +659,229 @@ fn initialize_sessions(
     )
     .context("refund runner session is invalid")?;
     publish_session_bundle(&destination, &claim, &refund)
+}
+
+#[cfg(feature = "sessions")]
+struct CompletedTakerSession {
+    transcript: XmrSessionTranscriptV1,
+    maker_partial: [u8; 32],
+    taker_partial: [u8; 32],
+    presignature: [u8; 65],
+}
+
+#[cfg(feature = "sessions")]
+fn compose_stage_b(
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    journal: &Path,
+    output_unsigned_stage_b: &Path,
+) -> Result<()> {
+    let destination = SecureDestination::new(output_unsigned_stage_b, "unsigned Stage-B wire")?;
+    destination.ensure_absent("unsigned Stage-B wire")?;
+    let packets = StageRolePackets::read(ActorRole::Taker, own_public_packet, peer_public_packet)?;
+    let material = validate_private_role(private_root, ActorRole::Taker, &packets)?;
+    let agreement = read_validated_stage_a(agreement_stage_a, &packets)?;
+
+    let claim_session = ValidatedSession::from_untweaked_context(
+        agreement
+            .claim_session_descriptor()
+            .context()
+            .context("claim session descriptor is invalid")?,
+    )
+    .context("claim runner session is invalid")?;
+    let refund_session = ValidatedSession::from_untweaked_context(
+        agreement
+            .refund_session_descriptor()
+            .context()
+            .context("refund session descriptor is invalid")?,
+    )
+    .context("refund runner session is invalid")?;
+    let claim = load_completed_taker_session(journal, &claim_session, "claim")?;
+    let refund = load_completed_taker_session(journal, &refund_session, "refund")?;
+
+    let claim_partial_context = agreement
+        .claim_partial_context_binding(&claim.transcript, claim.maker_partial)
+        .context("claim partial context is invalid")?;
+    let claim_partial_commitment = agreement
+        .commit_taker_claim_partial(&claim.transcript, claim.maker_partial, claim.taker_partial)
+        .context("Taker claim partial is invalid")?;
+    let body = XmrActivationBodyV1::new(
+        agreement.agreement_commitment(),
+        agreement.claim_context_binding(),
+        claim.transcript,
+        claim.maker_partial,
+        claim_partial_context,
+        claim_partial_commitment,
+        agreement.refund_context_binding(),
+        refund.transcript,
+        refund.maker_partial,
+        refund.taker_partial,
+        refund.presignature,
+    );
+    let validated = ValidatedXmrActivationBodyV1::validate(&agreement, body, &material.view)
+        .context("unsigned Stage-B body is invalid")?;
+    let encoded = validated
+        .encode_unsigned_wire()
+        .context("encode unsigned Stage-B wire")?;
+    write_bounded_public_new(
+        &destination,
+        &encoded,
+        u64::try_from(MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES).unwrap_or(u64::MAX),
+        "unsigned Stage-B wire",
+    )
+}
+
+#[cfg(feature = "sessions")]
+fn sign_stage_b(
+    role: ActorRole,
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    unsigned_stage_b: &Path,
+    output_signature: &Path,
+) -> Result<()> {
+    let destination = SecureDestination::new(output_signature, "Stage-B signature")?;
+    destination.ensure_absent("Stage-B signature")?;
+    let packets = StageRolePackets::read(role, own_public_packet, peer_public_packet)?;
+    let material = validate_private_role(private_root, role, &packets)?;
+    let agreement = read_validated_stage_a(agreement_stage_a, &packets)?;
+    let wire = read_public_input(
+        unsigned_stage_b,
+        u64::try_from(MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES).unwrap_or(u64::MAX),
+        "unsigned Stage-B wire",
+    )?;
+    let validated =
+        ValidatedXmrActivationBodyV1::from_unsigned_wire(&agreement, &wire, &material.view)
+            .context("unsigned Stage-B wire is invalid")?;
+    let secp = Secp256k1::new();
+    let signature = secp
+        .sign_schnorr_no_aux_rand(
+            &Message::from_digest(validated.commitment()),
+            &Keypair::from_secret_key(&secp, &material.agreement.key),
+        )
+        .serialize();
+    write_bounded_public_new(
+        &destination,
+        &signature,
+        STAGE_B_SIGNATURE_BYTES as u64,
+        "Stage-B signature",
+    )
+}
+
+#[cfg(feature = "sessions")]
+#[allow(clippy::too_many_arguments)]
+fn assemble_stage_b(
+    role: ActorRole,
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    unsigned_stage_b: &Path,
+    maker_signature: &Path,
+    taker_signature: &Path,
+    output_stage_b: &Path,
+) -> Result<()> {
+    let destination = SecureDestination::new(output_stage_b, "signed Stage-B wire")?;
+    destination.ensure_absent("signed Stage-B wire")?;
+    let packets = StageRolePackets::read(role, own_public_packet, peer_public_packet)?;
+    let material = validate_private_role(private_root, role, &packets)?;
+    let agreement = read_validated_stage_a(agreement_stage_a, &packets)?;
+    let wire = read_public_input(
+        unsigned_stage_b,
+        u64::try_from(MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES).unwrap_or(u64::MAX),
+        "unsigned Stage-B wire",
+    )?;
+    let validated =
+        ValidatedXmrActivationBodyV1::from_unsigned_wire(&agreement, &wire, &material.view)
+            .context("unsigned Stage-B wire is invalid")?;
+    let maker =
+        read_fixed_public::<STAGE_B_SIGNATURE_BYTES>(maker_signature, "Maker Stage-B signature")?;
+    let taker =
+        read_fixed_public::<STAGE_B_SIGNATURE_BYTES>(taker_signature, "Taker Stage-B signature")?;
+    let activated = validated
+        .attach_signatures(maker, taker)
+        .context("Stage-B role signatures are invalid")?;
+    let encoded = activated
+        .encode_wire()
+        .context("encode signed Stage-B wire")?;
+    XmrActivatedAgreementV1::from_wire(&agreement, &encoded, &material.view)
+        .context("written Stage-B wire would be invalid")?;
+    write_bounded_public_new(
+        &destination,
+        &encoded,
+        u64::try_from(MAX_XMR_ACTIVATION_WIRE_BYTES).unwrap_or(u64::MAX),
+        "signed Stage-B wire",
+    )
+}
+
+#[cfg(feature = "sessions")]
+fn read_validated_stage_a(
+    agreement_stage_a: &Path,
+    packets: &StageRolePackets,
+) -> Result<XmrAgreementV1> {
+    let wire = read_public_input(
+        agreement_stage_a,
+        u64::try_from(MAX_XMR_AGREEMENT_WIRE_BYTES).unwrap_or(u64::MAX),
+        "signed Stage-A wire",
+    )?;
+    let agreement = XmrAgreementV1::from_wire(&wire).context("signed Stage-A wire is invalid")?;
+    validate_stage_a_packets(agreement.body(), packets)?;
+    Ok(agreement)
+}
+
+#[cfg(feature = "sessions")]
+fn load_completed_taker_session(
+    journal_path: &Path,
+    session: &ValidatedSession,
+    label: &'static str,
+) -> Result<CompletedTakerSession> {
+    let journal = SqliteAdaptorSessionJournal::open_existing(journal_path)
+        .with_context(|| format!("open existing Taker {label} journal"))?;
+    let expected = session.identity(RunnerRole::Taker);
+    let snapshot = journal
+        .load(expected.session_id())
+        .with_context(|| format!("load Taker {label} journal"))?
+        .ok_or_else(|| anyhow!("Taker {label} journal has no matching session"))?;
+    ensure!(
+        snapshot.identity() == &expected,
+        "Taker {label} journal identity mismatch"
+    );
+    ensure!(
+        snapshot.phase() == AdaptorSessionPhase::PresignatureVerified,
+        "Taker {label} journal is incomplete"
+    );
+    let own_nonce = snapshot
+        .own_public_nonce()
+        .ok_or_else(|| anyhow!("Taker {label} public nonce is unavailable"))?;
+    let peer_commitment = snapshot
+        .peer_commitment()
+        .ok_or_else(|| anyhow!("Maker {label} commitment is unavailable"))?;
+    let peer_nonce = snapshot
+        .peer_public_nonce()
+        .ok_or_else(|| anyhow!("Maker {label} public nonce is unavailable"))?;
+    let taker_partial = snapshot
+        .own_partial()
+        .ok_or_else(|| anyhow!("Taker {label} partial is unavailable"))?;
+    let maker_partial = snapshot
+        .peer_partial()
+        .ok_or_else(|| anyhow!("Maker {label} partial is unavailable"))?;
+    let presignature = snapshot
+        .presignature()
+        .ok_or_else(|| anyhow!("Taker {label} presignature is unavailable"))?;
+    Ok(CompletedTakerSession {
+        transcript: XmrSessionTranscriptV1::new(
+            *peer_commitment.bytes(),
+            *snapshot.own_commitment().bytes(),
+            *peer_nonce.bytes(),
+            *own_nonce.bytes(),
+        ),
+        maker_partial: *maker_partial.bytes(),
+        taker_partial: *taker_partial.bytes(),
+        presignature: *presignature.bytes(),
+    })
 }
 
 fn provision(
@@ -711,6 +1079,8 @@ impl Drop for LoadedSecpKey {
 
 struct ValidatedPrivateRoleMaterial {
     agreement: LoadedSecpKey,
+    #[cfg(feature = "sessions")]
+    view: MoneroPrivateViewKey,
 }
 
 fn validate_private_role(
@@ -771,10 +1141,13 @@ fn validate_private_role(
         view.public_key() == own.public_view_key,
         "private Monero view key does not match the bound public packet"
     );
-    drop(view);
     drop(claim);
     drop(refund);
-    Ok(ValidatedPrivateRoleMaterial { agreement })
+    Ok(ValidatedPrivateRoleMaterial {
+        agreement,
+        #[cfg(feature = "sessions")]
+        view,
+    })
 }
 
 fn validate_stage_a_packets(body: &XmrAgreementBodyV1, packets: &StageRolePackets) -> Result<()> {

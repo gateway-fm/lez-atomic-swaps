@@ -1,4 +1,7 @@
+#![cfg(feature = "sessions")]
+
 use std::{
+    ffi::OsString,
     fs::{self, OpenOptions},
     io::Write as _,
     os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
@@ -6,10 +9,13 @@ use std::{
     process::{Command, Output},
 };
 
+use clap::Parser as _;
+use lez_adaptor_role_runner::{Cli as RunnerCli, execute as execute_runner};
 use lez_xmr_swap_sdk::{
-    MoneroAddressNetworkV1, MoneroSharedAddressV1, ValidatedXmrAgreementBodyV1, XmrAgreementBodyV1,
-    XmrAgreementV1, XmrLezTermsV1, XmrMessagesV1, XmrMoneroTermsV1, XmrNamedProfileV1,
-    XmrParticipantsV1, XmrSwapDirectionV1, XmrWindowsV1,
+    MoneroAddressNetworkV1, MoneroPrivateViewKey, MoneroSharedAddressV1,
+    ValidatedXmrAgreementBodyV1, XmrActivatedAgreementV1, XmrAgreementBodyV1, XmrAgreementV1,
+    XmrLezTermsV1, XmrMessagesV1, XmrMoneroTermsV1, XmrNamedProfileV1, XmrParticipantsV1,
+    XmrSwapDirectionV1, XmrWindowsV1,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
@@ -303,6 +309,213 @@ fn signed_agreement(fixture: &Fixture) -> (PathBuf, PathBuf, PathBuf) {
     (maker_signature, taker_signature, agreement)
 }
 
+fn runner(role: &str, journal: &Path, session: &Path, action: Vec<OsString>) {
+    let mut arguments = vec![
+        OsString::from("lez-adaptor-role-runner"),
+        OsString::from(role),
+        OsString::from("--journal"),
+        journal.as_os_str().to_owned(),
+        OsString::from("--session"),
+        session.as_os_str().to_owned(),
+    ];
+    arguments.extend(action);
+    let cli = RunnerCli::try_parse_from(arguments).expect("parse runner command");
+    execute_runner(&cli).expect("execute runner command");
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the two-role transcript stays linear so the exact packet order remains auditable"
+)]
+fn run_adaptor_round(
+    fixture: &Fixture,
+    purpose: &str,
+    maker_session: &Path,
+    taker_session: &Path,
+    maker_journal: &Path,
+    taker_journal: &Path,
+) -> [u8; 32] {
+    let exchange = owner_directory(&fixture.exchange, &format!("{purpose}-round"));
+    let maker_commitment = exchange.join("maker-commitment.json");
+    let taker_commitment = exchange.join("taker-commitment.json");
+    let maker_nonce = exchange.join("maker-nonce.json");
+    let taker_nonce = exchange.join("taker-nonce.json");
+    let maker_partial = exchange.join("maker-partial.json");
+    let taker_partial = fixture
+        .taker_root
+        .join(format!("{purpose}-partial.private.json"));
+    let taker_presignature = exchange.join("taker-presignature.json");
+
+    for (role, journal, session, key, output) in [
+        (
+            "maker",
+            maker_journal,
+            maker_session,
+            fixture.maker_root.join(format!("{purpose}.key")),
+            &maker_commitment,
+        ),
+        (
+            "taker",
+            taker_journal,
+            taker_session,
+            fixture.taker_root.join(format!("{purpose}.key")),
+            &taker_commitment,
+        ),
+    ] {
+        runner(
+            role,
+            journal,
+            session,
+            vec![
+                "reserve".into(),
+                "--secret-key-file".into(),
+                key.into_os_string(),
+                "--output".into(),
+                output.as_os_str().to_owned(),
+            ],
+        );
+    }
+    runner(
+        "maker",
+        maker_journal,
+        maker_session,
+        vec![
+            "accept-commitment".into(),
+            "--input".into(),
+            taker_commitment.as_os_str().to_owned(),
+        ],
+    );
+    runner(
+        "taker",
+        taker_journal,
+        taker_session,
+        vec![
+            "accept-commitment".into(),
+            "--input".into(),
+            maker_commitment.as_os_str().to_owned(),
+        ],
+    );
+    for (role, journal, session, output) in [
+        ("maker", maker_journal, maker_session, &maker_nonce),
+        ("taker", taker_journal, taker_session, &taker_nonce),
+    ] {
+        runner(
+            role,
+            journal,
+            session,
+            vec![
+                "reveal-nonce".into(),
+                "--output".into(),
+                output.as_os_str().to_owned(),
+            ],
+        );
+    }
+    for (role, journal, session, input, key, output) in [
+        (
+            "maker",
+            maker_journal,
+            maker_session,
+            &taker_nonce,
+            fixture.maker_root.join(format!("{purpose}.key")),
+            &maker_partial,
+        ),
+        (
+            "taker",
+            taker_journal,
+            taker_session,
+            &maker_nonce,
+            fixture.taker_root.join(format!("{purpose}.key")),
+            &taker_partial,
+        ),
+    ] {
+        runner(
+            role,
+            journal,
+            session,
+            vec![
+                "accept-nonce-sign".into(),
+                "--input".into(),
+                input.as_os_str().to_owned(),
+                "--secret-key-file".into(),
+                key.into_os_string(),
+                "--output".into(),
+                output.as_os_str().to_owned(),
+            ],
+        );
+    }
+    runner(
+        "taker",
+        taker_journal,
+        taker_session,
+        vec![
+            "accept-peer-partial".into(),
+            "--input".into(),
+            maker_partial.as_os_str().to_owned(),
+            "--output".into(),
+            taker_presignature.as_os_str().to_owned(),
+        ],
+    );
+    if purpose == "refund" {
+        runner(
+            "maker",
+            maker_journal,
+            maker_session,
+            vec![
+                "accept-peer-partial".into(),
+                "--input".into(),
+                taker_partial.as_os_str().to_owned(),
+                "--output".into(),
+                exchange.join("maker-presignature.json").into_os_string(),
+            ],
+        );
+    }
+
+    let packet: Value =
+        serde_json::from_slice(&fs::read(&taker_partial).expect("Taker partial packet"))
+            .expect("Taker partial packet JSON");
+    hex::decode(packet["payload"].as_str().expect("Taker partial payload"))
+        .expect("Taker partial hex")
+        .try_into()
+        .expect("Taker partial width")
+}
+
+fn stage_b_sign(
+    fixture: &Fixture,
+    role: &str,
+    agreement: &Path,
+    unsigned: &Path,
+    output: &Path,
+) -> Output {
+    let (root, own, peer) = match role {
+        "maker" => (
+            &fixture.maker_root,
+            &fixture.maker_packet,
+            &fixture.taker_packet,
+        ),
+        "taker" => (
+            &fixture.taker_root,
+            &fixture.taker_packet,
+            &fixture.maker_packet,
+        ),
+        _ => panic!("unknown role"),
+    };
+    Command::new(binary())
+        .args(["sign-stage-b", role, "--private-root"])
+        .arg(root)
+        .arg("--own-public-packet")
+        .arg(own)
+        .arg("--peer-public-packet")
+        .arg(peer)
+        .arg("--agreement-stage-a")
+        .arg(agreement)
+        .arg("--unsigned-stage-b")
+        .arg(unsigned)
+        .arg("--output-signature")
+        .arg(output)
+        .output()
+        .expect("spawn Stage-B signer")
+}
+
 #[test]
 fn separate_role_processes_produce_byte_identical_stage_a_and_sessions() {
     let fixture = provision_pair();
@@ -492,4 +705,177 @@ fn crosswired_private_bindings_signatures_and_destinations_fail_closed() {
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("signing keys do not match"));
     assert!(!rejected_session_root.exists());
     assert_no_staging_entries(&fixture.material);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn completed_role_journals_activate_without_disclosing_taker_claim_partial() {
+    let fixture = provision_pair();
+    let (_, _, agreement) = signed_agreement(&fixture);
+    let maker_sessions = fixture.material.join("stage-b-maker-sessions");
+    let taker_sessions = fixture.material.join("stage-b-taker-sessions");
+    assert_success(
+        &initialize(&fixture, "maker", &agreement, &maker_sessions),
+        "Maker Stage-B session initialization",
+    );
+    assert_success(
+        &initialize(&fixture, "taker", &agreement, &taker_sessions),
+        "Taker Stage-B session initialization",
+    );
+
+    let incomplete_journal = fixture.taker_root.join("incomplete.sqlite");
+    let incomplete_commitment = fixture.taker_root.join("incomplete-commitment.json");
+    runner(
+        "taker",
+        &incomplete_journal,
+        &taker_sessions.join("claim.json"),
+        vec![
+            "reserve".into(),
+            "--secret-key-file".into(),
+            fixture.taker_root.join("claim.key").into_os_string(),
+            "--output".into(),
+            incomplete_commitment.into_os_string(),
+        ],
+    );
+    let incomplete_output = fixture.exchange.join("incomplete-stage-b.bin");
+    let incomplete = Command::new(binary())
+        .arg("compose-stage-b")
+        .arg("--private-root")
+        .arg(&fixture.taker_root)
+        .arg("--own-public-packet")
+        .arg(&fixture.taker_packet)
+        .arg("--peer-public-packet")
+        .arg(&fixture.maker_packet)
+        .arg("--agreement-stage-a")
+        .arg(&agreement)
+        .arg("--journal")
+        .arg(&incomplete_journal)
+        .arg("--output-unsigned-stage-b")
+        .arg(&incomplete_output)
+        .output()
+        .expect("spawn incomplete Stage-B composer");
+    assert!(!incomplete.status.success());
+    assert!(String::from_utf8_lossy(&incomplete.stderr).contains("claim journal is incomplete"));
+    assert!(!incomplete_output.exists());
+
+    let maker_journal = fixture.maker_root.join("stage-b.sqlite");
+    let taker_journal = fixture.taker_root.join("stage-b.sqlite");
+    let taker_claim_partial = run_adaptor_round(
+        &fixture,
+        "claim",
+        &maker_sessions.join("claim.json"),
+        &taker_sessions.join("claim.json"),
+        &maker_journal,
+        &taker_journal,
+    );
+    let _taker_refund_partial = run_adaptor_round(
+        &fixture,
+        "refund",
+        &maker_sessions.join("refund.json"),
+        &taker_sessions.join("refund.json"),
+        &maker_journal,
+        &taker_journal,
+    );
+
+    let unsigned = fixture.exchange.join("unsigned-stage-b.bin");
+    let compose = Command::new(binary())
+        .arg("compose-stage-b")
+        .arg("--private-root")
+        .arg(&fixture.taker_root)
+        .arg("--own-public-packet")
+        .arg(&fixture.taker_packet)
+        .arg("--peer-public-packet")
+        .arg(&fixture.maker_packet)
+        .arg("--agreement-stage-a")
+        .arg(&agreement)
+        .arg("--journal")
+        .arg(&taker_journal)
+        .arg("--output-unsigned-stage-b")
+        .arg(&unsigned)
+        .output()
+        .expect("spawn Stage-B composer");
+    assert_success(&compose, "Stage-B compose");
+    assert_private_output(&unsigned);
+    let unsigned_bytes = fs::read(&unsigned).expect("unsigned Stage-B wire");
+    assert!(
+        !unsigned_bytes
+            .windows(taker_claim_partial.len())
+            .any(|bytes| bytes == taker_claim_partial)
+    );
+
+    let maker_signature = fixture.exchange.join("maker-stage-b.sig");
+    let taker_signature = fixture.exchange.join("taker-stage-b.sig");
+    assert_success(
+        &stage_b_sign(&fixture, "maker", &agreement, &unsigned, &maker_signature),
+        "Maker Stage-B sign",
+    );
+    assert_success(
+        &stage_b_sign(&fixture, "taker", &agreement, &unsigned, &taker_signature),
+        "Taker Stage-B sign",
+    );
+    assert_private_output(&maker_signature);
+    assert_private_output(&taker_signature);
+
+    let activated = fixture.exchange.join("activated-stage-b.bin");
+    let assemble = |maker: &Path, taker: &Path, output: &Path| {
+        Command::new(binary())
+            .args(["assemble-stage-b", "taker", "--private-root"])
+            .arg(&fixture.taker_root)
+            .arg("--own-public-packet")
+            .arg(&fixture.taker_packet)
+            .arg("--peer-public-packet")
+            .arg(&fixture.maker_packet)
+            .arg("--agreement-stage-a")
+            .arg(&agreement)
+            .arg("--unsigned-stage-b")
+            .arg(&unsigned)
+            .arg("--maker-signature")
+            .arg(maker)
+            .arg("--taker-signature")
+            .arg(taker)
+            .arg("--output-stage-b")
+            .arg(output)
+            .output()
+            .expect("spawn Stage-B assembler")
+    };
+    assert_success(
+        &assemble(&maker_signature, &taker_signature, &activated),
+        "Stage-B assemble",
+    );
+    assert_private_output(&activated);
+    let activated_bytes = fs::read(&activated).expect("activated Stage-B wire");
+    assert!(
+        !activated_bytes
+            .windows(taker_claim_partial.len())
+            .any(|bytes| bytes == taker_claim_partial)
+    );
+    let stage_a = XmrAgreementV1::from_wire(&fs::read(&agreement).expect("Stage-A wire"))
+        .expect("validated Stage A");
+    let view_bytes: [u8; 32] = hex::decode(
+        std::str::from_utf8(
+            &fs::read(fixture.taker_root.join("monero-view.key")).expect("view key"),
+        )
+        .expect("view key UTF-8")
+        .trim(),
+    )
+    .expect("view key hex")
+    .try_into()
+    .expect("view key width");
+    let view =
+        MoneroPrivateViewKey::from_monero_little_endian(view_bytes).expect("private view key");
+    XmrActivatedAgreementV1::from_wire(&stage_a, &activated_bytes, &view)
+        .expect("validated activated agreement");
+
+    let crossed_output = fixture.exchange.join("crossed-stage-b.bin");
+    let crossed = assemble(&taker_signature, &maker_signature, &crossed_output);
+    assert!(!crossed.status.success());
+    assert!(String::from_utf8_lossy(&crossed.stderr).contains("role signatures are invalid"));
+    assert!(!crossed_output.exists());
+
+    let collision = fixture.exchange.join("stage-b-collision.bin");
+    write_new_private(&collision, b"untouched");
+    let collided = assemble(&maker_signature, &taker_signature, &collision);
+    assert!(!collided.status.success());
+    assert!(String::from_utf8_lossy(&collided.stderr).contains("already exists"));
+    assert_eq!(fs::read(&collision).expect("collision file"), b"untouched");
 }

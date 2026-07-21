@@ -239,6 +239,19 @@ byte-identical claim/refund session files. The
 non-secret identities and hashes. No public RPC, peer, faucet, public funds, or
 external finality service participated. This is real RPC-backed pre-effect
 composition, not a chain mutation or completed swap.
+The role-journal and Stage-B continuation is now GREEN on the same agreement.
+Maker and Taker each used one long-lived owner-private SQLite journal across
+both claim and refund. Both commitment/opening rounds completed; Maker exposed
+its claim and refund partials, Taker exposed only its refund partial, and the
+exact Taker claim partial stayed in its private journal/outbox. The two refund
+presignatures were byte-identical. A Taker-only actor composed the 747-byte
+canonical unsigned Stage B from its single journal, separate Maker and Taker
+processes countersigned it, and assembly produced an 875-byte activation that
+revalidated through `XmrActivatedAgreementV1`. An exact-current replay was
+byte-identical. The
+[Stage-B packet](docs/evidence/m4-actual-stage-b-poc-20260721.json) records only
+non-secret hashes and safety facts. This remains pre-effect evidence: actual
+swaps are still 0 of 1.
 Actual-local tag-13 execution/classification, release-worker clock/route wiring,
 tag-14 submission and tag-14/tag-15 finalized discovery, adaptor extraction, official-wallet
 claim, and fresh terminal roles remain before the happy PoC. Refund/punishment
@@ -271,9 +284,11 @@ packets and every private binding before signing Stage A; its public assembler
 accepts only correctly indexed BIP340 signatures. Each role then derives the
 same purpose-separated claim/refund contexts into one complete owner-only
 session directory published by a single no-replace rename. Six actor tests are
-GREEN, including two separate-process Stage-A tests. Public actual-local Stage-A
-composition has also passed against the two isolated devnets; interactive
-journal rounds, Stage B, and chain effects remain pending. No swap is claimed.
+GREEN, including two separate-process Stage-A tests. A third process test now
+drives both sessions through one journal per role, rejects incomplete journals
+and crossed signatures, proves the private Taker claim partial is absent from
+both Stage-B wires, and preserves create-new outputs. Public actual-local Stage A
+and canonical Stage B have passed; chain effects remain pending. No swap is claimed.
 
 The fresh checked guest and current host components can be repeated
 independently before the full actor exists; the exact deployer and tag-15

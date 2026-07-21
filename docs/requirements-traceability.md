@@ -1,8 +1,8 @@
 # Requirements traceability
 
-Last reconciled: 2026-07-20 against the live RFP-003 and Gateway's accepted
+Last reconciled: 2026-07-21 against the live RFP-003 and Gateway's accepted
 replacement proposal #112. Issue #61 is superseded. M4 component evidence was
-synchronized on 2026-07-20 without treating the component route as actor or
+synchronized through canonical Stage B without treating the pre-effect route as
 actual-node evidence. ADR 0068 adds the separately locked, compile-green
 one-shot release worker, four unit tests, and one checked typed-issuer-seeded
 subprocess admission/restart proof. The proof uses official v0.2 indexer-wire plus typed bridge-protocol loopback
@@ -87,8 +87,18 @@ nonces across monotonic live tips, and published one no-clobber canonical wire.
 Separate Maker/Taker processes signed it and produced equal same-purpose atomic
 session files. Adapter 17/17, composer 10/10, strict Clippy, formatting,
 warning-fatal private Rustdoc, isolation policy, and the actual process replay
-are GREEN. This is pre-effect evidence: nonce/partial journal rounds, Stage B,
-and every chain effect remain, so the M4 count is still 0 of 1 swaps.
+are GREEN. The canonical continuation is also GREEN. One long-lived SQLite
+database per role carries both claim/refund sessions, retaining database-wide
+nonce-reuse detection. Existing runner transitions persist commitments before
+openings and consume nonces with exact partial outboxes. Only Maker claim/refund
+and Taker refund partials enter the exchange. A Taker-only process reconstructs
+both completed journal transcripts, commits its private claim partial into a
+747-byte unsigned Stage B, and separate Maker/Taker processes countersign the
+875-byte SDK-validated activation. The exact-current replay is byte-identical;
+the focused black-box test rejects incomplete journals, crossed signatures, and
+clobber while proving the exact private Taker claim partial is absent from both
+wires. This is pre-effect evidence: every chain effect remains, so the M4 count
+is still 0 of 1 swaps.
 The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,

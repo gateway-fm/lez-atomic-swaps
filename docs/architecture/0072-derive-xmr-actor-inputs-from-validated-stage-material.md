@@ -2,9 +2,9 @@
 
 Status: Accepted as an M4 composition rule; SDK boundaries, the role-fixed
 tag-13 actor, independent material provisioning, the completed Taker-journal
-handoff, and private Stage-A signing/assembly/atomic session roots are
-implemented. Stage-B composition and actual role-process chain execution remain
-pending.
+handoff, private Stage-A signing/assembly/session roots, one-journal-per-role
+adaptor rounds, and canonical countersigned Stage B are implemented. Actual
+role-process chain execution remains pending.
 
 Date: 2026-07-20
 
@@ -155,9 +155,8 @@ effect was executed by that test gate.
   consumers; durable nonce leasing/exclusivity remains production hardening.
 - Descriptors are not signing/release authority or actual-swap evidence.
 
-Feed the GREEN private Stage-A role boundary from the actual-local public
-composer, complete the interactive journal rounds and countersign Stage B,
-execute the canonical-wire tag-13 actor, then compose finalized tags 14 and 15,
+Feed the GREEN canonical Stage A/B and completed Taker journal into the
+canonical-wire tag-13 actor, then compose finalized tags 14 and 15,
 adaptor extraction, and the official-wallet Monero spend.
 Recovery, chaos, and production/Stagenet hardening follow the happy PoC under
 ADR 0027.

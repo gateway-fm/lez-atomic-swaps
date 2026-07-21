@@ -1,0 +1,89 @@
+{
+  "schema": "lez-atomic-swaps-m4-actual-stage-b-poc",
+  "version": 1,
+  "result": "passed",
+  "date_utc": "2026-07-21",
+  "milestone": "M4",
+  "scope": "two independent role journals complete claim and refund adaptor rounds, compose canonical Stage B, countersign it in separate role processes, and assemble a validated activation; no chain effect",
+  "source_base_commit": "a5d29175da42be2ebaba8dbc904383867a0ac0b6",
+  "implementation_binding": "the Git commit containing this packet",
+  "run_id": "m4stagea-fb67fe1-20260720b",
+  "stage_a": {
+    "swap_id": "74cd98f1dd6143be0169f9fd0aa269f08a15a0d862519fe37c3f02c36ea98210",
+    "agreement_commitment": "170c23ad14e7e738af917e22b125a2a62e248a92f0054e08195ff97c27266009",
+    "signed_wire_sha256": "dc1de615b74a4eb3cb2fe94647d1d5fe2da02f35c526c187e9db4e3f1b1b5bb6"
+  },
+  "journal_topology": {
+    "maker_journal_count": 1,
+    "taker_journal_count": 1,
+    "claim_and_refund_share_each_role_journal": true,
+    "cross_purpose_nonce_fingerprint_guard_active": true,
+    "journal_file_mode": "0600",
+    "journal_file_link_count": 1,
+    "journal_parent_mode": "0700",
+    "nonce_reserved_before_commitment": true,
+    "peer_commitment_durable_before_nonce_opening": true,
+    "nonce_consumed_with_partial_persistence": true
+  },
+  "packet_exchange": {
+    "maker_claim_partial_shared": true,
+    "maker_refund_partial_shared": true,
+    "taker_refund_partial_shared": true,
+    "taker_claim_partial_shared": false,
+    "taker_claim_partial_location": "owner-private Taker outbox and journal only",
+    "taker_claim_journal_phase": "presignature_verified",
+    "maker_claim_journal_phase": "partial_persisted",
+    "maker_refund_journal_phase": "presignature_verified",
+    "taker_refund_journal_phase": "presignature_verified",
+    "refund_presignatures_byte_identical": true,
+    "refund_presignature_packet_sha256": "b163a225f44718ffc148718b2ab823230bd4945c4e9a83403917243ffab7126e"
+  },
+  "stage_b": {
+    "unsigned_wire_bytes": 747,
+    "signed_wire_bytes": 875,
+    "unsigned_wire_sha256": "85cee706de63ace6e6e5e23e5aa4df2c0c7918234cf036001397ee504d9afaf4",
+    "signed_wire_sha256": "df65d354ecc5acb2655c23e5fb7684ded0dac410af1f59ba602ba7ac7fa55da2",
+    "maker_signature_sha256": "40cb832432796980357b8b51d823e1660a7a65530cb450f5f30ee1c0281d0652",
+    "taker_signature_sha256": "fd6b46d52df06a7572e2387e5781da52edf1a40802586c31959c49e7db54a2b2",
+    "canonical_current_cli_replay_byte_identical": true,
+    "output_file_mode": "0600",
+    "output_file_link_count": 1,
+    "taker_claim_partial_committed_not_disclosed": true,
+    "exact_private_taker_claim_partial_absent_from_unsigned_wire": true,
+    "exact_private_taker_claim_partial_absent_from_signed_wire": true,
+    "final_sdk_validation": "XmrActivatedAgreementV1"
+  },
+  "role_processes": {
+    "distinct_private_roots": true,
+    "separate_maker_and_taker_stage_b_sign_invocations": true,
+    "canonical_role_indexed_assembly": true,
+    "composer_accepts_one_taker_journal_path": true,
+    "composer_chain_submission_capability": false,
+    "role_runner_chain_submission_capability": false,
+    "reference_actor_chain_submission_capability": false
+  },
+  "automated_evidence": {
+    "focused_stage_b_process_tests_passed": 1,
+    "incomplete_journal_rejected_without_output": true,
+    "crossed_signatures_rejected_without_output": true,
+    "preexisting_output_preserved": true,
+    "no_default_features_check": "passed",
+    "strict_clippy": "passed"
+  },
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment_used": false,
+  "effects": {
+    "lez_transactions_submitted": 0,
+    "monero_transactions_submitted_during_stage_b": 0,
+    "completed_atomic_swaps": 0
+  },
+  "remaining_happy_path": [
+    "actual tag-13 Initialize and Fund execution plus finality",
+    "actual tag-14 authorization publication plus finality",
+    "actual tag-15 Maker claim plus finality",
+    "Maker-share extraction and official-wallet Monero claim"
+  ]
+}

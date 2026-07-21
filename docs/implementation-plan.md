@@ -3313,46 +3313,40 @@ reusable finalized nonce/deployment facts, the role-fixed XMR reference actor,
 and a narrow journal-to-tag-14 loader. No external Logos dependency blocks this
 work.
 
-The first three ADR 0073 foundation slices are now GREEN: exact unsigned
-Stage-A/B signed-prefix codecs and comparison getters, opaque canonical runner
-session creation plus role-bound journal identity, and reusable stable finalized
-nonce/deployment facts. The new `xmr-reference-actor provision` command is also
-GREEN through two fresh real process invocations and four focused tests, including
-a two-process CLI E2E. It atomically publishes separate owner-only Maker/Taker
-bundles with fresh agreement/claim/refund keys, one nonduplicated DLEQ-backed
-Monero share, and a role/owner/packet-digest manifest; only the view key crosses
-privately from Taker to Maker. This is material provisioning, not Stage-A/B completion or a chain effect.
+All ADR 0073 material slices are now GREEN. Exact unsigned Stage-A/B codecs,
+descriptor-derived runner sessions, stable finalized facts, public actual-node
+Stage-A composition, independent provisioning/signing/session roots, and the
+narrow journal loader are joined by the actual role-journal continuation. One
+Maker database and one Taker database each carry both purpose-separated
+sessions, so the store's database-wide nonce-fingerprint guard applies across
+claim and refund. Maker exposes its claim/refund partials; Taker exposes only
+its refund partial. The Taker composer accepts one journal path, commits rather
+than serializes its claim partial, and emits canonical unsigned Stage B.
+Separate role processes sign and assemble the activation.
+
+Run `m4stagea-fb67fe1-20260720b` retained the exact pre-effect proof. The
+current CLI replay produced byte-identical 747-byte unsigned and 875-byte signed
+Stage-B wires. The focused process test rejects incomplete journals and crossed
+signatures, proves the exact private Taker claim partial is absent from both
+wires, and preserves create-new outputs. This is complete pre-effect material,
+not a chain mutation or swap.
 
 The immediate critical path is now:
 
-1. add a public compose binary in the isolated v0.2 sidecar graph. It reads both
-   validated role packets, checked deployment and actual-local node identity,
-   one stable finalized four-account nonce snapshot, the existing future-message
-   plan, and actual Monero Regtest identity, then create-new writes the exact
-   validated unsigned Stage A. The root actor must not import the Logos/Risc0
-   sidecar graph;
-2. add role-private Stage-A sign/assemble/session commands. Each process
-   cross-checks its manifest, keys, DLEQ share, view key, and both public packets;
-   both assemble byte-identical canonical Stage A and independently derive the
-   existing claim/refund runner sessions. Run both purpose-separated journal
-   packet rounds, keep the Taker claim partial private, persist the complete
-   signed-refund presignature, then build and countersign exact Stage B;
-3. compose the now-GREEN narrow Taker-journal-to-tag-14 loader with the GREEN
-   tag-13 route, the proved local deployment, and the funded Taker identity. The
-   loader opens only the existing role-bound journal, requires its terminal
-   signing phase, rebinds every transcript field and the withheld partial to
-   Stage B, and creates no plaintext side store. Execute Initialize once,
-   require its exact
-   finalized classifier capability before Fund, execute Fund once, and feed
-   actual finalized Fund plus actual Monero output/topology capabilities through
-   the typed issuer;
-4. run the release worker against the actual local indexer and sidecar to submit
-   tag 14, require exact finality before the GREEN Maker tag-15 path, execute and
-   classify tag 15, ingest the finalized aggregate signature into the Maker
-   claim journal, extract and point-check the Maker scalar, reconstruct the
-   shared Monero spend key, claim through the official wallet RPC, and seal the
-   sole LEZ-first happy evidence/manual reproduction. Pre-funding proof of the
-   hidden partial remains disclosed as GW-M4-003 for production review.
+1. execute the component-GREEN tag-13 actor with the retained funded Taker key,
+   canonical Stage A/B, proved checked deployment, and actual local sequencer and
+   indexer. Submit Initialize once, require exact finalized `Found`, submit Fund
+   once, and retain exact finality evidence before the signed cutoff;
+2. compose the GREEN Taker-journal loader with the actual finalized Fund,
+   authenticated Monero output/topology observations, typed issuer, stable
+   finalized clock, and release worker. Submit tag 14 once and require exact
+   finalized authorization before Maker use;
+3. execute and classify the GREEN Maker tag-15 path, ingest its finalized
+   aggregate signature into the Maker claim journal, extract and point-check the
+   Maker scalar, reconstruct the shared Monero spend key, claim through the
+   official wallet RPC, and seal the sole LEZ-first happy evidence/manual
+   reproduction. Pre-funding proof of the hidden partial remains disclosed as
+   GW-M4-003 for production review.
 
 The route audit found no cryptographic or Logos protocol blocker. The former
 Monero-identity plumbing gap is closed: a narrow maintained-client attestor now
@@ -3376,32 +3370,33 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 1.5 to 3 focused engineering hours
-to the first reproducible independent-actor claim-path PoC and 8 to 16
-additional hours to the local claim/refund/punishment PoC. Exact deployment,
-funded identities, future-message planning, journal-to-tag-14 handoff, and the
-complete pre-effect Stage-A path are GREEN. Run
-`m4stagea-fb67fe1-20260720b` used the actual isolated LEZ and Monero RPC stacks:
-the composer cross-checked finalized block 2281, two independent role processes
-signed the 114562-byte canonical wire, assembly produced commitment
-`170c23ad...66009`, and both atomic session roots contained byte-identical
-same-purpose files. The post-provision compose/sign/assemble/session path took
-about 75 seconds; no chain submission occurred.
+The checkpoint ETA carried by this push is 1 to 2.5 focused engineering hours
+to the first reproducible independent-actor claim-path PoC and 6 to 12
+additional hours to the local claim/refund/punishment PoC. This is based on the
+observed Stage-A and Stage-B slice history, not a production-hardening estimate.
+Exact deployment, funded identities, future-message planning, journal handoff,
+and all pre-effect Stage-A/B material are GREEN. Run
+`m4stagea-fb67fe1-20260720b` used the actual isolated LEZ and Monero RPC stacks.
+Its current one-journal-per-role continuation produced unsigned Stage-B SHA-256
+`85cee706...afaf4` and signed Stage-B SHA-256 `df65d354...5da2`; the exact CLI
+replay was byte-identical. No chain submission occurred in either material
+stage.
 
 The remaining happy-path implementation order is:
 
-1. execute the existing commitment, nonce-opening, and allowed-partial journal
-   rounds, then build and countersign canonical Stage B;
-2. recover the retained funded LEZ owner signing roots or regenerate one fresh
-   isolated funded stack, then execute/classify tag-13 Initialize and Fund;
-3. drive the existing Taker journal handoff through actual tag-14 submission
+1. execute/classify tag-13 Initialize and Fund through the retained local LEZ
+   stack before the signed funding cutoff;
+2. drive the existing Taker journal handoff through actual tag-14 submission
    and finality, then complete, submit, and finalize tag 15;
-4. ingest the finalized aggregate signature, extract and point-check Maker's
+3. ingest the finalized aggregate signature, extract and point-check Maker's
    share, reconstruct the spend key, and claim through the official wallet RPC.
 
-Missing retained owner-key provenance is a local evidence risk, not an external
-or Logos blocker; fresh isolated regeneration is the bounded fallback and is
-included near the ETA upper bound. Bounded non-owned tag-14/tag-15 discovery
+The retained funded LEZ signer files are present in their same-run owner-only
+Maker/Taker roots at mode `0600`, size 65, and link count one. Metadata is not
+cryptographic provenance, so tag 13 must still derive and compare the Taker
+account before its first RPC; the executable already performs that check. No
+external or Logos dependency blocks the remaining happy path. Bounded
+non-owned tag-14/tag-15 discovery remains post-PoC hardening.
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 

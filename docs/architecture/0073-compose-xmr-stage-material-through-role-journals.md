@@ -1,10 +1,11 @@
 # ADR 0073: Compose XMR stage material through separate role journals
 
 Status: Accepted; actual-local public Stage-A composition, independent private
-signing, canonical assembly, and atomic session-root derivation are GREEN.
-Interactive adaptor journals and Stage B remain.
+signing, atomic session-root derivation, one-journal-per-role adaptor rounds,
+and canonical countersigned Stage B are GREEN. Chain effects remain.
 
 Date: 2026-07-20
+Updated: 2026-07-21
 
 ## Context
 
@@ -17,8 +18,13 @@ sequencer/account/finalized facts and emits one canonical unsigned Stage A.
 Separate role processes validate and sign that wire, assemble its role-indexed
 signatures, and derive the same purpose-separated session contexts. Run
 `m4stagea-fb67fe1-20260720b` exercised that complete pre-effect path. The
-interactive Stage-B journal rounds remain. Copying a test fixture or running
-both private roles in one process would not prove the required boundaries.
+canonical continuation uses exactly one long-lived SQLite database per role for
+both purposes. It completed all commitment/opening rounds, kept the Taker claim
+partial private, produced byte-identical refund presignatures, built a 747-byte
+unsigned Stage B from the Taker journal, and independently countersigned the
+875-byte activation. The exact-current CLI replay was byte-identical. Copying a
+test fixture or running both private roles in one process would not prove the
+required boundaries.
 
 The repository already has the cryptographic and persistence primitives:
 cross-curve DLEQ proofs, checked XMR agreement/session descriptors, the
@@ -184,11 +190,16 @@ leasing.
    privately signs, publicly assembles exact role signatures, and atomically
    publishes complete claim/refund session roots. Four provisioning plus two
    black-box tests, 17 adapter tests, 10 composer tests, strict Clippy/Rustdoc/fmt,
-   one actual two-devnet replay, and the split feature graphs are GREEN. The
-   interactive Stage-B journal assembly remains.
+   one actual two-devnet replay, and the split feature graphs are GREEN.
 5. **GREEN:** The narrow Taker-journal loader opens only an existing completed
    role-bound claim journal, rebinds it to Stage B, and creates no plaintext
    partial store. Invalid journals make zero RPC calls.
+6. **GREEN:** Existing role-runner transitions complete claim and refund through
+   one Maker journal and one Taker journal. The Taker-only composer requires one
+   journal path, reconstructs both canonical transcripts from its completed
+   snapshots, commits rather than emits its claim partial, and writes Stage B
+   create-new. Separate processes validate/sign; assembly rejects crossed
+   signatures. The focused process test and actual-local replay are GREEN.
 
 Fresh scalar/view-key convenience constructors are implemented in the XMR SDK,
 so actors do not reproduce scalar rejection rules. Agreement signatures reuse the
@@ -199,8 +210,9 @@ these slices.
 
 - The user flow is reproducible without fixture secrets or merged roles. It
   creates owner-only manifest-bound roots, observes both actual local chains,
-  countersigns Stage A in separate processes, and publishes complete role-local
-  session roots. It deliberately makes no Stage-B or chain-effect claim.
+  countersigns Stage A, completes role-local journals, and countersigns Stage B
+  in separate processes. It deliberately makes no chain-effect or completed-swap
+  claim.
 - Interactive nonces remain durable and purpose-separated through existing
   code rather than a new store.
 - Public packets can be inspected and copied; private roots and the view-key

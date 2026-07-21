@@ -2115,8 +2115,9 @@ supply that direction's safe recovery path.
 The shared signing, two-stage XMR SDK, and focused guest-source boundaries are
 executable without routing XMR through the BTC SDK. Independent provisioning,
 actual-local public Stage-A composition, private signing/assembly, and atomic
-session roots are GREEN; Stage B and journal rounds remain. Solid edges are
-component-tested or actual-local; dotted edges remain composition/effect work:
+session roots are GREEN. The one-journal-per-role claim/refund rounds and
+canonical countersigned Stage B are now GREEN too. Solid edges are
+component-tested or actual-local; dotted edges remain effect work:
 
 ```mermaid
 flowchart LR
@@ -2134,7 +2135,9 @@ flowchart LR
     ActualIndexer -->|"stable finalized four account RPC"| ActualComposer
     Monerod -->|"Digest authenticated height zero RPC"| ActualComposer
     ActualComposer --> StageACompose["Independent Stage A signing assembly and atomic sessions<br/>actual replay plus six tests green"]
-    StageACompose -.-> RoleRunner
+    StageACompose --> RoleRunner
+    RoleRunner --> StageBActivation["One journal per role claim and refund rounds<br/>canonical Stage B actual replay green"]
+    StageBActivation -.-> XmrActor
     FuturePlan --> ActualComposer
     XmrActor -.-> XmrSdk
     XmrActor -.-> OrdinaryClient["Ordinary BridgeClient<br/>eight methods green"]
