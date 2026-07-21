@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "tag14_publication",
+      implemented_execute_through: "tag14_finality",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -74,6 +74,9 @@ emit_contract() {
       tag14_publication_implemented: true,
       tag14_publication_reachable_in_execute: true,
       tag14_publication_executed_in_certifying_replay: false,
+      tag14_finality_implemented: true,
+      tag14_finality_reachable_in_execute: true,
+      tag14_finality_executed_in_certifying_replay: false,
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
@@ -679,7 +682,7 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$release_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline \
       --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml \
-      --bin lez-v02-xmr-release-prepare --bin lez-v0-2-xmr-release-service
+      --bin lez-v02-xmr-release-prepare --bin lez-v0-2-xmr-release-service --bin lez-v02-xmr-classify-finalized
 
   readonly staged_binary_root="${build_root}/staged-binaries"
   record_resource ephemeral_path "$staged_binary_root" "$staged_binary_root"
@@ -694,6 +697,7 @@ build_identity_and_artifact() {
   readonly monero_verify_binary="${staged_binary_root}/lez-v02-xmr-regtest-verify"
   readonly release_prepare_binary="${staged_binary_root}/lez-v02-xmr-release-prepare"
   readonly release_service_binary="${staged_binary_root}/lez-v0-2-xmr-release-service"
+  readonly classifier_binary="${staged_binary_root}/lez-v02-xmr-classify-finalized"
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
@@ -708,6 +712,7 @@ build_identity_and_artifact() {
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-verify" "$monero_verify_binary" "Monero verification"
   stage_executable "${release_target}/debug/lez-v02-xmr-release-prepare" "$release_prepare_binary" "Tag14 preparation"
   stage_executable "${release_target}/debug/lez-v0-2-xmr-release-service" "$release_service_binary" "Tag14 release service"
+  stage_executable "${release_target}/debug/lez-v02-xmr-classify-finalized" "$classifier_binary" "finalized effect classifier"
   readonly artifact_root="${build_root}/m4-artifact"
   record_resource ephemeral_path "${artifact_root}/target" "${artifact_root}/target"
   RUN_ID="$artifact_run_id" LEZ_M4_ARTIFACT_ROOT="$artifact_root" LEZ_M4_KEEP_BUILD=1 \
@@ -1285,6 +1290,18 @@ publish_tag14_release() {
   record_phase tag14_publication completed
 }
 
+classify_tag14_finality() {
+  record_phase tag14_finality started
+  readonly tag14_finality_result="${evidence_root}/tag14-finalized.json"
+  local maker_endpoint start_height
+  maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
+  start_height="$(jq -er '.funding.containing_block_id + 1' "$tag13_internal")"
+  "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag14-finality-001" --role maker --effect authorize-claim --start-height "$start_height" --max-blocks 512 --output-result "$tag14_finality_result"
+  require_owner_file "$tag14_finality_result" "Tag14 finality result"
+  jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="authorize_claim"' "$tag14_finality_result" >/dev/null || fail "Tag14 finality result is incomplete"
+  record_phase tag14_finality completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1308,7 +1325,8 @@ execute_run() {
   fund_and_verify_monero
   prepare_tag14_release
   publish_tag14_release
-  fail "finality phase is not implemented; Tag14 publication completed; do not retry this run"
+  classify_tag14_finality
+  fail "tag15 phase is not implemented; Tag14 finality completed; do not retry this run"
 }
 
 mode="${1:-}"
