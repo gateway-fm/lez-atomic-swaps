@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "tag15_signature",
+      implemented_execute_through: "tag15_publication",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -80,6 +80,9 @@ emit_contract() {
       tag15_signature_implemented: true,
       tag15_signature_reachable_in_execute: true,
       tag15_signature_executed_in_certifying_replay: false,
+      tag15_publication_implemented: true,
+      tag15_publication_reachable_in_execute: true,
+      tag15_publication_executed_in_certifying_replay: false,
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
@@ -1315,6 +1318,17 @@ prepare_tag15_signature() {
   record_phase tag15_prepare completed
 }
 
+publish_tag15() {
+  record_phase tag15 started
+  readonly tag15_submission="${evidence_root}/tag15-submission.json"
+  local maker_endpoint
+  maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
+  "$tag15_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --agreement-wire-file "$agreement_stage_a" --activation-wire-file "$agreement_stage_b" --monero-view-key-file "${agreement_root}/material/taker/monero-view.key" --final-signature-file "$maker_final_signature" --run-id "$run_id" --prepare-request-id "${run_id}-tag15-prepare-001" --complete-request-id "${run_id}-tag15-complete-001" --output-evidence "$tag15_submission"
+  require_owner_file "$tag15_submission" "Tag15 submission evidence"
+  jq -e '(.schema|type=="string") and .submission_outcome != null and .automatic_submission_retry == false and .public_rpc_used == false' "$tag15_submission" >/dev/null || fail "Tag15 submission evidence is incomplete"
+  record_phase tag15 completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1340,7 +1354,8 @@ execute_run() {
   publish_tag14_release
   classify_tag14_finality
   prepare_tag15_signature
-  fail "tag15 publication is not implemented; Maker final signature prepared; do not retry this run"
+  publish_tag15
+  fail "tag15 finality is not implemented; Tag15 admission completed; do not retry this run"
 }
 
 mode="${1:-}"
