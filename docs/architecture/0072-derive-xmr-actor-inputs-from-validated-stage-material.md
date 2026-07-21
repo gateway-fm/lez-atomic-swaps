@@ -1,9 +1,10 @@
 # ADR 0072: Derive XMR actor inputs from validated stage material
 
-Status: Accepted as an M4 composition rule; SDK boundaries and the role-fixed
-tag-13 actor, independent material provisioning, and the completed Taker
-claim-journal-to-tag-14 handoff are implemented, while Stage-A/B process
-composition and actual role-process chain execution remain pending.
+Status: Accepted as an M4 composition rule; SDK boundaries, the role-fixed
+tag-13 actor, independent material provisioning, the completed Taker-journal
+handoff, and private Stage-A signing/assembly/atomic session roots are
+implemented. Stage-B composition and actual role-process chain execution remain
+pending.
 
 Date: 2026-07-20
 
@@ -154,8 +155,9 @@ effect was executed by that test gate.
   consumers; durable nonce leasing/exclusivity remains production hardening.
 - Descriptors are not signing/release authority or actual-swap evidence.
 
-Build independent role-process countersigning/material packets on the validated
-API, execute the canonical-wire tag-13 actor, then compose actual finalized
-tags 14 and 15, adaptor extraction, and the official-wallet Monero spend.
+Feed the GREEN private Stage-A role boundary from the actual-local public
+composer, complete the interactive journal rounds and countersign Stage B,
+execute the canonical-wire tag-13 actor, then compose finalized tags 14 and 15,
+adaptor extraction, and the official-wallet Monero spend.
 Recovery, chaos, and production/Stagenet hardening follow the happy PoC under
 ADR 0027.

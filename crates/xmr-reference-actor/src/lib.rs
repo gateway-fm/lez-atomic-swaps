@@ -19,9 +19,15 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow, ensure};
 use clap::{Parser, Subcommand, ValueEnum};
+#[cfg(feature = "sessions")]
+use lez_adaptor_role_runner::ValidatedSession;
 use lez_xmr_swap_sdk::{
-    CrossCurveDleqProofV1, CrossCurveScalar, MoneroPrivateViewKey, XmrParticipantIdentityV1,
+    CrossCurveDleqProofV1, CrossCurveScalar, MAX_XMR_AGREEMENT_WIRE_BYTES,
+    MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES, MoneroPrivateViewKey, ValidatedXmrAgreementBodyV1,
+    XmrAgreementBodyV1, XmrAgreementV1, XmrParticipantIdentityV1, XmrRoleV1,
 };
+#[cfg(feature = "sessions")]
+use rustix::fs::Dir;
 use rustix::{
     fs::{
         AtFlags, CWD, Mode, OFlags, RenameFlags, ResolveFlags, mkdirat, openat, openat2,
@@ -30,7 +36,7 @@ use rustix::{
     io::Errno,
 };
 use secp256k1::rand::{CryptoRng, RngCore, SeedableRng, rngs::OsRng, rngs::StdRng};
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
@@ -41,6 +47,15 @@ const ROLE_PACKET_MAX_BYTES: u64 = 270 * 1024;
 const ROLE_PACKET_MAX_HEX_CHARS: usize = 270 * 1024 * 2;
 const PRIVATE_MANIFEST_MAX_BYTES: u64 = 1024;
 const PRIVATE_KEY_MAX_BYTES: u64 = 66;
+const STAGE_A_SIGNATURE_BYTES: usize = 64;
+#[cfg(feature = "sessions")]
+const SESSION_FILE_MAX_BYTES: u64 = 8 * 1024;
+#[cfg(feature = "sessions")]
+const CLAIM_SESSION_FILE: &str = "claim.json";
+#[cfg(feature = "sessions")]
+const REFUND_SESSION_FILE: &str = "refund.json";
+#[cfg(feature = "sessions")]
+const SESSION_BUNDLE_FILES: [&str; 2] = [CLAIM_SESSION_FILE, REFUND_SESSION_FILE];
 const AGREEMENT_KEY_FILE: &str = "agreement.key";
 const CLAIM_KEY_FILE: &str = "claim.key";
 const REFUND_KEY_FILE: &str = "refund.key";
@@ -86,6 +101,76 @@ pub enum Action {
         /// New canonical public role packet under an exact owner-only parent.
         #[arg(long, value_name = "NEW_PUBLIC_JSON")]
         public_packet: PathBuf,
+    },
+    /// Sign one canonical unsigned Stage-A wire with this role's private agreement key.
+    SignStageA {
+        /// Fixed role bound by the private manifest.
+        #[arg(value_enum)]
+        role: ActorRole,
+        /// Existing owner-only role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// This role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// The other role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical validated unsigned Stage-A wire.
+        #[arg(long, value_name = "UNSIGNED_STAGE_A")]
+        unsigned_stage_a: PathBuf,
+        /// New raw fixed-width BIP340 signature.
+        #[arg(long, value_name = "NEW_SIGNATURE")]
+        output_signature: PathBuf,
+    },
+    /// Assemble two raw role signatures into the canonical signed Stage-A wire.
+    AssembleStageA {
+        /// Canonical Maker public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        maker_public_packet: PathBuf,
+        /// Canonical Taker public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        taker_public_packet: PathBuf,
+        /// Canonical validated unsigned Stage-A wire.
+        #[arg(long, value_name = "UNSIGNED_STAGE_A")]
+        unsigned_stage_a: PathBuf,
+        /// Raw fixed-width Maker BIP340 signature.
+        #[arg(long, value_name = "SIGNATURE")]
+        maker_signature: PathBuf,
+        /// Raw fixed-width Taker BIP340 signature.
+        #[arg(long, value_name = "SIGNATURE")]
+        taker_signature: PathBuf,
+        /// New canonical signed Stage-A wire.
+        #[arg(long, value_name = "NEW_STAGE_A")]
+        output_stage_a: PathBuf,
+    },
+    /// Derive exact claim/refund runner sessions from an accepted Stage A.
+    ///
+    /// The complete `claim.json`/`refund.json` bundle is exposed by one
+    /// no-replace directory rename. A path-only runner API is used only inside
+    /// the random unpublished staging directory. A hostile same-UID race can
+    /// leave an orphan there, but held-directory identity validation prevents
+    /// any incomplete canonical session root from being published.
+    #[cfg(feature = "sessions")]
+    InitializeSessions {
+        /// Fixed role bound by the private manifest.
+        #[arg(value_enum)]
+        role: ActorRole,
+        /// Existing owner-only role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// This role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// The other role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// New atomic role-local directory containing claim.json and refund.json.
+        #[arg(long, value_name = "NEW_DIRECTORY")]
+        session_root: PathBuf,
     },
 }
 
@@ -138,14 +223,7 @@ impl ValidatedRolePacket {
     /// Rejects unsafe files, noncanonical JSON/hex, invalid or aliased keys, or
     /// a failed DLEQ proof.
     pub fn read(path: &Path) -> Result<Self> {
-        let file = open_path_no_symlinks(path, "public role packet")?;
-        let bytes = read_bounded_file(
-            file,
-            ROLE_PACKET_MAX_BYTES,
-            FilePolicy::Public,
-            "public role packet",
-        )?;
-        Self::from_bytes(&bytes)
+        read_role_packet_with_digest(path).map(|(packet, _)| packet)
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self> {
@@ -224,37 +302,7 @@ impl ValidatedPrivateManifest {
     /// Rejects unsafe roots/files and malformed or noncanonical manifests.
     pub fn read(private_root: &Path) -> Result<Self> {
         let root = open_private_directory(private_root, "private role root")?;
-        let manifest = openat(
-            &root,
-            PRIVATE_MANIFEST_FILE,
-            OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map(File::from)
-        .map_err(|_| anyhow!("private manifest is unavailable"))?;
-        let bytes = read_bounded_file(
-            manifest,
-            PRIVATE_MANIFEST_MAX_BYTES,
-            FilePolicy::Private,
-            "private manifest",
-        )?;
-        let raw: PrivateManifestV1 =
-            serde_json::from_slice(&bytes).context("private manifest is malformed")?;
-        ensure!(
-            raw.canonical_bytes()? == bytes,
-            "private manifest is noncanonical"
-        );
-        ensure!(
-            raw.schema_version == PRIVATE_MANIFEST_SCHEMA_V1,
-            "private manifest schema is unsupported"
-        );
-        let owner = decode_exact(&raw.lez_owner_account)?;
-        ensure!(owner != [0; 32], "private manifest owner is invalid");
-        Ok(Self {
-            role: raw.role,
-            lez_owner_account: owner,
-            public_packet_sha256: decode_exact(&raw.public_packet_sha256)?,
-        })
+        read_private_manifest_at(&root)
     }
 
     /// Private role durably bound to this root.
@@ -309,7 +357,163 @@ pub fn execute(cli: Cli) -> Result<()> {
             shared_view_key_file.as_deref(),
             &public_packet,
         ),
+        Action::SignStageA {
+            role,
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            unsigned_stage_a,
+            output_signature,
+        } => sign_stage_a(
+            role,
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &unsigned_stage_a,
+            &output_signature,
+        ),
+        Action::AssembleStageA {
+            maker_public_packet,
+            taker_public_packet,
+            unsigned_stage_a,
+            maker_signature,
+            taker_signature,
+            output_stage_a,
+        } => assemble_stage_a(
+            &maker_public_packet,
+            &taker_public_packet,
+            &unsigned_stage_a,
+            &maker_signature,
+            &taker_signature,
+            &output_stage_a,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::InitializeSessions {
+            role,
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            session_root,
+        } => initialize_sessions(
+            role,
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &session_root,
+        ),
     }
+}
+
+fn sign_stage_a(
+    role: ActorRole,
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    unsigned_stage_a: &Path,
+    output_signature: &Path,
+) -> Result<()> {
+    let destination = SecureDestination::new(output_signature, "Stage-A signature")?;
+    destination.ensure_absent("Stage-A signature")?;
+    let packets = StageRolePackets::read(role, own_public_packet, peer_public_packet)?;
+    let material = validate_private_role(private_root, role, &packets)?;
+    let wire = read_public_input(
+        unsigned_stage_a,
+        u64::try_from(MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES).unwrap_or(u64::MAX),
+        "unsigned Stage-A wire",
+    )?;
+    let validated = ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wire)
+        .context("unsigned Stage-A wire is invalid")?;
+    validate_stage_a_packets(validated.body(), &packets)?;
+    let secp = Secp256k1::new();
+    let signature = secp
+        .sign_schnorr_no_aux_rand(
+            &Message::from_digest(validated.commitment()),
+            &Keypair::from_secret_key(&secp, &material.agreement.key),
+        )
+        .serialize();
+    write_bounded_public_new(
+        &destination,
+        &signature,
+        STAGE_A_SIGNATURE_BYTES as u64,
+        "Stage-A signature",
+    )
+}
+
+fn assemble_stage_a(
+    maker_public_packet: &Path,
+    taker_public_packet: &Path,
+    unsigned_stage_a: &Path,
+    maker_signature: &Path,
+    taker_signature: &Path,
+    output_stage_a: &Path,
+) -> Result<()> {
+    let destination = SecureDestination::new(output_stage_a, "signed Stage-A wire")?;
+    destination.ensure_absent("signed Stage-A wire")?;
+    let packets = StageRolePackets::read_explicit(maker_public_packet, taker_public_packet)?;
+    let wire = read_public_input(
+        unsigned_stage_a,
+        u64::try_from(MAX_XMR_UNSIGNED_STAGE_A_WIRE_BYTES).unwrap_or(u64::MAX),
+        "unsigned Stage-A wire",
+    )?;
+    let validated = ValidatedXmrAgreementBodyV1::from_unsigned_wire(&wire)
+        .context("unsigned Stage-A wire is invalid")?;
+    validate_stage_a_packets(validated.body(), &packets)?;
+    let maker =
+        read_fixed_public::<STAGE_A_SIGNATURE_BYTES>(maker_signature, "Maker Stage-A signature")?;
+    let taker =
+        read_fixed_public::<STAGE_A_SIGNATURE_BYTES>(taker_signature, "Taker Stage-A signature")?;
+    let agreement = validated
+        .attach_signatures(maker, taker)
+        .context("Stage-A role signatures are invalid")?;
+    let encoded = agreement
+        .encode_wire()
+        .context("encode signed Stage-A wire")?;
+    XmrAgreementV1::from_wire(&encoded).context("written Stage-A wire would be invalid")?;
+    write_bounded_public_new(
+        &destination,
+        &encoded,
+        u64::try_from(MAX_XMR_AGREEMENT_WIRE_BYTES).unwrap_or(u64::MAX),
+        "signed Stage-A wire",
+    )
+}
+
+#[cfg(feature = "sessions")]
+fn initialize_sessions(
+    role: ActorRole,
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    session_root: &Path,
+) -> Result<()> {
+    let destination = SecureDestination::new(session_root, "session root")?;
+    destination.ensure_absent("session root")?;
+    let packets = StageRolePackets::read(role, own_public_packet, peer_public_packet)?;
+    let _material = validate_private_role(private_root, role, &packets)?;
+    let wire = read_public_input(
+        agreement_stage_a,
+        u64::try_from(MAX_XMR_AGREEMENT_WIRE_BYTES).unwrap_or(u64::MAX),
+        "signed Stage-A wire",
+    )?;
+    let agreement = XmrAgreementV1::from_wire(&wire).context("signed Stage-A wire is invalid")?;
+    validate_stage_a_packets(agreement.body(), &packets)?;
+    let claim = ValidatedSession::from_untweaked_context(
+        agreement
+            .claim_session_descriptor()
+            .context()
+            .context("claim session descriptor is invalid")?,
+    )
+    .context("claim runner session is invalid")?;
+    let refund = ValidatedSession::from_untweaked_context(
+        agreement
+            .refund_session_descriptor()
+            .context()
+            .context("refund session descriptor is invalid")?,
+    )
+    .context("refund runner session is invalid")?;
+    publish_session_bundle(&destination, &claim, &refund)
 }
 
 fn provision(
@@ -375,8 +579,13 @@ fn provision(
     };
     let manifest_bytes = manifest.canonical_bytes()?;
 
-    let (public_stage_name, public_stage_file) =
-        create_staged_file(&public_destination.parent, "public", &packet_bytes)?;
+    let (public_stage_name, public_stage_file) = create_staged_file(
+        &public_destination.parent,
+        "public",
+        &packet_bytes,
+        ROLE_PACKET_MAX_BYTES,
+        "public packet",
+    )?;
     let private_result = publish_private_bundle(
         &private_destination,
         &agreement,
@@ -395,12 +604,270 @@ fn provision(
         &public_destination,
         &public_stage_name,
         &public_stage_file,
+        ROLE_PACKET_MAX_BYTES,
         "public packet",
     );
     if publish_result.is_err() {
         cleanup_staged_file(&public_destination.parent, &public_stage_name);
     }
     publish_result
+}
+
+struct StageRolePackets {
+    maker: ValidatedRolePacket,
+    taker: ValidatedRolePacket,
+    own_packet_digest: Option<[u8; 32]>,
+}
+
+impl StageRolePackets {
+    fn read(role: ActorRole, own_public_packet: &Path, peer_public_packet: &Path) -> Result<Self> {
+        let (own, own_digest) = read_role_packet_with_digest(own_public_packet)?;
+        let (peer, _) = read_role_packet_with_digest(peer_public_packet)?;
+        ensure!(own.role == role, "own public packet has the wrong role");
+        ensure!(
+            peer.role == role.opposite(),
+            "peer public packet has the wrong role"
+        );
+        let (maker, taker) = match role {
+            ActorRole::Maker => (own, peer),
+            ActorRole::Taker => (peer, own),
+        };
+        Self::validated(maker, taker, Some(own_digest))
+    }
+
+    fn read_explicit(maker_path: &Path, taker_path: &Path) -> Result<Self> {
+        let (maker, _) = read_role_packet_with_digest(maker_path)?;
+        let (taker, _) = read_role_packet_with_digest(taker_path)?;
+        ensure!(
+            maker.role == ActorRole::Maker,
+            "Maker public packet has the wrong role"
+        );
+        ensure!(
+            taker.role == ActorRole::Taker,
+            "Taker public packet has the wrong role"
+        );
+        Self::validated(maker, taker, None)
+    }
+
+    fn validated(
+        maker: ValidatedRolePacket,
+        taker: ValidatedRolePacket,
+        own_packet_digest: Option<[u8; 32]>,
+    ) -> Result<Self> {
+        ensure!(
+            maker.public_view_key == taker.public_view_key,
+            "role packets use different Monero view keys"
+        );
+        ensure!(
+            maker.identity.lez_owner_account() != taker.identity.lez_owner_account(),
+            "role packets alias the LEZ owner account"
+        );
+        Ok(Self {
+            maker,
+            taker,
+            own_packet_digest,
+        })
+    }
+
+    const fn for_role(&self, role: ActorRole) -> &ValidatedRolePacket {
+        match role {
+            ActorRole::Maker => &self.maker,
+            ActorRole::Taker => &self.taker,
+        }
+    }
+}
+
+impl ActorRole {
+    const fn opposite(self) -> Self {
+        match self {
+            Self::Maker => Self::Taker,
+            Self::Taker => Self::Maker,
+        }
+    }
+}
+
+struct LoadedSecpKey {
+    key: SecretKey,
+    _bytes: Zeroizing<[u8; 32]>,
+}
+
+impl LoadedSecpKey {
+    fn from_bytes(bytes: Zeroizing<[u8; 32]>, label: &'static str) -> Result<Self> {
+        let key = SecretKey::from_slice(bytes.as_ref())
+            .with_context(|| format!("private {label} key is invalid"))?;
+        Ok(Self { key, _bytes: bytes })
+    }
+
+    fn public_key(&self, secp: &Secp256k1<secp256k1::All>) -> [u8; 33] {
+        PublicKey::from_secret_key(secp, &self.key).serialize()
+    }
+}
+
+impl Drop for LoadedSecpKey {
+    fn drop(&mut self) {
+        self.key.non_secure_erase();
+    }
+}
+
+struct ValidatedPrivateRoleMaterial {
+    agreement: LoadedSecpKey,
+}
+
+fn validate_private_role(
+    private_root: &Path,
+    role: ActorRole,
+    packets: &StageRolePackets,
+) -> Result<ValidatedPrivateRoleMaterial> {
+    let root = open_private_directory(private_root, "private role root")?;
+    let manifest = read_private_manifest_at(&root)?;
+    let own = packets.for_role(role);
+    let own_digest = packets
+        .own_packet_digest
+        .ok_or_else(|| anyhow!("private role validation requires an own packet digest"))?;
+    ensure!(manifest.role == role, "private manifest role mismatch");
+    ensure!(
+        manifest.lez_owner_account == own.identity.lez_owner_account(),
+        "private manifest owner mismatch"
+    );
+    ensure!(
+        manifest.public_packet_sha256 == own_digest,
+        "private manifest public-packet digest mismatch"
+    );
+
+    let agreement = LoadedSecpKey::from_bytes(
+        read_secret_hex_at(&root, AGREEMENT_KEY_FILE, "agreement key")?,
+        "agreement",
+    )?;
+    let claim = LoadedSecpKey::from_bytes(
+        read_secret_hex_at(&root, CLAIM_KEY_FILE, "claim key")?,
+        "claim",
+    )?;
+    let refund = LoadedSecpKey::from_bytes(
+        read_secret_hex_at(&root, REFUND_KEY_FILE, "refund key")?,
+        "refund",
+    )?;
+    let secp = Secp256k1::new();
+    ensure!(
+        agreement.public_key(&secp) == own.identity.agreement_public_key()
+            && claim.public_key(&secp) == own.identity.claim_session_public_key()
+            && refund.public_key(&secp) == own.identity.refund_session_public_key(),
+        "private signing keys do not match the bound public packet"
+    );
+
+    let share_bytes = read_secret_hex_at(&root, XMR_SHARE_FILE, "Monero share")?;
+    let share = CrossCurveScalar::from_monero_little_endian(*share_bytes)
+        .context("private Monero share is invalid")?;
+    drop(share_bytes);
+    own.proof
+        .verify_scalar(&share)
+        .context("private Monero share does not match the bound DLEQ proof")?;
+    drop(share);
+
+    let view_bytes = read_secret_hex_at(&root, VIEW_KEY_FILE, "Monero view key")?;
+    let view = MoneroPrivateViewKey::from_monero_little_endian(*view_bytes)
+        .context("private Monero view key is invalid")?;
+    drop(view_bytes);
+    ensure!(
+        view.public_key() == own.public_view_key,
+        "private Monero view key does not match the bound public packet"
+    );
+    drop(view);
+    drop(claim);
+    drop(refund);
+    Ok(ValidatedPrivateRoleMaterial { agreement })
+}
+
+fn validate_stage_a_packets(body: &XmrAgreementBodyV1, packets: &StageRolePackets) -> Result<()> {
+    ensure!(
+        body.participants().for_role(XmrRoleV1::Maker) == packets.maker.identity()
+            && body.participants().for_role(XmrRoleV1::Taker) == packets.taker.identity(),
+        "Stage-A participants differ from the role packets"
+    );
+    let maker_wire = packets
+        .maker
+        .proof
+        .to_wire_bytes()
+        .context("encode Maker DLEQ proof")?;
+    let taker_wire = packets
+        .taker
+        .proof
+        .to_wire_bytes()
+        .context("encode Taker DLEQ proof")?;
+    ensure!(
+        body.monero().maker_dleq_proof_wire() == maker_wire
+            && body.monero().taker_dleq_proof_wire() == taker_wire
+            && body.monero().public_view_key() == packets.maker.public_view_key,
+        "Stage-A Monero identity differs from the role packets"
+    );
+    Ok(())
+}
+
+fn read_role_packet_with_digest(path: &Path) -> Result<(ValidatedRolePacket, [u8; 32])> {
+    let file = open_path_no_symlinks(path, "public role packet")?;
+    let bytes = read_bounded_file(
+        file,
+        ROLE_PACKET_MAX_BYTES,
+        FilePolicy::Public,
+        "public role packet",
+    )?;
+    let packet = ValidatedRolePacket::from_bytes(&bytes)?;
+    Ok((packet, Sha256::digest(bytes).into()))
+}
+
+fn read_private_manifest_at(root: &File) -> Result<ValidatedPrivateManifest> {
+    let manifest = openat(
+        root,
+        PRIVATE_MANIFEST_FILE,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(File::from)
+    .map_err(|_| anyhow!("private manifest is unavailable"))?;
+    let bytes = read_bounded_file(
+        manifest,
+        PRIVATE_MANIFEST_MAX_BYTES,
+        FilePolicy::Private,
+        "private manifest",
+    )?;
+    let raw: PrivateManifestV1 =
+        serde_json::from_slice(&bytes).context("private manifest is malformed")?;
+    ensure!(
+        raw.canonical_bytes()? == bytes,
+        "private manifest is noncanonical"
+    );
+    ensure!(
+        raw.schema_version == PRIVATE_MANIFEST_SCHEMA_V1,
+        "private manifest schema is unsupported"
+    );
+    let owner = decode_exact(&raw.lez_owner_account)?;
+    ensure!(owner != [0; 32], "private manifest owner is invalid");
+    Ok(ValidatedPrivateManifest {
+        role: raw.role,
+        lez_owner_account: owner,
+        public_packet_sha256: decode_exact(&raw.public_packet_sha256)?,
+    })
+}
+
+fn read_secret_hex_at(root: &File, name: &str, label: &'static str) -> Result<Zeroizing<[u8; 32]>> {
+    let file = openat(
+        root,
+        name,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(File::from)
+    .map_err(|_| anyhow!("private {label} is unavailable"))?;
+    let encoded = Zeroizing::new(read_bounded_file(
+        file,
+        PRIVATE_KEY_MAX_BYTES,
+        FilePolicy::Private,
+        label,
+    )?);
+    let trimmed = encoded
+        .strip_suffix(b"\r\n")
+        .or_else(|| encoded.strip_suffix(b"\n"))
+        .unwrap_or(&encoded);
+    decode_secret_exact(trimmed)
 }
 
 fn publish_private_bundle(
@@ -466,15 +933,11 @@ fn publish_staged_file(
     destination: &SecureDestination,
     stage_name: &str,
     stage_file: &File,
+    max_bytes: u64,
     label: &'static str,
 ) -> Result<()> {
     destination.revalidate()?;
-    validate_file(
-        stage_file,
-        FilePolicy::Private,
-        ROLE_PACKET_MAX_BYTES,
-        label,
-    )?;
+    validate_file(stage_file, FilePolicy::Private, max_bytes, label)?;
     renameat_with(
         &destination.parent,
         stage_name,
@@ -484,16 +947,230 @@ fn publish_staged_file(
     )
     .map_err(|error| {
         if error == Errno::EXIST {
-            anyhow!("public packet already exists")
+            anyhow!("{label} already exists")
         } else {
-            anyhow!("publish public packet failed")
+            anyhow!("publish {label} failed")
         }
     })?;
     destination
         .parent
         .sync_all()
-        .context("sync public packet parent")?;
+        .with_context(|| format!("sync {label} parent"))?;
     destination.revalidate()
+}
+
+fn write_bounded_public_new(
+    destination: &SecureDestination,
+    bytes: &[u8],
+    max_bytes: u64,
+    label: &'static str,
+) -> Result<()> {
+    destination.ensure_absent(label)?;
+    let (stage_name, stage_file) =
+        create_staged_file(&destination.parent, label, bytes, max_bytes, label)?;
+    let result = publish_staged_file(destination, &stage_name, &stage_file, max_bytes, label);
+    if result.is_err() {
+        cleanup_staged_file(&destination.parent, &stage_name);
+    }
+    result
+}
+
+fn read_public_input(path: &Path, max_bytes: u64, label: &'static str) -> Result<Vec<u8>> {
+    let file = open_path_no_symlinks(path, label)?;
+    read_bounded_file(file, max_bytes, FilePolicy::Public, label)
+}
+
+fn read_fixed_public<const N: usize>(path: &Path, label: &'static str) -> Result<[u8; N]> {
+    let bytes = read_public_input(path, N as u64, label)?;
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("{label} has the wrong width"))
+}
+
+#[cfg(feature = "sessions")]
+fn publish_session_bundle(
+    destination: &SecureDestination,
+    claim: &ValidatedSession,
+    refund: &ValidatedSession,
+) -> Result<()> {
+    destination.ensure_absent("session root")?;
+    destination.revalidate()?;
+    let (stage_name, stage) = create_staging_directory(&destination.parent)?;
+    let mut published = false;
+    let result = (|| {
+        write_session_member(
+            destination,
+            &stage_name,
+            &stage,
+            CLAIM_SESSION_FILE,
+            claim,
+            "claim session",
+        )?;
+        write_session_member(
+            destination,
+            &stage_name,
+            &stage,
+            REFUND_SESSION_FILE,
+            refund,
+            "refund session",
+        )?;
+        validate_complete_session_bundle(&stage, "session staging root")?;
+        stage.sync_all().context("sync session staging root")?;
+        validate_named_directory(
+            &destination.parent,
+            Path::new(&stage_name),
+            &stage,
+            "session staging root",
+        )?;
+        validate_complete_session_bundle(&stage, "session staging root")?;
+        destination.ensure_absent("session root")?;
+        renameat_with(
+            &destination.parent,
+            stage_name.as_str(),
+            &destination.parent,
+            &destination.name,
+            RenameFlags::NOREPLACE,
+        )
+        .map_err(|error| {
+            if error == Errno::EXIST {
+                anyhow!("session root already exists")
+            } else {
+                anyhow!("publish session root failed")
+            }
+        })?;
+        published = true;
+        destination
+            .parent
+            .sync_all()
+            .context("sync session-root parent; complete root may already be published")?;
+        destination.revalidate()?;
+        validate_named_directory(
+            &destination.parent,
+            Path::new(&destination.name),
+            &stage,
+            "published session root",
+        )?;
+        validate_complete_session_bundle(&stage, "published session root")?;
+        Ok(())
+    })();
+    if result.is_err() && !published {
+        cleanup_staging_directory_with_files(
+            &destination.parent,
+            &stage_name,
+            &stage,
+            &SESSION_BUNDLE_FILES,
+        );
+    }
+    result
+}
+
+#[cfg(feature = "sessions")]
+fn write_session_member(
+    destination: &SecureDestination,
+    stage_name: &str,
+    stage: &File,
+    member_name: &str,
+    session: &ValidatedSession,
+    label: &'static str,
+) -> Result<()> {
+    destination.revalidate()?;
+    validate_named_directory(
+        &destination.parent,
+        Path::new(stage_name),
+        stage,
+        "session staging root",
+    )?;
+    let stage_path = destination.parent_path.join(stage_name).join(member_name);
+    let write_result = session
+        .write_new(&stage_path)
+        .with_context(|| format!("write staged {label}"));
+    write_result?;
+    destination.revalidate()?;
+    validate_named_directory(
+        &destination.parent,
+        Path::new(stage_name),
+        stage,
+        "session staging root",
+    )?;
+    validate_session_file(stage, member_name, label)
+}
+
+#[cfg(feature = "sessions")]
+fn validate_session_file(directory: &File, name: &str, label: &'static str) -> Result<()> {
+    let file = openat(
+        directory,
+        name,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(File::from)
+    .map_err(|_| anyhow!("open staged {label} failed"))?;
+    let bytes = read_bounded_file(file, SESSION_FILE_MAX_BYTES, FilePolicy::Private, label)?;
+    ensure!(!bytes.is_empty(), "staged {label} is empty");
+    Ok(())
+}
+
+#[cfg(feature = "sessions")]
+fn validate_complete_session_bundle(directory: &File, label: &'static str) -> Result<()> {
+    validate_exact_directory_entries(directory, &SESSION_BUNDLE_FILES, label)?;
+    validate_session_file(directory, CLAIM_SESSION_FILE, "claim session")?;
+    validate_session_file(directory, REFUND_SESSION_FILE, "refund session")
+}
+
+#[cfg(feature = "sessions")]
+fn validate_named_directory(
+    parent: &File,
+    name: &Path,
+    held: &File,
+    label: &'static str,
+) -> Result<()> {
+    validate_owner_directory(held, label)?;
+    let current = openat(
+        parent,
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map(File::from)
+    .map_err(|_| anyhow!("{label} is unavailable or unsafe"))?;
+    validate_owner_directory(&current, label)?;
+    let held_metadata = held
+        .metadata()
+        .with_context(|| format!("inspect {label}"))?;
+    let current_metadata = current
+        .metadata()
+        .with_context(|| format!("inspect {label}"))?;
+    ensure!(
+        held_metadata.dev() == current_metadata.dev()
+            && held_metadata.ino() == current_metadata.ino(),
+        "{label} changed"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sessions")]
+fn validate_exact_directory_entries(
+    directory: &File,
+    expected: &[&str],
+    label: &'static str,
+) -> Result<()> {
+    let mut stream = Dir::read_from(directory).map_err(|_| anyhow!("inspect {label} failed"))?;
+    let mut actual = Vec::new();
+    while let Some(entry) = stream.read() {
+        let entry = entry.map_err(|_| anyhow!("inspect {label} failed"))?;
+        let name = entry.file_name().to_bytes();
+        if name != b"." && name != b".." {
+            actual.push(name.to_vec());
+        }
+    }
+    actual.sort_unstable();
+    let mut expected = expected
+        .iter()
+        .map(|name| name.as_bytes().to_vec())
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    ensure!(actual == expected, "{label} has unexpected entries");
+    Ok(())
 }
 
 fn read_private_view_key(path: &Path) -> Result<MoneroPrivateViewKey> {
@@ -579,6 +1256,7 @@ fn fallible_seeded_rng() -> Result<StdRng> {
 
 struct SecureDestination {
     parent: File,
+    parent_path: PathBuf,
     name: OsString,
 }
 
@@ -590,11 +1268,15 @@ impl SecureDestination {
             .ok_or_else(|| anyhow!("{label} path is invalid"))?
             .to_os_string();
         let parent_path = match path.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent,
-            Some(_) | None => Path::new("."),
+            Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+            Some(_) | None => PathBuf::from("."),
         };
-        let parent = open_private_directory(parent_path, "destination parent")?;
-        Ok(Self { parent, name })
+        let parent = open_private_directory(&parent_path, "destination parent")?;
+        Ok(Self {
+            parent,
+            parent_path,
+            name,
+        })
     }
 
     fn ensure_absent(&self, label: &'static str) -> Result<()> {
@@ -612,7 +1294,18 @@ impl SecureDestination {
     }
 
     fn revalidate(&self) -> Result<()> {
-        validate_owner_directory(&self.parent, "destination parent")
+        validate_owner_directory(&self.parent, "destination parent")?;
+        let reopened = open_private_directory(&self.parent_path, "destination parent")?;
+        let held = self
+            .parent
+            .metadata()
+            .context("inspect destination parent")?;
+        let current = reopened.metadata().context("inspect destination parent")?;
+        ensure!(
+            held.dev() == current.dev() && held.ino() == current.ino(),
+            "destination parent changed"
+        );
+        Ok(())
     }
 }
 
@@ -749,7 +1442,17 @@ fn create_staging_directory(parent: &File) -> Result<(String, File)> {
     Ok((stage_name, stage))
 }
 
-fn create_staged_file(parent: &File, kind: &'static str, bytes: &[u8]) -> Result<(String, File)> {
+fn create_staged_file(
+    parent: &File,
+    kind: &str,
+    bytes: &[u8],
+    max_bytes: u64,
+    label: &'static str,
+) -> Result<(String, File)> {
+    ensure!(
+        u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= max_bytes,
+        "{label} is oversized"
+    );
     let stage_name = temporary_name(kind)?;
     let mut file = openat(
         parent,
@@ -758,24 +1461,21 @@ fn create_staged_file(parent: &File, kind: &'static str, bytes: &[u8]) -> Result
         Mode::RUSR | Mode::WUSR,
     )
     .map(File::from)
-    .map_err(|_| anyhow!("create staged public packet failed"))?;
+    .map_err(|_| anyhow!("create staged {label} failed"))?;
     let result = (|| {
-        validate_file(
-            &file,
-            FilePolicy::Private,
-            ROLE_PACKET_MAX_BYTES,
-            "staged public packet",
-        )?;
+        validate_file(&file, FilePolicy::Private, max_bytes, label)?;
         file.write_all(bytes)
-            .context("write staged public packet")?;
-        file.sync_all().context("sync staged public packet")?;
-        validate_file(
-            &file,
-            FilePolicy::Private,
-            ROLE_PACKET_MAX_BYTES,
-            "staged public packet",
-        )?;
-        parent.sync_all().context("sync public packet staging")
+            .with_context(|| format!("write staged {label}"))?;
+        file.sync_all()
+            .with_context(|| format!("sync staged {label}"))?;
+        let metadata = validate_file(&file, FilePolicy::Private, max_bytes, label)?;
+        ensure!(
+            metadata.len() == u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            "staged {label} has the wrong length"
+        );
+        parent
+            .sync_all()
+            .with_context(|| format!("sync {label} staging"))
     })();
     if let Err(error) = result {
         cleanup_staged_file(parent, &stage_name);
@@ -828,8 +1528,17 @@ fn cleanup_staged_file(parent: &File, stage_name: &str) {
 }
 
 fn cleanup_staging_directory(parent: &File, stage_name: &str, stage: &File) {
-    for name in PRIVATE_BUNDLE_FILES {
-        let _ = unlinkat(stage, name, AtFlags::empty());
+    cleanup_staging_directory_with_files(parent, stage_name, stage, &PRIVATE_BUNDLE_FILES);
+}
+
+fn cleanup_staging_directory_with_files(
+    parent: &File,
+    stage_name: &str,
+    stage: &File,
+    files: &[&str],
+) {
+    for name in files {
+        let _ = unlinkat(stage, *name, AtFlags::empty());
     }
     let _ = unlinkat(parent, stage_name, AtFlags::REMOVEDIR);
     let _ = parent.sync_all();

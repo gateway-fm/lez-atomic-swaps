@@ -256,8 +256,14 @@ once; an after-cutoff finalized Fund cannot become success evidence. It has not 
 provisioning is GREEN in four focused tests, including a two-process CLI E2E:
 each role atomically publishes one manifest-bound owner-only bundle with distinct
 agreement/claim/refund keys and one DLEQ-backed Monero share, while Maker imports
-Taker's view key privately. Stage-A/B countersigning, journal rounds, and chain
-effects remain pending; no swap is claimed.
+Taker's view key privately. The same role-fixed binary now validates both
+packets and every private binding before signing Stage A; its public assembler
+accepts only correctly indexed BIP340 signatures. Each role then derives the
+same purpose-separated claim/refund contexts into one complete owner-only
+session directory published by a single no-replace rename. Six actor tests are
+GREEN, including two separate-process Stage-A tests. Public actual-local Stage-A
+composition, interactive journal rounds, Stage B, and chain effects remain
+pending; no swap is claimed.
 
 The fresh checked guest and current host components can be repeated
 independently before the full actor exists; the exact deployer and tag-15

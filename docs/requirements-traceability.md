@@ -69,6 +69,17 @@ passes the independently revalidated partial directly to the existing typed
 preparation route. Its 5 focused and 98 full package tests are GREEN; invalid
 journals make zero RPC calls. This is still preparation, not publication,
 finality, Maker observation, or a swap effect.
+The role actor now closes the private Stage-A subpath. Each process validates
+its manifest role/owner/packet digest, all three private keys, DLEQ share, view
+key, both public packets, and canonical unsigned body before producing one
+create-new BIP340 signature. Public assembly accepts only correctly indexed
+Maker/Taker signatures and reparses the canonical agreement. Each role derives
+the same purpose-separated claim/refund contexts into one exact owner-only
+directory exposed by one no-replace rename; a canonical half-bundle cannot
+appear. Four provisioning and two black-box Stage-A tests, default and
+provision-only strict Clippy, warning-fatal Rustdoc, formatting, and diff gates
+are GREEN. Public actual-local composition, nonce/partial journal rounds, Stage
+B, and every chain effect remain.
 The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,

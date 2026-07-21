@@ -2113,10 +2113,10 @@ output. XMR-first is rejected because the reviewed COMIT construction does not
 supply that direction's safe recovery path.
 
 The shared signing, two-stage XMR SDK, and focused guest-source boundaries are
-executable without routing XMR through the BTC SDK. Independent role
-provisioning is GREEN; stage countersigning and journal composition remain
-pending. Solid edges below are component-tested or proved actual-local edges;
-dotted edges are still M4 swap-effect, finality, or actor composition work:
+executable without routing XMR through the BTC SDK. Independent provisioning,
+private Stage-A signing/assembly, and atomic session roots are GREEN; public
+actual-local composition, Stage B, and journal rounds remain. Solid edges are
+component-tested or actual-local; dotted edges remain composition/effect work:
 
 ```mermaid
 flowchart LR
@@ -2129,7 +2129,7 @@ flowchart LR
     XmrActor["Fresh XMR lifecycle actors<br/>pending"] -.-> RoleRunner
     RoleProvisioner["Independent role provisioner<br/>four tests green including process E2E"] --> RoleBundles[("Atomic manifest-bound Maker and Taker bundles")]
     RoleBundles -.-> XmrActor
-    RoleBundles --> StageACompose["Stage A countersigning and session initialization<br/>pending"]
+    RoleBundles --> StageACompose["Private Stage A signing assembly and atomic sessions<br/>six actor tests green"]
     StageACompose -.-> RoleRunner
     FuturePlan --> StageACompose
     XmrActor -.-> XmrSdk

@@ -1,6 +1,7 @@
 # ADR 0073: Compose XMR stage material through separate role journals
 
-Status: Accepted; provisioning and foundation APIs are GREEN, stage composition pending.
+Status: Accepted; provisioning plus private Stage-A signing, assembly, and
+atomic session-root derivation are GREEN. Public composition and Stage B remain.
 
 Date: 2026-07-20
 
@@ -9,10 +10,11 @@ Date: 2026-07-20
 The role-fixed tag-13 actor accepts only canonical validated Stage-A and
 Stage-B wires. Tests can construct those records. The role-fixed provisioning
 command now lets independent Maker and Taker processes generate private roots,
-DLEQ-backed shares, and public identity packets, but no user-facing process yet
-completes Stage-A/Stage-B countersigning and journal rounds. Copying the
-test fixture or running both private roles in one process would not prove the
-privacy, nonce, or actor boundaries required by issue 112.
+DLEQ-backed shares, and public identity packets. Separate role processes now
+validate and sign one canonical unsigned Stage A, assemble its role-indexed
+signatures, and derive the same purpose-separated session contexts. The
+interactive Stage-B journal rounds remain. Copying a test fixture or running
+both private roles in one process would not prove the required boundaries.
 
 The repository already has the cryptographic and persistence primitives:
 cross-curve DLEQ proofs, checked XMR agreement/session descriptors, the
@@ -35,6 +37,14 @@ public-packet digest. Only the canonical Monero share is stored; the role-correc
 adaptor scalar is derived in memory. Private-root and public-packet publication
 cannot be one cross-directory filesystem transaction, so a late public collision
 or parent-sync ambiguity preserves the complete private root and fails closed.
+Claim and refund session contexts are staged together under one random
+owner-only directory, exact-entry and inode checked, synced, then exposed as one
+complete role-local root through `RENAME_NOREPLACE` followed by parent fsync.
+No canonical half-bundle can appear. A post-rename sync ambiguity may return an
+error with the complete root present. The reused runner writer accepts only a
+path, so a hostile same-UID parent-path race can leave an unpublished orphan;
+the held-directory checks prevent it from becoming the canonical root.
+
 A partially populated role root is never published.
 
 Each role uses one long-lived journal for both claim and refund sessions. The
@@ -74,7 +84,10 @@ flowchart LR
     UnsignedA --> TakerProc
     MakerProc --> Agreement["Canonical countersigned Stage A"]
     TakerProc --> Agreement
-    Agreement --> Sessions["Claim and refund packet rounds"]
+    Agreement --> MakerSessions["Atomic Maker session root"]
+    Agreement --> TakerSessions["Atomic Taker session root"]
+    MakerSessions --> Sessions["Claim and refund packet rounds"]
+    TakerSessions --> Sessions
     Sessions --> UnsignedB["Validated unsigned Stage B"]
     UnsignedB --> MakerProc
     UnsignedB --> TakerProc
@@ -161,13 +174,15 @@ leasing.
    create-new session writer; retain the runner's existing packet schema.
 3. **GREEN:** Extract the stable four-account finalized nonce snapshot and checked M4
    program identity from the tag-13 binary into the sidecar library.
-4. **IN PROGRESS:** Add the role-fixed XMR reference actor commands and a process
-   E2E that spawns separate Maker/Taker roots. Provisioning is GREEN through
-   fresh separate process invocations and four focused tests, including one
-   two-process CLI E2E; Stage-A/B signing, session export, and Stage-B journal
-   assembly remain.
-5. **PENDING:** Add a narrow Taker-journal loader for tag-14 preparation; do not add a
-   plaintext partial store.
+4. **PARTIAL GREEN:** The role-fixed actor now provisions, privately signs Stage
+   A, publicly assembles its exact role signatures, and atomically publishes
+   complete claim/refund session roots. Four provisioning plus two black-box
+   Stage-A process tests, strict Clippy/Rustdoc/fmt, and the provision-only
+   dependency graph are GREEN. Public actual-local Stage-A composition and the
+   interactive Stage-B journal assembly remain.
+5. **GREEN:** The narrow Taker-journal loader opens only an existing completed
+   role-bound claim journal, rebinds it to Stage B, and creates no plaintext
+   partial store. Invalid journals make zero RPC calls.
 
 Fresh scalar/view-key convenience constructors are implemented in the XMR SDK,
 so actors do not reproduce scalar rejection rules. Agreement signatures reuse the

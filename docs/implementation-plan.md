@@ -3374,7 +3374,7 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 2 to 4 focused engineering hours to the first reproducible independent-actor claim-path PoC and 8 to 16
+The checkpoint ETA carried by this push is 1.5 to 3.5 focused engineering hours to the first reproducible independent-actor claim-path PoC and 8 to 16
 additional hours to the local claim/refund/punishment PoC. A direct source audit
 found two previously untracked repository gaps. Exact completed tag-15
 admission is now GREEN; bounded finalized discovery for the non-owned
@@ -3386,7 +3386,11 @@ descriptors, tested role-fixed tag-13 executable, exact finalized-Initialize/Fun
 classifier and consuming Fund barrier, and durable Maker tag-15
 prepare/complete path are component-GREEN. Independent role-process material
 provisioning and the authenticated completed-Taker-journal-to-tag-14 handoff are
-GREEN; Stage-A/B countersigning, the remaining journal packet rounds,
+GREEN. Private Stage-A signing, public role-indexed assembly, and one-rename
+atomic claim/refund session roots are also GREEN through two black-box process
+tests; the provision-only feature graph excludes the role-runner and its
+incompatible sidecar dependencies. Public actual-local Stage-A composition,
+Stage-B countersigning and the remaining journal packet rounds,
 Initialize/Fund execution, release-worker actual-local tag-14 submission,
 actual tag-15 execution, finalized tag-14/tag-15 discovery, adaptor
 extraction integration, official-wallet claim completion, and fresh lifecycle

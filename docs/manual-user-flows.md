@@ -2721,12 +2721,74 @@ ambiguous-outcome recovery, and durable nonce leasing apply after stage
 composition and remain tracked for post-PoC hardening.
 
 Do not fabricate agreement/activation wires from unit-test constants to run the
-tag-13 binary. Provisioning above is GREEN, but the next M4 slice must still use
-the two public packets plus stable actual-local facts to build, independently
-validate, and countersign Stage A; execute both journal packet rounds; and
-countersign Stage B while withholding the Taker claim partial until finalized
-tag 14. Until those commands land, the manually repeatable effect-bearing
-boundary still stops at checked deployment and two-role Vault onboarding.
+tag-13 binary. When the public actual-local composer has produced
+`$XMR_MATERIAL_ROOT/exchange/unsigned-stage-a.bin`, repeat the now-GREEN private
+role boundary with separate process invocations:
+
+```sh
+target/debug/xmr-reference-actor sign-stage-a taker \
+  --private-root "$XMR_MATERIAL_ROOT/material/taker" \
+  --own-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --peer-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --unsigned-stage-a "$XMR_MATERIAL_ROOT/exchange/unsigned-stage-a.bin" \
+  --output-signature "$XMR_MATERIAL_ROOT/exchange/taker-stage-a.sig"
+
+target/debug/xmr-reference-actor sign-stage-a maker \
+  --private-root "$XMR_MATERIAL_ROOT/material/maker" \
+  --own-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --peer-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --unsigned-stage-a "$XMR_MATERIAL_ROOT/exchange/unsigned-stage-a.bin" \
+  --output-signature "$XMR_MATERIAL_ROOT/exchange/maker-stage-a.sig"
+
+target/debug/xmr-reference-actor assemble-stage-a \
+  --maker-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --taker-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --unsigned-stage-a "$XMR_MATERIAL_ROOT/exchange/unsigned-stage-a.bin" \
+  --maker-signature "$XMR_MATERIAL_ROOT/exchange/maker-stage-a.sig" \
+  --taker-signature "$XMR_MATERIAL_ROOT/exchange/taker-stage-a.sig" \
+  --output-stage-a "$XMR_MATERIAL_ROOT/exchange/agreement-stage-a.bin"
+
+target/debug/xmr-reference-actor initialize-sessions taker \
+  --private-root "$XMR_MATERIAL_ROOT/material/taker" \
+  --own-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --peer-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --agreement-stage-a "$XMR_MATERIAL_ROOT/exchange/agreement-stage-a.bin" \
+  --session-root "$XMR_MATERIAL_ROOT/material/taker-sessions"
+
+target/debug/xmr-reference-actor initialize-sessions maker \
+  --private-root "$XMR_MATERIAL_ROOT/material/maker" \
+  --own-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --peer-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --agreement-stage-a "$XMR_MATERIAL_ROOT/exchange/agreement-stage-a.bin" \
+  --session-root "$XMR_MATERIAL_ROOT/material/maker-sessions"
+
+cmp "$XMR_MATERIAL_ROOT/material/taker-sessions/claim.json" \
+  "$XMR_MATERIAL_ROOT/material/maker-sessions/claim.json"
+cmp "$XMR_MATERIAL_ROOT/material/taker-sessions/refund.json" \
+  "$XMR_MATERIAL_ROOT/material/maker-sessions/refund.json"
+test ! "$XMR_MATERIAL_ROOT/material/taker-sessions/claim.json" -ef \
+  "$XMR_MATERIAL_ROOT/material/taker-sessions/refund.json"
+```
+
+Each session root is mode `0700` and contains exactly two mode-`0600`,
+single-link files. The complete directory is exposed by one no-replace rename;
+no canonical claim-only or refund-only root can appear. A parent-fsync ambiguity
+may report an error after the complete directory exists, so inspect the whole
+root after an error and never merge files. The runner's path-only writer can
+leave an unpublished orphan only under a hostile same-UID parent-path race;
+held inode and exact-entry checks prevent that orphan from becoming canonical.
+
+The component replay is:
+
+```sh
+cargo +1.96.0 test --locked --offline \
+  -p xmr-reference-actor --test stage_a
+```
+
+Expected result is 2 of 2 passed in addition to the four provisioning tests.
+These tests use no Docker, node, RPC, peer, faucet, public endpoint, funds, or
+external finality service. At this checkpoint the actual-local public composer,
+interactive journal packet rounds, and Stage B still precede any tag-13 effect.
 
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and
