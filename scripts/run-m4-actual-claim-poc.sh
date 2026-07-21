@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "tag15_publication",
+      implemented_execute_through: "tag15_finality",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -83,6 +83,9 @@ emit_contract() {
       tag15_publication_implemented: true,
       tag15_publication_reachable_in_execute: true,
       tag15_publication_executed_in_certifying_replay: false,
+      tag15_finality_implemented: true,
+      tag15_finality_reachable_in_execute: true,
+      tag15_finality_executed_in_certifying_replay: false,
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
@@ -1329,6 +1332,18 @@ publish_tag15() {
   record_phase tag15 completed
 }
 
+classify_tag15_finality() {
+  record_phase tag15_finality started
+  readonly tag15_finality_result="${evidence_root}/tag15-finalized.json"
+  local taker_endpoint start_height
+  taker_endpoint="$(jq -er '.endpoint' "$taker_sidecar_root/pid-manifest.json")"
+  start_height="$(jq -er '.outcome.facts.containing_block.block_id + 1' "$tag14_finality_result")"
+  "$classifier_binary" --sidecar-endpoint "$taker_endpoint" --capability-file "$taker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/taker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag15-finality-001" --role taker --effect claim --start-height "$start_height" --max-blocks 512 --output-result "$tag15_finality_result"
+  require_owner_file "$tag15_finality_result" "Tag15 finality result"
+  jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="claim" and .outcome.facts.metadata.state=="claimed" and .outcome.facts.custody.balance=="0"' "$tag15_finality_result" >/dev/null || fail "Tag15 finality result is incomplete"
+  record_phase tag15_finality completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1355,7 +1370,8 @@ execute_run() {
   classify_tag14_finality
   prepare_tag15_signature
   publish_tag15
-  fail "tag15 finality is not implemented; Tag15 admission completed; do not retry this run"
+  classify_tag15_finality
+  fail "extraction phase is not implemented; Tag15 finality completed; do not retry this run"
 }
 
 mode="${1:-}"
