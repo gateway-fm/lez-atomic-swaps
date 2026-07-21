@@ -11,6 +11,7 @@ anyhow = "=1.0.103"
 async-trait = "=0.1.89"
 diqwest = { version = "=3.1.0", default-features = false }
 lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
+lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk" }
 monero-rpc = { version = "=0.5.1", default-features = false, features = ["rpc_authentication"] }
 reqwest = { version = "=0.12.28", default-features = false }
 serde = { version = "=1.0.228", features = ["derive"] }

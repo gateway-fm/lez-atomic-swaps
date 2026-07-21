@@ -27,6 +27,7 @@
 #![forbid(unsafe_code)]
 
 mod topology;
+mod wallet_effect;
 
 use std::fmt;
 use std::num::NonZeroU64;
@@ -49,6 +50,10 @@ use url::{Host, Url};
 pub use topology::{
     MoneroTopologyBindingError, MoneroTopologyError, MoneroTopologyVerifier,
     VerifiedMoneroTopologyAttestation,
+};
+pub use wallet_effect::{
+    ConfirmedMoneroFunding, ConfirmedMoneroSweep, MoneroRegtestWalletEffects,
+    MoneroWalletEffectError,
 };
 
 /// Canonical Monero standard-address type used by exact output terms.
