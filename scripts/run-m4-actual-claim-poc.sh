@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "extraction_scalar",
+      implemented_execute_through: "monero_sweep",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -92,6 +92,9 @@ emit_contract() {
       extraction_scalar_implemented: true,
       extraction_scalar_reachable_in_execute: true,
       extraction_scalar_executed_in_certifying_replay: false,
+      monero_sweep_implemented: true,
+      monero_sweep_reachable_in_execute: true,
+      monero_sweep_executed_in_certifying_replay: false,
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
@@ -1368,6 +1371,15 @@ extract_adaptor_scalar() {
   record_phase extraction_scalar completed
 }
 
+sweep_monero_claim() {
+  record_phase monero_sweep started
+  readonly monero_sweep_evidence="${evidence_root}/monero-sweep.json"
+  "$monero_sweep_binary" --run-id "$MONERO_RUN_ID" --agreement-wire-file "$agreement_stage_a" --taker-share-file "${agreement_root}/material/taker/xmr-share.key" --extracted-maker-adaptor-scalar-file "$extracted_maker_scalar" --monero-view-key-file "${agreement_root}/material/taker/monero-view.key" --daemon-url "${monero_env[MONERO_DAEMON_ENDPOINT]}" --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" --shared-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" --shared-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" --shared-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" --shared-wallet-file-password-file "${monero_env[MONERO_TAKER_WALLET_PASSWORD_FILE]}" --taker-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" --taker-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" --taker-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" --funding-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" --funding-wallet-username-file "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" --funding-wallet-password-file "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" --reconstructed-wallet-filename "m4-${MONERO_RUN_ID}-reconstructed" --restore-height 0 --output-evidence "$monero_sweep_evidence"
+  require_owner_file "$monero_sweep_evidence" "Monero sweep evidence"
+  jq -e '.schema=="lez_v02_m4_actual_local_monero_claim_sweep_v2" and .public_rpc_used==false and .faucet_used==false and .automatic_submission_retry==false and .confirmations >= .required_confirmations and .peer_count==0' "$monero_sweep_evidence" >/dev/null || fail "Monero sweep evidence is incomplete"
+  record_phase monero_sweep completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1397,7 +1409,8 @@ execute_run() {
   classify_tag15_finality
   extract_claim_signature
   extract_adaptor_scalar
-  fail "sweep phase is not implemented; adaptor scalar extraction completed; do not retry this run"
+  sweep_monero_claim
+  fail "binding phase is not implemented; Monero sweep completed; do not retry this run"
 }
 
 mode="${1:-}"
