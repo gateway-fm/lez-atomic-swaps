@@ -675,7 +675,7 @@ build_identity_and_artifact() {
     cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
       --bin lez-v02-vault-claim-poc --bin lez-v02-xmr-stage-a-compose \
       --bin lez-v02-xmr-stage-a-poc --bin lez-v02-bridge-poc --bin lez-v02-xmr-tag13-export \
-      --bin lez-v02-xmr-regtest-fund --bin lez-v02-xmr-regtest-verify --example lez-v02-local-actor-identity
+      --bin lez-v02-xmr-regtest-fund --bin lez-v02-xmr-regtest-verify --bin lez-v02-xmr-regtest-sweep --example lez-v02-local-actor-identity
   readonly identity_binary="${sidecar_target}/debug/examples/lez-v02-local-actor-identity"
   [[ -x "$identity_binary" && ! -L "$identity_binary" ]] || fail "identity binary build is unavailable"
   readonly vault_claim_binary="${sidecar_target}/debug/lez-v02-vault-claim-poc"
@@ -708,6 +708,7 @@ build_identity_and_artifact() {
   readonly tag13_export_binary="${staged_binary_root}/lez-v02-xmr-tag13-export"
   readonly monero_fund_binary="${staged_binary_root}/lez-v02-xmr-regtest-fund"
   readonly monero_verify_binary="${staged_binary_root}/lez-v02-xmr-regtest-verify"
+  readonly monero_sweep_binary="${staged_binary_root}/lez-v02-xmr-regtest-sweep"
   readonly release_prepare_binary="${staged_binary_root}/lez-v02-xmr-release-prepare"
   readonly release_service_binary="${staged_binary_root}/lez-v0-2-xmr-release-service"
   readonly classifier_binary="${staged_binary_root}/lez-v02-xmr-classify-finalized"
@@ -724,6 +725,7 @@ build_identity_and_artifact() {
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-tag13-export" "$tag13_export_binary" "Tag13 handoff exporter"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-fund" "$monero_fund_binary" "Monero funding"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-verify" "$monero_verify_binary" "Monero verification"
+  stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-sweep" "$monero_sweep_binary" "Monero sweep"
   stage_executable "${release_target}/debug/lez-v02-xmr-release-prepare" "$release_prepare_binary" "Tag14 preparation"
   stage_executable "${release_target}/debug/lez-v0-2-xmr-release-service" "$release_service_binary" "Tag14 release service"
   stage_executable "${release_target}/debug/lez-v02-xmr-classify-finalized" "$classifier_binary" "finalized effect classifier"
