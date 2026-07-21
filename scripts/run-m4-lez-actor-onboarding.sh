@@ -197,6 +197,8 @@ fi
 readonly poll_limit
 
 mkdir -m 0700 "$M4_ONBOARD_EVIDENCE_ROOT" "$state_root"
+# Normalize exact mode because the Vault Claim durable store rejects non-0700 directories.
+chmod 0700 "$M4_ONBOARD_EVIDENCE_ROOT" "$state_root"
 runner_sha="$(sha256sum scripts/run-m4-lez-actor-onboarding.sh | sed 's/ .*//')"
 stack_sha="$(sha256sum "$M4_ONBOARD_STACK_MANIFEST" | sed 's/ .*//')"
 deployment_sha="$(sha256sum "$M4_ONBOARD_DEPLOYMENT_FINALITY" | sed 's/ .*//')"
@@ -292,7 +294,7 @@ claim_role() {
   fi
   account="$(identity_value account_id "$identity")"; vault="$(identity_value vault_account_id "$identity")"
   owner_hex="$(identity_value account_id_hex "$identity")"; vault_hex="$(identity_value vault_account_id_hex "$identity")"
-  role_state="${state_root}/${role}"; mkdir -m 0700 "$role_state"
+  role_state="${state_root}/${role}"; mkdir -m 0700 "$role_state"; chmod 0700 "$role_state"
   request="${role}-flow0-vault-claim-0001"
   evidence="${M4_ONBOARD_EVIDENCE_ROOT}/${role}-vault-claim.json"; partial="${evidence}.partial"
   start="$(tip)"
