@@ -662,6 +662,12 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p lez-adaptor-role-runner \
       --bin lez-adaptor-role-runner
+  readonly release_target="${build_root}/release-target"
+  record_resource ephemeral_path "$release_target" "$release_target"
+  CARGO_TARGET_DIR="$release_target" CARGO_NET_OFFLINE=true \
+    cargo +1.96.0 build --locked --offline \
+      --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml \
+      --bin lez-v02-xmr-release-prepare --bin lez-v0-2-xmr-release-service
 
   readonly staged_binary_root="${build_root}/staged-binaries"
   record_resource ephemeral_path "$staged_binary_root" "$staged_binary_root"
@@ -674,6 +680,8 @@ build_identity_and_artifact() {
   readonly tag13_export_binary="${staged_binary_root}/lez-v02-xmr-tag13-export"
   readonly monero_fund_binary="${staged_binary_root}/lez-v02-xmr-regtest-fund"
   readonly monero_verify_binary="${staged_binary_root}/lez-v02-xmr-regtest-verify"
+  readonly release_prepare_binary="${staged_binary_root}/lez-v02-xmr-release-prepare"
+  readonly release_service_binary="${staged_binary_root}/lez-v0-2-xmr-release-service"
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
@@ -686,6 +694,8 @@ build_identity_and_artifact() {
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-tag13-export" "$tag13_export_binary" "Tag13 handoff exporter"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-fund" "$monero_fund_binary" "Monero funding"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-verify" "$monero_verify_binary" "Monero verification"
+  stage_executable "${release_target}/debug/lez-v02-xmr-release-prepare" "$release_prepare_binary" "Tag14 preparation"
+  stage_executable "${release_target}/debug/lez-v0-2-xmr-release-service" "$release_service_binary" "Tag14 release service"
   readonly artifact_root="${build_root}/m4-artifact"
   record_resource ephemeral_path "${artifact_root}/target" "${artifact_root}/target"
   RUN_ID="$artifact_run_id" LEZ_M4_ARTIFACT_ROOT="$artifact_root" LEZ_M4_KEEP_BUILD=1 \
