@@ -146,8 +146,8 @@ the checked artifact, identities, LEZ stack, deployment, and exact finalized
 Maker/Taker Vault Claims, `execute` starts the run-scoped official Monero child,
 composes canonical Stage A and countersigned Stage B through separate role
 journals, publishes a durable no-retry latch, and invokes the exact one-shot
-tag-13 Initialize/Fund actor. It then intentionally fails before swap-specific
-Monero funding. The cleanup contract uses an exact resource ledger, child/run
+tag-13 Initialize/Fund actor. It then funds the local shared Monero output and verifies it against both role wallets,
+then intentionally fails before release/Tag14. The cleanup contract uses an exact resource ledger, child/run
 labels revalidated immediately before deletion, PID start-time/binary binding,
 and a foreign sentinel; broad cleanup is forbidden. These paths are
 **contract-GREEN but have not been cleanly replayed from the current commit**,
@@ -158,13 +158,14 @@ The role-sidecar launcher now supports exact Taker adoption of the Tag-13 state,
 requires the owner-private typed receipt plus its fixed runtime and terms
 siblings, and rejects cross-swap terms, aliases, and state/output overlap before
 creating a supervisor root. The bridge lease, typed exporter, receipt gate, and adversarial tests are
-source/component-GREEN. The parent `execute` runner now builds and stages the
-exporter and bridge, exports the four exact artifacts, starts Taker adoption and
-fresh Maker sidecars, records exact cleanup identities, and stops intentionally
-before Monero funding. The exact committed-tree replay remains pending. The
+source/component-GREEN. The parent `execute` runner now builds and stages the exporter, bridge, and
+Monero fund/verify binaries, exports the four exact artifacts, starts Taker
+adoption and fresh Maker sidecars, records exact cleanup identities, funds the
+local shared output, verifies it against both role wallets, and stops
+intentionally before release/Tag14. The exact committed-tree replay remains
+pending. The
 agreement receipt calls the CLI inputs `requested_terms`; it does not claim that
-the helper decoded and rebound those terms from Stage A. The remaining runner/PoC
-slice is estimated at 1 to 3 focused hours; after it exists, a warm replay is
+the helper decoded and rebound those terms from Stage A. The remaining runner/PoC slice is estimated at 1 to 3 focused hours; after it exists, a warm replay is
 expected to take 25 to 45 minutes and a cold replay 1 to 3 hours.
 Full functional M4 remains 15 to 27 focused hours; later owner-selected
 hardening is separate.

@@ -108,12 +108,18 @@ jq -e '
   and .automatic_submission_retry == false
   and .dynamic_literal_loopback_ports == true
   and .public_runtime_resources == []
-  and .implemented_execute_through == "sidecar_readiness"
+  and .implemented_execute_through == "monero_funding_verification"
   and .actor_onboarding_implemented == true
   and .successful_claim_tail_implemented == false
   and .monero_launcher_implemented == true
   and .monero_launcher_reachable_in_execute == true
   and .monero_launcher_executed_in_certifying_replay == false
+  and .monero_funding_implemented == true
+  and .monero_funding_reachable_in_execute == true
+  and .monero_funding_executed_in_certifying_replay == false
+  and .monero_verification_implemented == true
+  and .monero_verification_reachable_in_execute == true
+  and .monero_verification_executed_in_certifying_replay == false
   and .role_sidecar_launcher_contract_green == true
   and .role_sidecar_launcher_reachable_in_execute == true
   and .agreement_helper_contract_green == true
@@ -305,7 +311,7 @@ rg -Fq 'compose_xmr_agreement' <<<"$execute_source" ||
   fail "execute omits the agreement helper"
 rg -Fq 'submit_tag13' <<<"$execute_source" ||
   fail "execute omits the tag-13 runner"
-readonly post_tag13_fail='fail "monero_funding phase is not implemented; Tag13 handoff and sidecar readiness completed; do not retry this run"'
+readonly post_tag13_fail='fail "release phase is not implemented; Monero funding and verification completed; do not retry this run"'
 rg -Fq "$post_tag13_fail" <<<"$execute_source" ||
   fail "execute omits the post-tag13 fail-closed boundary"
 execute_tag13_line="$(rg -n -m1 -F 'submit_tag13' <<<"$execute_source")"

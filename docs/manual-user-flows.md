@@ -2336,8 +2336,7 @@ tag-13 state. Adoption requires the owner-private fixed siblings
 canonical artifact directory; cross-swap terms, aliases, and state/output overlap
 are rejected before supervisor-root creation. The typed exporter and bridge receipt gate are source/component-GREEN. The
 parent runner now exports the four artifacts, starts Taker adoption and a fresh
-Maker sidecar, records PID/start/binary cleanup identities, and stops before
-Monero funding; the exact committed-tree replay remains pending.
+Maker sidecar, records PID/start/binary cleanup identities, funds the local shared Monero output, verifies it against both role wallets, and stops before release/Tag14; the exact committed-tree replay remains pending.
 The agreement helper receipt truthfully records CLI values as `requested_terms`
 and does not claim independent helper-level term binding; the role actors remain
 the canonical wire validation and signing boundary. Do not advertise the runner

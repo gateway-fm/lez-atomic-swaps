@@ -39,11 +39,17 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "sidecar_readiness",
+      implemented_execute_through: "monero_funding_verification",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
       monero_launcher_executed_in_certifying_replay: false,
+      monero_funding_implemented: true,
+      monero_funding_reachable_in_execute: true,
+      monero_funding_executed_in_certifying_replay: false,
+      monero_verification_implemented: true,
+      monero_verification_reachable_in_execute: true,
+      monero_verification_executed_in_certifying_replay: false,
       role_sidecar_launcher_contract_green: true,
       role_sidecar_launcher_reachable_in_execute: true,
       agreement_helper_contract_green: true,
@@ -641,7 +647,8 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$sidecar_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
       --bin lez-v02-vault-claim-poc --bin lez-v02-xmr-stage-a-compose \
-      --bin lez-v02-xmr-stage-a-poc --bin lez-v02-bridge-poc --bin lez-v02-xmr-tag13-export --example lez-v02-local-actor-identity
+      --bin lez-v02-xmr-stage-a-poc --bin lez-v02-bridge-poc --bin lez-v02-xmr-tag13-export \
+      --bin lez-v02-xmr-regtest-fund --bin lez-v02-xmr-regtest-verify --example lez-v02-local-actor-identity
   readonly identity_binary="${sidecar_target}/debug/examples/lez-v02-local-actor-identity"
   [[ -x "$identity_binary" && ! -L "$identity_binary" ]] || fail "identity binary build is unavailable"
   readonly vault_claim_binary="${sidecar_target}/debug/lez-v02-vault-claim-poc"
@@ -665,6 +672,8 @@ build_identity_and_artifact() {
   readonly tag13_binary="${staged_binary_root}/lez-v02-xmr-stage-a-poc"
   readonly bridge_binary="${staged_binary_root}/lez-v02-bridge-poc"
   readonly tag13_export_binary="${staged_binary_root}/lez-v02-xmr-tag13-export"
+  readonly monero_fund_binary="${staged_binary_root}/lez-v02-xmr-regtest-fund"
+  readonly monero_verify_binary="${staged_binary_root}/lez-v02-xmr-regtest-verify"
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
@@ -675,7 +684,8 @@ build_identity_and_artifact() {
     "$tag13_binary" "tag13 runner"
   stage_executable "${sidecar_target}/debug/lez-v02-bridge-poc" "$bridge_binary" "LEZ sidecar bridge"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-tag13-export" "$tag13_export_binary" "Tag13 handoff exporter"
-
+  stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-fund" "$monero_fund_binary" "Monero funding"
+  stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-verify" "$monero_verify_binary" "Monero verification"
   readonly artifact_root="${build_root}/m4-artifact"
   record_resource ephemeral_path "${artifact_root}/target" "${artifact_root}/target"
   RUN_ID="$artifact_run_id" LEZ_M4_ARTIFACT_ROOT="$artifact_root" LEZ_M4_KEEP_BUILD=1 \
@@ -1201,6 +1211,27 @@ start_role_sidecars() {
   done
   record_phase sidecars completed
 }
+fund_and_verify_monero() {
+  record_phase monero_funding started
+  readonly monero_funding_evidence="${evidence_root}/monero-funding.json"
+  readonly monero_verification_evidence="${evidence_root}/monero-verification.json"
+  [[ ! -e "$monero_funding_evidence" && ! -L "$monero_funding_evidence" ]] || fail "Monero funding evidence exists"
+  [[ ! -e "$monero_verification_evidence" && ! -L "$monero_verification_evidence" ]] || fail "Monero verification evidence exists"
+  "$monero_fund_binary" --agreement-wire-file "$agreement_stage_a" --monero-view-key-file "${agreement_root}/material/taker/monero-view.key" --daemon-url "${monero_env[MONERO_DAEMON_ENDPOINT]}" --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" --funding-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" --funding-wallet-username-file "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" --funding-wallet-password-file "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" --shared-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" --shared-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" --shared-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" --shared-wallet-file-password-file "${monero_env[MONERO_TAKER_WALLET_PASSWORD_FILE]}" --shared-wallet-filename "m4-${MONERO_RUN_ID}-shared" --output-evidence "$monero_funding_evidence" >/dev/null
+  require_owner_file "$monero_funding_evidence" "Monero funding evidence"
+  local tx_id
+  tx_id="$(jq -er '.schema=="lez_v02_m4_actual_local_monero_funding_v2" and .attempt_state=="confirmed" and .public_rpc_used==false and .faucet_used==false and .automatic_submission_retry==false | if . then .transaction_id else error end' "$monero_funding_evidence")" || fail "Monero funding evidence violates the local one-shot boundary"
+  [[ "$tx_id" =~ ^[0-9a-f]{64}$ ]] || fail "Monero funding transaction ID is invalid"
+  record_phase monero_funding completed
+  record_phase monero_verification started
+  "$monero_verify_binary" --agreement-wire-file "$agreement_stage_a" --monero-transaction-id "$tx_id" --run-id "$MONERO_RUN_ID" --daemon-url "${monero_env[MONERO_DAEMON_ENDPOINT]}" --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" --target-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" --target-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" --target-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" --foreign-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" --foreign-wallet-username-file "${monero_env[MONERO_MAKER_RPC_USERNAME_FILE]}" --foreign-wallet-password-file "${monero_env[MONERO_MAKER_RPC_PASSWORD_FILE]}" --output-evidence "$monero_verification_evidence" >/dev/null
+  require_owner_file "$monero_verification_evidence" "Monero verification evidence"
+  local required_confirmations
+  required_confirmations=$(jq -er '.required_confirmations | select(type == "number" and . >= 1)' "$monero_funding_evidence") || fail "Monero funding evidence lacks required confirmations"
+  jq -e --arg run_id "$MONERO_RUN_ID" --arg tx "$tx_id" --argjson required "$required_confirmations" '.schema=="lez_v02_m4_actual_local_monero_verification_v2" and .run_id==$run_id and .transaction_id==$tx and .confirmations >= $required and .public_rpc_used==false and .faucet_used==false and .network_scope=="isolated_official_monero_regtest"' "$monero_verification_evidence" >/dev/null || fail "Monero verification evidence is incomplete"
+  record_phase monero_verification completed
+}
+
 execute_run() {
   run_preflight
   require_command docker
@@ -1220,7 +1251,8 @@ execute_run() {
   submit_tag13
   export_tag13_handoff
   start_role_sidecars
-  fail "monero_funding phase is not implemented; Tag13 handoff and sidecar readiness completed; do not retry this run"
+  fund_and_verify_monero
+  fail "release phase is not implemented; Monero funding and verification completed; do not retry this run"
 }
 
 mode="${1:-}"

@@ -3032,9 +3032,10 @@ The next certification order is:
 The direct finalized-Claim-to-sweep binder and its retained-run invocation are
 complete. The replay runner source/contract now composes the official Monero child,
 agreement and separate role journals, durable tag-13 no-retry latch, exact
-finalized tag 13, typed four-artifact handoff, and both role sidecars through
-readiness. It has not been cleanly replayed from the current commit. Next, wire
-Monero funding and the retained successful-claim tail, publish synchronized
+finalized tag 13, typed four-artifact handoff, both role sidecars through
+readiness, and local Monero fund/verify evidence. It has not been cleanly
+replayed from the current commit. Next, wire release/Tag14 and the retained
+successful-claim tail, publish synchronized
 evidence, and prove ledgered/label-revalidated scoped cleanup. Remaining
 runner/PoC implementation is estimated at 1 to 3 focused hours. After that
 implementation is complete,
