@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "monero_funding_verification",
+      implemented_execute_through: "tag14_preparation",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -68,6 +68,9 @@ emit_contract() {
       ],
       monero_owned_volume_count: 4,
       successful_claim_tail_implemented: false,
+      tag14_preparation_implemented: true,
+      tag14_preparation_reachable_in_execute: true,
+      tag14_preparation_executed_in_certifying_replay: false,
       phases: [
         "preflight", "build", "identity", "lez_stack", "deployment",
         "actor_onboarding", "monero_stack", "agreement", "journals", "tag13", "tag13_handoff",
@@ -1241,6 +1244,29 @@ fund_and_verify_monero() {
   jq -e --arg run_id "$MONERO_RUN_ID" --arg tx "$tx_id" --argjson required "$required_confirmations" '.schema=="lez_v02_m4_actual_local_monero_verification_v2" and .run_id==$run_id and .transaction_id==$tx and .confirmations >= $required and .public_rpc_used==false and .faucet_used==false and .network_scope=="isolated_official_monero_regtest"' "$monero_verification_evidence" >/dev/null || fail "Monero verification evidence is incomplete"
   record_phase monero_verification completed
 }
+prepare_tag14_release() {
+  record_phase release started
+  readonly release_root="${private_root}/tag14-release"
+  readonly release_config_root="${release_root}/config"
+  readonly release_state_root="${release_root}/state"
+  readonly release_public_config="${release_config_root}/release.json"
+  readonly release_preparation_config="${release_config_root}/preparation.json"
+  readonly release_protection_key="${release_root}/protection.key"
+  mkdir -m 0700 "$release_root" "$release_config_root" "$release_state_root"
+  record_resource ephemeral_path "$release_root" "$release_root"
+  openssl rand -hex 32 >"$release_protection_key"
+  chmod 600 "$release_protection_key"
+  local taker_endpoint
+  taker_endpoint="$(jq -er ' .endpoint ' "$taker_sidecar_root/pid-manifest.json")"
+  jq -n --slurpfile evidence "$tag13_internal" --arg sidecar "$taker_endpoint" --arg indexer "$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")" '{schema_version:1,sidecar_endpoint:$sidecar,indexer_endpoint:$indexer,node_profile:"local",run_id:$evidence[0].run_id,runtime:$evidence[0].runtime,terms:$evidence[0].terms,protection_key_id:"m4-local-release-key-001"}' >"$release_public_config"
+  jq -n --slurpfile evidence "$tag13_internal" --arg fund_id "m4-${run_id}-fund-finality" --arg authorization_id "m4-${run_id}-authorization-prepare" --arg txid "$(jq -er '.transaction_id' "$monero_funding_evidence")" --arg daemon "${monero_env[MONERO_DAEMON_ENDPOINT]}" --arg target "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" --arg foreign "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" '{schema_version:1,escrow_prepare_request_id:$evidence[0].prepare_request_id,fund_finality_request_id:$fund_id,authorization_prepare_request_id:$authorization_id,fund_finality_window:$evidence[0].funding.scanned_window,monero_funding_transaction_id:$txid,monero_daemon_endpoint:$daemon,monero_target_wallet_endpoint:$target,monero_foreign_wallet_endpoint:$foreign}' >"$release_preparation_config"
+  chmod 600 "$release_public_config" "$release_preparation_config"
+  "$release_prepare_binary" --public-config-file "$release_public_config" --preparation-config-file "$release_preparation_config" --agreement-wire-file "$agreement_stage_a" --activation-wire-file "$agreement_stage_b" --monero-view-key-file "${agreement_root}/material/taker/monero-view.key" --taker-claim-journal "${agreement_root}/stage-b/private/taker.sqlite" --bridge-capability-file "$taker_sidecar_root/capability" --protection-key-file "$release_protection_key" --state-directory "$release_state_root" --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" --target-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" --target-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" --foreign-wallet-username-file "${monero_env[MONERO_MAKER_RPC_USERNAME_FILE]}" --foreign-wallet-password-file "${monero_env[MONERO_MAKER_RPC_PASSWORD_FILE]}" >"${release_root}/preparation-result.json"
+  require_owner_file "${release_root}/preparation-result.json" "Tag14 preparation result"
+  jq -e '.schema_version==1 and .event=="xmr_claim_authorization_preparation" and .durable_state=="prepared" and .node_profile=="local"' "${release_root}/preparation-result.json" >/dev/null || fail "Tag14 preparation result is incomplete"
+  record_phase release completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1262,7 +1288,8 @@ execute_run() {
   export_tag13_handoff
   start_role_sidecars
   fund_and_verify_monero
-  fail "release phase is not implemented; Monero funding and verification completed; do not retry this run"
+  prepare_tag14_release
+  fail "publication phase is not implemented; Tag14 preparation completed; do not retry this run"
 }
 
 mode="${1:-}"
