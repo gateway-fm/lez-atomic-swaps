@@ -3693,6 +3693,7 @@ dependencies = [
  "async-trait",
  "diqwest",
  "lez-bridge-protocol",
+ "lez-xmr-swap-sdk",
  "monero-rpc",
  "reqwest",
  "serde",
