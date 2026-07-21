@@ -13,7 +13,7 @@ fail() {
   exit 1
 }
 
-for command_name in awk cc chmod cp curl jq kill mkdir mktemp mv readlink rm sha256sum sleep stat tail wc; do
+for command_name in awk cc chmod cp curl jq kill mkdir mktemp mv readlink rm rmdir sha256sum sleep stat tail wc; do
   command -v "$command_name" >/dev/null || fail "missing test dependency: ${command_name}"
 done
 [[ -x "$launcher" && ! -L "$launcher" ]] || fail "launcher is missing or unsafe"
@@ -68,6 +68,8 @@ cat >"$fake_bin_root/fake-sidecar.c" <<'FAKE_SIDECAR'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 static volatile sig_atomic_t stopping = 0;
@@ -97,12 +99,16 @@ int main(int argc, char **argv) {
   const char *runtime_path = NULL;
   const char *sequencer_url = NULL;
   const char *indexer_url = NULL;
+  const char *state_directory = NULL;
+  const char *tag13_handoff_receipt = NULL;
   const char *audit_path;
   FILE *runtime;
   FILE *audit;
   char runtime_json[8192];
   size_t runtime_size;
   int index;
+  int state_lease;
+  char state_lease_path[4096];
 
   configure_signals();
 
@@ -132,23 +138,32 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[index], "--runtime-file") == 0) runtime_path = argv[index + 1];
     else if (strcmp(argv[index], "--sequencer-url") == 0) sequencer_url = argv[index + 1];
     else if (strcmp(argv[index], "--indexer-url") == 0) indexer_url = argv[index + 1];
+    else if (strcmp(argv[index], "--state-directory") == 0) state_directory = argv[index + 1];
+    else if (strcmp(argv[index], "--tag13-handoff-receipt") == 0)
+      tag13_handoff_receipt = argv[index + 1];
     else if (
              strcmp(argv[index], "--node-profile") != 0 &&
              strcmp(argv[index], "--capability-file") != 0 &&
              strcmp(argv[index], "--private-key-file") != 0 &&
-             strcmp(argv[index], "--state-directory") != 0 &&
              strcmp(argv[index], "--authenticated-transfer-program-id") != 0) return 64;
   }
   if (listen == NULL || strncmp(listen, "127.0.0.1:", 10) != 0 || run_id == NULL ||
-      runtime_path == NULL || sequencer_url == NULL || indexer_url == NULL) return 64;
+      runtime_path == NULL || sequencer_url == NULL || indexer_url == NULL ||
+      state_directory == NULL) return 64;
   if (getenv("TEST_SEQUENCER_URL") == NULL || getenv("TEST_INDEXER_URL") == NULL ||
       strcmp(sequencer_url, getenv("TEST_SEQUENCER_URL")) != 0 ||
       strcmp(indexer_url, getenv("TEST_INDEXER_URL")) != 0) return 64;
+  if (snprintf(state_lease_path, sizeof(state_lease_path), "%s/%s", state_directory,
+               "bridge-state-lease.v1.lock") >= (int)sizeof(state_lease_path)) return 68;
+  state_lease = open(state_lease_path, O_CREAT | O_RDWR, 0600);
+  if (state_lease < 0 || flock(state_lease, LOCK_EX | LOCK_NB) != 0) return 68;
   audit_path = getenv("TEST_LAUNCH_AUDIT");
   if (audit_path == NULL) return 65;
   audit = fopen(audit_path, "a");
   if (audit == NULL) return 65;
-  fprintf(audit, "%ld\t%s\t%s\t%s\n", (long)getpid(), listen, sequencer_url, indexer_url);
+  fprintf(audit, "%ld\t%s\t%s\t%s\t%s\t%s\t%s\n", (long)getpid(), listen,
+          sequencer_url, indexer_url, state_directory,
+          tag13_handoff_receipt == NULL ? "-" : tag13_handoff_receipt, runtime_path);
   fclose(audit);
   runtime = fopen(runtime_path, "r");
   if (runtime == NULL) return 66;
@@ -280,7 +295,9 @@ start_output="$test_root/start.json"
 
 jq -e --arg root "$sidecar_root" '
   .schema == "lez_m4_role_sidecar_launcher_v1" and .action == "start" and .status == "running" and
-  .root == $root and .role == "maker" and .health_and_authentication_proved == true
+  .root == $root and .role == "maker" and .health_and_authentication_proved == true and
+  .state_directory_mode == "fresh_supervisor_owned" and
+  .tag13_handoff_receipt_bound == false and .tag13_handoff_receipt_sha256 == null
 ' "$start_output" >/dev/null || fail "start result is incomplete"
 
 for path in "$sidecar_root" "$sidecar_root/state"; do
@@ -294,7 +311,9 @@ done
 jq -e --arg run "$run_id" --arg runtime_sha "$(sha256sum "$runtime_file" | awk '{print $1}')" \
   --arg terms_sha "$(sha256sum "$terms_file" | awk '{print $1}')" \
   --arg binary_sha "$(sha256sum "$fake_bin_root/fake-sidecar" | awk '{print $1}')" '
-  .schema == "lez_m4_role_sidecar_pid_manifest_v1" and .run_id == $run and .role == "maker" and
+  .schema == "lez_m4_role_sidecar_pid_manifest_v2" and .run_id == $run and .role == "maker" and
+  .state_directory_mode == "fresh_supervisor_owned" and
+  .tag13_handoff_receipt == null and .tag13_handoff_receipt_sha256 == null and
   (.endpoint | test("^http://127\\.0\\.0\\.1:[1-9][0-9]*$")) and
   .runtime_sha256 == $runtime_sha and .terms_sha256 == $terms_sha and .binary_sha256 == $binary_sha and
   .executable_sha256 == $binary_sha and (.executable_device | test("^[0-9]+$")) and
@@ -313,6 +332,7 @@ target_pid="$(jq -er '.pid' "$sidecar_root/pid-manifest.json")"
 [[ "$(awk 'NR == 1 { print $1 }' "$launch_audit")" == "$target_pid" ]] ||
   fail "launcher PID does not match the exact spawned process"
 [[ -r "/proc/$target_pid/stat" ]] || fail "target sidecar is not running"
+[[ "$(awk 'NR == 1 { print $7 }' "$launch_audit")" == "$sidecar_root/runtime.json" ]] || fail "fresh sidecar did not receive supervisor runtime copy"
 
 status_output="$test_root/status.json"
 "$launcher" status --root "$sidecar_root" >"$status_output"
@@ -565,6 +585,229 @@ jq -e '.status == "stopped" and .identity_matched' "$test_root/mutable-stop.json
 taker_runtime="$source_root/taker-runtime.json"
 jq -c '.sidecar_role = "taker"' "$runtime_file" >"$taker_runtime"
 chmod 0600 "$taker_runtime"
+tag13_handoff_receipt="$source_root/tag13-handoff-receipt.json"
+printf "{\"schema\":\"lez_v02_m4_tag13_handoff_v1\"}\n" >"$tag13_handoff_receipt"
+chmod 0600 "$tag13_handoff_receipt"
+tag13_handoff_receipt_sha="$(sha256sum "$tag13_handoff_receipt" | awk '{print $1}')"
+adopted_state="$test_root/tag13-state"
+mkdir -m 0700 -- "$adopted_state"
+printf "tag13-state-sentinel\n" >"$adopted_state/m4-xmr-stage-a-tag13-evidence.v2.json"
+chmod 0600 "$adopted_state/m4-xmr-stage-a-tag13-evidence.v2.json"
+adopted_root="$test_root/taker-adopted-sidecar"
+export TEST_EXPECTED_ROOT="$adopted_root"
+export TEST_RUNTIME_FILE="$taker_runtime"
+adopted_start="$test_root/taker-adopted-start.json"
+"$launcher" start --root "$adopted_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state" --tag13-handoff-receipt "$tag13_handoff_receipt" >"$adopted_start"
+[[ ! -e "$adopted_root/state" && ! -L "$adopted_root/state" ]] ||
+  fail "adoption created a shadow state directory"
+[[ "$(jq -er .state_directory "$adopted_start")" == "$adopted_state" ]] ||
+  fail "start result omitted the exact adopted state"
+[[ "$(jq -er .state_directory_mode "$adopted_start")" == adopted_exact_existing_tag13 ]] ||
+  fail "start result omitted adopted-state mode"
+[[ "$(jq -er .tag13_handoff_receipt_bound "$adopted_start")" == true ]] ||
+  fail "start result omitted typed receipt binding"
+[[ "$(jq -er .tag13_handoff_receipt_sha256 "$adopted_start")" == "$tag13_handoff_receipt_sha" ]] || fail "start result receipt SHA-256 drifted"
+[[ "$(jq -er .schema "$adopted_root/pid-manifest.json")" == lez_m4_role_sidecar_pid_manifest_v2 ]] || fail "adopted manifest is not v2"
+[[ "$(jq -er .tag13_handoff_receipt "$adopted_root/pid-manifest.json")" == "$tag13_handoff_receipt" ]] || fail "manifest omitted exact receipt path"
+[[ "$(jq -er .tag13_handoff_receipt_sha256 "$adopted_root/pid-manifest.json")" == "$tag13_handoff_receipt_sha" ]] || fail "manifest receipt SHA-256 drifted"
+adopted_terms_sha="$(sha256sum "$terms_file" | awk '{print $1}')"
+[[ "$(sha256sum "$adopted_root/terms.json" | awk '{print $1}')" == "$adopted_terms_sha" ]] || fail "supervisor terms copy differs from typed terms"
+[[ "$(jq -er .terms_sha256 "$adopted_root/pid-manifest.json")" == "$adopted_terms_sha" ]] || fail "manifest did not bind copied typed terms"
+[[ ! "$adopted_root/terms.json" -ef "$terms_file" ]] ||
+  fail "supervisor terms evidence aliases the original typed artifact"
+[[ "$(<"$adopted_state/m4-xmr-stage-a-tag13-evidence.v2.json")" == tag13-state-sentinel ]] ||
+  fail "adoption changed the existing Tag13 evidence"
+[[ "$(jq -er .state_directory "$adopted_root/pid-manifest.json")" == "$adopted_state" ]] ||
+  fail "manifest did not bind the exact adopted state directory"
+[[ "$(jq -er .state_directory_mode "$adopted_root/pid-manifest.json")" == adopted_exact_existing_tag13 ]] ||
+  fail "manifest did not disclose exact Tag13 state adoption"
+[[ "$(tail -n 1 "$launch_audit" | awk '{print $5}')" == "$adopted_state" ]] ||
+  fail "sidecar did not receive the exact adopted state directory"
+[[ "$(tail -n 1 "$launch_audit" | awk '{print $6}')" == "$tag13_handoff_receipt" ]] ||
+  fail "sidecar did not receive the exact typed receipt"
+[[ "$(tail -n 1 "$launch_audit" | awk '{print $7}')" == "$taker_runtime" ]] ||
+  fail "adopted sidecar did not receive the original typed Taker runtime"
+target_pid="$(jq -er .pid "$adopted_root/pid-manifest.json")"
+
+adopted_status="$test_root/taker-adopted-status.json"
+"$launcher" status --root "$adopted_root" >"$adopted_status"
+[[ "$(jq -er .status "$adopted_status")" == running &&
+  "$(jq -er .state_directory_mode "$adopted_status")" == adopted_exact_existing_tag13 &&
+  "$(jq -er .tag13_handoff_receipt_bound "$adopted_status")" == true &&
+  "$(jq -er .tag13_handoff_receipt_sha256 "$adopted_status")" == "$tag13_handoff_receipt_sha" ]] || fail "adopted-mode status omitted typed binding truth"
+
+adopted_state_saved="$test_root/tag13-state.original"
+mv -- "$adopted_state" "$adopted_state_saved"
+mkdir -m 0700 -- "$adopted_state"
+if "$launcher" status --root "$adopted_root" >"$test_root/replaced-state-status.json" 2>&1; then
+  fail "status accepted a replacement adopted-state device/inode"
+fi
+rmdir -- "$adopted_state"
+mv -- "$adopted_state_saved" "$adopted_state"
+"$launcher" status --root "$adopted_root" >"$test_root/restored-state-status.json"
+
+tag13_handoff_receipt_saved="$test_root/tag13-handoff-receipt.original"
+mv -- "$tag13_handoff_receipt" "$tag13_handoff_receipt_saved"
+printf "{\"schema\":\"mismatched-receipt\"}\n" >"$tag13_handoff_receipt"
+chmod 0600 "$tag13_handoff_receipt"
+if "$launcher" status --root "$adopted_root" >"$test_root/replaced-receipt-status.json" 2>&1; then
+  fail "status accepted a receipt whose SHA-256 changed"
+fi
+rm -f -- "$tag13_handoff_receipt"
+mv -- "$tag13_handoff_receipt_saved" "$tag13_handoff_receipt"
+"$launcher" status --root "$adopted_root" >"$test_root/restored-receipt-status.json"
+
+adoption_launch_count="$(wc -l <"$launch_audit")"
+adoption_collision_root="$test_root/taker-adoption-collision"
+export TEST_EXPECTED_ROOT="$adoption_collision_root"
+if "$launcher" start --root "$adoption_collision_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state" --tag13-handoff-receipt "$tag13_handoff_receipt" >/dev/null 2>&1; then
+  fail "launcher accepted a concurrent reused-state collision"
+fi
+[[ "$(wc -l <"$launch_audit")" == "$adoption_launch_count" ]] ||
+  fail "reused-state collision reached sidecar readiness"
+
+missing_receipt_root="$test_root/missing-receipt-adoption-root"
+if "$launcher" start --root "$missing_receipt_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state" >/dev/null 2>&1; then
+  fail "launcher adopted Tag13 state without the typed receipt"
+fi
+[[ ! -e "$missing_receipt_root" ]] || fail "missing receipt created a supervisor root"
+
+fresh_receipt_root="$test_root/fresh-receipt-root"
+if "$launcher" start --root "$fresh_receipt_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --tag13-handoff-receipt "$tag13_handoff_receipt" >/dev/null 2>&1; then
+  fail "launcher accepted a typed receipt without adopted state"
+fi
+[[ ! -e "$fresh_receipt_root" ]] || fail "fresh receipt created a supervisor root"
+
+maker_adoption_root="$test_root/maker-adoption-root"
+if "$launcher" start --root "$maker_adoption_root" --role maker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$runtime_file" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state" --tag13-handoff-receipt "$tag13_handoff_receipt" >/dev/null 2>&1; then
+  fail "launcher allowed Maker to adopt Taker Tag13 state"
+fi
+[[ ! -e "$maker_adoption_root" ]] || fail "rejected Maker adoption created a supervisor root"
+
+cross_role_adoption_root="$test_root/cross-role-adoption-root"
+if "$launcher" start --root "$cross_role_adoption_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$runtime_file" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state" --tag13-handoff-receipt "$tag13_handoff_receipt" >/dev/null 2>&1; then
+  fail "launcher accepted Maker runtime for Taker state adoption"
+fi
+[[ ! -e "$cross_role_adoption_root" ]] || fail "cross-role adoption created a supervisor root"
+
+cross_swap_artifacts="$test_root/cross-swap-artifacts"
+mkdir -m 0700 -- "$cross_swap_artifacts"
+cross_swap_terms="$cross_swap_artifacts/terms.json"
+jq -c '.swap_id = ("9" * 64)' "$terms_file" >"$cross_swap_terms"
+chmod 0600 "$cross_swap_terms"
+cross_swap_terms_root="$test_root/cross-swap-terms-root"
+if "$launcher" start --root "$cross_swap_terms_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$cross_swap_terms" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state" --tag13-handoff-receipt "$tag13_handoff_receipt" \
+  >/dev/null 2>&1; then
+  fail "launcher accepted unrelated cross-swap terms for adopted state"
+fi
+[[ ! -e "$cross_swap_terms_root" ]] ||
+  fail "cross-swap terms rejection created a supervisor root"
+
+missing_evidence_state="$test_root/missing-evidence-tag13-state"
+mkdir -m 0700 -- "$missing_evidence_state"
+missing_evidence_root="$test_root/missing-evidence-adoption-root"
+if "$launcher" start --root "$missing_evidence_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$missing_evidence_state" --tag13-handoff-receipt "$tag13_handoff_receipt" >/dev/null 2>&1; then
+  fail "launcher adopted a directory without exact Tag13 evidence"
+fi
+[[ ! -e "$missing_evidence_root" ]] || fail "missing-evidence adoption created a supervisor root"
+
+unsafe_receipt="$source_root/unsafe-tag13-handoff-receipt.json"
+printf "{\"schema\":\"unsafe\"}\n" >"$unsafe_receipt"
+chmod 0644 "$unsafe_receipt"
+unsafe_receipt_root="$test_root/unsafe-receipt-root"
+if "$launcher" start --root "$unsafe_receipt_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state" --tag13-handoff-receipt "$unsafe_receipt" \
+  >/dev/null 2>&1; then
+  fail "launcher accepted a non-private typed receipt"
+fi
+[[ ! -e "$unsafe_receipt_root" ]] || fail "unsafe receipt created a supervisor root"
+
+unsafe_adopted_state="$test_root/unsafe-tag13-state"
+mkdir -m 0755 -- "$unsafe_adopted_state"
+unsafe_adoption_root="$test_root/unsafe-adoption-root"
+if "$launcher" start --root "$unsafe_adoption_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$unsafe_adopted_state" --tag13-handoff-receipt "$tag13_handoff_receipt" >/dev/null 2>&1; then
+  fail "launcher accepted unsafe adopted state permissions"
+fi
+[[ ! -e "$unsafe_adoption_root" ]] || fail "unsafe adoption created a supervisor root"
+
+adopted_state_alias="$test_root/tag13-state-alias"
+"$real_ln" -s -- "$adopted_state" "$adopted_state_alias"
+alias_adoption_root="$test_root/alias-adoption-root"
+if "$launcher" start --root "$alias_adoption_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state_alias" --tag13-handoff-receipt "$tag13_handoff_receipt" >/dev/null 2>&1; then
+  fail "launcher accepted adopted state through a symlink"
+fi
+[[ ! -e "$alias_adoption_root" ]] || fail "aliased adoption created a supervisor root"
+
+overlapping_adoption_root="$adopted_state/nested-supervisor"
+if "$launcher" start --root "$overlapping_adoption_root" --role taker --run-id "$run_id" \
+  --sidecar-bin "$fake_bin_root/fake-sidecar" --sequencer-url http://127.0.0.1:3040 \
+  --indexer-url http://127.0.0.1:8779 --runtime-file "$taker_runtime" \
+  --terms-file "$terms_file" --private-key-file "$private_key_file" \
+  --authenticated-transfer-program-id "$transfer_program" \
+  --adopt-state-directory "$adopted_state" --tag13-handoff-receipt "$tag13_handoff_receipt" >/dev/null 2>&1; then
+  fail "launcher nested a supervisor root inside adopted Tag13 state"
+fi
+[[ ! -e "$overlapping_adoption_root" ]] || fail "overlap rejection created a supervisor root"
+
+"$launcher" stop --root "$adopted_root" >"$test_root/taker-adopted-stop.json"
+target_pid=""
+[[ "$(<"$adopted_state/m4-xmr-stage-a-tag13-evidence.v2.json")" == tag13-state-sentinel ]] ||
+  fail "stopping an adopter changed Tag13 evidence"
+
 taker_root="$test_root/taker-sidecar"
 export TEST_EXPECTED_ROOT="$taker_root"
 export TEST_RUNTIME_FILE="$taker_runtime"

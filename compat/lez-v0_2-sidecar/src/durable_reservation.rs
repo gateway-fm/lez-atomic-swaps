@@ -171,6 +171,10 @@ impl SecureStateDirectory {
         &self.path
     }
 
+    pub(crate) const fn identity(&self) -> (u64, u64) {
+        (self.device, self.inode)
+    }
+
     pub(crate) fn revalidate(&self) -> Result<(), DurableReservationError> {
         validate_trusted_parent_chain(&self.path)?;
         let held = validate_directory(&self.descriptor)?;
@@ -206,6 +210,14 @@ impl fmt::Debug for StateDirectoryLease {
 }
 
 impl StateDirectoryLease {
+    pub(crate) fn state_path(&self) -> &Path {
+        self.directory.path()
+    }
+
+    pub(crate) const fn state_identity(&self) -> (u64, u64) {
+        self.directory.identity()
+    }
+
     /// Takes a nonblocking exclusive lease on one existing owner-only state directory.
     ///
     /// # Errors
@@ -319,6 +331,174 @@ impl DurableReservationStore {
     pub(crate) fn open(path: &Path) -> Result<Self, DurableReservationError> {
         let directory = SecureStateDirectory::open(path)?;
         Ok(Self { directory })
+    }
+
+    pub(crate) const fn identity(&self) -> (u64, u64) {
+        self.directory.identity()
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        self.directory.path()
+    }
+
+    pub(crate) fn contains_fixed_file(
+        &self,
+        filename: &str,
+    ) -> Result<bool, DurableReservationError> {
+        validate_fixed_filename(filename)?;
+        self.directory.revalidate()?;
+        let descriptor = match openat(
+            self.directory.descriptor(),
+            filename,
+            OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(Errno::NOENT) => return Ok(false),
+            Err(Errno::LOOP) => return Err(DurableReservationError::InsecureStateFile),
+            Err(_) => return Err(DurableReservationError::Filesystem),
+        };
+        validate_state_file(&File::from(descriptor))?;
+        self.directory.revalidate()?;
+        Ok(true)
+    }
+
+    pub(crate) fn create_fixed_file_set(
+        &self,
+        artifacts: &[(&str, &[u8])],
+    ) -> Result<(), DurableReservationError> {
+        if artifacts.is_empty() {
+            return Err(DurableReservationError::Filesystem);
+        }
+        self.directory.revalidate()?;
+        let entries = Dir::read_from(self.directory.descriptor())
+            .map_err(|_| DurableReservationError::Filesystem)?;
+        for entry in entries {
+            let entry = entry.map_err(|_| DurableReservationError::Filesystem)?;
+            let name = entry.file_name().to_bytes();
+            if name != b"." && name != b".." {
+                return Err(DurableReservationError::AlreadyReserved);
+            }
+        }
+        for (index, (filename, bytes)) in artifacts.iter().enumerate() {
+            validate_fixed_filename(filename)?;
+            if bytes.is_empty()
+                || u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_RESERVATION_BYTES
+                || artifacts[..index]
+                    .iter()
+                    .any(|(prior, _)| prior == filename)
+            {
+                return Err(DurableReservationError::CorruptReservation);
+            }
+        }
+
+        let mut files = Vec::with_capacity(artifacts.len());
+        for (filename, _) in artifacts {
+            let descriptor = match openat(
+                self.directory.descriptor(),
+                *filename,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::RUSR | Mode::WUSR,
+            ) {
+                Ok(descriptor) => descriptor,
+                Err(error) => {
+                    for (created_name, _) in &files {
+                        let _ =
+                            unlinkat(self.directory.descriptor(), *created_name, AtFlags::empty());
+                    }
+                    let _ = self.directory.descriptor().sync_all();
+                    return Err(if error == Errno::EXIST {
+                        DurableReservationError::AlreadyReserved
+                    } else {
+                        DurableReservationError::Filesystem
+                    });
+                }
+            };
+            let file = File::from(descriptor);
+            validate_state_file(&file)?;
+            files.push((*filename, file));
+        }
+
+        let write_result = (|| {
+            for ((filename, bytes), (_, file)) in artifacts.iter().zip(files.iter_mut()) {
+                file.write_all(bytes)
+                    .map_err(|_| DurableReservationError::Filesystem)?;
+                file.sync_all()
+                    .map_err(|_| DurableReservationError::Filesystem)?;
+                validate_state_file(file)?;
+                let reopened = openat(
+                    self.directory.descriptor(),
+                    *filename,
+                    OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                    Mode::empty(),
+                )
+                .map(File::from)
+                .map_err(|_| DurableReservationError::InsecureStateFile)?;
+                let held = file
+                    .metadata()
+                    .map_err(|_| DurableReservationError::InsecureStateFile)?;
+                let current = reopened
+                    .metadata()
+                    .map_err(|_| DurableReservationError::InsecureStateFile)?;
+                validate_state_file(&reopened)?;
+                if held.dev() != current.dev() || held.ino() != current.ino() {
+                    return Err(DurableReservationError::InsecureStateFile);
+                }
+            }
+            self.directory.revalidate()?;
+            self.directory
+                .descriptor()
+                .sync_all()
+                .map_err(|_| DurableReservationError::Filesystem)?;
+            self.directory.revalidate()
+        })();
+        if write_result.is_err() {
+            for (filename, _) in &files {
+                let _ = unlinkat(self.directory.descriptor(), *filename, AtFlags::empty());
+            }
+            let _ = self.directory.descriptor().sync_all();
+        }
+        write_result
+    }
+
+    pub(crate) fn read_fixed_file(
+        &self,
+        filename: &str,
+        maximum_bytes: u64,
+    ) -> Result<Vec<u8>, DurableReservationError> {
+        if filename.is_empty()
+            || filename.contains('/')
+            || filename == "."
+            || filename == ".."
+            || maximum_bytes == 0
+        {
+            return Err(DurableReservationError::InsecureStateFile);
+        }
+        self.directory.revalidate()?;
+        let descriptor = openat(
+            self.directory.descriptor(),
+            filename,
+            OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| match error {
+            Errno::NOENT => DurableReservationError::CorruptReservation,
+            Errno::LOOP => DurableReservationError::InsecureStateFile,
+            _ => DurableReservationError::Filesystem,
+        })?;
+        let mut file = File::from(descriptor);
+        validate_state_file(&file)?;
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file)
+            .take(maximum_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|_| DurableReservationError::Filesystem)?;
+        if bytes.is_empty() || u64::try_from(bytes.len()).unwrap_or(u64::MAX) > maximum_bytes {
+            return Err(DurableReservationError::CorruptReservation);
+        }
+        validate_state_file(&file)?;
+        self.directory.revalidate()?;
+        Ok(bytes)
     }
 
     pub(crate) fn load<Request, Output>(
@@ -484,6 +664,17 @@ fn validate_directory(directory: &File) -> Result<std::fs::Metadata, DurableRese
         return Err(DurableReservationError::InsecureDirectory);
     }
     Ok(metadata)
+}
+
+fn validate_fixed_filename(filename: &str) -> Result<(), DurableReservationError> {
+    if filename.is_empty()
+        || filename.contains(char::from(47))
+        || filename == "."
+        || filename == ".."
+    {
+        return Err(DurableReservationError::InsecureStateFile);
+    }
+    Ok(())
 }
 
 fn validate_state_file(file: &File) -> Result<(), DurableReservationError> {

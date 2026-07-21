@@ -154,15 +154,18 @@ and a foreign sentinel; broad cleanup is forbidden. These paths are
 so they do not replace the retained working-tree checkpoint and the script is
 not yet a one-command happy-claim replay.
 
-The role-sidecar launcher is still unwired from `execute`. The bridge process
-exclusive state-directory lease is source/component-GREEN, while launcher
-support for adopting the tag-13 state directory, a typed tag-13-to-tag-14
-exporter, and their actual replay remain pending. The agreement receipt calls
-the CLI inputs `requested_terms`; it does not claim that the helper decoded and
-rebound those terms from Stage A. Completing the runner/PoC slice is estimated
-at 3 to 7 focused hours; after it exists, a warm replay is expected to take 25
-to 45 minutes and a cold replay 1 to 3 hours. Full functional M4 remains 15 to
-27 focused hours; later owner-selected hardening is separate.
+The role-sidecar launcher now supports exact Taker adoption of the Tag-13 state,
+requires the owner-private typed receipt plus its fixed runtime and terms
+siblings, and rejects cross-swap terms, aliases, and state/output overlap before
+creating a supervisor root. The bridge lease, typed exporter, receipt gate, and
+adversarial tests are source/component-GREEN. The parent `execute` runner is
+still unwired through this slice, and the exact committed-tree replay remains
+pending. The agreement receipt calls the CLI inputs `requested_terms`; it does
+not claim that the helper decoded and rebound those terms from Stage A. The
+remaining runner/PoC slice is estimated at 2 to 5 focused hours; after it exists,
+a warm replay is expected to take 25 to 45 minutes and a cold replay 1 to 3 hours.
+Full functional M4 remains 15 to 27 focused hours; later owner-selected
+hardening is separate.
 
 The checked guest and focused host components can be repeated independently of
 the actual two-devnet journey. The deployer, focused component commands, and

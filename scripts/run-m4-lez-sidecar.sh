@@ -4,7 +4,7 @@ set -euo pipefail
 export LC_ALL=C
 umask 077
 
-readonly MANIFEST_SCHEMA="lez_m4_role_sidecar_pid_manifest_v1"
+readonly MANIFEST_SCHEMA="lez_m4_role_sidecar_pid_manifest_v2"
 readonly RESULT_SCHEMA="lez_m4_role_sidecar_launcher_v1"
 readonly CAPABILITY_SCOPE="full_role_sidecar_rpc_surface_not_release_only"
 readonly TERMS_ENFORCEMENT="launcher_manifest_binding_not_server_method_restriction"
@@ -22,7 +22,7 @@ usage:
     --sidecar-bin BINARY --sequencer-url http://127.0.0.1:PORT \
     --indexer-url http://127.0.0.1:PORT --runtime-file PRIVATE_JSON \
     --terms-file PRIVATE_JSON --private-key-file PRIVATE_KEY \
-    --authenticated-transfer-program-id HEX32
+    --authenticated-transfer-program-id HEX32 [--adopt-state-directory ABSOLUTE_0700_DIR --tag13-handoff-receipt PRIVATE_JSON]
   run-m4-lez-sidecar.sh status --root EXISTING_0700_ROOT
   run-m4-lez-sidecar.sh stop --root EXISTING_0700_ROOT
 USAGE
@@ -320,14 +320,25 @@ prove_authentication() {
 }
 
 load_manifest() {
-  local root="$1" manifest
+  local root="$1" manifest state_directory state_mode state_device state_inode role
+  local tag13_handoff_receipt tag13_handoff_receipt_sha
   manifest="$root/pid-manifest.json"
   require_absolute_path "$root" "root"
   require_private_directory "$root" "sidecar root"
   require_private_file "$manifest" "PID manifest"
   jq -e --arg schema "$MANIFEST_SCHEMA" --arg root "$root" '
     .schema == $schema and (.pid | type == "number") and
-    .root == $root and
+    .root == $root and (.state_directory | startswith("/")) and
+    (.state_directory_mode == "fresh_supervisor_owned" or
+      .state_directory_mode == "adopted_exact_existing_tag13") and
+    (.state_directory_device | test("^[0-9]+$")) and
+    (.state_directory_inode | test("^[1-9][0-9]*$")) and
+    (((.state_directory_mode == "adopted_exact_existing_tag13") and
+      ((.tag13_handoff_receipt | type) == "string") and
+      (.tag13_handoff_receipt | startswith("/")) and
+      (.tag13_handoff_receipt_sha256 | test("^[0-9a-f]{64}$"))) or
+     ((.state_directory_mode == "fresh_supervisor_owned") and
+      .tag13_handoff_receipt == null and .tag13_handoff_receipt_sha256 == null)) and
     (.start_ticks | type == "string" and test("^[1-9][0-9]*$")) and
     (.endpoint | test("^http://127\\.0\\.0\\.1:[1-9][0-9]*$")) and
     (.binary_sha256 | test("^[0-9a-f]{64}$")) and
@@ -343,6 +354,30 @@ load_manifest() {
     .capability_scope == "full_role_sidecar_rpc_surface_not_release_only" and
     .terms_enforcement == "launcher_manifest_binding_not_server_method_restriction"
   ' "$manifest" >/dev/null || fail "PID manifest is malformed or unsupported"
+  state_directory="$(jq -er .state_directory "$manifest")"
+  state_mode="$(jq -er .state_directory_mode "$manifest")"
+  state_device="$(jq -er .state_directory_device "$manifest")"
+  state_inode="$(jq -er .state_directory_inode "$manifest")"
+  role="$(jq -er .role "$manifest")"
+  require_private_directory "$state_directory" "bound sidecar state directory"
+  [[ "$(stat --format=%d:%i -- "$state_directory")" == "$state_device:$state_inode" ]] ||
+    fail "bound sidecar state directory identity changed"
+  if [[ "$state_mode" == fresh_supervisor_owned ]]; then
+    [[ "$state_directory" == "$root/state" ]] || fail "fresh state is outside its supervisor root"
+  else
+    [[ "$role" == taker ]] || fail "only Taker may own adopted Tag13 state"
+    require_private_file "$state_directory/m4-xmr-stage-a-tag13-evidence.v2.json" \
+      "bound adopted Tag13 evidence"
+    tag13_handoff_receipt="$(jq -er .tag13_handoff_receipt "$manifest")"
+    tag13_handoff_receipt_sha="$(jq -er .tag13_handoff_receipt_sha256 "$manifest")"
+    require_private_file "$tag13_handoff_receipt" "bound typed Tag13 handoff receipt"
+    [[ "$tag13_handoff_receipt" != "$state_directory/"* ]] ||
+      fail "bound typed Tag13 handoff receipt moved inside adopted state"
+    [[ "$(sha256sum "$tag13_handoff_receipt" | awk '{print $1}')" == "$tag13_handoff_receipt_sha" ]] || fail "typed Tag13 handoff receipt hash changed"
+    [[ "$state_directory" != "$root" && "$state_directory" != "$root/"* &&
+      "$root" != "$state_directory/"* ]] ||
+      fail "adopted Tag13 state overlaps its supervisor root"
+  fi
   require_private_file "$root/runtime.json" "bound runtime"
   require_private_file "$root/terms.json" "bound terms"
   require_private_file "$root/capability" "sidecar capability"
@@ -356,30 +391,41 @@ load_manifest() {
 
 emit_result() {
   local action="$1" status="$2" root="$3" identity="$4" authenticated="$5"
-  local role run endpoint pid
+  local role run endpoint pid state_directory state_mode tag13_handoff_receipt_sha
   role="$(jq -er '.role' "$root/pid-manifest.json")"
   run="$(jq -er '.run_id' "$root/pid-manifest.json")"
   endpoint="$(jq -er '.endpoint' "$root/pid-manifest.json")"
   pid="$(jq -er '.pid' "$root/pid-manifest.json")"
+  state_directory="$(jq -er .state_directory "$root/pid-manifest.json")"
+  state_mode="$(jq -er .state_directory_mode "$root/pid-manifest.json")"
+  tag13_handoff_receipt_sha="$(jq -r '.tag13_handoff_receipt_sha256 // ""' \
+    "$root/pid-manifest.json")"
   jq -cn --arg schema "$RESULT_SCHEMA" --arg action "$action" --arg status "$status" \
     --arg root "$root" --arg role "$role" --arg run "$run" --arg endpoint "$endpoint" \
+    --arg state_directory "$state_directory" --arg state_mode "$state_mode" \
+    --arg receipt_sha "$tag13_handoff_receipt_sha" \
     --argjson pid "$pid" --argjson identity "$identity" --argjson authenticated "$authenticated" '
     {schema:$schema,action:$action,status:$status,root:$root,role:$role,run_id:$run,
-     endpoint:$endpoint,pid:$pid,identity_matched:$identity,authenticated:$authenticated,
+     endpoint:$endpoint,pid:$pid,state_directory:$state_directory,
+     state_directory_mode:$state_mode,
+     tag13_handoff_receipt_bound:($state_mode == "adopted_exact_existing_tag13"),
+     tag13_handoff_receipt_sha256:(if $receipt_sha == "" then null else $receipt_sha end),
+     identity_matched:$identity,authenticated:$authenticated,
      health_and_authentication_proved:($status == "running" and $identity and $authenticated)}
   '
 }
 
 start_sidecar() {
   local root="" role="" run_id="" sidecar_bin="" sequencer_url="" indexer_url=""
-  local runtime_file="" terms_file="" private_key_file="" transfer_program=""
+  local runtime_file="" terms_file="" private_key_file="" transfer_program="" adopted_state_directory=""
+  local tag13_handoff_receipt=""
   local option
   declare -A seen_options=()
   while (($#)); do
     option="$1"
     case "$option" in
       --root|--role|--run-id|--sidecar-bin|--sequencer-url|--indexer-url|--runtime-file|\
-        --terms-file|--private-key-file|--authenticated-transfer-program-id)
+        --terms-file|--private-key-file|--authenticated-transfer-program-id|--adopt-state-directory|--tag13-handoff-receipt)
         [[ -z "${seen_options[$option]+present}" ]] || fail "duplicate start option: $option"
         seen_options["$option"]=1
         [[ $# -ge 2 ]] || usage
@@ -397,6 +443,8 @@ start_sidecar() {
       --terms-file) terms_file="$2" ;;
       --private-key-file) private_key_file="$2" ;;
       --authenticated-transfer-program-id) transfer_program="$2" ;;
+      --adopt-state-directory) adopted_state_directory="$2" ;;
+      --tag13-handoff-receipt) tag13_handoff_receipt="$2" ;;
     esac
     shift 2
   done
@@ -408,6 +456,17 @@ start_sidecar() {
   require_absolute_path "$runtime_file" "runtime file"
   require_absolute_path "$terms_file" "terms file"
   require_absolute_path "$private_key_file" "private key file"
+  if [[ -n "$adopted_state_directory" ]]; then
+    require_absolute_path "$adopted_state_directory" "adopted state directory"
+    [[ -n "$tag13_handoff_receipt" ]] ||
+      fail "adopted state requires one typed Tag13 handoff receipt"
+  else
+    [[ -z "$tag13_handoff_receipt" ]] ||
+      fail "typed Tag13 handoff receipt is forbidden without adopted state"
+  fi
+  if [[ -n "$tag13_handoff_receipt" ]]; then
+    require_absolute_path "$tag13_handoff_receipt" "Tag13 handoff receipt"
+  fi
   require_role "$role"
   require_safe_run_id "$run_id"
   require_loopback_url "$sequencer_url" "sequencer URL"
@@ -423,12 +482,63 @@ start_sidecar() {
   validate_private_key "$private_key_file"
   validate_runtime_and_terms "$runtime_file" "$terms_file" "$role" "$transfer_program"
 
-  local parent
+  local parent root_name planned_root state_directory state_mode state_identity
+  local state_device state_inode tag13_handoff_receipt_sha=""
+  local tag13_artifact_directory tag13_artifact_identity
   parent="$(dirname "$root")"
   require_private_directory "$parent" "sidecar-root parent"
+  root_name="${root##*/}"
+  [[ -n "$root_name" && "$root_name" != . && "$root_name" != .. ]] ||
+    fail "sidecar root must name one new directory"
+  planned_root="${parent%/}/${root_name}"
+  [[ "$root" == "$planned_root" ]] ||
+    fail "sidecar root must use its canonical path"
   [[ ! -e "$root" && ! -L "$root" ]] || fail "sidecar root already exists"
+  if [[ -n "$adopted_state_directory" ]]; then
+    [[ "$role" == taker ]] || fail "only Taker may adopt existing Tag13 state"
+    require_private_directory "$adopted_state_directory" "adopted Tag13 state directory"
+    require_private_file "$adopted_state_directory/m4-xmr-stage-a-tag13-evidence.v2.json" \
+      "adopted Tag13 evidence"
+    require_private_file "$tag13_handoff_receipt" "typed Tag13 handoff receipt"
+    tag13_artifact_directory="$(dirname "$tag13_handoff_receipt")"
+    require_private_directory "$tag13_artifact_directory" "typed Tag13 artifact directory"
+    [[ "$tag13_handoff_receipt" == "$tag13_artifact_directory/tag13-handoff-receipt.json" ]] ||
+      fail "typed Tag13 handoff receipt does not use its fixed artifact path"
+    [[ "$runtime_file" == "$tag13_artifact_directory/taker-runtime.json" ]] ||
+      fail "adopted runtime is not the fixed typed Taker artifact"
+    [[ "$terms_file" == "$tag13_artifact_directory/terms.json" ]] ||
+      fail "adopted terms are not the fixed typed artifact beside the receipt"
+    tag13_artifact_identity="$(stat --format=%d:%i -- "$tag13_artifact_directory")"
+    [[ "$(stat --format=%d:%i -- "$(dirname "$runtime_file")")" == "$tag13_artifact_identity" &&
+      "$(stat --format=%d:%i -- "$(dirname "$terms_file")")" == "$tag13_artifact_identity" ]] ||
+      fail "typed Tag13 runtime, terms, and receipt do not share one artifact directory identity"
+    [[ "$tag13_handoff_receipt" != "$adopted_state_directory/"* ]] ||
+      fail "typed Tag13 handoff receipt must be outside adopted state"
+    tag13_handoff_receipt_sha="$(sha256sum "$tag13_handoff_receipt" | awk '{print $1}')"
+    [[ "$adopted_state_directory" != "$planned_root" &&
+      "$adopted_state_directory" != "$planned_root/"* &&
+      "$planned_root" != "$adopted_state_directory/"* ]] ||
+      fail "adopted Tag13 state must be separate from its supervisor root"
+    state_directory="$adopted_state_directory"
+    state_mode=adopted_exact_existing_tag13
+  else
+    state_directory="$root/state"
+    state_mode=fresh_supervisor_owned
+  fi
   mkdir -m 0700 -- "$root"
-  mkdir -m 0700 -- "$root/state"
+  if [[ "$state_mode" == fresh_supervisor_owned ]]; then
+    mkdir -m 0700 -- "$state_directory"
+  fi
+  require_private_directory "$state_directory" "sidecar state directory"
+  state_identity="$(stat --format=%d:%i -- "$state_directory")"
+  [[ "$state_identity" =~ ^[0-9]+:[1-9][0-9]*$ ]] || fail "invalid state directory identity"
+  IFS=: read -r state_device state_inode <<<"$state_identity"
+  local -a tag13_handoff_arguments=()
+  local sidecar_runtime_file="$root/runtime.json"
+  if [[ "$state_mode" == adopted_exact_existing_tag13 ]]; then
+    tag13_handoff_arguments=(--tag13-handoff-receipt "$tag13_handoff_receipt")
+    sidecar_runtime_file="$runtime_file"
+  fi
   copy_private_input "$runtime_file" "$root/runtime.json" "runtime input"
   copy_private_input "$terms_file" "$root/terms.json" "terms input"
   publish_private_output "$root/capability" openssl rand -hex 32
@@ -505,9 +615,9 @@ start_sidecar() {
   spawn_pending=true
   "$sidecar_bin" --listen-address "127.0.0.1:$port" --node-profile local \
     --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$run_id" \
-    --runtime-file "$root/runtime.json" --capability-file "$root/capability" \
-    --private-key-file "$private_key_file" --state-directory "$root/state" \
-    --authenticated-transfer-program-id "$transfer_program" >"$root/sidecar.log" 2>&1 &
+    --runtime-file "$sidecar_runtime_file" --capability-file "$root/capability" \
+    --private-key-file "$private_key_file" --state-directory "$state_directory" \
+    --authenticated-transfer-program-id "$transfer_program" "${tag13_handoff_arguments[@]}" >"$root/sidecar.log" 2>&1 &
   pid=$!
   spawn_pending=false
   capture_owned_spawn_identity || fail "sidecar child ownership could not be captured immediately after spawn"
@@ -549,6 +659,14 @@ start_sidecar() {
     sleep 0.05
   done
   [[ "$readiness_valid" == true ]] || fail "sidecar did not emit exact bound readiness"
+  require_private_directory "$state_directory" "sidecar state directory after readiness"
+  [[ "$(stat --format=%d:%i -- "$state_directory")" == "$state_device:$state_inode" ]] ||
+    fail "sidecar state directory identity changed during launch"
+  if [[ "$state_mode" == adopted_exact_existing_tag13 ]]; then
+    require_private_file "$tag13_handoff_receipt" "typed Tag13 handoff receipt after readiness"
+    [[ "$(sha256sum "$tag13_handoff_receipt" | awk '{print $1}')" == "$tag13_handoff_receipt_sha" ]] ||
+      fail "typed Tag13 handoff receipt changed during launch"
+  fi
   prove_authentication "$root" "$endpoint" "$run_id" "$role"
   local capability
   capability="$(tr -d '\r\n' <"$root/capability")"
@@ -560,6 +678,10 @@ start_sidecar() {
   readiness_sha="$(printf '%s\n' "$readiness" | sha256sum | awk '{print $1}')"
   publish_private_output "$manifest" jq -cn --arg schema "$MANIFEST_SCHEMA" --arg role "$role" \
     --arg run "$run_id" --arg endpoint "$endpoint" --arg root "$root" \
+    --arg state_directory "$state_directory" --arg state_mode "$state_mode" \
+    --arg state_device "$state_device" --arg state_inode "$state_inode" \
+    --arg tag13_receipt "$tag13_handoff_receipt" \
+    --arg tag13_receipt_sha "$tag13_handoff_receipt_sha" \
     --argjson pid "$pid" --arg start "$start_ticks" --arg executable "$executable" \
     --arg binary "$sidecar_bin" --arg binary_sha "$binary_sha" \
     --arg executable_device "$executable_device" --arg executable_inode "$executable_inode" \
@@ -567,6 +689,12 @@ start_sidecar() {
     --arg terms_sha "$terms_sha" --arg readiness_sha "$readiness_sha" \
     --arg capability_scope "$CAPABILITY_SCOPE" --arg terms_enforcement "$TERMS_ENFORCEMENT" '
     {schema:$schema,role:$role,run_id:$run,root:$root,endpoint:$endpoint,
+     state_directory:$state_directory,state_directory_mode:$state_mode,
+     state_directory_device:$state_device,state_directory_inode:$state_inode,
+     tag13_handoff_receipt:(if $state_mode == "adopted_exact_existing_tag13"
+       then $tag13_receipt else null end),
+     tag13_handoff_receipt_sha256:(if $state_mode == "adopted_exact_existing_tag13"
+       then $tag13_receipt_sha else null end),
      listener_scope:"dynamic_literal_loopback",pid:$pid,start_ticks:$start,
      executable:$executable,sidecar_binary:$binary,binary_sha256:$binary_sha,
      executable_device:$executable_device,executable_inode:$executable_inode,

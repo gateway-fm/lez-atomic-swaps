@@ -41,10 +41,13 @@ until the server has stopped. A concurrent adopter receives the distinct
 exit, error, or process death releases the kernel lock; the empty lock file
 remains for the next checked process.
 
-The intended Taker continuation adopts the exact tag-13 directory rather than
-copying it. That launcher option and the typed tag-13 evidence exporter are not
-part of this decision and remain pending. Maker receives a separate state
-directory and lease.
+The Taker continuation now adopts the exact tag-13 directory rather than
+copying it. The launcher requires a typed handoff receipt for adoption and
+passes the original typed Taker runtime artifact to the child. The exporter
+and bridge validate finalized evidence, reservation, state identity, and
+artifact hashes while holding the same lease. Maker still receives a separate
+state directory and lease; parent-runner wiring through funding and tag 14
+remains pending.
 
 ## Component ownership
 
@@ -53,11 +56,13 @@ flowchart LR
     Tag13["Tag 13 Taker process"] --> TakerState[("Exact Taker state directory mode 0700")]
     TakerState --> Pair["Durable Initialize and Fund reservation"]
     TakerState --> Lock["bridge-state-lease.v1.lock mode 0600"]
-    Launcher["Pending launcher adoption"] -.-> TakerBridge["Taker bridge sidecar"]
+    Launcher["Run-scoped launcher"] --> Receipt["Typed tag-13 handoff receipt"]
+    Receipt --> TakerBridge["Taker bridge sidecar"]
     TakerBridge --> Lease["StateDirectoryLease"]
     Lease --> Lock
     TakerBridge --> Requests["bridge-requests.v1.json"]
-    Pair --> Tag14["Tag 14 reservation reuses Fund nonce plus one"]
+    Pair --> Export["Descriptor-relative four-artifact export"]
+    Export --> Tag14["Tag 14 reservation reuses Fund nonce plus one"]
     TakerBridge --> Tag14
     Second["Second adopter"] --> Lock
     Lock --> Reject["Nonblocking AlreadyHeld rejection"]
@@ -78,6 +83,9 @@ sequenceDiagram
     Tag13->>State: Persist exact Initialize and Fund reservation
     Tag13->>State: Commit finalized tag-13 evidence
     Tag13-->>State: Exit and release process resources
+    Exporter->>State: Validate finalized evidence and reservation under lease
+    Exporter->>State: Create runtime, terms, and receipt artifacts (0600)
+    Exporter-->>Launcher: Typed receipt and artifact hashes
     Bridge->>State: Open fixed lease file through secure directory descriptor
     Bridge->>State: Take nonblocking exclusive lease
     Other->>State: Attempt the same exclusive lease
@@ -107,6 +115,7 @@ sequenceDiagram
   transaction or change ambiguous-submission recovery semantics.
 - The Maker must use a separate state directory. Cross-role state adoption
   remains invalid even when no process currently holds the Taker lease.
-- Launcher adoption of the exact tag-13 directory, typed runtime and terms
-  export, and a fresh actual-local tag-13-to-tag-14 replay remain pending. No
-  milestone or full-swap atomicity claim follows from this component alone.
+- Launcher adoption, typed runtime/terms export, and the fail-closed bridge
+  receipt gate are source/component GREEN with adversarial coverage. A fresh
+  actual-local tag-13-to-tag-14 replay and parent-runner wiring remain pending.
+  No milestone or full-swap atomicity claim follows from this component alone.

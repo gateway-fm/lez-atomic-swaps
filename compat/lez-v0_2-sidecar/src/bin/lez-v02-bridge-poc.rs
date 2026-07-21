@@ -15,8 +15,9 @@ use clap::{Parser, ValueEnum};
 use lez_bridge_protocol::{Hex32, RunId, RuntimeDescriptor};
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeServerCapability, BridgeServerConfig, NativeEscrowPlanner,
-    OfficialIndexerRpc, OfficialNodeRpc, StateDirectoryLease, program_id_from_hex,
-    read_genesis_bound_finalized_clock, start_bridge_server, validate_loopback_http_endpoint,
+    OfficialIndexerRpc, OfficialNodeRpc, StateDirectoryLease, m4_tag13_state_present,
+    program_id_from_hex, read_genesis_bound_finalized_clock, start_bridge_server,
+    validate_loopback_http_endpoint, verify_m4_tag13_bridge_handoff,
 };
 use nssa::{AccountId, PrivateKey, PublicKey};
 use serde::Serialize;
@@ -100,6 +101,9 @@ struct Arguments {
     /// Existing owner-only 0700 directory dedicated to this actor and run.
     #[arg(long)]
     state_directory: PathBuf,
+    /// Optional owner-private receipt required when this is adopted tag-13 state.
+    #[arg(long)]
+    tag13_handoff_receipt: Option<PathBuf>,
     /// Checked authenticated-transfer program ID as 64 lowercase hex characters.
     #[arg(long)]
     authenticated_transfer_program_id: String,
@@ -132,12 +136,17 @@ async fn main() {
 async fn execute(arguments: Arguments) -> Result<()> {
     validate_arguments(&arguments)?;
     let state_lease = acquire_state_directory_lease(&arguments.state_directory)?;
-    let run_id = RunId::new(arguments.run_id).context("invalid run ID")?;
-    let runtime: RuntimeDescriptor = serde_json::from_slice(&read_public_file(
-        &arguments.runtime_file,
-        MAX_PUBLIC_CONFIG_BYTES,
-    )?)
-    .context("invalid runtime descriptor")?;
+    let run_id = RunId::new(arguments.run_id.clone()).context("invalid run ID")?;
+    let authenticated_transfer_program = parse_nonzero_hex(
+        &arguments.authenticated_transfer_program_id,
+        "authenticated-transfer program ID",
+    )?;
+    let runtime = load_runtime_before_secrets(
+        &arguments,
+        &state_lease,
+        &run_id,
+        authenticated_transfer_program,
+    )?;
     let mut capability = read_secret_text(&arguments.capability_file)?;
     let capability = BridgeServerCapability::new(std::mem::take(&mut *capability))
         .context("invalid bridge capability")?;
@@ -147,10 +156,6 @@ async fn execute(arguments: Arguments) -> Result<()> {
         runtime.signer_account_id == Hex32::from_bytes(signer_account_id.into_value()),
         "runtime signer does not match the isolated private key"
     );
-    let authenticated_transfer_program = parse_nonzero_hex(
-        &arguments.authenticated_transfer_program_id,
-        "authenticated-transfer program ID",
-    )?;
     ensure!(
         authenticated_transfer_program != runtime.escrow_program_id,
         "escrow and authenticated-transfer programs must be distinct"
@@ -229,6 +234,35 @@ async fn execute(arguments: Arguments) -> Result<()> {
     Ok(())
 }
 
+fn load_runtime_before_secrets(
+    arguments: &Arguments,
+    state_lease: &StateDirectoryLease,
+    run_id: &RunId,
+    authenticated_transfer_program_id: Hex32,
+) -> Result<RuntimeDescriptor> {
+    if let Some(receipt) = arguments.tag13_handoff_receipt.as_ref() {
+        return verify_m4_tag13_bridge_handoff(
+            state_lease,
+            receipt,
+            &arguments.runtime_file,
+            run_id,
+            authenticated_transfer_program_id,
+        )
+        .map(|verified| verified.runtime().clone())
+        .context("revalidate exact tag-13 receipt and state before secrets or RPCs");
+    }
+    ensure!(
+        !m4_tag13_state_present(state_lease)
+            .context("inspect fixed tag-13 state before secrets or RPCs")?,
+        "tag-13 handoff receipt is required for fixed tag-13 state"
+    );
+    serde_json::from_slice(&read_public_file(
+        &arguments.runtime_file,
+        MAX_PUBLIC_CONFIG_BYTES,
+    )?)
+    .context("invalid runtime descriptor")
+}
+
 fn acquire_state_directory_lease(path: &Path) -> Result<StateDirectoryLease> {
     StateDirectoryLease::acquire(path)
         .context("acquire exclusive bridge sidecar state-directory lease")
@@ -247,7 +281,15 @@ fn validate_arguments(arguments: &Arguments) -> Result<()> {
     ensure!(
         arguments.capability_file != arguments.private_key_file
             && arguments.runtime_file != arguments.capability_file
-            && arguments.runtime_file != arguments.private_key_file,
+            && arguments.runtime_file != arguments.private_key_file
+            && arguments
+                .tag13_handoff_receipt
+                .as_ref()
+                .is_none_or(|receipt| {
+                    receipt != &arguments.runtime_file
+                        && receipt != &arguments.capability_file
+                        && receipt != &arguments.private_key_file
+                }),
         "configuration and secret files must be distinct"
     );
     let state = fs::symlink_metadata(&arguments.state_directory)
@@ -331,7 +373,11 @@ fn parse_nonzero_hex(value: &str, name: &str) -> Result<Hex32> {
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt as _};
 
-    use super::{NodeRouteProfile, acquire_state_directory_lease, validate_node_routes};
+    use super::{
+        Arguments, NodeRouteProfile, acquire_state_directory_lease, load_runtime_before_secrets,
+        validate_node_routes,
+    };
+    use lez_bridge_protocol::{Hex32, RunId};
 
     const LOCAL_SEQUENCER: &str = "http://127.0.0.1:3040/";
     const LOCAL_INDEXER: &str = "http://127.0.0.1:8779/";
@@ -389,5 +435,42 @@ mod tests {
 
         drop(first);
         acquire_state_directory_lease(directory.path()).expect("binary lease after release");
+    }
+
+    #[test]
+    fn direct_cli_omission_is_rejected_before_runtime_or_secret_reads() {
+        let directory = tempfile::tempdir().expect("temporary state directory");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("owner-only state directory");
+        let evidence = directory
+            .path()
+            .join("m4-xmr-stage-a-tag13-evidence.v2.json");
+        fs::write(&evidence, b"{}").expect("fixed tag-13 marker");
+        fs::set_permissions(&evidence, fs::Permissions::from_mode(0o600))
+            .expect("owner-only marker");
+        let lease = acquire_state_directory_lease(directory.path()).expect("state lease");
+        let arguments = Arguments {
+            listen_address: "127.0.0.1:39001".parse().expect("listen address"),
+            sequencer_url: LOCAL_SEQUENCER.to_owned(),
+            indexer_url: LOCAL_INDEXER.to_owned(),
+            node_profile: NodeRouteProfile::Local,
+            run_id: "m4-tag13-direct-cli-test".to_owned(),
+            runtime_file: directory.path().join("does-not-exist-runtime.json"),
+            capability_file: directory.path().join("does-not-exist-capability"),
+            private_key_file: directory.path().join("does-not-exist-key"),
+            state_directory: directory.path().to_path_buf(),
+            tag13_handoff_receipt: None,
+            authenticated_transfer_program_id:
+                "0101010101010101010101010101010101010101010101010101010101010101".to_owned(),
+            shutdown_on_stdin: true,
+        };
+        let error = load_runtime_before_secrets(
+            &arguments,
+            &lease,
+            &RunId::new("m4-tag13-direct-cli-test").expect("run"),
+            Hex32::from_bytes([1; 32]),
+        )
+        .expect_err("receipt omission must fail before missing runtime or secrets");
+        assert!(format!("{error:#}").contains("receipt is required"));
     }
 }

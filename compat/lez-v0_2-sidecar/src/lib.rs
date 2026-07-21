@@ -17,6 +17,8 @@ mod finalized_xmr_observation;
 mod m4_finalized_facts;
 #[cfg(target_os = "linux")]
 mod m4_stage_a_composer;
+#[cfg(target_os = "linux")]
+mod m4_tag13_handoff;
 mod native_prepare;
 mod runtime;
 mod server;
@@ -57,6 +59,13 @@ pub use m4_finalized_facts::{
 pub use m4_stage_a_composer::{
     ActualLocalM4StageAConfig, M4_STAGE_A_DEPLOYMENT_RESIDUAL, M4StageAComposeReceipt,
     M4StageAParameters, compose_m4_stage_a_actual_local,
+};
+#[cfg(target_os = "linux")]
+pub use m4_tag13_handoff::{
+    M4_TAG13_MAKER_RUNTIME_FILE, M4_TAG13_RECEIPT_FILE, M4_TAG13_TAKER_RUNTIME_FILE,
+    M4_TAG13_TERMS_FILE, M4Tag13BridgeInputs, M4Tag13Expectation, M4Tag13HandoffError,
+    M4Tag13HandoffReceipt, export_m4_tag13_handoff, m4_tag13_state_present,
+    verify_m4_tag13_bridge_handoff,
 };
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,

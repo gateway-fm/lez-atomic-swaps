@@ -2449,38 +2449,13 @@ impl NativeEscrowPlanner {
         request: &PrepareNativeXmrEscrowV3Request,
         result: &PrepareNativeXmrEscrowV3Result,
     ) -> Result<(), NativePrepareError> {
-        self.validate_xmr_escrow_v3_request(request)?;
-        if result.context != request.context
-            || result.terms != request.terms
-            || result.initialization == result.funding
-            || result.initialization.transaction_id == result.funding.transaction_id
-        {
-            return Err(NativePrepareError::InvalidTransactionBytes);
-        }
-        let initialization =
-            decode_prepared_for_signer(&result.initialization, self.signer_account_id)?;
-        let funding = decode_prepared_for_signer(&result.funding, self.signer_account_id)?;
-        let [initialization_nonce] = initialization.message().nonces.as_slice() else {
-            return Err(NativePrepareError::InvalidTransactionBytes);
-        };
-        let initialization_nonce = u128::from(*initialization_nonce);
-        let funding_nonce = initialization_nonce
-            .checked_add(1)
-            .ok_or(NativePrepareError::NonceOverflow)?;
-        let [observed_funding_nonce] = funding.message().nonces.as_slice() else {
-            return Err(NativePrepareError::InvalidTransactionBytes);
-        };
-        if u128::from(*observed_funding_nonce) != funding_nonce {
-            return Err(NativePrepareError::InvalidTransactionBytes);
-        }
-        let (expected_initialization, expected_funding) =
-            self.xmr_escrow_v3_messages(request, initialization_nonce, funding_nonce)?;
-        if initialization.message() != &expected_initialization
-            || funding.message() != &expected_funding
-        {
-            return Err(NativePrepareError::InvalidTransactionBytes);
-        }
-        Ok(())
+        validate_prepared_native_xmr_escrow_v3_public(
+            &self.expected_runtime,
+            self.authenticated_transfer_program_id,
+            request,
+            result,
+            None,
+        )
     }
 
     /// Validates one recovered XMR claim authorization against its request and ABI.
@@ -3779,64 +3754,13 @@ impl NativeEscrowPlanner {
         funding_nonce: u128,
     ) -> Result<(Message, Message), NativePrepareError> {
         self.validate_xmr_escrow_v3_request(request)?;
-        if funding_nonce
-            != initialization_nonce
-                .checked_add(1)
-                .ok_or(NativePrepareError::NonceOverflow)?
-        {
-            return Err(NativePrepareError::InvalidTransactionBytes);
-        }
-        let terms = request.terms.to_input();
-        let swap_id = *terms.swap_id.as_bytes();
-        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
-        let custody = compute_custody_pda(&self.escrow_program_id, &swap_id);
-        let depositor = AccountId::new(*terms.depositor_account_id.as_bytes());
-        let claimant = AccountId::new(*terms.claimant_account_id.as_bytes());
-        let claim_authority = AccountId::new(*terms.claim_authority_account_id.as_bytes());
-        let refund_authority = AccountId::new(*terms.refund_authority_account_id.as_bytes());
-        let initialization = Message::try_new(
+        xmr_escrow_v3_messages_for_public_binding(
             self.escrow_program_id,
-            vec![
-                metadata,
-                custody,
-                depositor,
-                claimant,
-                claim_authority,
-                refund_authority,
-            ],
-            vec![initialization_nonce.into()],
-            ZecEscrowInstruction::InitializeNativeXmr {
-                swap_id,
-                terms_hash: *terms.activation_commitment.as_bytes(),
-                claim_aggregate_x_only_public_key: *terms
-                    .claim_aggregate_x_only_public_key
-                    .as_bytes(),
-                refund_aggregate_x_only_public_key: *terms
-                    .refund_aggregate_x_only_public_key
-                    .as_bytes(),
-                maker_dleq_transcript_commitment: *terms
-                    .maker_dleq_transcript_commitment
-                    .as_bytes(),
-                taker_dleq_transcript_commitment: *terms
-                    .taker_dleq_transcript_commitment
-                    .as_bytes(),
-                claim_partial_context_binding: *terms.claim_partial_context_binding.as_bytes(),
-                claim_partial_commitment: *terms.claim_partial_commitment.as_bytes(),
-                amount: terms.amount,
-                refund_at: terms.refund_at_ms,
-                punish_at: terms.punish_at_ms,
-                authenticated_transfer_program: self.authenticated_transfer_program_id,
-            },
+            self.authenticated_transfer_program_id,
+            request,
+            initialization_nonce,
+            funding_nonce,
         )
-        .map_err(|_| NativePrepareError::InstructionEncoding)?;
-        let funding = Message::try_new(
-            self.escrow_program_id,
-            vec![metadata, custody, depositor],
-            vec![funding_nonce.into()],
-            ZecEscrowInstruction::FundNative { swap_id },
-        )
-        .map_err(|_| NativePrepareError::InstructionEncoding)?;
-        Ok((initialization, funding))
     }
 
     fn plan_pair(
@@ -4125,6 +4049,192 @@ fn claim_request_sha256(
     let digest = Sha256::digest(&encoded).into();
     encoded.zeroize();
     Ok(digest)
+}
+
+/// Validates a durable native-XMR escrow pair without possessing the Taker key.
+///
+/// This is the same exact request, generated-ABI, account-order, instruction,
+/// canonical-byte, signature, signer, and consecutive-nonce predicate used by
+/// the native escrow planner. An optional nonce binds recovery to a separately
+/// finalized account snapshot.
+pub(crate) fn validate_prepared_native_xmr_escrow_v3_public(
+    expected_runtime: &RuntimeDescriptor,
+    authenticated_transfer_program_id: [u32; 8],
+    request: &PrepareNativeXmrEscrowV3Request,
+    result: &PrepareNativeXmrEscrowV3Result,
+    expected_initialization_nonce: Option<u128>,
+) -> Result<(), NativePrepareError> {
+    validate_xmr_escrow_v3_request_public(
+        expected_runtime,
+        authenticated_transfer_program_id,
+        request,
+    )?;
+    if result.context != request.context
+        || result.terms != request.terms
+        || result.initialization == result.funding
+        || result.initialization.transaction_id == result.funding.transaction_id
+    {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    let signer = AccountId::new(*expected_runtime.signer_account_id.as_bytes());
+    let initialization = decode_prepared_for_signer(&result.initialization, signer)?;
+    let funding = decode_prepared_for_signer(&result.funding, signer)?;
+    let [initialization_nonce] = initialization.message().nonces.as_slice() else {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    };
+    let initialization_nonce = u128::from(*initialization_nonce);
+    if expected_initialization_nonce.is_some_and(|expected| expected != initialization_nonce) {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    let funding_nonce = initialization_nonce
+        .checked_add(1)
+        .ok_or(NativePrepareError::NonceOverflow)?;
+    let [observed_funding_nonce] = funding.message().nonces.as_slice() else {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    };
+    if u128::from(*observed_funding_nonce) != funding_nonce {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    let escrow_program_id = program_id_from_hex(expected_runtime.escrow_program_id);
+    let (expected_initialization, expected_funding) = xmr_escrow_v3_messages_for_public_binding(
+        escrow_program_id,
+        authenticated_transfer_program_id,
+        request,
+        initialization_nonce,
+        funding_nonce,
+    )?;
+    if initialization.message() != &expected_initialization
+        || funding.message() != &expected_funding
+    {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    Ok(())
+}
+
+fn validate_xmr_escrow_v3_request_public(
+    expected_runtime: &RuntimeDescriptor,
+    authenticated_transfer_program_id: [u32; 8],
+    request: &PrepareNativeXmrEscrowV3Request,
+) -> Result<(), NativePrepareError> {
+    if expected_runtime.sidecar_role != Participant::Taker
+        || request.context.sidecar_role != Participant::Taker
+        || request.runtime.sidecar_role != Participant::Taker
+        || request.terms.to_input().depositor != Participant::Taker
+    {
+        return Err(NativePrepareError::WrongRole);
+    }
+    if &request.runtime != expected_runtime
+        || request.runtime.compatibility != RuntimeCompatibility::LeeV0_2_0
+        || request
+            .terms
+            .validate_runtime_binding(&request.context, &request.runtime)
+            .is_err()
+    {
+        return Err(NativePrepareError::WrongRuntime);
+    }
+    let terms = request.terms.to_input();
+    if request.runtime.signer_account_id != terms.depositor_account_id {
+        return Err(NativePrepareError::WrongSigner);
+    }
+    let escrow_program_id = program_id_from_hex(expected_runtime.escrow_program_id);
+    if escrow_program_id == [0; 8]
+        || request.runtime.escrow_program_id != program_id_to_hex(escrow_program_id)
+        || terms.escrow_program_id != program_id_to_hex(escrow_program_id)
+    {
+        return Err(NativePrepareError::WrongEscrowProgram);
+    }
+    if authenticated_transfer_program_id == [0; 8]
+        || authenticated_transfer_program_id == escrow_program_id
+        || terms.authenticated_transfer_program_id
+            != program_id_to_hex(authenticated_transfer_program_id)
+    {
+        return Err(NativePrepareError::WrongAuthenticatedTransferProgram);
+    }
+    let swap_id = *terms.swap_id.as_bytes();
+    if terms.metadata_account_id
+        != Hex32::from_bytes(compute_metadata_pda(&escrow_program_id, &swap_id).into_value())
+        || terms.custody_account_id
+            != Hex32::from_bytes(compute_custody_pda(&escrow_program_id, &swap_id).into_value())
+    {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    let claim_key = PublicKey::try_new(*terms.claim_aggregate_x_only_public_key.as_bytes())
+        .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+    let refund_key = PublicKey::try_new(*terms.refund_aggregate_x_only_public_key.as_bytes())
+        .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+    if AccountId::from(&claim_key).into_value() != *terms.claim_authority_account_id.as_bytes()
+        || AccountId::from(&refund_key).into_value()
+            != *terms.refund_authority_account_id.as_bytes()
+    {
+        return Err(NativePrepareError::WrongAggregateAuthority);
+    }
+    Ok(())
+}
+
+fn xmr_escrow_v3_messages_for_public_binding(
+    escrow_program_id: [u32; 8],
+    authenticated_transfer_program_id: [u32; 8],
+    request: &PrepareNativeXmrEscrowV3Request,
+    initialization_nonce: u128,
+    funding_nonce: u128,
+) -> Result<(Message, Message), NativePrepareError> {
+    validate_xmr_escrow_v3_request_public(
+        &request.runtime,
+        authenticated_transfer_program_id,
+        request,
+    )?;
+    if funding_nonce
+        != initialization_nonce
+            .checked_add(1)
+            .ok_or(NativePrepareError::NonceOverflow)?
+    {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    }
+    let terms = request.terms.to_input();
+    let swap_id = *terms.swap_id.as_bytes();
+    let metadata = compute_metadata_pda(&escrow_program_id, &swap_id);
+    let custody = compute_custody_pda(&escrow_program_id, &swap_id);
+    let depositor = AccountId::new(*terms.depositor_account_id.as_bytes());
+    let claimant = AccountId::new(*terms.claimant_account_id.as_bytes());
+    let claim_authority = AccountId::new(*terms.claim_authority_account_id.as_bytes());
+    let refund_authority = AccountId::new(*terms.refund_authority_account_id.as_bytes());
+    let initialization = Message::try_new(
+        escrow_program_id,
+        vec![
+            metadata,
+            custody,
+            depositor,
+            claimant,
+            claim_authority,
+            refund_authority,
+        ],
+        vec![initialization_nonce.into()],
+        ZecEscrowInstruction::InitializeNativeXmr {
+            swap_id,
+            terms_hash: *terms.activation_commitment.as_bytes(),
+            claim_aggregate_x_only_public_key: *terms.claim_aggregate_x_only_public_key.as_bytes(),
+            refund_aggregate_x_only_public_key: *terms
+                .refund_aggregate_x_only_public_key
+                .as_bytes(),
+            maker_dleq_transcript_commitment: *terms.maker_dleq_transcript_commitment.as_bytes(),
+            taker_dleq_transcript_commitment: *terms.taker_dleq_transcript_commitment.as_bytes(),
+            claim_partial_context_binding: *terms.claim_partial_context_binding.as_bytes(),
+            claim_partial_commitment: *terms.claim_partial_commitment.as_bytes(),
+            amount: terms.amount,
+            refund_at: terms.refund_at_ms,
+            punish_at: terms.punish_at_ms,
+            authenticated_transfer_program: authenticated_transfer_program_id,
+        },
+    )
+    .map_err(|_| NativePrepareError::InstructionEncoding)?;
+    let funding = Message::try_new(
+        escrow_program_id,
+        vec![metadata, custody, depositor],
+        vec![funding_nonce.into()],
+        ZecEscrowInstruction::FundNative { swap_id },
+    )
+    .map_err(|_| NativePrepareError::InstructionEncoding)?;
+    Ok((initialization, funding))
 }
 
 /// Converts one official transaction into the bounded persisted representation.

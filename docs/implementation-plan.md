@@ -2950,10 +2950,12 @@ Only a genuinely fresh third database was eligible for publication.
   The agreement receipt calls CLI values `requested_terms` and explicitly
   records that the helper itself does not decode and rebind those terms from
   Stage A; the role actors remain the canonical validation and signing
-  boundary. The role-sidecar launcher is the remaining unwired launcher. Its
-  bridge state-directory lease is source/component-GREEN, but launcher support
-  for adopting the existing tag-13 state directory, a typed
-  tag-13-to-tag-14 exporter, and an actual continuation replay remain next.
+  boundary. The role-sidecar launcher now adopts the exact existing tag-13 state for Taker,
+  requires the fixed owner-private receipt/runtime/terms siblings, rejects
+  cross-swap terms and state/output overlap, and passes the original typed runtime
+  to the child. The typed tag-13-to-tag-14 exporter and bridge receipt gate are
+  source/component-GREEN with adversarial coverage. Parent-runner wiring and an
+  actual continuation replay remain next.
   Parent-runner integration must continue to stage each checked actor,
   role-runner, and composer binary as an owner-held, mode-`0700`, single-link
   run artifact; the shared `target/debug` cache is mode `0775` with two links
@@ -3034,8 +3036,7 @@ exact finalized tag 13. It has not been cleanly replayed from the current
 commit. Next, wire the role-sidecar launcher to adopt the existing tag-13 state,
 export typed tag-13 evidence into tag-14 preparation, continue through the
 retained successful-claim tail, publish synchronized evidence, and prove the
-ledgered/label-revalidated scoped cleanup. Remaining runner/PoC implementation
-is estimated at 3 to 7 focused hours. After that implementation is complete,
+ledgered/label-revalidated scoped cleanup. Remaining runner/PoC implementation is estimated at 2 to 5 focused hours. After that implementation is complete,
 budget 25 to 45 minutes for one warm exact-commit replay or 1 to 3 hours for a
 cold replay, evidence rebinding, and scoped cleanup. Full M4 functional closure,
 including actual tag-16/tag-17 recovery, F7 native-plus-two-token parity, U9
