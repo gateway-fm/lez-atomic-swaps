@@ -721,6 +721,8 @@ build_identity_and_artifact() {
   readonly release_prepare_binary="${staged_binary_root}/lez-v02-xmr-release-prepare"
   readonly release_service_binary="${staged_binary_root}/lez-v0-2-xmr-release-service"
   readonly classifier_binary="${staged_binary_root}/lez-v02-xmr-classify-finalized"
+  readonly vault_claim_staged_binary="${staged_binary_root}/lez-v02-vault-claim-poc"
+  stage_executable "$vault_claim_binary" "$vault_claim_staged_binary" "Vault Claim"
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/xmr-reference-tag15" "$tag15_binary" "Tag15 driver"
@@ -896,8 +898,8 @@ actor_onboarding() {
     M4_ONBOARD_TAKER_IDENTITY="${evidence_root}/taker-lez-identity.json" \
     M4_ONBOARD_MAKER_PRIVATE_KEY="${private_root}/lez-identities/maker/lez-signer.key" \
     M4_ONBOARD_TAKER_PRIVATE_KEY="${private_root}/lez-identities/taker/lez-signer.key" \
-    M4_ONBOARD_VAULT_CLAIM_BIN="$vault_claim_binary" \
-    M4_ONBOARD_EXPECTED_VAULT_CLAIM_SHA256="$(sha256_file "$vault_claim_binary")" \
+    M4_ONBOARD_VAULT_CLAIM_BIN="$vault_claim_staged_binary" \
+    M4_ONBOARD_EXPECTED_VAULT_CLAIM_SHA256="$(sha256_file "$vault_claim_staged_binary")" \
     "$onboarding_runner" execute
   require_owner_file "${actor_onboarding_evidence}/summary.json" "actor-onboarding summary"
   jq -e '.result=="passed" and .total_submission_count==2
