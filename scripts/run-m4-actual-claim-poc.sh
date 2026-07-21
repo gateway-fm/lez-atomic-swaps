@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "tag14_preparation",
+      implemented_execute_through: "tag14_publication",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -71,6 +71,15 @@ emit_contract() {
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
+      tag14_publication_implemented: true,
+      tag14_publication_reachable_in_execute: true,
+      tag14_publication_executed_in_certifying_replay: false,
+      tag14_preparation_implemented: true,
+      tag14_preparation_reachable_in_execute: true,
+      tag14_preparation_executed_in_certifying_replay: false,
+      tag14_publication_implemented: true,
+      tag14_publication_reachable_in_execute: true,
+      tag14_publication_executed_in_certifying_replay: false,
       phases: [
         "preflight", "build", "identity", "lez_stack", "deployment",
         "actor_onboarding", "monero_stack", "agreement", "journals", "tag13", "tag13_handoff",
@@ -1267,6 +1276,15 @@ prepare_tag14_release() {
   record_phase release completed
 }
 
+publish_tag14_release() {
+  record_phase tag14_publication started
+  readonly tag14_publication_result="${release_root}/publication-result.json"
+  "$release_service_binary" --public-config-file "$release_public_config" --state-directory "$release_state_root" --sidecar-capability-file "$taker_sidecar_root/capability" --protection-key-file "$release_protection_key" >"$tag14_publication_result"
+  require_owner_file "$tag14_publication_result" "Tag14 publication result"
+  jq -e '.schema_version==1 and .event=="xmr_claim_authorization_publication" and (.durable_state=="admitted" or .durable_state=="already_known")' "$tag14_publication_result" >/dev/null || fail "Tag14 publication result is not durably admitted"
+  record_phase tag14_publication completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1289,7 +1307,8 @@ execute_run() {
   start_role_sidecars
   fund_and_verify_monero
   prepare_tag14_release
-  fail "publication phase is not implemented; Tag14 preparation completed; do not retry this run"
+  publish_tag14_release
+  fail "finality phase is not implemented; Tag14 publication completed; do not retry this run"
 }
 
 mode="${1:-}"
