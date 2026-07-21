@@ -292,6 +292,9 @@ pub enum ReleaseError {
     /// The database is not one owner-only, regular, non-aliased inode.
     #[error("release database file is unsafe")]
     UnsafeDatabaseFile,
+    /// Exclusive journal creation found an existing safe database inode.
+    #[error("release database already exists")]
+    DatabaseAlreadyExists,
     /// A newer schema must not be reinterpreted.
     #[error("release database uses a future schema")]
     FutureSchema,
@@ -329,10 +332,24 @@ impl fmt::Debug for ReleaseStore {
 impl ReleaseStore {
     /// Opens or initializes one owner-private, durable release journal.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ReleaseError> {
-        let (path, parent, database_name) = validate_database_path(path.as_ref())?;
+        Self::open_with_policy(path.as_ref(), DatabaseOpenPolicy::OpenOrCreate)
+    }
+
+    /// Exclusively creates and initializes one owner-private release journal.
+    ///
+    /// Unlike [`Self::open`], this never opens or migrates an existing journal.
+    /// The file is created descriptor-relative with `CREATE | EXCL | NOFOLLOW`,
+    /// exact mode `0600`, and one link. Initialization retains the creation
+    /// descriptor and verifies that `SQLite` opened the same inode.
+    pub fn create_new(path: impl AsRef<Path>) -> Result<Self, ReleaseError> {
+        Self::open_with_policy(path.as_ref(), DatabaseOpenPolicy::CreateNew)
+    }
+
+    fn open_with_policy(path: &Path, policy: DatabaseOpenPolicy) -> Result<Self, ReleaseError> {
+        let (path, parent, database_name) = validate_database_path(path)?;
         let directory = SecureDirectory::open(&parent)?;
         let (database_identity, creation_guard) =
-            prepare_database_file(&directory, &database_name)?;
+            prepare_database_file(&directory, &database_name, policy)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
@@ -1139,27 +1156,47 @@ struct DatabaseIdentity {
     inode: u64,
 }
 
+#[derive(Clone, Copy)]
+enum DatabaseOpenPolicy {
+    OpenOrCreate,
+    CreateNew,
+}
+
 fn prepare_database_file(
     directory: &SecureDirectory,
     name: &OsStr,
+    policy: DatabaseOpenPolicy,
 ) -> Result<(DatabaseIdentity, File), ReleaseError> {
     directory.revalidate()?;
-    let descriptor = match openat(
-        &directory.descriptor,
-        name,
-        OFlags::RDWR | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    ) {
-        Ok(descriptor) => descriptor,
-        Err(Errno::NOENT) => openat(
+    let existing_flags = OFlags::RDWR | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let create_flags =
+        OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let descriptor = match policy {
+        DatabaseOpenPolicy::OpenOrCreate => {
+            match openat(&directory.descriptor, name, existing_flags, Mode::empty()) {
+                Ok(descriptor) => descriptor,
+                Err(Errno::NOENT) => openat(
+                    &directory.descriptor,
+                    name,
+                    create_flags,
+                    Mode::RUSR | Mode::WUSR,
+                )
+                .map_err(|_| ReleaseError::Store)?,
+                Err(Errno::LOOP) => return Err(ReleaseError::UnsafeDatabaseFile),
+                Err(_) => return Err(ReleaseError::Store),
+            }
+        }
+        DatabaseOpenPolicy::CreateNew => openat(
             &directory.descriptor,
             name,
-            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            create_flags,
             Mode::RUSR | Mode::WUSR,
         )
-        .map_err(|_| ReleaseError::Store)?,
-        Err(Errno::LOOP) => return Err(ReleaseError::UnsafeDatabaseFile),
-        Err(_) => return Err(ReleaseError::Store),
+        .map_err(|error| match error {
+            Errno::EXIST => classify_existing_database(directory, name),
+            Errno::LOOP => ReleaseError::UnsafeDatabaseFile,
+            _ => ReleaseError::Store,
+        })?,
     };
     let file = File::from(descriptor);
     let identity = validate_database_file(&file)?;
@@ -1170,6 +1207,21 @@ fn prepare_database_file(
         .map_err(|_| ReleaseError::Store)?;
     directory.revalidate()?;
     Ok((identity, file))
+}
+
+fn classify_existing_database(directory: &SecureDirectory, name: &OsStr) -> ReleaseError {
+    match openat(
+        &directory.descriptor,
+        name,
+        OFlags::RDWR | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(descriptor) => match validate_database_file(&File::from(descriptor)) {
+            Ok(_) => ReleaseError::DatabaseAlreadyExists,
+            Err(error) => error,
+        },
+        Err(_) => ReleaseError::UnsafeDatabaseFile,
+    }
 }
 
 fn verify_database_file(
@@ -1420,6 +1472,107 @@ mod tests {
             .open(path)
             .unwrap();
         Connection::open(path).unwrap()
+    }
+
+    #[test]
+    fn create_new_is_owner_private_and_rejects_existing_journals() {
+        let valid_directory = directory();
+        let valid_path = database_path(&valid_directory);
+        drop(ReleaseStore::create_new(&valid_path).unwrap());
+        let metadata = fs::symlink_metadata(&valid_path).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+        assert_eq!(metadata.nlink(), 1);
+        assert_eq!(
+            ReleaseStore::create_new(&valid_path).unwrap_err(),
+            ReleaseError::DatabaseAlreadyExists
+        );
+
+        let empty_directory = directory();
+        let empty_path = database_path(&empty_directory);
+        drop(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&empty_path)
+                .unwrap(),
+        );
+        assert_eq!(
+            ReleaseStore::create_new(&empty_path).unwrap_err(),
+            ReleaseError::DatabaseAlreadyExists
+        );
+
+        let admitted_directory = directory();
+        let admitted_path = database_path(&admitted_directory);
+        let key = protection_key(0x58);
+        let store = ReleaseStore::create_new(&admitted_path).unwrap();
+        let snapshot = store
+            .prepare(binding(0x58, &key, b"admitted"), &key)
+            .unwrap();
+        let PublicationDecision::Send(attempt) = store.begin_publication(snapshot, &key).unwrap()
+        else {
+            panic!("new journal owns publication");
+        };
+        store.mark_admitted(*attempt, &key).unwrap();
+        drop(store);
+        assert_eq!(
+            ReleaseStore::create_new(&admitted_path).unwrap_err(),
+            ReleaseError::DatabaseAlreadyExists
+        );
+    }
+
+    #[test]
+    fn create_new_rejects_symlink_and_hardlink_aliases() {
+        let directory = directory();
+        let target = database_path(&directory);
+        drop(ReleaseStore::create_new(&target).unwrap());
+
+        let symlink = directory.path().join("symlink.sqlite");
+        std::os::unix::fs::symlink(&target, &symlink).unwrap();
+        assert_eq!(
+            ReleaseStore::create_new(&symlink).unwrap_err(),
+            ReleaseError::UnsafeDatabaseFile
+        );
+
+        let hardlink = directory.path().join("hardlink.sqlite");
+        fs::hard_link(&target, &hardlink).unwrap();
+        assert_eq!(
+            ReleaseStore::create_new(&hardlink).unwrap_err(),
+            ReleaseError::UnsafeDatabaseFile
+        );
+    }
+
+    #[test]
+    fn concurrent_create_new_has_exactly_one_winner() {
+        const CONTENDERS: usize = 8;
+        let directory = directory();
+        let path = database_path(&directory);
+        let barrier = Arc::new(Barrier::new(CONTENDERS + 1));
+        let joins: Vec<_> = (0..CONTENDERS)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    match ReleaseStore::create_new(path) {
+                        Ok(store) => {
+                            drop(store);
+                            true
+                        }
+                        Err(ReleaseError::DatabaseAlreadyExists) => false,
+                        Err(error) => panic!("unexpected creation failure: {error}"),
+                    }
+                })
+            })
+            .collect();
+        barrier.wait();
+        let winners: usize = joins
+            .into_iter()
+            .map(|join| usize::from(join.join().unwrap()))
+            .sum();
+        assert_eq!(winners, 1);
+        drop(ReleaseStore::open(path).unwrap());
     }
 
     #[test]
