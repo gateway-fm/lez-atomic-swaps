@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "tag15_finality",
+      implemented_execute_through: "extraction",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -86,6 +86,9 @@ emit_contract() {
       tag15_finality_implemented: true,
       tag15_finality_reachable_in_execute: true,
       tag15_finality_executed_in_certifying_replay: false,
+      extraction_implemented: true,
+      extraction_reachable_in_execute: true,
+      extraction_executed_in_certifying_replay: false,
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
@@ -1344,6 +1347,14 @@ classify_tag15_finality() {
   record_phase tag15_finality completed
 }
 
+extract_claim_signature() {
+  record_phase extraction started
+  readonly observed_final_signature="${private_root}/tag14-release/taker-observed-final-signature.json"
+  "$agreement_actor_binary" ingest-finalized-claim-signature --private-root "${agreement_root}/material/taker" --own-public-packet "${agreement_root}/exchange/taker.json" --peer-public-packet "${agreement_root}/exchange/maker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/taker.sqlite" --run-id "$run_id" --finalized-claim "$tag15_finality_result" --output-final-signature "$observed_final_signature"
+  require_owner_file "$observed_final_signature" "Taker observed final-signature packet"
+  record_phase extraction completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1371,7 +1382,8 @@ execute_run() {
   prepare_tag15_signature
   publish_tag15
   classify_tag15_finality
-  fail "extraction phase is not implemented; Tag15 finality completed; do not retry this run"
+  extract_claim_signature
+  fail "sweep phase is not implemented; Taker extraction completed; do not retry this run"
 }
 
 mode="${1:-}"
