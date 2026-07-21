@@ -39,7 +39,7 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "monero_sweep",
+      implemented_execute_through: "evidence",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
       monero_launcher_reachable_in_execute: true,
@@ -95,6 +95,9 @@ emit_contract() {
       monero_sweep_implemented: true,
       monero_sweep_reachable_in_execute: true,
       monero_sweep_executed_in_certifying_replay: false,
+      evidence_binding_implemented: true,
+      evidence_binding_reachable_in_execute: true,
+      evidence_binding_executed_in_certifying_replay: false,
       tag14_preparation_implemented: true,
       tag14_preparation_reachable_in_execute: true,
       tag14_preparation_executed_in_certifying_replay: false,
@@ -1380,6 +1383,15 @@ sweep_monero_claim() {
   record_phase monero_sweep completed
 }
 
+bind_claim_sweep() {
+  record_phase evidence started
+  readonly claim_sweep_binding="${evidence_root}/claim-sweep-binding.json"
+  "$agreement_actor_binary" bind-finalized-claim-sweep --private-root "${agreement_root}/material/taker" --own-public-packet "${agreement_root}/exchange/taker.json" --peer-public-packet "${agreement_root}/exchange/maker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/taker.sqlite" --run-id "$run_id" --finalized-claim "$tag15_finality_result" --observed-final-signature "$observed_final_signature" --extracted-maker-adaptor-scalar "$extracted_maker_scalar" --monero-sweep-evidence "$monero_sweep_evidence" --monero-receipt-evidence "$monero_verification_evidence" --output-binding-evidence "$claim_sweep_binding"
+  require_owner_file "$claim_sweep_binding" "claim/sweep binding evidence"
+  jq -e '.schema=="lez_v02_m4_claim_sweep_binding_v1" and .distributed_cross_chain_transaction_claimed==false and .lez_effect=="claim" and .sweeping_role=="taker"' "$claim_sweep_binding" >/dev/null || fail "claim/sweep binding evidence is incomplete"
+  record_phase evidence completed
+}
+
 
 execute_run() {
   run_preflight
@@ -1410,7 +1422,8 @@ execute_run() {
   extract_claim_signature
   extract_adaptor_scalar
   sweep_monero_claim
-  fail "binding phase is not implemented; Monero sweep completed; do not retry this run"
+  bind_claim_sweep
+  fail "cleanup phase is not implemented; cross-chain evidence completed; do not retry this run"
 }
 
 mode="${1:-}"
