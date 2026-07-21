@@ -2040,12 +2040,16 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "hex",
  "indexer_service_protocol",
  "indexer_service_rpc",
  "jsonrpsee",
  "lez-bridge-adapter",
  "lez-bridge-protocol",
+ "lez-swap-core",
+ "lez-xmr-monero-adapter",
  "lez-xmr-release-authority",
+ "lez-xmr-swap-sdk",
  "rustix",
  "serde",
  "serde_json",
@@ -2053,6 +2057,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -2063,6 +2068,7 @@ dependencies = [
  "async-trait",
  "diqwest",
  "lez-bridge-protocol",
+ "lez-xmr-swap-sdk",
  "monero-rpc",
  "reqwest",
  "serde",

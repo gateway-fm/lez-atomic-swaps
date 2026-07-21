@@ -2958,8 +2958,10 @@ cargo +1.96.0 test --locked --offline \
 
 Expected result is 3 of 3 passed in addition to the four provisioning tests.
 These tests use no Docker, node, RPC, peer, faucet, public endpoint, funds, or
-external finality service. Actual-local Stage A, the canonical role-journal Stage B, and tag 13 are GREEN;
-tag 14 remains the next pending chain effect.
+external finality service. Actual-local Stage A, the canonical role-journal Stage B, and tag 13 are GREEN.
+The exclusive release preparer and both role-local finalized-effect bridges are
+source/component-GREEN; actual Monero funding and tag 14 remain the next pending
+effects.
 
 ### Execute the one-shot M4 tag-13 effect
 
@@ -2992,10 +2994,15 @@ compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-stage-a-poc \
   --prepare-request-id "${M4_TAG13_RUN}-prepare"
 ```
 
-Expected output names the owner-only evidence file and prints its non-secret
-JSON. Verify `initialization.effect == "initialize"`, `funding.effect ==
-"fund"`, strictly increasing finalized heights, both timestamps no later than
-`maker_xmr_funding_cutoff_ms`, and `atomic_swap_proven == false`. This flow uses
+Expected output names the owner-only
+`m4-xmr-stage-a-tag13-evidence.v2.json` file and prints its non-secret JSON.
+Verify `schema == "lez_v02_m4_xmr_stage_a_tag13_poc_v2"`, that
+`prepare_request_id` exactly equals the CLI value, that
+`initialization.effect == "initialize"`, `funding.effect == "fund"`, finalized
+heights strictly increase, both timestamps are no later than
+`maker_xmr_funding_cutoff_ms`, and `atomic_swap_proven == false`. The retained
+v1 evidence is historical and must not be silently rewritten or used as if it
+contained the durable preparation identity. This flow uses
 only the suite-specific loopback LEZ sequencer/indexer and deterministic local
 genesis funds. It uses no public RPC, peer, faucet, public funds, or external
 finality service. The retained run took about 2.5 minutes per finalized effect;
@@ -3022,6 +3029,148 @@ The unit suite makes no actual node call. A fresh `run-monero-e2e.sh` manifest
 exports separate mode-`0600` RPC username/password and wallet-password file
 paths for funding, Maker, and Taker. Never place those contents on argv or in
 evidence.
+
+### Prepare one sealed M4 tag-14 release journal
+
+This step is source/component-reproducible now. Its actual-local invocation is
+still pending the fresh happy-path run, so do not count the commands below as a
+swap unless the inputs were produced by the same live two-devnet journey. Build
+the separately locked preparer and publisher:
+
+```sh
+RAPIDSNARK_LIB_DIR=/absolute/path/to/rapidsnark/lib \
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include \
+cargo +1.96.0 build --locked --offline \
+  --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml \
+  --bin lez-v02-xmr-release-prepare \
+  --bin lez-v0-2-xmr-release-service
+```
+
+Use the v2 tag-13 evidence rather than retyping runtime or terms. The target
+wallet below must be the authenticated view-capable wallet for the exact shared
+Stage-A address; the generic Maker wallet is not a substitute merely because it
+has the Maker label. The foreign wallet must be a distinct authenticated origin
+whose credentials receive exact HTTP 401 at the target. Source the retained
+Monero manifest for the daemon/foreign credentials and set the remaining
+same-run values explicitly:
+
+```sh
+export TAG13_EVIDENCE=/absolute/path/to/m4-xmr-stage-a-tag13-evidence.v2.json
+export TAKER_SIDECAR_URL=http://127.0.0.1:TAKER_SIDECAR_PORT
+export TAKER_SIDECAR_CAPABILITY=/absolute/path/to/taker-sidecar.capability
+export INDEXER_URL=http://127.0.0.1:INDEXER_PORT
+export SHARED_WALLET_ENDPOINT=http://127.0.0.1:SHARED_WALLET_PORT
+export SHARED_WALLET_USERNAME_FILE=/absolute/path/to/shared-wallet.username
+export SHARED_WALLET_PASSWORD_FILE=/absolute/path/to/shared-wallet.password
+export MONERO_FUNDING_TXID=64_lowercase_hex_characters
+export AGREEMENT_STAGE_A=/absolute/path/to/stage-a.bin
+export ACTIVATION_STAGE_B=/absolute/path/to/stage-b.bin
+export TAKER_CLAIM_JOURNAL=/absolute/path/to/taker/claim.json
+export TAKER_MONERO_VIEW_KEY=/absolute/path/to/taker/monero-view.key
+
+export RELEASE_ROOT=/tmp/lez-m4-release-$(git rev-parse --short HEAD)-001
+test ! -e "$RELEASE_ROOT"
+install -d -m 700 "$RELEASE_ROOT" "$RELEASE_ROOT/config" "$RELEASE_ROOT/state"
+openssl rand -hex 32 >"$RELEASE_ROOT/protection.key"
+chmod 600 "$RELEASE_ROOT/protection.key"
+
+jq -n --slurpfile evidence "$TAG13_EVIDENCE" \
+  --arg sidecar "$TAKER_SIDECAR_URL" --arg indexer "$INDEXER_URL" \
+  '{schema_version:1, sidecar_endpoint:$sidecar, indexer_endpoint:$indexer,
+    node_profile:"local", run_id:$evidence[0].run_id,
+    runtime:$evidence[0].runtime, terms:$evidence[0].terms,
+    protection_key_id:"m4-local-release-key-001"}' \
+  >"$RELEASE_ROOT/config/release.json"
+
+jq -n --slurpfile evidence "$TAG13_EVIDENCE" \
+  --arg fund_id "m4-local-fund-finality-001" \
+  --arg authorization_id "m4-local-authorization-prepare-001" \
+  --arg txid "$MONERO_FUNDING_TXID" \
+  --arg daemon "$MONERO_DAEMON_ENDPOINT" \
+  --arg target "$SHARED_WALLET_ENDPOINT" \
+  --arg foreign "$MONERO_TAKER_WALLET_ENDPOINT" \
+  '{schema_version:1,
+    escrow_prepare_request_id:$evidence[0].prepare_request_id,
+    fund_finality_request_id:$fund_id,
+    authorization_prepare_request_id:$authorization_id,
+    fund_finality_window:$evidence[0].funding.scanned_window,
+    monero_funding_transaction_id:$txid,
+    monero_daemon_endpoint:$daemon,
+    monero_target_wallet_endpoint:$target,
+    monero_foreign_wallet_endpoint:$foreign}' \
+  >"$RELEASE_ROOT/config/preparation.json"
+chmod 600 "$RELEASE_ROOT/config/release.json" \
+  "$RELEASE_ROOT/config/preparation.json"
+```
+
+Every private file and its immediate directory must be owned by the invoking
+UID, linked once, and not writable by group or others. The state directory must
+be fresh and `xmr-release.sqlite3` must not exist. Invoke the preparer once:
+
+```sh
+compat/lez-v0_2-xmr-release-service/target/debug/lez-v02-xmr-release-prepare \
+  --public-config-file "$RELEASE_ROOT/config/release.json" \
+  --preparation-config-file "$RELEASE_ROOT/config/preparation.json" \
+  --agreement-wire-file "$AGREEMENT_STAGE_A" \
+  --activation-wire-file "$ACTIVATION_STAGE_B" \
+  --monero-view-key-file "$TAKER_MONERO_VIEW_KEY" \
+  --taker-claim-journal "$TAKER_CLAIM_JOURNAL" \
+  --bridge-capability-file "$TAKER_SIDECAR_CAPABILITY" \
+  --protection-key-file "$RELEASE_ROOT/protection.key" \
+  --state-directory "$RELEASE_ROOT/state" \
+  --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
+  --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
+  --target-wallet-username-file "$SHARED_WALLET_USERNAME_FILE" \
+  --target-wallet-password-file "$SHARED_WALLET_PASSWORD_FILE" \
+  --foreign-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
+  --foreign-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE"
+```
+
+The only success payload is
+`{"schema_version":1,"event":"xmr_claim_authorization_preparation","durable_state":"prepared","node_profile":"local"}`.
+The process has no publication client: it validates configuration before RPC,
+recovers the exact tag-13 bytes by their original request ID, proves finalized
+Fund plus authenticated peerless Regtest topology/output, prepares tag 14 from
+the completed Taker journal, creates the release database exclusively at mode
+`0600`, and authenticates it after drop/reopen. Any failure after database
+creation leaves a poison/observe-only artifact for inspection. Do not delete it
+and retry the same swap; use a genuinely fresh attempt only after determining
+that no release occurred. A missing tag-13 reservation can currently allocate a
+fresh reservation before finality rejects it, and the ordinary bearer is a
+trusted-process PoC boundary rather than server-enforced route scoping.
+
+Only after the preparer succeeds should the separately privileged publisher be
+given its release-only capability and invoked once:
+
+```sh
+compat/lez-v0_2-xmr-release-service/target/debug/lez-v0-2-xmr-release-service \
+  --public-config-file "$RELEASE_ROOT/config/release.json" \
+  --state-directory "$RELEASE_ROOT/state" \
+  --sidecar-capability-file /absolute/path/to/release-only.capability \
+  --protection-key-file "$RELEASE_ROOT/protection.key"
+```
+
+Admission is not finality. After exact tag-14 `DiscoverByTerms` finality from
+the Maker sidecar, use `xmr-reference-actor
+complete-claim-from-finalized-authorization`; after exact tag-15
+`DiscoverByTerms` finality from the Taker sidecar, use `xmr-reference-actor
+ingest-finalized-claim-signature`. Each command revalidates the role, Stage A/B,
+journal transcript, run, canonical accounts/message/signature, and rejects
+owner-side `Exact` or cross-role discovery results. Inspect their exact current
+arguments with:
+
+```sh
+cargo run --locked --offline -p xmr-reference-actor --features sessions -- \
+  complete-claim-from-finalized-authorization --help
+cargo run --locked --offline -p xmr-reference-actor --features sessions -- \
+  ingest-finalized-claim-signature --help
+```
+
+These steps use only literal-loopback LEZ v0.2 and official Monero 0.18.5.1
+Regtest services with deterministic local genesis/Regtest funds. They use no
+public RPC, peer, faucet, public funds, or external finality service. Local node
+cadence and process startup can affect duration; they cannot introduce public
+network flakiness. Cold dependency caches remain a separate availability input.
 
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and
@@ -3073,10 +3222,9 @@ additional sequencer send rather than return cached success. These
 are typed preparation/submission components, not actual-node, authorization or
 claim finality, actor-flow, or claim-PoC evidence.
 
-The focused classifier command must report `running 1 test`,
-`authenticated_exact_persisted_fund_requires_stable_finalized_history ... ok`,
-and `1 passed; 0 failed`. Its assertions cover exact durable-target rejection
-before any indexer read, Taker-only authority, exact Initialize and Fund
+The focused classifier command must report two passing integration tests. The
+matrix covers exact owner-side Initialize/Fund plus role-local discovery-side
+tag 14/tag 15, durable-target rejection before any indexer read, and canonical
 `Found` results with the state-specific metadata/custody checks,
 candidate/tip/window repins, typed finality, history, moving, conflicting, and
 malformed failures, missing as `Uncertain`, and zero sequencer sends.
@@ -3132,7 +3280,8 @@ cd ../..
 M4_RELEASE_PROCESS_OFFLINE=1 ./scripts/test-m4-xmr-release-worker-process.sh
 ```
 
-The unit command must report four passing library tests. The process runner
+The standalone all-target command must report eight passing tests, including
+the release-worker and exclusive-preparer cases. The process runner
 must report one passing ignored integration and
 `M4 typed-issuer release-process admission and restart proof passed`. It seeds
 the journal only through the public typed issuer, first requires a redacted
@@ -3161,8 +3310,9 @@ authenticated typed bridge-protocol sidecar mock; it uses no Docker,
 public RPC, faucet, chain funds, peer, or external finality service. Those
 fixtures prove client decoding, exact call counts, one-attempt publication, and
 durable restart behavior, but cannot prove actual-node consensus or finality.
-The composed actual-local-devnet command is the next planned update. Inventing
-a raw journal or authorization flag would bypass the authority being proved.
+The exclusive preparer command above is the current composition boundary; its
+fresh actual-local execution is the next evidence update. Inventing a raw
+journal or authorization flag would bypass the authority being proved.
 A cold Cargo cache can require crates.io and the pinned Logos execution-zone
 Git tag; `M4_RELEASE_PROCESS_OFFLINE=1` deliberately fails if that cache is
 not already warm.

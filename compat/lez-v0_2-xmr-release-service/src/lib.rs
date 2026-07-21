@@ -2,6 +2,14 @@
 
 #![forbid(unsafe_code)]
 
+mod preparer;
+
+pub use preparer::{
+    XMR_RELEASE_PREPARATION_SCHEMA_VERSION, XmrReleasePreparationConfig,
+    XmrReleasePreparationError, XmrReleasePreparationPaths, XmrReleasePreparationReport,
+    prepare_xmr_release_service, read_xmr_release_preparation_config,
+};
+
 use std::{
     fmt, fs,
     fs::File,

@@ -2127,7 +2127,7 @@ flowchart LR
     Adaptor --> Musig["Pinned MuSig2"]
     XmrSdk --> Dleq["Two bounded DLEQ envelopes"]
     Dleq --> SharedKey["Shared Monero spend key"]
-    XmrActor["Fresh XMR lifecycle actors<br/>pending"] -.-> RoleRunner
+    XmrActor["Role-local finalized-effect lifecycle bridges<br/>component green; actual effects pending"] --> RoleRunner
     RoleProvisioner["Independent role provisioner<br/>four tests green including process E2E"] --> RoleBundles[("Atomic manifest-bound Maker and Taker bundles")]
     RoleBundles -.-> XmrActor
     RoleBundles --> ActualComposer["Read only actual local Stage A composer<br/>one two devnet replay green"]
@@ -2144,7 +2144,7 @@ flowchart LR
     StageBActivation --> Tag13Actor["Role fixed Taker tag 13<br/>actual Initialize block 3008 then Fund block 3023 green"]
     Tag13Actor --> ActualSequencer
     ActualIndexer --> Tag13Actor
-    Tag13Actor -.-> XmrActor
+    Tag13Actor --> XmrActor
     FuturePlan --> ActualComposer
     XmrActor -.-> XmrSdk
     XmrActor -.-> OrdinaryClient["Ordinary BridgeClient<br/>eight methods green"]
@@ -2152,7 +2152,7 @@ flowchart LR
     VaultCli --> ActualSequencer
     ActualSequencer --> VaultFinality[("Taker block 228 and Maker block 240<br/>funded identity and nonce readiness green")]
     VaultFinality --> Tag13Actor
-    XmrActor -.-> ClaimAuthorization["Taker Stage-B claim authorization<br/>typed adapter component green"]
+    XmrActor --> ClaimAuthorization["Taker Stage-B claim authorization<br/>typed adapter component green"]
     XmrSdk --> ClaimAuthorization
     ClaimAuthorization -->|exactly one authenticated success| OrdinaryClient
     OrdinaryClient --> AuthMock["Authenticated literal-loopback mock<br/>component E2E only"]
@@ -2164,21 +2164,30 @@ flowchart LR
     FuturePlan --> Tag15Prepare
     FuturePlan -.-> BridgeRuntime
     OrdinaryRoutes --> Tag15Prepare["Maker tag-15 prepare<br/>exact nonce ABI accounts and message hash green"]
-    AuthorizationFinality -.-> Tag15Prepare
+    AuthorizationFinality -.-> FinalizedClassifier
+    FinalizedClassifier --> MakerFinalityBridge["Maker role-local tag-14 bridge<br/>component green"]
+    MakerFinalityBridge --> XmrActor
+    XmrActor --> Tag15Prepare
     Tag15Prepare --> Tag15Reservation[("Owner-only unsigned tag-15 reservation<br/>restart replay green")]
     Tag15Reservation --> Tag15Complete["Aggregate BIP340 completion<br/>signature and canonical bytes green"]
     Tag15Complete --> Tag15Transaction[("Owner-only completed tag-15 transaction")]
     Tag15Transaction --> Tag15OwnedGate["Exact active plus durable prepare and completion match<br/>component green"]
     Tag15OwnedGate --> Tag15GenericSubmit["Authenticated generic tag-15 submission<br/>one fixture send green"]
     Tag15GenericSubmit --> OfficialFixture
-    Tag15GenericSubmit -.-> Tag15ClaimFinality["Exact finalized tag-15 discovery<br/>pending"]
+    Tag15GenericSubmit -.-> Tag15ClaimFinality["Actual finalized tag-15 effect<br/>pending"]
+    Tag15ClaimFinality -.-> FinalizedClassifier
+    FinalizedClassifier --> TakerFinalityBridge["Taker role-local tag-15 bridge<br/>signature extraction component green"]
+    TakerFinalityBridge --> XmrActor
+    XmrActor --> FinalSignature[("Canonical final-signature packet<br/>component green")]
+    FinalSignature -.-> WalletEffects
     Tag15GenericSubmit -.-> ActualSequencer
     ClaimAuthorization --> ClaimEvidence["Private-field non-Clone authorization evidence"]
-    ClaimEvidence -.-> ReleaseStore
+    StageBActivation --> TakerJournal[("Completed owner-private Taker claim journal")]
+    Reservation --> Tag13Request[("Original durable tag-13 request identity")]
     OrdinaryClient --> OrdinaryRoutes["Authenticated ordinary sidecar v3 routes<br/>eight methods"]
     OrdinaryRoutes --> NativePrepare["Taker native-XMR escrow preparation<br/>exact durable initialize and fund pair green"]
     NativePrepare --> Reservation[("Owner-only exact transaction reservation<br/>restart replay green")]
-    OrdinaryRoutes --> FinalizedClassifier["Taker exact finalized Initialize and Fund classifier<br/>synthetic component E2E green"]
+    OrdinaryRoutes --> FinalizedClassifier["Exact finalized tags 13 through 15 classifier<br/>owner and role-local discovery component green"]
     Reservation --> FinalizedClassifier
     SyntheticIndexer["Synthetic FinalizedIndexerApi<br/>component E2E only"] --> FinalizedClassifier
     ActualIndexer["Actual local LEZ indexer<br/>Stage A reads green; effect classification pending"] -.-> FinalizedClassifier
@@ -2203,7 +2212,14 @@ flowchart LR
     Topology["Run/chain/origin-bound topology capability<br/>16 adapter tests green"] --> Issuer
     FinalizedClassifier --> Issuer
     SignedDeadline["Stage A signed refund time<br/>same exclusive guest deadline"] --> Issuer
-    Issuer --> ReleaseStore["Sealed release journal schema v3<br/>35 package tests green"]
+    ClaimEvidence --> ReleasePreparer["Exclusive release preparer<br/>source and eight tests green; actual run pending"]
+    FinalizedClassifier --> ReleasePreparer
+    XmrObservation --> ReleasePreparer
+    Topology --> ReleasePreparer
+    TakerJournal --> ReleasePreparer
+    Tag13Request --> ReleasePreparer
+    ReleasePreparer --> ReleaseStore["Create-new sealed release journal schema v3<br/>actual run pending"]
+    Issuer --> ReleaseStore
     ReleaseStore --> ReleaseJournal[("Release-authority SQLite journal<br/>one semantic publisher")]
     ReleaseStore --> Publisher["Sealed transaction-scoped publisher<br/>narrow-client wrapper component green"]
     Publisher --> TestClock["Loopback finalized-clock fixture"]
@@ -2243,17 +2259,24 @@ client binding before clock or CAS. Its loopback proof takes two finalized
 samples, performs one dedicated RPC, persists `Admitted`, and restart observes
 only without another call.
 
-The release-intended client and sidecar route are component-green against an
-official-type literal-loopback sequencer fixture. The route reloads the exact
-durable authorization and persists a request-scoped unknown outcome before
-lookup or send. A dedicated process, official clock adapter, actual sequencer,
-actor API, and authorization-finality observer remain pending.
+The exclusive preparer and release-intended client/sidecar route are
+component-green. The preparer validates all local configuration before its
+first RPC, re-derives Stage A/B, recovers the original durable tag-13
+reservation, proves finalized Fund and authenticated Monero topology/output,
+prepares tag 14 from the completed Taker journal, and create-new seals and
+reopens the release journal. It has no publication client. The route is tested
+against an official-type literal-loopback sequencer fixture and reloads the
+exact durable authorization before lookup or send. Actual-local
+preparer/clock/route execution and tag-14 finality remain pending.
 
 The release-authority SQLite journal grants semantic publication across request
 IDs; the sidecar idempotency journal protects one RPC request ID. They are
-separate durable components with no shared transaction. A dedicated process
-must own both capabilities and recover conservatively between them. Node
-admission is not chain inclusion or finality.
+separate durable components with no shared transaction. The checked one-shot
+publisher owns both capabilities and recovers conservatively between them. The
+preparer exclusively owns journal creation. The ordinary bearer used by the
+trusted preparer is not server-enforced method scoping, and the tag-13 prepare
+API is create-or-recover rather than recovery-only; both remain
+production-hardening residuals. Node admission is not chain inclusion or finality.
 
 The completed adapter capability has a narrower component sequence than the
 still-pending actor flow:
@@ -2595,21 +2618,19 @@ node I/O. This is literal-loopback component evidence, not release-journal
 wiring, actual-sequencer execution, actor isolation, or finality. The complete
 pinned sidecar suite, strict Clippy, warning-free Rustdoc, formatting, and
 advisory/ban/license/source policy remain green.
-The exact Initialize/Fund classifier is component-green behind the authenticated
-Taker-only route. It reloads and matches the durable reservation before any
-indexer read, accepts only one canonical finalized exact match, checks the
-transaction hash/bytes/proof shape/ABI/accounts/signer plus state-specific
-metadata and custody, and re-pins the candidate, finalized tip, and requested
-end before returning `Found`. Missing is always `Uncertain`, never `Absent`;
-finality, history, moving-tip, and conflicting-match failures stay typed. The
-focused E2E uses a synthetic `FinalizedIndexerApi` and makes zero sends. The
-separate exact-genesis stable-clock tests reject wrong genesis and tip movement.
-Exact tag-16 signed-refund and tag-17 punishment future messages/hashes are now
-planned, but the three refund/completion/punishment builders and
-non-Initialize/Fund discovery remain unavailable. No positive actual-local
-tag-14/tag-15 finalized discovery, tag-15 chain effect, or claim PoC exists;
-the preparation/completion records and official-type fixture admission are not
-actual-chain state.
+The four-effect classifier is component-green behind authenticated role-local
+routes. It reloads exact owner-side Initialize/Fund or completed tag-14/tag-15
+durable targets before any indexer read, accepts one canonical finalized match,
+checks transaction bytes/proof shape/ABI/accounts/signer plus state-specific
+metadata, custody, committed partial, or aggregate signature, and re-pins the
+candidate, finalized tip, and requested end. Maker-side discovery exposes only
+tag 14 and Taker-side discovery exposes only tag 15; cross-role and owner-side
+evidence is rejected by the role-local lifecycle commands. Missing is always
+`Uncertain`, never `Absent`; finality, history, moving-tip, and conflicting-match
+failures stay typed. Focused E2E uses a synthetic `FinalizedIndexerApi` and
+makes zero sends. Exact tag-16 signed-refund and tag-17 punishment messages are
+planned, but their builders remain unavailable. No positive actual-local
+tag-14/tag-15 finalized effect or claim PoC exists.
 
 The workspace now also contains the sealed `lez-xmr-release-authority`
 foundation and its public opaque-evidence issuer. Its 35 tests cover schema-v3
@@ -2630,13 +2651,12 @@ mode-`0700` directory and mode-`0600` canonical journal, no backup/restore or
 clone, and no hostile same-UID WAL/SHM race. AEAD and HMAC do not prevent
 rollback of an older valid journal.
 
-The typed main-process claim-authorization capability and official builder feed
-the release journal through the issuer. ADR 0067 separately supplies a narrow
-release-intended type-narrowed client and returned-ID-checking sidecar route, but the internal
-journal publisher does not call it. Because Rust has no cross-crate friend
-visibility, the consuming extraction remains a trusted-single-process PoC seam;
-production requires a dedicated release-service process and UID so actors never
-receive authorization bytes or the release bearer. The release and sidecar
+The typed claim-authorization capability and official builder now feed the
+release journal through an exclusive redacted preparer. ADR 0067 supplies the
+narrow release-intended client and returned-ID-checking route, and the checked
+one-shot worker invokes the sealed publisher. Rust type narrowing still does not
+scope the raw bearer at the server: production requires a dedicated UID and
+network policy so actors never receive authorization bytes or the release bearer. The release and sidecar
 journals have no shared transaction. The remaining builders, actual-local
 tag-13/indexer evidence, release-service clock/route ownership and wiring,
 actual-local tag-14/tag-15 sequencer effects and finalized discovery,

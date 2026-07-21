@@ -80,8 +80,10 @@ at-most-once component evidence. ADR 0070 now supplies the missing typed actor
 barrier: only an exact stable finalized Initialize `Found` mints a private-field
 non-`Clone` capability, and the Taker Fund method consumes it before transport.
 Missing, moving, unavailable, or mismatched evidence cannot attempt Fund. The
-focused proof is synthetic/literal-loopback component evidence; no actual-local
-effect or swap is claimed.
+focused proof is synthetic/literal-loopback component evidence. A separate
+role-fixed actual-local run later finalized Initialize in block 3008 and Fund in
+block 3023; that retained run is historical because its signed continuation
+expired, and no swap is claimed.
 `prepare_native_xmr_claim_authorization_v3` separately recomputes the exact
 NUL-terminated partial commitment, requires and revalidates that durable Fund,
 derives nonce `Fund + 1` without an RPC, builds generated tag 14 with the sole
@@ -115,25 +117,29 @@ both durable records and neither preparation step submits. The generic route
 now admits only that exact completed durable tag-15 claim; an authenticated
 fresh-sidecar test performs its one accepted send, while drift or missing
 durable state fails before node I/O. Tag 14 remains dedicated-release-only.
-Actual-local tag-14/tag-15 execution and finalized discovery, adaptor
-extraction, and actor ownership remain composition work. The three
-refund/completion/punishment builders still fail closed with typed `Unavailable`.
+Actual-local tag-14/tag-15 execution and finalized discovery remain. Exact
+role-local actor bridges are component-GREEN: Maker consumes Maker-side tag-14
+`DiscoverByTerms` and adapts the existing claim presignature; Taker consumes
+Taker-side tag-15 discovery and emits the extraction packet. Cross-role and
+owner-side exact evidence is rejected. The three refund/completion/punishment
+builders still fail closed with typed `Unavailable`.
 
-The Taker classifier now admits only exact durable Initialize or Fund targets
-before any indexer read. Initialize requires canonical generated ABI, six
-ordered accounts, the sole depositor signer, historical `Empty` metadata, and
-zero custody. Fund retains `Funded` metadata and exact custody amount checks.
-Both require candidate/tip/window re-pins, and every missing case remains
-`Uncertain`. The full pinned sidecar package, strict Clippy, warning-free
-Rustdoc, and dependency policy pass. This is synthetic classification, not an
-actual local-devnet read.
+The finalized classifier now covers four exact effects. Owner-side Taker
+classification accepts durable Initialize/Fund; role-local discovery exposes
+only tag 14 to Maker and tag 15 to Taker after checking generated ABI, accounts,
+signer, state, committed partial or aggregate signature, and stable
+candidate/tip/window re-pins. Missing remains `Uncertain`; cross-role or
+owner-side evidence is rejected by the lifecycle commands. The full pinned
+sidecar package, strict Clippy, warning-free Rustdoc, and dependency policy
+pass. Tag-14/tag-15 coverage is synthetic component evidence, not an actual
+local-devnet claim read.
 
 The main-process adapter exposes two Taker-only non-cloneable authorities.
 Stage-B claim authorization re-derives the committed partial and signed
 runtime binding. The ADR-0070 pre-Fund boundary mints exact finalized-Initialize
 evidence only through `LezBridgeAdapter<BridgeClient>` and consumes it after
 run, role, runtime, terms, facts, ID, and bytes checks. A mismatch fails before
-transport. The package passes 96 non-doc tests plus three doctests, strict
+transport. The package passes 98 non-doc tests plus three doctests, strict
 Clippy, Rustdoc, formatting, and diff gates. Its authenticated servers and
 indexer are literal-loopback/synthetic fixtures with zero external resources.
 The official sidecar builder independently validates the generated ABI,
@@ -166,10 +172,16 @@ explicit standalone CI contract are green. The checked process proof now seeds
 the journal only through the typed issuer, starts the real worker, observes one
 admitted sidecar submission after the official v0.2 indexer-wire finalized-clock reads, and
 starts a fresh worker that reports observe-only without another RPC or
-submission. CI runs that proof. Different-UID and network isolation,
-actual-local node execution, authorization finality, actors, and an actual swap
-remain absent. Preparation still extracts bytes in the trusted test process and
-must move behind the service boundary before an actor-isolation claim.
+submission. CI runs that proof. Different-UID and network isolation, actual-local node execution,
+authorization finality, and an actual swap remain absent. ADR 0074 now adds a
+separate redacted one-shot preparer in the same locked package. It re-derives
+Stage A/B, recovers the exact tag-13 bytes using the original durable request
+ID, proves finalized Fund and authenticated Monero topology/output, loads the
+completed Taker journal, then descriptor-exclusively creates a mode-`0600`
+one-link release database and authenticates it after drop/reopen. The combined
+standalone suite is 8 of 8; strict Clippy, warning-fatal Rustdoc, and
+advisory/ban/license/source gates pass. The preparer has no publication client,
+and its actual-local invocation remains pending.
 
 The Monero output observation is deliberately not claim-partial release
 authority. The one-command topology
@@ -272,8 +284,9 @@ point-checked key, exact unlocked-balance validation, one sweep, and final
 confirmations. The next fresh topology emits separate owner-only RPC and wallet
 password files for each role; credentials and key bytes never enter evidence or
 argv. This 18-test adapter checkpoint has not yet funded the agreement address.
-Release-worker clock/route wiring, tag-14 submission and tag-14/tag-15 finalized discovery, adaptor extraction, official-wallet
-claim, and fresh terminal roles remain before the happy PoC. Refund/punishment
+Fresh actual-local preparer/worker execution, tag-14 submission/finality,
+tag-15 submission/finality, role-local adaptor extraction, and the reconstructed
+official-wallet claim remain before the happy PoC. Refund/punishment
 follow as the next progressive slice. Full sidecar, security, architecture, and
 diff gates remain mandatory before each pushed checkpoint. The
 exact components/RPCs and both target and bootstrap sequences are in

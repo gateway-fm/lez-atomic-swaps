@@ -3343,19 +3343,18 @@ not a chain mutation or swap.
 
 The immediate critical path is now:
 
-1. **GREEN:** execute tag 13 with the retained funded Taker key and canonical
-   Stage A/B; retain exact finalized Initialize block 3008 followed by Fund
-   block 3023 before the signed cutoff;
-2. compose the GREEN Taker-journal loader with that actual finalized Fund,
-   authenticated Monero output/topology observations, typed issuer, stable
-   finalized clock, and release worker. Submit tag 14 once and require exact
-   finalized authorization before Maker use;
-3. execute and classify the GREEN Maker tag-15 path, ingest its finalized
-   aggregate signature into the Maker claim journal, extract and point-check the
-   Maker scalar, reconstruct the shared Monero spend key, claim through the
-   official wallet RPC, and seal the sole LEZ-first happy evidence/manual
-   reproduction. Pre-funding proof of the hidden partial remains disclosed as
-   GW-M4-003 for production review.
+1. **GREEN:** actual tag 13 finalized Initialize and Fund on local LEZ; the v2
+   owner-only evidence format now retains the original durable preparation
+   request ID needed to recover the exact reserved Fund bytes;
+2. **COMPONENT GREEN:** the dedicated release preparer revalidates Stage A/B,
+   recovers that exact tag-13 reservation, proves finalized Fund, authenticated
+   peerless Monero topology and the exact funded output, loads the completed
+   Taker claim journal, then exclusively creates and restart-authenticates the
+   sealed release database. The live worker still must submit tag 14 once;
+3. **COMPONENT GREEN:** role-local finalized discovery and lifecycle bridges now
+   feed Maker-side tag 14 into the Maker journal/adaptation path and Taker-side
+   tag 15 into the Taker extraction path. The fresh devnet still must execute
+   both effects and the reconstructed official-wallet Monero sweep.
 
 The route audit found no cryptographic or Logos protocol blocker. The former
 Monero-identity plumbing gap is closed: a narrow maintained-client attestor now
@@ -3387,8 +3386,8 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by the next push is 6 to 10 focused engineering
-hours to the first reproducible independent-actor happy claim and 6 to 12
+The checkpoint ETA carried by this push is 4 to 7 focused engineering hours
+to the first reproducible independent-actor happy claim and 6 to 12
 additional hours to the local refund/punishment PoC. This is based on the
 observed Stage-A and Stage-B slice history plus the tag-13 live-path audit, not
 a production-hardening estimate. Exact deployment, funded identities,
@@ -3402,19 +3401,20 @@ stage.
 
 The remaining happy-path implementation order is:
 
-1. **GREEN:** execute/classify tag-13 Initialize and Fund through the retained
-   local LEZ stack before the signed funding cutoff;
-2. drive the existing Taker journal handoff through actual tag-14 submission
-   and finality, then complete, submit, and finalize tag 15;
-3. ingest the finalized aggregate signature, extract and point-check Maker's
-   share, reconstruct the spend key, and claim through the official wallet RPC.
+1. start a fresh isolated LEZ/Monero run with wider signed deadlines and retain
+   Stage A, one journal per role, Stage B, and tag-13 v2 evidence;
+2. fund the Stage-A shared address, run the new preparer, publish tag 14 through
+   the sealed worker, and require Maker-side finalized discovery;
+3. adapt/submit tag 15, require Taker-side finalized discovery, extract and
+   point-check the share, reconstruct the spend key, and perform the bounded
+   official-wallet sweep with retained evidence.
 
 The retained funded LEZ signer files are present in their same-run owner-only
 Maker/Taker roots at mode `0600`, size 65, and link count one. Metadata is not
 cryptographic provenance, so tag 13 must still derive and compare the Taker
 account before its first RPC; the executable already performs that check. No
-external or Logos dependency blocks the remaining happy path. Bounded
-non-owned tag-14/tag-15 discovery remains post-PoC hardening.
+external or Logos dependency blocks the remaining happy path. Role-local non-owned tag-14/tag-15 discovery is component-GREEN; actual-node
+execution and retained evidence remain.
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 

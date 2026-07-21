@@ -187,14 +187,16 @@ require crates.io and the pinned official Git source.
 
 ## Residuals
 
-- Preparation still occurs outside this one-shot publication worker.
+- ADR 0074 supplies a separate exclusive one-shot preparer; its actual-local
+  execution and different-UID isolation remain pending.
 - The source boundary does not by itself prove a different UID, mount
   namespace, or network namespace. The later isolated runtime lane must deny the
   actor access to the credential paths, sidecar, indexer, and sequencer.
 - The pinned official v0.2 genesis block ID is one. A later Logos version
   requires an explicit compatibility update and fresh tests, not silent reuse.
-- Actual-local Fund evidence, actual sequencer admission, authorization
-  finality, LEZ claim completion, role processes, and the M4 swap remain.
+- Actual-local tag 13 is GREEN. Fresh Monero funding, preparer/publisher
+  execution, authorization finality, LEZ tag-15 completion, the reconstructed
+  wallet sweep, and the M4 swap remain.
 - The root adapter graph still carries pre-existing upstream deprecation
   warnings. The worker is clean under strict no-deps lint; dependency warnings
   remain tracked separately from worker-owned code.
