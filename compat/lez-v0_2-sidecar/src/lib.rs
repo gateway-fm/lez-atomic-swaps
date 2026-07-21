@@ -15,6 +15,8 @@ mod finalized_claim_observation;
 mod finalized_refund_observation;
 mod finalized_xmr_observation;
 mod m4_finalized_facts;
+#[cfg(target_os = "linux")]
+mod m4_stage_a_composer;
 mod native_prepare;
 mod runtime;
 mod server;
@@ -48,6 +50,11 @@ pub use m4_finalized_facts::{
     CHECKED_M4_ESCROW_PROGRAM_ID, CHECKED_M4_ESCROW_PROGRAM_ID_HEX, M4FinalizedAccountIds,
     M4FinalizedAccountNonce, M4FinalizedAccountPresence, StableM4FinalizedNonceSnapshot,
     read_stable_m4_finalized_nonce_snapshot, validate_checked_m4_escrow_program_id,
+};
+#[cfg(target_os = "linux")]
+pub use m4_stage_a_composer::{
+    ActualLocalM4StageAConfig, M4_STAGE_A_DEPLOYMENT_RESIDUAL, M4StageAComposeReceipt,
+    M4StageAParameters, compose_m4_stage_a_actual_local,
 };
 pub use native_prepare::{
     NativeEscrowPlanner, NativePrepareError, NonceSource, ZecEscrowInstruction,

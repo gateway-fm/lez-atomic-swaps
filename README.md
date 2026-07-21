@@ -229,6 +229,16 @@ Both owner nonces are now one and their allocations remain 200000 and 100000;
 the [actor-onboarding packet](docs/evidence/m4-local-actor-onboarding-20260720.json)
 contains no signing material. This closes funding/nonce prerequisites only;
 fresh role-process lifecycle execution and actual swaps remain 0 of 1.
+The first actual-local Stage-A replay is now GREEN. A read-only composer used
+the retained official LEZ sequencer/indexer and a fresh isolated official
+Monero 0.18.5.1 Regtest daemon, cross-checked finalized block 2281, and emitted
+one canonical unsigned agreement. Independent Maker and Taker processes then
+signed it, assembled commitment `170c23ad...66009`, and atomically published
+byte-identical claim/refund session files. The
+[Stage-A packet](docs/evidence/m4-actual-stage-a-poc-20260720.json) records the
+non-secret identities and hashes. No public RPC, peer, faucet, public funds, or
+external finality service participated. This is real RPC-backed pre-effect
+composition, not a chain mutation or completed swap.
 Actual-local tag-13 execution/classification, release-worker clock/route wiring,
 tag-14 submission and tag-14/tag-15 finalized discovery, adaptor extraction, official-wallet
 claim, and fresh terminal roles remain before the happy PoC. Refund/punishment
@@ -262,8 +272,8 @@ accepts only correctly indexed BIP340 signatures. Each role then derives the
 same purpose-separated claim/refund contexts into one complete owner-only
 session directory published by a single no-replace rename. Six actor tests are
 GREEN, including two separate-process Stage-A tests. Public actual-local Stage-A
-composition, interactive journal rounds, Stage B, and chain effects remain
-pending; no swap is claimed.
+composition has also passed against the two isolated devnets; interactive
+journal rounds, Stage B, and chain effects remain pending. No swap is claimed.
 
 The fresh checked guest and current host components can be repeated
 independently before the full actor exists; the exact deployer and tag-15

@@ -2720,10 +2720,54 @@ because future nonces are checked but not leased. Crash resume,
 ambiguous-outcome recovery, and durable nonce leasing apply after stage
 composition and remain tracked for post-PoC hardening.
 
-Do not fabricate agreement/activation wires from unit-test constants to run the
-tag-13 binary. When the public actual-local composer has produced
-`$XMR_MATERIAL_ROOT/exchange/unsigned-stage-a.bin`, repeat the now-GREEN private
-role boundary with separate process invocations:
+Do not fabricate agreement/activation wires from unit-test constants. Start the
+Monero runner in keep mode, source its owner-only manifest, and use a retained
+isolated LEZ stack whose funded owners match the role packets:
+
+```sh
+export RUN_ID=m4-manual-stage-a-20260720a
+export MONERO_E2E_KEEP_RUNNING=1
+./scripts/run-monero-e2e.sh
+source ".e2e/${RUN_ID}/monero/run.env"
+export M4_LEZ_STACK_MANIFEST=/absolute/path/to/isolated/lez-v02/run.env
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8/lib
+
+SEQUENCER_URL="$(sed -n 's/^LEZ_SEQUENCER_RPC_URL=//p' "$M4_LEZ_STACK_MANIFEST")"
+INDEXER_URL="$(sed -n 's/^LEZ_INDEXER_RPC_URL=//p' "$M4_LEZ_STACK_MANIFEST")"
+SWAP_ID="$(printf '%s' "${RUN_ID}:stage-a:001" | sha256sum | cut -d' ' -f1)"
+NOW_S="$(date -u +%s)"
+FUNDING_CUTOFF_MS=$(((NOW_S + 14400) * 1000))
+REFUND_AT_MS=$((FUNDING_CUTOFF_MS + 10000))
+PUNISH_AT_MS=$((REFUND_AT_MS + 10000))
+
+cargo +1.96.0 build --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --bin lez-v02-xmr-stage-a-compose
+COMPOSER="$PWD/compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-stage-a-compose"
+"$COMPOSER" --sequencer-url "$SEQUENCER_URL" \
+  --indexer-url "$INDEXER_URL" \
+  --monero-daemon-url "$MONERO_DAEMON_ENDPOINT" \
+  --monero-rpc-username-file "$MONERO_DAEMON_USERNAME_FILE" \
+  --monero-rpc-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
+  --maker-public-packet "$XMR_MATERIAL_ROOT/exchange/maker.json" \
+  --taker-public-packet "$XMR_MATERIAL_ROOT/exchange/taker.json" \
+  --output-unsigned-stage-a "$XMR_MATERIAL_ROOT/exchange/unsigned-stage-a.bin" \
+  --swap-id "$SWAP_ID" --monero-amount-piconero 1000000000000 \
+  --lez-amount 700 --maker-xmr-funding-cutoff-ms "$FUNDING_CUTOFF_MS" \
+  --refund-at-ms "$REFUND_AT_MS" --punish-at-ms "$PUNISH_AT_MS"
+```
+
+The runner exports separate mode-`0600` daemon username/password files; never
+print or parse its combined curl credential. The read-only composer submits no
+transaction. It discovers Monero height zero, brackets actual LEZ accounts and
+nonces, cross-checks the indexer finalized hash with the sequencer, and writes
+the canonical output create-new. Account/nonce drift, nondefault escrow state,
+insufficient balance, crossed roles, or an existing output fails closed.
+Run `m4stagea-fb67fe1-20260720b` produced commitment `170c23ad...66009` at
+finalized block 2281; see
+[the non-secret packet](evidence/m4-actual-stage-a-poc-20260720.json). Those
+identities are evidence, not constants. After composition, use separate role
+processes:
 
 ```sh
 target/debug/xmr-reference-actor sign-stage-a taker \
@@ -2787,8 +2831,8 @@ cargo +1.96.0 test --locked --offline \
 
 Expected result is 2 of 2 passed in addition to the four provisioning tests.
 These tests use no Docker, node, RPC, peer, faucet, public endpoint, funds, or
-external finality service. At this checkpoint the actual-local public composer,
-interactive journal packet rounds, and Stage B still precede any tag-13 effect.
+external finality service. The actual-local public composer is now GREEN;
+interactive journal packet rounds and Stage B still precede any tag-13 effect.
 
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and

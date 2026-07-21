@@ -130,6 +130,72 @@ pub struct MoneroChainIdentity {
     genesis_hash: [u8; 32],
 }
 
+/// Read-only typed attestor for an actual local daemon's height-zero identity.
+///
+/// This boundary owns no wallet, output, signing, or submission capability. It
+/// exists so a new agreement can bind the chain it actually contacted instead
+/// of accepting a caller-supplied genesis hash.
+pub struct MoneroChainIdentityAttestor {
+    network: MoneroNetwork,
+    daemon: DaemonJsonRpcClient,
+    daemon_origin: String,
+}
+
+impl MoneroChainIdentityAttestor {
+    /// Builds one Digest-authenticated, literal-loopback discovery boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MoneroEvidenceError::RpcClientBuild`] if the maintained typed
+    /// client cannot be constructed. Route and credential validation happens in
+    /// [`LoopbackRpcEndpoint::new`] before this method.
+    pub fn new(
+        network: MoneroNetwork,
+        daemon: &LoopbackRpcEndpoint,
+    ) -> Result<Self, MoneroEvidenceError> {
+        let client = daemon
+            .client()
+            .map_err(|source| MoneroEvidenceError::RpcClientBuild {
+                endpoint: "daemon JSON",
+                source,
+            })?
+            .daemon();
+        Ok(Self {
+            network,
+            daemon: client,
+            daemon_origin: daemon.base_url.clone(),
+        })
+    }
+
+    /// Discovers the exact nonzero block hash at height zero.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed if the typed RPC fails or returns an all-zero placeholder.
+    pub async fn discover(&self) -> Result<MoneroChainIdentity, MoneroEvidenceError> {
+        let hash =
+            MoneroRpcPort::rpc("on_get_block_hash(0)", self.daemon.on_get_block_hash(0)).await?;
+        identity_from_observed_hash(self.network, hash_bytes(hash.as_ref()))
+    }
+
+    /// Non-secret exact daemon origin used for discovery.
+    #[must_use]
+    pub fn daemon_origin(&self) -> &str {
+        &self.daemon_origin
+    }
+}
+
+impl fmt::Debug for MoneroChainIdentityAttestor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MoneroChainIdentityAttestor")
+            .field("network", &self.network)
+            .field("daemon_origin", &self.daemon_origin)
+            .field("credentials", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
 impl MoneroChainIdentity {
     /// Creates one exact named chain identity.
     ///
@@ -517,6 +583,9 @@ pub enum MoneroEvidenceError {
         #[source]
         source: anyhow::Error,
     },
+    /// The actual daemon returned an unusable all-zero height-zero identity.
+    #[error("Monero daemon returned an all-zero height-zero hash")]
+    ZeroObservedGenesisHash,
     /// A decoded collection exceeded its post-decode `PoC` bound.
     #[error("decoded Monero `{resource}` exceeded the semantic bound {maximum}")]
     SemanticResponseBound {
@@ -603,6 +672,14 @@ pub enum MoneroEvidenceError {
     /// Wallet output reports a nonzero remaining unlock distance.
     #[error("Monero wallet output still reports a nonzero unlock distance")]
     NonzeroUnlockDistance,
+}
+
+fn identity_from_observed_hash(
+    network: MoneroNetwork,
+    genesis_hash: [u8; 32],
+) -> Result<MoneroChainIdentity, MoneroEvidenceError> {
+    MoneroChainIdentity::new(network, genesis_hash)
+        .map_err(|_| MoneroEvidenceError::ZeroObservedGenesisHash)
 }
 
 fn valid_credential(value: &str, colon_allowed: bool) -> bool {
@@ -1503,6 +1580,26 @@ mod tests {
             MoneroOutputVerifier::new(identity, &aliased_daemon, &aliased_wallet),
             Err(MoneroEvidenceError::AliasedRpcOrigins)
         ));
+    }
+
+    #[test]
+    fn observed_height_zero_identity_is_exact_and_nonzero() {
+        let identity = identity_from_observed_hash(MoneroNetwork::Regtest, [7; 32])
+            .expect("actual nonzero height-zero identity");
+        assert_eq!(identity.network(), MoneroNetwork::Regtest);
+        assert_eq!(identity.genesis_hash(), [7; 32]);
+        assert!(matches!(
+            identity_from_observed_hash(MoneroNetwork::Regtest, [0; 32]),
+            Err(MoneroEvidenceError::ZeroObservedGenesisHash)
+        ));
+
+        let endpoint = LoopbackRpcEndpoint::new("http://127.0.0.1:18081", "daemon", "secret")
+            .expect("literal-loopback authenticated endpoint");
+        let attestor = MoneroChainIdentityAttestor::new(MoneroNetwork::Regtest, &endpoint)
+            .expect("typed height-zero attestor");
+        let debug = format!("{attestor:?}");
+        assert!(debug.contains("127.0.0.1:18081"));
+        assert!(!debug.contains("secret"));
     }
 
     #[test]

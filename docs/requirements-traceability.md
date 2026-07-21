@@ -78,8 +78,17 @@ the same purpose-separated claim/refund contexts into one exact owner-only
 directory exposed by one no-replace rename; a canonical half-bundle cannot
 appear. Four provisioning and two black-box Stage-A tests, default and
 provision-only strict Clippy, warning-fatal Rustdoc, formatting, and diff gates
-are GREEN. Public actual-local composition, nonce/partial journal rounds, Stage
-B, and every chain effect remain.
+are GREEN. Public actual-local composition is now GREEN too: the read-only
+sidecar composer used maintained typed Monero RPC plus official LEZ v0.2
+sequencer/indexer clients, discovered nonzero height-zero identity, required
+exact default escrow prestate and funded dedicated owners, cross-checked the
+indexer finalized hash at sequencer block 2281, bracketed stable accounts and
+nonces across monotonic live tips, and published one no-clobber canonical wire.
+Separate Maker/Taker processes signed it and produced equal same-purpose atomic
+session files. Adapter 17/17, composer 10/10, strict Clippy, formatting,
+warning-fatal private Rustdoc, isolation policy, and the actual process replay
+are GREEN. This is pre-effect evidence: nonce/partial journal rounds, Stage B,
+and every chain effect remain, so the M4 count is still 0 of 1 swaps.
 The 2026-07-18 authority refresh pins the live RFP repository at master commit
 `121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,

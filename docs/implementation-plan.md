@@ -3354,11 +3354,13 @@ The immediate critical path is now:
    sole LEZ-first happy evidence/manual reproduction. Pre-funding proof of the
    hidden partial remains disclosed as GW-M4-003 for production review.
 
-The route audit found no cryptographic or Logos protocol blocker. One local
-plumbing item remains: the Monero topology verifier revalidates a supplied
-chain identity but does not discover it, so the compose runner must retain the
-actual height-zero hash for revalidation or add one narrow discovery method.
-This is implementation work, not an external blocker.
+The route audit found no cryptographic or Logos protocol blocker. The former
+Monero-identity plumbing gap is closed: a narrow maintained-client attestor now
+discovers height zero from the authenticated daemon, while the composer binds
+that nonzero hash together with the actual LEZ genesis, channel, stable account
+snapshot, and an indexer anchor cross-checked against the sequencer. The
+topology runner emits separate owner-only username/password files so the live
+path never parses or prints its combined curl credential.
 
 The signed-refund and punishment recovery paths follow in the next progressive
 slice after the reproducible happy PoC; they do not delay that first vertical
@@ -3374,33 +3376,32 @@ both executed on the isolated official fakechain, with the spend confirmed ten
 times and exact cleanup. That deterministic-key development run is not retained
 milestone evidence and is not an atomic swap.
 
-The checkpoint ETA carried by this push is 1.5 to 3.5 focused engineering hours to the first reproducible independent-actor claim-path PoC and 8 to 16
-additional hours to the local claim/refund/punishment PoC. A direct source audit
-found two previously untracked repository gaps. Exact completed tag-15
-admission is now GREEN; bounded finalized discovery for the non-owned
-tag-14/tag-15 effects remains. This estimate reflects the measured remaining
-composition work, not a regression. Exact checked local
-deployment and funded two-identity Vault onboarding are now actual-local GREEN;
-the pure exact Stage-A future-message/hash planner, validated-session
-descriptors, tested role-fixed tag-13 executable, exact finalized-Initialize/Fund
-classifier and consuming Fund barrier, and durable Maker tag-15
-prepare/complete path are component-GREEN. Independent role-process material
-provisioning and the authenticated completed-Taker-journal-to-tag-14 handoff are
-GREEN. Private Stage-A signing, public role-indexed assembly, and one-rename
-atomic claim/refund session roots are also GREEN through two black-box process
-tests; the provision-only feature graph excludes the role-runner and its
-incompatible sidecar dependencies. Public actual-local Stage-A composition,
-Stage-B countersigning and the remaining journal packet rounds,
-Initialize/Fund execution, release-worker actual-local tag-14 submission,
-actual tag-15 execution, finalized tag-14/tag-15 discovery, adaptor
-extraction integration, official-wallet claim completion, and fresh lifecycle
-actors dominate the next vertical slice. The handoff's 5 focused and 98 full
-package tests, strict Clippy, formatting, and warning-fatal Rustdoc are GREEN;
-mocked transports and checked
-recursive cases still do not count as swap runtime evidence.
-The ETA must be refreshed again at the next verified push.
-GW-M4-001, GW-M4-002, and GW-M4-003 remain upstream production/review
-disclosures and do not block the private local implementation.
+The checkpoint ETA carried by this push is 1.5 to 3 focused engineering hours
+to the first reproducible independent-actor claim-path PoC and 8 to 16
+additional hours to the local claim/refund/punishment PoC. Exact deployment,
+funded identities, future-message planning, journal-to-tag-14 handoff, and the
+complete pre-effect Stage-A path are GREEN. Run
+`m4stagea-fb67fe1-20260720b` used the actual isolated LEZ and Monero RPC stacks:
+the composer cross-checked finalized block 2281, two independent role processes
+signed the 114562-byte canonical wire, assembly produced commitment
+`170c23ad...66009`, and both atomic session roots contained byte-identical
+same-purpose files. The post-provision compose/sign/assemble/session path took
+about 75 seconds; no chain submission occurred.
+
+The remaining happy-path implementation order is:
+
+1. execute the existing commitment, nonce-opening, and allowed-partial journal
+   rounds, then build and countersign canonical Stage B;
+2. recover the retained funded LEZ owner signing roots or regenerate one fresh
+   isolated funded stack, then execute/classify tag-13 Initialize and Fund;
+3. drive the existing Taker journal handoff through actual tag-14 submission
+   and finality, then complete, submit, and finalize tag 15;
+4. ingest the finalized aggregate signature, extract and point-check Maker's
+   share, reconstruct the spend key, and claim through the official wallet RPC.
+
+Missing retained owner-key provenance is a local evidence risk, not an external
+or Logos blocker; fresh isolated regeneration is the bounded fallback and is
+included near the ETA upper bound. Bounded non-owned tag-14/tag-15 discovery
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 

@@ -169,10 +169,10 @@ public deployment.
 
 ## M4 integration component and RPC status
 
-Solid green-labelled components have executable source gates. Dotted edges are
-the remaining local-PoC composition; no public endpoint, faucet, peer, or public
-fund participates. Every actor-facing bridge and wallet port will be a unique
-dynamic literal-loopback publication owned by one run.
+Solid green-labelled components have executable source gates; the Stage-A
+composer edges also have one actual-local replay. Dotted edges are remaining
+effect work. No public endpoint, faucet, peer, or public fund participates;
+every RPC is a unique literal-loopback publication owned by one isolated run.
 
 ```mermaid
 flowchart LR
@@ -194,10 +194,14 @@ flowchart LR
     RoleProvisioner["Independent role provisioner<br/>four tests green including process E2E"] --> RoleBundles[("Atomic manifest-bound Maker and Taker bundles")]
     RoleBundles -.-> MakerActor
     RoleBundles -.-> TakerActor
-    RoleBundles --> StageACompose["Private Stage A signing assembly and atomic sessions<br/>six actor tests green"]
+    RoleBundles --> StageAComposer["Read only actual local Stage A composer<br/>one RPC backed replay green"]
+    Sequencer -->|"official account block and tip RPC"| StageAComposer
+    Indexer -->|"stable finalized four account RPC"| StageAComposer
+    Monerod -->|"Digest authenticated height zero RPC"| StageAComposer
+    StageAComposer --> StageACompose["Independent signing assembly and atomic sessions<br/>actual replay plus six tests green"]
     StageACompose -.-> StageB
-    FinalizedNonces --> StageACompose
-    FuturePlan --> StageACompose
+    FinalizedNonces --> StageAComposer
+    FuturePlan --> StageAComposer
     ActorSigners[("Independent owner-private Maker and Taker signers<br/>not committed")] --> VaultCli["Actual local Vault Claim CLI"]
     VaultCli --> Sequencer
     Sequencer --> VaultFinality[("Taker block 228 and Maker block 240<br/>funded identity and nonce readiness green")]
@@ -229,7 +233,7 @@ flowchart LR
     ClaimEvidence -.-> ReleaseStore
     MakerSidecar -.-> Sequencer
     TakerSidecar -.-> Sequencer
-    MakerSidecar -.-> Indexer["Actual local LEZ v0.2 indexer<br/>dynamic loopback composition pending"]
+    MakerSidecar -.-> Indexer["Actual local LEZ v0.2 indexer<br/>Stage A reads green; effect finality pending"]
     TakerSidecar -.-> Indexer
     Indexer -.-> FinalizedClassifier
     SyntheticIndexer["Synthetic FinalizedIndexerApi<br/>component E2E only"] --> FinalizedClassifier
@@ -273,6 +277,15 @@ flowchart LR
     MakerActor -.-> Monerod
     TakerActor -.-> Monerod
 ```
+The actual Stage-A composer owns read clients only: official LEZ v0.2 sequencer
+and finalized-indexer clients plus a maintained typed Monero daemon client. It
+binds observed genesis/channel, exact default escrow prestate, funded owners,
+stable finalized nonces, an indexer hash cross-checked at the same sequencer
+height, and a safely bracketed monotonic live tip before one create-new wire.
+Run `m4stagea-fb67fe1-20260720b` exercised all three RPC routes, then separate
+Maker/Taker processes signed, assembled, and initialized equal session roots.
+This component cannot deploy, submit, fund, authorize, claim, or spend; all
+effect edges remain dotted.
 
 The Monero observation is non-cloneable but is not itself claim-partial
 authority. It retains the exact daemon and wallet origins. A separate
@@ -705,7 +718,7 @@ revalidation, propagation, and finality evidence before release.
 | M4 typed Stage-B authorization and pre-Fund gate | Two private-field non-`Clone` adapter capabilities are component-GREEN; 98 non-doc tests plus 3 doctests and strict gates pass | Authenticated literal-loopback bridge calls after Taker-only preflight; synthetic finalized response for Initialize; no node, public RPC, or external resource | Only `LezBridgeAdapter<BridgeClient>` can mint either capability. Stage-B authorization binds the committed partial; the journal handoff opens only the exact completed Taker claim session and rebinds its transcript/partial without a plaintext side store; ADR 0070 binds exact finalized Initialize facts and consumes them before Fund. Drift fails before transport | Load exact Taker partial; prepare tag-14 authorization; classify exact Initialize; submit exact Fund under its transaction-ID-derived request key | Invalid journals make zero RPC calls. Official sidecar builders/classifier independently validate durable ABI and ownership. This row does not claim actual-local finality, node effect, or claim PoC |
 | M4 official Stage-B builder, native-XMR escrow, tag-15 completion, and exact Initialize/Fund classifier | Four of seven builders plus the exact durable Initialize/Fund classifier, genesis-bound clock, and exact owned tag-15 generic admission are component-GREEN; full pinned sidecar package and strict Clippy/Rustdoc/dependency policy pass | Capability-authenticated literal-loopback v3 routes; classifier uses synthetic `FinalizedIndexerApi` only after durable ownership; clock uses official finalized ID plus block-by-ID/hash and exact runtime genesis; preparation/completion/classification make zero sends; an official-message tag-15 fixture makes one authenticated send | Taker runtime binds exact terms/deployment/accounts/signers, tags 13/14, canonical bytes/IDs, commitment, nonces, and durable replay. Maker tag 15 binds aggregate authority/nonce, generated ABI/accounts, immutable message hash, valid aggregate BIP340 signature, separate durable prepare/complete records, and exact completed-record admission | Persist exact Initialize/Fund, tag 14, unsigned tag 15, and completed canonical tag 15 before exposure; classify exact finalized Initialize or Fund with canonical stability re-pins; admit only an exact owned tag-15 submission and reject tag 14 on the generic route | Missing remains `Uncertain`; wrong/moving/unavailable facts fail closed. Three refund/completion/punishment builders and non-Initialize/Fund discovery remain `Unavailable`; actual-local classification, actual tag-14/tag-15 finalized discovery and effects, claim PoC, and resumable actor completion are pending |
 | M4 pure Stage-A future-message planner | 3 of 3 focused tests GREEN | Pure function only: no endpoint, RPC, reservation, journal, persistence, signer, or submission authority | One caller-supplied stable finalized snapshot binds Maker/Taker owner and claim/refund aggregate-authority nonces. Aliased identities, invalid keys, nonce overflow, or colliding hashes fail closed | Constructs exact generated official tag-15 claim, tag-16 signed-refund, and tag-17 punishment messages plus distinct NSSA hashes. Existing tag-15 prepare/complete accepts the planned claim message/hash byte-identically | Closes placeholder future-message planning only. Callers must obtain and bind the stable finalized snapshot; tag-16/tag-17 builders, signatures, persistence, submission, finality, actors, and swap effects remain unavailable |
-| M4 independent XMR role provisioner and private Stage-A actor | Component-GREEN; 4 provisioning tests plus 2 black-box Stage-A process tests, plus 2 fresh manual provisioning invocations | No socket or RPC. Each process receives one new role root and owner ID; Maker privately imports the Taker view key. No Docker service, node, faucet, peer, or finality service is used | Provisioning atomically publishes each manifest-bound secret bundle. Before signing, the role revalidates manifest/owner/packet digest, all private keys, DLEQ share, view key, both public packets, and canonical Stage A. The complete claim/refund session directory is one no-replace rename | `provision`; private Stage-A signatures; public role-indexed assembly; per-role atomic `claim.json`/`refund.json` session roots | Same-host evidence is not different-UID isolation. Private-root/public-packet cross-output ambiguity and path-only upstream writer orphaning remain explicit; neither can publish a partial canonical role/session root. Public actual-local composition, Stage B journals, effects, and production custody remain pending |
+| M4 actual-local Stage-A composer and independent role actor | Component and pre-effect actual-local GREEN; 17 adapter tests, 10 composer tests, 4 provisioning tests, 2 black-box process tests, and 1 two-devnet replay | Composer owns read-only literal-loopback clients: Digest-authenticated official monerod 0.18.5.1 plus official LEZ v0.2 sequencer/indexer. Role processes have no socket or RPC and each receive one private root. No public RPC, peer, faucet, public fund, or external finality service is used | Composer binds observed Monero/LEZ identities, exact escrow/account state, cross-checked finalized anchor, stable nonces, future messages, roles, and canonical SDK wire. Each role revalidates every private/public binding before signing; each complete session directory is one no-replace rename | `lez-v02-xmr-stage-a-compose`; independent `sign-stage-a`; public `assemble-stage-a`; independent atomic `initialize-sessions` | Same-host evidence is not different-UID isolation. Composer does not prove the checked ProgramID deployment and has no submit authority; tag-13 must re-prove deployment before effects. Parent-path same-UID unpublished-orphan and ordinary in-memory credential-copy residuals remain. Stage B journals, effects, and production custody are pending |
 | M4 canonical tag-13 executor | Component-GREEN; focused tag-13 matrix 3 of 3 | Reuses authenticated generic submit and durable request journal; canonical transaction-ID request key; official-type loopback lookup/send; Fund first looks up exact Initialize | Owner-only pair, run, role, runtime, ABI, signature, accounts, nonces, bytes, IDs, and request identity revalidate before I/O. ADR 0070 adds an independent typed finalized barrier before the actor may call Fund | Ordered Initialize then Fund reaches lookup/send 3/2; replay unchanged; premature Fund 1/0; arbitrary ID or missing reservation zero-send | No Docker, public RPC, faucet, peer, public funds, or external finality. Actual-local node execution is pending; component finalized-Initialize actor gating is GREEN |
 | M4 Monero output observation adapter | Exact receipt observation component-GREEN in 7 of 7 focused tests; public release-issuer composition GREEN in the 35-test authority suite | Typed `monero-rpc` 0.5.1 to distinct credential-configured literal-loopback daemon and wallet origins; fixed 30-second request timeout; public/DNS RPC rejected | Exact network/genesis, standard shared address, transaction, amount, wallet-reported availability, canonical decoded-block membership, at least ten confirmations, and stable tip. The result is private-field and non-cloneable, but is not Stage-B or durable-consumption authority by itself | Typed height-zero hash, bracketed last headers, wallet transfer/available outputs, daemon transaction, containing header/block. Selected decoded collections are bounded | The public integration cross-binds it to the run-bound topology capability, consumes it once against Stage B, and journals it before publication. Actor composition remains pending. View-only spent status, upstream pre-decode bounds, discarded header trust flags, and malformed-block panic behavior remain explicit residuals. Peerless Regtest observation is supported; Stagenet/production hardening is pending |
 | M4 local Monero topology attestation | Run/chain/origin/auth capability component-GREEN; total adapter suite 16 of 16 plus strict Clippy/Rustdoc/format/diff; public release-issuer composition GREEN | Three distinct credential-configured literal-loopback origins; fixed timeout; project-owned `get_info`/`get_connections` response bodies are streamed with a 64 KiB cap | Private-field and non-`Clone`; correct target and foreign origins authenticate with their own Digest credentials, while replaying the foreign credential against the target must finish exact HTTP 401. Capability cross-binds exact run, Regtest chain, daemon origin, and target wallet origin to the output observation | Typed `get_info`, `get_connections`, both wallets `get_version`, and height-zero genesis. Requires fakechain, offline, `untrusted == false`, zero incoming/outgoing counts, empty connections, and matching genesis | Closes the earlier topology-auth residual for the isolated local Regtest PoC only. `monero-rpc` 0.5.1 lacks the two topology calls, so the narrow bounded adapter is project-owned and needs production/upstream review. No public/Stagenet trust, node publication, or claim PoC is claimed |

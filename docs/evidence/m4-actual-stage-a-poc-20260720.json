@@ -1,0 +1,74 @@
+{
+  "schema": "lez-atomic-swaps-m4-actual-stage-a-poc",
+  "version": 1,
+  "result": "passed",
+  "date_utc": "2026-07-20",
+  "milestone": "M4",
+  "scope": "actual-local read-only Stage-A composition, independent role signing, canonical assembly, and atomic role session initialization; no chain effect",
+  "source_base_commit": "fb67fe155cbb9c6183a251a1abbc203c2b6ed3e3",
+  "implementation_binding": "the Git commit containing this packet",
+  "run_id": "m4stagea-fb67fe1-20260720b",
+  "agreement": {
+    "swap_id": "74cd98f1dd6143be0169f9fd0aa269f08a15a0d862519fe37c3f02c36ea98210",
+    "commitment": "170c23ad14e7e738af917e22b125a2a62e248a92f0054e08195ff97c27266009",
+    "monero_amount_piconero": 1000000000000,
+    "lez_amount": 700,
+    "unsigned_wire_bytes": 114562,
+    "unsigned_wire_sha256": "16020cab93ae729e75dd2cdb97bc6d9974b6e0b0be9638a3e122e0c42e9eb585",
+    "signed_wire_sha256": "dc1de615b74a4eb3cb2fe94647d1d5fe2da02f35c526c187e9db4e3f1b1b5bb6",
+    "maker_signature_sha256": "d599cb2d9cd4a3aaf54bc43067a4b71290948cd951398941f1802a40208f3bba",
+    "taker_signature_sha256": "54fa5607e54769c43d23082c9be23a95321049a92ef636294007dbfacd514166"
+  },
+  "monero": {
+    "release": "0.18.5.1",
+    "nettype": "fakechain",
+    "offline": true,
+    "peers": 0,
+    "genesis_hash": "418015bb9ae982a1975da7d79277c2705727a56894ba0fb246adaabb1f4632e3",
+    "rpc_authentication": "Digest",
+    "rpc_binding": "dynamically allocated literal-loopback port",
+    "deterministic_local_funds": true
+  },
+  "lez": {
+    "release": "v0.2.0",
+    "channel_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_hash": "8aa42f94d48a342304dd599b194454d4aa4a59182d23e3527e02983a4d31b714",
+    "finalized_block_height": 2281,
+    "finalized_block_hash": "705390e6725e690ca8d6c4a91bf6117026786ab455f87c5edcd08c05d98d34c6",
+    "checked_escrow_program_id": "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82",
+    "maker_owner_hex": "d8f695e45e50c70bd6a99d2c39b9eca8dc81de5d6b5b9a51c5819cd71f35ff4f",
+    "taker_owner_hex": "15a53503615a30c8b7fcc48f6fa6857da4e2e234680a3482b13366e2d513d2c3",
+    "sequencer_binding": "literal-loopback official RPC",
+    "indexer_binding": "literal-loopback official finalized RPC"
+  },
+  "role_processes": {
+    "distinct_private_roots": true,
+    "separate_maker_and_taker_sign_invocations": true,
+    "canonical_role_indexed_assembly": true,
+    "maker_session_root_mode": "0700",
+    "taker_session_root_mode": "0700",
+    "session_file_mode": "0600",
+    "session_file_link_count": 1,
+    "claim_session_sha256": "7020e4b71b847d32833bbb921b8accb13037f01aa4f4b667b65fe890504229d6",
+    "refund_session_sha256": "68fbad367be41d3597df2db726ef8196bdafe571967d3a93147855a089c67248",
+    "same_purpose_bytes_equal_across_roles": true,
+    "claim_and_refund_bytes_distinct": true
+  },
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment_used": false,
+  "effects": {
+    "lez_transactions_submitted": 0,
+    "monero_transactions_submitted_by_composer_or_role_actor": 0,
+    "completed_atomic_swaps": 0
+  },
+  "remaining_happy_path": [
+    "interactive claim and refund adaptor journal rounds",
+    "canonical countersigned Stage B",
+    "actual tag-13 Initialize and Fund execution plus finality",
+    "actual tag-14 authorization and tag-15 claim execution plus finality",
+    "Maker-share extraction and official-wallet Monero claim"
+  ]
+}

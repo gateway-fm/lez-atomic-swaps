@@ -109,6 +109,13 @@ write_config() {
   chmod 0444 "$path"
 }
 
+write_secret_value() {
+  local path="$1"
+  local value="$2"
+  printf '%s\n' "$value" >"$path"
+  chmod 0600 "$path"
+}
+
 write_curl_config() {
   local path="$1"
   local user="$2"
@@ -172,6 +179,8 @@ write_wallet_config() {
 write_wallet_config "${config_dir}/funding-wallet.conf" funding "$funding_rpc_secret"
 write_wallet_config "${config_dir}/maker-wallet.conf" maker "$maker_rpc_secret"
 write_wallet_config "${config_dir}/taker-wallet.conf" taker "$taker_rpc_secret"
+write_secret_value "${credentials_dir}/daemon.username" daemon
+write_secret_value "${credentials_dir}/daemon.password" "$daemon_secret"
 write_curl_config "${credentials_dir}/daemon.curlrc" daemon "$daemon_secret"
 write_curl_config "${credentials_dir}/funding.curlrc" funding "$funding_rpc_secret"
 write_curl_config "${credentials_dir}/maker.curlrc" maker "$maker_rpc_secret"
@@ -284,7 +293,7 @@ cleanup() {
     echo "Monero Regtest remains running for RUN_ID=${run_id}"
     echo "Manifest: ${manifest}"
     echo "Runtime evidence: ${runtime_evidence}"
-    echo "Use only the actor-specific curl credential files under ${credentials_dir}"
+    echo "Use only the run-scoped credential files under ${credentials_dir}"
     echo "To clean up, source the manifest and run:"
     echo 'docker compose --project-name "$MONERO_COMPOSE_PROJECT" --file "$MONERO_COMPOSE_FILE" down --volumes --remove-orphans'
     echo 'docker network rm "$MONERO_NETWORK"'
@@ -707,6 +716,8 @@ bootstrap_complete_epoch="$(date +%s)"
   printf 'export MONERO_MAKER_WALLET_ENDPOINT=%q\n' "$maker_endpoint"
   printf 'export MONERO_TAKER_WALLET_ENDPOINT=%q\n' "$taker_endpoint"
   printf 'export MONERO_DAEMON_CREDENTIAL_FILE=%q\n' "${credentials_dir}/daemon.curlrc"
+  printf 'export MONERO_DAEMON_USERNAME_FILE=%q\n' "${credentials_dir}/daemon.username"
+  printf 'export MONERO_DAEMON_PASSWORD_FILE=%q\n' "${credentials_dir}/daemon.password"
   printf 'export MONERO_FUNDING_CREDENTIAL_FILE=%q\n' "${credentials_dir}/funding.curlrc"
   printf 'export MONERO_MAKER_CREDENTIAL_FILE=%q\n' "${credentials_dir}/maker.curlrc"
   printf 'export MONERO_TAKER_CREDENTIAL_FILE=%q\n' "${credentials_dir}/taker.curlrc"

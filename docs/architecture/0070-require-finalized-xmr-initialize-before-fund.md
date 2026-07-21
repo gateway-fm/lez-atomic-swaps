@@ -114,7 +114,7 @@ sequenceDiagram
         Sidecar->>Sequencer: Exact Fund lookup or one send
         Sequencer-->>Sidecar: Accepted or byte-identical AlreadyKnown
     else Missing, moving, unavailable, or invalid
-        Adapter-->>Taker: Fail closed; Fund is not attempted
+        Adapter-->>Taker: Fail closed and Fund is not attempted
     end
 ```
 

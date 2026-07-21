@@ -23,6 +23,7 @@ common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-
 hex = "=0.4.3"
 indexer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", default-features = false, features = ["client"] }
 indexer_service_protocol = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", default-features = false }
+lez-xmr-monero-adapter = { version = "=0.1.0", path = "../../crates/xmr-monero-adapter" }
 lez-xmr-swap-sdk = { version = "=0.1.0", path = "../../crates/xmr-swap-sdk" }
 jsonrpsee = { version = "=0.26.0", features = ["client-core", "server"] }
 nssa = { package = "lee", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
@@ -45,6 +46,7 @@ tower-http = { version = "=0.7.0", features = ["auth"] }
 url = "=2.5.8"
 vault_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 wallet = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+xmr-reference-actor = { version = "=0.1.0", path = "../../crates/xmr-reference-actor", default-features = false }
 zeroize = "=1.9.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]

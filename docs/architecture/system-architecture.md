@@ -2114,8 +2114,8 @@ supply that direction's safe recovery path.
 
 The shared signing, two-stage XMR SDK, and focused guest-source boundaries are
 executable without routing XMR through the BTC SDK. Independent provisioning,
-private Stage-A signing/assembly, and atomic session roots are GREEN; public
-actual-local composition, Stage B, and journal rounds remain. Solid edges are
+actual-local public Stage-A composition, private signing/assembly, and atomic
+session roots are GREEN; Stage B and journal rounds remain. Solid edges are
 component-tested or actual-local; dotted edges remain composition/effect work:
 
 ```mermaid
@@ -2129,9 +2129,13 @@ flowchart LR
     XmrActor["Fresh XMR lifecycle actors<br/>pending"] -.-> RoleRunner
     RoleProvisioner["Independent role provisioner<br/>four tests green including process E2E"] --> RoleBundles[("Atomic manifest-bound Maker and Taker bundles")]
     RoleBundles -.-> XmrActor
-    RoleBundles --> StageACompose["Private Stage A signing assembly and atomic sessions<br/>six actor tests green"]
+    RoleBundles --> ActualComposer["Read only actual local Stage A composer<br/>one two devnet replay green"]
+    ActualSequencer -->|"official account block and tip RPC"| ActualComposer
+    ActualIndexer -->|"stable finalized four account RPC"| ActualComposer
+    Monerod -->|"Digest authenticated height zero RPC"| ActualComposer
+    ActualComposer --> StageACompose["Independent Stage A signing assembly and atomic sessions<br/>actual replay plus six tests green"]
     StageACompose -.-> RoleRunner
-    FuturePlan --> StageACompose
+    FuturePlan --> ActualComposer
     XmrActor -.-> XmrSdk
     XmrActor -.-> OrdinaryClient["Ordinary BridgeClient<br/>eight methods green"]
     ActorSigners[("Independent owner-private Maker and Taker signers<br/>not committed")] --> VaultCli["Actual local Vault Claim CLI<br/>two identities finalized once"]
@@ -2167,7 +2171,7 @@ flowchart LR
     OrdinaryRoutes --> FinalizedClassifier["Taker exact finalized Initialize and Fund classifier<br/>synthetic component E2E green"]
     Reservation --> FinalizedClassifier
     SyntheticIndexer["Synthetic FinalizedIndexerApi<br/>component E2E only"] --> FinalizedClassifier
-    ActualIndexer["Actual local LEZ indexer<br/>composition pending"] -.-> FinalizedClassifier
+    ActualIndexer["Actual local LEZ indexer<br/>Stage A reads green; effect classification pending"] -.-> FinalizedClassifier
     FinalizedClassifier --> InitCapability["Non-cloneable exact finalized Initialize evidence"]
     InitCapability --> FundGate["Typed Fund submission gate"]
     FundGate --> OrdinaryClient
@@ -2216,7 +2220,7 @@ flowchart LR
     ReleaseJournal -.-> JournalBoundary["No transaction spans the two journals"]
     BridgeJournal -.-> JournalBoundary
     XmrObservation --> WalletRpc["Credential-configured wallet RPCs"]
-    WalletRpc --> Monerod["Official monerod Regtest"]
+    WalletRpc --> Monerod["Official monerod 0.18.5.1<br/>peerless Regtest"]
     WalletRpc --> Topology
     Monerod --> Topology
 ```

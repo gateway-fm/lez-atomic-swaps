@@ -1,7 +1,8 @@
 # ADR 0073: Compose XMR stage material through separate role journals
 
-Status: Accepted; provisioning plus private Stage-A signing, assembly, and
-atomic session-root derivation are GREEN. Public composition and Stage B remain.
+Status: Accepted; actual-local public Stage-A composition, independent private
+signing, canonical assembly, and atomic session-root derivation are GREEN.
+Interactive adaptor journals and Stage B remain.
 
 Date: 2026-07-20
 
@@ -10,9 +11,12 @@ Date: 2026-07-20
 The role-fixed tag-13 actor accepts only canonical validated Stage-A and
 Stage-B wires. Tests can construct those records. The role-fixed provisioning
 command now lets independent Maker and Taker processes generate private roots,
-DLEQ-backed shares, and public identity packets. Separate role processes now
-validate and sign one canonical unsigned Stage A, assemble its role-indexed
-signatures, and derive the same purpose-separated session contexts. The
+DLEQ-backed shares, and public identity packets. The public composer now obtains
+actual authenticated Monero height-zero identity plus official LEZ v0.2
+sequencer/account/finalized facts and emits one canonical unsigned Stage A.
+Separate role processes validate and sign that wire, assemble its role-indexed
+signatures, and derive the same purpose-separated session contexts. Run
+`m4stagea-fb67fe1-20260720b` exercised that complete pre-effect path. The
 interactive Stage-B journal rounds remain. Copying a test fixture or running
 both private roles in one process would not prove the required boundaries.
 
@@ -53,11 +57,12 @@ consumes it when the role partial is persisted, and rejects a repeated secret
 nonce fingerprint across purposes or swaps. A journal is never reset to retry
 a swap.
 
-The public planner uses both public role packets, a private shared-view-key
-handoff validated independently by each role, the actual local Monero identity,
-and one stable finalized LEZ view. It calls the existing Stage-A future-message
-planner and SDK validators; it does not implement a second wire or session
-formula.
+The public composer uses both public role packets, a private shared-view-key
+handoff validated independently by each role, an authenticated actual-local
+Monero height-zero observation, and bracketed live plus stable finalized LEZ
+views. It cross-checks the finalized indexer anchor against the sequencer and
+calls the existing Stage-A future-message planner and SDK validators; it does
+not implement a second wire or session formula and has no submission client.
 
 Keep actual-node Stage-A composition in the isolated `compat/lez-v0_2-sidecar`
 graph, where the official RPC clients, checked deployment, stable finalized
@@ -75,11 +80,11 @@ flowchart LR
     MakerProc --> MakerPublic["Maker public packet"]
     TakerPrivate --> ViewKey["Owner private shared view key handoff"]
     ViewKey --> MakerProc
-    TakerPublic --> Planner["Public Stage A planner"]
+    TakerPublic --> Planner["Actual local read only Stage A composer<br/>one live replay green"]
     MakerPublic --> Planner
     LezRpc["Official LEZ sequencer and finalized indexer RPCs"] --> Planner
-    MoneroRpc["Official Monero daemon and wallet identity"] --> Planner
-    Planner --> UnsignedA["Validated unsigned Stage A"]
+    MoneroRpc["Digest authenticated official monerod<br/>height zero identity"] --> Planner
+    Planner --> UnsignedA["Validated unsigned Stage A<br/>create new publication"]
     UnsignedA --> MakerProc
     UnsignedA --> TakerProc
     MakerProc --> Agreement["Canonical countersigned Stage A"]
@@ -174,12 +179,13 @@ leasing.
    create-new session writer; retain the runner's existing packet schema.
 3. **GREEN:** Extract the stable four-account finalized nonce snapshot and checked M4
    program identity from the tag-13 binary into the sidecar library.
-4. **PARTIAL GREEN:** The role-fixed actor now provisions, privately signs Stage
-   A, publicly assembles its exact role signatures, and atomically publishes
-   complete claim/refund session roots. Four provisioning plus two black-box
-   Stage-A process tests, strict Clippy/Rustdoc/fmt, and the provision-only
-   dependency graph are GREEN. Public actual-local Stage-A composition and the
-   interactive Stage-B journal assembly remain.
+4. **GREEN:** The actual-local composer binds authenticated official Monero and
+   LEZ facts into one canonical Stage A. The role-fixed actor provisions,
+   privately signs, publicly assembles exact role signatures, and atomically
+   publishes complete claim/refund session roots. Four provisioning plus two
+   black-box tests, 17 adapter tests, 10 composer tests, strict Clippy/Rustdoc/fmt,
+   one actual two-devnet replay, and the split feature graphs are GREEN. The
+   interactive Stage-B journal assembly remains.
 5. **GREEN:** The narrow Taker-journal loader opens only an existing completed
    role-bound claim journal, rebinds it to Stage B, and creates no plaintext
    partial store. Invalid journals make zero RPC calls.
@@ -191,10 +197,10 @@ these slices.
 
 ## Consequences
 
-- The user flow becomes reproducible without fixture secrets or merged roles.
-  The first GREEN step atomically creates two owner-only, manifest-bound roots
-  and canonical public packets; it deliberately makes no Stage-A/B or
-  chain-effect claim.
+- The user flow is reproducible without fixture secrets or merged roles. It
+  creates owner-only manifest-bound roots, observes both actual local chains,
+  countersigns Stage A in separate processes, and publishes complete role-local
+  session roots. It deliberately makes no Stage-B or chain-effect claim.
 - Interactive nonces remain durable and purpose-separated through existing
   code rather than a new store.
 - Public packets can be inspected and copied; private roots and the view-key
