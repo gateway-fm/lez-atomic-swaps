@@ -265,6 +265,13 @@ lock and no atomic-swap claim. Its signed continuation expires at
 `2026-07-21T05:05:40Z`; because the live audit found missing tag-14/tag-15
 composition, it is historical tag-13 evidence only. The happy E2E must use a
 fresh wider-window Stage A/B/tag-13 run after those own-code gaps close.
+The official-wallet effect boundary is now component-GREEN without a custom
+RPC schema: pinned `monero-rpc` 0.5.1 performs one exact funding transfer,
+fixed Regtest confirmations, `generate_from_keys` from the SDK's consumed
+point-checked key, exact unlocked-balance validation, one sweep, and final
+confirmations. The next fresh topology emits separate owner-only RPC and wallet
+password files for each role; credentials and key bytes never enter evidence or
+argv. This 18-test adapter checkpoint has not yet funded the agreement address.
 Release-worker clock/route wiring, tag-14 submission and tag-14/tag-15 finalized discovery, adaptor extraction, official-wallet
 claim, and fresh terminal roles remain before the happy PoC. Refund/punishment
 follow as the next progressive slice. Full sidecar, security, architecture, and

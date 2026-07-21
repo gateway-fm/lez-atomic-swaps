@@ -3005,6 +3005,24 @@ owner-only evidence/journal first. Never continue a retained run after its
 signed refund boundary; regenerate Stage A/B and tag 13 with a new bounded
 window instead.
 
+The typed official-wallet component can be checked independently:
+
+```sh
+cargo +1.96.0 test --locked --offline \
+  -p lez-xmr-monero-adapter --all-targets
+```
+
+Expected result is 18 passed. The effect API accepts only distinct
+credential-configured literal-loopback daemon/wallet origins. Its funding path
+uses the exact caller-supplied Stage-A destination/principal; its claim path
+consumes the SDK's point-checked reconstructed spend and view keys, requires the
+official restored address plus exact unlocked principal, permits one sweep
+transaction in the first vertical PoC, and mines the fixed ten confirmations.
+The unit suite makes no actual node call. A fresh `run-monero-e2e.sh` manifest
+exports separate mode-`0600` RPC username/password and wallet-password file
+paths for funding, Maker, and Taker. Never place those contents on argv or in
+evidence.
+
 The focused public-boundary command must report `running 1 test` and one
 passed; the full release-authority command must report 31 unit, 3 key-file, and
 1 public integration test passed (35 aggregate) and zero

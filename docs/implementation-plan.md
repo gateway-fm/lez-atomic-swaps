@@ -3363,7 +3363,15 @@ discovers height zero from the authenticated daemon, while the composer binds
 that nonzero hash together with the actual LEZ genesis, channel, stable account
 snapshot, and an indexer anchor cross-checked against the sequencer. The
 topology runner emits separate owner-only username/password files so the live
-path never parses or prints its combined curl credential.
+path never parses or prints its combined curl credential. The topology runner
+now emits separate mode-`0600` RPC username/password files for all three
+wallets plus separate wallet-password handoffs. A narrow typed wallet-effect
+boundary reuses pinned `monero-rpc` 0.5.1 for one exact Stage-A-address funding
+transfer, fixed local confirmations, SDK-key `generate_from_keys`, exact
+unlocked-principal validation, one sweep, and final confirmations. Its focused
+18-test crate, strict Clippy, and warning-fatal Rustdoc are GREEN. This is a
+component capability; no agreement-address funding or reconstructed claim from
+the current swap has executed through it yet.
 
 The signed-refund and punishment recovery paths follow in the next progressive
 slice after the reproducible happy PoC; they do not delay that first vertical

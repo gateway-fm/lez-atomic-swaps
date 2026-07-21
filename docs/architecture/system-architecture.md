@@ -2134,6 +2134,10 @@ flowchart LR
     ActualSequencer -->|"official account block and tip RPC"| ActualComposer
     ActualIndexer -->|"stable finalized four account RPC"| ActualComposer
     Monerod -->|"Digest authenticated height zero RPC"| ActualComposer
+    FundingWallet["Official funding wallet RPC<br/>separate owner only credentials"] --> WalletEffects["Typed Monero wallet effects<br/>exact transfer generate from keys and one sweep component green"]
+    TakerWallet["Official Taker wallet RPC<br/>separate RPC and wallet password files"] --> WalletEffects
+    WalletEffects -->|"generate ten local confirmations"| Monerod
+    WalletEffects -.-> XmrActor
     ActualComposer --> StageACompose["Independent Stage A signing assembly and atomic sessions<br/>actual replay plus six tests green"]
     StageACompose --> RoleRunner
     RoleRunner --> StageBActivation["One journal per role claim and refund rounds<br/>canonical Stage B actual replay green"]
