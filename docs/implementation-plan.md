@@ -2936,19 +2936,28 @@ Only a genuinely fresh third database was eligible for publication.
 - [ ] Finish and rehearse the run-scoped orchestrator through every role
   handoff, terminal assertion, evidence publication, and scoped cleanup. The
   manual procedure now includes the cross-chain binder, but
-  `scripts/run-m4-actual-claim-poc.sh` is deliberately partial: contract and
-  preflight work; `execute` now reaches two exact finalized fresh-actor Vault
-  Claims after deployment, then fails closed at `monero_stack` before any Monero
-  or swap effect. The run-scoped Monero, role-sidecar, and agreement/session launchers
-  exist but are not yet wired into `execute`. The agreement helper is fixture-GREEN
-  through countersigned Stage B. Its receipt calls CLI values `requested_terms`
-  and explicitly records that the helper itself does not decode and rebind those
-  terms from Stage A; the role actors remain the canonical validation and
-  signing boundary. The tag-13-through-cleanup tail is absent.
-  Parent-runner integration must stage each checked actor, role-runner, and
-  composer binary as an owner-held, mode-`0755`, single-link run artifact; the
-  shared `target/debug` cache is mode `0775` with two links and is intentionally
-  rejected by the helper trust boundary.
+  `scripts/run-m4-actual-claim-poc.sh` remains deliberately partial. Its
+  source/contract path now starts the run-scoped official Monero child, composes
+  canonical Stage A and countersigned Stage B through separate role journals,
+  publishes a durable create-new no-retry latch before the exact one-shot
+  tag-13 actor, and intentionally fails after tag-13 finality but before
+  swap-specific Monero funding. The exact cleanup ledger pre-registers the
+  Monero child, captures exact containers, volumes, network, and image, and
+  revalidates each persisted run label immediately before deletion; process
+  entries revalidate PID start time and executable identity, foreign-sentinel
+  survival is mandatory, and broad cleanup is forbidden. This is
+  contract-GREEN, not a clean actual replay from the current commit.
+  The agreement receipt calls CLI values `requested_terms` and explicitly
+  records that the helper itself does not decode and rebind those terms from
+  Stage A; the role actors remain the canonical validation and signing
+  boundary. The role-sidecar launcher is the remaining unwired launcher. Its
+  bridge state-directory lease is source/component-GREEN, but launcher support
+  for adopting the existing tag-13 state directory, a typed
+  tag-13-to-tag-14 exporter, and an actual continuation replay remain next.
+  Parent-runner integration must continue to stage each checked actor,
+  role-runner, and composer binary as an owner-held, mode-`0700`, single-link
+  run artifact; the shared `target/debug` cache is mode `0775` with two links
+  and is intentionally rejected by the helper trust boundary.
 - [ ] Build and scan the final distributable Monero runtime image fail-hard;
   the current official archive and local runtime remain PoC infrastructure.
 
@@ -3009,8 +3018,8 @@ definitive-absence recovery, and cancellation-after-CAS remain hardening work.
 The next certification order is:
 
 1. finish focused tests, strict Clippy/Rustdoc, dependency policy, traceability,
-   one end-of-slice static Mermaid check, and secret/diff hygiene for the binder
-   and partial orchestrator;
+   one end-of-slice static Mermaid check, and secret/diff hygiene for the runner through tag 13
+   and the exclusive state lease;
 2. commit and push the exact sources and documentation, then replay the journey
    from that clean commit with fresh run IDs and retain scoped cleanup;
 3. replace the working-tree qualifier only if the replay reproduces the ordered
@@ -3019,19 +3028,23 @@ The next certification order is:
    then QA, chaos, information-security, and production-readiness hardening.
 
 The direct finalized-Claim-to-sweep binder and its retained-run invocation are
-complete. The partial exact replay now proves its fresh Maker/Taker onboarding
-contract. The reusable role-sidecar launcher and complete agreement/session choreography
-through countersigned Stage B are contract-GREEN but not yet wired. Remaining
-runner/orchestration implementation is estimated at 4 to 8 focused hours. After that implementation is complete, budget 25 to
-45 minutes
-for one warm exact-commit replay or 1 to 3 hours for a cold replay, evidence
-rebinding, and scoped cleanup. Full M4 functional closure, including actual
-tag-16/tag-17 recovery, F7 native-plus-two-token parity, U9 guidance/CI, D1 XMR
-recordings, and synchronized closure gates, remains estimated at 16 to 28
-focused hours from this checkpoint. These ranges exclude owner-selected
-post-PoC QA, chaos, information-security, and production-readiness phases and do not let
-Logos-owned external gaps block local certification. No ETA authorizes an
-`m4-complete` tag before the recorded gates are true.
+complete. The replay runner source/contract now composes the official Monero
+child, agreement and separate role journals, durable tag-13 no-retry latch, and
+exact finalized tag 13. It has not been cleanly replayed from the current
+commit. Next, wire the role-sidecar launcher to adopt the existing tag-13 state,
+export typed tag-13 evidence into tag-14 preparation, continue through the
+retained successful-claim tail, publish synchronized evidence, and prove the
+ledgered/label-revalidated scoped cleanup. Remaining runner/PoC implementation
+is estimated at 3 to 7 focused hours. After that implementation is complete,
+budget 25 to 45 minutes for one warm exact-commit replay or 1 to 3 hours for a
+cold replay, evidence rebinding, and scoped cleanup. Full M4 functional closure,
+including actual tag-16/tag-17 recovery, F7 native-plus-two-token parity, U9
+guidance/CI, D1 XMR recordings, and synchronized closure gates, remains
+estimated at 15 to 27 focused hours from this checkpoint. These ranges exclude
+owner-selected post-PoC QA, chaos, information-security, and
+production-readiness phases and do not let Logos-owned external gaps block
+local certification. No ETA authorizes an `m4-complete` tag before the recorded
+gates are true.
 
 ### Post-PoC RED-GREEN-REFACTOR hardening required for M4 closure
 

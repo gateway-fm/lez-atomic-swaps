@@ -186,9 +186,15 @@ dynamic literal-loopback allocation, exact authenticated runtime probes,
 owner-private create-new manifests, PID start-time plus executable identity,
 and exact scoped stop. It explicitly records that the ordinary bearer covers
 the full role-sidecar RPC surface and is not a server-enforced release-only
-capability. Its actual-node parent-runner integration remains pending. The process proof uses
-ephemeral authenticated official v0.2 indexer-wire and typed bridge-protocol loopback services and deterministic
-typed fixtures; it does not claim actual-node behavior. Cold cache setup can
+capability. Its parent-runner `execute` route remains unwired. The bridge process now
+acquires one exclusive fixed-name state-directory lease immediately after
+argument validation, before config, node, store, or server work, and holds it
+until server stop; the source/component lease gate is GREEN. Launcher adoption
+of the existing tag-13 state directory, typed tag-13-to-tag-14 export, and
+actual continuation replay remain pending. The process proof uses ephemeral
+authenticated official v0.2 indexer-wire and typed bridge-protocol loopback
+services and deterministic typed fixtures; it does not claim actual-node
+behavior. Cold cache setup can
 require crates.io and the pinned official Git source.
 
 ## Residuals

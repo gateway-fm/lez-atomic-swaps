@@ -140,23 +140,29 @@ The complete fresh-ID operator procedure, external resources, inspection, and
 scoped-cleanup rules are in
 [Flow 0](docs/manual-user-flows.md#flow-0-m4-official-monero-regtest-topology).
 
-`scripts/run-m4-actual-claim-poc.sh` is deliberately partial. Its contract and
-source/environment preflight are implemented; `execute` builds the checked
-artifact, provisions identities, starts the LEZ stack, deploys the M4 program,
-and drives fresh Maker and Taker Vault Claims through exact finalized `Public`
-membership and exact-block owner/Vault state checks. It then fails closed at
-`monero_stack` before starting Monero or any swap effect. The run-scoped Monero
-child, role-sidecar, and agreement/session launchers exist but are not yet reachable from `execute`. The role-sidecar launcher has
-Docker-free contract coverage for authenticated runtime probes, PID identity,
-atomic create-new artifacts, and exact stop. The agreement helper independently
-proves role provisioning, read-only Stage A composition, equal claim/refund
-sessions, one journal per role, withheld Taker claim material, equal refund
-presignatures, and countersigned Stage B through fake-process fixtures. The
-tag-13-through-cleanup claim tail is not implemented. Do not describe this
-script as a one-command replay yet. Completing that orchestration is estimated
-at 4 to 8 focused hours; after it exists, a warm replay is expected to take 25
-to 45 minutes and a cold replay 1 to 3 hours. Full functional M4 remains 16 to
-28 focused hours; later owner-selected hardening is separate.
+`scripts/run-m4-actual-claim-poc.sh` remains a deliberately incomplete replay
+runner, but its source and contract now compose through finalized tag 13. After
+the checked artifact, identities, LEZ stack, deployment, and exact finalized
+Maker/Taker Vault Claims, `execute` starts the run-scoped official Monero child,
+composes canonical Stage A and countersigned Stage B through separate role
+journals, publishes a durable no-retry latch, and invokes the exact one-shot
+tag-13 Initialize/Fund actor. It then intentionally fails before swap-specific
+Monero funding. The cleanup contract uses an exact resource ledger, child/run
+labels revalidated immediately before deletion, PID start-time/binary binding,
+and a foreign sentinel; broad cleanup is forbidden. These paths are
+**contract-GREEN but have not been cleanly replayed from the current commit**,
+so they do not replace the retained working-tree checkpoint and the script is
+not yet a one-command happy-claim replay.
+
+The role-sidecar launcher is still unwired from `execute`. The bridge process
+exclusive state-directory lease is source/component-GREEN, while launcher
+support for adopting the tag-13 state directory, a typed tag-13-to-tag-14
+exporter, and their actual replay remain pending. The agreement receipt calls
+the CLI inputs `requested_terms`; it does not claim that the helper decoded and
+rebound those terms from Stage A. Completing the runner/PoC slice is estimated
+at 3 to 7 focused hours; after it exists, a warm replay is expected to take 25
+to 45 minutes and a cold replay 1 to 3 hours. Full functional M4 remains 15 to
+27 focused hours; later owner-selected hardening is separate.
 
 The checked guest and focused host components can be repeated independently of
 the actual two-devnet journey. The deployer, focused component commands, and

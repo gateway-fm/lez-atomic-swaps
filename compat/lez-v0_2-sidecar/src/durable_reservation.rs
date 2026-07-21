@@ -9,14 +9,15 @@ use std::{
 
 use rustix::{
     fs::{
-        AtFlags, CWD, Dir, Mode, OFlags, RenameFlags, ResolveFlags, openat, openat2, renameat_with,
-        unlinkat,
+        AtFlags, CWD, Dir, FlockOperation, Mode, OFlags, RenameFlags, ResolveFlags, flock, openat,
+        openat2, renameat_with, unlinkat,
     },
     io::Errno,
     process::geteuid,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+const BRIDGE_STATE_LEASE_FILENAME: &str = "bridge-state-lease.v1.lock";
 const RESERVATION_SCHEMA_VERSION: u32 = 1;
 const MAX_RESERVATION_BYTES: u64 = 8 * 1024 * 1024;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -44,6 +45,20 @@ pub enum DurableReservationError {
     AlreadyReserved,
     /// A redacted filesystem operation failed.
     #[error("durable reservation filesystem operation failed")]
+    Filesystem,
+}
+
+/// Fail-closed errors while taking exclusive ownership of a sidecar state directory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum StateDirectoryLeaseError {
+    /// The directory or fixed lease file is aliased, foreign-owned, or has unsafe permissions.
+    #[error("sidecar state directory or lease file is unsafe")]
+    UnsafeState,
+    /// Another live file description already holds the exclusive lease.
+    #[error("sidecar state directory is already owned by another process")]
+    AlreadyHeld,
+    /// A redacted filesystem or lock operation failed.
+    #[error("sidecar state directory lease operation failed")]
     Filesystem,
 }
 
@@ -168,6 +183,88 @@ impl SecureStateDirectory {
             return Err(DurableReservationError::InsecureDirectory);
         }
         Ok(())
+    }
+}
+
+/// Process-held exclusive ownership of one secure sidecar state directory.
+///
+/// The fixed empty lock file is opened relative to the already validated
+/// directory descriptor. Dropping this value releases the kernel lease while
+/// retaining the owner-only file for the next process.
+pub struct StateDirectoryLease {
+    file: File,
+    directory: SecureStateDirectory,
+}
+
+impl fmt::Debug for StateDirectoryLease {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StateDirectoryLease")
+            .field("state_directory", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
+impl StateDirectoryLease {
+    /// Takes a nonblocking exclusive lease on one existing owner-only state directory.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsafe directory paths, unsafe or aliased fixed lock files,
+    /// concurrent ownership, and redacted filesystem failures.
+    pub fn acquire(path: impl AsRef<Path>) -> Result<Self, StateDirectoryLeaseError> {
+        let directory = SecureStateDirectory::open(path.as_ref())
+            .map_err(|_| StateDirectoryLeaseError::UnsafeState)?;
+        directory
+            .revalidate()
+            .map_err(|_| StateDirectoryLeaseError::UnsafeState)?;
+        let descriptor = openat(
+            directory.descriptor(),
+            BRIDGE_STATE_LEASE_FILENAME,
+            OFlags::RDWR | OFlags::CREATE | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(|_| StateDirectoryLeaseError::UnsafeState)?;
+        let file = File::from(descriptor);
+        let held = validate_lease_file(&file)?;
+        match flock(&file, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => {}
+            Err(error) if error == Errno::AGAIN || error == Errno::WOULDBLOCK => {
+                return Err(StateDirectoryLeaseError::AlreadyHeld);
+            }
+            Err(_) => return Err(StateDirectoryLeaseError::Filesystem),
+        }
+        let held_after_lock = validate_lease_file(&file)?;
+        if held.dev() != held_after_lock.dev() || held.ino() != held_after_lock.ino() {
+            return Err(StateDirectoryLeaseError::UnsafeState);
+        }
+        let reopened = openat(
+            directory.descriptor(),
+            BRIDGE_STATE_LEASE_FILENAME,
+            OFlags::RDWR | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(|_| StateDirectoryLeaseError::UnsafeState)?;
+        let current = validate_lease_file(&reopened)?;
+        if held.dev() != current.dev() || held.ino() != current.ino() {
+            return Err(StateDirectoryLeaseError::UnsafeState);
+        }
+        directory
+            .descriptor()
+            .sync_all()
+            .map_err(|_| StateDirectoryLeaseError::Filesystem)?;
+        directory
+            .revalidate()
+            .map_err(|_| StateDirectoryLeaseError::UnsafeState)?;
+        Ok(Self { file, directory })
+    }
+}
+
+impl Drop for StateDirectoryLease {
+    fn drop(&mut self) {
+        let _ = flock(&self.file, FlockOperation::Unlock);
+        let _ = self.directory.revalidate();
     }
 }
 
@@ -401,4 +498,90 @@ fn validate_state_file(file: &File) -> Result<(), DurableReservationError> {
         return Err(DurableReservationError::InsecureStateFile);
     }
     Ok(())
+}
+
+fn validate_lease_file(file: &File) -> Result<std::fs::Metadata, StateDirectoryLeaseError> {
+    validate_state_file(file).map_err(|_| StateDirectoryLeaseError::UnsafeState)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| StateDirectoryLeaseError::UnsafeState)?;
+    if metadata.len() != 0 {
+        return Err(StateDirectoryLeaseError::UnsafeState);
+    }
+    Ok(metadata)
+}
+
+#[cfg(test)]
+mod bridge_state_lease_tests {
+    use std::{
+        fs,
+        os::unix::fs::{PermissionsExt as _, symlink},
+        path::Path,
+    };
+
+    use super::{BRIDGE_STATE_LEASE_FILENAME, StateDirectoryLease, StateDirectoryLeaseError};
+
+    fn secure_directory() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().expect("temporary state directory");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("owner-only state directory");
+        directory
+    }
+
+    fn assert_unsafe(path: &Path) {
+        assert_eq!(
+            StateDirectoryLease::acquire(path).expect_err("unsafe state must fail closed"),
+            StateDirectoryLeaseError::UnsafeState
+        );
+    }
+
+    #[test]
+    fn bridge_state_lease_is_exclusive_and_release_allows_the_next_holder() {
+        let directory = secure_directory();
+        let first = StateDirectoryLease::acquire(directory.path()).expect("first lease holder");
+        assert_eq!(
+            StateDirectoryLease::acquire(directory.path())
+                .expect_err("concurrent state owner must fail closed"),
+            StateDirectoryLeaseError::AlreadyHeld
+        );
+
+        drop(first);
+        StateDirectoryLease::acquire(directory.path()).expect("lease after release");
+    }
+
+    #[test]
+    fn bridge_state_lease_rejects_unsafe_directory_and_lock_file_aliases() {
+        let directory = secure_directory();
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o750))
+            .expect("make state directory unsafe");
+        assert_unsafe(directory.path());
+
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("restore state directory");
+        let alias = directory.path().with_extension("alias");
+        symlink(directory.path(), &alias).expect("state directory alias");
+        assert_unsafe(&alias);
+        fs::remove_file(alias).expect("remove state alias");
+
+        let lease_path = directory.path().join(BRIDGE_STATE_LEASE_FILENAME);
+        fs::write(&lease_path, []).expect("existing lease file");
+        fs::set_permissions(&lease_path, fs::Permissions::from_mode(0o640))
+            .expect("make lease file unsafe");
+        assert_unsafe(directory.path());
+
+        fs::set_permissions(&lease_path, fs::Permissions::from_mode(0o600))
+            .expect("restore lease file mode");
+        let hard_link = directory.path().join("lease-hard-link");
+        fs::hard_link(&lease_path, &hard_link).expect("hard-linked lease file");
+        assert_unsafe(directory.path());
+        fs::remove_file(hard_link).expect("remove hard link");
+        fs::remove_file(&lease_path).expect("remove lease file");
+
+        let target = directory.path().join("lease-target");
+        fs::write(&target, []).expect("symlink target");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600))
+            .expect("private symlink target");
+        symlink(&target, &lease_path).expect("symlinked lease file");
+        assert_unsafe(directory.path());
+    }
 }

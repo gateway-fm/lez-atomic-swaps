@@ -207,9 +207,12 @@ leasing.
    explicitly declines helper-level term binding because the composer receipt
    exposes identity metadata and wire length, not decoded terms; role actors
    remain the canonical wire validation and signing boundary. Parent-runner
-   integration remains. That integration must stage the three
-   checked executables as owner-held, non-group-writable, single-link run
-   artifacts rather than pass the shared mode-`0775`, two-link target cache.
+   source/contract integration is now GREEN through the official Monero child,
+   this agreement helper, separate role journals, and exact finalized tag 13;
+   it intentionally stops before swap-specific Monero funding and has not been
+   cleanly replayed from the current commit. The runner stages the three checked
+   executables as owner-held mode-`0700`, single-link run artifacts rather than
+   pass the shared mode-`0775`, two-link target cache.
 
 Fresh scalar/view-key convenience constructors are implemented in the XMR SDK,
 so actors do not reproduce scalar rejection rules. Agreement signatures reuse the

@@ -2313,22 +2313,34 @@ adaptation/publication/finality, Taker extraction, and reconstructed-wallet
 Monero sweep. Only that same-swap causal chain is the successful-claim atomicity
 checkpoint. The signed-refund and punishment branches remain unexecuted.
 
-The repository runner is not yet the replay for this manual flow.
+The repository runner is not yet the replay for this complete manual flow.
 `scripts/run-m4-actual-claim-poc.sh contract` and its preflight modes are
-implemented. `execute` currently reaches checked artifact build, identity
-provisioning, the LEZ stack, M4 deployment, and fresh Maker/Taker Vault Claims.
-It independently proves each exact `Public` transaction once in a bounded
-finalized window, checks the containing block by ID/hash/ID, and reads the owner
-and Vault state at that exact block. It then deliberately fails closed at
-`monero_stack` before Monero or any swap effect. Its Monero launcher and the separately contract-tested
-role-sidecar and agreement/session launchers are not yet reachable. The agreement helper covers
-role provisioning through countersigned Stage B. Its receipt truthfully records CLI values as
-`requested_terms` and does not claim independent helper-level term binding; the
-role actors remain the canonical wire validation and signing boundary. The
-tag-13-through-cleanup tail is absent. Do not invoke or advertise it as a
-one-command successful-claim replay. The remaining orchestration is estimated
-at 4 to 8 focused hours; once complete, allow 25 to 45 minutes for a warm replay
-or 1 to 3 hours for a cold replay.
+implemented. Its source/contract path now reaches checked artifact build,
+identity provisioning, the LEZ stack, M4 deployment, exact finalized
+Maker/Taker Vault Claims, the official Monero child, canonical Stage A and
+countersigned Stage B with separate role journals, and the exact tag-13 actor.
+Before invoking that actor it durably publishes a create-new no-retry latch;
+after finalized tag 13 it deliberately fails before swap-specific Monero
+funding. The exact cleanup ledger records the Monero child before launch and
+revalidates every Docker run label and process identity before deletion. Broad
+or guessed cleanup is forbidden. This route is contract-GREEN, not a clean
+actual replay from the current commit.
+
+**Running `execute` may submit both tag-13 effects and then return failure. Do
+not retry the same `RUN_ID`, and do not delete its `tag13-no-retry.latch` to make
+it appear retryable.** Reconcile the recorded transaction evidence and chain
+state; for development, quarantine that root and begin again with a fresh run
+ID. The role-sidecar launcher remains unwired. The bridge exclusive
+state-directory lease is source/component-GREEN, but launcher support for
+adopting the existing tag-13 state, the typed tag-13-to-tag-14 exporter, and an
+actual tag-13-to-tag-14 replay remain pending. The agreement helper receipt
+truthfully records CLI values as `requested_terms` and does not claim
+independent helper-level term binding; the role actors remain the canonical
+wire validation and signing boundary. Do not advertise the runner as a
+one-command successful-claim replay. The remaining runner/PoC work is estimated
+at 3 to 7 focused hours; once complete, allow 25 to 45 minutes for a warm replay
+or 1 to 3 hours for a cold replay. Full functional M4 is estimated at 15 to 27
+focused hours.
 
 Every effect command below uses create-new outputs and has no automatic
 submission retry. Use a fresh lowercase run ID, source the fresh LEZ and Monero

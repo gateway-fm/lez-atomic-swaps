@@ -144,9 +144,11 @@ view-key handoff, read-only Stage A composition, byte-equal claim/refund
 sessions, one journal per role, withheld Taker claim material, equal refund
 presignatures, and countersigned Stage B. Its fake-process gate proves exact
 argv/order/role/path boundaries, create-new refusal, unsafe-binary rejection,
-and mismatch-before-journal failure; actual cryptographic/devnet execution
-remains the parent-runner gate. Only finalized LEZ consensus timestamps carry
-cutoff authority. Locked/offline actor tests and strict Clippy pass with
+and mismatch-before-journal failure. The parent-runner source/contract now
+reaches that helper and its separate role journals, then publishes a durable
+no-retry latch and invokes the exact tag-13 actor. This has not been cleanly
+replayed from the current commit; actual parent-runner evidence remains the
+gate. Only finalized LEZ consensus timestamps carry cutoff authority. Locked/offline actor tests and strict Clippy pass with
 the pinned local rapidsnark libraries. This is component evidence only; no node
 effect was executed by that test gate.
 

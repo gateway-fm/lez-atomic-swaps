@@ -171,16 +171,21 @@ public deployment.
 
 Status: actual local successful-claim checkpoint from a working tree; exact committed-tree replay, cleanup attestation, recovery paths, and milestone certification remain open.
 
-The retained run used actual isolated LEZ v0.2 services and official Monero 0.18.5.1 Regtest processes. Solid arrows in both diagrams were exercised in one same-run journey. Dashed arrows belong to the replay-orchestration overlay, which has not completed a clean replay. The runner-to-onboarding route is wired and contract-GREEN; the agreement and sidecar routes are implemented and contract-GREEN but are not yet reachable from the parent runner's `execute` path. The port numbers are retained evidence examples only; every new run must read fresh dynamic literal-loopback endpoints from its owner-only manifests.
+The retained run used actual isolated LEZ v0.2 services and official Monero 0.18.5.1 Regtest processes. Solid arrows in both diagrams were exercised in one same-run journey. Dashed arrows belong to the current replay-orchestration source/contract and have not completed a clean replay from the current commit. That runner now reaches actor onboarding, the official Monero child, canonical agreement and separate role journals, and exact one-shot finalized tag 13. The role-sidecar route remains unwired; its exclusive state lease is component-GREEN, while adopted-state launch and typed tag-13-to-tag-14 export are pending. The port numbers are retained evidence examples only; every new run must read fresh dynamic literal-loopback endpoints from its owner-only manifests.
 
 ```mermaid
 flowchart LR
     Operator["Operator"]
-    subgraph ReplayOverlay["Replay orchestration overlay, not yet clean-replayed"]
-        ReplayRunner["Actual-claim replay runner<br/>implemented through actor onboarding"]
-        OnboardingHelper["Actor-onboarding helper<br/>wired and contract-GREEN"]
-        AgreementHelper["Agreement helper<br/>implemented through countersigned Stage B; unwired"]
-        SidecarLauncher["Role-sidecar launcher<br/>authenticated lifecycle; unwired"]
+    subgraph ReplayOverlay["Replay source and contract overlay; not clean-replayed"]
+        ReplayRunner["Actual-claim runner<br/>source and contract GREEN through finalized tag 13"]
+        OnboardingHelper["Actor-onboarding helper<br/>wired"]
+        MoneroChild["Official Monero child launcher<br/>wired"]
+        AgreementHelper["Agreement helper<br/>wired through countersigned Stage B"]
+        ReplayJournals[("Separate role journals<br/>wired")]
+        Tag13Runner["Exact one-shot tag 13 actor<br/>wired with durable no-retry latch"]
+        SidecarLauncher["Role-sidecar launcher<br/>unwired"]
+        SidecarLease["Exclusive sidecar state lease<br/>component GREEN"]
+        TypedExporter["Typed tag 13 to tag 14 exporter<br/>pending"]
     end
     Maker["Maker actor"]
     Taker["Taker actor"]
@@ -210,17 +215,29 @@ flowchart LR
     OnboardingHelper -.-> Taker
     OnboardingHelper -.-> Sequencer
     OnboardingHelper -.-> Indexer
+    ReplayRunner -.-> MoneroChild
+    MoneroChild -.-> Monerod
+    MoneroChild -.-> FundingWallet
+    MoneroChild -.-> SharedWallet
+    MoneroChild -.-> TakerWallet
     ReplayRunner -.-> AgreementHelper
     AgreementHelper -.-> Maker
     AgreementHelper -.-> Taker
-    AgreementHelper -.-> MakerJournal
-    AgreementHelper -.-> TakerJournal
+    AgreementHelper -.-> ReplayJournals
+    ReplayJournals -.-> MakerJournal
+    ReplayJournals -.-> TakerJournal
     AgreementHelper -.-> Sequencer
     AgreementHelper -.-> Indexer
     AgreementHelper -.-> Monerod
+    ReplayRunner -.-> Tag13Runner
+    Tag13Runner -.-> Sequencer
+    Tag13Runner -.-> Indexer
+    Tag13Runner -.-> TypedExporter
+    TypedExporter -.-> SidecarLauncher
     ReplayRunner -.-> SidecarLauncher
-    SidecarLauncher -.-> MakerSidecar
-    SidecarLauncher -.-> TakerSidecar
+    SidecarLauncher -.-> SidecarLease
+    SidecarLease -.-> MakerSidecar
+    SidecarLease -.-> TakerSidecar
     Taker --> TakerJournal
     Maker --> MakerJournal
     Taker --> TakerSidecar
@@ -310,24 +327,32 @@ scoped cleanup, signed-refund and punishment journeys, F7 token parity, U9
 public guidance, D1 XMR video evidence, and all post-PoC hardening remain before
 an `m4-complete` tag.
 
-`scripts/run-m4-actual-claim-poc.sh` is not yet a one-command journey. Its
-contract/preflight and execution through M4 deployment plus fresh Maker/Taker
-Vault Claims are implemented. Onboarding proves exact finalized `Public`
-membership, block ID/hash/ID equality, and exact-block owner/Vault state before
-the runner fails closed at `monero_stack`. The Monero launcher exists but is
-unreachable. `scripts/run-m4-lez-sidecar.sh` separately provides run-scoped
-dynamic-loopback Maker/Taker startup, exact authenticated runtime probing, PID
-start-time/executable identity, owner-private manifests, and exact stop; it
-deliberately records that its bearer covers the full role RPC surface and that
-terms are launcher-bound rather than server route-enforced. It is contract-GREEN but not yet integrated with actual nodes in the
-parent runner. `scripts/run-m4-xmr-agreement.sh` is independently fixture-GREEN for
-separate role provisioning, read-only Stage A composition, claim/refund sessions
-and journals, private Taker claim material, equal refund presignatures, and
-countersigned Stage B. It performs no submission, has no retry, and requires
-incomplete roots to be quarantined. Tag 13 through cleanup remains to be wired.
-The orchestration estimate is 4 to 8 focused hours, followed by a 25-to-45 minute warm or 1-to-3 hour
-cold
-replay.
+`scripts/run-m4-actual-claim-poc.sh` is not yet a one-command happy-claim
+journey. Its source/contract path now composes deployment and exact finalized
+Maker/Taker onboarding, the run-scoped official Monero child, canonical Stage A
+and countersigned Stage B with separate role journals, and exact one-shot
+finalized tag 13. Before tag-13 invocation it durably publishes a create-new
+no-retry latch. It then intentionally fails before swap-specific Monero funding.
+The cleanup contract pre-registers the Monero child, captures exact Docker
+resources in reverse-cleanup order, binds each process by PID start time and
+executable, and revalidates each resource run label immediately before deletion;
+foreign-sentinel survival is required and broad cleanup is forbidden. This is
+source/contract evidence only, not a clean actual replay from the current
+commit.
+
+`scripts/run-m4-lez-sidecar.sh` remains the only available unwired launcher. It
+provides run-scoped dynamic-loopback Maker/Taker startup, exact authenticated
+runtime probing, PID identity, owner-private manifests, and exact stop. The
+bridge process now holds one exclusive fixed-name state-directory lease from
+immediately after argument validation until shutdown, and that source/component
+gate is GREEN. Launcher adoption of the tag-13 state directory, typed
+tag-13-to-tag-14 evidence export, and actual continuation replay are pending.
+`scripts/run-m4-xmr-agreement.sh` is wired in the runner source through
+countersigned Stage B; it performs no submission and its `requested_terms`
+field remains a CLI-input report, not a helper-level decoded/rebound Stage-A
+claim. The runner/PoC estimate is 3 to 7 focused hours, followed by a
+25-to-45-minute warm or 1-to-3-hour cold replay. Full functional M4 remains 15
+to 27 focused hours.
 
 ## M2 SDK/reference-demo target topology
 
@@ -644,6 +669,7 @@ revalidation, propagation, and finality evidence before release.
 | M4 typed Stage-B authorization and pre-Fund gate | Two private-field non-`Clone` adapter capabilities are component-GREEN; 98 non-doc tests plus 3 doctests and strict gates pass | Authenticated literal-loopback bridge calls after Taker-only preflight; synthetic finalized response for Initialize; no node, public RPC, or external resource | Only `LezBridgeAdapter<BridgeClient>` can mint either capability. Stage-B authorization binds the committed partial; the journal handoff opens only the exact completed Taker claim session and rebinds its transcript/partial without a plaintext side store; ADR 0070 binds exact finalized Initialize facts and consumes them before Fund. Drift fails before transport | Load exact Taker partial; prepare tag-14 authorization; classify exact Initialize; submit exact Fund under its transaction-ID-derived request key | Invalid journals make zero RPC calls. Official sidecar builders/classifier independently validate durable ABI and ownership. This row does not claim actual-local finality, node effect, or claim PoC |
 | M4 official Stage-B builder, native-XMR escrow, tag-15 completion, and four-effect classifier | Four of seven builders, exact tag-13 through tag-15 classification, genesis-bound clock, exact tag-15 admission, and role-local actor ingestion are component-GREEN | Capability-authenticated literal-loopback v3 routes; classifier uses synthetic `FinalizedIndexerApi` only after durable ownership; clock uses official finalized ID plus block-by-ID/hash and exact runtime genesis; preparation/completion/classification make zero sends; an official-message tag-15 fixture makes one authenticated send | Taker runtime binds exact terms/deployment/accounts/signers, tags 13/14, canonical bytes/IDs, commitment, nonces, and durable replay. Maker tag 15 binds aggregate authority/nonce, generated ABI/accounts, immutable message hash, valid aggregate BIP340 signature, separate durable prepare/complete records, and exact completed-record admission | Persist exact Initialize/Fund, tag 14, unsigned tag 15, and completed canonical tag 15 before exposure; exact-classify owner or role-local discovery results with canonical stability re-pins; admit only an exact owned tag-15 submission and reject tag 14 on the generic route | Missing remains `Uncertain`; wrong/moving/unavailable/cross-role facts fail closed. Three recovery builders remain unavailable. The run-level checkpoint above exercised actual tag 14, tag 15, finality, role ingestion, and the reconstructed-wallet sweep; the three recovery builders remain unavailable and exact committed replay is pending |
 | M4 pure Stage-A future-message planner | 3 of 3 focused tests GREEN | Pure function only: no endpoint, RPC, reservation, journal, persistence, signer, or submission authority | One caller-supplied stable finalized snapshot binds Maker/Taker owner and claim/refund aggregate-authority nonces. Aliased identities, invalid keys, nonce overflow, or colliding hashes fail closed | Constructs exact generated official tag-15 claim, tag-16 signed-refund, and tag-17 punishment messages plus distinct NSSA hashes. Existing tag-15 prepare/complete accepts the planned claim message/hash byte-identically | Closes placeholder future-message planning only. Callers must obtain and bind the stable finalized snapshot; tag-16/tag-17 builders, signatures, persistence, submission, finality, actors, and swap effects remain unavailable |
+| M4 bridge state-directory exclusive lease | Source/component GREEN; 2 library tests plus 1 binary lifecycle test | Local filesystem only; no RPC, socket, Docker, chain, faucet, peer, or public service | Fixed `bridge-state-lease.v1.lock` is opened relative to the already held state directory; exact mode `0600`, current UID, one link, empty content, inode re-open equality, and nonblocking exclusive `flock` are required | `lez-v02-bridge-poc` acquires immediately after argument validation and before config, node, store, or server work, then holds the lease until server stop | Prevents two bridge processes from owning one journal/state root. The parent launcher still cannot adopt the tag-13 state directory, remains unwired, and has no typed tag-13-to-tag-14 exporter or actual continuation replay |
 | M4 actual-local Stage-A composer and independent role actor | Component and pre-effect actual-local GREEN; 17 adapter tests, 10 composer tests, 4 provisioning tests, 2 black-box process tests, and 1 two-devnet replay | Composer owns read-only literal-loopback clients: Digest-authenticated official monerod 0.18.5.1 plus official LEZ v0.2 sequencer/indexer. Role processes have no socket or RPC and each receive one private root. No public RPC, peer, faucet, public fund, or external finality service is used | Composer binds observed Monero/LEZ identities, exact escrow/account state, cross-checked finalized anchor, stable nonces, future messages, roles, and canonical SDK wire. Each role revalidates every private/public binding before signing; each complete session directory is one no-replace rename | `lez-v02-xmr-stage-a-compose`; independent `sign-stage-a`; public `assemble-stage-a`; independent atomic `initialize-sessions` | Same-host evidence is not different-UID isolation. Composer does not prove the checked ProgramID deployment and has no submit authority; tag-13 independently re-proves deployment before effects. Parent-path same-UID unpublished-orphan and ordinary in-memory credential-copy residuals remain. Stage B journals and actual tag 13 are GREEN. Later effects and production custody are pending |
 | M4 canonical tag-13 executor | Component and actual-local GREEN; focused tag-13 matrix 3 of 3 plus finalized blocks 3008 and 3023 | Reuses authenticated generic submit and durable request journal; canonical transaction-ID request key; official-type loopback lookup/send; Fund first looks up exact Initialize | Owner-only pair, run, role, runtime, ABI, signature, accounts, nonces, bytes, IDs, and request identity revalidate before I/O. ADR 0070 adds an independent typed finalized barrier before the actor may call Fund | Ordered Initialize then Fund reaches lookup/send 3/2; replay unchanged; premature Fund 1/0; arbitrary ID or missing reservation zero-send | The retained actual run used only local LEZ and deterministic genesis funds. Its signed continuation expired, so a fresh wider-window v2-evidence run is required; no public RPC, faucet, peer, public funds, or external finality participated |
 | M4 cross-chain claim-to-sweep binder | Actor implementation and retained actual-run invocation GREEN; exact committed replay pending | No RPC of its own. It consumes bounded canonical owner-private Stage A/B, Taker journal/signature/extraction, finalized-classifier JSON, sweep evidence, and independent receipt evidence | Revalidates exact Taker role material and session, LEZ Claim facts and aggregate signature, transcript extraction, reconstructed public spend key, agreement/run/genesis/network, Monero transaction/block/tip/topology, and create-new `0600` one-link output | The current sweep-v2 validator proves exact received-plus-fee accounting in focused tests; the retained invocation used legacy v1 plus receipt v2. Retained legacy sweep v1 plus receipt v2 emits a null fee and only the checked unreceived remainder. Both produce the successful-claim conditional-atomicity snapshot | The destination is evidenced through the owner-private Taker-wallet producer but is not Stage-A committed; the binder does not prove independent Taker address ownership, current canonicality, future-reorg immunity, or a distributed cross-chain transaction |

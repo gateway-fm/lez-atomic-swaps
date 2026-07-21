@@ -15,8 +15,8 @@ use clap::{Parser, ValueEnum};
 use lez_bridge_protocol::{Hex32, RunId, RuntimeDescriptor};
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeServerCapability, BridgeServerConfig, NativeEscrowPlanner,
-    OfficialIndexerRpc, OfficialNodeRpc, program_id_from_hex, read_genesis_bound_finalized_clock,
-    start_bridge_server, validate_loopback_http_endpoint,
+    OfficialIndexerRpc, OfficialNodeRpc, StateDirectoryLease, program_id_from_hex,
+    read_genesis_bound_finalized_clock, start_bridge_server, validate_loopback_http_endpoint,
 };
 use nssa::{AccountId, PrivateKey, PublicKey};
 use serde::Serialize;
@@ -131,6 +131,7 @@ async fn main() {
 
 async fn execute(arguments: Arguments) -> Result<()> {
     validate_arguments(&arguments)?;
+    let state_lease = acquire_state_directory_lease(&arguments.state_directory)?;
     let run_id = RunId::new(arguments.run_id).context("invalid run ID")?;
     let runtime: RuntimeDescriptor = serde_json::from_slice(&read_public_file(
         &arguments.runtime_file,
@@ -224,7 +225,13 @@ async fn execute(arguments: Arguments) -> Result<()> {
             .context("wait for interrupt")?;
     }
     server.stop().await?;
+    drop(state_lease);
     Ok(())
+}
+
+fn acquire_state_directory_lease(path: &Path) -> Result<StateDirectoryLease> {
+    StateDirectoryLease::acquire(path)
+        .context("acquire exclusive bridge sidecar state-directory lease")
 }
 
 fn validate_arguments(arguments: &Arguments) -> Result<()> {
@@ -322,7 +329,9 @@ fn parse_nonzero_hex(value: &str, name: &str) -> Result<Hex32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NodeRouteProfile, validate_node_routes};
+    use std::{fs, os::unix::fs::PermissionsExt as _};
+
+    use super::{NodeRouteProfile, acquire_state_directory_lease, validate_node_routes};
 
     const LOCAL_SEQUENCER: &str = "http://127.0.0.1:3040/";
     const LOCAL_INDEXER: &str = "http://127.0.0.1:8779/";
@@ -362,5 +371,23 @@ mod tests {
         ] {
             assert!(validate_node_routes(profile, sequencer, indexer).is_err());
         }
+    }
+
+    #[test]
+    fn bridge_binary_holds_one_exclusive_state_directory_lease() {
+        let directory = tempfile::tempdir().expect("temporary state directory");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("owner-only state directory");
+        let first =
+            acquire_state_directory_lease(directory.path()).expect("first binary state lease");
+        let error = acquire_state_directory_lease(directory.path())
+            .expect_err("second binary state lease must fail closed");
+        assert!(
+            format!("{error:#}").contains("already owned by another process"),
+            "concurrent ownership must report a clear error"
+        );
+
+        drop(first);
+        acquire_state_directory_lease(directory.path()).expect("binary lease after release");
     }
 }

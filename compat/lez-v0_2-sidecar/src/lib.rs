@@ -24,7 +24,9 @@ mod vault_claim_prepare;
 mod xmr_stage_a_future_messages;
 
 #[cfg(target_os = "linux")]
-pub use durable_reservation::DurableReservationError;
+pub use durable_reservation::{
+    DurableReservationError, StateDirectoryLease, StateDirectoryLeaseError,
+};
 #[cfg(target_os = "linux")]
 pub use effect_submission::{
     JournaledVaultClaimEffect, PreparedVaultClaimEffect, SequencerSendFailure, SequencerSubmitApi,

@@ -13,6 +13,7 @@ readonly lez_stack_runner="scripts/run-lez-v02-stack.sh"
 readonly deployment_runner="scripts/run-m4-lez-local-deployment.sh"
 readonly onboarding_runner="scripts/run-m4-lez-actor-onboarding.sh"
 readonly monero_runner="scripts/run-monero-e2e.sh"
+readonly agreement_runner="scripts/run-m4-xmr-agreement.sh"
 readonly sidecar_manifest="compat/lez-v0_2-sidecar/Cargo.toml"
 readonly deployer_manifest="compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml"
 readonly expected_rapidsnark_sha256="d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423"
@@ -38,19 +39,23 @@ emit_contract() {
       automatic_submission_retry: false,
       dynamic_literal_loopback_ports: true,
       public_runtime_resources: [],
-      implemented_execute_through: "actor_onboarding",
+      implemented_execute_through: "tag13_finality",
       actor_onboarding_implemented: true,
       monero_launcher_implemented: true,
-      monero_launcher_reachable_in_execute: false,
+      monero_launcher_reachable_in_execute: true,
       monero_launcher_executed_in_certifying_replay: false,
       role_sidecar_launcher_contract_green: true,
       role_sidecar_launcher_reachable_in_execute: false,
       agreement_helper_contract_green: true,
       agreement_helper_implemented_through: "countersigned_stage_b",
       agreement_helper_submission_performed: false,
-      agreement_helper_reachable_in_execute: false,
+      agreement_helper_reachable_in_execute: true,
+      journal_phase_started_before_agreement_helper: true,
+      tag13_runner_implemented: true,
+      tag13_runner_reachable_in_execute: true,
+      tag13_runner_executed_in_certifying_replay: false,
       available_unwired_launchers: [
-        "run-m4-lez-sidecar.sh", "run-m4-xmr-agreement.sh"
+        "run-m4-lez-sidecar.sh"
       ],
       monero_owned_volume_count: 4,
       successful_claim_tail_implemented: false,
@@ -65,12 +70,18 @@ emit_contract() {
         pid_start_time_binary_binding: true,
         foreign_sentinel_required: true,
         exact_monero_volume_capture: true,
+        monero_child_preregistered: true,
+        monero_child_sentinel_fallback: true,
+        ledger_validated_before_cleanup: true,
+        sentinel_survival_required_for_pass: true,
+        docker_labels_revalidated_before_delete: true,
+        tag13_no_retry_latch_before_submission: true,
         broad_cleanup_forbidden: true
       },
       composed_launchers: [
         "run-m4-lez-artifact-tests.sh", "run-lez-v02-stack.sh",
         "run-m4-lez-local-deployment.sh", "run-m4-lez-actor-onboarding.sh",
-        "run-monero-e2e.sh"
+        "run-monero-e2e.sh", "run-m4-xmr-agreement.sh"
       ],
       required_future_binaries: [
         "lez-v02-xmr-stage-a-compose", "lez-v02-xmr-stage-a-poc",
@@ -167,8 +178,8 @@ configure_run_identity() {
 
 environment_preflight() {
   local command_name
-  for command_name in awk bash base64 cargo chmod cut date flock git id jq mkdir \
-      mktemp openssl readlink rg sed sha256sum stat tac xxd; do
+  for command_name in awk bash base64 cargo chmod cmp cp cut date diff flock git id \
+      install jq ln mkdir mktemp openssl readlink rg sed sha256sum sort stat sync tac tr unlink wc xxd; do
     require_command "$command_name"
   done
   [[ "${RAPIDSNARK_LIB_DIR:-}" == /* && -d "$RAPIDSNARK_LIB_DIR" ]] ||
@@ -180,7 +191,7 @@ environment_preflight() {
   [[ "${LOGOS_BLOCKCHAIN_CIRCUITS:-}" == /* && -d "$LOGOS_BLOCKCHAIN_CIRCUITS" ]] ||
     fail "LOGOS_BLOCKCHAIN_CIRCUITS must be an existing absolute directory"
   for path in "$artifact_runner" "$lez_stack_runner" "$deployment_runner" \
-      "$onboarding_runner" "$monero_runner"; do
+      "$onboarding_runner" "$monero_runner" "$agreement_runner"; do
     [[ -x "$path" && ! -L "$path" ]] || fail "composed launcher is unavailable: ${path}"
   done
   verify_native_library librapidsnark.a "$expected_rapidsnark_sha256"
@@ -227,11 +238,13 @@ record_phase() {
 
 record_resource() {
   local kind="$1" identity="$2" name="$3" start_ticks="${4:-}" binary_sha256="${5:-}"
+  local run_label="${6:-}"
   jq -cn --arg kind "$kind" --arg identity "$identity" --arg name "$name" \
-    --arg start_ticks "$start_ticks" --arg binary_sha256 "$binary_sha256" \
+    --arg start_ticks "$start_ticks" --arg binary_sha256 "$binary_sha256" --arg run_label "$run_label" \
     '{schema_version:1,kind:$kind,identity:$identity,name:$name,
       start_ticks:(if $start_ticks=="" then null else $start_ticks end),
-      binary_sha256:(if $binary_sha256=="" then null else $binary_sha256 end)}' \
+      binary_sha256:(if $binary_sha256=="" then null else $binary_sha256 end),
+      run_label:(if $run_label=="" then null else $run_label end)}' \
     >>"$resource_ledger"
 }
 
@@ -248,6 +261,112 @@ process_is_owned() {
   [[ -f "$executable" && "$(sha256_file "$executable")" == "$binary_sha256" ]]
 }
 
+docker_resource_run_label_matches() {
+  local kind="$1" identity="$2" expected="$3" actual
+  [[ -n "$expected" ]] || return 1
+  case "$kind" in
+    container)
+      actual="$(docker container inspect --format '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' "$identity" 2>/dev/null)" ||
+        return 1
+      ;;
+    volume)
+      actual="$(docker volume inspect --format '{{ index .Labels "org.logos-co.atomic-swaps.run" }}' "$identity" 2>/dev/null)" ||
+        return 1
+      ;;
+    network)
+      actual="$(docker network inspect --format '{{ index .Labels "org.logos-co.atomic-swaps.run" }}' "$identity" 2>/dev/null)" ||
+        return 1
+      ;;
+    image)
+      actual="$(docker image inspect --format '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' "$identity" 2>/dev/null)" ||
+        return 1
+      ;;
+    *) return 1 ;;
+  esac
+  [[ "$actual" == "$expected" ]]
+}
+
+sentinel_label_matches() {
+  local identity="$1" expected="$2" actual
+  actual="$(docker network inspect --format '{{ index .Labels "org.logos-co.atomic-swaps.sentinel-for" }}' "$identity" 2>/dev/null)" ||
+    return 1
+  [[ "$actual" == "$expected" ]]
+}
+
+remove_labeled_docker_resource() {
+  local kind="$1" identity="$2" expected="$3"
+  docker_resource_run_label_matches "$kind" "$identity" "$expected" || return 1
+  case "$kind" in
+    container) docker container rm --force "$identity" >/dev/null 2>&1 ;;
+    volume) docker volume rm "$identity" >/dev/null 2>&1 ;;
+    network) docker network rm "$identity" >/dev/null 2>&1 ;;
+    image) docker image rm "$identity" >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+cleanup_monero_child_by_label() {
+  local run_label="$1" kind identity resources
+  for kind in container volume network image; do
+    case "$kind" in
+      container)
+        resources="$(docker container ls --all --quiet \
+          --filter "label=org.logos-co.atomic-swaps.run=${run_label}")" || return 1
+        ;;
+      volume)
+        resources="$(docker volume ls --quiet \
+          --filter "label=org.logos-co.atomic-swaps.run=${run_label}")" || return 1
+        ;;
+      network)
+        resources="$(docker network ls --quiet \
+          --filter "label=org.logos-co.atomic-swaps.run=${run_label}")" || return 1
+        ;;
+      image)
+        resources="$(docker image ls --quiet \
+          --filter "label=org.logos-co.atomic-swaps.run=${run_label}")" || return 1
+        ;;
+    esac
+    while IFS= read -r identity; do
+      [[ -n "$identity" ]] || continue
+      remove_labeled_docker_resource "$kind" "$identity" "$run_label" || return 1
+    done <<<"$resources"
+  done
+  local child_sentinel="lez-atomic-swaps-monero-${run_label}-foreign-sentinel"
+  if docker network inspect "$child_sentinel" >/dev/null 2>&1; then
+    sentinel_label_matches "$child_sentinel" "$run_label" || return 1
+    docker network rm "$child_sentinel" >/dev/null 2>&1 || return 1
+  fi
+}
+
+docker_label_resources_absent() {
+  local run_label="$1" kind resources
+  for kind in container volume network image; do
+    case "$kind" in
+      container)
+        resources="$(docker container ls --all --quiet \
+          --filter "label=org.logos-co.atomic-swaps.run=${run_label}")" || return 1
+        ;;
+      volume)
+        resources="$(docker volume ls --quiet \
+          --filter "label=org.logos-co.atomic-swaps.run=${run_label}")" || return 1
+        ;;
+      network)
+        resources="$(docker network ls --quiet \
+          --filter "label=org.logos-co.atomic-swaps.run=${run_label}")" || return 1
+        ;;
+      image)
+        resources="$(docker image ls --quiet \
+          --filter "label=org.logos-co.atomic-swaps.run=${run_label}")" || return 1
+        ;;
+    esac
+    [[ -z "$resources" ]] || return 1
+  done
+  local child_sentinel="lez-atomic-swaps-monero-${run_label}-foreign-sentinel"
+  if docker network inspect "$child_sentinel" >/dev/null 2>&1; then
+    return 1
+  fi
+}
+
 safe_ephemeral_path() {
   local path="$1"
   case "$path" in
@@ -256,17 +375,103 @@ safe_ephemeral_path() {
   esac
 }
 
+materialize_validated_resource_ledger() {
+  local output="$1"
+  local expected_sentinel="lez-atomic-swaps-m4-${run_id}-foreign-sentinel"
+  [[ ! -e "$output" && ! -L "$output" ]] || return 1
+  jq -s -er --arg run_id "$run_id" --arg monero_run_id "$MONERO_RUN_ID" \
+    --arg expected_sentinel "$expected_sentinel" '
+      def clean_string:
+        type == "string"
+        and length > 0
+        and (test("[\u0000-\u001f\u007f]") | not);
+      def nullable_clean_string:
+        . == null or clean_string;
+      def base:
+        type == "object"
+        and keys == [
+          "binary_sha256", "identity", "kind", "name", "run_label",
+          "schema_version", "start_ticks"
+        ]
+        and .schema_version == 1
+        and (.kind | clean_string)
+        and (.identity | clean_string)
+        and (.name | clean_string)
+        and (.start_ticks | nullable_clean_string)
+        and (.binary_sha256 | nullable_clean_string)
+        and (.run_label | nullable_clean_string);
+      def no_process_metadata:
+        .start_ticks == null and .binary_sha256 == null;
+      def valid_row:
+        base and (
+          if .kind == "process" then
+            (.identity | test("^[1-9][0-9]*$"))
+            and (.start_ticks | type == "string" and test("^[0-9]+$"))
+            and (.binary_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+            and .run_label == null
+          elif (.kind == "container" or .kind == "volume"
+              or .kind == "network" or .kind == "image") then
+            no_process_metadata
+            and (.run_label == $run_id or .run_label == $monero_run_id)
+          elif .kind == "monero_child" then
+            no_process_metadata
+            and .identity == $monero_run_id and .name == $monero_run_id
+            and .run_label == $monero_run_id
+          elif .kind == "ephemeral_path" then
+            no_process_metadata and .identity == .name and .run_label == null
+          elif .kind == "sentinel_network" then
+            no_process_metadata
+            and .identity == $expected_sentinel and .name == $expected_sentinel
+            and .run_label == $run_id
+          else false
+          end
+        );
+      if length > 0
+        and all(.[]; valid_row)
+        and ([.[] | select(.kind == "sentinel_network")] | length == 1)
+      then
+        .[] |
+        [.kind, .identity, .name, (.start_ticks // ""), (.binary_sha256 // ""),
+         (.run_label // "")] |
+        join("\u001f")
+      else
+        error("resource ledger violates its exact cleanup contract")
+      end
+    ' "$resource_ledger" >"$output" || {
+      unlink "$output" 2>/dev/null
+      return 1
+    }
+  chmod 0600 "$output" || return 1
+  require_owner_file "$output" "validated cleanup resource ledger"
+}
+
 cleanup_started=0
 cleanup() {
   local source_status=$? cleanup_failed=0 sentinel_survived=false resources_absent=true
-  local kind identity name start_ticks binary_sha256
+  local kind identity name start_ticks binary_sha256 run_label
+  local validated_ledger
+  local ledger_valid=false index sentinel_name="" sentinel_expected=""
+  local -a ledger_rows=()
   trap - EXIT
   set +e
   if [[ "$cleanup_started" != 1 ]]; then
     exit "$source_status"
   fi
+  validated_ledger="${manifest_root}/resource-ledger.validated.usv"
   record_phase cleanup started
-  while IFS=$'\t' read -r kind identity name start_ticks binary_sha256; do
+  if materialize_validated_resource_ledger "$validated_ledger" &&
+     mapfile -t ledger_rows <"$validated_ledger" &&
+     (( ${#ledger_rows[@]} > 0 )); then
+    ledger_valid=true
+  else
+    cleanup_failed=1
+    resources_absent=false
+  fi
+
+  if [[ "$ledger_valid" == true ]]; then
+    for ((index=${#ledger_rows[@]} - 1; index >= 0; index--)); do
+      IFS=$'\x1f' read -r kind identity name start_ticks binary_sha256 run_label \
+        <<<"${ledger_rows[index]}"
     case "$kind" in
       process)
         if process_is_owned "$identity" "$start_ticks" "$binary_sha256"; then
@@ -279,17 +484,43 @@ cleanup() {
         fi
         ;;
       container)
-        docker container inspect "$identity" >/dev/null 2>&1 &&
-          docker container rm --force "$identity" >/dev/null 2>&1
+        if docker container inspect "$identity" >/dev/null 2>&1; then
+          if docker_resource_run_label_matches container "$identity" "$run_label"; then
+            docker container rm --force "$identity" >/dev/null 2>&1 || cleanup_failed=1
+          else
+            cleanup_failed=1
+          fi
+        fi
         ;;
       volume)
-        docker volume inspect "$name" >/dev/null 2>&1 && docker volume rm "$name" >/dev/null 2>&1
+        if docker volume inspect "$name" >/dev/null 2>&1; then
+          if docker_resource_run_label_matches volume "$name" "$run_label"; then
+            docker volume rm "$name" >/dev/null 2>&1 || cleanup_failed=1
+          else
+            cleanup_failed=1
+          fi
+        fi
         ;;
       network)
-        docker network inspect "$name" >/dev/null 2>&1 && docker network rm "$name" >/dev/null 2>&1
+        if docker network inspect "$name" >/dev/null 2>&1; then
+          if docker_resource_run_label_matches network "$name" "$run_label"; then
+            docker network rm "$name" >/dev/null 2>&1 || cleanup_failed=1
+          else
+            cleanup_failed=1
+          fi
+        fi
         ;;
       image)
-        docker image inspect "$name" >/dev/null 2>&1 && docker image rm "$name" >/dev/null 2>&1
+        if docker image inspect "$name" >/dev/null 2>&1; then
+          if docker_resource_run_label_matches image "$name" "$run_label"; then
+            docker image rm "$name" >/dev/null 2>&1 || cleanup_failed=1
+          else
+            cleanup_failed=1
+          fi
+        fi
+        ;;
+      monero_child)
+        cleanup_monero_child_by_label "$run_label" || cleanup_failed=1
         ;;
       ephemeral_path)
         if [[ -e "$name" || -L "$name" ]]; then
@@ -303,35 +534,57 @@ cleanup() {
       sentinel_network) ;;
       *) cleanup_failed=1 ;;
     esac
-  done < <(tac "$resource_ledger" | jq -r '[.kind,.identity,.name,(.start_ticks//""),(.binary_sha256//"")] | @tsv')
+    done
+  fi
 
-  while IFS=$'\t' read -r kind identity name start_ticks binary_sha256; do
+  if [[ "$ledger_valid" == true ]]; then
+    for ((index=0; index < ${#ledger_rows[@]}; index++)); do
+      IFS=$'\x1f' read -r kind identity name start_ticks binary_sha256 run_label \
+        <<<"${ledger_rows[index]}"
     case "$kind" in
       process) process_is_owned "$identity" "$start_ticks" "$binary_sha256" && resources_absent=false ;;
       container) docker container inspect "$identity" >/dev/null 2>&1 && resources_absent=false ;;
       volume) docker volume inspect "$name" >/dev/null 2>&1 && resources_absent=false ;;
       network) docker network inspect "$name" >/dev/null 2>&1 && resources_absent=false ;;
       image) docker image inspect "$name" >/dev/null 2>&1 && resources_absent=false ;;
+      monero_child) docker_label_resources_absent "$run_label" || resources_absent=false ;;
       ephemeral_path) [[ -e "$name" || -L "$name" ]] && resources_absent=false ;;
       sentinel_network)
-        if docker network inspect "$name" >/dev/null 2>&1; then sentinel_survived=true; else cleanup_failed=1; fi
+        if sentinel_label_matches "$name" "$run_label"; then
+          sentinel_survived=true
+          sentinel_name="$name"
+          sentinel_expected="$run_label"
+        else
+          cleanup_failed=1
+        fi
         ;;
     esac
-  done < <(jq -r '[.kind,.identity,.name,(.start_ticks//""),(.binary_sha256//"")] | @tsv' "$resource_ledger")
+    done
+  fi
 
   if [[ "$sentinel_survived" == true ]]; then
-    local sentinel_name
-    sentinel_name="$(jq -r 'select(.kind=="sentinel_network") | .name' "$resource_ledger")"
-    [[ -n "$sentinel_name" ]] && docker network rm "$sentinel_name" >/dev/null 2>&1 || cleanup_failed=1
+    if [[ -n "$sentinel_name" ]] && sentinel_label_matches "$sentinel_name" "$sentinel_expected"; then
+      docker network rm "$sentinel_name" >/dev/null 2>&1 || cleanup_failed=1
+    else
+      cleanup_failed=1
+    fi
+  else
+    cleanup_failed=1
   fi
   [[ "$resources_absent" == true ]] || cleanup_failed=1
   local cleanup_result=passed
   [[ "$cleanup_failed" == 0 ]] || cleanup_result=failed
+  local no_retry_latch_preserved=false
+  if [[ -n "${tag13_no_retry_latch:-}" && -f "$tag13_no_retry_latch" && ! -L "$tag13_no_retry_latch" ]]; then
+    no_retry_latch_preserved=true
+  fi
   jq -n --arg result "$cleanup_result" --argjson source_status "$source_status" \
     --argjson absent "$resources_absent" --argjson sentinel "$sentinel_survived" \
+    --argjson no_retry_latch_preserved "$no_retry_latch_preserved" \
     '{schema_version:1,result:$result,source_exit_status:$source_status,
       exact_run_resources_absent:$absent,sidecar_processes_absent:$absent,
       sidecar_ports_closed:$absent,foreign_sentinel_survived_exact_cleanup:$sentinel,
+      tag13_no_retry_latch_preserved:$no_retry_latch_preserved,
       foreign_resources_targeted:false,broad_cleanup_used:false}' \
     >"${evidence_root}/cleanup.json"
   chmod 0600 "${evidence_root}/cleanup.json"
@@ -361,7 +614,21 @@ create_foreign_sentinel() {
   docker network create --driver bridge \
     --label "org.logos-co.atomic-swaps.sentinel-for=${run_id}" \
     "$sentinel_network" >/dev/null
-  record_resource sentinel_network "$sentinel_network" "$sentinel_network"
+  record_resource sentinel_network "$sentinel_network" "$sentinel_network" "" "" "$run_id"
+}
+
+stage_executable() {
+  local source="$1" destination="$2" label="$3" canonical uid mode links
+  [[ -x "$source" && -f "$source" && ! -L "$source" ]] || fail "${label} build output is unsafe"
+  [[ ! -e "$destination" && ! -L "$destination" ]] || fail "${label} staged path exists"
+  install -m 0700 -- "$source" "$destination"
+  canonical="$(readlink -f "$destination")"
+  uid="$(stat -c '%u' "$destination")"
+  mode="$(stat -c '%a' "$destination")"
+  links="$(stat -c '%h' "$destination")"
+  [[ "$canonical" == "$destination" && "$uid" == "$(id -u)" && "$mode" == 700 &&
+     "$links" == 1 && -x "$destination" && ! -L "$destination" ]] ||
+    fail "${label} staged executable identity is unsafe"
 }
 
 build_identity_and_artifact() {
@@ -370,11 +637,37 @@ build_identity_and_artifact() {
   record_resource ephemeral_path "$sidecar_target" "$sidecar_target"
   CARGO_TARGET_DIR="$sidecar_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
-      --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity
+      --bin lez-v02-vault-claim-poc --bin lez-v02-xmr-stage-a-compose \
+      --bin lez-v02-xmr-stage-a-poc --example lez-v02-local-actor-identity
   readonly identity_binary="${sidecar_target}/debug/examples/lez-v02-local-actor-identity"
   [[ -x "$identity_binary" && ! -L "$identity_binary" ]] || fail "identity binary build is unavailable"
   readonly vault_claim_binary="${sidecar_target}/debug/lez-v02-vault-claim-poc"
   [[ -x "$vault_claim_binary" && ! -L "$vault_claim_binary" ]] || fail "Vault Claim binary build is unavailable"
+
+  readonly workspace_target="${build_root}/workspace-target"
+  record_resource ephemeral_path "$workspace_target" "$workspace_target"
+  CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+    cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
+      --bin xmr-reference-actor
+  CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+    cargo +1.96.0 build --locked --offline -p lez-adaptor-role-runner \
+      --bin lez-adaptor-role-runner
+
+  readonly staged_binary_root="${build_root}/staged-binaries"
+  record_resource ephemeral_path "$staged_binary_root" "$staged_binary_root"
+  mkdir -m 0700 "$staged_binary_root"
+  readonly agreement_actor_binary="${staged_binary_root}/xmr-reference-actor"
+  readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
+  readonly agreement_composer_binary="${staged_binary_root}/lez-v02-xmr-stage-a-compose"
+  readonly tag13_binary="${staged_binary_root}/lez-v02-xmr-stage-a-poc"
+  stage_executable "${workspace_target}/debug/xmr-reference-actor" \
+    "$agreement_actor_binary" "agreement actor"
+  stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
+    "$agreement_role_runner_binary" "agreement role runner"
+  stage_executable "${sidecar_target}/debug/lez-v02-xmr-stage-a-compose" \
+    "$agreement_composer_binary" "stage-a composer"
+  stage_executable "${sidecar_target}/debug/lez-v02-xmr-stage-a-poc" \
+    "$tag13_binary" "tag13 runner"
 
   readonly artifact_root="${build_root}/m4-artifact"
   record_resource ephemeral_path "${artifact_root}/target" "${artifact_root}/target"
@@ -421,14 +714,22 @@ write_build_manifest() {
     --arg deployment_runner "$(sha256_file "$deployment_runner")" \
     --arg onboarding_runner "$(sha256_file "$onboarding_runner")" \
     --arg monero_runner "$(sha256_file "$monero_runner")" \
+    --arg agreement_runner "$(sha256_file "$agreement_runner")" \
     --arg identity "$(sha256_file "$identity_binary")" \
     --arg vault_claim "$(sha256_file "$vault_claim_binary")" \
+    --arg agreement_actor "$(sha256_file "$agreement_actor_binary")" \
+    --arg agreement_role_runner "$(sha256_file "$agreement_role_runner_binary")" \
+    --arg agreement_composer "$(sha256_file "$agreement_composer_binary")" \
+    --arg tag13 "$(sha256_file "$tag13_binary")" \
     --arg deployer "$(sha256_file "$deployer_binary")" --arg guest "$guest_actual" \
     '{schema_version:1,source_commit:$commit,binary_sha256:{runner:$runner,
       artifact_runner:$artifact_runner,lez_stack_runner:$stack_runner,
       deployment_runner:$deployment_runner,onboarding_runner:$onboarding_runner,
-      monero_runner:$monero_runner,identity_provisioner:$identity,
-      vault_claim:$vault_claim,deployer:$deployer,checked_guest:$guest}}' >"$output"
+      monero_runner:$monero_runner,agreement_runner:$agreement_runner,
+      identity_provisioner:$identity,vault_claim:$vault_claim,
+      agreement_actor:$agreement_actor,agreement_role_runner:$agreement_role_runner,
+      agreement_composer:$agreement_composer,tag13_runner:$tag13,
+      deployer:$deployer,checked_guest:$guest}}' >"$output"
   chmod 0600 "$output"
 }
 
@@ -464,8 +765,8 @@ capture_lez_resources() {
     fail "LEZ image run label drift"
   [[ "$(docker network inspect --format '{{ index .Labels "org.logos-co.atomic-swaps.run" }}' "$network")" == "$run_id" ]] ||
     fail "LEZ network run label drift"
-  record_resource image "$image" "$image"
-  record_resource network "$network" "$network"
+  record_resource image "$image" "$image" "" "" "$run_id"
+  record_resource network "$network" "$network" "" "" "$run_id"
   container_ids="$(docker container ls --all --quiet --filter "label=org.logos-co.atomic-swaps.run=${run_id}")"
   count="$(sed '/^$/d' <<<"$container_ids" | wc -l | tr -d ' ')"
   [[ "$count" == 3 ]] || fail "LEZ resource capture did not find exactly three containers"
@@ -473,7 +774,7 @@ capture_lez_resources() {
     [[ -n "$container_id" ]] || continue
     [[ "$(docker inspect -f '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' "$container_id")" == "$run_id" ]] ||
       fail "LEZ container label drift"
-    record_resource container "$container_id" "$container_id"
+    record_resource container "$container_id" "$container_id" "" "" "$run_id"
   done <<<"$container_ids"
   local image_context="${repo_root}/.e2e/${run_id}/lez-v02/image-context"
   [[ -d "$image_context" && ! -L "$image_context" ]] &&
@@ -537,15 +838,107 @@ actor_onboarding() {
   record_phase actor_onboarding completed
 }
 
+parse_monero_manifest() {
+  local line key value expected_key
+  local -a expected_keys=(
+    RUN_ID MONERO_COMPOSE_PROJECT MONERO_COMPOSE_FILE MONERO_IMAGE MONERO_NETWORK
+    MONERO_DAEMON_HOST_PORT MONERO_FUNDING_WALLET_HOST_PORT
+    MONERO_MAKER_WALLET_HOST_PORT MONERO_TAKER_WALLET_HOST_PORT
+    MONERO_DAEMON_CONFIG MONERO_FUNDING_WALLET_CONFIG MONERO_MAKER_WALLET_CONFIG
+    MONERO_TAKER_WALLET_CONFIG MONERO_DAEMON_ENDPOINT MONERO_FUNDING_WALLET_ENDPOINT
+    MONERO_MAKER_WALLET_ENDPOINT MONERO_TAKER_WALLET_ENDPOINT
+    MONERO_DAEMON_CREDENTIAL_FILE MONERO_DAEMON_USERNAME_FILE MONERO_DAEMON_PASSWORD_FILE
+    MONERO_FUNDING_CREDENTIAL_FILE MONERO_FUNDING_RPC_USERNAME_FILE
+    MONERO_FUNDING_RPC_PASSWORD_FILE MONERO_FUNDING_WALLET_PASSWORD_FILE
+    MONERO_MAKER_CREDENTIAL_FILE MONERO_MAKER_RPC_USERNAME_FILE
+    MONERO_MAKER_RPC_PASSWORD_FILE MONERO_MAKER_WALLET_PASSWORD_FILE
+    MONERO_TAKER_CREDENTIAL_FILE MONERO_TAKER_RPC_USERNAME_FILE
+    MONERO_TAKER_RPC_PASSWORD_FILE MONERO_TAKER_WALLET_PASSWORD_FILE
+  )
+  declare -gA monero_env=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^export\ ([A-Z0-9_]+)=([-A-Za-z0-9_./:=]+)$ ]] ||
+      fail "Monero manifest contains an unsafe or malformed line"
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    [[ -z "${monero_env[$key]+present}" ]] || fail "Monero manifest repeats key: ${key}"
+    monero_env["$key"]="$value"
+  done <"$monero_manifest"
+  [[ "${#monero_env[@]}" == "${#expected_keys[@]}" ]] ||
+    fail "Monero manifest key count differs from its exact contract"
+  for expected_key in "${expected_keys[@]}"; do
+    [[ -n "${monero_env[$expected_key]+present}" ]] ||
+      fail "Monero manifest omits key: ${expected_key}"
+  done
+  [[ "${monero_env[RUN_ID]}" == "$MONERO_RUN_ID" ]] || fail "Monero manifest run identity drift"
+  [[ "${monero_env[MONERO_COMPOSE_PROJECT]}" == "lez-atomic-swaps-monero-${MONERO_RUN_ID}" ]] ||
+    fail "Monero project identity drift"
+  [[ "${monero_env[MONERO_NETWORK]}" == "${monero_env[MONERO_COMPOSE_PROJECT]}-private" ]] ||
+    fail "Monero network identity drift"
+  [[ "${monero_env[MONERO_IMAGE]}" == "lez-atomic-swaps-monero:${MONERO_RUN_ID}" ]] ||
+    fail "Monero image identity drift"
+  for key in MONERO_DAEMON_HOST_PORT MONERO_FUNDING_WALLET_HOST_PORT \
+      MONERO_MAKER_WALLET_HOST_PORT MONERO_TAKER_WALLET_HOST_PORT; do
+    [[ "${monero_env[$key]}" =~ ^[1-9][0-9]{0,4}$ ]] ||
+      fail "Monero manifest port is invalid: ${key}"
+  done
+  [[ "${monero_env[MONERO_DAEMON_ENDPOINT]}" == \
+     "http://127.0.0.1:${monero_env[MONERO_DAEMON_HOST_PORT]}" ]] ||
+    fail "Monero daemon endpoint is not bound to its captured loopback port"
+  [[ "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" == \
+     "http://127.0.0.1:${monero_env[MONERO_FUNDING_WALLET_HOST_PORT]}" ]] ||
+    fail "Monero funding-wallet endpoint drift"
+  [[ "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" == \
+     "http://127.0.0.1:${monero_env[MONERO_MAKER_WALLET_HOST_PORT]}" ]] ||
+    fail "Monero Maker endpoint drift"
+  [[ "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" == \
+     "http://127.0.0.1:${monero_env[MONERO_TAKER_WALLET_HOST_PORT]}" ]] ||
+    fail "Monero Taker endpoint drift"
+  for key in MONERO_DAEMON_CREDENTIAL_FILE MONERO_DAEMON_USERNAME_FILE MONERO_DAEMON_PASSWORD_FILE \
+      MONERO_FUNDING_CREDENTIAL_FILE MONERO_FUNDING_RPC_USERNAME_FILE \
+      MONERO_FUNDING_RPC_PASSWORD_FILE MONERO_FUNDING_WALLET_PASSWORD_FILE \
+      MONERO_MAKER_CREDENTIAL_FILE MONERO_MAKER_RPC_USERNAME_FILE \
+      MONERO_MAKER_RPC_PASSWORD_FILE MONERO_MAKER_WALLET_PASSWORD_FILE \
+      MONERO_TAKER_CREDENTIAL_FILE MONERO_TAKER_RPC_USERNAME_FILE \
+      MONERO_TAKER_RPC_PASSWORD_FILE MONERO_TAKER_WALLET_PASSWORD_FILE; do
+    [[ "${monero_env[$key]}" == "${repo_root}/.e2e/${MONERO_RUN_ID}/monero/credentials/"* ]] ||
+      fail "Monero credential path escaped the child run root: ${key}"
+    require_owner_file "${monero_env[$key]}" "Monero credential ${key}"
+  done
+  readonly monero_daemon_endpoint="${monero_env[MONERO_DAEMON_ENDPOINT]}"
+  readonly monero_daemon_username_file="${monero_env[MONERO_DAEMON_USERNAME_FILE]}"
+  readonly monero_daemon_password_file="${monero_env[MONERO_DAEMON_PASSWORD_FILE]}"
+}
+
+validate_monero_runtime_evidence() {
+  readonly monero_runtime_evidence="${repo_root}/.e2e/${MONERO_RUN_ID}/monero/evidence/runtime.json"
+  require_owner_file "$monero_runtime_evidence" "Monero runtime evidence"
+  jq -e --arg run_id "$MONERO_RUN_ID" --arg daemon "${monero_env[MONERO_DAEMON_ENDPOINT]}" \
+    --arg funding "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" \
+    --arg maker "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" \
+    --arg taker "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" '
+      .schema_version==1 and .result=="passed" and .run_id==$run_id and .milestone=="M4"
+      and .release.version=="0.18.5.1" and .chain.nettype=="fakechain"
+      and .chain.offline==true and .chain.peers==0
+      and .isolation.rpc_bindings_literal_loopback_only==true
+      and .isolation.ip_masquerade==false
+      and ([.components[] | [.role,.kind,.endpoint]] == [
+        ["provisioner","monerod",$daemon],
+        ["provisioner","funding-wallet-rpc",$funding],
+        ["Maker","wallet-rpc",$maker],["Taker","wallet-rpc",$taker]])
+      and (all(.components[]; (.container_id|type)=="string" and (.container_id|length)>0))
+      and .local_funding.maker_unlocked==true and .local_funding.taker_unlocked==true
+      and .runtime_external_resources==[] and .public_rpc_used==false
+      and .faucet_used==false and .public_funds_used==false
+    ' "$monero_runtime_evidence" >/dev/null || fail "Monero runtime evidence violates the M4 boundary"
+}
+
 capture_monero_resources() {
-  local protocol_run="$run_id" container_ids count container_id project network image
+  local container_ids count container_id project network image
   local volume_names volume_name
-  # shellcheck disable=SC1090
-  source "$monero_manifest"
-  project="$MONERO_COMPOSE_PROJECT"
-  network="$MONERO_NETWORK"
-  image="$MONERO_IMAGE"
-  export RUN_ID="$protocol_run"
+  project="${monero_env[MONERO_COMPOSE_PROJECT]}"
+  network="${monero_env[MONERO_NETWORK]}"
+  image="${monero_env[MONERO_IMAGE]}"
   [[ "$project" == "lez-atomic-swaps-monero-${MONERO_RUN_ID}" ]] || fail "Monero project identity drift"
   [[ "$network" == "${project}-private" ]] || fail "Monero network identity drift"
   [[ "$image" == "lez-atomic-swaps-monero:${MONERO_RUN_ID}" ]] || fail "Monero image identity drift"
@@ -555,8 +948,8 @@ capture_monero_resources() {
     fail "Monero image run label drift"
   [[ "$(docker network inspect --format '{{ index .Labels "org.logos-co.atomic-swaps.run" }}' "$network")" == "$MONERO_RUN_ID" ]] ||
     fail "Monero network run label drift"
-  record_resource image "$image" "$image"
-  record_resource network "$network" "$network"
+  record_resource image "$image" "$image" "" "" "$MONERO_RUN_ID"
+  record_resource network "$network" "$network" "" "" "$MONERO_RUN_ID"
   container_ids="$(docker container ls --all --quiet --filter "label=com.docker.compose.project=${project}")"
   count="$(sed '/^$/d' <<<"$container_ids" | wc -l | tr -d ' ')"
   [[ "$count" == 4 ]] || fail "Monero resource capture did not find exactly four containers"
@@ -568,24 +961,189 @@ capture_monero_resources() {
     [[ -n "$volume_name" ]] || continue
     [[ "$(docker volume inspect --format '{{ index .Labels "org.logos-co.atomic-swaps.run" }}' "$volume_name")" == "$MONERO_RUN_ID" ]] ||
       fail "Monero volume run label drift"
-    record_resource volume "$volume_name" "$volume_name"
+    record_resource volume "$volume_name" "$volume_name" "" "" "$MONERO_RUN_ID"
   done <<<"$volume_names"
   while IFS= read -r container_id; do
     [[ -n "$container_id" ]] || continue
     [[ "$(docker container inspect --format '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}' "$container_id")" == "$MONERO_RUN_ID" ]] ||
       fail "Monero container run label drift"
-    record_resource container "$container_id" "$container_id"
+    record_resource container "$container_id" "$container_id" "" "" "$MONERO_RUN_ID"
   done <<<"$container_ids"
-
 }
 start_monero_child() {
   record_phase monero_stack started
+  record_resource monero_child "$MONERO_RUN_ID" "$MONERO_RUN_ID" "" "" "$MONERO_RUN_ID"
   RUN_ID="$MONERO_RUN_ID" MONERO_E2E_KEEP_RUNNING=1 MONERO_E2E_REQUIRE_CLEAN=1 \
     "$monero_runner"
   readonly monero_manifest="${repo_root}/.e2e/${MONERO_RUN_ID}/monero/run.env"
   require_owner_file "$monero_manifest" "Monero child manifest"
+  parse_monero_manifest
+  validate_monero_runtime_evidence
   capture_monero_resources
   record_phase monero_stack completed
+}
+
+compose_xmr_agreement() {
+  record_phase agreement started
+  readonly agreement_root="${private_root}/xmr-agreement"
+  readonly agreement_stdout="${evidence_root}/xmr-agreement-receipt.json"
+  [[ ! -e "$agreement_root" && ! -L "$agreement_root" ]] || fail "agreement output root exists"
+  [[ ! -e "$agreement_stdout" && ! -L "$agreement_stdout" ]] || fail "agreement stdout evidence exists"
+  local taker_owner maker_owner sequencer_url indexer_url now_seconds
+  taker_owner="$(jq -er '.account_id_hex' "${evidence_root}/taker-lez-identity.json")"
+  maker_owner="$(jq -er '.account_id_hex' "${evidence_root}/maker-lez-identity.json")"
+  sequencer_url="$(manifest_value LEZ_SEQUENCER_RPC_URL "$lez_stack_manifest")"
+  indexer_url="$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")"
+  now_seconds="$(date -u +%s)"
+  readonly agreement_monero_amount_piconero=1000000000000
+  readonly agreement_lez_amount=700
+  readonly maker_xmr_funding_cutoff_ms="$(((now_seconds + 14400) * 1000))"
+  readonly refund_at_ms="$((maker_xmr_funding_cutoff_ms + 10000))"
+  readonly punish_at_ms="$((refund_at_ms + 10000))"
+
+  record_phase journals started
+  "$agreement_runner" execute --run-id "$run_id" --output-root "$agreement_root" \
+    --taker-lez-owner "$taker_owner" --maker-lez-owner "$maker_owner" \
+    --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" \
+    --monero-daemon-url "$monero_daemon_endpoint" \
+    --monero-rpc-username-file "$monero_daemon_username_file" \
+    --monero-rpc-password-file "$monero_daemon_password_file" \
+    --monero-amount-piconero "$agreement_monero_amount_piconero" \
+    --lez-amount "$agreement_lez_amount" \
+    --maker-xmr-funding-cutoff-ms "$maker_xmr_funding_cutoff_ms" \
+    --refund-at-ms "$refund_at_ms" --punish-at-ms "$punish_at_ms" \
+    --actor-bin "$agreement_actor_binary" --role-runner-bin "$agreement_role_runner_binary" \
+    --composer-bin "$agreement_composer_binary" >"$agreement_stdout"
+  chmod 0600 "$agreement_stdout"
+
+  readonly agreement_receipt="${agreement_root}/agreement-receipt.json"
+  readonly agreement_stage_a="${agreement_root}/exchange/agreement-stage-a.bin"
+  readonly agreement_stage_b="${agreement_root}/stage-b/stage-b.bin"
+  readonly agreement_composer_receipt="${agreement_root}/exchange/stage-a-composer-receipt.json"
+  require_owner_file "$agreement_stdout" "agreement stdout receipt"
+  require_owner_file "$agreement_receipt" "agreement internal receipt"
+  require_owner_file "$agreement_stage_a" "countersigned Stage A"
+  require_owner_file "$agreement_stage_b" "countersigned Stage B"
+  require_owner_file "$agreement_composer_receipt" "Stage-A composer receipt"
+  cmp -- "$agreement_stdout" "$agreement_receipt" || fail "agreement stdout differs from internal receipt"
+  jq -e --arg run_id "$run_id" --arg monero "$agreement_monero_amount_piconero" \
+    --arg lez "$agreement_lez_amount" --arg cutoff "$maker_xmr_funding_cutoff_ms" \
+    --arg refund "$refund_at_ms" --arg punish "$punish_at_ms" \
+    --arg stage_a "$(sha256_file "$agreement_stage_a")" \
+    --arg stage_b "$(sha256_file "$agreement_stage_b")" '
+      .schema_version==1 and .kind=="m4_xmr_agreement_receipt" and .result=="passed"
+      and .run_id==$run_id and (.swap_id|test("^[0-9a-f]{64}$"))
+      and .stage_a_sha256==$stage_a and .stage_b_sha256==$stage_b
+      and .requested_terms=={monero_amount_piconero:$monero,lez_amount:$lez,
+        maker_xmr_funding_cutoff_ms:$cutoff,refund_at_ms:$refund,punish_at_ms:$punish}
+      and .terms_bound_to_stage_material_by_helper==false
+      and .composer_receipt_validation_scope=="schema_shape_and_unsigned_wire_length_only"
+      and .composer_receipt_wire_bytes_matched_output==true
+      and .submission_performed==false and .stage_a_rpc_scope=="read_only"
+      and .sessions_equal_across_roles==true and .taker_claim_material_private==true
+      and .refund_presignatures_equal==true and .stage_b_countersigned==true
+    ' "$agreement_receipt" >/dev/null || fail "agreement receipt violates the exact M4 boundary"
+  jq -e '(.wire_bytes|type)=="number" and .wire_bytes>0
+    and (.agreement_commitment|test("^[0-9a-f]{64}$"))
+    and (.monero_genesis_hash|test("^[0-9a-f]{64}$"))
+    and (.lez_genesis_hash|test("^[0-9a-f]{64}$"))' "$agreement_composer_receipt" >/dev/null ||
+    fail "agreement composer receipt is incomplete"
+
+  local role purpose
+  for role in maker taker; do
+    require_owner_file "${agreement_root}/stage-b/private/${role}.sqlite" "${role} role journal"
+    for purpose in claim refund; do
+      require_owner_file "${agreement_root}/material/${role}-sessions/${purpose}.json" \
+        "${role} ${purpose} session"
+    done
+  done
+  cmp -- "${agreement_root}/material/maker-sessions/claim.json" \
+    "${agreement_root}/material/taker-sessions/claim.json" ||
+    fail "role-local claim sessions differ"
+  cmp -- "${agreement_root}/material/maker-sessions/refund.json" \
+    "${agreement_root}/material/taker-sessions/refund.json" ||
+    fail "role-local refund sessions differ"
+  [[ ! "${agreement_root}/material/taker-sessions/claim.json" -ef \
+     "${agreement_root}/material/taker-sessions/refund.json" ]] ||
+    fail "Taker claim/refund sessions alias one inode"
+  require_owner_file "${agreement_root}/stage-b/private/taker-outbox/claim-partial.json" \
+    "private Taker claim partial"
+  require_owner_file "${agreement_root}/stage-b/private/taker-outbox/claim-presignature.json" \
+    "private Taker claim presignature"
+  [[ ! -e "${agreement_root}/stage-b/exchange/claim/taker-partial.json" &&
+     ! -L "${agreement_root}/stage-b/exchange/claim/taker-partial.json" ]] ||
+    fail "Taker claim partial crossed the exchange boundary"
+  [[ ! -e "${agreement_root}/stage-b/exchange/claim/taker-presignature.json" &&
+     ! -L "${agreement_root}/stage-b/exchange/claim/taker-presignature.json" ]] ||
+    fail "Taker claim presignature crossed the exchange boundary"
+  cmp -- "${agreement_root}/stage-b/exchange/refund/maker-presignature.json" \
+    "${agreement_root}/stage-b/exchange/refund/taker-presignature.json" ||
+    fail "refund presignatures differ"
+  record_phase journals completed
+  record_phase agreement completed
+}
+
+submit_tag13() {
+  record_phase tag13 started
+  readonly tag13_state="${private_root}/tag13-state"
+  mkdir -m 0700 "$tag13_state"
+  readonly tag13_stdout="${evidence_root}/tag13-stdout.json"
+  readonly tag13_internal="${tag13_state}/m4-xmr-stage-a-tag13-evidence.v2.json"
+  readonly tag13_no_retry_latch="${manifest_root}/tag13-no-retry.latch"
+  readonly tag13_prepare_request_id="${run_id}-tag13-prepare-001"
+  [[ ! -e "$tag13_stdout" && ! -L "$tag13_stdout" ]] || fail "tag13 stdout evidence exists"
+  [[ ! -e "$tag13_internal" && ! -L "$tag13_internal" ]] || fail "tag13 internal evidence exists"
+  [[ ! -e "$tag13_no_retry_latch" && ! -L "$tag13_no_retry_latch" ]] ||
+    fail "tag13 no-retry latch already exists; do not retry this run"
+
+  local temporary
+  temporary="$(mktemp "${manifest_root}/.tag13-no-retry.XXXXXX")"
+  printf '%s\n' 'tag13_submission_may_have_occurred' >"$temporary"
+  chmod 0600 "$temporary"
+  sync -f "$temporary"
+  ln -- "$temporary" "$tag13_no_retry_latch"
+  unlink "$temporary"
+  sync -f "$tag13_no_retry_latch"
+  sync -d "$manifest_root"
+  require_owner_file "$tag13_no_retry_latch" "tag13 durable no-retry latch"
+  [[ "$(sed -n '1p' "$tag13_no_retry_latch")" == tag13_submission_may_have_occurred ]] ||
+    fail "tag13 no-retry latch marker drift"
+
+  "$tag13_binary" --state-directory "$tag13_state" \
+    --private-key-file "${private_root}/lez-identities/taker/lez-signer.key" \
+    --sequencer-url "$(manifest_value LEZ_SEQUENCER_RPC_URL "$lez_stack_manifest")" \
+    --indexer-url "$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")" \
+    --agreement-wire-file "$agreement_stage_a" --activation-wire-file "$agreement_stage_b" \
+    --monero-view-key-file "${agreement_root}/material/taker/monero-view.key" \
+    --run-id "$run_id" --prepare-request-id "$tag13_prepare_request_id" >"$tag13_stdout"
+  chmod 0600 "$tag13_stdout"
+  require_owner_file "$tag13_stdout" "tag13 stdout evidence"
+  require_owner_file "$tag13_internal" "tag13 internal evidence"
+  [[ "$(jq -S -c . "$tag13_stdout")" == "$(jq -S -c . "$tag13_internal")" ]] ||
+    fail "tag13 stdout and durable evidence differ semantically"
+  jq -e --arg run_id "$run_id" --arg request "$tag13_prepare_request_id" \
+    --arg stage_a "$(sha256_file "$agreement_stage_a")" \
+    --arg stage_b "$(sha256_file "$agreement_stage_b")" \
+    --arg lez_amount "$agreement_lez_amount" \
+    --argjson cutoff "$maker_xmr_funding_cutoff_ms" '
+      .schema=="lez_v02_m4_xmr_stage_a_tag13_poc_v2" and .role=="taker"
+      and .run_id==$run_id and .prepare_request_id==$request
+      and .stage_a_agreement_wire_sha256==$stage_a
+      and .stage_b_activation_wire_sha256==$stage_b
+      and .terms.amount==$lez_amount and .maker_xmr_funding_cutoff_ms==$cutoff
+      and .initialization.effect=="initialize" and .funding.effect=="fund"
+      and .initialization.finalized_clock.height < .funding.finalized_clock.height
+      and .initialization.finalized_clock.timestamp_ms <= $cutoff
+      and .funding.finalized_clock.timestamp_ms <= $cutoff
+      and .public_rpc_used==false and .automatic_submission_retry==false
+      and .send_attempt_ceiling_per_effect_per_process==1
+      and .finality_polling_is_submission_retry==false
+      and .crash_atomic_submission==false
+      and .monero_lock_observed==false and .swap_completed==false
+      and .atomic_swap_proven==false
+      and .atomicity_claim=="none_tag13_only_proves_ordered_finalized_lez_escrow_funding"
+    ' "$tag13_internal" >/dev/null || fail "tag13 evidence violates the exact v2 boundary"
+  record_phase tag13 completed
 }
 
 execute_run() {
@@ -602,7 +1160,10 @@ execute_run() {
   start_lez_stack
   deploy_m4_program
   actor_onboarding
-  fail "monero_stack phase is not implemented; no Monero or swap effect was started"
+  start_monero_child
+  compose_xmr_agreement
+  submit_tag13
+  fail "monero_funding phase is not implemented; tag13 effects may have been submitted; do not retry this run"
 }
 
 mode="${1:-}"
