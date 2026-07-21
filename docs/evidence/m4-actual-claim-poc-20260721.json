@@ -125,7 +125,11 @@
       "confirmation_tip_height": 130,
       "required_confirmations": 10,
       "funded_principal_piconero": 1000000000000,
-      "automatic_submission_retry": false
+      "automatic_submission_retry": false,
+      "containing_height": 121,
+      "received_amount_piconero": 998191600000,
+      "fee_piconero": null,
+      "unreceived_remainder_piconero": 1808400000
     }
   ],
   "role_and_atomicity_evidence": {
@@ -167,12 +171,58 @@
   },
   "remaining_before_m4_completion_tag": [
     "exact committed-tree replay and clean pushed-commit evidence",
-    "reproducible one-command or fully rehearsed operator runner with scoped cleanup attestation",
+    "finish and rehearse the partial run-scoped orchestrator through every actor handoff, terminal assertion, and scoped cleanup attestation",
     "signed tag-16 refund and tag-17 punishment actual-node paths",
     "native plus two independent custom-token F7 parity",
     "self-hosted and public Monero Stagenet U9 guide and CI lane",
     "happy refund and concurrent XMR D1 videos",
     "post-PoC QA chaos information-security production-readiness and review gates"
   ],
-  "m4_complete_tag_authorized": false
+  "m4_complete_tag_authorized": false,
+  "cross_chain_binding": {
+    "result": "verified_owner_private_actor_binding",
+    "schema": "lez_v02_m4_claim_cross_chain_binding_v1",
+    "artifact_sha256": "896d05d3178e3ff44b6ca010d4528835f5d796dc7e1004984ed78e853c083306",
+    "artifact_mode": "0600",
+    "artifact_link_count": 1,
+    "artifact_path_published": false,
+    "monero_sweep_evidence_provenance": "legacy_v1_plus_receipt_v2",
+    "monero_sweep_evidence_schema": "lez_v02_m4_actual_local_monero_claim_sweep_v1",
+    "monero_receipt_evidence_schema": "lez_v02_m4_actual_local_monero_verification_v2",
+    "lez_claim_block_height": 4208,
+    "lez_finalized_tip_height": 4220,
+    "monero_sweep_block_height": 121,
+    "monero_stable_tip_height": 130,
+    "monero_sweep_confirmations": 10,
+    "funded_amount_piconero": 1000000000000,
+    "received_amount_piconero": 998191600000,
+    "fee_piconero": null,
+    "unreceived_remainder_piconero": 1808400000,
+    "destination_ownership_binding": "owner_private_taker_wallet_boundary_not_stage_a_committed",
+    "confirmed_sweep_to_evidenced_destination": true,
+    "taker_destination_control_cryptographically_committed_by_stage_a": false,
+    "atomicity_scope": "successful_claim_path_conditional_atomicity",
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorg_immunity_claimed": false,
+    "artifact_size_bytes": 3203,
+    "monero_daemon_version": "0.18.5.1-release",
+    "monero_target_wallet_version": 65567,
+    "monero_foreign_wallet_version": 65567,
+    "network_scope": "isolated_official_monero_regtest",
+    "peer_count": 0,
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "automatic_submission_retry": false
+  },
+  "replay_runner_status": {
+    "script": "scripts/run-m4-actual-claim-poc.sh",
+    "contract_and_preflight_implemented": true,
+    "execute_implemented_through": "deployment",
+    "actor_onboarding_implemented": false,
+    "actor_onboarding_failure_mode": "fail_closed_before_monero_or_swap_effects",
+    "monero_launcher_implemented": true,
+    "monero_launcher_reachable_in_execute": false,
+    "successful_claim_tail_implemented": false,
+    "one_command_replay_claimed": false
+  }
 }

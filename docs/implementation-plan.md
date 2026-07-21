@@ -2922,11 +2922,24 @@ Only a genuinely fresh third database was eligible for publication.
   and finalized-height identities, role boundaries, zero LEZ custody, no public
   resources, and explicit nonclaims. The current packet is a working-tree
   checkpoint and is not clean-commit certification.
+- [x] Bind finalized LEZ Claim evidence to the transcript-verified adaptor
+  extraction, reconstructed public spend key, original sweep effect, and an
+  independent Monero receipt in one create-new Taker-private record. The
+  retained legacy-v1-plus-receipt-v2 record has a null exact fee and a checked
+  1808400000-piconero unreceived remainder; the current sweep-v2 path proves
+  exact fee conservation in focused tests but was not the retained full CLI
+  invocation. Destination ownership remains the explicit owner-private
+  Taker-wallet boundary rather than a Stage-A commitment.
 - [ ] Replay the exact journey from the final committed source, retain binary
   and input identities, prove scoped cleanup without touching unrelated Docker
   activity, and publish the synchronized clean-push checkpoint.
-- [ ] Publish and rehearse a one-command runner or a complete create-new manual
-  procedure whose commands cover every role handoff and terminal assertion.
+- [ ] Finish and rehearse the run-scoped orchestrator through every role
+  handoff, terminal assertion, evidence publication, and scoped cleanup. The
+  manual procedure now includes the cross-chain binder, but
+  `scripts/run-m4-actual-claim-poc.sh` is deliberately partial: contract and
+  preflight work; `execute` reaches deployment then fails closed at unimplemented
+  actor onboarding; its Monero launcher is unreachable and its successful-claim
+  tail is absent.
 - [ ] Build and scan the final distributable Monero runtime image fail-hard;
   the current official archive and local runtime remain PoC infrastructure.
 
@@ -2960,7 +2973,9 @@ The first complete local claim journey is GREEN as a working-tree checkpoint:
    height 4208 with custody zero; and
 6. the Taker extracted the Maker share only from that canonical final signature,
    reconstructed the Stage-A spend key, and confirmed sweep
-   `6c8c7bca...70e8e21a` at Monero tip 130.
+   `6c8c7bca...70e8e21a` at Monero tip 130. The Taker actor then produced
+   a verified owner-private cross-chain binding over LEZ Claim height 4208 and
+   finalized tip 4220, plus Monero receipt height 121 and stable tip 130.
 
 The retained example topology used LEZ Bedrock/sequencer/indexer ports
 33145/33146/33147, Maker/Taker sidecars 36967/58993, and Monero daemon,
@@ -2985,7 +3000,8 @@ definitive-absence recovery, and cancellation-after-CAS remain hardening work.
 The next certification order is:
 
 1. finish focused tests, strict Clippy/Rustdoc, dependency policy, traceability,
-   static Mermaid checks, and secret/diff hygiene for the new live-path CLIs;
+   one end-of-slice static Mermaid check, and secret/diff hygiene for the binder
+   and partial orchestrator;
 2. commit and push the exact sources and documentation, then replay the journey
    from that clean commit with fresh run IDs and retain scoped cleanup;
 3. replace the working-tree qualifier only if the replay reproduces the ordered
@@ -2993,15 +3009,15 @@ The next certification order is:
 4. after owner transition, begin the signed-refund/punishment functional slice,
    then QA, chaos, information-security, and production-readiness hardening.
 
-Checkpoint ETA after this push: 2 to 4 focused hours for the direct finalized
-tag-15-to-extraction-to-sweep binder and its negative tests, then 4 to 8
-additional
-focused hours for a fresh exact-commit replay, fully rehearsed runner, evidence
-rebinding, and scoped cleanup. Full M4 functional closure, including actual
-tag-16/tag-17 recovery, F7 native-plus-two-token parity, U9 guidance/CI, D1 XMR
-recordings, and synchronized closure gates, is estimated at 18 to 30 focused
-hours from this checkpoint. These ranges exclude owner-selected post-PoC QA,
-chaos, information-security, and production-readiness phases and do not let
+The direct finalized-Claim-to-sweep binder and its retained-run invocation are
+complete. Remaining runner/orchestration implementation is estimated at 6 to
+10 focused hours. After that implementation is complete, budget 25 to 45
+minutes for one warm exact-commit replay or 1 to 3 hours for a cold replay,
+evidence rebinding, and scoped cleanup. Full M4 functional closure, including
+actual tag-16/tag-17 recovery, F7 native-plus-two-token parity, U9 guidance/CI,
+D1 XMR recordings, and synchronized closure gates, remains estimated at 18 to
+30 focused hours from this checkpoint. These ranges exclude owner-selected
+post-PoC QA, chaos, information-security, and production-readiness phases and do not let
 Logos-owned external gaps block local certification. No ETA authorizes an
 `m4-complete` tag before the recorded gates are true.
 

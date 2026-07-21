@@ -2131,6 +2131,8 @@ flowchart TB
     FundingWallet["Official funding wallet RPC"]
     SharedWallet["Official shared or Maker wallet RPC"]
     TakerWallet["Official Taker wallet RPC"]
+    Binder["Taker cross-chain binder"]
+    Binding[("Owner-private binding record")]
 
     Maker --> MakerJournal
     Taker --> TakerJournal
@@ -2155,6 +2157,11 @@ flowchart TB
     Worker --> TakerSidecar
     Maker --> SharedWallet
     Taker --> TakerWallet
+    Taker --> Binder
+    TakerJournal --> Binder
+    TakerSidecar -.->|"Finalized result file"| Binder
+    TakerWallet -.->|"Receipt evidence file"| Binder
+    Binder --> Binding
 ```
 
 The retained run used dynamic literal-loopback RPCs. Its example ports were LEZ Bedrock 33145, sequencer 33146, indexer 33147, Maker sidecar 36967, Taker sidecar 58993, Monero daemon 39185, funding wallet 41189, shared or Maker wallet 46769, and Taker wallet 58393. These numbers document that run; fresh operators must source fresh manifests. No public RPC, P2P peer, faucet, public funds, Stagenet, or external finality service participated.
@@ -2172,6 +2179,7 @@ sequenceDiagram
     participant P as Exclusive release preparer
     participant W as Release-only worker
     participant M as Maker and Maker sidecar
+    participant B as Taker cross-chain binder
 
     Note over T,M: Stage A and B bind terms, claim, refund, punishment, and role journals
     Note over T,M: Taker first lock starts the protocol
@@ -2198,6 +2206,9 @@ sequenceDiagram
     T->>T: Extract Maker adaptor share from final signature
     T->>X: Reconstruct Stage A wallet and sweep
     X-->>T: Sweep confirmed at tip 130
+    T->>B: Bind Stage A and B, journal, finalized tag 15, packet, and extraction
+    X-->>B: Independent receipt at block 121 under stable tip 130
+    B-->>T: Owner-private conditional-atomicity snapshot
     Note over T,M: No canonical reveal uses pending tag 16 and tag 17 recovery
     Note over T,M: Implementation status successful claim GREEN and recovery pending
 ```
@@ -2245,11 +2256,32 @@ The argument is conditional on the cryptography and finality assumptions, on the
 
 **Conditional liveness:** the argument assumes canonical LEZ and Monero finality, retained role journals and shares, usable local nodes, fees, inclusion, and enough signed recovery margin. A crash can delay the follower, while canonical disclosure preserves its authority.
 
-**Implementation status:** the actual local successful-claim branch is working-tree GREEN. Exact committed-tree replay, direct finalized-Claim-to-sweep binding evidence, tag 16 refund, tag 17 punishment, and survivor recovery are still pending, so no M4 completion tag is authorized.
+**Implementation status:** the actual local successful-claim branch and its
+owner-private direct finalized-Claim-to-sweep binder are working-tree GREEN.
+The binder revalidated LEZ Claim at height 4208 under finalized tip 4220 and
+the matching Monero receipt at height 121 under stable tip 130. Exact
+committed-tree replay, the full runner, tag 16 refund, tag 17 punishment, and
+survivor recovery are still pending, so no M4 completion tag is authorized.
 
 Official Monero 0.18.5.1 may omit `connections` for an empty list. The local compatibility decoder accepts omission only as empty while `get_info` independently requires zero incoming and zero outgoing peers. Two failed preparation states exposed this wire difference and remain quarantined; only fresh `release3` reached Prepared and Admitted.
 
-The public evidence packet is [m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json). It is a working-tree checkpoint over base commit `40cbac3d`, not exact clean-commit replay. It omits private material and does not claim execution-binary hashes. Scoped cleanup, signed recovery, F7 token parity, U9 public deployment guidance, D1 XMR videos, QA, chaos, information-security, production-readiness review, and the `m4-complete` tag remain open.
+The public evidence packet is
+[m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json).
+It records the binder schema and public facts without its private path or any
+scalar. The retained legacy-v1 sweep plus receipt-v2 binding has
+`fee_piconero: null` and an unreceived remainder of 1808400000 piconero; the
+current sweep-v2 validator instead proves exact fee conservation in focused
+tests, but it was not the retained full CLI invocation. The destination is
+authenticated by the owner-private Taker-wallet boundary but is not
+countersigned by Stage A, so the architecture claims a confirmed sweep to the
+evidenced destination rather than independent address-ownership proof. The
+binder is a conditional-atomicity snapshot, not a distributed transaction or
+future-reorg guarantee. It is a working-tree checkpoint over base commit
+`40cbac3d`, not exact clean-commit replay. It omits private material and does
+not claim execution-binary hashes. Scoped cleanup, signed recovery, F7 token
+parity, U9 public deployment guidance, D1 XMR videos, QA, chaos,
+information-security, production-readiness review, and the `m4-complete` tag
+remain open.
 
 ## Happy-path user flow
 

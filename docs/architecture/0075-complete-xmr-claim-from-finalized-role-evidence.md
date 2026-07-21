@@ -46,6 +46,16 @@ official wallet RPC, requires the exact unlocked principal, performs one sweep,
 and mines the local confirmation policy. It emits no private scalar or wallet
 credential.
 
+A Taker-only `bind-finalized-claim-sweep` action then rebuilds the same canonical
+Stage A/B lifecycle and durable claim session. It byte-binds finalized tag 15,
+the observed final-signature packet, transcript-verified adaptor extraction,
+the reconstructed public spend key, the sweep effect, and an independent
+Monero receipt/topology observation into one create-new owner-private record.
+It accepts both current sweep v2 and the retained legacy sweep v1 paired with
+receipt v2. The current-v2 validator proves exact fee conservation in focused
+tests; legacy v1 exposes only an unreceived remainder and therefore emits
+`fee_piconero: null`. The retained full CLI invocation used the legacy path.
+
 Official Monero 0.18.5.1 can omit `connections` when the connection list is
 empty. The topology decoder therefore defaults an omitted list to empty but
 still independently requires `get_info` to report zero incoming and zero
@@ -64,6 +74,11 @@ flowchart LR
     Tag15 --> TakerActor["Taker role-local classifier and adaptor extraction"]
     TakerActor --> Reconstruct["Point-checked spend-key reconstruction"]
     Reconstruct --> Sweep["Official Monero wallet sweep confirmed"]
+    Sweep --> Receipt["Independent Monero receipt and topology"]
+    Tag15 --> Binder["Taker cross-chain binder"]
+    TakerActor --> Binder
+    Receipt --> Binder
+    Binder --> Bound["Owner-private conditional-atomicity record"]
 ```
 
 ## Actual successful-claim sequence
@@ -78,6 +93,7 @@ sequenceDiagram
     participant LezIdx as LEZ finalized indexer
     participant Release as Release preparer and worker
     participant Monero as Official Monero daemon and wallets
+    participant Binder as Taker cross-chain binder
 
     Taker->>TakerSidecar: Submit exact Initialize then Fund
     TakerSidecar->>LezSeq: One attempt per durable transaction
@@ -94,6 +110,9 @@ sequenceDiagram
     Taker->>Taker: Extract Maker share only from canonical final signature
     Taker->>Monero: Restore exact reconstructed wallet and sweep
     Monero-->>Taker: Sweep reaches 10 confirmations at tip 130
+    Taker->>Binder: Supply Stage A and B, journal, finalized tag 15, packet, and extracted share
+    Monero-->>Binder: Supply sweep effect plus independent receipt at block 121 and tip 130
+    Binder-->>Taker: Create owner-private conditional-atomicity record
 ```
 
 ## Atomicity contribution
@@ -112,7 +131,10 @@ claim branch of the conditional atomicity argument:
 Thus, in the executed branch, the Maker cannot receive the LEZ custody balance
 without publishing the information needed for the Taker's XMR spend, subject to
 the DLEQ construction, canonical LEZ finality, exact Monero observation, role
-key custody, and reorg assumptions. The tag-16 signed-refund and tag-17
+key custody, and reorg assumptions. The binder makes that causal statement
+machine-checkable for this snapshot: finalized LEZ Claim is at height 4208
+under tip 4220, and the matching Monero receipt is at height 121 under stable
+tip 130. The tag-16 signed-refund and tag-17
 punishment branches were not executed. This ADR therefore does not claim
 literal both-refund conformance, production atomicity, or an M4 completion tag.
 
@@ -125,6 +147,15 @@ The packet deliberately records `pending_exact_committed_tree_replay`: the run
 used later uncommitted sources on top of base commit `40cbac3`, so it is not
 clean-commit milestone certification.
 
+A reviewed owner-private binder record is mode `0600` and one link. The final
+3203-byte packet has SHA-256
+`896d05d3178e3ff44b6ca010d4528835f5d796dc7e1004984ed78e853c083306`.
+The public packet retains no private path or scalar. Its retained input provenance is
+`legacy_v1_plus_receipt_v2`: funded amount 1000000000000, evidenced receipt
+998191600000, exact fee unknown (`null`), and unreceived remainder 1808400000
+piconero. The current sweep-v2 validator records and verifies an exact fee
+instead; it is focused-tested but was not the retained full CLI invocation.
+
 The runtime used only run-owned literal-loopback services and deterministic
 local genesis/Regtest funds. No public RPC, P2P peer, faucet, public funds, or
 external finality service participated. The retained run has not yet produced a
@@ -133,6 +164,11 @@ cleanup attestation.
 ## Consequences and residuals
 
 - A result-only classifier is chain evidence, not submission authority.
+- The binder proves a confirmed sweep to the evidenced destination. Stage A
+  does not commit that destination, so independent cryptographic Taker ownership
+  is not claimed; ownership comes from the owner-private Taker-wallet boundary.
+- The binder is a finalized snapshot, not a current-chain query, distributed
+  cross-chain transaction, or future-reorganization guarantee.
 - Extracted scalar material remains owner-private and absent even as a hash from
   public evidence.
 - The two failed preparer databases are quarantined; only the fresh third state

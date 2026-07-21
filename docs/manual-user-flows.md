@@ -2313,6 +2313,16 @@ adaptation/publication/finality, Taker extraction, and reconstructed-wallet
 Monero sweep. Only that same-swap causal chain is the successful-claim atomicity
 checkpoint. The signed-refund and punishment branches remain unexecuted.
 
+The repository runner is not yet the replay for this manual flow.
+`scripts/run-m4-actual-claim-poc.sh contract` and its preflight modes are
+implemented. `execute` currently reaches checked artifact build, identity
+provisioning, the LEZ stack, and M4 deployment, then deliberately fails closed
+at `actor_onboarding` before Monero or any swap effect. Its Monero launcher is
+implemented but unreachable, and the agreement-through-cleanup tail is absent.
+Do not invoke or advertise it as a one-command successful-claim replay. The
+remaining orchestration is estimated at 6 to 10 focused hours; once complete,
+allow 25 to 45 minutes for a warm replay or 1 to 3 hours for a cold replay.
+
 Every effect command below uses create-new outputs and has no automatic
 submission retry. Use a fresh lowercase run ID, source the fresh LEZ and Monero
 manifests, keep Maker/Taker roots and capabilities separate, and never substitute
@@ -3326,6 +3336,75 @@ jq -e '.confirmations >= .required_confirmations and
        .public_rpc_used == false and .faucet_used == false' \
   "$MONERO_SWEEP_EVIDENCE"
 ```
+
+A fresh run of the current sweep binary emits
+`lez_v02_m4_actual_local_monero_claim_sweep_v2`. Unlike the retained legacy-v1
+artifact, v2 records exact received and fee fields and requires checked
+`funded == received + fee`. Create an independent receipt through the Taker
+wallet, then let the Taker actor bind both chain snapshots to the same durable
+claim transcript:
+
+```sh
+export MONERO_CLAIM_RECEIPT="$M4_PRIVATE_ROOT/monero-claim-receipt.json"
+export M4_CROSS_CHAIN_BINDING="$M4_PRIVATE_ROOT/m4-cross-chain-binding.json"
+test ! -e "$MONERO_CLAIM_RECEIPT"
+test ! -e "$M4_CROSS_CHAIN_BINDING"
+
+compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-verify \
+  --agreement-wire-file "$AGREEMENT_STAGE_A" \
+  --monero-transaction-id "$(jq -er .transaction_id "$MONERO_SWEEP_EVIDENCE")" \
+  --destination-address "$(jq -er .destination_address "$MONERO_SWEEP_EVIDENCE")" \
+  --amount-piconero "$(jq -er .received_amount_piconero "$MONERO_SWEEP_EVIDENCE")" \
+  --run-id "$M4_RUN_ID" \
+  --daemon-url "$MONERO_DAEMON_ENDPOINT" \
+  --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
+  --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
+  --target-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
+  --target-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
+  --target-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
+  --foreign-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
+  --foreign-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
+  --foreign-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
+  --output-evidence "$MONERO_CLAIM_RECEIPT"
+
+"$REFERENCE_ACTOR" bind-finalized-claim-sweep \
+  --private-root "$TAKER_PRIVATE_ROOT" \
+  --own-public-packet "$TAKER_PUBLIC_PACKET" \
+  --peer-public-packet "$MAKER_PUBLIC_PACKET" \
+  --agreement-stage-a "$AGREEMENT_STAGE_A" \
+  --activation-stage-b "$ACTIVATION_STAGE_B" \
+  --journal "$TAKER_CLAIM_JOURNAL" \
+  --run-id "$M4_RUN_ID" \
+  --finalized-claim "$TAG15_FINALIZED" \
+  --observed-final-signature "$TAKER_OBSERVED_SIGNATURE" \
+  --extracted-maker-adaptor-scalar "$EXTRACTED_MAKER_SCALAR" \
+  --monero-sweep-evidence "$MONERO_SWEEP_EVIDENCE" \
+  --monero-receipt-evidence "$MONERO_CLAIM_RECEIPT" \
+  --output-binding-evidence "$M4_CROSS_CHAIN_BINDING"
+
+test "$(stat -c %a "$M4_CROSS_CHAIN_BINDING")" = 600
+test "$(stat -c %h "$M4_CROSS_CHAIN_BINDING")" = 1
+jq -e . "$M4_CROSS_CHAIN_BINDING" >/dev/null
+```
+
+The binder revalidates the Taker role material, Stage A/B, durable claim
+session, finalized tag-15 aggregate signature, extracted share, reconstructed
+public spend key, exact agreement/genesis/network, both Monero evidence files,
+confirmations, topology, and checked accounting. It creates one owner-private
+canonical record. It never emits the scalar.
+
+For retained run `m4happy-40cbac3-20260721a`, the original sweep file is
+`lez_v02_m4_actual_local_monero_claim_sweep_v1`; pairing it with receipt v2
+produces provenance `legacy_v1_plus_receipt_v2`, received amount 998191600000,
+`fee_piconero: null`, and unreceived remainder 1808400000. The remainder must
+not be relabeled an exact fee because v1 did not retain fee accounting. The current-v2
+validator instead retains and verifies the exact fee. That path is
+focused-tested but was not used by the retained full CLI invocation. In both cases the
+address is the evidenced destination selected by the owner-private Taker-wallet
+boundary; Stage A does not countersign that destination, so the binder does not
+independently prove Taker address ownership. The result is a successful-claim
+conditional-atomicity snapshot, not a distributed transaction, current-chain
+query, or future-reorg guarantee.
 
 Assemble a public packet by selecting only transaction IDs, heights, public
 addresses/keys, role/effect order, runtime identities, resource booleans, and

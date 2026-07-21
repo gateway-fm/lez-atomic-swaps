@@ -193,6 +193,8 @@ flowchart LR
     ReleaseDb[("Sealed release SQLite")]
     MakerJournal[("Maker role journal")]
     TakerJournal[("Taker role journal")]
+    Binder["Taker cross-chain binder"]
+    Binding[("Owner-private binding record")]
 
     Operator --> Maker
     Operator --> Taker
@@ -221,6 +223,11 @@ flowchart LR
     Maker --> Classifier
     Taker --> Classifier
     Taker --> TakerWallet
+    Taker --> Binder
+    Classifier --> Binder
+    TakerJournal --> Binder
+    TakerWallet --> Binder
+    Binder --> Binding
 ```
 
 All services above were run-owned local processes. No public RPC, P2P peer, faucet, public funds, Stagenet, or external finality service participated. Loopback was transport isolation, not a replacement for the real daemon, wallet, sequencer, indexer, or sidecar implementation.
@@ -234,6 +241,7 @@ sequenceDiagram
     participant P as Exclusive preparer
     participant W as Release worker
     participant M as Maker actor and sidecar
+    participant B as Taker cross-chain binder
 
     T->>TS: Submit InitializeNativeXmr
     TS->>L: Exact signed tag 13 Initialize
@@ -253,13 +261,38 @@ sequenceDiagram
     T->>T: Extract Maker share from canonical final signature
     T->>MW: Reconstruct Stage A wallet and sweep
     MW-->>T: Sweep confirmed at tip 130
+    T->>B: Bind Stage A and B, journal, finalized tag 15, packet, and extraction
+    MW-->>B: Independent receipt at block 121 under stable tip 130
+    B-->>T: Owner-private conditional-atomicity snapshot
 ```
 
 The successful branch is conditionally atomic because the Taker partial was committed before effects but withheld until the exact Monero output was confirmed; tag 14 released only that committed partial; the Maker could claim LEZ only by publishing the final signature that reveals the Maker adaptor share; and the Taker extracted that share only from finalized canonical tag 15 before reconstructing and spending the Monero key. This is not a distributed transaction across chains. Atomic recovery still depends on the separately signed tag 16 refund and tag 17 punishment paths, which have not yet been exercised actual-node.
 
 Two failed preparer states are quarantined. Official Monero may omit `connections` when the list is empty; the compatibility decoder maps omission only to an empty list while `get_info` independently requires zero incoming and zero outgoing peers. The successful fresh `release3` database alone reached Prepared and then Admitted.
 
-The public packet is [m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json). It is intentionally bound to a working tree over base commit `40cbac3d` and does not retain execution-binary hashes. Exact clean-commit replay, one-command or fully rehearsed operator replay, scoped cleanup, signed-refund and punishment journeys, F7 token parity, U9 public guidance, D1 XMR video evidence, and all post-PoC hardening remain before an `m4-complete` tag.
+The public packet is
+[m4-actual-claim-poc-20260721.json](../evidence/m4-actual-claim-poc-20260721.json).
+It carries the binder schema and public facts without a private path or scalar.
+The final 3203-byte mode-`0600`, one-link packet has SHA-256
+`896d05d3178e3ff44b6ca010d4528835f5d796dc7e1004984ed78e853c083306`.
+The retained legacy-v1 sweep plus receipt-v2 pair records exact receipt and
+remainder but `fee_piconero: null`; the current sweep-v2 validator proves exact
+fee conservation in focused tests but was not the retained full CLI invocation.
+Its destination is authenticated by the owner-private Taker-wallet boundary,
+not committed by Stage A. The binder is a conditional-atomicity snapshot rather
+than a distributed transaction or future-reorg guarantee. It is intentionally
+bound to a working tree over base commit `40cbac3d` and does not retain
+execution-binary hashes. Exact clean-commit replay, completed operator replay,
+scoped cleanup, signed-refund and punishment journeys, F7 token parity, U9
+public guidance, D1 XMR video evidence, and all post-PoC hardening remain before
+an `m4-complete` tag.
+
+`scripts/run-m4-actual-claim-poc.sh` is not yet a one-command journey. Its
+contract/preflight and execution through M4 deployment are implemented; it then
+fails closed at unimplemented actor onboarding. The Monero launcher exists but
+is unreachable, and all agreement-through-cleanup phases remain to be wired.
+The orchestration estimate is 6 to 10 focused hours, followed by a 25-to-45
+minute warm or 1-to-3 hour cold replay.
 
 ## M2 SDK/reference-demo target topology
 
@@ -578,6 +611,7 @@ revalidation, propagation, and finality evidence before release.
 | M4 pure Stage-A future-message planner | 3 of 3 focused tests GREEN | Pure function only: no endpoint, RPC, reservation, journal, persistence, signer, or submission authority | One caller-supplied stable finalized snapshot binds Maker/Taker owner and claim/refund aggregate-authority nonces. Aliased identities, invalid keys, nonce overflow, or colliding hashes fail closed | Constructs exact generated official tag-15 claim, tag-16 signed-refund, and tag-17 punishment messages plus distinct NSSA hashes. Existing tag-15 prepare/complete accepts the planned claim message/hash byte-identically | Closes placeholder future-message planning only. Callers must obtain and bind the stable finalized snapshot; tag-16/tag-17 builders, signatures, persistence, submission, finality, actors, and swap effects remain unavailable |
 | M4 actual-local Stage-A composer and independent role actor | Component and pre-effect actual-local GREEN; 17 adapter tests, 10 composer tests, 4 provisioning tests, 2 black-box process tests, and 1 two-devnet replay | Composer owns read-only literal-loopback clients: Digest-authenticated official monerod 0.18.5.1 plus official LEZ v0.2 sequencer/indexer. Role processes have no socket or RPC and each receive one private root. No public RPC, peer, faucet, public fund, or external finality service is used | Composer binds observed Monero/LEZ identities, exact escrow/account state, cross-checked finalized anchor, stable nonces, future messages, roles, and canonical SDK wire. Each role revalidates every private/public binding before signing; each complete session directory is one no-replace rename | `lez-v02-xmr-stage-a-compose`; independent `sign-stage-a`; public `assemble-stage-a`; independent atomic `initialize-sessions` | Same-host evidence is not different-UID isolation. Composer does not prove the checked ProgramID deployment and has no submit authority; tag-13 independently re-proves deployment before effects. Parent-path same-UID unpublished-orphan and ordinary in-memory credential-copy residuals remain. Stage B journals and actual tag 13 are GREEN. Later effects and production custody are pending |
 | M4 canonical tag-13 executor | Component and actual-local GREEN; focused tag-13 matrix 3 of 3 plus finalized blocks 3008 and 3023 | Reuses authenticated generic submit and durable request journal; canonical transaction-ID request key; official-type loopback lookup/send; Fund first looks up exact Initialize | Owner-only pair, run, role, runtime, ABI, signature, accounts, nonces, bytes, IDs, and request identity revalidate before I/O. ADR 0070 adds an independent typed finalized barrier before the actor may call Fund | Ordered Initialize then Fund reaches lookup/send 3/2; replay unchanged; premature Fund 1/0; arbitrary ID or missing reservation zero-send | The retained actual run used only local LEZ and deterministic genesis funds. Its signed continuation expired, so a fresh wider-window v2-evidence run is required; no public RPC, faucet, peer, public funds, or external finality participated |
+| M4 cross-chain claim-to-sweep binder | Actor implementation and retained actual-run invocation GREEN; exact committed replay pending | No RPC of its own. It consumes bounded canonical owner-private Stage A/B, Taker journal/signature/extraction, finalized-classifier JSON, sweep evidence, and independent receipt evidence | Revalidates exact Taker role material and session, LEZ Claim facts and aggregate signature, transcript extraction, reconstructed public spend key, agreement/run/genesis/network, Monero transaction/block/tip/topology, and create-new `0600` one-link output | The current sweep-v2 validator proves exact received-plus-fee accounting in focused tests; the retained invocation used legacy v1 plus receipt v2. Retained legacy sweep v1 plus receipt v2 emits a null fee and only the checked unreceived remainder. Both produce the successful-claim conditional-atomicity snapshot | The destination is evidenced through the owner-private Taker-wallet producer but is not Stage-A committed; the binder does not prove independent Taker address ownership, current canonicality, future-reorg immunity, or a distributed cross-chain transaction |
 | M4 Monero output observation adapter | Exact receipt observation component-GREEN in 7 of 7 focused tests; public release-issuer composition GREEN in the 35-test authority suite | Typed `monero-rpc` 0.5.1 to distinct credential-configured literal-loopback daemon and wallet origins; fixed 30-second request timeout; public/DNS RPC rejected | Exact network/genesis, standard shared address, transaction, amount, wallet-reported availability, canonical decoded-block membership, at least ten confirmations, and stable tip. The result is private-field and non-cloneable, but is not Stage-B or durable-consumption authority by itself | Typed height-zero hash, bracketed last headers, wallet transfer/available outputs, daemon transaction, containing header/block. Selected decoded collections are bounded | The public integration cross-binds it to the run-bound topology capability, consumes it once against Stage B, and journals it before publication. Run-level actor composition is evidenced above on the working tree. View-only spent status, upstream pre-decode bounds, discarded header trust flags, and malformed-block panic behavior remain explicit residuals. Peerless Regtest observation is supported; Stagenet/production hardening is pending |
 | M4 local Monero topology attestation | Run/chain/origin/auth capability component-GREEN; total adapter suite 16 of 16 plus strict Clippy/Rustdoc/format/diff; public release-issuer composition GREEN | Three distinct credential-configured literal-loopback origins; fixed timeout; project-owned `get_info`/`get_connections` response bodies are streamed with a 64 KiB cap | Private-field and non-`Clone`; correct target and foreign origins authenticate with their own Digest credentials, while replaying the foreign credential against the target must finish exact HTTP 401. Capability cross-binds exact run, Regtest chain, daemon origin, and target wallet origin to the output observation | Typed `get_info`, `get_connections`, both wallets `get_version`, and height-zero genesis. Requires fakechain, offline, `untrusted == false`, zero incoming/outgoing counts, empty connections, and matching genesis | Closes the earlier topology-auth residual for the isolated local Regtest PoC only. `monero-rpc` 0.5.1 lacks the two topology calls, so the narrow bounded adapter is project-owned and needs production/upstream review. No public or Stagenet trust is claimed; the run-level working-tree checkpoint above consumed this capability in the actual local claim |
 | M4 sealed XMR release journal | Public opaque-evidence issuer, exclusive preparer, and sealed narrow-client publisher component-GREEN; no live node authority | The preparer composes credential-configured literal-loopback LEZ/Monero clients; component integration uses authenticated loopback factories. A separate process proof wires the official v0.2 indexer client to an indexer-wire mock; actual-local indexer/sequencer execution is pending | Raw release plan, byte-bearing transport, and decrypted authorization stay private. The preparer re-derives Stage A/B, recovers exact tag-13 bytes, proves Fund/topology/output/journal evidence, then creates one 0600 one-link database. XChaCha20-Poly1305, domain-separated HMACs, exact binary IDs, authenticated expected publication ID, and schema-v3 constraints protect it | Stable resource and later-tip observation; client mismatch makes zero clock/RPC calls; exact binding takes two finalized samples, one prepared-to-started CAS, one dedicated RPC, matching-ID admission, and zero-call observe-only restart | Assumes one trusted host/process boundary, one canonical journal, no clone/backup/restore/rollback, and no hostile same-UID WAL/SHM race. Exclusive create-new preparation and the one-shot worker are source-GREEN. Actual-local preparer, clock, and route wiring ran in the working-tree checkpoint above. Exact committed replay, definitive absence, different-UID release-service isolation, cancellation-after-CAS hardening, and an external rollback anchor remain |

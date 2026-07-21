@@ -88,6 +88,29 @@ deliberately omits execution-binary hashes because post-run rebuilds changed
 the evidence schemas; that omission and the explicit source limitation prevent
 the run name from being misread as clean commit `40cbac3` evidence.
 
+The Taker actor has now also produced one owner-private, mode-`0600`,
+one-link cross-chain binder. It revalidates the exact Taker Stage A/B and
+durable claim session, canonical finalized tag 15 at LEZ height 4208 under tip
+4220, the observed aggregate signature and extracted Maker share, the
+reconstructed public spend key, and the independently observed Monero sweep at
+height 121 under tip 130. The public packet records the binder schema and
+public facts without a private path. The final 3203-byte mode-`0600`, one-link
+packet has SHA-256
+`896d05d3178e3ff44b6ca010d4528835f5d796dc7e1004984ed78e853c083306`.
+
+The retained sweep input is legacy v1 paired with receipt v2. It proves
+998191600000 piconero at the evidenced destination and an unreceived remainder
+of 1808400000 piconero, but it did not record exact fee fields; therefore the
+public fee is `null`. The current sweep-v2 path is focused-tested and records
+and cross-checks the exact fee, but the retained CLI invocation used legacy v1
+plus receipt v2.
+
+The destination is authenticated by the owner-private Taker-wallet execution
+boundary but is not countersigned in Stage A, so the binder claims a confirmed
+sweep to the evidenced destination, not an independent cryptographic proof of
+Taker address ownership. It claims successful-path conditional atomicity, not
+a distributed transaction or immunity from a later reorganization.
+
 This executes the successful-claim branch of the conditional atomicity
 argument: the Maker cannot receive the LEZ custody balance without finalizing
 the signature that reveals Maker share `s_a`, which the Taker combines with
@@ -116,6 +139,18 @@ conditional claim argument and evidence boundary are recorded in
 The complete fresh-ID operator procedure, external resources, inspection, and
 scoped-cleanup rules are in
 [Flow 0](docs/manual-user-flows.md#flow-0-m4-official-monero-regtest-topology).
+
+`scripts/run-m4-actual-claim-poc.sh` is deliberately partial. Its contract and
+source/environment preflight are implemented; `execute` builds the checked
+artifact, provisions identities, starts the LEZ stack, and deploys the M4
+program, then fails closed at unimplemented `actor_onboarding` before starting
+Monero or any swap effect. The Monero child launcher exists but is unreachable
+from `execute`, and the agreement-through-cleanup claim tail is not implemented.
+Do not describe this script as a one-command replay yet. Completing that
+orchestration is estimated at 6 to 10 focused hours; after it exists, a warm
+replay is expected to take 25 to 45 minutes and a cold replay 1 to 3 hours. Full
+functional M4 remains 18 to 30 focused hours; later owner-selected hardening is
+separate.
 
 The checked guest and focused host components can be repeated independently of
 the actual two-devnet journey. The deployer, focused component commands, and
