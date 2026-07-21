@@ -4148,6 +4148,8 @@ dependencies = [
  "clap",
  "hex",
  "lez-adaptor-role-runner",
+ "lez-bridge-adapter",
+ "lez-bridge-protocol",
  "lez-swap-store",
  "lez-xmr-swap-sdk",
  "rustix",

@@ -15,6 +15,10 @@ use std::{
     process::{Command, Output},
 };
 
+use lez_adaptor_role_runner::{
+    Role, ValidatedSession, accept_published_peer_partial_and_adapt,
+    write_observed_final_signature_packet,
+};
 use lez_adaptor_signature::{
     AdaptorSessionContext, adapt_presignature, aggregate_adaptor_presignature,
     verify_final_signature,
@@ -228,6 +232,8 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
     let taker_presignature = directory.join("taker-presignature.json");
     let maker_presignature_replay = directory.join("maker-presignature-replay.json");
     let final_signature_packet = directory.join("final-signature.json");
+    let bridged_final_signature_packet = directory.join("bridged-final-signature.json");
+    let observed_final_signature_packet = directory.join("observed-final-signature.json");
     let final_signature_from_extracted = directory.join("final-signature-from-extracted.json");
     let extracted_adaptor_secret = directory.join("extracted-adaptor.key");
 
@@ -368,6 +374,21 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
         assert!(String::from_utf8_lossy(&output.stderr).contains("sender role"));
     }
 
+    if matches!(domain, Domain::Lez) {
+        let session =
+            ValidatedSession::from_untweaked_context(fixture.context.clone()).expect("session");
+        let published_taker_partial = packet_payload(&taker_partial, "partial_signature", "taker");
+        accept_published_peer_partial_and_adapt(
+            &fixture.maker_journal,
+            &session,
+            Role::Maker,
+            published_taker_partial,
+            Zeroizing::new(ADAPTOR_SECRET),
+            &bridged_final_signature_packet,
+        )
+        .expect("finalized peer partial completes the Maker claim");
+    }
+
     let mut aggregate_maker = command("maker", &fixture.maker_journal, &fixture.session);
     aggregate_maker
         .arg("accept-peer-partial")
@@ -416,6 +437,42 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
     )
     .expect("independent process partials aggregate");
     assert_eq!(process_presignature, presignature);
+    if matches!(domain, Domain::Lez) {
+        let session =
+            ValidatedSession::from_untweaked_context(fixture.context.clone()).expect("session");
+        let bridged_signature: [u8; 64] = packet_payload(
+            &bridged_final_signature_packet,
+            "final_signature",
+            "aggregate",
+        );
+        write_observed_final_signature_packet(
+            &fixture.taker_journal,
+            &session,
+            Role::Taker,
+            bridged_signature,
+            &observed_final_signature_packet,
+        )
+        .expect("finalized aggregate signature is extraction-linked to Taker journal");
+        assert_eq!(
+            fs::read(&observed_final_signature_packet).expect("observed final packet"),
+            fs::read(&bridged_final_signature_packet).expect("bridged final packet")
+        );
+
+        let mut invalid_signature = bridged_signature;
+        invalid_signature[63] ^= 1;
+        let invalid_observed = directory.join("invalid-observed-final-signature.json");
+        assert!(
+            write_observed_final_signature_packet(
+                &fixture.taker_journal,
+                &session,
+                Role::Taker,
+                invalid_signature,
+                &invalid_observed,
+            )
+            .is_err()
+        );
+        assert!(!invalid_observed.exists());
+    }
 
     if crosswire_checks {
         let wrong_adaptor_key = directory.join("wrong-adaptor.key");
@@ -532,6 +589,12 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
     let final_signature: [u8; 64] =
         packet_payload(&final_signature_packet, "final_signature", "aggregate");
     verify_final_signature(&fixture.context, final_signature).expect("final signature verifies");
+    if matches!(domain, Domain::Lez) {
+        assert_eq!(
+            fs::read(&final_signature_packet).expect("manual final packet"),
+            fs::read(&bridged_final_signature_packet).expect("bridged final packet")
+        );
+    }
 
     if crosswire_checks {
         let final_bytes = fs::read(&final_signature_packet).expect("read final packet");
@@ -659,6 +722,23 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600, "{} must be owner-private", path.display());
+    }
+    if matches!(domain, Domain::Lez) {
+        for path in [
+            &bridged_final_signature_packet,
+            &observed_final_signature_packet,
+        ] {
+            let mode = fs::metadata(path)
+                .expect("bridge output metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "{} must be owner-private", path.display());
+            let text = fs::read_to_string(path).expect("bridge public packet text");
+            assert!(!text.contains(&hex::encode(MAKER_SECRET)));
+            assert!(!text.contains(&hex::encode(TAKER_SECRET)));
+            assert!(!text.contains(&hex::encode(ADAPTOR_SECRET)));
+        }
     }
     for path in [
         maker_commitment,

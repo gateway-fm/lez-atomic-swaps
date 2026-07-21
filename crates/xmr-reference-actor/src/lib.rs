@@ -20,7 +20,18 @@ use std::{
 use anyhow::{Context as _, Result, anyhow, ensure};
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "sessions")]
-use lez_adaptor_role_runner::{Role as RunnerRole, ValidatedSession};
+use lez_adaptor_role_runner::{
+    Role as RunnerRole, ValidatedSession, accept_published_peer_partial_and_adapt,
+    write_observed_final_signature_packet,
+};
+#[cfg(feature = "sessions")]
+use lez_bridge_adapter::XmrLezBridgeBindingV3;
+#[cfg(feature = "sessions")]
+use lez_bridge_protocol::{
+    ClassifyFinalizedNativeXmrEffectV3Result, FinalizedNativeXmrEffectFactsV3,
+    FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
+    Participant as BridgeParticipant, RunId, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+};
 #[cfg(feature = "sessions")]
 use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal};
 use lez_xmr_swap_sdk::{
@@ -60,6 +71,8 @@ const STAGE_A_SIGNATURE_BYTES: usize = 64;
 const STAGE_B_SIGNATURE_BYTES: usize = 64;
 #[cfg(feature = "sessions")]
 const SESSION_FILE_MAX_BYTES: u64 = 8 * 1024;
+#[cfg(feature = "sessions")]
+const FINALIZED_XMR_EFFECT_MAX_BYTES: u64 = 5 * 1024 * 1024;
 #[cfg(feature = "sessions")]
 const CLAIM_SESSION_FILE: &str = "claim.json";
 #[cfg(feature = "sessions")]
@@ -259,6 +272,70 @@ pub enum Action {
         /// New canonical signed Stage-B wire.
         #[arg(long, value_name = "NEW_STAGE_B")]
         output_stage_b: PathBuf,
+    },
+    /// Consume role-local finalized tag-14 discovery, complete the Maker claim presignature,
+    /// and adapt it with the retained Maker Monero share.
+    #[cfg(feature = "sessions")]
+    CompleteClaimFromFinalizedAuthorization {
+        /// Existing owner-only Maker role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// Maker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// Taker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// Canonical countersigned Stage-B activation wire.
+        #[arg(long, value_name = "STAGE_B")]
+        activation_stage_b: PathBuf,
+        /// Existing owner-private Maker journal containing the claim session.
+        #[arg(long, value_name = "PRIVATE_SQLITE")]
+        journal: PathBuf,
+        /// Run identity echoed by the role-local finalized classifier.
+        #[arg(long)]
+        run_id: String,
+        /// Canonical Maker-sidecar `DiscoverByTerms` result for tag 14.
+        #[arg(long, value_name = "FINALIZED_JSON")]
+        finalized_authorization: PathBuf,
+        /// New canonical aggregate final-signature packet for tag 15 completion.
+        #[arg(long, value_name = "NEW_PUBLIC_JSON")]
+        output_final_signature: PathBuf,
+    },
+    /// Convert role-local finalized tag-15 discovery into the Taker's extraction packet after
+    /// proving it opens the existing durable claim presignature.
+    #[cfg(feature = "sessions")]
+    IngestFinalizedClaimSignature {
+        /// Existing owner-only Taker role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// Taker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// Maker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// Canonical countersigned Stage-B activation wire.
+        #[arg(long, value_name = "STAGE_B")]
+        activation_stage_b: PathBuf,
+        /// Existing owner-private Taker journal containing the claim presignature.
+        #[arg(long, value_name = "PRIVATE_SQLITE")]
+        journal: PathBuf,
+        /// Run identity echoed by the role-local finalized classifier.
+        #[arg(long)]
+        run_id: String,
+        /// Canonical Taker-sidecar `DiscoverByTerms` result for tag 15.
+        #[arg(long, value_name = "FINALIZED_JSON")]
+        finalized_claim: PathBuf,
+        /// New canonical final-signature packet for extraction/reconstruction.
+        #[arg(long, value_name = "NEW_PUBLIC_JSON")]
+        output_final_signature: PathBuf,
     },
 }
 
@@ -548,9 +625,250 @@ pub fn execute(cli: Cli) -> Result<()> {
             &taker_signature,
             &output_stage_b,
         ),
+        #[cfg(feature = "sessions")]
+        Action::CompleteClaimFromFinalizedAuthorization {
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            activation_stage_b,
+            journal,
+            run_id,
+            finalized_authorization,
+            output_final_signature,
+        } => complete_claim_from_finalized_authorization(
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &activation_stage_b,
+            &journal,
+            &run_id,
+            &finalized_authorization,
+            &output_final_signature,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::IngestFinalizedClaimSignature {
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            activation_stage_b,
+            journal,
+            run_id,
+            finalized_claim,
+            output_final_signature,
+        } => ingest_finalized_claim_signature(
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &activation_stage_b,
+            &journal,
+            &run_id,
+            &finalized_claim,
+            &output_final_signature,
+        ),
     }
 }
 
+#[cfg(feature = "sessions")]
+struct ValidatedClaimLifecycle {
+    agreement: XmrAgreementV1,
+    activation: XmrActivatedAgreementV1,
+    binding: XmrLezBridgeBindingV3,
+    session: ValidatedSession,
+    material: ValidatedPrivateRoleMaterial,
+}
+
+#[cfg(feature = "sessions")]
+#[allow(clippy::too_many_arguments)]
+fn complete_claim_from_finalized_authorization(
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    activation_stage_b: &Path,
+    journal: &Path,
+    run_id: &str,
+    finalized_authorization: &Path,
+    output_final_signature: &Path,
+) -> Result<()> {
+    let destination =
+        SecureDestination::new(output_final_signature, "claim final-signature packet")?;
+    destination.ensure_absent("claim final-signature packet")?;
+    let lifecycle = load_claim_lifecycle(
+        ActorRole::Maker,
+        private_root,
+        own_public_packet,
+        peer_public_packet,
+        agreement_stage_a,
+        activation_stage_b,
+    )?;
+    let result = read_finalized_xmr_effect(finalized_authorization)?;
+    let facts = discovered_finalized_xmr_facts(
+        &result,
+        run_id,
+        &lifecycle.binding.terms(),
+        XmrNativeEffectV3::AuthorizeClaim,
+        BridgeParticipant::Maker,
+    )?;
+    let partial = facts
+        .instruction
+        .published_claim_partial
+        .ok_or_else(|| anyhow!("finalized tag-14 facts omit the published partial"))?;
+    lifecycle
+        .activation
+        .verify_published_taker_claim_partial(&lifecycle.agreement, *partial.as_bytes())
+        .context("finalized tag-14 partial differs from Stage B")?;
+    let adaptor_secret = lifecycle.material.share.adaptor_scalar_big_endian();
+    accept_published_peer_partial_and_adapt(
+        journal,
+        &lifecycle.session,
+        RunnerRole::Maker,
+        *partial.as_bytes(),
+        adaptor_secret,
+        output_final_signature,
+    )
+    .context("complete Maker claim from finalized tag 14")?;
+    destination.revalidate()
+}
+
+#[cfg(feature = "sessions")]
+#[allow(clippy::too_many_arguments)]
+fn ingest_finalized_claim_signature(
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    activation_stage_b: &Path,
+    journal: &Path,
+    run_id: &str,
+    finalized_claim: &Path,
+    output_final_signature: &Path,
+) -> Result<()> {
+    let destination = SecureDestination::new(
+        output_final_signature,
+        "observed claim final-signature packet",
+    )?;
+    destination.ensure_absent("observed claim final-signature packet")?;
+    let lifecycle = load_claim_lifecycle(
+        ActorRole::Taker,
+        private_root,
+        own_public_packet,
+        peer_public_packet,
+        agreement_stage_a,
+        activation_stage_b,
+    )?;
+    let result = read_finalized_xmr_effect(finalized_claim)?;
+    let facts = discovered_finalized_xmr_facts(
+        &result,
+        run_id,
+        &lifecycle.binding.terms(),
+        XmrNativeEffectV3::Claim,
+        BridgeParticipant::Taker,
+    )?;
+    let signature = facts
+        .aggregate_signature
+        .ok_or_else(|| anyhow!("finalized tag-15 facts omit the aggregate signature"))?;
+    write_observed_final_signature_packet(
+        journal,
+        &lifecycle.session,
+        RunnerRole::Taker,
+        *signature.as_bytes(),
+        output_final_signature,
+    )
+    .context("ingest finalized tag-15 signature into the Taker claim session")?;
+    destination.revalidate()
+}
+
+#[cfg(feature = "sessions")]
+fn load_claim_lifecycle(
+    role: ActorRole,
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    activation_stage_b: &Path,
+) -> Result<ValidatedClaimLifecycle> {
+    let packets = StageRolePackets::read(role, own_public_packet, peer_public_packet)?;
+    let material = validate_private_role(private_root, role, &packets)?;
+    let agreement = read_validated_stage_a(agreement_stage_a, &packets)?;
+    let wire = read_public_input(
+        activation_stage_b,
+        u64::try_from(MAX_XMR_ACTIVATION_WIRE_BYTES).unwrap_or(u64::MAX),
+        "signed Stage-B activation wire",
+    )?;
+    let activation = XmrActivatedAgreementV1::from_wire(&agreement, &wire, &material.view)
+        .context("signed Stage-B activation wire is invalid")?;
+    let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
+        .context("Stage-B LEZ binding is invalid")?;
+    let session = ValidatedSession::from_untweaked_context(
+        agreement
+            .claim_session_descriptor()
+            .context()
+            .context("claim session descriptor is invalid")?,
+    )
+    .context("claim runner session is invalid")?;
+    Ok(ValidatedClaimLifecycle {
+        agreement,
+        activation,
+        binding,
+        session,
+        material,
+    })
+}
+
+#[cfg(feature = "sessions")]
+fn read_finalized_xmr_effect(path: &Path) -> Result<ClassifyFinalizedNativeXmrEffectV3Result> {
+    let bytes = read_public_input(path, FINALIZED_XMR_EFFECT_MAX_BYTES, "finalized XMR effect")?;
+    let result: ClassifyFinalizedNativeXmrEffectV3Result =
+        serde_json::from_slice(&bytes).context("finalized XMR effect is malformed")?;
+    ensure!(
+        canonical_json_bytes(&result, "encode finalized XMR effect")? == bytes,
+        "finalized XMR effect is noncanonical"
+    );
+    Ok(result)
+}
+
+#[cfg(feature = "sessions")]
+fn discovered_finalized_xmr_facts<'result>(
+    result: &'result ClassifyFinalizedNativeXmrEffectV3Result,
+    expected_run_id: &str,
+    expected_terms: &XmrNativeEscrowTermsV3,
+    expected_effect: XmrNativeEffectV3,
+    expected_sidecar_role: BridgeParticipant,
+) -> Result<&'result FinalizedNativeXmrEffectFactsV3> {
+    let expected_run_id =
+        RunId::new(expected_run_id.to_owned()).context("invalid expected run ID")?;
+    ensure!(
+        result.context.run_id == expected_run_id,
+        "finalized XMR effect belongs to another run"
+    );
+    ensure!(
+        result.context.sidecar_role == expected_sidecar_role,
+        "finalized XMR effect came from the wrong role sidecar"
+    );
+    ensure!(
+        &result.terms == expected_terms,
+        "finalized XMR effect differs from Stage B"
+    );
+    ensure!(
+        result.effect == expected_effect,
+        "finalized XMR effect has the wrong instruction"
+    );
+    ensure!(
+        matches!(
+            result.target,
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {}
+        ),
+        "finalized XMR effect is not a role-local discovery result"
+    );
+    let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = &result.outcome else {
+        return Err(anyhow!("finalized XMR effect is not affirmative Found"));
+    };
+    Ok(facts)
+}
 fn sign_stage_a(
     role: ActorRole,
     private_root: &Path,
@@ -1081,6 +1399,8 @@ struct ValidatedPrivateRoleMaterial {
     agreement: LoadedSecpKey,
     #[cfg(feature = "sessions")]
     view: MoneroPrivateViewKey,
+    #[cfg(feature = "sessions")]
+    share: CrossCurveScalar,
 }
 
 fn validate_private_role(
@@ -1131,6 +1451,7 @@ fn validate_private_role(
     own.proof
         .verify_scalar(&share)
         .context("private Monero share does not match the bound DLEQ proof")?;
+    #[cfg(not(feature = "sessions"))]
     drop(share);
 
     let view_bytes = read_secret_hex_at(&root, VIEW_KEY_FILE, "Monero view key")?;
@@ -1147,6 +1468,8 @@ fn validate_private_role(
         agreement,
         #[cfg(feature = "sessions")]
         view,
+        #[cfg(feature = "sessions")]
+        share,
     })
 }
 
@@ -1988,4 +2311,120 @@ fn decode_vec(encoded: &str) -> Result<Vec<u8>> {
         "canonical lowercase hex is invalid"
     );
     hex::decode(encoded).context("canonical lowercase hex is invalid")
+}
+
+#[cfg(all(test, feature = "sessions"))]
+mod finalized_effect_gate_tests {
+    use super::*;
+    use lez_bridge_protocol::{
+        ExactTransactionBytes, FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext,
+        PreparedTransaction, RequestId, TransactionId, XmrNativeEscrowTermsV3Input,
+    };
+
+    fn h(byte: u8) -> Hex32 {
+        Hex32::from_bytes([byte; 32])
+    }
+
+    fn terms() -> XmrNativeEscrowTermsV3 {
+        XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
+            swap_id: h(1),
+            activation_commitment: h(2),
+            escrow_program_id: h(3),
+            authenticated_transfer_program_id: h(4),
+            metadata_account_id: h(5),
+            custody_account_id: h(6),
+            depositor: BridgeParticipant::Taker,
+            depositor_account_id: h(7),
+            claimant: BridgeParticipant::Maker,
+            claimant_account_id: h(8),
+            claim_aggregate_x_only_public_key: h(9),
+            claim_authority_account_id: h(10),
+            refund_aggregate_x_only_public_key: h(11),
+            refund_authority_account_id: h(12),
+            maker_dleq_transcript_commitment: h(13),
+            taker_dleq_transcript_commitment: h(14),
+            claim_partial_context_binding: h(15),
+            claim_partial_commitment: h(16),
+            amount: 42,
+            refund_at_ms: 10_000,
+            punish_at_ms: 20_000,
+            claim_message_hash: h(17),
+            refund_message_hash: h(18),
+            punish_message_hash: h(19),
+        })
+        .expect("valid XMR terms")
+    }
+
+    fn result(
+        sidecar_role: BridgeParticipant,
+        target: FinalizedNativeXmrTransactionTargetV3,
+    ) -> ClassifyFinalizedNativeXmrEffectV3Result {
+        ClassifyFinalizedNativeXmrEffectV3Result::new(
+            MessageContext::new(
+                RunId::new("actor-finalized-gate").expect("run ID"),
+                RequestId::new("actor-finalized-gate-request").expect("request ID"),
+                sidecar_role,
+            ),
+            terms(),
+            XmrNativeEffectV3::AuthorizeClaim,
+            target,
+            FinalizedNativeXmrScanOutcomeV3::unavailable(
+                FinalizedNativeXmrUnavailableReasonV3::HistoryUnavailable,
+            ),
+        )
+        .expect("well-formed unavailable result")
+    }
+
+    #[test]
+    fn finalized_actor_bridge_requires_role_local_discovery() {
+        for (expected_role, wrong_role) in [
+            (BridgeParticipant::Maker, BridgeParticipant::Taker),
+            (BridgeParticipant::Taker, BridgeParticipant::Maker),
+        ] {
+            let wrong_sidecar = result(
+                wrong_role,
+                FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+            );
+            let error = discovered_finalized_xmr_facts(
+                &wrong_sidecar,
+                "actor-finalized-gate",
+                &terms(),
+                XmrNativeEffectV3::AuthorizeClaim,
+                expected_role,
+            )
+            .expect_err("cross-role sidecar evidence must be rejected");
+            assert!(format!("{error:#}").contains("wrong role sidecar"));
+        }
+
+        let owner_exact = result(
+            BridgeParticipant::Maker,
+            FinalizedNativeXmrTransactionTargetV3::exact(PreparedTransaction::new(
+                TransactionId::from_bytes([0x51; 32]),
+                ExactTransactionBytes::new(vec![0x52]).expect("exact transaction bytes"),
+            )),
+        );
+        let error = discovered_finalized_xmr_facts(
+            &owner_exact,
+            "actor-finalized-gate",
+            &terms(),
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Maker,
+        )
+        .expect_err("owner-side exact evidence must not replace local discovery");
+        assert!(format!("{error:#}").contains("role-local discovery"));
+
+        let local_discovery = result(
+            BridgeParticipant::Maker,
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        );
+        let error = discovered_finalized_xmr_facts(
+            &local_discovery,
+            "actor-finalized-gate",
+            &terms(),
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Maker,
+        )
+        .expect_err("non-affirmative discovery must remain pending");
+        assert!(format!("{error:#}").contains("not affirmative Found"));
+    }
 }

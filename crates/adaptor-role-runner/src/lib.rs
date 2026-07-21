@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use lez_adaptor_signature::{
     FreshAdaptorNonce, PersistedAdaptorSigningMaterial, adapt_presignature,
     aggregate_adaptor_presignature, extract_adaptor_secret, sign_persisted_adaptor_partial,
-    verify_adaptor_partial_signature, verify_nonce_commitment,
+    verify_adaptor_partial_signature, verify_final_signature, verify_nonce_commitment,
 };
 use lez_swap_store::{
     AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
@@ -228,6 +228,70 @@ pub fn execute(cli: &Cli) -> Result<(), RunnerError> {
     }
 }
 
+/// Records one already authenticated peer partial and adapts the resulting
+/// durable presignature without writing an intermediate packet or scalar copy.
+///
+/// This is the pair-neutral lifecycle bridge used after a chain-specific actor
+/// has proved that the exact peer partial was finalized. The existing journal
+/// must already contain the local partial and both nonce openings. The supplied
+/// scalar remains in memory, is point-checked by the adaptor implementation,
+/// and is zeroized on drop. Only the canonical aggregate final-signature packet
+/// is written.
+///
+/// # Errors
+///
+/// Rejects a missing, role-crossed, incomplete, or conflicting journal; an
+/// invalid peer partial or adaptor scalar; or an unsafe/pre-existing output.
+pub fn accept_published_peer_partial_and_adapt(
+    journal_path: &std::path::Path,
+    session: &ValidatedSession,
+    role: Role,
+    peer_partial: [u8; 32],
+    adaptor_secret: zeroize::Zeroizing<[u8; 32]>,
+    output: &std::path::Path,
+) -> Result<(), RunnerError> {
+    let identity = session.identity(role);
+    let mut journal = SqliteAdaptorSessionJournal::open_existing(journal_path)?;
+    let presignature =
+        verify_and_record_peer_partial(&mut journal, &identity, session, role, peer_partial)?;
+    let final_signature = adapt_presignature(session.context(), presignature, adaptor_secret)
+        .map_err(|_| RunnerError::CryptographicValidation)?;
+    protocol::write_aggregate_packet(output, PacketKind::FinalSignature, session, final_signature)
+}
+
+/// Converts an authenticated on-chain aggregate signature into the exact
+/// canonical packet consumed by the existing extraction action.
+///
+/// The role journal must already contain the related durable presignature. The
+/// function verifies the final signature, extracts and point-checks the adaptor
+/// scalar in memory, immediately drops it, and writes only the public signature
+/// packet. It never creates a plaintext scalar handoff.
+///
+/// # Errors
+///
+/// Rejects a missing, role-crossed, incomplete, or conflicting journal; an
+/// invalid or unrelated final signature; or an unsafe/pre-existing output.
+pub fn write_observed_final_signature_packet(
+    journal_path: &std::path::Path,
+    session: &ValidatedSession,
+    role: Role,
+    final_signature: [u8; 64],
+    output: &std::path::Path,
+) -> Result<(), RunnerError> {
+    let identity = session.identity(role);
+    let journal = SqliteAdaptorSessionJournal::open_existing(journal_path)?;
+    let presignature = required_snapshot(&journal, &identity)?
+        .presignature()
+        .ok_or(RunnerError::PresignatureUnavailable)?;
+    verify_final_signature(session.context(), final_signature)
+        .map_err(|_| RunnerError::CryptographicValidation)?;
+    let extracted =
+        extract_adaptor_secret(session.context(), *presignature.bytes(), final_signature)
+            .map_err(|_| RunnerError::CryptographicValidation)?;
+    drop(extracted);
+    protocol::write_aggregate_packet(output, PacketKind::FinalSignature, session, final_signature)
+}
+
 fn reserve(
     journal: &mut SqliteAdaptorSessionJournal,
     identity: &AdaptorSessionIdentity,
@@ -330,6 +394,18 @@ fn accept_peer_partial(
 ) -> Result<(), RunnerError> {
     let peer_partial =
         protocol::read_peer_packet(input, PacketKind::PartialSignature, role, session)?;
+    let presignature =
+        verify_and_record_peer_partial(journal, identity, session, role, peer_partial)?;
+    protocol::write_aggregate_packet(output, PacketKind::Presignature, session, presignature)
+}
+
+fn verify_and_record_peer_partial(
+    journal: &mut SqliteAdaptorSessionJournal,
+    identity: &AdaptorSessionIdentity,
+    session: &ValidatedSession,
+    role: Role,
+    peer_partial: [u8; 32],
+) -> Result<[u8; 65], RunnerError> {
     let snapshot = required_snapshot(journal, identity)?;
     let own_public_nonce = snapshot
         .own_public_nonce()
@@ -374,7 +450,7 @@ fn accept_peer_partial(
         .record_verified_peer_partial(identity, AdaptorPartialSignature::new(peer_partial))?;
     let _ =
         journal.record_verified_presignature(identity, AdaptorPresignature::new(presignature))?;
-    protocol::write_aggregate_packet(output, PacketKind::Presignature, session, presignature)
+    Ok(presignature)
 }
 
 fn adapt_durable_presignature(
