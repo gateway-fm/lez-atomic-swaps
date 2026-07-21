@@ -260,7 +260,10 @@ initialize_run_root() {
     require_safe_parent "$namespace" "M4 run namespace"
   fi
   mkdir -m 0700 "$run_root"
-  readonly private_root="${run_root}/private"
+  readonly private_namespace="${TMPDIR:-/tmp}/lez-atomic-swaps-m4-${run_id}"
+  [[ ! -e "$private_namespace" && ! -L "$private_namespace" ]] || fail "refusing to reuse M4 private namespace"
+  mkdir -m 0700 "$private_namespace"
+  readonly private_root="${private_namespace}/private"
   readonly evidence_root="${run_root}/evidence"
   readonly manifest_root="${run_root}/manifests"
   readonly log_root="${run_root}/logs"
@@ -271,6 +274,7 @@ initialize_run_root() {
   readonly phase_ledger="${evidence_root}/phases.jsonl"
   (umask 077; : >"$resource_ledger"; : >"$phase_ledger")
   chmod 0600 "$resource_ledger" "$phase_ledger"
+  record_resource ephemeral_path "$private_namespace" "$private_namespace"
 }
 
 phase_index=0
@@ -415,7 +419,7 @@ docker_label_resources_absent() {
 safe_ephemeral_path() {
   local path="$1"
   case "$path" in
-    "${run_root}/build/"* | "${repo_root}/.e2e/${run_id}/lez-v02/image-context") return 0 ;;
+    "${run_root}/build/"* | "${repo_root}/.e2e/${run_id}/lez-v02/image-context" | "${private_namespace}") return 0 ;;
     *) return 1 ;;
   esac
 }
