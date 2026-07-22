@@ -263,7 +263,9 @@ preflight_last="$(jq -er '.preflight.last_block_id' "$deployment")"; genesis="$(
 ((pre_tip<=preflight_last && preflight_last<inclusion)) || fail "pre-finalized tip, sequencer preflight, and inclusion order differ"
 
 cursor=$((pre_tip+1)); post_exact=0; tx_count=0; containing_id=0; containing_file=""; final_tip="$pre_tip"
+deadline=$((SECONDS+timeout_seconds))
 for ((poll=0; poll<finality_poll_limit; poll++)); do
+  ((SECONDS < deadline)) || fail "finality polling timeout after ${timeout_seconds}s"
   final_tip="$(tip)"; ((final_tip>=pre_tip)) || fail "finalized tip regressed"; ((final_tip-pre_tip<=max_finality_blocks)) || fail "scan exceeded bound"
   while ((cursor<=final_tip)); do
     block_by_id "$cursor" "$scan_file"
@@ -273,6 +275,7 @@ for ((poll=0; poll<finality_poll_limit; poll++)); do
     cursor=$((cursor+1))
   done
   ((tx_count==0)) || break
+  ((SECONDS < deadline)) || fail "finality polling timeout after ${timeout_seconds}s"
   sleep .25
 done
 [[ "$tx_count" == 1 && "$post_exact" == 1 && "$containing_id" != 0 ]] || fail "canonical window lacks exactly one transaction and exact ELF"
