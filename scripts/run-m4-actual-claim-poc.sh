@@ -756,7 +756,7 @@ build_identity_and_artifact() {
   export RISC0_DOCKER_CONTAINER_TAG="r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"
   export PATH="${LEZ_M4_TOOL_DIR}/cargo-home/bin:${LEZ_M4_TOOL_DIR}/bin:${PATH}"
   export CARGO_TARGET_DIR="${artifact_root}/target"
-  CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo +1.96.0 build --locked --offline \
+  CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo +1.96.0 build --locked --offline \
     --manifest-path "$deployer_manifest" --bin lez-zec-escrow-v02-deployer
   readonly deployer_binary="${CARGO_TARGET_DIR}/debug/lez-zec-escrow-v02-deployer"
   [[ -x "$deployer_binary" && ! -L "$deployer_binary" ]] || fail "checked deployer is unavailable"
