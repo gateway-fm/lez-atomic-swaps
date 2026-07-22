@@ -384,9 +384,12 @@ pub enum Action {
         /// Existing owner-private Taker journal containing the claim presignature.
         #[arg(long, value_name = "PRIVATE_SQLITE")]
         journal: PathBuf,
-        /// Run identity echoed by both chain evidence records.
+        /// Monero child-run identity echoed by the sweep and receipt evidence.
         #[arg(long)]
         run_id: String,
+        /// Parent-run identity echoed by the finalized LEZ claim classifier.
+        #[arg(long)]
+        claim_run_id: String,
         /// Canonical Taker-sidecar `DiscoverByTerms` result for finalized tag 15.
         #[arg(long, value_name = "FINALIZED_JSON")]
         finalized_claim: PathBuf,
@@ -857,6 +860,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             activation_stage_b,
             journal,
             run_id,
+            claim_run_id,
             finalized_claim,
             observed_final_signature,
             extracted_maker_adaptor_scalar,
@@ -871,6 +875,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             &activation_stage_b,
             &journal,
             &run_id,
+            &claim_run_id,
             &finalized_claim,
             &observed_final_signature,
             &extracted_maker_adaptor_scalar,
@@ -2662,6 +2667,7 @@ fn bind_finalized_claim_sweep(
     activation_stage_b: &Path,
     journal: &Path,
     run_id: &str,
+    claim_run_id: &str,
     finalized_claim: &Path,
     observed_final_signature: &Path,
     extracted_maker_adaptor_scalar: &Path,
@@ -2688,7 +2694,7 @@ fn bind_finalized_claim_sweep(
     let result = read_finalized_xmr_effect(finalized_claim)?;
     let facts = discovered_finalized_xmr_facts(
         &result,
-        run_id,
+        claim_run_id,
         &lifecycle.binding.terms(),
         XmrNativeEffectV3::Claim,
         BridgeParticipant::Taker,
