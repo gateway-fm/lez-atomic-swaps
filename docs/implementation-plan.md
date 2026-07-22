@@ -218,10 +218,12 @@ the original tag is never moved.
 
 ## Milestone completion tags
 
-Each milestone is marked by one annotated Git tag, `m1-complete` through
-`m7-complete`, on the exact commit whose living plan, review packet, and required
-test evidence prove every exit gate. Tags are never created for partial or
-aspirational states. A later fix does not move an existing tag; it receives a
+M1--M3 retain their annotated `m1-complete` through `m3-complete` tags. Under
+the progressive-JPEG strategy, M4 has an explicitly scoped annotated
+`m4-poc-complete` tag on the exact commit whose local PoC replay, living plan,
+review packet, and required evidence prove the PoC exit gates. A later
+`m4-complete` tag is reserved for production/hardening closure; tags are never
+created for aspirational states. A later fix does not move an existing tag; it receives a
 new normal commit and, if the milestone evidence was invalidated, a documented
 corrective tag such as `m1-complete.1` only after the full gate is rerun.
 
@@ -3106,9 +3108,10 @@ gates are true.
 ADR 0053 is the component, RPC, flow, isolation, dependency, and evidence entry
 decision; ADR 0054 pins the executable two-proof/share boundary; ADR 0055
 corrects claim/refund share ownership, claim-partial sequencing, and the
-atomicity nonclaims. The annotated `m4-complete` tag remains forbidden until
-all six accepted outputs are present, the exact clean pushed commit passes the
-full repository and M4 actual-node gates, and the tag states every deferred
+atomicity nonclaims. The annotated `m4-poc-complete` tag now records the exact local PoC replay;
+the separate `m4-complete` production tag remains forbidden until all six
+accepted outputs are present, the exact clean pushed commit passes the full
+repository and M4 actual-node gates, and the tag states every deferred
 production/formal-review item without claiming literal resolution of open
 proposal errata.
 
