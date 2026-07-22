@@ -1385,7 +1385,7 @@ classify_tag15_finality() {
 extract_claim_signature() {
   record_phase extraction started
   readonly observed_final_signature="${private_root}/tag14-release/taker-observed-final-signature.json"
-  "$agreement_actor_binary" ingest-finalized-claim-signature --private-root "${agreement_root}/material/taker" --own-public-packet "${agreement_root}/exchange/taker.json" --peer-public-packet "${agreement_root}/exchange/maker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/taker.sqlite" --run-id "$run_id" --finalized-claim "$tag15_finality_result" --output-final-signature "$observed_final_signature"
+  "$agreement_actor_binary" ingest-finalized-claim-signature --private-root "${agreement_root}/material/taker" --own-public-packet "${agreement_root}/exchange/taker.json" --peer-public-packet "${agreement_root}/exchange/maker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/taker.sqlite" --run-id "$MONERO_RUN_ID" --finalized-claim "$tag15_finality_result" --output-final-signature "$observed_final_signature"
   require_owner_file "$observed_final_signature" "Taker observed final-signature packet"
   record_phase extraction completed
 }
