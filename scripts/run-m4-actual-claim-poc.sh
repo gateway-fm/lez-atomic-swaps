@@ -620,7 +620,13 @@ cleanup() {
   else
     cleanup_failed=1
   fi
+  # Cleanup is judged by the final resource state; repeated/idempotent remove
+  # races must not turn an actually clean run into a false failure.
+  cleanup_failed=0
   [[ "$resources_absent" == true ]] || cleanup_failed=1
+  if [[ -n "${sentinel_name:-}" ]] && docker network inspect "$sentinel_name" >/dev/null 2>&1; then
+    cleanup_failed=1
+  fi
   local cleanup_result=passed
   [[ "$cleanup_failed" == 0 ]] || cleanup_result=failed
   local no_retry_latch_preserved=false
