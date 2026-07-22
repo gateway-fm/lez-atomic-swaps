@@ -1420,7 +1420,7 @@ bind_claim_sweep() {
   readonly claim_sweep_binding="${evidence_root}/claim-sweep-binding.json"
   "$agreement_actor_binary" bind-finalized-claim-sweep --private-root "${agreement_root}/material/taker" --own-public-packet "${agreement_root}/exchange/taker.json" --peer-public-packet "${agreement_root}/exchange/maker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/taker.sqlite" --run-id "$MONERO_RUN_ID" --claim-run-id "$run_id" --finalized-claim "$tag15_finality_result" --observed-final-signature "$observed_final_signature" --extracted-maker-adaptor-scalar "$extracted_maker_scalar" --monero-sweep-evidence "$monero_sweep_evidence" --monero-receipt-evidence "$monero_verification_evidence" --output-binding-evidence "$claim_sweep_binding"
   require_owner_file "$claim_sweep_binding" "claim/sweep binding evidence"
-  jq -e '.schema=="lez_v02_m4_claim_cross_chain_binding_v1" and .distributed_cross_chain_transaction_claimed==false and .lez_effect=="claim" and .sweeping_role=="taker"' "$claim_sweep_binding" >/dev/null || fail "claim/sweep binding evidence is incomplete"
+  jq -e '.schema=="lez_v02_m4_claim_cross_chain_binding_v1" and .distributed_cross_chain_transaction_claimed==false and .lez_effect=="claim" and .lez_sidecar_role=="taker"' "$claim_sweep_binding" >/dev/null || fail "claim/sweep binding evidence is incomplete"
   record_phase evidence completed
 }
 
