@@ -311,21 +311,21 @@ rg -Fq 'compose_xmr_agreement' <<<"$execute_source" ||
   fail "execute omits the agreement helper"
 rg -Fq 'submit_tag13' <<<"$execute_source" ||
   fail "execute omits the tag-13 runner"
-readonly post_tag13_fail='fail "cleanup phase is not implemented; cross-chain evidence completed; do not retry this run"'
-rg -Fq "$post_tag13_fail" <<<"$execute_source" ||
-  fail "execute omits the post-tag13 fail-closed boundary"
+readonly post_tag13_return='return 0'
+rg -Fq "$post_tag13_return" <<<"$execute_source" ||
+  fail "execute omits the post-tag13 success boundary"
 execute_tag13_line="$(rg -n -m1 -F 'submit_tag13' <<<"$execute_source")"
 execute_tag13_line="${execute_tag13_line%%:*}"
-post_tag13_fail_line="$(rg -n -m1 -F "$post_tag13_fail" <<<"$execute_source")"
-post_tag13_fail_line="${post_tag13_fail_line%%:*}"
-(( execute_tag13_line < post_tag13_fail_line )) ||
+post_tag13_return_line="$(rg -n -m1 -F "$post_tag13_return" <<<"$execute_source")"
+post_tag13_return_line="${post_tag13_return_line%%:*}"
+(( execute_tag13_line < post_tag13_return_line )) ||
   fail "post-tag13 no-retry boundary appears before the tag-13 call"
 export_line="$(rg -n -m1 -F 'export_tag13_handoff' <<<"$execute_source")"
 export_line="${export_line%%:*}"
 sidecar_line="$(rg -n -m1 -F 'start_role_sidecars' <<<"$execute_source")"
 sidecar_line="${sidecar_line%%:*}"
 [[ "$export_line" =~ ^[0-9]+$ && "$sidecar_line" =~ ^[0-9]+$ ]] || fail "sidecar continuation boundaries are unavailable"
-(( execute_tag13_line < export_line && export_line < sidecar_line && sidecar_line < post_tag13_fail_line )) || fail "tag13 handoff/sidecar readiness ordering is not fail-closed"
+(( execute_tag13_line < export_line && export_line < sidecar_line && sidecar_line < post_tag13_return_line )) || fail "tag13 handoff/sidecar completion ordering is invalid"
 
 tag13_source="$(function_source submit_tag13)"
 [[ -n "$tag13_source" ]] || fail "tag-13 submission function is unavailable"
