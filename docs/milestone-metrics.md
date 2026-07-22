@@ -230,3 +230,16 @@ Status: awaiting owner transition.
 4. Record failed attempts and flakes as well as successes.
 5. Update the implementation plan, manual guide, architecture diagrams, and
    external-resource inventory in the same change when their facts change.
+
+## M4 progressive local PoC certification (2026-07-22)
+
+Exact clean replay `m4cert20260722an` on commit `5ec6521` passed the native XMR
+claim path and bounded cleanup. The run exercised both actor roles, LEZ v0.2
+deployment/readiness, official Monero 0.18.5.1 Regtest, finalized tag 13/14/15,
+adaptor extraction, Maker-destination post-fee receipt verification, and the
+canonical `lez_v02_m4_claim_cross_chain_binding_v1` evidence packet. Its ledger
+records source exit 0, evidence completed, cleanup passed, exact run resources
+absent, sidecar ports closed, and foreign-sentinel survival; it used no public
+RPC, faucet, peer, or public funds. This is the progressive local-functional PoC
+checkpoint, not a production-readiness claim; refund/punishment, F7 parity,
+U9/D1, independent review, chaos, and QA/security hardening remain deferred.

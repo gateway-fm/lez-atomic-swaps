@@ -9,6 +9,18 @@ together with the live
 [RFP-003](https://github.com/logos-co/rfp/blob/master/RFPs/RFP-003-atomic-swaps.md).
 The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
+### M4 progressive local PoC
+
+The exact clean replay `m4cert20260722an` on commit `5ec6521` certifies the
+local native-XMR successful-claim path: LEZ v0.2 deployment/readiness, fresh
+Maker/Taker actors, finalized tag 13/14/15, adaptor extraction, Maker-destination
+post-fee receipt verification, canonical cross-chain binding evidence, and exact
+run-scoped cleanup all passed. It used only isolated loopback services and
+deterministic local genesis/Regtest funds—no public RPC, faucet, peer, or public
+funds. This is a progressive local-functional PoC checkpoint; signed refund and
+punishment branches, F7 parity, U9/D1 outputs, independent review, chaos, and
+production-readiness hardening remain explicitly deferred.
+
 The current BTC slice uses strict schema 4. The Taker externally submits the
 direction-selected first lock. Only the Maker config contains `maker_lock`
 material, and a fresh `btc-reference-actor` process reconstructs the exact

@@ -1224,3 +1224,28 @@ exact resources; it never prunes Docker globally, stops an unlisted process, or
 removes the caller-supplied verified artifact cache. Failed effect-bearing M3
 runs are retained and their agreements, journals, outputs, Vault funds, and
 Core inputs are never reused.
+
+## M4 exact replay checkpoint
+
+The component/RPC graph was exercised by clean replay `m4cert20260722an` on
+`5ec6521`: isolated LEZ Bedrock/sequencer/indexer, authenticated Maker/Taker
+role sidecars, and official Monero 0.18.5.1 daemon/funding/shared/Maker/Taker
+wallet RPCs. All endpoints were fresh loopback bindings from the run manifest;
+no public RPC, P2P peer, faucet, or public funds participated. The replay passed
+finalized deployment, actor onboarding, tag 13/14/15 discovery, post-fee
+Maker-destination receipt verification, canonical cross-chain binding, and
+state-based exact cleanup. This diagram remains the local PoC architecture;
+production deployment, distributed atomicity, and recovery branches are not
+claimed by this checkpoint.
+
+```mermaid
+graph LR
+  T[Taker actor] -->|authenticated RPC| TS[Taker sidecar]
+  M[Maker actor] -->|authenticated RPC| MS[Maker sidecar]
+  TS -->|tag 13/14/15 effects| L[LEZ v0.2\nBedrock + sequencer + indexer]
+  MS -->|finalized claim| L
+  TS -->|wallet RPC| X[Monero regtest daemon]
+  MS -->|funding and destination wallet RPC| X
+  X -->|receipt and sweep evidence| B[Cross-chain binder]
+  L -->|finalized claim evidence| B
+```

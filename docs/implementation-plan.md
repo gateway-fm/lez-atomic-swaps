@@ -2835,6 +2835,25 @@ inspected on 2026-07-20. The old ETH-scoped issue #61 is not authoritative.
 
 ### Actual entry state
 
+### Certified exact-commit local PoC replay (2026-07-22)
+
+Run `m4cert20260722an` is the clean, isolated replay of commit
+`5ec65217424c4b976ced662ffcc590ffd5a1713e`. It passed artifact identity and
+negative tests, LEZ v0.2 deployment/readiness, fresh Maker/Taker Vault Claims
+onboarding, official Monero 0.18.5.1 provenance and peerless Regtest topology,
+canonical Stage A/B and role journals, finalized tag 13/14/15, adaptor extraction,
+post-fee Maker-destination receipt verification, the canonical
+`lez_v02_m4_claim_cross_chain_binding_v1` binder, and exact cleanup. The retained
+ledger records `source_exit_status=0`, `evidence=completed`, `cleanup=passed`,
+`exact_run_resources_absent=true`, closed sidecar ports, and a surviving foreign
+sentinel; no public RPC, faucet, peer, or fund was used. Evidence is under
+`.e2e/m4cert20260722an/m4-actual-claim/evidence/`.
+
+This certifies the progressive local-functional M4 happy-path PoC. It does not
+claim production readiness or literal F6/F7/U9/D1 closure; signed refund and
+punishment branches, token parity, independent crypto review, chaos, and later
+QA/security hardening remain explicitly deferred.
+
 M4 has now crossed its first actual local successful-claim vertical. The
 underlying component set includes bounded two-party cross-curve DLEQ proofs,
 pair-neutral adaptor signatures, canonical countersigned Stage A and Stage B,
