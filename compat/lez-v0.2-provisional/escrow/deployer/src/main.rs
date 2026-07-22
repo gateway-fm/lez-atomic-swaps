@@ -1171,15 +1171,24 @@ async fn deploy_once_and_observe_with_timeout(
         nssa::program_deployment_transaction::Message::new(ZEC_ESCROW_V02_ELF.to_vec()),
     );
     let expected_hash = HashType(transaction.hash());
-    let submitted_hash = client
-        .send_transaction(LeeTransaction::ProgramDeployment(transaction.clone()))
-        .await
-        .with_context(|| {
-            format!(
-                "deployment submission outcome is unknown for {}; observe before any retry",
-                expected_hash
-            )
-        })?;
+    let submitted_hash = tokio::time::timeout(
+        observation_timeout,
+        client.send_transaction(LeeTransaction::ProgramDeployment(transaction.clone())),
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "timed out submitting deployment {}; outcome is unknown; do not resubmit",
+            expected_hash
+        )
+    })?
+    .context("deployment submission outcome is unknown; do not resubmit")
+    .with_context(|| {
+        format!(
+            "deployment submission outcome is unknown for {}; observe before any retry",
+            expected_hash
+        )
+    })?;
     ensure!(
         submitted_hash == expected_hash,
         "RPC returned a deployment hash different from the locally checked transaction"
