@@ -3380,12 +3380,12 @@ compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-verify \
   --daemon-url "$MONERO_DAEMON_ENDPOINT" \
   --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
   --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
-  --target-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
-  --target-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
-  --target-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
-  --foreign-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
-  --foreign-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
-  --foreign-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
+  --target-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
+  --target-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
+  --target-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
+  --foreign-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
+  --foreign-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
+  --foreign-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
   --output-evidence "$MONERO_CLAIM_RECEIPT"
 
 "$REFERENCE_ACTOR" bind-finalized-claim-sweep \
