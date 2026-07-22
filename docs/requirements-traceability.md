@@ -304,3 +304,14 @@ execution, production hardening, or an M3 completion tag.
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
 | D1 | Happy, abandonment/refund, and concurrent-swap recorded demo video for each pair | Nine videos generated from passing role E2E runs, with commit/testnet/version metadata | BTC M3 GREEN: happy `m3record-happy-20260718ag`, refund `m3record-refund-20260718ag`, and concurrent `m3record-concurrent-20260718ag` are replayable mode-`0600` actual-node captures bound to clean pushed evidence commit `a6eb1ad`, Core 31.1 Regtest/LEZ v0.2 identities, zero replay sends, and no public RPC/faucet/funds. Refund covers both ordered timeout legs; concurrent proves simultaneous revision two and disjoint authority. Source verifier commit `946208a` sealed source bundle `3d7d7adc...a86c7cc`; RED-GREEN renderer/verifier commit `846ba56` then produced three H.264 1280x720 MP4s. Regenerated-source verification, full decode, scenario/atomicity/tail frame sampling, and mode-`0600` bundle verification passed at SHA-256 `7697a27c80c8f90856d6592051805a8923fe564aa01b0dff4109bd5c5f101ba8`. Other-pair videos remain M4/M7 work; public execution stays deferred under ADR 0023. |
+
+## M4 PoC evidence checkpoint
+
+The progressive local-functional M4 exit gates are evidenced by clean replay
+`m4cert20260722an` on commit `5ec6521` (documented and tagged as
+`m4-poc-complete.1`). The replay binds finalized LEZ Claim, transcript
+extraction, reconstructed spend key, Maker-destination Monero sweep, independent
+post-fee receipt, and canonical cross-chain binding; its evidence and cleanup
+ledgers are green with exact resources absent. This checkpoint deliberately does
+not claim the deferred signed-recovery branches, F7/U9/D1 outputs, or production
+hardening gates.
