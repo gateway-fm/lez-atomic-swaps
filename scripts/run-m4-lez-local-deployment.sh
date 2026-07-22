@@ -58,7 +58,7 @@ case "${1:-}" in
   *) fail "expected contract, self-test-finality-selector, or execute" ;;
 esac
 
-for name in base64 basename chmod cp curl dirname find jq mkdir mv readlink rg rm sed sha256sum sleep sort stat; do
+for name in base64 basename chmod cp curl date dirname find jq mkdir mv readlink rg rm sed sha256sum sleep sort stat; do
   command -v "$name" >/dev/null || fail "missing required tool: $name"
 done
 required=(M4_LEZ_RUN_ID M4_LEZ_STACK_MANIFEST M4_LEZ_ARTIFACT_EVIDENCE M4_LEZ_DEPLOYER
@@ -163,7 +163,7 @@ mkdir -m 0700 "$M4_LEZ_EVIDENCE_ROOT"
 printf '%s\n' "$deployer_sha" >"$M4_LEZ_EVIDENCE_ROOT/deployer-sha256-at-submission"
 chmod 0600 "$M4_LEZ_EVIDENCE_ROOT/deployer-sha256-at-submission"
 
-rpc() { curl --fail --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 30 -H 'content-type: application/json' --data "$2" "$1"; }
+rpc() { curl --fail --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 -H 'content-type: application/json' --data "$2" "$1"; }
 tip() {
   local response value
   for _ in {1..120}; do
@@ -269,6 +269,7 @@ for ((poll=0; poll<finality_poll_limit; poll++)); do
   (( $(date +%s) < deadline )) || fail "finality polling timeout after ${timeout_seconds}s"
   final_tip="$(tip)"; ((final_tip>=pre_tip)) || fail "finalized tip regressed"; ((final_tip-pre_tip<=max_finality_blocks)) || fail "scan exceeded bound"
   while ((cursor<=final_tip)); do
+    (( $(date +%s) < deadline )) || fail "finality polling timeout after ${timeout_seconds}s"
     block_by_id "$cursor" "$scan_file"
     found="$(inspect_deployments "$scan_file" post "$cursor")"; post_exact=$((post_exact+found))
     occurrences="$(transaction_occurrences "$scan_file" "$tx")"; tx_count=$((tx_count+occurrences))
