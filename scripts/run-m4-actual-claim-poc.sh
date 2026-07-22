@@ -682,6 +682,7 @@ stage_executable() {
 
 build_identity_and_artifact() {
   record_phase build started
+  export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
   readonly sidecar_target="${build_root}/sidecar-target"
   record_resource ephemeral_path "$sidecar_target" "$sidecar_target"
   CARGO_TARGET_DIR="$sidecar_target" CARGO_NET_OFFLINE=true \
