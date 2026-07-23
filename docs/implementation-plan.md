@@ -3115,6 +3115,100 @@ repository and M4 actual-node gates, and the tag states every deferred
 production/formal-review item without claiming literal resolution of open
 proposal errata.
 
+## M5 active work package: application plane
+
+Entered: 2026-07-23. Authority is the live RFP-003 plus Gateway's accepted
+replacement proposal issue #112; superseded issue #61 is not an acceptance
+source. The proposal's stale F9/R7 references are interpreted by their semantic
+text as current RFP F8/R8.
+
+M5 must deliver:
+
+- a Tokio/Rust maker daemon controlled through the Logos Core daemon-mode seam,
+  with a real standalone systemd fallback and installation guide;
+- a maker CLI that configures pairs/prices, controls and inspects the service,
+  lists history, and requests manual claims/refunds;
+- a taker CLI that discovers offers, initiates swaps, monitors progress, and
+  requests claim/refund;
+- a persistent coordinator with crash recovery and concurrent-swap isolation;
+- a pluggable price-source contract with local configuration and a Logos-module
+  C-API adapter;
+- documented graceful behavior while Logos Delivery or Chat is unavailable; and
+- a `cargo-fuzz` or equivalent state-machine fuzz harness.
+
+The current executable baseline is intentionally not called M5-complete. It has
+an authenticated loopback-HTTP maker daemon, four RPC methods, a partial maker
+CLI, SQLite recovery machinery, ZEC watcher reconciliation, and property tests.
+It has no taker CLI, pair/price configuration, history/manual effect surface,
+Delivery/Chat runtime, C-API pricing implementation, systemd package,
+owner-restricted Unix socket, or literal fuzz target.
+
+### Progressive PoC gate
+
+The first M5 image is one reproducible local happy path through the actual
+application binaries:
+
+1. an operator starts the maker daemon on a mode-0600 Unix socket inside an
+   owner-only runtime directory and configures one enabled pair plus a static
+   price through the maker CLI;
+2. the daemon publishes an authenticated, expiring offer through a run-local
+   Delivery-compatible adapter and signs negotiation through a run-local
+   Chat-compatible adapter;
+3. a separate taker CLI identity discovers and accepts that offer, after which
+   both role processes persist the same signed terms;
+4. the selected stable pair adapter completes against the already pinned local
+   foreign-chain and LEZ devnets, with no internal test-only lifecycle call
+   standing in for a maker or taker action;
+5. Delivery and Chat are removed after the first lock and the swap still reaches
+   an observable terminal state from durable chain evidence;
+6. daemon restart retains configuration, offer/swap history, and terminal state;
+   and
+7. the one-command runner records exact binaries, roles, RPCs, transactions,
+   finality, duration, external resources, and scoped cleanup.
+
+The PoC uses the existing local LEZ/ZEC corridor first because it is the
+shortest already-certified real-node pair. BTC and XMR application-plane
+composition remain required before the literal M5 milestone exit unless the
+owner explicitly changes that exit gate. No public RPC, faucet, public funds,
+or public deployment is necessary; cold dependency acquisition is recorded
+separately from runtime dependencies.
+
+### Implementation order and live status
+
+- [x] Reconcile the live RFP and accepted replacement issue #112.
+- [x] Audit the current daemon, CLI, coordinator, persistence, pair adapters,
+  tests, CI, and living documentation.
+- [x] Record the component, actor, trust, and outage design in ADR 0079.
+- [ ] Replace loopback HTTP with owner-restricted Unix-socket JSON-RPC while
+  retaining `jsonrpsee` as the protocol implementation.
+- [ ] Add durable pair and local-price configuration plus offer/history views.
+- [ ] Add the price-source trait, local source, and bounded Logos C-API adapter.
+- [ ] Complete maker CLI commands and add the taker CLI.
+- [ ] Add Delivery/Chat-compatible run-local adapters, expiry/authentication,
+  buffering, retry/degraded state, and the post-lock cutover rule.
+- [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
+  retain one exact reproducible PoC.
+- [ ] Add the standalone hardened systemd unit/install rehearsal and the tested
+  Logos Core lifecycle adapter contract.
+- [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
+  isolation, unavailable-chain, outage, stale price, request replay, and manual
+  recovery cases.
+- [ ] Add and continuously exercise the coordinator fuzz target with retained
+  regression inputs and bounded CI smoke execution.
+- [ ] Revalidate formatting, Clippy, tests, Rustdoc, dependency
+  advisories/licenses/sources, image vulnerability scans, isolation,
+  traceability, diagrams, secret safety, and exact cleanup.
+- [ ] Certify the clean pushed commit, update evidence/manual docs/metrics, and
+  create the annotated M5 completion tag only after every literal output is
+  proven.
+
+Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
+Until Logos publishes that capability, M5 implements and tests the lifecycle
+contract against the same daemon binary and records the missing upstream
+integration in the production-blocker register. This external dependency does
+not excuse or defer the real standalone systemd, local control, persistence, or
+user-flow deliverables.
+
 ## Docker isolation policy
 
 Docker suites must:

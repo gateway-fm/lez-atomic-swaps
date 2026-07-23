@@ -1,6 +1,6 @@
 # Milestone delivery metrics
 
-Last updated: 2026-07-21
+Last updated: 2026-07-23
 
 This is the live evidence scorecard for ADR 0027's progressive milestone
 delivery. It tracks measurements and explicit unknowns; it does not infer a
@@ -22,10 +22,32 @@ Status vocabulary:
 | M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
 | M3 | Certified local-functional PoC | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | `m3-complete` at `f7fb250` | Owner entered M3 on 2026-07-14 and directed completion. The exact commit and tag are pushed; the private Actions API was unavailable and no remote-green claim is made. Cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
-| M4 | Progressive local-functional PoC | One same-run LEZ-first successful claim executed through actual isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest processes. The public packet is a working-tree checkpoint pending exact committed-tree replay and scoped cleanup. Signed tag-16 refund, tag-17 punishment, F7 parity, U9, D1 XMR videos, repository closure, and QA/chaos/infosec/production hardening remain | None | Repository-wide continuation entered M4 on 2026-07-19. No `m4-complete` tag or production phase is implied |
-| M5 | Not active | Awaiting owner transition | None | Not requested |
+| M4 | Certified progressive local-functional PoC | Exact clean replay `m4cert20260722an` completed the LEZ-first claim through isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest, retained canonical cross-chain binding and exact cleanup, and was documented on the pushed tree | `m4-poc-complete.2` | Owner entered M5 on 2026-07-23; deferred M4 hardening and production scope remain explicit |
+| M5 | Progressive local-functional PoC | Scope and current-state audit complete; architecture and exit criteria recorded. The existing maker daemon/CLI are carried prototype evidence, while the Unix-socket application plane, complete CLIs, pricing, Delivery/Chat behavior, systemd path, fuzz target, and application-level local-devnet run remain open | None | Owner entered M5 on 2026-07-23 |
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
+
+## M5 PoC scorecard
+
+Status: active progressive local-PoC; scope frozen, implementation not yet
+certified.
+
+| Metric | Current measurement | Evidence or next measurement point |
+|---|---|---|
+| Live authorities reconciled | 2 of 2 | Live RFP-003 and accepted replacement issue #112 re-read on 2026-07-23; issue #61 excluded |
+| Literal M5 outputs complete | 0 of 7 certified | Daemon/systemd, maker CLI, taker CLI, persistent coordinator, two pricing modes, Delivery/Chat behavior, and fuzz harness require exact evidence |
+| Application binaries | Maker daemon and partial maker CLI carried; no taker CLI | Replace provisional HTTP control, complete maker commands, add taker process |
+| Owner-local control | Loopback Bearer prototype only | Mode-0700 runtime directory, mode-0600 Unix socket, credential-safe versioned RPC |
+| Price sources | 0 of 2 | Local durable configuration, then bounded Logos C-API adapter |
+| Discovery and negotiation | Typed ports only | Authenticated expiring local adapters first; exact Logos adapters remain upstream-dependent |
+| Persistent restart evidence | One daemon/CLI create-status restart test carried | Repeat through the complete application happy path and exact effect outbox |
+| Concurrent application swaps | 0 composed | Distinct swap IDs, role state, agreements, escrows, deadlines, and effects |
+| Missing-chain degradation | 0 composed | Each unavailable route disables only affected pairs and reports operator state |
+| Delivery/Chat removal after lock | 0 composed | Kill both adapters after first lock; terminal state must use only SQLite and chain evidence |
+| Coordinator fuzzing | 512-case Proptest carried; no literal fuzz target | Add `cargo-fuzz` or equivalent target and bounded CI smoke corpus |
+| Actual local application swaps | 0 | First target is the stable isolated LEZ/ZEC corridor through maker/taker binaries |
+| Public runtime dependencies | None required for PoC | Record cold-download dependencies separately; runtime uses local nodes and deterministic funds |
+| Cleanup leaks | Not measured | Exact run ledger, absent owned resources, foreign sentinel survives |
 
 ## M4 PoC scorecard
 
