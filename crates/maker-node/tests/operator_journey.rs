@@ -2,7 +2,8 @@
 
 use std::{
     fs,
-    path::Path,
+    os::unix::fs::{DirBuilderExt as _, FileTypeExt as _, PermissionsExt as _},
+    path::{Path, PathBuf},
     process::{Child, Command, Output},
     thread,
     time::{Duration, Instant},
@@ -33,8 +34,6 @@ use zcash_transparent::{
     bundle::{OutPoint, TxOut},
 };
 
-const TOKEN: &str = "e2e-maker-owner-capability";
-
 struct Daemon(Child);
 
 impl Drop for Daemon {
@@ -45,17 +44,23 @@ impl Drop for Daemon {
 }
 
 #[test]
-fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
+fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
     let run = tempdir().expect("isolated test directory");
     let database = run.path().join("maker.sqlite3");
 
-    let (first_daemon, first_endpoint) = start_daemon(run.path(), &database, "first.ready");
-    let created = create_swap(&first_endpoint, "operator-swap-1", "bitcoin", None);
+    let (first_daemon, first_socket) = start_daemon(run.path(), &database, "first");
+    let runtime = fs::metadata(first_socket.parent().unwrap()).unwrap();
+    assert_eq!(runtime.permissions().mode() & 0o7777, 0o700);
+    let socket_metadata = fs::symlink_metadata(&first_socket).unwrap();
+    assert!(socket_metadata.file_type().is_socket());
+    assert_eq!(socket_metadata.permissions().mode() & 0o7777, 0o600);
+
+    let created = create_swap(&first_socket, "operator-swap-1", "bitcoin", None);
     assert_success(&created);
     assert_swap_view(&created.stdout, "operator-swap-1", "Bitcoin", "Offered");
 
     let reverse = create_swap(
-        &first_endpoint,
+        &first_socket,
         "operator-swap-reverse",
         "zcash",
         Some("taker-sells-lez"),
@@ -65,7 +70,7 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
     assert_eq!(reverse_view["direction"], "TakerSellsLez");
 
     let xmr = create_swap(
-        &first_endpoint,
+        &first_socket,
         "operator-xmr-event-recovery",
         "monero",
         Some("taker-sells-lez"),
@@ -79,7 +84,7 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
     );
 
     let unsupported_xmr_first = create_swap(
-        &first_endpoint,
+        &first_socket,
         "unsafe-xmr-first",
         "monero",
         Some("taker-sells-foreign"),
@@ -93,36 +98,27 @@ fn maker_cli_controls_authenticated_daemon_and_survives_restart() {
     );
 
     let denied = maker_cli(
-        &first_endpoint,
-        "wrong-capability",
+        &run.path().join("not-the-owner-socket"),
         &["status", "--id", "operator-swap-1"],
     );
     assert!(
         !denied.status.success(),
-        "unauthorized CLI unexpectedly succeeded"
+        "wrong socket unexpectedly succeeded"
     );
     assert!(
-        String::from_utf8_lossy(&denied.stderr).contains("401"),
+        String::from_utf8_lossy(&denied.stderr).contains("connect local RPC socket"),
         "unexpected denial: {}",
         String::from_utf8_lossy(&denied.stderr)
     );
 
     drop(first_daemon);
 
-    let (_second_daemon, second_endpoint) = start_daemon(run.path(), &database, "second.ready");
-    let recovered = maker_cli(
-        &second_endpoint,
-        TOKEN,
-        &["status", "--id", "operator-swap-1"],
-    );
+    let (_second_daemon, second_socket) = start_daemon(run.path(), &database, "second.ready");
+    let recovered = maker_cli(&second_socket, &["status", "--id", "operator-swap-1"]);
     assert_success(&recovered);
     assert_swap_view(&recovered.stdout, "operator-swap-1", "Bitcoin", "Offered");
 
-    let reverse_recovered = maker_cli(
-        &second_endpoint,
-        TOKEN,
-        &["status", "--id", "operator-swap-reverse"],
-    );
+    let reverse_recovered = maker_cli(&second_socket, &["status", "--id", "operator-swap-reverse"]);
     assert_success(&reverse_recovered);
     let reverse_view: Value =
         serde_json::from_slice(&reverse_recovered.stdout).expect("CLI emits JSON");
@@ -135,41 +131,20 @@ fn owner_lists_and_acknowledges_durable_alert_across_daemon_restart() {
     let database = run.path().join("alerts.sqlite3");
     let alert_sequence = seed_replacement_conflict(&database);
 
-    let (first_daemon, first_endpoint) = start_daemon(run.path(), &database, "alert-first.ready");
-    let status = maker_cli(
-        &first_endpoint,
-        TOKEN,
-        &["status", "--id", "operator-alert-swap"],
-    );
+    let (first_daemon, first_socket) = start_daemon(run.path(), &database, "alert-first.ready");
+    let status = maker_cli(&first_socket, &["status", "--id", "operator-alert-swap"]);
     assert_success(&status);
     assert_attention(&status.stdout, true, 1, "TakerLockReorged");
-    let denied = maker_cli(
-        &first_endpoint,
-        "wrong-capability",
-        &["alerts", "--id", "operator-alert-swap"],
-    );
-    assert!(!denied.status.success());
-    assert!(String::from_utf8_lossy(&denied.stderr).contains("401"));
-    let alerts = maker_cli(
-        &first_endpoint,
-        TOKEN,
-        &["alerts", "--id", "operator-alert-swap"],
-    );
+    let alerts = maker_cli(&first_socket, &["alerts", "--id", "operator-alert-swap"]);
     assert_alert_list(&alerts, alert_sequence, false);
     drop(first_daemon);
 
-    let (_second_daemon, second_endpoint) =
-        start_daemon(run.path(), &database, "alert-second.ready");
-    let restarted = maker_cli(
-        &second_endpoint,
-        TOKEN,
-        &["status", "--id", "operator-alert-swap"],
-    );
+    let (_second_daemon, second_socket) = start_daemon(run.path(), &database, "alert-second.ready");
+    let restarted = maker_cli(&second_socket, &["status", "--id", "operator-alert-swap"]);
     assert_success(&restarted);
     assert_attention(&restarted.stdout, true, 1, "TakerLockReorged");
     let acknowledged = maker_cli(
-        &second_endpoint,
-        TOKEN,
+        &second_socket,
         &[
             "acknowledge-alert",
             "--id",
@@ -180,25 +155,20 @@ fn owner_lists_and_acknowledges_durable_alert_across_daemon_restart() {
     );
     assert_success(&acknowledged);
     assert_attention(&acknowledged.stdout, false, 0, "TakerLockReorged");
-    let pending = maker_cli(
-        &second_endpoint,
-        TOKEN,
-        &["alerts", "--id", "operator-alert-swap"],
-    );
+    let pending = maker_cli(&second_socket, &["alerts", "--id", "operator-alert-swap"]);
     assert_success(&pending);
     assert_eq!(
         serde_json::from_slice::<Value>(&pending.stdout).unwrap(),
         serde_json::json!([])
     );
     let all = maker_cli(
-        &second_endpoint,
-        TOKEN,
+        &second_socket,
         &["alerts", "--id", "operator-alert-swap", "--all"],
     );
     assert_alert_list(&all, alert_sequence, true);
 }
 
-fn create_swap(endpoint: &str, id: &str, pair: &str, direction: Option<&str>) -> Output {
+fn create_swap(socket: &Path, id: &str, pair: &str, direction: Option<&str>) -> Output {
     let mut arguments = vec![
         "create-swap",
         "--id",
@@ -227,24 +197,32 @@ fn create_swap(endpoint: &str, id: &str, pair: &str, direction: Option<&str>) ->
     if let Some(direction) = direction {
         arguments.extend(["--direction", direction]);
     }
-    maker_cli(endpoint, TOKEN, &arguments)
+    maker_cli(socket, &arguments)
 }
 
-fn start_daemon(run: &Path, database: &Path, ready_name: &str) -> (Daemon, String) {
-    let ready = run.join(ready_name);
+fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
+    let runtime = run.join(format!("{name}.runtime"));
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&runtime)
+        .expect("create owner-only maker runtime");
+    let socket = runtime.join("maker.sock");
+    let ready = runtime.join("ready");
     let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
-        .args(["--listen", "127.0.0.1:0", "--database"])
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--database")
         .arg(database)
         .arg("--ready-file")
         .arg(&ready)
-        .env("LEZ_MAKER_RPC_TOKEN", TOKEN)
         .spawn()
         .expect("start maker daemon");
     let mut daemon = Daemon(child);
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Ok(endpoint) = fs::read_to_string(&ready) {
-            return (daemon, endpoint);
+        if let Ok(published) = fs::read_to_string(&ready) {
+            assert_eq!(published.trim(), socket.to_str().unwrap());
+            return (daemon, socket);
         }
         if let Some(status) = daemon.0.try_wait().expect("poll maker daemon") {
             panic!("maker daemon exited before readiness: {status}");
@@ -257,12 +235,11 @@ fn start_daemon(run: &Path, database: &Path, ready_name: &str) -> (Daemon, Strin
     }
 }
 
-fn maker_cli(endpoint: &str, token: &str, arguments: &[&str]) -> Output {
+fn maker_cli(socket: &Path, arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_lez-maker"))
-        .arg("--rpc-url")
-        .arg(endpoint)
+        .arg("--socket")
+        .arg(socket)
         .args(arguments)
-        .env("LEZ_MAKER_RPC_TOKEN", token)
         .output()
         .expect("run maker CLI")
 }

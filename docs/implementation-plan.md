@@ -3179,8 +3179,10 @@ separately from runtime dependencies.
 - [x] Audit the current daemon, CLI, coordinator, persistence, pair adapters,
   tests, CI, and living documentation.
 - [x] Record the component, actor, trust, and outage design in ADR 0079.
-- [ ] Replace loopback HTTP with owner-restricted Unix-socket JSON-RPC while
-  retaining `jsonrpsee` as the protocol implementation.
+- [x] Replace loopback HTTP with owner-restricted Unix-socket JSON-RPC while
+  retaining `jsonrpsee` as the protocol implementation. The daemon now enforces
+  owner/mode/path/body/connection limits, no-clobber readiness, and exact-inode
+  cleanup; real daemon/CLI restart and alert journeys pass.
 - [ ] Add durable pair and local-price configuration plus offer/history views.
 - [ ] Add the price-source trait, local source, and bounded Logos C-API adapter.
 - [ ] Complete maker CLI commands and add the taker CLI.

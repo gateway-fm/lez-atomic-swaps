@@ -1,19 +1,17 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand, ValueEnum};
-use jsonrpsee::{core::client::ClientT, rpc_params};
-use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
 use lez_maker_node::{
     AlertAcknowledgeRequest, AlertListRequest, CreateSwapRequest, OperatorAlertView,
-    RecoveryRequest, StatusRequest, SwapView,
+    RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
 };
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 
 #[derive(Parser)]
 #[command(about = "Operator CLI for the LEZ atomic-swap maker daemon")]
 struct Arguments {
-    #[arg(long, default_value = "http://127.0.0.1:9944")]
-    rpc_url: String,
-    #[arg(long, env = "LEZ_MAKER_RPC_TOKEN", hide_env_values = true)]
-    rpc_token: String,
+    #[arg(long, default_value = "/run/lez-atomic-swaps/maker.sock")]
+    socket: PathBuf,
     #[command(subcommand)]
     command: Command,
 }
@@ -118,7 +116,7 @@ impl From<PairArgument> for Pair {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
-    let client = rpc_client(&arguments.rpc_url, &arguments.rpc_token)?;
+    let socket = arguments.socket;
     let output = match arguments.command {
         Command::CreateSwap {
             id,
@@ -182,12 +180,12 @@ async fn main() -> anyhow::Result<()> {
                 confirmations,
                 recovery,
             };
-            let view: SwapView = client.request("swap_create", rpc_params![request]).await?;
+            let view: SwapView = call_local_rpc(&socket, "swap_create", &request).await?;
             serde_json::to_value(view)?
         }
         Command::Status { id } => {
             let request = StatusRequest { id: id.into() };
-            let view: SwapView = client.request("swap_status", rpc_params![request]).await?;
+            let view: SwapView = call_local_rpc(&socket, "swap_status", &request).await?;
             serde_json::to_value(view)?
         }
         Command::Alerts { id, after, all } => {
@@ -197,7 +195,7 @@ async fn main() -> anyhow::Result<()> {
                 include_acknowledged: all,
             };
             let alerts: Vec<OperatorAlertView> =
-                client.request("swap_alerts", rpc_params![request]).await?;
+                call_local_rpc(&socket, "swap_alerts", &request).await?;
             serde_json::to_value(alerts)?
         }
         Command::AcknowledgeAlert { id, alert_sequence } => {
@@ -205,23 +203,11 @@ async fn main() -> anyhow::Result<()> {
                 id: id.into(),
                 alert_sequence,
             };
-            let view: SwapView = client
-                .request("swap_alert_acknowledge", rpc_params![request])
-                .await?;
+            let view: SwapView =
+                call_local_rpc(&socket, "swap_alert_acknowledge", &request).await?;
             serde_json::to_value(view)?
         }
     };
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
-}
-
-fn rpc_client(rpc_url: &str, rpc_token: &str) -> anyhow::Result<jsonrpsee_http_client::HttpClient> {
-    let mut headers = HeaderMap::new();
-    let mut authorization = HeaderValue::from_str(&format!("Bearer {rpc_token}"))?;
-    authorization.set_sensitive(true);
-    headers.insert("authorization", authorization);
-    HttpClientBuilder::default()
-        .set_headers(headers)
-        .build(rpc_url)
-        .map_err(Into::into)
 }

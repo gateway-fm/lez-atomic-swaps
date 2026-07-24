@@ -36,11 +36,11 @@ certified.
 |---|---|---|
 | Live authorities reconciled | 2 of 2 | Live RFP-003 and accepted replacement issue #112 re-read on 2026-07-23; issue #61 excluded |
 | Literal M5 outputs complete | 0 of 7 certified | Daemon/systemd, maker CLI, taker CLI, persistent coordinator, two pricing modes, Delivery/Chat behavior, and fuzz harness require exact evidence |
-| Application binaries | Maker daemon and partial maker CLI carried; no taker CLI | Replace provisional HTTP control, complete maker commands, add taker process |
-| Owner-local control | Loopback Bearer prototype only | Mode-0700 runtime directory, mode-0600 Unix socket, credential-safe versioned RPC |
+| Application binaries | Maker daemon and partial maker CLI now use owner-local Unix-socket JSON-RPC; no taker CLI | Complete maker commands and add the taker process |
+| Owner-local control | GREEN component slice | Mode-0700 owner runtime directory, mode-0600 Unix socket, absolute/no-symlink paths, bounded HTTP/1 JSON-RPC, disabled batches, 16-connection cap, no-clobber readiness, exact-inode cleanup, and two black-box daemon/CLI journeys pass strict gates |
 | Price sources | 0 of 2 | Local durable configuration, then bounded Logos C-API adapter |
 | Discovery and negotiation | Typed ports only | Authenticated expiring local adapters first; exact Logos adapters remain upstream-dependent |
-| Persistent restart evidence | One daemon/CLI create-status restart test carried | Repeat through the complete application happy path and exact effect outbox |
+| Persistent restart evidence | Two daemon/CLI process journeys pass across restart, including durable alerts | Repeat through the complete application happy path and exact effect outbox |
 | Concurrent application swaps | 0 composed | Distinct swap IDs, role state, agreements, escrows, deadlines, and effects |
 | Missing-chain degradation | 0 composed | Each unavailable route disables only affected pairs and reports operator state |
 | Delivery/Chat removal after lock | 0 composed | Kill both adapters after first lock; terminal state must use only SQLite and chain evidence |

@@ -1,5 +1,8 @@
 //! Authenticated local JSON-RPC boundary for the headless maker.
 
+mod local_rpc;
+pub use local_rpc::call_local_rpc;
+
 use std::sync::Mutex;
 
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
@@ -21,9 +24,6 @@ use serde::{Deserialize, Serialize};
 const NOT_FOUND: i32 = -32_004;
 const CONFLICT: i32 = -32_009;
 const INTERNAL_ERROR: i32 = -32_603;
-
-/// Minimum capability length. Deployments should use at least 256 random bits.
-pub const MINIMUM_CAPABILITY_LENGTH: usize = 24;
 
 /// RPC context owned by one maker daemon.
 pub struct MakerRpc {
@@ -347,19 +347,6 @@ fn project_zcash_funding_event(
             }
         }
     }
-}
-
-/// Rejects trivially weak owner capabilities before transport setup.
-///
-/// # Errors
-///
-/// Returns an error when the capability is too short.
-pub fn validate_capability(capability: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        capability.len() >= MINIMUM_CAPABILITY_LENGTH,
-        "maker RPC capability must contain at least {MINIMUM_CAPABILITY_LENGTH} bytes"
-    );
-    Ok(())
 }
 
 /// Serializable operator-facing snapshot. Secret evidence is deliberately omitted.

@@ -3744,10 +3744,10 @@ The executable acceptance fixture is the quickest exact reproduction:
 cargo test --locked -p lez-maker-node --test operator_journey -- --nocapture
 ```
 
-It starts the real daemon on an ephemeral loopback port, creates BTC, reverse
-ZEC, and supported LEZ-first XMR swaps through the real CLI, rejects an
-unsupported XMR direction and a wrong capability, kills the daemon, restarts it
-on a new port with the same SQLite database, and reads the persisted swaps.
+It starts the real daemon on a mode-0600 Unix socket below an owner-only runtime
+directory, creates BTC, reverse ZEC, and supported LEZ-first XMR swaps through
+the real CLI, rejects an unsupported XMR direction and a wrong socket, kills the
+daemon, restarts it with the same SQLite database, and reads the persisted swaps.
 
 To repeat the operator steps manually, first build the two binaries:
 
@@ -3755,28 +3755,28 @@ To repeat the operator steps manually, first build the two binaries:
 cargo build --locked -p lez-maker-node --bins
 ```
 
-In terminal 1, use an isolated directory and a capability of at least 24 bytes:
+In terminal 1, use an isolated owner-only runtime directory:
 
 ```sh
-export RUN_ID=manual-operator-20260711-a
+umask 077
+export RUN_ID=manual-operator-20260724-a
 export RUN_DIR="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
-export LEZ_MAKER_RPC_TOKEN=manual-maker-owner-capability-20260711-a
-mkdir -p "$RUN_DIR"
+export MAKER_SOCKET="$RUN_DIR/maker.sock"
+mkdir -m 0700 "$RUN_DIR"
 target/debug/lez-maker-daemon \
-  --listen 127.0.0.1:0 \
+  --socket "$MAKER_SOCKET" \
   --database "$RUN_DIR/maker.sqlite3" \
   --ready-file "$RUN_DIR/maker.ready"
 ```
 
-After the ready file appears, use the same environment in terminal 2:
+After the ready file appears, use its exact socket path in terminal 2:
 
 ```sh
-export RUN_ID=manual-operator-20260711-a
+export RUN_ID=manual-operator-20260724-a
 export RUN_DIR="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
-export LEZ_MAKER_RPC_TOKEN=manual-maker-owner-capability-20260711-a
-export MAKER_RPC_URL="$(cat "$RUN_DIR/maker.ready")"
+export MAKER_SOCKET="$(cat "$RUN_DIR/maker.ready")"
 
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
+target/debug/lez-maker --socket "$MAKER_SOCKET" create-swap \
   --id manual-zec-reverse-1 \
   --pair zcash \
   --direction taker-sells-lez \
@@ -3787,7 +3787,7 @@ target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
   --later-refund-earliest 1200 \
   --required-margin 100
 
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" status \
+target/debug/lez-maker --socket "$MAKER_SOCKET" status \
   --id manual-zec-reverse-1
 ```
 
@@ -3799,7 +3799,7 @@ The other currently accepted operator constructions use these exact argument
 shapes:
 
 ```sh
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
+target/debug/lez-maker --socket "$MAKER_SOCKET" create-swap \
   --id manual-btc-forward-1 \
   --pair bitcoin \
   --direction taker-sells-foreign \
@@ -3810,7 +3810,7 @@ target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
   --later-refund-earliest 1200 \
   --required-margin 100
 
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
+target/debug/lez-maker --socket "$MAKER_SOCKET" create-swap \
   --id manual-xmr-lez-first-1 \
   --pair monero \
   --direction taker-sells-lez \
@@ -3824,19 +3824,19 @@ rejected, and XMR recovery is canonical-LEZ-refund-event-gated rather than
 configured with a fabricated Monero deadline.
 
 To prove restart persistence, stop terminal 1 with Ctrl-C and start the same
-daemon command again with the same database and ready file. Refresh the URL and
-query status again:
+daemon command again with the same database, socket, and readiness arguments.
+Reread the readiness path and query status again:
 
 ```sh
-export MAKER_RPC_URL="$(cat "$RUN_DIR/maker.ready")"
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" status \
+export MAKER_SOCKET="$(cat "$RUN_DIR/maker.ready")"
+target/debug/lez-maker --socket "$MAKER_SOCKET" status \
   --id manual-zec-reverse-1
 ```
 
-The same JSON view must be returned after refreshing the daemon's ephemeral
-endpoint. The database and readiness file are the run-specific manual-flow
-artifacts; remove that specific `$RUN_DIR` only after the daemon has stopped
-and the evidence is no longer needed.
+The same JSON view must be returned through the recreated socket. The daemon
+removes only its exact socket and readiness inodes on graceful stop. The
+database is the run-specific durable artifact; remove that specific `$RUN_DIR`
+only after the daemon has stopped and the evidence is no longer needed.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
@@ -4009,19 +4009,20 @@ cargo test --locked -p lez-maker-node --test operator_journey \
 ```
 
 That journey creates a genuine post-dependent Zcash replacement conflict through
-the maker runtime, starts the daemon on an ephemeral loopback port, and uses the
+the maker runtime, starts the daemon on an owner-only Unix socket, and uses the
 owner CLI to verify the attention summary, list the durable alert, restart the
-daemon, and acknowledge the same alert. A wrong bearer token must be rejected.
-For an equivalent already-running daemon, the owner commands are:
+daemon, and acknowledge the same alert. A wrong socket cannot reach the daemon;
+the mode-0700 runtime and mode-0600 socket are the authorization boundary. For
+an equivalent already-running daemon, the owner commands are:
 
 ```sh
-target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+target/debug/lez-maker --socket "$MAKER_SOCKET" \
   status --id "$SWAP_ID"
-target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+target/debug/lez-maker --socket "$MAKER_SOCKET" \
   alerts --id "$SWAP_ID"
-target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+target/debug/lez-maker --socket "$MAKER_SOCKET" \
   acknowledge-alert --id "$SWAP_ID" --alert "$ALERT_SEQUENCE"
-target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+target/debug/lez-maker --socket "$MAKER_SOCKET" \
   alerts --id "$SWAP_ID" --all
 ```
 
@@ -4212,11 +4213,12 @@ composed actor corridor.
   `generated.json`. Setup transactions and mandatory Clock execution must not
   enter the measured operation list. Treat unexplained cycle or topology drift
   as a code/pin change requiring review.
-- **The operator CLI receives HTTP 401:** terminal 1 and terminal 2 are not using
-  the same `LEZ_MAKER_RPC_TOKEN`. Do not place a real credential in source,
-  shell history, or committed files.
-- **An old maker URL fails after restart:** reread `maker.ready`; the daemon
-  intentionally binds a new ephemeral loopback port.
+- **The operator CLI cannot connect:** reread `maker.ready`, verify the daemon is
+  running, and require mode 0700 on the runtime plus mode 0600 on the socket. Do
+  not make either path group/world accessible.
+- **The daemon refuses an existing socket/readiness path:** it never unlinks an
+  unverified path. Confirm the recorded daemon process is absent and remove only
+  that run's stale paths before restarting; never sweep `/run` or `/tmp`.
 
 ## Keeping this guide current
 

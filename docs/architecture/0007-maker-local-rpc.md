@@ -1,19 +1,19 @@
 # ADR 0007: Maker local RPC and process ownership
 
-Status: Accepted for the operator vertical slice; production transport pending —
-2026-07-11
+Status: Accepted; owner-local Unix transport implemented, durable mutation
+outbox pending — 2026-07-24
 
 ```mermaid
 flowchart LR
-    CLI["Maker CLI"] -->|"Bearer capability"| Transport["Loopback JSON-RPC now / owner UDS gate"]
+    CLI["Maker CLI"] -->|"HTTP JSON-RPC over Unix stream"| Socket["Mode-0600 Unix socket"]
     MiniApp["Maker mini-app via Logos Core"] --> CoreAdapter["Core lifecycle adapter"]
-    CoreAdapter --> Transport
+    CoreAdapter --> Socket
     Systemd["Hardened systemd supervisor"] --> Daemon["Maker daemon"]
-    Transport --> Daemon
+    Socket --> Daemon
     Daemon --> Coordinator["Coordinator + chain adapters"]
     Daemon --> Writer["Single SQLite writer"]
-    Credential["Owner credential file / protected handle"] --> Transport
-    Ready["Readiness URL only"] --> Systemd
+    Runtime["Owner mode-0700 runtime directory"] --> Socket
+    Ready["No-clobber socket-path readiness file"] --> Systemd
 ```
 
 ## Context
@@ -30,56 +30,58 @@ only database writer and the only component that owns maker execution keys. CLI,
 mini-app, systemd, and Logos Core are clients or supervisors, never alternate
 database writers.
 
-The current executable slice uses HTTP on an ephemeral or configured loopback
-address and refuses non-loopback binds. Every request carries an owner capability
-of at least 24 bytes in the HTTP `Authorization: Bearer` header, supplied to both
-processes through the environment rather than command-line arguments. Tower HTTP
-rejects invalid credentials before JSON-RPC parsing, so parameters, errors, and
-request `Debug` output never contain the capability. The client marks the header
-value sensitive and argument structures containing the token do not implement
-`Debug`. This deliberately small scheme is an integration adapter, not the
-production transport approval.
+The executable M5 slice runs `jsonrpsee`'s HTTP service over a Tokio Unix-domain
+stream. The daemon accepts only an absolute socket below a real, effective-UID-
+owned mode-0700 runtime directory, refuses any pre-existing socket path, sets and
+rechecks mode 0600, disables batch/WebSocket requests, caps connections at 16,
+and limits request and response bodies to 64 KiB. The CLI opens one fresh
+connection per explicit command; transport failure never causes an automatic
+mutation retry.
 
-Before M5 production freeze:
+Authorization is the operating-system owner boundary. No bearer secret appears
+in environment variables, arguments, readiness files, logs, or HTTP headers.
+Socket and readiness cleanup capture device/inode identity and remove only the
+exact path created by that daemon. The optional readiness file is create-new,
+mode 0600, shares the runtime directory, and contains only the socket path.
 
-- Unix deployments use a Unix-domain socket inside a mode-0700 runtime directory;
-  the socket is mode 0600 and owned by the maker account. Other platforms need an
-  equivalent owner-restricted local transport.
-- Generate a random 256-bit capability into an owner-readable credential file.
-  Keep authentication in transport metadata and redact it from traces, errors,
-  audit records, crash reports, and process arguments.
+Before M5 freeze, the remaining control-plane work is:
+
 - Version the RPC surface and classify methods as read-only, idempotent mutation,
   or fund-moving mutation. Mutations receive request IDs and durable audit/outbox
   records so retries cannot duplicate effects.
-- Enforce request/body/concurrency limits and expose health separately from the
-  authenticated control surface.
+- Expose health separately from the control surface and rehearse the hardened
+  systemd package under a dedicated service user.
+- On non-Unix platforms, supply an equivalent owner-restricted local transport.
 
-The `--ready-file` option is service-manager/test handoff only. It contains the
-loopback URL, never the capability. Tests bind port zero and kill only the child
-process they created, so they cannot collide with another developer's daemon.
+Tests allocate distinct temporary runtime directories and kill only the child
+process they created, so no host port or another developer's daemon can collide.
 
 ## Standalone and Logos Core lifecycle
 
-The standalone systemd unit will use `RuntimeDirectory`, `StateDirectory`, and
-`LoadCredential` for socket, database, and capability ownership. Its hardening
-baseline includes `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, a
-private home, an explicit writable state path, bounded restart policy, and no
-network address families beyond those required by configured chain adapters.
+The standalone systemd unit will use `RuntimeDirectory` and `StateDirectory` for
+socket and database ownership. Its hardening baseline includes
+`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, a private home, an
+explicit writable state path, bounded restart policy, and no network address
+families beyond those required by configured chain adapters.
 
 The Logos Core daemon-mode adapter owns only lifecycle and presentation. Its
-contract is `start(config, credential_handle)`, `endpoint()`, `health()`, and
-`stop(grace_period)`. It must use the same daemon binary and RPC contract as the
-standalone mode, pass credentials through an OS-protected handle, wait for the
-readiness/health contract, and never deserialize wallet keys or bypass RPC by
-opening SQLite. Unexpected Core or UI termination leaves the daemon governed by
-the configured ownership mode; it cannot strand a post-lock recovery workflow.
+contract is `start(config)`, `endpoint()`, `health()`, and `stop(grace_period)`.
+It must use the same daemon binary and RPC contract as the standalone mode,
+receive the socket through the owner-local readiness contract, and never
+deserialize wallet keys or bypass RPC by opening SQLite. Unexpected Core or UI
+termination leaves the daemon governed by the configured ownership mode; it
+cannot strand a post-lock recovery workflow.
 
 ## Evidence and consequences
 
-`operator_journey` launches the actual daemon and CLI binaries, proves an invalid
-capability is rejected, kills the daemon, restarts it on a new ephemeral port,
-and reads the persisted swap through the CLI. It covers the first UJ-007 control
-seam, not pricing, chain actions, a taker role, or a complete swap.
+`operator_journey` launches the actual daemon and CLI binaries, verifies the
+runtime/socket modes, proves a wrong socket cannot reach the daemon, kills the
+daemon, restarts it with a fresh owner runtime and the same database, and reads
+the persisted swaps and alert history through the CLI. Thirteen passing tests
+plus one justified Docker-only ignored test in the full
+maker-node package, strict Clippy, and warning-fatal Rustdoc pass. This covers
+the UJ-007 control seam, not pricing, chain actions, a taker role, or a complete
+swap.
 
 The prototype serializes SQLite access with a mutex on `jsonrpsee` blocking
 workers. Replace this with the dedicated persistence actor and atomic outbox

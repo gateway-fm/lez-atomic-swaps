@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-07-21
+Status: Living executable inventory — 2026-07-24
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -22,6 +22,9 @@ flowchart TB
         CLI["lez-maker CLI"]
         Daemon["lez-maker-daemon"]
         Store[("SQLite schema v10")]
+        RuntimeDir["Effective-UID-owned mode-0700 runtime"]
+        Socket["Mode-0600 Unix socket"]
+        Ready["Create-new mode-0600 readiness path"]
         RuntimeTest["maker runtime restart fixture"]
         SdkJournal["SDK exact-tracker canonical / depth / same-tip replacement / removal journal"]
         SdkMaker["SDK fresh-gated maker-lock fixture"]
@@ -52,7 +55,10 @@ flowchart TB
     end
 
     Operator --> CLI
-    CLI -->|"Bearer HTTP JSON-RPC; create, status, alert list, alert acknowledge"| Daemon
+    RuntimeDir --> Socket
+    RuntimeDir --> Ready
+    CLI -->|"Bounded HTTP JSON-RPC over Unix stream"| Socket
+    Socket -->|"create, status, alert list, alert acknowledge"| Daemon
     Daemon -->|"rusqlite; caller-selected local file; Mutex-serialized"| Store
     RuntimeTest -->|"Direct maker runtime API"| Store
     RuntimeTest --> SdkJournal
@@ -78,15 +84,19 @@ flowchart TB
     LezExternal -->|"Atomic no-clobber publish after verification"| LezReady
 ```
 
-The maker daemon hard-refuses a non-loopback bind and defaults to
-`127.0.0.1:0`. Its ready file contains only the selected URL; the Bearer token
-comes from `LEZ_MAKER_RPC_TOKEN` and is never written there. The CLI default is
-`http://127.0.0.1:9944`, so an ephemeral daemon must be called with the ready URL.
-Registered methods are `swap_create`, `swap_status`, `swap_alerts`, and
-`swap_alert_acknowledge`. Status includes pending count/highest severity; list
-supports a cursor and acknowledged-history flag. Acknowledgment never changes
-protocol phase. There is no daemon-integrated chain watcher, chain-key owner,
-health method, or production ZEC ingestion RPC yet.
+The maker daemon exposes no TCP listener. It defaults to
+`/run/lez-atomic-swaps/maker.sock` and accepts only an absolute socket beneath a
+real effective-UID-owned mode-0700 runtime directory. It refuses a pre-existing
+path, applies mode 0600, disables WebSocket and batch calls, caps connections at
+16, and caps request/response bodies at 64 KiB. Its optional create-new readiness
+file contains only the socket path and is removed only if device/inode identity
+still matches. The CLI uses that socket directly and opens one connection per
+explicit command. Registered methods are `swap_create`, `swap_status`,
+`swap_alerts`, and `swap_alert_acknowledge`. Status includes pending
+count/highest severity; list supports a cursor and acknowledged-history flag.
+Acknowledgment never changes protocol phase. There is no daemon-integrated
+chain watcher, chain-key owner, health method, or production ZEC ingestion RPC
+yet.
 
 Each Zebra container listens on `0.0.0.0:18232` inside its isolated project
 network. Compose publishes it as a different ephemeral `127.0.0.1` host port.

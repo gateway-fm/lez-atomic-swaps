@@ -12,21 +12,24 @@ workspace = true
 
 [dependencies]
 anyhow = "1.0.102"
+bytes = "1.12.1"
 clap = { version = "4.6.0", features = ["derive", "env"] }
+http-body-util = "0.1.3"
+hyper = { version = "1.10.1", features = ["client", "http1"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
 jsonrpsee = { version = "0.26.0", features = ["client-core", "server"] }
-jsonrpsee-http-client = { version = "0.26.0", default-features = false }
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
+rustix = { version = "1.1.4", features = ["process"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread", "signal"] }
-tower = "0.5.3"
-tower-http = { version = "0.7.0", features = ["auth"] }
+tokio = { version = "1.52.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
 thiserror = "2.0.18"
 
 [dev-dependencies]
 hex = "0.4.3"
+jsonrpsee-http-client = { version = "0.26.0", default-features = false }
 tempfile = "3.27.0"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
