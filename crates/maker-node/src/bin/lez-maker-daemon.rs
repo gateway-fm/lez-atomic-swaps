@@ -3,6 +3,7 @@ use std::{
     io::{self, Write as _},
     os::unix::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context as _, bail, ensure};
@@ -10,9 +11,11 @@ use clap::Parser;
 use jsonrpsee::server::{
     BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
 };
-use lez_maker_node::{MakerRpc, rpc_module};
+use lez_maker_node::{MakerRpc, RunLocalDelivery, rpc_module};
 use lez_swap_store::SqliteSwapStore;
+use secp256k1::SecretKey;
 use tokio::{net::UnixListener, task::JoinSet};
+use zeroize::{Zeroize as _, Zeroizing};
 
 const MAXIMUM_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CONNECTIONS: u32 = 16;
@@ -28,19 +31,47 @@ struct Arguments {
     /// Optional no-clobber readiness handoff containing only the socket path.
     #[arg(long)]
     ready_file: Option<PathBuf>,
+    /// Owner-private run-local Delivery directory; requires the signing key file.
+    #[arg(long, requires = "delivery_signing_key_file")]
+    delivery_directory: Option<PathBuf>,
+    /// Owner-only file containing exactly one hex-encoded 32-byte secp256k1 key.
+    #[arg(long, requires = "delivery_directory")]
+    delivery_signing_key_file: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
+    let store = SqliteSwapStore::open(&arguments.database).context("open maker database")?;
+    let context = match (
+        arguments.delivery_directory,
+        arguments.delivery_signing_key_file,
+    ) {
+        (Some(directory), Some(key_file)) => {
+            let delivery = RunLocalDelivery::publisher(directory, load_delivery_key(&key_file)?)
+                .context("open maker Delivery publisher")?;
+            let now_unix_seconds = trusted_now_unix_seconds()?;
+            let active = store
+                .list_discoverable_maker_offers(now_unix_seconds)
+                .context("load active offers for Delivery reconciliation")?
+                .into_iter()
+                .map(|record| record.offer().clone())
+                .collect::<Vec<_>>();
+            delivery
+                .reconcile(&active, now_unix_seconds)
+                .context("reconcile Delivery advertisements")?;
+            MakerRpc::with_delivery(store, delivery)
+        }
+        (None, None) => MakerRpc::new(store),
+        _ => unreachable!("clap requires paired Delivery arguments"),
+    };
+    let module = rpc_module(context)?;
     let _ready_guard = arguments
         .ready_file
         .as_deref()
         .map(|path| create_ready_file(path, &arguments.socket))
         .transpose()?;
-    let store = SqliteSwapStore::open(&arguments.database).context("open maker database")?;
-    let module = rpc_module(MakerRpc::new(store))?;
     let (stop_handle, server_handle) = stop_channel();
     let server_config = ServerConfig::builder()
         .max_request_body_size(MAXIMUM_RPC_BODY_BYTES)
@@ -89,6 +120,43 @@ async fn main() -> anyhow::Result<()> {
     drop(stop_handle);
     server_handle.stopped().await;
     Ok(())
+}
+
+fn load_delivery_key(path: &Path) -> anyhow::Result<SecretKey> {
+    let metadata = fs::symlink_metadata(path).context("inspect Delivery signing key")?;
+    ensure!(
+        metadata.file_type().is_file()
+            && metadata.uid() == rustix::process::geteuid().as_raw()
+            && metadata.mode() & 0o7777 == 0o600
+            && metadata.nlink() == 1,
+        "Delivery signing key must be an owner-owned, single-link regular file with mode 0600"
+    );
+    ensure!(
+        metadata.len() <= 65,
+        "Delivery signing key file is oversized"
+    );
+    let mut encoded = fs::read(path).context("read Delivery signing key")?;
+    let result = (|| {
+        let text = std::str::from_utf8(&encoded)
+            .context("Delivery signing key must be UTF-8 hex")?
+            .trim();
+        ensure!(
+            text.len() == 64,
+            "Delivery signing key must contain exactly 32 bytes as hex"
+        );
+        let mut bytes = Zeroizing::new([0_u8; 32]);
+        hex::decode_to_slice(text, bytes.as_mut()).context("decode Delivery signing key")?;
+        SecretKey::from_slice(bytes.as_ref()).context("validate Delivery signing key")
+    })();
+    encoded.zeroize();
+    result
+}
+
+fn trusted_now_unix_seconds() -> anyhow::Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before Unix epoch")
+        .map(|duration| duration.as_secs())
 }
 
 fn bind_owner_socket(path: &Path) -> anyhow::Result<(UnixListener, OwnedPath)> {

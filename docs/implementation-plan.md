@@ -3139,9 +3139,10 @@ M5 must deliver:
 The current executable baseline is intentionally not called M5-complete. It has
 an owner-restricted Unix-socket maker daemon, durable pair and exact-price
 configuration, a pluggable local runtime price source, swap/alert history,
-SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It
-has no taker CLI, signed Delivery/Chat runtime, C-API pricing
-implementation, manual effect surface, systemd package, or literal fuzz target.
+SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It has
+a discovery-only taker CLI and daemon-owned signed run-local Delivery,
+but no process-facing Chat runtime, C-API pricing implementation, manual effect
+surface, systemd package, or literal fuzz target.
 
 ### Progressive PoC gate
 
@@ -3191,10 +3192,14 @@ separately from runtime dependencies.
   adapter, owner-local quote RPC/CLI, and restart journey are GREEN; the bounded
   Logos C-API adapter and its stale/unavailable contract remain.
 - [ ] Complete maker CLI commands and the taker CLI. The separate `lez-taker`
-  discovery process is GREEN with key-pinned signed offers, exact route/TTL
-  filtering, and versioned output; initiation, status, claim, and refund remain.
+  process now discovers daemon-published key-pinned signed offers with exact
+  route/TTL filtering and versioned output; initiation, status, claim, and
+  refund remain.
 - [x] Add the bounded signed run-local Delivery adapter with exact maker identity,
-  canonical snapshot validation, half-open expiry, and immutable publication.
+  canonical snapshot validation, half-open expiry, immutable publication, and
+  daemon-owned publish/withdraw. Startup reconciles SQLite's exact active set
+  before readiness, republishing missing files and pruning authenticated stale
+  advertisements; the black-box maker/taker process journey is GREEN.
 - [x] Add the maker-first canonical ZEC draft/proposal/countersign contract and
   exact no-rounding offer amount conversion.
 - [ ] Add durable Chat reservation/negotiation, transport process wiring,

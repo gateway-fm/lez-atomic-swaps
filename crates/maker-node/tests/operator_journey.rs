@@ -2,11 +2,15 @@
 
 use std::{
     fs,
-    os::unix::fs::{DirBuilderExt as _, FileTypeExt as _, PermissionsExt as _},
+    fs::OpenOptions,
+    io::Write as _,
+    os::unix::fs::{
+        DirBuilderExt as _, FileTypeExt as _, OpenOptionsExt as _, PermissionsExt as _,
+    },
     path::{Path, PathBuf},
     process::{Child, Command, Output},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use lez_maker_node::apply_zcash_funding_event;
@@ -57,6 +61,7 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
 
     configure_zec_route(&first_socket);
     publish_zec_offer(&first_socket);
+    assert_delivery_offer(run.path(), true);
 
     let created = create_swap(&first_socket, "operator-swap-1", "bitcoin", None);
     assert_success(&created);
@@ -129,8 +134,10 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
     assert_route_lists(&second_socket);
     assert_route_quote(&second_socket);
     assert_offer_history(&second_socket, "active", 1);
+    assert_delivery_offer(run.path(), true);
     withdraw_zec_offer(&second_socket);
     assert_offer_history(&second_socket, "withdrawn", 2);
+    assert_delivery_offer(run.path(), false);
     let history = maker_cli(&second_socket, &["history"]);
     assert_success(&history);
     let history: Value = serde_json::from_slice(&history.stdout).expect("CLI emits history JSON");
@@ -346,6 +353,20 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         .expect("create owner-only maker runtime");
     let socket = runtime.join("maker.sock");
     let ready = runtime.join("ready");
+    let delivery_key = run.join("delivery-signing.key");
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&delivery_key)
+    {
+        Ok(mut file) => {
+            writeln!(file, "{}", hex::encode([8_u8; 32])).unwrap();
+            file.sync_all().unwrap();
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => panic!("create Delivery signing key: {error}"),
+    }
     let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
         .arg("--socket")
         .arg(&socket)
@@ -353,6 +374,10 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         .arg(database)
         .arg("--ready-file")
         .arg(&ready)
+        .arg("--delivery-directory")
+        .arg(run.join("delivery"))
+        .arg("--delivery-signing-key-file")
+        .arg(delivery_key)
         .spawn()
         .expect("start maker daemon");
     let mut daemon = Daemon(child);
@@ -371,6 +396,36 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         );
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn assert_delivery_offer(run: &Path, expected: bool) {
+    let maker = PublicKey::from_secret_key(
+        &Secp256k1::signing_only(),
+        &SecretKey::from_slice(&[8_u8; 32]).unwrap(),
+    );
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg("--delivery-directory")
+        .arg(run.join("delivery"))
+        .arg("--maker-public-key")
+        .arg(hex::encode(maker.serialize()))
+        .arg("--now-unix-seconds")
+        .arg(now.to_string())
+        .arg("--pair")
+        .arg("zcash")
+        .arg("--direction")
+        .arg("taker-sells-lez")
+        .output()
+        .expect("run separate taker discovery");
+    assert_success(&output);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        value["offers"].as_array().unwrap().len(),
+        usize::from(expected)
+    );
 }
 
 fn maker_cli(socket: &Path, arguments: &[&str]) -> Output {

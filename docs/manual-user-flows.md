@@ -3746,7 +3746,9 @@ cargo test --locked -p lez-maker-node --test operator_journey -- --nocapture
 
 It starts the real daemon on a mode-0600 Unix socket below an owner-only runtime
 directory, configures and prices an enabled ZEC route through the real CLI,
-publishes and exact-replays an expiring offer, creates BTC, reverse ZEC, and supported LEZ-first XMR swaps, rejects an
+publishes and exact-replays an expiring offer through signed Delivery, verifies
+it from the separate key-pinned taker process, creates BTC, reverse ZEC, and
+supported LEZ-first XMR swaps, and rejects an
 unsupported XMR direction and a wrong socket, kills the daemon, restarts it with
 the same SQLite database, and reads the persisted policy, price, offer, and swap
 history before withdrawing the offer.
@@ -3764,11 +3766,19 @@ umask 077
 export RUN_ID=manual-operator-20260724-a
 export RUN_DIR="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
 export MAKER_SOCKET="$RUN_DIR/maker.sock"
+export DELIVERY_DIR="$RUN_DIR/delivery"
+export DELIVERY_KEY="$RUN_DIR/delivery-signing.key"
 mkdir -m 0700 "$RUN_DIR"
+# Deterministic local-demo key only; use a securely generated key outside this PoC.
+printf '%s\n' '0808080808080808080808080808080808080808080808080808080808080808' \
+  >"$DELIVERY_KEY"
+chmod 0600 "$DELIVERY_KEY"
 target/debug/lez-maker-daemon \
   --socket "$MAKER_SOCKET" \
   --database "$RUN_DIR/maker.sqlite3" \
-  --ready-file "$RUN_DIR/maker.ready"
+  --ready-file "$RUN_DIR/maker.ready" \
+  --delivery-directory "$DELIVERY_DIR" \
+  --delivery-signing-key-file "$DELIVERY_KEY"
 ```
 
 After the ready file appears, use its exact socket path in terminal 2:
@@ -3806,6 +3816,14 @@ target/debug/lez-maker --socket "$MAKER_SOCKET" publish-offer \
   --pair zcash --direction taker-sells-lez
 target/debug/lez-maker --socket "$MAKER_SOCKET" offers
 
+target/debug/lez-taker \
+  --delivery-directory "$RUN_DIR/delivery" \
+  --maker-public-key \
+    03f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661b \
+  --now-unix-seconds "$(date +%s)" \
+  --pair zcash \
+  --direction taker-sells-lez
+
 target/debug/lez-maker --socket "$MAKER_SOCKET" create-swap \
   --id manual-zec-reverse-1 \
   --pair zcash \
@@ -3833,7 +3851,10 @@ object must report the same exact price, `source_revision:1`, and a nonzero
 daemon-trusted `observed_at_unix_seconds`. This local source makes no network,
 RPC, faucet, or public-price-feed call. The first offer list must report revision
 1 and `status:"active"`, policy revision 2, price revision 1, and the same 5:2
-price. After withdrawal it must report revision 2 and `status:"withdrawn"`.
+price. The separate taker output must contain one schema-v1 offer with ID
+`manual-zec-offer-001`, the pinned maker key, and a nonzero signed-envelope
+commitment. After withdrawal the maker view must report revision 2 and
+`status:"withdrawn"`, and the same taker command must return an empty offer list.
 
 The other currently accepted operator constructions use these exact argument
 shapes:
@@ -3888,8 +3909,9 @@ only after the daemon has stopped and the evidence is no longer needed.
 
 ### Signed run-local Delivery component check
 
-The current signed-discovery slice is not yet a CLI user journey. Reproduce its
-exact component boundary with:
+The current signed-discovery slice is a real daemon-to-separate-taker process
+journey, but not yet a negotiated swap. Reproduce its focused adapter boundary
+with:
 
 ```sh
 cargo test --locked -p lez-maker-node --test run_local_delivery -- --nocapture
@@ -3928,13 +3950,14 @@ it fail closed. Cold Cargo dependency acquisition can still depend on the
 configured package registry; `--locked --offline` removes that dependency once
 the cache is warm.
 
-Do not treat this command as the M5 application PoC. The next slices must wire
-publication into the maker process, add mutually authenticated one-winner Chat
-negotiation and the separate taker CLI, bind the returned offer commitment and
-exact amount into the pair SDK's countersigned agreement, and then run the
-actual LEZ/ZEC local-devnet corridor. After first lock, both transport processes
-must be removed and terminal progress must continue from role-local durable
-state and chain evidence alone.
+Do not treat this command as the complete M5 application PoC. Publication is now
+owned by the maker daemon and discovery by the separate taker process. The next
+slices must expose mutually authenticated one-winner Chat negotiation through
+those processes, bind the returned offer commitment and exact amount into the
+pair SDK's countersigned agreement, derive both actor configurations from that
+exact final wire, and then run the actual LEZ/ZEC local-devnet corridor. After
+first lock, both transport processes must be removed and terminal progress must
+continue from role-local durable state and chain evidence alone.
 
 ### Maker-first ZEC negotiation component check
 

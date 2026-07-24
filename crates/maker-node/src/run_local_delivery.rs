@@ -125,6 +125,9 @@ pub enum RunLocalDeliveryError {
     /// An immutable advertisement with this offer ID already exists.
     #[error("Delivery offer already exists")]
     AlreadyExists,
+    /// A file with the same ID authenticates different immutable terms.
+    #[error("Delivery offer ID already authenticates different terms")]
+    ConflictingOffer,
     /// The directory exceeded its explicit discovery bound.
     #[error("Delivery directory exceeds the {MAXIMUM_DISCOVERY_ENTRIES}-entry bound")]
     TooManyEntries,
@@ -215,6 +218,117 @@ impl RunLocalDelivery {
             expected_maker,
             signing_key: None,
         })
+    }
+
+    /// Publishes an offer or verifies that a prior crash/restart published the exact same offer.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a conflicting existing advertisement, invalid terms, insecure storage, or I/O.
+    pub fn publish_or_verify(
+        &self,
+        publication: &DeliveryPublicationV1,
+    ) -> Result<AuthenticatedOfferRefV1, RunLocalDeliveryError> {
+        match self.publish_sync(publication) {
+            Ok(authenticated) => Ok(authenticated),
+            Err(RunLocalDeliveryError::AlreadyExists) => {
+                let path = offer_path(&self.directory, publication.offer.id().as_str());
+                let encoded = read_regular_offer_file(&path)?;
+                let authenticated = verify_envelope(&encoded, &self.expected_maker)?;
+                if authenticated.offer() != &publication.offer {
+                    return Err(RunLocalDeliveryError::ConflictingOffer);
+                }
+                Ok(authenticated)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Removes one advertisement after the durable offer has been withdrawn.
+    ///
+    /// Missing files are idempotent so an exact RPC replay can finish cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Rejects discovery-only instances, mismatched/tampered files, insecure storage, or I/O.
+    pub fn withdraw(
+        &self,
+        offer_id: &lez_swap_store::MakerOfferId,
+    ) -> Result<(), RunLocalDeliveryError> {
+        validate_private_directory(&self.directory)?;
+        if self.signing_key.is_none() {
+            return Err(RunLocalDeliveryError::DiscoveryOnly);
+        }
+        let path = offer_path(&self.directory, offer_id.as_str());
+        let encoded = match read_regular_offer_file(&path) {
+            Ok(encoded) => encoded,
+            Err(RunLocalDeliveryError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        let authenticated = verify_envelope(&encoded, &self.expected_maker)?;
+        if authenticated.offer().id() != offer_id {
+            return Err(RunLocalDeliveryError::ConflictingOffer);
+        }
+        fs::remove_file(path)?;
+        File::open(&self.directory)?.sync_all()?;
+        Ok(())
+    }
+
+    /// Reconciles the removable mailbox to the store's exact active-offer set.
+    ///
+    /// Exact active files are retained, missing active files are republished, and
+    /// authenticated files absent from `active` are removed. Any malformed or
+    /// wrong-key entry fails startup closed instead of being silently deleted.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid active offers, conflicting/tampered files, insecure
+    /// storage, discovery-only instances, excess entries, or I/O.
+    pub fn reconcile(
+        &self,
+        active: &[MakerOfferV1],
+        now_unix_seconds: u64,
+    ) -> Result<(), RunLocalDeliveryError> {
+        validate_private_directory(&self.directory)?;
+        if self.signing_key.is_none() {
+            return Err(RunLocalDeliveryError::DiscoveryOnly);
+        }
+        for offer in active {
+            self.publish_or_verify(&DeliveryPublicationV1::new(offer.clone(), now_unix_seconds))?;
+        }
+
+        let mut paths = Vec::new();
+        for entry in fs::read_dir(&self.directory)? {
+            let path = entry?.path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(OFFER_FILE_SUFFIX))
+            {
+                paths.push(path);
+                if paths.len() > MAXIMUM_DISCOVERY_ENTRIES {
+                    return Err(RunLocalDeliveryError::TooManyEntries);
+                }
+            }
+        }
+        let mut removed = false;
+        for path in paths {
+            let authenticated =
+                verify_envelope(&read_regular_offer_file(&path)?, &self.expected_maker)?;
+            if !active
+                .iter()
+                .any(|offer| offer.id() == authenticated.offer().id())
+            {
+                fs::remove_file(path)?;
+                removed = true;
+            }
+        }
+        if removed {
+            File::open(&self.directory)?.sync_all()?;
+        }
+        Ok(())
     }
 
     fn publish_sync(
@@ -383,6 +497,24 @@ fn offer_digest(maker_public_key: &[u8; 33], offer_json: &[u8]) -> [u8; 32] {
 
 fn offer_path(directory: &Path, offer_id: &str) -> PathBuf {
     directory.join(format!("{offer_id}{OFFER_FILE_SUFFIX}"))
+}
+
+fn read_regular_offer_file(path: &Path) -> Result<Vec<u8>, RunLocalDeliveryError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.nlink() != 1
+    {
+        return Err(RunLocalDeliveryError::MalformedEnvelope);
+    }
+    if metadata.len() > MAXIMUM_ENVELOPE_BYTES {
+        return Err(RunLocalDeliveryError::OversizedEnvelope);
+    }
+    let encoded = fs::read(path)?;
+    if encoded.len() as u64 > MAXIMUM_ENVELOPE_BYTES {
+        return Err(RunLocalDeliveryError::OversizedEnvelope);
+    }
+    Ok(encoded)
 }
 
 fn ensure_private_directory(directory: &Path) -> Result<(), RunLocalDeliveryError> {

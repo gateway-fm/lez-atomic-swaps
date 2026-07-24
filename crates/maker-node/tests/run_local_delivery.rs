@@ -152,6 +152,28 @@ async fn publication_is_immutable_and_rejects_insecure_directories() {
         Err(RunLocalDeliveryError::AlreadyExists)
     ));
 
+    let exact = offer();
+    let restarted = RunLocalDelivery::publisher(&directory, signing_key(21)).unwrap();
+    restarted.reconcile(&[exact], 1_001).unwrap();
+    let identity = PublicKey::from_secret_key(&Secp256k1::signing_only(), &signing_key(21));
+    let subscriber = RunLocalDelivery::subscriber(&directory, identity).unwrap();
+    assert_eq!(
+        subscriber
+            .discover(&DeliveryOfferQueryV1::all(1_001))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    restarted.reconcile(&[], 1_001).unwrap();
+    assert!(
+        subscriber
+            .discover(&DeliveryOfferQueryV1::all(1_001))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
     let insecure = run.path().join("shared");
     fs::create_dir(&insecure).unwrap();
     fs::set_permissions(&insecure, fs::Permissions::from_mode(0o755)).unwrap();

@@ -614,7 +614,7 @@ flowchart TB
     end
 
     subgraph TakerDevice["Taker-controlled device"]
-        TC["lez-taker CLI<br/>Delivery discovery GREEN<br/>lifecycle planned"]
+        TC["lez-taker CLI<br/>key-pinned daemon offer discovery GREEN<br/>lifecycle planned"]
         TM["Taker mini-app"]
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
@@ -709,7 +709,7 @@ flowchart TB
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
-        DEL["Run-local Delivery-compatible adapter<br/>signed bounded discovery GREEN"]
+        DEL["Run-local Delivery-compatible adapter<br/>daemon publication and taker discovery GREEN"]
         CHAT["Run-local Chat-compatible adapter<br/>proposal + stage + atomic final accept GREEN; runtime planned"]
     end
 
@@ -754,6 +754,10 @@ flowchart TB
     LC -.->|"start / stop / health"| MD
     MD --> APP
     APP --> OF
+    APP -->|"signed offer publication"| DEL
+    TC -->|"key-pinned discovery"| DEL
+    APP -.->|"process runtime planned"| CHAT
+    TC -.->|"process runtime planned"| CHAT
     OF --> DB
     APP --> CO
     CO --> DB

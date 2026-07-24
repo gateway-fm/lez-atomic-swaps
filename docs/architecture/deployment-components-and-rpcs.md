@@ -596,6 +596,7 @@ flowchart LR
         Core["Optional Logos Core lifecycle adapter"]
         MakerDaemon["Maker daemon plus ZEC watcher"]
         MakerStore[("SQLite aggregate, journal, binding, alert outbox")]
+        DeliveryKey[("Mode 0600 Delivery signing key")]
         NegotiationTxn["Schema-v13 negotiation handoff<br/>proposal stage + atomic final accept"]
         MakerZebra["Schema-v3 maker Zebra route"]
         MakerLezBridge["Loopback capability LEZ adapter"]
@@ -604,7 +605,7 @@ flowchart LR
     end
 
     subgraph TakerBoundary["Taker-owned boundary"]
-        TakerCLI["lez-taker CLI<br/>key-pinned discovery GREEN<br/>lifecycle commands planned"]
+        TakerCLI["lez-taker CLI<br/>key-pinned daemon offer discovery GREEN<br/>lifecycle commands planned"]
         TakerState[("Taker recovery state")]
         TakerZebra["Schema-v3 taker Zebra route"]
         TakerLezBridge["Loopback capability LEZ adapter"]
@@ -612,7 +613,7 @@ flowchart LR
         TakerLez["Typed outbound LEZ profile"]
     end
 
-    Delivery["Offer discovery"]
+    Delivery["Run-local signed offer discovery<br/>daemon-to-taker GREEN"]
     Chat["Signed negotiation channel"]
     RouteGate["Validate signed agreement, runtime,<br/>route, identity, and credentials"]
 
@@ -629,6 +630,7 @@ flowchart LR
     MakerCLI -.->|"Owner-local authenticated control RPC"| MakerDaemon
     Core -.->|"start, endpoint, health, stop"| MakerDaemon
     MakerDaemon --> MakerStore
+    DeliveryKey --> MakerDaemon
     Chat --> NegotiationTxn
     NegotiationTxn --> MakerStore
     MakerDaemon -->|"Typed Zebra JSON-RPC"| MakerZebra
@@ -641,8 +643,8 @@ flowchart LR
     TakerCLI -->|"Bounded local adapter protocol"| TakerLezBridge
     TakerLezBridge -->|"Loopback + run/role capability"| TakerLezSidecar
     TakerLezSidecar --> TakerLez
-    MakerDaemon -.->|"Authenticated expiring offers only"| Delivery
-    TakerCLI -.->|"Offer queries only"| Delivery
+    MakerDaemon -->|"Authenticated expiring offers only"| Delivery
+    TakerCLI -->|"Key-pinned offer queries only"| Delivery
     MakerDaemon -.->|"Both-role signed terms before first lock"| Chat
     TakerCLI -.->|"Both-role signed terms before first lock"| Chat
     Chat --> RouteGate
@@ -662,8 +664,8 @@ flowchart LR
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
     classDef implemented fill:#ddf4ff,stroke:#0969da;
-    class MakerCLI,Core,MakerDaemon,TakerCLI,TakerState,Delivery,Chat,PublicLezRisk planned;
-    class NegotiationTxn,MakerZebra,MakerLezBridge,MakerLezSidecar,MakerLez,TakerZebra,TakerLezBridge,TakerLezSidecar,TakerLez,RouteGate,LocalLez,PublicLez,LocalZebra,SelfHostedZebra,TatumZebra implemented;
+    class MakerCLI,Core,MakerDaemon,TakerCLI,TakerState,Chat,PublicLezRisk planned;
+    class Delivery,DeliveryKey,NegotiationTxn,MakerZebra,MakerLezBridge,MakerLezSidecar,MakerLez,TakerZebra,TakerLezBridge,TakerLezSidecar,TakerLez,RouteGate,LocalLez,PublicLez,LocalZebra,SelfHostedZebra,TatumZebra implemented;
 ```
 
 Delivery and Chat are negotiation transports, never sources of chain truth or
@@ -717,7 +719,7 @@ revalidation, propagation, and finality evidence before release.
 | LEZ standalone v0.1.2 | Running in ignored E2E | Upstream server `0.0.0.0:0`; client uses `127.0.0.1:<assigned>` | No transport credential; actor signatures authorize transactions | `checkHealth`, `sendTransaction`, `getLastBlockId`, `getTransaction`, `getAccountsNonces`, `getAccount`, `getBlock`, and `getProgramIds` for static built-ins only | In-process handle, temporary state, deterministic genesis actors; not public v0.2 |
 | Reusable external LEZ standalone process | Exact schema-v2 process, rejection paths, native/two-definition lifecycle, strict Clippy, and recursive-cost runner previously GREEN; nonempty actor channel focused suite GREEN and exact full rerun pending | Own process; upstream `0.0.0.0:0` server; publishes only the allocated literal `http://127.0.0.1:<port>` client URL | No RPC transport credential; mode-0600 no-clobber readiness is a run-local capability because it contains two actor private keys. Actor signatures remain transaction authority | Preflight tracked manifest/ELF/ImageID before state; start service; `checkHealth`; exact genesis; mandatory block progress; `sendTransaction` deployment; locate the exact hash/variant in `getTransaction` and containing `getBlock`; derive ProgramId from those ELF bytes; use `getProgramIds` only to bind the static authenticated-transfer owner; verify two `getAccount` ownership/balance results; graceful stdin/Ctrl-C shutdown | Initial exact run rejected the false custom-program-list assertion. Corrected schema-v2 source refuses pre-existing home/readiness, creates a fresh mode-0700 home, and binds endpoint, nonempty deterministic channel, genesis ID/hash, ELF SHA-256, ImageID/ProgramId, deployment transaction hash, containing block ID/hash, authenticated-transfer built-in, account IDs, keys, and balances. The earlier exact full runner passed; after correcting the agreement-invalid zero channel, the three-test locked-graph readiness suite passes and the full runner is a pre-corridor gate. No Docker, faucet, public RPC, or fixed port |
 | Logos Core adapter | Planned | No transport/port selected beyond the daemon control endpoint | Protected OS credential handle | `start`, `endpoint`, `health`, `stop` | Optional supervisor of the same daemon binary |
-| Run-local Delivery | Component GREEN, process wiring pending | Owner-private mode-0700 bounded filesystem mailbox; no network endpoint | Key-pinned secp256k1 signed immutable offer envelope with taker-local expiry and route validation | `OfferDiscovery` | Untrusted/removable after negotiation; exact Logos adapter pending |
+| Run-local Delivery | Daemon-to-separate-taker process GREEN | Owner-private mode-0700 bounded filesystem mailbox; no network endpoint | Key-pinned secp256k1 signed immutable offer envelope with taker-local expiry and route validation | `OfferDiscovery`; daemon publish/withdraw and pre-readiness restart reconciliation | Untrusted/removable after negotiation; same-UID local PoC and exact Logos adapter pending |
 | Chat | Canonical proposal, durable stage, and atomic final acceptance GREEN; runtime planned | No endpoint selected yet | Maker-first validated low-S proposal and taker countersignature; exposes exact amounts and Delivery commitment for runtime binding | `NegotiationChannel`; `ZecAgreementDraftV1`; `ZecMakerAgreementProposalV1` | Process wiring pending; removable after first lock |
 | Production Zebra watcher routes | Schema-v3 self-hosted-cookie and exact-Tatum-`x-api-key` route/config/client construction GREEN; live evidence pending | Zebra 6.0.0 JSON-RPC on operator-owned loopback with cookie auth, or only `https://zcash-testnet-zebrad.gateway.tatum.io/` with a sensitive `x-api-key`; generic HTTPS providers are rejected | Self-hosted: operator owns cookie/node and public peers provide consensus. Tatum operates the public authoritative node/gateway; never substitute generic Zcash RPC or lightwalletd gRPC | Required on both live routes: sync/branch/genesis preflight, stable-tip observation, `gettxout`, raw transaction/mempool/block lookup, broadcast, and reorg reconciliation. Exact method smoke remains required before effects | No live call was made. Self-hosted initial sync/disk/P2P/epoch risk and Tatum provisioning/quota/outage/lag/method-policy/trust risk remain; never switch routes mid-effect or automatically retry an ambiguous broadcast |
 | Official LEZ testnet v0.2 node | Exact dormant sidecar route construction GREEN; public deployment/execution evidence pending | Only HTTPS JSON-RPC `https://testnet.lez.logos.co/` is accepted for both outbound sequencer and indexer clients | Public reads and program deployment transaction; rate limits, reset schedule, and indexer-method surface unspecified | Live gate requires `checkHealth`, `getChannelId`, exact runtime/channel/genesis/program validation, exactly one `sendTransaction`, bounded observation, and a non-genesis finalized tip. Availability of `getLastFinalizedBlockId` at this origin is not established | Official LEZ v0.2.0 commit `a58fbce...`; guest/client use `/LEE/` PDA domain. No public call was made by the contract test; reset/channel drift or missing finalized-tip support fails closed |

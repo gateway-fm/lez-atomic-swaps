@@ -23,9 +23,9 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit,
-    MakerOfferId, MakerOfferRecordV1, MakerPairConfigurationV1, MakerRouteV1, OperatorAlert,
-    OperatorAlertKind, OperatorAlertRecordV1, OperatorAlertSeverity, SqliteSwapStore, StoreError,
-    VersionedMakerRecord,
+    MakerOfferId, MakerOfferRecordV1, MakerOfferStatus, MakerPairConfigurationV1, MakerRouteV1,
+    OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1, OperatorAlertSeverity,
+    SqliteSwapStore, StoreError, VersionedMakerRecord,
 };
 use lez_zec_swap_sdk::{
     HistoricalReplayError, ZcashObservationEvent, ZcashObservationEventRecordV1,
@@ -41,6 +41,7 @@ const INTERNAL_ERROR: i32 = -32_603;
 /// RPC context owned by one maker daemon.
 pub struct MakerRpc {
     store: Mutex<SqliteSwapStore>,
+    delivery: Option<RunLocalDelivery>,
 }
 
 impl std::fmt::Debug for MakerRpc {
@@ -48,6 +49,7 @@ impl std::fmt::Debug for MakerRpc {
         formatter
             .debug_struct("MakerRpc")
             .field("store", &self.store)
+            .field("delivery", &self.delivery)
             .finish()
     }
 }
@@ -58,6 +60,16 @@ impl MakerRpc {
     pub fn new(store: SqliteSwapStore) -> Self {
         Self {
             store: Mutex::new(store),
+            delivery: None,
+        }
+    }
+
+    /// Creates a maker RPC context that advertises durable offers through Delivery.
+    #[must_use]
+    pub fn with_delivery(store: SqliteSwapStore, delivery: RunLocalDelivery) -> Self {
+        Self {
+            store: Mutex::new(store),
+            delivery: Some(delivery),
         }
     }
 }
@@ -800,19 +812,39 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
         "maker_offer_publish",
         |params, context, _| {
             let request: OfferPublishRequest = params.one()?;
+            let offer_id = request.offer_id.clone();
             let now_unix_seconds = trusted_now_unix_seconds()?;
             let mut store = context
                 .store
                 .lock()
                 .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            store
+            let commit = store
                 .publish_local_offer(
                     &request.request_id,
-                    &request.offer_id,
+                    &offer_id,
                     request.route,
                     now_unix_seconds,
                 )
-                .map_err(application_store_error)
+                .map_err(application_store_error)?;
+            if let Some(delivery) = &context.delivery {
+                let active = store
+                    .list_maker_offer_history(now_unix_seconds)
+                    .map_err(application_store_error)?
+                    .into_iter()
+                    .find(|record| {
+                        record.offer().id() == &offer_id
+                            && record.status() == MakerOfferStatus::Active
+                    });
+                if let Some(record) = active {
+                    delivery
+                        .publish_or_verify(&DeliveryPublicationV1::new(
+                            record.offer().clone(),
+                            now_unix_seconds,
+                        ))
+                        .map_err(|error| delivery_error(&error))?;
+                }
+            }
+            Ok(commit)
         },
     )?;
     module.register_blocking_method::<RpcResult<Vec<MakerOfferRecordV1>>, _>(
@@ -837,16 +869,26 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
                 .store
                 .lock()
                 .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            store
+            let commit = store
                 .withdraw_maker_offer(
                     &request.request_id,
                     &request.offer_id,
                     request.expected_revision,
                 )
-                .map_err(application_store_error)
+                .map_err(application_store_error)?;
+            if let Some(delivery) = &context.delivery {
+                delivery
+                    .withdraw(&request.offer_id)
+                    .map_err(|error| delivery_error(&error))?;
+            }
+            Ok(commit)
         },
     )?;
     Ok(())
+}
+
+fn delivery_error(error: &RunLocalDeliveryError) -> ErrorObjectOwned {
+    rpc_error(INTERNAL_ERROR, error.to_string())
 }
 
 fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Error> {
