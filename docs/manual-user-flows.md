@@ -3895,7 +3895,7 @@ exact component boundary with:
 cargo test --locked -p lez-maker-node --test run_local_delivery -- --nocapture
 ```
 
-The expected result is three passing cases. They create a fresh mode-0700
+The expected result is four passing cases, including a real separate `lez-taker` process. They create a fresh mode-0700
 temporary Delivery directory, derive deterministic test-only maker identities,
 publish one real schema-v13 store-produced ZEC offer, and discover it through a
 separate subscriber holding only the expected public identity. The suite checks
@@ -3903,6 +3903,21 @@ the byte-identical offer and nonzero signed-envelope commitment, then proves the
 exclusive expiry boundary, discovery-only authority, wrong-maker rejection,
 signed-byte tamper rejection, no-clobber publication, and insecure-directory
 rejection.
+
+The fourth case launches the actual taker binary and can be repeated alone:
+
+```sh
+cargo test --locked --offline -p lez-maker-node --test run_local_delivery \
+  separate_taker_process_discovers_only_key_pinned_live_route_offers \
+  -- --exact --nocapture
+```
+
+The process receives an owner-private mailbox path, the expected compressed
+maker key, trusted taker-local time, and exact ZEC `TakerSellsLez` route. Its
+schema-v1 JSON contains the fully validated offer, pinned maker key, and signed
+envelope commitment; at the exclusive expiry second it returns an empty list.
+This is discovery only. Initiation/countersigning, durable taker acceptance,
+status, claim, refund, and actual-node effects remain.
 
 The component uses the accepted `OfferDiscovery` port and the repository's
 pinned `secp256k1` library. It does not call a chain RPC, Logos Delivery, Chat,

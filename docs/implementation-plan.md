@@ -3190,7 +3190,9 @@ separately from runtime dependencies.
 - [ ] Complete both price-source adapters. The trait, store-backed local
   adapter, owner-local quote RPC/CLI, and restart journey are GREEN; the bounded
   Logos C-API adapter and its stale/unavailable contract remain.
-- [ ] Complete maker CLI commands and add the taker CLI.
+- [ ] Complete maker CLI commands and the taker CLI. The separate `lez-taker`
+  discovery process is GREEN with key-pinned signed offers, exact route/TTL
+  filtering, and versioned output; initiation, status, claim, and refund remain.
 - [x] Add the bounded signed run-local Delivery adapter with exact maker identity,
   canonical snapshot validation, half-open expiry, and immutable publication.
 - [x] Add the maker-first canonical ZEC draft/proposal/countersign contract and

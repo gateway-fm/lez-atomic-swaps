@@ -1,6 +1,6 @@
 //! Acceptance tests for the run-local Delivery-compatible adapter.
 
-use std::{fs, os::unix::fs::PermissionsExt as _};
+use std::{fs, os::unix::fs::PermissionsExt as _, process::Command};
 
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
@@ -159,4 +159,66 @@ async fn publication_is_immutable_and_rejects_insecure_directories() {
         RunLocalDelivery::publisher(&insecure, signing_key(22)),
         Err(RunLocalDeliveryError::InsecureDirectory)
     ));
+}
+
+#[tokio::test]
+async fn separate_taker_process_discovers_only_key_pinned_live_route_offers() {
+    let run = tempdir().expect("isolated Delivery root");
+    let directory = run.path().join("delivery");
+    let key = signing_key(8);
+    let identity = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key);
+    let publisher = RunLocalDelivery::publisher(&directory, key).unwrap();
+    let authenticated = publisher
+        .publish(DeliveryPublicationV1::new(offer(), 1_000))
+        .await
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .args([
+            "--delivery-directory",
+            directory.to_str().unwrap(),
+            "--maker-public-key",
+            &hex::encode(identity.serialize()),
+            "--now-unix-seconds",
+            "1299",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+        ])
+        .output()
+        .expect("run separate taker process");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["offers"].as_array().unwrap().len(), 1);
+    assert_eq!(value["offers"][0]["offer"]["id"], "delivery-offer-001");
+    assert_eq!(
+        value["offers"][0]["maker_public_key"],
+        hex::encode(identity.serialize())
+    );
+    assert_eq!(
+        value["offers"][0]["signed_envelope_sha256"],
+        hex::encode(authenticated.commitment())
+    );
+
+    let identity_hex = hex::encode(identity.serialize());
+    let expired = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .args([
+            "--delivery-directory",
+            directory.to_str().unwrap(),
+            "--maker-public-key",
+            &identity_hex,
+            "--now-unix-seconds",
+            "1300",
+        ])
+        .output()
+        .unwrap();
+    assert!(expired.status.success());
+    let expired: Value = serde_json::from_slice(&expired.stdout).unwrap();
+    assert!(expired["offers"].as_array().unwrap().is_empty());
 }

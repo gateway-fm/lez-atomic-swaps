@@ -17,7 +17,8 @@ pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, signed bounded run-local Delivery discovery, global request
 replay, and restart recovery. Final ZEC acceptance atomically persists the
 countersigned agreement, coordinator, immutable binding, encrypted maker claim
-material, offer consumption, and replay result. A separate taker CLI,
+material, offer consumption, and replay result. A separate taker CLI now discovers key-pinned signed offers;
+initiation,
 authenticated run-local Chat/Delivery process wiring, and the actual LEZ/ZEC
 application-level swap are the next PoC critical path; the Logos C-API price
 source, systemd/Core lifecycle, fuzzing, and hardening remain literal M5 completion work.

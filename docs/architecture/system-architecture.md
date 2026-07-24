@@ -614,7 +614,7 @@ flowchart TB
     end
 
     subgraph TakerDevice["Taker-controlled device"]
-        TC["Taker CLI"]
+        TC["lez-taker CLI<br/>Delivery discovery GREEN<br/>lifecycle planned"]
         TM["Taker mini-app"]
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
