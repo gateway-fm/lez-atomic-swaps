@@ -33,12 +33,15 @@ other fields, both private-key identities, the funder role and hash preimage
 before emitting fresh isolated actor state. The opt-in M5 runner now composes
 that handoff with the stable LEZ/ZEC actor corridor, retains the restarted
 daemon through the first confirmed Zcash lock, and then removes Chat and
-Delivery before settlement. Working-tree run `m5app-4a8ea01-20260724d`
-completed that actual-node path in 30.830 seconds: both actors reached revision
-4, Zebra advanced exactly 104 to 107, and no public RPC or faucet participated.
-A clean pushed-tree replay and secret-safe evidence packet remain the PoC
-checkpoint gate. The Logos C-API price source, systemd/Core lifecycle, fuzzing,
-other application pairs, and hardening remain literal M5 completion work.
+Delivery before settlement. Exact pushed-tree run `m5app-71dd9cc-20260724a`
+completed that actual-node path in 26.780 protocol seconds: both actors reached
+revision 4, Zebra advanced exactly 107 to 110, scoped cleanup passed, and no
+public RPC or faucet participated. See the
+[secret-safe evidence packet](docs/evidence/m5-zec-application-corridor-20260724.json).
+Projecting terminal actor state into a newly restarted operator daemon remains
+the next progressive PoC seam. The Logos C-API price source, systemd/Core
+lifecycle, fuzzing, other application pairs, and hardening remain literal M5
+completion work.
 
 Build and repeat the current real process boundary with:
 

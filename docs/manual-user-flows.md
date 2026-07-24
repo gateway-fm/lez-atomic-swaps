@@ -4105,12 +4105,16 @@ configuration, chain funding, or a completed cross-chain swap.
 
 ## Flow 1B: composed M5 ZEC application PoC
 
-Status: working-tree run `m5app-4a8ea01-20260724d` completed the full flow in
-30.830 seconds and produced a validating `result.json`. Both actors reached
-revision 4 `completed`; Zebra advanced exactly from height 104 to 107; Delivery
-and both Unix sockets were absent after the confirmed first lock; and no public
-RPC or faucet participated. A clean pushed-tree replay and checked secret-safe
-evidence packet remain required before calling the PoC checkpoint certified.
+Status: exact pushed-tree run `m5app-71dd9cc-20260724a` completed the composed
+corridor in 26.780 protocol seconds and produced a validating `result.json`.
+Both actors reached revision 4 `completed`; Zebra advanced exactly from height
+107 to 110; Delivery and both Unix sockets were absent after the confirmed
+first lock; scoped cleanup passed; and no public RPC or faucet participated.
+The checked packet is
+[`m5-zec-application-corridor-20260724.json`](evidence/m5-zec-application-corridor-20260724.json).
+A post-terminal operator-daemon restart does not yet import the actors' terminal
+state into its history, so this is an exact corridor checkpoint rather than the
+complete progressive M5 PoC gate.
 
 This flow emulates the actual users: a maker operator configures and publishes
 through `lez-maker`, a separate taker identity discovers and accepts through

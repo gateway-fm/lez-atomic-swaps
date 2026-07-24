@@ -23,7 +23,7 @@ Status vocabulary:
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
 | M3 | Certified local-functional PoC | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | `m3-complete` at `f7fb250` | Owner entered M3 on 2026-07-14 and directed completion. The exact commit and tag are pushed; the private Actions API was unavailable and no remote-green claim is made. Cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
 | M4 | Certified progressive local-functional PoC | Exact clean replay `m4cert20260722an` completed the LEZ-first claim through isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest, retained canonical cross-chain binding and exact cleanup, and was documented on the pushed tree | `m4-poc-complete.2` | Owner entered M5 on 2026-07-23; deferred M4 hardening and production scope remain explicit |
-| M5 | Progressive local-functional PoC | The first working-tree application-to-chain run is GREEN: real maker/taker negotiation, restart, actor rebinding, isolated LEZ/Zebra settlement, post-first-lock transport removal, and terminal revision 4 completed in 30.830 seconds. Exact pushed-tree replay/evidence, broader taker commands, C-API pricing, systemd, fuzzing, other pairs, and hardening remain | None | Owner entered M5 on 2026-07-23 |
+| M5 | Progressive local-functional PoC | Exact pushed-tree corridor `m5app-71dd9cc-20260724a` is GREEN: real maker/taker negotiation, pre-effect restart, actor rebinding, isolated LEZ/Zebra settlement, post-first-lock transport removal, terminal revision 4, and scoped cleanup completed. Terminal state projection through a fresh operator-daemon restart, broader taker commands, C-API pricing, systemd, fuzzing, other pairs, and hardening remain | None | Owner entered M5 on 2026-07-23 |
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
@@ -39,20 +39,20 @@ certified.
 | Application binaries | Maker daemon and partial maker CLI expose owner-local pair policy, exact local price, durable offer publish/list/withdraw, swap create/status/history, and alert commands; daemon-owned authenticated Delivery plus real taker ZEC acceptance are GREEN | Add maker manual effect/lifecycle commands and taker status/claim/refund plus BTC/XMR initiation |
 | Owner-local control | GREEN component slice | Mode-0700 owner runtime directory, disjoint mode-0600 owner and Chat Unix sockets, absolute/no-symlink paths, bounded HTTP/1 JSON-RPC, disabled batches, 16-connection cap, no-clobber readiness, exact-inode cleanup, and two black-box daemon/CLI journeys pass strict gates |
 | Price-source runtime adapters | 1 of 2 component GREEN | The pluggable trait and store-backed local adapter preserve exact route, reduced-integer price, revision, and daemon-trusted time; the real CLI quotes 5:2 after daemon restart. Add the bounded Logos C-API adapter and bind external quotes into signed offers |
-| Discovery and negotiation | Signed bounded Delivery, restart reconciliation, schema-v13 staging, atomic acceptance and final actor rebinding are GREEN. The actual `lez-taker` process authenticates and selects the offer, validates the unchanged maker proposal, countersigns, and no-clobber persists. Working-tree run `m5app-4a8ea01-20260724d` composed these boundaries into actual chain effects | Replay the exact pushed tree; then add outage hardening and exact Logos adapters |
-| Persistent restart evidence | Two daemon/CLI restart journeys plus one abnormal-stop Chat proposal journey pass, including durable pair/price/offer/swap history, alerts, completed negotiation, exact final wire, encrypted claim material, and byte-identical replay | Repeat through the complete application happy path and exact effect outbox |
+| Discovery and negotiation | Signed bounded Delivery, restart reconciliation, schema-v13 staging, atomic acceptance and final actor rebinding are GREEN. Exact-tree run `m5app-71dd9cc-20260724a` composed the real maker/taker binaries into actual chain effects | Add outage hardening and exact Logos adapters |
+| Persistent restart evidence | Pre-effect restart retained exact pair/price/consumed-offer/swap history in the composed run; component journeys retain alerts, final wire, encrypted claim material, and byte-identical replay | Import terminal actor state into operator history and prove a fresh post-terminal daemon restart |
 | Concurrent application swaps | 0 composed | Distinct swap IDs, role state, agreements, escrows, deadlines, and effects |
 | Missing-chain degradation | 0 composed | Each unavailable route disables only affected pairs and reports operator state |
-| Delivery/Chat removal after lock | 1 working-tree actual-node run GREEN | Run `m5app-4a8ea01-20260724d` retained the exact restarted daemon through two-confirmation Zcash funding, then removed owner/Chat sockets and Delivery before LEZ reveal and terminal settlement |
+| Delivery/Chat removal after lock | 1 exact-tree actual-node run GREEN | Run `m5app-71dd9cc-20260724a` retained the exact restarted daemon through two-confirmation Zcash funding, then removed owner/Chat sockets and Delivery before LEZ reveal and terminal settlement |
 | Coordinator fuzzing | 512-case Proptest carried; no literal fuzz target | Add `cargo-fuzz` or equivalent target and bounded CI smoke corpus |
-| Actual local application swaps | 1 working-tree success; 0 exact-tree certified | `TakerSellsLez` completed in 30.830 seconds, 65 drive rounds, one bounded retry, Zebra 104 to 107, and both roles revision 4; exact pushed-tree replay is next |
+| Actual local application swaps | 1 exact-tree corridor checkpoint | `TakerSellsLez` completed in 26.780 protocol seconds, 54 drive rounds, one bounded retry, Zebra 107 to 110, and both roles revision 4; the checked packet records exact LEZ/ZEC transactions and finality |
 | Public runtime dependencies | None required for PoC | Record cold-download dependencies separately; runtime uses local nodes and deterministic funds |
-| Cleanup leaks | Not measured | Exact run ledger, absent owned resources, foreign sentinel survives |
+| Cleanup leaks | 0 in the exact-tree corridor run | Both run-scoped Compose projects, four containers, two unique images, the LEZ network, RPC ports, and named private roots are absent; every pre-existing foreign container survived |
 
-Current M5 PoC checkpoint ETA: 20–45 focused minutes with the current isolated
-nodes, or 2–4 hours after a cold isolated LEZ/Zebra rebuild. This covers the
-exact pushed-tree replay, evidence/docs, and scoped cleanup; it excludes
-systemd, Logos C-API, fuzz, multi-pair, and post-PoC hardening outputs.
+Current progressive M5 PoC ETA: 2–4 focused hours for terminal-history
+projection, restart regression, and exact local replay; add 2–4 hours if a cold
+LEZ/Zebra rebuild is required. This excludes systemd, Logos C-API, fuzz,
+multi-pair, and post-PoC hardening outputs.
 
 ## M4 PoC scorecard
 

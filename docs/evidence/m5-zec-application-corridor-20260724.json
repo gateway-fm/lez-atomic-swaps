@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "kind": "m5_zec_application_corridor_exact_tree_checkpoint",
+  "result": "completed",
+  "certification_scope": "exact application-to-chain corridor; not full M5 PoC or milestone completion",
+  "run": {
+    "id": "m5app-71dd9cc-20260724a",
+    "date_utc": "2026-07-24",
+    "git_commit": "71dd9ccca8dd1b7bd0e07e77274a8a8e3eee4ba8",
+    "git_commit_pushed_to_origin_main_before_run": true,
+    "working_tree_clean_before_run": true,
+    "direction": "taker_sells_lez",
+    "protocol_elapsed_milliseconds_from_provisioning": 26780,
+    "outer_elapsed_seconds": 28.582,
+    "pre_effect_elapsed_milliseconds": 750,
+    "drive_rounds": 54,
+    "same_run_drive_retries": 1,
+    "provision_to_completion_cap_seconds": 49,
+    "lez_delay_margin_seconds": 10
+  },
+  "application": {
+    "offer_id": "m5-offer-3c4f1f76b21ed1df",
+    "reservation_id": "m5-reserve-3c4f1f76b21ed1df",
+    "swap_id": "m5app-71dd9cc-20260724a-swap",
+    "final_agreement_sha256": "0ab4142ec740eedb12f07517659b2cec06e479f732cfbacab24e621af9a67f9a",
+    "maker_public_key": "03462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b",
+    "taker_public_key": "024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766",
+    "real_processes": {
+      "maker_daemon": true,
+      "maker_cli": true,
+      "taker_cli": true,
+      "maker_reference_actor": true,
+      "taker_reference_actor": true
+    },
+    "daemon_restart_before_chain_effects": {
+      "pair_configuration_retained": true,
+      "price_retained": true,
+      "consumed_offer_retained": true,
+      "swap_history_retained": true
+    },
+    "post_terminal_daemon_restart_projection_proven": false,
+    "post_terminal_daemon_restart_projection_note": "The actor stores reached terminal revision 4 after the daemon and Delivery/Chat were deliberately removed. Importing that durable terminal chain state into a newly restarted operator daemon remains the next progressive PoC seam."
+  },
+  "roles": {
+    "maker": {
+      "final_state": "active",
+      "final_phase": "completed",
+      "final_revision": 4,
+      "zcash_funder": true,
+      "lez_revealing_claimant": true
+    },
+    "taker": {
+      "final_state": "active",
+      "final_phase": "completed",
+      "final_revision": 4,
+      "lez_depositor": true,
+      "zcash_followup_claimant": true
+    }
+  },
+  "lez": {
+    "version": "0.2.0",
+    "source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "source_image_sha256": "6066069bfbe7b88e917a50a6348ab79143e0dccbf6dcce036bd2259d2e94df35",
+    "run_id": "m5lez-4a8ea01-20260724a",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_hash": "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9",
+    "escrow_program_id": "39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec",
+    "deployment_transaction_id": "94a49583a5fd5d6a749fd227f38fe99b002866921a9b77e956623ee6f36e76d3",
+    "deployment_finalized_block_id": 28,
+    "initial_tip": 219,
+    "finalized_tip_at_evidence_collection": 229,
+    "transactions": [
+      {
+        "operation": "initialize",
+        "submitter": "taker",
+        "transaction_id": "7e5cabb004d7d6d6f80b90e3a276f30c978fdddc26ff14164147059257a43d82",
+        "containing_block_id": 220,
+        "containing_block_hash": "182f7bbf41117b52297073d5dd8c4373b8851c316bb910fc1bf7621696217a87",
+        "bedrock_status": "Finalized"
+      },
+      {
+        "operation": "fund",
+        "submitter": "taker",
+        "transaction_id": "9256784007d400fb4b5e055ea6fb4e5a7fd79535af1ca3befb3a13b947b4ad3c",
+        "containing_block_id": 221,
+        "containing_block_hash": "89644dda41cabf6df80d1a657dc813d4b34f358d2bd2b2dc7053e08539d23c12",
+        "bedrock_status": "Finalized"
+      },
+      {
+        "operation": "revealing_claim",
+        "submitter": "maker",
+        "transaction_id": "687f5a76e2ef321a619cdbb4d1b395dcfbca7c194b4c88d5adf7ad5898a61442",
+        "containing_block_id": 222,
+        "containing_block_hash": "737ac8656857d09c8a536797533d7ed22805e9165ef74adcd142aad19b8b1f39",
+        "bedrock_status": "Finalized"
+      }
+    ]
+  },
+  "zcash": {
+    "implementation": "Zebra 5.2.0 Regtest",
+    "source_commit": "62e4a43879c9c86d23ecfcf5a02335eec8a1517d",
+    "source_image_sha256": "fe727c73c5e1821a64abcf266ccfe30de40a9609a5ba28a767d38aaac34b2968",
+    "run_id": "m5zebra-4a8ea01-20260724a",
+    "initial_tip": 107,
+    "final_tip": 110,
+    "funding": {
+      "submitter": "maker",
+      "transaction_id": "abbcec0e1b4ae26d3f7e716299304addb1a070af79cfa9d844a2e28420d002fa",
+      "containing_block_height": 108,
+      "containing_block_hash": "02b299eb4286aedb9df13229c31411c3c1702a15cf2847d7f203e01562067337",
+      "confirmations_before_reveal": 2
+    },
+    "followup_claim": {
+      "submitter": "taker",
+      "transaction_id": "dcc49cb4e85f367ebb2f8702d669acf9590170f6ca865fd48177edcfcdd52a3f",
+      "spends_funding_transaction": true,
+      "containing_block_height": 110,
+      "containing_block_hash": "ae86851c7341540852c01ee40b5936040cd1a4cb8f5280422279ca11859d4da2"
+    }
+  },
+  "transport_cutover": {
+    "delivery_and_chat_armed_before_activation": true,
+    "cutover_after_confirmed_first_lock": true,
+    "maker_socket_absent": true,
+    "chat_socket_absent": true,
+    "delivery_path_absent": true,
+    "transports_absent_through_terminal_actor_state": true
+  },
+  "atomicity": {
+    "observed_order": [
+      "zcash_funded_and_confirmed",
+      "delivery_and_chat_removed",
+      "lez_revealing_claim_finalized",
+      "zcash_followup_claim_finalized"
+    ],
+    "argument": "The maker could reveal the shared preimage on LEZ only after the maker-funded Zcash contract had two confirmations. The taker then spent that exact Zcash output with the revealed preimage. Before reveal, both parties retain their agreement-defined timeout/refund paths; after reveal, the taker has the information needed for the remaining claim. This is protocol atomicity and recoverability, not one cross-chain database transaction."
+  },
+  "receipt_sha256": {
+    "run_identity": "1b4d7a2287f1e4031edbfd42fd321071ebb1f1928761c7a2f55b9d2f413d0cbe",
+    "application_handoff": "fc0b9afd444ce91f91f185489af896875da8602a833506de3cbf7b35466edd5c",
+    "post_lock_cutover": "fd43256f0e02d8977433b642b2ebfe3dc11769580c7f849e606876fea330cfcf",
+    "result": "3b1e9d1f762d173fafb3fe0de27db9bc3ea9c866598f87b4b5209122e88a56ce"
+  },
+  "external_resources": {
+    "public_rpc": false,
+    "faucet": false,
+    "public_funds": false,
+    "public_peer": false,
+    "logos_delivery_chat_core_or_price_service": false,
+    "cold_setup_only": ["Cargo registry cache", "Docker image inputs", "Git source checkouts"],
+    "runtime": ["isolated literal-loopback LEZ v0.2 services", "isolated literal-loopback Zebra Regtest", "deterministic local genesis and Regtest funds"],
+    "runtime_rpc_endpoints": [
+      {"component": "LEZ Bedrock", "url": "http://127.0.0.1:33275"},
+      {"component": "LEZ sequencer", "url": "http://127.0.0.1:33276"},
+      {"component": "LEZ indexer", "url": "http://127.0.0.1:33277"},
+      {"component": "Zebra Regtest", "url": "http://127.0.0.1:33278"}
+    ],
+    "endpoint_tuple_lock_held": true,
+    "node_stacks_reused_serially_after_working_tree_run": true,
+    "concurrent_effect_bearing_run_on_same_nodes": false
+  },
+  "cleanup": {
+    "exact_lez_containers_absent": true,
+    "exact_zebra_compose_project_absent": true,
+    "exact_lez_network_absent": true,
+    "exact_run_images_absent": true,
+    "exact_rpc_ports_closed": true,
+    "exact_private_temp_roots_removed": true,
+    "all_preexisting_foreign_containers_survived": true
+  },
+  "private_material_disclosed": false
+}
