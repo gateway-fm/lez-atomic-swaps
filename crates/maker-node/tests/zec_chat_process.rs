@@ -12,8 +12,8 @@ use std::{
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, ListRequest, LocalPriceSetRequest,
-    OfferPublishRequest, PairConfigureRequest, RunLocalDelivery, ZecChatProposalV1,
-    ZecChatProposeRequestV1, call_local_rpc,
+    OfferPublishRequest, PairConfigureRequest, RunLocalDelivery, ZecChatCompleteRequestV1,
+    ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
 };
 use lez_swap_core::{Pair, SwapDirection, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
@@ -29,8 +29,9 @@ use lez_zec_swap_sdk::{
     ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
     derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 use zcash_protocol::{
     consensus::{BranchId, NetworkType},
@@ -38,8 +39,10 @@ use zcash_protocol::{
 };
 use zcash_transparent::address::TransparentAddress;
 
+const CLAIM_PREIMAGE: [u8; 32] = [0x44; 32];
+
 #[tokio::test]
-async fn separate_taker_stages_an_offer_bound_maker_proposal_before_response() {
+async fn separate_taker_countersigns_and_maker_atomically_accepts_before_response() {
     let run = tempdir().expect("isolated Chat process root");
     let runtime = run.path().join("runtime");
     fs::DirBuilder::new()
@@ -52,15 +55,22 @@ async fn separate_taker_stages_an_offer_bound_maker_proposal_before_response() {
     let database = run.path().join("maker.sqlite3");
     let delivery = run.path().join("delivery");
     let key_file = run.path().join("delivery-signing.key");
+    let claim_key_file = run.path().join("maker-claim-recovery.key");
+    let claim_preimage_file = run.path().join("maker-claim-preimage.key");
     write_key(&key_file, 8);
-    let mut daemon = start_daemon(
-        &socket,
-        &chat_socket,
-        &ready,
-        &database,
-        &delivery,
-        &key_file,
-    );
+    write_raw_key(&claim_key_file, 0x7a);
+    write_raw_key(&claim_preimage_file, CLAIM_PREIMAGE[0]);
+    let daemon_paths = DaemonPaths {
+        socket: &socket,
+        chat_socket: &chat_socket,
+        ready: &ready,
+        database: &database,
+        delivery: &delivery,
+        key_file: &key_file,
+        claim_key_file: &claim_key_file,
+        claim_preimage_file: &claim_preimage_file,
+    };
+    let mut daemon = start_daemon(&daemon_paths);
     wait_ready(&mut daemon, &ready, &socket);
 
     let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
@@ -116,28 +126,114 @@ async fn separate_taker_stages_an_offer_bound_maker_proposal_before_response() {
             .expect("taker validates the exact maker-signed proposal");
     assert_eq!(validated.commitment(), &proposal.agreement_commitment);
 
-    thread::sleep(Duration::from_millis(1_100));
-    let replay: ZecChatProposalV1 =
-        call_local_rpc(&chat_socket, "zec_chat_propose_v1", &proposal_request)
-            .await
-            .unwrap();
-    assert!(replay.was_replay);
-    assert_eq!(replay.offer_revision, 2);
-    assert_eq!(replay.proposal_wire, proposal.proposal_wire);
+    assert_proposal_replay(&chat_socket, &proposal_request, &proposal).await;
+
+    let final_wire = complete_chat(
+        &chat_socket,
+        &offer_id,
+        &reservation_id,
+        &proposal,
+        validated,
+    )
+    .await;
 
     daemon
         .kill()
         .expect("terminate daemon after committed response");
     daemon.wait().expect("reap daemon");
-    let store = SqliteSwapStore::open(&database).unwrap();
+    assert_completed_durable(
+        &database,
+        &offer_id,
+        &reservation_id,
+        &proposal,
+        &authenticated,
+        &final_wire,
+    );
+}
+
+async fn assert_proposal_replay(
+    chat_socket: &std::path::Path,
+    request: &ZecChatProposeRequestV1,
+    original: &ZecChatProposalV1,
+) {
+    thread::sleep(Duration::from_millis(1_100));
+    let replay: ZecChatProposalV1 = call_local_rpc(chat_socket, "zec_chat_propose_v1", request)
+        .await
+        .unwrap();
+    assert!(replay.was_replay);
+    assert_eq!(replay.offer_revision, 2);
+    assert_eq!(replay.proposal_wire, original.proposal_wire);
+}
+
+async fn complete_chat(
+    chat_socket: &std::path::Path,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    proposal: &ZecChatProposalV1,
+    validated: ZecMakerAgreementProposalV1,
+) -> Vec<u8> {
+    let taker_signature = Secp256k1::signing_only()
+        .sign_ecdsa(
+            &Message::from_digest(proposal.agreement_commitment),
+            &key(2),
+        )
+        .serialize_compact();
+    let agreement = validated
+        .complete_at(taker_signature, UnixSeconds::new(now()))
+        .expect("taker countersigns the exact maker proposal");
+    let final_wire = agreement.encode_wire().unwrap();
+    let request = ZecChatCompleteRequestV1 {
+        schema_version: 1,
+        request_id: request("m5-chat-complete-001"),
+        offer_id: offer_id.clone(),
+        expected_offer_revision: 2,
+        reservation_id: reservation_id.clone(),
+        final_agreement_wire: final_wire.clone(),
+    };
+    let completed: ZecChatCompleteResponseV1 =
+        call_local_rpc(chat_socket, "zec_chat_complete_v1", &request)
+            .await
+            .unwrap();
+    assert_eq!(completed.offer_revision, 3);
+    assert!(!completed.was_replay);
+    assert_eq!(completed.swap_id.as_ref(), "m5-chat-swap-001");
+    thread::sleep(Duration::from_millis(1_100));
+    let replay: ZecChatCompleteResponseV1 =
+        call_local_rpc(chat_socket, "zec_chat_complete_v1", &request)
+            .await
+            .unwrap();
+    assert_eq!(replay.offer_revision, 3);
+    assert!(replay.was_replay);
+    assert_eq!(replay.swap_id, completed.swap_id);
+    final_wire
+}
+
+fn assert_completed_durable(
+    database: &std::path::Path,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    proposal: &ZecChatProposalV1,
+    authenticated: &AuthenticatedOfferRefV1,
+    final_wire: &[u8],
+) {
+    let store = SqliteSwapStore::open(database).unwrap();
     let durable = store
-        .load_zec_maker_negotiation(&offer_id)
+        .load_zec_maker_negotiation(offer_id)
         .unwrap()
-        .expect("proposal remains durable after process termination");
-    assert_eq!(durable.status(), MakerZecNegotiationStatus::Proposed);
-    assert_eq!(durable.reservation_id(), &reservation_id);
+        .expect("completion remains durable after process termination");
+    assert_eq!(durable.status(), MakerZecNegotiationStatus::Completed);
+    assert_eq!(durable.reservation_id(), reservation_id);
     assert_eq!(durable.maker_proposal_wire(), proposal.proposal_wire);
     assert_eq!(durable.offer_commitment(), &authenticated.commitment());
+    assert_eq!(durable.final_agreement_wire(), Some(final_wire));
+    assert_eq!(durable.swap_id(), Some("m5-chat-swap-001"));
+    assert!(
+        !fs::read(database)
+            .unwrap()
+            .windows(CLAIM_PREIMAGE.len())
+            .any(|window| window == CLAIM_PREIMAGE),
+        "maker claim preimage must not occur in plaintext SQLite bytes"
+    );
 }
 
 async fn assert_socket_method_isolation(
@@ -217,7 +313,8 @@ fn unsigned_draft(
     let onchain_swap_id = derive_lez_swap_id_v1(application_swap_id.as_bytes());
     let metadata = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
     let custody = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
-    let contract = Bip199Contract::new(120, maker_hash, [9; 32], taker_hash);
+    let secret_digest: [u8; 32] = Sha256::digest(CLAIM_PREIMAGE).into();
+    let contract = Bip199Contract::new(120, maker_hash, secret_digest, taker_hash);
     let output = ExpectedBip199Output::new(
         NetworkType::Regtest,
         BranchId::Nu6_2,
@@ -233,7 +330,7 @@ fn unsigned_draft(
             ZecParticipantIdentityV1::new([3; 32], maker_public.serialize()),
             ZecParticipantIdentityV1::new([4; 32], taker_public.serialize()),
         ),
-        [9; 32],
+        secret_digest,
         ZecLezTermsV1::new(
             LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
             escrow_program,
@@ -266,27 +363,37 @@ fn unsigned_draft(
     ZecAgreementDraftV1::new(body).encode_wire().unwrap()
 }
 
-fn start_daemon(
-    socket: &std::path::Path,
-    chat_socket: &std::path::Path,
-    ready: &std::path::Path,
-    database: &std::path::Path,
-    delivery: &std::path::Path,
-    key_file: &std::path::Path,
-) -> Child {
+struct DaemonPaths<'a> {
+    socket: &'a std::path::Path,
+    chat_socket: &'a std::path::Path,
+    ready: &'a std::path::Path,
+    database: &'a std::path::Path,
+    delivery: &'a std::path::Path,
+    key_file: &'a std::path::Path,
+    claim_key_file: &'a std::path::Path,
+    claim_preimage_file: &'a std::path::Path,
+}
+
+fn start_daemon(paths: &DaemonPaths<'_>) -> Child {
     Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
         .arg("--socket")
-        .arg(socket)
+        .arg(paths.socket)
         .arg("--chat-socket")
-        .arg(chat_socket)
+        .arg(paths.chat_socket)
         .arg("--database")
-        .arg(database)
+        .arg(paths.database)
         .arg("--ready-file")
-        .arg(ready)
+        .arg(paths.ready)
         .arg("--delivery-directory")
-        .arg(delivery)
+        .arg(paths.delivery)
         .arg("--delivery-signing-key-file")
-        .arg(key_file)
+        .arg(paths.key_file)
+        .arg("--maker-claim-key-id")
+        .arg("m5-chat-claim-key-v1")
+        .arg("--maker-claim-key-file")
+        .arg(paths.claim_key_file)
+        .arg("--maker-claim-preimage-file")
+        .arg(paths.claim_preimage_file)
         .spawn()
         .expect("start isolated maker daemon")
 }
@@ -312,6 +419,17 @@ fn write_key(path: &std::path::Path, byte: u8) {
         .open(path)
         .unwrap();
     writeln!(file, "{}", hex::encode([byte; 32])).unwrap();
+    file.sync_all().unwrap();
+}
+
+fn write_raw_key(path: &std::path::Path, byte: u8) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    file.write_all(&[byte; 32]).unwrap();
     file.sync_all().unwrap();
 }
 

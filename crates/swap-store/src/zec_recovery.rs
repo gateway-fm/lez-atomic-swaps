@@ -66,7 +66,6 @@ struct CompleteMakerZecRequest<'a> {
     offer_id: &'a MakerOfferId,
     expected_offer_revision: u64,
     reservation_id: &'a RequestId,
-    accepted_at_unix_seconds: u64,
     agreement_wire_sha256: [u8; 32],
     secret_digest: [u8; 32],
 }
@@ -223,7 +222,6 @@ impl SqliteZecRecoveryStore {
             offer_id,
             expected_offer_revision,
             reservation_id,
-            accepted_at_unix_seconds: accepted.accepted_at().value(),
             agreement_wire_sha256,
             secret_digest: actual_secret_digest,
         })?;

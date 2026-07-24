@@ -4034,7 +4034,7 @@ check: no chain RPC, node, Docker, faucet, public funds, DNS, or Logos service.
 It proves the crash-safe handoff to post-negotiation authority, not the separate
 maker/taker process flow or actual local-devnet effects.
 
-### Process-facing ZEC maker proposal
+### Process-facing ZEC negotiation and atomic acceptance
 
 Build the real application binaries and repeat the current maker/taker process
 boundary with:
@@ -4042,7 +4042,7 @@ boundary with:
 ```sh
 cargo build --locked --offline -p lez-maker-node --bins
 cargo test --locked --offline -p lez-maker-node --test zec_chat_process \
-  separate_taker_stages_an_offer_bound_maker_proposal_before_response \
+  separate_taker_countersigns_and_maker_atomically_accepts_before_response \
   -- --exact --nocapture
 ```
 
@@ -4054,20 +4054,25 @@ a separate key-pinned taker. That taker constructs a canonical unsigned draft
 bound to the selected envelope, reservation-derived session, exact quote, and
 expiry, then submits it over Chat.
 
-The result must be offer revision 2 and 25,000 LEZ atomic units for 10,000
-zatoshis. The taker validates the maker signature, repeats the identical request after crossing a wall-clock second
-and receives the byte-identical replay, then kills the daemon and reopens SQLite
-to recover the exact proposal. The same run proves the owner socket rejects the
+The proposal result must be offer revision 2 and 25,000 LEZ atomic units for
+10,000 zatoshis. The taker validates the maker signature, repeats the identical
+request after crossing a wall-clock second, and receives the byte-identical
+proposal. It then countersigns the exact commitment and sends only the dual-
+signed wire and public IDs to Chat. The daemon atomically returns revision 3 and
+the agreement-derived swap ID; a second delayed request exact-replays. After a
+forced daemon stop, SQLite must reopen with Completed negotiation, exact final
+wire, consumed offer, coordinator, binding, and no plaintext preimage. The same run proves the owner socket rejects the
 Chat method and the Chat socket rejects owner-control methods.
 
 All resources are created below one private temporary directory: two mode-0600
-Unix sockets, one mode-0600 deterministic test key file, SQLite, and the signed
-Delivery mailbox. No LEZ or Zebra node, chain RPC, Docker, faucet, public funds,
+Unix sockets, one hex Delivery/agreement key, raw 32-byte claim-recovery and
+preimage files, SQLite, and the signed Delivery mailbox. No LEZ or Zebra node, chain RPC, Docker, faucet, public funds,
 DNS, public price source, public finality source, or Logos service is used.
 After the Cargo cache is warm, `--locked --offline` removes registry/network
 availability as a flakiness source; the only time-sensitive boundary is a
-five-minute local offer TTL. This proves proposal staging, not countersigning,
-final acceptance through processes, chain funding, or a completed swap.
+five-minute local offer TTL. This proves negotiation and the atomic pre-lock durable handoff through the
+real daemon boundary. It does not yet prove the actual `lez-taker` command, final
+actor configuration, chain funding, or a completed cross-chain swap.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 

@@ -113,8 +113,8 @@ proposal/staging process boundary, not chain funding or a completed swap.
   claimed as the final Logos Chat adapter or a multi-tenant network boundary.
 - The exact maker key now authenticates Delivery and signs the ZEC proposal,
   preventing identity substitution between discovery and negotiation.
-- Taker countersigning, atomic final acceptance through the process boundary,
-  role-local final configuration, and the actual LEZ/ZEC corridor remain the
-  next vertical slice.
+- ADR 0091 completes countersigning and atomic final acceptance through the
+  process boundary. The actual taker CLI, role-local final configuration, and
+  LEZ/ZEC corridor remain the next vertical slice.
 - Post-PoC QA must add bounded malformed-input, outage, concurrent-reservation,
   kill-point, resource-exhaustion, and credential-isolation matrices.

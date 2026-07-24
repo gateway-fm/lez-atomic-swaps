@@ -5201,17 +5201,18 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
         0,
     )
     .unwrap();
-    assert!(matches!(
-        recovery_store.complete_maker_zec_negotiation(
+    let delayed_replay = recovery_store
+        .complete_maker_zec_negotiation(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &changed_acceptance,
             &ClaimPreimage::new(secret),
-        ),
-        Err(StoreError::MakerOfferRequestConflict)
-    ));
+        )
+        .unwrap();
+    assert_eq!(delayed_replay.offer_revision(), 3);
+    assert!(delayed_replay.was_replay());
     drop(raw);
     drop(recovery_store);
 

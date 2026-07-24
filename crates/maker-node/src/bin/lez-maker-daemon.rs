@@ -1,6 +1,6 @@
 use std::{
-    fs::{self, OpenOptions},
-    io::{self, Write as _},
+    fs::{self, File, OpenOptions},
+    io::{self, Read as _, Write as _},
     os::unix::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -12,10 +12,13 @@ use jsonrpsee::server::{
     BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
 };
 use lez_maker_node::{MakerRpc, RunLocalDelivery, chat_rpc_module, rpc_module};
-use lez_swap_store::SqliteSwapStore;
+use lez_swap_core::Participant;
+use lez_swap_store::{SqliteSwapStore, SqliteZecRecoveryStore};
+use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
+use rustix::fs::{CWD, Mode, OFlags, ResolveFlags, openat2};
 use secp256k1::SecretKey;
 use tokio::{net::UnixListener, task::JoinSet};
-use zeroize::{Zeroize as _, Zeroizing};
+use zeroize::Zeroizing;
 
 const MAXIMUM_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CONNECTIONS: u32 = 16;
@@ -40,6 +43,15 @@ struct Arguments {
     /// Taker-facing run-local Chat socket, isolated from owner-control methods.
     #[arg(long, requires_all = ["delivery_directory", "delivery_signing_key_file"])]
     chat_socket: Option<PathBuf>,
+    /// Non-secret rotation identifier for the maker claim-recovery key.
+    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_file", "maker_claim_preimage_file"])]
+    maker_claim_key_id: Option<Box<str>>,
+    /// Owner-only file containing one raw 32-byte claim-recovery key.
+    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_preimage_file"])]
+    maker_claim_key_file: Option<PathBuf>,
+    /// Owner-only file containing the maker-owned 32-byte claim preimage.
+    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
+    maker_claim_preimage_file: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -58,6 +70,9 @@ async fn main() -> anyhow::Result<()> {
         &arguments.database,
         arguments.delivery_directory.as_deref(),
         arguments.delivery_signing_key_file.as_deref(),
+        arguments.maker_claim_key_id.as_deref(),
+        arguments.maker_claim_key_file.as_deref(),
+        arguments.maker_claim_preimage_file.as_deref(),
     )?;
     let module = rpc_module(context.clone())?;
     let chat_module = if chat_listener.is_some() {
@@ -145,12 +160,41 @@ fn maker_context(
     database: &Path,
     delivery_directory: Option<&Path>,
     delivery_signing_key_file: Option<&Path>,
+    maker_claim_key_id: Option<&str>,
+    maker_claim_key_file: Option<&Path>,
+    maker_claim_preimage_file: Option<&Path>,
 ) -> anyhow::Result<MakerRpc> {
     let store = SqliteSwapStore::open(database).context("open maker database")?;
-    let (Some(directory), Some(key_file)) = (delivery_directory, delivery_signing_key_file) else {
+    let configured = (
+        delivery_directory,
+        delivery_signing_key_file,
+        maker_claim_key_id,
+        maker_claim_key_file,
+        maker_claim_preimage_file,
+    );
+    let (
+        Some(directory),
+        Some(signing_file),
+        Some(claim_key_id),
+        Some(claim_key_file),
+        Some(preimage_file),
+    ) = configured
+    else {
+        ensure!(
+            configured == (None, None, None, None, None),
+            "Delivery, Chat, claim-recovery, and preimage authority must be configured together"
+        );
         return Ok(MakerRpc::new(store));
     };
-    let signing_key = load_delivery_key(key_file)?;
+    let signing_key = load_delivery_key(signing_file)?;
+    let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;
+    let claim_key = ProtectedClaimKey::new(claim_key_id, *claim_key_material)
+        .context("validate maker claim-recovery key ID")?;
+    let preimage_material = load_raw_secret(preimage_file, "maker claim preimage")?;
+    let preimage = ClaimPreimage::new(*preimage_material);
+    let recovery_store =
+        SqliteZecRecoveryStore::open_claim_capable(database, Participant::Maker, claim_key)
+            .context("open maker ZEC recovery store")?;
     let delivery = RunLocalDelivery::publisher(directory.to_path_buf(), signing_key)
         .context("open maker Delivery publisher")?;
     let now_unix_seconds = trusted_now_unix_seconds()?;
@@ -163,7 +207,13 @@ fn maker_context(
     delivery
         .reconcile(&active, now_unix_seconds)
         .context("reconcile Delivery advertisements")?;
-    Ok(MakerRpc::with_delivery(store, delivery, signing_key))
+    Ok(MakerRpc::with_delivery(
+        store,
+        delivery,
+        signing_key,
+        recovery_store,
+        preimage,
+    ))
 }
 
 fn server_config() -> ServerConfig {
@@ -177,33 +227,86 @@ fn server_config() -> ServerConfig {
 }
 
 fn load_delivery_key(path: &Path) -> anyhow::Result<SecretKey> {
-    let metadata = fs::symlink_metadata(path).context("inspect Delivery signing key")?;
+    let encoded = read_private_file(path, 65, "Delivery signing key")?;
+    let text = std::str::from_utf8(&encoded)
+        .context("Delivery signing key must be UTF-8 hex")?
+        .trim();
+    ensure!(
+        text.len() == 64,
+        "Delivery signing key must contain exactly 32 bytes as hex"
+    );
+    let mut bytes = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(text, bytes.as_mut()).context("decode Delivery signing key")?;
+    SecretKey::from_slice(bytes.as_ref()).context("validate Delivery signing key")
+}
+
+fn load_raw_secret(path: &Path, purpose: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
+    let bytes = read_private_file(path, 32, purpose)?;
+    ensure!(
+        bytes.len() == 32,
+        "{purpose} must contain exactly 32 raw bytes"
+    );
+    let mut secret = Zeroizing::new([0_u8; 32]);
+    secret.copy_from_slice(&bytes);
+    ensure!(
+        secret.iter().any(|byte| *byte != 0),
+        "{purpose} must be nonzero"
+    );
+    Ok(secret)
+}
+
+fn read_private_file(
+    path: &Path,
+    maximum_bytes: u64,
+    purpose: &str,
+) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+    let mut file = openat2(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .with_context(|| format!("open {purpose}"))?;
+    let before = validate_private_file(&file, maximum_bytes, purpose)?;
+    let mut bytes = Zeroizing::new(Vec::new());
+    std::io::Read::by_ref(&mut file)
+        .take(maximum_bytes + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {purpose}"))?;
+    ensure!(
+        bytes.len() as u64 <= maximum_bytes,
+        "{purpose} is oversized"
+    );
+    let after = validate_private_file(&file, maximum_bytes, purpose)?;
+    ensure!(
+        before.dev() == after.dev()
+            && before.ino() == after.ino()
+            && before.len() == after.len()
+            && after.len() == bytes.len() as u64,
+        "{purpose} changed while it was read"
+    );
+    Ok(bytes)
+}
+
+fn validate_private_file(
+    file: &File,
+    maximum_bytes: u64,
+    purpose: &str,
+) -> anyhow::Result<std::fs::Metadata> {
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect {purpose}"))?;
     ensure!(
         metadata.file_type().is_file()
             && metadata.uid() == rustix::process::geteuid().as_raw()
             && metadata.mode() & 0o7777 == 0o600
-            && metadata.nlink() == 1,
-        "Delivery signing key must be an owner-owned, single-link regular file with mode 0600"
+            && metadata.nlink() == 1
+            && metadata.len() <= maximum_bytes,
+        "{purpose} must be an owner-owned, single-link mode-0600 regular file within its size bound"
     );
-    ensure!(
-        metadata.len() <= 65,
-        "Delivery signing key file is oversized"
-    );
-    let mut encoded = fs::read(path).context("read Delivery signing key")?;
-    let result = (|| {
-        let text = std::str::from_utf8(&encoded)
-            .context("Delivery signing key must be UTF-8 hex")?
-            .trim();
-        ensure!(
-            text.len() == 64,
-            "Delivery signing key must contain exactly 32 bytes as hex"
-        );
-        let mut bytes = Zeroizing::new([0_u8; 32]);
-        hex::decode_to_slice(text, bytes.as_mut()).context("decode Delivery signing key")?;
-        SecretKey::from_slice(bytes.as_ref()).context("validate Delivery signing key")
-    })();
-    encoded.zeroize();
-    result
+    Ok(metadata)
 }
 
 fn trusted_now_unix_seconds() -> anyhow::Result<u64> {

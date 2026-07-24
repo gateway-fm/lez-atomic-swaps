@@ -3141,8 +3141,9 @@ an owner-restricted Unix-socket maker daemon, durable pair and exact-price
 configuration, a pluggable local runtime price source, swap/alert history,
 SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It has
 a discovery-only taker CLI, daemon-owned signed run-local Delivery, and a
-disjoint process-facing maker-proposal Chat endpoint with durable one-winner
-staging, but no taker countersign/completion command, C-API pricing
+disjoint process-facing Chat endpoint with durable proposal staging, role
+countersigning, and atomic final acceptance, but no taker lifecycle command,
+C-API pricing
 implementation, manual effect surface, systemd package, or literal fuzz target.
 
 ### Progressive PoC gate
@@ -3204,20 +3205,23 @@ separately from runtime dependencies.
 - [x] Add the maker-first canonical ZEC draft/proposal/countersign contract and
   exact no-rounding offer amount conversion.
 - [ ] Complete durable Chat negotiation, buffering, retry/degraded state, and
-  the post-lock cutover rule. The first process-wired proposal stage is GREEN: a
+  the post-lock cutover rule. The proposal and final-acceptance process stages are GREEN: a
   disjoint mode-0600 Chat socket authenticates and cross-binds the exact signed
   Delivery envelope and canonical unsigned draft, signs with the pinned maker
   identity, commits reservation plus proposal before response, exact-replays,
-  rejects owner/Chat method crossover, and survives kill/reopen. Schema v13
+  rejects owner/Chat method crossover, and survives kill/reopen. A separate
+  taker role validates and countersigns the proposal; the daemon validates the
+  exact final wire using its own clock and daemon-local raw recovery/preimage
+  authority, then reuses the atomic final transaction before responding. Schema v13
   now atomically stores the exact bounded maker proposal before transport and
   reserves one offer winner with exact replay/conflict/restart evidence. The
   countersigned agreement, coordinator, immutable ZEC binding, protected maker
   claim material, offer consumption, and replay result also commit together
-  with forced-rollback/replay/restart evidence. Next add the taker
-  countersign and process-level atomic final-accept call,
+  with forced-rollback/replay/restart evidence. Next wire those now-GREEN operations into the actual `lez-taker`
+  command,
   split the local chain-fact preparer from role signing, persist the exact final
   wire into both actor configurations, then prove the post-lock transport
-  cutover. The canonical unsigned draft and maker Chat endpoint are now GREEN;
+  cutover. The canonical unsigned draft and both maker Chat endpoints are now GREEN;
   they do not yet prove any chain effect.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC.

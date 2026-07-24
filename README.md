@@ -21,8 +21,10 @@ maker claim material, offer consumption, and replay result. A separate taker CLI
 discovers the daemon's key-pinned signed offers. A disjoint taker-facing Chat
 socket now authenticates the exact Delivery envelope and unsigned canonical ZEC
 draft, signs with the Delivery-pinned maker identity, and atomically stages the
-one-winner proposal before responding; exact replay and kill/reopen durability
-are process-GREEN. Taker countersigning, process-level atomic final acceptance,
+one-winner proposal before responding. The separate taker role then validates and
+countersigns that proposal, and the daemon reuses the atomic schema-v13 final
+acceptance transaction with only daemon-local claim authority; delayed replay
+and kill/reopen durability are process-GREEN. The actual taker CLI command,
 exact final-wire actor configuration, and the actual LEZ/ZEC application swap
 are the next PoC critical path. The Logos C-API price
 source, systemd/Core lifecycle, fuzzing, and hardening remain literal M5
@@ -39,7 +41,7 @@ cargo test --locked --offline -p lez-maker-node --test zec_chat_process -- --noc
 The complete manual configure, price, quote, publish, restart, inspect, and
 withdraw flow is [Flow 1 in the operator guide](docs/manual-user-flows.md#flow-1-maker-operator-cli-and-daemon-restart).
 These component flows use only owner-private local Unix sockets, SQLite,
-signing-key file, and Delivery directory; they use no chain RPC, Docker, faucet,
+Delivery, signing, raw claim-recovery and preimage files; they use no chain RPC, Docker, faucet,
 public funds, public price feed, or external network at runtime. The future
 application PoC will use only isolated local LEZ
 v0.2 and Zebra Regtest services with deterministic local funds, and will record

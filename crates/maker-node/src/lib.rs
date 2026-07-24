@@ -25,13 +25,14 @@ use lez_swap_store::{
     AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit,
     MakerOfferId, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerPairConfigurationV1,
     MakerRouteV1, MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
-    OperatorAlertSeverity, SqliteSwapStore, StoreError, VersionedMakerRecord,
-    maker_zec_chat_session_id,
+    OperatorAlertSeverity, SqliteSwapStore, SqliteZecRecoveryStore, StoreError,
+    VersionedMakerRecord, maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
-    HistoricalReplayError, ValidatedZecAgreementDraftV1, ZcashObservationEvent,
-    ZcashObservationEventRecordV1, ZcashObservationTracker, ZecAgreementDraftV1,
-    ZecBindingRecordError, ZecRefundProfile, ZecSwapBinding, replay_zcash_observation_history,
+    AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ValidatedZecAgreementDraftV1,
+    ZcashObservationEvent, ZcashObservationEventRecordV1, ZcashObservationTracker,
+    ZecAgreementDraftV1, ZecBindingRecordError, ZecRefundProfile, ZecSwapBinding,
+    replay_zcash_observation_history,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,8 @@ pub struct MakerRpc {
     store: Arc<Mutex<SqliteSwapStore>>,
     delivery: Option<Arc<RunLocalDelivery>>,
     chat_signing_key: Option<Arc<SecretKey>>,
+    zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
+    maker_claim_preimage: Option<Arc<ClaimPreimage>>,
 }
 
 impl std::fmt::Debug for MakerRpc {
@@ -57,6 +60,14 @@ impl std::fmt::Debug for MakerRpc {
             .field(
                 "chat_signing_key",
                 &self.chat_signing_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "zec_completion_store",
+                &self.zec_completion_store.as_ref().map(|_| "configured"),
+            )
+            .field(
+                "maker_claim_preimage",
+                &self.maker_claim_preimage.as_ref().map(|_| "[REDACTED]"),
             )
             .finish()
     }
@@ -70,6 +81,8 @@ impl MakerRpc {
             store: Arc::new(Mutex::new(store)),
             delivery: None,
             chat_signing_key: None,
+            zec_completion_store: None,
+            maker_claim_preimage: None,
         }
     }
 
@@ -79,11 +92,15 @@ impl MakerRpc {
         store: SqliteSwapStore,
         delivery: RunLocalDelivery,
         chat_signing_key: SecretKey,
+        zec_completion_store: SqliteZecRecoveryStore,
+        maker_claim_preimage: ClaimPreimage,
     ) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),
             delivery: Some(Arc::new(delivery)),
             chat_signing_key: Some(Arc::new(chat_signing_key)),
+            zec_completion_store: Some(Arc::new(zec_completion_store)),
+            maker_claim_preimage: Some(Arc::new(maker_claim_preimage)),
         }
     }
 }
@@ -587,6 +604,38 @@ pub struct ZecChatProposalV1 {
     pub proposal_wire: Vec<u8>,
 }
 
+/// Versioned taker response carrying the exact countersigned ZEC agreement.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZecChatCompleteRequestV1 {
+    /// Must be one for this DTO shape.
+    pub schema_version: u16,
+    /// Global exact-replay identity for atomic final acceptance.
+    pub request_id: RequestId,
+    /// Reserved immutable offer identity.
+    pub offer_id: MakerOfferId,
+    /// Current reserved offer revision, normally two.
+    pub expected_offer_revision: u64,
+    /// Winning reservation and Chat-session identity.
+    pub reservation_id: RequestId,
+    /// Exact bounded dual-signed agreement wire validated by the taker.
+    pub final_agreement_wire: Vec<u8>,
+}
+
+/// Durable final-acceptance result returned only after every linked row commits.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZecChatCompleteResponseV1 {
+    /// This response schema version.
+    pub schema_version: u16,
+    /// Durable consumed offer revision.
+    pub offer_revision: u64,
+    /// Whether the exact completion request was already committed.
+    pub was_replay: bool,
+    /// Agreement-derived application swap identity.
+    pub swap_id: Box<str>,
+}
+
 /// Empty parameters for bounded owner-local list methods.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ListRequest {}
@@ -1061,7 +1110,61 @@ fn register_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()>
             })
         },
     )?;
+    register_chat_complete_method(module)?;
     Ok(())
+}
+
+fn register_chat_complete_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<ZecChatCompleteResponseV1>, _>(
+        "zec_chat_complete_v1",
+        |params, context, _| {
+            let request: ZecChatCompleteRequestV1 = params.one()?;
+            complete_zec_chat(&request, &context)
+        },
+    )?;
+    Ok(())
+}
+
+fn complete_zec_chat(
+    request: &ZecChatCompleteRequestV1,
+    context: &MakerRpc,
+) -> RpcResult<ZecChatCompleteResponseV1> {
+    if request.schema_version != 1 {
+        return Err(invalid_request("unsupported ZEC Chat completion"));
+    }
+    let now_unix_seconds = trusted_now_unix_seconds()?;
+    let completion_store = context
+        .zec_completion_store
+        .as_ref()
+        .ok_or_else(|| invalid_request("maker ZEC completion store is unavailable"))?;
+    let preimage = context
+        .maker_claim_preimage
+        .as_ref()
+        .ok_or_else(|| invalid_request("maker claim authority is unavailable"))?;
+    let accepted = AcceptedZecAgreementV1::accept_wire_at(
+        &request.final_agreement_wire,
+        lez_swap_core::UnixSeconds::new(now_unix_seconds),
+        Participant::Maker,
+        0,
+    )
+    .map_err(invalid_request)?;
+    let swap_id: Box<str> = accepted.agreement().coordinator().id().as_str().into();
+    let commit = completion_store
+        .complete_maker_zec_negotiation(
+            &request.request_id,
+            &request.offer_id,
+            request.expected_offer_revision,
+            &request.reservation_id,
+            &accepted,
+            preimage,
+        )
+        .map_err(application_store_error)?;
+    Ok(ZecChatCompleteResponseV1 {
+        schema_version: 1,
+        offer_revision: commit.offer_revision(),
+        was_replay: commit.was_replay(),
+        swap_id,
+    })
 }
 
 fn validate_zec_chat_shape(request: &ZecChatProposeRequestV1) -> RpcResult<()> {

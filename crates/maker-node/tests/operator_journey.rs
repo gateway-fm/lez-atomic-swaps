@@ -367,6 +367,10 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => panic!("create Delivery signing key: {error}"),
     }
+    let claim_key = run.join("maker-claim-recovery.key");
+    let claim_preimage = run.join("maker-claim-preimage.key");
+    write_raw_secret_once(&claim_key, 0x7a);
+    write_raw_secret_once(&claim_preimage, 0x44);
     let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
         .arg("--socket")
         .arg(&socket)
@@ -380,6 +384,12 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         .arg(runtime.join("chat.sock"))
         .arg("--delivery-signing-key-file")
         .arg(delivery_key)
+        .arg("--maker-claim-key-id")
+        .arg("m5-operator-claim-key-v1")
+        .arg("--maker-claim-key-file")
+        .arg(claim_key)
+        .arg("--maker-claim-preimage-file")
+        .arg(claim_preimage)
         .spawn()
         .expect("start maker daemon");
     let mut daemon = Daemon(child);
@@ -397,6 +407,22 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
             "maker daemon readiness timed out"
         );
         thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn write_raw_secret_once(path: &Path, byte: u8) {
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(mut file) => {
+            file.write_all(&[byte; 32]).unwrap();
+            file.sync_all().unwrap();
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => panic!("create private raw material: {error}"),
     }
 }
 
