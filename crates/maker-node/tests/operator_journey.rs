@@ -55,6 +55,8 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
     assert!(socket_metadata.file_type().is_socket());
     assert_eq!(socket_metadata.permissions().mode() & 0o7777, 0o600);
 
+    configure_zec_route(&first_socket);
+
     let created = create_swap(&first_socket, "operator-swap-1", "bitcoin", None);
     assert_success(&created);
     assert_swap_view(&created.stdout, "operator-swap-1", "Bitcoin", "Offered");
@@ -123,6 +125,23 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
     let reverse_view: Value =
         serde_json::from_slice(&reverse_recovered.stdout).expect("CLI emits JSON");
     assert_eq!(reverse_view["direction"], "TakerSellsLez");
+    assert_route_lists(&second_socket);
+    let history = maker_cli(&second_socket, &["history"]);
+    assert_success(&history);
+    let history: Value = serde_json::from_slice(&history.stdout).expect("CLI emits history JSON");
+    let history = history.as_array().expect("history array");
+    assert_eq!(history.len(), 3);
+    assert!(history.iter().any(|view| view["id"] == "operator-swap-1"));
+    assert!(
+        history
+            .iter()
+            .any(|view| view["id"] == "operator-swap-reverse")
+    );
+    assert!(
+        history
+            .iter()
+            .any(|view| view["id"] == "operator-xmr-event-recovery")
+    );
 }
 
 #[test]
@@ -166,6 +185,71 @@ fn owner_lists_and_acknowledges_durable_alert_across_daemon_restart() {
         &["alerts", "--id", "operator-alert-swap", "--all"],
     );
     assert_alert_list(&all, alert_sequence, true);
+}
+
+fn configure_zec_route(socket: &Path) {
+    let disabled = maker_cli(
+        socket,
+        &[
+            "configure-pair",
+            "--request-id",
+            "operator-pair-zec-create-001",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+            "--enabled",
+            "false",
+            "--minimum-foreign-units",
+            "10",
+            "--maximum-foreign-units",
+            "10000",
+            "--offer-ttl-seconds",
+            "300",
+        ],
+    );
+    assert_configuration_commit(&disabled, 1, false);
+    let price = maker_cli(
+        socket,
+        &[
+            "set-local-price",
+            "--request-id",
+            "operator-price-zec-create-001",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+            "--lez-units-per-lot",
+            "5",
+            "--foreign-units-per-lot",
+            "2",
+        ],
+    );
+    assert_configuration_commit(&price, 1, false);
+    let enabled = maker_cli(
+        socket,
+        &[
+            "configure-pair",
+            "--request-id",
+            "operator-pair-zec-enable-001",
+            "--expected-revision",
+            "1",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+            "--enabled",
+            "true",
+            "--minimum-foreign-units",
+            "10",
+            "--maximum-foreign-units",
+            "10000",
+            "--offer-ttl-seconds",
+            "300",
+        ],
+    );
+    assert_configuration_commit(&enabled, 2, false);
+    assert_route_lists(socket);
 }
 
 fn create_swap(socket: &Path, id: &str, pair: &str, direction: Option<&str>) -> Output {
@@ -251,6 +335,33 @@ fn assert_success(output: &Output) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn assert_configuration_commit(output: &Output, revision: u64, replay: bool) {
+    assert_success(output);
+    let commit: Value = serde_json::from_slice(&output.stdout).expect("CLI emits commit JSON");
+    assert_eq!(commit["revision"], revision);
+    assert_eq!(commit["was_replay"], replay);
+}
+
+fn assert_route_lists(socket: &Path) {
+    let pairs = maker_cli(socket, &["pairs"]);
+    assert_success(&pairs);
+    let pairs: Value = serde_json::from_slice(&pairs.stdout).expect("CLI emits pair JSON");
+    assert_eq!(pairs.as_array().unwrap().len(), 1);
+    assert_eq!(pairs[0]["revision"], 2);
+    assert_eq!(pairs[0]["value"]["enabled"], true);
+    assert_eq!(pairs[0]["value"]["price_source"], "local");
+    assert_eq!(pairs[0]["value"]["route"]["pair"], "Zcash");
+    assert_eq!(pairs[0]["value"]["route"]["direction"], "TakerSellsLez");
+
+    let prices = maker_cli(socket, &["prices"]);
+    assert_success(&prices);
+    let prices: Value = serde_json::from_slice(&prices.stdout).expect("CLI emits price JSON");
+    assert_eq!(prices.as_array().unwrap().len(), 1);
+    assert_eq!(prices[0]["revision"], 1);
+    assert_eq!(prices[0]["value"]["lez_units_per_lot"], 5);
+    assert_eq!(prices[0]["value"]["foreign_units_per_lot"], 2);
 }
 
 fn assert_swap_view(bytes: &[u8], id: &str, pair: &str, phase: &str) {

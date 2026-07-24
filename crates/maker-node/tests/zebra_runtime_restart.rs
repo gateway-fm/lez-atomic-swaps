@@ -514,7 +514,7 @@ fn assert_removal_survives_restart(
     let journal_rows: i64 = connection
         .query_row("SELECT COUNT(*) FROM chain_events", [], |row| row.get(0))
         .expect("count journal rows");
-    assert_eq!(schema_version, 10, "update this audit for every migration");
+    assert_eq!(schema_version, 11, "update this audit for every migration");
     assert_eq!(binding_rows, 1);
     assert_eq!(journal_rows, 2);
 }

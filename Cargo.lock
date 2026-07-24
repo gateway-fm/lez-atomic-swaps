@@ -1977,6 +1977,7 @@ dependencies = [
  "hyper-util",
  "jsonrpsee",
  "jsonrpsee-http-client",
+ "lez-bridge-protocol",
  "lez-swap-core",
  "lez-swap-store",
  "lez-zec-swap-sdk",

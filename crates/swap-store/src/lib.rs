@@ -13,6 +13,7 @@ mod adaptor_session_journal;
 mod bridge_operation_journal;
 mod btc_maker_lock_journal;
 mod btc_recovery;
+mod maker_application;
 mod public_effect_journal;
 mod zec_recovery;
 
@@ -37,6 +38,10 @@ pub use btc_recovery::{
     BtcAgreementAcceptance, BtcLifecycleEvidenceKind, BtcLifecycleEvidenceV1, BtcOfflineStatus,
     BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome, SqliteBtcRecoveryStore,
 };
+pub use maker_application::{
+    LocalPriceV1, MakerConfigurationCommit, MakerConfigurationError, MakerPairConfigurationV1,
+    MakerPriceSourceKind, MakerRouteV1, VersionedMakerRecord,
+};
 pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
     PublicEffectKey, PublicEffectObservation, PublicEffectOperation, PublicEffectSnapshot,
@@ -56,7 +61,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 10;
+const DATABASE_SCHEMA_VERSION: i64 = 11;
+const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
@@ -297,6 +303,32 @@ pub enum StoreError {
     /// `SQLite` operation failed.
     #[error("SQLite swap-store operation failed")]
     Sqlite(#[from] rusqlite::Error),
+    /// A maker pair, amount bound, TTL, or local price was invalid.
+    #[error("maker application configuration is invalid")]
+    MakerConfiguration(#[from] MakerConfigurationError),
+    /// One maker request ID was reused with a different operation or payload.
+    #[error("maker configuration request ID conflicts with its durable mutation")]
+    MakerConfigurationRequestConflict,
+    /// A maker configuration row disagreed with its route key or stored result.
+    #[error("maker application configuration is corrupt")]
+    CorruptMakerConfiguration,
+    /// A route-local compare-and-swap revision did not match durable state.
+    #[error("stale maker configuration revision: expected {expected:?}, actual {actual:?}")]
+    StaleMakerConfiguration {
+        /// Revision expected by the caller; `None` means insert-only.
+        expected: Option<u64>,
+        /// Current durable revision; `None` means the route is absent.
+        actual: Option<u64>,
+    },
+    /// A local price cannot be installed before its route policy.
+    #[error("maker pair configuration does not exist")]
+    MissingMakerPair,
+    /// An enabled local-price route has no durable quote.
+    #[error("enabled maker route has no local price")]
+    MissingMakerLocalPrice,
+    /// A local-price mutation targeted a non-local price source.
+    #[error("maker route does not use the local price source")]
+    MakerPriceSourceMismatch,
     /// A persisted bridge protocol value was malformed or unsupported.
     #[error("persisted bridge operation context contains an invalid bounded value")]
     BridgeProtocolValue(#[from] lez_bridge_protocol::ProtocolValueError),
@@ -639,6 +671,39 @@ impl SqliteSwapStore {
                 serde_json::from_str(&json).map_err(StoreError::from)
             })
             .transpose()
+    }
+
+    /// Lists all durable swap aggregates in stable identifier order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when reading, decoding, or revalidating an aggregate fails.
+    pub fn list_swaps(&self) -> Result<Vec<SwapCoordinator>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, schema_version, state_json FROM swaps ORDER BY id")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (id, version, json) = row?;
+            if version != SWAP_PAYLOAD_VERSION {
+                return Err(StoreError::UnsupportedPayloadVersion {
+                    kind: "swap",
+                    version,
+                });
+            }
+            let swap: SwapCoordinator = serde_json::from_str(&json)?;
+            if swap.id().as_str() != id {
+                return Err(StoreError::InvalidLegacySwapState);
+            }
+            Ok(swap)
+        })
+        .collect()
     }
 
     /// Returns the durable optimistic revision for a swap.
@@ -1347,7 +1412,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
             [],
         )?;
     }
-    if version < DATABASE_SCHEMA_VERSION {
+    if version < LEGACY_CLAIM_MIGRATION_VERSION {
         migrate_legacy_claim_evidence(&transaction)?;
     }
     transaction.execute_batch(
@@ -1391,6 +1456,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
             ON operator_alert_outbox (acknowledged, severity, alert_sequence);
         ",
     )?;
+    maker_application::migrate(&transaction)?;
     migrate_zec_sdk_recovery(&transaction)?;
     transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()?;

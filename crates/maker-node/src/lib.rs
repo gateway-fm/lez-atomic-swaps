@@ -6,13 +6,15 @@ pub use local_rpc::call_local_rpc;
 use std::sync::Mutex;
 
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
+use lez_bridge_protocol::RequestId;
 use lez_swap_core::{
     Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    AlertObservedEvent, EventCommit, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
-    OperatorAlertSeverity, SqliteSwapStore, StoreError,
+    AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit,
+    MakerPairConfigurationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
+    OperatorAlertSeverity, SqliteSwapStore, StoreError, VersionedMakerRecord,
 };
 use lez_zec_swap_sdk::{
     HistoricalReplayError, ZcashObservationEvent, ZcashObservationEventRecordV1,
@@ -451,6 +453,32 @@ impl From<&OperatorAlert> for OperatorAlertView {
     }
 }
 
+/// Parameters for one idempotent maker pair-policy mutation.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PairConfigureRequest {
+    /// Stable request identity used for exact replay.
+    pub request_id: RequestId,
+    /// Current route revision, or `None` for insert-only.
+    pub expected_revision: Option<u64>,
+    /// Fully validated versioned policy.
+    pub configuration: MakerPairConfigurationV1,
+}
+
+/// Parameters for one idempotent local-price mutation.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct LocalPriceSetRequest {
+    /// Stable request identity used for exact replay.
+    pub request_id: RequestId,
+    /// Current price revision, or `None` for insert-only.
+    pub expected_revision: Option<u64>,
+    /// Exact integer lot ratio.
+    pub price: LocalPriceV1,
+}
+
+/// Empty parameters for bounded owner-local list methods.
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct ListRequest {}
+
 /// Parameters for creating one swap with already negotiated immutable terms.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CreateSwapRequest {
@@ -532,6 +560,7 @@ pub struct AlertAcknowledgeRequest {
 /// Returns an error if a method cannot be registered.
 pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
     let mut module = RpcModule::new(context);
+    register_application_methods(&mut module)?;
     module.register_blocking_method::<RpcResult<SwapView>, _>(
         "swap_create",
         |params, context, _| {
@@ -630,6 +659,87 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
     Ok(module)
 }
 
+fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<MakerConfigurationCommit>, _>(
+        "maker_pair_configure",
+        |params, context, _| {
+            let request: PairConfigureRequest = params.one()?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .configure_maker_pair(
+                    &request.request_id,
+                    request.expected_revision,
+                    &request.configuration,
+                )
+                .map_err(application_store_error)
+        },
+    )?;
+    module.register_blocking_method::<
+        RpcResult<Vec<VersionedMakerRecord<MakerPairConfigurationV1>>>,
+        _,
+    >("maker_pair_list", |params, context, _| {
+        let _: ListRequest = params.one()?;
+        let store = context
+            .store
+            .lock()
+            .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+        store.list_maker_pairs().map_err(application_store_error)
+    })?;
+    module.register_blocking_method::<RpcResult<MakerConfigurationCommit>, _>(
+        "maker_local_price_set",
+        |params, context, _| {
+            let request: LocalPriceSetRequest = params.one()?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .set_local_price(
+                    &request.request_id,
+                    request.expected_revision,
+                    &request.price,
+                )
+                .map_err(application_store_error)
+        },
+    )?;
+    module.register_blocking_method::<RpcResult<Vec<VersionedMakerRecord<LocalPriceV1>>>, _>(
+        "maker_local_price_list",
+        |params, context, _| {
+            let _: ListRequest = params.one()?;
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store.list_local_prices().map_err(application_store_error)
+        },
+    )?;
+    module.register_blocking_method::<RpcResult<Vec<SwapView>>, _>(
+        "swap_history",
+        |params, context, _| {
+            let _: ListRequest = params.one()?;
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .list_swaps()
+                .map_err(internal_store_error)?
+                .iter()
+                .map(|swap| {
+                    let alerts = store
+                        .list_operator_alerts(swap.id(), 0, false)
+                        .map_err(internal_store_error)?;
+                    SwapView::with_pending_alerts(swap, &alerts).map_err(internal_store_error)
+                })
+                .collect()
+        },
+    )?;
+    Ok(())
+}
+
 fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Error> {
     match (&request.recovery, request.pair, request.direction) {
         (_, Pair::Monero, SwapDirection::TakerSellsForeign) => Err(Error::UnsupportedDirection {
@@ -698,6 +808,18 @@ fn position(chain: Chain, basis: ClockBasis, value: u64) -> ChainPosition {
 
 fn invalid_request(error: impl std::fmt::Display) -> ErrorObjectOwned {
     rpc_error(-32_602, error.to_string())
+}
+
+fn application_store_error(error: StoreError) -> ErrorObjectOwned {
+    match error {
+        StoreError::MakerConfigurationRequestConflict
+        | StoreError::StaleMakerConfiguration { .. } => rpc_error(CONFLICT, error.to_string()),
+        StoreError::MakerConfiguration(_)
+        | StoreError::MissingMakerPair
+        | StoreError::MissingMakerLocalPrice
+        | StoreError::MakerPriceSourceMismatch => invalid_request(error),
+        other => internal_store_error(other),
+    }
 }
 
 fn internal_store_error(error: impl std::fmt::Display) -> ErrorObjectOwned {

@@ -3183,7 +3183,10 @@ separately from runtime dependencies.
   retaining `jsonrpsee` as the protocol implementation. The daemon now enforces
   owner/mode/path/body/connection limits, no-clobber readiness, and exact-inode
   cleanup; real daemon/CLI restart and alert journeys pass.
-- [ ] Add durable pair and local-price configuration plus offer/history views.
+- [ ] Complete durable application views. Schema v11 pair and exact local-price
+  configuration plus swap history are process-level GREEN with CAS, request
+  replay, rollback, migration, and restart evidence; expiring offer lifecycle
+  and history remain.
 - [ ] Add the price-source trait, local source, and bounded Logos C-API adapter.
 - [ ] Complete maker CLI commands and add the taker CLI.
 - [ ] Add Delivery/Chat-compatible run-local adapters, expiry/authentication,
