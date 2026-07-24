@@ -4209,6 +4209,55 @@ another run's Compose project. Keep the private application root only while
 debugging or collecting secret-safe evidence, then remove that exact path under
 the operator's normal local retention policy.
 
+## Flow 1C: coordinator fuzz smoke and longer campaign
+
+This is a developer/CI flow, not a user swap. It exercises BTC and ZEC in both
+directions and the reviewed LEZ-first XMR profile without starting any node,
+daemon, sidecar, Docker project, RPC, faucet, or public service.
+
+Install the exact tools once:
+
+```sh
+rustup toolchain install nightly-2026-07-01 --profile minimal
+cargo install cargo-fuzz --version 0.13.2 --locked
+```
+
+Then run the structural contract and the same bounded smoke as CI:
+
+```sh
+./scripts/test-m5-coordinator-fuzz-contract.sh
+./scripts/run-m5-coordinator-fuzz-smoke.sh
+```
+
+Expected output ends with `DONE` after 512 runs and no crash. The runner copies
+the seven checked seeds to a disposable corpus, limits inputs to 512 bytes and
+each input to two seconds, and removes successful-run corpus, build, and
+artifact roots. On an invariant failure it retains only the exact crash
+artifact path printed on stderr; minimize and add that input to
+`fuzz/corpus/coordinator/` with a descriptive name before fixing the bug.
+
+For a larger but still bounded local campaign:
+
+```sh
+FUZZ_SMOKE_RUNS=100000 \
+FUZZ_MAX_LEN=512 \
+FUZZ_TIMEOUT_SECONDS=2 \
+  ./scripts/run-m5-coordinator-fuzz-smoke.sh
+```
+
+External-resource and flakiness inventory:
+
+| Resource | Runtime use | Flakiness and trust boundary |
+|---|---:|---|
+| LEZ, Bitcoin, Monero, or Zcash node/RPC | No | The target consumes deterministic in-memory public observations only |
+| Docker, faucet, public funds, Delivery, Chat, Core | No | None can affect a fuzz result |
+| crates.io and Rust distribution servers | Cold setup only | Toolchain and dependency acquisition can fail; the executed graph is locked and later runs use local caches |
+| Host CPU and memory | Yes | A bounded run may be slower under contention; per-input timeout remains fail-hard |
+
+The isolated `fuzz/Cargo.lock` is covered by its own advisory, license, ban, and
+source audit in CI. `libfuzzer-sys` 0.4.13 carries permissive MIT/Apache and LLVM
+NCSA terms; the NCSA allowance is exact and graph-local in `fuzz/deny.toml`.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

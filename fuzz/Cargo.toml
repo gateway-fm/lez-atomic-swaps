@@ -1,0 +1,25 @@
+[package]
+name = "lez-swap-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+lez-swap-core = { path = "../crates/swap-core", version = "=0.1.0" }
+serde_json = "=1.0.150"
+
+[[bin]]
+name = "coordinator"
+path = "fuzz_targets/coordinator.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+resolver = "2"

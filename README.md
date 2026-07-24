@@ -50,10 +50,12 @@ and no public RPC or faucet participated. See the
 and the preceding
 [corridor checkpoint](docs/evidence/m5-zec-application-corridor-20260724.json).
 The progressive local ZEC application PoC gate is certified. Full swap-store,
-maker-process, strict Clippy, and Rustdoc gates are GREEN. C-API pricing,
-systemd/Core, fuzzing, other pairs, and hardening remain literal M5 work; the
-living implementation plan and milestone metrics track that broader scope
-without weakening this reproducible PoC claim.
+maker-process, strict Clippy, and Rustdoc gates are GREEN. The literal pinned
+coordinator fuzz target, seven-seed corpus, bounded CI smoke, and separate
+dependency audit are also GREEN locally; reproduce them with
+`./scripts/run-m5-coordinator-fuzz-smoke.sh`. C-API pricing, systemd/Core, other
+pairs, and hardening remain literal M5 work, tracked in the living plan and
+metrics without weakening this reproducible PoC claim.
 
 Build and repeat the current real process boundary with:
 

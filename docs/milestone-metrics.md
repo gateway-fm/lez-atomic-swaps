@@ -34,8 +34,8 @@ certified.
 
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
-| Live authorities reconciled | 2 of 2 | Live RFP-003 and accepted replacement issue #112 re-read on 2026-07-23; issue #61 excluded |
-| Literal M5 outputs complete | 0 of 7 certified | Daemon/systemd, maker CLI, taker CLI, persistent coordinator, two pricing modes, Delivery/Chat behavior, and fuzz harness require exact evidence |
+| Live authorities reconciled | 2 of 2 | Live RFP-003 and accepted replacement issue #112 re-read on 2026-07-24; issue #61 excluded |
+| Literal M5 outputs complete | 1 of 7 component-certified | The fuzz harness is GREEN; daemon/systemd, maker CLI, taker CLI, persistent coordinator, two pricing modes, and Delivery/Chat behavior remain partial |
 | Application binaries | Maker daemon and partial maker CLI expose owner-local pair policy, exact local price, durable offer publish/list/withdraw, swap create/status/history, and alert commands; daemon-owned authenticated Delivery plus real taker ZEC acceptance are GREEN | Add maker manual effect/lifecycle commands and taker status/claim/refund plus BTC/XMR initiation |
 | Owner-local control | GREEN component slice | Mode-0700 owner runtime directory, disjoint mode-0600 owner and Chat Unix sockets, absolute/no-symlink paths, bounded HTTP/1 JSON-RPC, disabled batches, 16-connection cap, no-clobber readiness, exact-inode cleanup, and two black-box daemon/CLI journeys pass strict gates |
 | Price-source runtime adapters | 1 of 2 component GREEN | The pluggable trait and store-backed local adapter preserve exact route, reduced-integer price, revision, and daemon-trusted time; the real CLI quotes 5:2 after daemon restart. Add the bounded Logos C-API adapter and bind external quotes into signed offers |
@@ -44,15 +44,15 @@ certified.
 | Concurrent application swaps | 0 composed | Distinct swap IDs, role state, agreements, escrows, deadlines, and effects |
 | Missing-chain degradation | 0 composed | Each unavailable route disables only affected pairs and reports operator state |
 | Delivery/Chat removal after lock | 3 exact-tree actual-node runs GREEN | The latest run retained the exact restarted daemon through two-confirmation Zcash funding, then removed owner/Chat sockets and Delivery before LEZ reveal, terminal settlement, and offline terminal projection |
-| Coordinator fuzzing | 512-case Proptest carried; no literal fuzz target | Add `cargo-fuzz` or equivalent target and bounded CI smoke corpus |
+| Coordinator fuzzing | Literal cargo-fuzz target plus 7 retained seeds; local 512-run smoke GREEN at 1,161 covered counters and 4,926 features | BTC/ZEC both directions and LEZ-first XMR cover transition rejection, reorg/removal, claim/refund/recovery, immutable terms, terminal absorption, and restart after every action; the isolated graph audit is GREEN |
 | Actual local application swaps | 4 exact-tree happy-path completions; 3 checked records including 1 packet-bearing certification replay | Latest run `m5app6c3bbbe20260724a` completed in 27.860 seconds, 56 drive rounds, zero retry, Zebra 104 to 107, both roles revision 4, and fresh terminal owner projection |
 | Public runtime dependencies | None required for PoC | Record cold-download dependencies separately; runtime uses local nodes and deterministic funds |
 | Cleanup leaks | 0 in the exact-tree corridor run | Both run-scoped Compose projects, four containers, two unique images, the LEZ network, RPC ports, and named private roots are absent; every pre-existing foreign container survived |
 
 The progressive local ZEC application PoC gate is closed. Remaining literal M5
-ETA is 45–70 focused hours under the owner-approved Logos-upstream exception;
-systemd/Core, Logos C-API, fuzz, multi-pair, and post-PoC hardening outputs
-remain open and are not inferred from this completed replay.
+ETA is 42–65 focused hours under the owner-approved Logos-upstream exception;
+systemd/Core, Logos C-API, multi-pair, and post-PoC hardening outputs remain
+open and are not inferred from this completed replay.
 
 ## M4 PoC scorecard
 

@@ -644,6 +644,7 @@ flowchart TB
         M3RA["btc-reference-actor<br/>schema 4 live locks and schema 5 peer projection GREEN<br/>four complete F7 actual-node pairs GREEN"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3CACHE["Policy-2 official-wallet artifact cache<br/>executable plus manifest only<br/>202.42s cold and 10.35s hit GREEN"]
+        M5FZ["M5 cargo-fuzz coordinator harness<br/>all supported profiles + restart invariants<br/>bounded CI smoke GREEN locally"]
         M3F7A --> M3F7C
         M3F7C --> M3F7D
         M3F7D --> M3F7S
@@ -763,6 +764,7 @@ flowchart TB
     APP --> CO
     CO --> DB
     CO --> PS
+    M5FZ -.->|"generated transition and restart checks"| CO
     PS -->|"stopped terminal offline replay"| OTP
     OTP --> DB
     APP -->|"owner status and history overlay only"| OTP

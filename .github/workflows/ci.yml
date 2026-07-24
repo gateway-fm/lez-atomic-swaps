@@ -94,6 +94,26 @@ jobs:
       - run: ./scripts/check-architecture-diagrams.sh
       - run: ./scripts/check-docker-isolation.sh
 
+  coordinator-fuzz:
+    name: coordinator fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: nightly-2026-07-01
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Run bounded coordinator fuzz smoke
+        env:
+          FUZZ_SMOKE_RUNS: "512"
+          FUZZ_MAX_LEN: "512"
+          FUZZ_TIMEOUT_SECONDS: "2"
+        run: ./scripts/run-m5-coordinator-fuzz-smoke.sh
+
   dependencies:
     name: dependency vulnerabilities, licenses, bans, and sources
     runs-on: ubuntu-latest
@@ -105,6 +125,13 @@ jobs:
           rust-version: "1.96.0"
           command: check advisories bans licenses sources
           arguments: --all-features
+      - name: Audit isolated coordinator fuzz graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: fuzz/Cargo.toml
+          command: check
+          command-arguments: --config fuzz/deny.toml advisories bans licenses sources
       - name: Audit pinned SPEL/LEZ compatibility graph
         uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:

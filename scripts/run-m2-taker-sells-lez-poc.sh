@@ -64,7 +64,7 @@ else
   provision_actors_root="$actors_root"
 fi
 readonly provision_actors_root
-readonly m5_handoff_driver="$(pwd)/scripts/run-m5-zec-chat-handoff.sh"
+readonly m5_handoff_driver="${PWD}/scripts/run-m5-zec-chat-handoff.sh"
 
 for endpoint in "$LEZ_SEQUENCER_URL" "$LEZ_INDEXER_URL" "$ZEBRA_RPC_URL"; do
   if [[ ! "$endpoint" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}/?$ ]]; then

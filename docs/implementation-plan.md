@@ -3276,8 +3276,14 @@ separately from runtime dependencies.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
-- [ ] Add and continuously exercise the coordinator fuzz target with retained
-  regression inputs and bounded CI smoke execution.
+- [x] Add and continuously exercise the coordinator fuzz target with retained
+  regression inputs and bounded CI smoke execution. The isolated cargo-fuzz
+  0.13.2/libfuzzer-sys 0.4.13 graph covers every supported pair/direction
+  profile, rejected-transition immutability, absorbing terminal states, claim
+  evidence, immutable agreement terms, and an exact JSON restart after every
+  generated action. Seven seeds, a disposable mutable corpus, 512-run bounded
+  CI job, strict Clippy, and graph-local advisory/license/ban/source audit are
+  GREEN; ADR 0096 records the boundary and first local run.
 - [ ] Revalidate formatting, Clippy, tests, Rustdoc, dependency
   advisories/licenses/sources, image vulnerability scans, isolation,
   traceability, diagrams, secret safety, and exact cleanup.
@@ -3286,8 +3292,8 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 45 to 70 focused hours under the owner-approved Logos-upstream
-exception; systemd/Core, Logos C-API pricing, fuzzing, other pairs, and post-PoC
+literal M5 ETA is 42 to 65 focused hours under the owner-approved Logos-upstream
+exception; systemd/Core, Logos C-API pricing, other pairs, and post-PoC
 hardening remain explicitly open above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.

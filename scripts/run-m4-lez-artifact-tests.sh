@@ -162,7 +162,8 @@ fi
 [[ "$($rzup_bin --version)" == "rzup ${rzup_version}" ]] ||
   fail "expected rzup ${rzup_version} at $rzup_bin"
 
-readonly rzup_show="$(RISC0_HOME="$risc0_home" "$rzup_bin" show)"
+rzup_show="$(RISC0_HOME="$risc0_home" "$rzup_bin" show)"
+readonly rzup_show
 if ! grep -Fqx "* ${risc0_rust_version}" <<<"$rzup_show"; then
   [[ "$tool_dir_is_run_owned" == 1 ]] ||
     fail "explicit LEZ_M4_TOOL_DIR is missing Risc0 Rust ${risc0_rust_version}"
