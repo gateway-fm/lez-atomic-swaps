@@ -11,7 +11,7 @@ pub use run_local_delivery::{
 };
 
 use std::{
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -23,15 +23,17 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit,
-    MakerOfferId, MakerOfferRecordV1, MakerOfferStatus, MakerPairConfigurationV1, MakerRouteV1,
-    OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1, OperatorAlertSeverity,
-    SqliteSwapStore, StoreError, VersionedMakerRecord,
+    MakerOfferId, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerPairConfigurationV1,
+    MakerRouteV1, MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
+    OperatorAlertSeverity, SqliteSwapStore, StoreError, VersionedMakerRecord,
+    maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
-    HistoricalReplayError, ZcashObservationEvent, ZcashObservationEventRecordV1,
-    ZcashObservationTracker, ZecBindingRecordError, ZecRefundProfile, ZecSwapBinding,
-    replay_zcash_observation_history,
+    HistoricalReplayError, ValidatedZecAgreementDraftV1, ZcashObservationEvent,
+    ZcashObservationEventRecordV1, ZcashObservationTracker, ZecAgreementDraftV1,
+    ZecBindingRecordError, ZecRefundProfile, ZecSwapBinding, replay_zcash_observation_history,
 };
+use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 
 const NOT_FOUND: i32 = -32_004;
@@ -39,9 +41,11 @@ const CONFLICT: i32 = -32_009;
 const INTERNAL_ERROR: i32 = -32_603;
 
 /// RPC context owned by one maker daemon.
+#[derive(Clone)]
 pub struct MakerRpc {
-    store: Mutex<SqliteSwapStore>,
-    delivery: Option<RunLocalDelivery>,
+    store: Arc<Mutex<SqliteSwapStore>>,
+    delivery: Option<Arc<RunLocalDelivery>>,
+    chat_signing_key: Option<Arc<SecretKey>>,
 }
 
 impl std::fmt::Debug for MakerRpc {
@@ -50,6 +54,10 @@ impl std::fmt::Debug for MakerRpc {
             .debug_struct("MakerRpc")
             .field("store", &self.store)
             .field("delivery", &self.delivery)
+            .field(
+                "chat_signing_key",
+                &self.chat_signing_key.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
@@ -59,17 +67,23 @@ impl MakerRpc {
     #[must_use]
     pub fn new(store: SqliteSwapStore) -> Self {
         Self {
-            store: Mutex::new(store),
+            store: Arc::new(Mutex::new(store)),
             delivery: None,
+            chat_signing_key: None,
         }
     }
 
-    /// Creates a maker RPC context that advertises durable offers through Delivery.
+    /// Creates a shared maker context for Delivery and the isolated Chat RPC module.
     #[must_use]
-    pub fn with_delivery(store: SqliteSwapStore, delivery: RunLocalDelivery) -> Self {
+    pub fn with_delivery(
+        store: SqliteSwapStore,
+        delivery: RunLocalDelivery,
+        chat_signing_key: SecretKey,
+    ) -> Self {
         Self {
-            store: Mutex::new(store),
-            delivery: Some(delivery),
+            store: Arc::new(Mutex::new(store)),
+            delivery: Some(Arc::new(delivery)),
+            chat_signing_key: Some(Arc::new(chat_signing_key)),
         }
     }
 }
@@ -527,6 +541,52 @@ pub struct OfferWithdrawRequest {
     pub expected_revision: u64,
 }
 
+/// Versioned untrusted taker request for one maker-first ZEC proposal.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZecChatProposeRequestV1 {
+    /// Must be one for this DTO shape.
+    pub schema_version: u16,
+    /// Global exact-replay identity for durable proposal staging.
+    pub request_id: RequestId,
+    /// Selected immutable offer identity.
+    pub offer_id: MakerOfferId,
+    /// Current active offer revision, normally one.
+    pub expected_offer_revision: u64,
+    /// Winning reservation and Chat-session identity.
+    pub reservation_id: RequestId,
+    /// Exact selected Zcash principal in zatoshis.
+    pub foreign_units: u64,
+    /// Exact signed Delivery envelope previously authenticated by the taker.
+    pub signed_offer_envelope: Vec<u8>,
+    /// Canonical bounded unsigned agreement draft produced from public chain facts.
+    pub unsigned_draft_wire: Vec<u8>,
+}
+
+/// Exact durable maker proposal returned only after staging commits.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZecChatProposalV1 {
+    /// This response schema version.
+    pub schema_version: u16,
+    /// Durable reserved offer revision.
+    pub offer_revision: u64,
+    /// Whether the exact stage request was already committed.
+    pub was_replay: bool,
+    /// Winning reservation and Chat-session identity.
+    pub reservation_id: RequestId,
+    /// Exact no-rounding LEZ principal.
+    pub lez_units: u128,
+    /// Maker identity authenticated by Delivery and the proposal signature.
+    pub maker_identity: Vec<u8>,
+    /// Taker identity committed by the validated unsigned draft.
+    pub taker_identity: Vec<u8>,
+    /// Canonical body commitment signed by the maker.
+    pub agreement_commitment: [u8; 32],
+    /// Exact bounded maker-proposal wire for taker validation and countersigning.
+    pub proposal_wire: Vec<u8>,
+}
+
 /// Empty parameters for bounded owner-local list methods.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ListRequest {}
@@ -889,6 +949,146 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
 
 fn delivery_error(error: &RunLocalDeliveryError) -> ErrorObjectOwned {
     rpc_error(INTERNAL_ERROR, error.to_string())
+}
+
+/// Builds the taker-facing Chat module without registering owner-control methods.
+///
+/// # Errors
+///
+/// Returns an error if the bounded Chat method cannot be registered.
+pub fn chat_rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
+    let mut module = RpcModule::new(context);
+    register_chat_methods(&mut module)?;
+    Ok(module)
+}
+
+fn register_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<ZecChatProposalV1>, _>(
+        "zec_chat_propose_v1",
+        |params, context, _| {
+            let request: ZecChatProposeRequestV1 = params.one()?;
+            validate_zec_chat_shape(&request)?;
+            let now_unix_seconds = trusted_now_unix_seconds()?;
+            let delivery = context
+                .delivery
+                .as_ref()
+                .ok_or_else(|| invalid_request("maker Chat Delivery is unavailable"))?;
+            let signing_key = context
+                .chat_signing_key
+                .as_ref()
+                .ok_or_else(|| invalid_request("maker Chat signer is unavailable"))?;
+            let authenticated = delivery
+                .authenticate_envelope(&request.signed_offer_envelope)
+                .map_err(|error| invalid_request(error.to_string()))?;
+            let offer = authenticated.offer();
+            if offer.id() != &request.offer_id
+                || offer.route().pair() != Pair::Zcash
+                || offer.route().direction() != SwapDirection::TakerSellsLez
+                || offer.created_at_unix_seconds() > now_unix_seconds
+                || now_unix_seconds >= offer.expires_at_unix_seconds()
+            {
+                return Err(invalid_request(
+                    "Delivery offer does not match live ZEC Chat request",
+                ));
+            }
+            let validated = ZecAgreementDraftV1::from_wire_at(
+                &request.unsigned_draft_wire,
+                lez_swap_core::UnixSeconds::new(now_unix_seconds),
+            )
+            .map_err(invalid_request)?;
+            let maker_key = PublicKey::from_secret_key(&Secp256k1::signing_only(), signing_key);
+            let maker_identity = maker_key.serialize();
+            let taker_identity = validated.taker_zcash_key().serialize();
+            let lez_units = offer
+                .quote_foreign_amount(request.foreign_units)
+                .map_err(invalid_request)?;
+            let offer_commitment = authenticated.commitment();
+            if !zec_draft_matches_offer(
+                &validated,
+                &authenticated,
+                offer,
+                &maker_key,
+                &request.reservation_id,
+                request.foreign_units,
+                lez_units,
+            ) {
+                return Err(invalid_request(
+                    "unsigned ZEC draft is not bound to the selected offer",
+                ));
+            }
+            let agreement_commitment = validated.commitment();
+            let signature = Secp256k1::signing_only()
+                .sign_ecdsa(&Message::from_digest(agreement_commitment), signing_key)
+                .serialize_compact();
+            let proposal = validated
+                .with_maker_signature(signature)
+                .map_err(invalid_request)?;
+            let proposal_wire = proposal.encode_wire().map_err(invalid_request)?;
+            let negotiation = MakerZecNegotiationV1::proposed(
+                request.reservation_id.clone(),
+                offer_commitment,
+                maker_identity,
+                taker_identity,
+                request.foreign_units,
+                lez_units,
+                now_unix_seconds,
+                agreement_commitment,
+                proposal_wire.clone(),
+            )
+            .map_err(invalid_request)?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            let commit = store
+                .stage_zec_maker_negotiation(
+                    &request.request_id,
+                    &request.offer_id,
+                    request.expected_offer_revision,
+                    &negotiation,
+                )
+                .map_err(application_store_error)?;
+            Ok(ZecChatProposalV1 {
+                schema_version: 1,
+                offer_revision: commit.revision(),
+                was_replay: commit.was_replay(),
+                reservation_id: request.reservation_id,
+                lez_units,
+                maker_identity: maker_identity.to_vec(),
+                taker_identity: taker_identity.to_vec(),
+                agreement_commitment,
+                proposal_wire,
+            })
+        },
+    )?;
+    Ok(())
+}
+
+fn validate_zec_chat_shape(request: &ZecChatProposeRequestV1) -> RpcResult<()> {
+    if request.schema_version != 1 || request.foreign_units == 0 {
+        return Err(invalid_request("unsupported or empty ZEC Chat proposal"));
+    }
+    Ok(())
+}
+
+fn zec_draft_matches_offer(
+    validated: &ValidatedZecAgreementDraftV1,
+    authenticated: &AuthenticatedOfferRefV1,
+    offer: &MakerOfferV1,
+    maker_key: &PublicKey,
+    reservation_id: &RequestId,
+    foreign_units: u64,
+    lez_units: u128,
+) -> bool {
+    let transcript = validated.body().transcript();
+    validated.maker_zcash_key() == maker_key
+        && authenticated.maker_identity() == &maker_key.serialize()
+        && validated.body().direction() == SwapDirection::TakerSellsLez
+        && validated.zcash_amount_zatoshis() == foreign_units
+        && validated.body().lez_terms().amount() == lez_units
+        && transcript.session_id() == &maker_zec_chat_session_id(reservation_id)
+        && transcript.offer_commitment() == &authenticated.commitment()
+        && transcript.expires_at_unix_seconds() == offer.expires_at_unix_seconds()
 }
 
 fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Error> {

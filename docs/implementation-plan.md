@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-20
+Last updated: 2026-07-24
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -119,8 +119,8 @@ created under the previous test-first strategy. ADR 0027 carries it forward for
 later revalidation; it does not imply that the M2 QA, chaos, information-
 security, or production-readiness phase has been entered or completed. M2 and
 M3 are certified at their reproducible local-functional PoC boundaries; their
-QA and later hardening phases remain inactive. M4 is now the active progressive
-local-PoC slice.
+QA and later hardening phases remain inactive. M5 is now the active progressive
+local-PoC slice; M4 is certified at its owner-selected PoC boundary.
 The final column is a post-M2 backlog, not
 an instruction to start every listed refactor now. Restart, refund, reorg,
 concurrency, broad negative testing, and new RED-GREEN-REFACTOR work wait for
@@ -3140,9 +3140,10 @@ The current executable baseline is intentionally not called M5-complete. It has
 an owner-restricted Unix-socket maker daemon, durable pair and exact-price
 configuration, a pluggable local runtime price source, swap/alert history,
 SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It has
-a discovery-only taker CLI and daemon-owned signed run-local Delivery,
-but no process-facing Chat runtime, C-API pricing implementation, manual effect
-surface, systemd package, or literal fuzz target.
+a discovery-only taker CLI, daemon-owned signed run-local Delivery, and a
+disjoint process-facing maker-proposal Chat endpoint with durable one-winner
+staging, but no taker countersign/completion command, C-API pricing
+implementation, manual effect surface, systemd package, or literal fuzz target.
 
 ### Progressive PoC gate
 
@@ -3202,18 +3203,22 @@ separately from runtime dependencies.
   advertisements; the black-box maker/taker process journey is GREEN.
 - [x] Add the maker-first canonical ZEC draft/proposal/countersign contract and
   exact no-rounding offer amount conversion.
-- [ ] Add durable Chat reservation/negotiation, transport process wiring,
-  buffering, retry/degraded state, and the post-lock cutover rule. Schema v13
+- [ ] Complete durable Chat negotiation, buffering, retry/degraded state, and
+  the post-lock cutover rule. The first process-wired proposal stage is GREEN: a
+  disjoint mode-0600 Chat socket authenticates and cross-binds the exact signed
+  Delivery envelope and canonical unsigned draft, signs with the pinned maker
+  identity, commits reservation plus proposal before response, exact-replays,
+  rejects owner/Chat method crossover, and survives kill/reopen. Schema v13
   now atomically stores the exact bounded maker proposal before transport and
   reserves one offer winner with exact replay/conflict/restart evidence. The
   countersigned agreement, coordinator, immutable ZEC binding, protected maker
   claim material, offer consumption, and replay result also commit together
-  with forced-rollback/replay/restart evidence. Next expose that path through
-  independent maker/taker processes, add bounded outage behavior, and prove the
-  post-lock transport cutover. The canonical unsigned ZEC draft wire is now
-  bounded and fully validated before maker signing, so the local chain-fact
-  preparer can be split without retaining either role signature. Next wire it
-  into the maker Chat endpoint and taker countersign command.
+  with forced-rollback/replay/restart evidence. Next add the taker
+  countersign and process-level atomic final-accept call,
+  split the local chain-fact preparer from role signing, persist the exact final
+  wire into both actor configurations, then prove the post-lock transport
+  cutover. The canonical unsigned draft and maker Chat endpoint are now GREEN;
+  they do not yet prove any chain effect.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested

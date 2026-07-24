@@ -220,6 +220,25 @@ impl RunLocalDelivery {
         })
     }
 
+    /// Authenticates exact bounded envelope bytes against this adapter's pinned maker key.
+    ///
+    /// This does not apply route or time filtering; a Chat caller must cross-bind
+    /// the returned immutable offer to its trusted local time and selected route.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized, malformed, noncanonical, wrongly keyed, wrongly signed,
+    /// or invalid offer bytes.
+    pub fn authenticate_envelope(
+        &self,
+        encoded: &[u8],
+    ) -> Result<AuthenticatedOfferRefV1, RunLocalDeliveryError> {
+        if encoded.len() as u64 > MAXIMUM_ENVELOPE_BYTES {
+            return Err(RunLocalDeliveryError::OversizedEnvelope);
+        }
+        verify_envelope(encoded, &self.expected_maker)
+    }
+
     /// Publishes an offer or verifies that a prior crash/restart published the exact same offer.
     ///
     /// # Errors

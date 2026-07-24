@@ -11,7 +11,7 @@ use clap::Parser;
 use jsonrpsee::server::{
     BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
 };
-use lez_maker_node::{MakerRpc, RunLocalDelivery, rpc_module};
+use lez_maker_node::{MakerRpc, RunLocalDelivery, chat_rpc_module, rpc_module};
 use lez_swap_store::SqliteSwapStore;
 use secp256k1::SecretKey;
 use tokio::{net::UnixListener, task::JoinSet};
@@ -32,58 +32,55 @@ struct Arguments {
     #[arg(long)]
     ready_file: Option<PathBuf>,
     /// Owner-private run-local Delivery directory; requires the signing key file.
-    #[arg(long, requires = "delivery_signing_key_file")]
+    #[arg(long, requires_all = ["delivery_signing_key_file", "chat_socket"])]
     delivery_directory: Option<PathBuf>,
     /// Owner-only file containing exactly one hex-encoded 32-byte secp256k1 key.
-    #[arg(long, requires = "delivery_directory")]
+    #[arg(long, requires_all = ["delivery_directory", "chat_socket"])]
     delivery_signing_key_file: Option<PathBuf>,
+    /// Taker-facing run-local Chat socket, isolated from owner-control methods.
+    #[arg(long, requires_all = ["delivery_directory", "delivery_signing_key_file"])]
+    chat_socket: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
-    let store = SqliteSwapStore::open(&arguments.database).context("open maker database")?;
-    let context = match (
-        arguments.delivery_directory,
-        arguments.delivery_signing_key_file,
-    ) {
-        (Some(directory), Some(key_file)) => {
-            let delivery = RunLocalDelivery::publisher(directory, load_delivery_key(&key_file)?)
-                .context("open maker Delivery publisher")?;
-            let now_unix_seconds = trusted_now_unix_seconds()?;
-            let active = store
-                .list_discoverable_maker_offers(now_unix_seconds)
-                .context("load active offers for Delivery reconciliation")?
-                .into_iter()
-                .map(|record| record.offer().clone())
-                .collect::<Vec<_>>();
-            delivery
-                .reconcile(&active, now_unix_seconds)
-                .context("reconcile Delivery advertisements")?;
-            MakerRpc::with_delivery(store, delivery)
-        }
-        (None, None) => MakerRpc::new(store),
-        _ => unreachable!("clap requires paired Delivery arguments"),
+    let (chat_listener, _chat_socket_guard) = arguments
+        .chat_socket
+        .as_deref()
+        .map(bind_owner_socket)
+        .transpose()?
+        .map_or((None, None), |(listener, guard)| {
+            (Some(listener), Some(guard))
+        });
+    let context = maker_context(
+        &arguments.database,
+        arguments.delivery_directory.as_deref(),
+        arguments.delivery_signing_key_file.as_deref(),
+    )?;
+    let module = rpc_module(context.clone())?;
+    let chat_module = if chat_listener.is_some() {
+        Some(chat_rpc_module(context)?)
+    } else {
+        None
     };
-    let module = rpc_module(context)?;
     let _ready_guard = arguments
         .ready_file
         .as_deref()
         .map(|path| create_ready_file(path, &arguments.socket))
         .transpose()?;
     let (stop_handle, server_handle) = stop_channel();
-    let server_config = ServerConfig::builder()
-        .max_request_body_size(MAXIMUM_RPC_BODY_BYTES)
-        .max_response_body_size(MAXIMUM_RPC_BODY_BYTES)
-        .max_connections(MAXIMUM_CONNECTIONS)
-        .set_batch_request_config(BatchRequestConfig::Disabled)
-        .http_only()
-        .build();
     let service = ServerBuilder::default()
-        .set_config(server_config)
+        .set_config(server_config())
         .to_service_builder()
         .build(module, stop_handle.clone());
+    let chat_service = chat_module.map(|module| {
+        ServerBuilder::default()
+            .set_config(server_config())
+            .to_service_builder()
+            .build(module, stop_handle.clone())
+    });
     let mut connections = JoinSet::new();
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
@@ -93,6 +90,28 @@ async fn main() -> anyhow::Result<()> {
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("accept local RPC connection")?;
                 let connection_service = service.clone();
+                let connection_stop = stop_handle.clone();
+                connections.spawn(async move {
+                    serve_with_graceful_shutdown(
+                        stream,
+                        connection_service,
+                        connection_stop.shutdown(),
+                    )
+                    .await
+                });
+            }
+            accepted = async {
+                chat_listener
+                    .as_ref()
+                    .expect("Chat listener is present when branch is enabled")
+                    .accept()
+                    .await
+            }, if chat_listener.is_some() => {
+                let (stream, _) = accepted.context("accept local Chat connection")?;
+                let connection_service = chat_service
+                    .as_ref()
+                    .expect("Chat service is present with Chat listener")
+                    .clone();
                 let connection_stop = stop_handle.clone();
                 connections.spawn(async move {
                     serve_with_graceful_shutdown(
@@ -120,6 +139,41 @@ async fn main() -> anyhow::Result<()> {
     drop(stop_handle);
     server_handle.stopped().await;
     Ok(())
+}
+
+fn maker_context(
+    database: &Path,
+    delivery_directory: Option<&Path>,
+    delivery_signing_key_file: Option<&Path>,
+) -> anyhow::Result<MakerRpc> {
+    let store = SqliteSwapStore::open(database).context("open maker database")?;
+    let (Some(directory), Some(key_file)) = (delivery_directory, delivery_signing_key_file) else {
+        return Ok(MakerRpc::new(store));
+    };
+    let signing_key = load_delivery_key(key_file)?;
+    let delivery = RunLocalDelivery::publisher(directory.to_path_buf(), signing_key)
+        .context("open maker Delivery publisher")?;
+    let now_unix_seconds = trusted_now_unix_seconds()?;
+    let active = store
+        .list_discoverable_maker_offers(now_unix_seconds)
+        .context("load active offers for Delivery reconciliation")?
+        .into_iter()
+        .map(|record| record.offer().clone())
+        .collect::<Vec<_>>();
+    delivery
+        .reconcile(&active, now_unix_seconds)
+        .context("reconcile Delivery advertisements")?;
+    Ok(MakerRpc::with_delivery(store, delivery, signing_key))
+}
+
+fn server_config() -> ServerConfig {
+    ServerConfig::builder()
+        .max_request_body_size(MAXIMUM_RPC_BODY_BYTES)
+        .max_response_body_size(MAXIMUM_RPC_BODY_BYTES)
+        .max_connections(MAXIMUM_CONNECTIONS)
+        .set_batch_request_config(BatchRequestConfig::Disabled)
+        .http_only()
+        .build()
 }
 
 fn load_delivery_key(path: &Path) -> anyhow::Result<SecretKey> {

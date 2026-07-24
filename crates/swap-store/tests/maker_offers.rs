@@ -185,9 +185,15 @@ fn zec_proposal_stage_is_one_winner_replay_safe_and_survives_restart() {
         .unwrap();
     assert_eq!(committed.revision(), 2);
     assert!(!committed.was_replay());
+    let delayed_replay = negotiation("offer-negotiation-reservation-001", 102, 10, 25, 7);
     assert!(
         store
-            .stage_zec_maker_negotiation(&request("offer-negotiation-stage-001"), &id, 1, &staged,)
+            .stage_zec_maker_negotiation(
+                &request("offer-negotiation-stage-001"),
+                &id,
+                1,
+                &delayed_replay,
+            )
             .unwrap()
             .was_replay()
     );

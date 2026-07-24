@@ -4034,6 +4034,41 @@ check: no chain RPC, node, Docker, faucet, public funds, DNS, or Logos service.
 It proves the crash-safe handoff to post-negotiation authority, not the separate
 maker/taker process flow or actual local-devnet effects.
 
+### Process-facing ZEC maker proposal
+
+Build the real application binaries and repeat the current maker/taker process
+boundary with:
+
+```sh
+cargo build --locked --offline -p lez-maker-node --bins
+cargo test --locked --offline -p lez-maker-node --test zec_chat_process \
+  separate_taker_stages_an_offer_bound_maker_proposal_before_response \
+  -- --exact --nocapture
+```
+
+The focused command must report exactly one passing test. It starts the real
+maker daemon with separate owner-control and taker-facing Chat Unix sockets,
+configures a ZEC route and exact 5:2 local price through owner RPC, publishes a
+signed expiring offer through the daemon-owned Delivery directory, and acts as
+a separate key-pinned taker. That taker constructs a canonical unsigned draft
+bound to the selected envelope, reservation-derived session, exact quote, and
+expiry, then submits it over Chat.
+
+The result must be offer revision 2 and 25,000 LEZ atomic units for 10,000
+zatoshis. The taker validates the maker signature, repeats the identical request after crossing a wall-clock second
+and receives the byte-identical replay, then kills the daemon and reopens SQLite
+to recover the exact proposal. The same run proves the owner socket rejects the
+Chat method and the Chat socket rejects owner-control methods.
+
+All resources are created below one private temporary directory: two mode-0600
+Unix sockets, one mode-0600 deterministic test key file, SQLite, and the signed
+Delivery mailbox. No LEZ or Zebra node, chain RPC, Docker, faucet, public funds,
+DNS, public price source, public finality source, or Logos service is used.
+After the Cargo cache is warm, `--locked --offline` removes registry/network
+availability as a flakiness source; the only time-sensitive boundary is a
+five-minute local offer TTL. This proves proposal staging, not countersigning,
+final acceptance through processes, chain funding, or a completed swap.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

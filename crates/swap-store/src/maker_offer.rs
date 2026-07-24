@@ -515,7 +515,6 @@ struct StageZecNegotiationRequest<'a> {
     taker_chat_identity: &'a [u8],
     foreign_units: u64,
     lez_units: String,
-    reserved_at_unix_seconds: u64,
     agreement_commitment: &'a [u8],
     maker_proposal_sha256: [u8; 32],
 }
@@ -690,7 +689,6 @@ impl SqliteSwapStore {
             taker_chat_identity: negotiation.taker_chat_identity(),
             foreign_units: negotiation.foreign_units(),
             lez_units: negotiation.lez_units().to_string(),
-            reserved_at_unix_seconds: negotiation.reserved_at_unix_seconds(),
             agreement_commitment: negotiation.agreement_commitment(),
             maker_proposal_sha256: proposal_sha256,
         })?;

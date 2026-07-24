@@ -376,6 +376,8 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         .arg(&ready)
         .arg("--delivery-directory")
         .arg(run.join("delivery"))
+        .arg("--chat-socket")
+        .arg(runtime.join("chat.sock"))
         .arg("--delivery-signing-key-file")
         .arg(delivery_key)
         .spawn()

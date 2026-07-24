@@ -18,9 +18,13 @@ one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
 persists the countersigned agreement, coordinator, immutable binding, encrypted
 maker claim material, offer consumption, and replay result. A separate taker CLI
-discovers the daemon's key-pinned signed offers. Process-facing Chat initiation,
-countersigning, exact final-wire actor configuration, and the actual LEZ/ZEC
-application-level swap are the next PoC critical path. The Logos C-API price
+discovers the daemon's key-pinned signed offers. A disjoint taker-facing Chat
+socket now authenticates the exact Delivery envelope and unsigned canonical ZEC
+draft, signs with the Delivery-pinned maker identity, and atomically stages the
+one-winner proposal before responding; exact replay and kill/reopen durability
+are process-GREEN. Taker countersigning, process-level atomic final acceptance,
+exact final-wire actor configuration, and the actual LEZ/ZEC application swap
+are the next PoC critical path. The Logos C-API price
 source, systemd/Core lifecycle, fuzzing, and hardening remain literal M5
 completion work.
 
@@ -29,12 +33,13 @@ Build and repeat the current real process boundary with:
 ```sh
 cargo build --locked -p lez-maker-node --bins
 cargo test --locked -p lez-maker-node --test operator_journey -- --nocapture
+cargo test --locked --offline -p lez-maker-node --test zec_chat_process -- --nocapture
 ```
 
 The complete manual configure, price, quote, publish, restart, inspect, and
 withdraw flow is [Flow 1 in the operator guide](docs/manual-user-flows.md#flow-1-maker-operator-cli-and-daemon-restart).
-This component flow uses only an owner-private local Unix socket, SQLite,
-signing-key file, and Delivery directory; it uses no chain RPC, Docker, faucet,
+These component flows use only owner-private local Unix sockets, SQLite,
+signing-key file, and Delivery directory; they use no chain RPC, Docker, faucet,
 public funds, public price feed, or external network at runtime. The future
 application PoC will use only isolated local LEZ
 v0.2 and Zebra Regtest services with deterministic local funds, and will record

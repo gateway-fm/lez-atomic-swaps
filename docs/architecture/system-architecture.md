@@ -710,7 +710,7 @@ flowchart TB
 
     subgraph OffChain["Untrusted, removable after lock"]
         DEL["Run-local Delivery-compatible adapter<br/>daemon publication and taker discovery GREEN"]
-        CHAT["Run-local Chat-compatible adapter<br/>proposal + stage + atomic final accept GREEN; runtime planned"]
+        CHAT["Run-local Chat-compatible adapter<br/>disjoint process proposal and stage GREEN<br/>final accept store GREEN; process completion planned"]
     end
 
     subgraph Nodes["Actor-selected node boundary"]
@@ -756,8 +756,8 @@ flowchart TB
     APP --> OF
     APP -->|"signed offer publication"| DEL
     TC -->|"key-pinned discovery"| DEL
-    APP -.->|"process runtime planned"| CHAT
-    TC -.->|"process runtime planned"| CHAT
+    APP -->|"isolated maker proposal runtime"| CHAT
+    TC -.->|"countersign and completion planned"| CHAT
     OF --> DB
     APP --> CO
     CO --> DB
