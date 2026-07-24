@@ -3224,10 +3224,16 @@ separately from runtime dependencies.
   and the finalizer exact-compares every other body field, both role keys,
   funder ownership and the hash preimage before emitting fresh isolated actor
   state. The canonical draft, both Chat endpoints and final actor-config handoff
-  are component GREEN; they do not yet prove any chain effect. Next compose the
-  actual corridor and remove Delivery/Chat after first lock.
+  are component GREEN; they do not yet prove any chain effect. The opt-in M5
+  runner now composes these steps with fresh final actor state, preserves the
+  endpoint-tuple lock and one 49-second provision-to-completion clock, keeps the
+  restarted application transports through the first confirmed Zcash lock, and
+  removes both before later settlement. Source, syntax, process, and strict-lint
+  gates are GREEN; actual isolated-node evidence is pending.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
-  retain one exact reproducible PoC.
+  retain one exact reproducible PoC. The one-command `TakerSellsLez` composition
+  is implemented; run it against fresh isolated nodes and replay from the exact
+  pushed tree before checking this item.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested
   Logos Core lifecycle adapter contract.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
@@ -3241,6 +3247,12 @@ separately from runtime dependencies.
 - [ ] Certify the clean pushed commit, update evidence/manual docs/metrics, and
   create the annotated M5 completion tag only after every literal output is
   proven.
+
+Current PoC ETA (updated 2026-07-24): 45 to 90 focused minutes if cached local
+node images and LEZ artifacts remain usable, or 2 to 4 hours if a cold isolated
+rebuild is required. This covers the first composed run, defects found by that
+run, exact evidence/docs, and a pushed PoC checkpoint; it excludes the later
+literal M5 completion outputs above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 implements and tests the lifecycle

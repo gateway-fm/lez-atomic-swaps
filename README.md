@@ -30,8 +30,11 @@ and kill/reopen durability are process-GREEN. Exact final-wire actor
 configuration is now component-GREEN: a no-authority preparer replaces only the
 Delivery/Chat transcript of validated chain facts, while a finalizer checks all
 other fields, both private-key identities, the funder role and hash preimage
-before emitting fresh isolated actor state. The actual LEZ/ZEC application swap
-and post-lock transport cutover are the next PoC critical path. The Logos C-API
+before emitting fresh isolated actor state. The opt-in M5 runner now composes
+that handoff with the stable LEZ/ZEC actor corridor, retains the restarted
+daemon through the first confirmed Zcash lock, and then removes Chat and
+Delivery before settlement. Its fresh isolated-node replay is the next PoC
+evidence gate. The Logos C-API
 price source, systemd/Core lifecycle, fuzzing, and hardening remain literal M5
 completion work.
 
@@ -45,10 +48,25 @@ cargo test --locked --offline -p lez-maker-node --test zec_chat_process -- --noc
 
 The complete manual configure, price, quote, publish, restart, inspect, and
 withdraw flow is [Flow 1 in the operator guide](docs/manual-user-flows.md#flow-1-maker-operator-cli-and-daemon-restart).
+After starting fresh isolated LEZ v0.2 and primary Zebra Regtest services and
+deploying the checked escrow, run the composed application path with identities
+and dynamic loopback endpoints from those run manifests:
+
+```sh
+RUN_ID=m5zec-$(date -u +%Y%m%d%H%M%S) \
+LEZ_SEQUENCER_URL=http://127.0.0.1:PORT \
+LEZ_INDEXER_URL=http://127.0.0.1:PORT \
+ZEBRA_RPC_URL=http://127.0.0.1:PORT \
+LEZ_CHAIN_ID=HEX LEZ_GENESIS_HASH=HEX ESCROW_PROGRAM_ID=HEX \
+./scripts/run-m5-zec-application-poc.sh
+```
+
+See [Flow 1B](docs/manual-user-flows.md#flow-1b-composed-m5-zec-application-poc)
+for prerequisites, evidence, and cleanup.
 These component flows use only owner-private local Unix sockets, SQLite,
 Delivery, signing, raw claim-recovery and preimage files; they use no chain RPC, Docker, faucet,
-public funds, public price feed, or external network at runtime. The future
-application PoC will use only isolated local LEZ
+public funds, public price feed, or external network at runtime. The composed
+application PoC uses only isolated local LEZ
 v0.2 and Zebra Regtest services with deterministic local funds, and will record
 every endpoint and scoped cleanup operation.
 

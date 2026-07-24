@@ -39,15 +39,19 @@ certified.
 | Application binaries | Maker daemon and partial maker CLI expose owner-local pair policy, exact local price, durable offer publish/list/withdraw, swap create/status/history, and alert commands; daemon-owned authenticated Delivery plus real taker ZEC acceptance are GREEN | Add maker manual effect/lifecycle commands and taker status/claim/refund plus BTC/XMR initiation |
 | Owner-local control | GREEN component slice | Mode-0700 owner runtime directory, disjoint mode-0600 owner and Chat Unix sockets, absolute/no-symlink paths, bounded HTTP/1 JSON-RPC, disabled batches, 16-connection cap, no-clobber readiness, exact-inode cleanup, and two black-box daemon/CLI journeys pass strict gates |
 | Price-source runtime adapters | 1 of 2 component GREEN | The pluggable trait and store-backed local adapter preserve exact route, reduced-integer price, revision, and daemon-trusted time; the real CLI quotes 5:2 after daemon restart. Add the bounded Logos C-API adapter and bind external quotes into signed offers |
-| Discovery and negotiation | Signed bounded Delivery, restart reconciliation, schema-v13 staging, atomic acceptance and final actor rebinding are GREEN. The actual `lez-taker` process authenticates and selects the offer, validates the unchanged maker proposal, countersigns, exact-replays, and no-clobber persists. The finalizer proves unchanged chain facts, both role keys, funder/preimage ownership, exact final-wire hashes, and fresh role state | Add actual corridor, outage/cutover behavior, and exact Logos adapters |
+| Discovery and negotiation | Signed bounded Delivery, restart reconciliation, schema-v13 staging, atomic acceptance and final actor rebinding are GREEN. The actual `lez-taker` process authenticates and selects the offer, validates the unchanged maker proposal, countersigns, exact-replays, and no-clobber persists. The finalizer proves unchanged chain facts, both role keys, funder/preimage ownership, exact final-wire hashes, and fresh role state. The opt-in composed runner is source-GREEN | Execute against fresh nodes; then add outage hardening and exact Logos adapters |
 | Persistent restart evidence | Two daemon/CLI restart journeys plus one abnormal-stop Chat proposal journey pass, including durable pair/price/offer/swap history, alerts, completed negotiation, exact final wire, encrypted claim material, and byte-identical replay | Repeat through the complete application happy path and exact effect outbox |
 | Concurrent application swaps | 0 composed | Distinct swap IDs, role state, agreements, escrows, deadlines, and effects |
 | Missing-chain degradation | 0 composed | Each unavailable route disables only affected pairs and reports operator state |
-| Delivery/Chat removal after lock | 0 composed | Kill both adapters after first lock; terminal state must use only SQLite and chain evidence |
+| Delivery/Chat removal after lock | Runner source and ownership checks GREEN; 0 actual-node runs | The runner retains the exact restarted daemon through confirmed Zcash funding, then removes owner/Chat sockets and Delivery; actual terminal evidence is pending |
 | Coordinator fuzzing | 512-case Proptest carried; no literal fuzz target | Add `cargo-fuzz` or equivalent target and bounded CI smoke corpus |
-| Actual local application swaps | 0 | First target is the stable isolated LEZ/ZEC corridor through maker/taker binaries |
+| Actual local application swaps | 0 | One-command `TakerSellsLez` composition exists; fresh isolated LEZ/Zebra execution is next |
 | Public runtime dependencies | None required for PoC | Record cold-download dependencies separately; runtime uses local nodes and deterministic funds |
 | Cleanup leaks | Not measured | Exact run ledger, absent owned resources, foreign sentinel survives |
+
+Current M5 PoC ETA: 45–90 focused minutes with warm node artifacts, or 2–4
+hours after a cold isolated LEZ/Zebra rebuild. This excludes systemd, Logos
+C-API, fuzz, multi-pair, and post-PoC hardening outputs.
 
 ## M4 PoC scorecard
 

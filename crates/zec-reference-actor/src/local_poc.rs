@@ -149,6 +149,8 @@ pub struct LocalPocProvisionSummary {
     direction: &'static str,
     agreement_file: PathBuf,
     signed_agreement_sha256: Hex32,
+    maker_zcash_public_key: String,
+    taker_zcash_public_key: String,
     authenticated_transfer_program_id: Hex32,
     authenticated_transfer_program_id_words: [u32; 8],
     maker: RolePaths,
@@ -210,6 +212,8 @@ struct SelectedCandidate {
 struct AgreementFixture {
     wire: Zeroizing<Vec<u8>>,
     sha256: Hex32,
+    maker_zcash_public_key: [u8; 33],
+    taker_zcash_public_key: [u8; 33],
     maker_zcash_key: Zeroizing<[u8; 32]>,
     taker_zcash_key: Zeroizing<[u8; 32]>,
     preimage: Zeroizing<[u8; 32]>,
@@ -411,6 +415,8 @@ pub async fn provision_local_v0_2_corridor(
         direction: spec.direction.as_str(),
         agreement_file,
         signed_agreement_sha256: fixture.sha256,
+        maker_zcash_public_key: hex::encode(fixture.maker_zcash_public_key),
+        taker_zcash_public_key: hex::encode(fixture.taker_zcash_public_key),
         authenticated_transfer_program_id: Hex32::from_bytes(authenticated_transfer),
         authenticated_transfer_program_id_words: program_id_words(Hex32::from_bytes(
             authenticated_transfer,
@@ -1103,6 +1109,8 @@ fn build_agreement(
     Ok(AgreementFixture {
         wire,
         sha256,
+        maker_zcash_public_key: maker_public.serialize(),
+        taker_zcash_public_key: taker_public.serialize(),
         maker_zcash_key: maker_bytes,
         taker_zcash_key: taker_bytes,
         preimage,

@@ -15,6 +15,7 @@ readonly AUTHENTICATED_TRANSFER_PROGRAM_BASE58="${AUTHENTICATED_TRANSFER_PROGRAM
 readonly MAKER_ACCOUNT_BASE58="${MAKER_ACCOUNT_BASE58:-B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd}"
 readonly TAKER_ACCOUNT_BASE58="${TAKER_ACCOUNT_BASE58:-34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib}"
 readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
+readonly M5_APPLICATION_MODE="${M5_APPLICATION_MODE:-0}"
 readonly DISCOVERY_BLOCKS=256
 readonly POLL_INTERVAL_SECONDS=0.10
 # Both ceilings start at provisioning. The 49-second completion cap retains at
@@ -40,10 +41,30 @@ if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,63}$ ]]; then
   exit 2
 fi
 readonly run_id
+if [[ "$M5_APPLICATION_MODE" != 0 && "$M5_APPLICATION_MODE" != 1 ]]; then
+  echo 'M5_APPLICATION_MODE must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$M5_APPLICATION_MODE" == 1 && ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]]; then
+  echo 'M5 application RUN_ID must be 8..=48 safe characters' >&2
+  exit 2
+fi
+if [[ "$M5_APPLICATION_MODE" == 1 && "$POC_DIRECTION" != taker_sells_lez ]]; then
+  echo 'M5 application composition currently requires POC_DIRECTION=taker_sells_lez' >&2
+  exit 2
+fi
 readonly private_base="${POC_OUTPUT_ROOT:-/tmp/lez-atomic-swaps-${run_id}}"
 readonly spec_file="${private_base}/provision-spec.json"
 readonly actors_root="${private_base}/actors"
 readonly evidence_dir="${private_base}/evidence"
+readonly application_root="${private_base}/application"
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  provision_actors_root="${private_base}/actors-source"
+else
+  provision_actors_root="$actors_root"
+fi
+readonly provision_actors_root
+readonly m5_handoff_driver="$(pwd)/scripts/run-m5-zec-chat-handoff.sh"
 
 for endpoint in "$LEZ_SEQUENCER_URL" "$LEZ_INDEXER_URL" "$ZEBRA_RPC_URL"; do
   if [[ ! "$endpoint" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}/?$ ]]; then
@@ -109,6 +130,14 @@ maker_pid=''
 taker_pid=''
 maker_start_ticks=''
 taker_start_ticks=''
+m5_daemon_pid=''
+m5_daemon_start_ticks=''
+m5_daemon_bin=''
+m5_maker_socket=''
+m5_chat_socket=''
+m5_delivery_directory=''
+m5_delivery_offline=''
+m5_transport_cutover_complete=0
 corridor_deadline_monotonic_ms=''
 
 process_start_ticks() {
@@ -146,12 +175,33 @@ stop_owned_process() {
   wait "$pid" 2>/dev/null || true
 }
 
+stop_owned_m5_daemon() {
+  if ! process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin"; then
+    return 0
+  fi
+  kill -INT "$m5_daemon_pid" || true
+  for _ in {1..200}; do
+    if ! process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin"; then
+      wait "$m5_daemon_pid" 2>/dev/null || true
+      return 0
+    fi
+    sleep 0.05
+  done
+  if process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin"; then
+    kill -KILL "$m5_daemon_pid" || true
+  fi
+  wait "$m5_daemon_pid" 2>/dev/null || true
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
   if [[ -n "${sidecar_bin:-}" ]]; then
     stop_owned_process "$maker_pid" "$maker_start_ticks" "$sidecar_bin"
     stop_owned_process "$taker_pid" "$taker_start_ticks" "$sidecar_bin"
+  fi
+  if [[ -n "$m5_daemon_bin" ]]; then
+    stop_owned_m5_daemon
   fi
   if (( status != 0 )); then
     if [[ -d "$private_base" ]]; then
@@ -267,6 +317,9 @@ verify_native_library libfr.a 40f809394904682cb5517845cd3c2f936a5eb4609712534b57
 
 echo 'Prebuilding the provisioner, actor, and exact v0.2 bridge before provisioning'
 cargo +1.96.0 build --locked --offline -p zec-reference-actor --bins
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  cargo +1.96.0 build --locked --offline -p lez-maker-node --bins
+fi
 cargo +1.96.0 build \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
   --locked --offline --bin lez-v02-bridge-poc
@@ -276,12 +329,24 @@ provisioner_bin="$(readlink -f target/debug/zec-local-poc-provision)"
 readonly actor_bin provisioner_bin
 sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc)"
 readonly sidecar_bin
-for binary in "$actor_bin" "$provisioner_bin" "$sidecar_bin"; do
+required_binaries=("$actor_bin" "$provisioner_bin" "$sidecar_bin")
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  maker_daemon_bin="$(readlink -f target/debug/lez-maker-daemon)"
+  maker_cli_bin="$(readlink -f target/debug/lez-maker)"
+  taker_bin="$(readlink -f target/debug/lez-taker)"
+  chat_draft_bin="$(readlink -f target/debug/zec-local-poc-chat-draft)"
+  chat_finalize_bin="$(readlink -f target/debug/zec-local-poc-chat-finalize)"
+  readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin
+  required_binaries+=("$maker_daemon_bin" "$maker_cli_bin" "$taker_bin")
+  required_binaries+=("$chat_draft_bin" "$chat_finalize_bin" "$m5_handoff_driver")
+fi
+for binary in "${required_binaries[@]}"; do
   [[ -x "$binary" ]] || {
     echo "prebuilt binary is unavailable: ${binary}" >&2
     exit 2
   }
 done
+unset required_binaries
 
 rpc() {
   local endpoint="$1"
@@ -404,7 +469,7 @@ corridor_deadline_monotonic_ms=$((
   provision_started_monotonic_ms + MAX_CORRIDOR_SECONDS * 1000
 ))
 readonly budget_clock_source provision_started_monotonic_ms corridor_deadline_monotonic_ms
-"$provisioner_bin" --spec-file "$spec_file" --output-root "$actors_root" \
+"$provisioner_bin" --spec-file "$spec_file" --output-root "$provision_actors_root" \
   >"${evidence_dir}/provision-summary.json"
 remaining_budget_milliseconds 'provisioning-after' >/dev/null
 jq -e \
@@ -429,6 +494,59 @@ jq -e \
   .lez_depositor_account_id_base58 == $depositor
   and .authenticated_transfer_program_id == $authenticated_transfer
 ' "${evidence_dir}/provision-summary.json" >/dev/null
+
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  "$m5_handoff_driver" \
+    --run-id "$run_id" \
+    --source-actors-root "$provision_actors_root" \
+    --source-provision-summary "${evidence_dir}/provision-summary.json" \
+    --output-actors-root "$actors_root" \
+    --application-root "$application_root" \
+    --evidence-dir "$evidence_dir" \
+    --maker-daemon-bin "$maker_daemon_bin" \
+    --maker-cli-bin "$maker_cli_bin" \
+    --taker-bin "$taker_bin" \
+    --draft-bin "$chat_draft_bin" \
+    --finalize-bin "$chat_finalize_bin" \
+    >"${evidence_dir}/m5-handoff-path.txt"
+  [[ "$(<"${evidence_dir}/m5-handoff-path.txt")" == \
+      "${evidence_dir}/m5-chat-handoff.json" ]] || {
+    echo 'M5 handoff returned an unexpected evidence path' >&2
+    exit 2
+  }
+  remaining_budget_milliseconds 'm5-handoff-after' >/dev/null
+  m5_daemon_pid="$(jq -er '.transport_cutover.maker_daemon_pid | numbers' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_daemon_start_ticks="$(jq -er \
+    '.transport_cutover.maker_daemon_start_ticks | strings | select(test("^[0-9]+$"))' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_daemon_bin="$(jq -er '.transport_cutover.maker_daemon_bin | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_maker_socket="$(jq -er '.transport_cutover.maker_socket | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_chat_socket="$(jq -er '.transport_cutover.chat_socket | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_delivery_directory="$(jq -er '.transport_cutover.delivery_directory | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_delivery_offline="$(jq -er '.transport_cutover.delivery_offline | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+    echo 'M5 maker daemon handoff is not the exact live process' >&2
+    exit 2
+  }
+  [[ -S "$m5_maker_socket" && -S "$m5_chat_socket" \
+    && -d "$m5_delivery_directory" && ! -e "$m5_delivery_offline" ]] || {
+    echo 'M5 negotiation transports are not armed for post-lock cutover' >&2
+    exit 2
+  }
+fi
+application_handoff_sha256=''
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  application_handoff_sha256="$(sha256sum "${evidence_dir}/m5-chat-handoff.json")"
+  application_handoff_sha256="${application_handoff_sha256%% *}"
+  [[ "$application_handoff_sha256" =~ ^[0-9a-f]{64}$ ]] || exit 2
+fi
+readonly application_handoff_sha256
 
 lez_native_amount="$(jq -er '.lez_native_amount | numbers' \
   "${evidence_dir}/provision-summary.json")"
@@ -503,9 +621,9 @@ startup_remaining_ms="$(remaining_budget_milliseconds 'sidecar-startup-before')"
   --sequencer-url "$LEZ_SEQUENCER_URL" \
   --indexer-url "$LEZ_INDEXER_URL" \
   --run-id "$run_id" \
-  --runtime-file "${actors_root}/maker/lez-runtime.json" \
-  --capability-file "${actors_root}/maker/sidecar.capability" \
-  --private-key-file "${actors_root}/maker/lez-signer.key" \
+  --runtime-file "${provision_actors_root}/maker/lez-runtime.json" \
+  --capability-file "${provision_actors_root}/maker/sidecar.capability" \
+  --private-key-file "${provision_actors_root}/maker/lez-signer.key" \
   --state-directory "${actors_root}/maker/state" \
   --authenticated-transfer-program-id "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" \
   >"$maker_log" 2>&1 &
@@ -517,9 +635,9 @@ maker_start_ticks="$(process_start_ticks "$maker_pid")"
   --sequencer-url "$LEZ_SEQUENCER_URL" \
   --indexer-url "$LEZ_INDEXER_URL" \
   --run-id "$run_id" \
-  --runtime-file "${actors_root}/taker/lez-runtime.json" \
-  --capability-file "${actors_root}/taker/sidecar.capability" \
-  --private-key-file "${actors_root}/taker/lez-signer.key" \
+  --runtime-file "${provision_actors_root}/taker/lez-runtime.json" \
+  --capability-file "${provision_actors_root}/taker/sidecar.capability" \
+  --private-key-file "${provision_actors_root}/taker/lez-signer.key" \
   --state-directory "${actors_root}/taker/state" \
   --authenticated-transfer-program-id "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" \
   >"$taker_log" 2>&1 &
@@ -612,6 +730,8 @@ jq -n \
   --argjson provision_started_monotonic_ms "$provision_started_monotonic_ms" \
   --argjson corridor_deadline_monotonic_ms "$corridor_deadline_monotonic_ms" \
   --argjson pre_effect_remaining_ms "$pre_effect_remaining_ms" \
+  --argjson m5_application_mode "$M5_APPLICATION_MODE" \
+  --arg application_handoff_sha256 "$application_handoff_sha256" \
   --argjson zebra_tip "$zebra_tip" '
   {
     schema_version: 1,
@@ -642,6 +762,12 @@ jq -n \
       lez_delay_margin_seconds: 10
     },
     initial_zebra_tip: $zebra_tip,
+    application_plane: {
+      enabled: ($m5_application_mode == 1),
+      handoff_receipt_sha256:
+        (if $m5_application_mode == 1 then $application_handoff_sha256 else null end),
+      transports_removed_before_activation: ($m5_application_mode == 1)
+    },
     public_rpc_or_faucet_used: false,
     actor_outputs_secret_free: true
   }' >"${evidence_dir}/run-identity.json"
@@ -748,6 +874,37 @@ handle_zcash_submission() {
     zcash_fund_submitter="$role"
     zcash_fund_mined=2
     mine_blocks funding 2
+    if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+      stop_owned_m5_daemon
+      m5_daemon_pid=''
+      m5_daemon_start_ticks=''
+      [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" ]] || {
+        echo 'M5 Unix transports survived post-lock daemon shutdown' >&2
+        return 1
+      }
+      mv -- "$m5_delivery_directory" "$m5_delivery_offline"
+      [[ ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || {
+        echo 'M5 Delivery transport survived post-lock cutover' >&2
+        return 1
+      }
+      jq -n \
+        --arg first_lock_role "$role" \
+        --argjson confirmations_mined \
+          "$(jq -er '.result | length' "${evidence_dir}/zebra-generate-funding.json")" '
+        {
+          schema_version: 1,
+          result: "passed",
+          cutover_after_first_lock: true,
+          first_lock: "zcash_funding",
+          first_lock_submitter: $first_lock_role,
+          confirmations_mined: $confirmations_mined,
+          maker_socket_absent: true,
+          chat_socket_absent: true,
+          delivery_path_absent: true
+        }' >"${evidence_dir}/m5-post-lock-cutover.json"
+      chmod 0600 "${evidence_dir}/m5-post-lock-cutover.json"
+      m5_transport_cutover_complete=1
+    fi
   fi
   if jq -e '.outcome == "submitted" and .operation == "zcash_followup_claim"' \
     <<<"$output" >/dev/null; then
@@ -817,6 +974,17 @@ done
   echo "corridor did not complete atomically: completed=${completed}, funding_blocks=${zcash_fund_mined}, lez_reveal=${lez_revealing_claim_seen}, claim_blocks=${zcash_claim_mined}" >&2
   exit 1
 }
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  (( m5_transport_cutover_complete == 1 )) || {
+    echo 'M5 corridor completed without the required post-first-lock cutover' >&2
+    exit 1
+  }
+  jq -e '.result == "passed" and .cutover_after_first_lock == true
+    and .first_lock == "zcash_funding" and .confirmations_mined == 2
+    and .maker_socket_absent == true and .chat_socket_absent == true
+    and .delivery_path_absent == true' \
+    "${evidence_dir}/m5-post-lock-cutover.json" >/dev/null
+fi
 
 "$actor_bin" --config "$maker_config" status >"${evidence_dir}/maker-status-final.json"
 "$actor_bin" --config "$taker_config" status >"${evidence_dir}/taker-status-final.json"
@@ -843,6 +1011,10 @@ jq -n \
   --argjson final_zebra_tip "$final_zebra_tip" \
   --argjson drive_rounds "$round" \
   --argjson drive_retry_count "$(jq -s 'length' "${evidence_dir}/drive-retries.ndjson")" \
+  --argjson m5_application_mode "$M5_APPLICATION_MODE" \
+  --arg application_handoff_sha256 "$application_handoff_sha256" \
+  --arg application_cutover_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-post-lock-cutover.json" | cut -d ' ' -f1; fi)" \
   --argjson elapsed_ms "$((MAX_CORRIDOR_SECONDS * 1000 - $(remaining_budget_milliseconds 'result-before')))" '
   {
     schema_version: 1,
@@ -875,6 +1047,15 @@ jq -n \
     drive_rounds: $drive_rounds,
     same_run_drive_retries: $drive_retry_count,
     elapsed_milliseconds_from_provisioning: $elapsed_ms,
+    application_plane: {
+      enabled: ($m5_application_mode == 1),
+      handoff_receipt_sha256:
+        (if $m5_application_mode == 1 then $application_handoff_sha256 else null end),
+      cutover_receipt_sha256:
+        (if $m5_application_mode == 1 then $application_cutover_sha256 else null end),
+      transports_removed_after_first_lock: ($m5_application_mode == 1),
+      transports_absent_through_terminal_state: ($m5_application_mode == 1)
+    },
     public_rpc_or_faucet_used: false,
     evidence_root: $output_root
   }' >"${evidence_dir}/result.json"

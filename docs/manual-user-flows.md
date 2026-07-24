@@ -4103,6 +4103,94 @@ five-minute local offer TTL. This proves negotiation and the atomic pre-lock dur
 real daemon boundary. It proves the actual `lez-taker` acceptance command but not final actor
 configuration, chain funding, or a completed cross-chain swap.
 
+## Flow 1B: composed M5 ZEC application PoC
+
+Status: the one-command composition is source- and component-GREEN; the first
+fresh isolated-node execution is pending and must not be reported as a passed
+application swap until `result.json` validates.
+
+This flow emulates the actual users: a maker operator configures and publishes
+through `lez-maker`, a separate taker identity discovers and accepts through
+`lez-taker`, and independent maker/taker actors execute the final agreement.
+
+First start a unique LEZ v0.2 stack and primary-only Zebra Regtest node. Never
+reuse another activity's run ID or fixed host port:
+
+```sh
+LEZ_RUN=m5lez-$(date -u +%Y%m%d%H%M%S)
+ZEC_RUN=m5zecnode-$(date -u +%Y%m%d%H%M%S)
+
+RUN_ID="$LEZ_RUN" LEZ_V02_KEEP_RUNNING=1 \
+  ./scripts/run-lez-v02-stack.sh
+RUN_ID="$ZEC_RUN" ZEBRA_E2E_PRIMARY_ONLY=1 ZEBRA_E2E_SKIP_TESTS=1 \
+  ZEBRA_E2E_KEEP_RUNNING=1 ./scripts/run-zebra-e2e.sh
+```
+
+Follow [Flow 0B2](#flow-0b2-run-the-isolated-lez-v02-service-stack) and
+[Flow 0G](#flow-0g-run-either-development-m2-corridor-direction) to deploy the
+checked escrow and obtain the exact chain ID, genesis hash, program IDs,
+onboarded actor accounts, and dynamic sequencer/indexer/Zebra URLs. Do not copy
+historical endpoint ports. The deterministic genesis identities and Zebra
+Regtest outputs are local test funds; there is no faucet.
+
+Run the application composition from the repository root. Values shown as
+placeholders must come from the fresh manifests and deployment receipt:
+
+```sh
+export RUN_ID=m5app-$(date -u +%Y%m%d%H%M%S)
+export LEZ_SEQUENCER_URL=http://127.0.0.1:SEQUENCER_PORT
+export LEZ_INDEXER_URL=http://127.0.0.1:INDEXER_PORT
+export ZEBRA_RPC_URL=http://127.0.0.1:ZEBRA_PORT
+export LEZ_CHAIN_ID=LOWERCASE_HEX32
+export LEZ_GENESIS_HASH=LOWERCASE_HEX32
+export ESCROW_PROGRAM_ID=LOWERCASE_HEX32
+export AUTHENTICATED_TRANSFER_PROGRAM_HEX=LOWERCASE_HEX32
+export AUTHENTICATED_TRANSFER_PROGRAM_BASE58=BASE58_PROGRAM_ID
+export MAKER_ACCOUNT_BASE58=BASE58_MAKER_ACCOUNT
+export TAKER_ACCOUNT_BASE58=BASE58_TAKER_ACCOUNT
+
+./scripts/run-m5-zec-application-poc.sh
+```
+
+The runner refuses non-loopback endpoints, an unsafe/reused output root, an
+endpoint tuple already owned by another corridor, or a direction other than
+`taker_sells_lez`. It uses the exact prebuilt real binaries, source chain facts,
+separate actor keys/state, capability-authenticated LEZ sidecars, and one
+monotonic 49-second provision-to-completion clock.
+
+On success, inspect without printing private key/config files:
+
+```sh
+EVIDENCE=/tmp/lez-atomic-swaps-${RUN_ID}/evidence
+jq . "$EVIDENCE/m5-chat-handoff.json"
+jq . "$EVIDENCE/m5-post-lock-cutover.json"
+jq . "$EVIDENCE/result.json"
+```
+
+Required facts are: the real daemon/maker/taker processes completed one
+agreement; restart retained exact pair, price, consumed offer, and swap history;
+the maker actor submitted confirmed Zcash funding; only then were both Unix
+sockets and Delivery removed; the LEZ revealing claim and Zcash follow-up claim
+still completed; both roles are terminal; and both application receipt hashes
+are bound into `result.json`.
+
+Runtime external-resource inventory:
+
+| Resource | Used by the swap | Flakiness and trust boundary |
+|---|---:|---|
+| Isolated LEZ v0.2 sequencer/indexer | Yes, literal loopback | Real official-wire local services; indexer finality and exact chain/program identity are checked. Host load can delay finality |
+| Isolated Zebra Regtest | Yes, literal loopback | Real Zebra transaction/consensus behavior with deterministic local mining. The runner mines only after observed actor submissions |
+| Public RPC, faucet, peer, public funds | No | Any observed use invalidates the local PoC |
+| Logos Delivery, Chat, Core, or price feed | No | Run-local adapters emulate the accepted contracts; upstream production integration remains separately tracked |
+| Registries, GitHub, Docker registry | Cold setup only | A warm `--locked --offline` run needs none. Cold image/tool/dependency acquisition can fail independently and is not swap-runtime evidence |
+
+The application runner intentionally does not own the two node stacks. Stop
+only the exact LEZ and Zebra resources recorded by their own run manifests and
+cleanup commands; never use broad Docker prune, project-name wildcards, or
+another run's Compose project. Keep the private application root only while
+debugging or collecting secret-safe evidence, then remove that exact path under
+the operator's normal local retention policy.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

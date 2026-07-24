@@ -689,6 +689,64 @@ connections. Only the local targets have execution evidence. The dashed public
 edges still require endpoint/authentication smoke, funding/deployment, identity
 revalidation, propagation, and finality evidence before release.
 
+### M5 progressive local ZEC composition
+
+The opt-in runner narrows the first application PoC to one already stable
+`TakerSellsLez` corridor. This diagram is implemented source topology; an exact
+fresh-node pass is not claimed yet.
+
+```mermaid
+flowchart TB
+    subgraph App[Owner-local application plane]
+        MakerCli[Maker CLI]
+        Daemon[Maker daemon]
+        Store[SQLite schema v13]
+        Delivery[Signed run-local Delivery]
+        TakerCli[Taker CLI]
+        Finalizer[Agreement-to-actor finalizer]
+        MakerCli -->|owner Unix RPC| Daemon
+        Daemon --> Store
+        Daemon --> Delivery
+        Delivery --> TakerCli
+        TakerCli -->|Chat Unix RPC| Daemon
+        Daemon --> Finalizer
+        TakerCli --> Finalizer
+    end
+
+    subgraph Roles[Independent role processes]
+        MakerActor[Maker ZEC actor]
+        TakerActor[Taker ZEC actor]
+        MakerSidecar[Maker LEZ sidecar]
+        TakerSidecar[Taker LEZ sidecar]
+        Finalizer --> MakerActor
+        Finalizer --> TakerActor
+        MakerActor --> MakerSidecar
+        TakerActor --> TakerSidecar
+    end
+
+    subgraph Nodes[Fresh isolated local devnets]
+        Zebra[Zebra Regtest JSON-RPC]
+        Sequencer[LEZ v0.2 sequencer JSON-RPC]
+        Indexer[LEZ v0.2 finalized indexer JSON-RPC]
+    end
+
+    MakerActor --> Zebra
+    TakerActor --> Zebra
+    MakerSidecar --> Sequencer
+    MakerSidecar --> Indexer
+    TakerSidecar --> Sequencer
+    TakerSidecar --> Indexer
+    Cutover[Cutover after confirmed Zcash first lock] --> Daemon
+    Cutover --> Delivery
+```
+
+The runner accepts only explicit nonzero literal-loopback HTTP endpoints and
+locks their exact tuple. The application control and Chat endpoints are
+separate mode-0600 Unix sockets. After the first lock is confirmed, the runner
+stops the exact PID/start-time/executable tuple and moves only that run's
+Delivery path offline. Later LEZ reveal and Zcash follow-up operations use only
+fresh role state, capability-authenticated sidecars, and the chain RPCs.
+
 ## RPC and local-resource inventory
 
 | Component | Status | Transport and bind | Authentication / authority | Methods exercised or required | Lifecycle and isolation |
