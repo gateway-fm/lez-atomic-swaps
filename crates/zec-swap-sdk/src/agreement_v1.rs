@@ -548,6 +548,24 @@ impl NegotiationTranscriptV1 {
             expires_at_unix_seconds,
         }
     }
+
+    /// Unique pre-lock negotiation session identity.
+    #[must_use]
+    pub const fn session_id(&self) -> &[u8; 32] {
+        &self.session_id
+    }
+
+    /// Commitment to the exact authenticated Delivery advertisement.
+    #[must_use]
+    pub const fn offer_commitment(&self) -> &[u8; 32] {
+        &self.offer_commitment
+    }
+
+    /// Exclusive agreement validity boundary.
+    #[must_use]
+    pub const fn expires_at_unix_seconds(&self) -> u64 {
+        self.expires_at_unix_seconds
+    }
 }
 
 /// Canonical version-1 agreement body signed by maker and taker.
@@ -629,6 +647,18 @@ impl ZecAgreementBodyV1 {
     pub const fn lez_terms(&self) -> &ZecLezTermsV1 {
         &self.lez
     }
+
+    /// Exact role identities that must authenticate the agreement.
+    #[must_use]
+    pub const fn participants(&self) -> &ZecParticipantsV1 {
+        &self.participants
+    }
+
+    /// Delivery-bound negotiation identity and expiry.
+    #[must_use]
+    pub const fn transcript(&self) -> &NegotiationTranscriptV1 {
+        &self.transcript
+    }
 }
 
 /// Primitive agreement record. It is untrusted until validated.
@@ -680,6 +710,189 @@ impl ZecAgreementRecordV1 {
             });
         }
         Ok(encoded)
+    }
+}
+
+/// Untrusted canonical agreement body before either role signs it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZecAgreementDraftV1 {
+    body: ZecAgreementBodyV1,
+}
+
+impl ZecAgreementDraftV1 {
+    /// Wraps an untrusted maker-constructed agreement body.
+    #[must_use]
+    pub const fn new(body: ZecAgreementBodyV1) -> Self {
+        Self { body }
+    }
+
+    /// Validates every unsigned executable term before the maker may sign.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid identity, profile, amount, binding, deadline, transcript,
+    /// deployment, destination, or coordinator terms.
+    pub fn validate_at(
+        self,
+        now: UnixSeconds,
+    ) -> Result<ValidatedZecAgreementDraftV1, ZecAgreementV1Error> {
+        let validated = validate_draft_body(&self.body, now)?;
+        Ok(ValidatedZecAgreementDraftV1 {
+            body: self.body,
+            maker_zcash_key: validated.maker_zcash_key,
+        })
+    }
+}
+
+/// Semantically validated unsigned draft that is safe for maker signing.
+#[derive(Eq, PartialEq)]
+pub struct ValidatedZecAgreementDraftV1 {
+    body: ZecAgreementBodyV1,
+    maker_zcash_key: PublicKey,
+}
+
+impl ValidatedZecAgreementDraftV1 {
+    /// Exact domain-separated commitment the maker must sign.
+    #[must_use]
+    pub fn commitment(&self) -> [u8; 32] {
+        self.body.commitment()
+    }
+
+    /// Expected maker agreement identity embedded in the validated body.
+    #[must_use]
+    pub const fn maker_zcash_key(&self) -> &PublicKey {
+        &self.maker_zcash_key
+    }
+
+    /// Verifies the maker signature and produces the bounded partial record.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed, high-S, or wrong-key signatures.
+    pub fn with_maker_signature(
+        self,
+        maker_signature: [u8; 64],
+    ) -> Result<ZecMakerAgreementProposalV1, ZecAgreementV1Error> {
+        let commitment = self.body.commitment();
+        verify_role_signature(
+            Participant::Maker,
+            &self.maker_zcash_key,
+            &maker_signature,
+            commitment,
+        )?;
+        Ok(ZecMakerAgreementProposalV1 {
+            schema_version: ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+            body: self.body,
+            agreement_commitment: commitment,
+            maker_signature,
+        })
+    }
+}
+
+impl std::fmt::Debug for ValidatedZecAgreementDraftV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ValidatedZecAgreementDraftV1")
+            .field("body", &self.body)
+            .field("maker_zcash_key", &self.maker_zcash_key)
+            .finish()
+    }
+}
+
+/// Bounded maker-signed agreement proposal awaiting the taker signature.
+#[derive(BorshSerialize, Clone, Eq, PartialEq)]
+pub struct ZecMakerAgreementProposalV1 {
+    schema_version: u16,
+    body: ZecAgreementBodyV1,
+    agreement_commitment: [u8; 32],
+    maker_signature: [u8; 64],
+}
+
+impl ZecMakerAgreementProposalV1 {
+    /// Decodes and validates the only supported maker-proposal wire record.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized, malformed, trailing, invalid, expired, or wrongly signed bytes.
+    pub fn from_wire_at(bytes: &[u8], now: UnixSeconds) -> Result<Self, ZecAgreementV1Error> {
+        preflight_wire(bytes)?;
+        let mut reader = BoundedWireReader::new(bytes);
+        let schema_version = reader.u16()?;
+        let body = decode_bounded_body(&mut reader, schema_version)?;
+        let agreement_commitment = reader.fixed()?;
+        let maker_signature = reader.fixed()?;
+        reader.finish()?;
+        let proposal = Self {
+            schema_version,
+            body,
+            agreement_commitment,
+            maker_signature,
+        };
+        validate_maker_proposal(&proposal, now)?;
+        Ok(proposal)
+    }
+
+    /// Encodes the exact canonical bounded maker-proposal wire record.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an encoding that exceeds the fixed agreement-record limit.
+    pub fn encode_wire(&self) -> Result<Vec<u8>, ZecAgreementV1Error> {
+        let encoded = borsh::to_vec(self).map_err(|_| ZecAgreementV1Error::WireEncoding)?;
+        if encoded.len() > MAX_ZEC_AGREEMENT_RECORD_BYTES {
+            return Err(ZecAgreementV1Error::OversizedWireRecord {
+                actual: encoded.len(),
+                maximum: MAX_ZEC_AGREEMENT_RECORD_BYTES,
+            });
+        }
+        Ok(encoded)
+    }
+
+    /// Exact canonical body validated before the maker signature was accepted.
+    #[must_use]
+    pub const fn body(&self) -> &ZecAgreementBodyV1 {
+        &self.body
+    }
+
+    /// Exact domain-separated agreement commitment the taker must countersign.
+    #[must_use]
+    pub const fn commitment(&self) -> &[u8; 32] {
+        &self.agreement_commitment
+    }
+
+    /// Adds the taker signature and revalidates the complete executable agreement.
+    ///
+    /// # Errors
+    ///
+    /// Rejects expired/drifted proposal fields or malformed, high-S, or wrong-key signatures.
+    pub fn complete_at(
+        self,
+        taker_signature: [u8; 64],
+        now: UnixSeconds,
+    ) -> Result<ZecAgreementV1, ZecAgreementV1Error> {
+        validate_maker_proposal(&self, now)?;
+        ZecAgreementV1::validate_at(
+            ZecAgreementRecordV1::from_parts(
+                self.schema_version,
+                self.body,
+                self.agreement_commitment,
+                self.maker_signature,
+                taker_signature,
+            ),
+            now,
+        )
+    }
+}
+
+impl std::fmt::Debug for ZecMakerAgreementProposalV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ZecMakerAgreementProposalV1")
+            .field("schema_version", &self.schema_version)
+            .field("body", &self.body)
+            .field("agreement_commitment", &"[REDACTED]")
+            .field("maker_signature", &"[REDACTED]")
+            .finish()
     }
 }
 
@@ -736,23 +949,7 @@ impl ZecAgreementV1 {
     ///
     /// Rejects oversized, truncated, malformed, trailing, overlong-ID, or invalid records.
     pub fn from_wire_at(bytes: &[u8], now: UnixSeconds) -> Result<Self, ZecAgreementV1Error> {
-        const APPLICATION_ID_LENGTH_OFFSET: usize = 2;
-        const APPLICATION_ID_BYTES_OFFSET: usize = APPLICATION_ID_LENGTH_OFFSET + 4;
-        if bytes.len() > MAX_ZEC_AGREEMENT_RECORD_BYTES {
-            return Err(ZecAgreementV1Error::OversizedWireRecord {
-                actual: bytes.len(),
-                maximum: MAX_ZEC_AGREEMENT_RECORD_BYTES,
-            });
-        }
-        let length_bytes: [u8; 4] = bytes
-            .get(APPLICATION_ID_LENGTH_OFFSET..APPLICATION_ID_BYTES_OFFSET)
-            .and_then(|value| value.try_into().ok())
-            .ok_or(ZecAgreementV1Error::MalformedWireRecord)?;
-        let declared_length = usize::try_from(u32::from_le_bytes(length_bytes))
-            .map_err(|_| ZecAgreementV1Error::ApplicationIdTooLong)?;
-        if declared_length > MAX_ZEC_APPLICATION_SWAP_ID_BYTES {
-            return Err(ZecAgreementV1Error::ApplicationIdTooLong);
-        }
+        preflight_wire(bytes)?;
         let record = decode_bounded_record(bytes)?;
         Self::validate_at(record, now)
     }
@@ -842,6 +1039,30 @@ impl ZecAgreementV1 {
     #[must_use]
     pub const fn transaction_policy(&self) -> &ZecTransactionPolicyV1 {
         &self.record.body.transaction_policy
+    }
+
+    /// Stable application-level swap ID authenticated by both roles.
+    #[must_use]
+    pub fn application_swap_id(&self) -> &str {
+        self.record.body.application_swap_id()
+    }
+
+    /// Delivery-bound negotiation identity and expiry authenticated by both roles.
+    #[must_use]
+    pub const fn transcript(&self) -> &NegotiationTranscriptV1 {
+        self.record.body.transcript()
+    }
+
+    /// Exact transparent Zcash principal in zatoshis.
+    #[must_use]
+    pub fn zcash_amount_zatoshis(&self) -> u64 {
+        u64::from(self.binding.expected_output().value())
+    }
+
+    /// Exact LEZ principal in atomic units.
+    #[must_use]
+    pub const fn lez_amount(&self) -> u128 {
+        self.record.body.lez_terms().amount()
     }
 
     /// Derives and validates the only funding request permitted by the signed agreement.
@@ -1391,6 +1612,27 @@ impl<'a> BoundedWireReader<'a> {
     }
 }
 
+fn preflight_wire(bytes: &[u8]) -> Result<(), ZecAgreementV1Error> {
+    const APPLICATION_ID_LENGTH_OFFSET: usize = 2;
+    const APPLICATION_ID_BYTES_OFFSET: usize = APPLICATION_ID_LENGTH_OFFSET + 4;
+    if bytes.len() > MAX_ZEC_AGREEMENT_RECORD_BYTES {
+        return Err(ZecAgreementV1Error::OversizedWireRecord {
+            actual: bytes.len(),
+            maximum: MAX_ZEC_AGREEMENT_RECORD_BYTES,
+        });
+    }
+    let length_bytes: [u8; 4] = bytes
+        .get(APPLICATION_ID_LENGTH_OFFSET..APPLICATION_ID_BYTES_OFFSET)
+        .and_then(|value| value.try_into().ok())
+        .ok_or(ZecAgreementV1Error::MalformedWireRecord)?;
+    let declared_length = usize::try_from(u32::from_le_bytes(length_bytes))
+        .map_err(|_| ZecAgreementV1Error::ApplicationIdTooLong)?;
+    if declared_length > MAX_ZEC_APPLICATION_SWAP_ID_BYTES {
+        return Err(ZecAgreementV1Error::ApplicationIdTooLong);
+    }
+    Ok(())
+}
+
 fn decode_bounded_record(bytes: &[u8]) -> Result<ZecAgreementRecordV1, ZecAgreementV1Error> {
     let mut reader = BoundedWireReader::new(bytes);
     let schema_version = reader.u16()?;
@@ -1651,6 +1893,60 @@ pub enum ZecAgreementV1Error {
     /// Named confirmation policy could not be reconstructed.
     #[error("invalid named confirmation policy")]
     InvalidConfirmationPolicy,
+}
+
+struct DraftValidation {
+    maker_zcash_key: PublicKey,
+}
+
+fn validate_draft_body(
+    body: &ZecAgreementBodyV1,
+    now: UnixSeconds,
+) -> Result<DraftValidation, ZecAgreementV1Error> {
+    if body.application_swap_id.len() > MAX_ZEC_APPLICATION_SWAP_ID_BYTES {
+        return Err(ZecAgreementV1Error::ApplicationIdTooLong);
+    }
+    let swap_id = SwapId::new(body.application_swap_id.clone())
+        .map_err(|_| ZecAgreementV1Error::InvalidSwapId)?;
+    if body.secret_digest == [0; 32] {
+        return Err(ZecAgreementV1Error::EmptySecretDigest);
+    }
+    validate_transcript(&body.transcript, now)?;
+    validate_participants(&body.participants)?;
+    validate_lez_terms(body)?;
+    let maker_zcash_key = parse_role_key(&body.participants, Participant::Maker)?;
+    let taker_zcash_key = parse_role_key(&body.participants, Participant::Taker)?;
+    let binding = validate_binding(body, &maker_zcash_key, &taker_zcash_key)?;
+    let _ = derive_protocol(body, &binding, swap_id)?;
+    Ok(DraftValidation { maker_zcash_key })
+}
+
+fn validate_maker_proposal(
+    proposal: &ZecMakerAgreementProposalV1,
+    now: UnixSeconds,
+) -> Result<DraftValidation, ZecAgreementV1Error> {
+    if proposal.schema_version != ZEC_CONCRETE_AGREEMENT_SCHEMA_V2 {
+        return Err(ZecAgreementV1Error::UnsupportedSchema(
+            proposal.schema_version,
+        ));
+    }
+    let validated = validate_draft_body(&proposal.body, now)?;
+    let expected_commitment = proposal.body.commitment();
+    if proposal
+        .agreement_commitment
+        .ct_eq(&expected_commitment)
+        .unwrap_u8()
+        == 0
+    {
+        return Err(ZecAgreementV1Error::CommitmentMismatch);
+    }
+    verify_role_signature(
+        Participant::Maker,
+        &validated.maker_zcash_key,
+        &proposal.maker_signature,
+        expected_commitment,
+    )?;
+    Ok(validated)
 }
 
 struct ValidatedEnvelope {

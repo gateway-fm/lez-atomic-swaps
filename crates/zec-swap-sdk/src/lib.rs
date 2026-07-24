@@ -32,12 +32,12 @@ pub use agreement_v1::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, FundingInputSetError, LezAssetV1,
     LezChainIdentityV1, LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES,
     MAX_ZEC_APPLICATION_SWAP_ID_BYTES, MAX_ZEC_FUNDING_INPUTS, MAX_ZEC_FUNDING_SCRIPT_BYTES,
-    NegotiationTranscriptV1, SwapDirectionRecordV1, ZEC_AGREEMENT_V1_DOMAIN,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1,
-    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementExecutionError, ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error,
-    ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1,
-    ZecTransactionPolicyV1,
+    NegotiationTranscriptV1, SwapDirectionRecordV1, ValidatedZecAgreementDraftV1,
+    ZEC_AGREEMENT_V1_DOMAIN, ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+    ZcashFundingInputSetV1, ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementDraftV1, ZecAgreementExecutionError, ZecAgreementRecordV1, ZecAgreementV1,
+    ZecAgreementV1Error, ZecLezTermsV1, ZecMakerAgreementProposalV1, ZecParticipantIdentityV1,
+    ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1, ZecTransactionPolicyV1,
 };
 pub use claim::{
     ClaimDriveOutcome, ClaimError, ClaimIntentV1, ClaimStepV1, FollowupClaimEvidenceV1,

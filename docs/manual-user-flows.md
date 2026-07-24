@@ -3921,6 +3921,38 @@ actual LEZ/ZEC local-devnet corridor. After first lock, both transport processes
 must be removed and terminal progress must continue from role-local durable
 state and chain evidence alone.
 
+### Maker-first ZEC negotiation component check
+
+Reproduce the canonical proposal/countersign path and exact offer conversion:
+
+```sh
+cargo test --locked -p lez-zec-swap-sdk \
+  --test agreement_v1_cross_binding \
+  maker_validates_and_signs_before_the_taker_countersigns_exact_wire \
+  -- --exact --nocapture
+cargo test --locked -p lez-swap-store \
+  --test maker_offers \
+  publication_snapshots_exact_policy_and_price_and_survives_restart \
+  -- --exact --nocapture
+```
+
+Each command must report one passing test. The first constructs the same
+canonical ZEC body used by the executable SDK, validates every unsigned term
+before the maker signature, bounded-decodes the maker proposal, rejects wrong
+and high-S maker signatures, rejects a wrong taker signature and mutated wire,
+then returns a fully validated dual-signed agreement with the exact direction,
+ZEC amount, LEZ amount, Delivery offer commitment, and expiry. The second proves
+the signed 5:2 price maps 10 foreign atomic units to exactly 25 LEZ atomic units,
+rejects values outside 10 through 10,000, and rejects 11 because it would require
+rounding.
+
+These are deterministic in-process component checks. They use no Delivery or
+Chat process, chain RPC, node, Docker, faucet, public funds, DNS, public price
+feed, or external finality source. Cold Cargo acquisition is their only
+possible network dependency; use `--locked --offline` after warming the cache.
+They do not yet prove durable negotiation, lost-response replay, a separate
+taker CLI, or the actual local-devnet corridor.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

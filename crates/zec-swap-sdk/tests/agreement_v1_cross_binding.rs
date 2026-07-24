@@ -4,13 +4,13 @@ use lez_zec_swap_sdk::{
     LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, MAX_ZEC_APPLICATION_SWAP_ID_BYTES,
     MAX_ZEC_FUNDING_INPUTS, MAX_ZEC_FUNDING_SCRIPT_BYTES, NegotiationTranscriptV1, TransparentUtxo,
     ZEC_CONCRETE_AGREEMENT_SCHEMA_V1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1,
-    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementDraftV1,
     ZecAgreementExecutionError, ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error,
-    ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
-    ZecRefundPlanV1, ZecRolePayoutV1, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1, derive_lez_token_account_v1, derive_nssa_v0_1_2_metadata_account_v1,
-    derive_nssa_v0_1_2_native_custody_account_v1,
+    ZecLezTermsV1, ZecMakerAgreementProposalV1, ZecParticipantIdentityV1, ZecParticipantsV1,
+    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecRolePayoutV1, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1, derive_lez_token_account_v1,
+    derive_nssa_v0_1_2_metadata_account_v1, derive_nssa_v0_1_2_native_custody_account_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use zcash_protocol::{
@@ -266,6 +266,72 @@ impl Fixture {
     fn validate(&self) -> Result<ZecAgreementV1, ZecAgreementV1Error> {
         ZecAgreementV1::validate_at(self.record(), UnixSeconds::new(NOW))
     }
+}
+
+#[test]
+fn maker_validates_and_signs_before_the_taker_countersigns_exact_wire() {
+    let fixture = Fixture::new(SwapDirection::TakerSellsLez);
+    let wrong_key_draft = ZecAgreementDraftV1::new(fixture.body())
+        .validate_at(UnixSeconds::new(NOW))
+        .expect("maker validates all unsigned terms");
+    let commitment = wrong_key_draft.commitment();
+    assert!(matches!(
+        wrong_key_draft.with_maker_signature(sign(commitment, &key(9))),
+        Err(ZecAgreementV1Error::SignatureMismatch(Participant::Maker))
+    ));
+    let high_s_draft = ZecAgreementDraftV1::new(fixture.body())
+        .validate_at(UnixSeconds::new(NOW))
+        .expect("same terms validate deterministically");
+    assert!(matches!(
+        high_s_draft.with_maker_signature(to_high_s(sign(commitment, &fixture.maker_signer))),
+        Err(ZecAgreementV1Error::NonCanonicalSignature(
+            Participant::Maker
+        ))
+    ));
+
+    let draft = ZecAgreementDraftV1::new(fixture.body())
+        .validate_at(UnixSeconds::new(NOW))
+        .expect("final signing draft validates");
+    assert_eq!(draft.maker_zcash_key(), &public_key(&fixture.maker_signer));
+    let proposal = draft
+        .with_maker_signature(sign(commitment, &fixture.maker_signer))
+        .expect("exact maker signs validated draft");
+    let wire = proposal.encode_wire().expect("bounded maker proposal wire");
+    let decoded = ZecMakerAgreementProposalV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+        .expect("taker validates maker proposal");
+    assert_eq!(decoded, proposal);
+    assert!(matches!(
+        decoded
+            .clone()
+            .complete_at(sign(commitment, &key(9)), UnixSeconds::new(NOW)),
+        Err(ZecAgreementV1Error::SignatureMismatch(Participant::Taker))
+    ));
+
+    let agreement = decoded
+        .complete_at(
+            sign(commitment, &fixture.taker_signer),
+            UnixSeconds::new(NOW),
+        )
+        .expect("exact taker countersigns");
+    assert_eq!(agreement.application_swap_id(), fixture.application_swap_id);
+    assert_eq!(agreement.direction(), fixture.direction);
+    assert_eq!(agreement.zcash_amount_zatoshis(), fixture.zcash_value);
+    assert_eq!(agreement.lez_amount(), fixture.lez_amount);
+    assert_eq!(
+        agreement.transcript().offer_commitment(),
+        &fixture.offer_commitment
+    );
+    assert_eq!(
+        agreement.transcript().expires_at_unix_seconds(),
+        fixture.expires_at
+    );
+
+    let mut tampered = wire;
+    *tampered.last_mut().expect("nonempty proposal") ^= 1;
+    assert!(matches!(
+        ZecMakerAgreementProposalV1::from_wire_at(&tampered, UnixSeconds::new(NOW)),
+        Err(ZecAgreementV1Error::SignatureMismatch(Participant::Maker))
+    ));
 }
 
 #[test]

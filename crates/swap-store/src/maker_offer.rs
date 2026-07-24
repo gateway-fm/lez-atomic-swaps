@@ -25,6 +25,12 @@ pub enum MakerOfferError {
     /// Price, policy, route, or revision snapshots were inconsistent.
     #[error("offer snapshot is internally inconsistent")]
     InvalidSnapshot,
+    /// Selected foreign amount fell outside the signed inclusive offer bounds.
+    #[error("selected foreign amount is outside the offer bounds")]
+    AmountOutOfBounds,
+    /// Exact integer-lot price could not represent the selected amount without rounding.
+    #[error("selected amount is not exactly representable by the offer price")]
+    NonIntegralPrice,
 }
 
 /// Bounded log-safe durable offer identity.
@@ -166,6 +172,28 @@ impl MakerOfferV1 {
     #[must_use]
     pub const fn expires_at_unix_seconds(&self) -> u64 {
         self.expires_at_unix_seconds
+    }
+
+    /// Converts one selected foreign amount through the exact signed integer-lot price.
+    ///
+    /// # Errors
+    ///
+    /// Rejects amounts outside the inclusive offer bounds or any result that
+    /// would require fractional LEZ atomic units. No rounding is performed.
+    pub fn quote_foreign_amount(&self, foreign_units: u64) -> Result<u128, MakerOfferError> {
+        if foreign_units < self.minimum_foreign_units()
+            || foreign_units > self.maximum_foreign_units()
+        {
+            return Err(MakerOfferError::AmountOutOfBounds);
+        }
+        let numerator = u128::from(foreign_units)
+            .checked_mul(u128::from(self.price.lez_units_per_lot()))
+            .ok_or(MakerOfferError::InvalidSnapshot)?;
+        let denominator = u128::from(self.price.foreign_units_per_lot());
+        if numerator % denominator != 0 {
+            return Err(MakerOfferError::NonIntegralPrice);
+        }
+        Ok(numerator / denominator)
     }
 
     /// Revalidates a deserialized offer snapshot at an untrusted boundary.

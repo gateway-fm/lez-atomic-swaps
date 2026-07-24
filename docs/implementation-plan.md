@@ -3193,7 +3193,9 @@ separately from runtime dependencies.
 - [ ] Complete maker CLI commands and add the taker CLI.
 - [x] Add the bounded signed run-local Delivery adapter with exact maker identity,
   canonical snapshot validation, half-open expiry, and immutable publication.
-- [ ] Add authenticated Chat reservation/negotiation, transport process wiring,
+- [x] Add the maker-first canonical ZEC draft/proposal/countersign contract and
+  exact no-rounding offer amount conversion.
+- [ ] Add durable Chat reservation/negotiation, transport process wiring,
   buffering, retry/degraded state, and the post-lock cutover rule.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC.

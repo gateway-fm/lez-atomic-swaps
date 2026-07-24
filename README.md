@@ -16,9 +16,10 @@ Unix-socket daemon, maker CLI, durable schema-v12 pair/price/offer/swap history,
 exact local pricing, expiring one-winner offers, signed bounded run-local
 Delivery discovery, global request replay, and restart recovery. Offer
 consumption atomically inserts the matching initial coordinator. A separate
-taker CLI, authenticated run-local Chat negotiation, Delivery process wiring,
-and the actual LEZ/ZEC application-level swap are the next PoC critical path; the
-Logos C-API price source, systemd/Core lifecycle, fuzzing, and hardening remain
+taker CLI, authenticated run-local Chat runtime and atomic acceptance, Delivery
+process wiring, and the actual LEZ/ZEC application-level swap are the next PoC
+critical path; the Logos C-API price source, systemd/Core lifecycle, fuzzing,
+and hardening remain
 literal M5 completion work.
 
 Build and repeat the current real process boundary with:

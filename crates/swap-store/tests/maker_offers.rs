@@ -4,8 +4,8 @@ use lez_swap_core::{
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    LocalPriceV1, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind,
-    MakerRouteV1, SqliteSwapStore, StoreError,
+    LocalPriceV1, MakerOfferError, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1,
+    MakerPriceSourceKind, MakerRouteV1, SqliteSwapStore, StoreError,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -123,6 +123,19 @@ fn publication_snapshots_exact_policy_and_price_and_survives_restart() {
     assert_eq!(record.offer().price_source_revision(), 1);
     assert_eq!(record.offer().price().lez_units_per_lot(), 5);
     assert_eq!(record.offer().price().foreign_units_per_lot(), 2);
+    assert_eq!(record.offer().quote_foreign_amount(10), Ok(25));
+    assert_eq!(
+        record.offer().quote_foreign_amount(9),
+        Err(MakerOfferError::AmountOutOfBounds)
+    );
+    assert_eq!(
+        record.offer().quote_foreign_amount(10_001),
+        Err(MakerOfferError::AmountOutOfBounds)
+    );
+    assert_eq!(
+        record.offer().quote_foreign_amount(11),
+        Err(MakerOfferError::NonIntegralPrice)
+    );
     assert_eq!(record.offer().price_observed_at_unix_seconds(), 1_000);
     assert_eq!(record.offer().created_at_unix_seconds(), 1_000);
     assert_eq!(record.offer().expires_at_unix_seconds(), 1_300);
