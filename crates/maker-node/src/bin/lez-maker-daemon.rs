@@ -155,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
             .map_err(|error| anyhow::anyhow!("serve local RPC connection: {error}"))?;
     }
     drop(service);
+    drop(chat_service);
     drop(stop_handle);
     server_handle.stopped().await;
     Ok(())

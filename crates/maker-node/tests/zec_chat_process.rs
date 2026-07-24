@@ -29,6 +29,7 @@ use lez_zec_swap_sdk::{
     ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
     derive_lez_swap_id_v1,
 };
+use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -134,10 +135,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     };
     let final_wire = assert_taker_accepts_and_replays(&taker, &maker_key, accepted_at);
 
-    daemon
-        .kill()
-        .expect("terminate daemon after committed response");
-    daemon.wait().expect("reap daemon");
+    stop_daemon_gracefully(&mut daemon, &daemon_paths);
     assert_completed_durable(
         &database,
         &offer_id,
@@ -416,6 +414,38 @@ fn wait_ready(daemon: &mut Child, ready: &std::path::Path, socket: &std::path::P
         assert!(Instant::now() < deadline, "daemon readiness timed out");
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn stop_daemon_gracefully(daemon: &mut Child, paths: &DaemonPaths<'_>) {
+    kill_process(Pid::from_child(daemon), Signal::INT).expect("signal maker daemon");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = daemon.try_wait().expect("poll maker daemon") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            daemon.kill().expect("kill wedged maker daemon");
+            daemon.wait().expect("reap wedged maker daemon");
+            panic!("maker daemon did not stop within the graceful deadline");
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        status.success(),
+        "maker daemon exited unsuccessfully: {status}"
+    );
+    assert!(
+        !paths.socket.exists(),
+        "graceful shutdown must remove the owner socket"
+    );
+    assert!(
+        !paths.chat_socket.exists(),
+        "graceful shutdown must remove the Chat socket"
+    );
+    assert!(
+        !paths.ready.exists(),
+        "graceful shutdown must remove the readiness handoff"
+    );
 }
 
 fn write_raw_key(path: &std::path::Path, byte: u8) {

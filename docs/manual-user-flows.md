@@ -4105,9 +4105,12 @@ configuration, chain funding, or a completed cross-chain swap.
 
 ## Flow 1B: composed M5 ZEC application PoC
 
-Status: the one-command composition is source- and component-GREEN; the first
-fresh isolated-node execution is pending and must not be reported as a passed
-application swap until `result.json` validates.
+Status: working-tree run `m5app-4a8ea01-20260724d` completed the full flow in
+30.830 seconds and produced a validating `result.json`. Both actors reached
+revision 4 `completed`; Zebra advanced exactly from height 104 to 107; Delivery
+and both Unix sockets were absent after the confirmed first lock; and no public
+RPC or faucet participated. A clean pushed-tree replay and checked secret-safe
+evidence packet remain required before calling the PoC checkpoint certified.
 
 This flow emulates the actual users: a maker operator configures and publishes
 through `lez-maker`, a separate taker identity discovers and accepts through

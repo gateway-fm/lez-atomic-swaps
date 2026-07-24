@@ -656,8 +656,8 @@ wait_for_readiness() {
         .event == "ready"
         and .run_id == $run_id
         and .runtime.sidecar_role == $role
-        and .indexer_health == "getLastFinalizedBlockId_non_genesis"
-        and .finality == "not_observed_by_this_poc_bridge"
+        and .indexer_health == "stable_finalized_tip_bound_to_runtime_genesis"
+        and .finality == "exact_genesis_bound_finalized_indexer_clock_available"
       ' "$log" >/dev/null 2>&1; then
       return 0
     fi
@@ -766,7 +766,7 @@ jq -n \
       enabled: ($m5_application_mode == 1),
       handoff_receipt_sha256:
         (if $m5_application_mode == 1 then $application_handoff_sha256 else null end),
-      transports_removed_before_activation: ($m5_application_mode == 1)
+      transports_armed_before_activation: ($m5_application_mode == 1)
     },
     public_rpc_or_faucet_used: false,
     actor_outputs_secret_free: true

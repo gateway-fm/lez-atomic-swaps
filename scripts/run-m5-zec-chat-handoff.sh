@@ -143,7 +143,7 @@ stop_daemon() {
     daemon_start_ticks=''
     return 0
   fi
-  kill -INT "$daemon_pid"
+  kill -INT "$daemon_pid" 2>/dev/null || true
   for _ in {1..200}; do
     if ! daemon_is_owned; then
       wait "$daemon_pid" 2>/dev/null || true
@@ -153,7 +153,27 @@ stop_daemon() {
     fi
     sleep 0.05
   done
-  fail 'maker daemon did not stop gracefully'
+  kill -TERM "$daemon_pid" 2>/dev/null || true
+  for _ in {1..100}; do
+    if ! daemon_is_owned; then
+      wait "$daemon_pid" 2>/dev/null || true
+      daemon_pid=''
+      daemon_start_ticks=''
+      return 0
+    fi
+    sleep 0.05
+  done
+  kill -KILL "$daemon_pid" 2>/dev/null || true
+  for _ in {1..100}; do
+    if ! daemon_is_owned; then
+      wait "$daemon_pid" 2>/dev/null || true
+      daemon_pid=''
+      daemon_start_ticks=''
+      return 0
+    fi
+    sleep 0.05
+  done
+  fail 'maker daemon did not terminate after SIGKILL'
 }
 
 cleanup() {
@@ -165,7 +185,25 @@ cleanup() {
       daemon_is_owned || break
       sleep 0.05
     done
-    wait "$daemon_pid" 2>/dev/null || true
+    if daemon_is_owned; then
+      kill -TERM "$daemon_pid" 2>/dev/null || true
+      for _ in {1..100}; do
+        daemon_is_owned || break
+        sleep 0.05
+      done
+    fi
+    if daemon_is_owned; then
+      kill -KILL "$daemon_pid" 2>/dev/null || true
+      for _ in {1..100}; do
+        daemon_is_owned || break
+        sleep 0.05
+      done
+    fi
+    if daemon_is_owned; then
+      printf 'M5 owned maker daemon did not terminate after SIGKILL\n' >&2
+    else
+      wait "$daemon_pid" 2>/dev/null || true
+    fi
   fi
   if (( status != 0 )); then
     printf 'M5 private handoff diagnostics retained at %s\n' "$application_root" >&2
@@ -244,8 +282,8 @@ jq -e --arg offer "$offer_id" --arg maker "$maker_public_key" '
   and .offers[0].offer.id == $offer
   and .offers[0].maker_public_key == $maker
   and (.offers[0].signed_envelope_sha256 | test("^[0-9a-f]{64}$"))
-  and .offers[0].offer.pair_configuration.route.pair == "zcash"
-  and .offers[0].offer.pair_configuration.route.direction == "taker_sells_lez"
+  and .offers[0].offer.pair_configuration.route.pair == "Zcash"
+  and .offers[0].offer.pair_configuration.route.direction == "TakerSellsLez"
 ' "$discovery_receipt" >/dev/null
 offer_commitment="$(jq -er '.offers[0].signed_envelope_sha256' "$discovery_receipt")"
 offer_expires="$(jq -er '.offers[0].offer.expires_at_unix_seconds | numbers' "$discovery_receipt")"

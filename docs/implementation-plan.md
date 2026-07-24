@@ -3223,17 +3223,21 @@ separately from runtime dependencies.
   now rebinds only the authenticated transcript of validated local chain facts,
   and the finalizer exact-compares every other body field, both role keys,
   funder ownership and the hash preimage before emitting fresh isolated actor
-  state. The canonical draft, both Chat endpoints and final actor-config handoff
-  are component GREEN; they do not yet prove any chain effect. The opt-in M5
+  state. The opt-in M5
   runner now composes these steps with fresh final actor state, preserves the
   endpoint-tuple lock and one 49-second provision-to-completion clock, keeps the
   restarted application transports through the first confirmed Zcash lock, and
-  removes both before later settlement. Source, syntax, process, and strict-lint
-  gates are GREEN; actual isolated-node evidence is pending.
+  removes both before later settlement. Working-tree run
+  `m5app-4a8ea01-20260724d` completed in 30.830 seconds against isolated LEZ
+  v0.2 and Zebra Regtest, with both actors at revision 4, exact Zebra height 104
+  to 107, post-lock transport removal, and no public resources. The preceding
+  fail-closed attempts exposed stale typed assertions and a daemon shutdown
+  deadlock; corrections and a real-process regression are GREEN. An exact
+  pushed-tree replay and checked secret-safe evidence remain pending.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC. The one-command `TakerSellsLez` composition
-  is implemented; run it against fresh isolated nodes and replay from the exact
-  pushed tree before checking this item.
+  is working-tree GREEN; replay from the exact pushed tree before checking this
+  item.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested
   Logos Core lifecycle adapter contract.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
@@ -3248,11 +3252,10 @@ separately from runtime dependencies.
   create the annotated M5 completion tag only after every literal output is
   proven.
 
-Current PoC ETA (updated 2026-07-24): 45 to 90 focused minutes if cached local
-node images and LEZ artifacts remain usable, or 2 to 4 hours if a cold isolated
-rebuild is required. This covers the first composed run, defects found by that
-run, exact evidence/docs, and a pushed PoC checkpoint; it excludes the later
-literal M5 completion outputs above.
+Current PoC checkpoint ETA (updated 2026-07-24): 20 to 45 focused minutes while
+the isolated nodes remain healthy, or 2 to 4 hours if a cold rebuild is needed.
+This covers the exact pushed-tree replay, secret-safe evidence, documentation,
+and scoped cleanup; it excludes the later literal M5 completion outputs above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 implements and tests the lifecycle
