@@ -3140,7 +3140,7 @@ The current executable baseline is intentionally not called M5-complete. It has
 an owner-restricted Unix-socket maker daemon, durable pair and exact-price
 configuration, a pluggable local runtime price source, swap/alert history,
 SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It has
-a discovery-only taker CLI, daemon-owned signed run-local Delivery, and a
+a taker CLI with key-pinned discovery and ZEC acceptance, daemon-owned signed run-local Delivery, and a
 disjoint process-facing Chat endpoint with durable proposal staging, role
 countersigning, and atomic final acceptance, but no taker lifecycle command,
 C-API pricing
@@ -3193,10 +3193,11 @@ separately from runtime dependencies.
 - [ ] Complete both price-source adapters. The trait, store-backed local
   adapter, owner-local quote RPC/CLI, and restart journey are GREEN; the bounded
   Logos C-API adapter and its stale/unavailable contract remain.
-- [ ] Complete maker CLI commands and the taker CLI. The separate `lez-taker`
-  process now discovers daemon-published key-pinned signed offers with exact
-  route/TTL filtering and versioned output; initiation, status, claim, and
-  refund remain.
+- [ ] Complete maker CLI commands and the taker CLI. The separate `lez-taker` process now discovers daemon-published key-pinned
+  signed offers and initiates ZEC acceptance through the isolated Chat socket. It
+  validates the exact maker proposal, countersigns with an owner-private raw key,
+  exact-replays both mutations, and publishes the final agreement without
+  clobber. Status, claim, refund, other pairs, and corridor composition remain.
 - [x] Add the bounded signed run-local Delivery adapter with exact maker identity,
   canonical snapshot validation, half-open expiry, immutable publication, and
   daemon-owned publish/withdraw. Startup reconciles SQLite's exact active set
@@ -3217,9 +3218,7 @@ separately from runtime dependencies.
   reserves one offer winner with exact replay/conflict/restart evidence. The
   countersigned agreement, coordinator, immutable ZEC binding, protected maker
   claim material, offer consumption, and replay result also commit together
-  with forced-rollback/replay/restart evidence. Next wire those now-GREEN operations into the actual `lez-taker`
-  command,
-  split the local chain-fact preparer from role signing, persist the exact final
+  with forced-rollback/replay/restart evidence. Next split the local chain-fact preparer from role signing, persist the exact final
   wire into both actor configurations, then prove the post-lock transport
   cutover. The canonical unsigned draft and both maker Chat endpoints are now GREEN;
   they do not yet prove any chain effect.
@@ -3280,7 +3279,7 @@ CI and local scripts fail if the project name is empty or does not start with
 | Mainnet deadlines remain uncalibrated | `public-testnet-v1` fixes testnet depths/horizons and conservative bounds; mainnet is deliberately absent | Gather chain telemetry and fee/reorg stress evidence, then require formal review before enabling a mainnet profile |
 | Spend evidence is not yet durable adapter truth | Funding observations are durable and adapter-grade; bounded spend recognition now preserves consensus-valid claim/refund semantics and policy fields, but expected terms are still caller-supplied and spend reorg history is not journaled | Derive expected spends from the concrete agreement plus canonical funding, then add versioned claim/refund removal/replacement persistence before terminal projection |
 | LEZ and core timestamp units differ | Typed `UnixSeconds`/`LezUnixMilliseconds` conversion now checks guest multiplication, floors observations, ceils earlier-latest bounds, and passes boundary/overflow tests | Require named profiles to be the only construction path used by composed refund-margin E2E |
-| Final E2E must represent actual users | Operator process harness exists; taker and chain lifecycles still call protocol core directly | Extend the role harness through taker CLI and real chain adapters before labeling tests as full E2E |
+| Final E2E must represent actual users | The real taker CLI now owns ZEC discovery, proposal validation, countersigning, completion, replay, and final-wire persistence; chain lifecycle remains separate | Extend the same role boundary through actor activation and real chain adapters before labeling the application flow full E2E |
 | Prototype local RPC still uses loopback HTTP and an environment capability | Tower rejects a Bearer header before JSON parsing and non-loopback binds are refused | Move to an owner-restricted Unix socket and credential file before M5 freeze |
 | Daemon prototype serializes SQLite with a mutex on blocking workers | Safe for the two-method operator slice, not chain watcher concurrency | Introduce the ADR-0003 single writer actor and atomic outbox before mutations expand |
 | Trade direction was unstated in both contractual sources | ADR 0008 now separates taker-first funding from construction-specific claimant order; ZEC's chain order comes directly from RFP F4 | Keep direction immutable; BTC/ZEC allow both only through their reviewed actor/chain flows, while XMR remains LEZ-first only |

@@ -4046,19 +4046,48 @@ cargo test --locked --offline -p lez-maker-node --test zec_chat_process \
   -- --exact --nocapture
 ```
 
+The test invokes the following real user-facing shape. For a manually prepared
+draft, substitute paths and IDs from the private preparation step. The current
+process test creates these inputs; the one-command corridor preparer is the next
+vertical slice:
+
+```sh
+target/debug/lez-taker \
+  --delivery-directory "$RUN_ROOT/delivery" \
+  --maker-public-key "$MAKER_ZEC_PUBLIC_KEY_HEX" \
+  --now-unix-seconds "$(date +%s)" \
+  --pair zcash \
+  --direction taker-sells-lez \
+  --accept-zec-offer "$OFFER_ID" \
+  --chat-socket "$RUN_ROOT/runtime/chat.sock" \
+  --reservation-id "$RESERVATION_ID" \
+  --foreign-units 10000 \
+  --unsigned-draft-file "$RUN_ROOT/taker/unsigned-draft.borsh" \
+  --taker-signing-key-file "$RUN_ROOT/taker/agreement.key" \
+  --agreement-output-file "$RUN_ROOT/taker/agreement.borsh"
+```
+
+The runtime and taker directories must be real owner-owned mode-`0700`
+directories. Both input files must be owner-owned, single-link, mode-`0600`
+regular files; the key is exactly 32 nonzero raw bytes. The output must not
+already exist unless it contains the byte-identical agreement from an exact
+retry. Repeating the complete command is safe: its proposal/completion request
+IDs are deterministically derived from the reservation and the output uses
+no-clobber publication.
+
 The focused command must report exactly one passing test. It starts the real
 maker daemon with separate owner-control and taker-facing Chat Unix sockets,
 configures a ZEC route and exact 5:2 local price through owner RPC, publishes a
-signed expiring offer through the daemon-owned Delivery directory, and acts as
-a separate key-pinned taker. That taker constructs a canonical unsigned draft
+signed expiring offer through the daemon-owned Delivery directory, and launches the actual `lez-taker` process as a separate key-pinned user. The
+fixture prepares a canonical unsigned draft
 bound to the selected envelope, reservation-derived session, exact quote, and
 expiry, then submits it over Chat.
 
 The proposal result must be offer revision 2 and 25,000 LEZ atomic units for
-10,000 zatoshis. The taker validates the maker signature, repeats the identical
-request after crossing a wall-clock second, and receives the byte-identical
-proposal. It then countersigns the exact commitment and sends only the dual-
-signed wire and public IDs to Chat. The daemon atomically returns revision 3 and
+10,000 zatoshis. The CLI validates the maker signature and exact unchanged body, countersigns
+with its own raw mode-0600 key, no-clobber persists the dual-signed wire, then
+repeats the identical command after crossing a wall-clock second, and receives the byte-identical
+proposal. The daemon atomically returns revision 3 and
 the agreement-derived swap ID; a second delayed request exact-replays. After a
 forced daemon stop, SQLite must reopen with Completed negotiation, exact final
 wire, consumed offer, coordinator, binding, and no plaintext preimage. The same run proves the owner socket rejects the
@@ -4071,8 +4100,8 @@ DNS, public price source, public finality source, or Logos service is used.
 After the Cargo cache is warm, `--locked --offline` removes registry/network
 availability as a flakiness source; the only time-sensitive boundary is a
 five-minute local offer TTL. This proves negotiation and the atomic pre-lock durable handoff through the
-real daemon boundary. It does not yet prove the actual `lez-taker` command, final
-actor configuration, chain funding, or a completed cross-chain swap.
+real daemon boundary. It proves the actual `lez-taker` acceptance command but not final actor
+configuration, chain funding, or a completed cross-chain swap.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 

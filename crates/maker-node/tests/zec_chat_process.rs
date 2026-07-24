@@ -12,10 +12,10 @@ use std::{
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, ListRequest, LocalPriceSetRequest,
-    OfferPublishRequest, PairConfigureRequest, RunLocalDelivery, ZecChatCompleteRequestV1,
-    ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
+    OfferPublishRequest, PairConfigureRequest, RunLocalDelivery, ZecChatProposeRequestV1,
+    call_local_rpc,
 };
-use lez_swap_core::{Pair, SwapDirection, UnixSeconds};
+use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
     LocalPriceV1, MakerOfferId, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
@@ -24,12 +24,12 @@ use lez_swap_store::{
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
     NegotiationTranscriptV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementDraftV1, ZecLezTermsV1, ZecMakerAgreementProposalV1, ZecParticipantIdentityV1,
-    ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ZecAgreementDraftV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
+    ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
+    derive_lez_swap_id_v1,
 };
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -100,6 +100,16 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         .expect("published offer is discoverable");
     let reservation_id = request("m5-chat-reservation-001");
     let draft_wire = unsigned_draft(&authenticated, &reservation_id, &maker_secret, &key(2));
+    let taker_root = run.path().join("taker");
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&taker_root)
+        .expect("create owner-only taker root");
+    let draft_file = taker_root.join("unsigned-draft.borsh");
+    let taker_key_file = taker_root.join("agreement.key");
+    let agreement_file = taker_root.join("agreement.borsh");
+    write_private(&draft_file, &draft_wire);
+    write_raw_key(&taker_key_file, 2);
     let proposal_request = ZecChatProposeRequestV1 {
         schema_version: 1,
         request_id: request("m5-chat-propose-001"),
@@ -108,34 +118,21 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         reservation_id: reservation_id.clone(),
         foreign_units: 10_000,
         signed_offer_envelope: authenticated.signed_envelope().to_vec(),
-        unsigned_draft_wire: draft_wire,
+        unsigned_draft_wire: draft_wire.clone(),
     };
 
     assert_socket_method_isolation(&socket, &chat_socket, &proposal_request).await;
-    let proposal: ZecChatProposalV1 =
-        call_local_rpc(&chat_socket, "zec_chat_propose_v1", &proposal_request)
-            .await
-            .unwrap();
-    assert_eq!(proposal.offer_revision, 2);
-    assert!(!proposal.was_replay);
-    assert_eq!(proposal.reservation_id, reservation_id);
-    assert_eq!(proposal.lez_units, 25_000);
-    assert_eq!(proposal.maker_identity, maker_key.serialize());
-    let validated =
-        ZecMakerAgreementProposalV1::from_wire_at(&proposal.proposal_wire, UnixSeconds::new(now()))
-            .expect("taker validates the exact maker-signed proposal");
-    assert_eq!(validated.commitment(), &proposal.agreement_commitment);
-
-    assert_proposal_replay(&chat_socket, &proposal_request, &proposal).await;
-
-    let final_wire = complete_chat(
-        &chat_socket,
-        &offer_id,
-        &reservation_id,
-        &proposal,
-        validated,
-    )
-    .await;
+    let accepted_at = now();
+    let taker = TakerProcess {
+        delivery: &delivery,
+        chat_socket: &chat_socket,
+        offer_id: &offer_id,
+        reservation_id: &reservation_id,
+        draft_file: &draft_file,
+        taker_key_file: &taker_key_file,
+        agreement_file: &agreement_file,
+    };
+    let final_wire = assert_taker_accepts_and_replays(&taker, &maker_key, accepted_at);
 
     daemon
         .kill()
@@ -145,74 +142,84 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         &database,
         &offer_id,
         &reservation_id,
-        &proposal,
         &authenticated,
         &final_wire,
     );
 }
 
-async fn assert_proposal_replay(
-    chat_socket: &std::path::Path,
-    request: &ZecChatProposeRequestV1,
-    original: &ZecChatProposalV1,
-) {
-    thread::sleep(Duration::from_millis(1_100));
-    let replay: ZecChatProposalV1 = call_local_rpc(chat_socket, "zec_chat_propose_v1", request)
-        .await
-        .unwrap();
-    assert!(replay.was_replay);
-    assert_eq!(replay.offer_revision, 2);
-    assert_eq!(replay.proposal_wire, original.proposal_wire);
+struct TakerProcess<'a> {
+    delivery: &'a std::path::Path,
+    chat_socket: &'a std::path::Path,
+    offer_id: &'a MakerOfferId,
+    reservation_id: &'a RequestId,
+    draft_file: &'a std::path::Path,
+    taker_key_file: &'a std::path::Path,
+    agreement_file: &'a std::path::Path,
 }
 
-async fn complete_chat(
-    chat_socket: &std::path::Path,
-    offer_id: &MakerOfferId,
-    reservation_id: &RequestId,
-    proposal: &ZecChatProposalV1,
-    validated: ZecMakerAgreementProposalV1,
+fn assert_taker_accepts_and_replays(
+    taker: &TakerProcess<'_>,
+    maker_key: &PublicKey,
+    accepted_at: u64,
 ) -> Vec<u8> {
-    let taker_signature = Secp256k1::signing_only()
-        .sign_ecdsa(
-            &Message::from_digest(proposal.agreement_commitment),
-            &key(2),
-        )
-        .serialize_compact();
-    let agreement = validated
-        .complete_at(taker_signature, UnixSeconds::new(now()))
-        .expect("taker countersigns the exact maker proposal");
-    let final_wire = agreement.encode_wire().unwrap();
-    let request = ZecChatCompleteRequestV1 {
-        schema_version: 1,
-        request_id: request("m5-chat-complete-001"),
-        offer_id: offer_id.clone(),
-        expected_offer_revision: 2,
-        reservation_id: reservation_id.clone(),
-        final_agreement_wire: final_wire.clone(),
-    };
-    let completed: ZecChatCompleteResponseV1 =
-        call_local_rpc(chat_socket, "zec_chat_complete_v1", &request)
-            .await
-            .unwrap();
-    assert_eq!(completed.offer_revision, 3);
-    assert!(!completed.was_replay);
-    assert_eq!(completed.swap_id.as_ref(), "m5-chat-swap-001");
+    let accepted = run_taker(taker, maker_key, accepted_at);
+    assert_eq!(accepted["schema_version"], 1);
+    assert_eq!(accepted["offer_revision"], 3);
+    assert_eq!(accepted["swap_id"], "m5-chat-swap-001");
+    assert_eq!(accepted["replay"]["proposal"], false);
+    assert_eq!(accepted["replay"]["completion"], false);
+    assert_eq!(accepted["replay"]["agreement_file"], false);
+    assert_eq!(accepted["private_material_disclosed"], false);
     thread::sleep(Duration::from_millis(1_100));
-    let replay: ZecChatCompleteResponseV1 =
-        call_local_rpc(chat_socket, "zec_chat_complete_v1", &request)
-            .await
-            .unwrap();
-    assert_eq!(replay.offer_revision, 3);
-    assert!(replay.was_replay);
-    assert_eq!(replay.swap_id, completed.swap_id);
-    final_wire
+    let replay = run_taker(taker, maker_key, accepted_at);
+    assert_eq!(replay["replay"]["proposal"], true);
+    assert_eq!(replay["replay"]["completion"], true);
+    assert_eq!(replay["replay"]["agreement_file"], true);
+    assert_eq!(replay["agreement_sha256"], accepted["agreement_sha256"]);
+    fs::read(taker.agreement_file).expect("read taker-persisted final agreement")
+}
+
+fn run_taker(taker: &TakerProcess<'_>, maker_key: &PublicKey, accepted_at: u64) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg("--delivery-directory")
+        .arg(taker.delivery)
+        .arg("--maker-public-key")
+        .arg(hex::encode(maker_key.serialize()))
+        .arg("--now-unix-seconds")
+        .arg(accepted_at.to_string())
+        .arg("--pair")
+        .arg("zcash")
+        .arg("--direction")
+        .arg("taker-sells-lez")
+        .arg("--accept-zec-offer")
+        .arg(taker.offer_id.as_str())
+        .arg("--chat-socket")
+        .arg(taker.chat_socket)
+        .arg("--reservation-id")
+        .arg(taker.reservation_id.as_str())
+        .arg("--foreign-units")
+        .arg("10000")
+        .arg("--unsigned-draft-file")
+        .arg(taker.draft_file)
+        .arg("--taker-signing-key-file")
+        .arg(taker.taker_key_file)
+        .arg("--agreement-output-file")
+        .arg(taker.agreement_file)
+        .output()
+        .expect("run real taker process");
+    assert!(
+        output.status.success(),
+        "real taker failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("real taker returns bounded JSON")
 }
 
 fn assert_completed_durable(
     database: &std::path::Path,
     offer_id: &MakerOfferId,
     reservation_id: &RequestId,
-    proposal: &ZecChatProposalV1,
     authenticated: &AuthenticatedOfferRefV1,
     final_wire: &[u8],
 ) {
@@ -223,7 +230,7 @@ fn assert_completed_durable(
         .expect("completion remains durable after process termination");
     assert_eq!(durable.status(), MakerZecNegotiationStatus::Completed);
     assert_eq!(durable.reservation_id(), reservation_id);
-    assert_eq!(durable.maker_proposal_wire(), proposal.proposal_wire);
+    assert!(!durable.maker_proposal_wire().is_empty());
     assert_eq!(durable.offer_commitment(), &authenticated.commitment());
     assert_eq!(durable.final_agreement_wire(), Some(final_wire));
     assert_eq!(durable.swap_id(), Some("m5-chat-swap-001"));
@@ -430,6 +437,17 @@ fn write_raw_key(path: &std::path::Path, byte: u8) {
         .open(path)
         .unwrap();
     file.write_all(&[byte; 32]).unwrap();
+    file.sync_all().unwrap();
+}
+
+fn write_private(path: &std::path::Path, bytes: &[u8]) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    file.write_all(bytes).unwrap();
     file.sync_all().unwrap();
 }
 

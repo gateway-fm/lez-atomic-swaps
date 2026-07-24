@@ -17,18 +17,19 @@ pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
 persists the countersigned agreement, coordinator, immutable binding, encrypted
-maker claim material, offer consumption, and replay result. A separate taker CLI
-discovers the daemon's key-pinned signed offers. A disjoint taker-facing Chat
-socket now authenticates the exact Delivery envelope and unsigned canonical ZEC
-draft, signs with the Delivery-pinned maker identity, and atomically stages the
-one-winner proposal before responding. The separate taker role then validates and
-countersigns that proposal, and the daemon reuses the atomic schema-v13 final
+maker claim material, offer consumption, and replay result. The separate taker
+CLI discovers the daemon's key-pinned signed offers and now owns its ZEC
+proposal validation, local countersignature, atomic Chat completion, and
+no-clobber final-wire persistence. A disjoint taker-facing Chat socket now
+authenticates the exact Delivery envelope and unsigned canonical ZEC draft,
+signs with the Delivery-pinned maker identity, and atomically stages the
+one-winner proposal before responding. The separate taker role then validates
+and countersigns that proposal, and the daemon reuses the atomic schema-v13 final
 acceptance transaction with only daemon-local claim authority; delayed replay
-and kill/reopen durability are process-GREEN. The actual taker CLI command,
-exact final-wire actor configuration, and the actual LEZ/ZEC application swap
-are the next PoC critical path. The Logos C-API price
-source, systemd/Core lifecycle, fuzzing, and hardening remain literal M5
-completion work.
+and kill/reopen durability are process-GREEN. Exact final-wire actor
+configuration and the actual LEZ/ZEC application swap are the next PoC critical
+path. The Logos C-API price source, systemd/Core lifecycle, fuzzing, and
+hardening remain literal M5 completion work.
 
 Build and repeat the current real process boundary with:
 

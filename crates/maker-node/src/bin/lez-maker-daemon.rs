@@ -1,6 +1,6 @@
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, Read as _, Write as _},
+    fs::{self, OpenOptions},
+    io::{self, Write as _},
     os::unix::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -15,10 +15,13 @@ use lez_maker_node::{MakerRpc, RunLocalDelivery, chat_rpc_module, rpc_module};
 use lez_swap_core::Participant;
 use lez_swap_store::{SqliteSwapStore, SqliteZecRecoveryStore};
 use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
-use rustix::fs::{CWD, Mode, OFlags, ResolveFlags, openat2};
 use secp256k1::SecretKey;
 use tokio::{net::UnixListener, task::JoinSet};
 use zeroize::Zeroizing;
+
+#[path = "support/secure_file.rs"]
+mod secure_file;
+use secure_file::{load_raw_secret, read_private_file};
 
 const MAXIMUM_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CONNECTIONS: u32 = 16;
@@ -238,75 +241,6 @@ fn load_delivery_key(path: &Path) -> anyhow::Result<SecretKey> {
     let mut bytes = Zeroizing::new([0_u8; 32]);
     hex::decode_to_slice(text, bytes.as_mut()).context("decode Delivery signing key")?;
     SecretKey::from_slice(bytes.as_ref()).context("validate Delivery signing key")
-}
-
-fn load_raw_secret(path: &Path, purpose: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
-    let bytes = read_private_file(path, 32, purpose)?;
-    ensure!(
-        bytes.len() == 32,
-        "{purpose} must contain exactly 32 raw bytes"
-    );
-    let mut secret = Zeroizing::new([0_u8; 32]);
-    secret.copy_from_slice(&bytes);
-    ensure!(
-        secret.iter().any(|byte| *byte != 0),
-        "{purpose} must be nonzero"
-    );
-    Ok(secret)
-}
-
-fn read_private_file(
-    path: &Path,
-    maximum_bytes: u64,
-    purpose: &str,
-) -> anyhow::Result<Zeroizing<Vec<u8>>> {
-    let mut file = openat2(
-        CWD,
-        path,
-        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS,
-    )
-    .map(File::from)
-    .with_context(|| format!("open {purpose}"))?;
-    let before = validate_private_file(&file, maximum_bytes, purpose)?;
-    let mut bytes = Zeroizing::new(Vec::new());
-    std::io::Read::by_ref(&mut file)
-        .take(maximum_bytes + 1)
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("read {purpose}"))?;
-    ensure!(
-        bytes.len() as u64 <= maximum_bytes,
-        "{purpose} is oversized"
-    );
-    let after = validate_private_file(&file, maximum_bytes, purpose)?;
-    ensure!(
-        before.dev() == after.dev()
-            && before.ino() == after.ino()
-            && before.len() == after.len()
-            && after.len() == bytes.len() as u64,
-        "{purpose} changed while it was read"
-    );
-    Ok(bytes)
-}
-
-fn validate_private_file(
-    file: &File,
-    maximum_bytes: u64,
-    purpose: &str,
-) -> anyhow::Result<std::fs::Metadata> {
-    let metadata = file
-        .metadata()
-        .with_context(|| format!("inspect {purpose}"))?;
-    ensure!(
-        metadata.file_type().is_file()
-            && metadata.uid() == rustix::process::geteuid().as_raw()
-            && metadata.mode() & 0o7777 == 0o600
-            && metadata.nlink() == 1
-            && metadata.len() <= maximum_bytes,
-        "{purpose} must be an owner-owned, single-link mode-0600 regular file within its size bound"
-    );
-    Ok(metadata)
 }
 
 fn trusted_now_unix_seconds() -> anyhow::Result<u64> {

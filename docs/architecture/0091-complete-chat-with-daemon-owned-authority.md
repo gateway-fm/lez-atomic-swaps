@@ -103,7 +103,8 @@ a completed cross-chain swap.
 - The first PoC accepts explicit secret-file paths; the corridor composition
   must converge these with the reference actor's provisioning manifest and use
   the provisioned maker ZEC key for both Delivery and agreement signing.
-- The actual `lez-taker` command still needs to own proposal validation,
-  countersigning, completion, and final-wire persistence.
+- The actual `lez-taker` command now owns proposal validation, countersigning,
+  completion, deterministic retry, and no-clobber final-wire persistence under
+  ADR 0092.
 - Exact final-wire actor configuration and the actual LEZ/ZEC application
   corridor remain the next vertical slice.
