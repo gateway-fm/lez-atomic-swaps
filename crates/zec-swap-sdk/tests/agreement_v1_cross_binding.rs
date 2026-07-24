@@ -269,6 +269,40 @@ impl Fixture {
 }
 
 #[test]
+fn unsigned_chat_draft_round_trips_through_the_bounded_maker_boundary() {
+    let fixture = Fixture::new(SwapDirection::TakerSellsLez);
+    let draft = ZecAgreementDraftV1::new(fixture.body());
+    let wire = draft.encode_wire().expect("bounded unsigned draft");
+    let validated = ZecAgreementDraftV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+        .expect("maker validates exact unsigned draft bytes");
+    assert_eq!(validated.commitment(), fixture.body().commitment());
+    assert_eq!(
+        validated.maker_zcash_key(),
+        &public_key(&fixture.maker_signer)
+    );
+    assert_eq!(
+        validated.taker_zcash_key(),
+        &public_key(&fixture.taker_signer)
+    );
+    assert_eq!(validated.zcash_amount_zatoshis(), fixture.zcash_value);
+    assert_eq!(validated.body().lez_terms().amount(), fixture.lez_amount);
+
+    let mut trailing = wire.clone();
+    trailing.push(0);
+    assert!(matches!(
+        ZecAgreementDraftV1::from_wire_at(&trailing, UnixSeconds::new(NOW)),
+        Err(ZecAgreementV1Error::MalformedWireRecord)
+    ));
+
+    let mut oversized = wire;
+    oversized.resize(MAX_ZEC_AGREEMENT_RECORD_BYTES + 1, 0);
+    assert!(matches!(
+        ZecAgreementDraftV1::from_wire_at(&oversized, UnixSeconds::new(NOW)),
+        Err(ZecAgreementV1Error::OversizedWireRecord { .. })
+    ));
+}
+
+#[test]
 fn maker_validates_and_signs_before_the_taker_countersigns_exact_wire() {
     let fixture = Fixture::new(SwapDirection::TakerSellsLez);
     let wrong_key_draft = ZecAgreementDraftV1::new(fixture.body())

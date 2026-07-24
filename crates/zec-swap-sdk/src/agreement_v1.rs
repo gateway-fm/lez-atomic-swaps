@@ -726,6 +726,46 @@ impl ZecAgreementDraftV1 {
         Self { body }
     }
 
+    /// Encodes the unsigned body for an untrusted Chat handoff to the maker.
+    ///
+    /// The record carries the concrete schema prefix and exact canonical body,
+    /// but no signature or signing authority.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an encoding failure or a record above the agreement wire bound.
+    pub fn encode_wire(&self) -> Result<Vec<u8>, ZecAgreementV1Error> {
+        let body = borsh::to_vec(&self.body).map_err(|_| ZecAgreementV1Error::WireEncoding)?;
+        let mut encoded = Vec::with_capacity(2 + body.len());
+        encoded.extend_from_slice(&ZEC_CONCRETE_AGREEMENT_SCHEMA_V2.to_le_bytes());
+        encoded.extend_from_slice(&body);
+        if encoded.len() > MAX_ZEC_AGREEMENT_RECORD_BYTES {
+            return Err(ZecAgreementV1Error::OversizedWireRecord {
+                actual: encoded.len(),
+                maximum: MAX_ZEC_AGREEMENT_RECORD_BYTES,
+            });
+        }
+        Ok(encoded)
+    }
+
+    /// Decodes and fully validates an unsigned Chat handoff before maker signing.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized, malformed, trailing, unsupported, expired, or
+    /// semantically invalid executable terms.
+    pub fn from_wire_at(
+        bytes: &[u8],
+        now: UnixSeconds,
+    ) -> Result<ValidatedZecAgreementDraftV1, ZecAgreementV1Error> {
+        preflight_wire(bytes)?;
+        let mut reader = BoundedWireReader::new(bytes);
+        let schema_version = reader.u16()?;
+        let body = decode_bounded_body(&mut reader, schema_version)?;
+        reader.finish()?;
+        Self::new(body).validate_at(now)
+    }
+
     /// Validates every unsigned executable term before the maker may sign.
     ///
     /// # Errors
@@ -740,6 +780,8 @@ impl ZecAgreementDraftV1 {
         Ok(ValidatedZecAgreementDraftV1 {
             body: self.body,
             maker_zcash_key: validated.maker_zcash_key,
+            taker_zcash_key: validated.taker_zcash_key,
+            zcash_amount_zatoshis: validated.zcash_amount_zatoshis,
         })
     }
 }
@@ -749,6 +791,8 @@ impl ZecAgreementDraftV1 {
 pub struct ValidatedZecAgreementDraftV1 {
     body: ZecAgreementBodyV1,
     maker_zcash_key: PublicKey,
+    taker_zcash_key: PublicKey,
+    zcash_amount_zatoshis: u64,
 }
 
 impl ValidatedZecAgreementDraftV1 {
@@ -756,6 +800,24 @@ impl ValidatedZecAgreementDraftV1 {
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
         self.body.commitment()
+    }
+
+    /// Exact validated unsigned executable body.
+    #[must_use]
+    pub const fn body(&self) -> &ZecAgreementBodyV1 {
+        &self.body
+    }
+
+    /// Expected taker agreement identity embedded in the validated body.
+    #[must_use]
+    pub const fn taker_zcash_key(&self) -> &PublicKey {
+        &self.taker_zcash_key
+    }
+
+    /// Exact validated transparent Zcash principal in zatoshis.
+    #[must_use]
+    pub const fn zcash_amount_zatoshis(&self) -> u64 {
+        self.zcash_amount_zatoshis
     }
 
     /// Expected maker agreement identity embedded in the validated body.
@@ -795,6 +857,8 @@ impl std::fmt::Debug for ValidatedZecAgreementDraftV1 {
             .debug_struct("ValidatedZecAgreementDraftV1")
             .field("body", &self.body)
             .field("maker_zcash_key", &self.maker_zcash_key)
+            .field("taker_zcash_key", &self.taker_zcash_key)
+            .field("zcash_amount_zatoshis", &self.zcash_amount_zatoshis)
             .finish()
     }
 }
@@ -1903,6 +1967,8 @@ pub enum ZecAgreementV1Error {
 
 struct DraftValidation {
     maker_zcash_key: PublicKey,
+    taker_zcash_key: PublicKey,
+    zcash_amount_zatoshis: u64,
 }
 
 fn validate_draft_body(
@@ -1924,7 +1990,11 @@ fn validate_draft_body(
     let taker_zcash_key = parse_role_key(&body.participants, Participant::Taker)?;
     let binding = validate_binding(body, &maker_zcash_key, &taker_zcash_key)?;
     let _ = derive_protocol(body, &binding, swap_id)?;
-    Ok(DraftValidation { maker_zcash_key })
+    Ok(DraftValidation {
+        maker_zcash_key,
+        taker_zcash_key,
+        zcash_amount_zatoshis: u64::from(binding.expected_output().value()),
+    })
 }
 
 fn validate_maker_proposal(

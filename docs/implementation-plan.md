@@ -3210,7 +3210,10 @@ separately from runtime dependencies.
   claim material, offer consumption, and replay result also commit together
   with forced-rollback/replay/restart evidence. Next expose that path through
   independent maker/taker processes, add bounded outage behavior, and prove the
-  post-lock transport cutover.
+  post-lock transport cutover. The canonical unsigned ZEC draft wire is now
+  bounded and fully validated before maker signing, so the local chain-fact
+  preparer can be split without retaining either role signature. Next wire it
+  into the maker Chat endpoint and taker countersign command.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested
