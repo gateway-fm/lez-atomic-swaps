@@ -1969,6 +1969,7 @@ name = "lez-maker-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "clap",
  "hex",
@@ -1979,6 +1980,7 @@ dependencies = [
  "jsonrpsee-http-client",
  "lez-bridge-protocol",
  "lez-swap-core",
+ "lez-swap-sdk-core",
  "lez-swap-store",
  "lez-zec-swap-sdk",
  "rusqlite",
@@ -1986,6 +1988,7 @@ dependencies = [
  "secp256k1 0.29.1",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

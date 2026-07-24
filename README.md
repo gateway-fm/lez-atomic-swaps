@@ -13,10 +13,11 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
 M5 is active. The owner-local maker application currently provides a mode-0600
 Unix-socket daemon, maker CLI, durable schema-v12 pair/price/offer/swap history,
-exact local pricing, expiring one-winner offers, global request replay, and
-restart recovery. Offer consumption atomically inserts the matching initial
-coordinator. A separate taker CLI, signed run-local Delivery/Chat adapters, and
-the actual LEZ/ZEC application-level swap are the next PoC critical path; the
+exact local pricing, expiring one-winner offers, signed bounded run-local
+Delivery discovery, global request replay, and restart recovery. Offer
+consumption atomically inserts the matching initial coordinator. A separate
+taker CLI, authenticated run-local Chat negotiation, Delivery process wiring,
+and the actual LEZ/ZEC application-level swap are the next PoC critical path; the
 Logos C-API price source, systemd/Core lifecycle, fuzzing, and hardening remain
 literal M5 completion work.
 

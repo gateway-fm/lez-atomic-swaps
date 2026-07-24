@@ -2,8 +2,13 @@
 
 mod local_rpc;
 mod price_source;
+mod run_local_delivery;
 pub use local_rpc::call_local_rpc;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
+pub use run_local_delivery::{
+    AuthenticatedOfferRefV1, DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery,
+    RunLocalDeliveryError,
+};
 
 use std::{
     sync::Mutex,

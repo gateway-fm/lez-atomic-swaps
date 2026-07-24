@@ -3191,7 +3191,9 @@ separately from runtime dependencies.
   adapter, owner-local quote RPC/CLI, and restart journey are GREEN; the bounded
   Logos C-API adapter and its stale/unavailable contract remain.
 - [ ] Complete maker CLI commands and add the taker CLI.
-- [ ] Add Delivery/Chat-compatible run-local adapters, expiry/authentication,
+- [x] Add the bounded signed run-local Delivery adapter with exact maker identity,
+  canonical snapshot validation, half-open expiry, and immutable publication.
+- [ ] Add authenticated Chat reservation/negotiation, transport process wiring,
   buffering, retry/degraded state, and the post-lock cutover rule.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC.

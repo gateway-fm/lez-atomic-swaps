@@ -168,7 +168,12 @@ impl MakerOfferV1 {
         self.expires_at_unix_seconds
     }
 
-    fn validate(&self) -> Result<(), MakerOfferError> {
+    /// Revalidates a deserialized offer snapshot at an untrusted boundary.
+    ///
+    /// # Errors
+    ///
+    /// Rejects inconsistent identity, route, policy, price, revision, or time fields.
+    pub fn validate(&self) -> Result<(), MakerOfferError> {
         MakerOfferId::new(self.id.as_str())?;
         let validated_policy = MakerPairConfigurationV1::new(
             self.pair_configuration.route(),

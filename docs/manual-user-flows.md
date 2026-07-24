@@ -3886,6 +3886,41 @@ removes only its exact socket and readiness inodes on graceful stop. The
 database is the run-specific durable artifact; remove that specific `$RUN_DIR`
 only after the daemon has stopped and the evidence is no longer needed.
 
+### Signed run-local Delivery component check
+
+The current signed-discovery slice is not yet a CLI user journey. Reproduce its
+exact component boundary with:
+
+```sh
+cargo test --locked -p lez-maker-node --test run_local_delivery -- --nocapture
+```
+
+The expected result is three passing cases. They create a fresh mode-0700
+temporary Delivery directory, derive deterministic test-only maker identities,
+publish one real schema-v12 store-produced ZEC offer, and discover it through a
+separate subscriber holding only the expected public identity. The suite checks
+the byte-identical offer and nonzero signed-envelope commitment, then proves the
+exclusive expiry boundary, discovery-only authority, wrong-maker rejection,
+signed-byte tamper rejection, no-clobber publication, and insecure-directory
+rejection.
+
+The component uses the accepted `OfferDiscovery` port and the repository's
+pinned `secp256k1` library. It does not call a chain RPC, Logos Delivery, Chat,
+DNS, a faucet, Docker, a public price feed, or any public service. Its only
+runtime resources are owner-local temporary files, so network/finality
+flakiness is absent. Host filesystem exhaustion or permission changes can make
+it fail closed. Cold Cargo dependency acquisition can still depend on the
+configured package registry; `--locked --offline` removes that dependency once
+the cache is warm.
+
+Do not treat this command as the M5 application PoC. The next slices must wire
+publication into the maker process, add mutually authenticated one-winner Chat
+negotiation and the separate taker CLI, bind the returned offer commitment and
+exact amount into the pair SDK's countersigned agreement, and then run the
+actual LEZ/ZEC local-devnet corridor. After first lock, both transport processes
+must be removed and terminal progress must continue from role-local durable
+state and chain evidence alone.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

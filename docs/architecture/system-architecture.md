@@ -709,7 +709,7 @@ flowchart TB
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
-        DEL["Run-local Delivery-compatible adapter<br/>signed advertisement planned"]
+        DEL["Run-local Delivery-compatible adapter<br/>signed bounded discovery GREEN"]
         CHAT["Run-local Chat-compatible adapter<br/>authenticated negotiation planned"]
     end
 
