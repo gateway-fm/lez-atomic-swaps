@@ -56,6 +56,7 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
     assert_eq!(socket_metadata.permissions().mode() & 0o7777, 0o600);
 
     configure_zec_route(&first_socket);
+    publish_zec_offer(&first_socket);
 
     let created = create_swap(&first_socket, "operator-swap-1", "bitcoin", None);
     assert_success(&created);
@@ -127,6 +128,9 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
     assert_eq!(reverse_view["direction"], "TakerSellsLez");
     assert_route_lists(&second_socket);
     assert_route_quote(&second_socket);
+    assert_offer_history(&second_socket, "active", 1);
+    withdraw_zec_offer(&second_socket);
+    assert_offer_history(&second_socket, "withdrawn", 2);
     let history = maker_cli(&second_socket, &["history"]);
     assert_success(&history);
     let history: Value = serde_json::from_slice(&history.stdout).expect("CLI emits history JSON");
@@ -251,6 +255,55 @@ fn configure_zec_route(socket: &Path) {
     );
     assert_configuration_commit(&enabled, 2, false);
     assert_route_lists(socket);
+}
+
+fn publish_zec_offer(socket: &Path) {
+    let published = maker_cli(
+        socket,
+        &[
+            "publish-offer",
+            "--request-id",
+            "operator-offer-zec-publish-001",
+            "--offer-id",
+            "operator-offer-zec-001",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+        ],
+    );
+    assert_configuration_commit(&published, 1, false);
+    let replay = maker_cli(
+        socket,
+        &[
+            "publish-offer",
+            "--request-id",
+            "operator-offer-zec-publish-001",
+            "--offer-id",
+            "operator-offer-zec-001",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+        ],
+    );
+    assert_configuration_commit(&replay, 1, true);
+}
+
+fn withdraw_zec_offer(socket: &Path) {
+    let withdrawn = maker_cli(
+        socket,
+        &[
+            "withdraw-offer",
+            "--request-id",
+            "operator-offer-zec-withdraw-001",
+            "--offer-id",
+            "operator-offer-zec-001",
+            "--expected-revision",
+            "1",
+        ],
+    );
+    assert_configuration_commit(&withdrawn, 2, false);
 }
 
 fn create_swap(socket: &Path, id: &str, pair: &str, direction: Option<&str>) -> Output {
@@ -378,6 +431,20 @@ fn assert_route_quote(socket: &Path) {
     assert_eq!(quote["price"]["foreign_units_per_lot"], 2);
     assert_eq!(quote["source_revision"], 1);
     assert!(quote["observed_at_unix_seconds"].as_u64().unwrap() > 0);
+}
+
+fn assert_offer_history(socket: &Path, expected_status: &str, expected_revision: u64) {
+    let offers = maker_cli(socket, &["offers"]);
+    assert_success(&offers);
+    let offers: Value = serde_json::from_slice(&offers.stdout).expect("CLI emits offer JSON");
+    assert_eq!(offers.as_array().unwrap().len(), 1);
+    assert_eq!(offers[0]["revision"], expected_revision);
+    assert_eq!(offers[0]["status"], expected_status);
+    assert_eq!(offers[0]["offer"]["id"], "operator-offer-zec-001");
+    assert_eq!(offers[0]["offer"]["pair_configuration_revision"], 2);
+    assert_eq!(offers[0]["offer"]["price_source_revision"], 1);
+    assert_eq!(offers[0]["offer"]["price"]["lez_units_per_lot"], 5);
+    assert_eq!(offers[0]["offer"]["price"]["foreign_units_per_lot"], 2);
 }
 
 fn assert_swap_view(bytes: &[u8], id: &str, pair: &str, phase: &str) {

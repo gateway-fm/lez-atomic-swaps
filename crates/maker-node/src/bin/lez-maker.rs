@@ -4,13 +4,14 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AlertAcknowledgeRequest, AlertListRequest, CreateSwapRequest, ListRequest,
-    LocalPriceSetRequest, OperatorAlertView, PairConfigureRequest, PriceQuoteRequest, PriceQuoteV1,
-    RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
+    LocalPriceSetRequest, OfferPublishRequest, OfferWithdrawRequest, OperatorAlertView,
+    PairConfigureRequest, PriceQuoteRequest, PriceQuoteV1, RecoveryRequest, StatusRequest,
+    SwapView, call_local_rpc,
 };
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 use lez_swap_store::{
-    LocalPriceV1, MakerConfigurationCommit, MakerPairConfigurationV1, MakerPriceSourceKind,
-    MakerRouteV1, VersionedMakerRecord,
+    LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit, MakerOfferId, MakerOfferRecordV1,
+    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, VersionedMakerRecord,
 };
 
 #[derive(Parser)]
@@ -68,6 +69,28 @@ enum Command {
         pair: PairArgument,
         #[arg(long, value_enum, default_value_t = DirectionArgument::TakerSellsForeign)]
         direction: DirectionArgument,
+    },
+    /// Publishes one expiring offer from the current enabled local route.
+    PublishOffer {
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        offer_id: String,
+        #[arg(long)]
+        pair: PairArgument,
+        #[arg(long, value_enum, default_value_t = DirectionArgument::TakerSellsForeign)]
+        direction: DirectionArgument,
+    },
+    /// Lists complete durable offer history in stable identity order.
+    Offers,
+    /// Withdraws one active unreserved offer.
+    WithdrawOffer {
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        offer_id: String,
+        #[arg(long)]
+        expected_revision: u64,
     },
     /// Lists durable swap summaries in stable identifier order.
     History,
@@ -195,6 +218,8 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
         command @ Command::ConfigurePair { .. } => configure_pair(socket, command).await,
         command @ Command::SetLocalPrice { .. } => set_local_price(socket, command).await,
         command @ Command::CreateSwap { .. } => create_swap(socket, command).await,
+        command @ Command::PublishOffer { .. } => publish_offer(socket, command).await,
+        command @ Command::WithdrawOffer { .. } => withdraw_offer(socket, command).await,
         Command::Pairs => {
             let pairs: Vec<VersionedMakerRecord<MakerPairConfigurationV1>> =
                 call_local_rpc(socket, "maker_pair_list", &ListRequest::default()).await?;
@@ -211,6 +236,11 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
             };
             let quote: PriceQuoteV1 = call_local_rpc(socket, "maker_price_quote", &request).await?;
             serde_json::to_value(quote).map_err(Into::into)
+        }
+        Command::Offers => {
+            let offers: Vec<MakerOfferRecordV1> =
+                call_local_rpc(socket, "maker_offer_list", &ListRequest::default()).await?;
+            serde_json::to_value(offers).map_err(Into::into)
         }
         Command::History => {
             let history: Vec<SwapView> =
@@ -298,6 +328,43 @@ async fn set_local_price(socket: &Path, command: Command) -> anyhow::Result<serd
     };
     let commit: MakerConfigurationCommit =
         call_local_rpc(socket, "maker_local_price_set", &request).await?;
+    serde_json::to_value(commit).map_err(Into::into)
+}
+
+async fn publish_offer(socket: &Path, command: Command) -> anyhow::Result<serde_json::Value> {
+    let Command::PublishOffer {
+        request_id,
+        offer_id,
+        pair,
+        direction,
+    } = command
+    else {
+        unreachable!("publish_offer receives only its matching command")
+    };
+    let request = OfferPublishRequest {
+        request_id: RequestId::new(request_id)?,
+        offer_id: MakerOfferId::new(offer_id)?,
+        route: MakerRouteV1::new(pair.into(), direction.into())?,
+    };
+    let commit: MakerOfferCommit = call_local_rpc(socket, "maker_offer_publish", &request).await?;
+    serde_json::to_value(commit).map_err(Into::into)
+}
+
+async fn withdraw_offer(socket: &Path, command: Command) -> anyhow::Result<serde_json::Value> {
+    let Command::WithdrawOffer {
+        request_id,
+        offer_id,
+        expected_revision,
+    } = command
+    else {
+        unreachable!("withdraw_offer receives only its matching command")
+    };
+    let request = OfferWithdrawRequest {
+        request_id: RequestId::new(request_id)?,
+        offer_id: MakerOfferId::new(offer_id)?,
+        expected_revision,
+    };
+    let commit: MakerOfferCommit = call_local_rpc(socket, "maker_offer_withdraw", &request).await?;
     serde_json::to_value(commit).map_err(Into::into)
 }
 

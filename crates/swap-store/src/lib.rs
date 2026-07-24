@@ -14,6 +14,7 @@ mod bridge_operation_journal;
 mod btc_maker_lock_journal;
 mod btc_recovery;
 mod maker_application;
+mod maker_offer;
 mod public_effect_journal;
 mod zec_recovery;
 
@@ -42,6 +43,10 @@ pub use maker_application::{
     LocalPriceV1, MakerConfigurationCommit, MakerConfigurationError, MakerPairConfigurationV1,
     MakerPriceSourceKind, MakerRouteV1, VersionedMakerRecord,
 };
+pub use maker_offer::{
+    MakerOfferCommit, MakerOfferError, MakerOfferId, MakerOfferRecordV1, MakerOfferStatus,
+    MakerOfferV1,
+};
 pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
     PublicEffectKey, PublicEffectObservation, PublicEffectOperation, PublicEffectSnapshot,
@@ -61,7 +66,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 11;
+const DATABASE_SCHEMA_VERSION: i64 = 12;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
@@ -306,6 +311,44 @@ pub enum StoreError {
     /// A maker pair, amount bound, TTL, or local price was invalid.
     #[error("maker application configuration is invalid")]
     MakerConfiguration(#[from] MakerConfigurationError),
+    /// A durable maker offer contained invalid immutable input.
+    #[error("maker offer is invalid")]
+    MakerOffer(#[from] MakerOfferError),
+    /// One offer request ID was reused with a different operation or payload.
+    #[error("maker offer request ID conflicts with its durable mutation")]
+    MakerOfferRequestConflict,
+    /// A durable offer identity already exists.
+    #[error("maker offer already exists")]
+    MakerOfferAlreadyExists,
+    /// The requested durable offer does not exist.
+    #[error("maker offer does not exist")]
+    MissingMakerOffer,
+    /// The configured route is disabled for new offers.
+    #[error("maker route is disabled")]
+    MakerRouteDisabled,
+    /// The offer was not reserved before its exclusive expiry boundary.
+    #[error("maker offer has expired")]
+    MakerOfferExpired,
+    /// The offer state cannot accept the requested transition.
+    #[error("maker offer is unavailable")]
+    MakerOfferUnavailable,
+    /// The consumed coordinator disagrees with immutable offer route or initial phase.
+    #[error("maker offer cannot bind the supplied swap coordinator")]
+    MakerOfferSwapMismatch,
+    /// The consuming negotiation does not own the durable reservation.
+    #[error("maker offer reservation conflicts with the winning negotiation")]
+    MakerOfferReservationConflict,
+    /// The offer compare-and-swap revision did not match durable state.
+    #[error("stale maker offer revision: expected {expected}, actual {actual}")]
+    StaleMakerOffer {
+        /// Revision expected by the caller.
+        expected: u64,
+        /// Current durable revision.
+        actual: u64,
+    },
+    /// Durable offer columns, payload, state, or mutation result disagree.
+    #[error("maker offer state is corrupt")]
+    CorruptMakerOffer,
     /// One maker request ID was reused with a different operation or payload.
     #[error("maker configuration request ID conflicts with its durable mutation")]
     MakerConfigurationRequestConflict,
@@ -1457,6 +1500,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
         ",
     )?;
     maker_application::migrate(&transaction)?;
+    maker_offer::migrate(&transaction)?;
     migrate_zec_sdk_recovery(&transaction)?;
     transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()?;

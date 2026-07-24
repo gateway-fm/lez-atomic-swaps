@@ -484,7 +484,7 @@ fn replay_configuration_mutation(
     let existing = transaction
         .query_row(
             "SELECT operation, request_json, result_json
-             FROM maker_configuration_mutations WHERE request_id = ?1",
+             FROM maker_application_mutations WHERE request_id = ?1",
             params![request_id.as_str()],
             |row| {
                 Ok((
@@ -523,7 +523,7 @@ fn persist_configuration_mutation(
         revision,
     })?;
     transaction.execute(
-        "INSERT INTO maker_configuration_mutations (
+        "INSERT INTO maker_application_mutations (
              request_id, operation, request_payload_version, request_json, result_json
          ) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
@@ -712,16 +712,30 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
                  REFERENCES maker_pair_configurations(pair, direction) ON DELETE RESTRICT,
              CHECK (pair != 'monero' OR direction = 'taker_sells_lez')
          ) STRICT;
-         CREATE TABLE IF NOT EXISTS maker_configuration_mutations (
+         CREATE TABLE IF NOT EXISTS maker_application_mutations (
              sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
              request_id              TEXT NOT NULL UNIQUE,
              operation               TEXT NOT NULL CHECK (
-                 operation IN ('pair_configure', 'local_price_set')
+                 operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw')
              ),
              request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
              request_json            TEXT NOT NULL,
              result_json             TEXT NOT NULL
          ) STRICT;",
     )?;
+    let legacy_exists: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'maker_configuration_mutations')",
+        [],
+        |row| row.get(0),
+    )?;
+    if legacy_exists {
+        transaction.execute_batch(
+            "INSERT INTO maker_application_mutations (
+                 sequence, request_id, operation, request_payload_version, request_json, result_json
+             ) SELECT sequence, request_id, operation, request_payload_version, request_json, result_json
+               FROM maker_configuration_mutations ORDER BY sequence;
+             DROP TABLE maker_configuration_mutations;",
+        )?;
+    }
     Ok(())
 }

@@ -9,6 +9,32 @@ together with the live
 [RFP-003](https://github.com/logos-co/rfp/blob/master/RFPs/RFP-003-atomic-swaps.md).
 The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
+### M5 active progressive application PoC
+
+M5 is active. The owner-local maker application currently provides a mode-0600
+Unix-socket daemon, maker CLI, durable schema-v12 pair/price/offer/swap history,
+exact local pricing, expiring one-winner offers, global request replay, and
+restart recovery. Offer consumption atomically inserts the matching initial
+coordinator. A separate taker CLI, signed run-local Delivery/Chat adapters, and
+the actual LEZ/ZEC application-level swap are the next PoC critical path; the
+Logos C-API price source, systemd/Core lifecycle, fuzzing, and hardening remain
+literal M5 completion work.
+
+Build and repeat the current real process boundary with:
+
+```sh
+cargo build --locked -p lez-maker-node --bins
+cargo test --locked -p lez-maker-node --test operator_journey -- --nocapture
+```
+
+The complete manual configure, price, quote, publish, restart, inspect, and
+withdraw flow is [Flow 1 in the operator guide](docs/manual-user-flows.md#flow-1-maker-operator-cli-and-daemon-restart).
+This component flow uses only an owner-private local Unix socket and SQLite; it
+uses no chain RPC, Docker, faucet, public funds, public price feed, or external
+network at runtime. The future application PoC will use only isolated local LEZ
+v0.2 and Zebra Regtest services with deterministic local funds, and will record
+every endpoint and scoped cleanup operation.
+
 ### M4 progressive local PoC
 
 The exact clean replay `m4cert20260722an` on commit `5ec6521` certifies the
@@ -65,11 +91,11 @@ below; final repository-wide gates still precede any `m3-complete` tag.
 
 ## Current status
 
-M3 is complete, tagged `m3-complete`, and pushed. M4 remains in its
-progressive local-functional PoC phase. The first role-correct native-XMR happy
-claim has now executed through actual isolated local services, but it is a
-**working-tree checkpoint pending exact committed-tree replay**, not milestone
-certification and not authority for an `m4-complete` tag.
+M3 is complete under `m3-complete`; the M4 local-functional PoC is certified
+under `m4-poc-complete.2`. M5 is the active progressive phase. Its current
+component evidence and remaining PoC path are summarized above and tracked in
+[the live milestone scorecard](docs/milestone-metrics.md). The paragraphs below
+retain the detailed historical M4 execution record.
 
 Run `m4happy-40cbac3-20260721a` used the checked M4 LEZ guest, an isolated
 source-audited LEZ v0.2 Bedrock/sequencer/indexer stack, separate authenticated

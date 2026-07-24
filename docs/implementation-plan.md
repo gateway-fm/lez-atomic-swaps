@@ -3140,7 +3140,7 @@ The current executable baseline is intentionally not called M5-complete. It has
 an owner-restricted Unix-socket maker daemon, durable pair and exact-price
 configuration, a pluggable local runtime price source, swap/alert history,
 SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It
-has no taker CLI, durable offers, Delivery/Chat runtime, C-API pricing
+has no taker CLI, signed Delivery/Chat runtime, C-API pricing
 implementation, manual effect surface, systemd package, or literal fuzz target.
 
 ### Progressive PoC gate
@@ -3183,10 +3183,10 @@ separately from runtime dependencies.
   retaining `jsonrpsee` as the protocol implementation. The daemon now enforces
   owner/mode/path/body/connection limits, no-clobber readiness, and exact-inode
   cleanup; real daemon/CLI restart and alert journeys pass.
-- [ ] Complete durable application views. Schema v11 pair and exact local-price
-  configuration plus swap history are process-level GREEN with CAS, request
-  replay, rollback, migration, and restart evidence; expiring offer lifecycle
-  and history remain.
+- [x] Complete durable application views. Schema v12 pair, exact local-price,
+  offer, and swap history are GREEN with global request replay, CAS, rollback,
+  migration, and restart evidence. Reservation is one-winner; consumption
+  atomically inserts the matching initial coordinator.
 - [ ] Complete both price-source adapters. The trait, store-backed local
   adapter, owner-local quote RPC/CLI, and restart journey are GREEN; the bounded
   Logos C-API adapter and its stale/unavailable contract remain.

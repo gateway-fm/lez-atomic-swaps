@@ -122,7 +122,7 @@ fn route_and_price_constructors_reject_unsafe_shapes() {
 }
 
 #[test]
-fn schema_v10_migrates_to_v11_without_rewriting_coordinator_bytes() {
+fn schema_v10_migrates_to_current_without_rewriting_coordinator_bytes() {
     let run = tempdir().expect("isolated migration store");
     let database = run.path().join("schema-v10.sqlite3");
     let swap = zcash_swap("schema-v10-swap");
@@ -171,7 +171,7 @@ fn schema_v10_migrates_to_v11_without_rewriting_coordinator_bytes() {
             |row| row.get(0),
         )
         .expect("read retained aggregate bytes");
-    assert_eq!(version, 11);
+    assert_eq!(version, 12);
     assert_eq!(retained, encoded);
 }
 

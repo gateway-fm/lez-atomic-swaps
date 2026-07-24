@@ -599,8 +599,10 @@ flowchart TB
         MM["Maker mini-app"]
         LC["Logos Core lifecycle adapter"]
         MD["Maker daemon"]
+        APP["M5 application service"]
+        OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v11<br/>lock + claim + refund journals")]
+        DB[("Maker SQLite schema v12<br/>lock + claim + refund journals")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
         ZTX["ZEC BIP-199 V5 transaction SDK"]
@@ -617,12 +619,12 @@ flowchart TB
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
         TMO["Taker-only maker-lock observation"]
-        TDB[("Taker SQLite schema v11<br/>role-local recovery")]
+        TDB[("Taker SQLite schema v12<br/>role-local recovery")]
         TLB["Context-owning LEZ SDK ports + adapter"]
     end
 
     subgraph SharedSecurity["Shared SDK security boundary"]
-        PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v11 envelope journal"]
+        PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v12 envelope journal"]
         M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
         M3AS[("M3 taker-only adaptor scalar<br/>owner-private file; point check only at activation<br/>maker authority forbidden")]
         M3RK[("M3 Bitcoin-funder refund scalar<br/>mode 0600 + x-only agreement match GREEN")]
@@ -707,7 +709,8 @@ flowchart TB
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
-        DC["Delivery / Chat"]
+        DEL["Run-local Delivery-compatible adapter<br/>signed advertisement planned"]
+        CHAT["Run-local Chat-compatible adapter<br/>authenticated negotiation planned"]
     end
 
     subgraph Nodes["Actor-selected node boundary"]
@@ -749,7 +752,10 @@ flowchart TB
     MC -->|"authenticated local RPC"| MD
     MM -.->|"M6 authenticated local RPC"| MD
     LC -.->|"start / stop / health"| MD
-    MD --> CO
+    MD --> APP
+    APP --> OF
+    OF --> DB
+    APP --> CO
     CO --> DB
     CO --> PS
     PS --> ZA
@@ -872,8 +878,10 @@ flowchart TB
     ZebraProfile -.->|"self_hosted_cookie"| SelfHostedZebra
     ZebraProfile -.->|"tatum_testnet_x_api_key"| TatumZebra
 
-    MD <-->|"discovery + negotiation only"| DC
-    TS <-->|"discovery + negotiation only"| DC
+    APP -.->|"publish and reserve before first lock"| DEL
+    APP -.->|"countersigned terms before first lock"| CHAT
+    TS -.->|"discover only before acceptance"| DEL
+    TS -.->|"negotiate only before first lock"| CHAT
     CA --> LEZ
     CA --> BTC
     M3BC --> BTC
@@ -1095,7 +1103,7 @@ persists a stable primitive snapshot bound to the signed channel/genesis,
 public fund transaction, canonical block/tip, complete SPEL metadata, exact
 custody, depth, and finality policy. SDK and SQLite replay rerun the same
 validator. The dependency-free exact-head tracker is now folded by the active
-SDK and the schema-v11 journal. Exact duplicates write no row, while a
+SDK and the schema-v12 journal. Exact duplicates write no row, while a
 same-inclusion Pending-to-Finalized update advances one contiguous revision and
 survives close/reopen. The pure tracker also proves affirmative same-tip
 replacement, stale-evidence rejection, and fatal finalized-history changes.
@@ -1521,7 +1529,7 @@ legs: removal pins the exact ID, suspends claims, exact reappearance restores
 authority, conflicting replacement fails, and refunds remain available.
 Independent leg policies also make maker-depth regression suspend and depth
 recovery restore claims. The runtime event-to-participant path is now solid: the
-isolated two-Zebra fixture drives real canonical and removal evidence through schema-v11 SQLite
+isolated two-Zebra fixture drives real canonical and removal evidence through schema-v12 SQLite
 close/reopen and exact replay. The composed local LEZ/ZEC happy-path corridor is solid for both directions in
 the canonical forward and reverse certification runs. Its actual-node
 restart/refund/reorg and recovery paths remain open. RPC errors or absence never imply removal: a detach event

@@ -21,7 +21,8 @@ flowchart TB
     subgraph MakerHost["Maker host"]
         CLI["lez-maker CLI"]
         Daemon["lez-maker-daemon"]
-        Store[("SQLite schema v11")]
+        Store[("SQLite schema v12")]
+        Offers["Durable offer lifecycle<br/>snapshot + expiry + one-winner CAS"]
         RuntimeDir["Effective-UID-owned mode-0700 runtime"]
         Socket["Mode-0600 Unix socket"]
         Ready["Create-new mode-0600 readiness path"]
@@ -33,8 +34,8 @@ flowchart TB
     subgraph DeterministicCorridor["Deterministic SDK claim corridor; no node or RPC"]
         MakerActor["Role-fixed maker SDK actor"]
         TakerActor["Role-fixed taker SDK actor"]
-        MakerClaimState[("Maker schema-v11 state")]
-        TakerClaimState[("Taker schema-v11 state")]
+        MakerClaimState[("Maker schema-v12 state")]
+        TakerClaimState[("Taker schema-v12 state")]
         ClaimDouble["Deterministic LEZ/Zcash claim-port doubles"]
         Completed["Both actors Completed at revision 4"]
     end
@@ -58,7 +59,9 @@ flowchart TB
     RuntimeDir --> Socket
     RuntimeDir --> Ready
     CLI -->|"Bounded HTTP JSON-RPC over Unix stream"| Socket
-    Socket -->|"pair, price, history, create, status, alerts"| Daemon
+    Socket -->|"pair, price, offer, history, create, status, alerts"| Daemon
+    Daemon --> Offers
+    Offers -->|"BEGIN IMMEDIATE plus global request replay"| Store
     Daemon -->|"rusqlite; caller-selected local file; Mutex-serialized"| Store
     RuntimeTest -->|"Direct maker runtime API"| Store
     RuntimeTest --> SdkJournal
@@ -92,7 +95,9 @@ path, applies mode 0600, disables WebSocket and batch calls, caps connections at
 file contains only the socket path and is removed only if device/inode identity
 still matches. The CLI uses that socket directly and opens one connection per
 explicit command. Registered methods are `maker_pair_configure`, `maker_pair_list`,
-`maker_local_price_set`, `maker_local_price_list`, `swap_create`, `swap_status`,
+`maker_local_price_set`, `maker_local_price_list`, `maker_price_quote`,
+`maker_offer_publish`, `maker_offer_list`, `maker_offer_withdraw`, `swap_create`,
+`swap_status`,
 `swap_history`, `swap_alerts`, and `swap_alert_acknowledge`. Status includes pending
 count/highest severity; list supports a cursor and acknowledged-history flag.
 Acknowledgment never changes protocol phase. There is no daemon-integrated
@@ -132,7 +137,7 @@ contains deterministic actor private keys and is never a public ready file.
 Tamper/reuse failures leave no readiness and preserve the existing home.
 
 The deterministic claim corridor is deliberately separate from both local-node
-lanes. It uses two role-fixed SDK actors, two different temporary schema-v11
+lanes. It uses two role-fixed SDK actors, two different temporary schema-v12
 SQLite databases, and an externally supplied test claim key per role. The key is
 not stored in SQLite. In both signed directions it persists exact protected
 claim submissions, observes the LEZ reveal, protects the extracted preimage,
@@ -410,7 +415,7 @@ flowchart LR
 
     subgraph MakerProcess["Role-fixed maker reference actor process"]
         MakerSdk["LEZ/ZEC swap SDK and agreement validators"]
-        MakerState[("Maker-only schema-v11 state")]
+        MakerState[("Maker-only schema-v12 state")]
         MakerConfig["Schema-v3 maker config"]
         MakerStatus["Offline status material"]
         MakerBridge["Typed local LEZ bridge client"]
@@ -425,7 +430,7 @@ flowchart LR
 
     subgraph TakerProcess["Role-fixed taker reference actor process"]
         TakerSdk["LEZ/ZEC swap SDK and agreement validators"]
-        TakerState[("Taker-only schema-v11 state")]
+        TakerState[("Taker-only schema-v12 state")]
         TakerConfig["Schema-v3 taker config"]
         TakerStatus["Offline status material"]
         TakerBridge["Typed local LEZ bridge client"]
@@ -693,9 +698,9 @@ revalidation, propagation, and finality evidence before release.
 | Exact v0.2 PoC role bridge | Both role processes completed the full method sequence in canonical forward and reverse runs; dormant exact-public construction is GREEN | Actor-facing listener is explicit nonzero loopback. Sidecar outbound `local` accepts explicit loopback sequencer/indexer URLs; `official_public` accepts only `https://testnet.lez.logos.co/` for both | File-backed capability and private key; bearer, run, role, runtime, signer, canonical program, and private state are bound before JSON parsing | Describe, native prepare, escrow observe, revealing-claim prepare/observe, and exact submit; startup requires an unchanged finalized indexer tip bound to the configured runtime genesis by exact ID/hash reads; sequencer facts are checked on operation paths, not cross-bound at startup | Both canonical runs used only ProgramId `5cf8c5...29c1`. No public call was made; official-origin finalized-tip availability and actual-node refund remain open |
 | Local reference-actor fixture provisioner | Direction-aware private pairs provisioned and reloadable; retained successful pairs are evidence, not reusable fixtures | Reads retained Zebra at dynamic loopback and emits distinct configured sidecar URLs; runner binds fresh role bridges | Separate `0700` roots and `0600` files; distinct recovery keys, capabilities, signers, stores, and journals. Only the direction-derived Zcash funder receives the preimage candidate | Validates Regtest identity and stable mature UTXO; emits and reloads configs and activation material; validates pair isolation | The old window 1..256 is never reused. Both canonical runs provisioned fresh inputs and bound only ProgramId `5cf8c5...29c1`; new effect-bearing runs require fresh funds or explicit owner recovery |
 | Reference actor configuration, status, activate, and drive | Unix schema-v3 configuration, paired-role validation, offline recovery, both canonical local directions, and dormant Zebra route contracts GREEN | Bridge endpoint remains explicit loopback. Zebra route is deterministic local loopback, self-hosted loopback with cookie, or exact Tatum Testnet HTTPS with `x-api-key` | Agreement, run, swap, role, runtime, network, branch, genesis, route, canonical ProgramId, separate capability/signer/state/claim/Zcash keys, and owner-only credentials validate before effects | `status` remains chain-impossible by type. `activate` and `drive` use fresh role-bound bridge and bounded Zebra clients; both canonical runs reached revision 4 `Completed` | Public construction is tested without calls. Self-hosted/Tatum availability, actual-node restart/refund/reorg, and hardening remain open |
-| `lez-maker-daemon` | Running M5 application shell | Bounded HTTP/1 JSON-RPC over an absolute owner-only Unix socket; no TCP listener | Effective-UID-owned mode-0700 runtime, mode-0600 socket, no-clobber path and exact-inode cleanup | Actual: pair configure/list, local-price set/list/quote, swap create/status/history, alert list/acknowledge | Operator/service-manager-owned process; caller-selected owner-private SQLite path; Ctrl-C shutdown; chain watcher and health remain |
-| `lez-maker` | Running partial M5 CLI | Fresh bounded HTTP/1 connection over the daemon Unix socket per explicit command | Socket filesystem ownership; bounded request ID and route-local expected revision for configuration mutations | Actual CLI: `configure-pair`, `set-local-price`, `pairs`, `prices`, `quote`, `history`, `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process; lifecycle and manual claim/refund commands remain |
-| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle; claim key material is supplied externally and never stored | Pair policy, exact local price, request-result audit, aggregate, revision, ZEC journal, immutable binding, alerts, separate lock/claim/refund owner intents, protected claim material, owner/observer claim/refund transitions, and canonical observation transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v11 replay retains prior lock/claim journals, rejects inconsistent history, and closes/reopens both directions at revision 4 and `Completed` or `Refunded`. Owner refund commit copies the exact intent, inserts the transition, advances revision once, and deletes pending intent in one immediate transaction; observer rows retain no signing intent. The v8→v9 migration still replaces legacy plaintext claim evidence and scrubs SQLite/WAL remnants; 112 store tests pass; one process mutex remains |
+| `lez-maker-daemon` | Running M5 application shell | Bounded HTTP/1 JSON-RPC over an absolute owner-only Unix socket; no TCP listener | Effective-UID-owned mode-0700 runtime, mode-0600 socket, no-clobber path and exact-inode cleanup | Actual: pair configure/list, local-price set/list/quote, offer publish/list/withdraw, swap create/status/history, alert list/acknowledge | Operator/service-manager-owned process; caller-selected owner-private SQLite path; Ctrl-C shutdown; chain watcher and health remain |
+| `lez-maker` | Running partial M5 CLI | Fresh bounded HTTP/1 connection over the daemon Unix socket per explicit command | Socket filesystem ownership; bounded request ID and route-local expected revision for configuration mutations | Actual CLI: `configure-pair`, `set-local-price`, `pairs`, `prices`, `quote`, `publish-offer`, `offers`, `withdraw-offer`, `history`, `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process; lifecycle and manual claim/refund commands remain |
+| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle; claim key material is supplied externally and never stored | Pair policy, exact local price, immutable expiring offers, global request-result audit, aggregate, revision, ZEC journal, immutable binding, alerts, separate lock/claim/refund owner intents, protected claim material, owner/observer claim/refund transitions, and canonical observation transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v12 replay retains prior lock/claim journals, rejects inconsistent history, and closes/reopens both directions at revision 4 and `Completed` or `Refunded`. Owner refund commit copies the exact intent, inserts the transition, advances revision once, and deletes pending intent in one immediate transaction; observer rows retain no signing intent. The v8→v9 migration still replaces legacy plaintext claim evidence and scrubs SQLite/WAL remnants; 117 store tests pass; one process mutex remains |
 | Adapter-independent SDK core | Running library contract at `ed5cd77` | No socket, RPC, node, Docker, faucet, or public endpoint | Pair crates alone construct validated associated types; discovery and negotiation return untrusted inputs and cannot authorize post-lock effects | `SwapProtocol`, `OfferDiscovery`, `NegotiationChannel`, structured error category/disposition, explicit claim order, protocol/schema versions, and ordered exact-public-effect plans with stable step IDs, expected public IDs, complete bytes, hashes, and a domain-separated plan commitment | Eight invariant tests, two external-consumer API tests, one doctest, strict Clippy, and rustdoc pass. There is no actor, adapter, store, SQLite, or CLI coupling. The concrete BTC facade now layers its public durable lifecycle contract above this core; XMR remains M4 |
 | Deterministic LEZ/ZEC SDK lifecycle | Running library/test boundary | No socket, RPC, node, Docker, faucet, or public endpoint; bounded Borsh schema-2 bytes enter from an untrusted negotiation adapter | Fixed maker/taker roles and the signed direction select observations/effects; separate role databases and external claim keys prevent shared claim-recovery authority; refund observers cannot sign | Exact agreement validation, protected activation, both lock directions, LEZ reveal, observer preimage extraction, Zcash follow-up, and fixed LEZ-then-Zcash refund driving with observe-before-rebroadcast and versioned durable records. After signed-wire acceptance, activation and resume require no discovery or negotiation capability. `resume_all_capable` replays lock, claim, and refund records without a chain call for truthful terminal status | 16 KiB agreement and 2,000,000-byte submission caps; 132 SDK checks plus 112 store tests pass, with one actual-Zebra SDK case intentionally ignored outside its isolated runner. Claims and refunds replay through SQLite with forced-rollback, exact-conflict, corruption, future-schema, and terminal full-resume checks. Chain evidence comes from deterministic port doubles, so this row is not an actual-node claim |
 | SDK-facing LEZ bridge client and adapter | Twenty-nine-operation client including eleven additive v2 asset calls, signed-agreement adapters, crash-safe context-owning SDK ports, witnessed prepare/complete, distinct finalized funding/claim/refund observers, public prepared-message validation, and M3 actor revisions one through four actual-node GREEN. The F7 main-process adapter binding and schema-5 peer-funding projection are component GREEN | Literal-IP run-owned loopback HTTP; fresh client per attempt; no redirects or proxy settings; finite 120-second actor request timeout | Capability plus exact run/role/runtime/ProgramId and caller-owned request IDs. V2 asset calls bind depositor/claimant/either-participant authority to the countersigned BTC extension and exact local native/token policy before transport. Schema-5 peer projection has no peer-private prepared bytes and no submit surface; its ID binds agreement, asset, run, role, runtime, full terms, fixed target, and window before `DiscoverByTerms`. Runtime chain/program/signer drift and wrong roles are zero-wire | Prepare, complete, submit, current clock and progress observation, finalized funding/claim/refund, plus v2 ordered asset preparation/current observation/claim/refund and four finalized effect classifiers. The public validators check exact prepared bytes, transcript, target, window, stable placement, and response echoes without retries. Only v2 `Found` projects peer funding; the other three classifier states remain pending | The 46-check client and 79-test adapter gates remain GREEN. The actor's 85 tests cover both peer role/direction shapes, request-ID drift, and fail-closed absence/uncertainty/unavailability; strict Clippy and the pre-Docker contract pass. Run R retained the legacy-v1 Taker dispatch RED with exact cleanup. The dispatch fix is actual-node GREEN in four later two-direction pairs; compact evidence for valid transactions above the 64 KiB recovery cap, process-kill/reorg, and production trust remediation remain open |
@@ -1134,7 +1139,7 @@ journal, session, agreement, or escrow boundaries shown above.
 
 ## External resources and flakiness
 
-The deterministic SDK/schema-v11 corridor uses only local temporary files and
+The deterministic SDK/schema-v12 corridor uses only local temporary files and
 process input. It cannot fail because a public RPC, faucet, chain peer, Docker
 registry, or testnet is unavailable. The canonical forward and reverse certification runs crossed actual local LEZ
 v0.2 Bedrock, sequencer, indexer, and Zebra Regtest

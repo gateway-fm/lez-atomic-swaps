@@ -21,7 +21,7 @@ flowchart LR
     CLI -->|"owner-local JSON-RPC"| Daemon["lez-maker-daemon"]
     Daemon --> Port["PriceSource"]
     Port --> Local["LocalPriceSource"]
-    Local --> DB[("SQLite schema v11")]
+    Local --> DB[("SQLite schema v12")]
     Port -.-> CAPI["Bounded Logos C-API adapter"]
     Daemon --> Offer["Future signed offer publisher"]
 ```

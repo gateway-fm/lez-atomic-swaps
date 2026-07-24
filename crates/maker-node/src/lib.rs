@@ -17,9 +17,9 @@ use lez_swap_core::{
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit,
-    MakerPairConfigurationV1, MakerRouteV1, OperatorAlert, OperatorAlertKind,
-    OperatorAlertRecordV1, OperatorAlertSeverity, SqliteSwapStore, StoreError,
+    AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit,
+    MakerOfferId, MakerOfferRecordV1, MakerPairConfigurationV1, MakerRouteV1, OperatorAlert,
+    OperatorAlertKind, OperatorAlertRecordV1, OperatorAlertSeverity, SqliteSwapStore, StoreError,
     VersionedMakerRecord,
 };
 use lez_zec_swap_sdk::{
@@ -488,6 +488,28 @@ pub struct PriceQuoteRequest {
     pub route: MakerRouteV1,
 }
 
+/// Parameters for atomically publishing one offer from current local configuration.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct OfferPublishRequest {
+    /// Stable request identity used for exact replay.
+    pub request_id: RequestId,
+    /// New bounded offer identity.
+    pub offer_id: MakerOfferId,
+    /// Exact enabled local-price route.
+    pub route: MakerRouteV1,
+}
+
+/// Parameters for withdrawing one unreserved offer.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct OfferWithdrawRequest {
+    /// Stable request identity used for exact replay.
+    pub request_id: RequestId,
+    /// Existing bounded offer identity.
+    pub offer_id: MakerOfferId,
+    /// Current offer revision.
+    pub expected_revision: u64,
+}
+
 /// Empty parameters for bounded owner-local list methods.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ListRequest {}
@@ -733,10 +755,7 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
         "maker_price_quote",
         |params, context, _| {
             let request: PriceQuoteRequest = params.one()?;
-            let observed_at_unix_seconds = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "system clock is before Unix epoch"))?
-                .as_secs();
+            let observed_at_unix_seconds = trusted_now_unix_seconds()?;
             let store = context
                 .store
                 .lock()
@@ -746,6 +765,7 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 .map_err(price_source_error)
         },
     )?;
+    register_offer_methods(module)?;
     module.register_blocking_method::<RpcResult<Vec<SwapView>>, _>(
         "swap_history",
         |params, context, _| {
@@ -765,6 +785,60 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                     SwapView::with_pending_alerts(swap, &alerts).map_err(internal_store_error)
                 })
                 .collect()
+        },
+    )?;
+    Ok(())
+}
+
+fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<MakerOfferCommit>, _>(
+        "maker_offer_publish",
+        |params, context, _| {
+            let request: OfferPublishRequest = params.one()?;
+            let now_unix_seconds = trusted_now_unix_seconds()?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .publish_local_offer(
+                    &request.request_id,
+                    &request.offer_id,
+                    request.route,
+                    now_unix_seconds,
+                )
+                .map_err(application_store_error)
+        },
+    )?;
+    module.register_blocking_method::<RpcResult<Vec<MakerOfferRecordV1>>, _>(
+        "maker_offer_list",
+        |params, context, _| {
+            let _: ListRequest = params.one()?;
+            let now_unix_seconds = trusted_now_unix_seconds()?;
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .list_maker_offer_history(now_unix_seconds)
+                .map_err(application_store_error)
+        },
+    )?;
+    module.register_blocking_method::<RpcResult<MakerOfferCommit>, _>(
+        "maker_offer_withdraw",
+        |params, context, _| {
+            let request: OfferWithdrawRequest = params.one()?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .withdraw_maker_offer(
+                    &request.request_id,
+                    &request.offer_id,
+                    request.expected_revision,
+                )
+                .map_err(application_store_error)
         },
     )?;
     Ok(())
@@ -840,14 +914,31 @@ fn invalid_request(error: impl std::fmt::Display) -> ErrorObjectOwned {
     rpc_error(-32_602, error.to_string())
 }
 
+fn trusted_now_unix_seconds() -> RpcResult<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|_| rpc_error(INTERNAL_ERROR, "system clock is before Unix epoch"))
+}
+
 fn application_store_error(error: StoreError) -> ErrorObjectOwned {
     match error {
         StoreError::MakerConfigurationRequestConflict
-        | StoreError::StaleMakerConfiguration { .. } => rpc_error(CONFLICT, error.to_string()),
+        | StoreError::StaleMakerConfiguration { .. }
+        | StoreError::MakerOfferRequestConflict
+        | StoreError::MakerOfferAlreadyExists
+        | StoreError::StaleMakerOffer { .. } => rpc_error(CONFLICT, error.to_string()),
+        StoreError::MissingMakerOffer => rpc_error(NOT_FOUND, error.to_string()),
         StoreError::MakerConfiguration(_)
+        | StoreError::MakerOffer(_)
         | StoreError::MissingMakerPair
         | StoreError::MissingMakerLocalPrice
-        | StoreError::MakerPriceSourceMismatch => invalid_request(error),
+        | StoreError::MakerPriceSourceMismatch
+        | StoreError::MakerRouteDisabled
+        | StoreError::MakerOfferExpired
+        | StoreError::MakerOfferUnavailable
+        | StoreError::MakerOfferSwapMismatch
+        | StoreError::MakerOfferReservationConflict => invalid_request(error),
         other => internal_store_error(other),
     }
 }
