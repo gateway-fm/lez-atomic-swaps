@@ -716,13 +716,43 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
              sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
              request_id              TEXT NOT NULL UNIQUE,
              operation               TEXT NOT NULL CHECK (
-                 operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw')
+                 operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'zec_negotiation_stage', 'zec_negotiation_complete')
              ),
              request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
              request_json            TEXT NOT NULL,
              result_json             TEXT NOT NULL
          ) STRICT;",
     )?;
+    let supports_zec_negotiation: bool = transaction.query_row(
+        "SELECT instr(sql, 'zec_negotiation_stage') > 0
+           FROM sqlite_master
+          WHERE type = 'table' AND name = 'maker_application_mutations'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !supports_zec_negotiation {
+        transaction.execute_batch(
+            "ALTER TABLE maker_application_mutations
+                 RENAME TO maker_application_mutations_before_zec_negotiation;
+             CREATE TABLE maker_application_mutations (
+                 sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
+                 request_id              TEXT NOT NULL UNIQUE,
+                 operation               TEXT NOT NULL CHECK (
+                     operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'zec_negotiation_stage', 'zec_negotiation_complete')
+                 ),
+                 request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
+                 request_json            TEXT NOT NULL,
+                 result_json             TEXT NOT NULL
+             ) STRICT;
+             INSERT INTO maker_application_mutations (
+                 sequence, request_id, operation, request_payload_version, request_json, result_json
+             )
+             SELECT sequence, request_id, operation, request_payload_version, request_json, result_json
+               FROM maker_application_mutations_before_zec_negotiation
+              ORDER BY sequence;
+             DROP TABLE maker_application_mutations_before_zec_negotiation;",
+        )?;
+    }
     let legacy_exists: bool = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'maker_configuration_mutations')",
         [],

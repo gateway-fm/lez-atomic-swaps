@@ -829,8 +829,8 @@ local runner now reproduces either direction through `POC_DIRECTION`.
 |---|---|---|
 | ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects complete both actual-node happy directions; deterministic lanes additionally cover refunds | Runs 14o and reverse 14c are 2 of 2 PoC directions. Both ended with two independent revision-4 `Completed` stores |
 | LEZ bridge and Zebra funding/claim/refund contracts | The authenticated bridge and context-owning SDK ports compose through live actor `activate`/`drive`; direct Zebra ports complete funding and claim in the same actor boundary | Run 14o completed after one bounded payload-free `moving_tip` retry; reverse 14c completed without a same-run retry. Both have separate LEZ finality and exact Zcash funding/spend evidence. No public endpoint, faucet, or fixed bridge port is used |
-| Maker operator configuration/create/history/restart | Actual `lez-maker` process, owner-local Unix RPC, actual `lez-maker-daemon`, schema-v12 pair/price/offer/request state, and persisted swaps | This configures, publishes/withdraws offers, and creates negotiated swap state only; it does not run a taker or submit chain transactions |
-| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v12 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
+| Maker operator configuration/create/history/restart | Actual `lez-maker` process, owner-local Unix RPC, actual `lez-maker-daemon`, schema-v13 pair/price/offer/request state, and persisted swaps | This configures, publishes/withdraws offers, and creates negotiated swap state only; it does not run a taker or submit chain transactions |
+| Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v13 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. The last corrected full runner exited `0` after the reusable external process published a private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `a324355c...7006` and ImageID `c14c978a...4483`. A later actor-contract RED replaced the agreement-invalid zero channel with one nonempty deterministic identity; its focused suite passes and the exact full runner must be repeated before using the handoff as current corridor evidence. No reference SDK actor consumes that handoff in a composed LEZ/Zebra flow yet, and this local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
@@ -2072,7 +2072,7 @@ read-only timeout so a moving or unresponsive local indexer fails uncertain
 instead of hanging; retrying that observation never grants effect
 resubmission.
 
-The SDK memory actor test and schema-v12 SQLite actor test in Flow 2 are the
+The SDK memory actor test and schema-v13 SQLite actor test in Flow 2 are the
 most isolated claim lane: they start no service, make no network request, and
 need no RPC, node, Docker image, faucet, or pre-funded chain account. The
 SQLite case creates different temporary database paths for maker and taker.
@@ -3897,7 +3897,7 @@ cargo test --locked -p lez-maker-node --test run_local_delivery -- --nocapture
 
 The expected result is three passing cases. They create a fresh mode-0700
 temporary Delivery directory, derive deterministic test-only maker identities,
-publish one real schema-v12 store-produced ZEC offer, and discover it through a
+publish one real schema-v13 store-produced ZEC offer, and discover it through a
 separate subscriber holding only the expected public identity. The suite checks
 the byte-identical offer and nonzero signed-envelope commitment, then proves the
 exclusive expiry boundary, discovery-only authority, wrong-maker rejection,
@@ -3950,8 +3950,29 @@ These are deterministic in-process component checks. They use no Delivery or
 Chat process, chain RPC, node, Docker, faucet, public funds, DNS, public price
 feed, or external finality source. Cold Cargo acquisition is their only
 possible network dependency; use `--locked --offline` after warming the cache.
-They do not yet prove durable negotiation, lost-response replay, a separate
-taker CLI, or the actual local-devnet corridor.
+They do not yet prove a separate taker CLI or the actual local-devnet corridor.
+
+Reproduce the durable maker-side Chat linearization point with:
+
+```sh
+cargo test --locked --offline -p lez-swap-store --test maker_offers \
+  zec_proposal_stage_is_one_winner_replay_safe_and_survives_restart \
+  -- --exact --nocapture
+```
+
+The command must report one passing test. It creates a private temporary
+schema-v13 database, publishes a real price-bound ZEC offer, atomically stores
+the exact maker proposal while reserving one winner, replays the identical
+request, rejects a competing reservation and changed lost-response retry, and
+reopens the database to recover byte-identical proposal state. The request
+ledger migration also preserves every older global request identity while
+admitting the new operation.
+
+This store check uses no chain RPC, node, Docker, faucet, public funds, DNS,
+Logos Delivery/Chat service, or public endpoint. It therefore has no
+network/finality flakiness. It is a component checkpoint, not the application
+PoC: atomic final countersignature acceptance and independent process wiring
+remain before any first-lock submission is allowed.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
@@ -4011,7 +4032,7 @@ attempt to obtain raw LEZ, Zcash, or recovery-store handles from an active swap.
 The chain adapters are deterministic contract doubles; these commands require
 no RPC, node, Docker, faucet, or external resource. They do not prove real
 Logos Delivery/Chat, official-wire LEZ/Zebra lifecycle effects, or a
-process-level maker/taker E2E. The claim-capable activation and schema-v12 store
+process-level maker/taker E2E. The claim-capable activation and schema-v13 store
 atomically bind the direction-derived first claimant agreement to encrypted
 material, retain exact claim submissions only in protected envelopes, and
 separate owner and observer transition journals. The SDK first-lock cases
@@ -4051,7 +4072,7 @@ not increase. A taker removal after LEZ initialization holds the maker in
 validated replacement.
 The store command runs
 16 production-adapter cases over real temporary
-schema-v12 databases: exact replay/conflict, same-ID role isolation, retained
+schema-v13 databases: exact replay/conflict, same-ID role isolation, retained
 closed intent, taker and maker trigger-injected rollback,
 future/malformed/torn/orphan/holey-state rejection, poison-append rejection,
 exact and historical maker replay, stale-instance catch-up, and four-event
@@ -4066,7 +4087,7 @@ no duplicate, returns the durable revision, and leaves `next_action` at
 are not, and local Pending is depth-eligible. The public Pending/Safe typed
 awaiting-finality policy is unit-tested only because public agreement activation
 remains fail-closed pending reviewed deployment. Stable absence and unstable polls return no
-eligibility, write nothing, and preserve the revision. Its schema-v12 cases
+eligibility, write nothing, and preserve the revision. Its schema-v13 cases
 prove both directions stage at revision 1, commit an intervening canonical
 depth/finality update at revision 2 without another maker submission, then
 close the intent and maker transition at revision 3 before reopen at
@@ -4160,7 +4181,7 @@ Rust fixtures. It refuses a pre-existing manifest, database, WAL, or SHM before
 Compose starts. The maker runtime fixture runs first and:
 
 1. constructs and broadcasts canonical BIP-199 funding to the primary node;
-2. commits its immutable binding, event, and aggregate revision to schema-v12
+2. commits its immutable binding, event, and aggregate revision to schema-v13
    SQLite, closes the store, reopens it, replays the journal, and proves an
    unchanged fresh RPC requery creates no duplicate;
 3. mines a longer independent fork without the funding transaction, relays it

@@ -5,7 +5,8 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     LocalPriceV1, MakerOfferError, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1,
-    MakerPriceSourceKind, MakerRouteV1, SqliteSwapStore, StoreError,
+    MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationStatus, MakerZecNegotiationV1,
+    SqliteSwapStore, StoreError,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -23,6 +24,27 @@ fn offer(value: &str) -> MakerOfferId {
 
 fn zec_route() -> MakerRouteV1 {
     MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap()
+}
+
+fn negotiation(
+    reservation_id: &str,
+    reserved_at_unix_seconds: u64,
+    foreign_units: u64,
+    lez_units: u128,
+    proposal_byte: u8,
+) -> MakerZecNegotiationV1 {
+    MakerZecNegotiationV1::proposed(
+        request(reservation_id),
+        [4; 32],
+        [2; 33],
+        [3; 33],
+        foreign_units,
+        lez_units,
+        reserved_at_unix_seconds,
+        [5; 32],
+        vec![proposal_byte; 256],
+    )
+    .unwrap()
 }
 
 fn zec_swap(id: &str) -> SwapCoordinator {
@@ -139,6 +161,72 @@ fn publication_snapshots_exact_policy_and_price_and_survives_restart() {
     assert_eq!(record.offer().price_observed_at_unix_seconds(), 1_000);
     assert_eq!(record.offer().created_at_unix_seconds(), 1_000);
     assert_eq!(record.offer().expires_at_unix_seconds(), 1_300);
+}
+
+#[test]
+fn zec_proposal_stage_is_one_winner_replay_safe_and_survives_restart() {
+    let run = tempdir().expect("isolated negotiation store");
+    let database = run.path().join("negotiation.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    configure_local_route(&mut store);
+    let id = offer("offer-zec-negotiation-001");
+    store
+        .publish_local_offer(
+            &request("offer-negotiation-publish-001"),
+            &id,
+            zec_route(),
+            100,
+        )
+        .unwrap();
+
+    let staged = negotiation("offer-negotiation-reservation-001", 101, 10, 25, 7);
+    let committed = store
+        .stage_zec_maker_negotiation(&request("offer-negotiation-stage-001"), &id, 1, &staged)
+        .unwrap();
+    assert_eq!(committed.revision(), 2);
+    assert!(!committed.was_replay());
+    assert!(
+        store
+            .stage_zec_maker_negotiation(&request("offer-negotiation-stage-001"), &id, 1, &staged,)
+            .unwrap()
+            .was_replay()
+    );
+    assert_eq!(
+        store.load_zec_maker_negotiation(&id).unwrap(),
+        Some(staged.clone())
+    );
+    let reserved = &store.list_maker_offer_history(101).unwrap()[0];
+    assert_eq!(reserved.status(), MakerOfferStatus::Reserved);
+    assert_eq!(reserved.revision(), 2);
+    assert_eq!(reserved.reservation_id(), Some(staged.reservation_id()));
+
+    let losing = negotiation("offer-negotiation-reservation-002", 101, 10, 25, 8);
+    assert!(matches!(
+        store
+            .stage_zec_maker_negotiation(&request("offer-negotiation-stage-002"), &id, 1, &losing,),
+        Err(StoreError::StaleMakerOffer {
+            expected: 1,
+            actual: 2
+        })
+    ));
+    let changed_replay = negotiation("offer-negotiation-reservation-001", 101, 10, 25, 9);
+    assert!(matches!(
+        store.stage_zec_maker_negotiation(
+            &request("offer-negotiation-stage-001"),
+            &id,
+            1,
+            &changed_replay,
+        ),
+        Err(StoreError::MakerOfferRequestConflict)
+    ));
+    drop(store);
+
+    let store = SqliteSwapStore::open(&database).unwrap();
+    let recovered = store.load_zec_maker_negotiation(&id).unwrap().unwrap();
+    assert_eq!(recovered, staged);
+    assert_eq!(recovered.status(), MakerZecNegotiationStatus::Proposed);
+    assert_eq!(recovered.final_agreement_wire(), None);
+    assert_eq!(recovered.swap_id(), None);
 }
 
 #[test]
@@ -344,7 +432,7 @@ fn schema_v11_migrates_the_global_request_ledger_without_reuse() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     assert_eq!(migrated_rows, 1);
     assert!(!legacy_exists);
 }

@@ -1053,6 +1053,12 @@ impl ZecAgreementV1 {
         self.record.body.transcript()
     }
 
+    /// Exact role identities authenticated by both agreement signatures.
+    #[must_use]
+    pub const fn participants(&self) -> &ZecParticipantsV1 {
+        self.record.body.participants()
+    }
+
     /// Exact transparent Zcash principal in zatoshis.
     #[must_use]
     pub fn zcash_amount_zatoshis(&self) -> u64 {

@@ -144,7 +144,7 @@ fn schema_v8_plaintext_claim_evidence_migrates_to_current_schema_and_is_scrubbed
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version");
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     connection
         .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
         .expect("checkpoint migrated plaintext pages");

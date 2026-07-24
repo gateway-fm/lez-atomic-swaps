@@ -3183,7 +3183,7 @@ separately from runtime dependencies.
   retaining `jsonrpsee` as the protocol implementation. The daemon now enforces
   owner/mode/path/body/connection limits, no-clobber readiness, and exact-inode
   cleanup; real daemon/CLI restart and alert journeys pass.
-- [x] Complete durable application views. Schema v12 pair, exact local-price,
+- [x] Complete durable application views. Schema v13 pair, exact local-price,
   offer, and swap history are GREEN with global request replay, CAS, rollback,
   migration, and restart evidence. Reservation is one-winner; consumption
   atomically inserts the matching initial coordinator.
@@ -3196,7 +3196,12 @@ separately from runtime dependencies.
 - [x] Add the maker-first canonical ZEC draft/proposal/countersign contract and
   exact no-rounding offer amount conversion.
 - [ ] Add durable Chat reservation/negotiation, transport process wiring,
-  buffering, retry/degraded state, and the post-lock cutover rule.
+  buffering, retry/degraded state, and the post-lock cutover rule. Schema v13
+  now atomically stores the exact bounded maker proposal before transport and
+  reserves one offer winner with exact replay/conflict/restart evidence. Next,
+  commit the countersigned agreement, coordinator, immutable ZEC binding,
+  protected maker claim material, and offer consumption together; then expose
+  that path through independent maker/taker processes.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested

@@ -4,6 +4,7 @@ use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, Phase, SwapCoordinator, SwapDirection, SwapId};
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 use super::{
@@ -12,6 +13,8 @@ use super::{
 };
 
 const OFFER_PAYLOAD_VERSION: i64 = 1;
+const MAXIMUM_ZEC_PROPOSAL_BYTES: usize = 16 * 1024;
+const ZEC_CHAT_SESSION_DOMAIN: &[u8] = b"lez-atomic-swaps/maker-zec-chat-session/v1";
 
 /// Invalid immutable maker-offer input.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -31,6 +34,9 @@ pub enum MakerOfferError {
     /// Exact integer-lot price could not represent the selected amount without rounding.
     #[error("selected amount is not exactly representable by the offer price")]
     NonIntegralPrice,
+    /// Durable Chat negotiation metadata was empty, oversized, aliased, or inconsistent.
+    #[error("maker ZEC negotiation metadata is invalid")]
+    InvalidNegotiation,
 }
 
 /// Bounded log-safe durable offer identity.
@@ -302,6 +308,174 @@ impl MakerOfferCommit {
     }
 }
 
+/// Durable pre-lock Chat negotiation phase.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MakerZecNegotiationStatus {
+    /// Maker proposal is durable and awaits the exact taker countersignature.
+    Proposed,
+    /// Final countersigned agreement and initial coordinator are durable.
+    Completed,
+}
+
+/// Exact durable ZEC proposal state bound to one reserved offer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MakerZecNegotiationV1 {
+    reservation_id: RequestId,
+    offer_commitment: [u8; 32],
+    maker_chat_identity: [u8; 33],
+    taker_chat_identity: [u8; 33],
+    foreign_units: u64,
+    lez_units: u128,
+    reserved_at_unix_seconds: u64,
+    agreement_commitment: [u8; 32],
+    maker_proposal_wire: Vec<u8>,
+    status: MakerZecNegotiationStatus,
+    final_agreement_wire: Option<Vec<u8>>,
+    swap_id: Option<Box<str>>,
+}
+
+impl MakerZecNegotiationV1 {
+    /// Constructs one bounded proposal staged after all Chat and SDK validation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty/aliased identities, empty commitments, zero amounts,
+    /// invalid time, or empty/oversized proposal bytes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn proposed(
+        reservation_id: RequestId,
+        offer_commitment: [u8; 32],
+        maker_chat_identity: [u8; 33],
+        taker_chat_identity: [u8; 33],
+        foreign_units: u64,
+        lez_units: u128,
+        reserved_at_unix_seconds: u64,
+        agreement_commitment: [u8; 32],
+        maker_proposal_wire: Vec<u8>,
+    ) -> Result<Self, MakerOfferError> {
+        let value = Self {
+            reservation_id,
+            offer_commitment,
+            maker_chat_identity,
+            taker_chat_identity,
+            foreign_units,
+            lez_units,
+            reserved_at_unix_seconds,
+            agreement_commitment,
+            maker_proposal_wire,
+            status: MakerZecNegotiationStatus::Proposed,
+            final_agreement_wire: None,
+            swap_id: None,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Stable reservation/session identity.
+    pub const fn reservation_id(&self) -> &RequestId {
+        &self.reservation_id
+    }
+
+    /// Exact signed Delivery envelope commitment.
+    #[must_use]
+    pub const fn offer_commitment(&self) -> &[u8; 32] {
+        &self.offer_commitment
+    }
+
+    /// Authenticated maker Chat identity linked to the Delivery publisher.
+    #[must_use]
+    pub const fn maker_chat_identity(&self) -> &[u8; 33] {
+        &self.maker_chat_identity
+    }
+
+    /// Authenticated taker Chat identity.
+    #[must_use]
+    pub const fn taker_chat_identity(&self) -> &[u8; 33] {
+        &self.taker_chat_identity
+    }
+
+    /// Exact selected foreign-chain atomic units.
+    #[must_use]
+    pub const fn foreign_units(&self) -> u64 {
+        self.foreign_units
+    }
+
+    /// Exact no-rounding LEZ atomic units.
+    #[must_use]
+    pub const fn lez_units(&self) -> u128 {
+        self.lez_units
+    }
+
+    /// Trusted maker reservation time.
+    #[must_use]
+    pub const fn reserved_at_unix_seconds(&self) -> u64 {
+        self.reserved_at_unix_seconds
+    }
+
+    /// Canonical pair-agreement body commitment signed by the maker.
+    #[must_use]
+    pub const fn agreement_commitment(&self) -> &[u8; 32] {
+        &self.agreement_commitment
+    }
+
+    /// Exact bounded maker-proposal wire sent to the taker.
+    #[must_use]
+    pub fn maker_proposal_wire(&self) -> &[u8] {
+        &self.maker_proposal_wire
+    }
+
+    /// Durable negotiation phase.
+    #[must_use]
+    pub const fn status(&self) -> MakerZecNegotiationStatus {
+        self.status
+    }
+
+    /// Exact final countersigned wire after completion.
+    #[must_use]
+    pub fn final_agreement_wire(&self) -> Option<&[u8]> {
+        self.final_agreement_wire.as_deref()
+    }
+
+    /// Application swap identity after completion.
+    #[must_use]
+    pub fn swap_id(&self) -> Option<&str> {
+        self.swap_id.as_deref()
+    }
+
+    fn validate(&self) -> Result<(), MakerOfferError> {
+        if self.offer_commitment == [0; 32]
+            || self.agreement_commitment == [0; 32]
+            || self.maker_chat_identity == [0; 33]
+            || self.taker_chat_identity == [0; 33]
+            || self.maker_chat_identity == self.taker_chat_identity
+            || self.foreign_units == 0
+            || self.lez_units == 0
+            || self.reserved_at_unix_seconds == 0
+            || self.reserved_at_unix_seconds > i64::MAX as u64
+            || self.maker_proposal_wire.is_empty()
+            || self.maker_proposal_wire.len() > MAXIMUM_ZEC_PROPOSAL_BYTES
+            || self
+                .final_agreement_wire
+                .as_ref()
+                .is_some_and(|wire| wire.len() > MAXIMUM_ZEC_PROPOSAL_BYTES)
+        {
+            return Err(MakerOfferError::InvalidNegotiation);
+        }
+        match self.status {
+            MakerZecNegotiationStatus::Proposed
+                if self.final_agreement_wire.is_none() && self.swap_id.is_none() => {}
+            MakerZecNegotiationStatus::Completed
+                if self
+                    .final_agreement_wire
+                    .as_ref()
+                    .is_some_and(|wire| !wire.is_empty())
+                    && self.swap_id.is_some() => {}
+            _ => return Err(MakerOfferError::InvalidNegotiation),
+        }
+        Ok(())
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 struct StoredOfferCommitV1 {
     schema_version: u16,
@@ -329,6 +503,21 @@ struct ConsumeRequest<'a> {
     expected_revision: u64,
     reservation_id: &'a RequestId,
     swap: &'a SwapCoordinator,
+}
+
+#[derive(Serialize)]
+struct StageZecNegotiationRequest<'a> {
+    offer_id: &'a MakerOfferId,
+    expected_revision: u64,
+    reservation_id: &'a RequestId,
+    offer_commitment: &'a [u8],
+    maker_chat_identity: &'a [u8],
+    taker_chat_identity: &'a [u8],
+    foreign_units: u64,
+    lez_units: String,
+    reserved_at_unix_seconds: u64,
+    agreement_commitment: &'a [u8],
+    maker_proposal_sha256: [u8; 32],
 }
 
 #[derive(Serialize)]
@@ -468,6 +657,142 @@ impl SqliteSwapStore {
         )
     }
 
+    /// Atomically reserves one ZEC offer and retains the exact maker proposal.
+    ///
+    /// This is the Chat midpoint linearization point. The proposal is durable
+    /// before it can be sent to the taker, and exactly one competing stage can
+    /// move the active offer to `reserved`.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on malformed negotiation metadata, non-ZEC route, price or
+    /// amount mismatch, expiry, non-active state, stale revision, request
+    /// conflict, missing/corrupt state, or `SQLite` failure.
+    #[allow(clippy::too_many_lines)]
+    pub fn stage_zec_maker_negotiation(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_revision: u64,
+        negotiation: &MakerZecNegotiationV1,
+    ) -> Result<MakerOfferCommit, StoreError> {
+        negotiation.validate()?;
+        if negotiation.status != MakerZecNegotiationStatus::Proposed {
+            return Err(MakerOfferError::InvalidNegotiation.into());
+        }
+        let proposal_sha256: [u8; 32] = Sha256::digest(negotiation.maker_proposal_wire()).into();
+        let request_json = serde_json::to_string(&StageZecNegotiationRequest {
+            offer_id,
+            expected_revision,
+            reservation_id: negotiation.reservation_id(),
+            offer_commitment: negotiation.offer_commitment(),
+            maker_chat_identity: negotiation.maker_chat_identity(),
+            taker_chat_identity: negotiation.taker_chat_identity(),
+            foreign_units: negotiation.foreign_units(),
+            lez_units: negotiation.lez_units().to_string(),
+            reserved_at_unix_seconds: negotiation.reserved_at_unix_seconds(),
+            agreement_commitment: negotiation.agreement_commitment(),
+            maker_proposal_sha256: proposal_sha256,
+        })?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(commit) = replay_offer_mutation(
+            &transaction,
+            request_id,
+            "zec_negotiation_stage",
+            &request_json,
+        )? {
+            transaction.commit()?;
+            return Ok(commit);
+        }
+        let record = load_offer(
+            &transaction,
+            offer_id,
+            negotiation.reserved_at_unix_seconds(),
+        )?
+        .ok_or(StoreError::MissingMakerOffer)?;
+        if record.revision != expected_revision {
+            return Err(StoreError::StaleMakerOffer {
+                expected: expected_revision,
+                actual: record.revision,
+            });
+        }
+        if record.offer.route().pair() != Pair::Zcash {
+            return Err(StoreError::MakerOfferSwapMismatch);
+        }
+        if negotiation.reserved_at_unix_seconds() >= record.offer.expires_at_unix_seconds() {
+            return Err(StoreError::MakerOfferExpired);
+        }
+        if record.status != MakerOfferStatus::Active {
+            return Err(StoreError::MakerOfferUnavailable);
+        }
+        if record
+            .offer
+            .quote_foreign_amount(negotiation.foreign_units())?
+            != negotiation.lez_units()
+        {
+            return Err(MakerOfferError::InvalidNegotiation.into());
+        }
+        transaction.execute(
+            "INSERT INTO maker_zec_negotiations (
+                 offer_id, reservation_id, payload_version, offer_commitment,
+                 maker_chat_identity, taker_chat_identity, foreign_units, lez_units,
+                 reserved_at_unix_seconds, agreement_commitment, maker_proposal_wire,
+                 state, final_agreement_wire, swap_id, updated_request_id
+             ) VALUES (
+                 ?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                 'proposed', NULL, NULL, ?11
+             )",
+            params![
+                offer_id.as_str(),
+                negotiation.reservation_id().as_str(),
+                negotiation.offer_commitment().as_slice(),
+                negotiation.maker_chat_identity().as_slice(),
+                negotiation.taker_chat_identity().as_slice(),
+                u64_to_sql(negotiation.foreign_units())?,
+                negotiation.lez_units().to_be_bytes().as_slice(),
+                u64_to_sql(negotiation.reserved_at_unix_seconds())?,
+                negotiation.agreement_commitment().as_slice(),
+                negotiation.maker_proposal_wire(),
+                request_id.as_str(),
+            ],
+        )?;
+        let revision = expected_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let updated = transaction.execute(
+            "UPDATE maker_offers SET state = 'reserved', revision = ?1,
+                 reservation_id = ?2, updated_request_id = ?3
+             WHERE offer_id = ?4 AND revision = ?5 AND state = 'active'",
+            params![
+                u64_to_sql(revision)?,
+                negotiation.reservation_id().as_str(),
+                request_id.as_str(),
+                offer_id.as_str(),
+                u64_to_sql(expected_revision)?,
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::StaleMakerOffer {
+                expected: expected_revision,
+                actual: record.revision,
+            });
+        }
+        persist_offer_mutation(
+            &transaction,
+            request_id,
+            "zec_negotiation_stage",
+            &request_json,
+            revision,
+        )?;
+        transaction.commit()?;
+        Ok(MakerOfferCommit {
+            revision,
+            was_replay: false,
+        })
+    }
+
     /// Atomically binds the winning reservation to one validated swap identity.
     ///
     /// Expiry is intentionally not rechecked: reservation is the acceptance
@@ -590,6 +915,46 @@ impl SqliteSwapStore {
             return Err(MakerOfferError::InvalidTime.into());
         }
         list_offers(&self.connection, "", None, now_unix_seconds)
+    }
+
+    /// Loads the exact durable ZEC Chat negotiation for one offer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed/corrupt state or `SQLite` failure.
+    pub fn load_zec_maker_negotiation(
+        &self,
+        offer_id: &MakerOfferId,
+    ) -> Result<Option<MakerZecNegotiationV1>, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT reservation_id, payload_version, offer_commitment,
+                        maker_chat_identity, taker_chat_identity, foreign_units,
+                        lez_units, reserved_at_unix_seconds, agreement_commitment,
+                        maker_proposal_wire, state, final_agreement_wire, swap_id
+                 FROM maker_zec_negotiations WHERE offer_id = ?1",
+                params![offer_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(decode_zec_negotiation_row)
+            .transpose()
     }
 }
 
@@ -883,6 +1248,82 @@ fn load_offer(
         .transpose()
 }
 
+type ZecNegotiationRow = (
+    String,
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    i64,
+    Vec<u8>,
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+    String,
+    Option<Vec<u8>>,
+    Option<String>,
+);
+
+fn decode_zec_negotiation_row(row: ZecNegotiationRow) -> Result<MakerZecNegotiationV1, StoreError> {
+    let (
+        reservation_id,
+        payload_version,
+        offer_commitment,
+        maker_chat_identity,
+        taker_chat_identity,
+        foreign_units,
+        lez_units,
+        reserved_at_unix_seconds,
+        agreement_commitment,
+        maker_proposal_wire,
+        state,
+        final_agreement_wire,
+        swap_id,
+    ) = row;
+    check_version(payload_version, "maker ZEC negotiation")?;
+    let offer_commitment: [u8; 32] = offer_commitment
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let maker_chat_identity: [u8; 33] = maker_chat_identity
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let taker_chat_identity: [u8; 33] = taker_chat_identity
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let lez_units: [u8; 16] = lez_units
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let agreement_commitment: [u8; 32] = agreement_commitment
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let status = match state.as_str() {
+        "proposed" => MakerZecNegotiationStatus::Proposed,
+        "completed" => MakerZecNegotiationStatus::Completed,
+        _ => return Err(StoreError::CorruptMakerOffer),
+    };
+    let swap_id = swap_id
+        .map(|value| SwapId::new(value.clone()).map(|_| value.into_boxed_str()))
+        .transpose()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let value = MakerZecNegotiationV1 {
+        reservation_id: RequestId::new(reservation_id)
+            .map_err(|_| StoreError::CorruptMakerOffer)?,
+        offer_commitment,
+        maker_chat_identity,
+        taker_chat_identity,
+        foreign_units: sql_to_u64(foreign_units)?,
+        lez_units: u128::from_be_bytes(lez_units),
+        reserved_at_unix_seconds: sql_to_u64(reserved_at_unix_seconds)?,
+        agreement_commitment,
+        maker_proposal_wire,
+        status,
+        final_agreement_wire,
+        swap_id,
+    };
+    value.validate()?;
+    Ok(value)
+}
+
 type OfferRow = (
     String,
     String,
@@ -1009,7 +1450,49 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
          ) STRICT;
          CREATE INDEX IF NOT EXISTS maker_offers_discovery
              ON maker_offers (state, expires_at_unix_seconds, pair, direction, offer_id);
+         CREATE TABLE IF NOT EXISTS maker_zec_negotiations (
+             offer_id                  TEXT PRIMARY KEY NOT NULL,
+             reservation_id            TEXT NOT NULL UNIQUE,
+             payload_version           INTEGER NOT NULL CHECK (payload_version = 1),
+             offer_commitment           BLOB NOT NULL CHECK (length(offer_commitment) = 32),
+             maker_chat_identity        BLOB NOT NULL CHECK (length(maker_chat_identity) = 33),
+             taker_chat_identity        BLOB NOT NULL CHECK (length(taker_chat_identity) = 33),
+             foreign_units              INTEGER NOT NULL CHECK (foreign_units > 0),
+             lez_units                  BLOB NOT NULL CHECK (length(lez_units) = 16),
+             reserved_at_unix_seconds   INTEGER NOT NULL CHECK (reserved_at_unix_seconds > 0),
+             agreement_commitment       BLOB NOT NULL CHECK (length(agreement_commitment) = 32),
+             maker_proposal_wire        BLOB NOT NULL CHECK (
+                 length(maker_proposal_wire) BETWEEN 1 AND 16384
+             ),
+             state                      TEXT NOT NULL CHECK (state IN ('proposed', 'completed')),
+             final_agreement_wire       BLOB CHECK (
+                 final_agreement_wire IS NULL
+                 OR length(final_agreement_wire) BETWEEN 1 AND 16384
+             ),
+             swap_id                    TEXT,
+             updated_request_id         TEXT NOT NULL,
+             FOREIGN KEY (offer_id) REFERENCES maker_offers(offer_id) ON DELETE RESTRICT,
+             FOREIGN KEY (swap_id) REFERENCES swaps(id) ON DELETE RESTRICT,
+             CHECK (maker_chat_identity != taker_chat_identity),
+             CHECK (
+                 (state = 'proposed' AND final_agreement_wire IS NULL AND swap_id IS NULL)
+                 OR (state = 'completed' AND final_agreement_wire IS NOT NULL AND swap_id IS NOT NULL)
+             )
+         ) STRICT;
+         CREATE INDEX IF NOT EXISTS maker_zec_negotiations_state_reservation
+             ON maker_zec_negotiations (state, reservation_id);
 ",
     )?;
     Ok(())
+}
+/// Derives the signed 32-byte Chat session from its durable reservation ID.
+///
+/// Both peers can recompute this before signing, while the store can prove the
+/// final transcript belongs to the exact winning reservation after restart.
+#[must_use]
+pub fn maker_zec_chat_session_id(reservation_id: &RequestId) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(ZEC_CHAT_SESSION_DOMAIN);
+    hasher.update(reservation_id.as_str().as_bytes());
+    hasher.finalize().into()
 }

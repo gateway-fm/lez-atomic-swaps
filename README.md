@@ -12,7 +12,7 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ### M5 active progressive application PoC
 
 M5 is active. The owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v12 pair/price/offer/swap history,
+Unix-socket daemon, maker CLI, durable schema-v13 pair/price/offer/negotiation/swap history,
 exact local pricing, expiring one-winner offers, signed bounded run-local
 Delivery discovery, global request replay, and restart recovery. Offer
 consumption atomically inserts the matching initial coordinator. A separate

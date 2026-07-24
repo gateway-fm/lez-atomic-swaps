@@ -45,7 +45,7 @@ pub use maker_application::{
 };
 pub use maker_offer::{
     MakerOfferCommit, MakerOfferError, MakerOfferId, MakerOfferRecordV1, MakerOfferStatus,
-    MakerOfferV1,
+    MakerOfferV1, MakerZecNegotiationStatus, MakerZecNegotiationV1, maker_zec_chat_session_id,
 };
 pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
@@ -66,7 +66,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 12;
+const DATABASE_SCHEMA_VERSION: i64 = 13;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
