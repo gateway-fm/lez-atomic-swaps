@@ -12,7 +12,7 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ### M5 active progressive application PoC
 
 M5 is active. The owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v13
+Unix-socket daemon, maker CLI, durable schema-v14
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
@@ -24,7 +24,7 @@ no-clobber final-wire persistence. A disjoint taker-facing Chat socket now
 authenticates the exact Delivery envelope and unsigned canonical ZEC draft,
 signs with the Delivery-pinned maker identity, and atomically stages the
 one-winner proposal before responding. The separate taker role then validates
-and countersigns that proposal, and the daemon reuses the atomic schema-v13 final
+and countersigns that proposal, and the daemon reuses the atomic schema-v14 final
 acceptance transaction with only daemon-local claim authority; delayed replay
 and kill/reopen durability are process-GREEN. Exact final-wire actor
 configuration is now component-GREEN: a no-authority preparer replaces only the
@@ -38,10 +38,18 @@ completed that actual-node path in 26.780 protocol seconds: both actors reached
 revision 4, Zebra advanced exactly 107 to 110, scoped cleanup passed, and no
 public RPC or faucet participated. See the
 [secret-safe evidence packet](docs/evidence/m5-zec-application-corridor-20260724.json).
-Projecting terminal actor state into a newly restarted operator daemon remains
-the next progressive PoC seam. The Logos C-API price source, systemd/Core
-lifecycle, fuzzing, other application pairs, and hardening remain literal M5
-completion work.
+The next terminal-history seam is implementation-GREEN and exact-run pending:
+schema v14 keeps a separate display-only terminal projection, replays the
+stopped Maker actor's complete durable history with unit chain ports, binds the
+result to the exact countersigned Chat agreement, and atomically imports it
+before a fresh owner-only daemon becomes ready. `status` and `history` overlay
+that record, while ordinary lifecycle loads remain unchanged and can never gain
+effect authority from an operator view. The real corridor now asserts the fresh
+daemon reports `completed` while Chat and Delivery remain absent. Full swap-store,
+maker-process, strict Clippy, and Rustdoc gates are GREEN; fresh isolated-node
+replay remains. ETA: 1–2 focused hours, plus 2–4 hours only for cold LEZ/Zebra
+rebuilds. C-API pricing, systemd/Core, fuzzing,
+other pairs, and hardening remain literal M5 work outside that PoC ETA.
 
 Build and repeat the current real process boundary with:
 

@@ -177,6 +177,9 @@ flowchart TB
     XmrReleasePreparer --> XmrActualClaim
     XmrActorInputs --> XmrActualClaim
     XmrObservation --> XmrActualClaim
+    Progressive -.-> M5Entry["0079 M5 application plane"]
+    M5Entry --> M5Corridor["0094 ZEC composition"]
+    M5Corridor --> M5Projection["0095 Terminal operator projection"]
 ```
 
 | ADR | Decision | Status |
@@ -275,3 +278,4 @@ flowchart TB
 | [0092](0092-let-the-taker-own-validation-and-countersigning.md) | Make the real taker process authenticate, validate, countersign, exact-replay, and no-clobber persist ZEC acceptance | Accepted and process component GREEN; chain-fact preparation, final actor configs, lifecycle commands, and corridor composition remain |
 | [0093](0093-rebind-chat-agreements-into-fresh-actors.md) | Rebind only the authenticated Chat transcript of validated local chain facts, then validate the final role authority into fresh actor state | Accepted and actor-handoff component GREEN; actual corridor and post-lock cutover remain |
 | [0094](0094-compose-m5-zec-and-cut-after-first-lock.md) | Compose real maker/taker negotiation into fresh ZEC actors and remove Delivery/Chat only after the confirmed first lock | Accepted and runner source-GREEN; fresh isolated-node execution and evidence remain |
+| [0095](0095-project-terminal-actors-as-operator-views.md) | Project stopped terminal Maker actors into a provenance-bound display-only owner view without changing lifecycle authority | Accepted and component GREEN; exact local-devnet restart evidence pending |

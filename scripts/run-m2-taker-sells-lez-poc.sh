@@ -134,6 +134,7 @@ m5_daemon_pid=''
 m5_daemon_start_ticks=''
 m5_daemon_bin=''
 m5_maker_socket=''
+m5_application_database=''
 m5_chat_socket=''
 m5_delivery_directory=''
 m5_delivery_offline=''
@@ -191,6 +192,108 @@ stop_owned_m5_daemon() {
     kill -KILL "$m5_daemon_pid" || true
   fi
   wait "$m5_daemon_pid" 2>/dev/null || true
+}
+
+prove_m5_terminal_operator_projection() {
+  local swap_id actor_state claim_key_id claim_key_file terminal_ready terminal_log
+  local history_file status_file terminal_receipt ready=0
+  swap_id="$(jq -er '.swap_id | strings' "$maker_config")"
+  actor_state="$(jq -er '.role_state_db | strings' "$maker_config")"
+  claim_key_id="$(jq -er '.claim_recovery.key_id | strings' "$maker_config")"
+  claim_key_file="$(jq -er '.claim_recovery.key_file | strings' "$maker_config")"
+  jq -e --arg swap "$swap_id" '
+    .role == "maker" and .swap_id == $swap
+  ' "$maker_config" >/dev/null
+
+  terminal_ready="${application_root}/runtime/ready-terminal"
+  terminal_log="${evidence_dir}/m5-terminal-maker-daemon.log"
+  history_file="${evidence_dir}/m5-history-after-terminal-restart.json"
+  status_file="${evidence_dir}/m5-status-after-terminal-restart.json"
+  terminal_receipt="${evidence_dir}/m5-terminal-operator-projection.json"
+  [[ ! -e "$terminal_ready" && ! -e "$m5_maker_socket" ]] || {
+    echo 'terminal M5 owner endpoint already exists' >&2
+    return 1
+  }
+
+  "$m5_daemon_bin" \
+    --socket "$m5_maker_socket" \
+    --database "$m5_application_database" \
+    --ready-file "$terminal_ready" \
+    --terminal-zec-maker-state-db "$actor_state" \
+    --terminal-zec-swap-id "$swap_id" \
+    --terminal-zec-claim-key-id "$claim_key_id" \
+    --terminal-zec-claim-key-file "$claim_key_file" \
+    >"$terminal_log" 2>&1 &
+  m5_daemon_pid=$!
+  for _ in {1..40}; do
+    m5_daemon_start_ticks="$(process_start_ticks "$m5_daemon_pid")"
+    [[ -n "$m5_daemon_start_ticks" ]] && break
+    sleep 0.05
+  done
+  process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+    tail -n 40 "$terminal_log" >&2 || true
+    return 1
+  }
+  for _ in {1..200}; do
+    if [[ -f "$terminal_ready" && "$(<"$terminal_ready")" == "$m5_maker_socket" \
+      && -S "$m5_maker_socket" ]]; then
+      ready=1
+      break
+    fi
+    process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+      tail -n 40 "$terminal_log" >&2 || true
+      return 1
+    }
+    sleep 0.05
+  done
+  (( ready == 1 )) || {
+    echo 'terminal M5 owner daemon did not become ready' >&2
+    return 1
+  }
+  [[ ! -e "$m5_chat_socket" && ! -e "$m5_delivery_directory" \
+    && -d "$m5_delivery_offline" ]] || {
+    echo 'terminal M5 restart restored a removed negotiation transport' >&2
+    return 1
+  }
+
+  "$maker_cli_bin" --socket "$m5_maker_socket" history >"$history_file"
+  "$maker_cli_bin" --socket "$m5_maker_socket" status --id "$swap_id" >"$status_file"
+  jq -e --arg swap "$swap_id" '
+    length == 1 and .[0].id == $swap and .[0].phase == "completed"
+  ' "$history_file" >/dev/null
+  jq -e --arg swap "$swap_id" '
+    .id == $swap and .phase == "completed"
+  ' "$status_file" >/dev/null
+
+  stop_owned_m5_daemon
+  m5_daemon_pid=''
+  m5_daemon_start_ticks=''
+  [[ ! -e "$m5_maker_socket" && ! -e "$terminal_ready" \
+    && ! -e "$m5_chat_socket" && ! -e "$m5_delivery_directory" \
+    && -d "$m5_delivery_offline" ]] || {
+    echo 'terminal M5 restart cleanup or transport isolation failed' >&2
+    return 1
+  }
+  jq -n --arg swap_id "$swap_id" \
+    --arg history_sha256 "$(sha256sum "$history_file" | cut -d ' ' -f1)" \
+    --arg status_sha256 "$(sha256sum "$status_file" | cut -d ' ' -f1)" \
+    --argjson source_revision "$(jq -er '.revision | numbers' "${evidence_dir}/maker-status-final.json")" '
+    {
+      schema_version: 1,
+      result: "passed",
+      swap_id: $swap_id,
+      source: {role:"maker",revision:$source_revision,offline_full_history_replay:true},
+      operator_history_phase: "completed",
+      operator_status_phase: "completed",
+      history_sha256: $history_sha256,
+      status_sha256: $status_sha256,
+      owner_socket_removed_after_query: true,
+      chat_remained_absent: true,
+      delivery_remained_offline: true,
+      chain_rpc_used_during_import: false,
+      private_material_disclosed: false
+    }' >"$terminal_receipt"
+  chmod 0600 "$terminal_receipt"
 }
 
 cleanup() {
@@ -523,6 +626,8 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   m5_daemon_bin="$(jq -er '.transport_cutover.maker_daemon_bin | strings' \
     "${evidence_dir}/m5-chat-handoff.json")"
   m5_maker_socket="$(jq -er '.transport_cutover.maker_socket | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_application_database="$(jq -er '.transport_cutover.application_database | strings' \
     "${evidence_dir}/m5-chat-handoff.json")"
   m5_chat_socket="$(jq -er '.transport_cutover.chat_socket | strings' \
     "${evidence_dir}/m5-chat-handoff.json")"
@@ -992,6 +1097,19 @@ jq -e '.role == "maker" and .state == "active" and .phase == "completed"' \
   "${evidence_dir}/maker-status-final.json" >/dev/null
 jq -e '.role == "taker" and .state == "active" and .phase == "completed"' \
   "${evidence_dir}/taker-status-final.json" >/dev/null
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  prove_m5_terminal_operator_projection
+  jq -e '
+    .result == "passed" and .source.role == "maker"
+    and .source.revision > 0 and .source.offline_full_history_replay == true
+    and .operator_history_phase == "completed"
+    and .operator_status_phase == "completed"
+    and .owner_socket_removed_after_query == true
+    and .chat_remained_absent == true and .delivery_remained_offline == true
+    and .chain_rpc_used_during_import == false
+    and .private_material_disclosed == false
+  ' "${evidence_dir}/m5-terminal-operator-projection.json" >/dev/null
+fi
 
 final_zebra_tip_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}')"
 final_zebra_tip="$(jq -er '.result | numbers' <<<"$final_zebra_tip_response")"
@@ -1015,6 +1133,8 @@ jq -n \
   --arg application_handoff_sha256 "$application_handoff_sha256" \
   --arg application_cutover_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-post-lock-cutover.json" | cut -d ' ' -f1; fi)" \
+  --arg terminal_projection_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-terminal-operator-projection.json" | cut -d ' ' -f1; fi)" \
   --argjson elapsed_ms "$((MAX_CORRIDOR_SECONDS * 1000 - $(remaining_budget_milliseconds 'result-before')))" '
   {
     schema_version: 1,
@@ -1053,6 +1173,9 @@ jq -n \
         (if $m5_application_mode == 1 then $application_handoff_sha256 else null end),
       cutover_receipt_sha256:
         (if $m5_application_mode == 1 then $application_cutover_sha256 else null end),
+      terminal_projection_receipt_sha256:
+        (if $m5_application_mode == 1 then $terminal_projection_sha256 else null end),
+      fresh_operator_restart_reports_completed: ($m5_application_mode == 1),
       transports_removed_after_first_lock: ($m5_application_mode == 1),
       transports_absent_through_terminal_state: ($m5_application_mode == 1)
     },

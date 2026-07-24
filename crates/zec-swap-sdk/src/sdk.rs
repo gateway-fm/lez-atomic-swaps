@@ -419,6 +419,18 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store> {
         self.coordinator.phase()
     }
 
+    /// Returns the absorbing coordinator only after full durable replay reached a terminal phase.
+    ///
+    /// This narrow view supports display-only operator projection without exposing mutable
+    /// in-flight state as a second lifecycle authority.
+    #[must_use]
+    pub const fn terminal_coordinator(&self) -> Option<&SwapCoordinator> {
+        match self.coordinator.phase() {
+            Phase::Completed | Phase::Refunded => Some(&self.coordinator),
+            _ => None,
+        }
+    }
+
     /// Last role-local durable revision loaded during activation/resume.
     #[must_use]
     pub const fn revision(&self) -> u64 {

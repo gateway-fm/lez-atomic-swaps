@@ -11,8 +11,10 @@ use clap::Parser;
 use jsonrpsee::server::{
     BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
 };
-use lez_maker_node::{MakerRpc, RunLocalDelivery, chat_rpc_module, rpc_module};
-use lez_swap_core::Participant;
+use lez_maker_node::{
+    MakerRpc, RunLocalDelivery, chat_rpc_module, import_terminal_zec_maker_projection, rpc_module,
+};
+use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{SqliteSwapStore, SqliteZecRecoveryStore};
 use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
 use secp256k1::SecretKey;
@@ -56,11 +58,24 @@ struct Arguments {
     /// Owner-only file containing the maker-owned 32-byte claim preimage.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
     maker_claim_preimage_file: Option<PathBuf>,
+    /// Stopped owner-private Maker actor database imported only as a terminal operator view.
+    #[arg(long, requires_all = ["terminal_zec_swap_id", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
+    terminal_zec_maker_state_db: Option<PathBuf>,
+    /// Exact swap ID expected in both the stopped actor and completed Maker Chat history.
+    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
+    terminal_zec_swap_id: Option<Box<str>>,
+    /// Rotation ID for the stopped Maker actor's claim-recovery key.
+    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_swap_id", "terminal_zec_claim_key_file"])]
+    terminal_zec_claim_key_id: Option<Box<str>>,
+    /// Owner-only raw 32-byte claim key for offline terminal history replay.
+    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_swap_id", "terminal_zec_claim_key_id"])]
+    terminal_zec_claim_key_file: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
+    import_terminal_projection(&arguments).await?;
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
     let (chat_listener, _chat_socket_guard) = arguments
         .chat_socket
@@ -158,6 +173,39 @@ async fn main() -> anyhow::Result<()> {
     drop(chat_service);
     drop(stop_handle);
     server_handle.stopped().await;
+    Ok(())
+}
+
+async fn import_terminal_projection(arguments: &Arguments) -> anyhow::Result<()> {
+    let configured = (
+        arguments.terminal_zec_maker_state_db.as_deref(),
+        arguments.terminal_zec_swap_id.as_deref(),
+        arguments.terminal_zec_claim_key_id.as_deref(),
+        arguments.terminal_zec_claim_key_file.as_deref(),
+    );
+    let (Some(actor_database), Some(swap_id), Some(key_id), Some(key_file)) = configured else {
+        ensure!(
+            configured == (None, None, None, None),
+            "terminal ZEC projection arguments must be configured together"
+        );
+        return Ok(());
+    };
+    let swap_id = SwapId::new(swap_id.to_owned()).context("validate terminal ZEC swap ID")?;
+    let key_material = load_raw_secret(key_file, "terminal Maker claim-recovery key")?;
+    let claim_key = ProtectedClaimKey::new(key_id, *key_material)
+        .context("validate terminal Maker claim-recovery key ID")?;
+    let commit = import_terminal_zec_maker_projection(
+        &arguments.database,
+        actor_database,
+        &swap_id,
+        claim_key,
+    )
+    .await
+    .context("import terminal Maker actor projection")?;
+    ensure!(
+        commit.source_revision() > 0,
+        "terminal Maker actor projection has no durable source revision"
+    );
     Ok(())
 }
 

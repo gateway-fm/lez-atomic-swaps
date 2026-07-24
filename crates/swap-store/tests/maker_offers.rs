@@ -452,7 +452,7 @@ fn schema_v11_migrates_the_global_request_ledger_without_reuse() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     assert_eq!(migrated_rows, 1);
     assert!(!legacy_exists);
 }

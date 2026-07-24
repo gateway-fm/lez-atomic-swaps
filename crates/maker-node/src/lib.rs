@@ -11,6 +11,7 @@ pub use run_local_delivery::{
 };
 
 use std::{
+    path::Path,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -25,14 +26,14 @@ use lez_swap_store::{
     AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit,
     MakerOfferId, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerPairConfigurationV1,
     MakerRouteV1, MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
-    OperatorAlertSeverity, SqliteSwapStore, SqliteZecRecoveryStore, StoreError,
-    VersionedMakerRecord, maker_zec_chat_session_id,
+    OperatorAlertSeverity, OperatorTerminalProjectionCommit, SqliteSwapStore,
+    SqliteZecRecoveryStore, StoreError, VersionedMakerRecord, maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ValidatedZecAgreementDraftV1,
-    ZcashObservationEvent, ZcashObservationEventRecordV1, ZcashObservationTracker,
-    ZecAgreementDraftV1, ZecBindingRecordError, ZecRefundProfile, ZecSwapBinding,
-    replay_zcash_observation_history,
+    AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ProtectedClaimKey,
+    ValidatedZecAgreementDraftV1, ZcashObservationEvent, ZcashObservationEventRecordV1,
+    ZcashObservationTracker, ZecAgreementDraftV1, ZecBindingRecordError, ZecPairSdk,
+    ZecRefundProfile, ZecSwapBinding, replay_zcash_observation_history,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,48 @@ impl MakerRpc {
             maker_claim_preimage: Some(Arc::new(maker_claim_preimage)),
         }
     }
+}
+
+/// Replays one stopped Maker actor offline and atomically imports its terminal operator view.
+///
+/// Unit chain ports make the replay incapable of RPC or chain effects. The application store
+/// validates that the actor's exact signed agreement is the one previously completed through
+/// Maker Chat; the ordinary application aggregate remains untouched.
+///
+/// # Errors
+///
+/// Fails when the source is missing, not a fully replayable terminal Maker actor, aliases the
+/// application database, lacks the matching claim key, or disagrees with application history.
+pub async fn import_terminal_zec_maker_projection(
+    application_database: &Path,
+    actor_state_database: &Path,
+    swap_id: &SwapId,
+    claim_key: ProtectedClaimKey,
+) -> anyhow::Result<OperatorTerminalProjectionCommit> {
+    anyhow::ensure!(
+        application_database != actor_state_database,
+        "terminal actor state must be separate from the application database"
+    );
+    let actor_store = SqliteZecRecoveryStore::open_claim_capable_existing(
+        actor_state_database,
+        Participant::Maker,
+        claim_key,
+    )?;
+    let sdk: ZecPairSdk<(), (), (), (), SqliteZecRecoveryStore> =
+        ZecPairSdk::new(Participant::Maker, (), (), (), (), actor_store);
+    let active = sdk
+        .resume_all_capable(swap_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("terminal Maker actor is not activated"))?;
+    let terminal = active.terminal_coordinator().ok_or_else(|| {
+        anyhow::anyhow!("Maker actor has not reached an absorbing terminal phase")
+    })?;
+    let agreement_wire = active.agreement().encode_wire()?;
+    let source_revision = active.revision();
+    let mut application = SqliteSwapStore::open(application_database)?;
+    application
+        .project_zec_terminal_for_operator(terminal, source_revision, &agreement_wire)
+        .map_err(Into::into)
 }
 
 /// Result of one committed Zcash funding reconciliation.
@@ -763,7 +806,7 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
                 .lock()
                 .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
             let swap = store
-                .load(&id)
+                .load_operator_swap(&id)
                 .map_err(internal_store_error)?
                 .ok_or_else(|| rpc_error(NOT_FOUND, "swap not found"))?;
             let alerts = store
@@ -901,7 +944,7 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 .lock()
                 .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
             store
-                .list_swaps()
+                .list_operator_swaps()
                 .map_err(internal_store_error)?
                 .iter()
                 .map(|swap| {

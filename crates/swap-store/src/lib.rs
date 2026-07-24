@@ -54,24 +54,27 @@ pub use public_effect_journal::{
 };
 pub use zec_recovery::{MakerZecAcceptanceCommit, SqliteZecRecoveryStore};
 
-use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId};
+use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
-    ClaimError, ClaimRecordError, FirstLockRecordError, MakerLockError, MakerLockRecordError,
-    ObservationRecordError, ObservedMakerLockError, ObservedTakerFirstLockTransitionError,
-    ProtectedClaimError, ZcashObservationEventRecordV1, ZecAgreementV1Error, ZecBindingRecordError,
-    ZecSwapBinding, ZecSwapBindingRecordV1, revalidate_historical_event,
+    AcceptedZecAgreementV1, ClaimError, ClaimRecordError, FirstLockRecordError, MakerLockError,
+    MakerLockRecordError, ObservationRecordError, ObservedMakerLockError,
+    ObservedTakerFirstLockTransitionError, ProtectedClaimError, ZcashObservationEventRecordV1,
+    ZecAgreementV1Error, ZecBindingRecordError, ZecSwapBinding, ZecSwapBindingRecordV1,
+    revalidate_historical_event,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 13;
+const DATABASE_SCHEMA_VERSION: i64 = 14;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_BINDING_PAYLOAD_VERSION: i64 = 1;
 const OPERATOR_ALERT_PAYLOAD_VERSION: i64 = 1;
+const OPERATOR_TERMINAL_PROJECTION_PAYLOAD_VERSION: i64 = 1;
+const ZEC_MAKER_ACTOR_PROJECTION_KIND: &str = "zec_maker_actor";
 
 /// Stable operator/security alert kind.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -308,6 +311,15 @@ pub enum StoreError {
     /// `SQLite` operation failed.
     #[error("SQLite swap-store operation failed")]
     Sqlite(#[from] rusqlite::Error),
+    /// A terminal actor projection does not match the completed application agreement.
+    #[error("operator terminal projection is invalid")]
+    InvalidOperatorTerminalProjection,
+    /// A different terminal actor projection already exists for the swap.
+    #[error("operator terminal projection conflicts with durable state")]
+    OperatorTerminalProjectionConflict,
+    /// A durable terminal operator projection is malformed or lacks exact provenance.
+    #[error("operator terminal projection is corrupt")]
+    CorruptOperatorTerminalProjection,
     /// A maker pair, amount bound, TTL, or local price was invalid.
     #[error("maker application configuration is invalid")]
     MakerConfiguration(#[from] MakerConfigurationError),
@@ -582,6 +594,26 @@ impl EventCommit {
     }
 }
 
+/// Result of one atomic, display-only terminal actor projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OperatorTerminalProjectionCommit {
+    source_revision: u64,
+    was_replay: bool,
+}
+
+impl OperatorTerminalProjectionCommit {
+    /// Fully replayed role-local actor revision that produced the terminal view.
+    #[must_use]
+    pub const fn source_revision(self) -> u64 {
+        self.source_revision
+    }
+
+    /// Whether the exact immutable projection was already durable.
+    #[must_use]
+    pub const fn was_replay(self) -> bool {
+        self.was_replay
+    }
+}
 /// Single-process `SQLite` repository for durable swap aggregates.
 #[derive(Debug)]
 pub struct SqliteSwapStore {
@@ -747,6 +779,127 @@ impl SqliteSwapStore {
             Ok(swap)
         })
         .collect()
+    }
+
+    /// Atomically imports one fully replayed terminal Maker actor as a display-only view.
+    ///
+    /// The application aggregate remains unchanged and therefore cannot gain effect authority
+    /// from this projection. The exact countersigned agreement must already be the result of a
+    /// completed Maker Chat negotiation in this database.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable projection error for non-terminal, mismatched, conflicting, corrupt, or
+    /// unrepresentable input, and [`StoreError::Sqlite`] when the transaction fails.
+    pub fn project_zec_terminal_for_operator(
+        &mut self,
+        terminal: &SwapCoordinator,
+        source_revision: u64,
+        signed_agreement_wire: &[u8],
+    ) -> Result<OperatorTerminalProjectionCommit, StoreError> {
+        let terminal_phase = terminal_phase_name(terminal.phase())
+            .ok_or(StoreError::InvalidOperatorTerminalProjection)?;
+        if source_revision == 0 {
+            return Err(StoreError::InvalidOperatorTerminalProjection);
+        }
+        let source_revision_sql =
+            i64::try_from(source_revision).map_err(|_| StoreError::RevisionOverflow)?;
+        let state_json = serde_json::to_string(terminal)?;
+        let agreement_sha256: [u8; 32] = Sha256::digest(signed_agreement_wire).into();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (base, durable_wire) = validated_operator_projection_base(&transaction, terminal.id())?;
+        if durable_wire != signed_agreement_wire || !same_immutable_swap_terms(&base, terminal) {
+            return Err(StoreError::InvalidOperatorTerminalProjection);
+        }
+        let existing = transaction
+            .query_row(
+                "SELECT kind, payload_version, agreement_sha256, source_role,
+                        source_revision, terminal_phase, state_json
+                   FROM operator_terminal_projections WHERE swap_id = ?1",
+                params![terminal.id().as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                },
+            )
+            .optional()?;
+        if let Some((kind, version, digest, role, revision, phase, json)) = existing {
+            if kind == ZEC_MAKER_ACTOR_PROJECTION_KIND
+                && version == OPERATOR_TERMINAL_PROJECTION_PAYLOAD_VERSION
+                && digest == agreement_sha256
+                && role == "maker"
+                && revision == source_revision_sql
+                && phase == terminal_phase
+                && json == state_json
+            {
+                transaction.commit()?;
+                return Ok(OperatorTerminalProjectionCommit {
+                    source_revision,
+                    was_replay: true,
+                });
+            }
+            return Err(StoreError::OperatorTerminalProjectionConflict);
+        }
+        transaction.execute(
+            "INSERT INTO operator_terminal_projections (
+                 swap_id, kind, payload_version, agreement_sha256, source_role,
+                 source_revision, terminal_phase, state_json
+             ) VALUES (?1, ?2, ?3, ?4, 'maker', ?5, ?6, ?7)",
+            params![
+                terminal.id().as_str(),
+                ZEC_MAKER_ACTOR_PROJECTION_KIND,
+                OPERATOR_TERMINAL_PROJECTION_PAYLOAD_VERSION,
+                agreement_sha256,
+                source_revision_sql,
+                terminal_phase,
+                state_json,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(OperatorTerminalProjectionCommit {
+            source_revision,
+            was_replay: false,
+        })
+    }
+
+    /// Loads the owner-visible swap view while keeping lifecycle authority isolated.
+    ///
+    /// # Errors
+    ///
+    /// Returns a store error when either the application aggregate or its optional terminal
+    /// projection fails exact provenance validation.
+    pub fn load_operator_swap(&self, id: &SwapId) -> Result<Option<SwapCoordinator>, StoreError> {
+        load_operator_swap_from(&self.connection, id)
+    }
+
+    /// Lists owner-visible swap views in stable identifier order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a store error when any aggregate or optional projection is invalid.
+    pub fn list_operator_swaps(&self) -> Result<Vec<SwapCoordinator>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM swaps ORDER BY id")?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.into_iter()
+            .map(|id| {
+                let id = SwapId::new(id).map_err(|_| StoreError::InvalidLegacySwapState)?;
+                load_operator_swap_from(&self.connection, &id)?
+                    .ok_or(StoreError::InvalidLegacySwapState)
+            })
+            .collect()
     }
 
     /// Returns the durable optimistic revision for a swap.
@@ -1066,6 +1219,169 @@ impl SqliteSwapStore {
         }
         Ok(())
     }
+}
+
+fn load_swap_from(
+    connection: &Connection,
+    id: &SwapId,
+) -> Result<Option<SwapCoordinator>, StoreError> {
+    connection
+        .query_row(
+            "SELECT schema_version, state_json FROM swaps WHERE id = ?1",
+            params![id.as_str()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .map(|(version, json)| {
+            if version != SWAP_PAYLOAD_VERSION {
+                return Err(StoreError::UnsupportedPayloadVersion {
+                    kind: "swap",
+                    version,
+                });
+            }
+            let swap: SwapCoordinator = serde_json::from_str(&json)?;
+            if swap.id() != id {
+                return Err(StoreError::InvalidLegacySwapState);
+            }
+            Ok(swap)
+        })
+        .transpose()
+}
+
+fn validated_operator_projection_base(
+    connection: &Connection,
+    id: &SwapId,
+) -> Result<(SwapCoordinator, Vec<u8>), StoreError> {
+    let row = connection
+        .query_row(
+            "SELECT s.schema_version, s.state_json, s.revision,
+                    a.agreement_wire, a.accepted_at, a.accepted_revision, a.active_revision,
+                    n.final_agreement_wire
+               FROM swaps s
+               JOIN zec_sdk_agreements a
+                 ON a.swap_id = s.id AND a.local_role = 'maker'
+               JOIN maker_zec_negotiations n
+                 ON n.swap_id = s.id AND n.state = 'completed'
+              WHERE s.id = ?1",
+            params![id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, Vec<u8>>(7)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(StoreError::CorruptOperatorTerminalProjection)?;
+    let (
+        version,
+        state_json,
+        aggregate_revision,
+        agreement_wire,
+        accepted_at,
+        accepted_revision,
+        active_revision,
+        final_wire,
+    ) = row;
+    if version != SWAP_PAYLOAD_VERSION
+        || aggregate_revision != 0
+        || accepted_revision != 0
+        || active_revision != 0
+        || agreement_wire != final_wire
+    {
+        return Err(StoreError::CorruptOperatorTerminalProjection);
+    }
+    let accepted_at = revision_from_sql(accepted_at)?;
+    let accepted = AcceptedZecAgreementV1::accept_wire_at(
+        &agreement_wire,
+        UnixSeconds::new(accepted_at),
+        Participant::Maker,
+        0,
+    )
+    .map_err(|_| StoreError::CorruptOperatorTerminalProjection)?;
+    let base: SwapCoordinator = serde_json::from_str(&state_json)?;
+    if base.id() != id
+        || &base != accepted.agreement().coordinator()
+        || accepted.agreement().application_swap_id() != id.as_str()
+    {
+        return Err(StoreError::CorruptOperatorTerminalProjection);
+    }
+    Ok((base, agreement_wire))
+}
+
+fn load_operator_swap_from(
+    connection: &Connection,
+    id: &SwapId,
+) -> Result<Option<SwapCoordinator>, StoreError> {
+    let Some(base) = load_swap_from(connection, id)? else {
+        return Ok(None);
+    };
+    let projection = connection
+        .query_row(
+            "SELECT kind, payload_version, agreement_sha256, source_role,
+                    source_revision, terminal_phase, state_json
+               FROM operator_terminal_projections WHERE swap_id = ?1",
+            params![id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((kind, version, digest, role, source_revision, phase, state_json)) = projection else {
+        return Ok(Some(base));
+    };
+    if kind != ZEC_MAKER_ACTOR_PROJECTION_KIND
+        || version != OPERATOR_TERMINAL_PROJECTION_PAYLOAD_VERSION
+        || role != "maker"
+        || source_revision <= 0
+    {
+        return Err(StoreError::CorruptOperatorTerminalProjection);
+    }
+    let (validated_base, agreement_wire) = validated_operator_projection_base(connection, id)?;
+    let expected_digest: [u8; 32] = Sha256::digest(&agreement_wire).into();
+    let terminal: SwapCoordinator = serde_json::from_str(&state_json)?;
+    if validated_base != base
+        || digest != expected_digest
+        || terminal.id() != id
+        || terminal_phase_name(terminal.phase()) != Some(phase.as_str())
+        || !same_immutable_swap_terms(&base, &terminal)
+    {
+        return Err(StoreError::CorruptOperatorTerminalProjection);
+    }
+    Ok(Some(terminal))
+}
+
+fn terminal_phase_name(phase: Phase) -> Option<&'static str> {
+    match phase {
+        Phase::Completed => Some("completed"),
+        Phase::Refunded => Some("refunded"),
+        _ => None,
+    }
+}
+
+fn same_immutable_swap_terms(initial: &SwapCoordinator, terminal: &SwapCoordinator) -> bool {
+    initial.id() == terminal.id()
+        && initial.pair() == terminal.pair()
+        && initial.direction() == terminal.direction()
+        && initial.required_confirmations(Participant::Maker)
+            == terminal.required_confirmations(Participant::Maker)
+        && initial.required_confirmations(Participant::Taker)
+            == terminal.required_confirmations(Participant::Taker)
+        && initial.recovery_schedule() == terminal.recovery_schedule()
 }
 
 fn open_configured_connection(path: impl AsRef<Path>) -> Result<Connection, StoreError> {
@@ -1497,6 +1813,16 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
             ON operator_alert_outbox (swap_id, acknowledged, alert_sequence);
         CREATE INDEX IF NOT EXISTS operator_alert_pending_severity_sequence
             ON operator_alert_outbox (acknowledged, severity, alert_sequence);
+        CREATE TABLE IF NOT EXISTS operator_terminal_projections (
+            swap_id          TEXT PRIMARY KEY NOT NULL REFERENCES swaps(id) ON DELETE CASCADE,
+            kind             TEXT NOT NULL CHECK (kind = 'zec_maker_actor'),
+            payload_version  INTEGER NOT NULL,
+            agreement_sha256 BLOB NOT NULL CHECK (length(agreement_sha256) = 32),
+            source_role      TEXT NOT NULL CHECK (source_role = 'maker'),
+            source_revision  INTEGER NOT NULL CHECK (source_revision > 0),
+            terminal_phase   TEXT NOT NULL CHECK (terminal_phase IN ('completed', 'refunded')),
+            state_json       TEXT NOT NULL
+        ) STRICT;
         ",
     )?;
     maker_application::migrate(&transaction)?;

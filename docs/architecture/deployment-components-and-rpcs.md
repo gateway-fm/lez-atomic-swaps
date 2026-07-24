@@ -22,7 +22,7 @@ flowchart TB
     subgraph MakerHost["Maker host"]
         CLI["lez-maker CLI"]
         Daemon["lez-maker-daemon"]
-        Store[("SQLite schema v13")]
+        Store[("SQLite schema v14")]
         Offers["Durable offer lifecycle<br/>snapshot + expiry + one-winner CAS"]
         RuntimeDir["Effective-UID-owned mode-0700 runtime"]
         Socket["Owner mode-0600 Unix socket"]
@@ -37,8 +37,8 @@ flowchart TB
     subgraph DeterministicCorridor["Deterministic SDK claim corridor; no node or RPC"]
         MakerActor["Role-fixed maker SDK actor"]
         TakerActor["Role-fixed taker SDK actor"]
-        MakerClaimState[("Maker schema-v13 state")]
-        TakerClaimState[("Taker schema-v13 state")]
+        MakerClaimState[("Maker schema-v14 state")]
+        TakerClaimState[("Taker schema-v14 state")]
         ClaimDouble["Deterministic LEZ/Zcash claim-port doubles"]
         Completed["Both actors Completed at revision 4"]
     end
@@ -111,7 +111,7 @@ explicit command. Registered methods are `maker_pair_configure`, `maker_pair_lis
 `swap_history`, `swap_alerts`, and `swap_alert_acknowledge`. Status includes pending
 count/highest severity; list supports a cursor and acknowledged-history flag.
 Acknowledgment never changes protocol phase. The Chat proposal authenticates the exact signed Delivery envelope, validates
-and signs the canonical unsigned ZEC draft, and commits the one-winner schema-v13
+and signs the canonical unsigned ZEC draft, and commits the one-winner schema-v14
 reservation plus byte-exact proposal before responding. There is no daemon-integrated
 chain watcher, chain-key owner, health method, or production ZEC ingestion RPC
 yet.
@@ -149,7 +149,7 @@ contains deterministic actor private keys and is never a public ready file.
 Tamper/reuse failures leave no readiness and preserve the existing home.
 
 The deterministic claim corridor is deliberately separate from both local-node
-lanes. It uses two role-fixed SDK actors, two different temporary schema-v13
+lanes. It uses two role-fixed SDK actors, two different temporary schema-v14
 SQLite databases, and an externally supplied test claim key per role. The key is
 not stored in SQLite. In both signed directions it persists exact protected
 claim submissions, observes the LEZ reveal, protects the extracted preimage,
@@ -427,7 +427,7 @@ flowchart LR
 
     subgraph MakerProcess["Role-fixed maker reference actor process"]
         MakerSdk["LEZ/ZEC swap SDK and agreement validators"]
-        MakerState[("Maker-only schema-v13 state")]
+        MakerState[("Maker-only schema-v14 state")]
         MakerConfig["Schema-v3 maker config"]
         MakerStatus["Offline status material"]
         MakerBridge["Typed local LEZ bridge client"]
@@ -442,7 +442,7 @@ flowchart LR
 
     subgraph TakerProcess["Role-fixed taker reference actor process"]
         TakerSdk["LEZ/ZEC swap SDK and agreement validators"]
-        TakerState[("Taker-only schema-v13 state")]
+        TakerState[("Taker-only schema-v14 state")]
         TakerConfig["Schema-v3 taker config"]
         TakerStatus["Offline status material"]
         TakerBridge["Typed local LEZ bridge client"]
@@ -692,15 +692,18 @@ revalidation, propagation, and finality evidence before release.
 ### M5 progressive local ZEC composition
 
 The opt-in runner narrows the first application PoC to one already stable
-`TakerSellsLez` corridor. This diagram is implemented source topology; an exact
-fresh-node pass is not claimed yet.
+`TakerSellsLez` corridor. The pre-terminal topology has exact pushed-tree local-
+node evidence; the schema-v14 terminal import path is implementation-GREEN and
+awaits the refreshed exact-node replay.
 
 ```mermaid
 flowchart TB
     subgraph App[Owner-local application plane]
         MakerCli[Maker CLI]
         Daemon[Maker daemon]
-        Store[SQLite schema v13]
+        Store[SQLite schema v14]
+        TerminalView[Display-only terminal projection]
+        TerminalDaemon[Fresh owner-only daemon]
         Delivery[Signed run-local Delivery]
         TakerCli[Taker CLI]
         Finalizer[Agreement-to-actor finalizer]
@@ -711,6 +714,9 @@ flowchart TB
         TakerCli -->|Chat Unix RPC| Daemon
         Daemon --> Finalizer
         TakerCli --> Finalizer
+        TerminalDaemon -->|offline import before ready| TerminalView
+        TerminalView --> Store
+        TerminalDaemon -->|status and history overlay only| Store
     end
 
     subgraph Roles[Independent role processes]
@@ -722,6 +728,7 @@ flowchart TB
         Finalizer --> TakerActor
         MakerActor --> MakerSidecar
         TakerActor --> TakerSidecar
+        MakerActor -->|stopped terminal actor database| TerminalDaemon
     end
 
     subgraph Nodes[Fresh isolated local devnets]
@@ -745,7 +752,44 @@ locks their exact tuple. The application control and Chat endpoints are
 separate mode-0600 Unix sockets. After the first lock is confirmed, the runner
 stops the exact PID/start-time/executable tuple and moves only that run's
 Delivery path offline. Later LEZ reveal and Zcash follow-up operations use only
-fresh role state, capability-authenticated sidecars, and the chain RPCs.
+fresh role state, capability-authenticated sidecars, and the chain RPCs. After
+both actors are terminal, a fresh daemon imports only the stopped Maker actor's
+fully replayed terminal coordinator and exposes only the owner socket.
+
+```mermaid
+sequenceDiagram
+    actor Maker as Maker operator
+    participant Actor as Maker ZEC actor
+    participant ActorDB as Maker actor SQLite
+    participant Import as Offline terminal importer
+    participant AppDB as Application SQLite v14
+    participant Daemon as Fresh owner-only daemon
+
+    Actor->>ActorDB: Commit absorbing revision 4
+    Note over Actor,Daemon: Actor stopped; Chat and Delivery remain absent
+    Maker->>Daemon: Start with actor DB, swap ID, and recovery key
+    Daemon->>Import: Import before binding readiness
+    Import->>ActorDB: resume_all_capable with unit chain ports
+    ActorDB-->>Import: Validated terminal coordinator and exact agreement
+    Import->>AppDB: BEGIN IMMEDIATE
+    Import->>AppDB: Validate completed Chat wire and immutable base
+    Import->>AppDB: Insert exact terminal projection
+    Import->>AppDB: COMMIT
+    Import-->>Daemon: Source revision and idempotent result
+    Daemon-->>Maker: Ready on owner socket only
+    Maker->>Daemon: history and status
+    Daemon->>AppDB: Load validated operator overlay
+    AppDB-->>Maker: Completed
+```
+
+The actor's terminal journal is committed before import and is immutable. The
+projection insert is one target-database transaction, but no transaction spans
+the two SQLite files. A crash before target commit leaves the prior operator
+view and retries safely; a crash after commit exact-replays. The projection is
+never returned by lifecycle `load` or `list_swaps`, so it cannot authorize an
+effect. Offline replay uses unit LEZ/Zcash ports and therefore cannot issue a
+chain RPC. This preserves protocol atomicity while treating operator history as
+a recoverable read model rather than a second coordinator.
 
 ## RPC and local-resource inventory
 
@@ -776,7 +820,7 @@ fresh role state, capability-authenticated sidecars, and the chain RPCs.
 | `lez-maker-daemon` | Running M5 application shell | Bounded HTTP/1 JSON-RPC over disjoint absolute owner-control and taker-facing Chat Unix sockets; no TCP listener | Effective-UID-owned mode-0700 runtime, mode-0600 sockets, no-clobber paths and exact-inode cleanup | Owner methods plus isolated `zec_chat_propose_v1` and `zec_chat_complete_v1`; daemon-owned Delivery publication/reconciliation | Operator/service-manager-owned process; caller-selected owner-private SQLite, Delivery, and claim authority; Ctrl-C shutdown; chain watcher and health remain |
 | `lez-taker` | Running discovery and ZEC-acceptance M5 CLI | Owner-private run-local Delivery directory plus disjoint maker Chat Unix socket; no TCP listener | Pinned compressed maker key, trusted local time, exact offer/reservation, owner-private raw taker key, and mode-0700 output root | Key-pinned discovery; exact maker-proposal validation; local countersigning; atomic completion; deterministic replay; no-clobber agreement persistence | Final actor configs, status, claim, refund, BTC/XMR initiation, and actual corridor composition remain |
 | `lez-maker` | Running partial M5 CLI | Fresh bounded HTTP/1 connection over the daemon Unix socket per explicit command | Socket filesystem ownership; bounded request ID and route-local expected revision for configuration mutations | Actual CLI: `configure-pair`, `set-local-price`, `pairs`, `prices`, `quote`, `publish-offer`, `offers`, `withdraw-offer`, `history`, `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process; lifecycle and manual claim/refund commands remain |
-| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle; claim key material is supplied externally and never stored | Pair policy, exact local price, immutable expiring offers, global request-result audit, aggregate, revision, ZEC journal, immutable binding, alerts, separate lock/claim/refund owner intents, protected claim material, owner/observer claim/refund transitions, and canonical observation transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v13 replay retains prior lock/claim journals, rejects inconsistent history, and closes/reopens both directions at revision 4 and `Completed` or `Refunded`. Owner refund commit copies the exact intent, inserts the transition, advances revision once, and deletes pending intent in one immediate transaction; observer rows retain no signing intent. The v8→v9 migration still replaces legacy plaintext claim evidence and scrubs SQLite/WAL remnants; 119 store tests pass; one process mutex remains |
+| SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle; claim key material is supplied externally and never stored | Pair policy, exact local price, immutable expiring offers, global request-result audit, aggregate, revision, ZEC journal, immutable binding, alerts, separate lock/claim/refund owner intents, protected claim material, owner/observer claim/refund transitions, and canonical observation transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v14 replay retains prior lock/claim journals, rejects inconsistent history, and closes/reopens both directions at revision 4 and `Completed` or `Refunded`. Owner refund commit copies the exact intent, inserts the transition, advances revision once, and deletes pending intent in one immediate transaction; observer rows retain no signing intent. The v8→v9 migration still replaces legacy plaintext claim evidence and scrubs SQLite/WAL remnants; 119 store tests pass; one process mutex remains |
 | Adapter-independent SDK core | Running library contract at `ed5cd77` | No socket, RPC, node, Docker, faucet, or public endpoint | Pair crates alone construct validated associated types; discovery and negotiation return untrusted inputs and cannot authorize post-lock effects | `SwapProtocol`, `OfferDiscovery`, `NegotiationChannel`, structured error category/disposition, explicit claim order, protocol/schema versions, and ordered exact-public-effect plans with stable step IDs, expected public IDs, complete bytes, hashes, and a domain-separated plan commitment | Eight invariant tests, two external-consumer API tests, one doctest, strict Clippy, and rustdoc pass. There is no actor, adapter, store, SQLite, or CLI coupling. The concrete BTC facade now layers its public durable lifecycle contract above this core; XMR remains M4 |
 | Deterministic LEZ/ZEC SDK lifecycle | Running library/test boundary | No socket, RPC, node, Docker, faucet, or public endpoint; bounded Borsh schema-2 bytes enter from an untrusted negotiation adapter | Fixed maker/taker roles and the signed direction select observations/effects; separate role databases and external claim keys prevent shared claim-recovery authority; refund observers cannot sign | Exact agreement validation, protected activation, both lock directions, LEZ reveal, observer preimage extraction, Zcash follow-up, and fixed LEZ-then-Zcash refund driving with observe-before-rebroadcast and versioned durable records. After signed-wire acceptance, activation and resume require no discovery or negotiation capability. `resume_all_capable` replays lock, claim, and refund records without a chain call for truthful terminal status | 16 KiB agreement and 2,000,000-byte submission caps; 134 SDK tests plus one compile-fail doctest and 119 store tests pass, with one actual-Zebra SDK case intentionally ignored outside its isolated runner. Claims and refunds replay through SQLite with forced-rollback, exact-conflict, corruption, future-schema, and terminal full-resume checks. Chain evidence comes from deterministic port doubles, so this row is not an actual-node claim |
 | SDK-facing LEZ bridge client and adapter | Twenty-nine-operation client including eleven additive v2 asset calls, signed-agreement adapters, crash-safe context-owning SDK ports, witnessed prepare/complete, distinct finalized funding/claim/refund observers, public prepared-message validation, and M3 actor revisions one through four actual-node GREEN. The F7 main-process adapter binding and schema-5 peer-funding projection are component GREEN | Literal-IP run-owned loopback HTTP; fresh client per attempt; no redirects or proxy settings; finite 120-second actor request timeout | Capability plus exact run/role/runtime/ProgramId and caller-owned request IDs. V2 asset calls bind depositor/claimant/either-participant authority to the countersigned BTC extension and exact local native/token policy before transport. Schema-5 peer projection has no peer-private prepared bytes and no submit surface; its ID binds agreement, asset, run, role, runtime, full terms, fixed target, and window before `DiscoverByTerms`. Runtime chain/program/signer drift and wrong roles are zero-wire | Prepare, complete, submit, current clock and progress observation, finalized funding/claim/refund, plus v2 ordered asset preparation/current observation/claim/refund and four finalized effect classifiers. The public validators check exact prepared bytes, transcript, target, window, stable placement, and response echoes without retries. Only v2 `Found` projects peer funding; the other three classifier states remain pending | The 46-check client and 79-test adapter gates remain GREEN. The actor's 85 tests cover both peer role/direction shapes, request-ID drift, and fail-closed absence/uncertainty/unavailability; strict Clippy and the pre-Docker contract pass. Run R retained the legacy-v1 Taker dispatch RED with exact cleanup. The dispatch fix is actual-node GREEN in four later two-direction pairs; compact evidence for valid transactions above the 64 KiB recovery cap, process-kill/reorg, and production trust remediation remain open |
@@ -790,7 +834,7 @@ fresh role state, capability-authenticated sidecars, and the chain RPCs.
 | Reusable external LEZ standalone process | Exact schema-v2 process, rejection paths, native/two-definition lifecycle, strict Clippy, and recursive-cost runner previously GREEN; nonempty actor channel focused suite GREEN and exact full rerun pending | Own process; upstream `0.0.0.0:0` server; publishes only the allocated literal `http://127.0.0.1:<port>` client URL | No RPC transport credential; mode-0600 no-clobber readiness is a run-local capability because it contains two actor private keys. Actor signatures remain transaction authority | Preflight tracked manifest/ELF/ImageID before state; start service; `checkHealth`; exact genesis; mandatory block progress; `sendTransaction` deployment; locate the exact hash/variant in `getTransaction` and containing `getBlock`; derive ProgramId from those ELF bytes; use `getProgramIds` only to bind the static authenticated-transfer owner; verify two `getAccount` ownership/balance results; graceful stdin/Ctrl-C shutdown | Initial exact run rejected the false custom-program-list assertion. Corrected schema-v2 source refuses pre-existing home/readiness, creates a fresh mode-0700 home, and binds endpoint, nonempty deterministic channel, genesis ID/hash, ELF SHA-256, ImageID/ProgramId, deployment transaction hash, containing block ID/hash, authenticated-transfer built-in, account IDs, keys, and balances. The earlier exact full runner passed; after correcting the agreement-invalid zero channel, the three-test locked-graph readiness suite passes and the full runner is a pre-corridor gate. No Docker, faucet, public RPC, or fixed port |
 | Logos Core adapter | Planned | No transport/port selected beyond the daemon control endpoint | Protected OS credential handle | `start`, `endpoint`, `health`, `stop` | Optional supervisor of the same daemon binary |
 | Run-local Delivery | Daemon-to-separate-taker process GREEN | Owner-private mode-0700 bounded filesystem mailbox; no network endpoint | Key-pinned secp256k1 signed immutable offer envelope with taker-local expiry and route validation | `OfferDiscovery`; daemon publish/withdraw and pre-readiness restart reconciliation | Untrusted/removable after negotiation; same-UID local PoC and exact Logos adapter pending |
-| Chat | Proposal and atomic final acceptance process GREEN | Separate caller-selected absolute mode-0600 Unix socket; `zec_chat_propose_v1` and `zec_chat_complete_v1` only | Exact Delivery authentication, canonical draft validation, both role signatures, commit-before-response, delayed exact replay | `ZecAgreementDraftV1`; `ZecMakerAgreementProposalV1`; schema-v13 negotiation | Taker CLI and final actor-config wiring pending; removable after first lock |
+| Chat | Proposal and atomic final acceptance process GREEN | Separate caller-selected absolute mode-0600 Unix socket; `zec_chat_propose_v1` and `zec_chat_complete_v1` only | Exact Delivery authentication, canonical draft validation, both role signatures, commit-before-response, delayed exact replay | `ZecAgreementDraftV1`; `ZecMakerAgreementProposalV1`; schema-v14 negotiation | Taker CLI and final actor-config wiring pending; removable after first lock |
 | Production Zebra watcher routes | Schema-v3 self-hosted-cookie and exact-Tatum-`x-api-key` route/config/client construction GREEN; live evidence pending | Zebra 6.0.0 JSON-RPC on operator-owned loopback with cookie auth, or only `https://zcash-testnet-zebrad.gateway.tatum.io/` with a sensitive `x-api-key`; generic HTTPS providers are rejected | Self-hosted: operator owns cookie/node and public peers provide consensus. Tatum operates the public authoritative node/gateway; never substitute generic Zcash RPC or lightwalletd gRPC | Required on both live routes: sync/branch/genesis preflight, stable-tip observation, `gettxout`, raw transaction/mempool/block lookup, broadcast, and reorg reconciliation. Exact method smoke remains required before effects | No live call was made. Self-hosted initial sync/disk/P2P/epoch risk and Tatum provisioning/quota/outage/lag/method-policy/trust risk remain; never switch routes mid-effect or automatically retry an ambiguous broadcast |
 | Official LEZ testnet v0.2 node | Exact dormant sidecar route construction GREEN; public deployment/execution evidence pending | Only HTTPS JSON-RPC `https://testnet.lez.logos.co/` is accepted for both outbound sequencer and indexer clients | Public reads and program deployment transaction; rate limits, reset schedule, and indexer-method surface unspecified | Live gate requires `checkHealth`, `getChannelId`, exact runtime/channel/genesis/program validation, exactly one `sendTransaction`, bounded observation, and a non-genesis finalized tip. Availability of `getLastFinalizedBlockId` at this origin is not established | Official LEZ v0.2.0 commit `a58fbce...`; guest/client use `/LEE/` PDA domain. No public call was made by the contract test; reset/channel drift or missing finalized-tip support fails closed |
 | LEZ v0.2 deployment/query client | Executable engineering lane and authenticated offline provisioning handoff GREEN; live mutation not yet run | Fixed HTTPS JSON-RPC to the official node; loopback `jsonrpsee` server only in exact-once tests; `provision-identity` performs no RPC and creates one no-clobber file in a non-shared-writable directory | Official LEZ transaction/RPC types; program deployment bytes are derived from the checked ELF; the offline trusted target is derived from the immutable manifest plus compiled ELF/ImageID/ProgramId. A separate exact owner-only 32-byte key authenticates observed evidence and is zeroized after use; it is never an actor, wallet, or signing input | Validate endpoint, channel, genesis, built-ins, ATA provenance, ELF SHA-256, ImageID, and ProgramId before RPC; submit deployment once; bind returned/local hash, exact transaction bytes, post-tip block range, block ID, and block hash; timeout or ambiguity forbids retry. The deployer HMAC-SHA256 authenticates retained dynamic facts; offline provisioning verifies that tag before revalidating bounded evidence, its SHA-256, canonical deployment hash/inclusion, and emitting exact environment/compatibility/chain/channel/genesis/program identity | Six native-safe provisioning boundary tests cover happy output, no-clobber, eight authenticated mutations, unauthenticated chain-fact tampering, bounded/non-regular input, and exact owner-only key files without public I/O. Official RPC/type dependencies still pull Logos common/libp2p/Hickory 0.25; graph-local policy constrains that disclosed production blocker |
@@ -1216,7 +1260,7 @@ journal, session, agreement, or escrow boundaries shown above.
 
 ## External resources and flakiness
 
-The deterministic SDK/schema-v13 corridor uses only local temporary files and
+The deterministic SDK/schema-v14 corridor uses only local temporary files and
 process input. It cannot fail because a public RPC, faucet, chain peer, Docker
 registry, or testnet is unavailable. The canonical forward and reverse certification runs crossed actual local LEZ
 v0.2 Bedrock, sequencer, indexer, and Zebra Regtest

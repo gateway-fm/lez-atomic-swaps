@@ -3235,11 +3235,28 @@ separately from runtime dependencies.
   `docs/evidence/m5-zec-application-corridor-20260724.json`. The preceding
   fail-closed attempts exposed stale typed assertions and a daemon shutdown
   deadlock; corrections and a real-process regression are GREEN.
+- [x] Implement the terminal operator-history seam behind schema v14. A stopped
+  Maker actor is replayed with unit chain ports through `resume_all_capable`;
+  only an absorbing `Completed` or `Refunded` coordinator can enter a separate
+  provenance-bound projection table. One `BEGIN IMMEDIATE` validates the exact
+  completed Chat agreement and immutable application aggregate before an
+  insert-once projection. Exact replay is idempotent; changed input conflicts.
+  `swap_status` and `swap_history` overlay only this read model while ordinary
+  `load`/`list_swaps` remain effect-authoritative and unchanged. The source
+  terminal journal and target projection cannot share one cross-file
+  transaction, but the source is already immutable: a crash before target
+  commit leaves the old view and retries safely; a crash after commit exact-
+  replays; neither path performs a chain call. Focused RED-GREEN persistence,
+  injected rollback, invalid/conflicting provenance, the complete swap-store
+  suite, maker-process tests, strict Clippy/Rustdoc, shell syntax, formatting,
+  traceability, and diff hygiene are GREEN. The exact isolated-node corridor
+  replay remains the evidence gate.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC. The one-command `TakerSellsLez` composition
-  is exact-tree corridor GREEN. Before checking the full progressive PoC gate,
-  import the terminal actor state into the operator history and prove a fresh
-  daemon restart reports that same terminal state after transport cutover.
+  is exact-tree corridor GREEN. The runner now imports terminal actor history
+  before a fresh owner-only daemon becomes ready, asserts status/history are
+  completed, and proves Chat/Delivery stay absent; rerun this on fresh isolated
+  nodes and retain the exact pushed-tree packet before checking the gate.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested
   Logos Core lifecycle adapter contract.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
@@ -3254,9 +3271,9 @@ separately from runtime dependencies.
   create the annotated M5 completion tag only after every literal output is
   proven.
 
-Current progressive PoC ETA (updated 2026-07-24): 2 to 4 focused hours for the
-terminal-history projection, restart regression, and exact local replay; add 2
-to 4 hours if a cold LEZ/Zebra rebuild is required. This excludes the later
+Current progressive PoC ETA (updated 2026-07-24): 1 to 2 focused hours for the
+exact local replay and evidence refresh; add 2
+to 4 hours only if a cold LEZ/Zebra rebuild is required. This excludes the later
 literal M5 completion outputs above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.

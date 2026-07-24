@@ -358,6 +358,7 @@ jq -n \
   --arg agreement_sha256 "$(jq -er '.signed_agreement_sha256' "$finalize_receipt")" \
   --arg maker_public_key "$maker_public_key" --arg taker_public_key "$taker_public_key" \
   --arg maker_daemon_bin "$maker_daemon_bin" --arg maker_socket "$maker_socket" \
+  --arg application_database "$database" \
   --arg chat_socket "$chat_socket" --arg delivery_directory "$delivery_directory" \
   --arg delivery_offline "$delivery_offline" --argjson daemon_pid "$daemon_pid" \
   --arg daemon_start_ticks "$daemon_start_ticks" --argjson accepted_at "$accepted_at" '
@@ -381,6 +382,7 @@ jq -n \
       maker_daemon_pid:$daemon_pid,
       maker_daemon_start_ticks:$daemon_start_ticks,
       maker_socket:$maker_socket,
+      application_database:$application_database,
       chat_socket:$chat_socket,
       delivery_directory:$delivery_directory,
       delivery_offline:$delivery_offline

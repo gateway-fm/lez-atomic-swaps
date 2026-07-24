@@ -9,8 +9,8 @@ use std::{
 use async_trait::async_trait;
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{
-    Chain, ChainPosition, LezUnixMilliseconds, Pair, Participant, Phase, SwapDirection, SwapId,
-    UnixSeconds,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, LezUnixMilliseconds, Pair, Participant, Phase,
+    SwapDirection, SwapId, UnixSeconds,
 };
 use lez_swap_store::{
     LocalPriceV1, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind,
@@ -1813,7 +1813,7 @@ fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str, secret
     let version: i64 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version");
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     let active_revision: i64 = raw
         .query_row(
             "SELECT active_revision FROM zec_sdk_agreements
@@ -5216,7 +5216,7 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     drop(raw);
     drop(recovery_store);
 
-    let application_store = SqliteSwapStore::open(&path).unwrap();
+    let mut application_store = SqliteSwapStore::open(&path).unwrap();
     let negotiation = application_store
         .load_zec_maker_negotiation(&offer_id)
         .unwrap()
@@ -5238,6 +5238,13 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     );
     assert_eq!(
         application_store
+            .load_operator_swap(accepted.agreement().coordinator().id())
+            .unwrap(),
+        Some(accepted.agreement().coordinator().clone()),
+        "without an imported terminal projection the operator sees the application aggregate"
+    );
+    assert_eq!(
+        application_store
             .revision(accepted.agreement().coordinator().id())
             .unwrap(),
         Some(0)
@@ -5247,6 +5254,116 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
             .load_zcash_binding(accepted.agreement().coordinator().id())
             .unwrap(),
         Some(accepted.agreement().binding().clone())
+    );
+
+    let mut terminal = accepted.agreement().coordinator().clone();
+    terminal
+        .observe_taker_lock(ChainProof::new("terminal-projection-taker-lock", 2).unwrap())
+        .unwrap();
+    terminal
+        .observe_maker_lock(ChainProof::new("terminal-projection-maker-lock", 1).unwrap())
+        .unwrap();
+    terminal
+        .observe_revealing_claim(
+            terminal.first_claimant(),
+            ChainProof::new("terminal-projection-revealing-claim", 1).unwrap(),
+            ClaimEvidence::new(secret),
+        )
+        .unwrap();
+    terminal
+        .observe_followup_claim(
+            terminal.first_claimant().other(),
+            ChainProof::new("terminal-projection-followup-claim", 1).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(terminal.phase(), Phase::Completed);
+
+    assert!(matches!(
+        application_store.project_zec_terminal_for_operator(
+            accepted.agreement().coordinator(),
+            4,
+            &artifacts.agreement_wire,
+        ),
+        Err(StoreError::InvalidOperatorTerminalProjection)
+    ));
+    let mut wrong_agreement_wire = artifacts.agreement_wire.clone();
+    wrong_agreement_wire.push(0);
+    assert!(matches!(
+        application_store.project_zec_terminal_for_operator(&terminal, 4, &wrong_agreement_wire),
+        Err(StoreError::InvalidOperatorTerminalProjection)
+    ));
+
+    let projection_injector = Connection::open(&path).expect("operator projection injector");
+    projection_injector
+        .execute_batch(
+            "CREATE TRIGGER fail_operator_terminal_projection
+             BEFORE INSERT ON operator_terminal_projections
+             BEGIN SELECT RAISE(ABORT, 'forced operator projection rollback'); END;",
+        )
+        .unwrap();
+    assert!(matches!(
+        application_store.project_zec_terminal_for_operator(
+            &terminal,
+            4,
+            &artifacts.agreement_wire,
+        ),
+        Err(StoreError::Sqlite(_))
+    ));
+    assert_eq!(
+        application_store
+            .load_operator_swap(accepted.agreement().coordinator().id())
+            .unwrap(),
+        Some(accepted.agreement().coordinator().clone()),
+        "a failed projection transaction must leave the owner view unchanged"
+    );
+    projection_injector
+        .execute_batch("DROP TRIGGER fail_operator_terminal_projection;")
+        .unwrap();
+
+    let projected = application_store
+        .project_zec_terminal_for_operator(&terminal, 4, &artifacts.agreement_wire)
+        .expect("validated terminal actor projection");
+    assert_eq!(projected.source_revision(), 4);
+    assert!(!projected.was_replay());
+    assert_eq!(
+        application_store
+            .load(accepted.agreement().coordinator().id())
+            .unwrap(),
+        Some(accepted.agreement().coordinator().clone()),
+        "operator projection must never become lifecycle effect authority"
+    );
+    assert_eq!(
+        application_store
+            .load_operator_swap(accepted.agreement().coordinator().id())
+            .unwrap(),
+        Some(terminal.clone())
+    );
+    assert_eq!(
+        application_store.list_operator_swaps().unwrap(),
+        vec![terminal.clone()]
+    );
+    let replay = application_store
+        .project_zec_terminal_for_operator(&terminal, 4, &artifacts.agreement_wire)
+        .expect("exact terminal projection replay");
+    assert_eq!(replay.source_revision(), 4);
+    assert!(replay.was_replay());
+    assert!(matches!(
+        application_store.project_zec_terminal_for_operator(
+            &terminal,
+            5,
+            &artifacts.agreement_wire,
+        ),
+        Err(StoreError::OperatorTerminalProjectionConflict)
+    ));
+    drop(application_store);
+
+    let application_store = SqliteSwapStore::open(&path).unwrap();
+    assert_eq!(
+        application_store
+            .load_operator_swap(accepted.agreement().coordinator().id())
+            .unwrap(),
+        Some(terminal),
+        "terminal operator projection survives a fresh application-store process"
     );
     drop(application_store);
 
