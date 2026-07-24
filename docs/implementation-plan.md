@@ -3259,16 +3259,18 @@ separately from runtime dependencies.
   spelling and therefore withheld its terminal receipt and result. A focused
   contract reproduced the failure RED; both comparisons are GREEN with the
   real RPC spelling and the contract is now part of the CI quality gate.
-- [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
+- [x] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC. The one-command `TakerSellsLez` composition
   is exact-tree corridor GREEN. Exact pushed-tree run
   `m5appee8424520260724a` completed in 33.400 seconds with zero same-run retry,
   both actors at revision 4, Zebra 104 to 107, post-first-lock transport
   removal, fresh owner history/status `Completed`, no public resources, and
   exact scoped cleanup. The secret-safe packet is
-  `docs/evidence/m5-zec-application-terminal-projection-20260724.json`. Push the
-  packet and repeat once from that exact packet-bearing tree before checking
-  this repository-certification gate.
+  `docs/evidence/m5-zec-application-terminal-projection-20260724.json`. Exact
+  replay `m5app6c3bbbe20260724a` repeated the same outcome from its pushed
+  packet-bearing commit `6c3bbbe` in 27.860 seconds, 56 rounds, and zero retry;
+  both actor revisions, fresh terminal owner projection, no-public-resource
+  boundary, and exact cleanup remained GREEN.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested
   Logos Core lifecycle adapter contract.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
@@ -3283,10 +3285,10 @@ separately from runtime dependencies.
   create the annotated M5 completion tag only after every literal output is
   proven.
 
-Current progressive PoC ETA (updated 2026-07-24): 0.5 to 1.5 focused hours for
-one fresh exact local replay and evidence refresh; add 2
-to 4 hours only if a cold LEZ/Zebra rebuild is required. This excludes the later
-literal M5 completion outputs above.
+The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
+literal M5 ETA is 45 to 70 focused hours under the owner-approved Logos-upstream
+exception; systemd/Core, Logos C-API pricing, fuzzing, other pairs, and post-PoC
+hardening remain explicitly open above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 implements and tests the lifecycle

@@ -4106,17 +4106,18 @@ configuration, chain funding, or a completed cross-chain swap.
 ## Flow 1B: composed M5 ZEC application PoC
 
 Status: exact pushed-tree run `m5appee8424520260724a` completed the composed
-corridor in 33.400 protocol seconds and produced a validating `result.json`.
-Both actors reached revision 4 `completed`; Zebra advanced exactly from height
-104 to 107; Delivery and both Unix sockets were absent after the confirmed
-first lock; a fresh owner daemon reported `Completed` from offline Maker actor
-replay without chain RPC; scoped cleanup passed; and no public RPC or faucet
-participated.
+corridor in 33.400 protocol seconds. Exact packet-bearing replay
+`m5app6c3bbbe20260724a` repeated it from pushed commit `6c3bbbe` in 27.860
+seconds and produced a validating `result.json`. Both actors reached revision 4
+`completed`; Zebra advanced exactly from height 104 to 107; Delivery and both
+Unix sockets were absent after the confirmed first lock; a fresh owner daemon
+reported `Completed` from offline Maker actor replay without chain RPC; scoped
+cleanup passed; and no public RPC or faucet participated.
 The checked packet is
 [`m5-zec-application-terminal-projection-20260724.json`](evidence/m5-zec-application-terminal-projection-20260724.json).
-It was produced from pushed commit `ee84245`; repeat once from the pushed packet-
-bearing commit before treating the repository certification gate as closed.
-The earlier corridor-only packet remains a historical checkpoint.
+Its `certification_replay` record closes the progressive local-functional gate.
+The earlier corridor-only packet remains a historical checkpoint; neither
+packet claims literal M5 or production completion.
 
 This flow emulates the actual users: a maker operator configures and publishes
 through `lez-maker`, a separate taker identity discovers and accepts through

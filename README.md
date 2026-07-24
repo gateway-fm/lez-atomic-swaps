@@ -40,19 +40,20 @@ daemon becomes ready. Owner `status` and `history` overlay that record while
 ordinary lifecycle loads remain unchanged and cannot gain effect authority.
 
 Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
-33.400 protocol seconds with no retry: both actors reached revision 4, Zebra
-advanced exactly 104 to 107, Chat and Delivery stayed absent after the first
-lock, a fresh daemon reported `Completed`, exact scoped cleanup passed, and no
-public RPC or faucet participated. See the new
+33.400 protocol seconds with no retry. Exact packet-bearing replay
+`m5app6c3bbbe20260724a` then repeated it from pushed commit `6c3bbbe` in 27.860
+seconds and 56 drive rounds with zero retry: both actors reached revision 4,
+Zebra advanced exactly 104 to 107, Chat and Delivery stayed absent after the
+first lock, a fresh daemon reported `Completed`, exact scoped cleanup passed,
+and no public RPC or faucet participated. See the
 [terminal-projection evidence packet](docs/evidence/m5-zec-application-terminal-projection-20260724.json)
 and the preceding
 [corridor checkpoint](docs/evidence/m5-zec-application-corridor-20260724.json).
-The packet was produced on pushed commit `ee84245`; one fresh replay from the
-packet-bearing pushed commit remains the repository-certification gate. ETA:
-0.5–1.5 focused hours, plus 2–4 hours only for cold LEZ/Zebra rebuilds. Full
-swap-store, maker-process, strict Clippy, and Rustdoc gates are GREEN. C-API
-pricing, systemd/Core, fuzzing,
-other pairs, and hardening remain literal M5 work outside that PoC ETA.
+The progressive local ZEC application PoC gate is certified. Full swap-store,
+maker-process, strict Clippy, and Rustdoc gates are GREEN. C-API pricing,
+systemd/Core, fuzzing, other pairs, and hardening remain literal M5 work; the
+living implementation plan and milestone metrics track that broader scope
+without weakening this reproducible PoC claim.
 
 Build and repeat the current real process boundary with:
 

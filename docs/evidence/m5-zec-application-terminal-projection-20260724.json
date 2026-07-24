@@ -17,6 +17,56 @@
     "provision_to_completion_cap_seconds": 49,
     "lez_delay_margin_seconds": 10
   },
+  "certification_replay": {
+    "id": "m5app6c3bbbe20260724a",
+    "date_utc": "2026-07-24",
+    "git_commit": "6c3bbbee93ec280a80591ad452d026d9e368669e",
+    "git_commit_pushed_to_origin_main_before_run": true,
+    "working_tree_clean_before_run": true,
+    "direction": "taker_sells_lez",
+    "elapsed_milliseconds_from_provisioning": 27860,
+    "pre_effect_elapsed_milliseconds": 870,
+    "drive_rounds": 56,
+    "same_run_drive_retries": 0,
+    "roles": {
+      "maker": {
+        "final_phase": "completed",
+        "final_revision": 4
+      },
+      "taker": {
+        "final_phase": "completed",
+        "final_revision": 4
+      }
+    },
+    "zebra_tip": {
+      "initial": 104,
+      "final": 107,
+      "generated_blocks": 3
+    },
+    "lez": {
+      "deployment_transaction_id": "94a49583a5fd5d6a749fd227f38fe99b002866921a9b77e956623ee6f36e76d3",
+      "deployment_finalized_block_id": 9,
+      "taker_vault_claim_transaction_id": "0612ee8263e3eee26a315ec66582accd7fd0a0e92183fce9066a7293338a8361",
+      "maker_vault_claim_transaction_id": "ebec3cc0250eb980e2a4b9392154508d2948870a4d89d3ca7813fba4f4e981f0"
+    },
+    "terminal_projection": {
+      "source_role": "maker",
+      "source_revision": 4,
+      "fresh_rpc_history_phase": "Completed",
+      "fresh_rpc_status_phase": "Completed",
+      "chain_rpc_used_during_import": false,
+      "chat_remained_absent": true,
+      "delivery_remained_offline": true
+    },
+    "receipt_sha256": {
+      "application_handoff": "be9f741b6daf63f035f9f4d0cc9201a77dd49ae32c52a23f87dcfeeee45de018",
+      "post_lock_cutover": "fd43256f0e02d8977433b642b2ebfe3dc11769580c7f849e606876fea330cfcf",
+      "terminal_projection": "929c9a7c9dcc4a1ee74def9243e652f83791c91f0cbbfe5f8f418160a06ec58e",
+      "result": "1b2c306a0dc6c96f69fd8645ad5cdc7db1726ba7077e8816f734b9e73f9ccb59"
+    },
+    "public_rpc_or_faucet_used": false,
+    "exact_scoped_cleanup_passed": true
+  },
   "application": {
     "swap_id": "m5appee8424520260724a-swap",
     "offer_id": "m5-offer-1713b2e7478d5beb",

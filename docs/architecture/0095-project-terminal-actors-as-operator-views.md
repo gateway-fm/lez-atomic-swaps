@@ -1,6 +1,6 @@
 # ADR 0095: Project stopped terminal actors as operator-only views
 
-- Status: Accepted; exact actual-node replay GREEN at pushed commit `ee84245`
+- Status: Accepted; exact packet-bearing replay GREEN at pushed commit `6c3bbbe`
 - Date: 2026-07-24
 - Milestone: M5 progressive local-functional PoC
 
@@ -114,6 +114,7 @@ protocol atomicity.
 - Later reorg/chaos hardening must define whether a terminal operator projection
   gains a separate alert or invalidation record. This PoC uses stable local
   devnets and does not claim future-reorg finality.
-- Focused schema/restart/idempotency and compile gates are GREEN. Exact pushed-
-  tree run `m5appee8424520260724a` exercised the complete import through fresh
-  local devnets and retained a secret-safe packet; literal M5 completion remains gated.
+- Focused schema/restart/idempotency and compile gates are GREEN. Exact packet-
+  bearing replay `m5app6c3bbbe20260724a` exercised the complete import through
+  fresh local devnets from pushed commit `6c3bbbe` and retained a secret-safe
+  certification record; literal M5 completion remains gated.

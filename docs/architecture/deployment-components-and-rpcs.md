@@ -694,7 +694,9 @@ revalidation, propagation, and finality evidence before release.
 The opt-in runner narrows the first application PoC to one already stable
 `TakerSellsLez` corridor. Exact pushed-tree run `m5appee8424520260724a`
 completed the schema-v14 terminal import and fresh owner-daemon history/status
-through isolated local nodes; only the packet-bearing tree replay remains.
+through isolated local nodes. Replay `m5app6c3bbbe20260724a` repeated the whole
+flow from exact packet-bearing pushed commit `6c3bbbe` and closed this
+progressive local-functional gate.
 
 ```mermaid
 flowchart TB
