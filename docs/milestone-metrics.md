@@ -40,17 +40,17 @@ certified.
 | Owner-local control | GREEN component slice | Mode-0700 owner runtime directory, disjoint mode-0600 owner and Chat Unix sockets, absolute/no-symlink paths, bounded HTTP/1 JSON-RPC, disabled batches, 16-connection cap, no-clobber readiness, exact-inode cleanup, and two black-box daemon/CLI journeys pass strict gates |
 | Price-source runtime adapters | 1 of 2 component GREEN | The pluggable trait and store-backed local adapter preserve exact route, reduced-integer price, revision, and daemon-trusted time; the real CLI quotes 5:2 after daemon restart. Add the bounded Logos C-API adapter and bind external quotes into signed offers |
 | Discovery and negotiation | Signed bounded Delivery, restart reconciliation, schema-v14 staging, atomic acceptance and final actor rebinding are GREEN. Exact-tree run `m5app-71dd9cc-20260724a` composed the real maker/taker binaries into actual chain effects | Add outage hardening and exact Logos adapters |
-| Persistent restart evidence | Pre-effect restart remains actual-node GREEN. Schema v14 offline-replays a stopped terminal Maker actor with unit chain ports, atomically inserts an agreement-bound display-only projection, and overlays only owner status/history; rollback, rejection, idempotency, full store, maker-process, Clippy, and Rustdoc gates pass | Run the fresh post-terminal owner-only daemon assertion in the exact isolated-node corridor and retain its packet |
+| Persistent restart evidence | Pre-effect restart remains actual-node GREEN. Exact pushed-tree run `m5appaed757f20260724c` also returned `Completed` from a fresh post-terminal owner daemon while Chat/Delivery remained absent; a lowercase harness assertion withheld publication and is now RED-GREEN fixed with a CI contract | Repeat on a fresh exact pushed tree and retain its terminal-projection packet |
 | Concurrent application swaps | 0 composed | Distinct swap IDs, role state, agreements, escrows, deadlines, and effects |
 | Missing-chain degradation | 0 composed | Each unavailable route disables only affected pairs and reports operator state |
 | Delivery/Chat removal after lock | 1 exact-tree actual-node run GREEN | Run `m5app-71dd9cc-20260724a` retained the exact restarted daemon through two-confirmation Zcash funding, then removed owner/Chat sockets and Delivery before LEZ reveal and terminal settlement |
 | Coordinator fuzzing | 512-case Proptest carried; no literal fuzz target | Add `cargo-fuzz` or equivalent target and bounded CI smoke corpus |
-| Actual local application swaps | 1 exact-tree corridor checkpoint | `TakerSellsLez` completed in 26.780 protocol seconds, 54 drive rounds, one bounded retry, Zebra 107 to 110, and both roles revision 4; the checked packet records exact LEZ/ZEC transactions and finality |
+| Actual local application swaps | 2 exact-tree happy-path completions; 1 checked packet | The retained checkpoint completed in 26.780 protocol seconds. Run `m5appaed757f20260724c` independently reached both roles revision 4 and real terminal owner projection, but intentionally published no final packet after the harness mismatch |
 | Public runtime dependencies | None required for PoC | Record cold-download dependencies separately; runtime uses local nodes and deterministic funds |
 | Cleanup leaks | 0 in the exact-tree corridor run | Both run-scoped Compose projects, four containers, two unique images, the LEZ network, RPC ports, and named private roots are absent; every pre-existing foreign container survived |
 
-Current progressive M5 PoC ETA: 1–2 focused hours for exact local replay and
-evidence refresh; add 2–4 hours only if a cold
+Current progressive M5 PoC ETA: 0.5–1.5 focused hours for one fresh exact local
+replay and evidence refresh; add 2–4 hours only if a cold
 LEZ/Zebra rebuild is required. This excludes systemd, Logos C-API, fuzz,
 multi-pair, and post-PoC hardening outputs.
 

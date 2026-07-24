@@ -259,10 +259,10 @@ prove_m5_terminal_operator_projection() {
   "$maker_cli_bin" --socket "$m5_maker_socket" history >"$history_file"
   "$maker_cli_bin" --socket "$m5_maker_socket" status --id "$swap_id" >"$status_file"
   jq -e --arg swap "$swap_id" '
-    length == 1 and .[0].id == $swap and .[0].phase == "completed"
+    length == 1 and .[0].id == $swap and .[0].phase == "Completed"
   ' "$history_file" >/dev/null
   jq -e --arg swap "$swap_id" '
-    .id == $swap and .phase == "completed"
+    .id == $swap and .phase == "Completed"
   ' "$status_file" >/dev/null
 
   stop_owned_m5_daemon

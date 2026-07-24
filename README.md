@@ -45,10 +45,13 @@ result to the exact countersigned Chat agreement, and atomically imports it
 before a fresh owner-only daemon becomes ready. `status` and `history` overlay
 that record, while ordinary lifecycle loads remain unchanged and can never gain
 effect authority from an operator view. The real corridor now asserts the fresh
-daemon reports `completed` while Chat and Delivery remain absent. Full swap-store,
-maker-process, strict Clippy, and Rustdoc gates are GREEN; fresh isolated-node
-replay remains. ETA: 1–2 focused hours, plus 2–4 hours only for cold LEZ/Zebra
-rebuilds. C-API pricing, systemd/Core, fuzzing,
+daemon reports `Completed` while Chat and Delivery remain absent. Exact pushed-
+tree run `m5appaed757f20260724c` reached both terminal actors and returned that
+state through real owner `history`/`status`, but a lowercase harness comparison
+correctly withheld the final receipt. The two-line fix now has a RED-GREEN CI
+contract. Full swap-store, maker-process, strict Clippy, and Rustdoc gates are
+GREEN; one fresh exact replay remains. ETA: 0.5–1.5 focused hours, plus 2–4
+hours only for cold LEZ/Zebra rebuilds. C-API pricing, systemd/Core, fuzzing,
 other pairs, and hardening remain literal M5 work outside that PoC ETA.
 
 Build and repeat the current real process boundary with:

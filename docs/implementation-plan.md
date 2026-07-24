@@ -3251,6 +3251,14 @@ separately from runtime dependencies.
   suite, maker-process tests, strict Clippy/Rustdoc, shell syntax, formatting,
   traceability, and diff hygiene are GREEN. The exact isolated-node corridor
   replay remains the evidence gate.
+- [x] Exercise the terminal projection through real local nodes before claiming
+  its packet. Exact pushed-tree run `m5appaed757f20260724c` reached both actors
+  at revision 4, removed Chat/Delivery, offline-replayed the stopped Maker
+  actor, and returned `Completed` through a fresh daemon's real owner history
+  and status. The runner compared that RPC enum to lowercase actor-status
+  spelling and therefore withheld its terminal receipt and result. A focused
+  contract reproduced the failure RED; both comparisons are GREEN with the
+  real RPC spelling and the contract is now part of the CI quality gate.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC. The one-command `TakerSellsLez` composition
   is exact-tree corridor GREEN. The runner now imports terminal actor history
@@ -3271,8 +3279,8 @@ separately from runtime dependencies.
   create the annotated M5 completion tag only after every literal output is
   proven.
 
-Current progressive PoC ETA (updated 2026-07-24): 1 to 2 focused hours for the
-exact local replay and evidence refresh; add 2
+Current progressive PoC ETA (updated 2026-07-24): 0.5 to 1.5 focused hours for
+one fresh exact local replay and evidence refresh; add 2
 to 4 hours only if a cold LEZ/Zebra rebuild is required. This excludes the later
 literal M5 completion outputs above.
 
