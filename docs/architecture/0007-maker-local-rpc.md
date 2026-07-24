@@ -77,11 +77,11 @@ cannot strand a post-lock recovery workflow.
 `operator_journey` launches the actual daemon and CLI binaries, verifies the
 runtime/socket modes, proves a wrong socket cannot reach the daemon, kills the
 daemon, restarts it with a fresh owner runtime and the same database, and reads
-the persisted swaps and alert history through the CLI. Thirteen passing tests
-plus one justified Docker-only ignored test in the full
-maker-node package, strict Clippy, and warning-fatal Rustdoc pass. This covers
-the UJ-007 control seam, not pricing, chain actions, a taker role, or a complete
-swap.
+the persisted swaps and alert history through the CLI. Fifteen passing tests plus one justified Docker-only ignored test in the
+full maker-node package, strict Clippy, and warning-fatal Rustdoc pass. This
+covers the UJ-007 control seam. ADR 0081 separately proves the local
+pricing adapter through the same process journey; chain actions, a taker role,
+and a complete swap remain open.
 
 The prototype serializes SQLite access with a mutex on `jsonrpsee` blocking
 workers. Replace this with the dedicated persistence actor and atomic outbox

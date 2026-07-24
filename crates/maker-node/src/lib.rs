@@ -1,9 +1,14 @@
 //! Authenticated local JSON-RPC boundary for the headless maker.
 
 mod local_rpc;
+mod price_source;
 pub use local_rpc::call_local_rpc;
+pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
 
-use std::sync::Mutex;
+use std::{
+    sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
@@ -13,8 +18,9 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit,
-    MakerPairConfigurationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
-    OperatorAlertSeverity, SqliteSwapStore, StoreError, VersionedMakerRecord,
+    MakerPairConfigurationV1, MakerRouteV1, OperatorAlert, OperatorAlertKind,
+    OperatorAlertRecordV1, OperatorAlertSeverity, SqliteSwapStore, StoreError,
+    VersionedMakerRecord,
 };
 use lez_zec_swap_sdk::{
     HistoricalReplayError, ZcashObservationEvent, ZcashObservationEventRecordV1,
@@ -475,6 +481,13 @@ pub struct LocalPriceSetRequest {
     pub price: LocalPriceV1,
 }
 
+/// Parameters for reading one route's currently selected price source.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PriceQuoteRequest {
+    /// Exact pair and direction; another route is never substituted.
+    pub route: MakerRouteV1,
+}
+
 /// Empty parameters for bounded owner-local list methods.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ListRequest {}
@@ -716,6 +729,23 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
             store.list_local_prices().map_err(application_store_error)
         },
     )?;
+    module.register_blocking_method::<RpcResult<PriceQuoteV1>, _>(
+        "maker_price_quote",
+        |params, context, _| {
+            let request: PriceQuoteRequest = params.one()?;
+            let observed_at_unix_seconds = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "system clock is before Unix epoch"))?
+                .as_secs();
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            LocalPriceSource::new(&store)
+                .quote(request.route, observed_at_unix_seconds)
+                .map_err(price_source_error)
+        },
+    )?;
     module.register_blocking_method::<RpcResult<Vec<SwapView>>, _>(
         "swap_history",
         |params, context, _| {
@@ -819,6 +849,14 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
         | StoreError::MissingMakerLocalPrice
         | StoreError::MakerPriceSourceMismatch => invalid_request(error),
         other => internal_store_error(other),
+    }
+}
+
+fn price_source_error(error: PriceSourceError) -> ErrorObjectOwned {
+    match error {
+        PriceSourceError::MissingQuote => rpc_error(NOT_FOUND, error.to_string()),
+        PriceSourceError::Store(error) => internal_store_error(error),
+        PriceSourceError::DuplicateQuote => rpc_error(INTERNAL_ERROR, error.to_string()),
     }
 }
 

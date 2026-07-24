@@ -80,8 +80,8 @@ legacy migration against every valid v10 database. Future versions continue to
 fail closed.
 
 The new maker methods are additive. Pair policies select either `local` or
-`logos_c_api`; only the local implementation is active in this checkpoint. The
-bounded Logos C-API adapter, expiring signed offers, and offer history remain
+`logos_c_api`. ADR 0081 activates the local implementation through the real daemon and CLI.
+The bounded Logos C-API adapter, expiring signed offers, and offer history remain
 separate M5 work and cannot be inferred from this schema.
 
 ## Evidence

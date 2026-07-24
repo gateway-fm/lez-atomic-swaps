@@ -3137,11 +3137,11 @@ M5 must deliver:
 - a `cargo-fuzz` or equivalent state-machine fuzz harness.
 
 The current executable baseline is intentionally not called M5-complete. It has
-an authenticated loopback-HTTP maker daemon, four RPC methods, a partial maker
-CLI, SQLite recovery machinery, ZEC watcher reconciliation, and property tests.
-It has no taker CLI, pair/price configuration, history/manual effect surface,
-Delivery/Chat runtime, C-API pricing implementation, systemd package,
-owner-restricted Unix socket, or literal fuzz target.
+an owner-restricted Unix-socket maker daemon, durable pair and exact-price
+configuration, a pluggable local runtime price source, swap/alert history,
+SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It
+has no taker CLI, durable offers, Delivery/Chat runtime, C-API pricing
+implementation, manual effect surface, systemd package, or literal fuzz target.
 
 ### Progressive PoC gate
 
@@ -3187,7 +3187,9 @@ separately from runtime dependencies.
   configuration plus swap history are process-level GREEN with CAS, request
   replay, rollback, migration, and restart evidence; expiring offer lifecycle
   and history remain.
-- [ ] Add the price-source trait, local source, and bounded Logos C-API adapter.
+- [ ] Complete both price-source adapters. The trait, store-backed local
+  adapter, owner-local quote RPC/CLI, and restart journey are GREEN; the bounded
+  Logos C-API adapter and its stale/unavailable contract remain.
 - [ ] Complete maker CLI commands and add the taker CLI.
 - [ ] Add Delivery/Chat-compatible run-local adapters, expiry/authentication,
   buffering, retry/degraded state, and the post-lock cutover rule.

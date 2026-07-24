@@ -3796,6 +3796,8 @@ target/debug/lez-maker --socket "$MAKER_SOCKET" configure-pair \
 
 target/debug/lez-maker --socket "$MAKER_SOCKET" pairs
 target/debug/lez-maker --socket "$MAKER_SOCKET" prices
+target/debug/lez-maker --socket "$MAKER_SOCKET" quote \
+  --pair zcash --direction taker-sells-lez
 
 target/debug/lez-maker --socket "$MAKER_SOCKET" create-swap \
   --id manual-zec-reverse-1 \
@@ -3819,7 +3821,10 @@ Mutation, create, and status commands print one JSON object; list commands print
 JSON array. The swap object must contain `"id":"manual-zec-reverse-1"`,
 `"pair":"Zcash"`, `"direction":"TakerSellsLez"`, and
 `"phase":"Offered"`. The pair array must retain revision 2 with `enabled:true`;
-the price array must retain revision 1 and the exact 5:2 integer lots.
+the price array must retain revision 1 and the exact 5:2 integer lots. The quote
+object must report the same exact price, `source_revision:1`, and a nonzero
+daemon-trusted `observed_at_unix_seconds`. This local source makes no network,
+RPC, faucet, or public-price-feed call.
 
 The other currently accepted operator constructions use these exact argument
 shapes:

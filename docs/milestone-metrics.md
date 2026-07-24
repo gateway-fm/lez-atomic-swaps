@@ -1,6 +1,6 @@
 # Milestone delivery metrics
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 This is the live evidence scorecard for ADR 0027's progressive milestone
 delivery. It tracks measurements and explicit unknowns; it does not infer a
@@ -23,7 +23,7 @@ Status vocabulary:
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
 | M3 | Certified local-functional PoC | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | `m3-complete` at `f7fb250` | Owner entered M3 on 2026-07-14 and directed completion. The exact commit and tag are pushed; the private Actions API was unavailable and no remote-green claim is made. Cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
 | M4 | Certified progressive local-functional PoC | Exact clean replay `m4cert20260722an` completed the LEZ-first claim through isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest, retained canonical cross-chain binding and exact cleanup, and was documented on the pushed tree | `m4-poc-complete.2` | Owner entered M5 on 2026-07-23; deferred M4 hardening and production scope remain explicit |
-| M5 | Progressive local-functional PoC | Scope and current-state audit complete; architecture and exit criteria recorded. The existing maker daemon/CLI are carried prototype evidence, while the Unix-socket application plane, complete CLIs, pricing, Delivery/Chat behavior, systemd path, fuzz target, and application-level local-devnet run remain open | None | Owner entered M5 on 2026-07-23 |
+| M5 | Progressive local-functional PoC | Owner-local Unix application control, durable pair/price/history state, and the pluggable local runtime pricing adapter are component GREEN. Durable offers, taker CLI, Delivery/Chat, corridor composition, C-API pricing, systemd, fuzzing, and application-level local-devnet evidence remain | None | Owner entered M5 on 2026-07-23 |
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
@@ -38,7 +38,7 @@ certified.
 | Literal M5 outputs complete | 0 of 7 certified | Daemon/systemd, maker CLI, taker CLI, persistent coordinator, two pricing modes, Delivery/Chat behavior, and fuzz harness require exact evidence |
 | Application binaries | Maker daemon and partial maker CLI expose owner-local pair policy, exact local price, swap creation/status/history, and alert commands; no taker CLI | Add offer/manual effect/lifecycle commands and the taker process |
 | Owner-local control | GREEN component slice | Mode-0700 owner runtime directory, mode-0600 Unix socket, absolute/no-symlink paths, bounded HTTP/1 JSON-RPC, disabled batches, 16-connection cap, no-clobber readiness, exact-inode cleanup, and two black-box daemon/CLI journeys pass strict gates |
-| Price-source runtime adapters | 0 of 2; local storage GREEN | Schema-v11 reduced-integer configuration survives real daemon restart; add the price-source trait, local runtime source, and bounded Logos C-API adapter |
+| Price-source runtime adapters | 1 of 2 component GREEN | The pluggable trait and store-backed local adapter preserve exact route, reduced-integer price, revision, and daemon-trusted time; the real CLI quotes 5:2 after daemon restart. Add the bounded Logos C-API adapter and bind quotes into durable offers |
 | Discovery and negotiation | Typed ports only | Authenticated expiring local adapters first; exact Logos adapters remain upstream-dependent |
 | Persistent restart evidence | Two daemon/CLI process journeys pass across restart, including durable pair/price/history and alerts | Repeat through the complete application happy path and exact effect outbox |
 | Concurrent application swaps | 0 composed | Distinct swap IDs, role state, agreements, escrows, deadlines, and effects |

@@ -126,6 +126,7 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
         serde_json::from_slice(&reverse_recovered.stdout).expect("CLI emits JSON");
     assert_eq!(reverse_view["direction"], "TakerSellsLez");
     assert_route_lists(&second_socket);
+    assert_route_quote(&second_socket);
     let history = maker_cli(&second_socket, &["history"]);
     assert_success(&history);
     let history: Value = serde_json::from_slice(&history.stdout).expect("CLI emits history JSON");
@@ -362,6 +363,21 @@ fn assert_route_lists(socket: &Path) {
     assert_eq!(prices[0]["revision"], 1);
     assert_eq!(prices[0]["value"]["lez_units_per_lot"], 5);
     assert_eq!(prices[0]["value"]["foreign_units_per_lot"], 2);
+}
+
+fn assert_route_quote(socket: &Path) {
+    let quote = maker_cli(
+        socket,
+        &["quote", "--pair", "zcash", "--direction", "taker-sells-lez"],
+    );
+    assert_success(&quote);
+    let quote: Value = serde_json::from_slice(&quote.stdout).expect("CLI emits quote JSON");
+    assert_eq!(quote["price"]["route"]["pair"], "Zcash");
+    assert_eq!(quote["price"]["route"]["direction"], "TakerSellsLez");
+    assert_eq!(quote["price"]["lez_units_per_lot"], 5);
+    assert_eq!(quote["price"]["foreign_units_per_lot"], 2);
+    assert_eq!(quote["source_revision"], 1);
+    assert!(quote["observed_at_unix_seconds"].as_u64().unwrap() > 0);
 }
 
 fn assert_swap_view(bytes: &[u8], id: &str, pair: &str, phase: &str) {

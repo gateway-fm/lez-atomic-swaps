@@ -4,8 +4,8 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AlertAcknowledgeRequest, AlertListRequest, CreateSwapRequest, ListRequest,
-    LocalPriceSetRequest, OperatorAlertView, PairConfigureRequest, RecoveryRequest, StatusRequest,
-    SwapView, call_local_rpc,
+    LocalPriceSetRequest, OperatorAlertView, PairConfigureRequest, PriceQuoteRequest, PriceQuoteV1,
+    RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
 };
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 use lez_swap_store::{
@@ -62,6 +62,13 @@ enum Command {
     Pairs,
     /// Lists durable local prices in stable route order.
     Prices,
+    /// Reads one exact route quote through the configured runtime boundary.
+    Quote {
+        #[arg(long)]
+        pair: PairArgument,
+        #[arg(long, value_enum, default_value_t = DirectionArgument::TakerSellsForeign)]
+        direction: DirectionArgument,
+    },
     /// Lists durable swap summaries in stable identifier order.
     History,
     CreateSwap {
@@ -197,6 +204,13 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
             let prices: Vec<VersionedMakerRecord<LocalPriceV1>> =
                 call_local_rpc(socket, "maker_local_price_list", &ListRequest::default()).await?;
             serde_json::to_value(prices).map_err(Into::into)
+        }
+        Command::Quote { pair, direction } => {
+            let request = PriceQuoteRequest {
+                route: MakerRouteV1::new(pair.into(), direction.into())?,
+            };
+            let quote: PriceQuoteV1 = call_local_rpc(socket, "maker_price_quote", &request).await?;
+            serde_json::to_value(quote).map_err(Into::into)
         }
         Command::History => {
             let history: Vec<SwapView> =
