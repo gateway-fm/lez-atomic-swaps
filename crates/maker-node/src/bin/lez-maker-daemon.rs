@@ -40,7 +40,8 @@ struct Arguments {
     /// Owner-private run-local Delivery directory; requires the signing key file.
     #[arg(long, requires_all = ["delivery_signing_key_file", "chat_socket"])]
     delivery_directory: Option<PathBuf>,
-    /// Owner-only file containing exactly one hex-encoded 32-byte secp256k1 key.
+    /// Owner-only file containing one raw 32-byte secp256k1 key or its 64-byte
+    /// lowercase hexadecimal encoding.
     #[arg(long, requires_all = ["delivery_directory", "chat_socket"])]
     delivery_signing_key_file: Option<PathBuf>,
     /// Taker-facing run-local Chat socket, isolated from owner-control methods.
@@ -231,12 +232,15 @@ fn server_config() -> ServerConfig {
 
 fn load_delivery_key(path: &Path) -> anyhow::Result<SecretKey> {
     let encoded = read_private_file(path, 65, "Delivery signing key")?;
+    if encoded.len() == 32 {
+        return SecretKey::from_slice(encoded.as_slice()).context("validate Delivery signing key");
+    }
     let text = std::str::from_utf8(&encoded)
-        .context("Delivery signing key must be UTF-8 hex")?
+        .context("Delivery signing key must be raw bytes or UTF-8 hex")?
         .trim();
     ensure!(
         text.len() == 64,
-        "Delivery signing key must contain exactly 32 bytes as hex"
+        "Delivery signing key must contain exactly 32 raw bytes or 32 bytes as hex"
     );
     let mut bytes = Zeroizing::new([0_u8; 32]);
     hex::decode_to_slice(text, bytes.as_mut()).context("decode Delivery signing key")?;

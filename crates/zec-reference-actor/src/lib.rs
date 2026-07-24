@@ -20,7 +20,11 @@ pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
 };
-pub use local_poc::{LocalPocProvisionSummary, provision_local_v0_2_corridor};
+pub use local_poc::{
+    LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocProvisionSummary,
+    finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
+    provision_local_v0_2_corridor,
+};
 
 /// Exactly one lifecycle action performed by an actor process.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Subcommand)]

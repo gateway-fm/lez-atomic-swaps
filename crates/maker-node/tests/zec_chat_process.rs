@@ -57,7 +57,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     let key_file = run.path().join("delivery-signing.key");
     let claim_key_file = run.path().join("maker-claim-recovery.key");
     let claim_preimage_file = run.path().join("maker-claim-preimage.key");
-    write_key(&key_file, 8);
+    write_raw_key(&key_file, 8);
     write_raw_key(&claim_key_file, 0x7a);
     write_raw_key(&claim_preimage_file, CLAIM_PREIMAGE[0]);
     let daemon_paths = DaemonPaths {
@@ -416,17 +416,6 @@ fn wait_ready(daemon: &mut Child, ready: &std::path::Path, socket: &std::path::P
         assert!(Instant::now() < deadline, "daemon readiness timed out");
         thread::sleep(Duration::from_millis(20));
     }
-}
-
-fn write_key(path: &std::path::Path, byte: u8) {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .unwrap();
-    writeln!(file, "{}", hex::encode([byte; 32])).unwrap();
-    file.sync_all().unwrap();
 }
 
 fn write_raw_key(path: &std::path::Path, byte: u8) {

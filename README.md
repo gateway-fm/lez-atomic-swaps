@@ -27,9 +27,13 @@ one-winner proposal before responding. The separate taker role then validates
 and countersigns that proposal, and the daemon reuses the atomic schema-v13 final
 acceptance transaction with only daemon-local claim authority; delayed replay
 and kill/reopen durability are process-GREEN. Exact final-wire actor
-configuration and the actual LEZ/ZEC application swap are the next PoC critical
-path. The Logos C-API price source, systemd/Core lifecycle, fuzzing, and
-hardening remain literal M5 completion work.
+configuration is now component-GREEN: a no-authority preparer replaces only the
+Delivery/Chat transcript of validated chain facts, while a finalizer checks all
+other fields, both private-key identities, the funder role and hash preimage
+before emitting fresh isolated actor state. The actual LEZ/ZEC application swap
+and post-lock transport cutover are the next PoC critical path. The Logos C-API
+price source, systemd/Core lifecycle, fuzzing, and hardening remain literal M5
+completion work.
 
 Build and repeat the current real process boundary with:
 

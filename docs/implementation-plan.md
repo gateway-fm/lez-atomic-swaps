@@ -3140,10 +3140,11 @@ The current executable baseline is intentionally not called M5-complete. It has
 an owner-restricted Unix-socket maker daemon, durable pair and exact-price
 configuration, a pluggable local runtime price source, swap/alert history,
 SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It has
-a taker CLI with key-pinned discovery and ZEC acceptance, daemon-owned signed run-local Delivery, and a
-disjoint process-facing Chat endpoint with durable proposal staging, role
-countersigning, and atomic final acceptance, but no taker lifecycle command,
-C-API pricing
+a taker CLI with key-pinned discovery and ZEC acceptance, daemon-owned signed
+run-local Delivery, a disjoint process-facing Chat endpoint with durable
+proposal staging, role countersigning and atomic final acceptance, and a
+validated final-wire handoff into fresh role actor state, but no taker lifecycle
+command, C-API pricing
 implementation, manual effect surface, systemd package, or literal fuzz target.
 
 ### Progressive PoC gate
@@ -3218,10 +3219,13 @@ separately from runtime dependencies.
   reserves one offer winner with exact replay/conflict/restart evidence. The
   countersigned agreement, coordinator, immutable ZEC binding, protected maker
   claim material, offer consumption, and replay result also commit together
-  with forced-rollback/replay/restart evidence. Next split the local chain-fact preparer from role signing, persist the exact final
-  wire into both actor configurations, then prove the post-lock transport
-  cutover. The canonical unsigned draft and both maker Chat endpoints are now GREEN;
-  they do not yet prove any chain effect.
+  with forced-rollback/replay/restart evidence. A separate no-authority preparer
+  now rebinds only the authenticated transcript of validated local chain facts,
+  and the finalizer exact-compares every other body field, both role keys,
+  funder ownership and the hash preimage before emitting fresh isolated actor
+  state. The canonical draft, both Chat endpoints and final actor-config handoff
+  are component GREEN; they do not yet prove any chain effect. Next compose the
+  actual corridor and remove Delivery/Chat after first lock.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested

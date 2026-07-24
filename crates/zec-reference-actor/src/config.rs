@@ -536,6 +536,43 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
     serde_json::to_vec_pretty(&raw).map_err(|_| ActorConfigError::InvalidConfiguration)
 }
 
+/// Re-encodes one validated local actor around an exact new agreement and
+/// fresh mutable state locations without loading or returning any secret.
+pub(crate) fn encode_rebound_local_v0_2_actor_config(
+    source: &ActorConfig,
+    swap_id: SwapId,
+    agreement_file: PathBuf,
+    agreement_sha256: Hex32,
+    role_state_db: PathBuf,
+    bridge_journal_db: PathBuf,
+) -> Result<Vec<u8>, ActorConfigError> {
+    if !matches!(
+        source.zebra.route,
+        ZebraRouteConfig::DeterministicLocal { .. }
+    ) {
+        return Err(ActorConfigError::InvalidConfiguration);
+    }
+    let mut bridge = source.bridge.clone();
+    bridge.journal_db = bridge_journal_db;
+    let raw = RawActorConfig {
+        schema_version: source.schema_version,
+        role: source.role,
+        run_id: source.run_id.clone(),
+        swap_id,
+        signed_agreement_file: agreement_file,
+        signed_agreement_sha256: agreement_sha256,
+        role_state_db,
+        claim_recovery: source.claim_recovery.clone(),
+        claim_preimage_file: source.claim_preimage_file.clone(),
+        zcash_key_file: source.zcash_key_file.clone(),
+        bridge,
+        zebra: source.zebra.clone(),
+        lez_discovery_window: source.lez_discovery_window,
+        zcash_funding_outpoints: source.zcash_funding_outpoints.clone(),
+    };
+    serde_json::to_vec_pretty(&raw).map_err(|_| ActorConfigError::InvalidConfiguration)
+}
+
 impl ActorConfig {
     /// Loads one owner-private config without loading effect credentials.
     ///

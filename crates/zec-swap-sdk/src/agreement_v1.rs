@@ -726,6 +726,23 @@ impl ZecAgreementDraftV1 {
         Self { body }
     }
 
+    /// Creates an unsigned draft by replacing only the negotiation transcript
+    /// of an already validated agreement.
+    ///
+    /// This deliberately drops both old signatures. It lets a chain-fact
+    /// preparer bind otherwise unchanged executable terms to an authenticated
+    /// Delivery offer and fresh Chat reservation without acquiring either
+    /// role's signing authority.
+    #[must_use]
+    pub fn rebind_validated_transcript(
+        agreement: &ZecAgreementV1,
+        transcript: NegotiationTranscriptV1,
+    ) -> Self {
+        let mut body = agreement.record.body.clone();
+        body.transcript = transcript;
+        Self { body }
+    }
+
     /// Encodes the unsigned body for an untrusted Chat handoff to the maker.
     ///
     /// The record carries the concrete schema prefix and exact canonical body,

@@ -8,17 +8,19 @@ use std::{
 
 use anyhow::{Context as _, Result, bail, ensure};
 use lez_bridge_protocol::{
-    DiscoveryWindow, Hex32, Participant as BridgeParticipant, RunId, RuntimeCompatibility,
-    RuntimeDescriptor,
+    DiscoveryWindow, Hex32, Participant as BridgeParticipant, RequestId, RunId,
+    RuntimeCompatibility, RuntimeDescriptor,
 };
-use lez_swap_core::{SwapDirection, SwapId, UnixSeconds};
+use lez_swap_core::{Participant, SwapDirection, SwapId, UnixSeconds};
+use lez_swap_store::maker_zec_chat_session_id;
 use lez_zebra_node_adapter::{
     HttpZebraRpc, HttpZebraRpcConfig, ZebraChainIdentity, ZebraRpc, ZebraRpcChain,
 };
 use lez_zec_swap_sdk::{
-    Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
-    NegotiationTranscriptV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1,
-    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1,
+    AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
+    LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationTranscriptV1,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1, ZcashFundingInputV1,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementDraftV1, ZecAgreementRecordV1,
     ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
     ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
     ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
@@ -42,6 +44,7 @@ use zeroize::Zeroizing;
 
 use crate::config::{
     DeterministicLocalV0_2ActorConfigInput, encode_deterministic_local_v0_2_actor_config,
+    encode_rebound_local_v0_2_actor_config,
 };
 use crate::secure_file::{FilePrivacy, read_bounded_identified};
 use crate::{ActorConfig, ActorRole, CandidateOutpoint, validate_actor_pair};
@@ -155,6 +158,36 @@ pub struct LocalPocProvisionSummary {
     lez_native_amount: u128,
     lez_depositor_role: &'static str,
     lez_depositor_account_id_base58: String,
+    private_material_disclosed: bool,
+    actor_pair_validated: bool,
+}
+
+/// Secret-free result of binding a validated chain-fact template to Chat.
+#[derive(Debug, Serialize)]
+pub struct LocalPocChatDraftSummary {
+    schema_version: u16,
+    draft_file: PathBuf,
+    draft_sha256: Hex32,
+    swap_id: String,
+    maker_public_key: String,
+    reservation_id: RequestId,
+    offer_commitment: Hex32,
+    offer_expires_at_unix_seconds: u64,
+    private_material_disclosed: bool,
+}
+
+/// Secret-free result of producing fresh actors from a Chat agreement.
+#[derive(Debug, Serialize)]
+pub struct LocalPocChatFinalizeSummary {
+    schema_version: u16,
+    run_id: RunId,
+    swap_id: String,
+    agreement_file: PathBuf,
+    signed_agreement_sha256: Hex32,
+    maker_config_file: PathBuf,
+    taker_config_file: PathBuf,
+    maker_state_root: PathBuf,
+    taker_state_root: PathBuf,
     private_material_disclosed: bool,
     actor_pair_validated: bool,
 }
@@ -401,6 +434,262 @@ pub async fn provision_local_v0_2_corridor(
         private_material_disclosed: false,
         actor_pair_validated: true,
     })
+}
+
+/// Rebinds an already validated local chain-fact template to one Delivery offer
+/// and Chat reservation without either participant's signing authority.
+///
+/// # Errors
+///
+/// Fails closed for unsafe input/output files, an invalid or expired template,
+/// invalid transcript expiry, or a draft that changes executable chain facts.
+pub fn prepare_local_v0_2_chat_draft(
+    source_agreement_file: &Path,
+    now: UnixSeconds,
+    reservation_id: RequestId,
+    offer_commitment: Hex32,
+    offer_expires_at_unix_seconds: u64,
+    output_file: &Path,
+) -> Result<LocalPocChatDraftSummary> {
+    ensure!(
+        offer_expires_at_unix_seconds > now.value(),
+        "Delivery offer is already expired"
+    );
+    let (source_wire, _) = read_bounded_identified(
+        source_agreement_file,
+        MAX_ZEC_AGREEMENT_RECORD_BYTES,
+        FilePrivacy::Public,
+    )
+    .map_err(|_| anyhow::anyhow!("source agreement is unavailable or unsafe"))?;
+    let source = ZecAgreementV1::from_wire_at(source_wire.as_slice(), now)
+        .context("source agreement is not a valid chain-fact template")?;
+    let transcript = NegotiationTranscriptV1::new(
+        maker_zec_chat_session_id(&reservation_id),
+        *offer_commitment.as_bytes(),
+        offer_expires_at_unix_seconds,
+    );
+    let draft = ZecAgreementDraftV1::rebind_validated_transcript(&source, transcript);
+    let wire = Zeroizing::new(draft.encode_wire().context("failed to encode Chat draft")?);
+    let _validated = ZecAgreementDraftV1::from_wire_at(wire.as_slice(), now)
+        .context("prepared Chat draft did not revalidate")?;
+    let digest: [u8; 32] = Sha256::digest(wire.as_slice()).into();
+    write_private_new(output_file, wire.as_slice())?;
+    Ok(LocalPocChatDraftSummary {
+        schema_version: 1,
+        draft_file: output_file.to_path_buf(),
+        draft_sha256: Hex32::from_bytes(digest),
+        swap_id: source.application_swap_id().to_owned(),
+        maker_public_key: hex::encode(source.zcash_key(Participant::Maker).serialize()),
+        reservation_id,
+        offer_commitment,
+        offer_expires_at_unix_seconds,
+        private_material_disclosed: false,
+    })
+}
+
+/// Validates a real Chat result against its chain-fact template and produces a
+/// fresh isolated pair of role configurations and mutable state locations.
+///
+/// Existing authority files remain referenced in place and are never copied or
+/// returned. Every executable agreement field except the authenticated Chat
+/// transcript must match the validated source; both role keys and the funder's
+/// hash preimage are checked against the final countersigned record.
+///
+/// # Errors
+///
+/// Fails closed for unsafe files, invalid actor pairs, expired or mismatched
+/// agreements, incorrect role authority, changed chain facts, output collision,
+/// or a generated config that cannot be securely reloaded and activated.
+#[allow(clippy::too_many_lines, clippy::similar_names)]
+pub fn finalize_local_v0_2_chat_corridor(
+    source_maker_config_file: &Path,
+    source_taker_config_file: &Path,
+    final_agreement_file: &Path,
+    accepted_at: UnixSeconds,
+    output_root: &Path,
+) -> Result<LocalPocChatFinalizeSummary> {
+    validate_new_output_root(output_root)?;
+    let source_maker = ActorConfig::load_private(source_maker_config_file)
+        .context("source maker config is unsafe or invalid")?;
+    let source_taker = ActorConfig::load_private(source_taker_config_file)
+        .context("source taker config is unsafe or invalid")?;
+    ensure!(
+        source_maker.role() == ActorRole::Maker && source_taker.role() == ActorRole::Taker,
+        "source configs do not represent maker and taker"
+    );
+    validate_actor_pair(&source_maker, &source_taker)
+        .context("source actor pair is not isolated")?;
+    let maker_material = source_maker
+        .load_activate_material()
+        .context("source maker activation material is invalid")?;
+    let taker_material = source_taker
+        .load_activate_material()
+        .context("source taker activation material is invalid")?;
+    ensure!(
+        maker_material.signed_agreement_wire() == taker_material.signed_agreement_wire(),
+        "source actors do not share the exact agreement"
+    );
+    let source_agreement =
+        ZecAgreementV1::from_wire_at(maker_material.signed_agreement_wire(), accepted_at)
+            .context("source agreement is invalid at final acceptance")?;
+
+    let (final_wire, _) = read_bounded_identified(
+        final_agreement_file,
+        MAX_ZEC_AGREEMENT_RECORD_BYTES,
+        FilePrivacy::OwnerPrivate,
+    )
+    .map_err(|_| anyhow::anyhow!("final Chat agreement is unavailable or unsafe"))?;
+    let accepted_maker = AcceptedZecAgreementV1::accept_wire_at(
+        final_wire.as_slice(),
+        accepted_at,
+        Participant::Maker,
+        0,
+    )
+    .context("final Chat agreement is invalid for maker")?;
+    let accepted_taker = AcceptedZecAgreementV1::accept_wire_at(
+        final_wire.as_slice(),
+        accepted_at,
+        Participant::Taker,
+        0,
+    )
+    .context("final Chat agreement is invalid for taker")?;
+    ensure!(
+        accepted_maker.agreement() == accepted_taker.agreement(),
+        "roles accepted different final agreements"
+    );
+    let final_agreement = accepted_maker.agreement();
+    ensure!(
+        final_agreement.application_swap_id() == source_maker.swap_id().as_str()
+            && final_agreement.application_swap_id() == source_taker.swap_id().as_str(),
+        "final agreement swap ID differs from source actors"
+    );
+    let expected = ZecAgreementDraftV1::rebind_validated_transcript(
+        &source_agreement,
+        *final_agreement.transcript(),
+    );
+    let expected_wire = expected
+        .encode_wire()
+        .context("failed to encode expected Chat body")?;
+    let expected = ZecAgreementDraftV1::from_wire_at(&expected_wire, accepted_at)
+        .context("expected Chat body did not revalidate")?;
+    ensure!(
+        expected.body() == final_agreement.record().body(),
+        "final agreement changed executable chain facts outside the Chat transcript"
+    );
+    validate_role_authority(
+        &maker_material,
+        final_agreement,
+        Participant::Maker,
+        source_maker.is_local_zcash_funder(),
+    )?;
+    validate_role_authority(
+        &taker_material,
+        final_agreement,
+        Participant::Taker,
+        source_taker.is_local_zcash_funder(),
+    )?;
+
+    create_private_directory(output_root)?;
+    let shared_root = output_root.join("shared");
+    let maker_root = output_root.join("maker");
+    let taker_root = output_root.join("taker");
+    let maker_state = maker_root.join("state");
+    let taker_state = taker_root.join("state");
+    for directory in [
+        &shared_root,
+        &maker_root,
+        &taker_root,
+        &maker_state,
+        &taker_state,
+    ] {
+        create_private_directory(directory)?;
+    }
+    let agreement_file = shared_root.join("agreement-v2.borsh");
+    write_private_new(&agreement_file, final_wire.as_slice())?;
+    let agreement_digest: [u8; 32] = Sha256::digest(final_wire.as_slice()).into();
+    let agreement_sha256 = Hex32::from_bytes(agreement_digest);
+    let swap_id = SwapId::new(final_agreement.application_swap_id().to_owned())
+        .context("final application swap ID is invalid")?;
+    let maker_config_file = maker_root.join("actor-config.json");
+    let taker_config_file = taker_root.join("actor-config.json");
+    let maker_config = encode_rebound_local_v0_2_actor_config(
+        &source_maker,
+        swap_id.clone(),
+        agreement_file.clone(),
+        agreement_sha256,
+        maker_state.join("actor.sqlite3"),
+        maker_state.join("bridge.sqlite3"),
+    )
+    .context("failed to encode rebound maker config")?;
+    let taker_config = encode_rebound_local_v0_2_actor_config(
+        &source_taker,
+        swap_id,
+        agreement_file.clone(),
+        agreement_sha256,
+        taker_state.join("actor.sqlite3"),
+        taker_state.join("bridge.sqlite3"),
+    )
+    .context("failed to encode rebound taker config")?;
+    write_private_new(&maker_config_file, &maker_config)?;
+    write_private_new(&taker_config_file, &taker_config)?;
+    let maker = ActorConfig::load_private(&maker_config_file)
+        .context("rebound maker config did not reload")?;
+    let taker = ActorConfig::load_private(&taker_config_file)
+        .context("rebound taker config did not reload")?;
+    validate_actor_pair(&maker, &taker).context("rebound actor pair is not isolated")?;
+    let _maker_activation = maker
+        .load_activate_material()
+        .context("rebound maker activation material is invalid")?;
+    let _taker_activation = taker
+        .load_activate_material()
+        .context("rebound taker activation material is invalid")?;
+
+    Ok(LocalPocChatFinalizeSummary {
+        schema_version: 1,
+        run_id: maker.run_id().clone(),
+        swap_id: final_agreement.application_swap_id().to_owned(),
+        agreement_file,
+        signed_agreement_sha256: agreement_sha256,
+        maker_config_file,
+        taker_config_file,
+        maker_state_root: maker_state,
+        taker_state_root: taker_state,
+        private_material_disclosed: false,
+        actor_pair_validated: true,
+    })
+}
+
+fn validate_role_authority(
+    material: &crate::ActivateMaterial,
+    agreement: &ZecAgreementV1,
+    participant: Participant,
+    configured_as_funder: bool,
+) -> Result<()> {
+    let mut secret =
+        SecretKey::from_slice(material.zcash_secret_key()).context("actor Zcash key is invalid")?;
+    let public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret);
+    secret.non_secure_erase();
+    ensure!(
+        public == *agreement.zcash_key(participant),
+        "actor Zcash key does not match the final agreement"
+    );
+    let expected_funder = agreement.lez_claimant() == participant;
+    ensure!(
+        configured_as_funder == expected_funder,
+        "actor funder role does not match the final agreement"
+    );
+    match material.claim_preimage() {
+        Some(preimage) if expected_funder => {
+            let digest: [u8; 32] = Sha256::digest(preimage.expose_secret()).into();
+            ensure!(
+                digest == *agreement.secret_digest(),
+                "actor preimage does not match the final agreement"
+            );
+        }
+        None if !expected_funder => {}
+        _ => bail!("actor preimage ownership does not match the final agreement"),
+    }
+    Ok(())
 }
 
 struct MaterialPaths {
