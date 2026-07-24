@@ -710,7 +710,7 @@ flowchart TB
 
     subgraph OffChain["Untrusted, removable after lock"]
         DEL["Run-local Delivery-compatible adapter<br/>signed bounded discovery GREEN"]
-        CHAT["Run-local Chat-compatible adapter<br/>proposal + durable one-winner stage GREEN; runtime planned"]
+        CHAT["Run-local Chat-compatible adapter<br/>proposal + stage + atomic final accept GREEN; runtime planned"]
     end
 
     subgraph Nodes["Actor-selected node boundary"]

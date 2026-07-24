@@ -816,6 +816,16 @@ impl SqliteSwapStore {
             reservation_id,
             swap,
         })?;
+        let staged_zec_negotiation: bool = self.connection.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM maker_zec_negotiations WHERE offer_id = ?1
+             )",
+            params![offer_id.as_str()],
+            |row| row.get(0),
+        )?;
+        if staged_zec_negotiation {
+            return Err(StoreError::MakerOfferUnavailable);
+        }
         transition_offer(
             self,
             OfferTransitionContext {

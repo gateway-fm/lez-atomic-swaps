@@ -199,6 +199,20 @@ fn zec_proposal_stage_is_one_winner_replay_safe_and_survives_restart() {
     assert_eq!(reserved.status(), MakerOfferStatus::Reserved);
     assert_eq!(reserved.revision(), 2);
     assert_eq!(reserved.reservation_id(), Some(staged.reservation_id()));
+    assert!(matches!(
+        store.consume_maker_offer(
+            &request("offer-negotiation-bypass-001"),
+            &id,
+            2,
+            staged.reservation_id(),
+            &zec_swap("offer-negotiation-bypass-swap-001"),
+        ),
+        Err(StoreError::MakerOfferUnavailable)
+    ));
+    assert_eq!(
+        store.load_zec_maker_negotiation(&id).unwrap(),
+        Some(staged.clone())
+    );
 
     let losing = negotiation("offer-negotiation-reservation-002", 101, 10, 25, 8);
     assert!(matches!(

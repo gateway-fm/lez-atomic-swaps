@@ -3971,8 +3971,30 @@ admitting the new operation.
 This store check uses no chain RPC, node, Docker, faucet, public funds, DNS,
 Logos Delivery/Chat service, or public endpoint. It therefore has no
 network/finality flakiness. It is a component checkpoint, not the application
-PoC: atomic final countersignature acceptance and independent process wiring
-remain before any first-lock submission is allowed.
+PoC: independent process wiring remains before any first-lock submission is
+allowed.
+
+Reproduce the complete local negotiation handoff transaction with:
+
+```sh
+cargo test --locked --offline -p lez-swap-store --test zec_sdk_recovery \
+  maker_chat_completion_is_one_atomic_replay_safe_restart_unit \
+  -- --exact --nocapture
+```
+
+The command must report one passing test. It uses the real maker-first proposal
+and dual-signed agreement APIs, then forces the final replay insert to abort.
+Offer consumption, negotiation completion, coordinator, immutable ZEC binding,
+maker SDK agreement, and encrypted first-claim material all roll back. The same
+request then commits once, replays exactly, rejects changed acceptance metadata,
+and reopens every linked row plus the original protected preimage. A raw
+SQLite/WAL scan rejects plaintext secret material. Generic offer consumption is
+also forbidden once ZEC negotiation staging exists.
+
+This transaction check has the same file-only resource boundary as the staging
+check: no chain RPC, node, Docker, faucet, public funds, DNS, or Logos service.
+It proves the crash-safe handoff to post-negotiation authority, not the separate
+maker/taker process flow or actual local-devnet effects.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 

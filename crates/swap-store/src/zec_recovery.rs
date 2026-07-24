@@ -6,7 +6,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapId, UnixSeconds};
+use lez_bridge_protocol::RequestId;
+use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapDirection, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, CLAIM_RECORD_SCHEMA_V1,
     CLAIM_RECORD_SCHEMA_V2, ClaimIntentRecordV1, ClaimIntentV1, ClaimMaterialContext,
@@ -25,15 +26,56 @@ use lez_zec_swap_sdk::{
     REFUND_RECORD_SCHEMA_V1, RecoveryStore, RefundIntentRecordV1, RefundIntentV1,
     RefundRecoveryStore, RefundTransitionRecordV1, RefundTransitionV1,
     RevealingClaimTransitionRecordV1, RevealingClaimTransitionV1, ZcashObservationTracker,
+    ZecMakerAgreementProposalV1, ZecSwapBindingRecordV1,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::{
-    StoreError, open_configured_connection, open_existing_configured_connection, participant_name,
+    MakerOfferId, MakerOfferV1, SWAP_PAYLOAD_VERSION, StoreError, maker_zec_chat_session_id,
+    open_configured_connection, open_existing_configured_connection, participant_name,
     revision_from_sql,
 };
 
 const AGREEMENT_PAYLOAD_VERSION: i64 = 1;
+
+/// Result of atomically accepting one countersigned maker ZEC negotiation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MakerZecAcceptanceCommit {
+    offer_revision: u64,
+    was_replay: bool,
+}
+
+impl MakerZecAcceptanceCommit {
+    /// Consumed offer revision committed with the application and SDK state.
+    #[must_use]
+    pub const fn offer_revision(self) -> u64 {
+        self.offer_revision
+    }
+
+    /// Whether the exact global request already committed this result.
+    #[must_use]
+    pub const fn was_replay(self) -> bool {
+        self.was_replay
+    }
+}
+
+#[derive(Serialize)]
+struct CompleteMakerZecRequest<'a> {
+    offer_id: &'a MakerOfferId,
+    expected_offer_revision: u64,
+    reservation_id: &'a RequestId,
+    accepted_at_unix_seconds: u64,
+    agreement_wire_sha256: [u8; 32],
+    secret_digest: [u8; 32],
+}
+
+#[derive(Deserialize, Serialize)]
+struct CompleteMakerZecResult {
+    schema_version: u16,
+    offer_revision: u64,
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MakerObservationTrackers {
@@ -135,6 +177,303 @@ impl SqliteZecRecoveryStore {
     #[must_use]
     pub const fn local_participant(&self) -> Participant {
         self.local_participant
+    }
+
+    /// Atomically completes one staged maker-first ZEC negotiation.
+    ///
+    /// The countersigned agreement, initial coordinator, immutable ZEC binding,
+    /// protected first-claim material, completed negotiation, consumed offer,
+    /// and global replay result share one `BEGIN IMMEDIATE` transaction. No
+    /// first-lock authority exists until this method commits.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on role, revision, reservation, identity, session, offer,
+    /// amount, expiry, proposal, agreement, preimage, replay, or `SQLite` errors.
+    #[allow(clippy::similar_names, clippy::too_many_lines)]
+    pub fn complete_maker_zec_negotiation(
+        &self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        accepted: &AcceptedZecAgreementV1,
+        preimage: &ClaimPreimage,
+    ) -> Result<MakerZecAcceptanceCommit, StoreError> {
+        self.require_role(Participant::Maker)?;
+        self.require_role(accepted.local_participant())?;
+        let agreement = accepted.agreement();
+        if accepted.revision() != 0
+            || agreement.lez_claimant() != Participant::Maker
+            || agreement.direction() != SwapDirection::TakerSellsLez
+            || agreement.coordinator().pair() != Pair::Zcash
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let actual_secret_digest: [u8; 32] = Sha256::digest(preimage.expose_secret()).into();
+        if actual_secret_digest != *agreement.secret_digest() {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let agreement_wire = agreement.encode_wire()?;
+        let agreement_wire_sha256: [u8; 32] = Sha256::digest(&agreement_wire).into();
+        let committed_revision = expected_offer_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let request_json = serde_json::to_string(&CompleteMakerZecRequest {
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            accepted_at_unix_seconds: accepted.accepted_at().value(),
+            agreement_wire_sha256,
+            secret_digest: actual_secret_digest,
+        })?;
+
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let replay = transaction
+            .query_row(
+                "SELECT operation, request_json, result_json
+                   FROM maker_application_mutations WHERE request_id = ?1",
+                params![request_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        if let Some((operation, stored_request, stored_result)) = replay {
+            if operation != "zec_negotiation_complete" || stored_request != request_json {
+                return Err(StoreError::MakerOfferRequestConflict);
+            }
+            let result: CompleteMakerZecResult = serde_json::from_str(&stored_result)?;
+            if result.schema_version != 1 || result.offer_revision != committed_revision {
+                return Err(StoreError::CorruptMakerOffer);
+            }
+            transaction.commit()?;
+            return Ok(MakerZecAcceptanceCommit {
+                offer_revision: result.offer_revision,
+                was_replay: true,
+            });
+        }
+
+        #[allow(clippy::type_complexity)]
+        let row: Option<(
+            i64,
+            String,
+            i64,
+            String,
+            i64,
+            Option<String>,
+            String,
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>,
+            i64,
+            Vec<u8>,
+            i64,
+            Vec<u8>,
+            Vec<u8>,
+            String,
+        )> = transaction
+            .query_row(
+                "SELECT o.payload_version, o.payload_json, o.expires_at_unix_seconds,
+                        o.state, o.revision, o.reservation_id,
+                        n.reservation_id, n.offer_commitment,
+                        n.maker_chat_identity, n.taker_chat_identity,
+                        n.foreign_units, n.lez_units, n.reserved_at_unix_seconds,
+                        n.agreement_commitment, n.maker_proposal_wire, n.state
+                   FROM maker_offers o
+                   JOIN maker_zec_negotiations n USING (offer_id)
+                  WHERE o.offer_id = ?1",
+                params![offer_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                        row.get(13)?,
+                        row.get(14)?,
+                        row.get(15)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((
+            offer_payload_version,
+            offer_json,
+            expires_at,
+            offer_state,
+            offer_revision,
+            offer_reservation,
+            staged_reservation,
+            offer_commitment,
+            maker_chat_identity,
+            taker_chat_identity,
+            foreign_units,
+            lez_units,
+            reserved_at,
+            staged_agreement_commitment,
+            maker_proposal_wire,
+            negotiation_state,
+        )) = row
+        else {
+            return Err(StoreError::MissingMakerOffer);
+        };
+        if offer_payload_version != 1 {
+            return Err(StoreError::UnsupportedPayloadVersion {
+                kind: "maker offer",
+                version: offer_payload_version,
+            });
+        }
+        let offer: MakerOfferV1 = serde_json::from_str(&offer_json)?;
+        offer.validate()?;
+        let durable_offer_revision = revision_from_sql(offer_revision)?;
+        let durable_expires_at = revision_from_sql(expires_at)?;
+        let durable_reserved_at = revision_from_sql(reserved_at)?;
+        let durable_foreign_units = revision_from_sql(foreign_units)?;
+        let durable_lez_units = u128::from_be_bytes(fixed_bytes(lez_units)?);
+        let durable_offer_commitment = fixed_bytes(offer_commitment)?;
+        let durable_maker_identity = fixed_bytes(maker_chat_identity)?;
+        let durable_taker_identity = fixed_bytes(taker_chat_identity)?;
+        let durable_agreement_commitment = fixed_bytes(staged_agreement_commitment)?;
+        if offer.id() != offer_id
+            || offer.expires_at_unix_seconds() != durable_expires_at
+            || durable_offer_revision != expected_offer_revision
+            || offer_state != "reserved"
+            || negotiation_state != "proposed"
+            || offer_reservation.as_deref() != Some(reservation_id.as_str())
+            || staged_reservation != reservation_id.as_str()
+            || accepted.accepted_at().value() < durable_reserved_at
+            || accepted.accepted_at().value() >= durable_expires_at
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let proposal = ZecMakerAgreementProposalV1::from_wire_at(
+            &maker_proposal_wire,
+            UnixSeconds::new(durable_reserved_at),
+        )?;
+        let transcript = agreement.transcript();
+        if proposal.commitment() != &durable_agreement_commitment
+            || agreement.agreement_commitment() != &durable_agreement_commitment
+            || transcript.offer_commitment() != &durable_offer_commitment
+            || transcript.session_id() != &maker_zec_chat_session_id(reservation_id)
+            || transcript.expires_at_unix_seconds() != durable_expires_at
+            || agreement.application_swap_id() != agreement.coordinator().id().as_str()
+            || agreement.zcash_key(Participant::Maker).serialize() != durable_maker_identity
+            || agreement.zcash_key(Participant::Taker).serialize() != durable_taker_identity
+            || offer.route().pair() != Pair::Zcash
+            || offer.route().direction() != SwapDirection::TakerSellsLez
+            || agreement.zcash_amount_zatoshis() != durable_foreign_units
+            || agreement.lez_amount() != durable_lez_units
+            || offer.quote_foreign_amount(durable_foreign_units)? != durable_lez_units
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+
+        let coordinator = agreement.coordinator();
+        let coordinator_json = serde_json::to_string(coordinator)?;
+        let binding_record = ZecSwapBindingRecordV1::from_binding(agreement.binding());
+        binding_record.validate()?;
+        let binding_json = serde_json::to_string(&binding_record)?;
+        let protected = ProtectedClaimEnvelope::encrypt(
+            preimage,
+            self.claim_key()?,
+            fresh_claim_nonce()?,
+            claim_material_context(accepted, ClaimMaterialPurpose::LocalFirstClaim),
+        )?;
+        transaction.execute(
+            "INSERT INTO swaps (id, schema_version, state_json, revision)
+             VALUES (?1, ?2, ?3, 0)",
+            params![
+                coordinator.id().as_str(),
+                SWAP_PAYLOAD_VERSION,
+                coordinator_json
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO zcash_swap_bindings (swap_id, payload_version, payload_json)
+             VALUES (?1, 1, ?2)",
+            params![coordinator.id().as_str(), binding_json],
+        )?;
+        transaction.execute(
+            "INSERT INTO zec_sdk_agreements (
+                 local_role, swap_id, payload_version, agreement_wire,
+                 accepted_at, accepted_revision, active_revision
+             ) VALUES ('maker', ?1, ?2, ?3, ?4, 0, 0)",
+            params![
+                coordinator.id().as_str(),
+                AGREEMENT_PAYLOAD_VERSION,
+                agreement_wire,
+                sql_u64(accepted.accepted_at().value())?,
+            ],
+        )?;
+        insert_claim_material(
+            &transaction,
+            "maker",
+            coordinator.id(),
+            ClaimMaterialPurpose::LocalFirstClaim,
+            0,
+            &protected,
+        )?;
+        let completed_negotiation = transaction.execute(
+            "UPDATE maker_zec_negotiations
+                SET state = 'completed', final_agreement_wire = ?1,
+                    swap_id = ?2, updated_request_id = ?3
+              WHERE offer_id = ?4 AND reservation_id = ?5 AND state = 'proposed'",
+            params![
+                agreement_wire,
+                coordinator.id().as_str(),
+                request_id.as_str(),
+                offer_id.as_str(),
+                reservation_id.as_str(),
+            ],
+        )?;
+        let consumed_offer = transaction.execute(
+            "UPDATE maker_offers
+                SET state = 'consumed', revision = ?1, swap_id = ?2,
+                    updated_request_id = ?3
+              WHERE offer_id = ?4 AND revision = ?5 AND state = 'reserved'
+                AND reservation_id = ?6",
+            params![
+                sql_u64(committed_revision)?,
+                coordinator.id().as_str(),
+                request_id.as_str(),
+                offer_id.as_str(),
+                sql_u64(expected_offer_revision)?,
+                reservation_id.as_str(),
+            ],
+        )?;
+        if completed_negotiation != 1 || consumed_offer != 1 {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let result_json = serde_json::to_string(&CompleteMakerZecResult {
+            schema_version: 1,
+            offer_revision: committed_revision,
+        })?;
+        transaction.execute(
+            "INSERT INTO maker_application_mutations (
+                 request_id, operation, request_payload_version, request_json, result_json
+             ) VALUES (?1, 'zec_negotiation_complete', 1, ?2, ?3)",
+            params![request_id.as_str(), request_json, result_json],
+        )?;
+        transaction.commit()?;
+        Ok(MakerZecAcceptanceCommit {
+            offer_revision: committed_revision,
+            was_replay: false,
+        })
     }
 
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {

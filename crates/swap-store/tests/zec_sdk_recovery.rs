@@ -7,11 +7,16 @@ use std::{
 };
 
 use async_trait::async_trait;
+use lez_bridge_protocol::RequestId;
 use lez_swap_core::{
-    Chain, ChainPosition, LezUnixMilliseconds, Participant, Phase, SwapDirection, SwapId,
+    Chain, ChainPosition, LezUnixMilliseconds, Pair, Participant, Phase, SwapDirection, SwapId,
     UnixSeconds,
 };
-use lez_swap_store::{SqliteZecRecoveryStore, StoreError};
+use lez_swap_store::{
+    LocalPriceV1, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind,
+    MakerRouteV1, MakerZecNegotiationStatus, MakerZecNegotiationV1, SqliteSwapStore,
+    SqliteZecRecoveryStore, StoreError, maker_zec_chat_session_id,
+};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract, CLAIM_RECORD_SCHEMA_V1,
     CLAIM_RECORD_SCHEMA_V2, CanonicalLezEscrowObservationV1, CanonicalLezEscrowRemovalV1,
@@ -33,12 +38,12 @@ use lez_zec_swap_sdk::{
     RefundEvidenceV1, RefundObservationV1, RefundRecoveryStore, RefundStepV1,
     RefundSubmitOutcomeV1, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
     RevealingClaimTransitionRecordV1, TakerFirstLockObservationV1, TransparentFundingRequest,
-    TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashClaimContextV1, ZcashClaimPort,
-    ZcashFirstLockPort, ZcashFundingContextV1, ZcashFundingObservationV1, ZcashFundingWaitReasonV1,
+    TransparentUtxo, ZcashClaimContextV1, ZcashClaimPort, ZcashFirstLockPort,
+    ZcashFundingContextV1, ZcashFundingObservationV1, ZcashFundingWaitReasonV1,
     ZcashMakerLockObservationPort, ZcashNodeRemovalSnapshot, ZcashNodeSnapshot,
     ZcashObservationEventRecordV1, ZcashRefundPort, ZcashStableTip,
     ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1,
-    ZcashUnspentOutputSnapshotV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecLezTermsV1,
+    ZcashUnspentOutputSnapshotV1, ZecAgreementBodyV1, ZecAgreementDraftV1, ZecLezTermsV1,
     ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
     ZecRefundPlanV1, ZecSdkError, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
     build_funding_transaction, derive_lez_metadata_account_v1,
@@ -4996,6 +5001,281 @@ enum FixtureVariant {
     ChangedTranscript,
 }
 
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
+    let data = TempDir::new().expect("temporary maker application store");
+    let path = data.path().join("maker-chat-completion.sqlite3");
+    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+    let request = |value: &str| RequestId::new(value).expect("bounded request ID");
+    let offer_id = MakerOfferId::new("maker-zec-atomic-offer-001").unwrap();
+    let reservation_id = request("maker-zec-atomic-reservation-001");
+    let completion_request = request("maker-zec-atomic-completion-001");
+    let foreign_units = 100_000_000;
+    let lez_units = 250_000_000;
+    let secret = [0x91; 32];
+    let digest: [u8; 32] = Sha256::digest(secret).into();
+    let delivery_commitment = [0x61; 32];
+    let artifacts = negotiation_artifacts(
+        "maker-zec-atomic-swap-001",
+        SwapDirection::TakerSellsLez,
+        lez_units,
+        digest,
+        maker_zec_chat_session_id(&reservation_id),
+        delivery_commitment,
+        308,
+    );
+
+    let mut application_store = SqliteSwapStore::open(&path).unwrap();
+    application_store
+        .configure_maker_pair(
+            &request("maker-zec-atomic-pair-create-001"),
+            None,
+            &MakerPairConfigurationV1::new(
+                route,
+                false,
+                MakerPriceSourceKind::Local,
+                foreign_units,
+                foreign_units,
+                300,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    application_store
+        .set_local_price(
+            &request("maker-zec-atomic-price-create-001"),
+            None,
+            &LocalPriceV1::new(route, 5, 2).unwrap(),
+        )
+        .unwrap();
+    application_store
+        .configure_maker_pair(
+            &request("maker-zec-atomic-pair-enable-001"),
+            Some(1),
+            &MakerPairConfigurationV1::new(
+                route,
+                true,
+                MakerPriceSourceKind::Local,
+                foreign_units,
+                foreign_units,
+                300,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    application_store
+        .publish_local_offer(
+            &request("maker-zec-atomic-publish-001"),
+            &offer_id,
+            route,
+            8,
+        )
+        .unwrap();
+    let staged = MakerZecNegotiationV1::proposed(
+        reservation_id.clone(),
+        delivery_commitment,
+        artifacts.maker_key,
+        artifacts.taker_key,
+        foreign_units,
+        lez_units,
+        9,
+        artifacts.agreement_commitment,
+        artifacts.proposal_wire.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        application_store
+            .stage_zec_maker_negotiation(
+                &request("maker-zec-atomic-stage-001"),
+                &offer_id,
+                1,
+                &staged,
+            )
+            .unwrap()
+            .revision(),
+        2
+    );
+    drop(application_store);
+
+    let accepted = accept(&artifacts.agreement_wire, Participant::Maker);
+    let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
+        &path,
+        Participant::Maker,
+        claim_key("maker-zec-atomic-key", [0x71; 32]),
+    )
+    .unwrap();
+    let raw = Connection::open(&path).expect("external rollback injector");
+    raw.execute_batch(
+        "CREATE TRIGGER fail_maker_zec_completion
+         BEFORE INSERT ON maker_application_mutations
+         WHEN NEW.operation = 'zec_negotiation_complete'
+         BEGIN SELECT RAISE(ABORT, 'forced maker ZEC completion rollback'); END;",
+    )
+    .unwrap();
+    assert!(matches!(
+        recovery_store.complete_maker_zec_negotiation(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &ClaimPreimage::new(secret),
+        ),
+        Err(StoreError::Sqlite(_))
+    ));
+    let rolled_back: (String, i64, String, i64, i64, i64, i64, i64) = raw
+        .query_row(
+            "SELECT o.state, o.revision, n.state,
+                    n.final_agreement_wire IS NOT NULL, n.swap_id IS NOT NULL,
+                    (SELECT COUNT(*) FROM swaps WHERE id = 'maker-zec-atomic-swap-001'),
+                    (SELECT COUNT(*) FROM zec_sdk_agreements
+                      WHERE local_role = 'maker' AND swap_id = 'maker-zec-atomic-swap-001'),
+                    (SELECT COUNT(*) FROM maker_application_mutations
+                      WHERE operation = 'zec_negotiation_complete')
+               FROM maker_offers o
+               JOIN maker_zec_negotiations n USING (offer_id)
+              WHERE o.offer_id = ?1",
+            params![offer_id.as_str()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        rolled_back,
+        ("reserved".into(), 2, "proposed".into(), 0, 0, 0, 0, 0)
+    );
+    let rolled_back_binding_and_claim: (i64, i64) = raw
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM zcash_swap_bindings
+                  WHERE swap_id = 'maker-zec-atomic-swap-001'),
+                (SELECT COUNT(*) FROM zec_sdk_claim_materials
+                  WHERE local_role = 'maker' AND swap_id = 'maker-zec-atomic-swap-001')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(rolled_back_binding_and_claim, (0, 0));
+
+    raw.execute_batch("DROP TRIGGER fail_maker_zec_completion;")
+        .unwrap();
+    let committed = recovery_store
+        .complete_maker_zec_negotiation(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &ClaimPreimage::new(secret),
+        )
+        .unwrap();
+    assert_eq!(committed.offer_revision(), 3);
+    assert!(!committed.was_replay());
+    let replay = recovery_store
+        .complete_maker_zec_negotiation(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &ClaimPreimage::new(secret),
+        )
+        .unwrap();
+    assert_eq!(replay.offer_revision(), 3);
+    assert!(replay.was_replay());
+    let changed_acceptance = AcceptedZecAgreementV1::accept_wire_at(
+        &artifacts.agreement_wire,
+        UnixSeconds::new(11),
+        Participant::Maker,
+        0,
+    )
+    .unwrap();
+    assert!(matches!(
+        recovery_store.complete_maker_zec_negotiation(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &changed_acceptance,
+            &ClaimPreimage::new(secret),
+        ),
+        Err(StoreError::MakerOfferRequestConflict)
+    ));
+    drop(raw);
+    drop(recovery_store);
+
+    let application_store = SqliteSwapStore::open(&path).unwrap();
+    let negotiation = application_store
+        .load_zec_maker_negotiation(&offer_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(negotiation.status(), MakerZecNegotiationStatus::Completed);
+    assert_eq!(
+        negotiation.final_agreement_wire(),
+        Some(artifacts.agreement_wire.as_slice())
+    );
+    assert_eq!(negotiation.swap_id(), Some("maker-zec-atomic-swap-001"));
+    let offer = &application_store.list_maker_offer_history(1_000).unwrap()[0];
+    assert_eq!(offer.status(), MakerOfferStatus::Consumed);
+    assert_eq!(offer.revision(), 3);
+    assert_eq!(
+        application_store
+            .load(accepted.agreement().coordinator().id())
+            .unwrap(),
+        Some(accepted.agreement().coordinator().clone())
+    );
+    assert_eq!(
+        application_store
+            .revision(accepted.agreement().coordinator().id())
+            .unwrap(),
+        Some(0)
+    );
+    assert_eq!(
+        application_store
+            .load_zcash_binding(accepted.agreement().coordinator().id())
+            .unwrap(),
+        Some(accepted.agreement().binding().clone())
+    );
+    drop(application_store);
+
+    let recovery_store = SqliteZecRecoveryStore::open_claim_capable_existing(
+        &path,
+        Participant::Maker,
+        claim_key("maker-zec-atomic-key", [0x71; 32]),
+    )
+    .unwrap();
+    let durable =
+        RecoveryStore::load_agreement(&recovery_store, accepted.agreement().coordinator().id())
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(durable.agreement_wire(), artifacts.agreement_wire);
+    assert_eq!(durable.accepted_at(), ACCEPTED_AT);
+    assert_eq!(durable.local_participant(), Participant::Maker);
+    assert_eq!(durable.revision(), 0);
+    let recovered_secret = ClaimRecoveryStore::load_claim_material(
+        &recovery_store,
+        accepted.agreement().coordinator().id(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(recovered_secret.expose_secret(), &secret);
+    drop(recovery_store);
+    assert_claim_plaintext_absent(&path, secret);
+}
+
 fn agreement_wire(id: &str, variant: FixtureVariant) -> Vec<u8> {
     agreement_wire_direction(id, variant, SwapDirection::TakerSellsForeign)
 }
@@ -5033,6 +5313,39 @@ fn agreement_wire_direction_with_lez_amount_and_digest(
     lez_amount: u128,
     digest: [u8; 32],
 ) -> Vec<u8> {
+    negotiation_artifacts(
+        id,
+        direction,
+        lez_amount,
+        digest,
+        [5; 32],
+        match variant {
+            FixtureVariant::Local => [6; 32],
+            FixtureVariant::ChangedTranscript => [0x66; 32],
+        },
+        1_000,
+    )
+    .agreement_wire
+}
+
+struct NegotiationArtifacts {
+    proposal_wire: Vec<u8>,
+    agreement_wire: Vec<u8>,
+    agreement_commitment: [u8; 32],
+    maker_key: [u8; 33],
+    taker_key: [u8; 33],
+}
+
+#[allow(clippy::too_many_arguments)]
+fn negotiation_artifacts(
+    id: &str,
+    direction: SwapDirection,
+    lez_amount: u128,
+    digest: [u8; 32],
+    session_id: [u8; 32],
+    offer_commitment: [u8; 32],
+    expires_at_unix_seconds: u64,
+) -> NegotiationArtifacts {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
     let secp = Secp256k1::new();
@@ -5090,27 +5403,34 @@ fn agreement_wire_direction_with_lez_amount_and_digest(
             40,
         ),
         ZecRefundPlanV1::new(100, 116, 160_000, 200),
-        NegotiationTranscriptV1::new(
-            [5; 32],
-            match variant {
-                FixtureVariant::Local => [6; 32],
-                FixtureVariant::ChangedTranscript => [0x66; 32],
-            },
-            1_000,
-        ),
+        NegotiationTranscriptV1::new(session_id, offer_commitment, expires_at_unix_seconds),
     );
     let commitment = body.commitment();
-    ZecAgreementRecordV1::from_parts(
-        ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
-        body,
-        commitment,
-        secp.sign_ecdsa(&Message::from_digest(commitment), &maker_secret)
-            .serialize_compact(),
-        secp.sign_ecdsa(&Message::from_digest(commitment), &taker_secret)
-            .serialize_compact(),
-    )
-    .encode_wire()
-    .expect("bounded fixture wire")
+    let proposal = ZecAgreementDraftV1::new(body)
+        .validate_at(ACCEPTED_AT)
+        .expect("valid unsigned fixture")
+        .with_maker_signature(
+            secp.sign_ecdsa(&Message::from_digest(commitment), &maker_secret)
+                .serialize_compact(),
+        )
+        .expect("valid maker signature");
+    let proposal_wire = proposal.encode_wire().expect("bounded proposal wire");
+    let agreement_wire = proposal
+        .complete_at(
+            secp.sign_ecdsa(&Message::from_digest(commitment), &taker_secret)
+                .serialize_compact(),
+            ACCEPTED_AT,
+        )
+        .expect("valid taker signature")
+        .encode_wire()
+        .expect("bounded fixture wire");
+    NegotiationArtifacts {
+        proposal_wire,
+        agreement_wire,
+        agreement_commitment: commitment,
+        maker_key,
+        taker_key,
+    }
 }
 
 fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
