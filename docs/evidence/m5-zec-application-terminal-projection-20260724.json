@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "kind": "m5_zec_application_terminal_projection_exact_tree_poc",
+  "result": "completed",
+  "certification_scope": "progressive local-functional ZEC application happy path with post-terminal owner projection; not literal M5 or production completion",
+  "run": {
+    "id": "m5appee8424520260724a",
+    "date_utc": "2026-07-24",
+    "git_commit": "ee842459152797b71bdc6915015bfc75615b33f6",
+    "git_commit_pushed_to_origin_main_before_run": true,
+    "working_tree_clean_before_run": true,
+    "direction": "taker_sells_lez",
+    "elapsed_milliseconds_from_provisioning": 33400,
+    "pre_effect_elapsed_milliseconds": 870,
+    "drive_rounds": 63,
+    "same_run_drive_retries": 0,
+    "provision_to_completion_cap_seconds": 49,
+    "lez_delay_margin_seconds": 10
+  },
+  "application": {
+    "swap_id": "m5appee8424520260724a-swap",
+    "offer_id": "m5-offer-1713b2e7478d5beb",
+    "reservation_id": "m5-reserve-1713b2e7478d5beb",
+    "agreement_sha256": "c6a8010ba77e9515bc4cd109379930c631892499f4756bd390a74adafc13a528",
+    "real_processes": {
+      "maker_daemon": true,
+      "maker_cli": true,
+      "taker_cli": true,
+      "maker_reference_actor": true,
+      "taker_reference_actor": true
+    },
+    "daemon_restart_before_effects": {
+      "pair_configuration_retained": true,
+      "price_retained": true,
+      "consumed_offer_retained": true,
+      "swap_history_retained": true
+    },
+    "terminal_projection": {
+      "schema": 14,
+      "source_role": "maker",
+      "source_revision": 4,
+      "offline_full_history_replay": true,
+      "chain_rpc_used_during_import": false,
+      "operator_history_phase": "completed",
+      "operator_status_phase": "completed",
+      "fresh_rpc_history_phase": "Completed",
+      "fresh_rpc_status_phase": "Completed",
+      "owner_socket_removed_after_query": true,
+      "chat_remained_absent": true,
+      "delivery_remained_offline": true,
+      "private_material_disclosed": false
+    }
+  },
+  "roles": {
+    "maker": {
+      "final_phase": "completed",
+      "final_revision": 4,
+      "zcash_funder": true,
+      "lez_revealing_claimant": true
+    },
+    "taker": {
+      "final_phase": "completed",
+      "final_revision": 4,
+      "lez_depositor": true,
+      "zcash_followup_claimant": true
+    }
+  },
+  "atomicity": {
+    "observed_order": [
+      "zcash_funded_and_confirmed",
+      "delivery_and_chat_removed",
+      "lez_revealing_claim_submitted",
+      "zcash_followup_claim_submitted_and_confirmed",
+      "stopped_maker_actor_replayed_offline",
+      "terminal_operator_view_imported_before_owner_readiness"
+    ],
+    "zcash_confirmations_before_lez_reveal": 2,
+    "argument": "The maker revealed the shared preimage on LEZ only after its exact Zcash BIP-199 output had two confirmations. The taker then used that disclosure to spend the same Zcash output. Delivery and Chat were removed before reveal; the independent role stores alone completed settlement. The later terminal projection is a display-only read model imported from an already absorbing actor, uses no chain port, and cannot authorize an effect."
+  },
+  "lez": {
+    "version": "0.2.0",
+    "source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "run_id": "m5lezee8424520260724a",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_hash": "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9",
+    "escrow_elf_sha256": "a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293",
+    "escrow_program_id": "39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec",
+    "deployment_transaction_id": "94a49583a5fd5d6a749fd227f38fe99b002866921a9b77e956623ee6f36e76d3",
+    "deployment_finalized_block_id": 9,
+    "taker_vault_claim_transaction_id": "22deca11a911315bdde54ae34275aaf7968beb4f86e1282b7fe46c44f294ccc4",
+    "maker_vault_claim_transaction_id": "026f0361f39d403e78f23769ec5cc5c25a6c09ea71b1f321767d6322cb55f6d3",
+    "initial_swap_tip": 21,
+    "deterministic_genesis_funds": true
+  },
+  "zcash": {
+    "implementation": "Zebra 5.2.0 Regtest",
+    "source_commit": "62e4a43879c9c86d23ecfcf5a02335eec8a1517d",
+    "run_id": "m5zecee8424520260724a",
+    "initial_tip": 104,
+    "final_tip": 107,
+    "funding_confirmation_block_hashes": [
+      "8b1a6eb38bf066de95fceb0f8046fa64293e2987477314bcc0b37cd991d00ed4",
+      "d2da1409032fd2554aa3067a19f30d574413d517f3a7283dfb9d311266b7819b"
+    ],
+    "followup_claim_confirmation_block_hash": "10f4a99ad6bd13cee7a6b4ac567953523a8b19fd433e4a80f84ecba3f84d3948",
+    "deterministic_regtest_funds": true
+  },
+  "receipt_sha256": {
+    "application_handoff": "0d586802ca1e464052824dd4f58ca1053609dbf216c902e065a985745345e183",
+    "post_lock_cutover": "fd43256f0e02d8977433b642b2ebfe3dc11769580c7f849e606876fea330cfcf",
+    "terminal_projection": "f12397f30980d4935283527628771ca01f9bf11dcdfe6688eb42fb5b0197a1a9",
+    "result": "ab73af089364b0334956b2fa733a0cbc43a5b49ef59c3844ad73332ad0505712"
+  },
+  "binary_sha256": {
+    "maker_daemon": "f0d5d6866056c8afa48d81cbbf938b5e33a68e80c44ae1e91f232fb4ddb7dedd",
+    "maker_cli": "262818ffd1b043c232b545580cd778db47d8306fd5a00a8c4883c38eaf901123",
+    "taker_cli": "58b453e1b3f44d17cca002cbcb3b0beaab6e94238fb7eff2d022cfcc00d55b89",
+    "reference_actor": "bb91797a2012e734fe658b1e9761cbf60eb3f59e577308c3168a074957c50432"
+  },
+  "external_resources": {
+    "public_rpc": false,
+    "faucet": false,
+    "public_funds": false,
+    "public_peer": false,
+    "logos_delivery_chat_core_or_price_service": false,
+    "runtime": [
+      "isolated literal-loopback LEZ v0.2 Bedrock, sequencer, and indexer",
+      "isolated literal-loopback Zebra 5.2.0 Regtest",
+      "deterministic local genesis and Regtest funds"
+    ],
+    "cold_setup_only": [
+      "pre-existing Cargo registry cache",
+      "digest-pinned Docker image inputs",
+      "pinned local source checkouts"
+    ],
+    "runtime_endpoints_were_ephemeral_loopback": true,
+    "endpoint_tuple_lock_held": true
+  },
+  "cleanup": {
+    "exact_lez_containers_absent": true,
+    "exact_zebra_compose_project_absent": true,
+    "exact_lez_network_absent": true,
+    "exact_run_images_absent": true,
+    "exact_rpc_ports_closed": true,
+    "exact_private_temp_roots_absent": true,
+    "all_preexisting_foreign_containers_survived": true
+  },
+  "limitations": [
+    "one local happy-path ZEC direction",
+    "no public deployment or public funds",
+    "not evidence for C-API pricing, systemd or Logos Core lifecycle, other pairs, fuzzing, chaos, or production readiness",
+    "Logos upstream release blockers remain tracked separately and do not invalidate this local-functional PoC"
+  ],
+  "private_material_disclosed": false
+}

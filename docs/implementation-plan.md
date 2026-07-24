@@ -3249,8 +3249,8 @@ separately from runtime dependencies.
   replays; neither path performs a chain call. Focused RED-GREEN persistence,
   injected rollback, invalid/conflicting provenance, the complete swap-store
   suite, maker-process tests, strict Clippy/Rustdoc, shell syntax, formatting,
-  traceability, and diff hygiene are GREEN. The exact isolated-node corridor
-  replay remains the evidence gate.
+  traceability, and diff hygiene are GREEN. Run `m5appee8424520260724a` proved
+  the seam through fresh actual local nodes and a real restarted owner daemon.
 - [x] Exercise the terminal projection through real local nodes before claiming
   its packet. Exact pushed-tree run `m5appaed757f20260724c` reached both actors
   at revision 4, removed Chat/Delivery, offline-replayed the stopped Maker
@@ -3261,10 +3261,14 @@ separately from runtime dependencies.
   real RPC spelling and the contract is now part of the CI quality gate.
 - [ ] Connect the application plane to the stable local LEZ/ZEC corridor and
   retain one exact reproducible PoC. The one-command `TakerSellsLez` composition
-  is exact-tree corridor GREEN. The runner now imports terminal actor history
-  before a fresh owner-only daemon becomes ready, asserts status/history are
-  completed, and proves Chat/Delivery stay absent; rerun this on fresh isolated
-  nodes and retain the exact pushed-tree packet before checking the gate.
+  is exact-tree corridor GREEN. Exact pushed-tree run
+  `m5appee8424520260724a` completed in 33.400 seconds with zero same-run retry,
+  both actors at revision 4, Zebra 104 to 107, post-first-lock transport
+  removal, fresh owner history/status `Completed`, no public resources, and
+  exact scoped cleanup. The secret-safe packet is
+  `docs/evidence/m5-zec-application-terminal-projection-20260724.json`. Push the
+  packet and repeat once from that exact packet-bearing tree before checking
+  this repository-certification gate.
 - [ ] Add the standalone hardened systemd unit/install rehearsal and the tested
   Logos Core lifecycle adapter contract.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent

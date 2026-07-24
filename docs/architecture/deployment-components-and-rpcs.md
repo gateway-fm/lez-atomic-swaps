@@ -692,9 +692,9 @@ revalidation, propagation, and finality evidence before release.
 ### M5 progressive local ZEC composition
 
 The opt-in runner narrows the first application PoC to one already stable
-`TakerSellsLez` corridor. The pre-terminal topology has exact pushed-tree local-
-node evidence; the schema-v14 terminal import path is implementation-GREEN and
-awaits the refreshed exact-node replay.
+`TakerSellsLez` corridor. Exact pushed-tree run `m5appee8424520260724a`
+completed the schema-v14 terminal import and fresh owner-daemon history/status
+through isolated local nodes; only the packet-bearing tree replay remains.
 
 ```mermaid
 flowchart TB

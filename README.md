@@ -33,25 +33,25 @@ other fields, both private-key identities, the funder role and hash preimage
 before emitting fresh isolated actor state. The opt-in M5 runner now composes
 that handoff with the stable LEZ/ZEC actor corridor, retains the restarted
 daemon through the first confirmed Zcash lock, and then removes Chat and
-Delivery before settlement. Exact pushed-tree run `m5app-71dd9cc-20260724a`
-completed that actual-node path in 26.780 protocol seconds: both actors reached
-revision 4, Zebra advanced exactly 107 to 110, scoped cleanup passed, and no
-public RPC or faucet participated. See the
-[secret-safe evidence packet](docs/evidence/m5-zec-application-corridor-20260724.json).
-The next terminal-history seam is implementation-GREEN and exact-run pending:
-schema v14 keeps a separate display-only terminal projection, replays the
-stopped Maker actor's complete durable history with unit chain ports, binds the
-result to the exact countersigned Chat agreement, and atomically imports it
-before a fresh owner-only daemon becomes ready. `status` and `history` overlay
-that record, while ordinary lifecycle loads remain unchanged and can never gain
-effect authority from an operator view. The real corridor now asserts the fresh
-daemon reports `Completed` while Chat and Delivery remain absent. Exact pushed-
-tree run `m5appaed757f20260724c` reached both terminal actors and returned that
-state through real owner `history`/`status`, but a lowercase harness comparison
-correctly withheld the final receipt. The two-line fix now has a RED-GREEN CI
-contract. Full swap-store, maker-process, strict Clippy, and Rustdoc gates are
-GREEN; one fresh exact replay remains. ETA: 0.5–1.5 focused hours, plus 2–4
-hours only for cold LEZ/Zebra rebuilds. C-API pricing, systemd/Core, fuzzing,
+Delivery before settlement. Schema v14 then offline-replays the stopped Maker
+actor with unit chain ports, binds its terminal coordinator to the exact Chat
+agreement, and imports a display-only projection before a fresh owner-only
+daemon becomes ready. Owner `status` and `history` overlay that record while
+ordinary lifecycle loads remain unchanged and cannot gain effect authority.
+
+Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
+33.400 protocol seconds with no retry: both actors reached revision 4, Zebra
+advanced exactly 104 to 107, Chat and Delivery stayed absent after the first
+lock, a fresh daemon reported `Completed`, exact scoped cleanup passed, and no
+public RPC or faucet participated. See the new
+[terminal-projection evidence packet](docs/evidence/m5-zec-application-terminal-projection-20260724.json)
+and the preceding
+[corridor checkpoint](docs/evidence/m5-zec-application-corridor-20260724.json).
+The packet was produced on pushed commit `ee84245`; one fresh replay from the
+packet-bearing pushed commit remains the repository-certification gate. ETA:
+0.5–1.5 focused hours, plus 2–4 hours only for cold LEZ/Zebra rebuilds. Full
+swap-store, maker-process, strict Clippy, and Rustdoc gates are GREEN. C-API
+pricing, systemd/Core, fuzzing,
 other pairs, and hardening remain literal M5 work outside that PoC ETA.
 
 Build and repeat the current real process boundary with:
