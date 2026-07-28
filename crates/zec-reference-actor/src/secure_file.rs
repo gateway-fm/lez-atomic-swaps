@@ -1,10 +1,12 @@
 use std::{
     fs,
     fs::File,
-    io::Read as _,
+    io::{Read as _, Seek as _, SeekFrom},
     path::{Component, Path, PathBuf},
 };
 
+use lez_swap_store::MAKER_ACTOR_CONFIG_FD;
+use rustix::fs::{SealFlags, fcntl_get_seals};
 use zeroize::Zeroizing;
 
 #[derive(Clone, Default, Eq, PartialEq)]
@@ -144,6 +146,72 @@ pub(crate) fn read_bounded_identified(
         return Err(SecureFileError::Unsafe);
     }
     Ok((bytes, opened_location))
+}
+
+pub(crate) fn read_bounded_sealed_memfd(
+    fd: i32,
+    maximum: usize,
+) -> Result<(Zeroizing<Vec<u8>>, FileLocation), SecureFileError> {
+    if fd != MAKER_ACTOR_CONFIG_FD {
+        return Err(SecureFileError::Unsafe);
+    }
+    let descriptor_path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+    let mut file = File::open(&descriptor_path).map_err(|_| SecureFileError::Unavailable)?;
+    let before = file.metadata().map_err(|_| SecureFileError::Unavailable)?;
+    validate_sealed_memfd_metadata(&before, maximum)?;
+    validate_seals(&file)?;
+    let expected = FileLocation::existing(descriptor_path, &before);
+
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| SecureFileError::Unavailable)?;
+    let maximum_u64 = u64::try_from(maximum).map_err(|_| SecureFileError::Unsafe)?;
+    let mut bytes = Zeroizing::new(Vec::with_capacity(maximum.saturating_add(1)));
+    file.by_ref()
+        .take(maximum_u64.saturating_add(1))
+        .read_to_end(bytes.as_mut())
+        .map_err(|_| SecureFileError::Unavailable)?;
+
+    let after = file.metadata().map_err(|_| SecureFileError::Unavailable)?;
+    validate_sealed_memfd_metadata(&after, maximum)?;
+    validate_seals(&file)?;
+    let current = FileLocation::existing(expected.canonical.clone(), &after);
+    if !expected.unchanged(&current)
+        || bytes.is_empty()
+        || bytes.len() > maximum
+        || u64::try_from(bytes.len()).map_err(|_| SecureFileError::Unsafe)? != before.len()
+    {
+        return Err(SecureFileError::Unsafe);
+    }
+    Ok((bytes, expected))
+}
+
+fn validate_sealed_memfd_metadata(
+    metadata: &fs::Metadata,
+    maximum: usize,
+) -> Result<(), SecureFileError> {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    let maximum = u64::try_from(maximum).map_err(|_| SecureFileError::Unsafe)?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.nlink() != 0
+        || metadata.len() == 0
+        || metadata.len() > maximum
+    {
+        return Err(SecureFileError::Unsafe);
+    }
+    Ok(())
+}
+
+fn validate_seals(file: &File) -> Result<(), SecureFileError> {
+    let required = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
+    let actual = fcntl_get_seals(file).map_err(|_| SecureFileError::Unsafe)?;
+    if actual.contains(required) {
+        Ok(())
+    } else {
+        Err(SecureFileError::Unsafe)
+    }
 }
 
 pub(crate) fn canonical_location(path: &Path) -> Result<FileLocation, SecureFileError> {

@@ -5,7 +5,8 @@ compile_error!("zec-reference-actor requires Unix file permissions and inode ide
 
 use std::{fmt, path::PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
+use lez_swap_store::MAKER_ACTOR_CONFIG_FD;
 
 mod command;
 mod config;
@@ -43,14 +44,31 @@ pub enum ActorCommand {
 
 /// Process arguments for the one-shot actor.
 #[derive(Clone, Parser)]
-#[command(about = "One-shot role-fixed LEZ/Zcash reference actor")]
+#[command(
+    about = "One-shot role-fixed LEZ/Zcash reference actor",
+    group(ArgGroup::new("config_source").required(true).multiple(false).args(["config", "config_fd"]))
+)]
 pub struct ActorCli {
     /// Owner-private, bounded JSON configuration.
     #[arg(long, value_name = "PRIVATE_JSON")]
-    pub config: PathBuf,
+    pub config: Option<PathBuf>,
+    /// Fixed inherited descriptor containing one anonymous, fully sealed configuration.
+    #[arg(long, value_name = "FD", value_parser = parse_config_fd)]
+    pub config_fd: Option<i32>,
     /// Single lifecycle action; the process exits after it completes.
     #[command(subcommand)]
     pub command: ActorCommand,
+}
+
+fn parse_config_fd(value: &str) -> Result<i32, String> {
+    let fd = value
+        .parse::<i32>()
+        .map_err(|_| "invalid config descriptor".to_owned())?;
+    if fd == MAKER_ACTOR_CONFIG_FD {
+        Ok(fd)
+    } else {
+        Err(format!("config descriptor must be {MAKER_ACTOR_CONFIG_FD}"))
+    }
 }
 
 impl fmt::Debug for ActorCli {
@@ -58,6 +76,7 @@ impl fmt::Debug for ActorCli {
         formatter
             .debug_struct("ActorCli")
             .field("config", &"[REDACTED]")
+            .field("config_fd", &"[REDACTED]")
             .field("command", &self.command)
             .finish()
     }

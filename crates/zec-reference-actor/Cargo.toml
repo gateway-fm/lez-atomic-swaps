@@ -26,6 +26,7 @@ lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
 lez-zebra-node-adapter = { version = "0.1.0", path = "../zebra-node-adapter" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
+rustix = { version = "1.1.4", features = ["fs", "process"] }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
@@ -39,4 +40,5 @@ zcash_transparent = { version = "=0.8.0", default-features = false, features = [
 zeroize = "1.9.0"
 
 [dev-dependencies]
+command-fds = "=0.3.3"
 tempfile = "3.27.0"

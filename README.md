@@ -95,9 +95,16 @@ material, actor row, and replay record together. Exact/delayed replay preserves
 one row, changed manifest replay conflicts, and a missing scheduler row fails
 closed. The running daemon still needs maker-only no-clobber artifact
 provisioning before it can call that mandatory scheduled-acceptance API.
-Pair-specific proof that config state equals the manifest state, real actor
-`--config-fd` support, the supervisor, and actual-node crash composition also
-remain. This checkpoint does not increase the M5 score.
+The real ZEC actor now accepts exactly one of its legacy private path or fixed
+inherited config FD 196. It synchronously requires an anonymous, euid-owned,
+mode-0600, unlinked memfd with all immutable seals before Tokio exists, then
+reuses the same strict schema and path-binding validation. A black-box binary
+test replaces the deployment config after sealing and proves the actor reads
+only the inherited snapshot; an ordinary file, incomplete seals, or any other
+FD number fails without actor output. BTC agreement-commitment parity,
+pair-specific manifest comparison in the supervisor, daemon provisioning,
+the supervisor itself, and actual-node crash composition remain. This
+checkpoint does not increase the M5 score.
 
 Build and repeat the current real process boundary with:
 

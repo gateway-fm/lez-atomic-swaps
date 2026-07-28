@@ -1,12 +1,19 @@
 use std::{
+    ffi::CString,
     fs,
+    fs::File,
+    io::Write as _,
+    os::fd::OwnedFd,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use clap::Parser as _;
+use command_fds::{CommandFdExt as _, FdMapping};
 use lez_swap_core::Participant;
-use lez_swap_store::SqliteZecRecoveryStore;
+use lez_swap_store::{MAKER_ACTOR_CONFIG_FD, SqliteZecRecoveryStore};
 use lez_zec_swap_sdk::ProtectedClaimKey;
+use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
@@ -31,6 +38,26 @@ fn cli_exposes_exact_one_shot_commands_and_requires_private_config() {
         assert_eq!(cli.command, expected);
     }
     assert!(ActorCli::try_parse_from(["actor", "activate"]).is_err());
+    assert!(
+        ActorCli::try_parse_from(["actor", "--config-fd", "196", "status"]).is_ok(),
+        "the supervisor passes only inherited sealed config FD 196"
+    );
+    assert!(
+        ActorCli::try_parse_from(["actor", "--config-fd", "195", "status"]).is_err(),
+        "the actor must reject every descriptor except the fixed capability slot"
+    );
+    assert!(
+        ActorCli::try_parse_from([
+            "actor",
+            "--config",
+            "actor.json",
+            "--config-fd",
+            "196",
+            "status"
+        ])
+        .is_err(),
+        "path and inherited descriptor are mutually exclusive"
+    );
 }
 
 #[tokio::test]
@@ -789,6 +816,85 @@ fn late_public_agreement_cannot_alias_new_role_state_or_bridge_journal() {
             "late agreement alias with {mutable_name} must fail"
         );
     }
+}
+
+#[test]
+fn real_binary_reads_only_the_fully_sealed_inherited_config() {
+    let fixture = PairFixture::new();
+    let config_bytes = fs::read(&fixture.maker_config).expect("read private config");
+    let config_fd = fully_sealed_config(&config_bytes);
+    private_bytes(&fixture.maker_config, b"replaced deployment path");
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_zec-reference-actor"));
+    command.args(["--config-fd", "196", "status"]);
+    command
+        .fd_mappings(vec![FdMapping {
+            parent_fd: config_fd,
+            child_fd: MAKER_ACTOR_CONFIG_FD,
+        }])
+        .expect("map sealed config descriptor");
+    let output = command.output().expect("run sealed-config actor");
+    assert!(
+        output.status.success(),
+        "sealed actor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let response: Value = serde_json::from_slice(&output.stdout).expect("one JSON response");
+    assert_eq!(response["role"], "maker");
+    assert_eq!(response["state"], "not_activated");
+
+    let incomplete = config_memfd(
+        &config_bytes,
+        SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW,
+    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_zec-reference-actor"));
+    command.args(["--config-fd", "196", "status"]);
+    command
+        .fd_mappings(vec![FdMapping {
+            parent_fd: incomplete,
+            child_fd: MAKER_ACTOR_CONFIG_FD,
+        }])
+        .expect("map incompletely sealed descriptor");
+    let rejected = command.output().expect("run mutable-config actor");
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    assert_eq!(rejected.stderr, b"actor configuration is unavailable\n");
+
+    let ordinary = File::open(&fixture.maker_config).expect("open ordinary config file");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_zec-reference-actor"));
+    command.args(["--config-fd", "196", "status"]);
+    command
+        .fd_mappings(vec![FdMapping {
+            parent_fd: ordinary.into(),
+            child_fd: MAKER_ACTOR_CONFIG_FD,
+        }])
+        .expect("map ordinary descriptor");
+    let rejected = command.output().expect("run unsafe-config actor");
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    assert_eq!(rejected.stderr, b"actor configuration is unavailable\n");
+}
+
+fn fully_sealed_config(bytes: &[u8]) -> OwnedFd {
+    config_memfd(
+        bytes,
+        SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+    )
+}
+
+fn config_memfd(bytes: &[u8], seals: SealFlags) -> OwnedFd {
+    let name = CString::new("lez-zec-actor-test-config").expect("memfd name");
+    let descriptor = memfd_create(
+        name.as_c_str(),
+        MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+    )
+    .expect("create config memfd");
+    let mut file = File::from(descriptor);
+    fchmod(&file, Mode::RUSR | Mode::WUSR).expect("set config memfd mode");
+    file.write_all(bytes).expect("write config memfd");
+    fcntl_add_seals(&file, seals).expect("seal config memfd");
+    file.into()
 }
 
 #[test]

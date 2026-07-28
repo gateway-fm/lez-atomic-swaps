@@ -4487,6 +4487,49 @@ need crates.io and a C toolchain. The production module and immutable upstream
 ABI remain LOGOS-021; that release dependency does not block this local M5
 functional certification.
 
+## Flow 1F: repeat the ZEC sealed-config actor boundary
+
+This component check runs the real `zec-reference-actor` binary exactly as the
+M5 supervisor will run it, with its private config inherited on fixed FD 196.
+It does not claim that the daemon supervisor is complete.
+
+```sh
+cargo test --locked -p zec-reference-actor --test actor_boundary \
+  real_binary_reads_only_the_fully_sealed_inherited_config \
+  -- --exact --nocapture
+```
+
+Expected result: exactly one passing test. The harness creates an owner-private
+anonymous memfd, writes a valid role config, applies all four immutable seals,
+maps it to child FD 196 with pinned `command-fds` 0.3.3, replaces the original
+deployment path, and invokes the public actor's offline `status` command. The
+returned role and not-activated state must come from the sealed snapshot. The
+same test then proves that a memfd missing the write seal and an ordinary linked
+file both exit nonzero, emit no JSON, and expose only the generic configuration
+failure. The CLI suite separately rejects any descriptor other than 196 and
+rejects supplying both a path and descriptor.
+
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Test as Boundary harness
+    participant FD as Sealed config FD 196
+    participant Actor as Real ZEC actor
+    Operator->>Test: Run one exact Cargo test
+    Test->>FD: Write config and apply immutable seals
+    Test->>Actor: Exec status with inherited FD 196
+    Actor->>FD: Validate metadata seals and bytes
+    Actor-->>Test: Role-fixed offline status
+    Test->>Actor: Retry with incomplete seal and ordinary file
+    Actor-->>Test: Generic failure and no JSON
+    Test-->>Operator: One passing adversarial test
+```
+
+Runtime external resources are none: the flow uses only the local binary,
+temporary files, SQLite fixture state, and Linux memfd/seal/process primitives.
+It contacts no RPC, node, Docker service, faucet, DNS service, or public network.
+Cold compilation may need the pinned Cargo registry dependencies.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

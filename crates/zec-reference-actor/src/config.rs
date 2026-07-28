@@ -20,6 +20,7 @@ use zeroize::Zeroizing;
 
 use crate::secure_file::{
     FileLocation, FilePrivacy, SecureFileError, canonical_location, read_bounded_identified,
+    read_bounded_sealed_memfd,
 };
 
 const CONFIG_SCHEMA_VERSION: u16 = 3;
@@ -585,6 +586,25 @@ impl ActorConfig {
         let (bytes, source_identity) =
             read_bounded_identified(path, MAX_CONFIG_BYTES, FilePrivacy::OwnerPrivate)
                 .map_err(map_config_file_error)?;
+        Self::from_identified_bytes(&bytes, source_identity)
+    }
+
+    /// Loads one anonymous, immutable config from the fixed inherited descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a missing/wrong descriptor, linked or mutable file, incomplete seals,
+    /// unsafe owner/mode/size, malformed JSON, or invalid/aliased path bindings.
+    pub fn load_private_fd(fd: i32) -> Result<Self, ActorConfigError> {
+        let (bytes, source_identity) =
+            read_bounded_sealed_memfd(fd, MAX_CONFIG_BYTES).map_err(map_config_file_error)?;
+        Self::from_identified_bytes(&bytes, source_identity)
+    }
+
+    fn from_identified_bytes(
+        bytes: &Zeroizing<Vec<u8>>,
+        source_identity: FileLocation,
+    ) -> Result<Self, ActorConfigError> {
         let raw: RawActorConfig = serde_json::from_slice(bytes.as_slice())
             .map_err(|_| ActorConfigError::InvalidConfiguration)?;
         let mut config = Self {

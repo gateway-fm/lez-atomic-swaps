@@ -3329,9 +3329,20 @@ separately from runtime dependencies.
   This closes the store primitive, not the running handoff: the current daemon
   still calls the legacy unscheduled entry point.
 
+  The ZEC config-capability RED/GREEN slice now changes the real one-shot actor,
+  not a fixture. Its CLI requires exactly one private path or inherited FD 196
+  and rejects every other descriptor. The inherited route synchronously checks
+  an anonymous euid-owned mode-0600 zero-link regular memfd, the 64-KiB bound,
+  and all four immutable seals before Tokio exists, then reuses the existing
+  strict schema/path/role/agreement validation. The black-box binary test
+  replaces the deployment path after sealing and proves the snapshot wins;
+  incomplete seals and an ordinary file fail with no actor JSON. Full actor
+  tests, strict Clippy, warning-free Rustdoc, formatting, and diff hygiene are
+  GREEN. No chain RPC, node, Docker, faucet, or network participates.
+
   Next, add a maker-only no-clobber ZEC actor provisioner and route Chat
-  completion through the mandatory scheduled API; add real BTC/ZEC
-  `--config-fd` loading plus pair-specific config/state/agreement validation;
+  completion through the mandatory scheduled API; add commitment-bound BTC
+  `--config-fd` loading and pair-specific config/state/agreement validation;
   explicitly permit and rehearse `memfd_create` under the hardened systemd unit;
   implement the bounded pair-neutral supervisor; route existing M3 overlap and
   M5 ZEC application flows through it; then prove one exact SIGKILL/restart while
@@ -3356,7 +3367,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 18 to 33 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 17 to 31 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 
