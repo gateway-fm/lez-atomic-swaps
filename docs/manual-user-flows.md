@@ -4086,7 +4086,18 @@ no-clobber publication.
 
 The focused command must report exactly one passing test. It starts the real
 maker daemon with separate owner-control and taker-facing Chat Unix sockets,
-configures a ZEC route and exact 5:2 local price through owner RPC, publishes a
+then exercises two recoverable outages. First it changes Delivery from mode
+`0700` to insecure mode `0755`: the real maker command fails visibly after one
+durable offer commit, health returns `ready: true`, `degraded: true`, Delivery
+`unavailable`, and Chat `available`; restoring mode `0700` and repeating the
+same command republishes exactly one envelope without a second row. Later it
+stages one proposal, renames the Chat socket, observes Chat `unavailable`, and
+proves a real taker attempt creates no agreement file. It restores the socket,
+restarts the daemon, and repeats the same taker command; proposal replay and one
+atomic completion succeed, followed by an exact completion/file replay.
+
+The same process journey also configures a ZEC route and exact 5:2 local price
+through owner RPC, publishes a
 signed expiring offer through the daemon-owned Delivery directory, and launches the actual `lez-taker` process as a separate key-pinned user. The
 fixture prepares a canonical unsigned draft
 bound to the selected envelope, reservation-derived session, exact quote, and
@@ -4097,12 +4108,12 @@ The proposal result must be offer revision 2 and 25,000 LEZ atomic units for
 with its own raw mode-0600 key, no-clobber persists the dual-signed wire, then
 repeats the identical command after crossing a wall-clock second, and receives the byte-identical
 proposal. The daemon atomically returns revision 3 and
-the agreement-derived swap ID; a second delayed request exact-replays. After a
-forced daemon stop, SQLite must reopen with Completed negotiation, exact final
+the agreement-derived swap ID; a second delayed request exact-replays. After a daemon restart, SQLite must reopen with Completed negotiation, exact final
 wire, consumed offer, coordinator, binding, and no plaintext preimage. The same run proves the owner socket rejects the
 Chat method and the Chat socket rejects owner-control methods.
 
-All resources are created below one private temporary directory: two mode-0600
+All resources, including the temporary offline Chat path, are created below one
+private temporary directory: two mode-0600
 Unix sockets, one hex Delivery/agreement key, raw 32-byte claim-recovery and
 preimage files, SQLite, and the signed Delivery mailbox. No LEZ or Zebra node, chain RPC, Docker, faucet, public funds,
 DNS, public price source, public finality source, or Logos service is used.

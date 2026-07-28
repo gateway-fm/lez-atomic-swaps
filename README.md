@@ -70,8 +70,13 @@ into Delivery. A black-box daemon/maker/taker journey proves replay can recreate
 a deleted advertisement after the module fails without contacting it, while a
 fresh request fails closed and restart discovery reconciles from SQLite. See
 [Flow 1E](docs/manual-user-flows.md#flow-1e-repeat-the-logos-price-daemon-and-signed-offer-path).
-Completed maker/taker lifecycle commands, other-pair application composition,
-outage behavior, and hardening remain.
+The real ZEC process journey now also makes Delivery unavailable after startup,
+reports `ready: true` plus explicit degraded dependency state, repairs and
+exact-replays the one durable offer, removes Chat after proposal staging, proves
+no final agreement appears, and completes exactly once after daemon restart.
+Reserved or consumed unexpired envelopes remain projected only so the winning
+deterministic retry can resume. Completed maker/taker lifecycle commands,
+other-pair application composition, and hardening remain.
 
 Build and repeat the current real process boundary with:
 
@@ -80,8 +85,8 @@ cargo build --locked -p lez-maker-node --bins
 cargo test --locked -p lez-maker-node --test operator_journey -- --nocapture
 cargo test --locked --offline -p lez-maker-node --test zec_chat_process -- --nocapture
 cargo test --locked -p lez-logos-price-c-api --test worker_process
-```
 cargo test --locked -p lez-maker-node --test logos_price_offer_process -- --nocapture
+```
 
 The complete manual configure, price, quote, publish, restart, inspect, and
 withdraw flow is [Flow 1 in the operator guide](docs/manual-user-flows.md#flow-1-maker-operator-cli-and-daemon-restart).

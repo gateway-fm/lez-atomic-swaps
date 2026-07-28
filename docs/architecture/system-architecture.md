@@ -715,8 +715,8 @@ flowchart TB
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
-        DEL["Run-local Delivery-compatible adapter<br/>daemon publication and taker discovery GREEN"]
-        CHAT["Run-local Chat-compatible adapter<br/>disjoint process proposal, countersign and<br/>atomic final acceptance GREEN"]
+        DEL["Run-local Delivery-compatible adapter<br/>degraded health and exact retry GREEN"]
+        CHAT["Run-local Chat-compatible adapter<br/>outage, restart replay and atomic completion GREEN"]
     end
 
     subgraph Nodes["Actor-selected node boundary"]

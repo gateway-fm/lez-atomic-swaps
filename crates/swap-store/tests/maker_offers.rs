@@ -444,6 +444,14 @@ fn reservation_is_one_winner_and_consumption_survives_offer_expiry() {
             actual: 2
         })
     ));
+    let retryable = store.list_retryable_maker_offers(399).unwrap();
+    assert_eq!(retryable.len(), 1);
+    assert_eq!(retryable[0].status(), MakerOfferStatus::Reserved);
+    assert_eq!(retryable[0].reservation_id(), Some(&winning_reservation));
+    assert!(
+        store.list_retryable_maker_offers(400).unwrap().is_empty(),
+        "an expired reservation must not remain in Delivery"
+    );
     let failed_swap = bitcoin_swap("offer-swap-wrong-001");
     assert!(matches!(
         store.consume_maker_offer(
@@ -473,6 +481,10 @@ fn reservation_is_one_winner_and_consumption_survives_offer_expiry() {
         .unwrap();
     assert_eq!(consumed.revision(), 3);
     assert_eq!(store.load(swap.id()).unwrap(), Some(swap));
+    let retryable_consumed = store.list_retryable_maker_offers(399).unwrap();
+    assert_eq!(retryable_consumed.len(), 1);
+    assert_eq!(retryable_consumed[0].status(), MakerOfferStatus::Consumed);
+    assert!(store.list_retryable_maker_offers(400).unwrap().is_empty());
 
     let replay_after_later_transition = store
         .reserve_maker_offer(

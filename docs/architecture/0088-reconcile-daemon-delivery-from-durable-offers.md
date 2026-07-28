@@ -1,6 +1,6 @@
 # ADR 0088: Reconcile daemon Delivery from durable offers
 
-Status: Accepted and process component GREEN (2026-07-24)
+Status: Accepted and process component GREEN (2026-07-24); retry projection amended by ADR 0098
 
 ## Context
 
@@ -25,7 +25,8 @@ replay verifies an existing envelope instead of replacing it. Withdrawal commits
 the offer state first and then removes only the authenticated matching file.
 
 Before readiness on every restart, the daemon reconciles the mailbox to
-SQLite's exact active, unexpired set: missing active offers are republished,
+SQLite's exact unexpired active, reserved, or consumed retry set: missing
+retryable offers are republished,
 byte-equivalent files are retained, and authenticated stale files are removed.
 Malformed, wrong-key, conflicting, oversized, or insecure entries fail startup
 closed. Readiness is published only after database open, key validation,
@@ -41,7 +42,7 @@ flowchart LR
     Daemon -->|signed immutable envelopes| Delivery[(Run-local Delivery)]
     Key[Mode 0600 signing key file] --> Daemon
     Taker[lez-taker process] -->|key-pinned discovery| Delivery
-    Store -->|active set on restart| Daemon
+    Store -->|retryable set on restart| Daemon
 ```
 
 ## Publication, crash recovery, and withdrawal flow
@@ -67,8 +68,8 @@ sequenceDiagram
     T->>T: Verify key, signature, canonical offer, route, TTL
 
     Note over D,M: Crash may occur after SQLite commit
-    D->>S: Restart and load active unexpired set
-    D->>M: Reconcile exact active set
+    D->>S: Restart and load retryable unexpired set
+    D->>M: Reconcile exact retryable set
     M-->>D: Republished, retained, or stale files removed
     D-->>O: Publish readiness file
 

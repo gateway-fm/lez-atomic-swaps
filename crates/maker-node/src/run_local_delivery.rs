@@ -128,6 +128,9 @@ pub enum RunLocalDeliveryError {
     /// A file with the same ID authenticates different immutable terms.
     #[error("Delivery offer ID already authenticates different terms")]
     ConflictingOffer,
+    /// The removable projection does not exactly match the durable retryable-offer set.
+    #[error("Delivery projection differs from the durable retryable-offer set")]
+    ProjectionDrift,
     /// The directory exceeded its explicit discovery bound.
     #[error("Delivery directory exceeds the {MAXIMUM_DISCOVERY_ENTRIES}-entry bound")]
     TooManyEntries,
@@ -295,9 +298,59 @@ impl RunLocalDelivery {
         Ok(())
     }
 
-    /// Reconciles the removable mailbox to the store's exact active-offer set.
+    /// Verifies the removable mailbox against the exact durable retryable-offer set.
     ///
-    /// Exact active files are retained, missing active files are republished, and
+    /// This read-only check never repairs, signs, removes, or creates a projection.
+    /// It is suitable for dependency health reporting while `SQLite` remains the
+    /// authoritative application state.
+    ///
+    /// # Errors
+    ///
+    /// Rejects insecure or missing storage, invalid/tampered files, unexpected
+    /// advertisements, missing retryable offers, excess entries, or I/O.
+    pub fn projection_health(
+        &self,
+        active: &[MakerOfferV1],
+        now_unix_seconds: u64,
+    ) -> Result<(), RunLocalDeliveryError> {
+        validate_private_directory(&self.directory)?;
+        let mut projected_entries = 0_usize;
+        for entry in fs::read_dir(&self.directory)? {
+            let path = entry?.path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(OFFER_FILE_SUFFIX))
+            {
+                projected_entries += 1;
+                if projected_entries > MAXIMUM_DISCOVERY_ENTRIES {
+                    return Err(RunLocalDeliveryError::TooManyEntries);
+                }
+            }
+        }
+        if projected_entries != active.len() {
+            return Err(RunLocalDeliveryError::ProjectionDrift);
+        }
+        for expected in active {
+            expected.validate()?;
+            if now_unix_seconds < expected.created_at_unix_seconds()
+                || now_unix_seconds >= expected.expires_at_unix_seconds()
+            {
+                return Err(RunLocalDeliveryError::ProjectionDrift);
+            }
+            let encoded =
+                read_regular_offer_file(&offer_path(&self.directory, expected.id().as_str()))?;
+            let authenticated = verify_envelope(&encoded, &self.expected_maker)?;
+            if authenticated.offer() != expected {
+                return Err(RunLocalDeliveryError::ProjectionDrift);
+            }
+        }
+        Ok(())
+    }
+
+    /// Reconciles the removable mailbox to the caller's exact retained-offer set.
+    ///
+    /// Exact retained files are kept and missing retained files are republished;
     /// authenticated files absent from `active` are removed. Any malformed or
     /// wrong-key entry fails startup closed instead of being silently deleted.
     ///

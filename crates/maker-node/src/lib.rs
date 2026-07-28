@@ -18,7 +18,9 @@ pub use run_local_delivery::{
 };
 
 use std::{
-    path::Path,
+    fs,
+    os::unix::fs::{FileTypeExt as _, MetadataExt as _},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -56,6 +58,7 @@ pub struct MakerRpc {
     store: Arc<Mutex<SqliteSwapStore>>,
     logos_price_source: Option<Arc<ProcessLogosPriceSource>>,
     delivery: Option<Arc<RunLocalDelivery>>,
+    chat_socket: Option<Arc<PathBuf>>,
     chat_signing_key: Option<Arc<SecretKey>>,
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
     maker_claim_preimage: Option<Arc<ClaimPreimage>>,
@@ -71,6 +74,7 @@ impl std::fmt::Debug for MakerRpc {
                 &self.logos_price_source.as_ref().map(|_| "configured"),
             )
             .field("delivery", &self.delivery)
+            .field("chat_socket", &self.chat_socket)
             .field(
                 "chat_signing_key",
                 &self.chat_signing_key.as_ref().map(|_| "[REDACTED]"),
@@ -95,6 +99,7 @@ impl MakerRpc {
             store: Arc::new(Mutex::new(store)),
             logos_price_source: None,
             delivery: None,
+            chat_socket: None,
             chat_signing_key: None,
             zec_completion_store: None,
             maker_claim_preimage: None,
@@ -114,6 +119,7 @@ impl MakerRpc {
             store: Arc::new(Mutex::new(store)),
             logos_price_source: None,
             delivery: Some(Arc::new(delivery)),
+            chat_socket: None,
             chat_signing_key: Some(Arc::new(chat_signing_key)),
             zec_completion_store: Some(Arc::new(zec_completion_store)),
             maker_claim_preimage: Some(Arc::new(maker_claim_preimage)),
@@ -124,6 +130,13 @@ impl MakerRpc {
     #[must_use]
     pub fn with_logos_price_source(mut self, source: ProcessLogosPriceSource) -> Self {
         self.logos_price_source = Some(Arc::new(source));
+        self
+    }
+
+    /// Attaches the taker-facing Chat endpoint for read-only dependency health.
+    #[must_use]
+    pub fn with_chat_socket(mut self, socket: PathBuf) -> Self {
+        self.chat_socket = Some(Arc::new(socket));
         self
     }
 }
@@ -710,13 +723,32 @@ pub struct ListRequest {}
 pub struct MakerHealthV1 {
     schema_version: u16,
     ready: bool,
+    degraded: bool,
+    delivery: MakerDependencyStateV1,
+    chat: MakerDependencyStateV1,
+}
+
+/// Read-only state of one optional maker application dependency.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MakerDependencyStateV1 {
+    /// The optional dependency was not configured for this daemon.
+    Disabled,
+    /// The configured dependency is reachable and internally consistent.
+    Available,
+    /// The daemon is ready, but this configured dependency needs operator action.
+    Unavailable,
 }
 
 impl MakerHealthV1 {
-    const fn ready() -> Self {
+    const fn ready(delivery: MakerDependencyStateV1, chat: MakerDependencyStateV1) -> Self {
         Self {
             schema_version: 1,
             ready: true,
+            degraded: matches!(delivery, MakerDependencyStateV1::Unavailable)
+                || matches!(chat, MakerDependencyStateV1::Unavailable),
+            delivery,
+            chat,
         }
     }
 
@@ -730,6 +762,24 @@ impl MakerHealthV1 {
     #[must_use]
     pub const fn is_ready(&self) -> bool {
         self.schema_version == 1 && self.ready
+    }
+
+    /// Returns true when a configured application dependency is unavailable.
+    #[must_use]
+    pub const fn is_degraded(&self) -> bool {
+        self.degraded
+    }
+
+    /// Returns the current Delivery projection state.
+    #[must_use]
+    pub const fn delivery(&self) -> MakerDependencyStateV1 {
+        self.delivery
+    }
+
+    /// Returns the current Chat endpoint state.
+    #[must_use]
+    pub const fn chat(&self) -> MakerDependencyStateV1 {
+        self.chat
     }
 }
 
@@ -946,15 +996,57 @@ fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
         "maker_health",
         |params, context, _| {
             let _: ListRequest = params.one()?;
-            let store = context
-                .store
-                .lock()
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            store.list_maker_pairs().map_err(application_store_error)?;
-            Ok(MakerHealthV1::ready())
+            let now_unix_seconds = trusted_now_unix_seconds()?;
+            let active = {
+                let store = context
+                    .store
+                    .lock()
+                    .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+                store.list_maker_pairs().map_err(application_store_error)?;
+                store
+                    .list_retryable_maker_offers(now_unix_seconds)
+                    .map_err(application_store_error)?
+                    .into_iter()
+                    .map(|record| record.offer().clone())
+                    .collect::<Vec<_>>()
+            };
+            let delivery =
+                context
+                    .delivery
+                    .as_ref()
+                    .map_or(MakerDependencyStateV1::Disabled, |delivery| {
+                        if delivery
+                            .projection_health(&active, now_unix_seconds)
+                            .is_ok()
+                        {
+                            MakerDependencyStateV1::Available
+                        } else {
+                            MakerDependencyStateV1::Unavailable
+                        }
+                    });
+            let chat =
+                context
+                    .chat_socket
+                    .as_ref()
+                    .map_or(MakerDependencyStateV1::Disabled, |socket| {
+                        if owner_socket_is_available(socket) {
+                            MakerDependencyStateV1::Available
+                        } else {
+                            MakerDependencyStateV1::Unavailable
+                        }
+                    });
+            Ok(MakerHealthV1::ready(delivery, chat))
         },
     )?;
     Ok(())
+}
+
+fn owner_socket_is_available(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.file_type().is_socket()
+            && metadata.uid() == rustix::process::geteuid().as_raw()
+            && metadata.mode() & 0o7777 == 0o600
+    })
 }
 
 fn register_pair_and_price_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {

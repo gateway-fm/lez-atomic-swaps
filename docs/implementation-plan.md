@@ -3146,8 +3146,7 @@ validated final-wire actor handoff, a literal fuzz target, and a hardened
 systemd/future-Core lifecycle seam. The provisional C-API v1 worker and bounded
 parent are GREEN against actual C fixtures. Schema v15 now atomically binds an
 external module epoch, monotonic quote, policy snapshot, immutable offer, and
-request replay result; daemon selection and signed Delivery replay are now process-GREEN. Taker lifecycle
-commands, manual effects, autonomous other-pair execution, outage behavior, and post-PoC hardening are still incomplete.
+request replay result; daemon selection and signed Delivery replay are now process-GREEN. Taker lifecycle commands, manual effects, autonomous other-pair execution, persistent coordination, and post-PoC hardening are still incomplete. The local Delivery/Chat outage output is process-GREEN under ADR 0098; LOGOS-020 remains an upstream production-parity caveat.
 
 ### Progressive PoC gate
 
@@ -3211,13 +3210,12 @@ separately from runtime dependencies.
   clobber. Status, claim, refund, other pairs, and corridor composition remain.
 - [x] Add the bounded signed run-local Delivery adapter with exact maker identity,
   canonical snapshot validation, half-open expiry, immutable publication, and
-  daemon-owned publish/withdraw. Startup reconciles SQLite's exact active set
+  daemon-owned publish/withdraw. Startup reconciles SQLite's exact unexpired active, reserved, or consumed retry set
   before readiness, republishing missing files and pruning authenticated stale
   advertisements; the black-box maker/taker process journey is GREEN.
 - [x] Add the maker-first canonical ZEC draft/proposal/countersign contract and
   exact no-rounding offer amount conversion.
-- [ ] Complete durable Chat negotiation, buffering, retry/degraded state, and
-  the post-lock cutover rule. The proposal and final-acceptance process stages are GREEN: a
+- [x] Complete documented graceful Delivery/Chat outage behavior for the local application path and the post-lock cutover rule under ADR 0098. The real process journey proves degraded health, durable-first Delivery failure, exact repair replay, no final output during Chat loss, reserved/consumed-envelope restart reconciliation, deterministic taker replay, and one atomic completion. The proposal and final-acceptance process stages are GREEN: a
   disjoint mode-0600 Chat socket authenticates and cross-binds the exact signed
   Delivery envelope and canonical unsigned draft, signs with the pinned maker
   identity, commits reservation plus proposal before response, exact-replays,
@@ -3312,9 +3310,9 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 28 to 47 focused hours under the owner-approved Logos-upstream
-exception; C-API upstream compatibility, other pairs, CLI completion, outage
-behavior, and post-PoC hardening remain explicitly open above.
+literal M5 ETA is 25 to 42 focused hours under the owner-approved Logos-upstream
+exception; C-API upstream compatibility, other pairs, CLI completion, persistent
+coordination, and post-PoC hardening remain explicitly open above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 tests the lifecycle contract against

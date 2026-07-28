@@ -109,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
         arguments.maker_claim_preimage_file.as_deref(),
         logos_price_source,
     )?;
+    let context = attach_chat_health(context, arguments.chat_socket.as_deref());
     let module = rpc_module(context.clone())?;
     let chat_module = if chat_listener.is_some() {
         Some(chat_rpc_module(context)?)
@@ -201,6 +202,13 @@ async fn shutdown_signal() -> io::Result<()> {
         received = terminate.recv() => received.ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM signal stream closed")
         }),
+    }
+}
+
+fn attach_chat_health(context: MakerRpc, socket: Option<&Path>) -> MakerRpc {
+    match socket {
+        Some(socket) => context.with_chat_socket(socket.to_path_buf()),
+        None => context,
     }
 }
 
@@ -384,8 +392,8 @@ fn maker_context(
         .context("open maker Delivery publisher")?;
     let now_unix_seconds = trusted_now_unix_seconds()?;
     let active = store
-        .list_discoverable_maker_offers(now_unix_seconds)
-        .context("load active offers for Delivery reconciliation")?
+        .list_retryable_maker_offers(now_unix_seconds)
+        .context("load retryable offers for Delivery reconciliation")?
         .into_iter()
         .map(|record| record.offer().clone())
         .collect::<Vec<_>>();

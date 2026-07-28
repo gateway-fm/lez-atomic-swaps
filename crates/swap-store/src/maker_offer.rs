@@ -1121,6 +1121,31 @@ impl SqliteSwapStore {
         )
     }
 
+    /// Lists unexpired active, reserved, or consumed offers needed for exact retry.
+    ///
+    /// Active advertisements allow first contact. Reserved advertisements retain
+    /// the winning taker's exact authenticated envelope across restart. Consumed
+    /// advertisements allow the same taker command to authenticate before exact
+    /// completion replay. Withdrawn and expired offers are never projected.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid trusted time, corrupt state, or `SQLite` failure.
+    pub fn list_retryable_maker_offers(
+        &self,
+        now_unix_seconds: u64,
+    ) -> Result<Vec<MakerOfferRecordV1>, StoreError> {
+        if now_unix_seconds > i64::MAX as u64 {
+            return Err(MakerOfferError::InvalidTime.into());
+        }
+        list_offers(
+            &self.connection,
+            "WHERE state IN ('active', 'reserved', 'consumed') AND expires_at_unix_seconds > ?1",
+            Some(now_unix_seconds),
+            now_unix_seconds,
+        )
+    }
+
     /// Lists complete offer history with expiry projected at trusted caller time.
     ///
     /// # Errors

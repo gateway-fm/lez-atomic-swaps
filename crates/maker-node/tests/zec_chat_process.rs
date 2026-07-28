@@ -3,7 +3,7 @@
 use std::{
     fs::{self, OpenOptions},
     io::Write as _,
-    os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _},
+    os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _},
     process::{Child, Command},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -12,14 +12,14 @@ use std::{
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, ListRequest, LocalPriceSetRequest,
-    OfferPublishRequest, PairConfigureRequest, RunLocalDelivery, ZecChatProposeRequestV1,
+    PairConfigureRequest, RunLocalDelivery, ZecChatProposalV1, ZecChatProposeRequestV1,
     call_local_rpc,
 };
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    LocalPriceV1, MakerOfferId, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
-    MakerZecNegotiationStatus, SqliteSwapStore, maker_zec_chat_session_id,
+    LocalPriceV1, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind,
+    MakerRouteV1, MakerZecNegotiationStatus, SqliteSwapStore, maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
@@ -77,17 +77,9 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
     configure_live_route(&socket, route).await;
     let offer_id = MakerOfferId::new("m5-chat-offer-001").unwrap();
-    let _: Value = call_local_rpc(
-        &socket,
-        "maker_offer_publish",
-        &OfferPublishRequest {
-            request_id: request("m5-chat-publish-001"),
-            offer_id: offer_id.clone(),
-            route,
-        },
-    )
-    .await
-    .unwrap();
+    assert_delivery_outage_is_visible_and_exact_retry_recovers(
+        &socket, &database, &delivery, &offer_id,
+    );
 
     let maker_secret = key(8);
     let maker_key = public_key(&maker_secret);
@@ -113,7 +105,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     write_raw_key(&taker_key_file, 2);
     let proposal_request = ZecChatProposeRequestV1 {
         schema_version: 1,
-        request_id: request("m5-chat-propose-001"),
+        request_id: derived_chat_request(&reservation_id, b"propose"),
         offer_id: offer_id.clone(),
         expected_offer_revision: 1,
         reservation_id: reservation_id.clone(),
@@ -123,6 +115,11 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     };
 
     assert_socket_method_isolation(&socket, &chat_socket, &proposal_request).await;
+    let staged: ZecChatProposalV1 =
+        call_local_rpc(&chat_socket, "zec_chat_propose_v1", &proposal_request)
+            .await
+            .expect("stage proposal before Chat outage");
+    assert_eq!(staged.offer_revision, 2);
     let accepted_at = now();
     let taker = TakerProcess {
         delivery: &delivery,
@@ -133,7 +130,15 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         taker_key_file: &taker_key_file,
         agreement_file: &agreement_file,
     };
+
+    assert_chat_outage_and_restart(&taker, &maker_key, accepted_at, &mut daemon, &daemon_paths);
     let final_wire = assert_taker_accepts_and_replays(&taker, &maker_key, accepted_at);
+    let completed_health = run_maker_health(&socket);
+    assert_eq!(completed_health["ready"], true);
+    assert_eq!(completed_health["degraded"], false);
+    assert_eq!(completed_health["delivery"], "available");
+    assert_eq!(completed_health["chat"], "available");
+    assert_eq!(fs::read_dir(&delivery).unwrap().count(), 1);
 
     stop_daemon_gracefully(&mut daemon, &daemon_paths);
     assert_completed_durable(
@@ -143,6 +148,123 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         &authenticated,
         &final_wire,
     );
+}
+
+fn assert_chat_outage_and_restart(
+    taker: &TakerProcess<'_>,
+    maker_key: &PublicKey,
+    accepted_at: u64,
+    daemon: &mut Child,
+    paths: &DaemonPaths<'_>,
+) {
+    let offline_chat = paths.chat_socket.with_file_name("chat.offline");
+    fs::rename(paths.chat_socket, &offline_chat)
+        .expect("make Chat unavailable without stopping owner RPC");
+    let degraded = run_maker_health(paths.socket);
+    assert_eq!(degraded["ready"], true);
+    assert_eq!(degraded["degraded"], true);
+    assert_eq!(degraded["delivery"], "available");
+    assert_eq!(degraded["chat"], "unavailable");
+    let unavailable = taker_command(taker, maker_key, accepted_at)
+        .output()
+        .expect("run real taker during Chat outage");
+    assert!(
+        !unavailable.status.success(),
+        "Chat outage must be visible to the real taker"
+    );
+    assert!(
+        !taker.agreement_file.exists(),
+        "Chat outage must not create a final agreement"
+    );
+    fs::rename(&offline_chat, paths.chat_socket)
+        .expect("restore Chat socket identity before shutdown");
+    stop_daemon_gracefully(daemon, paths);
+    *daemon = start_daemon(paths);
+    wait_ready(daemon, paths.ready, paths.socket);
+}
+
+fn assert_delivery_outage_is_visible_and_exact_retry_recovers(
+    socket: &std::path::Path,
+    database: &std::path::Path,
+    delivery: &std::path::Path,
+    offer_id: &MakerOfferId,
+) {
+    fs::set_permissions(delivery, fs::Permissions::from_mode(0o755))
+        .expect("make Delivery projection insecure");
+    let failed = maker_publish_command(socket, offer_id)
+        .output()
+        .expect("run real maker during Delivery outage");
+    assert!(
+        !failed.status.success(),
+        "Delivery outage must be visible to the real maker"
+    );
+
+    let store = SqliteSwapStore::open(database).expect("open maker state after failed projection");
+    let offers = store
+        .list_maker_offer_history(now())
+        .expect("list durable offers after failed projection");
+    assert_eq!(
+        offers.len(),
+        1,
+        "projection failure must not duplicate durable offers"
+    );
+    assert_eq!(offers[0].status(), MakerOfferStatus::Active);
+    drop(store);
+
+    let degraded = run_maker_health(socket);
+    assert_eq!(degraded["schema_version"], 1);
+    assert_eq!(degraded["ready"], true, "SQLite owner RPC remains ready");
+    assert_eq!(degraded["degraded"], true);
+    assert_eq!(degraded["delivery"], "unavailable");
+    assert_eq!(degraded["chat"], "available");
+
+    fs::set_permissions(delivery, fs::Permissions::from_mode(0o700))
+        .expect("restore owner-private Delivery projection");
+    let replay = maker_publish_command(socket, offer_id)
+        .output()
+        .expect("retry exact real maker request");
+    assert!(
+        replay.status.success(),
+        "exact publish retry failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&replay.stdout),
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let commit: Value = serde_json::from_slice(&replay.stdout).expect("maker retry returns JSON");
+    assert_eq!(commit["was_replay"], true);
+
+    let healthy = run_maker_health(socket);
+    assert_eq!(healthy["ready"], true);
+    assert_eq!(healthy["degraded"], false);
+    assert_eq!(healthy["delivery"], "available");
+    assert_eq!(healthy["chat"], "available");
+}
+
+fn maker_publish_command(socket: &std::path::Path, offer_id: &MakerOfferId) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker"));
+    command
+        .arg("--socket")
+        .arg(socket)
+        .arg("publish-offer")
+        .arg("--request-id")
+        .arg("m5-chat-publish-001")
+        .arg("--offer-id")
+        .arg(offer_id.as_str())
+        .arg("--pair")
+        .arg("zcash")
+        .arg("--direction")
+        .arg("taker-sells-lez");
+    command
+}
+
+fn run_maker_health(socket: &std::path::Path) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+        .arg("--socket")
+        .arg(socket)
+        .arg("health")
+        .output()
+        .expect("run real maker health");
+    assert!(output.status.success(), "real maker health failed");
+    serde_json::from_slice(&output.stdout).expect("maker health returns JSON")
 }
 
 struct TakerProcess<'a> {
@@ -164,7 +286,7 @@ fn assert_taker_accepts_and_replays(
     assert_eq!(accepted["schema_version"], 1);
     assert_eq!(accepted["offer_revision"], 3);
     assert_eq!(accepted["swap_id"], "m5-chat-swap-001");
-    assert_eq!(accepted["replay"]["proposal"], false);
+    assert_eq!(accepted["replay"]["proposal"], true);
     assert_eq!(accepted["replay"]["completion"], false);
     assert_eq!(accepted["replay"]["agreement_file"], false);
     assert_eq!(accepted["private_material_disclosed"], false);
@@ -178,7 +300,21 @@ fn assert_taker_accepts_and_replays(
 }
 
 fn run_taker(taker: &TakerProcess<'_>, maker_key: &PublicKey, accepted_at: u64) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = taker_command(taker, maker_key, accepted_at)
+        .output()
+        .expect("run real taker process");
+    assert!(
+        output.status.success(),
+        "real taker failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("real taker returns bounded JSON")
+}
+
+fn taker_command(taker: &TakerProcess<'_>, maker_key: &PublicKey, accepted_at: u64) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-taker"));
+    command
         .arg("--delivery-directory")
         .arg(taker.delivery)
         .arg("--maker-public-key")
@@ -202,16 +338,8 @@ fn run_taker(taker: &TakerProcess<'_>, maker_key: &PublicKey, accepted_at: u64) 
         .arg("--taker-signing-key-file")
         .arg(taker.taker_key_file)
         .arg("--agreement-output-file")
-        .arg(taker.agreement_file)
-        .output()
-        .expect("run real taker process");
-    assert!(
-        output.status.success(),
-        "real taker failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).expect("real taker returns bounded JSON")
+        .arg(taker.agreement_file);
+    command
 }
 
 fn assert_completed_durable(
@@ -474,6 +602,14 @@ fn request(value: &str) -> RequestId {
     RequestId::new(value).unwrap()
 }
 
+fn derived_chat_request(reservation_id: &RequestId, label: &[u8]) -> RequestId {
+    let mut digest = Sha256::new();
+    digest.update(b"lez-atomic-swaps/zec-taker-chat-request/v1\0");
+    digest.update(reservation_id.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(label);
+    RequestId::new(hex::encode(digest.finalize())).unwrap()
+}
 fn key(byte: u8) -> SecretKey {
     SecretKey::from_slice(&[byte; 32]).unwrap()
 }
