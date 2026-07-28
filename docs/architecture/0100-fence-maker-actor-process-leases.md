@@ -2,9 +2,9 @@
 
 - Status: Accepted; schema-v16 transactional/race foundation GREEN;
   inherited held-lock recovery, physical artifact binding, and atomic ZEC
-  acceptance-registration store components plus the real ZEC sealed-config
-  consumer GREEN; BTC commitment parity, daemon-owned provisioning,
-  semantic config binding, process supervisor, and actual-node composition pending
+  acceptance-registration store components plus both real BTC/ZEC sealed-config
+  consumers GREEN; daemon-owned provisioning, supervisor manifest comparison,
+  process lifecycle, and actual-node composition pending
 - Date: 2026-07-28
 
 ## Context
@@ -91,23 +91,26 @@ verification cannot change those child bytes. The state database is rebound at
 command handoff as either the same owner-private mode-0600 single-link inode or
 the same absent path beneath its mode-0700 parent.
 
-The real ZEC actor accepts exactly one configuration source: its legacy private
-path or inherited FD 196. The inherited route is not a general file-descriptor
+The real ZEC and BTC actors each accept exactly one configuration source: a
+private path or inherited FD 196. The inherited route is not a general descriptor
 escape hatch. Before constructing Tokio, the actor reopens the fixed descriptor,
 requires a regular anonymous effective-UID-owned mode-0600 inode with link count
 zero and a 1-to-64-KiB size, requires `F_SEAL_SEAL`, `F_SEAL_SHRINK`,
 `F_SEAL_GROW`, and `F_SEAL_WRITE`, reads from offset zero under that immutable
-snapshot, and then applies the same strict config and alias validation as the
-path route. It rejects every other descriptor number. This closes the ZEC
-consumer half of the capability handoff; the daemon supervisor remains
-responsible for comparing the parsed swap, role, state database, and agreement
-commitment with the leased manifest before spawn.
+snapshot, and then applies that actor's existing strict config and binding
+validation. It rejects every other descriptor number. This closes both consumer
+halves of the capability handoff. BTC inherited execution requires schema 6,
+while path schemas 3 through 5 remain compatible. Schema 6 requires the exact
+agreement SHA-256; the actor rechecks that digest before parsing the signed
+agreement and exposes the derived swap ID, role, state path, and digest for
+supervisor comparison. The daemon supervisor remains responsible for comparing
+those semantic bindings with the leased manifest before spawn.
 
 ```mermaid
 sequenceDiagram
     participant S as Store harness or future supervisor
     participant M as Sealed memfd 196
-    participant A as ZEC actor process
+    participant A as BTC or ZEC actor process
     S->>M: Copy verified config bytes and apply all four seals
     S->>A: Exec exact actor with config-fd 196
     A->>A: Parse exact descriptor before Tokio
@@ -219,11 +222,13 @@ locks, agreements, escrows, outpoints, and deadlines.
   agreement, binding, claim-material, actor, and replay rows; success exposes
   exactly one queued row. Exact and delayed replay preserve it, a changed
   manifest conflicts, and a deleted scheduler row fails closed.
-- The real ZEC binary test replaces the deployment config after the sealed
-  snapshot is created and still reports the snapshot's role/state. An ordinary
-  linked file, a memfd missing `F_SEAL_WRITE`, path-plus-FD ambiguity, and any
-  descriptor other than 196 fail closed. These tests use only local process and
-  kernel primitives; no RPC, node, Docker, faucet, or network participates.
+- Both real actor binary tests replace the deployment config after the sealed
+  snapshot is created and still report the snapshot's role/state. Ordinary
+  linked files, memfds missing `F_SEAL_WRITE`, path-plus-FD ambiguity, and any
+  descriptor other than 196 fail closed. BTC additionally rejects legacy
+  schemas on the FD route and a mismatched agreement digest before activation.
+  These tests use only local process and kernel primitives; no RPC, node,
+  Docker, faucet, or network participates.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
 - Literal coordinator closure still requires daemon-owned maker-only artifact

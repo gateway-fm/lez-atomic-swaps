@@ -115,6 +115,7 @@ impl ActorFixture {
             schema_version: LEGACY_CONFIG_SCHEMA_VERSION,
             role,
             agreement_file,
+            agreement_sha256: None,
             state_db: directory.path().join("actor.sqlite3"),
             accepted_at_unix_seconds: 1_700_000_000,
             bitcoin_core: BitcoinCoreConfig {

@@ -1,14 +1,20 @@
 use std::{
+    ffi::CString,
     fs,
+    fs::File,
+    io::Write as _,
+    os::fd::OwnedFd,
     os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
 };
 
 use btc_reference_actor::{
-    ActorCli, ActorCommand, ActorCommandError, ActorConfig, ActorConfigError, execute_actor_command,
+    ActorCli, ActorCommand, ActorCommandError, ActorConfig, ActorConfigError, ActorRole,
+    execute_actor_command,
 };
 use clap::Parser as _;
+use command_fds::{CommandFdExt as _, FdMapping};
 use lez_bridge_protocol::{
     ExactMessageBytes, Hex32, MessageContext, Participant as BridgeParticipant,
     PrepareWitnessedClaimResult, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
@@ -21,10 +27,12 @@ use lez_btc_swap_sdk::{
 };
 use lez_swap_store::{
     AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
-    AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, SecretNonceBytes,
-    SqliteAdaptorSessionJournal,
+    AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, MAKER_ACTOR_CONFIG_FD,
+    SecretNonceBytes, SqliteAdaptorSessionJournal,
 };
+use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
 #[allow(dead_code)]
@@ -359,6 +367,23 @@ fn cli_exposes_repeatable_activate_drive_and_status_commands() {
         .expect("parse actor command");
         assert_eq!(cli.command, expected);
     }
+    assert!(
+        ActorCli::try_parse_from(["btc-reference-actor", "--config-fd", "196", "status"]).is_ok()
+    );
+    assert!(
+        ActorCli::try_parse_from([
+            "btc-reference-actor",
+            "--config",
+            "/tmp/private-actor.json",
+            "--config-fd",
+            "196",
+            "status"
+        ])
+        .is_err()
+    );
+    assert!(
+        ActorCli::try_parse_from(["btc-reference-actor", "--config-fd", "195", "status"]).is_err()
+    );
 }
 
 #[test]
@@ -420,6 +445,88 @@ fn binary_repeats_offline_status_and_idempotent_activation_from_disk() {
 }
 
 #[test]
+fn real_binary_reads_only_commitment_bound_fully_sealed_config() {
+    let fixture = ActorFixture::new(BridgeParticipant::Taker, BridgeParticipant::Taker);
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
+            .expect("config JSON");
+    let agreement_path = PathBuf::from(config["agreement_file"].as_str().expect("agreement path"));
+    config["schema_version"] = Value::from(6);
+    config["agreement_sha256"] = Value::from(hex::encode(Sha256::digest(
+        fs::read(agreement_path).expect("agreement bytes"),
+    )));
+    write_private_json(&fixture.config_path, &config);
+    let supervised_bytes = fs::read(&fixture.config_path).expect("supervised config bytes");
+    let sealed = config_memfd(
+        &supervised_bytes,
+        SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+    );
+    write_private_json(&fixture.config_path, &json!({}));
+
+    let output = run_with_config_fd(sealed, "status");
+    assert!(
+        output.status.success(),
+        "sealed actor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let status: Value = serde_json::from_slice(&output.stdout).expect("one actor response");
+    assert_eq!(status["role"], "taker");
+    assert_eq!(status["state"], "not_activated");
+
+    let incomplete = config_memfd(
+        &supervised_bytes,
+        SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW,
+    );
+    assert_config_fd_rejected(&run_with_config_fd(incomplete, "status"));
+
+    let ordinary = File::open(&fixture.config_path).expect("ordinary config file");
+    assert_config_fd_rejected(&run_with_config_fd(ordinary.into(), "status"));
+
+    let mut legacy = config;
+    legacy["schema_version"] = Value::from(3);
+    legacy.as_object_mut().unwrap().remove("agreement_sha256");
+    let legacy_bytes = serde_json::to_vec(&legacy).expect("legacy config JSON");
+    let legacy = config_memfd(
+        &legacy_bytes,
+        SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+    );
+    assert_config_fd_rejected(&run_with_config_fd(legacy, "status"));
+}
+
+fn run_with_config_fd(config: OwnedFd, command_name: &str) -> std::process::Output {
+    let mut command = ProcessCommand::new(env!("CARGO_BIN_EXE_btc-reference-actor"));
+    command.args(["--config-fd", "196", command_name]);
+    command
+        .fd_mappings(vec![FdMapping {
+            parent_fd: config,
+            child_fd: MAKER_ACTOR_CONFIG_FD,
+        }])
+        .expect("map config descriptor");
+    command.output().expect("run config-FD actor")
+}
+
+fn assert_config_fd_rejected(output: &std::process::Output) {
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, b"actor configuration is unavailable\n");
+}
+
+fn config_memfd(bytes: &[u8], seals: SealFlags) -> OwnedFd {
+    let name = CString::new("lez-btc-actor-test-config").expect("memfd name");
+    let descriptor = memfd_create(
+        name.as_c_str(),
+        MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+    )
+    .expect("create config memfd");
+    let mut file = File::from(descriptor);
+    fchmod(&file, Mode::RUSR | Mode::WUSR).expect("set config memfd mode");
+    file.write_all(bytes).expect("write config memfd");
+    fcntl_add_seals(&file, seals).expect("seal config memfd");
+    file.into()
+}
+
+#[test]
 fn private_config_rejects_world_readability_and_role_runtime_drift() {
     let directory = tempfile::tempdir().expect("actor tempdir");
     let config_path = directory.path().join("actor-private.json");
@@ -441,6 +548,51 @@ fn old_config_schema_is_rejected_after_refund_authority_migration() {
         serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
             .expect("config JSON");
     config["schema_version"] = Value::from(2);
+    write_private_json(&fixture.config_path, &config);
+    assert_eq!(
+        ActorConfig::load_private(&fixture.config_path),
+        Err(ActorConfigError::Invalid)
+    );
+}
+
+#[test]
+fn supervised_schema_requires_and_enforces_the_exact_agreement_digest() {
+    let fixture = ActorFixture::new(BridgeParticipant::Taker, BridgeParticipant::Taker);
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
+            .expect("config JSON");
+    let agreement_path = PathBuf::from(config["agreement_file"].as_str().expect("agreement path"));
+    let agreement_bytes = fs::read(agreement_path).expect("agreement bytes");
+    config["schema_version"] = Value::from(6);
+    config["agreement_sha256"] = Value::from(hex::encode(Sha256::digest(&agreement_bytes)));
+    write_private_json(&fixture.config_path, &config);
+    let exact = ActorConfig::load_private(&fixture.config_path)
+        .expect("commitment-bound supervised config");
+    assert!(execute_sync(&exact, ActorCommand::Status).is_ok());
+    assert_eq!(exact.role(), ActorRole::Taker);
+    assert_eq!(
+        exact.state_db(),
+        Path::new(config["state_db"].as_str().expect("state path"))
+    );
+    assert_eq!(
+        exact.agreement_sha256(),
+        Some(Sha256::digest(&agreement_bytes).into())
+    );
+    assert_eq!(
+        exact.supervised_swap_id().expect("supervised swap ID"),
+        support::swap_fixture().agreement.coordinator().id().clone()
+    );
+
+    config["agreement_sha256"] = Value::from(hex::encode([0_u8; 32]));
+    write_private_json(&fixture.config_path, &config);
+    let mismatched = ActorConfig::load_private(&fixture.config_path)
+        .expect("well-shaped config with mismatched external commitment");
+    assert_eq!(
+        execute_sync(&mismatched, ActorCommand::Activate),
+        Err(ActorCommandError::AgreementBindingInvalid)
+    );
+
+    config.as_object_mut().unwrap().remove("agreement_sha256");
     write_private_json(&fixture.config_path, &config);
     assert_eq!(
         ActorConfig::load_private(&fixture.config_path),

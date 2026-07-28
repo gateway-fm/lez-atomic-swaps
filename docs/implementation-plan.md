@@ -3340,14 +3340,26 @@ separately from runtime dependencies.
   tests, strict Clippy, warning-free Rustdoc, formatting, and diff hygiene are
   GREEN. No chain RPC, node, Docker, faucet, or network participates.
 
+  The BTC config-capability slice is also GREEN in the real binary. RED first
+  proved the missing fixed-FD CLI and missing agreement commitment. Schema 6 now
+  requires the exact signed-agreement SHA-256 for inherited execution while
+  preserving schemas 3 through 5 on the path route. Before Tokio, the actor
+  enforces the same FD-196 anonymous/mode/owner/link/size/seal contract, then
+  exposes its role, state path, commitment, and agreement-derived swap ID for
+  supervisor comparison. The actor rechecks the digest before activation. The
+  black-box test proves deployment-path replacement immunity and fail-closed
+  incomplete seals, ordinary files, and legacy sealed schemas. All 95 actor
+  tests, strict Clippy, and warning-free Rustdoc are GREEN; the refactor removed
+  duplicated schema alternatives without lint exceptions.
+
   Next, add a maker-only no-clobber ZEC actor provisioner and route Chat
-  completion through the mandatory scheduled API; add commitment-bound BTC
-  `--config-fd` loading and pair-specific config/state/agreement validation;
-  explicitly permit and rehearse `memfd_create` under the hardened systemd unit;
-  implement the bounded pair-neutral supervisor; route existing M3 overlap and
-  M5 ZEC application flows through it; then prove one exact SIGKILL/restart while
-  a disjoint peer reaches terminal without duplicate effects. This partial
-  progress does not increase the 3/7 score.
+  completion through the mandatory scheduled API; compare both pair configs'
+  swap/role/state/agreement semantics with each leased manifest; explicitly
+  permit and rehearse `memfd_create` under the hardened systemd unit; implement
+  the bounded pair-neutral supervisor; route existing M3 overlap and M5 ZEC
+  application flows through it; then prove one exact SIGKILL/restart while a
+  disjoint peer reaches terminal without duplicate effects. This partial progress
+  does not increase the 3/7 score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3367,7 +3379,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 17 to 31 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 15 to 28 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 

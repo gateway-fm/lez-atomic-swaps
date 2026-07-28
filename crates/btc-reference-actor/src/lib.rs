@@ -9,7 +9,7 @@ use std::{
     collections::HashSet,
     fmt,
     fs::{self, File},
-    io::Read as _,
+    io::{Read as _, Seek as _, SeekFrom},
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU8, Ordering as AtomicOrdering},
     time::Duration,
@@ -22,7 +22,7 @@ use bitcoin::{
     hashes::Hash as _,
     secp256k1::{Keypair, Message, Secp256k1, SecretKey},
 };
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use lez_bridge_adapter::{
     BtcLezAssetBridgeBindingV2, CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory,
     LezBridgeAdapter,
@@ -82,11 +82,13 @@ use lez_swap_store::{
     AdaptorSessionIdentity, AdaptorSessionPhase, AdaptorSessionRole, BtcAgreementAcceptance,
     BtcLifecycleEvidenceV1, BtcMakerLockIntentCreateOutcome, BtcMakerLockIntentV1,
     BtcMakerLockStepDecision, BtcMakerLockStepObservation, BtcMakerLockStepState,
-    BtcMakerLockSubmissionResult, BtcOfflineStatus, BtcRecoveryError, PreparedPublicEffect,
-    PublicEffectChain, PublicEffectDecision, PublicEffectKey, PublicEffectObservation,
-    PublicEffectOperation, PublicEffectSubmissionResult, SqliteAdaptorSessionJournal,
-    SqliteBtcMakerLockJournal, SqliteBtcRecoveryStore, SqlitePublicEffectJournal,
+    BtcMakerLockSubmissionResult, BtcOfflineStatus, BtcRecoveryError, MAKER_ACTOR_CONFIG_FD,
+    PreparedPublicEffect, PublicEffectChain, PublicEffectDecision, PublicEffectKey,
+    PublicEffectObservation, PublicEffectOperation, PublicEffectSubmissionResult,
+    SqliteAdaptorSessionJournal, SqliteBtcMakerLockJournal, SqliteBtcRecoveryStore,
+    SqlitePublicEffectJournal,
 };
+use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
@@ -95,6 +97,7 @@ use zeroize::Zeroizing;
 const LEGACY_CONFIG_SCHEMA_VERSION: u16 = 3;
 const CONFIG_SCHEMA_VERSION: u16 = 4;
 const ASSET_CONFIG_SCHEMA_VERSION: u16 = 5;
+const SUPERVISED_CONFIG_SCHEMA_VERSION: u16 = 6;
 const OUTPUT_SCHEMA_VERSION: u16 = 1;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_PREPARED_CLAIM_RESULT_BYTES: usize = 4 * 1024 * 1024;
@@ -119,11 +122,17 @@ pub enum ActorCommand {
 
 /// Process arguments for the one-shot actor.
 #[derive(Clone, Parser)]
-#[command(about = "One-shot role-fixed LEZ/Bitcoin reference actor")]
+#[command(
+    about = "One-shot role-fixed LEZ/Bitcoin reference actor",
+    group(ArgGroup::new("config_source").required(true).multiple(false).args(["config", "config_fd"]))
+)]
 pub struct ActorCli {
     /// Owner-private bounded JSON configuration.
     #[arg(long, value_name = "PRIVATE_JSON")]
-    pub config: PathBuf,
+    pub config: Option<PathBuf>,
+    /// Fixed inherited descriptor containing one anonymous, fully sealed configuration.
+    #[arg(long, value_name = "FD", value_parser = parse_config_fd)]
+    pub config_fd: Option<i32>,
     /// Single lifecycle command; the process exits after completion.
     #[command(subcommand)]
     pub command: ActorCommand,
@@ -134,8 +143,20 @@ impl fmt::Debug for ActorCli {
         formatter
             .debug_struct("ActorCli")
             .field("config", &"[REDACTED]")
+            .field("config_fd", &"[REDACTED]")
             .field("command", &self.command)
             .finish()
+    }
+}
+
+fn parse_config_fd(value: &str) -> Result<i32, String> {
+    let fd = value
+        .parse::<i32>()
+        .map_err(|_| "invalid config descriptor".to_owned())?;
+    if fd == MAKER_ACTOR_CONFIG_FD {
+        Ok(fd)
+    } else {
+        Err(format!("config descriptor must be {MAKER_ACTOR_CONFIG_FD}"))
     }
 }
 
@@ -320,6 +341,13 @@ where
     PathBuf::deserialize(deserializer).map(Some)
 }
 
+fn deserialize_present_hex32<'de, D>(deserializer: D) -> Result<Option<Hex32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Hex32::deserialize(deserializer).map(Some)
+}
+
 /// Owner-private, role-fixed disk configuration for one actor.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -329,6 +357,12 @@ pub struct ActorConfig {
     agreement_file: PathBuf,
     state_db: PathBuf,
     accepted_at_unix_seconds: u64,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_hex32",
+        skip_serializing_if = "Option::is_none"
+    )]
+    agreement_sha256: Option<Hex32>,
     bitcoin_core: BitcoinCoreConfig,
     lez_bridge: LezBridgeConfig,
     signing: ClaimRecoveryConfig,
@@ -363,6 +397,7 @@ impl fmt::Debug for ActorConfig {
             .field("state_db", &"[REDACTED]")
             .field("accepted_at_unix_seconds", &self.accepted_at_unix_seconds)
             .field("bitcoin_core", &"[REDACTED]")
+            .field("agreement_sha256", &"[REDACTED]")
             .field("lez_bridge", &"[REDACTED]")
             .field("signing", &"[REDACTED]")
             .field("refund", &"[REDACTED]")
@@ -383,16 +418,70 @@ impl ActorConfig {
     pub fn load_private(path: impl AsRef<Path>) -> Result<Self, ActorConfigError> {
         let bytes = read_stable_file(path.as_ref(), MAX_CONFIG_BYTES, true)
             .map_err(|()| ActorConfigError::Unavailable)?;
-        let config: Self = decode_strict_json(&bytes)?;
+        Self::from_private_bytes(&bytes, false)
+    }
+
+    /// Loads one immutable supervised configuration from the fixed inherited descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every descriptor except 196, unsafe metadata, incomplete seals,
+    /// malformed JSON, or any schema lacking an exact agreement commitment.
+    pub fn load_private_fd(fd: i32) -> Result<Self, ActorConfigError> {
+        let bytes = read_sealed_config_fd(fd, MAX_CONFIG_BYTES)
+            .map_err(|()| ActorConfigError::Unavailable)?;
+        Self::from_private_bytes(bytes.as_slice(), true)
+    }
+
+    /// Returns the fixed role bound by this configuration.
+    #[must_use]
+    pub const fn role(&self) -> ActorRole {
+        self.role
+    }
+
+    /// Returns the exact role-local state database path.
+    #[must_use]
+    pub fn state_db(&self) -> &Path {
+        &self.state_db
+    }
+
+    /// Returns the schema-6 agreement commitment, when present.
+    #[must_use]
+    pub fn agreement_sha256(&self) -> Option<[u8; 32]> {
+        self.agreement_sha256
+            .as_ref()
+            .map(|value| *value.as_bytes())
+    }
+
+    /// Revalidates the committed agreement and returns its canonical swap ID.
+    ///
+    /// # Errors
+    ///
+    /// Rejects legacy schemas, unavailable or changed agreement bytes, invalid
+    /// agreement signatures, or runtime/role binding drift.
+    pub fn supervised_swap_id(&self) -> Result<SwapId, ActorCommandError> {
+        if self.schema_version != SUPERVISED_CONFIG_SCHEMA_VERSION {
+            return Err(ActorCommandError::ConfigurationUnavailable);
+        }
+        let (agreement, _) = load_agreement(self)?;
+        Ok(agreement.coordinator().id().clone())
+    }
+
+    fn from_private_bytes(
+        bytes: &[u8],
+        require_supervised: bool,
+    ) -> Result<Self, ActorConfigError> {
+        let config: Self = decode_strict_json(bytes)?;
         config.validate()?;
+        if require_supervised && config.schema_version != SUPERVISED_CONFIG_SCHEMA_VERSION {
+            return Err(ActorConfigError::Invalid);
+        }
         Ok(config)
     }
 
     fn validate(&self) -> Result<(), ActorConfigError> {
-        if !matches!(
-            self.schema_version,
-            LEGACY_CONFIG_SCHEMA_VERSION | CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
-        ) || self.accepted_at_unix_seconds == 0
+        self.validate_schema()?;
+        if self.accepted_at_unix_seconds == 0
             || self.lez_bridge.request_timeout_millis == 0
             || self.lez_bridge.request_timeout_millis > MAX_REQUEST_TIMEOUT_MILLIS
             || self.lez_bridge.runtime.sidecar_role != self.role.bridge()
@@ -427,9 +516,6 @@ impl ActorConfig {
                 .all(|byte| *byte == 0)
             || self.signing.bitcoin.session_id == self.signing.lez.session_id
         {
-            return Err(ActorConfigError::Invalid);
-        }
-        if !self.schema_shape_is_valid() {
             return Err(ActorConfigError::Invalid);
         }
         match (self.role, &self.signing.adaptor_secret_file) {
@@ -486,45 +572,66 @@ impl ActorConfig {
         Ok(())
     }
 
-    fn schema_shape_is_valid(&self) -> bool {
-        matches!(
-            (
-                self.schema_version,
-                self.role,
-                &self.maker_lock,
-                &self.taker_first_lock,
-                &self.asset_extension,
+    fn validate_schema(&self) -> Result<(), ActorConfigError> {
+        let commitment_is_valid = match self.schema_version {
+            SUPERVISED_CONFIG_SCHEMA_VERSION => self.agreement_sha256.is_some(),
+            LEGACY_CONFIG_SCHEMA_VERSION | CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION => {
+                self.agreement_sha256.is_none()
+            }
+            _ => false,
+        };
+        let shape_is_valid = match self.schema_version {
+            LEGACY_CONFIG_SCHEMA_VERSION => {
+                self.maker_lock.is_none()
+                    && self.taker_first_lock.is_none()
+                    && self.asset_extension.is_none()
+            }
+            CONFIG_SCHEMA_VERSION => self.native_schema_shape_is_valid(),
+            ASSET_CONFIG_SCHEMA_VERSION => self.asset_schema_shape_is_valid(),
+            SUPERVISED_CONFIG_SCHEMA_VERSION => {
+                self.native_schema_shape_is_valid() || self.asset_schema_shape_is_valid()
+            }
+            _ => false,
+        };
+        if commitment_is_valid && shape_is_valid {
+            Ok(())
+        } else {
+            Err(ActorConfigError::Invalid)
+        }
+    }
+
+    fn native_schema_shape_is_valid(&self) -> bool {
+        if self.taker_first_lock.is_some() || self.asset_extension.is_some() {
+            return false;
+        }
+        match self.role {
+            ActorRole::Maker => matches!(
+                self.maker_lock,
+                Some(MakerLockMaterialConfig::Bitcoin { .. } | MakerLockMaterialConfig::Lez { .. })
             ),
-            (LEGACY_CONFIG_SCHEMA_VERSION, _, None, None, None)
-                | (
-                    CONFIG_SCHEMA_VERSION,
-                    ActorRole::Maker,
+            ActorRole::Taker => self.maker_lock.is_none(),
+        }
+    }
+
+    fn asset_schema_shape_is_valid(&self) -> bool {
+        if self.asset_extension.is_none() {
+            return false;
+        }
+        match self.role {
+            ActorRole::Maker => {
+                matches!(
+                    self.maker_lock,
                     Some(
                         MakerLockMaterialConfig::Bitcoin { .. }
-                            | MakerLockMaterialConfig::Lez { .. },
-                    ),
-                    None,
-                    None,
+                            | MakerLockMaterialConfig::LezAssetV2 { .. }
+                    )
+                ) && matches!(
+                    self.taker_first_lock,
+                    None | Some(TakerFirstLockMaterialConfig::LezAssetV2 { .. })
                 )
-                | (CONFIG_SCHEMA_VERSION, ActorRole::Taker, None, None, None)
-                | (
-                    ASSET_CONFIG_SCHEMA_VERSION,
-                    ActorRole::Maker,
-                    Some(
-                        MakerLockMaterialConfig::Bitcoin { .. }
-                            | MakerLockMaterialConfig::LezAssetV2 { .. },
-                    ),
-                    None | Some(TakerFirstLockMaterialConfig::LezAssetV2 { .. }),
-                    Some(_),
-                )
-                | (
-                    ASSET_CONFIG_SCHEMA_VERSION,
-                    ActorRole::Taker,
-                    None,
-                    None,
-                    Some(_),
-                )
-        )
+            }
+            ActorRole::Taker => self.maker_lock.is_none() && self.taker_first_lock.is_none(),
+        }
     }
 
     fn discovery_window(&self) -> Result<DiscoveryWindow, ActorCommandError> {
@@ -8098,6 +8205,12 @@ fn load_agreement(config: &ActorConfig) -> Result<(BtcAgreementV1, Vec<u8>), Act
         false,
     )
     .map_err(|()| ActorCommandError::AgreementUnavailable)?;
+    if let Some(expected) = &config.agreement_sha256 {
+        let actual: [u8; 32] = Sha256::digest(&wire).into();
+        if expected.as_bytes() != &actual {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        }
+    }
     let agreement =
         BtcAgreementV1::from_wire(&wire).map_err(|_| ActorCommandError::AgreementUnavailable)?;
     validate_actor_binding(config, &agreement)?;
@@ -8235,6 +8348,61 @@ fn decode_strict_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ActorConfi
     let value = T::deserialize(&mut deserializer).map_err(|_| ActorConfigError::Invalid)?;
     deserializer.end().map_err(|_| ActorConfigError::Invalid)?;
     Ok(value)
+}
+
+fn read_sealed_config_fd(fd: i32, maximum: usize) -> Result<Zeroizing<Vec<u8>>, ()> {
+    if fd != MAKER_ACTOR_CONFIG_FD {
+        return Err(());
+    }
+    let mut file = File::open(format!("/proc/self/fd/{fd}")).map_err(|_| ())?;
+    let before = file.metadata().map_err(|_| ())?;
+    validate_sealed_config_metadata(&before, maximum)?;
+    validate_config_seals(&file)?;
+
+    file.seek(SeekFrom::Start(0)).map_err(|_| ())?;
+    let maximum_u64 = u64::try_from(maximum).map_err(|_| ())?;
+    let mut bytes = Zeroizing::new(Vec::with_capacity(maximum.saturating_add(1)));
+    file.by_ref()
+        .take(maximum_u64.saturating_add(1))
+        .read_to_end(bytes.as_mut())
+        .map_err(|_| ())?;
+
+    let after = file.metadata().map_err(|_| ())?;
+    validate_sealed_config_metadata(&after, maximum)?;
+    validate_config_seals(&file)?;
+    if !same_file(&before, &after)
+        || bytes.is_empty()
+        || bytes.len() > maximum
+        || u64::try_from(bytes.len()).map_err(|_| ())? != before.len()
+    {
+        return Err(());
+    }
+    Ok(bytes)
+}
+
+fn validate_sealed_config_metadata(metadata: &fs::Metadata, maximum: usize) -> Result<(), ()> {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    if !metadata.file_type().is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.nlink() != 0
+        || metadata.len() == 0
+        || metadata.len() > u64::try_from(maximum).map_err(|_| ())?
+    {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn validate_config_seals(file: &File) -> Result<(), ()> {
+    let required = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
+    let actual = fcntl_get_seals(file).map_err(|_| ())?;
+    if actual.contains(required) {
+        Ok(())
+    } else {
+        Err(())
+    }
 }
 
 fn read_stable_file(path: &Path, maximum: usize, owner_private: bool) -> Result<Vec<u8>, ()> {
