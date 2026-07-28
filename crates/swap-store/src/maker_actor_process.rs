@@ -62,7 +62,7 @@ impl MakerActorKindV1 {
         }
     }
 
-    fn parse(value: &str) -> Result<Self, MakerActorProcessError> {
+    pub(crate) fn parse(value: &str) -> Result<Self, MakerActorProcessError> {
         match value {
             "bitcoin" => Ok(Self::Bitcoin),
             "zcash" => Ok(Self::Zcash),

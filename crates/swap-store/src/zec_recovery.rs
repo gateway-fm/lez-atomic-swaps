@@ -1,7 +1,7 @@
 //! Role-fixed `SQLite` implementation of the concrete ZEC SDK recovery port.
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -63,6 +63,27 @@ impl MakerZecAcceptanceCommit {
     }
 }
 
+/// Exact durable result of replaying one already-committed scheduled acceptance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MakerZecAcceptanceReplay {
+    offer_revision: u64,
+    swap_id: SwapId,
+}
+
+impl MakerZecAcceptanceReplay {
+    /// Consumed offer revision from the original transaction.
+    #[must_use]
+    pub const fn offer_revision(&self) -> u64 {
+        self.offer_revision
+    }
+
+    /// Application swap whose exact actor remains registered.
+    #[must_use]
+    pub const fn swap_id(&self) -> &SwapId {
+        &self.swap_id
+    }
+}
+
 #[derive(Serialize)]
 struct CompleteMakerZecRequest<'a> {
     offer_id: &'a MakerOfferId,
@@ -72,6 +93,44 @@ struct CompleteMakerZecRequest<'a> {
     secret_digest: [u8; 32],
     #[serde(skip_serializing_if = "Option::is_none")]
     actor: Option<&'a MakerActorManifestV1>,
+}
+
+#[derive(Deserialize)]
+struct StoredCompleteMakerZecRequest {
+    offer_id: MakerOfferId,
+    expected_offer_revision: u64,
+    reservation_id: RequestId,
+    agreement_wire_sha256: [u8; 32],
+    secret_digest: [u8; 32],
+    actor: Option<StoredMakerActorManifest>,
+}
+
+#[derive(Deserialize)]
+struct StoredMakerActorManifest {
+    swap_id: SwapId,
+    kind: String,
+    config_path: PathBuf,
+    config_sha256: [u8; 32],
+    program_path: PathBuf,
+    program_sha256: [u8; 32],
+    state_database_path: PathBuf,
+}
+
+impl StoredMakerActorManifest {
+    fn into_manifest(self) -> Result<MakerActorManifestV1, StoreError> {
+        let kind = MakerActorKindV1::parse(&self.kind)
+            .map_err(|_| StoreError::InvalidMakerActorRegistration)?;
+        MakerActorManifestV1::new(
+            self.swap_id,
+            kind,
+            self.config_path,
+            self.config_sha256,
+            self.program_path,
+            self.program_sha256,
+            self.state_database_path,
+        )
+        .map_err(|_| StoreError::InvalidMakerActorRegistration)
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -180,6 +239,109 @@ impl SqliteZecRecoveryStore {
     #[must_use]
     pub const fn local_participant(&self) -> Participant {
         self.local_participant
+    }
+
+    /// Replays one exact already-committed scheduled maker acceptance without
+    /// reparsing its agreement against the current wall clock.
+    ///
+    /// `Ok(None)` means the request ID has never committed. A present mutation
+    /// must match every caller-provided identity, its completed negotiation, and
+    /// its immutable actor row before the original result is returned.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on role mismatch, changed request bytes or metadata, a
+    /// legacy unscheduled result, missing/drifted actor state, or corrupt storage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preflight_maker_zec_scheduled_completion_replay(
+        &self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        final_agreement_wire: &[u8],
+        preimage: &ClaimPreimage,
+    ) -> Result<Option<MakerZecAcceptanceReplay>, StoreError> {
+        self.require_role(Participant::Maker)?;
+        let agreement_wire_sha256: [u8; 32] = Sha256::digest(final_agreement_wire).into();
+        let secret_digest: [u8; 32] = Sha256::digest(preimage.expose_secret()).into();
+        let committed_revision = expected_offer_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let replay = transaction
+            .query_row(
+                "SELECT operation, request_payload_version, request_json, result_json
+                   FROM maker_application_mutations WHERE request_id = ?1",
+                params![request_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((operation, stored_version, stored_request, stored_result)) = replay else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+        if operation != "zec_negotiation_complete" || stored_version != 1 {
+            return Err(StoreError::MakerOfferRequestConflict);
+        }
+        let stored: StoredCompleteMakerZecRequest = serde_json::from_str(&stored_request)?;
+        if &stored.offer_id != offer_id
+            || stored.expected_offer_revision != expected_offer_revision
+            || &stored.reservation_id != reservation_id
+            || stored.agreement_wire_sha256 != agreement_wire_sha256
+            || stored.secret_digest != secret_digest
+        {
+            return Err(StoreError::MakerOfferRequestConflict);
+        }
+        let actor = stored
+            .actor
+            .ok_or(StoreError::InvalidMakerActorRegistration)?
+            .into_manifest()?;
+        if actor.kind() != MakerActorKindV1::Zcash {
+            return Err(StoreError::InvalidMakerActorRegistration);
+        }
+        let result: CompleteMakerZecResult = serde_json::from_str(&stored_result)?;
+        if result.schema_version != 1 || result.offer_revision != committed_revision {
+            return Err(StoreError::CorruptMakerOffer);
+        }
+        let negotiation = transaction
+            .query_row(
+                "SELECT final_agreement_wire, swap_id, state, updated_request_id
+                   FROM maker_zec_negotiations WHERE offer_id = ?1",
+                params![offer_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<Vec<u8>>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::InvalidZecRecoveryState)?;
+        if negotiation.0.as_deref() != Some(final_agreement_wire)
+            || negotiation.1.as_deref() != Some(actor.swap_id().as_str())
+            || negotiation.2 != "completed"
+            || negotiation.3.as_deref() != Some(request_id.as_str())
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        require_exact_maker_actor_in_transaction(&transaction, &actor)
+            .map_err(|_| StoreError::InvalidMakerActorRegistration)?;
+        transaction.commit()?;
+        Ok(Some(MakerZecAcceptanceReplay {
+            offer_revision: result.offer_revision,
+            swap_id: actor.swap_id().clone(),
+        }))
     }
 
     /// Atomically completes one staged maker-first ZEC negotiation.

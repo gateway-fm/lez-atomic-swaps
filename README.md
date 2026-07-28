@@ -79,6 +79,12 @@ Reserved or consumed unexpired envelopes remain projected only so the winning
 deterministic retry can resume. Completed maker/taker lifecycle commands,
 other-pair application composition, and hardening remain.
 
+The short-TTL ZEC process proof now also waits until the consumed Delivery
+envelope is stale. The daemon remains `ready: true` but correctly reports
+`degraded: true` and Delivery `unavailable` until startup/operator
+reconciliation removes that stale projection; SQLite, not the mailbox, remains
+the committed swap authority.
+
 Schema v16 now also persists pair-bound, immutable maker-actor scheduling
 metadata with stable due order, owner/generation fencing, restart enumeration,
 and peer-isolated backoff. Time alone cannot steal a live lease. Registration
@@ -101,10 +107,18 @@ synced bottom-up before acceptance, and exact replay repeats the durability
 barrier. Six focused tests cover Maker-only creation/replay, Taker rejection,
 corrupt collision, unsafe mutable artifacts, and concurrent publishers. A
 filesystem bundle left by a database rollback is inert without its scheduler
-row and is exact-replayable. Exact committed replay after the agreement window,
-per-swap templates for distinct/concurrent application swaps, bounded
-supervisor composition, and actor-bearing hardened-systemd execution remain
-M5 work.
+row and is exact-replayable. Exact committed completion replay is now
+independent of the current wall clock: before live agreement parsing or actor
+provisioning, the daemon verifies the exact request, offer revision,
+reservation, final-wire digest, protected preimage digest, completed
+negotiation bytes, swap ID, and immutable scheduled actor row. The taker first
+persists the countersigned agreement; a rerun validates that private agreement,
+the executable unsigned draft, pinned Maker, local Taker role/key, and amount,
+then retries only completion without Delivery discovery or proposal replay.
+The real CLI/process proof uses a three-second offer TTL and completes this
+exact retry after expiry. Per-swap templates for distinct/concurrent application
+swaps, bounded supervisor composition, actor-bearing hardened-systemd execution,
+and actual-node supervisor composition remain M5 work.
 Both real one-shot ZEC and BTC actors now accept exactly one private path or
 fixed inherited config FD 196. Each synchronously requires an anonymous,
 euid-owned, mode-0600, unlinked memfd with all immutable seals before Tokio

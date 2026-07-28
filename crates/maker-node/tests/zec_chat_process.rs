@@ -83,7 +83,6 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     };
     let mut daemon = start_daemon(&daemon_paths);
     wait_ready(&mut daemon, &ready, &socket);
-
     let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
     configure_live_route(&socket, route).await;
     let offer_id = MakerOfferId::new("m5-chat-offer-001").unwrap();
@@ -102,17 +101,14 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         .next()
         .expect("published offer is discoverable");
     let reservation_id = request("m5-chat-reservation-001");
-    let draft_wire = unsigned_draft(&authenticated, &reservation_id, &maker_secret, &key(2));
-    let taker_root = run.path().join("taker");
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&taker_root)
-        .expect("create owner-only taker root");
-    let draft_file = taker_root.join("unsigned-draft.borsh");
-    let taker_key_file = taker_root.join("agreement.key");
-    let agreement_file = taker_root.join("agreement.borsh");
-    write_private(&draft_file, &draft_wire);
-    write_raw_key(&taker_key_file, 2);
+    let draft_wire = unsigned_draft(
+        &authenticated,
+        &reservation_id,
+        &maker_secret,
+        &key(2),
+        actor.agreement_basis_time,
+    );
+    let taker_files = prepare_taker_files(run.path(), &draft_wire);
     let proposal_request = ZecChatProposeRequestV1 {
         schema_version: 1,
         request_id: derived_chat_request(&reservation_id, b"propose"),
@@ -136,13 +132,13 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         chat_socket: &chat_socket,
         offer_id: &offer_id,
         reservation_id: &reservation_id,
-        draft_file: &draft_file,
-        taker_key_file: &taker_key_file,
-        agreement_file: &agreement_file,
+        draft_file: &taker_files.draft,
+        taker_key_file: &taker_files.key,
+        agreement_file: &taker_files.agreement,
     };
 
     assert_chat_outage_and_restart(&taker, &maker_key, accepted_at, &mut daemon, &daemon_paths);
-    let final_wire = assert_taker_accepts_and_replays(&taker, &maker_key, accepted_at, &database);
+    let final_wire = accept_and_replay(&taker, &maker_key, accepted_at, &authenticated, &database);
     assert_completed_process(
         &mut daemon,
         &daemon_paths,
@@ -165,8 +161,13 @@ fn assert_completed_process(
     let socket = paths.socket;
     let completed_health = run_maker_health(socket);
     assert_eq!(completed_health["ready"], true);
-    assert_eq!(completed_health["degraded"], false);
-    assert_eq!(completed_health["delivery"], "available");
+    // The short-TTL proof intentionally leaves the consumed envelope past expiry;
+    // health must expose that removable projection drift until reconciliation.
+    assert_eq!(
+        completed_health["degraded"], true,
+        "unexpected completed health: {completed_health}"
+    );
+    assert_eq!(completed_health["delivery"], "unavailable");
     assert_eq!(completed_health["chat"], "available");
     assert_eq!(fs::read_dir(paths.delivery).unwrap().count(), 1);
     stop_daemon_gracefully(daemon, paths);
@@ -296,6 +297,28 @@ fn run_maker_health(socket: &std::path::Path) -> Value {
     serde_json::from_slice(&output.stdout).expect("maker health returns JSON")
 }
 
+struct TakerFiles {
+    draft: PathBuf,
+    key: PathBuf,
+    agreement: PathBuf,
+}
+
+fn prepare_taker_files(run_root: &Path, draft_wire: &[u8]) -> TakerFiles {
+    let root = run_root.join("taker");
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&root)
+        .expect("create owner-only taker root");
+    let files = TakerFiles {
+        draft: root.join("unsigned-draft.borsh"),
+        key: root.join("agreement.key"),
+        agreement: root.join("agreement.borsh"),
+    };
+    write_private(&files.draft, draft_wire);
+    write_raw_key(&files.key, 2);
+    files
+}
+
 struct TakerProcess<'a> {
     delivery: &'a std::path::Path,
     chat_socket: &'a std::path::Path,
@@ -306,12 +329,14 @@ struct TakerProcess<'a> {
     agreement_file: &'a std::path::Path,
 }
 
-fn assert_taker_accepts_and_replays(
+fn accept_and_replay(
     taker: &TakerProcess<'_>,
     maker_key: &PublicKey,
     accepted_at: u64,
+    authenticated: &AuthenticatedOfferRefV1,
     database: &Path,
 ) -> Vec<u8> {
+    let expires_at_unix_seconds = authenticated.offer().expires_at_unix_seconds();
     let accepted = run_taker(taker, maker_key, accepted_at);
     assert_eq!(accepted["schema_version"], 1);
     assert_eq!(accepted["offer_revision"], 3);
@@ -346,7 +371,15 @@ fn assert_taker_accepts_and_replays(
             .join("taker")
             .exists()
     );
-    thread::sleep(Duration::from_millis(1_100));
+    let expiry_wait = Instant::now();
+    while now() <= expires_at_unix_seconds {
+        assert!(
+            expiry_wait.elapsed() < Duration::from_secs(6),
+            "short-lived local offer did not expire on schedule"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(now() > expires_at_unix_seconds);
     let replay = run_taker(taker, maker_key, accepted_at);
     assert_eq!(replay["replay"]["proposal"], true);
     assert_eq!(replay["replay"]["completion"], true);
@@ -467,7 +500,7 @@ async fn assert_socket_method_isolation(
 
 async fn configure_live_route(socket: &std::path::Path, route: MakerRouteV1) {
     let disabled =
-        MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 10, 10_000, 300)
+        MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 10, 10_000, 3)
             .unwrap();
     let _: Value = call_local_rpc(
         socket,
@@ -492,7 +525,7 @@ async fn configure_live_route(socket: &std::path::Path, route: MakerRouteV1) {
     .await
     .unwrap();
     let enabled =
-        MakerPairConfigurationV1::new(route, true, MakerPriceSourceKind::Local, 10, 10_000, 300)
+        MakerPairConfigurationV1::new(route, true, MakerPriceSourceKind::Local, 10, 10_000, 3)
             .unwrap();
     let _: Value = call_local_rpc(
         socket,
@@ -512,8 +545,8 @@ fn unsigned_draft(
     reservation_id: &RequestId,
     maker_secret: &SecretKey,
     taker_secret: &SecretKey,
+    agreement_basis_time: u64,
 ) -> Vec<u8> {
-    let current = now();
     let maker_public = public_key(maker_secret);
     let taker_public = public_key(taker_secret);
     let maker_hash = pubkey_hash(&maker_public);
@@ -563,7 +596,12 @@ fn unsigned_draft(
             1,
             40,
         ),
-        ZecRefundPlanV1::new(current, 116, (current + 60) * 1_000, current + 90),
+        ZecRefundPlanV1::new(
+            agreement_basis_time,
+            116,
+            (agreement_basis_time + 60) * 1_000,
+            agreement_basis_time + 90,
+        ),
         NegotiationTranscriptV1::new(
             maker_zec_chat_session_id(reservation_id),
             authenticated.commitment(),
@@ -578,6 +616,7 @@ struct ActorDeployment {
     source_config: PathBuf,
     program: PathBuf,
     program_sha256: String,
+    agreement_basis_time: u64,
 }
 
 fn prepare_actor_deployment(
@@ -590,7 +629,8 @@ fn prepare_actor_deployment(
     for directory in [&source_root, &actor_root] {
         fs::DirBuilder::new().mode(0o700).create(directory).unwrap();
     }
-    let agreement = source_agreement_wire(maker_secret, taker_secret);
+    let agreement_basis_time = now();
+    let agreement = source_agreement_wire(maker_secret, taker_secret, agreement_basis_time);
     let agreement_file = source_root.join("agreement-v2.borsh");
     let source_config = source_root.join("actor-config.json");
     let claim_key = source_root.join("claim-recovery.key");
@@ -667,11 +707,15 @@ fn prepare_actor_deployment(
         source_config,
         program,
         program_sha256,
+        agreement_basis_time,
     }
 }
 
-fn source_agreement_wire(maker_secret: &SecretKey, taker_secret: &SecretKey) -> Vec<u8> {
-    let current = now();
+fn source_agreement_wire(
+    maker_secret: &SecretKey,
+    taker_secret: &SecretKey,
+    agreement_basis_time: u64,
+) -> Vec<u8> {
     let maker_public = public_key(maker_secret);
     let taker_public = public_key(taker_secret);
     let maker_hash = pubkey_hash(&maker_public);
@@ -722,8 +766,13 @@ fn source_agreement_wire(maker_secret: &SecretKey, taker_secret: &SecretKey) -> 
             1,
             40,
         ),
-        ZecRefundPlanV1::new(current, 116, (current + 60) * 1_000, current + 90),
-        NegotiationTranscriptV1::new([9; 32], [10; 32], current + 300),
+        ZecRefundPlanV1::new(
+            agreement_basis_time,
+            116,
+            (agreement_basis_time + 60) * 1_000,
+            agreement_basis_time + 90,
+        ),
+        NegotiationTranscriptV1::new([9; 32], [10; 32], agreement_basis_time + 300),
     );
     let commitment = body.commitment();
     let record = ZecAgreementRecordV1::from_parts(
@@ -733,7 +782,7 @@ fn source_agreement_wire(maker_secret: &SecretKey, taker_secret: &SecretKey) -> 
         sign_agreement(commitment, maker_secret),
         sign_agreement(commitment, taker_secret),
     );
-    ZecAgreementV1::validate_at(record, UnixSeconds::new(current))
+    ZecAgreementV1::validate_at(record, UnixSeconds::new(agreement_basis_time))
         .unwrap()
         .encode_wire()
         .unwrap()

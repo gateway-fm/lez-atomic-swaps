@@ -11,11 +11,12 @@ use lez_maker_node::{
     DeliveryOfferQueryV1, RunLocalDelivery, ZecChatCompleteRequestV1, ZecChatCompleteResponseV1,
     ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
 };
-use lez_swap_core::{Pair, SwapDirection, UnixSeconds};
+use lez_swap_core::{Pair, Participant, SwapDirection, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{MakerOfferId, MakerRouteV1};
 use lez_zec_swap_sdk::{
-    MAX_ZEC_AGREEMENT_RECORD_BYTES, ZecAgreementDraftV1, ZecMakerAgreementProposalV1,
+    AcceptedZecAgreementV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, ZecAgreementDraftV1,
+    ZecMakerAgreementProposalV1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::Serialize;
@@ -61,6 +62,12 @@ pub(crate) async fn take_zec(input: ZecTakeInput<'_>) -> anyhow::Result<ZecAccep
     let offer_id = MakerOfferId::new(input.offer_id)?;
     let reservation_id = RequestId::new(input.reservation_id)?;
     ensure!(input.foreign_units > 0, "ZEC principal must be nonzero");
+
+    match fs::symlink_metadata(input.agreement_output_file) {
+        Ok(_) => return resume_persisted_zec(&input, offer_id, reservation_id).await,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("inspect persisted ZEC agreement"),
+    }
 
     let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez)?;
     let selected = input
@@ -133,6 +140,76 @@ pub(crate) async fn take_zec(input: ZecTakeInput<'_>) -> anyhow::Result<ZecAccep
     .await
 }
 
+async fn resume_persisted_zec(
+    input: &ZecTakeInput<'_>,
+    offer_id: MakerOfferId,
+    reservation_id: RequestId,
+) -> anyhow::Result<ZecAcceptanceOutput> {
+    let final_wire = read_private_file(
+        input.agreement_output_file,
+        MAX_ZEC_AGREEMENT_RECORD_BYTES as u64,
+        "persisted countersigned ZEC agreement",
+    )?;
+    let now = UnixSeconds::new(input.now_unix_seconds);
+    let accepted = AcceptedZecAgreementV1::accept_wire_at(&final_wire, now, Participant::Taker, 0)
+        .context("validate persisted countersigned ZEC agreement")?;
+    let agreement = accepted.agreement();
+    let draft_wire = read_private_file(
+        input.unsigned_draft_file,
+        MAX_ZEC_AGREEMENT_RECORD_BYTES as u64,
+        "unsigned ZEC agreement draft",
+    )?;
+    let validated_draft = ZecAgreementDraftV1::from_wire_at(&draft_wire, now)
+        .context("validate unsigned ZEC agreement draft for persisted retry")?;
+    let taker_secret_material =
+        load_raw_secret(input.taker_signing_key_file, "taker agreement key")?;
+    let mut taker_secret = SecretKey::from_slice(taker_secret_material.as_ref())
+        .context("validate taker agreement key")?;
+    let taker_public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &taker_secret);
+    taker_secret.non_secure_erase();
+    ensure!(
+        validated_draft.taker_zcash_key() == &taker_public
+            && validated_draft.maker_zcash_key() == input.expected_maker
+            && validated_draft.zcash_amount_zatoshis() == input.foreign_units
+            && validated_draft.body() == agreement.record().body(),
+        "persisted agreement does not match the local taker, pinned maker, or executable draft"
+    );
+    let completion: ZecChatCompleteResponseV1 = call_local_rpc(
+        input.chat_socket,
+        "zec_chat_complete_v1",
+        &ZecChatCompleteRequestV1 {
+            schema_version: 1,
+            request_id: derived_request_id(&reservation_id, b"complete")?,
+            offer_id: offer_id.clone(),
+            expected_offer_revision: 2,
+            reservation_id: reservation_id.clone(),
+            final_agreement_wire: final_wire.to_vec(),
+        },
+    )
+    .await?;
+    ensure!(
+        completion.schema_version == 1
+            && completion.offer_revision == 3
+            && completion.swap_id.as_ref() == agreement.application_swap_id(),
+        "maker completion result does not match the persisted countersigned agreement"
+    );
+    Ok(ZecAcceptanceOutput {
+        schema_version: 1,
+        offer_id: offer_id.as_str().to_owned(),
+        offer_revision: completion.offer_revision,
+        reservation_id: reservation_id.as_str().to_owned(),
+        swap_id: completion.swap_id,
+        agreement_file: input.agreement_output_file.to_path_buf(),
+        agreement_sha256: hex::encode(Sha256::digest(&final_wire)),
+        replay: ReplayOutput {
+            proposal: true,
+            completion: completion.was_replay,
+            agreement_file: true,
+        },
+        private_material_disclosed: false,
+    })
+}
+
 async fn complete_zec(
     input: &ZecTakeInput<'_>,
     offer_id: MakerOfferId,
@@ -152,6 +229,7 @@ async fn complete_zec(
         .complete_at(taker_signature, UnixSeconds::new(input.now_unix_seconds))
         .context("countersign maker ZEC proposal")?;
     let final_wire = agreement.encode_wire()?;
+    let agreement_file_was_replay = publish_exact_new(input.agreement_output_file, &final_wire)?;
     let complete_request_id = derived_request_id(&reservation_id, b"complete")?;
     let completion: ZecChatCompleteResponseV1 = call_local_rpc(
         input.chat_socket,
@@ -172,7 +250,6 @@ async fn complete_zec(
             && completion.swap_id.as_ref() == agreement.application_swap_id(),
         "maker completion result does not match the countersigned agreement"
     );
-    let agreement_file_was_replay = publish_exact_new(input.agreement_output_file, &final_wire)?;
 
     Ok(ZecAcceptanceOutput {
         schema_version: 1,

@@ -3377,6 +3377,24 @@ separately from runtime dependencies.
   failure can leave only an inert exact-replayable filesystem bundle; without a
   scheduler row it has no execution authority.
 
+  The expiry-independent replay RED/GREEN slice closes the next lost-response
+  boundary. A read-only store preflight returns `None` for an absent or rolled-
+  back request and otherwise verifies the exact request operation/version,
+  offer and reservation, expected revision, final-wire and protected-preimage
+  digests, completed negotiation bytes/state/swap, and the complete immutable
+  scheduled ZEC actor row. Only that fully matching committed result bypasses
+  current-wall-clock agreement parsing and provisioning; changed wire,
+  preimage, revision, reservation, offer, or missing actor fail closed. The
+  taker now durably no-clobber-publishes its countersigned agreement before the
+  completion RPC. On rerun it reopens and validates that private agreement,
+  executable draft, both roles/keys, amount, and swap identity, then retries
+  only completion instead of rediscovering Delivery or reproposing. The real
+  daemon/taker process proof uses a three-second offer TTL, waits beyond expiry,
+  and receives the same committed revision/swap as an exact replay. Its stale
+  consumed Delivery envelope intentionally makes health `ready` plus
+  `degraded`/Delivery-unavailable until reconciliation; the projection cannot
+  authorize or erase the durable completion.
+
   The systemd syscall-policy RED/GREEN slice is statically closed. The packaged
   unit now names `memfd_create` explicitly alongside `@system-service`, retains
   native-only/EPERM policy and `KillMode=control-group`, and its lifecycle
@@ -3385,9 +3403,8 @@ separately from runtime dependencies.
   group expansion from becoming an undocumented portability dependency. An
   actor-bearing transient-unit execution is still required before M5 closure.
 
-  Next, make committed Chat completion replay independent of the current
-  agreement-validity window and replace the fixed one-swap source template with
-  a per-swap immutable authority registry. Require actor deployment whenever
+  Next, replace the fixed one-swap source template with a per-swap immutable
+  authority registry. Require actor deployment whenever
   Chat is enabled and carry those inputs through the packaged systemd install.
   Then compare both pair configs' swap/role/state/agreement semantics with each
   leased manifest, implement the bounded pair-neutral supervisor, rehearse its

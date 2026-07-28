@@ -2,8 +2,9 @@
 
 - Status: Accepted; schema-v16 transactional/race foundation GREEN;
   inherited held-lock recovery, physical artifact binding, and atomic ZEC
-  acceptance-registration store components plus both real BTC/ZEC sealed-config
-  consumers and daemon-owned maker-only ZEC provisioning GREEN; supervisor
+  acceptance-registration plus expiry-independent committed replay, both real
+  BTC/ZEC sealed-config consumers, and daemon-owned maker-only ZEC provisioning
+  GREEN; supervisor
   manifest comparison, process lifecycle, and actual-node composition pending
 - Date: 2026-07-28
 
@@ -43,6 +44,15 @@ or drifted scheduler row on replay fails closed instead of being silently
 recreated. The actor's initial due time is deliberately not replay identity;
 the scheduler may already have advanced after a lost response.
 
+An exact committed completion is historical fact, so retry does not reapply the
+current agreement-validity window. Before any live parse or provisioning, the
+daemon reads the request mutation and exact-compares its offer, revision,
+reservation, final-wire and protected-preimage digests, completed negotiation
+bytes/state/swap, and immutable actor manifest plus row. Only that complete
+match returns the original revision and swap. Absence continues through normal
+live validation; changed identity, legacy unscheduled completion, corruption,
+or a missing/drifted actor fails closed.
+
 ```mermaid
 sequenceDiagram
     participant D as Maker daemon
@@ -50,6 +60,11 @@ sequenceDiagram
     participant Q as SQLite schema v16
     participant T as Taker Chat client
     T->>D: Countersigned final agreement
+    D->>Q: Preflight request negotiation and scheduled actor
+    alt exact committed scheduled result
+        Q-->>D: Original revision and swap
+        D-->>T: Replay without current-time parse or provisioning
+    else no committed request
     D->>F: Use startup-pinned Maker config identities and actor program
     D->>F: Write agreement and Maker config in private staging root
     D->>F: Sync files and nested directories bottom-up
@@ -70,6 +85,7 @@ sequenceDiagram
         end
     else artifact missing partial or conflicting
         D-->>T: Fail closed before SQLite acceptance
+    end
     end
 ```
 
@@ -239,8 +255,11 @@ locks, agreements, escrows, outpoints, and deadlines.
   creation fail closed.
 - Atomic acceptance tests force a later mutation failure and observe zero swap,
   agreement, binding, claim-material, actor, and replay rows; success exposes
-  exactly one queued row. Exact and delayed replay preserve it, a changed
-  manifest conflicts, and a deleted scheduler row fails closed.
+  exactly one queued row. Exact replay after store reopen and agreement expiry
+  preserves it without current-time parsing or provisioning; changed wire,
+  preimage, revision, reservation, offer, or manifest conflicts, and a deleted
+  scheduler row fails closed. The real taker process proves completion-only
+  retry after a three-second TTL from its private persisted agreement.
 - Both real actor binary tests replace the deployment config after the sealed
   snapshot is created and still report the snapshot's role/state. Ordinary
   linked files, memfds missing `F_SEAL_WRITE`, path-plus-FD ambiguity, and any

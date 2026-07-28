@@ -60,7 +60,9 @@ pub use public_effect_journal::{
     PublicEffectKey, PublicEffectObservation, PublicEffectOperation, PublicEffectSnapshot,
     PublicEffectState, PublicEffectSubmissionResult, SqlitePublicEffectJournal,
 };
-pub use zec_recovery::{MakerZecAcceptanceCommit, SqliteZecRecoveryStore};
+pub use zec_recovery::{
+    MakerZecAcceptanceCommit, MakerZecAcceptanceReplay, SqliteZecRecoveryStore,
+};
 
 use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{

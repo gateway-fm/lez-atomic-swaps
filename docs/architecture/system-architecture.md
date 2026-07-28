@@ -623,7 +623,7 @@ flowchart TB
     end
 
     subgraph TakerDevice["Taker-controlled device"]
-        TC["lez-taker CLI<br/>key-pinned discovery and ZEC acceptance GREEN<br/>lifecycle planned"]
+        TC["lez-taker CLI<br/>persist-before-complete and expiry retry GREEN<br/>lifecycle planned"]
         TM["Taker mini-app"]
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
@@ -719,8 +719,8 @@ flowchart TB
     end
 
     subgraph OffChain["Untrusted, removable after lock"]
-        DEL["Run-local Delivery-compatible adapter<br/>degraded health and exact retry GREEN"]
-        CHAT["Run-local Chat-compatible adapter<br/>outage, restart replay and atomic completion GREEN"]
+        DEL["Run-local Delivery-compatible adapter<br/>stale projection degradation GREEN"]
+        CHAT["Run-local Chat-compatible adapter<br/>atomic completion and post-expiry exact retry GREEN"]
     end
 
     subgraph Nodes["Actor-selected node boundary"]
@@ -773,10 +773,11 @@ flowchart TB
     APP -->|"signed offer publication"| DEL
     TC -->|"key-pinned discovery"| DEL
     APP -->|"isolated maker proposal runtime"| CHAT
-    TC -->|"countersign and atomic completion GREEN"| CHAT
+    TC -->|"persist wire then exact completion retry"| CHAT
     APP -->|"validated final agreement"| MPV
     MPV -->|"durable Maker-only bundle"| SCH
     SCH -->|"same acceptance transaction"| DB
+    DB -->|"expiry-independent committed replay preflight"| APP
     SCH -.->|"fenced lease and sealed FDs"| SUP
     SUP -.->|"bounded one-shot execution"| MA
     OF --> DB
@@ -953,6 +954,14 @@ Delivery / Chat is not trusted with secrets or chain truth and may disappear
 after the first lock. Chain adapters accept consensus evidence from the selected
 LEZ sequencer, Bitcoin Core, `monerod`, or Zebra; peer messages never advance an
 on-chain state by themselves.
+
+For a lost completion response, the taker persists its countersigned agreement
+before the RPC. A rerun validates that private wire against its executable
+draft and both role identities, then retries only Chat completion. The maker
+consults SQLite before current-time agreement validation or provisioning and
+returns the original result only when the request, negotiation, protected
+preimage digest, and scheduled actor row all match. Expired Delivery projection
+drift degrades transport health but cannot change that durable result.
 
 The concrete LEZ/ZEC agreement validator is integrated on both actor sides as
 one bounded canonical wire contract. Negotiation yields untrusted bytes;

@@ -5116,6 +5116,20 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
         claim_key("maker-zec-atomic-key", [0x71; 32]),
     )
     .unwrap();
+    assert!(
+        recovery_store
+            .preflight_maker_zec_scheduled_completion_replay(
+                &completion_request,
+                &offer_id,
+                2,
+                &reservation_id,
+                &artifacts.agreement_wire,
+                &ClaimPreimage::new(secret),
+            )
+            .unwrap()
+            .is_none(),
+        "an absent completion request has no durable replay"
+    );
     let raw = Connection::open(&path).expect("external rollback injector");
     raw.execute_batch(
         "CREATE TRIGGER fail_maker_zec_completion
@@ -5183,6 +5197,20 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
         )
         .unwrap();
     assert_eq!(rolled_back_binding_and_claim, (0, 0));
+    assert!(
+        recovery_store
+            .preflight_maker_zec_scheduled_completion_replay(
+                &completion_request,
+                &offer_id,
+                2,
+                &reservation_id,
+                &artifacts.agreement_wire,
+                &ClaimPreimage::new(secret),
+            )
+            .unwrap()
+            .is_none(),
+        "a rolled-back request has no durable replay"
+    );
 
     raw.execute_batch("DROP TRIGGER fail_maker_zec_completion;")
         .unwrap();
@@ -5200,6 +5228,97 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
         .unwrap();
     assert_eq!(committed.offer_revision(), 3);
     assert!(!committed.was_replay());
+    assert!(
+        AcceptedZecAgreementV1::accept_wire_at(
+            &artifacts.agreement_wire,
+            UnixSeconds::new(309),
+            Participant::Maker,
+            0,
+        )
+        .is_err(),
+        "the live agreement fixture must be expired at the replay-preflight time"
+    );
+    drop(recovery_store);
+    let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
+        &path,
+        Participant::Maker,
+        claim_key("maker-zec-atomic-key", [0x71; 32]),
+    )
+    .unwrap();
+    let durable_replay = recovery_store
+        .preflight_maker_zec_scheduled_completion_replay(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &artifacts.agreement_wire,
+            &ClaimPreimage::new(secret),
+        )
+        .unwrap()
+        .expect("exact committed request survives restart and live expiry");
+    assert_eq!(durable_replay.offer_revision(), 3);
+    assert_eq!(
+        durable_replay.swap_id(),
+        accepted.agreement().coordinator().id()
+    );
+
+    let mut changed_wire = artifacts.agreement_wire.clone();
+    changed_wire.push(0);
+    assert!(matches!(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &changed_wire,
+            &ClaimPreimage::new(secret),
+        ),
+        Err(StoreError::MakerOfferRequestConflict)
+    ));
+    assert!(matches!(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &artifacts.agreement_wire,
+            &ClaimPreimage::new([0x92; 32]),
+        ),
+        Err(StoreError::MakerOfferRequestConflict)
+    ));
+    assert!(matches!(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+            &completion_request,
+            &offer_id,
+            1,
+            &reservation_id,
+            &artifacts.agreement_wire,
+            &ClaimPreimage::new(secret),
+        ),
+        Err(StoreError::MakerOfferRequestConflict)
+    ));
+    assert!(matches!(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+            &completion_request,
+            &offer_id,
+            2,
+            &request("maker-zec-atomic-other-reservation"),
+            &artifacts.agreement_wire,
+            &ClaimPreimage::new(secret),
+        ),
+        Err(StoreError::MakerOfferRequestConflict)
+    ));
+    assert!(matches!(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+            &completion_request,
+            &MakerOfferId::new("maker-zec-atomic-other-offer").unwrap(),
+            2,
+            &reservation_id,
+            &artifacts.agreement_wire,
+            &ClaimPreimage::new(secret),
+        ),
+        Err(StoreError::MakerOfferRequestConflict)
+    ));
     let replay = recovery_store
         .complete_maker_zec_negotiation_and_register_actor(
             &completion_request,
@@ -5267,6 +5386,17 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
         .unwrap(),
         1
     );
+    assert!(matches!(
+        recovery_store.preflight_maker_zec_scheduled_completion_replay(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &artifacts.agreement_wire,
+            &ClaimPreimage::new(secret),
+        ),
+        Err(StoreError::InvalidMakerActorRegistration)
+    ));
     assert!(matches!(
         recovery_store.complete_maker_zec_negotiation_and_register_actor(
             &completion_request,

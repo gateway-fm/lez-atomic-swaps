@@ -1,6 +1,6 @@
 # ADR 0092: Let the taker own validation and countersigning
 
-- Status: Accepted; real taker-process acceptance slice GREEN
+- Status: Accepted; real taker acceptance and post-expiry completion retry GREEN
 - Date: 2026-07-24
 - Milestone: M5 progressive local-functional PoC
 
@@ -29,10 +29,18 @@ deadline, destination, or executable policy.
 
 Mutation request IDs are deterministic hashes of the reservation plus a
 domain-separated stage label. Retrying the same user command therefore reaches
-the maker's existing exact-replay records. After durable maker completion, the
-CLI publishes the final wire through a mode-0600 temporary file and
+the maker's existing exact-replay records. Before requesting final completion,
+the CLI publishes the countersigned wire through a mode-0600 temporary file and
 `persist_noclobber`, syncs the file and directory, and accepts an existing file
-only when its bounded, descriptor-revalidated bytes are identical.
+only when its bounded, descriptor-revalidated bytes are identical. A lost RPC
+response therefore cannot lose the only countersigned recovery artifact.
+
+When that file already exists, the CLI skips Delivery discovery and proposal.
+It reopens and validates the private agreement against the executable unsigned
+draft, pinned Maker identity, local Taker key/role, amount, signatures, and swap
+identity, then retries only the deterministic completion request. The daemon
+returns an expired agreement's original result only after SQLite exact-matches
+the full committed request, negotiation, and immutable scheduled actor row.
 
 The daemon and taker share one hardened private-file implementation. It opens
 without following symlinks, checks effective ownership, mode 0600, one link,
@@ -51,10 +59,11 @@ flowchart LR
     Loader --> CLI
     CLI -->|Proposal request| Chat[Maker Chat socket]
     Chat -->|Maker-signed proposal after commit| CLI
-    CLI -->|Dual-signed final wire| Chat
-    Chat -->|Revision 3 after atomic commit| CLI
     CLI --> Publish[No-clobber exact-wire publisher]
     Publish --> Agreement[Final agreement mode 0600]
+    Agreement -->|Validated persisted wire| CLI
+    CLI -->|Completion request| Chat
+    Chat -->|Revision 3 or exact committed replay| CLI
 ```
 
 The maker never receives the taker secret key. The taker never receives maker
@@ -82,12 +91,21 @@ sequenceDiagram
     C-->>T: Exact maker-signed proposal
     T->>T: Verify signature and exact-body equality
     T->>T: Countersign exact commitment with taker key
+    T->>F: Sync temporary and persist without replacement
     T->>C: Complete request with dual-signed wire
     C->>S: Accept agreement, protect claim material and consume offer atomically
     S-->>C: Commit revision 3
     C-->>T: Agreement-derived swap ID
-    T->>F: Sync temporary and persist without replacement
     T-->>U: Secret-free versioned result
+
+    U->>T: Repeat exact command after expiry or lost response
+    T->>F: Open bounded private agreement
+    T->>T: Revalidate draft roles amount signatures and swap
+    T->>C: Retry only deterministic completion request
+    C->>S: Preflight exact request negotiation and scheduled actor
+    S-->>C: Original committed revision and swap
+    C-->>T: Exact replay without current-time acceptance
+    T-->>U: Secret-free replay result
 ```
 
 ## Atomicity argument
@@ -100,27 +118,32 @@ maker database. Its safety comes from ordering and replay:
 2. the final completion response is not returned before agreement,
    coordinator, binding, encrypted maker claim material, offer consumption,
    and replay result commit together;
-3. the taker writes only the exact dual-signed wire it locally validated;
-4. if the process dies after maker commit but before local publication, the
-   same deterministic request exact-replays and safely republishes; and
+3. the taker durably writes only the exact dual-signed wire it locally validated
+   before attempting final completion;
+4. if the RPC is lost before or after maker commit, that persisted artifact
+   drives the same deterministic request; an exact committed result replays
+   after expiry, while an uncommitted expired agreement remains rejected; and
 5. an existing different output is never overwritten.
 
-Thus a crash can leave a recoverable missing taker file, not a conflicting
-accepted agreement or a partially consumed maker offer. Cross-chain atomicity
-still begins only after both role actors activate these terms and execute the
-reviewed HTLC lifecycle; this pre-lock decision does not itself move funds.
+Thus a crash can leave a recoverable private agreement awaiting completion, or
+that same agreement fully committed at the maker; it cannot create conflicting
+accepted bytes or a partially consumed maker offer. Cross-chain atomicity still
+begins only after both role actors activate these terms and execute the reviewed
+HTLC lifecycle; this pre-lock decision does not itself move funds.
 
 ## Evidence and limitations
 
 The `zec_chat_process` test now launches the actual maker daemon and actual
 `lez-taker` binary. The CLI authenticates the offer, reads its own raw key,
-validates and countersigns, receives revision 3, persists the final wire, then
-repeats the identical command after crossing a wall-clock second. All three
-replay indicators become true. Forced daemon termination and SQLite reopen
-retain the exact agreement and protected maker authority.
+validates and countersigns, persists the final wire, receives revision 3, waits
+past the three-second offer/agreement TTL, then repeats the identical command.
+The second process reads the private wire, makes no Delivery/proposal request,
+and exact-replays completion. Store tests separately prove reopen, rollback,
+changed-input conflicts, and missing-actor failure.
 
 The process test uses no node, chain RPC, Docker, faucet, public funds, DNS,
 public finality source, or Logos service. It proves the application negotiation
-boundary, not actor activation or a cross-chain effect. The unsigned
-chain-fact preparer, final actor-config rebinding, actual local LEZ/ZEC corridor,
-status/claim/refund taker commands, and outage cutover remain.
+boundary and acceptance-to-scheduler handoff, not actor execution or a
+cross-chain effect. A per-swap authority registry, pair-neutral supervisor,
+actor-bearing systemd execution, actual local-node crash composition, and
+status/claim/refund taker commands remain.

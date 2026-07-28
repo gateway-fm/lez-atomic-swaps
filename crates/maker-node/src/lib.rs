@@ -1441,11 +1441,6 @@ fn complete_zec_chat(
     if request.schema_version != 1 {
         return Err(invalid_request("unsupported ZEC Chat completion"));
     }
-    let now_unix_seconds = trusted_now_unix_seconds()?;
-    let provisioner = context
-        .zec_actor_provisioner
-        .as_ref()
-        .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker actor provisioning is unavailable"))?;
     let completion_store = context
         .zec_completion_store
         .as_ref()
@@ -1454,6 +1449,29 @@ fn complete_zec_chat(
         .maker_claim_preimage
         .as_ref()
         .ok_or_else(|| invalid_request("maker claim authority is unavailable"))?;
+    if let Some(replay) = completion_store
+        .preflight_maker_zec_scheduled_completion_replay(
+            &request.request_id,
+            &request.offer_id,
+            request.expected_offer_revision,
+            &request.reservation_id,
+            &request.final_agreement_wire,
+            preimage,
+        )
+        .map_err(application_store_error)?
+    {
+        return Ok(ZecChatCompleteResponseV1 {
+            schema_version: 1,
+            offer_revision: replay.offer_revision(),
+            was_replay: true,
+            swap_id: replay.swap_id().as_str().into(),
+        });
+    }
+    let now_unix_seconds = trusted_now_unix_seconds()?;
+    let provisioner = context
+        .zec_actor_provisioner
+        .as_ref()
+        .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker actor provisioning is unavailable"))?;
     let accepted = AcceptedZecAgreementV1::accept_wire_at(
         &request.final_agreement_wire,
         lez_swap_core::UnixSeconds::new(now_unix_seconds),

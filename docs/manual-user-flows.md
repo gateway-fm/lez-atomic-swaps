@@ -4565,15 +4565,28 @@ inputs an operator supplies:
 --zec-actor-program-sha256 EXACT_64_HEX_DIGEST
 ```
 
-The separate taker discovers and countersigns one offer. Before returning
-success, the daemon publishes the final agreement and Maker config with
+The separate taker discovers and countersigns one offer with a three-second
+TTL. It no-clobber-persists the private final agreement before asking the maker
+to complete, so a lost response cannot discard the only countersigned wire.
+Before returning success, the daemon publishes the final agreement and Maker config with
 no-clobber semantics, syncs files and all containing directories, reloads the
 semantic binding, and commits acceptance plus one queued schema-v16 actor row in
-one SQLite transaction. The delayed exact replay must retain one row, the same
-manifest, identical config bytes, and the same config inode. No `taker` subtree
-may exist in the daemon-created bundle. The focused actor test adds Taker-source
-rejection, corrupt collision, unsafe state/journal rejection, and two concurrent
-same-wire publishers. The process fixture pins `/usr/bin/true` only to prove
+one SQLite transaction.
+
+The test then waits until both offer and agreement are expired and invokes the
+same real taker CLI again. Because the private final agreement already exists,
+the taker validates it against its unsigned draft, pinned Maker, local Taker
+key/role, exact amount, and swap identity, then retries only
+`zec_chat_complete_v1`; it does not rediscover Delivery, stage a new proposal,
+or countersign new bytes. Before any current-wall-clock parsing or provisioning,
+the maker preflight exact-compares the committed request/offer/revision/
+reservation, final-wire and protected-preimage digests, completed negotiation,
+swap ID, and immutable actor row. The exact replay must retain one row, the same
+manifest, identical config bytes, and the same config inode. Changed replay
+inputs or a missing actor row fail closed. No `taker` subtree may exist in the
+daemon-created bundle. The focused actor test adds Taker-source rejection,
+corrupt collision, unsafe state/journal rejection, and two concurrent same-wire
+publishers. The process fixture pins `/usr/bin/true` only to prove
 production executable validation and scheduling; it does not claim actor
 execution. Sealed execution of the real ZEC binary is covered separately by
 `actor_boundary`, and supervisor composition remains open.
@@ -4586,13 +4599,17 @@ path. A partial four-argument group is rejected by the CLI before startup.
 Runtime external resources are none. The test uses Unix sockets, temporary
 owner-private files, SQLite, and local processes only. It contacts no chain
 RPC, node, Docker service, faucet, DNS service, public network, or public funds.
+After expiry the consumed Delivery envelope is intentionally stale: health
+remains `ready: true` while reporting `degraded: true` and Delivery
+`unavailable` until reconciliation. That removable projection is not swap
+authority and does not invalidate or duplicate the committed completion.
 The full local-devnet settlement remains Flow 1B; this focused flow certifies
 only the acceptance-to-scheduler handoff.
 
+Current limitation: the daemon still accepts one fixed source template rather
+than a per-swap authority registry. Supervisor execution, actor-bearing systemd,
+and actual-node supervisor composition also remain.
 
-Current limitation: a committed completion retried after the agreement validity
-window is not yet replayed before wall-clock validation, and the daemon accepts
-one fixed source template rather than a per-swap authority registry.
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim
