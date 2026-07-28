@@ -11,6 +11,8 @@ mod command;
 mod config;
 mod local_poc;
 mod secure_file;
+#[cfg(feature = "test-crash-hooks")]
+mod test_crash_hook;
 
 pub use command::{
     ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusV1,
@@ -25,6 +27,8 @@ pub use local_poc::{
     finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
     provision_local_v0_2_corridor,
 };
+#[cfg(feature = "test-crash-hooks")]
+pub use test_crash_hook::{TestCrashHookError, arm_test_crash_hook};
 
 /// Exactly one lifecycle action performed by an actor process.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Subcommand)]

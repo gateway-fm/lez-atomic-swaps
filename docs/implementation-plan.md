@@ -3291,6 +3291,21 @@ separately from runtime dependencies.
   runtime on SIGTERM in one second; the process adapter proves bounded
   start/health/stop and lease transfer. ADR
   0097 records the component, sequence, atomicity, and upstream-Core boundary.
+- [ ] Complete persistent process coordination. ADR 0099 adds a non-default,
+  allowlisted real-actor pause only after a secret-free submitted result exists
+  and before stdout; its owner-private no-clobber helper and negative cases are
+  GREEN and explicitly run in CI, while a real submitted subprocess remains
+  open. Schema v16 then persists pair-bound lexical config/program/state
+  identities, stable due order, backoff, and owner/generation-fenced attempts
+  without any protocol or effect data. Transactional exact registration,
+  two-connection same-row exclusion and distinct-row progress, restart lease
+  enumeration, half-open backoff, stale-fence rejection, peer isolation, and no
+  time-based lease steal are GREEN under ADR 0100. Next, join registration to
+  final acceptance, secure-open and physically validate every artifact, add the
+  pair-neutral supervisor and non-forgeable inherited-lock recovery capability,
+  route existing M3 overlap and M5 ZEC application flows through it, then prove
+  one exact SIGKILL/restart while a disjoint peer reaches terminal without
+  duplicate effects. This partial progress does not increase the 3/7 score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3310,7 +3325,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 25 to 42 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 23 to 39 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 

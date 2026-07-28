@@ -12,7 +12,7 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ### M5 active progressive application PoC
 
 M5 is active. The owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v15
+Unix-socket daemon, maker CLI, durable schema-v16
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
@@ -77,6 +77,15 @@ no final agreement appears, and completes exactly once after daemon restart.
 Reserved or consumed unexpired envelopes remain projected only so the winning
 deterministic retry can resume. Completed maker/taker lifecycle commands,
 other-pair application composition, and hardening remain.
+
+Schema v16 now also persists pair-bound, immutable maker-actor scheduling
+metadata with stable due order, owner/generation fencing, restart enumeration,
+and peer-isolated backoff. Time alone cannot steal a live lease. Registration
+and lease races plus the feature-gated marker helper are unit-GREEN. Atomic
+acceptance-to-registration handoff, secure physical file identity, a
+non-forgeable held-lock recovery capability, the real supervisor, and
+actual-node crash composition remain open, so this checkpoint does not
+increase the M5 score.
 
 Build and repeat the current real process boundary with:
 

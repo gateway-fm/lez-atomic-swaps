@@ -80,6 +80,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace --all-targets
+      - name: Exercise feature-gated actor crash seam
+        run: cargo test --locked -p zec-reference-actor --features test-crash-hooks --test crash_hook
       - name: Verify M3 official cryptographic vectors
         run: |
           ./scripts/check-m3-cryptographic-vectors.sh

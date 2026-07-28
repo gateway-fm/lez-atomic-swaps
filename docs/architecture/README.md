@@ -183,6 +183,8 @@ flowchart TB
     M5Entry --> M5Fuzz["0096 Coordinator fuzz harness"]
     M5Entry --> M5Lifecycle["0097 Maker lifecycle supervision"]
     M5Entry --> M5Outage["0098 Transport outage recovery"]
+    M5Entry --> M5Crash["0099 Actor submission fault seam"]
+    M5Crash --> M5ProcessLease["0100 Fenced actor-process leases"]
 ```
 
 | ADR | Decision | Status |
@@ -285,3 +287,5 @@ flowchart TB
 | [0096](0096-fuzz-coordinator-transitions-and-restarts.md) | Fuzz every supported coordinator profile and exact restart image in an isolated pinned libFuzzer graph | Accepted; 512-run local smoke, strict Clippy, and dependency-policy audit GREEN |
 | [0097](0097-supervise-one-maker-daemon-lifecycle.md) | Run the same maker daemon under hardened systemd today and a bounded future Logos Core lifecycle seam without moving keys, SQLite, or effect authority into the supervisor | Accepted; staged install, actual user-systemd notification/crash restart, process lifecycle, and single-writer lease rehearsals GREEN |
 | [0098](0098-report-and-recover-transport-outages.md) | Preserve SQLite authority while reporting and exactly recovering Delivery/Chat outages | Accepted; real maker/taker process outage, degraded health, restart, and exact-replay matrix GREEN; LOGOS-020 remains upstream production parity |
+| [0099](0099-pause-actors-after-submission-only-in-fault-tests.md) | Pause a feature-gated real actor after an exact submitted effect and before stdout | Accepted; marker helper unit-GREEN, real submitted subprocess/composed evidence pending |
+| [0100](0100-fence-maker-actor-process-leases.md) | Fence scheduling by swap, random owner, monotonic generation, and a process-layer kernel lock rather than TTL | Accepted; schema-v16 transactional/race foundation GREEN; acceptance handoff, physical artifact checks, held-lock recovery, supervisor, and actual-node composition pending |

@@ -13,6 +13,7 @@ mod adaptor_session_journal;
 mod bridge_operation_journal;
 mod btc_maker_lock_journal;
 mod btc_recovery;
+mod maker_actor_process;
 mod maker_application;
 mod maker_offer;
 mod public_effect_journal;
@@ -38,6 +39,11 @@ pub use btc_maker_lock_journal::{
 pub use btc_recovery::{
     BtcAgreementAcceptance, BtcLifecycleEvidenceKind, BtcLifecycleEvidenceV1, BtcOfflineStatus,
     BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome, SqliteBtcRecoveryStore,
+};
+pub use maker_actor_process::{
+    MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner, MakerActorLeaseV1,
+    MakerActorManifestV1, MakerActorProcessError, MakerActorProcessRecordV1,
+    MakerActorRegistrationCommit, MakerActorScheduleState,
 };
 pub use maker_application::{
     LocalPriceV1, MakerConfigurationCommit, MakerConfigurationError, MakerPairConfigurationV1,
@@ -68,7 +74,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 15;
+const DATABASE_SCHEMA_VERSION: i64 = 16;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
@@ -1833,6 +1839,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StoreError> {
         ",
     )?;
     maker_application::migrate(&transaction)?;
+    maker_actor_process::migrate(&transaction)?;
     maker_offer::migrate(&transaction)?;
     migrate_zec_sdk_recovery(&transaction)?;
     transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;

@@ -385,7 +385,7 @@ fn legacy_v1_table_migrates_and_future_versions_fail_explicitly() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        15
+        16
     );
     for table in [
         "zec_sdk_agreements",
