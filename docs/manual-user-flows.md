@@ -4258,6 +4258,117 @@ The isolated `fuzz/Cargo.lock` is covered by its own advisory, license, ban, and
 source audit in CI. `libfuzzer-sys` 0.4.13 carries permissive MIT/Apache and LLVM
 NCSA terms; the NCSA allowance is exact and graph-local in `fuzz/deny.toml`.
 
+
+## Flow 1D: install and rehearse the maker systemd service
+
+This flow packages the same `lez-maker-daemon` used by the application PoC. It
+does not substitute a service-specific implementation and does not grant the
+supervisor access to SQLite internals or secret bytes.
+
+First reproduce the staged installation and host unit verification without
+changing the host:
+
+```sh
+./scripts/test-m5-service-lifecycle-contract.sh
+./scripts/rehearse-m5-maker-service-install.sh
+```
+
+The second command builds all application binaries into an isolated temporary
+root, installs them with production paths and modes, and runs
+`systemd-analyze verify`. It must end with:
+
+```text
+M5 maker service staged-install and systemd verification passed
+```
+
+On a host with a user systemd manager, run the actual notification and restart
+rehearsal:
+
+```sh
+./scripts/run-m5-maker-systemd-transient.sh
+```
+
+The script creates a unique user unit and private run root, passes three real
+systemd runtime credentials, waits for `Type=notify` readiness, calls the real
+`lez-maker health` command, persists one route, kills only the unit's main PID,
+observes one automatic restart and the same route, then stops the unit through
+SIGTERM. Its trap stops and resets only that unique unit and removes only its
+run root. Success resembles:
+
+```text
+M5 actual user-systemd lifecycle passed: run_id=lez-m5-systemd-... restarts=1 duration_seconds=... runtime_external_resources=none
+```
+
+For a real system installation, build release binaries, create the dedicated
+account, and stage the package:
+
+```sh
+cargo build --locked --release -p lez-maker-node --bins
+sudo useradd --system --home-dir /var/lib/lez-atomic-swaps \
+  --shell /usr/sbin/nologin lez-swap
+sudo env SOURCE_BIN_DIR=target/release ./scripts/install-m5-maker-service.sh
+```
+
+Create each 32-byte nonzero raw secret offline in an owner-only temporary file.
+Do not place secret bytes in shell arguments, command history, logs, or this
+repository. Encrypt each file for the local host, preserving the exact
+credential name expected by the unit:
+
+```sh
+sudo systemd-creds encrypt --name=delivery-signing.key \
+  /secure/input/delivery-signing.key \
+  /etc/lez-atomic-swaps/credentials/delivery-signing.key.cred
+sudo systemd-creds encrypt --name=maker-claim-recovery.key \
+  /secure/input/maker-claim-recovery.key \
+  /etc/lez-atomic-swaps/credentials/maker-claim-recovery.key.cred
+sudo systemd-creds encrypt --name=maker-claim-preimage.key \
+  /secure/input/maker-claim-preimage.key \
+  /etc/lez-atomic-swaps/credentials/maker-claim-preimage.key.cred
+sudo chmod 0600 /etc/lez-atomic-swaps/credentials/*.cred
+```
+
+Remove the plaintext inputs only according to the operator's approved secret
+destruction procedure. Then verify, start, and inspect the service:
+
+```sh
+sudo systemd-analyze verify /usr/lib/systemd/system/lez-maker-daemon.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now lez-maker-daemon.service
+sudo systemctl status --no-pager lez-maker-daemon.service
+sudo -u lez-swap /usr/bin/lez-maker \
+  --socket /run/lez-atomic-swaps/maker.sock health
+```
+
+The health JSON must report schema version 1 and `ready: true`. The control
+socket is deliberately mode 0600, so ordinary users cannot issue maker RPCs;
+run operational CLI commands as `lez-swap` through the host's audited privilege
+boundary. Do not widen the socket mode to make a command convenient.
+
+Stop and disable only this service with:
+
+```sh
+sudo systemctl disable --now lez-maker-daemon.service
+```
+
+The persistent database and its `.lock` file remain in
+`/var/lib/lez-atomic-swaps`. A lock file's presence does not mean the daemon is
+running; the held kernel lock is authoritative. Do not delete state as part of
+ordinary restart or upgrade. systemd removes the runtime directory after stop.
+
+The actual transient rehearsal uses no chain RPC, local node, Docker, faucet,
+public funds, DNS, Logos service, price feed, or external finality. Therefore it
+cannot be flaky from block time or network finality. A cold Cargo build can
+depend on crates.io availability, and the actual rehearsal requires a working
+user systemd manager. Production operation additionally depends on only the
+chain RPCs configured for enabled pairs; those endpoints are configuration, not
+hard-coded service-unit behavior.
+
+The `ProcessMakerDaemon` lifecycle contract is the future Logos Core daemon mode
+boundary. The focused Rust test launches this exact binary, validates
+bounded readiness and health, rejects duplicate ownership and a second writer
+on one database, transfers the lease after stop, and enforces exact-child
+SIGTERM shutdown. Logos has not published the immutable live host API, so this
+is a tested compatibility boundary rather than a claim of live Core integration.
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

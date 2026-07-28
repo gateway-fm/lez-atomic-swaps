@@ -62,13 +62,14 @@ fn validate_private_file(
     let metadata = file
         .metadata()
         .with_context(|| format!("inspect {purpose}"))?;
+    let mode = metadata.mode() & 0o7777;
     ensure!(
         metadata.file_type().is_file()
             && metadata.uid() == rustix::process::geteuid().as_raw()
-            && metadata.mode() & 0o7777 == 0o600
+            && matches!(mode, 0o400 | 0o600)
             && metadata.nlink() == 1
             && metadata.len() <= maximum_bytes,
-        "{purpose} must be an owner-owned, single-link mode-0600 regular file within its size bound"
+        "{purpose} must be an owner-owned, single-link mode-0400-or-0600 regular file within its size bound"
     );
     Ok(metadata)
 }

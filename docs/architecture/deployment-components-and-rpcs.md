@@ -689,6 +689,88 @@ connections. Only the local targets have execution evidence. The dashed public
 edges still require endpoint/authentication smoke, funding/deployment, identity
 revalidation, propagation, and finality evidence before release.
 
+### M5 maker service supervision and RPC inventory
+
+ADR 0097 adds a production-shaped standalone supervisor without changing the
+application or chain boundaries. The same binary and state are used in the
+interactive PoC, systemd package, and future Logos Core lifecycle seam.
+
+```mermaid
+flowchart TB
+    Operator[Maker operator]
+    Systemctl[systemctl service control]
+    Systemd[systemd Type notify]
+    Core[Future Logos Core daemon host]
+    Adapter[Bounded process lifecycle adapter]
+    Encrypted[Encrypted credentials in etc]
+    RuntimeCredentials[Private mode 0400 runtime credentials]
+    Daemon[lez-maker-daemon]
+    Health[maker_health schema 1]
+    OwnerSocket[Mode 0600 owner Unix RPC]
+    ChatSocket[Mode 0600 taker Chat Unix RPC]
+    Lease[Exclusive kernel database lease]
+    Store[(SQLite state and effect journals)]
+    Delivery[Owner-private Delivery directory]
+    LezRpc[Configured LEZ sequencer and indexer RPCs]
+    ForeignRpc[Configured Bitcoin Monero or Zcash RPCs]
+    MakerCli[lez-maker CLI]
+
+    Operator --> Systemctl
+    Systemctl --> Systemd
+    Encrypted --> Systemd
+    Systemd --> RuntimeCredentials
+    RuntimeCredentials --> Daemon
+    Systemd --> Daemon
+    Core -.-> Adapter
+    Adapter -.-> Daemon
+    Daemon --> Lease
+    Lease --> Store
+    Daemon --> Delivery
+    Daemon --> OwnerSocket
+    Daemon --> ChatSocket
+    Daemon --> LezRpc
+    Daemon --> ForeignRpc
+    MakerCli --> OwnerSocket
+    OwnerSocket --> Health
+```
+
+| Component | Endpoint or path | Authority and failure behavior |
+|---|---|---|
+| systemd service | `lez-maker-daemon.service` | Dedicated `lez-swap` user; owns `/run/lez-atomic-swaps` and `/var/lib/lez-atomic-swaps`; reports active only after daemon notification; restarts after failure with a bounded storm policy |
+| Encrypted credentials | `/etc/lez-atomic-swaps/credentials/*.cred` to systemd `%d` | systemd decrypts named Delivery, claim-recovery, and preimage values into private mode-0400 runtime files; the unit never places secret bytes in arguments or environment variables |
+| Maker owner RPC | `/run/lez-atomic-swaps/maker.sock` | Owner-only bounded HTTP/1 JSON-RPC over Unix transport; `maker_health` is read-only and schema-versioned; operator CLI runs as the service user |
+| Taker Chat RPC | `/run/lez-atomic-swaps/chat.sock` | Separate owner-only Unix listener with the isolated negotiation method set; no owner-control method crossover |
+| Maker database | `/var/lib/lez-atomic-swaps/maker.sqlite3` | SQLite transactions and effect journals remain protocol authority; a sibling owner-only `.lock` admits one process writer for its whole lifetime |
+| Delivery adapter | `/var/lib/lez-atomic-swaps/delivery` | Signed pre-lock discovery only; it is not chain truth and may disappear after the first lock |
+| LEZ and foreign nodes | Pair configuration selects explicit HTTP RPC origins | AF_INET and AF_INET6 remain available under systemd for typed bounded chain adapters. The service unit embeds no endpoint, faucet, fund, or public-network assumption |
+| Future Core adapter | `start`, `endpoint`, `health`, `stop` process contract | Validates absolute paths, owns one exact child, has bounded readiness/health/shutdown, and never reads keys or SQLite. The live upstream Core API remains LOGOS-019 |
+
+```mermaid
+sequenceDiagram
+    participant S as Supervisor
+    participant D as Maker daemon
+    participant L as Database lease
+    participant DB as SQLite and journals
+    participant U as Owner Unix RPC
+    participant R as Configured chain RPCs
+
+    S->>D: Start same binary with private paths
+    D->>L: Acquire exclusive nonblocking lease
+    D->>DB: Open migrate and reconcile
+    D->>U: Bind socket and readiness file
+    D-->>S: READY after maker_health can succeed
+    U->>D: Configure inspect or recover
+    D->>R: Pair-specific bounded chain calls
+    S->>D: SIGTERM
+    D-->>S: STOPPING then drain and exit
+    D->>L: Release lease
+```
+
+Supervisor readiness and the database lease preserve lifecycle safety but do
+not create a cross-chain transaction. Swap atomicity remains in the signed
+agreement, chain contracts, durable transitions, effect journals, and recovery
+paths described by each pair ADR.
+
 ### M5 progressive local ZEC composition
 
 The opt-in runner narrows the first application PoC to one already stable

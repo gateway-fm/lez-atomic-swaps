@@ -1,8 +1,13 @@
 //! Authenticated local JSON-RPC boundary for the headless maker.
 
+mod daemon_lifecycle;
 mod local_rpc;
 mod price_source;
 mod run_local_delivery;
+pub use daemon_lifecycle::{
+    MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
+    ProcessMakerDaemon,
+};
 pub use local_rpc::call_local_rpc;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
 pub use run_local_delivery::{
@@ -683,6 +688,34 @@ pub struct ZecChatCompleteResponseV1 {
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ListRequest {}
 
+/// Versioned read-only daemon health response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MakerHealthV1 {
+    schema_version: u16,
+    ready: bool,
+}
+
+impl MakerHealthV1 {
+    const fn ready() -> Self {
+        Self {
+            schema_version: 1,
+            ready: true,
+        }
+    }
+
+    /// Returns the health schema version.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Returns true only for the daemon's ready state.
+    #[must_use]
+    pub const fn is_ready(&self) -> bool {
+        self.schema_version == 1 && self.ready
+    }
+}
+
 /// Parameters for creating one swap with already negotiated immutable terms.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CreateSwapRequest {
@@ -864,6 +897,50 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
 }
 
 fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    register_health_method(module)?;
+    register_pair_and_price_methods(module)?;
+    register_offer_methods(module)?;
+    module.register_blocking_method::<RpcResult<Vec<SwapView>>, _>(
+        "swap_history",
+        |params, context, _| {
+            let _: ListRequest = params.one()?;
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .list_operator_swaps()
+                .map_err(internal_store_error)?
+                .iter()
+                .map(|swap| {
+                    let alerts = store
+                        .list_operator_alerts(swap.id(), 0, false)
+                        .map_err(internal_store_error)?;
+                    SwapView::with_pending_alerts(swap, &alerts).map_err(internal_store_error)
+                })
+                .collect()
+        },
+    )?;
+    Ok(())
+}
+
+fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<MakerHealthV1>, _>(
+        "maker_health",
+        |params, context, _| {
+            let _: ListRequest = params.one()?;
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store.list_maker_pairs().map_err(application_store_error)?;
+            Ok(MakerHealthV1::ready())
+        },
+    )?;
+    Ok(())
+}
+
+fn register_pair_and_price_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<MakerConfigurationCommit>, _>(
         "maker_pair_configure",
         |params, context, _| {
@@ -932,28 +1009,6 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
             LocalPriceSource::new(&store)
                 .quote(request.route, observed_at_unix_seconds)
                 .map_err(price_source_error)
-        },
-    )?;
-    register_offer_methods(module)?;
-    module.register_blocking_method::<RpcResult<Vec<SwapView>>, _>(
-        "swap_history",
-        |params, context, _| {
-            let _: ListRequest = params.one()?;
-            let store = context
-                .store
-                .lock()
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            store
-                .list_operator_swaps()
-                .map_err(internal_store_error)?
-                .iter()
-                .map(|swap| {
-                    let alerts = store
-                        .list_operator_alerts(swap.id(), 0, false)
-                        .map_err(internal_store_error)?;
-                    SwapView::with_pending_alerts(swap, &alerts).map_err(internal_store_error)
-                })
-                .collect()
         },
     )?;
     Ok(())

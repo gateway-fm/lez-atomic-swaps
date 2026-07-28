@@ -1,5 +1,6 @@
 use std::{
-    fs::{self, OpenOptions},
+    ffi::OsString,
+    fs::{self, File, OpenOptions},
     io::{self, Write as _},
     os::unix::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
@@ -17,6 +18,8 @@ use lez_maker_node::{
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{SqliteSwapStore, SqliteZecRecoveryStore};
 use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
+use rustix::fs::{CWD, FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
+use sd_notify::NotifyState;
 use secp256k1::SecretKey;
 use tokio::{net::UnixListener, task::JoinSet};
 use zeroize::Zeroizing;
@@ -75,16 +78,11 @@ struct Arguments {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
+    let _state_lease = acquire_state_lease(&arguments.database)?;
     import_terminal_projection(&arguments).await?;
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
-    let (chat_listener, _chat_socket_guard) = arguments
-        .chat_socket
-        .as_deref()
-        .map(bind_owner_socket)
-        .transpose()?
-        .map_or((None, None), |(listener, guard)| {
-            (Some(listener), Some(guard))
-        });
+    let (chat_listener, _chat_socket_guard) =
+        bind_optional_owner_socket(arguments.chat_socket.as_deref())?;
     let context = maker_context(
         &arguments.database,
         arguments.delivery_directory.as_deref(),
@@ -116,7 +114,8 @@ async fn main() -> anyhow::Result<()> {
             .build(module, stop_handle.clone())
     });
     let mut connections = JoinSet::new();
-    let shutdown = tokio::signal::ctrl_c();
+    notify_ready()?;
+    let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
 
     loop {
@@ -158,6 +157,7 @@ async fn main() -> anyhow::Result<()> {
             }
             signal = &mut shutdown => {
                 signal.context("wait for shutdown")?;
+                notify_stopping();
                 break;
             }
         }
@@ -174,6 +174,77 @@ async fn main() -> anyhow::Result<()> {
     drop(stop_handle);
     server_handle.stopped().await;
     Ok(())
+}
+
+async fn shutdown_signal() -> io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        received = terminate.recv() => received.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM signal stream closed")
+        }),
+    }
+}
+
+fn notify_ready() -> anyhow::Result<()> {
+    sd_notify::notify(&[
+        NotifyState::Ready,
+        NotifyState::Status("maker RPC and durable state are ready"),
+    ])
+    .context("notify service manager of maker readiness")
+}
+
+fn notify_stopping() {
+    let _ = sd_notify::notify(&[
+        NotifyState::Stopping,
+        NotifyState::Status("maker daemon is stopping"),
+    ]);
+}
+
+fn bind_optional_owner_socket(
+    path: Option<&Path>,
+) -> anyhow::Result<(Option<UnixListener>, Option<OwnedPath>)> {
+    Ok(path
+        .map(bind_owner_socket)
+        .transpose()?
+        .map_or((None, None), |(listener, guard)| {
+            (Some(listener), Some(guard))
+        }))
+}
+
+#[derive(Debug)]
+struct StateLease {
+    _file: File,
+}
+
+fn acquire_state_lease(database: &Path) -> anyhow::Result<StateLease> {
+    ensure!(
+        database.is_absolute(),
+        "maker database path must be absolute"
+    );
+    let mut lease_name = OsString::from(database.as_os_str());
+    lease_name.push(".lock");
+    let lease_path = PathBuf::from(lease_name);
+    let file = openat2(
+        CWD,
+        &lease_path,
+        OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR,
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .context("open maker database lease")?;
+    let metadata = file.metadata().context("inspect maker database lease")?;
+    ensure!(
+        metadata.file_type().is_file()
+            && metadata.uid() == rustix::process::geteuid().as_raw()
+            && metadata.mode() & 0o7777 == 0o600
+            && metadata.nlink() == 1,
+        "maker database lease must be an owner-owned, single-link mode-0600 regular file"
+    );
+    flock(&file, FlockOperation::NonBlockingLockExclusive)
+        .context("acquire exclusive maker database lease")?;
+    Ok(StateLease { _file: file })
 }
 
 async fn import_terminal_projection(arguments: &Arguments) -> anyhow::Result<()> {

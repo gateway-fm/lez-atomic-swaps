@@ -53,9 +53,14 @@ The progressive local ZEC application PoC gate is certified. Full swap-store,
 maker-process, strict Clippy, and Rustdoc gates are GREEN. The literal pinned
 coordinator fuzz target, seven-seed corpus, bounded CI smoke, and separate
 dependency audit are also GREEN locally; reproduce them with
-`./scripts/run-m5-coordinator-fuzz-smoke.sh`. C-API pricing, systemd/Core, other
-pairs, and hardening remain literal M5 work, tracked in the living plan and
-metrics without weakening this reproducible PoC claim.
+`./scripts/run-m5-coordinator-fuzz-smoke.sh`. The same maker daemon now has a
+hardened `Type=notify` systemd package, encrypted runtime credentials, typed
+health, SIGTERM cleanup, a process-lifetime database lease, an actual
+crash/restart rehearsal, and a bounded future Logos Core lifecycle contract.
+Use [Flow 1D](docs/manual-user-flows.md#flow-1d-install-and-rehearse-the-maker-systemd-service)
+to repeat it. C-API pricing, completed maker/taker commands, other pairs,
+outage behavior, and hardening remain literal M5 work, tracked in the living
+plan and metrics without weakening this reproducible PoC claim.
 
 Build and repeat the current real process boundary with:
 

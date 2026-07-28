@@ -181,6 +181,7 @@ flowchart TB
     M5Entry --> M5Corridor["0094 ZEC composition"]
     M5Corridor --> M5Projection["0095 Terminal operator projection"]
     M5Entry --> M5Fuzz["0096 Coordinator fuzz harness"]
+    M5Entry --> M5Lifecycle["0097 Maker lifecycle supervision"]
 ```
 
 | ADR | Decision | Status |
@@ -281,3 +282,4 @@ flowchart TB
 | [0094](0094-compose-m5-zec-and-cut-after-first-lock.md) | Compose real maker/taker negotiation into fresh ZEC actors and remove Delivery/Chat only after the confirmed first lock | Accepted and exact isolated-node execution GREEN; terminal owner projection follows under ADR 0095 |
 | [0095](0095-project-terminal-actors-as-operator-views.md) | Project stopped terminal Maker actors into a provenance-bound display-only owner view without changing lifecycle authority | Accepted and exact packet-bearing local-devnet restart GREEN at pushed commit `6c3bbbe` |
 | [0096](0096-fuzz-coordinator-transitions-and-restarts.md) | Fuzz every supported coordinator profile and exact restart image in an isolated pinned libFuzzer graph | Accepted; 512-run local smoke, strict Clippy, and dependency-policy audit GREEN |
+| [0097](0097-supervise-one-maker-daemon-lifecycle.md) | Run the same maker daemon under hardened systemd today and a bounded future Logos Core lifecycle seam without moving keys, SQLite, or effect authority into the supervisor | Accepted; staged install, actual user-systemd notification/crash restart, process lifecycle, and single-writer lease rehearsals GREEN |

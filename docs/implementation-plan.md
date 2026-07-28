@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-24
+Last updated: 2026-07-28
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -3271,8 +3271,18 @@ separately from runtime dependencies.
   packet-bearing commit `6c3bbbe` in 27.860 seconds, 56 rounds, and zero retry;
   both actor revisions, fresh terminal owner projection, no-public-resource
   boundary, and exact cleanup remained GREEN.
-- [ ] Add the standalone hardened systemd unit/install rehearsal and the tested
-  Logos Core lifecycle adapter contract.
+- [x] Add the standalone hardened systemd unit/install rehearsal and the tested
+  Logos Core lifecycle adapter contract. The same daemon now handles SIGTERM,
+  publishes typed health and `sd_notify` readiness, accepts systemd's safe
+  mode-0400 runtime credentials, and holds one nonblocking process-lifetime
+  database lease. The hardened `Type=notify` unit uses encrypted credentials,
+  dedicated state/runtime directories, an owner-only socket, bounded restart,
+  and system-call/filesystem/capability restrictions. A staged install passes
+  `systemd-analyze verify`; actual run `lez-m5-systemd-1000-1141654-16155`
+  survived one exact SIGKILL restart with configuration intact and cleaned its
+  runtime on SIGTERM in one second; the process adapter proves bounded
+  start/health/stop and lease transfer. ADR
+  0097 records the component, sequence, atomicity, and upstream-Core boundary.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3292,16 +3302,16 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 42 to 65 focused hours under the owner-approved Logos-upstream
-exception; systemd/Core, Logos C-API pricing, other pairs, and post-PoC
-hardening remain explicitly open above.
+literal M5 ETA is 38 to 60 focused hours under the owner-approved Logos-upstream
+exception; Logos C-API pricing, other pairs, CLI completion, outage behavior,
+and post-PoC hardening remain explicitly open above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
-Until Logos publishes that capability, M5 implements and tests the lifecycle
-contract against the same daemon binary and records the missing upstream
-integration in the production-blocker register. This external dependency does
-not excuse or defer the real standalone systemd, local control, persistence, or
-user-flow deliverables.
+Until Logos publishes that capability, M5 tests the lifecycle contract against
+the same daemon binary and records the missing upstream integration in the
+production-blocker register. The standalone systemd, local control, persistence,
+and restart user flow are now GREEN; only the live upstream Core attachment is
+deferred under that exception.
 
 ## Docker isolation policy
 

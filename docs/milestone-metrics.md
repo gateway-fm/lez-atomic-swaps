@@ -1,6 +1,6 @@
 # Milestone delivery metrics
 
-Last updated: 2026-07-24
+Last updated: 2026-07-28
 
 This is the live evidence scorecard for ADR 0027's progressive milestone
 delivery. It tracks measurements and explicit unknowns; it does not infer a
@@ -23,7 +23,7 @@ Status vocabulary:
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
 | M3 | Certified local-functional PoC | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | `m3-complete` at `f7fb250` | Owner entered M3 on 2026-07-14 and directed completion. The exact commit and tag are pushed; the private Actions API was unavailable and no remote-green claim is made. Cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
 | M4 | Certified progressive local-functional PoC | Exact clean replay `m4cert20260722an` completed the LEZ-first claim through isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest, retained canonical cross-chain binding and exact cleanup, and was documented on the pushed tree | `m4-poc-complete.2` | Owner entered M5 on 2026-07-23; deferred M4 hardening and production scope remain explicit |
-| M5 | Progressive local-functional PoC | Exact packet-bearing replay `m5app6c3bbbe20260724a` completed the ZEC application path through terminal revision 4, schema-v14 display-only projection, fresh owner-only history/status, and scoped cleanup from pushed commit `6c3bbbe`. Broader taker commands, C-API pricing, systemd, fuzzing, other pairs, and hardening remain | None | Owner entered M5 on 2026-07-23 |
+| M5 | Progressive local-functional PoC | Exact packet-bearing replay `m5app6c3bbbe20260724a` completed the ZEC application path through terminal revision 4, schema-v14 display-only projection, fresh owner-only history/status, and scoped cleanup from pushed commit `6c3bbbe`. Fuzzing and the standalone systemd/future-Core lifecycle sub-slice are GREEN; broader CLI commands, C-API pricing, other pairs, outage behavior, and hardening remain | None | Owner entered M5 on 2026-07-23 |
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
@@ -35,9 +35,10 @@ certified.
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
 | Live authorities reconciled | 2 of 2 | Live RFP-003 and accepted replacement issue #112 re-read on 2026-07-24; issue #61 excluded |
-| Literal M5 outputs complete | 1 of 7 component-certified | The fuzz harness is GREEN; daemon/systemd, maker CLI, taker CLI, persistent coordinator, two pricing modes, and Delivery/Chat behavior remain partial |
+| Literal M5 outputs complete | 1 of 7 component-certified | The fuzz harness is fully GREEN. The daemon's standalone systemd/future-Core lifecycle sub-slice is GREEN, but autonomous multi-pair execution remains before that full output can be certified; maker CLI, taker CLI, persistent coordinator, two pricing modes, and Delivery/Chat behavior remain partial |
 | Application binaries | Maker daemon and partial maker CLI expose owner-local pair policy, exact local price, durable offer publish/list/withdraw, swap create/status/history, and alert commands; daemon-owned authenticated Delivery plus real taker ZEC acceptance are GREEN | Add maker manual effect/lifecycle commands and taker status/claim/refund plus BTC/XMR initiation |
 | Owner-local control | GREEN component slice | Mode-0700 owner runtime directory, disjoint mode-0600 owner and Chat Unix sockets, absolute/no-symlink paths, bounded HTTP/1 JSON-RPC, disabled batches, 16-connection cap, no-clobber readiness, exact-inode cleanup, and two black-box daemon/CLI journeys pass strict gates |
+| Daemon supervision | Standalone systemd and future-Core lifecycle sub-slice GREEN | Exact-pinned notification, typed health, SIGTERM, mode-0400 credentials, process-lifetime database lease, hardened unit, staged install verification, and exact-child adapter tests pass. Actual run `lez-m5-systemd-1000-1141654-16155` retained one route across one SIGKILL restart and completed scoped SIGTERM cleanup in one second. Live Logos Core attachment remains LOGOS-019 |
 | Price-source runtime adapters | 1 of 2 component GREEN | The pluggable trait and store-backed local adapter preserve exact route, reduced-integer price, revision, and daemon-trusted time; the real CLI quotes 5:2 after daemon restart. Add the bounded Logos C-API adapter and bind external quotes into signed offers |
 | Discovery and negotiation | Signed bounded Delivery, restart reconciliation, schema-v14 staging, atomic acceptance and final actor rebinding are GREEN. Exact-tree run `m5app-71dd9cc-20260724a` composed the real maker/taker binaries into actual chain effects | Add outage hardening and exact Logos adapters |
 | Persistent restart evidence | Exact packet-bearing replay `m5app6c3bbbe20260724a` retained pre-effect state and returned `Completed` from fresh post-terminal owner history/status while Chat/Delivery stayed absent; receipt `929c9a7c...c58e` binds source revision 4 and no-RPC offline replay | GREEN for the progressive local ZEC application PoC |
@@ -50,8 +51,8 @@ certified.
 | Cleanup leaks | 0 in the exact-tree corridor run | Both run-scoped Compose projects, four containers, two unique images, the LEZ network, RPC ports, and named private roots are absent; every pre-existing foreign container survived |
 
 The progressive local ZEC application PoC gate is closed. Remaining literal M5
-ETA is 42–65 focused hours under the owner-approved Logos-upstream exception;
-systemd/Core, Logos C-API, multi-pair, and post-PoC hardening outputs remain
+ETA is 38–60 focused hours under the owner-approved Logos-upstream exception;
+Logos C-API, CLI completion, multi-pair, outage behavior, and post-PoC hardening outputs remain
 open and are not inferred from this completed replay.
 
 ## M4 PoC scorecard
