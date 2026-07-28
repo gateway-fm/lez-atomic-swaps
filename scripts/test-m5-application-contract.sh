@@ -45,6 +45,28 @@ for required in 'actor_supervisor_enabled: false'; do
 done
 
 for required in \
+  'ESCROW_PROGRAM_ID:-4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82' \
+  'M5_LEZ_GUEST_SHA256:-dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292' \
+  'M5_LEZ_DEPLOYMENT_EVIDENCE_FILE' \
+  'M5_LEZ_FINALITY_EVIDENCE_FILE' \
+  'm5-lez-deployment.json' \
+  'm5-lez-deployment-finality.json' \
+  '.preflight.image_id == $program' \
+  '.preflight.elf_sha256 == $guest' \
+  '.preflight.rpc_url == $rpc' \
+  '.preflight.channel_id == $channel' \
+  'lez_escrow_program_id' \
+  'lez_escrow_guest_sha256' \
+  'lez_deployment_receipt_sha256' \
+  'lez_deployment_finality_sha256' \
+  'lez_deployment_transaction_hash' \
+  'lez_deployment_inclusion_block_id' \
+  'lez_deployment_inclusion_block_hash'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M5 runner does not bind the current escrow deployment: ${required}"
+done
+
+for required in \
   'start_m5_full_supervised_daemon' \
   'start_m5_supervisor_only_daemon' \
   '--actor-supervisor' \

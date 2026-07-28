@@ -9,11 +9,14 @@ readonly LEZ_INDEXER_URL="${LEZ_INDEXER_URL:-http://127.0.0.1:32829}"
 readonly ZEBRA_RPC_URL="${ZEBRA_RPC_URL:-http://127.0.0.1:32830}"
 readonly LEZ_CHAIN_ID="${LEZ_CHAIN_ID:-b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748}"
 readonly LEZ_GENESIS_HASH="${LEZ_GENESIS_HASH:-e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9}"
-readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec}"
+readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82}"
 readonly AUTHENTICATED_TRANSFER_PROGRAM_HEX="${AUTHENTICATED_TRANSFER_PROGRAM_HEX:-dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71}"
 readonly AUTHENTICATED_TRANSFER_PROGRAM_BASE58="${AUTHENTICATED_TRANSFER_PROGRAM_BASE58:-FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg}"
 readonly MAKER_ACCOUNT_BASE58="${MAKER_ACCOUNT_BASE58:-B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd}"
 readonly TAKER_ACCOUNT_BASE58="${TAKER_ACCOUNT_BASE58:-34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib}"
+readonly M5_LEZ_GUEST_SHA256="${M5_LEZ_GUEST_SHA256:-dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292}"
+readonly M5_LEZ_DEPLOYMENT_EVIDENCE_FILE="${M5_LEZ_DEPLOYMENT_EVIDENCE_FILE:-}"
+readonly M5_LEZ_FINALITY_EVIDENCE_FILE="${M5_LEZ_FINALITY_EVIDENCE_FILE:-}"
 readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
 readonly M5_APPLICATION_MODE="${M5_APPLICATION_MODE:-0}"
 readonly DISCOVERY_BLOCKS=256
@@ -82,6 +85,7 @@ for value in \
   "$LEZ_CHAIN_ID" \
   "$LEZ_GENESIS_HASH" \
   "$ESCROW_PROGRAM_ID" \
+  "$M5_LEZ_GUEST_SHA256" \
   "$AUTHENTICATED_TRANSFER_PROGRAM_HEX"; do
   if [[ ! "$value" =~ ^[0-9a-f]{64}$ || "$value" =~ ^0+$ ]]; then
     echo 'LEZ chain, genesis, and program identities must be nonzero lowercase hex32 values' >&2
@@ -121,6 +125,26 @@ case "$POC_DIRECTION" in
 esac
 readonly expected_zcash_funder_role expected_zcash_claimant_role
 readonly expected_lez_depositor_role expected_lez_depositor_account
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  for deployment_evidence_file in \
+    "$M5_LEZ_DEPLOYMENT_EVIDENCE_FILE" "$M5_LEZ_FINALITY_EVIDENCE_FILE"; do
+    if [[ "$deployment_evidence_file" != /* || ! -f "$deployment_evidence_file" \
+      || -L "$deployment_evidence_file" \
+      || "$(readlink -f -- "$deployment_evidence_file")" != "$deployment_evidence_file" ]]; then
+      echo 'M5 requires absolute, canonical, regular LEZ deployment evidence files' >&2
+      exit 2
+    fi
+    deployment_mode="$(stat -c %a -- "$deployment_evidence_file")"
+    deployment_owner="$(stat -c %u -- "$deployment_evidence_file")"
+    deployment_links="$(stat -c %h -- "$deployment_evidence_file")"
+    deployment_size="$(stat -c %s -- "$deployment_evidence_file")"
+    if (( (8#$deployment_mode & 077) != 0 || deployment_owner != EUID \
+      || deployment_links != 1 || deployment_size == 0 || deployment_size > 65536 )); then
+      echo 'M5 LEZ deployment evidence has unsafe owner, mode, links, or size' >&2
+      exit 2
+    fi
+  done
+fi
 if [[ -e "$private_base" ]]; then
   echo "refusing to reuse PoC output root: ${private_base}" >&2
   exit 2
@@ -624,7 +648,60 @@ zebra_tip="$(jq -er 'select(.error == null) | .result | numbers' \
 mkdir -m 0700 "$private_base" "$evidence_dir"
 m5_actor_program=''
 m5_actor_program_sha256=''
+m5_lez_deployment_receipt_sha256=''
+m5_lez_deployment_finality_sha256=''
+m5_lez_deployment_transaction_hash=''
+m5_lez_deployment_inclusion_block_id=0
+m5_lez_deployment_inclusion_block_hash=''
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  m5_lez_deployment_receipt="${evidence_dir}/m5-lez-deployment.json"
+  install -m 0600 -- "$M5_LEZ_DEPLOYMENT_EVIDENCE_FILE" \
+    "$m5_lez_deployment_receipt"
+  jq -e --arg program "$ESCROW_PROGRAM_ID" --arg guest "$M5_LEZ_GUEST_SHA256" \
+    --arg rpc "$LEZ_SEQUENCER_URL" --arg channel "$LEZ_CHAIN_ID" '
+    .schema_version == 1
+    and .preflight.image_id == $program
+    and .preflight.elf_sha256 == $guest
+    and .preflight.rpc_url == $rpc
+    and .preflight.channel_id == $channel
+    and (.transaction_hash | strings | test("^[0-9a-f]{64}$"))
+    and (.inclusion_block_id | numbers) > .preflight.last_block_id
+    and (.inclusion_block_hash | strings | test("^[0-9a-f]{64}$"))
+  ' "$m5_lez_deployment_receipt" >/dev/null || {
+    echo 'M5 LEZ deployment evidence differs from the configured runtime' >&2
+    exit 2
+  }
+  m5_lez_deployment_receipt_sha256="$(sha256sum "$m5_lez_deployment_receipt" | cut -d ' ' -f1)"
+  m5_lez_deployment_transaction_hash="$(jq -er '.transaction_hash' "$m5_lez_deployment_receipt")"
+  m5_lez_deployment_inclusion_block_id="$(jq -er '.inclusion_block_id | numbers' "$m5_lez_deployment_receipt")"
+  m5_lez_deployment_inclusion_block_hash="$(jq -er '.inclusion_block_hash' "$m5_lez_deployment_receipt")"
+  m5_lez_deployment_finality="${evidence_dir}/m5-lez-deployment-finality.json"
+  install -m 0600 -- "$M5_LEZ_FINALITY_EVIDENCE_FILE" \
+    "$m5_lez_deployment_finality"
+  jq -e --arg program "$ESCROW_PROGRAM_ID" --arg guest "$M5_LEZ_GUEST_SHA256" \
+    --arg sequencer "$LEZ_SEQUENCER_URL" --arg indexer "$LEZ_INDEXER_URL" \
+    --arg channel "$LEZ_CHAIN_ID" --arg genesis "$LEZ_GENESIS_HASH" \
+    --arg tx "$m5_lez_deployment_transaction_hash" \
+    --argjson block "$m5_lez_deployment_inclusion_block_id" \
+    --arg block_hash "$m5_lez_deployment_inclusion_block_hash" '
+    .schema_version == 1 and .kind == "m4_lez_local_deployment" and .result == "passed"
+    and .artifact.image_id == $program and .artifact.elf_sha256 == $guest
+    and .artifact.exact_elf_pre_window_occurrences == 0
+    and .artifact.exact_elf_post_window_occurrences == 1
+    and .artifact.finalized_wire_bytecode_equal == true
+    and .stack.sequencer_rpc_url == $sequencer and .stack.indexer_rpc_url == $indexer
+    and .stack.channel_id == $channel and .stack.finalized_genesis_hash == $genesis
+    and .transaction_id == $tx and .containing_block_id == $block
+    and .containing_block_hash == $block_hash and .bedrock_status == "Finalized"
+    and .canonical_window_occurrences == 1 and .id_hash_id_lookups_equal == true
+    and .sequencer_indexer_inclusion_equal == true and .runtime_external_resources == []
+    and .public_rpc_used == false and .faucet_used == false
+    and .private_material_disclosed == false
+  ' "$m5_lez_deployment_finality" >/dev/null || {
+    echo 'M5 LEZ finality evidence differs from the configured runtime or deployment receipt' >&2
+    exit 2
+  }
+  m5_lez_deployment_finality_sha256="$(sha256sum "$m5_lez_deployment_finality" | cut -d ' ' -f1)"
   m5_actor_deployment_root="$private_base/actor-deployment"
   mkdir -m 0700 "$m5_actor_deployment_root"
   m5_actor_program="$m5_actor_deployment_root/zec-reference-actor"
@@ -637,7 +714,12 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   }
   m5_actor_program_sha256="$(sha256sum "$m5_actor_program" | cut -d ' ' -f1)"
 fi
-readonly m5_actor_program m5_actor_program_sha256
+readonly m5_actor_program m5_actor_program_sha256 \
+  m5_lez_deployment_receipt_sha256 \
+  m5_lez_deployment_finality_sha256 \
+  m5_lez_deployment_transaction_hash \
+  m5_lez_deployment_inclusion_block_id \
+  m5_lez_deployment_inclusion_block_hash
 lez_tip_response="$(rpc "$LEZ_SEQUENCER_URL" '{"jsonrpc":"2.0","id":1,"method":"getLastBlockId","params":[]}')"
 lez_tip="$(jq -er '.result | numbers' <<<"$lez_tip_response")"
 discovery_start=$((lez_tip + 1))
@@ -1531,6 +1613,13 @@ jq -n \
   --arg maker_supervisor_final_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-final.json" | cut -d ' ' -f1; fi)" \
   --arg expected_zebra_funding_txid "$m5_expected_funding_txid" \
+  --arg lez_escrow_program_id "$ESCROW_PROGRAM_ID" \
+  --arg lez_escrow_guest_sha256 "$M5_LEZ_GUEST_SHA256" \
+  --arg lez_deployment_receipt_sha256 "$m5_lez_deployment_receipt_sha256" \
+  --arg lez_deployment_finality_sha256 "$m5_lez_deployment_finality_sha256" \
+  --arg lez_deployment_transaction_hash "$m5_lez_deployment_transaction_hash" \
+  --argjson lez_deployment_inclusion_block_id "$m5_lez_deployment_inclusion_block_id" \
+  --arg lez_deployment_inclusion_block_hash "$m5_lez_deployment_inclusion_block_hash" \
   --argjson elapsed_ms "$((MAX_CORRIDOR_SECONDS * 1000 - $(remaining_budget_milliseconds 'result-before')))" '
   {
     schema_version: 1,
@@ -1589,6 +1678,22 @@ jq -n \
       fresh_operator_restart_reports_completed: ($m5_application_mode == 1),
       transports_removed_after_first_lock: ($m5_application_mode == 1),
       transports_absent_through_terminal_state: ($m5_application_mode == 1)
+    },
+    lez_escrow: {
+      program_id:
+        (if $m5_application_mode == 1 then $lez_escrow_program_id else null end),
+      guest_elf_sha256:
+        (if $m5_application_mode == 1 then $lez_escrow_guest_sha256 else null end),
+      deployment_receipt_sha256:
+        (if $m5_application_mode == 1 then $lez_deployment_receipt_sha256 else null end),
+      deployment_finality_sha256:
+        (if $m5_application_mode == 1 then $lez_deployment_finality_sha256 else null end),
+      deployment_transaction_hash:
+        (if $m5_application_mode == 1 then $lez_deployment_transaction_hash else null end),
+      deployment_inclusion_block_id:
+        (if $m5_application_mode == 1 then $lez_deployment_inclusion_block_id else null end),
+      deployment_inclusion_block_hash:
+        (if $m5_application_mode == 1 then $lez_deployment_inclusion_block_hash else null end)
     },
     public_rpc_or_faucet_used: false,
     evidence_root: $output_root
