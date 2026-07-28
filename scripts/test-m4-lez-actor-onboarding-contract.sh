@@ -229,6 +229,10 @@ run_fixture() {
     [[ "$(wc -l <"$root/account-reads" | tr -d ' ')" == 4 ]] || fail "expected four exact-block account reads"
     jq -e '.result=="passed" and .flow=="flow_0_fresh_vault_claims"
       and .actors.maker.submission_count==1 and .actors.taker.submission_count==1
+      and .actors.maker.account_id=="Fbw9N5WSecWwV2dnD1LYorystRU8Wt7qvbYcwKRfUUBg"
+      and .actors.maker.vault_account_id=="73PkYv2kabhH1EWem8fHGzvq7w2KHJ48762bKNpusNor"
+      and .actors.taker.account_id=="2TVfxNxZQyar34fZTxzeS2gTD2yEwGT5berurSnRKJPt"
+      and .actors.taker.vault_account_id=="9pcYbhvbTYg5CHtP837u8vtpqf2svFrrkJs2ZXN1vtj"
       and .actors.maker.owner_after=={balance:100000,nonce:1}
       and .actors.taker.owner_after=={balance:200000,nonce:1}
       and .actors.maker.vault_after=={balance:0,nonce:0}

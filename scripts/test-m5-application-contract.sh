@@ -52,16 +52,24 @@ for required in \
   'M5_LEZ_GUEST_SHA256:-dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292' \
   'M5_LEZ_DEPLOYMENT_EVIDENCE_FILE' \
   'M5_LEZ_FINALITY_EVIDENCE_FILE' \
+  'M5_LEZ_ONBOARDING_EVIDENCE_FILE' \
   'm5-lez-deployment.json' \
   'm5-lez-deployment-finality.json' \
+  'm5-lez-actor-onboarding.json' \
   '.preflight.image_id == $program' \
   '.preflight.elf_sha256 == $guest' \
   '.preflight.rpc_url == $rpc' \
   '.preflight.channel_id == $channel' \
+  '.actors.maker.account_id == $maker' \
+  '.actors.taker.account_id == $taker' \
+  '.deployment.finalized_evidence_sha256 == $deployment_sha' \
   'lez_escrow_program_id' \
   'lez_escrow_guest_sha256' \
   'lez_deployment_receipt_sha256' \
   'lez_deployment_finality_sha256' \
+  'lez_actor_onboarding_sha256' \
+  'lez_maker_vault_claim_transaction_hash' \
+  'lez_taker_vault_claim_transaction_hash' \
   'lez_deployment_transaction_hash' \
   'lez_deployment_inclusion_block_id' \
   'lez_deployment_inclusion_block_hash'; do

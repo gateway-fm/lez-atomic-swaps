@@ -327,8 +327,9 @@ claim_role() {
   jq -e '.result.balance==0 and .result.nonce==0' "$vault_output" >/dev/null ||
     fail "${role} finalized Vault effect is invalid"
   summary="${M4_ONBOARD_EVIDENCE_ROOT}/${role}-summary.json"
-  jq -n --arg role "$role" --arg tx "$tx" --argjson block "$block" --argjson allocation "$allocation" \
-    '{role:$role,transaction_id:$tx,submission_count:1,finalized_block_id:$block,
+  jq -n --arg role "$role" --arg account "$account" --arg vault "$vault" --arg tx "$tx" \
+    --argjson block "$block" --argjson allocation "$allocation" \
+    '{role:$role,account_id:$account,vault_account_id:$vault,transaction_id:$tx,submission_count:1,finalized_block_id:$block,
       canonical_window_occurrences:1,owner_after:{balance:$allocation,nonce:1},vault_after:{balance:0,nonce:0}}' >"$summary"
   chmod 0600 "$summary"
 }

@@ -3501,6 +3501,28 @@ separately from runtime dependencies.
   The focused M5 and CI hardening contracts are GREEN; an actual-node replay of
   this correction remains required before upgrading the supervisor gate.
 
+  The next actual-node replay reached the pre-effect LEZ depositor guard and
+  failed closed because the deterministic Taker genesis Vault had not been
+  claimed into the owner account; no swap effect was submitted. The repository
+  now requires M5 mode to ingest owner-private actor-onboarding evidence tied to
+  the same channel, current ProgramId, and exact finalized-deployment evidence.
+  It validates one canonical finalized Vault Claim per role, the exact configured
+  Maker/Taker accounts, expected 100000/200000 balances at nonce one, empty
+  genesis Vaults, no automatic retry, no external resources, and no public RPC
+  or faucet. The onboarding summary now carries the public owner and Vault IDs,
+  and the final M5 result binds its digest, both claim transaction hashes, and
+  their finalized block IDs. Focused RED failures for both missing contracts
+  became GREEN without weakening the pre-effect guard.
+
+  A clean rebuild must use fresh OS-random Maker/Taker identities before genesis,
+  current escrow deployment, and the two canonical claims. The existing ZEC
+  provisioner still writes the historical deterministic 01/02 LEZ signer
+  fixtures and rejects other public accounts, so fresh signer injection plus
+  exact private-key/account binding is the next implementation slice before the
+  supervisor-owned actual-chain replay. Project Cargo output, failed run roots,
+  four owned devnet containers, and unused Docker cache were then retired;
+  unrelated `gate55` and `pr127` containers remained running.
+
   ZEC actors now expose a role-fixed `recover` command that calls only the SDK's
   existing ordered `drive_refund` boundary. SDK tests prove LEZ-before-Zcash,
   owner-only submission, non-owner observation, early-deadline zero submission,
@@ -3528,7 +3550,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 5 to 10 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 16 to 30 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordinator composition hardening, and post-PoC hardening remain explicitly
 open above.

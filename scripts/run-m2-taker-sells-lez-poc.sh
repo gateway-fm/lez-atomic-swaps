@@ -17,6 +17,7 @@ readonly TAKER_ACCOUNT_BASE58="${TAKER_ACCOUNT_BASE58:-34Kqgek6R7N1zU5FSJz8ziXwS
 readonly M5_LEZ_GUEST_SHA256="${M5_LEZ_GUEST_SHA256:-dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292}"
 readonly M5_LEZ_DEPLOYMENT_EVIDENCE_FILE="${M5_LEZ_DEPLOYMENT_EVIDENCE_FILE:-}"
 readonly M5_LEZ_FINALITY_EVIDENCE_FILE="${M5_LEZ_FINALITY_EVIDENCE_FILE:-}"
+readonly M5_LEZ_ONBOARDING_EVIDENCE_FILE="${M5_LEZ_ONBOARDING_EVIDENCE_FILE:-}"
 readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
 readonly M5_APPLICATION_MODE="${M5_APPLICATION_MODE:-0}"
 readonly DISCOVERY_BLOCKS=256
@@ -127,7 +128,8 @@ readonly expected_zcash_funder_role expected_zcash_claimant_role
 readonly expected_lez_depositor_role expected_lez_depositor_account
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   for deployment_evidence_file in \
-    "$M5_LEZ_DEPLOYMENT_EVIDENCE_FILE" "$M5_LEZ_FINALITY_EVIDENCE_FILE"; do
+    "$M5_LEZ_DEPLOYMENT_EVIDENCE_FILE" "$M5_LEZ_FINALITY_EVIDENCE_FILE" \
+    "$M5_LEZ_ONBOARDING_EVIDENCE_FILE"; do
     if [[ "$deployment_evidence_file" != /* || ! -f "$deployment_evidence_file" \
       || -L "$deployment_evidence_file" \
       || "$(readlink -f -- "$deployment_evidence_file")" != "$deployment_evidence_file" ]]; then
@@ -651,9 +653,14 @@ m5_actor_program=''
 m5_actor_program_sha256=''
 m5_lez_deployment_receipt_sha256=''
 m5_lez_deployment_finality_sha256=''
+m5_lez_actor_onboarding_sha256=''
 m5_lez_deployment_transaction_hash=''
 m5_lez_deployment_inclusion_block_id=0
 m5_lez_deployment_inclusion_block_hash=''
+m5_lez_maker_vault_claim_transaction_hash=''
+m5_lez_taker_vault_claim_transaction_hash=''
+m5_lez_maker_vault_claim_block_id=0
+m5_lez_taker_vault_claim_block_id=0
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   m5_lez_deployment_receipt="${evidence_dir}/m5-lez-deployment.json"
   install -m 0600 -- "$M5_LEZ_DEPLOYMENT_EVIDENCE_FILE" \
@@ -703,6 +710,49 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     exit 2
   }
   m5_lez_deployment_finality_sha256="$(sha256sum "$m5_lez_deployment_finality" | cut -d ' ' -f1)"
+  m5_lez_actor_onboarding="${evidence_dir}/m5-lez-actor-onboarding.json"
+  install -m 0600 -- "$M5_LEZ_ONBOARDING_EVIDENCE_FILE" \
+    "$m5_lez_actor_onboarding"
+  jq -e --arg channel "$LEZ_CHAIN_ID" --arg program "$ESCROW_PROGRAM_ID" \
+    --arg deployment_sha "$m5_lez_deployment_finality_sha256" \
+    --arg maker "$MAKER_ACCOUNT_BASE58" --arg taker "$TAKER_ACCOUNT_BASE58" \
+    --argjson deployment_block "$m5_lez_deployment_inclusion_block_id" '
+    .schema_version == 1 and .kind == "m4_lez_actor_onboarding" and .result == "passed"
+    and .flow == "flow_0_fresh_vault_claims"
+    and .channel_id == $channel and .escrow_program_id == $program
+    and .deployment.finalized_evidence_sha256 == $deployment_sha
+    and .actors.maker.role == "maker" and .actors.maker.account_id == $maker
+    and (.actors.maker.vault_account_id | strings | test("^[1-9A-HJ-NP-Za-km-z]{43,44}$"))
+    and (.actors.maker.transaction_id | strings | test("^[0-9a-f]{64}$"))
+    and .actors.maker.submission_count == 1
+    and .actors.maker.canonical_window_occurrences == 1
+    and .actors.maker.finalized_block_id > $deployment_block
+    and .actors.maker.owner_after == {balance:100000,nonce:1}
+    and .actors.maker.vault_after == {balance:0,nonce:0}
+    and .actors.taker.role == "taker" and .actors.taker.account_id == $taker
+    and (.actors.taker.vault_account_id | strings | test("^[1-9A-HJ-NP-Za-km-z]{43,44}$"))
+    and (.actors.taker.transaction_id | strings | test("^[0-9a-f]{64}$"))
+    and .actors.taker.submission_count == 1
+    and .actors.taker.canonical_window_occurrences == 1
+    and .actors.taker.finalized_block_id > $deployment_block
+    and .actors.taker.owner_after == {balance:200000,nonce:1}
+    and .actors.taker.vault_after == {balance:0,nonce:0}
+    and .total_submission_count == 2 and .automatic_submission_retry == false
+    and .monero_or_swap_effects_started == false and .runtime_external_resources == []
+    and .public_rpc_used == false and .faucet_used == false
+    and .private_material_disclosed == false
+    and (.raw_evidence | type == "array" and length > 0
+      and all(.[]; (.path | strings | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))
+        and (.sha256 | strings | test("^[0-9a-f]{64}$"))))
+  ' "$m5_lez_actor_onboarding" >/dev/null || {
+    echo 'M5 LEZ actor-onboarding evidence differs from the configured runtime or deployment' >&2
+    exit 2
+  }
+  m5_lez_actor_onboarding_sha256="$(sha256sum "$m5_lez_actor_onboarding" | cut -d ' ' -f1)"
+  m5_lez_maker_vault_claim_transaction_hash="$(jq -er '.actors.maker.transaction_id' "$m5_lez_actor_onboarding")"
+  m5_lez_taker_vault_claim_transaction_hash="$(jq -er '.actors.taker.transaction_id' "$m5_lez_actor_onboarding")"
+  m5_lez_maker_vault_claim_block_id="$(jq -er '.actors.maker.finalized_block_id | numbers' "$m5_lez_actor_onboarding")"
+  m5_lez_taker_vault_claim_block_id="$(jq -er '.actors.taker.finalized_block_id | numbers' "$m5_lez_actor_onboarding")"
   m5_actor_deployment_root="$private_base/actor-deployment"
   mkdir -m 0700 "$m5_actor_deployment_root"
   m5_actor_program="$m5_actor_deployment_root/zec-reference-actor"
@@ -720,6 +770,11 @@ fi
 readonly m5_actor_program m5_actor_program_sha256 \
   m5_lez_deployment_receipt_sha256 \
   m5_lez_deployment_finality_sha256 \
+  m5_lez_actor_onboarding_sha256 \
+  m5_lez_maker_vault_claim_transaction_hash \
+  m5_lez_taker_vault_claim_transaction_hash \
+  m5_lez_maker_vault_claim_block_id \
+  m5_lez_taker_vault_claim_block_id \
   m5_lez_deployment_transaction_hash \
   m5_lez_deployment_inclusion_block_id \
   m5_lez_deployment_inclusion_block_hash
@@ -1620,6 +1675,11 @@ jq -n \
   --arg lez_escrow_guest_sha256 "$M5_LEZ_GUEST_SHA256" \
   --arg lez_deployment_receipt_sha256 "$m5_lez_deployment_receipt_sha256" \
   --arg lez_deployment_finality_sha256 "$m5_lez_deployment_finality_sha256" \
+  --arg lez_actor_onboarding_sha256 "$m5_lez_actor_onboarding_sha256" \
+  --arg lez_maker_vault_claim_transaction_hash "$m5_lez_maker_vault_claim_transaction_hash" \
+  --arg lez_taker_vault_claim_transaction_hash "$m5_lez_taker_vault_claim_transaction_hash" \
+  --argjson lez_maker_vault_claim_block_id "$m5_lez_maker_vault_claim_block_id" \
+  --argjson lez_taker_vault_claim_block_id "$m5_lez_taker_vault_claim_block_id" \
   --arg lez_deployment_transaction_hash "$m5_lez_deployment_transaction_hash" \
   --argjson lez_deployment_inclusion_block_id "$m5_lez_deployment_inclusion_block_id" \
   --arg lez_deployment_inclusion_block_hash "$m5_lez_deployment_inclusion_block_hash" \
@@ -1691,6 +1751,16 @@ jq -n \
         (if $m5_application_mode == 1 then $lez_deployment_receipt_sha256 else null end),
       deployment_finality_sha256:
         (if $m5_application_mode == 1 then $lez_deployment_finality_sha256 else null end),
+      actor_onboarding_sha256:
+        (if $m5_application_mode == 1 then $lez_actor_onboarding_sha256 else null end),
+      maker_vault_claim_transaction_hash:
+        (if $m5_application_mode == 1 then $lez_maker_vault_claim_transaction_hash else null end),
+      maker_vault_claim_finalized_block_id:
+        (if $m5_application_mode == 1 then $lez_maker_vault_claim_block_id else null end),
+      taker_vault_claim_transaction_hash:
+        (if $m5_application_mode == 1 then $lez_taker_vault_claim_transaction_hash else null end),
+      taker_vault_claim_finalized_block_id:
+        (if $m5_application_mode == 1 then $lez_taker_vault_claim_block_id else null end),
       deployment_transaction_hash:
         (if $m5_application_mode == 1 then $lez_deployment_transaction_hash else null end),
       deployment_inclusion_block_id:
