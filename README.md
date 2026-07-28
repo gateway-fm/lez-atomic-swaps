@@ -198,6 +198,12 @@ LEZ_SEQUENCER_URL=http://127.0.0.1:PORT \
 LEZ_INDEXER_URL=http://127.0.0.1:PORT \
 ZEBRA_RPC_URL=http://127.0.0.1:PORT \
 LEZ_CHAIN_ID=HEX LEZ_GENESIS_HASH=HEX ESCROW_PROGRAM_ID=HEX \
+MAKER_ACCOUNT_BASE58=FRESH_BASE58 TAKER_ACCOUNT_BASE58=FRESH_BASE58 \
+M5_LEZ_DEPLOYMENT_EVIDENCE_FILE=/absolute/current/deployment.json \
+M5_LEZ_FINALITY_EVIDENCE_FILE=/absolute/current/finality.json \
+M5_LEZ_ONBOARDING_EVIDENCE_FILE=/absolute/current/onboarding/summary.json \
+M5_LEZ_MAKER_SIGNER_KEY_FILE=/absolute/private/maker/lez-signer.key \
+M5_LEZ_TAKER_SIGNER_KEY_FILE=/absolute/private/taker/lez-signer.key \
 ./scripts/run-m5-zec-application-poc.sh
 ```
 
@@ -207,8 +213,11 @@ These component flows use only owner-private local Unix sockets, SQLite,
 Delivery, signing, raw claim-recovery and preimage files; they use no chain RPC, Docker, faucet,
 public funds, public price feed, or external network at runtime. The composed
 application PoC uses only isolated local LEZ
-v0.2 and Zebra Regtest services with deterministic local funds, and will record
-every endpoint and scoped cleanup operation.
+v0.2 and Zebra Regtest services with fresh OS-random actor identities,
+deterministic local genesis/Regtest funds, and current finalized deployment and
+onboarding evidence. It records every endpoint and scoped cleanup operation.
+No public RPC or faucet participates; cold pinned dependency or image acquisition
+can fail independently and is not runtime swap evidence.
 
 ### M4 progressive local PoC
 

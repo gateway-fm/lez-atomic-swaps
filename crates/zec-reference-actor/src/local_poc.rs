@@ -24,7 +24,7 @@ use lez_zec_swap_sdk::{
     ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
     ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
     ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1,
+    derive_lez_public_account_v0_2, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -51,8 +51,7 @@ use crate::{ActorConfig, ActorRole, CandidateOutpoint, validate_actor_pair};
 
 const SPEC_SCHEMA_VERSION: u16 = 1;
 const MAX_SPEC_BYTES: usize = 32 * 1024;
-const MAKER_LEZ_ACCOUNT: &str = "B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd";
-const TAKER_LEZ_ACCOUNT: &str = "34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib";
+const MAX_LEZ_SIGNER_KEY_BYTES: usize = 65;
 const AUTHENTICATED_TRANSFER_PROGRAM: &str = "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg";
 const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
 const OTHER_ZCASH_KEY_BYTE: u8 = 2;
@@ -79,6 +78,36 @@ struct ProvisionSpec {
     zebra_endpoint: Url,
     lez_discovery_start_height: u64,
     lez_discovery_max_blocks: u32,
+}
+
+/// Owner-private LEZ signer files provisioned before a fresh local genesis.
+#[derive(Clone)]
+pub struct LocalPocLezSignerFiles {
+    maker: PathBuf,
+    taker: PathBuf,
+}
+
+impl std::fmt::Debug for LocalPocLezSignerFiles {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalPocLezSignerFiles")
+            .field("maker", &"<redacted>")
+            .field("taker", &"<redacted>")
+            .finish()
+    }
+}
+
+impl LocalPocLezSignerFiles {
+    /// Binds one complete Maker/Taker signer pair for private no-clobber copying.
+    #[must_use]
+    pub fn new(maker: PathBuf, taker: PathBuf) -> Self {
+        Self { maker, taker }
+    }
+}
+
+struct LezSignerMaterial {
+    maker: Zeroizing<Vec<u8>>,
+    taker: Zeroizing<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
@@ -238,7 +267,32 @@ pub async fn provision_local_v0_2_corridor(
     spec_file: &Path,
     output_root: &Path,
 ) -> Result<LocalPocProvisionSummary> {
+    provision_local_v0_2_corridor_with_signers(spec_file, output_root, None).await
+}
+
+/// Provisions a local corridor with an optional pre-provisioned LEZ signer pair.
+///
+/// The external path is reserved for a fresh genesis whose public accounts and
+/// owner-private signer files were created together by the canonical identity
+/// provisioner. The supplied bytes are read once, cryptographically bound to
+/// the spec accounts, and copied no-clobber into the isolated actor roots.
+///
+/// # Errors
+///
+/// In addition to [`provision_local_v0_2_corridor`], fails for absent, aliased,
+/// non-canonical, non-private, malformed, equal, or account-mismatched signers.
+#[allow(clippy::too_many_lines)]
+pub async fn provision_local_v0_2_corridor_with_signers(
+    spec_file: &Path,
+    output_root: &Path,
+    signer_files: Option<&LocalPocLezSignerFiles>,
+) -> Result<LocalPocProvisionSummary> {
     let spec = load_spec(spec_file)?;
+    let signer_material = load_lez_signer_material(
+        signer_files,
+        &spec.lez_runtime.maker_signer_account_id_base58,
+        &spec.lez_runtime.taker_signer_account_id_base58,
+    )?;
     validate_spec(&spec)?;
     validate_new_output_root(output_root)?;
 
@@ -313,11 +367,11 @@ pub async fn provision_local_v0_2_corridor(
     }
     write_private_new(
         &maker_paths.lez_signer_key,
-        hex::encode([1_u8; 32]).as_bytes(),
+        signer_material.maker.as_slice(),
     )?;
     write_private_new(
         &taker_paths.lez_signer_key,
-        hex::encode([2_u8; 32]).as_bytes(),
+        signer_material.taker.as_slice(),
     )?;
 
     let maker_capability = random_capability()?;
@@ -799,15 +853,104 @@ fn load_spec(path: &Path) -> Result<ProvisionSpec> {
     serde_json::from_slice(bytes.as_slice()).context("local PoC spec is invalid")
 }
 
+fn load_lez_signer_material(
+    signer_files: Option<&LocalPocLezSignerFiles>,
+    maker_account_id: &str,
+    taker_account_id: &str,
+) -> Result<LezSignerMaterial> {
+    let (maker, taker) = if let Some(signer_files) = signer_files {
+        for path in [&signer_files.maker, &signer_files.taker] {
+            ensure!(path.is_absolute(), "LEZ signer path must be absolute");
+            ensure!(
+                path.components().all(|component| matches!(
+                    component,
+                    Component::RootDir | Component::Normal(_)
+                )),
+                "LEZ signer path must be normalized"
+            );
+            ensure!(
+                fs::canonicalize(path).context("LEZ signer path is unavailable")? == path.as_path(),
+                "LEZ signer path must be canonical"
+            );
+        }
+        let (maker, maker_location) = read_bounded_identified(
+            &signer_files.maker,
+            MAX_LEZ_SIGNER_KEY_BYTES,
+            FilePrivacy::OwnerPrivate,
+        )
+        .map_err(|_| anyhow::anyhow!("Maker LEZ signer file is unavailable or unsafe"))?;
+        let (taker, taker_location) = read_bounded_identified(
+            &signer_files.taker,
+            MAX_LEZ_SIGNER_KEY_BYTES,
+            FilePrivacy::OwnerPrivate,
+        )
+        .map_err(|_| anyhow::anyhow!("Taker LEZ signer file is unavailable or unsafe"))?;
+        ensure!(
+            !maker_location.aliases(&taker_location),
+            "Maker and Taker LEZ signer files must not alias"
+        );
+        validate_external_lez_signer_encoding(maker.as_slice())?;
+        validate_external_lez_signer_encoding(taker.as_slice())?;
+        (maker, taker)
+    } else {
+        (
+            Zeroizing::new(hex::encode([1_u8; 32]).into_bytes()),
+            Zeroizing::new(hex::encode([2_u8; 32]).into_bytes()),
+        )
+    };
+
+    let maker_account = derive_lez_signer_account(maker.as_slice())?;
+    let taker_account = derive_lez_signer_account(taker.as_slice())?;
+    ensure!(
+        maker_account != taker_account,
+        "Maker and Taker LEZ signers must differ"
+    );
+    ensure!(
+        bs58::encode(maker_account).into_string() == maker_account_id,
+        "Maker LEZ signer does not match the configured account"
+    );
+    ensure!(
+        bs58::encode(taker_account).into_string() == taker_account_id,
+        "Taker LEZ signer does not match the configured account"
+    );
+    Ok(LezSignerMaterial { maker, taker })
+}
+
+fn validate_external_lez_signer_encoding(bytes: &[u8]) -> Result<()> {
+    ensure!(
+        bytes.len() == MAX_LEZ_SIGNER_KEY_BYTES
+            && bytes.ends_with(b"\n")
+            && bytes[..64]
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b"a"[0]..=b"f"[0]).contains(byte)),
+        "external LEZ signer must be 64 lowercase hexadecimal characters plus newline"
+    );
+    Ok(())
+}
+
+fn derive_lez_signer_account(bytes: &[u8]) -> Result<[u8; 32]> {
+    let encoded = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+    ensure!(
+        encoded.len() == 64
+            && encoded
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b"a"[0]..=b"f"[0]).contains(byte)),
+        "LEZ signer must be exactly 64 lowercase hexadecimal characters"
+    );
+    let mut scalar = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(encoded, scalar.as_mut())
+        .context("LEZ signer must be lowercase hexadecimal")?;
+    let mut secret = SecretKey::from_slice(scalar.as_ref()).context("invalid LEZ signer scalar")?;
+    let public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret);
+    secret.non_secure_erase();
+    let x_only = public.x_only_public_key().0.serialize();
+    Ok(derive_lez_public_account_v0_2(&x_only))
+}
+
 fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
     ensure!(
         spec.schema_version == SPEC_SCHEMA_VERSION,
         "unsupported local PoC spec schema"
-    );
-    ensure!(
-        spec.lez_runtime.maker_signer_account_id_base58 == MAKER_LEZ_ACCOUNT
-            && spec.lez_runtime.taker_signer_account_id_base58 == TAKER_LEZ_ACCOUNT,
-        "LEZ signer accounts do not match the funded deterministic v0.2 actors"
     );
     ensure!(
         spec.lez_runtime.authenticated_transfer_program_id_base58 == AUTHENTICATED_TRANSFER_PROGRAM,
@@ -1228,4 +1371,101 @@ pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to write private file {}", path.display()))?;
     file.sync_all()
         .with_context(|| format!("failed to sync private file {}", path.display()))
+}
+
+#[cfg(test)]
+mod signer_tests {
+    use std::{fs, os::unix::fs::PermissionsExt as _};
+
+    use tempfile::tempdir;
+
+    use super::{
+        LocalPocLezSignerFiles, derive_lez_signer_account, load_lez_signer_material,
+        validate_external_lez_signer_encoding,
+    };
+
+    const MAKER: &str = "B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd";
+    const TAKER: &str = "34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib";
+
+    fn write_signer(path: &std::path::Path, byte: u8) {
+        let mut encoded = hex::encode([byte; 32]);
+        encoded.push(char::from(10));
+        fs::write(path, encoded).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    fn account(path: &std::path::Path) -> String {
+        let bytes = fs::read(path).unwrap();
+        bs58::encode(derive_lez_signer_account(&bytes).unwrap()).into_string()
+    }
+
+    #[test]
+    fn deterministic_signers_remain_bound_to_official_fixture_accounts() {
+        let material = load_lez_signer_material(None, MAKER, TAKER).unwrap();
+        assert_eq!(
+            material.maker.as_slice(),
+            hex::encode([1_u8; 32]).as_bytes()
+        );
+        assert_eq!(
+            material.taker.as_slice(),
+            hex::encode([2_u8; 32]).as_bytes()
+        );
+    }
+
+    #[test]
+    fn fresh_signers_are_account_bound_and_preserved_exactly() {
+        let root = tempdir().unwrap();
+        let maker = root.path().join("maker.key");
+        let taker = root.path().join("taker.key");
+        write_signer(&maker, 3);
+        write_signer(&taker, 4);
+        let maker_account = account(&maker);
+        let taker_account = account(&taker);
+        let files = LocalPocLezSignerFiles::new(maker.clone(), taker.clone());
+        let debug = format!("{files:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains(maker.to_str().unwrap()));
+        assert!(!debug.contains(taker.to_str().unwrap()));
+
+        let material =
+            load_lez_signer_material(Some(&files), &maker_account, &taker_account).unwrap();
+        assert_eq!(material.maker.as_slice(), fs::read(maker).unwrap());
+        assert_eq!(material.taker.as_slice(), fs::read(taker).unwrap());
+    }
+
+    #[test]
+    fn fresh_signers_reject_cross_wire_alias_and_unsafe_encoding() {
+        let root = tempdir().unwrap();
+        let maker = root.path().join("maker.key");
+        let taker = root.path().join("taker.key");
+        write_signer(&maker, 3);
+        write_signer(&taker, 4);
+        let maker_account = account(&maker);
+        let taker_account = account(&taker);
+        let files = LocalPocLezSignerFiles::new(maker.clone(), taker.clone());
+
+        assert!(load_lez_signer_material(Some(&files), &taker_account, &maker_account).is_err());
+        let alias = LocalPocLezSignerFiles::new(maker.clone(), maker.clone());
+        assert!(load_lez_signer_material(Some(&alias), &maker_account, &maker_account).is_err());
+
+        fs::set_permissions(&maker, fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(load_lez_signer_material(Some(&files), &maker_account, &taker_account).is_err());
+        fs::set_permissions(&maker, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&maker, hex::encode([3_u8; 32])).unwrap();
+        assert!(load_lez_signer_material(Some(&files), &maker_account, &taker_account).is_err());
+        assert!(validate_external_lez_signer_encoding(&[0_u8; 65]).is_err());
+    }
+
+    #[test]
+    fn fresh_signers_reject_zero_and_out_of_range_scalars() {
+        let mut zero = hex::encode([0_u8; 32]).into_bytes();
+        zero.push(10);
+        assert!(validate_external_lez_signer_encoding(&zero).is_ok());
+        assert!(derive_lez_signer_account(&zero).is_err());
+
+        let mut overflow = vec![b'f'; 64];
+        overflow.push(10);
+        assert!(validate_external_lez_signer_encoding(&overflow).is_ok());
+        assert!(derive_lez_signer_account(&overflow).is_err());
+    }
 }

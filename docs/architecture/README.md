@@ -105,6 +105,8 @@ flowchart TB
     ZecPins --> LocalStack
     LocalStack --> PublicRoutes
     LocalStack --> VaultActors["0025 Independent v0.2 Vault onboarding"]
+    VaultActors --> FreshM5Signer["0101 Fresh M5 LEZ signer binding"]
+    FreshM5Signer --> M5Entry
     VaultActors --> V02Effects["0026 At-most-once v0.2 effects"]
     Scope --> Progressive["0027 Progressive milestone delivery"]
     Progressive -.-> LocalM2
@@ -289,3 +291,4 @@ flowchart TB
 | [0098](0098-report-and-recover-transport-outages.md) | Preserve SQLite authority while reporting and exactly recovering Delivery/Chat outages | Accepted; real maker/taker process outage, degraded health, restart, and exact-replay matrix GREEN; LOGOS-020 remains upstream production parity |
 | [0099](0099-pause-actors-after-submission-only-in-fault-tests.md) | Pause a feature-gated real actor after an exact submitted effect and before stdout | Accepted; marker helper and node-free systemd/scheduler crash fixture GREEN. Real submitted ZEC-chain subprocess evidence remains |
 | [0100](0100-fence-maker-actor-process-leases.md) | Fence scheduling by swap, random owner, monotonic generation, kernel lock, and sealed artifacts rather than TTL/path trust | Accepted; schema-v16 foundation, atomic ZEC acceptance, daemon-owned provisioning, expiry-independent replay, bounded per-swap authority registry, held-lock recovery, sealed config consumers, physical artifact binding, exact pair semantics, persistent daemon supervisor, and node-free user-systemd actor crash/restart GREEN. Actual-node supervisor execution, durable manual-action routing, and concurrent disjoint live-process composition remain |
+| [0101](0101-bind-fresh-lez-identities-into-m5-actors.md) | Derive and bind fresh canonical LEZ identities into isolated M5 actors without importing the incompatible Logos host graph | Accepted for the component boundary; fresh-stack actual-node supervisor replay remains |

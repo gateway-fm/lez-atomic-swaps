@@ -53,6 +53,8 @@ for required in \
   'M5_LEZ_DEPLOYMENT_EVIDENCE_FILE' \
   'M5_LEZ_FINALITY_EVIDENCE_FILE' \
   'M5_LEZ_ONBOARDING_EVIDENCE_FILE' \
+  'M5_LEZ_MAKER_SIGNER_KEY_FILE' \
+  'M5_LEZ_TAKER_SIGNER_KEY_FILE' \
   'm5-lez-deployment.json' \
   'm5-lez-deployment-finality.json' \
   'm5-lez-actor-onboarding.json' \
@@ -75,6 +77,18 @@ for required in \
   'lez_deployment_inclusion_block_hash'; do
   rg -Fq -- "$required" "$runner" ||
     fail "M5 runner does not bind the current escrow deployment: ${required}"
+done
+
+for required in \
+  '--maker-lez-signer-key-file "$M5_LEZ_MAKER_SIGNER_KEY_FILE"' \
+  '--taker-lez-signer-key-file "$M5_LEZ_TAKER_SIGNER_KEY_FILE"' \
+  '"$M5_LEZ_MAKER_SIGNER_KEY_FILE" "${provision_actors_root}/maker/lez-signer.key"' \
+  '"$M5_LEZ_TAKER_SIGNER_KEY_FILE" "${provision_actors_root}/taker/lez-signer.key"' \
+  '"$MAKER_ACCOUNT_BASE58" == 34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib' \
+  '"$TAKER_ACCOUNT_BASE58" == B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd' \
+  'M5 requires fresh LEZ identities rather than deterministic fixture defaults'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M5 runner does not preserve a fresh LEZ signer: ${required}"
 done
 
 for required in \

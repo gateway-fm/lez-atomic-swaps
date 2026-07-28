@@ -18,6 +18,8 @@ readonly M5_LEZ_GUEST_SHA256="${M5_LEZ_GUEST_SHA256:-dc370bc34b432317730c51b4934
 readonly M5_LEZ_DEPLOYMENT_EVIDENCE_FILE="${M5_LEZ_DEPLOYMENT_EVIDENCE_FILE:-}"
 readonly M5_LEZ_FINALITY_EVIDENCE_FILE="${M5_LEZ_FINALITY_EVIDENCE_FILE:-}"
 readonly M5_LEZ_ONBOARDING_EVIDENCE_FILE="${M5_LEZ_ONBOARDING_EVIDENCE_FILE:-}"
+readonly M5_LEZ_MAKER_SIGNER_KEY_FILE="${M5_LEZ_MAKER_SIGNER_KEY_FILE:-}"
+readonly M5_LEZ_TAKER_SIGNER_KEY_FILE="${M5_LEZ_TAKER_SIGNER_KEY_FILE:-}"
 readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
 readonly M5_APPLICATION_MODE="${M5_APPLICATION_MODE:-0}"
 readonly DISCOVERY_BLOCKS=256
@@ -146,6 +148,29 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
       exit 2
     fi
   done
+  for signer_file in "$M5_LEZ_MAKER_SIGNER_KEY_FILE" "$M5_LEZ_TAKER_SIGNER_KEY_FILE"; do
+    if [[ "$signer_file" != /* || ! -f "$signer_file" || -L "$signer_file" \
+      || "$(readlink -f -- "$signer_file")" != "$signer_file" \
+      || "$(stat -c %a -- "$signer_file")" != 600 \
+      || "$(stat -c %u -- "$signer_file")" != "$EUID" \
+      || "$(stat -c %h -- "$signer_file")" != 1 \
+      || "$(stat -c %s -- "$signer_file")" != 65 ]]; then
+      echo 'M5 LEZ signer file is absent, noncanonical, nonprivate, linked, or malformed' >&2
+      exit 2
+    fi
+  done
+  if [[ "$(stat -c %d:%i -- "$M5_LEZ_MAKER_SIGNER_KEY_FILE")" == \
+    "$(stat -c %d:%i -- "$M5_LEZ_TAKER_SIGNER_KEY_FILE")" ]]; then
+    echo 'M5 Maker and Taker LEZ signer files must be distinct' >&2
+    exit 2
+  fi
+  if [[ "$MAKER_ACCOUNT_BASE58" == 34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib \
+    || "$MAKER_ACCOUNT_BASE58" == B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd \
+    || "$TAKER_ACCOUNT_BASE58" == B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd \
+    || "$TAKER_ACCOUNT_BASE58" == 34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib ]]; then
+    echo 'M5 requires fresh LEZ identities rather than deterministic fixture defaults' >&2
+    exit 2
+  fi
 fi
 if [[ -e "$private_base" ]]; then
   echo "refusing to reuse PoC output root: ${private_base}" >&2
@@ -457,6 +482,7 @@ for command in awk base64 cargo curl date flock jq kill od perl readlink sha256s
   require_command "$command"
 done
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  require_command cmp
   require_command install
   require_command strip
 fi
@@ -840,9 +866,27 @@ corridor_deadline_monotonic_ms=$((
   provision_started_monotonic_ms + MAX_CORRIDOR_SECONDS * 1000
 ))
 readonly budget_clock_source provision_started_monotonic_ms corridor_deadline_monotonic_ms
+provisioner_signer_args=()
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  provisioner_signer_args=(
+    --maker-lez-signer-key-file "$M5_LEZ_MAKER_SIGNER_KEY_FILE"
+    --taker-lez-signer-key-file "$M5_LEZ_TAKER_SIGNER_KEY_FILE"
+  )
+fi
 "$provisioner_bin" --spec-file "$spec_file" --output-root "$provision_actors_root" \
-  >"${evidence_dir}/provision-summary.json"
+  "${provisioner_signer_args[@]}" >"${evidence_dir}/provision-summary.json"
+unset provisioner_signer_args
 remaining_budget_milliseconds 'provisioning-after' >/dev/null
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  cmp -- "$M5_LEZ_MAKER_SIGNER_KEY_FILE" "${provision_actors_root}/maker/lez-signer.key" || {
+    echo 'M5 provisioned Maker LEZ signer differs from the fresh identity' >&2
+    exit 2
+  }
+  cmp -- "$M5_LEZ_TAKER_SIGNER_KEY_FILE" "${provision_actors_root}/taker/lez-signer.key" || {
+    echo 'M5 provisioned Taker LEZ signer differs from the fresh identity' >&2
+    exit 2
+  }
+fi
 jq -e \
   --arg direction "$POC_DIRECTION" \
   --arg zcash_funder "$expected_zcash_funder_role" \

@@ -3515,13 +3515,19 @@ separately from runtime dependencies.
   became GREEN without weakening the pre-effect guard.
 
   A clean rebuild must use fresh OS-random Maker/Taker identities before genesis,
-  current escrow deployment, and the two canonical claims. The existing ZEC
-  provisioner still writes the historical deterministic 01/02 LEZ signer
-  fixtures and rejects other public accounts, so fresh signer injection plus
-  exact private-key/account binding is the next implementation slice before the
-  supervisor-owned actual-chain replay. Project Cargo output, failed run roots,
+  current escrow deployment, and the two canonical claims. That signer-binding
+  slice is now component-GREEN. M5 requires absolute canonical owner-private
+  signer files, validates their exact lowercase encoding and secp256k1 scalar,
+  derives the pinned LEZ v0.2 public-account domain, exact-matches both provision
+  accounts, rejects the historical 01/02 fixtures and inode aliases, and copies
+  the same bytes into isolated role roots with create-new mode `0600` writes.
+  The deterministic M2 fallback remains explicit and unchanged. Eight focused
+  derivation, provisioner, and CLI tests plus the M5 contract and strict Clippy
+  are GREEN; no dependency was added. Project Cargo output, failed run roots,
   four owned devnet containers, and unused Docker cache were then retired;
-  unrelated `gate55` and `pr127` containers remained running.
+  unrelated `gate55` and `pr127` containers remained running. The next gate is
+  one cold fresh-identity stack/deployment/onboarding replay through the daemon
+  supervisor.
 
   ZEC actors now expose a role-fixed `recover` command that calls only the SDK's
   existing ordered `drive_refund` boundary. SDK tests prove LEZ-before-Zcash,
@@ -3550,7 +3556,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 16 to 30 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 15 to 28 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordinator composition hardening, and post-PoC hardening remain explicitly
 open above.

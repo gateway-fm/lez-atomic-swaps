@@ -26,9 +26,9 @@ pub use config::{
     validate_maker_manifest_config_bytes, validate_rebound_actor_pair,
 };
 pub use local_poc::{
-    LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocProvisionSummary,
-    finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
-    provision_local_v0_2_corridor,
+    LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocLezSignerFiles,
+    LocalPocProvisionSummary, finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
+    provision_local_v0_2_corridor, provision_local_v0_2_corridor_with_signers,
 };
 pub use maker_provision::{
     ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,

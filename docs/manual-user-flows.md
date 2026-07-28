@@ -4143,6 +4143,33 @@ This flow emulates the actual users: a maker operator configures and publishes
 through `lez-maker`, a separate taker identity discovers and accepts through
 `lez-taker`, and independent maker/taker actors execute the final agreement.
 
+Before starting genesis, create two canonical OS-random LEZ identities. Keep
+their private files out of evidence, logs, command arguments, and the repository:
+
+```sh
+export M5_SETUP_ROOT=/tmp/m5-identities-$(date -u +%Y%m%d%H%M%S)
+umask 077
+install -d -m 0700 "$M5_SETUP_ROOT"
+CARGO_NET_OFFLINE=true cargo +1.96.0 build --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --example lez-v02-local-actor-identity
+IDENTITY_BIN="$PWD/compat/lez-v0_2-sidecar/target/debug/examples/lez-v02-local-actor-identity"
+"$IDENTITY_BIN" --output-directory "$M5_SETUP_ROOT/maker" >/dev/null
+"$IDENTITY_BIN" --output-directory "$M5_SETUP_ROOT/taker" >/dev/null
+
+export LEZ_V02_MAKER_ACCOUNT_ID="$(jq -er .account_id "$M5_SETUP_ROOT/maker/identity.json")"
+export LEZ_V02_MAKER_VAULT_ACCOUNT_ID="$(jq -er .vault_account_id \
+  "$M5_SETUP_ROOT/maker/identity.json")"
+export LEZ_V02_TAKER_ACCOUNT_ID="$(jq -er .account_id "$M5_SETUP_ROOT/taker/identity.json")"
+export LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$(jq -er .vault_account_id \
+  "$M5_SETUP_ROOT/taker/identity.json")"
+```
+
+Each signer is an owner-only, single-link, 65-byte file containing one
+lowercase secp256k1 scalar and newline. The application provisioner re-derives
+the pinned LEZ account from those bytes; copying a public ID without its exact
+private signer fails before actor output or chain RPC.
+
 First start a unique LEZ v0.2 stack and primary-only Zebra Regtest node. Never
 reuse another activity's run ID or fixed host port:
 
@@ -4158,10 +4185,13 @@ RUN_ID="$ZEC_RUN" ZEBRA_E2E_PRIMARY_ONLY=1 ZEBRA_E2E_SKIP_TESTS=1 \
 
 Follow [Flow 0B2](#flow-0b2-run-the-isolated-lez-v02-service-stack) and
 [Flow 0G](#flow-0g-run-either-development-m2-corridor-direction) to deploy the
-checked escrow and obtain the exact chain ID, genesis hash, program IDs,
-onboarded actor accounts, and dynamic sequencer/indexer/Zebra URLs. Do not copy
-historical endpoint ports. The deterministic genesis identities and Zebra
-Regtest outputs are local test funds; there is no faucet.
+checked escrow and obtain the exact chain ID, genesis hash, program IDs, current
+`deployment.json` and `finality.json`, canonical finalized Vault-Claim
+`summary.json`, fresh signer paths, actor accounts, and dynamic
+sequencer/indexer/Zebra URLs. The three evidence files must be canonical,
+owner-private, single-link files. Do not copy historical endpoint ports. Fresh
+genesis allocations and deterministic Zebra Regtest outputs are local test
+funds; there is no faucet.
 
 Run the application composition from the repository root. Values shown as
 placeholders must come from the fresh manifests and deployment receipt:
@@ -4178,6 +4208,11 @@ export AUTHENTICATED_TRANSFER_PROGRAM_HEX=LOWERCASE_HEX32
 export AUTHENTICATED_TRANSFER_PROGRAM_BASE58=BASE58_PROGRAM_ID
 export MAKER_ACCOUNT_BASE58=BASE58_MAKER_ACCOUNT
 export TAKER_ACCOUNT_BASE58=BASE58_TAKER_ACCOUNT
+export M5_LEZ_DEPLOYMENT_EVIDENCE_FILE=/absolute/current/deployment.json
+export M5_LEZ_FINALITY_EVIDENCE_FILE=/absolute/current/finality.json
+export M5_LEZ_ONBOARDING_EVIDENCE_FILE=/absolute/current/onboarding/summary.json
+export M5_LEZ_MAKER_SIGNER_KEY_FILE="$M5_SETUP_ROOT/maker/lez-signer.key"
+export M5_LEZ_TAKER_SIGNER_KEY_FILE="$M5_SETUP_ROOT/taker/lez-signer.key"
 
 ./scripts/run-m5-zec-application-poc.sh
 ```
