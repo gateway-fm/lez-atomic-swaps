@@ -61,11 +61,17 @@ Use [Flow 1D](docs/manual-user-flows.md#flow-1d-install-and-rehearse-the-maker-s
 to repeat it. The provisional versioned Logos price C-API and one-shot worker
 are actual-C fixture GREEN. Its parent adapter also bounds time/output, reaps an
 aborted or hung exact child, and pins owner/path/mode/link/module-hash inputs.
-Schema v15 now commits per-module revision high-water, policy revalidation, the
-immutable offer snapshot, and request replay together; exact replay returns
-before a source call. Daemon configuration/selection and black-box signed
-Delivery replay remain, along with completed maker/taker commands, other pairs,
-outage behavior, and hardening.
+Schema v15 commits per-module revision high-water, policy revalidation, the
+immutable signed offer snapshot, and request replay together; exact replay
+returns before a source call. The real daemon now selects the durable route's
+local or Logos source without fallback, invokes the bounded worker outside the
+SQLite mutex, and signs the exact module SHA, revision, observation, and ratio
+into Delivery. A black-box daemon/maker/taker journey proves replay can recreate
+a deleted advertisement after the module fails without contacting it, while a
+fresh request fails closed and restart discovery reconciles from SQLite. See
+[Flow 1E](docs/manual-user-flows.md#flow-1e-repeat-the-logos-price-daemon-and-signed-offer-path).
+Completed maker/taker lifecycle commands, other-pair application composition,
+outage behavior, and hardening remain.
 
 Build and repeat the current real process boundary with:
 
@@ -75,6 +81,7 @@ cargo test --locked -p lez-maker-node --test operator_journey -- --nocapture
 cargo test --locked --offline -p lez-maker-node --test zec_chat_process -- --nocapture
 cargo test --locked -p lez-logos-price-c-api --test worker_process
 ```
+cargo test --locked -p lez-maker-node --test logos_price_offer_process -- --nocapture
 
 The complete manual configure, price, quote, publish, restart, inspect, and
 withdraw flow is [Flow 1 in the operator guide](docs/manual-user-flows.md#flow-1-maker-operator-cli-and-daemon-restart).

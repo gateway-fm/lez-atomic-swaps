@@ -3766,19 +3766,28 @@ umask 077
 export RUN_ID=manual-operator-20260724-a
 export RUN_DIR="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
 export MAKER_SOCKET="$RUN_DIR/maker.sock"
+export CHAT_SOCKET="$RUN_DIR/chat.sock"
 export DELIVERY_DIR="$RUN_DIR/delivery"
 export DELIVERY_KEY="$RUN_DIR/delivery-signing.key"
+export CLAIM_KEY="$RUN_DIR/maker-claim.key"
+export CLAIM_PREIMAGE="$RUN_DIR/maker-claim-preimage.key"
 mkdir -m 0700 "$RUN_DIR"
 # Deterministic local-demo key only; use a securely generated key outside this PoC.
 printf '%s\n' '0808080808080808080808080808080808080808080808080808080808080808' \
   >"$DELIVERY_KEY"
-chmod 0600 "$DELIVERY_KEY"
+printf '%s' 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz' >"$CLAIM_KEY"
+printf '%s' 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD' >"$CLAIM_PREIMAGE"
+chmod 0600 "$DELIVERY_KEY" "$CLAIM_KEY" "$CLAIM_PREIMAGE"
 target/debug/lez-maker-daemon \
   --socket "$MAKER_SOCKET" \
   --database "$RUN_DIR/maker.sqlite3" \
   --ready-file "$RUN_DIR/maker.ready" \
   --delivery-directory "$DELIVERY_DIR" \
-  --delivery-signing-key-file "$DELIVERY_KEY"
+  --delivery-signing-key-file "$DELIVERY_KEY" \
+  --chat-socket "$CHAT_SOCKET" \
+  --maker-claim-key-id manual-demo-claim-v1 \
+  --maker-claim-key-file "$CLAIM_KEY" \
+  --maker-claim-preimage-file "$CLAIM_PREIMAGE"
 ```
 
 After the ready file appears, use its exact socket path in terminal 2:
@@ -4369,6 +4378,104 @@ bounded readiness and health, rejects duplicate ownership and a second writer
 on one database, transfers the lease after stop, and enforces exact-child
 SIGTERM shutdown. Logos has not published the immutable live host API, so this
 is a tested compatibility boundary rather than a claim of live Core integration.
+
+## Flow 1E: repeat the Logos price daemon and signed-offer path
+
+This component flow uses the real maker daemon, maker CLI, taker CLI, SQLite,
+Delivery signer, bounded price parent, and one-shot worker contract. Run both
+halves because they prove different boundaries:
+
+```sh
+cargo build --locked -p lez-maker-node --bins -p lez-logos-price-c-api --bin lez-logos-price-worker
+cargo test --locked -p lez-logos-price-c-api --test worker_process -- --nocapture
+cargo test --locked -p lez-maker-node --test logos_price_offer_process -- --nocapture
+```
+
+The first test compiles and loads actual C shared-library fixtures through the
+real `lez-logos-price-worker`; it covers ABI versioning, exact fixed-width
+fields, stale/missing/unavailable responses, malformed values, and native
+abort containment. The second test uses a deterministic local worker fixture
+to exercise the complete application path without pretending that Gateway owns
+an unpublished Logos module: daemon CLI parsing, durable route selection,
+quote, atomic offer commit, Delivery signature, separate taker discovery,
+failed-module replay, fresh-request rejection, and daemon restart.
+
+For an operator-supplied module, build the worker above and add these arguments
+to the fully configured daemon command from Flow 1. All paths must be absolute;
+the worker and module must be single-link regular files owned by root or the
+daemon UID, and neither the files nor their parent directories may be group- or
+world-writable.
+
+```sh
+export LOGOS_PRICE_WORKER="$(pwd)/target/debug/lez-logos-price-worker"
+export LOGOS_PRICE_MODULE=/absolute/operator/path/liblogos_price.so
+export LOGOS_PRICE_MODULE_SHA256="$(sha256sum "$LOGOS_PRICE_MODULE" | cut -d' ' -f1)"
+
+target/debug/lez-maker-daemon \
+  ...the Flow 1 Delivery, Chat, and claim-authority arguments... \
+  --logos-price-worker "$LOGOS_PRICE_WORKER" \
+  --logos-price-module "$LOGOS_PRICE_MODULE" \
+  --logos-price-module-sha256 "$LOGOS_PRICE_MODULE_SHA256" \
+  --logos-price-timeout-milliseconds 1000 \
+  --logos-price-max-age-seconds 30
+```
+
+The worker, module, and SHA arguments are all-or-none. Timeout is bounded to
+1 through 5000 milliseconds and quote age to the ABI maximum; invalid paths,
+modes, hashes, or bounds fail before daemon readiness. Configure the route
+without a local price, then quote and publish normally:
+
+```sh
+target/debug/lez-maker --socket "$MAKER_SOCKET" configure-pair \
+  --request-id manual-logos-zec-pair-001 \
+  --pair zcash --direction taker-sells-lez --enabled true \
+  --price-source logos-c-api \
+  --minimum-foreign-units 10 --maximum-foreign-units 10000 \
+  --offer-ttl-seconds 300
+target/debug/lez-maker --socket "$MAKER_SOCKET" quote \
+  --pair zcash --direction taker-sells-lez
+target/debug/lez-maker --socket "$MAKER_SOCKET" publish-offer \
+  --request-id manual-logos-zec-offer-001 \
+  --offer-id manual-logos-zec-offer-001 \
+  --pair zcash --direction taker-sells-lez
+```
+
+Atomicity is conditional on SQLite, not a distributed transaction with the
+price source. The source call happens outside the store mutex and has no write
+authority. The offer becomes authoritative only when one immediate transaction
+revalidates the policy revision and source, advances the module-specific quote
+high-water mark, inserts the immutable offer, and records replay. Delivery is
+post-commit and repairable from SQLite.
+
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Daemon
+    participant Store as SQLite
+    participant Worker
+    participant Delivery
+    participant Taker
+    Operator->>Daemon: Publish with request ID
+    Daemon->>Store: Replay and policy preflight
+    alt Exact replay
+        Store-->>Daemon: Prior commit
+    else Fresh request
+        Store-->>Daemon: Source and policy revision
+        Daemon->>Worker: Quote outside store lock
+        Worker-->>Daemon: Ratio revision and time
+        Daemon->>Store: Atomic policy CAS and offer commit
+        Store-->>Daemon: Commit
+    end
+    Daemon->>Delivery: Sign or repair exact durable offer
+    Delivery-->>Taker: Key-pinned signed offer
+```
+
+Runtime external resources are none: no chain node, RPC, Docker, faucet,
+public funds, DNS, public price feed, or network is used. Cold compilation may
+need crates.io and a C toolchain. The production module and immutable upstream
+ABI remain LOGOS-021; that release dependency does not block this local M5
+functional certification.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

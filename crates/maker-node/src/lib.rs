@@ -31,8 +31,9 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit,
-    MakerOfferId, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerPairConfigurationV1,
-    MakerRouteV1, MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
+    MakerOfferId, MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus,
+    MakerOfferV1, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
+    MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
     OperatorAlertSeverity, OperatorTerminalProjectionCommit, SqliteSwapStore,
     SqliteZecRecoveryStore, StoreError, VersionedMakerRecord, maker_zec_chat_session_id,
 };
@@ -53,6 +54,7 @@ const INTERNAL_ERROR: i32 = -32_603;
 #[derive(Clone)]
 pub struct MakerRpc {
     store: Arc<Mutex<SqliteSwapStore>>,
+    logos_price_source: Option<Arc<ProcessLogosPriceSource>>,
     delivery: Option<Arc<RunLocalDelivery>>,
     chat_signing_key: Option<Arc<SecretKey>>,
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
@@ -64,6 +66,10 @@ impl std::fmt::Debug for MakerRpc {
         formatter
             .debug_struct("MakerRpc")
             .field("store", &self.store)
+            .field(
+                "logos_price_source",
+                &self.logos_price_source.as_ref().map(|_| "configured"),
+            )
             .field("delivery", &self.delivery)
             .field(
                 "chat_signing_key",
@@ -87,6 +93,7 @@ impl MakerRpc {
     pub fn new(store: SqliteSwapStore) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),
+            logos_price_source: None,
             delivery: None,
             chat_signing_key: None,
             zec_completion_store: None,
@@ -105,11 +112,19 @@ impl MakerRpc {
     ) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),
+            logos_price_source: None,
             delivery: Some(Arc::new(delivery)),
             chat_signing_key: Some(Arc::new(chat_signing_key)),
             zec_completion_store: Some(Arc::new(zec_completion_store)),
             maker_claim_preimage: Some(Arc::new(maker_claim_preimage)),
         }
+    }
+
+    /// Installs the bounded external-price process used only by Logos-configured routes.
+    #[must_use]
+    pub fn with_logos_price_source(mut self, source: ProcessLogosPriceSource) -> Self {
+        self.logos_price_source = Some(Arc::new(source));
+        self
     }
 }
 
@@ -1004,13 +1019,7 @@ fn register_pair_and_price_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::
         |params, context, _| {
             let request: PriceQuoteRequest = params.one()?;
             let observed_at_unix_seconds = trusted_now_unix_seconds()?;
-            let store = context
-                .store
-                .lock()
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            LocalPriceSource::new(&store)
-                .quote(request.route, observed_at_unix_seconds)
-                .map_err(price_source_error)
+            quote_selected_price_source(&context, request.route, observed_at_unix_seconds)
         },
     )?;
     Ok(())
@@ -1023,32 +1032,29 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
             let request: OfferPublishRequest = params.one()?;
             let offer_id = request.offer_id.clone();
             let now_unix_seconds = trusted_now_unix_seconds()?;
-            let mut store = context
-                .store
-                .lock()
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            let commit = store
-                .publish_local_offer(
-                    &request.request_id,
-                    &offer_id,
-                    request.route,
-                    now_unix_seconds,
-                )
-                .map_err(application_store_error)?;
+            let commit = publish_offer(&context, &request, now_unix_seconds)?;
             if let Some(delivery) = &context.delivery {
-                let active = store
-                    .list_maker_offer_history(now_unix_seconds)
-                    .map_err(application_store_error)?
-                    .into_iter()
-                    .find(|record| {
-                        record.offer().id() == &offer_id
-                            && record.status() == MakerOfferStatus::Active
-                    });
-                if let Some(record) = active {
+                let delivery_now_unix_seconds = trusted_now_unix_seconds()?;
+                let active_offer = {
+                    let store = context
+                        .store
+                        .lock()
+                        .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+                    store
+                        .list_maker_offer_history(delivery_now_unix_seconds)
+                        .map_err(application_store_error)?
+                        .into_iter()
+                        .find(|record| {
+                            record.offer().id() == &offer_id
+                                && record.status() == MakerOfferStatus::Active
+                        })
+                        .map(|record| record.offer().clone())
+                };
+                if let Some(offer) = active_offer {
                     delivery
                         .publish_or_verify(&DeliveryPublicationV1::new(
-                            record.offer().clone(),
-                            now_unix_seconds,
+                            offer,
+                            delivery_now_unix_seconds,
                         ))
                         .map_err(|error| delivery_error(&error))?;
                 }
@@ -1094,6 +1100,105 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
         },
     )?;
     Ok(())
+}
+
+fn quote_selected_price_source(
+    context: &MakerRpc,
+    route: MakerRouteV1,
+    now_unix_seconds: u64,
+) -> RpcResult<PriceQuoteV1> {
+    let store = context
+        .store
+        .lock()
+        .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+    let configuration = store
+        .list_maker_pairs()
+        .map_err(application_store_error)?
+        .into_iter()
+        .find(|record| record.value().route() == route)
+        .ok_or_else(|| application_store_error(StoreError::MissingMakerPair))?;
+    match configuration.value().price_source() {
+        MakerPriceSourceKind::Local => LocalPriceSource::new(&store)
+            .quote(route, now_unix_seconds)
+            .map_err(price_source_error),
+        MakerPriceSourceKind::LogosCApi => {
+            let source = context
+                .logos_price_source
+                .clone()
+                .ok_or_else(|| price_source_error(PriceSourceError::UnavailableQuote))?;
+            drop(store);
+            source
+                .quote(route, now_unix_seconds)
+                .map_err(price_source_error)
+        }
+    }
+}
+
+fn publish_offer(
+    context: &MakerRpc,
+    request: &OfferPublishRequest,
+    now_unix_seconds: u64,
+) -> RpcResult<MakerOfferCommit> {
+    let preflight = {
+        let mut store = context
+            .store
+            .lock()
+            .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+        store
+            .prepare_maker_offer_publication(&request.request_id, &request.offer_id, request.route)
+            .map_err(application_store_error)?
+    };
+    match preflight {
+        MakerOfferPublicationPreflight::Replayed(commit) => Ok(commit),
+        MakerOfferPublicationPreflight::Pending {
+            price_source: MakerPriceSourceKind::Local,
+            ..
+        } => {
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .publish_local_offer(
+                    &request.request_id,
+                    &request.offer_id,
+                    request.route,
+                    now_unix_seconds,
+                )
+                .map_err(application_store_error)
+        }
+        MakerOfferPublicationPreflight::Pending {
+            pair_configuration_revision,
+            price_source: MakerPriceSourceKind::LogosCApi,
+        } => {
+            let source = context
+                .logos_price_source
+                .clone()
+                .ok_or_else(|| price_source_error(PriceSourceError::UnavailableQuote))?;
+            let quote = source
+                .quote(request.route, now_unix_seconds)
+                .map_err(price_source_error)?;
+            let commit_time = trusted_now_unix_seconds()?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .publish_logos_offer(
+                    &request.request_id,
+                    &request.offer_id,
+                    request.route,
+                    pair_configuration_revision,
+                    quote.price(),
+                    source.source_identity_sha256(),
+                    quote.source_revision(),
+                    quote.observed_at_unix_seconds(),
+                    commit_time,
+                    source.max_age_seconds(),
+                )
+                .map_err(application_store_error)
+        }
+    }
 }
 
 fn delivery_error(error: &RunLocalDeliveryError) -> ErrorObjectOwned {

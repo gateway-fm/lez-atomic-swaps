@@ -94,9 +94,9 @@ sequenceDiagram
     Daemon-->>Operator: committed or replayed result
 ```
 
-Local reads use the already-held store mutex. The daemon integration must drop
-that mutex before invoking the bounded external process, then reacquire it only
-for preflight/final commit; the typed trait itself does not require `Sync`
+Local reads use the already-held store mutex. The daemon drops that mutex before
+invoking the bounded external process, then reacquires it only for the final
+policy-CAS transaction; the typed trait itself does not require `Sync`
 because `rusqlite::Connection` is not `Sync`.
 
 ## Atomicity and nonclaims
@@ -139,14 +139,22 @@ Four parent-process tests additionally prove exact domain conversion, typed
 unavailability without substitution, abort and hang containment, exact timeout
 reap, oversized output rejection, and mutation/mode/hard-link/hash rejection.
 
-Schema-v15 store tests additionally prove request replay before any source
+Schema-v15 store tests prove request replay before any source
 effect, policy-revision revalidation, per-module revision anti-rollback,
 same-revision equivocation rejection, bounded freshness, and exact signed-offer
 snapshot fields. The complete swap-store all-target suite and strict Clippy are
 GREEN.
 
-The local implementation is one complete M5 adapter. The worker, bounded
-parent, and transactional store/offer binding are GREEN sub-slices of the
-second adapter; real daemon configuration/selection and black-box signed
-Delivery replay remain open. LOGOS-021 still prevents eventual-upstream ABI
-compatibility claims.
+A real-process daemon/CLI/Delivery test configures only a Logos C-API route,
+quotes exact 5:2 revision-7 data, publishes it into a module-identity-bound
+signed offer, and discovers it through a separate key-pinned taker process. It
+then corrupts the module and deletes Delivery files: the exact request replays
+and republishes without a source call, while a new request fails and produces
+no offer. Restoring the module and restarting the daemon reconciles the same
+durable signed offer before readiness. This exercises real user processes and
+uses no chain RPC, node, Docker, faucet, public feed, or external network.
+
+Both local and provisional Logos-module adapters are now application-path
+GREEN. LOGOS-021 still prevents eventual-upstream ABI compatibility claims;
+production sandboxing and the final upstream module remain hardening/release
+work, not a local M5 functional blocker.

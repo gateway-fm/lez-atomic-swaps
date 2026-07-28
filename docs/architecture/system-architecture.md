@@ -603,6 +603,10 @@ flowchart TB
         OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
         CO["Durable swap coordinator"]
         DB[("Maker SQLite schema v15<br/>lock + claim + refund journals")]
+        PR["Durable route price selector"]
+        PP["Bounded price process parent"]
+        PW["One-shot Logos price worker"]
+        PM["Pinned module plus SHA identity"]
         OTP[("Display-only terminal projection<br/>exact agreement provenance")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
@@ -756,6 +760,12 @@ flowchart TB
     LC -.->|"start / stop / health"| MD
     MD --> APP
     APP --> OF
+    APP --> PR
+    PR -->|"local route"| DB
+    PR -->|"Logos route outside DB lock"| PP
+    PP -->|"bounded typed JSON"| PW
+    PW -->|"versioned C ABI"| PM
+    PR -->|"atomic immutable snapshot"| OF
     APP -->|"signed offer publication"| DEL
     TC -->|"key-pinned discovery"| DEL
     APP -->|"isolated maker proposal runtime"| CHAT

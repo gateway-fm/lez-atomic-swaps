@@ -66,6 +66,18 @@ impl ProcessLogosPriceSource {
         })
     }
 
+    /// Pinned module identity committed into every external-price offer.
+    #[must_use]
+    pub const fn source_identity_sha256(&self) -> [u8; 32] {
+        self.module_sha256
+    }
+
+    /// Maximum accepted age of an external observation at publication.
+    #[must_use]
+    pub const fn max_age_seconds(&self) -> u64 {
+        self.max_age_seconds
+    }
+
     fn invoke(
         &self,
         route: MakerRouteV1,
@@ -87,6 +99,7 @@ impl ProcessLogosPriceSource {
             .arg("--max-age-seconds")
             .arg(self.max_age_seconds.to_string())
             .env_clear()
+            .current_dir("/")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -173,11 +186,19 @@ fn validate_secure_file(
     }
     let metadata = fs::symlink_metadata(path).map_err(|_| PriceSourceError::InvalidSource)?;
     let mode = metadata.permissions().mode();
+    let effective_uid = rustix::process::geteuid().as_raw();
+    let owner_uid = metadata.uid();
+    let trusted_owner = owner_uid == 0 || owner_uid == effective_uid;
+    let executable_mask = if owner_uid == effective_uid {
+        0o100
+    } else {
+        0o001
+    };
     if !metadata.file_type().is_file()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || !trusted_owner
         || metadata.nlink() != 1
         || mode & 0o022 != 0
-        || (executable && mode & 0o100 == 0)
+        || (executable && mode & executable_mask == 0)
         || (!executable && metadata.len() > MAX_MODULE_BYTES)
     {
         return Err(PriceSourceError::InvalidSource);
@@ -186,7 +207,7 @@ fn validate_secure_file(
     let parent_metadata =
         fs::symlink_metadata(parent).map_err(|_| PriceSourceError::InvalidSource)?;
     if !parent_metadata.file_type().is_dir()
-        || parent_metadata.uid() != rustix::process::geteuid().as_raw()
+        || (parent_metadata.uid() != 0 && parent_metadata.uid() != effective_uid)
         || parent_metadata.permissions().mode() & 0o022 != 0
     {
         return Err(PriceSourceError::InvalidSource);

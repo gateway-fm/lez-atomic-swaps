@@ -4,7 +4,7 @@ use std::{
     io::{self, Write as _},
     os::unix::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context as _, bail, ensure};
@@ -13,7 +13,8 @@ use jsonrpsee::server::{
     BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
 };
 use lez_maker_node::{
-    MakerRpc, RunLocalDelivery, chat_rpc_module, import_terminal_zec_maker_projection, rpc_module,
+    MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, chat_rpc_module,
+    import_terminal_zec_maker_projection, rpc_module,
 };
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{SqliteSwapStore, SqliteZecRecoveryStore};
@@ -73,11 +74,27 @@ struct Arguments {
     /// Owner-only raw 32-byte claim key for offline terminal history replay.
     #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_swap_id", "terminal_zec_claim_key_id"])]
     terminal_zec_claim_key_file: Option<PathBuf>,
+    /// Absolute crash-isolated worker executable for one pinned Logos price module.
+    #[arg(long, requires_all = ["logos_price_module", "logos_price_module_sha256"])]
+    logos_price_worker: Option<PathBuf>,
+    /// Absolute path to the pinned Logos price module artifact.
+    #[arg(long, requires_all = ["logos_price_worker", "logos_price_module_sha256"])]
+    logos_price_module: Option<PathBuf>,
+    /// Exact lowercase or uppercase 32-byte SHA-256 module identity.
+    #[arg(long, requires_all = ["logos_price_worker", "logos_price_module"])]
+    logos_price_module_sha256: Option<Box<str>>,
+    /// Per-invocation worker deadline; defaults to 1000 milliseconds when configured.
+    #[arg(long, requires = "logos_price_worker")]
+    logos_price_timeout_milliseconds: Option<u64>,
+    /// Maximum external observation age; defaults to 30 seconds when configured.
+    #[arg(long, requires = "logos_price_worker")]
+    logos_price_max_age_seconds: Option<u64>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
+    let logos_price_source = configured_logos_price_source(&arguments)?;
     let _state_lease = acquire_state_lease(&arguments.database)?;
     import_terminal_projection(&arguments).await?;
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
@@ -90,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
         arguments.maker_claim_key_id.as_deref(),
         arguments.maker_claim_key_file.as_deref(),
         arguments.maker_claim_preimage_file.as_deref(),
+        logos_price_source,
     )?;
     let module = rpc_module(context.clone())?;
     let chat_module = if chat_listener.is_some() {
@@ -280,6 +298,44 @@ async fn import_terminal_projection(arguments: &Arguments) -> anyhow::Result<()>
     Ok(())
 }
 
+fn configured_logos_price_source(
+    arguments: &Arguments,
+) -> anyhow::Result<Option<ProcessLogosPriceSource>> {
+    let configured = (
+        arguments.logos_price_worker.as_ref(),
+        arguments.logos_price_module.as_ref(),
+        arguments.logos_price_module_sha256.as_deref(),
+    );
+    let (Some(worker), Some(module), Some(module_sha256)) = configured else {
+        ensure!(
+            configured == (None, None, None)
+                && arguments.logos_price_timeout_milliseconds.is_none()
+                && arguments.logos_price_max_age_seconds.is_none(),
+            "Logos price worker, module, and module SHA-256 must be configured together"
+        );
+        return Ok(None);
+    };
+    ensure!(
+        module_sha256.len() == 64,
+        "Logos price module SHA-256 must contain exactly 32 bytes as hexadecimal"
+    );
+    let mut identity = [0_u8; 32];
+    hex::decode_to_slice(module_sha256, &mut identity)
+        .context("decode Logos price module SHA-256")?;
+    let timeout =
+        Duration::from_millis(arguments.logos_price_timeout_milliseconds.unwrap_or(1_000));
+    let max_age_seconds = arguments.logos_price_max_age_seconds.unwrap_or(30);
+    ProcessLogosPriceSource::new(
+        worker.clone(),
+        module.clone(),
+        identity,
+        timeout,
+        max_age_seconds,
+    )
+    .context("validate Logos price source")
+    .map(Some)
+}
+
 fn maker_context(
     database: &Path,
     delivery_directory: Option<&Path>,
@@ -287,6 +343,7 @@ fn maker_context(
     maker_claim_key_id: Option<&str>,
     maker_claim_key_file: Option<&Path>,
     maker_claim_preimage_file: Option<&Path>,
+    logos_price_source: Option<ProcessLogosPriceSource>,
 ) -> anyhow::Result<MakerRpc> {
     let store = SqliteSwapStore::open(database).context("open maker database")?;
     let configured = (
@@ -308,7 +365,11 @@ fn maker_context(
             configured == (None, None, None, None, None),
             "Delivery, Chat, claim-recovery, and preimage authority must be configured together"
         );
-        return Ok(MakerRpc::new(store));
+        let context = MakerRpc::new(store);
+        return Ok(match logos_price_source {
+            Some(source) => context.with_logos_price_source(source),
+            None => context,
+        });
     };
     let signing_key = load_delivery_key(signing_file)?;
     let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;
@@ -331,13 +392,11 @@ fn maker_context(
     delivery
         .reconcile(&active, now_unix_seconds)
         .context("reconcile Delivery advertisements")?;
-    Ok(MakerRpc::with_delivery(
-        store,
-        delivery,
-        signing_key,
-        recovery_store,
-        preimage,
-    ))
+    let context = MakerRpc::with_delivery(store, delivery, signing_key, recovery_store, preimage);
+    Ok(match logos_price_source {
+        Some(source) => context.with_logos_price_source(source),
+        None => context,
+    })
 }
 
 fn server_config() -> ServerConfig {

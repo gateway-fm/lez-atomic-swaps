@@ -3146,7 +3146,7 @@ validated final-wire actor handoff, a literal fuzz target, and a hardened
 systemd/future-Core lifecycle seam. The provisional C-API v1 worker and bounded
 parent are GREEN against actual C fixtures. Schema v15 now atomically binds an
 external module epoch, monotonic quote, policy snapshot, immutable offer, and
-request replay result; daemon selection and Delivery E2E remain. Taker lifecycle
+request replay result; daemon selection and signed Delivery replay are now process-GREEN. Taker lifecycle
 commands, manual effects, autonomous other-pair execution, outage behavior, and post-PoC hardening are still incomplete.
 
 ### Progressive PoC gate
@@ -3193,7 +3193,7 @@ separately from runtime dependencies.
   offer, and swap history are GREEN with global request replay, CAS, rollback,
   migration, and restart evidence. Reservation is one-winner; consumption
   atomically inserts the matching initial coordinator.
-- [ ] Complete both price-source adapters. The trait, store-backed local
+- [x] Complete both price-source adapters. The trait, store-backed local
   adapter, owner-local quote RPC/CLI, and restart journey are GREEN. The
   provisional fixed-width C ABI, one-shot `libloading` worker, actual-C fixture,
   typed missing/unavailable results, freshness validation, malformed-response
@@ -3203,7 +3203,7 @@ separately from runtime dependencies.
   replay together. Preflight returns an exact durable replay before any source
   call; a fresh final transaction rejects policy races, revision rollback,
   observation rollback, and same-revision equivocation. Daemon configuration,
-  source selection outside the store mutex, and black-box Delivery replay remain.
+  source selection outside the store mutex, exact replay-before-effect, black-box signed Delivery replay, failed-source rejection, and restart reconciliation are GREEN.
 - [ ] Complete maker CLI commands and the taker CLI. The separate `lez-taker` process now discovers daemon-published key-pinned
   signed offers and initiates ZEC acceptance through the isolated Chat socket. It
   validates the exact maker proposal, countersigns with an owner-private raw key,
@@ -3312,8 +3312,8 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 30 to 50 focused hours under the owner-approved Logos-upstream
-exception; C-API daemon/Delivery integration, other pairs, CLI completion, outage
+literal M5 ETA is 28 to 47 focused hours under the owner-approved Logos-upstream
+exception; C-API upstream compatibility, other pairs, CLI completion, outage
 behavior, and post-PoC hardening remain explicitly open above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.

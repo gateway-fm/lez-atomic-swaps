@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-07-24
+Status: Living executable inventory — 2026-07-28
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -29,6 +29,10 @@ flowchart TB
         ChatSocket["Taker-facing mode-0600 Chat socket"]
         DeliveryDir["Owner-private signed Delivery directory"]
         Ready["Create-new mode-0600 readiness path"]
+        PriceSelect["Durable route source selection"]
+        PriceParent["Bounded external-price parent"]
+        PriceWorker["lez-logos-price-worker"]
+        PriceModule["Pinned Logos module artifact"]
         RuntimeTest["maker runtime restart fixture"]
         SdkJournal["SDK exact-tracker canonical / depth / same-tip replacement / removal journal"]
         SdkMaker["SDK fresh-gated maker-lock fixture"]
@@ -67,6 +71,12 @@ flowchart TB
     RuntimeDir --> Ready
     CLI -->|"Bounded HTTP JSON-RPC over Unix stream"| Socket
     Socket -->|"pair, price, offer, history, create, status, alerts"| Daemon
+    Daemon --> PriceSelect
+    PriceSelect -->|"local route"| Store
+    PriceSelect -->|"Logos route outside SQLite lock"| PriceParent
+    PriceParent -->|"bounded child and JSON"| PriceWorker
+    PriceWorker -->|"versioned C ABI"| PriceModule
+    PriceSelect -->|"atomic quote snapshot"| Offers
     Daemon --> Offers
     Offers -->|"BEGIN IMMEDIATE plus global request replay"| Store
     Daemon -->|"rusqlite; caller-selected local file; Mutex-serialized"| Store
@@ -112,9 +122,18 @@ explicit command. Registered methods are `maker_pair_configure`, `maker_pair_lis
 count/highest severity; list supports a cursor and acknowledged-history flag.
 Acknowledgment never changes protocol phase. The Chat proposal authenticates the exact signed Delivery envelope, validates
 and signs the canonical unsigned ZEC draft, and commits the one-winner schema-v14
-reservation plus byte-exact proposal before responding. There is no daemon-integrated
-chain watcher, chain-key owner, health method, or production ZEC ingestion RPC
-yet.
+reservation plus byte-exact proposal before responding. The owner socket also
+exposes typed `maker_health`. There is no daemon-integrated chain watcher,
+chain-key owner, or production ZEC ingestion RPC yet.
+
+For a Logos-priced route, daemon startup validates an all-or-none absolute
+worker/module/SHA configuration plus bounded timeout and quote age. Quote and
+offer RPCs read the route's durable source kind; there is no local or zero-price
+fallback. The bounded worker runs with an empty environment, root working
+directory, null input and diagnostics, bounded output, timeout kill/reap, and
+pre/post module validation. SQLite schema v15 is the offer linearization point;
+Delivery signs only the committed snapshot and restart reconciliation repairs a
+missing advertisement. This component path uses no chain RPC or public feed.
 
 Each Zebra container listens on `0.0.0.0:18232` inside its isolated project
 network. Compose publishes it as a different ephemeral `127.0.0.1` host port.
@@ -788,6 +807,8 @@ flowchart TB
         Store[SQLite schema v15]
         TerminalView[Display-only terminal projection]
         TerminalDaemon[Fresh owner-only daemon]
+        PriceWorker[Bounded price worker]
+        PriceModule[Pinned Logos module]
         Delivery[Signed run-local Delivery]
         TakerCli[Taker CLI]
         Finalizer[Agreement-to-actor finalizer]
@@ -796,6 +817,8 @@ flowchart TB
         Daemon --> Delivery
         Delivery --> TakerCli
         TakerCli -->|Chat Unix RPC| Daemon
+        Daemon -->|quote outside store lock| PriceWorker
+        PriceWorker -->|versioned C ABI| PriceModule
         Daemon --> Finalizer
         TakerCli --> Finalizer
         TerminalDaemon -->|offline import before ready| TerminalView
