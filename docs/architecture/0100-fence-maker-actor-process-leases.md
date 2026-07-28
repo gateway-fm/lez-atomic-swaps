@@ -1,8 +1,9 @@
 # ADR 0100: fence maker actor process leases
 
 - Status: Accepted; schema-v16 transactional/race foundation GREEN;
-  acceptance handoff, physical artifact checks, held-lock recovery, process
-  supervisor, and actual-node composition pending
+  inherited held-lock recovery component GREEN; acceptance handoff, remaining
+  physical artifact checks, process supervisor, and actual-node composition
+  pending
 - Date: 2026-07-28
 
 ## Context
@@ -40,15 +41,29 @@ owner, increments a monotonic generation, and excludes every other claimant for
 that swap. Every resolution requires the exact owner and generation. Distinct
 rows may be leased independently.
 
-Stored paths are only lexically normalized and distinct. The supervisor must
-secure-open and revalidate owner, mode, link count, inode identity, and recorded
-hashes at every use before physical isolation is claimed.
+Stored paths are lexically normalized and distinct. The held-lock slice now
+derives one never-unlinked `<state-db>.maker-actor.lock` beside each role state
+database, requires an absolute canonical effective-UID-owned mode-0700 parent,
+secure-opens the mode-0600 regular lock with `openat2`, rejects symlinks and
+multiple links, and revalidates named/open device and inode identity. The
+supervisor must still apply equivalent owner, mode, link, inode, and recorded
+SHA-256 checks to the config, program, and state database before complete
+physical artifact binding is claimed.
 
-Time never releases `leased`, and schema v16 deliberately exposes no abandoned-
-lease recovery mutation. The supervisor must first acquire a per-swap kernel
-lock inherited into the old child and then present a non-forgeable held-lock
-capability to the future recovery operation. PID/start ticks remain diagnostic,
-not fencing authority.
+Time never releases `leased`. The daemon first acquires the per-swap exclusive
+kernel lock and maps a cloned close-on-exec descriptor to child FD 198. Exact-
+pinned `command-fds` 0.3.3 performs the child-only descriptor mapping without a
+process-wide close-on-exec race or repository-local unsafe code; its Google
+upstream and Apache-2.0 license pass the workspace dependency-policy gate. The
+old parent and every inherited child must exit before another daemon can acquire
+the lock. A non-cloneable held-lock value then authorizes one immediate SQLite
+transaction that replaces owner and increments generation while the row remains
+`leased`; no queued/unleased interval is observable. PID/start ticks remain
+diagnostic, not fencing authority.
+
+This capability assumes an effective-UID-private local filesystem with working
+`flock` semantics. Different-UID service isolation and remote filesystems need
+separate production validation; lock files are deliberately never unlinked.
 
 ```mermaid
 flowchart LR
@@ -56,8 +71,8 @@ flowchart LR
     Schedule --> Supervisor["Pair-neutral process supervisor"]
     Supervisor --> LockA["Inherited kernel lock: swap A"]
     Supervisor --> LockB["Inherited kernel lock: swap B"]
-    LockA --> ActorA["Opaque pair actor A"]
-    LockB --> ActorB["Opaque pair actor B"]
+    LockA -->|"child FD 198"| ActorA["Opaque pair actor A"]
+    LockB -->|"child FD 198"| ActorB["Opaque pair actor B"]
     ActorA --> StateA["Role SQLite A: protocol authority"]
     ActorB --> StateB["Role SQLite B: protocol authority"]
     ActorA --> Nodes["Shared local chain nodes"]
@@ -86,8 +101,7 @@ sequenceDiagram
         D2->>Q: leave lease untouched
     else old A is dead
         A-->>D2: kernel lock acquired
-        D2->>Q: recover with held-lock capability
-        D2->>Q: claim A as generation 2
+        D2->>Q: atomically transfer A to owner 2 and generation 2
         D2->>A: restart same immutable config
     end
     D2->>B: peer row remains independent
@@ -108,8 +122,14 @@ locks, agreements, escrows, outpoints, and deadlines.
 
 - Store tests prove transactional exact registration, pair binding, stable due
   order, competing-connection same-row exclusion and distinct-row progress,
-  restart enumeration, stale-fence rejection, half-open backoff, peer isolation,
+  restart enumeration, stale-fence rejection, half-open backoff, and peer
+  isolation.
+- Process-boundary tests prove child inheritance retains the lock after parent
+  release, live-child exclusion, exact post-exit recovery, stale-recovery
+  rejection, cross-swap rejection, peer immutability, unsafe-parent rejection,
+  and hard-link rejection.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
-- Literal coordinator closure still requires the daemon supervisor, inherited
-  lock, real role-process crash, and actual-node overlap evidence.
+- Literal coordinator closure still requires atomic acceptance registration,
+  full artifact validation, the daemon supervisor, a real role-process crash,
+  and actual-node overlap evidence.

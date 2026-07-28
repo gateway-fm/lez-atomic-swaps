@@ -41,8 +41,8 @@ pub use btc_recovery::{
     BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome, SqliteBtcRecoveryStore,
 };
 pub use maker_actor_process::{
-    MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner, MakerActorLeaseV1,
-    MakerActorManifestV1, MakerActorProcessError, MakerActorProcessRecordV1,
+    MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner,
+    MakerActorLeaseV1, MakerActorManifestV1, MakerActorProcessError, MakerActorProcessRecordV1,
     MakerActorRegistrationCommit, MakerActorScheduleState,
 };
 pub use maker_application::{

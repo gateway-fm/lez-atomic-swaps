@@ -1,5 +1,8 @@
 use std::{
+    fs,
+    os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::{Arc, Barrier},
     thread,
 };
@@ -9,8 +12,8 @@ use lez_swap_core::{
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
-    MakerActorProcessError, MakerActorScheduleState, SqliteSwapStore,
+    MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner,
+    MakerActorManifestV1, MakerActorProcessError, MakerActorScheduleState, SqliteSwapStore,
 };
 use tempfile::tempdir;
 
@@ -326,4 +329,138 @@ fn competing_connections_can_claim_distinct_swaps_independently() {
     });
     barrier.wait();
     assert!(claims.into_iter().all(|handle| handle.join().unwrap()));
+}
+
+#[test]
+fn inherited_lock_is_a_nonforgeable_abandoned_lease_recovery_capability() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    for (id, byte) in [("zec-locked", 41), ("zec-peer", 42)] {
+        store.save(&swap(id, Pair::Zcash)).unwrap();
+        store
+            .register_maker_actor(
+                &manifest(root.path(), id, MakerActorKindV1::Zcash, byte),
+                10,
+            )
+            .unwrap();
+    }
+    let records = store.list_maker_actor_processes().unwrap();
+    let locked_record = records
+        .iter()
+        .find(|record| record.swap_id().as_str() == "zec-locked")
+        .unwrap()
+        .clone();
+    let peer_record = records
+        .iter()
+        .find(|record| record.swap_id().as_str() == "zec-peer")
+        .unwrap()
+        .clone();
+    let locked_id = SwapId::new("zec-locked").unwrap();
+    let lease = store
+        .claim_maker_actor(&locked_id, MakerActorLeaseOwner::new([44; 16]).unwrap(), 10)
+        .unwrap()
+        .unwrap();
+
+    let held = MakerActorHeldLock::acquire(&locked_record).unwrap();
+    assert!(matches!(
+        MakerActorHeldLock::acquire(&locked_record),
+        Err(MakerActorProcessError::LockUnavailable)
+    ));
+    let peer = MakerActorHeldLock::acquire(&peer_record).unwrap();
+    assert!(matches!(
+        store.recover_abandoned_maker_actor(
+            &lease,
+            &peer,
+            MakerActorLeaseOwner::new([45; 16]).unwrap(),
+            20,
+        ),
+        Err(MakerActorProcessError::LockMismatch)
+    ));
+    drop(peer);
+
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg("read inherited_lock_probe")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    held.inherit_into(&mut command).unwrap();
+    let mut child = command.spawn().unwrap();
+    drop(command);
+    drop(held);
+    assert!(matches!(
+        MakerActorHeldLock::acquire(&locked_record),
+        Err(MakerActorProcessError::LockUnavailable)
+    ));
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let recovered = MakerActorHeldLock::acquire(&locked_record).unwrap();
+    let next = store
+        .recover_abandoned_maker_actor(
+            &lease,
+            &recovered,
+            MakerActorLeaseOwner::new([45; 16]).unwrap(),
+            20,
+        )
+        .unwrap();
+    assert_eq!(next.generation(), 2);
+    assert!(matches!(
+        store.recover_abandoned_maker_actor(
+            &lease,
+            &recovered,
+            MakerActorLeaseOwner::new([46; 16]).unwrap(),
+            30,
+        ),
+        Err(MakerActorProcessError::LeaseConflict)
+    ));
+    let records = store.list_maker_actor_processes().unwrap();
+    let locked = records
+        .iter()
+        .find(|record| record.swap_id().as_str() == "zec-locked")
+        .unwrap();
+    let peer = records
+        .iter()
+        .find(|record| record.swap_id().as_str() == "zec-peer")
+        .unwrap();
+    assert_eq!(locked.lease_generation(), 2);
+    assert_eq!(locked.attempt_count(), 2);
+    assert_eq!(peer.lease_generation(), 0);
+    assert_eq!(peer.attempt_count(), 0);
+}
+
+#[test]
+fn lock_acquisition_rejects_unsafe_parent_and_hardlinked_inode() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    store.save(&swap("zec-lock-safety", Pair::Zcash)).unwrap();
+    store
+        .register_maker_actor(
+            &manifest(root.path(), "zec-lock-safety", MakerActorKindV1::Zcash, 51),
+            10,
+        )
+        .unwrap();
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o750)).unwrap();
+    assert!(matches!(
+        MakerActorHeldLock::acquire(&record),
+        Err(MakerActorProcessError::UnsafeLock)
+    ));
+
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    drop(MakerActorHeldLock::acquire(&record).unwrap());
+    let lock_path = root
+        .path()
+        .join("zec-lock-safety-actor.sqlite3.maker-actor.lock");
+    fs::hard_link(&lock_path, root.path().join("attacker-link")).unwrap();
+    assert!(matches!(
+        MakerActorHeldLock::acquire(&record),
+        Err(MakerActorProcessError::UnsafeLock)
+    ));
 }

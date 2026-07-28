@@ -1,9 +1,17 @@
 //! Durable scheduling metadata for opaque maker-owned actor processes.
 
-use std::path::{Component, Path, PathBuf};
+use std::{
+    ffi::OsString,
+    fs::{self, File},
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
+    path::{Component, Path, PathBuf},
+    process::Command,
+};
 
+use command_fds::{CommandFdExt as _, FdMapping};
 use lez_swap_core::{Pair, SwapCoordinator, SwapId};
 use rusqlite::{Connection, OptionalExtension as _, Row, TransactionBehavior, params};
+use rustix::fs::{CWD, FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
 use thiserror::Error;
 
 use crate::{SqliteSwapStore, StoreError};
@@ -12,6 +20,7 @@ const MANIFEST_VERSION: i64 = 1;
 const MAX_PATH_BYTES: usize = 4_096;
 const MAX_FAILURE_CLASS_BYTES: usize = 64;
 const MAX_DUE_LIMIT: usize = 128;
+pub const MAKER_ACTOR_LOCK_FD: i32 = 198;
 
 /// Pair adapter executable used by one maker process record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -284,6 +293,107 @@ impl MakerActorLeaseV1 {
     }
 }
 
+/// Non-cloneable proof that this process owns one exact per-swap kernel lock.
+pub struct MakerActorHeldLock {
+    swap_id: SwapId,
+    state_database_path: PathBuf,
+    lock_path: PathBuf,
+    file: File,
+    device: u64,
+    inode: u64,
+}
+
+impl std::fmt::Debug for MakerActorHeldLock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MakerActorHeldLock")
+            .field("swap_id", &self.swap_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl MakerActorHeldLock {
+    /// Securely creates or opens and non-blockingly locks one deterministic file.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsafe state parent/lock inode or a still-live lock owner.
+    pub fn acquire(record: &MakerActorProcessRecordV1) -> Result<Self, MakerActorProcessError> {
+        let state_database_path = record.manifest.state_database_path().to_path_buf();
+        let parent = state_database_path
+            .parent()
+            .ok_or(MakerActorProcessError::UnsafeLock)?;
+        validate_lock_root(parent)?;
+        let lock_path = lock_file_path(&state_database_path);
+        let file = openat2(
+            CWD,
+            &lock_path,
+            OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+            ResolveFlags::NO_SYMLINKS,
+        )
+        .map(File::from)
+        .map_err(|_| MakerActorProcessError::UnsafeLock)?;
+        validate_lock_file(&file, &lock_path)?;
+        flock(&file, FlockOperation::NonBlockingLockExclusive)
+            .map_err(|_| MakerActorProcessError::LockUnavailable)?;
+        validate_lock_root(parent)?;
+        validate_lock_file(&file, &lock_path)?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| MakerActorProcessError::UnsafeLock)?;
+        Ok(Self {
+            swap_id: record.swap_id().clone(),
+            state_database_path,
+            lock_path,
+            file,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
+    /// Makes this lock survive `exec` in only the child spawned by `command`.
+    ///
+    /// The parent descriptor remains close-on-exec. The child clears that flag
+    /// after `fork` and before `exec`, avoiding a cross-thread descriptor leak.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the held descriptor cannot be duplicated for the command.
+    pub fn inherit_into(&self, command: &mut Command) -> Result<(), MakerActorProcessError> {
+        let descriptor = self
+            .file
+            .try_clone()
+            .map_err(|_| MakerActorProcessError::LockInheritance)?;
+        command
+            .fd_mappings(vec![FdMapping {
+                parent_fd: descriptor.into(),
+                child_fd: MAKER_ACTOR_LOCK_FD,
+            }])
+            .map_err(|_| MakerActorProcessError::LockInheritance)?;
+        Ok(())
+    }
+
+    fn validate_for(
+        &self,
+        record: &MakerActorProcessRecordV1,
+    ) -> Result<(), MakerActorProcessError> {
+        validate_lock_file(&self.file, &self.lock_path)?;
+        let metadata = self
+            .file
+            .metadata()
+            .map_err(|_| MakerActorProcessError::UnsafeLock)?;
+        if &self.swap_id != record.swap_id()
+            || self.state_database_path != record.manifest.state_database_path()
+            || metadata.dev() != self.device
+            || metadata.ino() != self.inode
+        {
+            return Err(MakerActorProcessError::LockMismatch);
+        }
+        Ok(())
+    }
+}
+
 /// Resolution of one bounded actor-process attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MakerActorAttemptResolution {
@@ -343,6 +453,18 @@ pub enum MakerActorProcessError {
     /// Lease owner or generation is stale.
     #[error("maker actor lease conflicts with durable owner")]
     LeaseConflict,
+    /// Lock root or deterministic lock inode is unsafe.
+    #[error("maker actor process lock is unsafe")]
+    UnsafeLock,
+    /// Another process or inherited actor child still owns the lock.
+    #[error("maker actor process lock is unavailable")]
+    LockUnavailable,
+    /// Held lock belongs to a different swap.
+    #[error("maker actor process lock does not match lease")]
+    LockMismatch,
+    /// Held descriptor could not be prepared for one exact child.
+    #[error("maker actor process lock inheritance failed")]
+    LockInheritance,
     /// Timestamp, child identity, limit, or failure class is invalid.
     #[error("maker actor scheduling input is invalid")]
     InvalidSchedulingInput,
@@ -562,6 +684,67 @@ impl SqliteSwapStore {
         } else {
             Err(MakerActorProcessError::LeaseConflict)
         }
+    }
+
+    /// Atomically transfers one abandoned lease while holding its exact kernel lock.
+    ///
+    /// The non-cloneable `held_lock` can exist only after the old parent and
+    /// every child that inherited its descriptor have exited. Time is never an
+    /// admission signal, and the row never becomes publicly queued/unleased.
+    ///
+    /// # Errors
+    ///
+    /// Fails for a cross-swap lock, stale lease, or durable-store error.
+    pub fn recover_abandoned_maker_actor(
+        &mut self,
+        lease: &MakerActorLeaseV1,
+        held_lock: &MakerActorHeldLock,
+        new_owner: MakerActorLeaseOwner,
+        now: u64,
+    ) -> Result<MakerActorLeaseV1, MakerActorProcessError> {
+        held_lock.validate_for(&lease.record)?;
+        let generation = lease
+            .generation
+            .checked_add(1)
+            .ok_or(MakerActorProcessError::CorruptRecord)?;
+        let now = time_to_sql(now);
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "UPDATE maker_actor_processes SET
+                 lease_generation = ?1, lease_owner = ?2, leased_at = ?3,
+                 child_pid = NULL,
+                 child_start_ticks = NULL, last_failure_class = 'coordinator_restarted',
+                 attempt_count = attempt_count + 1, updated_at = ?3
+             WHERE swap_id = ?4 AND schedule_state = 'leased'
+               AND lease_owner = ?5 AND lease_generation = ?6",
+            params![
+                generation_to_sql(generation)?,
+                new_owner.bytes().as_slice(),
+                now,
+                lease.record.swap_id().as_str(),
+                lease.owner.bytes().as_slice(),
+                generation_to_sql(lease.generation)?,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(MakerActorProcessError::LeaseConflict);
+        }
+        let record = load_record(&transaction, lease.record.swap_id())?
+            .ok_or(MakerActorProcessError::CorruptRecord)?;
+        if record.schedule_state != MakerActorScheduleState::Leased
+            || record.lease_owner != Some(new_owner)
+            || record.lease_generation != generation
+        {
+            return Err(MakerActorProcessError::CorruptRecord);
+        }
+        transaction.commit()?;
+        Ok(MakerActorLeaseV1 {
+            record,
+            owner: new_owner,
+            generation,
+        })
     }
 
     /// Lists every process record in stable swap-ID order.
@@ -845,6 +1028,57 @@ fn list_records(
             .collect::<Result<Vec<_>, _>>()?,
     };
     rows.into_iter().map(decode_record).collect()
+}
+
+fn lock_file_path(state_database_path: &Path) -> PathBuf {
+    let mut value = OsString::from(state_database_path.as_os_str());
+    value.push(".maker-actor.lock");
+    PathBuf::from(value)
+}
+
+fn validate_lock_root(root: &Path) -> Result<(), MakerActorProcessError> {
+    if !root.is_absolute() {
+        return Err(MakerActorProcessError::UnsafeLock);
+    }
+    let before = fs::symlink_metadata(root).map_err(|_| MakerActorProcessError::UnsafeLock)?;
+    let effective_uid = rustix::process::geteuid().as_raw();
+    if !before.file_type().is_dir()
+        || before.uid() != effective_uid
+        || before.permissions().mode() & 0o7777 != 0o700
+        || fs::canonicalize(root).map_err(|_| MakerActorProcessError::UnsafeLock)? != root
+    {
+        return Err(MakerActorProcessError::UnsafeLock);
+    }
+    let after = fs::symlink_metadata(root).map_err(|_| MakerActorProcessError::UnsafeLock)?;
+    if !same_inode(&before, &after) {
+        return Err(MakerActorProcessError::UnsafeLock);
+    }
+    Ok(())
+}
+
+fn validate_lock_file(file: &File, path: &Path) -> Result<(), MakerActorProcessError> {
+    let opened = file
+        .metadata()
+        .map_err(|_| MakerActorProcessError::UnsafeLock)?;
+    let named = fs::symlink_metadata(path).map_err(|_| MakerActorProcessError::UnsafeLock)?;
+    if !opened.file_type().is_file()
+        || !named.file_type().is_file()
+        || opened.uid() != rustix::process::geteuid().as_raw()
+        || opened.permissions().mode() & 0o7777 != 0o600
+        || opened.nlink() != 1
+        || !same_inode(&opened, &named)
+    {
+        return Err(MakerActorProcessError::UnsafeLock);
+    }
+    Ok(())
+}
+
+fn same_inode(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.uid() == right.uid()
+        && left.mode() == right.mode()
+        && left.nlink() == right.nlink()
 }
 
 pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), StoreError> {

@@ -81,10 +81,13 @@ other-pair application composition, and hardening remain.
 Schema v16 now also persists pair-bound, immutable maker-actor scheduling
 metadata with stable due order, owner/generation fencing, restart enumeration,
 and peer-isolated backoff. Time alone cannot steal a live lease. Registration
-and lease races plus the feature-gated marker helper are unit-GREEN. Atomic
-acceptance-to-registration handoff, secure physical file identity, a
-non-forgeable held-lock recovery capability, the real supervisor, and
-actual-node crash composition remain open, so this checkpoint does not
+and lease races plus the feature-gated marker helper are unit-GREEN. Secure
+per-state-database kernel locks now survive child exec through an exact fixed
+descriptor, exclude live children, reject unsafe paths/hard links, and authorize
+an atomic owner/generation recovery without exposing an unleased row. Atomic
+acceptance-to-registration handoff, complete config/program/state artifact
+validation, the real supervisor, and actual-node crash composition remain, so
+this does not
 increase the M5 score.
 
 Build and repeat the current real process boundary with:

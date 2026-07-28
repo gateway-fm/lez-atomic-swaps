@@ -3300,12 +3300,19 @@ separately from runtime dependencies.
   without any protocol or effect data. Transactional exact registration,
   two-connection same-row exclusion and distinct-row progress, restart lease
   enumeration, half-open backoff, stale-fence rejection, peer isolation, and no
-  time-based lease steal are GREEN under ADR 0100. Next, join registration to
-  final acceptance, secure-open and physically validate every artifact, add the
-  pair-neutral supervisor and non-forgeable inherited-lock recovery capability,
-  route existing M3 overlap and M5 ZEC application flows through it, then prove
-  one exact SIGKILL/restart while a disjoint peer reaches terminal without
-  duplicate effects. This partial progress does not increase the 3/7 score.
+  time-based lease steal are GREEN under ADR 0100. The next RED/GREEN slice adds
+  a non-cloneable per-swap held-lock capability: secure `openat2`, exact owner/
+  mode/link/inode checks, child-only FD-198 inheritance through exact-pinned
+  Apache-2.0 `command-fds` 0.3.3, live-child exclusion, and one atomic
+  owner/generation transfer that never exposes a queued/unleased row all pass.
+  Unsafe parents, hard links, cross-swap capabilities, stale recovery, and peer
+  mutation fail closed; full swap-store tests, strict Clippy/Rustdoc, and the
+  advisory/license/source gate are GREEN. Next, join registration to final
+  acceptance, secure-open and physically validate config/program/state
+  artifacts, add the pair-neutral supervisor, route existing M3 overlap and M5
+  ZEC application flows through it, then prove one exact SIGKILL/restart while a
+  disjoint peer reaches terminal without duplicate effects. This partial
+  progress does not increase the 3/7 score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3325,7 +3332,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 23 to 39 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 21 to 37 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 
