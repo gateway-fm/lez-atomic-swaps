@@ -9,6 +9,7 @@ members = [
     "crates/lez-bridge-adapter",
     "crates/lez-bridge-client",
     "crates/lez-bridge-protocol",
+    "crates/logos-price-c-api",
     "crates/maker-node",
     "crates/swap-core",
     "crates/swap-sdk-core",

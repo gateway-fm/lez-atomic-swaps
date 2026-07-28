@@ -58,9 +58,10 @@ hardened `Type=notify` systemd package, encrypted runtime credentials, typed
 health, SIGTERM cleanup, a process-lifetime database lease, an actual
 crash/restart rehearsal, and a bounded future Logos Core lifecycle contract.
 Use [Flow 1D](docs/manual-user-flows.md#flow-1d-install-and-rehearse-the-maker-systemd-service)
-to repeat it. C-API pricing, completed maker/taker commands, other pairs,
-outage behavior, and hardening remain literal M5 work, tracked in the living
-plan and metrics without weakening this reproducible PoC claim.
+to repeat it. The provisional versioned Logos price C-API and one-shot worker
+are actual-C fixture GREEN, including native-abort containment; daemon/store and
+signed-offer integration remain. Completed maker/taker commands, other pairs,
+outage behavior, and hardening remain literal M5 work.
 
 Build and repeat the current real process boundary with:
 
@@ -68,6 +69,7 @@ Build and repeat the current real process boundary with:
 cargo build --locked -p lez-maker-node --bins
 cargo test --locked -p lez-maker-node --test operator_journey -- --nocapture
 cargo test --locked --offline -p lez-maker-node --test zec_chat_process -- --nocapture
+cargo test --locked -p lez-logos-price-c-api --test worker_process
 ```
 
 The complete manual configure, price, quote, publish, restart, inspect, and
