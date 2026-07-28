@@ -1,10 +1,12 @@
 //! Authenticated local JSON-RPC boundary for the headless maker.
 
+mod actor_supervisor;
 mod daemon_lifecycle;
 mod local_rpc;
 mod logos_price_source;
 mod price_source;
 mod run_local_delivery;
+pub use actor_supervisor::prepare_maker_actor;
 pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,

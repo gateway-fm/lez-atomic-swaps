@@ -643,6 +643,33 @@ impl ActorConfig {
     }
 }
 
+/// Compares exact verified config bytes with a Bitcoin Maker scheduler manifest.
+///
+/// This requires supervised schema 6 and revalidates the agreement commitment
+/// before returning. The caller must pass these same bytes to sealed child FD
+/// 196 after the check succeeds.
+///
+/// # Errors
+///
+/// Rejects invalid/legacy bytes, a non-Maker role, a different agreement-derived
+/// swap ID, or a different role-state database.
+pub fn validate_maker_manifest_config_bytes(
+    bytes: &[u8],
+    expected_swap_id: &SwapId,
+    expected_state_database: &Path,
+) -> Result<(), ActorCommandError> {
+    let config = ActorConfig::from_private_bytes(bytes, true)
+        .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+    let swap_id = config.supervised_swap_id()?;
+    if config.role() != ActorRole::Maker
+        || &swap_id != expected_swap_id
+        || config.state_db() != expected_state_database
+    {
+        return Err(ActorCommandError::ConfigurationUnavailable);
+    }
+    Ok(())
+}
+
 /// Failure to load or validate the owner-private configuration.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ActorConfigError {

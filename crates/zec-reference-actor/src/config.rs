@@ -436,6 +436,36 @@ struct RawActorConfig {
     zcash_funding_outpoints: Vec<CandidateOutpoint>,
 }
 
+/// Compares exact verified config bytes with a ZEC Maker scheduler manifest.
+///
+/// Full path, credential, agreement, and runtime validation still occurs when
+/// the actor consumes these same bytes from sealed FD 196. This pre-spawn check
+/// prevents a role, application-swap, or role-state database substitution.
+///
+/// # Errors
+///
+/// Rejects oversized, malformed, unsupported, non-Maker, wrong-swap, or
+/// wrong-state config bytes.
+pub fn validate_maker_manifest_config_bytes(
+    bytes: &[u8],
+    expected_swap_id: &SwapId,
+    expected_state_database: &Path,
+) -> Result<(), ActorConfigError> {
+    if bytes.is_empty() || bytes.len() > MAX_CONFIG_BYTES {
+        return Err(ActorConfigError::InvalidConfiguration);
+    }
+    let raw: RawActorConfig =
+        serde_json::from_slice(bytes).map_err(|_| ActorConfigError::InvalidConfiguration)?;
+    if raw.schema_version != CONFIG_SCHEMA_VERSION
+        || raw.role != ActorRole::Maker
+        || &raw.swap_id != expected_swap_id
+        || raw.role_state_db != expected_state_database
+    {
+        return Err(ActorConfigError::InvalidConfiguration);
+    }
+    Ok(())
+}
+
 /// Complete primitive inputs for one deterministic-local-v0.2 actor config.
 ///
 /// This constructor exists so a local fixture provisioner can emit the exact

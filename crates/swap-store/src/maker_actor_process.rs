@@ -468,6 +468,24 @@ impl MakerActorArtifacts {
     /// Rejects unsafe metadata, content drift, hash mismatch, or an unsafe
     /// state-database location.
     pub fn open(record: &MakerActorProcessRecordV1) -> Result<Self, MakerActorProcessError> {
+        Self::open_validated(record, |_| Ok(()))
+    }
+
+    /// Secure-opens one deployment and validates the exact config snapshot.
+    ///
+    /// The callback receives the same hash-verified bytes that are subsequently
+    /// copied into sealed child FD 196. It must perform only pair-specific,
+    /// secret-free semantic validation and return `Err(())` on mismatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MakerActorProcessError::ArtifactSemanticMismatch`] when the
+    /// exact config bytes do not match their pair-specific manifest semantics,
+    /// in addition to the failures documented by [`Self::open`].
+    pub fn open_validated(
+        record: &MakerActorProcessRecordV1,
+        validate_config: impl FnOnce(&[u8]) -> Result<(), ()>,
+    ) -> Result<Self, MakerActorProcessError> {
         let manifest = record.manifest();
         let config_bytes = read_verified_artifact(
             manifest.config_path(),
@@ -475,6 +493,8 @@ impl MakerActorArtifacts {
             MAX_ACTOR_CONFIG_BYTES,
             manifest.config_sha256(),
         )?;
+        validate_config(config_bytes.as_slice())
+            .map_err(|()| MakerActorProcessError::ArtifactSemanticMismatch)?;
         let program_bytes = read_verified_artifact(
             manifest.program_path(),
             MakerActorArtifactKind::Program,
@@ -604,6 +624,9 @@ pub enum MakerActorProcessError {
     /// Config or program bytes differ from the immutable manifest digest.
     #[error("maker actor deployment artifact hash does not match")]
     ArtifactHashMismatch,
+    /// Exact config bytes disagree with pair-specific manifest semantics.
+    #[error("maker actor deployment semantics do not match")]
+    ArtifactSemanticMismatch,
     /// Verified artifacts could not be sealed or mapped into one child.
     #[error("maker actor deployment artifacts could not be prepared")]
     ArtifactPreparation,

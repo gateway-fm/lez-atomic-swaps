@@ -499,11 +499,14 @@ fn verified_artifact_fds_survive_path_replacement_before_exec() {
         .unwrap();
     let record = store.list_maker_actor_processes().unwrap().remove(0);
     let held = MakerActorHeldLock::acquire(&record).unwrap();
-    let artifacts = MakerActorArtifacts::open(&record).unwrap();
-
-    fs::rename(&config_path, root.path().join("original-config")).unwrap();
+    let artifacts = MakerActorArtifacts::open_validated(&record, |verified_config| {
+        assert_eq!(verified_config, config);
+        fs::rename(&config_path, root.path().join("original-config")).unwrap();
+        write_mode(&config_path, b"attacker-config\n", 0o600);
+        Ok(())
+    })
+    .unwrap();
     fs::rename(&program_path, root.path().join("original-program")).unwrap();
-    write_mode(&config_path, b"attacker-config\n", 0o600);
     write_mode(&program_path, b"#!/bin/sh\necho attacker-program\n", 0o700);
 
     let mut command = artifacts.into_command(&held).unwrap();

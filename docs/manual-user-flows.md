@@ -4530,9 +4530,17 @@ cargo test --locked -p zec-reference-actor --test actor_boundary \
 cargo test --locked -p btc-reference-actor --test actor_command \
   real_binary_reads_only_commitment_bound_fully_sealed_config \
   -- --exact --nocapture
+cargo test --locked -p btc-reference-actor --test actor_command \
+  supervised_maker_bytes_match_exact_manifest_swap_and_state \
+  -- --exact --nocapture
+cargo test --locked -p lez-maker-node --test maker_actor_manifest -- --nocapture
+cargo test --locked -p lez-swap-store --test maker_actor_process \
+  verified_artifact_fds_survive_path_replacement_before_exec \
+  -- --exact --nocapture
 ```
 
-Expected result: exactly one passing test from each command. Each harness creates
+Expected result: exactly one passing test from each focused command, plus all
+three ZEC manifest cases in the maker-node test. The boundary harnesses create
 an owner-private anonymous memfd, writes a valid role config, applies all four
 immutable seals, maps it to child FD 196 with pinned `command-fds` 0.3.3,
 replaces the original deployment path, and invokes the public actor's offline
@@ -4552,9 +4560,13 @@ state database path, and digest without secret material.
 sequenceDiagram
     actor Operator
     participant Test as Boundary harness
+    participant V as Pair manifest validator
     participant FD as Sealed config FD 196
     participant A as Real BTC or ZEC actor
     Operator->>Test: Run one exact Cargo test
+    Test->>V: Pass exact hash-verified config bytes
+    V->>V: Compare Maker role swap and state
+    V-->>Test: Admit exact semantics
     Test->>FD: Write config and apply immutable seals
     Test->>A: Exec status with inherited FD 196
     A->>FD: Validate metadata seals and bytes

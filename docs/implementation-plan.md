@@ -3419,12 +3419,16 @@ separately from runtime dependencies.
   debug sections reduced two-start warm-cache evidence from more than 34 seconds
   to nine; the clean-cache run records build cost separately from runtime behavior.
 
-  Next, compare each pair config's swap/role/state/agreement semantics with its
-  leased manifest and implement the bounded pair-neutral supervisor. Rehearse
-  sealed-actor execution under hardened systemd, route existing M3 overlap and
-  M5 ZEC application flows through it, then prove one exact SIGKILL/restart
-  while a disjoint peer reaches terminal without duplicate effects. This
-  partial progress does not increase the 3/7 literal-output score.
+  Exact-snapshot pair comparison is now GREEN: the store hashes and opens a
+  config once, the BTC/ZEC adapter compares Maker role, application swap, and
+  role-state path on those bytes, and the same bytes are sealed into FD 196.
+  BTC additionally requires schema 6 and revalidates the agreement-derived
+  swap. Wrong swap/state and deployment-path replacement tests pass before
+  spawn. Next, implement the bounded pair-neutral supervisor. Rehearse sealed
+  actor execution under hardened systemd, route existing M3 overlap and M5 ZEC
+  application flows through it, then prove one exact SIGKILL/restart while a
+  disjoint peer reaches terminal without duplicate effects. This partial
+  progress does not increase the 3/7 literal-output score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3444,7 +3448,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 10 to 20 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 8 to 16 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 

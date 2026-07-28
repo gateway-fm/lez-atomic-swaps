@@ -4,8 +4,8 @@
   inherited held-lock recovery, physical artifact binding, and atomic ZEC
   acceptance-registration plus expiry-independent committed replay, both real
   BTC/ZEC sealed-config consumers, and daemon-owned maker-only ZEC provisioning
-  GREEN; supervisor
-  manifest comparison, process lifecycle, and actual-node composition pending
+  GREEN; exact-snapshot BTC/ZEC manifest comparison GREEN; supervisor process
+  lifecycle and actual-node composition pending
 - Date: 2026-07-28
 
 ## Context
@@ -138,14 +138,24 @@ halves of the capability handoff. BTC inherited execution requires schema 6,
 while path schemas 3 through 5 remain compatible. Schema 6 requires the exact
 agreement SHA-256; the actor rechecks that digest before parsing the signed
 agreement and exposes the derived swap ID, role, state path, and digest for
-supervisor comparison. The daemon supervisor remains responsible for comparing
-those semantic bindings with the leased manifest before spawn.
+supervisor comparison. Pair-specific maker-node adapters now compare the exact
+hash-verified bytes with the leased Maker role, application swap, and role-state
+path before spawn. BTC additionally requires schema 6 and revalidates the
+agreement-derived swap ID. The same accepted bytes, not a reopened path, are
+then sealed into FD 196.
 
 ```mermaid
 sequenceDiagram
     participant S as Store harness or future supervisor
+    participant F as Verified deployment config
     participant M as Sealed memfd 196
     participant A as BTC or ZEC actor process
+    S->>F: Secure-open hash and read once
+    F-->>S: Exact config bytes
+    S->>S: Compare pair role swap and state
+    alt manifest semantics mismatch
+        S-->>S: Fail before child construction
+    else exact manifest semantics
     S->>M: Copy verified config bytes and apply all four seals
     S->>A: Exec exact actor with config-fd 196
     A->>A: Parse exact descriptor before Tokio
@@ -157,12 +167,13 @@ sequenceDiagram
     else all checks pass
         A-->>S: One command result
     end
+    end
 ```
 
-The future pair adapters must still parse the exact config and prove its
-internal role-state path equals the scheduler manifest before spawning. That
-semantic check cannot be inferred from a content digest alone and is not moved
-into this pair-neutral store layer.
+The store remains pair-neutral: it accepts a payload-free validator callback
+over the exact verified bytes. BTC and ZEC own their strict config formats and
+maker-node dispatches by the manifest kind. A content digest alone is not
+treated as proof of role, swap, or state semantics.
 
 Time never releases `leased`. The daemon first acquires the per-swap exclusive
 kernel lock and maps a cloned close-on-exec descriptor to child FD 198. Exact-

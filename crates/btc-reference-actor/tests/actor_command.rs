@@ -11,7 +11,7 @@ use std::{
 
 use btc_reference_actor::{
     ActorCli, ActorCommand, ActorCommandError, ActorConfig, ActorConfigError, ActorRole,
-    execute_actor_command,
+    execute_actor_command, validate_maker_manifest_config_bytes,
 };
 use clap::Parser as _;
 use command_fds::{CommandFdExt as _, FdMapping};
@@ -25,6 +25,7 @@ use lez_btc_swap_sdk::{
     SigningRole, aggregate_adaptor_presignature, sign_persisted_adaptor_partial,
     verify_adaptor_partial_signature, verify_nonce_commitment,
 };
+use lez_swap_core::SwapId;
 use lez_swap_store::{
     AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
     AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, MAKER_ACTOR_CONFIG_FD,
@@ -40,7 +41,7 @@ use tempfile::TempDir;
 mod support;
 
 struct ActorFixture {
-    _directory: TempDir,
+    directory: TempDir,
     config_path: std::path::PathBuf,
     config: ActorConfig,
 }
@@ -142,7 +143,7 @@ impl ActorFixture {
         );
         let config = ActorConfig::load_private(&config_path)?;
         Ok(Self {
-            _directory: directory,
+            directory,
             config_path,
             config,
         })
@@ -597,6 +598,50 @@ fn supervised_schema_requires_and_enforces_the_exact_agreement_digest() {
     assert_eq!(
         ActorConfig::load_private(&fixture.config_path),
         Err(ActorConfigError::Invalid)
+    );
+}
+
+#[test]
+fn supervised_maker_bytes_match_exact_manifest_swap_and_state() {
+    let fixture = ActorFixture::new(BridgeParticipant::Maker, BridgeParticipant::Maker);
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
+            .expect("config JSON");
+    let agreement_path = PathBuf::from(config["agreement_file"].as_str().expect("agreement path"));
+    config["schema_version"] = Value::from(6);
+    config["maker_lock"] = json!({
+        "chain": "lez",
+        "preparation_request_file": fixture.directory.path().join("maker-lock-request.json"),
+        "preparation_result_file": fixture.directory.path().join("maker-lock-result.json")
+    });
+    config["agreement_sha256"] = Value::from(hex::encode(Sha256::digest(
+        fs::read(agreement_path).expect("agreement bytes"),
+    )));
+    let bytes = serde_json::to_vec(&config).expect("supervised config bytes");
+    let swap_id = support::swap_fixture().agreement.coordinator().id().clone();
+    let state = Path::new(config["state_db"].as_str().expect("state path"));
+
+    validate_maker_manifest_config_bytes(&bytes, &swap_id, state)
+        .expect("exact Maker manifest binding");
+    assert!(
+        validate_maker_manifest_config_bytes(
+            &bytes,
+            &SwapId::new("different-btc-swap").unwrap(),
+            state,
+        )
+        .is_err()
+    );
+    assert!(
+        validate_maker_manifest_config_bytes(
+            &bytes,
+            &swap_id,
+            fixture
+                .directory
+                .path()
+                .join("different-state.sqlite3")
+                .as_path(),
+        )
+        .is_err()
     );
 }
 

@@ -129,9 +129,11 @@ SIGTERM in 51 seconds from a clean Cargo cache with no external resources; the
 same flow previously took nine seconds with a warm cache. The preceding RED
 proved a Cargo debug binary is correctly rejected for group-writable parent/file and
 multiple-link metadata; the rehearsal deploys a single-link mode-0500 copy and
-does not relax the artifact policy. Pair-specific manifest semantics, bounded
-supervisor execution, distinct-swap process overlap, and actual-node supervisor
-composition remain M5 work.
+does not relax the artifact policy. Exact config bytes are now hash-verified
+once, compared with their ZEC/BTC Maker role, swap, and role-state manifest
+fields, then sealed into FD 196; wrong-swap or wrong-state configs fail before
+spawn. Bounded supervisor execution, distinct-swap process overlap, and
+actual-node supervisor composition remain M5 work.
 Both real one-shot ZEC and BTC actors now accept exactly one private path or
 fixed inherited config FD 196. Each synchronously requires an anonymous,
 euid-owned, mode-0600, unlinked memfd with all immutable seals before Tokio
@@ -141,9 +143,9 @@ legacy BTC schemas, or any other FD number fail without actor JSON. The BTC FD
 route additionally requires schema 6: it binds the exact agreement SHA-256 and
 exposes a secret-free role/state/digest/signed-swap validation surface for the
 supervisor while keeping path schemas 3–5 compatible. Pair-specific leased-
-manifest comparison, the supervisor itself, systemd actor execution, and
-actual-node crash composition remain. This checkpoint does not increase the M5
-score.
+manifest comparison is GREEN over the exact sealed snapshot; the bounded
+supervisor loop, systemd actor execution, and actual-node crash composition
+remain. This checkpoint does not increase the M5 score.
 
 Build and repeat the current real process boundary with:
 
