@@ -267,11 +267,12 @@ locks, agreements, escrows, outpoints, and deadlines.
   schemas on the FD route and a mismatched agreement digest before activation.
   These tests use only local process and kernel primitives; no RPC, node,
   Docker, faucet, or network participates.
-- The packaged systemd unit names `memfd_create` explicitly alongside
-  `@system-service`, keeps native-architecture and EPERM fail-closed policy,
-  and uses control-group kill semantics. This is a documented portability
-  contract: the host's current `@system-service` expansion already includes
-  `memfd_create`. An actor-bearing transient-unit execution remains open.
+- The packaged systemd unit names `memfd_create` explicitly, keeps native-only
+  EPERM policy, installs the real ZEC actor, and carries the startup-pinned
+  authority/root/program/digest inputs. An actual user-systemd run validates
+  them before readiness and preserves configuration across SIGKILL restart.
+  It does not yet execute a leased sealed actor; that remains part of the
+  supervisor composition.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
 - Literal coordinator closure still requires pair-specific leased-manifest

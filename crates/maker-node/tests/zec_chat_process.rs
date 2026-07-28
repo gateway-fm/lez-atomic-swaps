@@ -1,5 +1,7 @@
 //! Separate-process happy-path proof for the run-local ZEC Chat boundary.
 
+mod support;
+
 use std::{
     fs::{self, OpenOptions},
     io::Write as _,
@@ -18,25 +20,26 @@ use lez_maker_node::{
     PairConfigureRequest, RunLocalDelivery, ZecChatProposalV1, ZecChatProposeRequestV1,
     call_local_rpc,
 };
-use lez_swap_core::{Pair, SwapDirection, UnixSeconds};
+use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
     LocalPriceV1, MakerActorKindV1, MakerActorScheduleState, MakerOfferId, MakerOfferStatus,
     MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationStatus,
-    SqliteSwapStore, maker_zec_chat_session_id, validate_maker_actor_program,
+    SqliteSwapStore, maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
-    NegotiationTranscriptV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashTransparentDestinationV1,
-    ZecAgreementBodyV1, ZecAgreementDraftV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
-    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    NegotiationTranscriptV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementDraftV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
+    ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
+    derive_lez_swap_id_v1,
 };
 use rustix::process::{Pid, Signal, kill_process};
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
-use serde_json::{Value, json};
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use serde_json::Value;
 use sha2::{Digest as _, Sha256};
+use support::actor_deployment;
 use tempfile::tempdir;
 use zcash_protocol::{
     consensus::{BranchId, NetworkType},
@@ -66,7 +69,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     write_raw_key(&key_file, 8);
     write_raw_key(&claim_key_file, 0x7a);
     write_raw_key(&claim_preimage_file, CLAIM_PREIMAGE[0]);
-    let actor = prepare_actor_deployment(run.path(), &key(8), &key(2));
+    let actor = actor_deployment(run.path(), "m5-chat-swap-001");
     let daemon_paths = DaemonPaths {
         socket: &socket,
         chat_socket: &chat_socket,
@@ -81,6 +84,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         actor_program: &actor.program,
         actor_program_sha256: &actor.program_sha256,
     };
+    assert_duplicate_actor_authority_is_rejected(&daemon_paths);
     let mut daemon = start_daemon(&daemon_paths);
     wait_ready(&mut daemon, &ready, &socket);
     let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
@@ -611,190 +615,6 @@ fn unsigned_draft(
     ZecAgreementDraftV1::new(body).encode_wire().unwrap()
 }
 
-struct ActorDeployment {
-    root: PathBuf,
-    source_config: PathBuf,
-    program: PathBuf,
-    program_sha256: String,
-    agreement_basis_time: u64,
-}
-
-fn prepare_actor_deployment(
-    run_root: &Path,
-    maker_secret: &SecretKey,
-    taker_secret: &SecretKey,
-) -> ActorDeployment {
-    let source_root = run_root.join("actor-source");
-    let actor_root = run_root.join("maker-actors");
-    for directory in [&source_root, &actor_root] {
-        fs::DirBuilder::new().mode(0o700).create(directory).unwrap();
-    }
-    let agreement_basis_time = now();
-    let agreement = source_agreement_wire(maker_secret, taker_secret, agreement_basis_time);
-    let agreement_file = source_root.join("agreement-v2.borsh");
-    let source_config = source_root.join("actor-config.json");
-    let claim_key = source_root.join("claim-recovery.key");
-    let preimage = source_root.join("claim-preimage.key");
-    let zcash_key = source_root.join("zcash.key");
-    let capability = source_root.join("bridge.capability");
-    write_private(&agreement_file, &agreement);
-    write_raw_key(&claim_key, 0x7a);
-    write_raw_key(&preimage, CLAIM_PREIMAGE[0]);
-    write_raw_key(&zcash_key, 8);
-    write_private(&capability, b"m5_actor_capability_0123456789abcdef");
-    let config = json!({
-        "schema_version": 3,
-        "role": "maker",
-        "run_id": "m5-chat-source",
-        "swap_id": "m5-chat-swap-001",
-        "signed_agreement_file": agreement_file,
-        "signed_agreement_sha256": hex::encode(Sha256::digest(&agreement)),
-        "role_state_db": source_root.join("unused-source-state.sqlite3"),
-        "claim_recovery": {
-            "key_id": "m5-chat-source-claim-v1",
-            "key_file": claim_key
-        },
-        "claim_preimage_file": preimage,
-        "zcash_key_file": zcash_key,
-        "bridge": {
-            "endpoint": "http://127.0.0.1:19001",
-            "journal_db": source_root.join("unused-source-bridge.sqlite3"),
-            "capability_file": capability,
-            "runtime": {
-                "sidecar_role": "maker",
-                "compatibility": "lee_v0_2_0",
-                "chain_id": "06".repeat(32),
-                "channel_id": "08".repeat(32),
-                "genesis_block_hash": "07".repeat(32),
-                "escrow_program_id": "01000000".repeat(8),
-                "signer_account_id": "03".repeat(32)
-            },
-            "request_timeout_millis": 5000
-        },
-        "zebra": {
-            "route": {
-                "kind": "deterministic_local",
-                "endpoint": "http://127.0.0.1:19101",
-                "cookie_file": null
-            },
-            "identity": {
-                "network": "regtest",
-                "rpc_chain": "test",
-                "consensus_branch_id": "c8e71055",
-                "genesis_hash": "77".repeat(32)
-            },
-            "counterparty_scan_blocks": 1000
-        },
-        "lez_discovery_window": {"start_height": 1, "max_blocks": 256},
-        "zcash_funding_outpoints": [{
-            "transaction_id": "aa".repeat(32),
-            "output_index": 0
-        }]
-    });
-    write_private(&source_config, &serde_json::to_vec_pretty(&config).unwrap());
-    let loaded = ActorConfig::load_private(&source_config).expect("valid source Maker config");
-    assert_eq!(loaded.role(), ActorRole::Maker);
-    loaded
-        .load_activate_material()
-        .expect("source Maker activation material");
-    let program = fs::canonicalize("/usr/bin/true").unwrap();
-    let program_identity: [u8; 32] = Sha256::digest(fs::read(&program).unwrap()).into();
-    validate_maker_actor_program(&program, program_identity)
-        .expect("fixture program satisfies production artifact policy");
-    let program_sha256 = hex::encode(program_identity);
-    ActorDeployment {
-        root: actor_root,
-        source_config,
-        program,
-        program_sha256,
-        agreement_basis_time,
-    }
-}
-
-fn source_agreement_wire(
-    maker_secret: &SecretKey,
-    taker_secret: &SecretKey,
-    agreement_basis_time: u64,
-) -> Vec<u8> {
-    let maker_public = public_key(maker_secret);
-    let taker_public = public_key(taker_secret);
-    let maker_hash = pubkey_hash(&maker_public);
-    let taker_hash = pubkey_hash(&taker_public);
-    let escrow_program = [1; 8];
-    let onchain_swap_id = derive_lez_swap_id_v1(b"m5-chat-swap-001");
-    let metadata = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
-    let custody = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
-    let secret_digest: [u8; 32] = Sha256::digest(CLAIM_PREIMAGE).into();
-    let binding = ZecSwapBinding::new(
-        ZecProfileId::DeterministicLocalV1,
-        ExpectedBip199Output::new(
-            NetworkType::Regtest,
-            BranchId::Nu6_2,
-            Zatoshis::from_u64(10_000).unwrap(),
-            Bip199Contract::new(120, maker_hash, secret_digest, taker_hash),
-        ),
-    )
-    .unwrap();
-    let body = ZecAgreementBodyV1::new(
-        "m5-chat-swap-001".to_owned(),
-        SwapDirection::TakerSellsLez,
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
-        ZecParticipantsV1::new(
-            ZecParticipantIdentityV1::new([3; 32], maker_public.serialize()),
-            ZecParticipantIdentityV1::new([4; 32], taker_public.serialize()),
-        ),
-        secret_digest,
-        ZecLezTermsV1::new(
-            LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
-            escrow_program,
-            LezAssetV1::Native {
-                authenticated_transfer_program_id: [2; 8],
-            },
-            25_000,
-            metadata,
-            custody,
-        ),
-        ZecSwapBindingRecordV1::from_binding(&binding),
-        ZecTransactionPolicyV1::new(
-            [12; 32],
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
-            1,
-            1,
-            ZcashTransparentDestinationV1::p2pkh(taker_hash),
-            1,
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
-            1,
-            40,
-        ),
-        ZecRefundPlanV1::new(
-            agreement_basis_time,
-            116,
-            (agreement_basis_time + 60) * 1_000,
-            agreement_basis_time + 90,
-        ),
-        NegotiationTranscriptV1::new([9; 32], [10; 32], agreement_basis_time + 300),
-    );
-    let commitment = body.commitment();
-    let record = ZecAgreementRecordV1::from_parts(
-        ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
-        body,
-        commitment,
-        sign_agreement(commitment, maker_secret),
-        sign_agreement(commitment, taker_secret),
-    );
-    ZecAgreementV1::validate_at(record, UnixSeconds::new(agreement_basis_time))
-        .unwrap()
-        .encode_wire()
-        .unwrap()
-}
-
-fn sign_agreement(commitment: [u8; 32], secret: &SecretKey) -> [u8; 64] {
-    let mut signature =
-        Secp256k1::signing_only().sign_ecdsa(&Message::from_digest(commitment), secret);
-    signature.normalize_s();
-    signature.serialize_compact()
-}
-
 struct DaemonPaths<'a> {
     socket: &'a std::path::Path,
     chat_socket: &'a std::path::Path,
@@ -810,8 +630,9 @@ struct DaemonPaths<'a> {
     actor_program_sha256: &'a str,
 }
 
-fn start_daemon(paths: &DaemonPaths<'_>) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
+fn daemon_command(paths: &DaemonPaths<'_>) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"));
+    command
         .arg("--socket")
         .arg(paths.socket)
         .arg("--chat-socket")
@@ -837,9 +658,28 @@ fn start_daemon(paths: &DaemonPaths<'_>) -> Child {
         .arg("--zec-actor-program")
         .arg(paths.actor_program)
         .arg("--zec-actor-program-sha256")
-        .arg(paths.actor_program_sha256)
+        .arg(paths.actor_program_sha256);
+    command
+}
+
+fn start_daemon(paths: &DaemonPaths<'_>) -> Child {
+    daemon_command(paths)
         .spawn()
         .expect("start isolated maker daemon")
+}
+
+fn assert_duplicate_actor_authority_is_rejected(paths: &DaemonPaths<'_>) {
+    let output = daemon_command(paths)
+        .arg("--zec-source-maker-config")
+        .arg(paths.actor_source_config)
+        .output()
+        .expect("run maker daemon with duplicate authority");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("duplicate swap or state identity"),
+        "unexpected duplicate-authority error: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn wait_ready(daemon: &mut Child, ready: &std::path::Path, socket: &std::path::Path) {

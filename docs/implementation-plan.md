@@ -3396,22 +3396,35 @@ separately from runtime dependencies.
   authorize or erase the durable completion.
 
   The systemd syscall-policy RED/GREEN slice is statically closed. The packaged
-  unit now names `memfd_create` explicitly alongside `@system-service`, retains
+  unit explicitly permits `memfd_create` alongside `@system-service`, retains
   native-only/EPERM policy and `KillMode=control-group`, and its lifecycle
-  contract asserts every relevant directive. The current host already includes
-  `memfd_create` through `@system-service`; the explicit token prevents that
-  group expansion from becoming an undocumented portability dependency. An
-  actor-bearing transient-unit execution is still required before M5 closure.
+  contract asserts every relevant directive.
 
-  Next, replace the fixed one-swap source template with a per-swap immutable
-  authority registry. Require actor deployment whenever
-  Chat is enabled and carry those inputs through the packaged systemd install.
-  Then compare both pair configs' swap/role/state/agreement semantics with each
-  leased manifest, implement the bounded pair-neutral supervisor, rehearse its
-  sealed-actor execution under hardened systemd; route existing M3 overlap and
-  M5 ZEC application flows through it; then prove one exact SIGKILL/restart while
-  a disjoint peer reaches terminal without duplicate effects. This partial
-  progress does not increase the 3/7 score.
+  The authority-registry and actor-bearing systemd slice is now GREEN. Chat's
+  CLI group requires complete Delivery, claim, registry, root, program, and
+  digest inputs. `--zec-source-maker-config` is repeatable and bounded to 256;
+  every config is loaded with all activation material at startup. Duplicate
+  swap or role-state identities fail before socket/database creation, and final
+  agreement provisioning selects only the exact application-swap template.
+  The real Delivery/operator journeys use valid authority rather than dummy
+  flags, while a repeated registry member fails in the real daemon process.
+  The package installs `zec-reference-actor`, requires an exact digest
+  environment, and supplies authority/root/program inputs to the hardened unit.
+  Staged install and `systemd-analyze verify` pass. Actual user-systemd run
+  `lez-m5-systemd-1000-2947208-15620` reached `READY=1`, persisted one route
+  across exact SIGKILL restart, and removed the runtime on SIGTERM in 51 seconds
+  from a clean Cargo cache with no external resources. The initial RED rejected Cargo's
+  group-writable, multiply linked debug artifact; a single-link mode-0500
+  deployment copy passed without relaxing policy. Stripping only disposable
+  debug sections reduced two-start warm-cache evidence from more than 34 seconds
+  to nine; the clean-cache run records build cost separately from runtime behavior.
+
+  Next, compare each pair config's swap/role/state/agreement semantics with its
+  leased manifest and implement the bounded pair-neutral supervisor. Rehearse
+  sealed-actor execution under hardened systemd, route existing M3 overlap and
+  M5 ZEC application flows through it, then prove one exact SIGKILL/restart
+  while a disjoint peer reaches terminal without duplicate effects. This
+  partial progress does not increase the 3/7 literal-output score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3431,7 +3444,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 14 to 26 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 10 to 20 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 

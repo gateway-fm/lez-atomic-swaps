@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-for command in cargo jq stat systemctl systemd-run; do
+for command in cargo install jq sha256sum stat strip systemctl systemd-run; do
   command -v "$command" >/dev/null || {
     echo "required command is unavailable: $command" >&2
     exit 1
@@ -85,16 +85,31 @@ wait_restarted() {
   return 1
 }
 
-cargo build --locked -p lez-maker-node --bin lez-maker-daemon --bin lez-maker
+cargo build --locked -p lez-maker-node --bin lez-maker-daemon --bin lez-maker \
+  --example m5-systemd-actor-fixture
+cargo build --locked -p zec-reference-actor --bin zec-reference-actor
 chmod 0700 "$run_root"
 write_secret "$signing_key" 08
 write_secret "$claim_key" 7a
 write_secret "$preimage" 44
+install -D -m 0700 target/debug/zec-reference-actor "$run_root/bin/zec-reference-actor"
+strip --strip-debug "$run_root/bin/zec-reference-actor"
+chmod 0500 "$run_root/bin/zec-reference-actor"
 
 daemon="$(realpath target/debug/lez-maker-daemon)"
 readonly daemon
 maker="$(realpath target/debug/lez-maker)"
 readonly maker
+actor_program="$(realpath "$run_root/bin/zec-reference-actor")"
+readonly actor_program
+read -r actor_program_sha256 _ < <(sha256sum "$actor_program")
+readonly actor_program_sha256
+actor_fixture_json="$(target/debug/examples/m5-systemd-actor-fixture "$run_root")"
+readonly actor_fixture_json
+actor_source_config="$(jq -er '.source_config' <<<"$actor_fixture_json")"
+readonly actor_source_config
+actor_root="$(jq -er '.actor_root' <<<"$actor_fixture_json")"
+readonly actor_root
 systemd-run --user \
   --unit="$unit_name" \
   --property=Type=notify \
@@ -115,7 +130,11 @@ systemd-run --user \
   --chat-socket "$chat_socket" \
   --maker-claim-key-id transient-v1 \
   --maker-claim-key-file "$credential_directory/maker-claim-recovery.key" \
-  --maker-claim-preimage-file "$credential_directory/maker-claim-preimage.key"
+  --maker-claim-preimage-file "$credential_directory/maker-claim-preimage.key" \
+  --zec-source-maker-config "$actor_source_config" \
+  --zec-maker-actor-root "$actor_root" \
+  --zec-actor-program "$actor_program" \
+  --zec-actor-program-sha256 "$actor_program_sha256"
 
 wait_active
 test "$(stat -c '%a' "$runtime")" = 700

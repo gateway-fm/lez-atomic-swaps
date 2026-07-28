@@ -11,6 +11,7 @@ cleanup() {
 trap cleanup EXIT
 
 cargo build --locked -p lez-maker-node --bins
+cargo build --locked -p zec-reference-actor --bin zec-reference-actor
 SOURCE_BIN_DIR="${SOURCE_BIN_DIR:-target/debug}" \
 DESTDIR="$stage" \
   ./scripts/install-m5-maker-service.sh
@@ -38,6 +39,8 @@ test "$(stat -c '%a' "$stage/usr/bin/lez-maker-daemon")" = 755
 test "$(stat -c '%a' "$stage/usr/bin/lez-maker")" = 755
 test "$(stat -c '%a' "$stage/usr/bin/lez-taker")" = 755
 test "$(stat -c '%a' "$stage/usr/lib/systemd/system/lez-maker-daemon.service")" = 644
+test "$(stat -c '%a' "$stage/usr/bin/zec-reference-actor")" = 755
 test "$(stat -c '%a' "$stage/etc/lez-atomic-swaps/credentials")" = 700
+test "$(stat -c '%a' "$stage/etc/lez-atomic-swaps/zec-actor.env.example")" = 600
 
 echo "M5 maker service staged-install and systemd verification passed"

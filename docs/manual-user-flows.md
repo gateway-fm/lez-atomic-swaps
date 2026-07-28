@@ -4293,9 +4293,10 @@ changing the host:
 ./scripts/rehearse-m5-maker-service-install.sh
 ```
 
-The second command builds all application binaries into an isolated temporary
-root, installs them with production paths and modes, and runs
-`systemd-analyze verify`. It must end with:
+The second command builds the application binaries and real ZEC one-shot actor
+into an isolated temporary root, installs them with production paths and modes,
+installs the digest-environment template, and runs `systemd-analyze verify`. It
+must end with:
 
 ```text
 M5 maker service staged-install and systemd verification passed
@@ -4309,7 +4310,9 @@ rehearsal:
 ```
 
 The script creates a unique user unit and private run root, passes three real
-systemd runtime credentials, waits for `Type=notify` readiness, calls the real
+systemd runtime credentials, creates one valid startup-pinned Maker authority
+template, and deploys a single-link mode-0500 copy of the real ZEC actor with
+its exact SHA-256. It waits for `Type=notify` readiness, calls the real
 `lez-maker health` command, persists one route, kills only the unit's main PID,
 observes one automatic restart and the same route, then stops the unit through
 SIGTERM. Its trap stops and resets only that unique unit and removes only its
@@ -4319,16 +4322,43 @@ run root. Success resembles:
 M5 actual user-systemd lifecycle passed: run_id=lez-m5-systemd-... restarts=1 duration_seconds=... runtime_external_resources=none
 ```
 
+
+Run `lez-m5-systemd-1000-2947208-15620` passed in 51 seconds after `cargo clean`;
+the same lifecycle previously passed in nine seconds with a warm cache. The preceding
+RED used Cargo's 167-MiB unstripped debug actor directly; policy correctly
+rejected its group-writable parent/file and multiple-link metadata. After a
+safe single-link copy, two unoptimized hashes still exceeded 34 seconds.
+Stripping only debug sections from that disposable copy reduced the full start,
+SIGKILL restart, and stop rehearsal to nine seconds when build artifacts are
+warm without bypassing the digest check. The 51-second clean-cache measurement
+includes rebuilding and preparing the actor artifact.
 For a real system installation, build release binaries, create the dedicated
 account, and stage the package:
 
 ```sh
 cargo build --locked --release -p lez-maker-node --bins
 sudo useradd --system --home-dir /var/lib/lez-atomic-swaps \
+cargo build --locked --release -p zec-reference-actor --bin zec-reference-actor
   --shell /usr/sbin/nologin lez-swap
 sudo env SOURCE_BIN_DIR=target/release ./scripts/install-m5-maker-service.sh
 ```
 
+
+Provision the validated Maker actor config and every absolute path it references
+as the service user; do not hand-edit the schema. The local-devnet provisioner
+from Flow 1B can produce this authority while its isolated nodes are running.
+The packaged unit expects the first config and fresh-output root here:
+
+```text
+/var/lib/lez-atomic-swaps/authority/zec-maker.json
+/var/lib/lez-atomic-swaps/actors
+```
+
+Both parents must be canonical, owned by `lez-swap`, and mode 0700. Copy
+`/etc/lez-atomic-swaps/zec-actor.env.example` to `zec-actor.env`, replace only
+the placeholder with `sha256sum /usr/bin/zec-reference-actor`, and keep the
+result root-owned mode 0600. The daemon refuses readiness if any authority or
+program identity differs.
 Create each 32-byte nonzero raw secret offline in an owner-only temporary file.
 Do not place secret bytes in shell arguments, command history, logs, or this
 repository. Encrypt each file for the local host, preserving the exact
@@ -4565,6 +4595,12 @@ inputs an operator supplies:
 --zec-actor-program-sha256 EXACT_64_HEX_DIGEST
 ```
 
+Repeat `--zec-source-maker-config` once per immutable application-swap
+authority, up to 256 entries. Startup loads every activation binding and rejects
+an empty/oversized registry or duplicate swap/state identity before binding a
+socket. Finalization selects by the accepted agreement's application swap ID;
+there is no first-template fallback.
+
 The separate taker discovers and countersigns one offer with a three-second
 TTL. It no-clobber-persists the private final agreement before asking the maker
 to complete, so a lost response cannot discard the only countersigned wire.
@@ -4606,9 +4642,9 @@ authority and does not invalidate or duplicate the committed completion.
 The full local-devnet settlement remains Flow 1B; this focused flow certifies
 only the acceptance-to-scheduler handoff.
 
-Current limitation: the daemon still accepts one fixed source template rather
-than a per-swap authority registry. Supervisor execution, actor-bearing systemd,
-and actual-node supervisor composition also remain.
+Current limitation: distinct-swap registry selection is implemented, but the
+pair-specific manifest comparison, bounded supervisor execution, disjoint
+process overlap, and actual-node supervisor composition remain.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 

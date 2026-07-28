@@ -51,7 +51,20 @@ struct Arguments {
     #[arg(long, requires_all = ["delivery_directory", "chat_socket"])]
     delivery_signing_key_file: Option<PathBuf>,
     /// Taker-facing run-local Chat socket, isolated from owner-control methods.
-    #[arg(long, requires_all = ["delivery_directory", "delivery_signing_key_file"])]
+    #[arg(
+        long,
+        requires_all = [
+            "delivery_directory",
+            "delivery_signing_key_file",
+            "maker_claim_key_id",
+            "maker_claim_key_file",
+            "maker_claim_preimage_file",
+            "zec_source_maker_config",
+            "zec_maker_actor_root",
+            "zec_actor_program",
+            "zec_actor_program_sha256"
+        ]
+    )]
     chat_socket: Option<PathBuf>,
     /// Non-secret rotation identifier for the maker claim-recovery key.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_file", "maker_claim_preimage_file"])]
@@ -62,9 +75,9 @@ struct Arguments {
     /// Owner-only file containing the maker-owned 32-byte claim preimage.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
     maker_claim_preimage_file: Option<PathBuf>,
-    /// Existing owner-private Maker actor config used as chain-fact and authority template.
-    #[arg(long, requires_all = ["delivery_directory", "zec_maker_actor_root", "zec_actor_program", "zec_actor_program_sha256"])]
-    zec_source_maker_config: Option<PathBuf>,
+    /// Existing owner-private per-swap Maker configs used as authority templates.
+    #[arg(long, action = clap::ArgAction::Append, requires_all = ["delivery_directory", "zec_maker_actor_root", "zec_actor_program", "zec_actor_program_sha256"])]
+    zec_source_maker_config: Vec<PathBuf>,
     /// Existing owner-private mode-0700 base for deterministic per-swap actor bundles.
     #[arg(long, requires_all = ["zec_source_maker_config", "zec_actor_program", "zec_actor_program_sha256"])]
     zec_maker_actor_root: Option<PathBuf>,
@@ -352,18 +365,20 @@ fn configured_logos_price_source(
 fn configured_zec_actor_provisioner(
     arguments: &Arguments,
 ) -> anyhow::Result<Option<ZecMakerActorProvisioner>> {
-    let configured = (
-        arguments.zec_source_maker_config.as_ref(),
+    let deployment = (
         arguments.zec_maker_actor_root.as_ref(),
         arguments.zec_actor_program.as_ref(),
         arguments.zec_actor_program_sha256.as_deref(),
     );
-    let (Some(source), Some(root), Some(program), Some(program_sha256)) = configured else {
+    if arguments.zec_source_maker_config.is_empty() {
         ensure!(
-            configured == (None, None, None, None),
-            "ZEC actor template, root, program, and SHA-256 must be configured together"
+            deployment == (None, None, None),
+            "ZEC actor templates, root, program, and SHA-256 must be configured together"
         );
         return Ok(None);
+    }
+    let (Some(root), Some(program), Some(program_sha256)) = deployment else {
+        bail!("ZEC actor templates, root, program, and SHA-256 must be configured together");
     };
     validate_runtime_directory(root).context("validate ZEC maker actor root")?;
     ensure!(
@@ -378,9 +393,14 @@ fn configured_zec_actor_provisioner(
     let mut identity = [0_u8; 32];
     hex::decode_to_slice(program_sha256, &mut identity)
         .context("decode ZEC actor program SHA-256")?;
-    ZecMakerActorProvisioner::new(source, root.clone(), program.clone(), identity)
-        .context("validate ZEC maker actor deployment")
-        .map(Some)
+    ZecMakerActorProvisioner::new(
+        &arguments.zec_source_maker_config,
+        root.clone(),
+        program.clone(),
+        identity,
+    )
+    .context("validate ZEC maker actor deployment")
+    .map(Some)
 }
 
 fn maker_context(
@@ -574,5 +594,54 @@ impl Drop for OwnedPath {
         if metadata.dev() == self.device && metadata.ino() == self.inode {
             let _ = fs::remove_file(&self.path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Arguments;
+    use clap::Parser as _;
+
+    fn chat_arguments() -> Vec<&'static str> {
+        vec![
+            "lez-maker-daemon",
+            "--database",
+            "/tmp/maker.sqlite3",
+            "--delivery-directory",
+            "/tmp/delivery",
+            "--delivery-signing-key-file",
+            "/tmp/delivery.key",
+            "--chat-socket",
+            "/tmp/chat.sock",
+            "--maker-claim-key-id",
+            "maker-claim-v1",
+            "--maker-claim-key-file",
+            "/tmp/claim.key",
+            "--maker-claim-preimage-file",
+            "/tmp/preimage.key",
+        ]
+    }
+
+    #[test]
+    fn chat_cli_requires_complete_zec_actor_deployment() {
+        assert!(
+            Arguments::try_parse_from(chat_arguments()).is_err(),
+            "serving Chat without actor authority must fail during CLI parsing"
+        );
+
+        let mut complete = chat_arguments();
+        complete.extend([
+            "--zec-source-maker-config",
+            "/tmp/actor.json",
+            "--zec-maker-actor-root",
+            "/tmp/actors",
+            "--zec-actor-program",
+            "/usr/bin/true",
+            "--zec-actor-program-sha256",
+            "00f5ba0b54bda7a48c9380b740fc38a8710a23c0f3f948cdcc9b7d5e712d1f8f",
+        ]);
+        Arguments::try_parse_from(complete.clone()).expect("complete Chat deployment parses");
+        complete.extend(["--zec-source-maker-config", "/tmp/second-actor.json"]);
+        Arguments::try_parse_from(complete).expect("per-swap source registry parses");
     }
 }

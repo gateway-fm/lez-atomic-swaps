@@ -144,6 +144,6 @@ changed-input conflicts, and missing-actor failure.
 The process test uses no node, chain RPC, Docker, faucet, public funds, DNS,
 public finality source, or Logos service. It proves the application negotiation
 boundary and acceptance-to-scheduler handoff, not actor execution or a
-cross-chain effect. A per-swap authority registry, pair-neutral supervisor,
-actor-bearing systemd execution, actual local-node crash composition, and
-status/claim/refund taker commands remain.
+cross-chain effect. The bounded per-swap authority registry and actor-bearing
+systemd restart are GREEN. Pair-neutral supervisor execution, actual local-node
+crash composition, and status/claim/refund taker commands remain.

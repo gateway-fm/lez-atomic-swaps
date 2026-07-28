@@ -116,9 +116,22 @@ persists the countersigned agreement; a rerun validates that private agreement,
 the executable unsigned draft, pinned Maker, local Taker role/key, and amount,
 then retries only completion without Delivery discovery or proposal replay.
 The real CLI/process proof uses a three-second offer TTL and completes this
-exact retry after expiry. Per-swap templates for distinct/concurrent application
-swaps, bounded supervisor composition, actor-bearing hardened-systemd execution,
-and actual-node supervisor composition remain M5 work.
+exact retry after expiry. Chat now requires a bounded registry of one or more
+startup-pinned Maker templates. Each accepted agreement selects the template by
+its exact application swap ID; duplicate swap or role-state identities fail
+before sockets or SQLite are opened, and missing authority fails before
+acceptance. The same requirement is carried through the packaged systemd unit,
+which installs the real ZEC actor, requires its exact SHA-256, and names the
+private authority and actor roots. Actual user-systemd run
+`lez-m5-systemd-1000-2947208-15620` reached notification readiness, preserved
+configuration across one exact SIGKILL restart, and removed its runtime on
+SIGTERM in 51 seconds from a clean Cargo cache with no external resources; the
+same flow previously took nine seconds with a warm cache. The preceding RED
+proved a Cargo debug binary is correctly rejected for group-writable parent/file and
+multiple-link metadata; the rehearsal deploys a single-link mode-0500 copy and
+does not relax the artifact policy. Pair-specific manifest semantics, bounded
+supervisor execution, distinct-swap process overlap, and actual-node supervisor
+composition remain M5 work.
 Both real one-shot ZEC and BTC actors now accept exactly one private path or
 fixed inherited config FD 196. Each synchronously requires an anonymous,
 euid-owned, mode-0600, unlinked memfd with all immutable seals before Tokio

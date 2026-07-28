@@ -1,5 +1,7 @@
 //! Black-box daemon/CLI/Delivery journey for the Logos C-API price source.
 
+mod support;
+
 use std::{
     fs,
     fs::OpenOptions,
@@ -10,6 +12,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use support::actor_deployment;
 
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
@@ -159,8 +162,7 @@ fn start_daemon(
         &hex::encode([8; 32]).into_bytes(),
         0o600,
     );
-    let claim_key = secure_file(run, "maker-claim.key", &[0x7a; 32], 0o600);
-    let claim_preimage = secure_file(run, "maker-preimage.key", &[0x44; 32], 0o600);
+    let actor = actor_deployment(run, "m5-integration-authority-001");
     let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
         .arg("--socket")
         .arg(&socket)
@@ -177,9 +179,17 @@ fn start_daemon(
         .arg("--maker-claim-key-id")
         .arg("m5-logos-price-claim-key-v1")
         .arg("--maker-claim-key-file")
-        .arg(claim_key)
+        .arg(&actor.claim_key)
         .arg("--maker-claim-preimage-file")
-        .arg(claim_preimage)
+        .arg(&actor.claim_preimage)
+        .arg("--zec-source-maker-config")
+        .arg(&actor.source_config)
+        .arg("--zec-maker-actor-root")
+        .arg(&actor.root)
+        .arg("--zec-actor-program")
+        .arg(&actor.program)
+        .arg("--zec-actor-program-sha256")
+        .arg(&actor.program_sha256)
         .arg("--logos-price-worker")
         .arg(worker)
         .arg("--logos-price-module")

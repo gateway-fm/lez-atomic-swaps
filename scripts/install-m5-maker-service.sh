@@ -6,6 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 readonly source_bin_dir="${SOURCE_BIN_DIR:-target/release}"
 readonly destination_root="${DESTDIR:-}"
 readonly unit_source="packaging/systemd/lez-maker-daemon.service"
+readonly environment_example="packaging/systemd/lez-maker-daemon.env.example"
 
 if [[ -n "$destination_root" && "$destination_root" != /* ]]; then
   echo "DESTDIR must be empty or an absolute staging root" >&2
@@ -16,7 +17,7 @@ if [[ ! -d "$source_bin_dir" ]]; then
   exit 1
 fi
 
-for binary in lez-maker-daemon lez-maker lez-taker; do
+for binary in lez-maker-daemon lez-maker lez-taker zec-reference-actor; do
   source_path="$source_bin_dir/$binary"
   if [[ ! -f "$source_path" || ! -x "$source_path" || -L "$source_path" ]]; then
     echo "required built executable is missing, non-executable, or a symlink: $source_path" >&2
@@ -28,12 +29,14 @@ if [[ ! -f "$unit_source" || -L "$unit_source" ]]; then
   exit 1
 fi
 
-for binary in lez-maker-daemon lez-maker lez-taker; do
+for binary in lez-maker-daemon lez-maker lez-taker zec-reference-actor; do
   install -D -m 0755 "$source_bin_dir/$binary" \
     "$destination_root/usr/bin/$binary"
 done
 install -D -m 0644 "$unit_source" \
   "$destination_root/usr/lib/systemd/system/lez-maker-daemon.service"
+install -D -m 0600 "$environment_example" \
+  "$destination_root/etc/lez-atomic-swaps/zec-actor.env.example"
 install -d -m 0700 "$destination_root/etc/lez-atomic-swaps/credentials"
 
 if [[ -z "$destination_root" ]]; then

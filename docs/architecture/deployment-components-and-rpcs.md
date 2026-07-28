@@ -724,6 +724,9 @@ flowchart TB
     Adapter[Bounded process lifecycle adapter]
     Encrypted[Encrypted credentials in etc]
     RuntimeCredentials[Private mode 0400 runtime credentials]
+    Authority[Startup-pinned Maker authority registry]
+    ActorProgram[Pinned ZEC actor and SHA-256]
+    ActorRoot[Private per-swap actor root]
     Daemon[lez-maker-daemon]
     Health[maker_health schema 1<br/>ready degraded dependency states]
     OwnerSocket[Mode 0600 owner Unix RPC]
@@ -741,6 +744,9 @@ flowchart TB
     Systemd --> RuntimeCredentials
     RuntimeCredentials --> Daemon
     Systemd --> Daemon
+    Authority --> Daemon
+    ActorProgram --> Daemon
+    Daemon --> ActorRoot
     Core -.-> Adapter
     Adapter -.-> Daemon
     Daemon --> Lease
@@ -760,6 +766,8 @@ flowchart TB
 |---|---|---|
 | systemd service | `lez-maker-daemon.service` | Dedicated `lez-swap` user; owns `/run/lez-atomic-swaps` and `/var/lib/lez-atomic-swaps`; reports active only after daemon notification; restarts after failure with a bounded storm policy |
 | Encrypted credentials | `/etc/lez-atomic-swaps/credentials/*.cred` to systemd `%d` | systemd decrypts named Delivery, claim-recovery, and preimage values into private mode-0400 runtime files; the unit never places secret bytes in arguments or environment variables |
+| ZEC Maker authority registry | `/var/lib/lez-atomic-swaps/authority/zec-maker.json` plus repeatable daemon inputs | One to 256 startup-pinned Maker configs; duplicate swap/state identities and incomplete Chat deployment fail before readiness; an accepted agreement selects only its exact application swap |
+| ZEC actor deployment | `/usr/bin/zec-reference-actor`, exact SHA-256 environment, and `/var/lib/lez-atomic-swaps/actors` | Installer carries the real actor and digest template; daemon verifies program metadata/hash and private root before sockets or SQLite; leased sealed execution remains supervisor work |
 | Maker owner RPC | `/run/lez-atomic-swaps/maker.sock` | Owner-only bounded HTTP/1 JSON-RPC over Unix transport; `maker_health` keeps schema 1 and owner/SQLite readiness while separately reporting `degraded` plus Delivery/Chat states; operator CLI runs as the service user |
 | Taker Chat RPC | `/run/lez-atomic-swaps/chat.sock` | Separate owner-only Unix listener with the isolated negotiation method set; no owner-control method crossover |
 | Maker database | `/var/lib/lez-atomic-swaps/maker.sqlite3` | SQLite transactions and effect journals remain protocol authority; a sibling owner-only `.lock` admits one process writer for its whole lifetime |

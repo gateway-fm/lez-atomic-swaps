@@ -56,6 +56,7 @@ const NOT_FOUND: i32 = -32_004;
 const CONFLICT: i32 = -32_009;
 const INTERNAL_ERROR: i32 = -32_603;
 
+const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
 /// RPC context owned by one maker daemon.
 #[derive(Clone)]
 pub struct MakerRpc {
@@ -1506,7 +1507,7 @@ fn complete_zec_chat(
 /// Validated immutable deployment inputs for daemon-owned ZEC actor creation.
 #[derive(Clone)]
 pub struct ZecMakerActorProvisioner {
-    source_maker_config: ActorConfig,
+    source_maker_configs: Box<[ActorConfig]>,
     actor_root: PathBuf,
     actor_program: PathBuf,
     actor_program_sha256: [u8; 32],
@@ -1516,7 +1517,10 @@ impl std::fmt::Debug for ZecMakerActorProvisioner {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ZecMakerActorProvisioner")
-            .field("source_maker_config", &"[PINNED REDACTED]")
+            .field(
+                "source_maker_config_count",
+                &self.source_maker_configs.len(),
+            )
             .field("actor_root", &"[REDACTED]")
             .field("actor_program", &"[REDACTED]")
             .field(
@@ -1528,41 +1532,58 @@ impl std::fmt::Debug for ZecMakerActorProvisioner {
 }
 
 impl ZecMakerActorProvisioner {
-    /// Validates one maker template and exact actor program before serving Chat.
+    /// Validates a bounded per-swap Maker authority registry and exact actor program.
     ///
     /// # Errors
     ///
-    /// Rejects non-maker templates and unsafe or mismatched actor executables.
+    /// Rejects an empty/oversized registry, duplicate swap or state identities,
+    /// non-Maker templates, and unsafe or mismatched actor executables.
     pub fn new(
-        source_maker_config: &Path,
+        source_maker_configs: &[PathBuf],
         actor_root: PathBuf,
         actor_program: PathBuf,
         actor_program_sha256: [u8; 32],
     ) -> anyhow::Result<Self> {
-        let source_parent = source_maker_config
-            .parent()
-            .context("source maker config has no parent")?;
-        let source_parent_metadata =
-            fs::symlink_metadata(source_parent).context("inspect source maker config parent")?;
         anyhow::ensure!(
-            source_maker_config.is_absolute()
-                && source_parent_metadata.file_type().is_dir()
-                && source_parent_metadata.uid() == rustix::process::geteuid().as_raw()
-                && source_parent_metadata.mode() & 0o7777 == 0o700
-                && fs::canonicalize(source_parent)
-                    .context("canonicalize source maker config parent")?
-                    == source_parent,
-            "source maker config parent is unsafe"
+            !source_maker_configs.is_empty()
+                && source_maker_configs.len() <= MAX_ZEC_MAKER_AUTHORITY_TEMPLATES,
+            "ZEC Maker authority registry is empty or oversized"
         );
-        let source = ActorConfig::load_private(source_maker_config)
-            .map_err(|_| anyhow::anyhow!("source maker config is unavailable"))?;
-        anyhow::ensure!(
-            source.role() == ActorRole::Maker,
-            "source actor config is not Maker"
-        );
-        source
-            .load_activate_material()
-            .map_err(|_| anyhow::anyhow!("source maker authority is unavailable"))?;
+        let mut sources: Vec<ActorConfig> = Vec::with_capacity(source_maker_configs.len());
+        for source_maker_config in source_maker_configs {
+            let source_parent = source_maker_config
+                .parent()
+                .context("source maker config has no parent")?;
+            let source_parent_metadata = fs::symlink_metadata(source_parent)
+                .context("inspect source maker config parent")?;
+            anyhow::ensure!(
+                source_maker_config.is_absolute()
+                    && source_parent_metadata.file_type().is_dir()
+                    && source_parent_metadata.uid() == rustix::process::geteuid().as_raw()
+                    && source_parent_metadata.mode() & 0o7777 == 0o700
+                    && fs::canonicalize(source_parent)
+                        .context("canonicalize source maker config parent")?
+                        == source_parent,
+                "source maker config parent is unsafe"
+            );
+            let source = ActorConfig::load_private(source_maker_config)
+                .map_err(|_| anyhow::anyhow!("source maker config is unavailable"))?;
+            anyhow::ensure!(
+                source.role() == ActorRole::Maker,
+                "source actor config is not Maker"
+            );
+            anyhow::ensure!(
+                sources
+                    .iter()
+                    .all(|existing| existing.swap_id() != source.swap_id()
+                        && existing.role_state_db() != source.role_state_db()),
+                "ZEC Maker authority registry contains duplicate swap or state identity"
+            );
+            source
+                .load_activate_material()
+                .map_err(|_| anyhow::anyhow!("source maker authority is unavailable"))?;
+            sources.push(source);
+        }
         let root_metadata =
             fs::symlink_metadata(&actor_root).context("inspect ZEC maker actor root")?;
         anyhow::ensure!(
@@ -1577,7 +1598,7 @@ impl ZecMakerActorProvisioner {
         validate_maker_actor_program(&actor_program, actor_program_sha256)
             .map_err(|_| anyhow::anyhow!("ZEC actor program is unavailable"))?;
         Ok(Self {
-            source_maker_config: source,
+            source_maker_configs: sources.into_boxed_slice(),
             actor_root,
             actor_program,
             actor_program_sha256,
@@ -1589,14 +1610,26 @@ impl ZecMakerActorProvisioner {
         final_agreement_wire: &[u8],
         accepted_at_unix_seconds: u64,
     ) -> anyhow::Result<MakerActorManifestV1> {
+        let accepted_at = lez_swap_core::UnixSeconds::new(accepted_at_unix_seconds);
+        let accepted = AcceptedZecAgreementV1::accept_wire_at(
+            final_agreement_wire,
+            accepted_at,
+            Participant::Maker,
+            0,
+        )?;
+        let source = self
+            .source_maker_configs
+            .iter()
+            .find(|source| source.swap_id().as_str() == accepted.agreement().application_swap_id())
+            .context("accepted ZEC swap has no pinned Maker authority template")?;
         let mut digest = Sha256::new();
         digest.update(b"lez-atomic-swaps/maker-actor-root/v1\0");
         digest.update(final_agreement_wire);
         let output_root = self.actor_root.join(hex::encode(digest.finalize()));
         let provisioned = provision_zec_maker_actor_from_config(
-            &self.source_maker_config,
+            source,
             final_agreement_wire,
-            lez_swap_core::UnixSeconds::new(accepted_at_unix_seconds),
+            accepted_at,
             &output_root,
         )?;
         let agreement_sha256: [u8; 32] = Sha256::digest(final_agreement_wire).into();

@@ -59,6 +59,9 @@ flowchart LR
     Core[Future Logos Core host]
     Adapter[Process lifecycle adapter]
     Credentials[Encrypted systemd credentials]
+    Authority[Startup-pinned Maker authority registry]
+    ActorProgram[Pinned ZEC actor and SHA-256]
+    ActorRoot[Private per-swap actor root]
     Daemon[lez-maker-daemon]
     Lease[Kernel flock on database lease]
     Store[(Maker SQLite state)]
@@ -70,6 +73,9 @@ flowchart LR
     Systemctl --> Systemd
     Credentials --> Systemd
     Systemd --> Daemon
+    Authority --> Daemon
+    ActorProgram --> Daemon
+    Daemon --> ActorRoot
     Core -.-> Adapter
     Adapter -.-> Daemon
     Daemon --> Lease
@@ -96,7 +102,9 @@ sequenceDiagram
     participant C as Maker CLI
 
     Operator->>S: Start service
-    S->>D: Spawn with private credential paths
+    S->>D: Spawn with credentials registry actor root program and digest
+    D->>D: Validate every authority binding and exact program
+    D->>D: Reject duplicates before sockets or SQLite
     D->>L: Acquire nonblocking exclusive lock
     L-->>D: One writer admitted
     D->>DB: Open, migrate, and reconcile durable state
@@ -138,13 +146,18 @@ this ADR neither weakens nor independently proves swap atomicity.
 
 ## Evidence and external resources
 
-The staged installer builds and installs all three application binaries,
-checks modes, and runs `systemd-analyze verify`. The actual user-systemd
-rehearsal observes notification readiness, mode-0400 runtime credentials,
-owner RPC health, a durable route across SIGKILL restart, SIGTERM cleanup, and
-one exact restart. The process test proves readiness, health, duplicate-start
-rejection, idempotent stop, restart, invalid pre-spawn configuration, and
-single-writer lease transfer.
+The staged installer builds and installs all three application binaries plus
+the real ZEC actor, installs the digest-environment template, checks modes, and
+runs `systemd-analyze verify`. The actual user-systemd rehearsal supplies a
+valid startup-pinned Maker authority and single-link mode-0500 real actor,
+observes notification readiness, mode-0400 runtime credentials, owner RPC
+health, a durable route across SIGKILL restart, SIGTERM cleanup, and one exact
+restart. Clean-cache run `lez-m5-systemd-1000-2947208-15620` passed in 51 seconds
+with no external resources; the equivalent warm-cache run passed in nine seconds.
+The process test also proves invalid pre-spawn rejection
+and single-writer lease transfer. This run validates deployment and restart
+authority but does not spawn a leased actor; sealed supervisor execution remains
+tracked by ADR 0100.
 
 These tests use no Docker, chain node, RPC, faucet, public funds, DNS, public
 price feed, Delivery service, Chat service, or external finality. A cold Cargo

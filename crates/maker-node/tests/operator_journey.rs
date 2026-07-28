@@ -1,5 +1,7 @@
 //! Black-box acceptance tests at the maker operator process boundary.
 
+mod support;
+
 use std::{
     fs,
     fs::OpenOptions,
@@ -12,6 +14,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use support::actor_deployment;
 
 use lez_maker_node::apply_zcash_funding_event;
 use lez_swap_core::{
@@ -367,10 +370,7 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => panic!("create Delivery signing key: {error}"),
     }
-    let claim_key = run.join("maker-claim-recovery.key");
-    let claim_preimage = run.join("maker-claim-preimage.key");
-    write_raw_secret_once(&claim_key, 0x7a);
-    write_raw_secret_once(&claim_preimage, 0x44);
+    let actor = actor_deployment(run, "m5-integration-authority-001");
     let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
         .arg("--socket")
         .arg(&socket)
@@ -387,9 +387,17 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         .arg("--maker-claim-key-id")
         .arg("m5-operator-claim-key-v1")
         .arg("--maker-claim-key-file")
-        .arg(claim_key)
+        .arg(&actor.claim_key)
         .arg("--maker-claim-preimage-file")
-        .arg(claim_preimage)
+        .arg(&actor.claim_preimage)
+        .arg("--zec-source-maker-config")
+        .arg(&actor.source_config)
+        .arg("--zec-maker-actor-root")
+        .arg(&actor.root)
+        .arg("--zec-actor-program")
+        .arg(&actor.program)
+        .arg("--zec-actor-program-sha256")
+        .arg(&actor.program_sha256)
         .spawn()
         .expect("start maker daemon");
     let mut daemon = Daemon(child);
@@ -407,22 +415,6 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
             "maker daemon readiness timed out"
         );
         thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn write_raw_secret_once(path: &Path, byte: u8) {
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-    {
-        Ok(mut file) => {
-            file.write_all(&[byte; 32]).unwrap();
-            file.sync_all().unwrap();
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => panic!("create private raw material: {error}"),
     }
 }
 

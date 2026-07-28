@@ -58,6 +58,11 @@ for directive in \
   'LoadCredentialEncrypted=delivery-signing.key:' \
   'LoadCredentialEncrypted=maker-claim-recovery.key:' \
   'LoadCredentialEncrypted=maker-claim-preimage.key:' \
+  'EnvironmentFile=/etc/lez-atomic-swaps/zec-actor.env' \
+  '--zec-source-maker-config /var/lib/lez-atomic-swaps/authority/zec-maker.json' \
+  '--zec-maker-actor-root /var/lib/lez-atomic-swaps/actors' \
+  '--zec-actor-program /usr/bin/zec-reference-actor' \
+  '--zec-actor-program-sha256 ${ZEC_ACTOR_PROGRAM_SHA256}' \
   '--ready-file /run/lez-atomic-swaps/ready'; do
   rg -Fq -- "$directive" "$unit" || fail "unit is missing $directive"
 done
@@ -67,6 +72,8 @@ for token in \
   'DESTDIR' \
   'install -D -m 0755' \
   'install -D -m 0644' \
+  'zec-reference-actor' \
+  'lez-maker-daemon.env.example' \
   'lez-maker-daemon.service'; do
   rg -Fq -- "$token" "$installer" || fail "installer is missing $token"
 done
