@@ -159,9 +159,22 @@ route additionally requires schema 6: it binds the exact agreement SHA-256 and
 exposes a secret-free role/state/digest/signed-swap validation surface for the
 supervisor while keeping path schemas 3–5 compatible. Pair-specific leased-
 manifest comparison is GREEN over the exact sealed snapshot, and the persistent
-daemon supervisor is process-GREEN. Actual-node actor composition, concurrent
-disjoint live-process overlap, and a systemd actor crash/restart rehearsal remain
-open. This checkpoint does not make M5 complete.
+daemon supervisor is process-GREEN. Actual user-systemd run
+`lez-m5-systemd-1000-3497452-2505` then proved the node-free scheduler crash
+boundary in 10 seconds: one sealed, hash-pinned memfd actor persisted an exact
+fixture effect, the daemon was killed, generation 2 adopted the abandoned lease
+without changing the effect inode or SHA-256, and a disjoint queued peer reached
+terminal generation 1. No actor row or child identity remained leased. This
+proof uses only local process, kernel, filesystem, and SQLite resources; it does
+not certify a Zcash transaction or replace the still-open actual-node supervisor
+composition and concurrent disjoint live-process composition.
+
+The application runner now also installs one private mode-0500, single-link ZEC
+actor and verifies that Chat acceptance atomically exposes the exact queued
+daemon-provisioned manifest. Its current settlement still drives a separately
+finalized Maker actor directly. Actual-node supervisor routing and durable
+maker/taker claim/refund controls plus concurrent disjoint live-node execution
+remain open. This checkpoint does not make M5 complete.
 
 Build and repeat the current real process boundary with:
 

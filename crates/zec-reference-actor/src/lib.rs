@@ -44,6 +44,8 @@ pub enum ActorCommand {
     Activate,
     /// Reconcile and attempt one eligible chain effect.
     Drive,
+    /// Reconcile and attempt one agreement-ordered timeout recovery effect.
+    Recover,
     /// Return a secret-free durable status snapshot.
     Status,
 }

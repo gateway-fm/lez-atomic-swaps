@@ -12,6 +12,7 @@ unsafe_directive_fixture="$fixture_dir/unsafe-directive.md"
 unsafe_interaction_fixture="$fixture_dir/unsafe-interaction.md"
 unsafe_beta_fixture="$fixture_dir/unsafe-beta.md"
 unsafe_sequence_note_semicolon_fixture="$fixture_dir/unsafe-sequence-note-semicolon.md"
+unsafe_sequence_message_semicolon_fixture="$fixture_dir/unsafe-sequence-message-semicolon.md"
 unsafe_reserved_actor_fixture="$fixture_dir/unsafe-reserved-actor.md"
 
 printf '%s\n' \
@@ -59,6 +60,16 @@ printf '%s\n' \
   '```' >"$unsafe_sequence_note_semicolon_fixture"
 
 printf '%s\n' \
+  '# Unsafe sequence message semicolon' \
+  '' \
+  '```mermaid' \
+  'sequenceDiagram' \
+  '    participant A' \
+  '    participant B' \
+  '    A-->>B: First clause; second clause' \
+  '```' >"$unsafe_sequence_message_semicolon_fixture"
+
+printf '%s\n' \
   '# Unsafe reserved actor identifier' \
   '' \
   '```mermaid' \
@@ -75,6 +86,7 @@ for unsafe_fixture in \
   "$unsafe_interaction_fixture" \
   "$unsafe_beta_fixture" \
   "$unsafe_sequence_note_semicolon_fixture" \
+  "$unsafe_sequence_message_semicolon_fixture" \
   "$unsafe_reserved_actor_fixture"
 do
   if "$checker" "$unsafe_fixture" >/dev/null 2>&1; then

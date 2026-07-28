@@ -15,7 +15,9 @@ usage() {
     '  --run-id ID --source-actors-root DIR --source-provision-summary FILE' \
     '  --output-actors-root NEW_DIR --application-root NEW_DIR --evidence-dir DIR' \
     '  --maker-daemon-bin FILE --maker-cli-bin FILE --taker-bin FILE' \
-    '  --draft-bin FILE --finalize-bin FILE'
+    '  --draft-bin FILE --finalize-bin FILE' \
+    '  --actor-program FILE --actor-program-sha256 HEX32' \
+    '  --actor-inspector-bin FILE'
 }
 
 run_id=''
@@ -29,6 +31,9 @@ maker_cli_bin=''
 taker_bin=''
 draft_bin=''
 finalize_bin=''
+actor_program=''
+actor_program_sha256=''
+actor_inspector_bin=''
 while (( $# > 0 )); do
   case "$1" in
     --run-id) run_id="${2:-}"; shift 2 ;;
@@ -41,6 +46,9 @@ while (( $# > 0 )); do
     --maker-cli-bin) maker_cli_bin="${2:-}"; shift 2 ;;
     --taker-bin) taker_bin="${2:-}"; shift 2 ;;
     --draft-bin) draft_bin="${2:-}"; shift 2 ;;
+    --actor-program) actor_program="${2:-}"; shift 2 ;;
+    --actor-program-sha256) actor_program_sha256="${2:-}"; shift 2 ;;
+    --actor-inspector-bin) actor_inspector_bin="${2:-}"; shift 2 ;;
     --finalize-bin) finalize_bin="${2:-}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; fail "unknown argument $1" ;;
@@ -49,14 +57,14 @@ done
 
 for value in run_id source_actors_root source_provision_summary output_actors_root \
   application_root evidence_dir maker_daemon_bin maker_cli_bin taker_bin draft_bin \
-  finalize_bin; do
+  finalize_bin actor_program actor_program_sha256 actor_inspector_bin; do
   [[ -n "${!value}" ]] || fail "missing --${value//_/-}"
 done
 [[ "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]] || fail 'run ID is unsafe'
 for path in "$source_actors_root" "$source_provision_summary" \
   "$output_actors_root" "$application_root" "$evidence_dir" \
   "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
-  "$finalize_bin"; do
+  "$finalize_bin" "$actor_program" "$actor_inspector_bin"; do
   [[ "$path" == /* ]] || fail "path must be absolute: $path"
 done
 [[ -d "$source_actors_root" && ! -L "$source_actors_root" ]] || \
@@ -68,10 +76,22 @@ done
 [[ ! -e "$application_root" && ! -L "$application_root" ]] || \
   fail 'application root already exists'
 for binary in "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
-  "$finalize_bin"; do
+  "$finalize_bin" "$actor_inspector_bin"; do
   [[ -f "$binary" && -x "$binary" && ! -L "$binary" ]] || \
     fail "binary is unavailable or unsafe: $binary"
 done
+[[ "$actor_program_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+  fail 'actor program SHA-256 must be lowercase hex32'
+[[ -f "$actor_program" && -x "$actor_program" && ! -L "$actor_program" ]] ||
+  fail 'actor program is unavailable or unsafe'
+[[ "$(stat -c %u -- "$actor_program")" == "$(id -u)" ]] ||
+  fail 'actor program has an unexpected owner'
+[[ "$(stat -c %a -- "$actor_program")" == 500 ]] ||
+  fail 'actor program is not mode 0500'
+[[ "$(stat -c %h -- "$actor_program")" == 1 ]] ||
+  fail 'actor program has multiple links'
+[[ "$(sha256sum "$actor_program" | cut -d ' ' -f1)" == "$actor_program_sha256" ]] ||
+  fail 'actor program SHA-256 changed'
 for private_file in \
   "$source_provision_summary" \
   "$source_actors_root/shared/agreement-v2.borsh" \
@@ -89,13 +109,15 @@ for private_file in \
     fail "private input has multiple links: $private_file"
 done
 
-for command in awk chmod cut date jq kill mkdir mv readlink sha256sum sleep stat; do
+for command in awk chmod cut date id jq kill mkdir mv readlink sha256sum sleep stat; do
   command -v "$command" >/dev/null || fail "required command unavailable: $command"
 done
 
 mkdir -m 0700 "$application_root"
 runtime_root="$application_root/runtime"
 mkdir -m 0700 "$runtime_root"
+actor_root="$application_root/maker-actors"
+mkdir -m 0700 "$actor_root"
 maker_socket="$runtime_root/maker.sock"
 chat_socket="$runtime_root/chat.sock"
 ready_file="$runtime_root/ready"
@@ -113,6 +135,7 @@ discovery_receipt="$evidence_dir/m5-delivery-discovery.json"
 taker_receipt="$evidence_dir/m5-taker-acceptance.json"
 result_receipt="$evidence_dir/m5-chat-handoff.json"
 
+queued_actor_receipt="$evidence_dir/m5-queued-maker-actor.json"
 token="$(printf '%s' "$run_id" | sha256sum)"
 token="${token%% *}"
 token="${token:0:16}"
@@ -227,6 +250,10 @@ start_daemon() {
     --maker-claim-key-id "${run_id}-maker-claim" \
     --maker-claim-key-file "$source_actors_root/maker/claim-recovery.key" \
     --maker-claim-preimage-file "$source_actors_root/maker/claim-preimage.key" \
+    --zec-source-maker-config "$source_actors_root/maker/actor-config.json" \
+    --zec-maker-actor-root "$actor_root" \
+    --zec-actor-program "$actor_program" \
+    --zec-actor-program-sha256 "$actor_program_sha256" \
     >"$log" 2>&1 &
   daemon_pid=$!
   daemon_start_ticks="$(process_start_ticks "$daemon_pid")"
@@ -314,6 +341,48 @@ jq -e --arg swap "$(jq -er '.swap_id' "$draft_receipt")" '
   and (.agreement_sha256 | test("^[0-9a-f]{64}$"))
 ' "$taker_receipt" >/dev/null
 
+"$actor_inspector_bin" --database "$database" >"$queued_actor_receipt"
+chmod 0600 "$queued_actor_receipt"
+queued_swap_id="$(jq -er '.[0].swap_id | strings' "$queued_actor_receipt")"
+queued_config="$(jq -er '.[0].config_path | strings' "$queued_actor_receipt")"
+queued_config_sha256="$(jq -er '.[0].config_sha256 | strings' "$queued_actor_receipt")"
+queued_state="$(jq -er '.[0].state_db_path | strings' "$queued_actor_receipt")"
+jq -e \
+  --arg swap "$(jq -er '.swap_id' "$taker_receipt")" \
+  --arg program "$actor_program" \
+  --arg program_sha256 "$actor_program_sha256" '
+  length == 1
+  and .[0].schema_version == 1
+  and .[0].swap_id == $swap
+  and .[0].actor_kind == "zcash"
+  and .[0].actor_program_path == $program
+  and .[0].actor_program_sha256 == $program_sha256
+  and (.[0].config_sha256 | test("^[0-9a-f]{64}$"))
+  and .[0].schedule_state == "queued"
+  and .[0].lease_generation == 0
+  and .[0].attempt_count == 0
+  and .[0].child_identity_absent == true
+' "$queued_actor_receipt" >/dev/null ||
+  fail 'daemon did not atomically register one exact queued Maker actor'
+queued_bundle="${queued_config%/maker/actor-config.json}"
+queued_bundle_id="${queued_bundle##*/}"
+[[ "$queued_bundle" != "$queued_config" \
+  && "${queued_bundle%/*}" == "$actor_root" \
+  && "$queued_bundle_id" =~ ^[0-9a-f]{64}$ ]] ||
+  fail 'queued Maker config is outside the daemon-provisioned actor root'
+[[ "$queued_state" == "$queued_bundle/maker/state/actor.sqlite3" ]] ||
+  fail 'queued Maker state path does not match its provisioned bundle'
+[[ -f "$queued_config" && ! -L "$queued_config" \
+  && "$(stat -c %a -- "$queued_config")" == 600 \
+  && "$(stat -c %h -- "$queued_config")" == 1 ]] ||
+  fail 'queued Maker config is unavailable or unsafe'
+[[ "$(sha256sum "$queued_config" | cut -d ' ' -f1)" == "$queued_config_sha256" ]] ||
+  fail 'queued Maker config differs from its immutable manifest'
+jq -e --arg swap "$queued_swap_id" --arg state "$queued_state" '
+  .role == "maker" and .swap_id == $swap and .role_state_db == $state
+' "$queued_config" >/dev/null ||
+  fail 'queued Maker config semantics differ from the manifest'
+
 "$finalize_bin" --source-maker-config "$source_actors_root/maker/actor-config.json" \
   --source-taker-config "$source_actors_root/taker/actor-config.json" \
   --final-agreement-file "$agreement_file" --accepted-at-unix-seconds "$accepted_at" \
@@ -361,7 +430,8 @@ jq -n \
   --arg application_database "$database" \
   --arg chat_socket "$chat_socket" --arg delivery_directory "$delivery_directory" \
   --arg delivery_offline "$delivery_offline" --argjson daemon_pid "$daemon_pid" \
-  --arg daemon_start_ticks "$daemon_start_ticks" --argjson accepted_at "$accepted_at" '
+  --arg daemon_start_ticks "$daemon_start_ticks" --argjson accepted_at "$accepted_at" \
+  --slurpfile queued "$queued_actor_receipt" '
   {
     schema_version: 1,
     kind: "m5_zec_chat_actor_handoff",
@@ -376,6 +446,7 @@ jq -n \
     real_processes: {maker_daemon:true,maker_cli:true,taker_cli:true},
     actor_pair_validated: true,
     daemon_restart_history_validated: true,
+    scheduled_maker_actor: $queued[0][0],
     transport_cutover: {
       state:"armed_after_restart",
       maker_daemon_bin:$maker_daemon_bin,
@@ -394,6 +465,10 @@ chmod 0600 "$result_receipt"
 jq -e '.result == "passed" and .actor_pair_validated == true
   and .daemon_restart_history_validated == true
   and .transport_cutover.state == "armed_after_restart"
+  and .scheduled_maker_actor.actor_kind == "zcash"
+  and .scheduled_maker_actor.schedule_state == "queued"
+  and .scheduled_maker_actor.swap_id == .swap_id
+  and .scheduled_maker_actor.child_identity_absent == true
   and (.transport_cutover.maker_daemon_pid | numbers) > 1
   and (.transport_cutover.maker_daemon_start_ticks | test("^[0-9]+$"))
   and .public_rpc_or_faucet_used == false

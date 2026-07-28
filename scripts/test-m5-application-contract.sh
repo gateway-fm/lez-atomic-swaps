@@ -5,6 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 export LC_ALL=C
 readonly runner="scripts/run-m2-taker-sells-lez-poc.sh"
+readonly handoff="scripts/run-m5-zec-chat-handoff.sh"
 
 fail() {
   echo "M5 application contract failed: $*" >&2
@@ -14,6 +15,30 @@ fail() {
 [[ -x scripts/run-m5-zec-application-poc.sh ]] || fail "M5 wrapper is not executable"
 rg -Fq 'export M5_APPLICATION_MODE=1' scripts/run-m5-zec-application-poc.sh ||
   fail "M5 wrapper does not force application mode"
+
+for required in \
+  'install -m 0500 "$actor_bin" "$m5_actor_program"' \
+  'stat -c %h -- "$m5_actor_program"' \
+  'sha256sum "$m5_actor_program"' \
+  '--actor-program "$m5_actor_program"' \
+  '--actor-program-sha256 "$m5_actor_program_sha256"'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M5 runner is missing private actor deployment contract: ${required}"
+done
+
+for required in \
+  '--zec-source-maker-config "$source_actors_root/maker/actor-config.json"' \
+  '--zec-maker-actor-root "$actor_root"' \
+  '--zec-actor-program "$actor_program"' \
+  '--zec-actor-program-sha256 "$actor_program_sha256"' \
+  'm5-queued-maker-actor.json' \
+  'schedule_state' \
+  'config_sha256' \
+  'actor_program_sha256'; do
+  rg -Fq -- "$required" "$handoff" ||
+    fail "M5 handoff is missing queued actor contract: ${required}"
+done
+
 
 projection_function="$(sed -n \
   '/^prove_m5_terminal_operator_projection() {$/,/^}$/p' "$runner")"
@@ -57,4 +82,4 @@ projection_call_line="$(rg -n '^  prove_m5_terminal_operator_projection$' "$runn
 (( maker_terminal_line < projection_call_line && taker_terminal_line < projection_call_line )) ||
   fail "operator projection must run only after both role actors are terminal"
 
-echo "M5 application terminal-projection contract passed"
+echo "M5 application contract passed"

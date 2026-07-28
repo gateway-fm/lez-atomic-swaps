@@ -19,8 +19,8 @@ use lez_zebra_node_adapter::{
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimPreimage, ClaimStepV1, FirstLockDriveOutcome,
     FirstLockStepV1, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, RecoveryStore, ZecLifecycleAction,
-    ZecPairSdk,
+    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, RecoveryStore, RefundDriveOutcome,
+    RefundFundingWaitReasonV1, RefundStepV1, ZecLifecycleAction, ZecPairSdk,
 };
 use secp256k1::SecretKey;
 use serde::Serialize;
@@ -80,18 +80,49 @@ impl ActorEffectOutputV1 {
 enum ActorEffectCommandV1 {
     Activate,
     Drive,
+    Recover,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 enum ActorEffectOutcomeV1 {
     Activated,
-    Submitted { operation: ActorOperationV1 },
-    AwaitingObservation { operation: ActorOperationV1 },
+    Submitted {
+        operation: ActorOperationV1,
+    },
+    AwaitingObservation {
+        operation: ActorOperationV1,
+    },
     AwaitingSafeZcashFunding,
-    Unchanged { operation: ActorOperationV1 },
-    Projected { operation: ActorOperationV1 },
+    Unchanged {
+        operation: ActorOperationV1,
+    },
+    Projected {
+        operation: ActorOperationV1,
+    },
     Completed,
+    AwaitingFunding {
+        operation: ActorOperationV1,
+        reason: ActorRefundFundingWaitReasonV1,
+    },
+    AwaitingDeadline {
+        operation: ActorOperationV1,
+    },
+    SubmissionRejected {
+        operation: ActorOperationV1,
+    },
+    SubmissionOutcomeUnknown {
+        operation: ActorOperationV1,
+    },
+    Refunded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ActorRefundFundingWaitReasonV1 {
+    Absent,
+    Spent,
+    Reorged,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -104,6 +135,8 @@ enum ActorOperationV1 {
     MakerLock,
     LezRevealingClaim,
     ZcashFollowupClaim,
+    LezRefund,
+    ZcashRefund,
 }
 
 /// Versioned role-local lifecycle status.
@@ -244,6 +277,21 @@ pub enum ActorCommandError {
     /// One bounded lifecycle attempt failed closed.
     #[error("actor drive is unavailable")]
     DriveUnavailable,
+    /// Fresh timeout-recovery material could not be loaded safely.
+    #[error("actor recovery material is unavailable")]
+    RecoveryMaterialUnavailable,
+    /// A role-local recovery adapter could not be configured safely.
+    #[error("actor recovery configuration is unavailable")]
+    RecoveryConfigurationUnavailable,
+    /// The role-local recovery stores could not be opened.
+    #[error("actor recovery store is unavailable")]
+    RecoveryStoreUnavailable,
+    /// Durable lifecycle state could not be resumed for recovery.
+    #[error("actor recovery replay is unavailable")]
+    RecoveryReplayUnavailable,
+    /// One bounded agreement-ordered recovery attempt failed closed.
+    #[error("actor recovery is unavailable")]
+    RecoveryUnavailable,
     /// The role-local state path could not be inspected safely.
     #[error("actor status is unavailable")]
     StatusUnavailable,
@@ -277,6 +325,7 @@ pub async fn execute_actor_command(
         ActorCommand::Status => status(config).await.map(ActorCommandOutputV1::Status),
         ActorCommand::Activate => activate(config).await.map(ActorCommandOutputV1::Effect),
         ActorCommand::Drive => drive(config).await.map(ActorCommandOutputV1::Effect),
+        ActorCommand::Recover => recover(config).await.map(ActorCommandOutputV1::Effect),
     }
 }
 
@@ -585,6 +634,160 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
     ))
 }
 
+/// Runs only the agreement-derived timeout-recovery state machine.
+///
+/// The configured role is passed unchanged into both chain adapters and the
+/// SDK. Consequently, a non-owner can only observe its counterparty's refund;
+/// it cannot prepare, sign, or submit that counterparty-owned effect. The SDK
+/// retains LEZ-before-Zcash ordering, fresh funding/deadline admission, and its
+/// persist-before-send journal.
+async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    let material = config
+        .load_drive_material()
+        .map_err(|_| ActorCommandError::RecoveryMaterialUnavailable)?;
+    let participant = config.role().sdk_participant();
+    let identity =
+        zebra_identity(config).map_err(|_| ActorCommandError::RecoveryConfigurationUnavailable)?;
+    let mut rpc_config = if let Some(api_key) = material.zebra_api_key() {
+        HttpZebraRpcConfig::public_https(config.zebra_endpoint().as_str())
+            .and_then(|route| route.with_public_api_key(api_key))
+            .map_err(|_| ActorCommandError::RecoveryConfigurationUnavailable)?
+    } else {
+        HttpZebraRpcConfig::new(config.zebra_endpoint().as_str())
+    }
+    .with_request_timeout(Duration::from_secs(30))
+    .with_max_concurrent_requests(1);
+    if let Some(cookie) = material.zebra_cookie() {
+        rpc_config = rpc_config
+            .with_cookie_credentials(cookie)
+            .map_err(|_| ActorCommandError::RecoveryConfigurationUnavailable)?;
+    }
+    let rpc = HttpZebraRpc::connect(&rpc_config)
+        .map_err(|_| ActorCommandError::RecoveryConfigurationUnavailable)?;
+    let signer = RoleKeyedZcashSigner::new(
+        participant,
+        SecretKey::from_slice(material.zcash_secret_key())
+            .map_err(|_| ActorCommandError::RecoveryMaterialUnavailable)?,
+    );
+    let store = SqliteZecRecoveryStore::open_claim_capable(
+        config.role_state_db(),
+        participant,
+        material.into_claim_recovery_key(),
+    )
+    .map_err(|_| ActorCommandError::RecoveryStoreUnavailable)?;
+    let factory = CapabilityFileBridgeClientFactory::new(
+        config.bridge_endpoint().as_str(),
+        config.bridge_capability_file(),
+        config.run_id().clone(),
+        config.bridge_runtime().clone(),
+        config.bridge_request_timeout(),
+    );
+    let contexts = ActorBridgeRequestContextSource::new(ConfiguredDiscoveryWindow(
+        config.lez_discovery_window(),
+    ));
+    let funding = SqliteCanonicalLezFundingSource::new(store.clone(), participant);
+    let lez = ContextOwningLezBridgePorts::new(
+        config.run_id().clone(),
+        config.bridge_runtime().clone(),
+        participant,
+        factory,
+        contexts,
+        store.clone(),
+        funding,
+        SqliteBridgeOperationJournal::open(config.bridge_journal_db())
+            .map_err(|_| ActorCommandError::RecoveryStoreUnavailable)?,
+    )
+    .map_err(|_| ActorCommandError::RecoveryConfigurationUnavailable)?;
+    let zcash = ZebraRpcZcashPort::new(rpc, signer, identity, participant)
+        .map_err(|_| ActorCommandError::RecoveryConfigurationUnavailable)?
+        .with_counterparty_scan_blocks(config.counterparty_scan_blocks());
+    let sdk = ZecPairSdk::new(participant, (), (), lez, zcash, store);
+    let mut active = sdk
+        .resume_all_capable(config.swap_id())
+        .await
+        .map_err(|_| ActorCommandError::RecoveryReplayUnavailable)?
+        .ok_or(ActorCommandError::NotActivated)?;
+
+    ensure_recovery_phase(active.status())?;
+    let outcome = active
+        .drive_refund()
+        .await
+        .map_err(|_| ActorCommandError::RecoveryUnavailable)?;
+    Ok(ActorEffectOutputV1::from_active(
+        config.role(),
+        ActorEffectCommandV1::Recover,
+        recovery_outcome(outcome),
+        &active,
+    ))
+}
+
+const fn ensure_recovery_phase(phase: Phase) -> Result<(), ActorCommandError> {
+    if matches!(
+        phase,
+        Phase::BothLegsLocked
+            | Phase::TakerLockReorged
+            | Phase::MakerLockReorged
+            | Phase::MakerLegRefunded
+            | Phase::TakerLegRefunded
+            | Phase::Refunded
+    ) {
+        Ok(())
+    } else {
+        Err(ActorCommandError::RecoveryUnavailable)
+    }
+}
+
+const fn recovery_outcome(outcome: RefundDriveOutcome) -> ActorEffectOutcomeV1 {
+    match outcome {
+        RefundDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
+            operation: refund_operation(step),
+        },
+        RefundDriveOutcome::AwaitingStableObservation(step) => {
+            ActorEffectOutcomeV1::AwaitingObservation {
+                operation: refund_operation(step),
+            }
+        }
+        RefundDriveOutcome::AwaitingFunding { step, reason } => {
+            ActorEffectOutcomeV1::AwaitingFunding {
+                operation: refund_operation(step),
+                reason: refund_funding_reason(reason),
+            }
+        }
+        RefundDriveOutcome::AwaitingDeadline(step) => ActorEffectOutcomeV1::AwaitingDeadline {
+            operation: refund_operation(step),
+        },
+        RefundDriveOutcome::SubmissionRejected(step) => ActorEffectOutcomeV1::SubmissionRejected {
+            operation: refund_operation(step),
+        },
+        RefundDriveOutcome::SubmissionOutcomeUnknown(step) => {
+            ActorEffectOutcomeV1::SubmissionOutcomeUnknown {
+                operation: refund_operation(step),
+            }
+        }
+        RefundDriveOutcome::Projected { step, .. } => ActorEffectOutcomeV1::Projected {
+            operation: refund_operation(step),
+        },
+        RefundDriveOutcome::Refunded { .. } => ActorEffectOutcomeV1::Refunded,
+    }
+}
+
+const fn refund_operation(step: RefundStepV1) -> ActorOperationV1 {
+    match step {
+        RefundStepV1::Lez => ActorOperationV1::LezRefund,
+        RefundStepV1::Zcash => ActorOperationV1::ZcashRefund,
+    }
+}
+
+const fn refund_funding_reason(
+    reason: RefundFundingWaitReasonV1,
+) -> ActorRefundFundingWaitReasonV1 {
+    match reason {
+        RefundFundingWaitReasonV1::Absent => ActorRefundFundingWaitReasonV1::Absent,
+        RefundFundingWaitReasonV1::Spent => ActorRefundFundingWaitReasonV1::Spent,
+        RefundFundingWaitReasonV1::Reorged => ActorRefundFundingWaitReasonV1::Reorged,
+    }
+}
+
 fn zebra_identity(config: &ActorConfig) -> Result<ZebraChainIdentity, ActorCommandError> {
     let network = match config.zcash_network() {
         ZcashNetworkConfig::Main => NetworkType::Main,
@@ -667,4 +870,96 @@ async fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError
         ),
         None => ActorStatusV1::not_activated(config.role()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn recovery_admission_rejects_every_non_refund_phase() {
+        for phase in [
+            Phase::Offered,
+            Phase::AwaitingTakerConfirmations,
+            Phase::TakerLockConfirmed,
+            Phase::AwaitingMakerConfirmations,
+            Phase::ClaimEvidenceAvailable,
+            Phase::Completed,
+            Phase::MakerRecoveryAvailable,
+        ] {
+            assert_eq!(
+                ensure_recovery_phase(phase),
+                Err(ActorCommandError::RecoveryUnavailable),
+                "phase {phase:?} must fail before a recovery RPC"
+            );
+        }
+        for phase in [
+            Phase::BothLegsLocked,
+            Phase::TakerLockReorged,
+            Phase::MakerLockReorged,
+            Phase::MakerLegRefunded,
+            Phase::TakerLegRefunded,
+            Phase::Refunded,
+        ] {
+            assert_eq!(ensure_recovery_phase(phase), Ok(()));
+        }
+    }
+
+    #[test]
+    fn recovery_outcomes_are_action_specific_bounded_json() {
+        for (outcome, expected) in [
+            (
+                RefundDriveOutcome::Submitted(RefundStepV1::Lez),
+                json!({"outcome":"submitted","operation":"lez_refund"}),
+            ),
+            (
+                RefundDriveOutcome::AwaitingStableObservation(RefundStepV1::Zcash),
+                json!({"outcome":"awaiting_observation","operation":"zcash_refund"}),
+            ),
+            (
+                RefundDriveOutcome::AwaitingFunding {
+                    step: RefundStepV1::Lez,
+                    reason: RefundFundingWaitReasonV1::Reorged,
+                },
+                json!({
+                    "outcome":"awaiting_funding",
+                    "operation":"lez_refund",
+                    "reason":"reorged"
+                }),
+            ),
+            (
+                RefundDriveOutcome::AwaitingDeadline(RefundStepV1::Lez),
+                json!({"outcome":"awaiting_deadline","operation":"lez_refund"}),
+            ),
+            (
+                RefundDriveOutcome::SubmissionRejected(RefundStepV1::Zcash),
+                json!({"outcome":"submission_rejected","operation":"zcash_refund"}),
+            ),
+            (
+                RefundDriveOutcome::SubmissionOutcomeUnknown(RefundStepV1::Lez),
+                json!({
+                    "outcome":"submission_outcome_unknown",
+                    "operation":"lez_refund"
+                }),
+            ),
+            (
+                RefundDriveOutcome::Projected {
+                    step: RefundStepV1::Zcash,
+                    revision: 4,
+                },
+                json!({"outcome":"projected","operation":"zcash_refund"}),
+            ),
+            (
+                RefundDriveOutcome::Refunded { revision: 4 },
+                json!({"outcome":"refunded"}),
+            ),
+        ] {
+            assert_eq!(
+                serde_json::to_value(recovery_outcome(outcome)).expect("outcome serializes"),
+                expected
+            );
+        }
+    }
 }

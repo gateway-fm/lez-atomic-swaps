@@ -3463,10 +3463,38 @@ separately from runtime dependencies.
   public funds participate. A cold Cargo build may need the pinned registry
   cache or dependency download.
 
-  Remaining coordinator closure work is actual-node actor composition,
-  concurrent disjoint live-process overlap, and a systemd actor SIGKILL/restart
-  rehearsal without duplicate effects. This progress does not by itself make
-  M5 complete.
+  The user-systemd scheduler crash slice is now node-free process GREEN. Exact
+  run `lez-m5-systemd-1000-3497452-2505` reached an allowlisted submitted-effect
+  pause in a feature-gated compiled actor, bound its marker to the durable PID
+  and start ticks, hash-verified the sealed program memfd and inherited lock FD
+  198, then killed daemon generation 1. Systemd restarted the same daemon in ten
+  seconds; generation 2 adopted the continuously leased row, advanced its fence
+  from 1 to 2, retained the exact fixture-effect inode and SHA-256, progressed a
+  disjoint queued peer from generation 0 to 1, and left no leased or child rows.
+  The harness now uses a 30-second actor bound so CI inspection cannot race the
+  fault seam. Runtime external resources were none. This proves systemd,
+  scheduling, fencing, sealed execution, and local effect replay only; the
+  fixture is not a Zcash transaction and `actual_zcash_chain_certified` is
+  explicitly false.
+
+  The application handoff now installs a private mode-0500, single-link,
+  hash-pinned ZEC actor and passes the complete provisioner group to the daemon.
+  A secret-free inspector uses the public store API to require exactly one
+  daemon-provisioned queued Maker manifest at generation and attempt zero, with
+  exact config/program/state paths and digests and no child identity. Acceptance
+  and registration already share one SQLite transaction. The actual-node runner
+  intentionally continues to drive its separately finalized Maker actor until
+  the next atomic slice reroutes effects; the queued row is registration evidence,
+  not supervisor execution evidence.
+
+  ZEC actors now expose a role-fixed `recover` command that calls only the SDK's
+  existing ordered `drive_refund` boundary. SDK tests prove LEZ-before-Zcash,
+  owner-only submission, non-owner observation, early-deadline zero submission,
+  ambiguity handling, and terminal replay. Durable manual-action intent routing
+  and actual-node actor-boundary recovery remain open. Remaining coordinator
+  closure is actual-node supervisor composition and durable manual claim/refund
+  selection plus concurrent disjoint live-process composition. This progress
+  does not by itself make M5 complete.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3486,7 +3514,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 6 to 14 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 5 to 10 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordinator composition hardening, and post-PoC hardening remain explicitly
 open above.

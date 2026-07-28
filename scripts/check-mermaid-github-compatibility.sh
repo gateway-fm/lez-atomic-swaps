@@ -61,8 +61,8 @@ for document in "${documents[@]}"; do
         reject("interactive links or callbacks are disabled by GitHub")
       }
       if (diagram_kind == "sequenceDiagram" &&
-          $0 ~ /^[[:space:]]*Note[[:space:]]+(over|right of|left of)[^:]*:.*;/) {
-        reject("semicolons terminate Mermaid sequence-note statements")
+          $0 ~ /:.*;/) {
+        reject("semicolons terminate Mermaid sequence statements")
       }
       if (diagram_kind == "sequenceDiagram" &&
           tolower($0) ~ /^[[:space:]]*(actor|participant)[[:space:]]+actor([[:space:]]+as|[[:space:]]*$)/) {

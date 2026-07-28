@@ -328,6 +328,9 @@ require_command() {
 for command in awk base64 cargo curl date flock jq kill od perl readlink sha256sum sleep stat tail timeout tr xxd; do
   require_command "$command"
 done
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  require_command install
+fi
 
 # A retained local node tuple may service only one effect-bearing corridor at a
 # time. The lock is scoped to the exact endpoints and does not touch unrelated
@@ -422,6 +425,7 @@ echo 'Prebuilding the provisioner, actor, and exact v0.2 bridge before provision
 cargo +1.96.0 build --locked --offline -p zec-reference-actor --bins
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   cargo +1.96.0 build --locked --offline -p lez-maker-node --bins
+  cargo +1.96.0 build --locked --offline -p lez-maker-node --example maker-actor-inspect
 fi
 cargo +1.96.0 build \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
@@ -439,9 +443,11 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   taker_bin="$(readlink -f target/debug/lez-taker)"
   chat_draft_bin="$(readlink -f target/debug/zec-local-poc-chat-draft)"
   chat_finalize_bin="$(readlink -f target/debug/zec-local-poc-chat-finalize)"
-  readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin
+  actor_inspector_bin="$(readlink -f target/debug/examples/maker-actor-inspect)"
+  readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin actor_inspector_bin
   required_binaries+=("$maker_daemon_bin" "$maker_cli_bin" "$taker_bin")
-  required_binaries+=("$chat_draft_bin" "$chat_finalize_bin" "$m5_handoff_driver")
+  required_binaries+=("$chat_draft_bin" "$chat_finalize_bin" "$actor_inspector_bin")
+  required_binaries+=("$m5_handoff_driver")
 fi
 for binary in "${required_binaries[@]}"; do
   [[ -x "$binary" ]] || {
@@ -510,6 +516,22 @@ zebra_tip="$(jq -er 'select(.error == null) | .result | numbers' \
 }
 
 mkdir -m 0700 "$private_base" "$evidence_dir"
+m5_actor_program=''
+m5_actor_program_sha256=''
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  m5_actor_deployment_root="$private_base/actor-deployment"
+  mkdir -m 0700 "$m5_actor_deployment_root"
+  m5_actor_program="$m5_actor_deployment_root/zec-reference-actor"
+  install -m 0500 "$actor_bin" "$m5_actor_program"
+  [[ -f "$m5_actor_program" && ! -L "$m5_actor_program" \
+    && "$(stat -c %a -- "$m5_actor_program")" == 500 \
+    && "$(stat -c %h -- "$m5_actor_program")" == 1 ]] || {
+    echo 'M5 private actor deployment is unavailable or unsafe' >&2
+    exit 2
+  }
+  m5_actor_program_sha256="$(sha256sum "$m5_actor_program" | cut -d ' ' -f1)"
+fi
+readonly m5_actor_program m5_actor_program_sha256
 lez_tip_response="$(rpc "$LEZ_SEQUENCER_URL" '{"jsonrpc":"2.0","id":1,"method":"getLastBlockId","params":[]}')"
 lez_tip="$(jq -er '.result | numbers' <<<"$lez_tip_response")"
 discovery_start=$((lez_tip + 1))
@@ -611,10 +633,28 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     --taker-bin "$taker_bin" \
     --draft-bin "$chat_draft_bin" \
     --finalize-bin "$chat_finalize_bin" \
+    --actor-program "$m5_actor_program" \
+    --actor-program-sha256 "$m5_actor_program_sha256" \
+    --actor-inspector-bin "$actor_inspector_bin" \
     >"${evidence_dir}/m5-handoff-path.txt"
   [[ "$(<"${evidence_dir}/m5-handoff-path.txt")" == \
       "${evidence_dir}/m5-chat-handoff.json" ]] || {
     echo 'M5 handoff returned an unexpected evidence path' >&2
+    exit 2
+  }
+  jq -e --arg program "$m5_actor_program" \
+    --arg program_sha256 "$m5_actor_program_sha256" '
+    .result == "passed"
+    and .scheduled_maker_actor.actor_kind == "zcash"
+    and .scheduled_maker_actor.schedule_state == "queued"
+    and .scheduled_maker_actor.lease_generation == 0
+    and .scheduled_maker_actor.attempt_count == 0
+    and .scheduled_maker_actor.child_identity_absent == true
+    and .scheduled_maker_actor.actor_program_path == $program
+    and .scheduled_maker_actor.actor_program_sha256 == $program_sha256
+    and (.scheduled_maker_actor.config_sha256 | test("^[0-9a-f]{64}$"))
+  ' "${evidence_dir}/m5-chat-handoff.json" >/dev/null || {
+    echo 'M5 handoff did not return the exact queued Maker manifest' >&2
     exit 2
   }
   remaining_budget_milliseconds 'm5-handoff-after' >/dev/null

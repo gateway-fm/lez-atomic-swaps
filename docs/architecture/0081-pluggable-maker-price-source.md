@@ -79,7 +79,7 @@ sequenceDiagram
     Operator->>Daemon: publish offer with request ID
     Daemon->>DB: preflight request ID, route and policy
     alt Exact committed replay
-        DB-->>Daemon: prior commit; do not call worker
+        DB-->>Daemon: prior commit and do not call worker
     else Fresh Logos publication
         DB-->>Daemon: source kind and policy revision
         Daemon->>Worker: fetch exact quote outside DB lock

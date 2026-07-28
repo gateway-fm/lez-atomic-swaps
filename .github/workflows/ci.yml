@@ -82,6 +82,8 @@ jobs:
       - run: cargo test --locked --workspace --all-targets
       - name: Exercise feature-gated actor crash seam
         run: cargo test --locked -p zec-reference-actor --features test-crash-hooks --test crash_hook
+      - name: Exercise feature-gated daemon actor crash routing
+        run: cargo test --locked -p lez-maker-node --features test-crash-hooks --test daemon_actor_supervisor_cli
       - name: Verify M3 official cryptographic vectors
         run: |
           ./scripts/check-m3-cryptographic-vectors.sh

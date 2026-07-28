@@ -4655,9 +4655,11 @@ authority and does not invalidate or duplicate the committed completion.
 The full local-devnet settlement remains Flow 1B; this focused flow certifies
 only the acceptance-to-scheduler handoff.
 
-Current limitation: persistent local-process coordination is implemented.
-Actual-node supervisor composition, concurrent disjoint live-process overlap,
-and a systemd actor crash/restart rehearsal remain.
+Current limitation: persistent local-process coordination and a node-free
+user-systemd actor crash/restart proof are implemented. The application handoff
+verifies the exact queued daemon-provisioned manifest, but the current local-node
+settlement still drives a separate finalized Maker actor. Actual-node supervisor
+composition and durable maker/taker claim/refund action routing remain.
 
 ## Flow 1H: repeat the persistent fenced maker-actor supervisor
 
@@ -4686,10 +4688,21 @@ one sealed deployment while retaining lock FD 198 through durable resolution.
 The daemon E2E uses a local long-running actor, observes `ready: true` health in
 under one second while that actor is leased, then sends SIGTERM. Cancellation,
 process-group reap, durable non-leased resolution, child-identity clear, and
-socket/readiness cleanup complete in under two seconds. The packaged systemd
-unit and `scripts/run-m5-maker-systemd-transient.sh` enable
-`--actor-supervisor`; their static/lifecycle checks do not yet prove an actor
-SIGKILL/restart.
+socket/readiness cleanup complete in under two seconds.
+
+Run the actual node-free user-systemd crash proof with:
+
+```sh
+./scripts/run-m5-maker-systemd-transient.sh
+```
+
+Expected output names a unique `lez-m5-systemd-*` unit, one restart, runtime
+external resources `none`, and `actual_zcash_chain_certified=false`. The proof
+binds an owner-private marker to the durable PID/start ticks, verifies the live
+sealed program memfd by SHA-256 and lock FD 198, kills daemon generation 1,
+then requires generation 2 recovery, unchanged effect inode/hash, disjoint peer
+progress, and zero leased/child rows. A failed run cleans only its unique unit
+and temporary root. Cold compilation may need the pinned Cargo registry cache.
 
 ```mermaid
 sequenceDiagram
@@ -4727,9 +4740,10 @@ locking primitives. They contact no chain RPC, node, Docker service, public
 faucet, DNS service, network, or public funds. Cold compilation may need pinned
 Cargo registry dependencies from cache or download.
 
-This flow certifies persistent local-process coordination. Actual-node actor
-composition, concurrent disjoint live-process overlap, and a systemd actor
-crash/restart rehearsal remain M5 work.
+This flow certifies persistent local-process coordination and node-free
+user-systemd crash/restart fencing. It does not certify a submitted Zcash effect.
+Actual-node supervisor composition and durable maker/taker manual-action routing
+plus concurrent disjoint live-process composition remain M5 work.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 

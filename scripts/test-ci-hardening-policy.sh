@@ -103,6 +103,8 @@ require_fixed 'cargo fmt --all --check' "$workflow"
 require_fixed 'cargo clippy --locked --workspace --all-targets --all-features -- -D warnings' \
   "$workflow"
 require_fixed 'cargo test --locked --workspace --all-targets' "$workflow"
+require_fixed 'cargo test --locked -p lez-maker-node --features test-crash-hooks --test daemon_actor_supervisor_cli' \
+  "$workflow"
 require_fixed 'cargo doc --locked --workspace --all-features --no-deps' "$workflow"
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe'

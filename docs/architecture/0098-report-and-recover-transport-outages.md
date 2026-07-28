@@ -78,13 +78,13 @@ sequenceDiagram
     T->>C: Deterministic proposal request
     C->>DB: Reserve offer and stage proposal atomically
     DB-->>C: Revision 2 before response
-    Note over C,T: Chat becomes unavailable; no agreement file exists
+    Note over C,T: Chat becomes unavailable and no agreement file exists
     T-xC: Exact CLI attempt fails visibly
     Note over D,C: Daemon restarts and retains reserved envelope
     T->>C: Repeat exact CLI command
     C->>DB: Replay proposal and atomically complete
     DB-->>C: Revision 3
-    C-->>T: Final agreement; create-new local publication
+    C-->>T: Final agreement and create-new local publication
 ```
 
 ## Why failures do not break atomicity

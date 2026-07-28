@@ -31,6 +31,7 @@ fn cli_exposes_exact_one_shot_commands_and_requires_private_config() {
     for (spelling, expected) in [
         ("activate", ActorCommand::Activate),
         ("drive", ActorCommand::Drive),
+        ("recover", ActorCommand::Recover),
         ("status", ActorCommand::Status),
     ] {
         let cli = ActorCli::try_parse_from(["actor", "--config", "actor.json", spelling])
@@ -155,6 +156,19 @@ async fn drive_without_activation_fails_closed_before_any_chain_effect() {
 
     assert_eq!(
         execute_actor_command(&config, ActorCommand::Drive).await,
+        Err(ActorCommandError::NotActivated)
+    );
+    assert!(fixture.path("maker-state").is_file());
+    assert!(fixture.path("maker-journal").is_file());
+}
+
+#[tokio::test]
+async fn recover_without_activation_fails_closed_before_any_chain_effect() {
+    let fixture = PairFixture::new();
+    let config = fixture.load("maker");
+
+    assert_eq!(
+        execute_actor_command(&config, ActorCommand::Recover).await,
         Err(ActorCommandError::NotActivated)
     );
     assert!(fixture.path("maker-state").is_file());

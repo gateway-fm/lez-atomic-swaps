@@ -139,6 +139,18 @@ struct Arguments {
         value_parser = clap::value_parser!(u64).range(256..=65_536)
     )]
     actor_max_output_bytes: Option<u64>,
+    /// Exact swap armed for the compile-time-gated submitted-effect pause.
+    #[cfg(feature = "test-crash-hooks")]
+    #[arg(long, hide = true, requires_all = ["actor_supervisor", "actor_test_pause_operation", "actor_test_pause_marker"])]
+    actor_test_pause_swap_id: Option<Box<str>>,
+    /// Allowlisted submitted operation armed only in fault-test builds.
+    #[cfg(feature = "test-crash-hooks")]
+    #[arg(long, hide = true, requires_all = ["actor_supervisor", "actor_test_pause_swap_id", "actor_test_pause_marker"])]
+    actor_test_pause_operation: Option<Box<str>>,
+    /// Private no-clobber marker beneath an owner-only canonical directory.
+    #[cfg(feature = "test-crash-hooks")]
+    #[arg(long, hide = true, requires_all = ["actor_supervisor", "actor_test_pause_swap_id", "actor_test_pause_operation"])]
+    actor_test_pause_marker: Option<PathBuf>,
 }
 
 struct ActorSupervisorRuntime {
@@ -186,6 +198,51 @@ fn configured_actor_supervisor(
         max_output_bytes,
     )
     .context("validate actor supervisor bounds")?;
+    #[cfg(feature = "test-crash-hooks")]
+    let config = {
+        let hook = (
+            arguments.actor_test_pause_swap_id.as_deref(),
+            arguments.actor_test_pause_operation.as_deref(),
+            arguments.actor_test_pause_marker.as_ref(),
+        );
+        match hook {
+            (None, None, None) => config,
+            (Some(swap_id), Some(operation), Some(marker)) => {
+                ensure!(
+                    marker.is_absolute(),
+                    "actor test pause marker must be one absolute path"
+                );
+                let parent = marker
+                    .parent()
+                    .context("actor test pause marker needs a parent")?;
+                validate_runtime_directory(parent)
+                    .context("validate actor test pause marker parent")?;
+                ensure!(
+                    fs::canonicalize(parent)
+                        .context("canonicalize actor test pause marker parent")?
+                        == parent,
+                    "actor test pause marker parent must be canonical"
+                );
+                match fs::symlink_metadata(marker) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error).context("inspect actor test pause marker"),
+                    Ok(metadata) => ensure!(
+                        metadata.file_type().is_file()
+                            && metadata.uid() == rustix::process::geteuid().as_raw()
+                            && metadata.mode() & 0o7777 == 0o600
+                            && metadata.nlink() == 1,
+                        "existing actor test pause marker must be an owner-only single-link file"
+                    ),
+                }
+                config.with_test_pause_after_submitted(
+                    SwapId::new(swap_id.to_owned()).context("validate actor test pause swap ID")?,
+                    operation,
+                    marker.clone(),
+                )?
+            }
+            _ => bail!("actor test pause arguments must be configured together"),
+        }
+    };
     let owner = MakerActorLeaseOwner::random().context("generate actor supervisor lease owner")?;
     let mut store =
         SqliteSwapStore::open(&arguments.database).context("open actor supervisor database")?;

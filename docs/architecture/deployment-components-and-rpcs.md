@@ -884,14 +884,14 @@ fully replayed terminal coordinator and exposes only the owner socket.
 ```mermaid
 sequenceDiagram
     actor Maker as Maker operator
-    participant Actor as Maker ZEC actor
+    participant ZActor as Maker ZEC actor
     participant ActorDB as Maker actor SQLite
     participant Import as Offline terminal importer
     participant AppDB as Application SQLite v14
     participant Daemon as Fresh owner-only daemon
 
-    Actor->>ActorDB: Commit absorbing revision 4
-    Note over Actor,Daemon: Actor stopped; Chat and Delivery remain absent
+    ZActor->>ActorDB: Commit absorbing revision 4
+    Note over ZActor,Daemon: Actor stopped and Chat and Delivery remain absent
     Maker->>Daemon: Start with actor DB, swap ID, and recovery key
     Daemon->>Import: Import before binding readiness
     Import->>ActorDB: resume_all_capable with unit chain ports

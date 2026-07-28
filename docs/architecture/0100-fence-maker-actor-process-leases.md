@@ -311,27 +311,33 @@ sequenceDiagram
 sequenceDiagram
     participant D1 as Daemon generation 1
     participant Q as Schema-v16 scheduler
-    participant A as Actor A
-    participant B as Actor B
+    participant A as Sealed actor A
+    participant B as Disjoint queued actor B
     participant D2 as Daemon generation 2
-    D1->>Q: claim A and B with owner 1
-    Q-->>D1: independent generation-1 leases
-    D1->>A: spawn with inherited lock A
-    D1->>B: spawn with inherited lock B
-    A--xD1: result lost or coordinator crashes
-    B-->>D1: peer result independently fenced
-    D2->>Q: list leased rows
-    D2->>A: try lock A
-    alt old A still alive
-        A-->>D2: kernel lock remains busy
-        D2->>Q: leave lease untouched
-    else old A is dead
-        A-->>D2: kernel lock acquired
-        D2->>Q: atomically transfer A to owner 2 and generation 2
-        D2->>A: restart same immutable config
-    end
-    D2->>B: peer row remains independent
+    D1->>Q: Claim A as owner 1 generation 1
+    Q-->>D1: A leased and B still queued
+    D1->>A: Run status then submitted fixture effect
+    A->>A: Persist and sync effect once
+    A-->>D1: Pause before stdout
+    D1--xA: SIGKILL service main and control group
+    D2->>Q: List abandoned leases
+    D2->>A: Acquire exact per-swap lock
+    D2->>Q: CAS A to owner 2 generation 2 while leased
+    D2->>A: Run same sealed snapshot
+    A-->>D2: Terminal from retained effect
+    D2->>Q: Resolve A terminal and clear child
+    D2->>Q: Claim B as generation 1
+    D2->>B: Run disjoint sealed snapshot
+    B-->>D2: Terminal
+    D2->>Q: Resolve B and clear child
+    Note over Q,B: Effect inode and SHA stay exact and no row remains leased
 ```
+
+This exact sequence is the node-free user-systemd evidence shape. It proves
+process supervision, sealed-byte identity, lock/fence recovery, local durable
+effect replay, and peer progress. The compiled fixture does not submit a chain
+transaction, so actual Zcash observe-before-rebroadcast remains a separate
+actual-node gate.
 
 ## Atomicity argument
 
@@ -348,10 +354,11 @@ bounded cycles for one swap. The persistent daemon composes that capability
 without a queued/unleased gap: only a successful kernel-lock acquisition can
 authorize the immediate owner/generation-plus-one recovery CAS, and a busy lock
 leaves the old lease untouched. A dedicated connection keeps long actor waits
-independent from owner RPC. This proves the local-process crash-handoff
-mechanism, not actual-node or systemd actor-crash composition. The actor's exact
-durable intent and observe-before-rebroadcast remain the at-most-once
-public-effect boundary. Different
+independent from owner RPC. The node-free systemd proof exercises that crash
+handoff with a synced fixture effect and preserves its inode and digest. It does
+not prove an actual-node submission. The actor's exact durable intent and
+observe-before-rebroadcast remain the at-most-once public-effect boundary.
+Different
 swaps use unique rows, configs, state databases, locks, agreements, escrows,
 outpoints, and deadlines.
 

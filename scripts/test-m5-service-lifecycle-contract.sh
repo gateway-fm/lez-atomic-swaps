@@ -116,6 +116,19 @@ rg -Fq 'Type=notify' "$transient_rehearsal" ||
   fail "actual transient notification rehearsal is missing"
 rg -Fq 'systemctl --user kill --kill-whom=main --signal=SIGKILL' "$transient_rehearsal" ||
   fail "actual crash/restart rehearsal is missing"
+for token in \
+  'm5-systemd-fault-actor' \
+  '--actor-test-pause-swap-id' \
+  '--actor-test-pause-operation zcash_fund' \
+  'paused_after_submitted_before_stdout' \
+  'lease_generation == 1' \
+  'lease_generation == 2' \
+  'effect_identity_preserved == true' \
+  'disjoint_peer_progressed == true' \
+  'KillMode=control-group'; do
+  rg -Fq -- "$token" "$transient_rehearsal" ||
+    fail "actual actor crash/restart rehearsal is missing $token"
+done
 rg -Fq 'systemd-analyze verify' "$manual" || fail "manual install verification is missing"
 rg -Fq 'Logos Core daemon mode' "$manual" || fail "manual upstream boundary is missing"
 rg -Fq 'systemd-creds encrypt' "$manual" || fail "encrypted credential provisioning is missing"

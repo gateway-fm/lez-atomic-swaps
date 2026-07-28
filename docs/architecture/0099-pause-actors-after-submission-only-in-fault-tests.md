@@ -1,7 +1,8 @@
 # ADR 0099: pause actors after submission only in fault tests
 
-- Status: Accepted; feature-gated marker helper unit-GREEN, real submitted
-  subprocess and composed coordinator crash evidence pending
+- Status: Accepted; feature-gated marker helper unit-GREEN and node-free
+  systemd/scheduler crash fixture GREEN; real submitted ZEC-chain subprocess
+  evidence pending
 - Date: 2026-07-28
 
 ## Context
@@ -77,5 +78,8 @@ fresh actor observes the expected public identity before any rebroadcast.
 - A genuine unknown-to-caller boundary is reproducible without synthetic
   transition APIs.
 - Protocol state and effect authority remain in pair SDK and actor journals.
+- The node-free user-systemd fixture proves daemon restart, fenced rescheduling,
+  sealed execution, unchanged local-effect replay, and disjoint peer progress.
+  It deliberately does not represent or certify a Zcash transaction.
 - This ADR alone does not certify coordination; two real swaps, peer progress,
   exact restart, disjoint authority, and terminal reopen remain required.

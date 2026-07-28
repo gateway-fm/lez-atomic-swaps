@@ -1,5 +1,7 @@
 //! Bounded execution of one durable maker-actor scheduling attempt.
 
+#[cfg(feature = "test-crash-hooks")]
+use std::path::PathBuf;
 use std::{
     fs,
     io::{self, Read},
@@ -37,6 +39,16 @@ pub struct MakerActorSupervisorConfig {
     requeue_delay_seconds: u64,
     failure_backoff_seconds: u64,
     max_output_bytes: usize,
+    #[cfg(feature = "test-crash-hooks")]
+    test_pause: Option<MakerActorTestPause>,
+}
+
+#[cfg(feature = "test-crash-hooks")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MakerActorTestPause {
+    swap_id: SwapId,
+    operation: Box<str>,
+    marker: PathBuf,
 }
 
 impl MakerActorSupervisorConfig {
@@ -65,7 +77,44 @@ impl MakerActorSupervisorConfig {
             requeue_delay_seconds,
             failure_backoff_seconds,
             max_output_bytes,
+            #[cfg(feature = "test-crash-hooks")]
+            test_pause: None,
         })
+    }
+
+    /// Arms one exact submitted-effect pause in feature-gated fault tests.
+    ///
+    /// This API and its child environment injection do not exist in default
+    /// production builds.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unknown submitted operation or a non-absolute marker path.
+    #[cfg(feature = "test-crash-hooks")]
+    pub fn with_test_pause_after_submitted(
+        mut self,
+        swap_id: SwapId,
+        operation: impl Into<Box<str>>,
+        marker: PathBuf,
+    ) -> Result<Self, MakerActorSupervisorError> {
+        let operation = operation.into();
+        if !matches!(
+            operation.as_ref(),
+            "lez_initialize"
+                | "lez_fund"
+                | "zcash_fund"
+                | "lez_revealing_claim"
+                | "zcash_followup_claim"
+        ) || !marker.is_absolute()
+        {
+            return Err(MakerActorSupervisorError::InvalidConfig);
+        }
+        self.test_pause = Some(MakerActorTestPause {
+            swap_id,
+            operation,
+            marker,
+        });
+        Ok(self)
     }
 }
 
@@ -465,6 +514,21 @@ fn run_child(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0);
+    #[cfg(feature = "test-crash-hooks")]
+    if actor_command == "drive"
+        && config
+            .test_pause
+            .as_ref()
+            .is_some_and(|pause| pause.swap_id == *lease.record().swap_id())
+    {
+        let pause = config.test_pause.as_ref().expect("matching test pause");
+        command
+            .env(
+                "LEZ_ACTOR_TEST_PAUSE_AFTER_SUBMITTED",
+                pause.operation.as_ref(),
+            )
+            .env("LEZ_ACTOR_TEST_PAUSE_MARKER", &pause.marker);
+    }
     let mut child = command
         .spawn()
         .map_err(|_| ChildRunError::Retry("actor_spawn_failed"))?;

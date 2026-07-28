@@ -48,7 +48,7 @@ sequenceDiagram
     D-->>M: Commit revision 2
     M-->>T: Exact durable proposal bytes
     T->>T: Validate and countersign exact commitment
-    Note over M,D: Crash before commit sends nothing; crash after commit replays exact bytes
+    Note over M,D: Crash before commit sends nothing and crash after commit replays exact bytes
 ```
 
 The stage request binds the offer ID, expected revision, reservation, Delivery
