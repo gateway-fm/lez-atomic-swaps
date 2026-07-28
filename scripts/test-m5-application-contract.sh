@@ -39,6 +39,36 @@ for required in \
     fail "M5 handoff is missing queued actor contract: ${required}"
 done
 
+for required in 'actor_supervisor_enabled: false'; do
+  rg -Fq -- "$required" "$handoff" ||
+    fail "M5 handoff must return a queued actor before supervision: ${required}"
+done
+
+for required in \
+  'start_m5_full_supervised_daemon' \
+  'start_m5_supervisor_only_daemon' \
+  '--actor-supervisor' \
+  '--actor-requeue-delay-seconds' \
+  '--actor-failure-backoff-seconds' \
+  'observe_m5_supervised_maker' \
+  'm5-maker-supervisor-status.ndjson' \
+  'm5-maker-supervisor-final.json' \
+  'm5-maker-lock-intent.json' \
+  'expected_zebra_txid' \
+  'maker_effect_authority: "daemon_supervisor"' \
+  'maker_daemon_alive: true' \
+  'M5 Maker supervisor exited before terminal evidence publication' \
+  '.schedule_state == "terminal"' \
+  'concurrent_direct_maker_effects: false' \
+  'maker_lock_intent_sha256' \
+  'exact_funding_mempool_sha256' \
+  'maker_supervisor_trace_sha256' \
+  'maker_supervisor_final_sha256' \
+  'maker_daemon_owned_at_terminal_observation'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M5 runner does not prove supervisor-owned Maker effects: ${required}"
+done
+
 
 projection_function="$(sed -n \
   '/^prove_m5_terminal_operator_projection() {$/,/^}$/p' "$runner")"

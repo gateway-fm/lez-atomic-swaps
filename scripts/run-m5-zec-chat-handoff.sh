@@ -446,6 +446,7 @@ jq -n \
     real_processes: {maker_daemon:true,maker_cli:true,taker_cli:true},
     actor_pair_validated: true,
     daemon_restart_history_validated: true,
+    actor_supervisor_enabled: false,
     scheduled_maker_actor: $queued[0][0],
     transport_cutover: {
       state:"armed_after_restart",
@@ -464,6 +465,7 @@ jq -n \
 chmod 0600 "$result_receipt"
 jq -e '.result == "passed" and .actor_pair_validated == true
   and .daemon_restart_history_validated == true
+  and .actor_supervisor_enabled == false
   and .transport_cutover.state == "armed_after_restart"
   and .scheduled_maker_actor.actor_kind == "zcash"
   and .scheduled_maker_actor.schedule_state == "queued"

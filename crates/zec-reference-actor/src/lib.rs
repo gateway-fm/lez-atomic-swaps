@@ -23,7 +23,7 @@ pub use command::{
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
-    validate_maker_manifest_config_bytes,
+    validate_maker_manifest_config_bytes, validate_rebound_actor_pair,
 };
 pub use local_poc::{
     LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocProvisionSummary,

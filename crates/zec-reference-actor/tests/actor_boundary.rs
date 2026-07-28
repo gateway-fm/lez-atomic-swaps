@@ -19,7 +19,7 @@ use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use zec_reference_actor::{
     ActorCli, ActorCommand, ActorCommandError, ActorConfig, ActorRole, execute_actor_command,
-    validate_actor_pair,
+    validate_actor_pair, validate_rebound_actor_pair,
 };
 
 const CAPABILITY: &[u8] = b"actor_capability_0123456789abcdef";
@@ -190,6 +190,33 @@ fn schema_v3_binds_complete_typed_runtime_routes_and_one_isolated_pair() {
     assert_eq!(maker.lez_discovery_window().start_height(), 1);
     assert_eq!(maker.lez_discovery_window().max_blocks(), 256);
     validate_actor_pair(&maker, &taker).expect("independent users form one run");
+}
+
+#[test]
+fn rebound_pair_requires_exact_wire_in_distinct_agreement_files() {
+    let fixture = PairFixture::new();
+    let taker_agreement = fixture.root.path().join("taker-rebound-agreement");
+    regular_file(
+        &taker_agreement,
+        &fs::read(fixture.path("agreement")).expect("read source agreement"),
+    );
+    set(
+        &fixture.taker_config,
+        "/signed_agreement_file",
+        path_value(&taker_agreement),
+    );
+    let maker = fixture.load("maker");
+    let taker = fixture.load("taker");
+
+    assert!(validate_actor_pair(&maker, &taker).is_err());
+    validate_rebound_actor_pair(&maker, &taker)
+        .expect("separately published exact agreements form one rebound pair");
+
+    let shared = PairFixture::new();
+    assert!(validate_rebound_actor_pair(&shared.load("maker"), &shared.load("taker")).is_err());
+
+    regular_file(&taker_agreement, b"changed agreement wire");
+    assert!(validate_rebound_actor_pair(&maker, &taker).is_err());
 }
 
 #[test]

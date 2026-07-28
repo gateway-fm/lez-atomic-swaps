@@ -138,6 +138,14 @@ m5_application_database=''
 m5_chat_socket=''
 m5_delivery_directory=''
 m5_delivery_offline=''
+m5_supervisor_socket=''
+m5_maker_actor_config=''
+m5_maker_actor_state=''
+m5_maker_bundle=''
+m5_maker_actor_root=''
+m5_maker_state_dir=''
+m5_expected_funding_txid=''
+m5_maker_phase='not_activated'
 m5_transport_cutover_complete=0
 corridor_deadline_monotonic_ms=''
 
@@ -192,6 +200,100 @@ stop_owned_m5_daemon() {
     kill -KILL "$m5_daemon_pid" || true
   fi
   wait "$m5_daemon_pid" 2>/dev/null || true
+}
+
+wait_for_m5_daemon_ready() {
+  local socket="$1"
+  local ready_file="$2"
+  local log="$3"
+  for _ in {1..200}; do
+    if [[ -s "$ready_file" && "$(<"$ready_file")" == "$socket" && -S "$socket" ]]; then
+      return 0
+    fi
+    process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+      tail -n 40 "$log" >&2 || true
+      return 1
+    }
+    sleep 0.05
+  done
+  echo "M5 supervised daemon did not become ready on ${socket}" >&2
+  tail -n 40 "$log" >&2 || true
+  return 1
+}
+
+start_m5_full_supervised_daemon() {
+  local ready_file="${application_root}/runtime/ready-supervised"
+  local log="${evidence_dir}/m5-maker-daemon-supervised.log"
+  [[ ! -e "$ready_file" && ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" ]] || {
+    echo 'M5 full supervised daemon endpoints already exist' >&2
+    return 1
+  }
+  "$m5_daemon_bin" \
+    --socket "$m5_maker_socket" \
+    --chat-socket "$m5_chat_socket" \
+    --database "$m5_application_database" \
+    --ready-file "$ready_file" \
+    --delivery-directory "$m5_delivery_directory" \
+    --delivery-signing-key-file "$provision_actors_root/maker/zcash.key" \
+    --maker-claim-key-id "${run_id}-maker-claim" \
+    --maker-claim-key-file "$provision_actors_root/maker/claim-recovery.key" \
+    --maker-claim-preimage-file "$provision_actors_root/maker/claim-preimage.key" \
+    --zec-source-maker-config "$provision_actors_root/maker/actor-config.json" \
+    --zec-maker-actor-root "$m5_maker_actor_root" \
+    --zec-actor-program "$m5_actor_program" \
+    --zec-actor-program-sha256 "$m5_actor_program_sha256" \
+    --actor-supervisor \
+    --actor-attempt-timeout-milliseconds 20000 \
+    --actor-poll-milliseconds 10 \
+    --actor-requeue-delay-seconds 1 \
+    --actor-failure-backoff-seconds 1 \
+    --actor-max-output-bytes 8192 \
+    >"$log" 2>&1 &
+  m5_daemon_pid=$!
+  m5_daemon_start_ticks="$(process_start_ticks "$m5_daemon_pid")"
+  [[ -n "$m5_daemon_start_ticks" ]] || {
+    echo 'M5 full supervised daemon identity is unavailable' >&2
+    return 1
+  }
+  wait_for_m5_daemon_ready "$m5_maker_socket" "$ready_file" "$log"
+  [[ -S "$m5_chat_socket" && -d "$m5_delivery_directory" ]] || {
+    echo 'M5 full supervised daemon did not retain Chat and Delivery' >&2
+    return 1
+  }
+}
+
+start_m5_supervisor_only_daemon() {
+  local ready_file="${application_root}/runtime/ready-supervisor-only"
+  local log="${evidence_dir}/m5-maker-daemon-supervisor-only.log"
+  [[ ! -e "$ready_file" && ! -e "$m5_supervisor_socket" \
+    && ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" \
+    && ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || {
+    echo 'M5 supervisor-only isolation precondition failed' >&2
+    return 1
+  }
+  "$m5_daemon_bin" \
+    --socket "$m5_supervisor_socket" \
+    --database "$m5_application_database" \
+    --ready-file "$ready_file" \
+    --actor-supervisor \
+    --actor-attempt-timeout-milliseconds 20000 \
+    --actor-poll-milliseconds 10 \
+    --actor-requeue-delay-seconds 1 \
+    --actor-failure-backoff-seconds 1 \
+    --actor-max-output-bytes 8192 \
+    >"$log" 2>&1 &
+  m5_daemon_pid=$!
+  m5_daemon_start_ticks="$(process_start_ticks "$m5_daemon_pid")"
+  [[ -n "$m5_daemon_start_ticks" ]] || {
+    echo 'M5 supervisor-only daemon identity is unavailable' >&2
+    return 1
+  }
+  wait_for_m5_daemon_ready "$m5_supervisor_socket" "$ready_file" "$log"
+  [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" \
+    && ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || {
+    echo 'M5 supervisor-only daemon restored a negotiation transport' >&2
+    return 1
+  }
 }
 
 prove_m5_terminal_operator_projection() {
@@ -426,6 +528,7 @@ cargo +1.96.0 build --locked --offline -p zec-reference-actor --bins
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   cargo +1.96.0 build --locked --offline -p lez-maker-node --bins
   cargo +1.96.0 build --locked --offline -p lez-maker-node --example maker-actor-inspect
+  cargo +1.96.0 build --locked --offline -p lez-maker-node --example maker-zec-lock-intent-inspect
 fi
 cargo +1.96.0 build \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
@@ -444,10 +547,13 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   chat_draft_bin="$(readlink -f target/debug/zec-local-poc-chat-draft)"
   chat_finalize_bin="$(readlink -f target/debug/zec-local-poc-chat-finalize)"
   actor_inspector_bin="$(readlink -f target/debug/examples/maker-actor-inspect)"
-  readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin actor_inspector_bin
+  m5_intent_inspector_bin="$(readlink -f target/debug/examples/maker-zec-lock-intent-inspect)"
+  readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin
+  readonly actor_inspector_bin m5_intent_inspector_bin
   required_binaries+=("$maker_daemon_bin" "$maker_cli_bin" "$taker_bin")
   required_binaries+=("$chat_draft_bin" "$chat_finalize_bin" "$actor_inspector_bin")
   required_binaries+=("$m5_handoff_driver")
+  required_binaries+=("$m5_intent_inspector_bin")
 fi
 for binary in "${required_binaries[@]}"; do
   [[ -x "$binary" ]] || {
@@ -679,6 +785,19 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     echo 'M5 maker daemon handoff is not the exact live process' >&2
     exit 2
   }
+  m5_maker_actor_config="$(jq -er '.scheduled_maker_actor.config_path | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_maker_actor_state="$(jq -er '.scheduled_maker_actor.state_db_path | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_maker_bundle="${m5_maker_actor_config%/maker/actor-config.json}"
+  [[ "$m5_maker_bundle" != "$m5_maker_actor_config" \
+    && "$m5_maker_actor_state" == "$m5_maker_bundle/maker/state/actor.sqlite3" ]] || {
+    echo 'M5 queued Maker config/state layout is invalid' >&2
+    exit 2
+  }
+  m5_maker_actor_root="${m5_maker_bundle%/*}"
+  m5_maker_state_dir="${m5_maker_actor_state%/actor.sqlite3}"
+  m5_supervisor_socket="${application_root}/runtime/supervisor.sock"
   [[ -S "$m5_maker_socket" && -S "$m5_chat_socket" \
     && -d "$m5_delivery_directory" && ! -e "$m5_delivery_offline" ]] || {
     echo 'M5 negotiation transports are not armed for post-lock cutover' >&2
@@ -750,7 +869,14 @@ jq -e \
 }
 remaining_budget_milliseconds 'lez-depositor-preflight-after' >/dev/null
 
-readonly maker_config="${actors_root}/maker/actor-config.json"
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  maker_config="$m5_maker_actor_config"
+  maker_sidecar_state_dir="$m5_maker_state_dir"
+else
+  maker_config="${actors_root}/maker/actor-config.json"
+  maker_sidecar_state_dir="${actors_root}/maker/state"
+fi
+readonly maker_config maker_sidecar_state_dir
 readonly taker_config="${actors_root}/taker/actor-config.json"
 readonly maker_log="${evidence_dir}/maker-sidecar.log"
 readonly taker_log="${evidence_dir}/taker-sidecar.log"
@@ -769,7 +895,7 @@ startup_remaining_ms="$(remaining_budget_milliseconds 'sidecar-startup-before')"
   --runtime-file "${provision_actors_root}/maker/lez-runtime.json" \
   --capability-file "${provision_actors_root}/maker/sidecar.capability" \
   --private-key-file "${provision_actors_root}/maker/lez-signer.key" \
-  --state-directory "${actors_root}/maker/state" \
+  --state-directory "$maker_sidecar_state_dir" \
   --authenticated-transfer-program-id "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" \
   >"$maker_log" 2>&1 &
 maker_pid=$!
@@ -917,20 +1043,71 @@ jq -n \
     actor_outputs_secret_free: true
   }' >"${evidence_dir}/run-identity.json"
 
-maker_activate_timeout="$(bounded_actor_timeout 'maker-activate')"
-timeout --signal=KILL "${maker_activate_timeout}s" \
-  "$actor_bin" --config "$maker_config" activate \
-  >"${evidence_dir}/maker-activate.json" 2>"${evidence_dir}/maker-activate.stderr"
-remaining_budget_milliseconds 'maker-activate-after' >/dev/null
+if [[ "$M5_APPLICATION_MODE" != 1 ]]; then
+  maker_activate_timeout="$(bounded_actor_timeout 'maker-activate')"
+  timeout --signal=KILL "${maker_activate_timeout}s" \
+    "$actor_bin" --config "$maker_config" activate \
+    >"${evidence_dir}/maker-activate.json" 2>"${evidence_dir}/maker-activate.stderr"
+  remaining_budget_milliseconds 'maker-activate-after' >/dev/null
+  jq -e '.role == "maker" and .outcome == "activated" and .phase == "offered"' \
+    "${evidence_dir}/maker-activate.json" >/dev/null
+fi
+
 taker_activate_timeout="$(bounded_actor_timeout 'taker-activate')"
 timeout --signal=KILL "${taker_activate_timeout}s" \
   "$actor_bin" --config "$taker_config" activate \
   >"${evidence_dir}/taker-activate.json" 2>"${evidence_dir}/taker-activate.stderr"
 remaining_budget_milliseconds 'taker-activate-after' >/dev/null
-jq -e '.role == "maker" and .outcome == "activated" and .phase == "offered"' \
-  "${evidence_dir}/maker-activate.json" >/dev/null
 jq -e '.role == "taker" and .outcome == "activated" and .phase == "offered"' \
   "${evidence_dir}/taker-activate.json" >/dev/null
+
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":1,"method":"getrawmempool","params":[]}' \
+    >"${evidence_dir}/m5-zebra-mempool-before-supervision.json"
+  jq -e '.error == null and .result == []' \
+    "${evidence_dir}/m5-zebra-mempool-before-supervision.json" >/dev/null || {
+    echo 'M5 exact-funding attribution requires an initially empty isolated mempool' >&2
+    exit 2
+  }
+  stop_owned_m5_daemon
+  m5_daemon_pid=''
+  m5_daemon_start_ticks=''
+  [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" \
+    && -d "$m5_delivery_directory" ]] || {
+    echo 'M5 unsupervised handoff daemon did not stop cleanly before supervision' >&2
+    exit 2
+  }
+  start_m5_full_supervised_daemon
+  maker_supervised_active=0
+  for _ in {1..200}; do
+    remaining_budget_milliseconds 'm5-maker-supervised-activation' >/dev/null
+    "$actor_bin" --config "$maker_config" status \
+      >"${evidence_dir}/m5-maker-supervised-activation-status.json"
+    if jq -e '.role == "maker" and .state == "active" and (.revision | numbers) >= 0' \
+      "${evidence_dir}/m5-maker-supervised-activation-status.json" >/dev/null; then
+      maker_supervised_active=1
+      break
+    fi
+    process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+      echo 'M5 full daemon exited during supervised Maker activation' >&2
+      exit 1
+    }
+    sleep 0.05
+  done
+  (( maker_supervised_active == 1 )) || {
+    echo 'M5 supervisor did not activate the daemon-provisioned Maker actor' >&2
+    exit 1
+  }
+  jq -n --slurpfile status "${evidence_dir}/m5-maker-supervised-activation-status.json" '
+    {
+      schema_version: 1,
+      maker_effect_authority: "daemon_supervisor",
+      concurrent_direct_maker_effects: false,
+      maker_daemon_alive: true,
+      actor_status: $status[0]
+    }' >"${evidence_dir}/maker-activate.json"
+fi
 
 : >"${evidence_dir}/actor-drive.ndjson"
 : >"${evidence_dir}/drive-retries.ndjson"
@@ -1001,6 +1178,152 @@ mine_blocks() {
     <<<"$response" >/dev/null
   jq . <<<"$response" >"${evidence_dir}/zebra-generate-${label}.json"
   (( rpc_status == 0 ))
+}
+
+cut_over_m5_negotiation_transports() {
+  stop_owned_m5_daemon
+  m5_daemon_pid=''
+  m5_daemon_start_ticks=''
+  [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" ]] || {
+    echo 'M5 Unix transports survived post-lock full-daemon shutdown' >&2
+    return 1
+  }
+  mv -- "$m5_delivery_directory" "$m5_delivery_offline"
+  [[ ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || {
+    echo 'M5 Delivery transport survived post-lock cutover' >&2
+    return 1
+  }
+  start_m5_supervisor_only_daemon
+  process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+    echo 'M5 supervisor-only daemon is not live after transport cutover' >&2
+    return 1
+  }
+  jq -n \
+    --arg first_lock_role maker \
+    --arg expected_zebra_txid "$m5_expected_funding_txid" \
+    --arg supervisor_socket "$m5_supervisor_socket" \
+    --argjson confirmations_mined \
+      "$(jq -er '.result | length' "${evidence_dir}/zebra-generate-funding.json")" '
+    {
+      schema_version: 1,
+      result: "passed",
+      cutover_after_first_lock: true,
+      first_lock: "zcash_funding",
+      first_lock_submitter: $first_lock_role,
+      expected_zebra_txid: $expected_zebra_txid,
+      confirmations_mined: $confirmations_mined,
+      maker_effect_authority: "daemon_supervisor",
+      maker_daemon_alive: true,
+      supervisor_socket: $supervisor_socket,
+      maker_socket_absent: true,
+      chat_socket_absent: true,
+      delivery_path_absent: true,
+      concurrent_direct_maker_effects: false
+    }' >"${evidence_dir}/m5-post-lock-cutover.json"
+  chmod 0600 "${evidence_dir}/m5-post-lock-cutover.json"
+  m5_transport_cutover_complete=1
+}
+
+observe_m5_supervised_maker() {
+  local round="$1"
+  local status_file="${evidence_dir}/m5-maker-supervisor-status-current.json"
+  local scheduler_file="${evidence_dir}/m5-maker-supervisor-scheduler-current.json"
+  local intent_candidate="${evidence_dir}/m5-maker-lock-intent-candidate.json"
+  local mempool_file="${evidence_dir}/m5-zebra-mempool-current.json"
+  process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+    echo 'M5 Maker supervisor daemon exited before terminal state' >&2
+    return 1
+  }
+  "$actor_bin" --config "$maker_config" status >"$status_file"
+  "$actor_inspector_bin" --database "$m5_application_database" >"$scheduler_file"
+  jq -e --arg swap "$(jq -er '.swap_id' "$maker_config")" '
+    length == 1 and .[0].swap_id == $swap
+    and .[0].actor_kind == "zcash"
+    and .[0].schedule_state != "failed"
+  ' "$scheduler_file" >/dev/null || {
+    echo 'M5 Maker supervisor entered an invalid or failed scheduler state' >&2
+    return 1
+  }
+  m5_maker_phase="$(jq -er \
+    'select(.role == "maker" and .state == "active") | .phase | strings' \
+    "$status_file")"
+  jq -nc --argjson round "$round" --slurpfile status "$status_file" \
+    --slurpfile scheduler "$scheduler_file" '
+    {
+      schema_version: 1,
+      round: $round,
+      maker_effect_authority: "daemon_supervisor",
+      maker_daemon_alive: true,
+      concurrent_direct_maker_effects: false,
+      actor_status: $status[0],
+      scheduler: $scheduler[0][0]
+    }' >>"${evidence_dir}/m5-maker-supervisor-status.ndjson"
+
+  if [[ -z "$m5_expected_funding_txid" ]] && \
+    "$m5_intent_inspector_bin" --config "$maker_config" --taker-config "$taker_config" \
+      >"$intent_candidate" 2>"${evidence_dir}/m5-maker-lock-intent-candidate.stderr"; then
+    jq -e --arg swap "$(jq -er '.swap_id' "$maker_config")" '
+      .schema_version == 1 and .swap_id == $swap and .role == "maker"
+      and .operation == "zcash_fund" and (.staged_revision | numbers) >= 0
+      and (.expected_submission_id_internal_hex | test("^[0-9a-f]{64}$"))
+      and (.expected_zebra_txid | test("^[0-9a-f]{64}$"))
+      and .actor_pair_validated == true
+      and .exact_submission_disclosed == false
+    ' "$intent_candidate" >/dev/null
+    mv -- "$intent_candidate" "${evidence_dir}/m5-maker-lock-intent.json"
+    m5_expected_funding_txid="$(jq -er '.expected_zebra_txid' \
+      "${evidence_dir}/m5-maker-lock-intent.json")"
+  fi
+
+  if [[ -n "$m5_expected_funding_txid" && "$zcash_fund_mined" == 0 ]]; then
+    rpc "$ZEBRA_RPC_URL" \
+      '{"jsonrpc":"2.0","id":1,"method":"getrawmempool","params":[]}' >"$mempool_file"
+    if jq -e '.error == null and (.result | arrays) and (.result | length) == 0' \
+      "$mempool_file" >/dev/null; then
+      return 0
+    fi
+    jq -e --arg txid "$m5_expected_funding_txid" '
+      .error == null and (.result | arrays)
+      and (.result | length) == 1 and .result[0] == $txid
+    ' "$mempool_file" >/dev/null || {
+      echo 'M5 isolated mempool contains a transaction other than the exact durable funding ID' >&2
+      return 1
+    }
+    install -m 0600 "$mempool_file" \
+      "${evidence_dir}/m5-zebra-mempool-exact-funding.json"
+    zcash_fund_submitter='maker'
+    zcash_fund_mined=2
+    mine_blocks funding 2
+    cut_over_m5_negotiation_transports
+  fi
+}
+
+wait_for_m5_supervisor_terminal() {
+  local candidate="${evidence_dir}/m5-maker-supervisor-final-candidate.json"
+  for _ in {1..500}; do
+    remaining_budget_milliseconds 'm5-maker-supervisor-terminal' >/dev/null
+    "$actor_inspector_bin" --database "$m5_application_database" >"$candidate"
+    if jq -e --arg swap "$(jq -er '.swap_id' "$maker_config")" '
+      length == 1 and .[0].swap_id == $swap
+      and .[0].schedule_state == "terminal"
+      and .[0].lease_generation > 0 and .[0].attempt_count > 0
+      and .[0].child_identity_absent == true
+    ' "$candidate" >/dev/null; then
+      process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+        echo 'M5 Maker supervisor exited before terminal evidence publication' >&2
+        return 1
+      }
+      mv -- "$candidate" "${evidence_dir}/m5-maker-supervisor-final.json"
+      return 0
+    fi
+    process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+      echo 'M5 Maker supervisor daemon exited before terminal scheduler state' >&2
+      return 1
+    }
+    sleep 0.05
+  done
+  echo 'M5 Maker supervisor did not reach a fenced terminal scheduler state' >&2
+  return 1
 }
 
 handle_zcash_submission() {
@@ -1074,7 +1397,11 @@ handle_zcash_submission() {
 handle_lez_revealing_claim() {
   local role="$1"
   local output="$2"
-  if ! jq -e '.outcome == "submitted" and .operation == "lez_revealing_claim"' \
+  if [[ "$M5_APPLICATION_MODE" == 1 && "$role" == taker ]] && jq -e \
+    '.outcome == "projected" and .operation == "lez_revealing_claim"' \
+    <<<"$output" >/dev/null; then
+    role='maker'
+  elif ! jq -e '.outcome == "submitted" and .operation == "lez_revealing_claim"' \
     <<<"$output" >/dev/null; then
     return 0
   fi
@@ -1100,11 +1427,16 @@ while true; do
   handle_lez_revealing_claim taker "$taker_output"
   handle_zcash_submission taker "$taker_output"
 
-  maker_output="$(drive_actor maker "$maker_config" "$round")"
-  handle_lez_revealing_claim maker "$maker_output"
-  handle_zcash_submission maker "$maker_output"
+  if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+    observe_m5_supervised_maker "$round"
+    maker_phase="$m5_maker_phase"
+  else
+    maker_output="$(drive_actor maker "$maker_config" "$round")"
+    handle_lez_revealing_claim maker "$maker_output"
+    handle_zcash_submission maker "$maker_output"
+    maker_phase="$(jq -r '.phase' <<<"$maker_output")"
+  fi
 
-  maker_phase="$(jq -r '.phase' <<<"$maker_output")"
   taker_phase="$(jq -r '.phase' <<<"$taker_output")"
   if [[ "$maker_phase" == completed && "$taker_phase" == completed ]]; then
     completed=1
@@ -1124,11 +1456,26 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     echo 'M5 corridor completed without the required post-first-lock cutover' >&2
     exit 1
   }
-  jq -e '.result == "passed" and .cutover_after_first_lock == true
+  jq -e --arg expected "$m5_expected_funding_txid" '
+    .result == "passed" and .cutover_after_first_lock == true
     and .first_lock == "zcash_funding" and .confirmations_mined == 2
+    and .expected_zebra_txid == $expected
+    and .maker_effect_authority == "daemon_supervisor"
+    and .maker_daemon_alive == true and .concurrent_direct_maker_effects == false
     and .maker_socket_absent == true and .chat_socket_absent == true
     and .delivery_path_absent == true' \
     "${evidence_dir}/m5-post-lock-cutover.json" >/dev/null
+fi
+
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  wait_for_m5_supervisor_terminal
+  stop_owned_m5_daemon
+  m5_daemon_pid=''
+  m5_daemon_start_ticks=''
+  [[ ! -e "$m5_supervisor_socket" ]] || {
+    echo 'M5 supervisor-only socket survived terminal daemon shutdown' >&2
+    exit 1
+  }
 fi
 
 "$actor_bin" --config "$maker_config" status >"${evidence_dir}/maker-status-final.json"
@@ -1175,6 +1522,15 @@ jq -n \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-post-lock-cutover.json" | cut -d ' ' -f1; fi)" \
   --arg terminal_projection_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-terminal-operator-projection.json" | cut -d ' ' -f1; fi)" \
+  --arg maker_lock_intent_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-lock-intent.json" | cut -d ' ' -f1; fi)" \
+  --arg exact_funding_mempool_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-zebra-mempool-exact-funding.json" | cut -d ' ' -f1; fi)" \
+  --arg maker_supervisor_trace_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-status.ndjson" | cut -d ' ' -f1; fi)" \
+  --arg maker_supervisor_final_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-final.json" | cut -d ' ' -f1; fi)" \
+  --arg expected_zebra_funding_txid "$m5_expected_funding_txid" \
   --argjson elapsed_ms "$((MAX_CORRIDOR_SECONDS * 1000 - $(remaining_budget_milliseconds 'result-before')))" '
   {
     schema_version: 1,
@@ -1215,6 +1571,21 @@ jq -n \
         (if $m5_application_mode == 1 then $application_cutover_sha256 else null end),
       terminal_projection_receipt_sha256:
         (if $m5_application_mode == 1 then $terminal_projection_sha256 else null end),
+      maker_lock_intent_sha256:
+        (if $m5_application_mode == 1 then $maker_lock_intent_sha256 else null end),
+      exact_funding_mempool_sha256:
+        (if $m5_application_mode == 1 then $exact_funding_mempool_sha256 else null end),
+      maker_supervisor_trace_sha256:
+        (if $m5_application_mode == 1 then $maker_supervisor_trace_sha256 else null end),
+      maker_supervisor_final_sha256:
+        (if $m5_application_mode == 1 then $maker_supervisor_final_sha256 else null end),
+      expected_zebra_funding_txid:
+        (if $m5_application_mode == 1 then $expected_zebra_funding_txid else null end),
+      maker_effect_authority:
+        (if $m5_application_mode == 1 then "daemon_supervisor" else null end),
+      maker_daemon_owned_at_terminal_observation: ($m5_application_mode == 1),
+      concurrent_direct_maker_effects:
+        (if $m5_application_mode == 1 then false else null end),
       fresh_operator_restart_reports_completed: ($m5_application_mode == 1),
       transports_removed_after_first_lock: ($m5_application_mode == 1),
       transports_absent_through_terminal_state: ($m5_application_mode == 1)

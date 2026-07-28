@@ -1258,11 +1258,62 @@ pub fn validate_actor_pair(
     left: &ActorConfig,
     right: &ActorConfig,
 ) -> Result<(), ActorConfigError> {
-    if left.role == right.role
+    if !left.bindings.agreement.aliases(&right.bindings.agreement)
+        || actor_pair_invariants_differ(left, right)
+    {
+        return Err(ActorConfigError::InvalidActorPair);
+    }
+    Ok(())
+}
+
+/// Confirms that two separately published actor bundles represent one swap.
+///
+/// Unlike [`validate_actor_pair`], this requires distinct agreement files and
+/// compares their exact bounded wire bytes. This is the application handoff
+/// boundary where a daemon publishes a Maker-only bundle after Chat while the
+/// Taker retains its independently finalized bundle.
+///
+/// # Errors
+///
+/// Rejects shared agreement inodes, changed or unsafe agreement files, or any
+/// role, run, swap, chain, agreement, funder, endpoint, signer, config, or
+/// private/mutable path inconsistency.
+pub fn validate_rebound_actor_pair(
+    left: &ActorConfig,
+    right: &ActorConfig,
+) -> Result<(), ActorConfigError> {
+    if left.bindings.agreement.aliases(&right.bindings.agreement)
+        || actor_pair_invariants_differ(left, right)
+    {
+        return Err(ActorConfigError::InvalidActorPair);
+    }
+    let left_wire = left
+        .read_command_file(
+            &left.signed_agreement_file,
+            MAX_ZEC_AGREEMENT_RECORD_BYTES,
+            FilePrivacy::Public,
+            &left.bindings.agreement,
+        )
+        .map_err(|_| ActorConfigError::InvalidActorPair)?;
+    let right_wire = right
+        .read_command_file(
+            &right.signed_agreement_file,
+            MAX_ZEC_AGREEMENT_RECORD_BYTES,
+            FilePrivacy::Public,
+            &right.bindings.agreement,
+        )
+        .map_err(|_| ActorConfigError::InvalidActorPair)?;
+    if left_wire.as_slice() != right_wire.as_slice() {
+        return Err(ActorConfigError::InvalidActorPair);
+    }
+    Ok(())
+}
+
+fn actor_pair_invariants_differ(left: &ActorConfig, right: &ActorConfig) -> bool {
+    left.role == right.role
         || left.run_id != right.run_id
         || left.swap_id != right.swap_id
         || left.signed_agreement_sha256 != right.signed_agreement_sha256
-        || !left.bindings.agreement.aliases(&right.bindings.agreement)
         || left.bridge.endpoint == right.bridge.endpoint
         || left.bridge.runtime.sidecar_role == right.bridge.runtime.sidecar_role
         || left.bridge.runtime.signer_account_id == right.bridge.runtime.signer_account_id
@@ -1281,10 +1332,6 @@ pub fn validate_actor_pair(
         || contains_location(&right.bindings.local(), &left.source_identity)
         || contains_location(&left.bindings.local(), &right.bindings.agreement)
         || contains_location(&right.bindings.local(), &left.bindings.agreement)
-    {
-        return Err(ActorConfigError::InvalidActorPair);
-    }
-    Ok(())
 }
 
 fn same_runtime(left: &RuntimeDescriptor, right: &RuntimeDescriptor) -> bool {

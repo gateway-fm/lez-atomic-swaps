@@ -42,6 +42,7 @@ tokio = { version = "1.52.0", features = ["macros", "net", "rt-multi-thread", "s
 thiserror = "2.0.18"
 wait-timeout = "=0.2.1"
 zeroize = "=1.9.0"
+zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -49,6 +50,5 @@ jsonrpsee-http-client = { version = "0.26.0", default-features = false }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
 zcash_encoding = "=0.4.0"
-zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
 zcash_protocol = { version = "=0.9.0", default-features = false }
 zcash_transparent = { version = "=0.8.0", default-features = false, features = ["transparent-inputs"] }
