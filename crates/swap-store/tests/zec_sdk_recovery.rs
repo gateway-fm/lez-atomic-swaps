@@ -1813,7 +1813,7 @@ fn assert_schema_v9_journal(path: &std::path::Path, id: &str, role: &str, secret
     let version: i64 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version");
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     let active_revision: i64 = raw
         .query_row(
             "SELECT active_revision FROM zec_sdk_agreements

@@ -12,7 +12,7 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ### M5 active progressive application PoC
 
 M5 is active. The owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v14
+Unix-socket daemon, maker CLI, durable schema-v15
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
@@ -24,7 +24,7 @@ no-clobber final-wire persistence. A disjoint taker-facing Chat socket now
 authenticates the exact Delivery envelope and unsigned canonical ZEC draft,
 signs with the Delivery-pinned maker identity, and atomically stages the
 one-winner proposal before responding. The separate taker role then validates
-and countersigns that proposal, and the daemon reuses the atomic schema-v14 final
+and countersigns that proposal, and the daemon reuses the atomic schema-v15 final
 acceptance transaction with only daemon-local claim authority; delayed replay
 and kill/reopen durability are process-GREEN. Exact final-wire actor
 configuration is now component-GREEN: a no-authority preparer replaces only the
@@ -33,7 +33,7 @@ other fields, both private-key identities, the funder role and hash preimage
 before emitting fresh isolated actor state. The opt-in M5 runner now composes
 that handoff with the stable LEZ/ZEC actor corridor, retains the restarted
 daemon through the first confirmed Zcash lock, and then removes Chat and
-Delivery before settlement. Schema v14 then offline-replays the stopped Maker
+Delivery before settlement. Schema v15 then offline-replays the stopped Maker
 actor with unit chain ports, binds its terminal coordinator to the exact Chat
 agreement, and imports a display-only projection before a fresh owner-only
 daemon becomes ready. Owner `status` and `history` overlay that record while
@@ -60,9 +60,12 @@ crash/restart rehearsal, and a bounded future Logos Core lifecycle contract.
 Use [Flow 1D](docs/manual-user-flows.md#flow-1d-install-and-rehearse-the-maker-systemd-service)
 to repeat it. The provisional versioned Logos price C-API and one-shot worker
 are actual-C fixture GREEN. Its parent adapter also bounds time/output, reaps an
-aborted or hung exact child, and pins owner/path/mode/link/module-hash inputs;
-daemon/store anti-rollback and signed-offer integration remain. Completed
-maker/taker commands, other pairs, outage behavior, and hardening remain.
+aborted or hung exact child, and pins owner/path/mode/link/module-hash inputs.
+Schema v15 now commits per-module revision high-water, policy revalidation, the
+immutable offer snapshot, and request replay together; exact replay returns
+before a source call. Daemon configuration/selection and black-box signed
+Delivery replay remain, along with completed maker/taker commands, other pairs,
+outage behavior, and hardening.
 
 Build and repeat the current real process boundary with:
 

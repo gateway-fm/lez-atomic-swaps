@@ -4,9 +4,9 @@ use lez_swap_core::{
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    LocalPriceV1, MakerOfferError, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1,
-    MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationStatus, MakerZecNegotiationV1,
-    SqliteSwapStore, StoreError,
+    LocalPriceV1, MakerOfferError, MakerOfferId, MakerOfferPublicationPreflight, MakerOfferStatus,
+    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationStatus,
+    MakerZecNegotiationV1, SqliteSwapStore, StoreError,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -106,6 +106,129 @@ fn configure_local_route(store: &mut SqliteSwapStore) {
         .unwrap();
 }
 
+fn configure_logos_route(store: &mut SqliteSwapStore) {
+    let route = zec_route();
+    let enabled = MakerPairConfigurationV1::new(
+        route,
+        true,
+        MakerPriceSourceKind::LogosCApi,
+        10,
+        10_000,
+        300,
+    )
+    .unwrap();
+    store
+        .configure_maker_pair(&request("offers-logos-pair-create-001"), None, &enabled)
+        .unwrap();
+}
+
+#[test]
+fn logos_publication_binds_quote_and_rejects_revision_rollback_or_equivocation() {
+    let run = tempdir().expect("isolated Logos offer store");
+    let mut store = SqliteSwapStore::open(run.path().join("logos-offers.sqlite3")).unwrap();
+    configure_logos_route(&mut store);
+    let price = LocalPriceV1::new(zec_route(), 5, 2).unwrap();
+    let source_identity = [0x42; 32];
+    let id = offer("offer-zec-logos-001");
+    let publish_request = request("offer-publish-logos-001");
+    assert!(matches!(
+        store
+            .prepare_maker_offer_publication(&publish_request, &id, zec_route())
+            .unwrap(),
+        MakerOfferPublicationPreflight::Pending {
+            pair_configuration_revision: 1,
+            price_source: MakerPriceSourceKind::LogosCApi,
+        }
+    ));
+
+    let published = store
+        .publish_logos_offer(
+            &publish_request,
+            &id,
+            zec_route(),
+            1,
+            &price,
+            source_identity,
+            7,
+            995,
+            1_000,
+            30,
+        )
+        .unwrap();
+    assert_eq!(published.revision(), 1);
+    assert!(!published.was_replay());
+    let preflight_replay = store
+        .prepare_maker_offer_publication(&publish_request, &id, zec_route())
+        .unwrap()
+        .replayed()
+        .unwrap();
+    assert!(preflight_replay.was_replay());
+
+    let replay = store
+        .publish_logos_offer(
+            &publish_request,
+            &id,
+            zec_route(),
+            1,
+            &LocalPriceV1::new(zec_route(), 7, 3).unwrap(),
+            source_identity,
+            8,
+            996,
+            1_100,
+            30,
+        )
+        .unwrap();
+    assert_eq!(replay.revision(), 1);
+    assert!(replay.was_replay());
+
+    let rollback = store.publish_logos_offer(
+        &request("offer-publish-logos-rollback-001"),
+        &offer("offer-zec-logos-rollback-001"),
+        zec_route(),
+        1,
+        &price,
+        source_identity,
+        6,
+        997,
+        1_001,
+        30,
+    );
+    assert!(matches!(
+        rollback,
+        Err(StoreError::MakerPriceRevisionRollback)
+    ));
+
+    let equivocation = store.publish_logos_offer(
+        &request("offer-publish-logos-equivocation-001"),
+        &offer("offer-zec-logos-equivocation-001"),
+        zec_route(),
+        1,
+        &LocalPriceV1::new(zec_route(), 7, 3).unwrap(),
+        source_identity,
+        7,
+        995,
+        1_001,
+        30,
+    );
+    assert!(matches!(
+        equivocation,
+        Err(StoreError::MakerPriceRevisionConflict)
+    ));
+
+    let records = store.list_maker_offer_history(1_001).unwrap();
+    assert_eq!(records.len(), 1);
+    let offer = records[0].offer();
+    assert_eq!(
+        offer.pair_configuration().price_source(),
+        MakerPriceSourceKind::LogosCApi
+    );
+    assert_eq!(offer.price(), &price);
+    assert_eq!(offer.price_source_revision(), 7);
+    assert_eq!(offer.price_source_identity_sha256(), Some(source_identity));
+    assert_eq!(offer.price_observed_at_unix_seconds(), 995);
+    assert_eq!(offer.created_at_unix_seconds(), 1_000);
+}
+
 #[test]
 fn publication_snapshots_exact_policy_and_price_and_survives_restart() {
     let run = tempdir().expect("isolated offer store");
@@ -120,7 +243,7 @@ fn publication_snapshots_exact_policy_and_price_and_survives_restart() {
     assert_eq!(published.revision(), 1);
     assert!(!published.was_replay());
     let replay = store
-        .publish_local_offer(&request("offer-publish-zec-001"), &id, zec_route(), 1_000)
+        .publish_local_offer(&request("offer-publish-zec-001"), &id, zec_route(), 1_100)
         .unwrap();
     assert_eq!(replay.revision(), 1);
     assert!(replay.was_replay());
@@ -161,6 +284,44 @@ fn publication_snapshots_exact_policy_and_price_and_survives_restart() {
     assert_eq!(record.offer().price_observed_at_unix_seconds(), 1_000);
     assert_eq!(record.offer().created_at_unix_seconds(), 1_000);
     assert_eq!(record.offer().expires_at_unix_seconds(), 1_300);
+}
+
+#[test]
+fn schema_v14_publication_request_replays_after_daemon_time_is_removed() {
+    let run = tempdir().expect("isolated legacy offer store");
+    let database = run.path().join("legacy-offer-request.sqlite3");
+    let route = zec_route();
+    let id = offer("offer-zec-legacy-replay-001");
+    let request_id = request("offer-publish-legacy-replay-001");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    configure_local_route(&mut store);
+    store
+        .publish_local_offer(&request_id, &id, route, 1_000)
+        .unwrap();
+    drop(store);
+
+    let legacy_request = serde_json::json!({
+        "offer_id": id.as_str(),
+        "route": route,
+        "now_unix_seconds": 1_000,
+    });
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute(
+            "UPDATE maker_application_mutations SET request_json = ?1
+             WHERE request_id = ?2 AND operation = 'offer_publish'",
+            rusqlite::params![legacy_request.to_string(), request_id.as_str()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let replay = store
+        .publish_local_offer(&request_id, &id, route, 1_100)
+        .unwrap();
+    assert_eq!(replay.revision(), 1);
+    assert!(replay.was_replay());
+    assert_eq!(store.list_maker_offer_history(1_100).unwrap().len(), 1);
 }
 
 #[test]
@@ -452,7 +613,7 @@ fn schema_v11_migrates_the_global_request_ledger_without_reuse() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     assert_eq!(migrated_rows, 1);
     assert!(!legacy_exists);
 }

@@ -602,7 +602,7 @@ flowchart TB
         APP["M5 application service"]
         OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v14<br/>lock + claim + refund journals")]
+        DB[("Maker SQLite schema v15<br/>lock + claim + refund journals")]
         OTP[("Display-only terminal projection<br/>exact agreement provenance")]
         PS["BTC / XMR / ZEC pair SDKs"]
         ZA["Canonical dual-signed LEZ/ZEC agreement validator"]
@@ -620,12 +620,12 @@ flowchart TB
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
         TMO["Taker-only maker-lock observation"]
-        TDB[("Taker SQLite schema v14<br/>role-local recovery")]
+        TDB[("Taker SQLite schema v15<br/>role-local recovery")]
         TLB["Context-owning LEZ SDK ports + adapter"]
     end
 
     subgraph SharedSecurity["Shared SDK security boundary"]
-        PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v14 envelope journal"]
+        PCM["Protected preimage + exact claim payload<br/>XChaCha20-Poly1305 + HKDF<br/>schema-v15 envelope journal"]
         M3AJ[("M3 role-local adaptor journal<br/>reserve before commitment<br/>consume nonce with exact partial GREEN")]
         M3AS[("M3 taker-only adaptor scalar<br/>owner-private file; point check only at activation<br/>maker authority forbidden")]
         M3RK[("M3 Bitcoin-funder refund scalar<br/>mode 0600 + x-only agreement match GREEN")]

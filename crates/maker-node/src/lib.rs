@@ -1377,6 +1377,8 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
         | StoreError::StaleMakerConfiguration { .. }
         | StoreError::MakerOfferRequestConflict
         | StoreError::MakerOfferAlreadyExists
+        | StoreError::MakerPriceRevisionRollback
+        | StoreError::MakerPriceRevisionConflict
         | StoreError::StaleMakerOffer { .. } => rpc_error(CONFLICT, error.to_string()),
         StoreError::MissingMakerOffer => rpc_error(NOT_FOUND, error.to_string()),
         StoreError::MakerConfiguration(_)

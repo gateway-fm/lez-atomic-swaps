@@ -13,6 +13,7 @@ use super::{
 };
 
 const OFFER_PAYLOAD_VERSION: i64 = 1;
+const MAX_LOGOS_QUOTE_AGE_SECONDS: u64 = 3_600;
 const MAXIMUM_ZEC_PROPOSAL_BYTES: usize = 16 * 1024;
 const ZEC_CHAT_SESSION_DOMAIN: &[u8] = b"lez-atomic-swaps/maker-zec-chat-session/v1";
 
@@ -109,6 +110,8 @@ pub struct MakerOfferV1 {
     pair_configuration_revision: u64,
     price_source_revision: u64,
     price_observed_at_unix_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    price_source_identity_sha256: Option<[u8; 32]>,
     created_at_unix_seconds: u64,
     expires_at_unix_seconds: u64,
 }
@@ -160,6 +163,12 @@ impl MakerOfferV1 {
     #[must_use]
     pub const fn price_source_revision(&self) -> u64 {
         self.price_source_revision
+    }
+
+    /// Pinned external module identity, absent only for a local price.
+    #[must_use]
+    pub const fn price_source_identity_sha256(&self) -> Option<[u8; 32]> {
+        self.price_source_identity_sha256
     }
 
     /// Trusted time at which the selected source was observed.
@@ -218,13 +227,26 @@ impl MakerOfferV1 {
             self.pair_configuration.offer_ttl_seconds(),
         )
         .map_err(|_| MakerOfferError::InvalidSnapshot)?;
+        let valid_observation_time = match self.pair_configuration.price_source() {
+            MakerPriceSourceKind::Local => {
+                self.price_source_identity_sha256.is_none()
+                    && self.price_observed_at_unix_seconds == self.created_at_unix_seconds
+            }
+            MakerPriceSourceKind::LogosCApi => {
+                self.price_source_identity_sha256
+                    .is_some_and(|identity| identity != [0; 32])
+                    && self.price_observed_at_unix_seconds > 0
+                    && self.price_observed_at_unix_seconds <= self.created_at_unix_seconds
+                    && self.created_at_unix_seconds - self.price_observed_at_unix_seconds
+                        <= MAX_LOGOS_QUOTE_AGE_SECONDS
+            }
+        };
         if validated_policy != self.pair_configuration
             || !self.pair_configuration.enabled()
-            || self.pair_configuration.price_source() != MakerPriceSourceKind::Local
             || self.price.route() != self.route()
             || self.pair_configuration_revision == 0
             || self.price_source_revision == 0
-            || self.price_observed_at_unix_seconds != self.created_at_unix_seconds
+            || !valid_observation_time
         {
             return Err(MakerOfferError::InvalidSnapshot);
         }
@@ -305,6 +327,30 @@ impl MakerOfferCommit {
     #[must_use]
     pub const fn was_replay(self) -> bool {
         self.was_replay
+    }
+}
+/// Read-before-effect result for one idempotent offer publication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MakerOfferPublicationPreflight {
+    /// The exact caller request already committed; no price source may run.
+    Replayed(MakerOfferCommit),
+    /// A fresh quote may be fetched for this exact policy snapshot.
+    Pending {
+        /// Route-policy revision the final transaction must still observe.
+        pair_configuration_revision: u64,
+        /// Price source selected by that policy revision.
+        price_source: MakerPriceSourceKind,
+    },
+}
+
+impl MakerOfferPublicationPreflight {
+    /// Returns the durable replay result, if publication already committed.
+    #[must_use]
+    pub const fn replayed(self) -> Option<MakerOfferCommit> {
+        match self {
+            Self::Replayed(commit) => Some(commit),
+            Self::Pending { .. } => None,
+        }
     }
 }
 
@@ -486,7 +532,12 @@ struct StoredOfferCommitV1 {
 struct PublishRequest<'a> {
     offer_id: &'a MakerOfferId,
     route: MakerRouteV1,
-    now_unix_seconds: u64,
+}
+
+#[derive(Deserialize, Eq, PartialEq)]
+struct ReplayPublishRequest {
+    offer_id: MakerOfferId,
+    route: MakerRouteV1,
 }
 
 #[derive(Serialize)]
@@ -526,6 +577,53 @@ struct WithdrawRequest<'a> {
 }
 
 impl SqliteSwapStore {
+    /// Resolves replay or snapshots the policy selected before a price effect.
+    ///
+    /// The returned revision must be supplied to external-price publication.
+    /// An exact durable replay is returned before inspecting current policy, so
+    /// retry never depends on a feed that may now be unavailable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for request-ID conflicts, duplicate offer identity,
+    /// disabled/missing policy, corrupt state, or a `SQLite` failure.
+    pub fn prepare_maker_offer_publication(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        route: MakerRouteV1,
+    ) -> Result<MakerOfferPublicationPreflight, StoreError> {
+        let request_json = serde_json::to_string(&PublishRequest { offer_id, route })?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(commit) =
+            replay_offer_mutation(&transaction, request_id, "offer_publish", &request_json)?
+        {
+            transaction.commit()?;
+            return Ok(MakerOfferPublicationPreflight::Replayed(commit));
+        }
+        let offer_exists: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM maker_offers WHERE offer_id = ?1)",
+            params![offer_id.as_str()],
+            |row| row.get(0),
+        )?;
+        if offer_exists {
+            return Err(StoreError::MakerOfferAlreadyExists);
+        }
+        let (policy, pair_configuration_revision) =
+            load_pair(&transaction, route)?.ok_or(StoreError::MissingMakerPair)?;
+        if !policy.enabled() {
+            return Err(StoreError::MakerRouteDisabled);
+        }
+        let result = MakerOfferPublicationPreflight::Pending {
+            pair_configuration_revision,
+            price_source: policy.price_source(),
+        };
+        transaction.commit()?;
+        Ok(result)
+    }
+
     /// Publishes one local-price offer and snapshots policy and price revisions atomically.
     ///
     /// # Errors
@@ -539,11 +637,7 @@ impl SqliteSwapStore {
         route: MakerRouteV1,
         now_unix_seconds: u64,
     ) -> Result<MakerOfferCommit, StoreError> {
-        let request_json = serde_json::to_string(&PublishRequest {
-            offer_id,
-            route,
-            now_unix_seconds,
-        })?;
+        let request_json = serde_json::to_string(&PublishRequest { offer_id, route })?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -587,8 +681,125 @@ impl SqliteSwapStore {
             price_observed_at_unix_seconds: now_unix_seconds,
             created_at_unix_seconds: now_unix_seconds,
             expires_at_unix_seconds,
+            price_source_identity_sha256: None,
         };
         offer.validate()?;
+        transaction.execute(
+            "INSERT INTO maker_offers (
+                 offer_id, pair, direction, payload_version, payload_json,
+                 expires_at_unix_seconds, state, revision, updated_request_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', 1, ?7)",
+            params![
+                offer_id.as_str(),
+                pair_name(route.pair()),
+                direction_name(route.direction()),
+                OFFER_PAYLOAD_VERSION,
+                serde_json::to_string(&offer)?,
+                u64_to_sql(expires_at_unix_seconds)?,
+                request_id.as_str(),
+            ],
+        )?;
+        persist_offer_mutation(&transaction, request_id, "offer_publish", &request_json, 1)?;
+        transaction.commit()?;
+        Ok(MakerOfferCommit {
+            revision: 1,
+            was_replay: false,
+        })
+    }
+
+    /// Publishes one Logos-priced offer from an already validated exact quote.
+    ///
+    /// The route policy, quote, source revision, observation time, and request
+    /// result commit in one transaction. Durable offer history prevents a
+    /// source revision from rolling back or identifying different quote data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for replay conflicts, disabled or non-Logos routes,
+    /// invalid quote/time input, revision rollback/equivocation, duplicate offer
+    /// identity, corrupt history, or a `SQLite` failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_logos_offer(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        route: MakerRouteV1,
+        expected_pair_configuration_revision: u64,
+        price: &LocalPriceV1,
+        price_source_identity_sha256: [u8; 32],
+        price_source_revision: u64,
+        price_observed_at_unix_seconds: u64,
+        now_unix_seconds: u64,
+        max_age_seconds: u64,
+    ) -> Result<MakerOfferCommit, StoreError> {
+        let request_json = serde_json::to_string(&PublishRequest { offer_id, route })?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(commit) =
+            replay_offer_mutation(&transaction, request_id, "offer_publish", &request_json)?
+        {
+            transaction.commit()?;
+            return Ok(commit);
+        }
+        if price.route() != route
+            || price_source_revision == 0
+            || price_source_revision > i64::MAX as u64
+            || price_source_identity_sha256 == [0; 32]
+            || price_observed_at_unix_seconds == 0
+            || price_observed_at_unix_seconds > now_unix_seconds
+            || now_unix_seconds > i64::MAX as u64
+            || !(1..=MAX_LOGOS_QUOTE_AGE_SECONDS).contains(&max_age_seconds)
+            || now_unix_seconds - price_observed_at_unix_seconds > max_age_seconds
+        {
+            return Err(MakerOfferError::InvalidSnapshot.into());
+        }
+        let offer_exists: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM maker_offers WHERE offer_id = ?1)",
+            params![offer_id.as_str()],
+            |row| row.get(0),
+        )?;
+        if offer_exists {
+            return Err(StoreError::MakerOfferAlreadyExists);
+        }
+        let (policy, policy_revision) =
+            load_pair(&transaction, route)?.ok_or(StoreError::MissingMakerPair)?;
+        if policy_revision != expected_pair_configuration_revision {
+            return Err(StoreError::StaleMakerConfiguration {
+                expected: Some(expected_pair_configuration_revision),
+                actual: Some(policy_revision),
+            });
+        }
+        if !policy.enabled() {
+            return Err(StoreError::MakerRouteDisabled);
+        }
+        if policy.price_source() != MakerPriceSourceKind::LogosCApi {
+            return Err(StoreError::MakerPriceSourceMismatch);
+        }
+        let expires_at_unix_seconds = now_unix_seconds
+            .checked_add(policy.offer_ttl_seconds())
+            .filter(|value| i64::try_from(*value).is_ok())
+            .ok_or(MakerOfferError::InvalidTime)?;
+        let offer = MakerOfferV1 {
+            id: offer_id.clone(),
+            pair_configuration: policy,
+            price: price.clone(),
+            pair_configuration_revision: policy_revision,
+            price_source_identity_sha256: Some(price_source_identity_sha256),
+            price_source_revision,
+            price_observed_at_unix_seconds,
+            created_at_unix_seconds: now_unix_seconds,
+            expires_at_unix_seconds,
+        };
+        offer.validate()?;
+        update_external_price_head(
+            &transaction,
+            route,
+            price_source_identity_sha256,
+            price,
+            price_source_revision,
+            price_observed_at_unix_seconds,
+        )?;
         transaction.execute(
             "INSERT INTO maker_offers (
                  offer_id, pair, direction, payload_version, payload_json,
@@ -1078,7 +1289,13 @@ fn replay_offer_mutation(
     let Some((stored_operation, stored_request, stored_result)) = row else {
         return Ok(None);
     };
-    if stored_operation != operation || stored_request != request_json {
+    if stored_operation != operation {
+        return Err(StoreError::MakerOfferRequestConflict);
+    }
+    let exact_request = stored_request == request_json;
+    let compatible_legacy_publish =
+        operation == "offer_publish" && equivalent_publish_requests(&stored_request, request_json);
+    if !exact_request && !compatible_legacy_publish {
         return Err(StoreError::MakerOfferRequestConflict);
     }
     let result: StoredOfferCommitV1 = serde_json::from_str(&stored_result)?;
@@ -1089,6 +1306,15 @@ fn replay_offer_mutation(
         revision: result.revision,
         was_replay: true,
     }))
+}
+
+fn equivalent_publish_requests(stored: &str, current: &str) -> bool {
+    let stored = serde_json::from_str::<ReplayPublishRequest>(stored);
+    let current = serde_json::from_str::<ReplayPublishRequest>(current);
+    match (stored, current) {
+        (Ok(stored), Ok(current)) => stored == current,
+        _ => false,
+    }
 }
 
 fn persist_offer_mutation(
@@ -1415,6 +1641,76 @@ fn sql_to_u64(value: i64) -> Result<u64, StoreError> {
     Ok(value)
 }
 
+fn update_external_price_head(
+    transaction: &rusqlite::Transaction<'_>,
+    route: MakerRouteV1,
+    source_identity_sha256: [u8; 32],
+    price: &LocalPriceV1,
+    source_revision: u64,
+    observed_at_unix_seconds: u64,
+) -> Result<(), StoreError> {
+    let prior_head = transaction
+        .query_row(
+            "SELECT source_revision, observed_at_unix_seconds,
+                    lez_units_per_lot, foreign_units_per_lot
+             FROM maker_external_price_heads
+             WHERE pair = ?1 AND direction = ?2 AND source_identity_sha256 = ?3",
+            params![
+                pair_name(route.pair()),
+                direction_name(route.direction()),
+                source_identity_sha256.as_slice(),
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((prior_revision, prior_observed, prior_lez, prior_foreign)) = prior_head {
+        let prior_revision = sql_to_u64(prior_revision)?;
+        let prior_observed = sql_to_u64(prior_observed)?;
+        let prior_lez = sql_to_u64(prior_lez)?;
+        let prior_foreign = sql_to_u64(prior_foreign)?;
+        if prior_revision > source_revision
+            || (prior_revision < source_revision && prior_observed > observed_at_unix_seconds)
+        {
+            return Err(StoreError::MakerPriceRevisionRollback);
+        }
+        if prior_revision == source_revision
+            && (prior_observed != observed_at_unix_seconds
+                || prior_lez != price.lez_units_per_lot()
+                || prior_foreign != price.foreign_units_per_lot())
+        {
+            return Err(StoreError::MakerPriceRevisionConflict);
+        }
+    }
+    transaction.execute(
+        "INSERT INTO maker_external_price_heads (
+             pair, direction, source_identity_sha256, source_revision,
+             observed_at_unix_seconds, lez_units_per_lot, foreign_units_per_lot
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(pair, direction, source_identity_sha256) DO UPDATE SET
+             source_revision = excluded.source_revision,
+             observed_at_unix_seconds = excluded.observed_at_unix_seconds,
+             lez_units_per_lot = excluded.lez_units_per_lot,
+             foreign_units_per_lot = excluded.foreign_units_per_lot",
+        params![
+            pair_name(route.pair()),
+            direction_name(route.direction()),
+            source_identity_sha256.as_slice(),
+            u64_to_sql(source_revision)?,
+            u64_to_sql(observed_at_unix_seconds)?,
+            u64_to_sql(price.lez_units_per_lot())?,
+            u64_to_sql(price.foreign_units_per_lot())?,
+        ],
+    )?;
+    Ok(())
+}
+
 fn u64_to_sql(value: u64) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| MakerOfferError::InvalidTime.into())
 }
@@ -1458,6 +1754,17 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
          ) STRICT;
          CREATE INDEX IF NOT EXISTS maker_offers_discovery
              ON maker_offers (state, expires_at_unix_seconds, pair, direction, offer_id);
+         CREATE TABLE IF NOT EXISTS maker_external_price_heads (
+             pair                        TEXT NOT NULL CHECK (pair IN ('bitcoin', 'monero', 'zcash')),
+             direction                   TEXT NOT NULL CHECK (direction IN ('taker_sells_foreign', 'taker_sells_lez')),
+             source_identity_sha256      BLOB NOT NULL CHECK (length(source_identity_sha256) = 32),
+             source_revision             INTEGER NOT NULL CHECK (source_revision > 0),
+             observed_at_unix_seconds    INTEGER NOT NULL CHECK (observed_at_unix_seconds > 0),
+             lez_units_per_lot           INTEGER NOT NULL CHECK (lez_units_per_lot > 0),
+             foreign_units_per_lot       INTEGER NOT NULL CHECK (foreign_units_per_lot > 0),
+             PRIMARY KEY (pair, direction, source_identity_sha256),
+             CHECK (pair != 'monero' OR direction = 'taker_sells_lez')
+         ) STRICT;
          CREATE TABLE IF NOT EXISTS maker_zec_negotiations (
              offer_id                  TEXT PRIMARY KEY NOT NULL,
              reservation_id            TEXT NOT NULL UNIQUE,

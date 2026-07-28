@@ -1,6 +1,6 @@
 # ADR 0081: Read maker prices through a pluggable source boundary
 
-Status: Accepted; local and isolated C-API process adapters GREEN — 2026-07-28
+Status: Accepted; local/process adapters and durable quote binding GREEN — 2026-07-28
 
 ## Context
 
@@ -21,12 +21,12 @@ flowchart LR
     CLI -->|"owner-local JSON-RPC"| Daemon["lez-maker-daemon"]
     Daemon --> Port["PriceSource"]
     Port --> Local["LocalPriceSource"]
-    Local --> DB[("SQLite schema v12")]
+    Local --> DB[("SQLite schema v15")]
     Port -.-> Parent["Bounded process adapter"]
     Parent -->|"exact path, route, time; bounded JSON"| Worker["one-shot price worker"]
     Worker -->|"libloading in only unsafe crate"| Module["pinned Logos module .so"]
     Module -.-> Worker
-    Daemon --> Offer["Future signed offer publisher"]
+    Daemon --> Offer["Immutable signed offer publisher"]
 ```
 
 The checked-in provisional ABI v1 uses only fixed-width `repr(C)` values, an
@@ -68,9 +68,36 @@ sequenceDiagram
     Daemon-->>CLI: Typed quote
 ```
 
-The current daemon serializes this bounded read with its store mutex. The trait
-does not require `Sync` because `rusqlite::Connection` is not `Sync`; a future
-dedicated persistence actor may move the boundary without changing callers.
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Daemon as Maker daemon
+    participant DB as SQLite schema v15
+    participant Worker as Bounded price worker
+    participant Delivery as Delivery publisher
+
+    Operator->>Daemon: publish offer with request ID
+    Daemon->>DB: preflight request ID, route and policy
+    alt Exact committed replay
+        DB-->>Daemon: prior commit; do not call worker
+    else Fresh Logos publication
+        DB-->>Daemon: source kind and policy revision
+        Daemon->>Worker: fetch exact quote outside DB lock
+        Worker-->>Daemon: ratio, module revision and observed time
+        Daemon->>DB: BEGIN IMMEDIATE and publish
+        DB->>DB: recheck policy revision and source
+        DB->>DB: reject module-revision rollback or equivocation
+        DB->>DB: write high-water, offer and replay result
+        DB-->>Daemon: COMMIT
+        Daemon->>Delivery: sign and publish exact offer snapshot
+    end
+    Daemon-->>Operator: committed or replayed result
+```
+
+Local reads use the already-held store mutex. The daemon integration must drop
+that mutex before invoking the bounded external process, then reacquire it only
+for preflight/final commit; the typed trait itself does not require `Sync`
+because `rusqlite::Connection` is not `Sync`.
 
 ## Atomicity and nonclaims
 
@@ -80,11 +107,19 @@ produced. Pre/post artifact hashing detects ordinary mutation, but the same-UID
 boundary is crash containment rather than an OS security sandbox; a malicious
 same-UID replace-and-restore race remains production hardening.
 
-The quote is one SQLite snapshot read and identifies its source revision, so an
-offer publisher can bind the exact price record it observed. This does not
-atomically bind a quote to a future offer or chain effect. Offer publication
-must persist its own immutable price and policy revisions in one transaction,
-and cross-chain atomicity remains the responsibility of the pair protocol.
+The external observation is not a distributed transaction. It becomes
+authoritative for one offer only at the SQLite linearization point. One
+`BEGIN IMMEDIATE` revalidates the exact enabled policy revision/source and
+freshness, advances a `(route, module SHA-256)` high-water record, inserts the
+immutable offer snapshot, and records request replay; every write commits or
+rolls back together. Lower revisions, an older observation under a newer
+revision, or different data under the same revision fail closed. A module SHA
+change creates an explicit new source epoch.
+
+Delivery publication occurs only after commit and signs the full immutable
+snapshot. A crash between SQLite and Delivery leaves a durable offer that
+reconciliation can republish; it never leaves a signed advertisement without
+durable authority. Cross-chain atomicity remains the pair protocol's concern.
 
 ## Evidence
 
@@ -104,7 +139,14 @@ Four parent-process tests additionally prove exact domain conversion, typed
 unavailability without substitution, abort and hang containment, exact timeout
 reap, oversized output rejection, and mutation/mode/hard-link/hash rejection.
 
-The local implementation is one complete M5 adapter. The worker plus bounded
-parent are GREEN sub-slices of the second adapter; daemon/store wiring, revision
-anti-rollback, retry identity, and atomic signed-offer binding remain open.
-LOGOS-021 still prevents eventual-upstream ABI compatibility claims.
+Schema-v15 store tests additionally prove request replay before any source
+effect, policy-revision revalidation, per-module revision anti-rollback,
+same-revision equivocation rejection, bounded freshness, and exact signed-offer
+snapshot fields. The complete swap-store all-target suite and strict Clippy are
+GREEN.
+
+The local implementation is one complete M5 adapter. The worker, bounded
+parent, and transactional store/offer binding are GREEN sub-slices of the
+second adapter; real daemon configuration/selection and black-box signed
+Delivery replay remain open. LOGOS-021 still prevents eventual-upstream ABI
+compatibility claims.

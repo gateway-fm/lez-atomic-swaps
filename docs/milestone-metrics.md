@@ -39,7 +39,7 @@ certified.
 | Application binaries | Maker daemon and partial maker CLI expose owner-local pair policy, exact local price, durable offer publish/list/withdraw, swap create/status/history, and alert commands; daemon-owned authenticated Delivery plus real taker ZEC acceptance are GREEN | Add maker manual effect/lifecycle commands and taker status/claim/refund plus BTC/XMR initiation |
 | Owner-local control | GREEN component slice | Mode-0700 owner runtime directory, disjoint mode-0600 owner and Chat Unix sockets, absolute/no-symlink paths, bounded HTTP/1 JSON-RPC, disabled batches, 16-connection cap, no-clobber readiness, exact-inode cleanup, and two black-box daemon/CLI journeys pass strict gates |
 | Daemon supervision | Standalone systemd and future-Core lifecycle sub-slice GREEN | Exact-pinned notification, typed health, SIGTERM, mode-0400 credentials, process-lifetime database lease, hardened unit, staged install verification, and exact-child adapter tests pass. Actual run `lez-m5-systemd-1000-1141654-16155` retained one route across one SIGKILL restart and completed scoped SIGTERM cleanup in one second. Live Logos Core attachment remains LOGOS-019 |
-| Price-source runtime adapters | 1 of 2 complete; second process boundary GREEN | The local adapter/CLI remain GREEN. Four actual-C worker tests plus four parent tests prove ABI/route/ratio/revision/time validation, typed absence/unavailability, abort/hang containment, exact timeout reap, owner/path/mode/link/hash checks, pre/post revalidation, and bounded output. Add daemon/store anti-rollback, retry identity, and atomic signed-offer binding |
+| Price-source runtime adapters | 1 of 2 complete; second process and store boundaries GREEN | The local adapter/CLI remain GREEN. Four actual-C worker tests plus four parent tests prove process isolation and validation. Schema-v15 tests prove replay-before-effect, policy CAS, module-epoch high-water, rollback/equivocation rejection, bounded freshness, and atomic immutable-offer binding. Add daemon configuration/selection and black-box signed Delivery replay |
 | Discovery and negotiation | Signed bounded Delivery, restart reconciliation, schema-v14 staging, atomic acceptance and final actor rebinding are GREEN. Exact-tree run `m5app-71dd9cc-20260724a` composed the real maker/taker binaries into actual chain effects | Add outage hardening and exact Logos adapters |
 | Persistent restart evidence | Exact packet-bearing replay `m5app6c3bbbe20260724a` retained pre-effect state and returned `Completed` from fresh post-terminal owner history/status while Chat/Delivery stayed absent; receipt `929c9a7c...c58e` binds source revision 4 and no-RPC offline replay | GREEN for the progressive local ZEC application PoC |
 | Concurrent application swaps | 0 composed | Distinct swap IDs, role state, agreements, escrows, deadlines, and effects |
@@ -51,7 +51,7 @@ certified.
 | Cleanup leaks | 0 in the exact-tree corridor run | Both run-scoped Compose projects, four containers, two unique images, the LEZ network, RPC ports, and named private roots are absent; every pre-existing foreign container survived |
 
 The progressive local ZEC application PoC gate is closed. Remaining literal M5
-ETA is 32–52 focused hours under the owner-approved Logos-upstream exception;
+ETA is 30–50 focused hours under the owner-approved Logos-upstream exception;
 C-API daemon/offer integration, CLI completion, multi-pair, outage behavior,
 and post-PoC hardening outputs remain open and are not inferred from this replay.
 

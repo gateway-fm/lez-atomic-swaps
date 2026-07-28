@@ -3143,10 +3143,11 @@ SQLite recovery machinery, ZEC watcher reconciliation, and property tests. It
 also has a taker CLI with key-pinned discovery and ZEC acceptance, daemon-owned
 signed run-local Delivery, durable Chat staging and atomic final acceptance,
 validated final-wire actor handoff, a literal fuzz target, and a hardened
-systemd/future-Core lifecycle seam. The provisional C-API v1 worker boundary is
-GREEN against actual C fixtures, but the parent runtime adapter and signed-offer
-binding remain. Taker lifecycle commands, manual effects, autonomous other-pair
-execution, outage behavior, and post-PoC hardening are still incomplete.
+systemd/future-Core lifecycle seam. The provisional C-API v1 worker and bounded
+parent are GREEN against actual C fixtures. Schema v15 now atomically binds an
+external module epoch, monotonic quote, policy snapshot, immutable offer, and
+request replay result; daemon selection and Delivery E2E remain. Taker lifecycle
+commands, manual effects, autonomous other-pair execution, outage behavior, and post-PoC hardening are still incomplete.
 
 ### Progressive PoC gate
 
@@ -3196,10 +3197,13 @@ separately from runtime dependencies.
   adapter, owner-local quote RPC/CLI, and restart journey are GREEN. The
   provisional fixed-width C ABI, one-shot `libloading` worker, actual-C fixture,
   typed missing/unavailable results, freshness validation, malformed-response
-  rejection, and native-abort containment are also GREEN. The parent process now
-  adds owner/path/mode/link/hash validation, pre/post artifact revalidation,
-  bounded output, timeout, and exact-child kill/reap. Daemon/store integration,
-  revision anti-rollback, retry identity, and signed-offer binding remain.
+  rejection, native-abort containment, and bounded parent are GREEN. Schema v15
+  adds a per-route/per-module high-water record and commits policy revalidation,
+  revision/time/ratio validation, immutable signed-offer fields, and request
+  replay together. Preflight returns an exact durable replay before any source
+  call; a fresh final transaction rejects policy races, revision rollback,
+  observation rollback, and same-revision equivocation. Daemon configuration,
+  source selection outside the store mutex, and black-box Delivery replay remain.
 - [ ] Complete maker CLI commands and the taker CLI. The separate `lez-taker` process now discovers daemon-published key-pinned
   signed offers and initiates ZEC acceptance through the isolated Chat socket. It
   validates the exact maker proposal, countersigns with an owner-private raw key,
@@ -3308,8 +3312,8 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 32 to 52 focused hours under the owner-approved Logos-upstream
-exception; C-API daemon/offer integration, other pairs, CLI completion, outage
+literal M5 ETA is 30 to 50 focused hours under the owner-approved Logos-upstream
+exception; C-API daemon/Delivery integration, other pairs, CLI completion, outage
 behavior, and post-PoC hardening remain explicitly open above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.

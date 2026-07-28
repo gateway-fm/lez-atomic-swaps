@@ -44,8 +44,9 @@ pub use maker_application::{
     MakerPriceSourceKind, MakerRouteV1, VersionedMakerRecord,
 };
 pub use maker_offer::{
-    MakerOfferCommit, MakerOfferError, MakerOfferId, MakerOfferRecordV1, MakerOfferStatus,
-    MakerOfferV1, MakerZecNegotiationStatus, MakerZecNegotiationV1, maker_zec_chat_session_id,
+    MakerOfferCommit, MakerOfferError, MakerOfferId, MakerOfferPublicationPreflight,
+    MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerZecNegotiationStatus,
+    MakerZecNegotiationV1, maker_zec_chat_session_id,
 };
 pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
@@ -67,7 +68,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 14;
+const DATABASE_SCHEMA_VERSION: i64 = 15;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
@@ -384,6 +385,12 @@ pub enum StoreError {
     /// A local-price mutation targeted a non-local price source.
     #[error("maker route does not use the local price source")]
     MakerPriceSourceMismatch,
+    /// A Logos source revision moved behind a quote already bound to an offer.
+    #[error("maker price source revision rolled back")]
+    MakerPriceRevisionRollback,
+    /// One Logos source revision identified different quote contents.
+    #[error("maker price source revision conflicts with durable quote history")]
+    MakerPriceRevisionConflict,
     /// A persisted bridge protocol value was malformed or unsupported.
     #[error("persisted bridge operation context contains an invalid bounded value")]
     BridgeProtocolValue(#[from] lez_bridge_protocol::ProtocolValueError),
