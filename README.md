@@ -138,9 +138,9 @@ claims one stable due row, retains the per-swap kernel lock across exact sealed
 each PID/start-time identity only after reap, and durably requeues, backs off,
 terminates, or fails closed under finite time/output bounds. Timeout with
 descendant cleanup, oversized/unknown output, terminal-without-effect, and happy
-requeue cases pass. The long-running daemon/systemd loop and prompt shutdown of
-an in-flight child,
-distinct-swap process overlap, and actual-node supervisor composition remain M5 work.
+requeue cases pass. Explicit cancellation also stops and reaps the process group
+in under one second before durable backoff. Long-running daemon/systemd wiring,
+distinct-swap overlap, and actual-node supervisor composition remain M5 work.
 Both real one-shot ZEC and BTC actors now accept exactly one private path or
 fixed inherited config FD 196. Each synchronously requires an anonymous,
 euid-owned, mode-0600, unlinked memfd with all immutable seals before Tokio

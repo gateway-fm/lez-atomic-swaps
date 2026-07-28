@@ -3,8 +3,9 @@
 mod runtime;
 
 pub use runtime::{
-    MakerActorSupervisorConfig, MakerActorSupervisorError, MakerActorSupervisorOutcome,
-    MakerActorSupervisorResolution, supervise_one_due_maker_actor,
+    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
+    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, supervise_one_due_maker_actor,
+    supervise_one_due_maker_actor_until,
 };
 
 use btc_reference_actor::validate_maker_manifest_config_bytes as validate_btc_config;

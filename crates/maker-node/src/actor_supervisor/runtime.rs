@@ -5,8 +5,12 @@ use std::{
     io::{self, Read},
     os::unix::process::CommandExt as _,
     process::{Child, ExitStatus, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use lez_swap_core::SwapId;
@@ -22,6 +26,7 @@ use wait_timeout::ChildExt as _;
 use super::prepare_maker_actor;
 
 const MAX_ATTEMPT_TIMEOUT: Duration = Duration::from_mins(5);
+const CHILD_WAIT_POLL: Duration = Duration::from_millis(20);
 const MIN_OUTPUT_BYTES: usize = 256;
 const MAX_OUTPUT_BYTES: usize = 64 * 1_024;
 
@@ -61,6 +66,31 @@ impl MakerActorSupervisorConfig {
             failure_backoff_seconds,
             max_output_bytes,
         })
+    }
+}
+
+/// Cloneable one-way stop signal for an in-flight bounded actor cycle.
+#[derive(Clone, Debug, Default)]
+pub struct MakerActorSupervisorCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl MakerActorSupervisorCancellation {
+    /// Creates an unset cancellation signal.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests cancellation. Repeated calls are idempotent.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Reports whether cancellation has been requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
     }
 }
 
@@ -136,6 +166,34 @@ pub fn supervise_one_due_maker_actor(
     now: u64,
     config: &MakerActorSupervisorConfig,
 ) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    supervise_one_due_maker_actor_until(
+        store,
+        owner,
+        now,
+        config,
+        &MakerActorSupervisorCancellation::new(),
+    )
+}
+
+/// Claims and runs at most one due actor with prompt cooperative cancellation.
+///
+/// Cancellation before claim performs no write. Cancellation after claim kills
+/// and reaps the current isolated process group, exact-clears its child identity,
+/// and durably backs off the leased row before returning.
+///
+/// # Errors
+///
+/// Returns an error only when the durable store/fence cannot safely complete.
+pub fn supervise_one_due_maker_actor_until(
+    store: &mut SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    now: u64,
+    config: &MakerActorSupervisorConfig,
+    cancellation: &MakerActorSupervisorCancellation,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    if cancellation.is_cancelled() {
+        return Ok(None);
+    }
     let Some(swap_id) = store.list_due_maker_actor_ids(now, 1)?.into_iter().next() else {
         return Ok(None);
     };
@@ -143,7 +201,7 @@ pub fn supervise_one_due_maker_actor(
         return Ok(None);
     };
     let generation = lease.generation();
-    let claimed = match run_claimed_attempt(store, &lease, config) {
+    let claimed = match run_claimed_attempt(store, &lease, config, cancellation) {
         Ok(value) => value,
         Err(ClaimedAttemptError::Scheduling(error)) => return Err(error.into()),
     };
@@ -219,6 +277,7 @@ fn run_claimed_attempt(
     store: &mut SqliteSwapStore,
     lease: &MakerActorLeaseV1,
     config: &MakerActorSupervisorConfig,
+    cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<ClaimedAttemptResult, ClaimedAttemptError> {
     let held_lock = match MakerActorHeldLock::acquire(lease.record()) {
         Ok(lock) => lock,
@@ -235,8 +294,14 @@ fn run_claimed_attempt(
             });
         }
     };
+    if cancellation.is_cancelled() {
+        return Ok(ClaimedAttemptResult {
+            attempt: ClaimedAttempt::Backoff("actor_cancelled"),
+            held_lock: Some(held_lock),
+        });
+    }
     let attempt = (|| {
-        let status = match run_child(store, lease, &held_lock, "status", config) {
+        let status = match run_child(store, lease, &held_lock, "status", config, cancellation) {
             Ok(output) => output,
             Err(ChildRunError::Retry(class)) => return Ok(ClaimedAttempt::Backoff(class)),
             Err(ChildRunError::Fail(class)) => return Ok(ClaimedAttempt::Failed(class)),
@@ -249,7 +314,14 @@ fn run_claimed_attempt(
             Ok(StatusDecision::Run(command)) => command,
             Err(()) => return Ok(ClaimedAttempt::Failed("actor_output_invalid")),
         };
-        let effect = match run_child(store, lease, &held_lock, command.name(), config) {
+        let effect = match run_child(
+            store,
+            lease,
+            &held_lock,
+            command.name(),
+            config,
+            cancellation,
+        ) {
             Ok(output) => output,
             Err(ChildRunError::Retry(class)) => return Ok(ClaimedAttempt::Backoff(class)),
             Err(ChildRunError::Fail(class)) => return Ok(ClaimedAttempt::Failed(class)),
@@ -281,7 +353,11 @@ fn run_child(
     held_lock: &MakerActorHeldLock,
     actor_command: &'static str,
     config: &MakerActorSupervisorConfig,
+    cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<Vec<u8>, ChildRunError> {
+    if cancellation.is_cancelled() {
+        return Err(ChildRunError::Retry("actor_cancelled"));
+    }
     let artifacts =
         prepare_maker_actor(lease.record()).map_err(|error| classify_deployment(&error))?;
     let mut command = artifacts
@@ -322,17 +398,7 @@ fn run_child(
             .map_err(ChildRunError::Scheduling)?;
         return Err(ChildRunError::Retry("actor_output_unavailable"));
     };
-    let status = match child.wait_timeout(config.attempt_timeout) {
-        Ok(Some(status)) => Ok(status),
-        Ok(None) => {
-            kill_and_reap(&mut child);
-            Err(ChildRunError::Retry("actor_timeout"))
-        }
-        Err(_) => {
-            kill_and_reap(&mut child);
-            Err(ChildRunError::Retry("actor_wait_failed"))
-        }
-    };
+    let status = wait_for_child(&mut child, config.attempt_timeout, cancellation);
     let output = match reader.join() {
         Ok(result) => result.map_err(|_| ChildRunError::Fail("actor_output_invalid")),
         Err(_) => Err(ChildRunError::Fail("actor_output_invalid")),
@@ -364,10 +430,43 @@ fn classify_exit(_status: ExitStatus) -> ChildRunError {
     ChildRunError::Retry("actor_exit_failed")
 }
 
-fn kill_and_reap(child: &mut Child) {
-    if let Some(pid) = Pid::from_raw(child.id().cast_signed()) {
+fn wait_for_child(
+    child: &mut Child,
+    timeout: Duration,
+    cancellation: &MakerActorSupervisorCancellation,
+) -> Result<ExitStatus, ChildRunError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if cancellation.is_cancelled() {
+            kill_and_reap(child);
+            return Err(ChildRunError::Retry("actor_cancelled"));
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            kill_and_reap(child);
+            return Err(ChildRunError::Retry("actor_timeout"));
+        }
+        match child.wait_timeout(remaining.min(CHILD_WAIT_POLL)) {
+            Ok(Some(status)) => {
+                terminate_process_group(child.id());
+                return Ok(status);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                kill_and_reap(child);
+                return Err(ChildRunError::Retry("actor_wait_failed"));
+            }
+        }
+    }
+}
+
+fn terminate_process_group(raw_pid: u32) {
+    if let Some(pid) = Pid::from_raw(raw_pid.cast_signed()) {
         let _ = kill_process_group(pid, Signal::KILL);
     }
+}
+fn kill_and_reap(child: &mut Child) {
+    terminate_process_group(child.id());
     let _ = child.kill();
     let _ = child.wait();
 }

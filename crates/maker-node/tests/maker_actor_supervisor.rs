@@ -8,8 +8,8 @@ use std::{
 };
 
 use lez_maker_node::{
-    MakerActorSupervisorConfig, MakerActorSupervisorResolution, prepare_maker_actor,
-    supervise_one_due_maker_actor,
+    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorResolution,
+    prepare_maker_actor, supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
 };
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, RecoverySchedule, SwapCoordinator,
@@ -141,6 +141,90 @@ fn timed_out_actor_is_reaped_cleared_and_durably_backed_off() {
     .expect("one due actor");
 
     assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(
+        outcome.resolution(),
+        MakerActorSupervisorResolution::Backoff
+    );
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Backoff);
+    assert_eq!(record.child_identity(), None);
+    assert!(store.list_due_maker_actor_ids(39, 1).unwrap().is_empty());
+    assert_eq!(
+        store.list_due_maker_actor_ids(40, 1).unwrap(),
+        [SwapId::new(swap_id).unwrap()]
+    );
+}
+
+#[test]
+fn successful_actor_leader_cannot_leave_stdout_holding_descendant() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-success-descendant";
+    let program = b"#!/bin/sh\n\
+        test \"$1\" = \"--config-fd\" || exit 91\n\
+        test \"$2\" = \"196\" || exit 92\n\
+        while :; do :; done &\n\
+        printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}'\n\
+        exit 0\n";
+    let mut store = registered_store(root.path(), swap_id, program);
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+        .expect("bounded descendant config");
+    let started = Instant::now();
+
+    let outcome = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x57; 16]).unwrap(),
+        10,
+        &config,
+    )
+    .expect("descendant cycle")
+    .expect("one due actor");
+
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(
+        outcome.resolution(),
+        MakerActorSupervisorResolution::Terminal
+    );
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Terminal);
+    assert_eq!(record.child_identity(), None);
+}
+
+#[test]
+fn cancellation_kills_descendants_clears_identity_and_durably_backs_off() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-cancel";
+    let program = b"#!/bin/sh\n\
+        test \"$1\" = \"--config-fd\" || exit 91\n\
+        test \"$2\" = \"196\" || exit 92\n\
+        test -r /proc/self/fd/196 || exit 93\n\
+        test -r /proc/self/fd/198 || exit 94\n\
+        while :; do :; done &\n\
+        wait\n";
+    let mut store = registered_store(root.path(), swap_id, program);
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+        .expect("bounded cancellation config");
+    let cancellation = MakerActorSupervisorCancellation::new();
+    let signal = cancellation.clone();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        signal.cancel();
+    });
+    let started = Instant::now();
+
+    let outcome = supervise_one_due_maker_actor_until(
+        &mut store,
+        MakerActorLeaseOwner::new([0x56; 16]).unwrap(),
+        10,
+        &config,
+        &cancellation,
+    )
+    .expect("cancelled cycle")
+    .expect("one due actor");
+    canceller.join().unwrap();
+
+    assert!(started.elapsed() < Duration::from_secs(1));
     assert_eq!(
         outcome.resolution(),
         MakerActorSupervisorResolution::Backoff

@@ -3430,17 +3430,21 @@ separately from runtime dependencies.
   one stable due row, acquires the per-swap kernel lock, executes exact sealed
   `status`, selects `activate`, `drive`, or BTC `recover`, and retains the lock
   through the effect process and durable owner/generation-fenced resolution.
-  Every spawned PID plus Linux start ticks is recorded before waiting and
-  exact-cleared only after kill/reap or normal reap. Finite time and output
-  bounds classify transient process failure as durable backoff and malformed
-  output/deployment as failed without storing payloads. Tests prove happy
-  status-to-activate requeue at the exact due time, kill/reap/clear on timeout,
-  oversized-output drain/reap/fail-closed, terminal status without an effect
-  process, and exact child-clear CAS. These component tests use local process,
-  kernel, filesystem, and SQLite fixtures only.
+  Every spawned PID plus Linux start ticks is recorded before waiting and exact-
+  cleared only after kill/reap or normal reap. Each actor command has its own
+  process group; timeout, explicit cancellation, or a successful leader exit
+  kills lingering descendants before the output reader joins. Finite time and
+  output bounds classify transient process failure as durable backoff and
+  malformed output/deployment as failed without storing payloads. Seven tests
+  prove happy status-to-activate requeue at the exact due time, kill/reap/clear
+  on timeout, prompt cooperative cancellation, successful-leader descendant
+  cleanup, oversized-output drain/reap/fail-closed, unknown-outcome rejection,
+  terminal status without an effect process, and exact child-clear CAS. These
+  component tests use local process, kernel, filesystem, and SQLite fixtures
+  only.
 
-  Next, compose this cycle into the long-running daemon with prompt
-  cancellation of an in-flight child and collision-resistant startup ownership.
+  Next, compose this cycle and cancellation into the long-running daemon with
+  collision-resistant startup ownership and abandoned-lease recovery.
   Rehearse sealed actor execution under hardened systemd, route existing M3
   overlap and M5 ZEC application flows through it, then prove one exact
   SIGKILL/restart while a disjoint peer reaches terminal without duplicate

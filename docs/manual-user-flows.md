@@ -4657,8 +4657,8 @@ only the acceptance-to-scheduler handoff.
 
 Current limitation: distinct-swap registry selection, exact pair-manifest
 comparison, and one bounded supervisor cycle are implemented. Long-running
-daemon/systemd supervision, prompt in-flight cancellation, disjoint process
-overlap, and actual-node supervisor composition remain.
+daemon/systemd wiring, abandoned-lease recovery, disjoint process overlap, and
+actual-node supervisor composition remain.
 
 ## Flow 1H: repeat one bounded fenced maker-actor cycle
 
@@ -4674,12 +4674,13 @@ cargo test --locked -p lez-swap-store --test maker_actor_process \
   -- --exact --nocapture
 ```
 
-Expected result: five supervisor cases and one exact store case pass. The
+Expected result: seven supervisor cases and one exact store case pass. The
 supervisor executes `status` and then the selected effect from the same sealed
 deployment while retaining lock FD 198 through durable resolution. The matrix
 proves happy requeue, timeout kill/reap/clear plus backoff, bounded output
-drain/reap plus fail-closed, rejection of an unknown outcome, and terminal
-status without an effect process.
+drain/reap plus fail-closed, rejection of an unknown outcome, terminal status
+without an effect process, prompt cancellation, and successful-leader cleanup
+of a descendant retaining stdout and FD 198.
 
 ```mermaid
 sequenceDiagram
@@ -4716,8 +4717,10 @@ faucet, DNS service, network, or public funds. Cold compilation may need pinned
 Cargo registry dependencies.
 
 This flow certifies one bounded component cycle only. The long-running
-daemon/systemd loop, prompt cancellation of an in-flight child, disjoint swap
-overlap, and actual-node supervisor composition remain M5 work.
+daemon/systemd wiring, abandoned-lease recovery, disjoint swap overlap, and
+actual-node supervisor composition remain M5 work.
+
+## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 
 Build the two libraries, then reproduce the proven independent-actor claim

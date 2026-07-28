@@ -4,8 +4,8 @@
   held-lock recovery, physical artifact binding, atomic ZEC acceptance and
   expiry-independent replay, real BTC/ZEC sealed-config consumers, daemon-owned
   Maker-only ZEC provisioning, exact-snapshot pair comparison, and one bounded
-  pair-neutral supervisor cycle GREEN; long-running daemon/systemd execution,
-  prompt in-flight cancellation, disjoint process overlap, and actual-node
+  pair-neutral supervisor cycle and prompt process-group cancellation GREEN;
+  long-running daemon/systemd wiring, disjoint process overlap, and actual-node
   composition pending
 - Date: 2026-07-28
 
@@ -317,11 +317,12 @@ outpoints, and deadlines.
   Docker, faucet, or network participates.
 - Bounded-cycle tests prove sealed `status` then `activate` requeues at the exact
   due time, timeout kills the isolated process group and reaps before exact
-  child-identity clear and durable backoff, oversized output is drained and
-  fails closed, an unknown outcome is rejected, and terminal status resolves
-  without spawning an effect process. The child-clear CAS rejects a forged
-  owner or wrong start ticks. These tests use no RPC, node, Docker, faucet, DNS,
-  or public network.
+  child-identity clear and durable backoff, cancellation does the same in under
+  one second, and a successful leader cannot leave a stdout/lock-holding
+  descendant. Oversized output is drained and fails closed, an unknown outcome
+  is rejected, and terminal status resolves without spawning an effect process.
+  The child-clear CAS rejects a forged owner or wrong start ticks. These tests
+  use no RPC, node, Docker, faucet, DNS, or public network.
 - The packaged systemd unit names `memfd_create` explicitly, keeps native-only
   EPERM policy, installs the real ZEC actor, and carries the startup-pinned
   authority/root/program/digest inputs. An actual user-systemd run validates
@@ -331,5 +332,5 @@ outpoints, and deadlines.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
 - Literal coordinator closure still requires the long-running daemon/systemd
-  supervisor, prompt in-flight cancellation, a real role-process crash,
+  supervisor wiring, abandoned-lease recovery, a real role-process crash,
   disjoint overlap, and actual-node evidence.

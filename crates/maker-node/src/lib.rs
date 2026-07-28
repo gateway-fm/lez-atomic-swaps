@@ -7,8 +7,9 @@ mod logos_price_source;
 mod price_source;
 mod run_local_delivery;
 pub use actor_supervisor::{
-    MakerActorSupervisorConfig, MakerActorSupervisorError, MakerActorSupervisorOutcome,
-    MakerActorSupervisorResolution, prepare_maker_actor, supervise_one_due_maker_actor,
+    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
+    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, prepare_maker_actor,
+    supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
 };
 pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
