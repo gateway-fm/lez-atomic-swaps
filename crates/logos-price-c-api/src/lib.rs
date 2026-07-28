@@ -4,10 +4,11 @@
 //! run in a short-lived helper process: native module aborts, segmentation
 //! faults, and hangs therefore cannot corrupt the fund-owning maker daemon.
 
-use std::{mem::size_of, path::Path};
-
+#[cfg(feature = "worker-host")]
 use libloading::{Library, Symbol};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "worker-host")]
+use std::{mem::size_of, path::Path};
 use thiserror::Error;
 
 /// The only ABI version understood by this adapter.
@@ -163,6 +164,7 @@ impl WorkerQuoteV1 {
         self.as_of_unix_seconds.unwrap_or(0)
     }
 
+    #[cfg(feature = "worker-host")]
     const fn without_quote(
         status: WorkerPriceStatusV1,
         pair: AbiPairV1,
@@ -183,6 +185,7 @@ impl WorkerQuoteV1 {
 
 #[derive(Clone, Copy)]
 #[repr(C)]
+#[cfg(feature = "worker-host")]
 struct PriceRequestV1 {
     struct_size: u32,
     abi_version: u32,
@@ -194,6 +197,7 @@ struct PriceRequestV1 {
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
+#[cfg(feature = "worker-host")]
 struct PriceResponseV1 {
     struct_size: u32,
     abi_version: u32,
@@ -206,9 +210,10 @@ struct PriceResponseV1 {
     reserved: [u64; 2],
 }
 
+#[cfg(feature = "worker-host")]
 type AbiVersionFn = unsafe extern "C" fn() -> u32;
+#[cfg(feature = "worker-host")]
 type QuoteFn = unsafe extern "C" fn(*const PriceRequestV1, *mut PriceResponseV1) -> i32;
-
 /// Errors at the provisional native-module boundary.
 #[derive(Debug, Error)]
 pub enum PriceCApiError {
@@ -247,6 +252,7 @@ pub enum PriceCApiError {
 ///
 /// Fails closed for unsafe paths, ABI/symbol mismatches, invalid statuses,
 /// malformed ratios, route substitution, revision errors, or stale/future data.
+#[cfg(feature = "worker-host")]
 pub fn query_module_once(
     module: &Path,
     pair: AbiPairV1,
@@ -321,6 +327,7 @@ pub fn query_module_once(
     }
 }
 
+#[cfg(feature = "worker-host")]
 fn validate_quote(
     response: PriceResponseV1,
     pair: AbiPairV1,

@@ -31,6 +31,18 @@ impl PriceQuoteV1 {
     pub const fn observed_at_unix_seconds(&self) -> u64 {
         self.observed_at_unix_seconds
     }
+
+    pub(crate) const fn from_external(
+        price: LocalPriceV1,
+        source_revision: u64,
+        observed_at_unix_seconds: u64,
+    ) -> Self {
+        Self {
+            price,
+            source_revision,
+            observed_at_unix_seconds,
+        }
+    }
 }
 
 /// Structured price-source failure.
@@ -45,6 +57,15 @@ pub enum PriceSourceError {
     /// A supposedly route-unique source returned more than one quote.
     #[error("price source returned duplicate route quotes")]
     DuplicateQuote,
+    /// The selected external source is temporarily unavailable.
+    #[error("price source is temporarily unavailable")]
+    UnavailableQuote,
+    /// The external worker exceeded its configured response deadline.
+    #[error("price source worker timed out")]
+    SourceTimeout,
+    /// The external artifact, process result, or quote violated its contract.
+    #[error("external price source failed validation")]
+    InvalidSource,
 }
 
 /// Synchronous quote boundary used inside the daemon's persistence actor.

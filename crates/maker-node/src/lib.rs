@@ -2,6 +2,7 @@
 
 mod daemon_lifecycle;
 mod local_rpc;
+mod logos_price_source;
 mod price_source;
 mod run_local_delivery;
 pub use daemon_lifecycle::{
@@ -9,6 +10,7 @@ pub use daemon_lifecycle::{
     ProcessMakerDaemon,
 };
 pub use local_rpc::call_local_rpc;
+pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
 pub use run_local_delivery::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery,
@@ -1395,7 +1397,12 @@ fn price_source_error(error: PriceSourceError) -> ErrorObjectOwned {
     match error {
         PriceSourceError::MissingQuote => rpc_error(NOT_FOUND, error.to_string()),
         PriceSourceError::Store(error) => internal_store_error(error),
-        PriceSourceError::DuplicateQuote => rpc_error(INTERNAL_ERROR, error.to_string()),
+        PriceSourceError::DuplicateQuote | PriceSourceError::InvalidSource => {
+            rpc_error(INTERNAL_ERROR, error.to_string())
+        }
+        PriceSourceError::UnavailableQuote | PriceSourceError::SourceTimeout => {
+            rpc_error(-32_003, error.to_string())
+        }
     }
 }
 

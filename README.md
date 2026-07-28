@@ -59,9 +59,10 @@ health, SIGTERM cleanup, a process-lifetime database lease, an actual
 crash/restart rehearsal, and a bounded future Logos Core lifecycle contract.
 Use [Flow 1D](docs/manual-user-flows.md#flow-1d-install-and-rehearse-the-maker-systemd-service)
 to repeat it. The provisional versioned Logos price C-API and one-shot worker
-are actual-C fixture GREEN, including native-abort containment; daemon/store and
-signed-offer integration remain. Completed maker/taker commands, other pairs,
-outage behavior, and hardening remain literal M5 work.
+are actual-C fixture GREEN. Its parent adapter also bounds time/output, reaps an
+aborted or hung exact child, and pins owner/path/mode/link/module-hash inputs;
+daemon/store anti-rollback and signed-offer integration remain. Completed
+maker/taker commands, other pairs, outage behavior, and hardening remain.
 
 Build and repeat the current real process boundary with:
 

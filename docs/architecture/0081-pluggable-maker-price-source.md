@@ -1,6 +1,6 @@
 # ADR 0081: Read maker prices through a pluggable source boundary
 
-Status: Accepted; local adapter and isolated C-API worker GREEN — 2026-07-28
+Status: Accepted; local and isolated C-API process adapters GREEN — 2026-07-28
 
 ## Context
 
@@ -35,8 +35,10 @@ observation time, route echo, and reserved-zero fields. A one-shot worker loads
 the module through `libloading`, copies the response, validates structure,
 route, units, revision, bounds and freshness, and emits bounded typed JSON. The
 ABI receives no database handle, wallet key, signing key, socket, or fund-moving
-authority. Native abort is process-contained; the parent process adapter must
-still add timeout, kill/reap, artifact pinning and output bounds.
+authority. Native abort is process-contained. The parent now enforces owner-only
+real-file paths, single links, non-writable artifacts, a pinned module SHA-256,
+pre/post-call revalidation, a five-second hard maximum, exact-child kill/reap,
+an empty environment, null input/diagnostics, and a 4 KiB output ceiling.
 
 ```mermaid
 sequenceDiagram
@@ -73,9 +75,10 @@ dedicated persistence actor may move the boundary without changing callers.
 ## Atomicity and nonclaims
 
 Process isolation preserves daemon memory/state atomicity when a foreign module
-aborts or returns malformed data: no quote or store mutation is produced. It is
-crash containment, not a distributed transaction or a same-UID security
-sandbox.
+aborts, hangs, or returns malformed data: no quote or store mutation is
+produced. Pre/post artifact hashing detects ordinary mutation, but the same-UID
+boundary is crash containment rather than an OS security sandbox; a malicious
+same-UID replace-and-restore race remains production hardening.
 
 The quote is one SQLite snapshot read and identifies its source revision, so an
 offer publisher can bind the exact price record it observed. This does not
@@ -97,7 +100,11 @@ mismatch rejection, route/ratio/revision/time/reserved-field rejection, and
 native-abort containment. All-target tests, strict Clippy and warning-fatal
 Rustdoc pass for the boundary crate.
 
-The local implementation is one complete M5 adapter. The native worker is a
-GREEN sub-slice of the second adapter; parent timeout/artifact/output controls,
-daemon/store wiring, revision anti-rollback, and signed-offer binding remain
-open. LOGOS-021 still prevents claims about an eventual upstream module's ABI.
+Four parent-process tests additionally prove exact domain conversion, typed
+unavailability without substitution, abort and hang containment, exact timeout
+reap, oversized output rejection, and mutation/mode/hard-link/hash rejection.
+
+The local implementation is one complete M5 adapter. The worker plus bounded
+parent are GREEN sub-slices of the second adapter; daemon/store wiring, revision
+anti-rollback, retry identity, and atomic signed-offer binding remain open.
+LOGOS-021 still prevents eventual-upstream ABI compatibility claims.

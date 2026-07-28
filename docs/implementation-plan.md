@@ -3196,9 +3196,10 @@ separately from runtime dependencies.
   adapter, owner-local quote RPC/CLI, and restart journey are GREEN. The
   provisional fixed-width C ABI, one-shot `libloading` worker, actual-C fixture,
   typed missing/unavailable results, freshness validation, malformed-response
-  rejection, and native-abort containment are also GREEN. Parent timeout and
-  exact-child reap, module path/hash/mode pinning, bounded output, daemon/store
-  integration, revision anti-rollback, and signed-offer binding remain.
+  rejection, and native-abort containment are also GREEN. The parent process now
+  adds owner/path/mode/link/hash validation, pre/post artifact revalidation,
+  bounded output, timeout, and exact-child kill/reap. Daemon/store integration,
+  revision anti-rollback, retry identity, and signed-offer binding remain.
 - [ ] Complete maker CLI commands and the taker CLI. The separate `lez-taker` process now discovers daemon-published key-pinned
   signed offers and initiates ZEC acceptance through the isolated Chat socket. It
   validates the exact maker proposal, countersigns with an owner-private raw key,
@@ -3307,8 +3308,8 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 34 to 55 focused hours under the owner-approved Logos-upstream
-exception; C-API parent/offer integration, other pairs, CLI completion, outage
+literal M5 ETA is 32 to 52 focused hours under the owner-approved Logos-upstream
+exception; C-API daemon/offer integration, other pairs, CLI completion, outage
 behavior, and post-PoC hardening remain explicitly open above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.

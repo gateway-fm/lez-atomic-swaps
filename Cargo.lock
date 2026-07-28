@@ -1991,6 +1991,7 @@ dependencies = [
  "jsonrpsee",
  "jsonrpsee-http-client",
  "lez-bridge-protocol",
+ "lez-logos-price-c-api",
  "lez-swap-core",
  "lez-swap-sdk-core",
  "lez-swap-store",
@@ -2005,6 +2006,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "wait-timeout",
  "zcash_encoding",
  "zcash_primitives",
  "zcash_protocol",
@@ -3860,6 +3862,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
