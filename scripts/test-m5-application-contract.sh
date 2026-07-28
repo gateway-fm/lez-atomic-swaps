@@ -17,7 +17,10 @@ rg -Fq 'export M5_APPLICATION_MODE=1' scripts/run-m5-zec-application-poc.sh ||
   fail "M5 wrapper does not force application mode"
 
 for required in \
-  'install -m 0500 "$actor_bin" "$m5_actor_program"' \
+  'install -m 0700 "$actor_bin" "$m5_actor_program"' \
+  'strip --strip-debug "$m5_actor_program"' \
+  'chmod 0500 "$m5_actor_program"' \
+  'require_command strip' \
   'stat -c %h -- "$m5_actor_program"' \
   'sha256sum "$m5_actor_program"' \
   '--actor-program "$m5_actor_program"' \

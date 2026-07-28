@@ -3487,6 +3487,20 @@ separately from runtime dependencies.
   the next atomic slice reroutes effects; the queued row is registration evidence,
   not supervisor execution evidence.
 
+  The 2026-07-28 current-artifact replay now uses the append-only M4 escrow
+  guest `dc370bc3...b7292` / ProgramId `4d659033...2c82`; its exact local
+  deployment is finalized at block 264 and the M5 runner binds both the raw
+  deployment receipt and canonical indexer-finality proof. Two cold-setup
+  attempts stopped before creating a run root or chain effect while completing
+  the locked sidecar cache and canonical Zebra height-104 maturity bootstrap.
+  The first application-layer attempt then exposed a real startup-bound RED:
+  validating the 168,579,992-byte debug actor took 20.741 seconds against the
+  ten-second handoff bound. Reusing the already-certified systemd packaging
+  pattern—private copy, `strip --strip-debug`, final mode 0500, then hash—reduced
+  the deployed actor to 33,690,232 bytes and fresh readiness to 4.446 seconds.
+  The focused M5 and CI hardening contracts are GREEN; an actual-node replay of
+  this correction remains required before upgrading the supervisor gate.
+
   ZEC actors now expose a role-fixed `recover` command that calls only the SDK's
   existing ordered `drive_refund` boundary. SDK tests prove LEZ-before-Zcash,
   owner-only submission, non-owner observation, early-deadline zero submission,

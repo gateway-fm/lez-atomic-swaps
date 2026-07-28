@@ -456,6 +456,7 @@ for command in awk base64 cargo curl date flock jq kill od perl readlink sha256s
 done
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   require_command install
+  require_command strip
 fi
 
 # A retained local node tuple may service only one effect-bearing corridor at a
@@ -705,7 +706,9 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   m5_actor_deployment_root="$private_base/actor-deployment"
   mkdir -m 0700 "$m5_actor_deployment_root"
   m5_actor_program="$m5_actor_deployment_root/zec-reference-actor"
-  install -m 0500 "$actor_bin" "$m5_actor_program"
+  install -m 0700 "$actor_bin" "$m5_actor_program"
+  strip --strip-debug "$m5_actor_program"
+  chmod 0500 "$m5_actor_program"
   [[ -f "$m5_actor_program" && ! -L "$m5_actor_program" \
     && "$(stat -c %a -- "$m5_actor_program")" == 500 \
     && "$(stat -c %h -- "$m5_actor_program")" == 1 ]] || {
