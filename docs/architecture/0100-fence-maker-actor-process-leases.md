@@ -229,6 +229,11 @@ locks, agreements, escrows, outpoints, and deadlines.
   schemas on the FD route and a mismatched agreement digest before activation.
   These tests use only local process and kernel primitives; no RPC, node,
   Docker, faucet, or network participates.
+- The packaged systemd unit names `memfd_create` explicitly alongside
+  `@system-service`, keeps native-architecture and EPERM fail-closed policy,
+  and uses control-group kill semantics. This is a documented portability
+  contract: the host's current `@system-service` expansion already includes
+  `memfd_create`. An actor-bearing transient-unit execution remains open.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
 - Literal coordinator closure still requires daemon-owned maker-only artifact

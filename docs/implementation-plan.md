@@ -3352,10 +3352,18 @@ separately from runtime dependencies.
   tests, strict Clippy, and warning-free Rustdoc are GREEN; the refactor removed
   duplicated schema alternatives without lint exceptions.
 
+  The systemd syscall-policy RED/GREEN slice is statically closed. The packaged
+  unit now names `memfd_create` explicitly alongside `@system-service`, retains
+  native-only/EPERM policy and `KillMode=control-group`, and its lifecycle
+  contract asserts every relevant directive. The current host already includes
+  `memfd_create` through `@system-service`; the explicit token prevents that
+  group expansion from becoming an undocumented portability dependency. An
+  actor-bearing transient-unit execution is still required before M5 closure.
+
   Next, add a maker-only no-clobber ZEC actor provisioner and route Chat
   completion through the mandatory scheduled API; compare both pair configs'
   swap/role/state/agreement semantics with each leased manifest; explicitly
-  permit and rehearse `memfd_create` under the hardened systemd unit; implement
+  rehearse sealed-actor execution under the hardened systemd unit; implement
   the bounded pair-neutral supervisor; route existing M3 overlap and M5 ZEC
   application flows through it; then prove one exact SIGKILL/restart while a
   disjoint peer reaches terminal without duplicate effects. This partial progress

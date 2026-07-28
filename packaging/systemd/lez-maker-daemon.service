@@ -59,7 +59,7 @@ MemoryDenyWriteExecute=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
-SystemCallFilter=@system-service
+SystemCallFilter=@system-service memfd_create
 SystemCallErrorNumber=EPERM
 RemoveIPC=yes
 

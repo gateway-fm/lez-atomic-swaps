@@ -39,6 +39,12 @@ for directive in \
   'RuntimeDirectoryMode=0700' \
   'StateDirectory=lez-atomic-swaps' \
   'StateDirectoryMode=0700' \
+  'KillMode=control-group' \
+  'MemoryDenyWriteExecute=yes' \
+  'SystemCallArchitectures=native' \
+  'SystemCallFilter=@system-service memfd_create' \
+  'SystemCallErrorNumber=EPERM' \
+  'ProtectProc=invisible' \
   'UMask=0077' \
   'Restart=on-failure' \
   'TimeoutStopSec=30s' \
