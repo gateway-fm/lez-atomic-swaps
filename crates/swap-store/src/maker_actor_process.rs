@@ -217,6 +217,26 @@ impl MakerActorLeaseOwner {
         }
     }
 
+    /// Generates a nonzero owner identity from the operating system CSPRNG.
+    ///
+    /// The reserved all-zero value is discarded and regenerated. Callers should
+    /// create one identity per coordinator process lifetime and reuse it for all
+    /// leases owned by that process.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MakerActorProcessError::LeaseOwnerEntropy`] when the operating
+    /// system random source is unavailable.
+    pub fn random() -> Result<Self, MakerActorProcessError> {
+        loop {
+            let mut value = [0_u8; 16];
+            getrandom::fill(&mut value).map_err(|_| MakerActorProcessError::LeaseOwnerEntropy)?;
+            if value != [0; 16] {
+                return Ok(Self(value));
+            }
+        }
+    }
+
     const fn bytes(self) -> [u8; 16] {
         self.0
     }
@@ -594,6 +614,9 @@ pub enum MakerActorProcessError {
     /// The all-zero process owner is reserved.
     #[error("maker actor lease owner is invalid")]
     InvalidLeaseOwner,
+    /// The operating system could not provide lease-owner entropy.
+    #[error("maker actor lease owner entropy is unavailable")]
+    LeaseOwnerEntropy,
     /// Referenced application swap is absent.
     #[error("maker actor application swap does not exist")]
     MissingSwap,

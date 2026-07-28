@@ -131,6 +131,7 @@ systemd-run --user \
   --maker-claim-key-id transient-v1 \
   --maker-claim-key-file "$credential_directory/maker-claim-recovery.key" \
   --maker-claim-preimage-file "$credential_directory/maker-claim-preimage.key" \
+  --actor-supervisor \
   --zec-source-maker-config "$actor_source_config" \
   --zec-maker-actor-root "$actor_root" \
   --zec-actor-program "$actor_program" \

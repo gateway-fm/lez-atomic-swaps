@@ -4,6 +4,7 @@ use std::{
     io::{self, Write as _},
     os::unix::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
+    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,11 +14,13 @@ use jsonrpsee::server::{
     BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
 };
 use lez_maker_node::{
-    MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, ZecMakerActorProvisioner, chat_rpc_module,
-    import_terminal_zec_maker_projection, rpc_module,
+    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerRpc,
+    ProcessLogosPriceSource, RunLocalDelivery, ZecMakerActorProvisioner, chat_rpc_module,
+    import_terminal_zec_maker_projection, rpc_module, supervise_one_abandoned_maker_actor,
+    supervise_one_abandoned_maker_actor_until, supervise_one_due_maker_actor_until,
 };
 use lez_swap_core::{Participant, SwapId};
-use lez_swap_store::{SqliteSwapStore, SqliteZecRecoveryStore};
+use lez_swap_store::{MakerActorLeaseOwner, SqliteSwapStore, SqliteZecRecoveryStore};
 use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
 use rustix::fs::{CWD, FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
 use sd_notify::NotifyState;
@@ -114,15 +117,141 @@ struct Arguments {
     /// Maximum external observation age; defaults to 30 seconds when configured.
     #[arg(long, requires = "logos_price_worker")]
     logos_price_max_age_seconds: Option<u64>,
+    /// Runs the persistent pair-neutral actor coordinator on a dedicated store connection.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    actor_supervisor: bool,
+    /// Finite deadline for one actor status/effect cycle (1..=300000 milliseconds).
+    #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..=300_000))]
+    actor_attempt_timeout_milliseconds: Option<u64>,
+    /// Idle scheduling poll interval (1..=1000 milliseconds).
+    #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..=1_000))]
+    actor_poll_milliseconds: Option<u64>,
+    /// Delay before observing a still-live actor again.
+    #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..))]
+    actor_requeue_delay_seconds: Option<u64>,
+    /// Delay after a transient actor/dependency failure.
+    #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..))]
+    actor_failure_backoff_seconds: Option<u64>,
+    /// Maximum stdout bytes accepted from one actor command (256..=65536).
+    #[arg(
+        long,
+        requires = "actor_supervisor",
+        value_parser = clap::value_parser!(u64).range(256..=65_536)
+    )]
+    actor_max_output_bytes: Option<u64>,
+}
+
+struct ActorSupervisorRuntime {
+    store: SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    config: MakerActorSupervisorConfig,
+    poll_interval: Duration,
+}
+
+struct ActorSupervisorCancellationGuard(MakerActorSupervisorCancellation);
+
+impl Drop for ActorSupervisorCancellationGuard {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
+fn configured_actor_supervisor(
+    arguments: &Arguments,
+) -> anyhow::Result<Option<ActorSupervisorRuntime>> {
+    let tuning = (
+        arguments.actor_attempt_timeout_milliseconds,
+        arguments.actor_poll_milliseconds,
+        arguments.actor_requeue_delay_seconds,
+        arguments.actor_failure_backoff_seconds,
+        arguments.actor_max_output_bytes,
+    );
+    if !arguments.actor_supervisor {
+        ensure!(
+            tuning == (None, None, None, None, None),
+            "actor supervisor tuning requires explicit opt-in"
+        );
+        return Ok(None);
+    }
+    let max_output_bytes = usize::try_from(arguments.actor_max_output_bytes.unwrap_or(8_192))
+        .context("convert validated actor output bound")?;
+    let config = MakerActorSupervisorConfig::new(
+        Duration::from_millis(
+            arguments
+                .actor_attempt_timeout_milliseconds
+                .unwrap_or(30_000),
+        ),
+        arguments.actor_requeue_delay_seconds.unwrap_or(5),
+        arguments.actor_failure_backoff_seconds.unwrap_or(30),
+        max_output_bytes,
+    )
+    .context("validate actor supervisor bounds")?;
+    let owner = MakerActorLeaseOwner::random().context("generate actor supervisor lease owner")?;
+    let mut store =
+        SqliteSwapStore::open(&arguments.database).context("open actor supervisor database")?;
+
+    loop {
+        let now = trusted_now_unix_seconds()?;
+        if supervise_one_abandoned_maker_actor(&mut store, owner, now, &config)
+            .context("recover abandoned maker actor before readiness")?
+            .is_none()
+        {
+            break;
+        }
+    }
+
+    Ok(Some(ActorSupervisorRuntime {
+        store,
+        owner,
+        config,
+        poll_interval: Duration::from_millis(arguments.actor_poll_milliseconds.unwrap_or(50)),
+    }))
+}
+
+fn run_actor_supervisor(
+    mut runtime: ActorSupervisorRuntime,
+    cancellation: &MakerActorSupervisorCancellation,
+) -> anyhow::Result<()> {
+    while !cancellation.is_cancelled() {
+        let now = trusted_now_unix_seconds()?;
+        if supervise_one_abandoned_maker_actor_until(
+            &mut runtime.store,
+            runtime.owner,
+            now,
+            &runtime.config,
+            cancellation,
+        )
+        .context("recover abandoned maker actor")?
+        .is_some()
+        {
+            continue;
+        }
+        if supervise_one_due_maker_actor_until(
+            &mut runtime.store,
+            runtime.owner,
+            now,
+            &runtime.config,
+            cancellation,
+        )
+        .context("supervise due maker actor")?
+        .is_some()
+        {
+            continue;
+        }
+        thread::sleep(runtime.poll_interval);
+    }
+    Ok(())
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)] // Keep startup, select, cancellation, and teardown order auditable.
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let logos_price_source = configured_logos_price_source(&arguments)?;
     let zec_actor_provisioner = configured_zec_actor_provisioner(&arguments)?;
     let _state_lease = acquire_state_lease(&arguments.database)?;
     import_terminal_projection(&arguments).await?;
+    let actor_supervisor = configured_actor_supervisor(&arguments)?;
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
     let (chat_listener, _chat_socket_guard) =
         bind_optional_owner_socket(arguments.chat_socket.as_deref())?;
@@ -151,6 +280,15 @@ async fn main() -> anyhow::Result<()> {
             .build(module, stop_handle.clone())
     });
     let mut connections = JoinSet::new();
+    let supervisor_cancellation = MakerActorSupervisorCancellation::new();
+    let _supervisor_cancellation_guard =
+        ActorSupervisorCancellationGuard(supervisor_cancellation.clone());
+    let mut supervisor_tasks = JoinSet::new();
+    if let Some(runtime) = actor_supervisor {
+        let cancellation = supervisor_cancellation.clone();
+        supervisor_tasks.spawn_blocking(move || run_actor_supervisor(runtime, &cancellation));
+    }
+    let mut daemon_error = None;
     notify_ready()?;
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -192,15 +330,35 @@ async fn main() -> anyhow::Result<()> {
                     .await
                 });
             }
-            signal = &mut shutdown => {
-                signal.context("wait for shutdown")?;
+            result = supervisor_tasks.join_next(), if !supervisor_tasks.is_empty() => {
+                let result = result.expect("enabled supervisor task is present");
+                daemon_error = Some(match result {
+                    Ok(Ok(())) => anyhow::anyhow!("actor supervisor exited unexpectedly"),
+                    Ok(Err(error)) => error.context("actor supervisor failed"),
+                    Err(error) => anyhow::Error::new(error).context("join actor supervisor"),
+                });
                 notify_stopping();
+                supervisor_cancellation.cancel();
+                break;
+            }
+            signal = &mut shutdown => {
+                if let Err(error) = signal {
+                    daemon_error = Some(anyhow::Error::new(error).context("wait for shutdown"));
+                }
+                notify_stopping();
+                supervisor_cancellation.cancel();
                 break;
             }
         }
     }
 
+    supervisor_cancellation.cancel();
     server_handle.stop().context("stop maker RPC")?;
+    while let Some(result) = supervisor_tasks.join_next().await {
+        result
+            .context("join actor supervisor during shutdown")?
+            .context("stop actor supervisor")?;
+    }
     while let Some(connection) = connections.join_next().await {
         connection
             .context("join local RPC connection")?
@@ -210,7 +368,10 @@ async fn main() -> anyhow::Result<()> {
     drop(chat_service);
     drop(stop_handle);
     server_handle.stopped().await;
-    Ok(())
+    match daemon_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 async fn shutdown_signal() -> io::Result<()> {
@@ -600,7 +761,18 @@ impl Drop for OwnedPath {
 #[cfg(test)]
 mod tests {
     use super::Arguments;
-    use clap::Parser as _;
+    use clap::{Parser as _, error::ErrorKind};
+
+    fn daemon_arguments() -> Vec<&'static str> {
+        vec!["lez-maker-daemon", "--database", "/tmp/maker.sqlite3"]
+    }
+
+    fn assert_cli_error(arguments: Vec<&'static str>, expected: ErrorKind) {
+        let Err(error) = Arguments::try_parse_from(arguments) else {
+            panic!("CLI must reject arguments");
+        };
+        assert_eq!(error.kind(), expected, "{error}");
+    }
 
     fn chat_arguments() -> Vec<&'static str> {
         vec![
@@ -643,5 +815,61 @@ mod tests {
         Arguments::try_parse_from(complete.clone()).expect("complete Chat deployment parses");
         complete.extend(["--zec-source-maker-config", "/tmp/second-actor.json"]);
         Arguments::try_parse_from(complete).expect("per-swap source registry parses");
+    }
+
+    #[test]
+    fn actor_supervisor_is_opt_in_and_accepts_complete_valid_tuning() {
+        Arguments::try_parse_from(daemon_arguments())
+            .expect("the actor supervisor remains disabled unless explicitly requested");
+
+        let mut enabled = daemon_arguments();
+        enabled.extend([
+            "--actor-supervisor",
+            "--actor-attempt-timeout-milliseconds",
+            "30000",
+            "--actor-poll-milliseconds",
+            "50",
+            "--actor-requeue-delay-seconds",
+            "5",
+            "--actor-failure-backoff-seconds",
+            "30",
+            "--actor-max-output-bytes",
+            "8192",
+        ]);
+        Arguments::try_parse_from(enabled)
+            .expect("an explicitly enabled actor supervisor accepts complete valid tuning");
+    }
+
+    #[test]
+    fn actor_supervisor_tuning_requires_explicit_opt_in() {
+        for (flag, value) in [
+            ("--actor-attempt-timeout-milliseconds", "30000"),
+            ("--actor-poll-milliseconds", "50"),
+            ("--actor-requeue-delay-seconds", "5"),
+            ("--actor-failure-backoff-seconds", "30"),
+            ("--actor-max-output-bytes", "8192"),
+        ] {
+            let mut arguments = daemon_arguments();
+            arguments.extend([flag, value]);
+            assert_cli_error(arguments, ErrorKind::MissingRequiredArgument);
+        }
+    }
+
+    #[test]
+    fn actor_supervisor_rejects_out_of_range_tuning() {
+        for (flag, value) in [
+            ("--actor-attempt-timeout-milliseconds", "0"),
+            ("--actor-attempt-timeout-milliseconds", "300001"),
+            ("--actor-poll-milliseconds", "0"),
+            ("--actor-poll-milliseconds", "1001"),
+            ("--actor-requeue-delay-seconds", "0"),
+            ("--actor-failure-backoff-seconds", "0"),
+            ("--actor-max-output-bytes", "255"),
+            ("--actor-max-output-bytes", "65537"),
+        ] {
+            let mut arguments = daemon_arguments();
+            arguments.extend(["--actor-supervisor", flag, value]);
+            assert_cli_error(arguments, ErrorKind::ValueValidation);
+        }
     }
 }

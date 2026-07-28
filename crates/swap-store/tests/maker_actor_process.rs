@@ -681,3 +681,13 @@ fn write_mode(path: &Path, bytes: &[u8], mode: u32) {
 fn digest(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
+
+#[test]
+fn random_lease_owners_are_nonzero_and_unique_in_a_small_sample() {
+    let mut owners = Vec::new();
+    for _ in 0..64 {
+        let owner = MakerActorLeaseOwner::random().unwrap();
+        assert!(!owners.contains(&owner));
+        owners.push(owner);
+    }
+}

@@ -9,15 +9,16 @@ use std::{
 
 use lez_maker_node::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorResolution,
-    prepare_maker_actor, supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
+    prepare_maker_actor, supervise_one_abandoned_maker_actor, supervise_one_due_maker_actor,
+    supervise_one_due_maker_actor_until,
 };
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, RecoverySchedule, SwapCoordinator,
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1, MakerActorScheduleState,
-    SqliteSwapStore, validate_maker_actor_program,
+    MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
+    MakerActorScheduleState, SqliteSwapStore, validate_maker_actor_program,
 };
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -112,6 +113,115 @@ fn one_bounded_cycle_runs_exact_sealed_actor_and_durably_requeues() {
         store.list_due_maker_actor_ids(15, 1).unwrap(),
         [SwapId::new(swap_id).unwrap()]
     );
+}
+
+#[test]
+fn abandoned_lease_is_generation_transferred_and_run_without_an_unleased_gap() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-recovery";
+    let program = b"#!/bin/sh\n\
+        test \"$1\" = \"--config-fd\" || exit 91\n\
+        test \"$2\" = \"196\" || exit 92\n\
+        test -r /proc/self/fd/196 || exit 93\n\
+        test -r /proc/self/fd/198 || exit 94\n\
+        case \"$3\" in\n\
+          status) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"not_activated\"}' ;;\n\
+          activate) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"activate\",\"outcome\":\"activated\",\"phase\":\"offered\",\"revision\":1}' ;;\n\
+          *) exit 95 ;;\n\
+        esac\n";
+    let mut store = registered_store(root.path(), swap_id, program);
+    let swap_id = SwapId::new(swap_id).unwrap();
+    let stale_owner = MakerActorLeaseOwner::new([0x61; 16]).unwrap();
+    let stale_lease = store
+        .claim_maker_actor(&swap_id, stale_owner, 10)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stale_lease.generation(), 1);
+
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+        .expect("bounded recovery config");
+    let outcome = supervise_one_abandoned_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x62; 16]).unwrap(),
+        20,
+        &config,
+    )
+    .expect("recovery cycle")
+    .expect("one abandoned actor");
+
+    assert_eq!(outcome.swap_id(), &swap_id);
+    assert_eq!(outcome.generation(), 2);
+    assert_eq!(
+        outcome.resolution(),
+        MakerActorSupervisorResolution::Requeued
+    );
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Queued);
+    assert_eq!(record.lease_generation(), 2);
+    assert_eq!(record.attempt_count(), 2);
+    assert_eq!(record.child_identity(), None);
+}
+
+#[test]
+fn live_old_lock_is_not_stolen_and_does_not_block_a_due_peer() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let terminal = b"#!/bin/sh\n\
+        test \"$1\" = \"--config-fd\" || exit 91\n\
+        test \"$2\" = \"196\" || exit 92\n\
+        printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}'\n";
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(database).unwrap();
+    let locked_root = root.path().join("locked");
+    let peer_root = root.path().join("peer");
+    for actor_root in [&locked_root, &peer_root] {
+        fs::create_dir(actor_root).unwrap();
+        fs::set_permissions(actor_root, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    register_actor(&mut store, &locked_root, "aaa-locked", terminal);
+    register_actor(&mut store, &peer_root, "zzz-peer", terminal);
+    let locked_id = SwapId::new("aaa-locked").unwrap();
+    store
+        .claim_maker_actor(
+            &locked_id,
+            MakerActorLeaseOwner::new([0x63; 16]).unwrap(),
+            10,
+        )
+        .unwrap()
+        .unwrap();
+    let locked_record = store
+        .list_maker_actor_processes()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.swap_id() == &locked_id)
+        .unwrap();
+    let old_process_lock = MakerActorHeldLock::acquire(&locked_record).unwrap();
+    let new_owner = MakerActorLeaseOwner::new([0x64; 16]).unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+        .expect("bounded peer config");
+
+    assert!(
+        supervise_one_abandoned_maker_actor(&mut store, new_owner, 20, &config)
+            .unwrap()
+            .is_none(),
+        "a live inherited lock must prevent generation transfer"
+    );
+    let peer = supervise_one_due_maker_actor(&mut store, new_owner, 20, &config)
+        .unwrap()
+        .expect("unrelated due peer progresses");
+    assert_eq!(peer.swap_id().as_str(), "zzz-peer");
+    assert_eq!(peer.resolution(), MakerActorSupervisorResolution::Terminal);
+
+    let records = store.list_maker_actor_processes().unwrap();
+    let locked = records
+        .iter()
+        .find(|record| record.swap_id() == &locked_id)
+        .unwrap();
+    assert_eq!(locked.schedule_state(), MakerActorScheduleState::Leased);
+    assert_eq!(locked.lease_generation(), 1);
+    assert_eq!(locked.attempt_count(), 1);
+    drop(old_process_lock);
 }
 
 #[test]
@@ -345,13 +455,23 @@ fn terminal_offline_status_resolves_without_an_effect_process() {
 }
 
 fn registered_store(root: &std::path::Path, swap_id: &str, program: &[u8]) -> SqliteSwapStore {
+    let mut store = SqliteSwapStore::open(root.join(format!("{swap_id}-maker.sqlite3"))).unwrap();
+    register_actor(&mut store, root, swap_id, program);
+    store
+}
+
+fn register_actor(
+    store: &mut SqliteSwapStore,
+    root: &std::path::Path,
+    swap_id: &str,
+    program: &[u8],
+) {
     let deployment = actor_deployment(root, swap_id);
     let actor_config = ActorConfig::load_private(&deployment.source_config).unwrap();
     let config_bytes = fs::read(&deployment.source_config).unwrap();
     let program_path = root.join(format!("{swap_id}-actor"));
     write_private(&program_path, program, 0o700);
     let program_sha256: [u8; 32] = Sha256::digest(program).into();
-    let mut store = SqliteSwapStore::open(root.join(format!("{swap_id}-maker.sqlite3"))).unwrap();
     store.save(&swap(swap_id)).unwrap();
     store
         .register_maker_actor(
@@ -368,9 +488,13 @@ fn registered_store(root: &std::path::Path, swap_id: &str, program: &[u8]) -> Sq
             10,
         )
         .unwrap();
-    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    let record = store
+        .list_maker_actor_processes()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.swap_id().as_str() == swap_id)
+        .unwrap();
     prepare_maker_actor(&record).expect("exact deployment preflight");
-    store
 }
 
 fn swap(id: &str) -> SwapCoordinator {

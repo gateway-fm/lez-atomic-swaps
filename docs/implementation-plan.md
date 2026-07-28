@@ -3146,7 +3146,14 @@ validated final-wire actor handoff, a literal fuzz target, and a hardened
 systemd/future-Core lifecycle seam. The provisional C-API v1 worker and bounded
 parent are GREEN against actual C fixtures. Schema v15 now atomically binds an
 external module epoch, monotonic quote, policy snapshot, immutable offer, and
-request replay result; daemon selection and signed Delivery replay are now process-GREEN. Taker lifecycle commands, manual effects, autonomous other-pair execution, persistent coordination, and post-PoC hardening are still incomplete. The local Delivery/Chat outage output is process-GREEN under ADR 0098; LOGOS-020 remains an upstream production-parity caveat.
+request replay result; daemon selection and signed Delivery replay are now
+process-GREEN. The persistent coordinator is local-process GREEN through daemon
+startup, abandoned-lease recovery, bounded actor execution, and SIGTERM cleanup;
+its actual-node, disjoint-live-process, and systemd actor crash/restart
+compositions remain open. Taker lifecycle commands, manual effects, autonomous
+other-pair execution, and post-PoC hardening are still incomplete. The local
+Delivery/Chat outage output is process-GREEN under ADR 0098; LOGOS-020 remains
+an upstream production-parity caveat.
 
 ### Progressive PoC gate
 
@@ -3426,30 +3433,40 @@ separately from runtime dependencies.
   swap. Wrong swap/state and deployment-path replacement tests pass before
   spawn.
 
-  One bounded pair-neutral supervisor cycle is now component-GREEN. It claims
-  one stable due row, acquires the per-swap kernel lock, executes exact sealed
-  `status`, selects `activate`, `drive`, or BTC `recover`, and retains the lock
-  through the effect process and durable owner/generation-fenced resolution.
-  Every spawned PID plus Linux start ticks is recorded before waiting and exact-
-  cleared only after kill/reap or normal reap. Each actor command has its own
-  process group; timeout, explicit cancellation, or a successful leader exit
-  kills lingering descendants before the output reader joins. Finite time and
-  output bounds classify transient process failure as durable backoff and
-  malformed output/deployment as failed without storing payloads. Seven tests
-  prove happy status-to-activate requeue at the exact due time, kill/reap/clear
-  on timeout, prompt cooperative cancellation, successful-leader descendant
-  cleanup, oversized-output drain/reap/fail-closed, unknown-outcome rejection,
-  terminal status without an effect process, and exact child-clear CAS. These
-  component tests use local process, kernel, filesystem, and SQLite fixtures
-  only.
+  The persistent daemon supervisor is now local-process GREEN. It is explicitly
+  opt-in, opens its own SQLite connection instead of sharing the RPC mutex, and
+  creates one nonzero 128-bit OS-CSPRNG lease owner per daemon lifetime. Before
+  readiness it scans every abandoned lease. Only successful acquisition of the
+  exact per-swap kernel lock authorizes an immediate CAS transfer to that owner
+  and generation plus one; the recovered row remains leased continuously, so
+  no queued or unleased handoff is visible. A live inherited lock leaves the
+  old lease unchanged while a distinct due peer still progresses.
 
-  Next, compose this cycle and cancellation into the long-running daemon with
-  collision-resistant startup ownership and abandoned-lease recovery.
-  Rehearse sealed actor execution under hardened systemd, route existing M3
-  overlap and M5 ZEC application flows through it, then prove one exact
-  SIGKILL/restart while a disjoint peer reaches terminal without duplicate
-  effects. This partial progress does not increase the 3/7 literal-output
-  score.
+  The same loop claims stable due rows, executes exact sealed `status`, selects
+  `activate`, `drive`, or BTC `recover`, and retains the lock through the effect
+  process and durable owner/generation-fenced resolution. Every spawned PID plus
+  Linux start ticks is recorded before waiting and exact-cleared only after
+  kill/reap or normal reap. Each command has its own process group; timeout,
+  SIGTERM cancellation, or successful leader exit kills lingering descendants
+  before the output reader joins. Finite time and output bounds classify
+  transient process failure as durable backoff and malformed output/deployment
+  as failed without storing payloads. The packaged systemd unit and transient
+  lifecycle rehearsal now enable the supervisor.
+
+  Focused evidence is 12/12 store cases and 9/9 pair-neutral supervisor cases.
+  One actual-daemon process E2E starts a leased local actor, proves owner health
+  remains responsive through the supervisor's dedicated connection, then
+  SIGTERMs the daemon and proves cancellation, process-group reap, durable
+  non-leased state, child-identity clear, and socket/readiness cleanup in under
+  two seconds. These tests use local process, kernel, filesystem, and SQLite
+  primitives only; no node, chain RPC, Docker, faucet, DNS, public network, or
+  public funds participate. A cold Cargo build may need the pinned registry
+  cache or dependency download.
+
+  Remaining coordinator closure work is actual-node actor composition,
+  concurrent disjoint live-process overlap, and a systemd actor SIGKILL/restart
+  rehearsal without duplicate effects. This progress does not by itself make
+  M5 complete.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3471,7 +3488,8 @@ separately from runtime dependencies.
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
 literal M5 ETA is 6 to 14 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
-coordination, and post-PoC hardening remain explicitly open above.
+coordinator composition hardening, and post-PoC hardening remain explicitly
+open above.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 tests the lifecycle contract against

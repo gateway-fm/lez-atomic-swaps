@@ -132,15 +132,23 @@ multiple-link metadata; the rehearsal deploys a single-link mode-0500 copy and
 does not relax the artifact policy. Exact config bytes are now hash-verified
 once, compared with their ZEC/BTC Maker role, swap, and role-state manifest
 fields, then sealed into FD 196; wrong-swap or wrong-state configs fail before
-spawn. One bounded pair-neutral supervisor cycle is now component-GREEN. It
-claims one stable due row, retains the per-swap kernel lock across exact sealed
-`status` and effect processes and durable resolution, records and exact-clears
-each PID/start-time identity only after reap, and durably requeues, backs off,
-terminates, or fails closed under finite time/output bounds. Timeout with
-descendant cleanup, oversized/unknown output, terminal-without-effect, and happy
-requeue cases pass. Explicit cancellation also stops and reaps the process group
-in under one second before durable backoff. Long-running daemon/systemd wiring,
-distinct-swap overlap, and actual-node supervisor composition remain M5 work.
+spawn. The opt-in long-running daemon supervisor is now local-process GREEN. It
+opens a dedicated SQLite connection so actor waits cannot block owner RPC,
+creates one nonzero 128-bit lease owner from the OS CSPRNG per daemon lifetime,
+and scans abandoned leases before readiness. A replacement generation may
+recover a lease only after acquiring its per-swap kernel lock; the CAS transfers
+owner and generation plus one while the row stays leased. A live old lock is
+left untouched and does not stop a distinct due peer. Exact sealed `status` and
+effect processes retain the lock through durable resolution, record and
+exact-clear PID/start-time identity only after reap, and run under finite
+process-group, time, and output bounds. SIGTERM cancels and reaps an in-flight
+group before socket/readiness cleanup. The packaged systemd unit and transient
+rehearsal enable this supervisor. Focused evidence is 12/12 store cases, 9/9
+supervisor cases, and one local-only actual-daemon E2E: health stayed responsive
+while the actor ran, and cancellation, reap, durable lease release, socket
+cleanup, and readiness cleanup completed in under two seconds. The focused
+runtime uses no node, RPC, Docker, faucet, DNS, public network, or public funds;
+a cold Cargo build may use its pinned registry cache or download.
 Both real one-shot ZEC and BTC actors now accept exactly one private path or
 fixed inherited config FD 196. Each synchronously requires an anonymous,
 euid-owned, mode-0600, unlinked memfd with all immutable seals before Tokio
@@ -150,10 +158,10 @@ legacy BTC schemas, or any other FD number fail without actor JSON. The BTC FD
 route additionally requires schema 6: it binds the exact agreement SHA-256 and
 exposes a secret-free role/state/digest/signed-swap validation surface for the
 supervisor while keeping path schemas 3–5 compatible. Pair-specific leased-
-manifest comparison is GREEN over the exact sealed snapshot, and one bounded
-supervisor cycle is component-GREEN. Long-running daemon/systemd execution,
-disjoint process overlap, and actual-node crash composition remain. This
-checkpoint does not increase the M5 score.
+manifest comparison is GREEN over the exact sealed snapshot, and the persistent
+daemon supervisor is process-GREEN. Actual-node actor composition, concurrent
+disjoint live-process overlap, and a systemd actor crash/restart rehearsal remain
+open. This checkpoint does not make M5 complete.
 
 Build and repeat the current real process boundary with:
 

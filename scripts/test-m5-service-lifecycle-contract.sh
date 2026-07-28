@@ -59,6 +59,7 @@ for directive in \
   'LoadCredentialEncrypted=maker-claim-recovery.key:' \
   'LoadCredentialEncrypted=maker-claim-preimage.key:' \
   'EnvironmentFile=/etc/lez-atomic-swaps/zec-actor.env' \
+  '--actor-supervisor' \
   '--zec-source-maker-config /var/lib/lez-atomic-swaps/authority/zec-maker.json' \
   '--zec-maker-actor-root /var/lib/lez-atomic-swaps/actors' \
   '--zec-actor-program /usr/bin/zec-reference-actor' \
@@ -96,6 +97,11 @@ rg -Fq 'NonBlockingLockExclusive' "$daemon" ||
   fail "daemon does not acquire a nonblocking process-lifetime state lease"
 rg -Fq 'NotifyState::Ready' "$daemon" || fail "daemon does not notify readiness"
 rg -Fq 'NotifyState::Stopping' "$daemon" || fail "daemon does not notify stopping"
+rg -Fq 'MakerActorLeaseOwner::random()' "$daemon" ||
+  fail "daemon does not generate a collision-resistant coordinator owner"
+rg -Fq 'supervise_one_abandoned_maker_actor' "$daemon" ||
+  fail "daemon does not recover abandoned actor leases"
+rg -Fq 'spawn_blocking' "$daemon" || fail "actor supervisor does not use an isolated store task"
 rg -Fq 'matches!(mode, 0o400 | 0o600)' "$secure_file" ||
   fail "systemd runtime credential mode 0400 is not accepted"
 rg -Fq 'sd-notify = { version = "=0.5.0"' "$manifest" ||

@@ -9,6 +9,7 @@ mod run_local_delivery;
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
     MakerActorSupervisorOutcome, MakerActorSupervisorResolution, prepare_maker_actor,
+    supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
     supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
 };
 pub use daemon_lifecycle::{

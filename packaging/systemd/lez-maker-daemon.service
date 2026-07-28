@@ -31,6 +31,7 @@ ExecStart=/usr/bin/lez-maker-daemon \
   --maker-claim-key-id systemd-v1 \
   --maker-claim-key-file %d/maker-claim-recovery.key \
   --maker-claim-preimage-file %d/maker-claim-preimage.key \
+  --actor-supervisor \
   --zec-source-maker-config /var/lib/lez-atomic-swaps/authority/zec-maker.json \
   --zec-maker-actor-root /var/lib/lez-atomic-swaps/actors \
   --zec-actor-program /usr/bin/zec-reference-actor \

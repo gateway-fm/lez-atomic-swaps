@@ -3,10 +3,10 @@
 - Status: Accepted; schema-v16 transactional/race foundation, inherited
   held-lock recovery, physical artifact binding, atomic ZEC acceptance and
   expiry-independent replay, real BTC/ZEC sealed-config consumers, daemon-owned
-  Maker-only ZEC provisioning, exact-snapshot pair comparison, and one bounded
-  pair-neutral supervisor cycle and prompt process-group cancellation GREEN;
-  long-running daemon/systemd wiring, disjoint process overlap, and actual-node
-  composition pending
+  Maker-only ZEC provisioning, exact-snapshot pair comparison, and the opt-in
+  persistent daemon supervisor with abandoned-lease recovery and prompt
+  process-group cancellation GREEN; actual-node composition, concurrent
+  disjoint live-process overlap, and systemd actor crash/restart pending
 - Date: 2026-07-28
 
 ## Context
@@ -241,6 +241,70 @@ sequenceDiagram
     S->>L: Release only after durable resolution
 ```
 
+## Persistent daemon composition
+
+The daemon creates one nonzero 128-bit lease owner from the operating system
+CSPRNG for its lifetime. When supervision is explicitly enabled, it opens a
+dedicated SQLite connection before readiness; actor execution never holds the
+owner RPC connection's mutex. Startup scans abandoned leases before publishing
+readiness, then the blocking supervisor loop alternates abandoned recovery and
+stable due-row claims. The packaged systemd unit and transient rehearsal enable
+the supervisor.
+
+```mermaid
+flowchart LR
+    Operator["Maker operator"] --> Socket["Owner-only Unix socket"]
+    Socket --> Rpc["Maker RPC task"]
+    Rpc --> RpcDb["RPC SQLite connection"]
+    Daemon["Maker daemon"] --> Owner["Per-daemon OS-CSPRNG owner"]
+    Daemon --> Loop["Persistent actor supervisor"]
+    Loop --> WorkerDb["Dedicated SQLite connection"]
+    WorkerDb --> Rows["Schema-v16 actor rows"]
+    Loop --> Lock["Per-swap kernel lock"]
+    Loop --> Child["Sealed actor process group"]
+    Child --> RoleDb["Role-local protocol database"]
+    Child --> LocalNodes["Configured chain RPCs"]
+    Signal["SIGTERM"] --> Loop
+    Loop --> Cleanup["Reap group and clear runtime files"]
+```
+
+The focused daemon-process E2E uses a local sleeping actor rather than
+`LocalNodes`; the node edge describes production composition, not focused-test
+evidence.
+
+```mermaid
+sequenceDiagram
+    participant D as Maker daemon
+    participant Q as Dedicated scheduler connection
+    participant L as Per-swap kernel lock
+    participant A as Sealed actor process group
+    actor O as Operator
+    D->>D: Generate one OS-CSPRNG owner
+    D->>Q: Open connection and list abandoned leases
+    loop each abandoned lease
+        D->>L: Try exact swap lock
+        alt old actor still holds lock
+            L-->>D: Busy
+            D->>Q: Leave owner and generation unchanged
+        else lock acquired
+            L-->>D: Held-lock capability
+            D->>Q: CAS owner and generation plus one while leased
+            D->>A: Run recovered exact manifest
+            A-->>D: Bounded result and reap
+            D->>Q: Commit fenced resolution
+            D->>L: Release after commit
+        end
+    end
+    D->>D: Publish readiness
+    O->>D: Health while actor is running
+    D-->>O: Ready without waiting on actor connection
+    O->>D: SIGTERM
+    D->>A: Cancel and terminate process group
+    A-->>D: Reaped
+    D->>Q: Exact-clear and durable backoff
+    D->>D: Remove socket and readiness file
+```
+
 ## Crash and peer-isolation flow
 
 ```mermaid
@@ -280,10 +344,14 @@ durable owner/generation-fenced resolution. Therefore another generation cannot
 enter between observation/effect and scheduling resolution; PID and start ticks
 are cleanup identity, never the concurrency fence. The primary key, immediate
 claim, secure physical artifact binding, and inherited kernel lock prevent two
-bounded cycles for one swap. Schema v16 or the bounded component alone does not
-make the full daemon-crash claim; long-running daemon/systemd composition and
-restart evidence remain required. The actor's exact durable intent and observe-
-before-rebroadcast remain the at-most-once public-effect boundary. Different
+bounded cycles for one swap. The persistent daemon composes that capability
+without a queued/unleased gap: only a successful kernel-lock acquisition can
+authorize the immediate owner/generation-plus-one recovery CAS, and a busy lock
+leaves the old lease untouched. A dedicated connection keeps long actor waits
+independent from owner RPC. This proves the local-process crash-handoff
+mechanism, not actual-node or systemd actor-crash composition. The actor's exact
+durable intent and observe-before-rebroadcast remain the at-most-once
+public-effect boundary. Different
 swaps use unique rows, configs, state databases, locks, agreements, escrows,
 outpoints, and deadlines.
 
@@ -315,22 +383,35 @@ outpoints, and deadlines.
   schemas on the FD route and a mismatched agreement digest before activation.
   These tests use only local process and kernel primitives; no RPC, node,
   Docker, faucet, or network participates.
-- Bounded-cycle tests prove sealed `status` then `activate` requeues at the exact
-  due time, timeout kills the isolated process group and reaps before exact
+- Bounded-cycle tests prove abandoned generation transfer without an unleased
+  gap, live-old-lock non-steal with distinct-peer progress, and sealed `status`
+  then `activate` requeue at the exact due time. Timeout kills the isolated
+  process group and reaps before exact
   child-identity clear and durable backoff, cancellation does the same in under
   one second, and a successful leader cannot leave a stdout/lock-holding
   descendant. Oversized output is drained and fails closed, an unknown outcome
   is rejected, and terminal status resolves without spawning an effect process.
   The child-clear CAS rejects a forged owner or wrong start ticks. These tests
-  use no RPC, node, Docker, faucet, DNS, or public network.
+  use no RPC, node, Docker, faucet, DNS, or public network. The focused
+  supervisor matrix is 9/9.
+- One actual-daemon process E2E proves the opt-in supervisor uses a dedicated
+  store connection: owner health remains responsive while a local actor is
+  leased. SIGTERM cancels and reaps that process group, clears child identity,
+  durably leaves the row non-leased, and removes socket/readiness files in under
+  two seconds. Runtime external resources are none; the test contacts no node,
+  RPC, Docker service, faucet, DNS service, network, or public funds. Cold Cargo
+  compilation may use the pinned registry cache or download dependencies.
+- The store actor-process matrix is 12/12, including nonzero unique sampled
+  OS-CSPRNG owners and the fencing, recovery, artifact, and peer-isolation
+  cases above.
 - The packaged systemd unit names `memfd_create` explicitly, keeps native-only
   EPERM policy, installs the real ZEC actor, and carries the startup-pinned
   authority/root/program/digest inputs. An actual user-systemd run validates
   them before readiness and preserves configuration across SIGKILL restart.
-  It does not yet execute a leased sealed actor; that remains part of the
-  supervisor composition.
+  The unit and transient runner now enable the daemon supervisor. A real sealed
+  actor crash/restart under systemd remains open.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
-- Literal coordinator closure still requires the long-running daemon/systemd
-  supervisor wiring, abandoned-lease recovery, a real role-process crash,
-  disjoint overlap, and actual-node evidence.
+- Literal coordinator closure still requires actual-node composition,
+  concurrent disjoint live-process overlap, and a real actor crash/restart
+  beneath systemd.

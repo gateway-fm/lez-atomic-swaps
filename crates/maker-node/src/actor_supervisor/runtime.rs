@@ -200,11 +200,95 @@ pub fn supervise_one_due_maker_actor_until(
     let Some(lease) = store.claim_maker_actor(&swap_id, owner, now)? else {
         return Ok(None);
     };
-    let generation = lease.generation();
     let claimed = match run_claimed_attempt(store, &lease, config, cancellation) {
         Ok(value) => value,
         Err(ClaimedAttemptError::Scheduling(error)) => return Err(error.into()),
     };
+    resolve_claimed_attempt(store, &lease, now, config, claimed).map(Some)
+}
+
+/// Recovers and runs at most one abandoned durable actor lease.
+///
+/// A lease is eligible only when this process can acquire its exact per-swap
+/// kernel lock, proving that neither the old coordinator nor any actor child
+/// still owns the inherited descriptor. The owner/generation transfer is one
+/// durable compare-and-swap and the lock remains held through execution and
+/// resolution, so the row is never exposed as queued or unowned in between.
+///
+/// # Errors
+///
+/// Returns an error when lock validation or a durable scheduling transition
+/// cannot be completed safely.
+pub fn supervise_one_abandoned_maker_actor(
+    store: &mut SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    now: u64,
+    config: &MakerActorSupervisorConfig,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    supervise_one_abandoned_maker_actor_until(
+        store,
+        owner,
+        now,
+        config,
+        &MakerActorSupervisorCancellation::new(),
+    )
+}
+
+/// Recovers and runs at most one abandoned lease with cooperative cancellation.
+///
+/// Cancellation before the durable generation transfer leaves the old lease
+/// untouched. Cancellation after transfer resolves the new generation to a
+/// finite durable backoff while retaining the exact lock.
+///
+/// # Errors
+///
+/// Returns an error when lock validation or a durable scheduling transition
+/// cannot be completed safely.
+pub fn supervise_one_abandoned_maker_actor_until(
+    store: &mut SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    now: u64,
+    config: &MakerActorSupervisorConfig,
+    cancellation: &MakerActorSupervisorCancellation,
+) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
+    if cancellation.is_cancelled() {
+        return Ok(None);
+    }
+    for lease in store.list_leased_maker_actors()? {
+        if cancellation.is_cancelled() {
+            return Ok(None);
+        }
+        let held_lock = match MakerActorHeldLock::acquire(lease.record()) {
+            Ok(lock) => lock,
+            Err(MakerActorProcessError::LockUnavailable) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if cancellation.is_cancelled() {
+            return Ok(None);
+        }
+        let recovered = match store.recover_abandoned_maker_actor(&lease, &held_lock, owner, now) {
+            Ok(recovered) => recovered,
+            Err(MakerActorProcessError::LeaseConflict) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        let claimed =
+            match run_claimed_attempt_with_lock(store, &recovered, held_lock, config, cancellation)
+            {
+                Ok(value) => value,
+                Err(ClaimedAttemptError::Scheduling(error)) => return Err(error.into()),
+            };
+        return resolve_claimed_attempt(store, &recovered, now, config, claimed).map(Some);
+    }
+    Ok(None)
+}
+
+fn resolve_claimed_attempt(
+    store: &mut SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    now: u64,
+    config: &MakerActorSupervisorConfig,
+    claimed: ClaimedAttemptResult,
+) -> Result<MakerActorSupervisorOutcome, MakerActorSupervisorError> {
     let attempt = claimed.attempt;
     let (durable, resolution) = match attempt {
         ClaimedAttempt::Requeue => (
@@ -231,13 +315,13 @@ pub fn supervise_one_due_maker_actor_until(
             MakerActorSupervisorResolution::Failed,
         ),
     };
-    store.resolve_maker_actor_attempt(&lease, durable, now)?;
+    store.resolve_maker_actor_attempt(lease, durable, now)?;
     drop(claimed.held_lock);
-    Ok(Some(MakerActorSupervisorOutcome {
-        swap_id,
-        generation,
+    Ok(MakerActorSupervisorOutcome {
+        swap_id: lease.record().swap_id().clone(),
+        generation: lease.generation(),
         resolution,
-    }))
+    })
 }
 
 enum ClaimedAttempt {
@@ -294,6 +378,16 @@ fn run_claimed_attempt(
             });
         }
     };
+    run_claimed_attempt_with_lock(store, lease, held_lock, config, cancellation)
+}
+
+fn run_claimed_attempt_with_lock(
+    store: &mut SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    held_lock: MakerActorHeldLock,
+    config: &MakerActorSupervisorConfig,
+    cancellation: &MakerActorSupervisorCancellation,
+) -> Result<ClaimedAttemptResult, ClaimedAttemptError> {
     if cancellation.is_cancelled() {
         return Ok(ClaimedAttemptResult {
             attempt: ClaimedAttempt::Backoff("actor_cancelled"),

@@ -4655,70 +4655,81 @@ authority and does not invalidate or duplicate the committed completion.
 The full local-devnet settlement remains Flow 1B; this focused flow certifies
 only the acceptance-to-scheduler handoff.
 
-Current limitation: distinct-swap registry selection, exact pair-manifest
-comparison, and one bounded supervisor cycle are implemented. Long-running
-daemon/systemd wiring, abandoned-lease recovery, disjoint process overlap, and
-actual-node supervisor composition remain.
+Current limitation: persistent local-process coordination is implemented.
+Actual-node supervisor composition, concurrent disjoint live-process overlap,
+and a systemd actor crash/restart rehearsal remain.
 
-## Flow 1H: repeat one bounded fenced maker-actor cycle
+## Flow 1H: repeat the persistent fenced maker-actor supervisor
 
-These component checks exercise one real scheduler claim and pair-neutral
-supervisor cycle with exact ZEC Maker config semantics, sealed child FDs, local
-processes, and SQLite. They prove process mechanics and durable scheduling; they
-do not replace the real BTC/ZEC sealed-config consumer tests in Flow 1F.
+These checks exercise the schema-v16 store, pair-neutral supervisor, and actual
+long-running daemon process. They cover exact ZEC Maker config semantics, sealed
+child FDs, abandoned-lease recovery, a dedicated supervisor SQLite connection,
+responsive owner health, and SIGTERM cleanup. They do not replace the real
+BTC/ZEC sealed-config consumer tests in Flow 1F or claim actual-node execution.
 
 ```sh
+cargo test --locked -p lez-swap-store --test maker_actor_process -- --nocapture
 cargo test --locked -p lez-maker-node --test maker_actor_supervisor -- --nocapture
-cargo test --locked -p lez-swap-store --test maker_actor_process \
-  reaped_child_clear_requires_exact_lease_pid_and_start_ticks \
-  -- --exact --nocapture
+cargo test --locked -p lez-maker-node \
+  --test daemon_actor_supervisor_process -- --nocapture
 ```
 
-Expected result: seven supervisor cases and one exact store case pass. The
-supervisor executes `status` and then the selected effect from the same sealed
-deployment while retaining lock FD 198 through durable resolution. The matrix
-proves happy requeue, timeout kill/reap/clear plus backoff, bounded output
-drain/reap plus fail-closed, rejection of an unknown outcome, terminal status
-without an effect process, prompt cancellation, and successful-leader cleanup
-of a descendant retaining stdout and FD 198.
+Expected result: 12 store cases, 9 supervisor cases, and one daemon-process E2E
+pass. At startup the opt-in daemon generates one nonzero 128-bit owner with the
+OS CSPRNG, opens a dedicated SQLite connection, and scans abandoned leases
+before readiness. Only acquisition of the exact per-swap kernel lock authorizes
+the CAS transfer to the new owner and generation plus one; the row never becomes
+queued or unleased. A live old lock is left untouched while a distinct due peer
+progresses. The same supervisor executes `status` and the selected effect from
+one sealed deployment while retaining lock FD 198 through durable resolution.
+
+The daemon E2E uses a local long-running actor, observes `ready: true` health in
+under one second while that actor is leased, then sends SIGTERM. Cancellation,
+process-group reap, durable non-leased resolution, child-identity clear, and
+socket/readiness cleanup complete in under two seconds. The packaged systemd
+unit and `scripts/run-m5-maker-systemd-transient.sh` enable
+`--actor-supervisor`; their static/lifecycle checks do not yet prove an actor
+SIGKILL/restart.
 
 ```mermaid
 sequenceDiagram
     actor O as Operator
-    participant S as Bounded supervisor
+    participant D as Maker daemon
     participant Q as Schema-v16 scheduler
     participant L as Per-swap lock
     participant A as Sealed actor child
-    O->>S: Run focused Cargo test
-    S->>Q: Claim exact owner and generation
-    Q-->>S: Due immutable manifest
-    S->>L: Acquire lock FD 198
-    S->>A: Spawn status with FDs 196 197 198
-    S->>Q: Record PID and start ticks
-    A-->>S: Bounded output then reap
-    S->>Q: Exact-clear child identity
-    alt terminal status
-        S->>Q: Prepare terminal resolution
-    else state needs effect
-        S->>A: Spawn activate drive or BTC recover
-        S->>Q: Record PID and start ticks
-        A-->>S: Bounded output then reap
-        S->>Q: Exact-clear child identity
+    O->>D: Run focused Cargo test
+    D->>Q: Scan abandoned leases before readiness
+    D->>L: Try exact per-swap lock
+    alt live old actor holds lock
+        L-->>D: Busy
+        D->>Q: Leave lease untouched
+    else abandoned lock acquired
+        L-->>D: Held-lock capability
+        D->>Q: CAS owner and generation plus one while leased
+        D->>A: Spawn exact sealed command
+        D->>Q: Record PID and start ticks
+        A-->>D: Bounded output then reap
+        D->>Q: Exact-clear and resolve while lock is held
+        D->>L: Release after durable commit
     end
-    S->>Q: Commit fenced durable resolution
-    S->>L: Release after commit
-    S-->>O: Report secret-free outcome
+    D-->>O: Publish readiness and responsive health
+    O->>D: SIGTERM
+    D->>A: Cancel process group
+    A-->>D: Reaped
+    D->>Q: Clear identity and durably back off
+    D-->>O: Remove socket and readiness file
 ```
 
 Runtime external resources are none. The tests use only local binaries,
 temporary owner-private files, SQLite, and Linux process, `/proc`, memfd, and
 locking primitives. They contact no chain RPC, node, Docker service, public
 faucet, DNS service, network, or public funds. Cold compilation may need pinned
-Cargo registry dependencies.
+Cargo registry dependencies from cache or download.
 
-This flow certifies one bounded component cycle only. The long-running
-daemon/systemd wiring, abandoned-lease recovery, disjoint swap overlap, and
-actual-node supervisor composition remain M5 work.
+This flow certifies persistent local-process coordination. Actual-node actor
+composition, concurrent disjoint live-process overlap, and a systemd actor
+crash/restart rehearsal remain M5 work.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
