@@ -843,6 +843,45 @@ impl SqliteSwapStore {
         }
     }
 
+    /// Clears one reaped child only for its exact durable lease and identity.
+    ///
+    /// A supervisor may run a bounded offline status subprocess before the
+    /// effect-capable subprocess. Clearing by owner, generation, PID, and start
+    /// ticks prevents either process from erasing a newer child's diagnostic
+    /// identity. The kernel lock remains the execution authority throughout.
+    ///
+    /// # Errors
+    ///
+    /// Fails for an invalid child identity, stale lease/child, or store error.
+    pub fn clear_maker_actor_child(
+        &mut self,
+        lease: &MakerActorLeaseV1,
+        pid: u32,
+        start_ticks: u64,
+    ) -> Result<(), MakerActorProcessError> {
+        if pid == 0 || start_ticks == 0 {
+            return Err(MakerActorProcessError::InvalidSchedulingInput);
+        }
+        let changed = self.connection.execute(
+            "UPDATE maker_actor_processes SET child_pid = NULL, child_start_ticks = NULL
+             WHERE swap_id = ?1 AND schedule_state = 'leased'
+               AND lease_owner = ?2 AND lease_generation = ?3
+               AND child_pid = ?4 AND child_start_ticks = ?5",
+            params![
+                lease.record.swap_id().as_str(),
+                lease.owner.bytes().as_slice(),
+                generation_to_sql(lease.generation)?,
+                i64::from(pid),
+                time_to_sql(start_ticks),
+            ],
+        )?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(MakerActorProcessError::LeaseConflict)
+        }
+    }
+
     /// Resolves one attempt only for the exact durable lease generation.
     ///
     /// # Errors

@@ -606,7 +606,7 @@ flowchart TB
         PR["Durable route price selector"]
         MPV["Daemon Maker-only provisioner<br/>startup-pinned authority + durable no-clobber publish"]
         SCH[("Schema-v16 actor scheduler<br/>atomic acceptance registration + fenced leases")]
-        SUP["Bounded sealed-FD supervisor<br/>composition pending"]
+        SUP["Bounded sealed-FD supervisor cycle GREEN<br/>daemon and systemd composition pending"]
         MA["One-shot Maker pair actor<br/>real BTC/ZEC sealed-config consumers GREEN"]
         PP["Bounded price process parent"]
         PW["One-shot Logos price worker"]

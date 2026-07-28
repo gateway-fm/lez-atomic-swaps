@@ -1,5 +1,12 @@
 //! Pair-specific validation for pair-neutral maker actor scheduling.
 
+mod runtime;
+
+pub use runtime::{
+    MakerActorSupervisorConfig, MakerActorSupervisorError, MakerActorSupervisorOutcome,
+    MakerActorSupervisorResolution, supervise_one_due_maker_actor,
+};
+
 use btc_reference_actor::validate_maker_manifest_config_bytes as validate_btc_config;
 use lez_swap_store::{
     MakerActorArtifacts, MakerActorKindV1, MakerActorProcessError, MakerActorProcessRecordV1,

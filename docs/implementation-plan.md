@@ -3424,11 +3424,28 @@ separately from runtime dependencies.
   role-state path on those bytes, and the same bytes are sealed into FD 196.
   BTC additionally requires schema 6 and revalidates the agreement-derived
   swap. Wrong swap/state and deployment-path replacement tests pass before
-  spawn. Next, implement the bounded pair-neutral supervisor. Rehearse sealed
-  actor execution under hardened systemd, route existing M3 overlap and M5 ZEC
-  application flows through it, then prove one exact SIGKILL/restart while a
-  disjoint peer reaches terminal without duplicate effects. This partial
-  progress does not increase the 3/7 literal-output score.
+  spawn.
+
+  One bounded pair-neutral supervisor cycle is now component-GREEN. It claims
+  one stable due row, acquires the per-swap kernel lock, executes exact sealed
+  `status`, selects `activate`, `drive`, or BTC `recover`, and retains the lock
+  through the effect process and durable owner/generation-fenced resolution.
+  Every spawned PID plus Linux start ticks is recorded before waiting and
+  exact-cleared only after kill/reap or normal reap. Finite time and output
+  bounds classify transient process failure as durable backoff and malformed
+  output/deployment as failed without storing payloads. Tests prove happy
+  status-to-activate requeue at the exact due time, kill/reap/clear on timeout,
+  oversized-output drain/reap/fail-closed, terminal status without an effect
+  process, and exact child-clear CAS. These component tests use local process,
+  kernel, filesystem, and SQLite fixtures only.
+
+  Next, compose this cycle into the long-running daemon with prompt
+  cancellation of an in-flight child and collision-resistant startup ownership.
+  Rehearse sealed actor execution under hardened systemd, route existing M3
+  overlap and M5 ZEC application flows through it, then prove one exact
+  SIGKILL/restart while a disjoint peer reaches terminal without duplicate
+  effects. This partial progress does not increase the 3/7 literal-output
+  score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3448,7 +3465,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 8 to 16 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 6 to 14 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 

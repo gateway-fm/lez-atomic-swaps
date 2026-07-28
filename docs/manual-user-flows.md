@@ -4637,7 +4637,8 @@ corrupt collision, unsafe state/journal rejection, and two concurrent same-wire
 publishers. The process fixture pins `/usr/bin/true` only to prove
 production executable validation and scheduling; it does not claim actor
 execution. Sealed execution of the real ZEC binary is covered separately by
-`actor_boundary`, and supervisor composition remains open.
+`actor_boundary`; Flow 1H covers one bounded supervisor cycle. Long-running
+daemon/systemd composition remains open.
 
 Omitting the four deployment inputs is a deliberate fail-closed mode: proposal
 staging remains available, but final completion returns `maker actor
@@ -4654,11 +4655,70 @@ authority and does not invalidate or duplicate the committed completion.
 The full local-devnet settlement remains Flow 1B; this focused flow certifies
 only the acceptance-to-scheduler handoff.
 
-Current limitation: distinct-swap registry selection is implemented, but the
-pair-specific manifest comparison, bounded supervisor execution, disjoint
-process overlap, and actual-node supervisor composition remain.
+Current limitation: distinct-swap registry selection, exact pair-manifest
+comparison, and one bounded supervisor cycle are implemented. Long-running
+daemon/systemd supervision, prompt in-flight cancellation, disjoint process
+overlap, and actual-node supervisor composition remain.
 
-## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
+## Flow 1H: repeat one bounded fenced maker-actor cycle
+
+These component checks exercise one real scheduler claim and pair-neutral
+supervisor cycle with exact ZEC Maker config semantics, sealed child FDs, local
+processes, and SQLite. They prove process mechanics and durable scheduling; they
+do not replace the real BTC/ZEC sealed-config consumer tests in Flow 1F.
+
+```sh
+cargo test --locked -p lez-maker-node --test maker_actor_supervisor -- --nocapture
+cargo test --locked -p lez-swap-store --test maker_actor_process \
+  reaped_child_clear_requires_exact_lease_pid_and_start_ticks \
+  -- --exact --nocapture
+```
+
+Expected result: five supervisor cases and one exact store case pass. The
+supervisor executes `status` and then the selected effect from the same sealed
+deployment while retaining lock FD 198 through durable resolution. The matrix
+proves happy requeue, timeout kill/reap/clear plus backoff, bounded output
+drain/reap plus fail-closed, rejection of an unknown outcome, and terminal
+status without an effect process.
+
+```mermaid
+sequenceDiagram
+    actor O as Operator
+    participant S as Bounded supervisor
+    participant Q as Schema-v16 scheduler
+    participant L as Per-swap lock
+    participant A as Sealed actor child
+    O->>S: Run focused Cargo test
+    S->>Q: Claim exact owner and generation
+    Q-->>S: Due immutable manifest
+    S->>L: Acquire lock FD 198
+    S->>A: Spawn status with FDs 196 197 198
+    S->>Q: Record PID and start ticks
+    A-->>S: Bounded output then reap
+    S->>Q: Exact-clear child identity
+    alt terminal status
+        S->>Q: Prepare terminal resolution
+    else state needs effect
+        S->>A: Spawn activate drive or BTC recover
+        S->>Q: Record PID and start ticks
+        A-->>S: Bounded output then reap
+        S->>Q: Exact-clear child identity
+    end
+    S->>Q: Commit fenced durable resolution
+    S->>L: Release after commit
+    S-->>O: Report secret-free outcome
+```
+
+Runtime external resources are none. The tests use only local binaries,
+temporary owner-private files, SQLite, and Linux process, `/proc`, memfd, and
+locking primitives. They contact no chain RPC, node, Docker service, public
+faucet, DNS service, network, or public funds. Cold compilation may need pinned
+Cargo registry dependencies.
+
+This flow certifies one bounded component cycle only. The long-running
+daemon/systemd loop, prompt cancellation of an in-flight child, disjoint swap
+overlap, and actual-node supervisor composition remain M5 work.
+
 
 Build the two libraries, then reproduce the proven independent-actor claim
 corridor directly:

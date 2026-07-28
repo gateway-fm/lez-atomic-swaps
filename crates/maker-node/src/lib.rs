@@ -6,7 +6,10 @@ mod local_rpc;
 mod logos_price_source;
 mod price_source;
 mod run_local_delivery;
-pub use actor_supervisor::prepare_maker_actor;
+pub use actor_supervisor::{
+    MakerActorSupervisorConfig, MakerActorSupervisorError, MakerActorSupervisorOutcome,
+    MakerActorSupervisorResolution, prepare_maker_actor, supervise_one_due_maker_actor,
+};
 pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,

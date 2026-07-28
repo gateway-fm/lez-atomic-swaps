@@ -1,11 +1,12 @@
 # ADR 0100: fence maker actor process leases
 
-- Status: Accepted; schema-v16 transactional/race foundation GREEN;
-  inherited held-lock recovery, physical artifact binding, and atomic ZEC
-  acceptance-registration plus expiry-independent committed replay, both real
-  BTC/ZEC sealed-config consumers, and daemon-owned maker-only ZEC provisioning
-  GREEN; exact-snapshot BTC/ZEC manifest comparison GREEN; supervisor process
-  lifecycle and actual-node composition pending
+- Status: Accepted; schema-v16 transactional/race foundation, inherited
+  held-lock recovery, physical artifact binding, atomic ZEC acceptance and
+  expiry-independent replay, real BTC/ZEC sealed-config consumers, daemon-owned
+  Maker-only ZEC provisioning, exact-snapshot pair comparison, and one bounded
+  pair-neutral supervisor cycle GREEN; long-running daemon/systemd execution,
+  prompt in-flight cancellation, disjoint process overlap, and actual-node
+  composition pending
 - Date: 2026-07-28
 
 ## Context
@@ -208,6 +209,38 @@ flowchart LR
     ActorB --> Nodes
 ```
 
+## Bounded supervisor cycle
+
+One bounded cycle deliberately serializes observation, effect selection, and
+durable scheduling resolution for one swap. The kernel lock remains held after
+each child is reaped and until the fenced scheduler transaction commits. Actor
+result bytes are parsed but never stored in the application scheduler.
+
+```mermaid
+sequenceDiagram
+    participant S as Pair-neutral supervisor
+    participant Q as Schema-v16 scheduler
+    participant L as Per-swap kernel lock
+    participant A as Exact sealed pair actor
+    S->>Q: Claim due swap with owner and generation
+    Q-->>S: Pair kind and immutable manifest
+    S->>L: Acquire and retain lock FD 198
+    S->>A: Spawn status over sealed FDs 196 197 198
+    S->>Q: Record exact PID and start ticks
+    A-->>S: Bounded Maker state then reap
+    S->>Q: Exact-clear child after reap
+    alt state is completed or refunded
+        S->>Q: Resolve terminal
+    else state needs an effect
+        S->>A: Spawn activate drive or BTC recover
+        S->>Q: Record exact PID and start ticks
+        A-->>S: Bounded command result then reap
+        S->>Q: Exact-clear child after reap
+    end
+    S->>Q: Requeue backoff terminal or fail with exact fence
+    S->>L: Release only after durable resolution
+```
+
 ## Crash and peer-isolation flow
 
 ```mermaid
@@ -238,17 +271,21 @@ sequenceDiagram
 
 ## Atomicity argument
 
-The scheduler decides only whether and when to invoke an opaque actor. In the
-completed design, accepted-swap creation and immutable ZEC actor registration
-share one rollback boundary, so a committed scheduled acceptance cannot expose
-the missing-row handoff. The primary key, immediate claim, owner/generation
-fence, secure physical artifact binding, and inherited kernel lock then prevent
-concurrent workers for one swap across a daemon crash. Schema v16 or the
-transactional API alone does not make the composed crash-safety claim; daemon
-provisioning and execution remain required. The actor's exact
-durable intent and observe-before-rebroadcast remain the at-most-once public-
-effect boundary. Different swaps use unique rows, configs, state databases,
-locks, agreements, escrows, outpoints, and deadlines.
+The scheduler decides only whether and when to invoke an opaque actor. Accepted-
+swap creation and immutable ZEC actor registration share one rollback boundary,
+so a committed scheduled acceptance cannot expose the missing-row handoff. The
+bounded cycle holds the same per-swap kernel lock across exact sealed `status`,
+the selected effect command, child reap, exact diagnostic identity clear, and
+durable owner/generation-fenced resolution. Therefore another generation cannot
+enter between observation/effect and scheduling resolution; PID and start ticks
+are cleanup identity, never the concurrency fence. The primary key, immediate
+claim, secure physical artifact binding, and inherited kernel lock prevent two
+bounded cycles for one swap. Schema v16 or the bounded component alone does not
+make the full daemon-crash claim; long-running daemon/systemd composition and
+restart evidence remain required. The actor's exact durable intent and observe-
+before-rebroadcast remain the at-most-once public-effect boundary. Different
+swaps use unique rows, configs, state databases, locks, agreements, escrows,
+outpoints, and deadlines.
 
 ## Consequences
 
@@ -278,6 +315,13 @@ locks, agreements, escrows, outpoints, and deadlines.
   schemas on the FD route and a mismatched agreement digest before activation.
   These tests use only local process and kernel primitives; no RPC, node,
   Docker, faucet, or network participates.
+- Bounded-cycle tests prove sealed `status` then `activate` requeues at the exact
+  due time, timeout kills the isolated process group and reaps before exact
+  child-identity clear and durable backoff, oversized output is drained and
+  fails closed, an unknown outcome is rejected, and terminal status resolves
+  without spawning an effect process. The child-clear CAS rejects a forged
+  owner or wrong start ticks. These tests use no RPC, node, Docker, faucet, DNS,
+  or public network.
 - The packaged systemd unit names `memfd_create` explicitly, keeps native-only
   EPERM policy, installs the real ZEC actor, and carries the startup-pinned
   authority/root/program/digest inputs. An actual user-systemd run validates
@@ -286,5 +330,6 @@ locks, agreements, escrows, outpoints, and deadlines.
   supervisor composition.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
-- Literal coordinator closure still requires pair-specific leased-manifest
-  validation, the daemon supervisor, a real role-process crash, and actual-node overlap evidence.
+- Literal coordinator closure still requires the long-running daemon/systemd
+  supervisor, prompt in-flight cancellation, a real role-process crash,
+  disjoint overlap, and actual-node evidence.

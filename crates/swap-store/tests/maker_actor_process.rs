@@ -180,6 +180,46 @@ fn restart_preserves_distinct_leases_while_one_swap_has_one_fenced_owner() {
 }
 
 #[test]
+fn reaped_child_clear_requires_exact_lease_pid_and_start_ticks() {
+    let root = tempdir().unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    store.save(&swap("zec-child-clear", Pair::Zcash)).unwrap();
+    store
+        .register_maker_actor(
+            &manifest(root.path(), "zec-child-clear", MakerActorKindV1::Zcash, 29),
+            10,
+        )
+        .unwrap();
+    let owner = MakerActorLeaseOwner::new([29; 16]).unwrap();
+    let lease = store
+        .claim_maker_actor(&SwapId::new("zec-child-clear").unwrap(), owner, 10)
+        .unwrap()
+        .unwrap();
+    store.record_maker_actor_child(&lease, 91, 9_100).unwrap();
+
+    assert!(matches!(
+        store.clear_maker_actor_child(&lease, 91, 9_101),
+        Err(MakerActorProcessError::LeaseConflict)
+    ));
+    let forged = lease.with_owner(MakerActorLeaseOwner::new([30; 16]).unwrap());
+    assert!(matches!(
+        store.clear_maker_actor_child(&forged, 91, 9_100),
+        Err(MakerActorProcessError::LeaseConflict)
+    ));
+    assert_eq!(
+        store.list_maker_actor_processes().unwrap()[0].child_identity(),
+        Some((91, 9_100))
+    );
+
+    store.clear_maker_actor_child(&lease, 91, 9_100).unwrap();
+    assert_eq!(
+        store.list_maker_actor_processes().unwrap()[0].child_identity(),
+        None
+    );
+}
+
+#[test]
 fn normal_requeue_and_generation_fence_preserve_peer_state() {
     let root = tempdir().unwrap();
     let database = root.path().join("maker.sqlite3");
