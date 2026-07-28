@@ -1,6 +1,6 @@
 use std::{
     fs,
-    os::unix::fs::PermissionsExt as _,
+    os::unix::fs::{PermissionsExt as _, symlink},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Barrier},
@@ -12,9 +12,11 @@ use lez_swap_core::{
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner,
-    MakerActorManifestV1, MakerActorProcessError, MakerActorScheduleState, SqliteSwapStore,
+    MakerActorArtifacts, MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1,
+    MakerActorLeaseOwner, MakerActorManifestV1, MakerActorProcessError, MakerActorScheduleState,
+    SqliteSwapStore,
 };
+use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 
 fn swap(id: &str, pair: Pair) -> SwapCoordinator {
@@ -463,4 +465,176 @@ fn lock_acquisition_rejects_unsafe_parent_and_hardlinked_inode() {
         MakerActorHeldLock::acquire(&record),
         Err(MakerActorProcessError::UnsafeLock)
     ));
+}
+
+#[test]
+fn verified_artifact_fds_survive_path_replacement_before_exec() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let config_path = root.path().join("zec-artifact-config.json");
+    let program_path = root.path().join("zec-artifact-actor");
+    let state_path = root.path().join("zec-artifact-state.sqlite3");
+    let config = b"trusted-config\n";
+    let program = b"#!/bin/sh\ncat /proc/self/fd/196\n";
+    write_mode(&config_path, config, 0o600);
+    write_mode(&program_path, program, 0o700);
+
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    store.save(&swap("zec-artifact", Pair::Zcash)).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                SwapId::new("zec-artifact").unwrap(),
+                MakerActorKindV1::Zcash,
+                config_path.clone(),
+                digest(config),
+                program_path.clone(),
+                digest(program),
+                state_path,
+            )
+            .unwrap(),
+            10,
+        )
+        .unwrap();
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    let held = MakerActorHeldLock::acquire(&record).unwrap();
+    let artifacts = MakerActorArtifacts::open(&record).unwrap();
+
+    fs::rename(&config_path, root.path().join("original-config")).unwrap();
+    fs::rename(&program_path, root.path().join("original-program")).unwrap();
+    write_mode(&config_path, b"attacker-config\n", 0o600);
+    write_mode(&program_path, b"#!/bin/sh\necho attacker-program\n", 0o700);
+
+    let mut command = artifacts.into_command(&held).unwrap();
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, config);
+}
+
+#[test]
+fn artifact_binding_rejects_hash_symlink_hardlink_and_unsafe_state() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let program = b"#!/bin/sh\nexit 0\n";
+    let config = b"{}\n";
+
+    for id in ["hash", "symlink", "hardlink", "state"] {
+        store.save(&swap(id, Pair::Zcash)).unwrap();
+        let config_path = root.path().join(format!("{id}-config.json"));
+        let program_path = root.path().join(format!("{id}-actor"));
+        write_mode(&config_path, config, 0o600);
+        write_mode(&program_path, program, 0o700);
+        let config_sha = if id == "hash" {
+            [99; 32]
+        } else {
+            digest(config)
+        };
+        store
+            .register_maker_actor(
+                &MakerActorManifestV1::new(
+                    SwapId::new(id).unwrap(),
+                    MakerActorKindV1::Zcash,
+                    config_path,
+                    config_sha,
+                    program_path,
+                    digest(program),
+                    root.path().join(format!("{id}-state.sqlite3")),
+                )
+                .unwrap(),
+                10,
+            )
+            .unwrap();
+    }
+    let records = store.list_maker_actor_processes().unwrap();
+    let record = |id: &str| {
+        records
+            .iter()
+            .find(|record| record.swap_id().as_str() == id)
+            .unwrap()
+    };
+    assert!(matches!(
+        MakerActorArtifacts::open(record("hash")),
+        Err(MakerActorProcessError::ArtifactHashMismatch)
+    ));
+
+    let symlink_config = root.path().join("symlink-config.json");
+    fs::remove_file(&symlink_config).unwrap();
+    let symlink_target = root.path().join("symlink-target.json");
+    write_mode(&symlink_target, config, 0o600);
+    symlink(&symlink_target, &symlink_config).unwrap();
+    assert!(matches!(
+        MakerActorArtifacts::open(record("symlink")),
+        Err(MakerActorProcessError::UnsafeArtifact)
+    ));
+
+    let hardlink_program = root.path().join("hardlink-actor");
+    fs::hard_link(&hardlink_program, root.path().join("program-alias")).unwrap();
+    assert!(matches!(
+        MakerActorArtifacts::open(record("hardlink")),
+        Err(MakerActorProcessError::UnsafeArtifact)
+    ));
+
+    write_mode(&root.path().join("state-state.sqlite3"), b"sqlite", 0o644);
+    assert!(matches!(
+        MakerActorArtifacts::open(record("state")),
+        Err(MakerActorProcessError::UnsafeArtifact)
+    ));
+}
+
+#[test]
+fn unexpected_state_creation_after_binding_fails_closed() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let config_path = root.path().join("state-race-config.json");
+    let program_path = root.path().join("state-race-actor");
+    let state_path = root.path().join("state-race.sqlite3");
+    let config = b"{}\n";
+    let program = b"#!/bin/sh\nexit 0\n";
+    write_mode(&config_path, config, 0o600);
+    write_mode(&program_path, program, 0o700);
+
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    store.save(&swap("state-race", Pair::Zcash)).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                SwapId::new("state-race").unwrap(),
+                MakerActorKindV1::Zcash,
+                config_path,
+                digest(config),
+                program_path,
+                digest(program),
+                state_path.clone(),
+            )
+            .unwrap(),
+            10,
+        )
+        .unwrap();
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    let held = MakerActorHeldLock::acquire(&record).unwrap();
+    let artifacts = MakerActorArtifacts::open(&record).unwrap();
+    write_mode(&state_path, b"unexpected", 0o600);
+
+    assert!(matches!(
+        artifacts.into_command(&held),
+        Err(MakerActorProcessError::UnsafeArtifact)
+    ));
+}
+
+fn write_mode(path: &Path, bytes: &[u8], mode: u32) {
+    fs::write(path, bytes).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+fn digest(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
 }

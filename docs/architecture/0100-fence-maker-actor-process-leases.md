@@ -1,9 +1,9 @@
 # ADR 0100: fence maker actor process leases
 
 - Status: Accepted; schema-v16 transactional/race foundation GREEN;
-  inherited held-lock recovery component GREEN; acceptance handoff, remaining
-  physical artifact checks, process supervisor, and actual-node composition
-  pending
+  inherited held-lock recovery and physical artifact binding components GREEN;
+  acceptance handoff, pair-specific semantic config binding, process supervisor,
+  and actual-node composition pending
 - Date: 2026-07-28
 
 ## Context
@@ -41,14 +41,26 @@ owner, increments a monotonic generation, and excludes every other claimant for
 that swap. Every resolution requires the exact owner and generation. Distinct
 rows may be leased independently.
 
-Stored paths are lexically normalized and distinct. The held-lock slice now
+Stored paths are lexically normalized and distinct. The held-lock component
 derives one never-unlinked `<state-db>.maker-actor.lock` beside each role state
 database, requires an absolute canonical effective-UID-owned mode-0700 parent,
 secure-opens the mode-0600 regular lock with `openat2`, rejects symlinks and
-multiple links, and revalidates named/open device and inode identity. The
-supervisor must still apply equivalent owner, mode, link, inode, and recorded
-SHA-256 checks to the config, program, and state database before complete
-physical artifact binding is claimed.
+multiple links, and revalidates named/open device and inode identity.
+
+The physical artifact component secure-opens config and program without
+following symlinks, requires stable named/open identity, bounded regular files,
+single links, trusted ownership and modes, and exact recorded SHA-256 bytes.
+It copies those bytes into write-sealed Linux memfds. The child executes only
+the sealed program on FD 197, reads the sealed private config on FD 196, and
+retains the lock on FD 198. Replacing or mutating the deployment paths after
+verification cannot change those child bytes. The state database is rebound at
+command handoff as either the same owner-private mode-0600 single-link inode or
+the same absent path beneath its mode-0700 parent.
+
+The future pair adapters must still parse the exact config and prove its
+internal role-state path equals the scheduler manifest before spawning. That
+semantic check cannot be inferred from a content digest alone and is not moved
+into this pair-neutral store layer.
 
 Time never releases `leased`. The daemon first acquires the per-swap exclusive
 kernel lock and maps a cloned close-on-exec descriptor to child FD 198. Exact-
@@ -69,8 +81,12 @@ separate production validation; lock files are deliberately never unlinked.
 flowchart LR
     AppDB["Application SQLite schema v16"] --> Schedule["maker_actor_processes metadata"]
     Schedule --> Supervisor["Pair-neutral process supervisor"]
-    Supervisor --> LockA["Inherited kernel lock: swap A"]
-    Supervisor --> LockB["Inherited kernel lock: swap B"]
+    Supervisor --> ArtifactsA["Sealed program FD 197 and config FD 196: A"]
+    Supervisor --> ArtifactsB["Sealed program FD 197 and config FD 196: B"]
+    Supervisor --> LockA["Inherited lock FD 198: swap A"]
+    Supervisor --> LockB["Inherited lock FD 198: swap B"]
+    ArtifactsA --> ActorA["Opaque pair actor A"]
+    ArtifactsB --> ActorB["Opaque pair actor B"]
     LockA -->|"child FD 198"| ActorA["Opaque pair actor A"]
     LockB -->|"child FD 198"| ActorB["Opaque pair actor B"]
     ActorA --> StateA["Role SQLite A: protocol authority"]
@@ -128,8 +144,12 @@ locks, agreements, escrows, outpoints, and deadlines.
   release, live-child exclusion, exact post-exit recovery, stale-recovery
   rejection, cross-swap rejection, peer immutability, unsafe-parent rejection,
   and hard-link rejection.
+- Artifact tests prove the executed program and read config remain the exact
+  verified bytes after both deployment paths are replaced. Wrong hashes,
+  config symlinks, program hard links, unsafe state modes, and unexpected state
+  creation fail closed.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
 - Literal coordinator closure still requires atomic acceptance registration,
-  full artifact validation, the daemon supervisor, a real role-process crash,
-  and actual-node overlap evidence.
+  pair-specific config-to-state validation, the daemon supervisor, a real
+  role-process crash, and actual-node overlap evidence.

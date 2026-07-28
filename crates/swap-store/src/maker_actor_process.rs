@@ -3,6 +3,8 @@
 use std::{
     ffi::OsString,
     fs::{self, File},
+    io::{Read as _, Seek as _, Write as _},
+    os::fd::AsRawFd as _,
     os::unix::fs::{MetadataExt as _, PermissionsExt as _},
     path::{Component, Path, PathBuf},
     process::Command,
@@ -11,8 +13,13 @@ use std::{
 use command_fds::{CommandFdExt as _, FdMapping};
 use lez_swap_core::{Pair, SwapCoordinator, SwapId};
 use rusqlite::{Connection, OptionalExtension as _, Row, TransactionBehavior, params};
-use rustix::fs::{CWD, FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
+use rustix::fs::{
+    CWD, FlockOperation, MemfdFlags, Mode, OFlags, ResolveFlags, SealFlags, fcntl_add_seals,
+    fcntl_get_seals, flock, memfd_create, openat2,
+};
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::{SqliteSwapStore, StoreError};
 
@@ -20,6 +27,13 @@ const MANIFEST_VERSION: i64 = 1;
 const MAX_PATH_BYTES: usize = 4_096;
 const MAX_FAILURE_CLASS_BYTES: usize = 64;
 const MAX_DUE_LIMIT: usize = 128;
+const MAX_ACTOR_CONFIG_BYTES: u64 = 4 * 1_024 * 1_024;
+const MAX_ACTOR_PROGRAM_BYTES: u64 = 512 * 1_024 * 1_024;
+/// Fixed child descriptor containing the sealed, verified actor config bytes.
+pub const MAKER_ACTOR_CONFIG_FD: i32 = 196;
+/// Fixed child descriptor used as the exact actor executable.
+pub const MAKER_ACTOR_PROGRAM_FD: i32 = 197;
+/// Fixed child descriptor retaining the per-swap kernel lock.
 pub const MAKER_ACTOR_LOCK_FD: i32 = 198;
 
 /// Pair adapter executable used by one maker process record.
@@ -361,17 +375,21 @@ impl MakerActorHeldLock {
     ///
     /// Fails when the held descriptor cannot be duplicated for the command.
     pub fn inherit_into(&self, command: &mut Command) -> Result<(), MakerActorProcessError> {
+        command
+            .fd_mappings(vec![self.fd_mapping()?])
+            .map_err(|_| MakerActorProcessError::LockInheritance)?;
+        Ok(())
+    }
+
+    fn fd_mapping(&self) -> Result<FdMapping, MakerActorProcessError> {
         let descriptor = self
             .file
             .try_clone()
             .map_err(|_| MakerActorProcessError::LockInheritance)?;
-        command
-            .fd_mappings(vec![FdMapping {
-                parent_fd: descriptor.into(),
-                child_fd: MAKER_ACTOR_LOCK_FD,
-            }])
-            .map_err(|_| MakerActorProcessError::LockInheritance)?;
-        Ok(())
+        Ok(FdMapping {
+            parent_fd: descriptor.into(),
+            child_fd: MAKER_ACTOR_LOCK_FD,
+        })
     }
 
     fn validate_for(
@@ -391,6 +409,100 @@ impl MakerActorHeldLock {
             return Err(MakerActorProcessError::LockMismatch);
         }
         Ok(())
+    }
+}
+
+/// Non-cloneable, sealed snapshot of one actor's exact deployment artifacts.
+pub struct MakerActorArtifacts {
+    record: MakerActorProcessRecordV1,
+    config: File,
+    program: File,
+    state: MakerActorStateBinding,
+}
+
+enum MakerActorStateBinding {
+    Missing,
+    Existing(File),
+}
+
+impl std::fmt::Debug for MakerActorArtifacts {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MakerActorArtifacts")
+            .field("swap_id", self.record.swap_id())
+            .finish_non_exhaustive()
+    }
+}
+
+impl MakerActorArtifacts {
+    /// Secure-opens, hashes, and seals one immutable config/program pair.
+    ///
+    /// The role-state database is bound as either one exact private inode or an
+    /// exact absent path under its owner-private parent. Config and program
+    /// bytes are copied into write-sealed anonymous files so later path or
+    /// in-place replacement cannot change what the child reads or executes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsafe metadata, content drift, hash mismatch, or an unsafe
+    /// state-database location.
+    pub fn open(record: &MakerActorProcessRecordV1) -> Result<Self, MakerActorProcessError> {
+        let manifest = record.manifest();
+        let config_bytes = read_verified_artifact(
+            manifest.config_path(),
+            MakerActorArtifactKind::Config,
+            MAX_ACTOR_CONFIG_BYTES,
+            manifest.config_sha256(),
+        )?;
+        let program_bytes = read_verified_artifact(
+            manifest.program_path(),
+            MakerActorArtifactKind::Program,
+            MAX_ACTOR_PROGRAM_BYTES,
+            manifest.program_sha256(),
+        )?;
+        let state = bind_actor_state(manifest.state_database_path())?;
+        let config = sealed_artifact("lez-maker-actor-config", &config_bytes, 0o600)?;
+        let program = sealed_artifact("lez-maker-actor-program", &program_bytes, 0o700)?;
+        Ok(Self {
+            record: record.clone(),
+            config,
+            program,
+            state,
+        })
+    }
+
+    /// Consumes the sealed snapshot into one exact child command.
+    ///
+    /// The executable is addressed only through child FD 197. The verified
+    /// config is child FD 196 and the per-swap lock is child FD 198. Callers
+    /// add the actor command and `--config-fd 196` arguments before spawning.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a changed state location, mismatched lock, or descriptor setup
+    /// failure.
+    pub fn into_command(
+        self,
+        held_lock: &MakerActorHeldLock,
+    ) -> Result<Command, MakerActorProcessError> {
+        held_lock.validate_for(&self.record)?;
+        validate_actor_state(self.record.manifest().state_database_path(), &self.state)?;
+        let lock_mapping = held_lock.fd_mapping()?;
+        let mut command = Command::new(format!("/proc/self/fd/{MAKER_ACTOR_PROGRAM_FD}"));
+        command
+            .fd_mappings(vec![
+                FdMapping {
+                    parent_fd: self.program.into(),
+                    child_fd: MAKER_ACTOR_PROGRAM_FD,
+                },
+                FdMapping {
+                    parent_fd: self.config.into(),
+                    child_fd: MAKER_ACTOR_CONFIG_FD,
+                },
+                lock_mapping,
+            ])
+            .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+        Ok(command)
     }
 }
 
@@ -465,6 +577,15 @@ pub enum MakerActorProcessError {
     /// Held descriptor could not be prepared for one exact child.
     #[error("maker actor process lock inheritance failed")]
     LockInheritance,
+    /// A config, program, or state-database filesystem binding is unsafe.
+    #[error("maker actor deployment artifact is unsafe")]
+    UnsafeArtifact,
+    /// Config or program bytes differ from the immutable manifest digest.
+    #[error("maker actor deployment artifact hash does not match")]
+    ArtifactHashMismatch,
+    /// Verified artifacts could not be sealed or mapped into one child.
+    #[error("maker actor deployment artifacts could not be prepared")]
+    ArtifactPreparation,
     /// Timestamp, child identity, limit, or failure class is invalid.
     #[error("maker actor scheduling input is invalid")]
     InvalidSchedulingInput,
@@ -1028,6 +1149,213 @@ fn list_records(
             .collect::<Result<Vec<_>, _>>()?,
     };
     rows.into_iter().map(decode_record).collect()
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum MakerActorArtifactKind {
+    Config,
+    Program,
+    State,
+}
+
+fn read_verified_artifact(
+    path: &Path,
+    kind: MakerActorArtifactKind,
+    maximum_bytes: u64,
+    expected_sha256: [u8; 32],
+) -> Result<Zeroizing<Vec<u8>>, MakerActorProcessError> {
+    validate_artifact_parent(path, kind)?;
+    let mut file = openat2(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .map_err(|_| MakerActorProcessError::UnsafeArtifact)?;
+    validate_named_artifact(&file, path, kind, Some(maximum_bytes))?;
+    let mut bytes = Zeroizing::new(Vec::new());
+    std::io::Read::by_ref(&mut file)
+        .take(maximum_bytes.saturating_add(1))
+        .read_to_end(bytes.as_mut())
+        .map_err(|_| MakerActorProcessError::UnsafeArtifact)?;
+    if bytes.is_empty() || bytes.len() as u64 > maximum_bytes {
+        return Err(MakerActorProcessError::UnsafeArtifact);
+    }
+    validate_artifact_parent(path, kind)?;
+    validate_named_artifact(&file, path, kind, Some(maximum_bytes))?;
+    let actual_sha256: [u8; 32] = Sha256::digest(bytes.as_slice()).into();
+    if actual_sha256 != expected_sha256 {
+        return Err(MakerActorProcessError::ArtifactHashMismatch);
+    }
+    Ok(bytes)
+}
+
+fn validate_artifact_parent(
+    path: &Path,
+    kind: MakerActorArtifactKind,
+) -> Result<(), MakerActorProcessError> {
+    let parent = path
+        .parent()
+        .ok_or(MakerActorProcessError::UnsafeArtifact)?;
+    match kind {
+        MakerActorArtifactKind::Config | MakerActorArtifactKind::State => {
+            validate_lock_root(parent).map_err(|_| MakerActorProcessError::UnsafeArtifact)
+        }
+        MakerActorArtifactKind::Program => validate_program_parent(parent),
+    }
+}
+
+fn validate_program_parent(parent: &Path) -> Result<(), MakerActorProcessError> {
+    if !parent.is_absolute() {
+        return Err(MakerActorProcessError::UnsafeArtifact);
+    }
+    let before =
+        fs::symlink_metadata(parent).map_err(|_| MakerActorProcessError::UnsafeArtifact)?;
+    let effective_uid = rustix::process::geteuid().as_raw();
+    if !before.file_type().is_dir()
+        || (before.uid() != 0 && before.uid() != effective_uid)
+        || before.permissions().mode() & 0o022 != 0
+        || fs::canonicalize(parent).map_err(|_| MakerActorProcessError::UnsafeArtifact)? != parent
+    {
+        return Err(MakerActorProcessError::UnsafeArtifact);
+    }
+    let after = fs::symlink_metadata(parent).map_err(|_| MakerActorProcessError::UnsafeArtifact)?;
+    if !same_artifact(&before, &after) {
+        return Err(MakerActorProcessError::UnsafeArtifact);
+    }
+    Ok(())
+}
+
+fn validate_named_artifact(
+    file: &File,
+    path: &Path,
+    kind: MakerActorArtifactKind,
+    maximum_bytes: Option<u64>,
+) -> Result<(), MakerActorProcessError> {
+    let opened = file
+        .metadata()
+        .map_err(|_| MakerActorProcessError::UnsafeArtifact)?;
+    let named = fs::symlink_metadata(path).map_err(|_| MakerActorProcessError::UnsafeArtifact)?;
+    let mode = opened.permissions().mode() & 0o7777;
+    let effective_uid = rustix::process::geteuid().as_raw();
+    let valid_kind = match kind {
+        MakerActorArtifactKind::Config | MakerActorArtifactKind::State => {
+            opened.uid() == effective_uid && mode == 0o600
+        }
+        MakerActorArtifactKind::Program => {
+            let owner_is_trusted = opened.uid() == 0 || opened.uid() == effective_uid;
+            let executable = if opened.uid() == effective_uid {
+                mode & 0o100 != 0
+            } else {
+                mode & 0o001 != 0
+            };
+            owner_is_trusted && mode & 0o022 == 0 && executable
+        }
+    };
+    if !opened.file_type().is_file()
+        || !named.file_type().is_file()
+        || opened.nlink() != 1
+        || !valid_kind
+        || maximum_bytes.is_some_and(|maximum| opened.len() == 0 || opened.len() > maximum)
+        || !same_artifact(&opened, &named)
+    {
+        return Err(MakerActorProcessError::UnsafeArtifact);
+    }
+    Ok(())
+}
+
+fn bind_actor_state(path: &Path) -> Result<MakerActorStateBinding, MakerActorProcessError> {
+    validate_artifact_parent(path, MakerActorArtifactKind::State)?;
+    match openat2(
+        CWD,
+        path,
+        OFlags::RDWR | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    ) {
+        Ok(descriptor) => {
+            let file = File::from(descriptor);
+            validate_named_artifact(&file, path, MakerActorArtifactKind::State, None)?;
+            validate_artifact_parent(path, MakerActorArtifactKind::State)?;
+            Ok(MakerActorStateBinding::Existing(file))
+        }
+        Err(error) if error == rustix::io::Errno::NOENT => {
+            match fs::symlink_metadata(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_) | Err(_) => return Err(MakerActorProcessError::UnsafeArtifact),
+            }
+            validate_artifact_parent(path, MakerActorArtifactKind::State)?;
+            Ok(MakerActorStateBinding::Missing)
+        }
+        Err(_) => Err(MakerActorProcessError::UnsafeArtifact),
+    }
+}
+
+fn validate_actor_state(
+    path: &Path,
+    binding: &MakerActorStateBinding,
+) -> Result<(), MakerActorProcessError> {
+    validate_artifact_parent(path, MakerActorArtifactKind::State)?;
+    match binding {
+        MakerActorStateBinding::Existing(file) => {
+            validate_named_artifact(file, path, MakerActorArtifactKind::State, None)?;
+        }
+        MakerActorStateBinding::Missing => match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) | Err(_) => return Err(MakerActorProcessError::UnsafeArtifact),
+        },
+    }
+    validate_artifact_parent(path, MakerActorArtifactKind::State)
+}
+
+fn sealed_artifact(name: &str, bytes: &[u8], mode: u32) -> Result<File, MakerActorProcessError> {
+    let descriptor = memfd_create(name, MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING)
+        .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    let mut writer = File::from(descriptor);
+    writer
+        .write_all(bytes)
+        .and_then(|()| writer.flush())
+        .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    writer
+        .set_permissions(fs::Permissions::from_mode(mode))
+        .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    let seals = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
+    fcntl_add_seals(&writer, seals).map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    if !fcntl_get_seals(&writer)
+        .map_err(|_| MakerActorProcessError::ArtifactPreparation)?
+        .contains(seals)
+    {
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    }
+    writer
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    let descriptor_path = format!("/proc/self/fd/{}", writer.as_raw_fd());
+    let reader =
+        File::open(descriptor_path).map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    let metadata = reader
+        .metadata()
+        .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    if metadata.len() != bytes.len() as u64 || metadata.permissions().mode() & 0o7777 != mode {
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    }
+    drop(writer);
+    Ok(reader)
+}
+
+fn same_artifact(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.uid() == right.uid()
+        && left.mode() == right.mode()
+        && left.nlink() == right.nlink()
+        && left.len() == right.len()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
 }
 
 fn lock_file_path(state_database_path: &Path) -> PathBuf {

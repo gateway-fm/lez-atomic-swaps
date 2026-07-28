@@ -3300,19 +3300,33 @@ separately from runtime dependencies.
   without any protocol or effect data. Transactional exact registration,
   two-connection same-row exclusion and distinct-row progress, restart lease
   enumeration, half-open backoff, stale-fence rejection, peer isolation, and no
-  time-based lease steal are GREEN under ADR 0100. The next RED/GREEN slice adds
+  time-based lease steal are GREEN under ADR 0100. The held-lock RED/GREEN slice
+  adds
   a non-cloneable per-swap held-lock capability: secure `openat2`, exact owner/
   mode/link/inode checks, child-only FD-198 inheritance through exact-pinned
   Apache-2.0 `command-fds` 0.3.3, live-child exclusion, and one atomic
   owner/generation transfer that never exposes a queued/unleased row all pass.
   Unsafe parents, hard links, cross-swap capabilities, stale recovery, and peer
   mutation fail closed; full swap-store tests, strict Clippy/Rustdoc, and the
-  advisory/license/source gate are GREEN. Next, join registration to final
-  acceptance, secure-open and physically validate config/program/state
-  artifacts, add the pair-neutral supervisor, route existing M3 overlap and M5
-  ZEC application flows through it, then prove one exact SIGKILL/restart while a
-  disjoint peer reaches terminal without duplicate effects. This partial
-  progress does not increase the 3/7 score.
+  advisory/license/source gate are GREEN.
+
+  The physical-artifact RED/GREEN slice then secure-opens stable single-link
+  config/program files, verifies trusted ownership, modes, bounds, inode
+  identity, and exact manifest SHA-256, and copies the bytes into write-sealed
+  Linux memfds. Command construction executes only sealed program FD 197, maps
+  sealed config FD 196 and lock FD 198, and rebinds the state database as the
+  same private inode or same absent path. Tests replace both deployment paths
+  before command construction and still execute/read only the verified bytes;
+  wrong hashes, symlinks, hard links, unsafe state mode, and unexpected state
+  creation fail closed. Full crate tests, strict Clippy/Rustdoc, and dependency
+  policy are GREEN.
+
+  Next, join registration to final acceptance, add pair-specific validation that
+  the exact config state path equals the manifest, implement the pair-neutral
+  supervisor, route existing M3 overlap and M5 ZEC application flows through it,
+  then prove one exact SIGKILL/restart while a disjoint peer reaches terminal
+  without duplicate effects. This partial progress does not increase the 3/7
+  score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3332,7 +3346,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 21 to 37 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 19 to 35 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 
