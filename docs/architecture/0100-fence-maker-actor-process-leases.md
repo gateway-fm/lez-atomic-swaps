@@ -3,8 +3,8 @@
 - Status: Accepted; schema-v16 transactional/race foundation GREEN;
   inherited held-lock recovery, physical artifact binding, and atomic ZEC
   acceptance-registration store components plus both real BTC/ZEC sealed-config
-  consumers GREEN; daemon-owned provisioning, supervisor manifest comparison,
-  process lifecycle, and actual-node composition pending
+  consumers and daemon-owned maker-only ZEC provisioning GREEN; supervisor
+  manifest comparison, process lifecycle, and actual-node composition pending
 - Date: 2026-07-28
 
 ## Context
@@ -49,26 +49,45 @@ sequenceDiagram
     participant F as Owner-private filesystem
     participant Q as SQLite schema v16
     participant T as Taker Chat client
-    D->>F: Prepare no-clobber maker config and exact hashes
     T->>D: Countersigned final agreement
-    D->>Q: BEGIN IMMEDIATE
-    D->>Q: Insert swap, agreement, binding, protected claim
-    D->>Q: Insert immutable queued actor manifest
-    D->>Q: Consume offer and persist exact replay result
-    alt every write succeeds
-        D->>Q: COMMIT
-        D-->>T: Accepted swap ID
-    else any write fails
-        D->>Q: ROLLBACK all acceptance and scheduling rows
-        D-->>T: Fail closed
+    D->>F: Use startup-pinned Maker config identities and actor program
+    D->>F: Write agreement and Maker config in private staging root
+    D->>F: Sync files and nested directories bottom-up
+    D->>F: Publish with RENAME_NOREPLACE
+    D->>F: Sync destination parent or fail before DB
+    D->>F: Reload and compare role swap state agreement and authority
+    alt artifact publication is exact
+        D->>Q: BEGIN IMMEDIATE
+        D->>Q: Insert swap agreement binding and protected claim
+        D->>Q: Insert immutable queued actor manifest
+        D->>Q: Consume offer and persist exact replay result
+        alt every database write succeeds
+            D->>Q: COMMIT
+            D-->>T: Accepted swap ID
+        else any database write fails
+            D->>Q: ROLLBACK all acceptance and scheduling rows
+            D-->>T: Fail closed with inert exact-replayable artifact
+        end
+    else artifact missing partial or conflicting
+        D-->>T: Fail closed before SQLite acceptance
     end
 ```
 
-The storage primitive is GREEN. The running daemon still needs a maker-only,
-no-clobber provisioner that prepares and semantically validates the exact
-config before it calls this mandatory scheduled-acceptance API. Until that
-wiring exists, the legacy unscheduled completion method remains only a
-migration/test entry point and production handoff is not claimed closed.
+The running Chat path now uses this storage primitive. At startup it loads only
+an existing Maker template beneath an owner-private canonical parent, validates
+all activation material, and retains the config's file identities. Later
+replacement therefore fails closed. Completion validates the exact final
+agreement against unchanged chain facts and Maker key/preimage authority,
+derives a path from a domain-separated digest rather than the raw swap ID,
+writes only a shared agreement plus Maker config and state locations, syncs
+every file and containing directory, and publishes through
+`RENAME_NOREPLACE`. Only an `EEXIST` rename may enter replay. Exact replay must
+retain the same bytes and semantic binding, reject unsafe state/journal files,
+and repeat the durability barrier; partial or changed content conflicts. Only
+after this succeeds does the daemon call the atomic scheduled-acceptance API.
+The legacy unscheduled method has no production caller and remains a
+migration/test entry point. A database rollback may leave an inert exact bundle,
+but it grants no scheduler authority and the same request can safely reuse it.
 
 An immediate SQLite transaction claims one due row, installs a random 16-byte
 owner, increments a monotonic generation, and excludes every other claimant for
@@ -236,6 +255,5 @@ locks, agreements, escrows, outpoints, and deadlines.
   `memfd_create`. An actor-bearing transient-unit execution remains open.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
-- Literal coordinator closure still requires daemon-owned maker-only artifact
-  provisioning, pair-specific config-to-state validation, the daemon
-  supervisor, a real role-process crash, and actual-node overlap evidence.
+- Literal coordinator closure still requires pair-specific leased-manifest
+  validation, the daemon supervisor, a real role-process crash, and actual-node overlap evidence.

@@ -665,7 +665,7 @@ pub fn finalize_local_v0_2_chat_corridor(
     })
 }
 
-fn validate_role_authority(
+pub(crate) fn validate_role_authority(
     material: &crate::ActivateMaterial,
     agreement: &ZecAgreementV1,
     participant: Participant,
@@ -1206,14 +1206,14 @@ fn validate_new_output_root(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn create_private_directory(path: &Path) -> Result<()> {
+pub(crate) fn create_private_directory(path: &Path) -> Result<()> {
     DirBuilder::new()
         .mode(0o700)
         .create(path)
         .with_context(|| format!("failed to create private directory {}", path.display()))
 }
 
-fn write_private_new(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<()> {
     ensure!(
         !bytes.is_empty(),
         "refusing to write empty private material"

@@ -4539,6 +4539,60 @@ temporary files, SQLite fixture state, and Linux memfd/seal/process primitives.
 It contacts no RPC, node, Docker service, faucet, DNS service, or public network.
 Cold compilation may need the pinned Cargo registry dependencies.
 
+## Flow 1G: repeat daemon-owned ZEC actor scheduling
+
+This process test exercises the real `lez-maker-daemon` and `lez-taker`
+binaries across their separate owner and Chat Unix sockets. It is the shortest
+repeatable proof that final Chat acceptance can no longer create an unscheduled
+swap.
+
+```sh
+cargo test --locked -p zec-reference-actor --test maker_provision -- --nocapture
+cargo test --locked -p lez-maker-node --test zec_chat_process \
+  separate_taker_countersigns_and_maker_atomically_accepts_before_response \
+  -- --exact --nocapture
+```
+
+Expected result: one passing test. The fixture creates a mode-0700 Maker actor
+root, an owner-private Maker-only source config and authority files, and one
+exact executable identity. It starts the daemon with the same four deployment
+inputs an operator supplies:
+
+```text
+--zec-source-maker-config ABSOLUTE_PRIVATE_JSON
+--zec-maker-actor-root ABSOLUTE_MODE_0700_DIRECTORY
+--zec-actor-program ABSOLUTE_PINNED_EXECUTABLE
+--zec-actor-program-sha256 EXACT_64_HEX_DIGEST
+```
+
+The separate taker discovers and countersigns one offer. Before returning
+success, the daemon publishes the final agreement and Maker config with
+no-clobber semantics, syncs files and all containing directories, reloads the
+semantic binding, and commits acceptance plus one queued schema-v16 actor row in
+one SQLite transaction. The delayed exact replay must retain one row, the same
+manifest, identical config bytes, and the same config inode. No `taker` subtree
+may exist in the daemon-created bundle. The focused actor test adds Taker-source
+rejection, corrupt collision, unsafe state/journal rejection, and two concurrent
+same-wire publishers. The process fixture pins `/usr/bin/true` only to prove
+production executable validation and scheduling; it does not claim actor
+execution. Sealed execution of the real ZEC binary is covered separately by
+`actor_boundary`, and supervisor composition remains open.
+
+Omitting the four deployment inputs is a deliberate fail-closed mode: proposal
+staging remains available, but final completion returns `maker actor
+provisioning is unavailable` and cannot call the legacy unscheduled acceptance
+path. A partial four-argument group is rejected by the CLI before startup.
+
+Runtime external resources are none. The test uses Unix sockets, temporary
+owner-private files, SQLite, and local processes only. It contacts no chain
+RPC, node, Docker service, faucet, DNS service, public network, or public funds.
+The full local-devnet settlement remains Flow 1B; this focused flow certifies
+only the acceptance-to-scheduler handoff.
+
+
+Current limitation: a committed completion retried after the agreement validity
+window is not yet replayed before wall-clock validation, and the daemon accepts
+one fixed source template rather than a per-swap authority registry.
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 Build the two libraries, then reproduce the proven independent-actor claim

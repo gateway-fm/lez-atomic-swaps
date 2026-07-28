@@ -3326,8 +3326,8 @@ separately from runtime dependencies.
   material, offer/negotiation mutation, replay record, and immutable queued
   actor row commit or roll back together. The manifest is exact replay identity;
   a changed manifest conflicts and a missing durable actor row fails closed.
-  This closes the store primitive, not the running handoff: the current daemon
-  still calls the legacy unscheduled entry point.
+  The legacy method remains only for migration/tests; the production Chat path
+  has no unscheduled caller after the daemon-owned slice below.
 
   The ZEC config-capability RED/GREEN slice now changes the real one-shot actor,
   not a fixture. Its CLI requires exactly one private path or inherited FD 196
@@ -3352,6 +3352,31 @@ separately from runtime dependencies.
   tests, strict Clippy, and warning-free Rustdoc are GREEN; the refactor removed
   duplicated schema alternatives without lint exceptions.
 
+  The daemon-owned provisioning RED/GREEN slice closes that running handoff.
+  RED used the real daemon and taker binaries: without actor deployment inputs,
+  final completion failed before acceptance instead of creating an unscheduled
+  swap. GREEN supplies an existing owner-private Maker template, mode-0700 actor
+  root, exact executable, and SHA-256. The daemon validates the template role,
+  private canonical parent, all activation material, and executable policy at
+  startup, then retains the loaded config and its file identities; replacement
+  after readiness fails closed. On completion it rechecks the final agreement
+  against unchanged chain facts, the Maker Zcash key, funder role, and preimage.
+  It derives the destination from a domain-separated agreement digest, stages
+  only a shared agreement plus Maker config/state paths, syncs files and every
+  containing directory bottom-up, and publishes with kernel
+  `RENAME_NOREPLACE`. Only kernel `EEXIST` enters replay; all other publication
+  or sync failures prevent database acceptance. Existing output is accepted
+  only as byte-and-semantic exact replay after mutable-state safety checks and a
+  repeated durability barrier; no Taker subtree or authority is read or
+  emitted. Only then does the same Chat request atomically commit acceptance and
+  one queued schema-v16 manifest. The process test proves one queued ZEC row,
+  exact role/swap/state binding, no Taker subtree, and delayed replay retaining
+  the same row, manifest, bytes, and config inode. Six direct tests prove
+  creation/replay, Taker rejection, corrupt collision, unsafe state/journal
+  rejection, and concurrent same-wire publication. A post-publication SQLite
+  failure can leave only an inert exact-replayable filesystem bundle; without a
+  scheduler row it has no execution authority.
+
   The systemd syscall-policy RED/GREEN slice is statically closed. The packaged
   unit now names `memfd_create` explicitly alongside `@system-service`, retains
   native-only/EPERM policy and `KillMode=control-group`, and its lifecycle
@@ -3360,14 +3385,16 @@ separately from runtime dependencies.
   group expansion from becoming an undocumented portability dependency. An
   actor-bearing transient-unit execution is still required before M5 closure.
 
-  Next, add a maker-only no-clobber ZEC actor provisioner and route Chat
-  completion through the mandatory scheduled API; compare both pair configs'
-  swap/role/state/agreement semantics with each leased manifest; explicitly
-  rehearse sealed-actor execution under the hardened systemd unit; implement
-  the bounded pair-neutral supervisor; route existing M3 overlap and M5 ZEC
-  application flows through it; then prove one exact SIGKILL/restart while a
-  disjoint peer reaches terminal without duplicate effects. This partial progress
-  does not increase the 3/7 score.
+  Next, make committed Chat completion replay independent of the current
+  agreement-validity window and replace the fixed one-swap source template with
+  a per-swap immutable authority registry. Require actor deployment whenever
+  Chat is enabled and carry those inputs through the packaged systemd install.
+  Then compare both pair configs' swap/role/state/agreement semantics with each
+  leased manifest, implement the bounded pair-neutral supervisor, rehearse its
+  sealed-actor execution under hardened systemd; route existing M3 overlap and
+  M5 ZEC application flows through it; then prove one exact SIGKILL/restart while
+  a disjoint peer reaches terminal without duplicate effects. This partial
+  progress does not increase the 3/7 score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3387,7 +3414,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 15 to 28 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 14 to 26 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 

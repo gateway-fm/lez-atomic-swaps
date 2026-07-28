@@ -27,10 +27,11 @@ one-winner proposal before responding. The separate taker role then validates
 and countersigns that proposal, and the daemon reuses the atomic schema-v15 final
 acceptance transaction with only daemon-local claim authority; delayed replay
 and kill/reopen durability are process-GREEN. Exact final-wire actor
-configuration is now component-GREEN: a no-authority preparer replaces only the
-Delivery/Chat transcript of validated chain facts, while a finalizer checks all
-other fields, both private-key identities, the funder role and hash preimage
-before emitting fresh isolated actor state. The opt-in M5 runner now composes
+configuration and scheduling are now component-GREEN: the daemon holds a
+startup-pinned Maker template and authority identities, revalidates every chain
+fact, key, funder role, and preimage, durably publishes only a Maker bundle with
+no-clobber rename, and commits its immutable schema-v16 scheduler manifest in
+the same SQLite transaction as acceptance. The opt-in M5 runner now composes
 that handoff with the stable LEZ/ZEC actor corridor, retains the restarted
 daemon through the first confirmed Zcash lock, and then removes Chat and
 Delivery before settlement. Schema v15 then offline-replays the stopped Maker
@@ -88,13 +89,22 @@ Config and program files are secure-opened, identity/mode/link/hash checked, and
 copied to write-sealed child FDs 196/197; path replacement cannot change the
 bytes read or executed. State paths are rebound as the same private inode or the
 same absence immediately before command construction, and lock FD 198 remains
-the process-liveness fence. The ZEC store API now joins final acceptance and one
-immutable queued actor manifest in the same immediate transaction: forced late
-failure rolls back the offer, swap, agreement, binding, encrypted claim
-material, actor row, and replay record together. Exact/delayed replay preserves
-one row, changed manifest replay conflicts, and a missing scheduler row fails
-closed. The running daemon still needs maker-only no-clobber artifact
-provisioning before it can call that mandatory scheduled-acceptance API.
+the process-liveness fence. The production Chat completion path now validates a
+Maker-only source template and pinned actor program, publishes an owner-private
+agreement/config bundle through `RENAME_NOREPLACE`, reloads its role/swap/state/
+agreement/authority binding, and only then atomically accepts the swap with one
+immutable queued actor manifest. Forced late failure rolls back the offer, swap,
+agreement, binding, encrypted claim material, actor row, and replay record
+together. Exact/delayed replay preserves one row and the same config inode;
+changed or partial artifacts conflict. Files and containing directories are
+synced bottom-up before acceptance, and exact replay repeats the durability
+barrier. Six focused tests cover Maker-only creation/replay, Taker rejection,
+corrupt collision, unsafe mutable artifacts, and concurrent publishers. A
+filesystem bundle left by a database rollback is inert without its scheduler
+row and is exact-replayable. Exact committed replay after the agreement window,
+per-swap templates for distinct/concurrent application swaps, bounded
+supervisor composition, and actor-bearing hardened-systemd execution remain
+M5 work.
 Both real one-shot ZEC and BTC actors now accept exactly one private path or
 fixed inherited config FD 196. Each synchronously requires an anonymous,
 euid-owned, mode-0600, unlinked memfd with all immutable seals before Tokio
@@ -103,8 +113,8 @@ prove only the inherited snapshots are read; ordinary files, incomplete seals,
 legacy BTC schemas, or any other FD number fail without actor JSON. The BTC FD
 route additionally requires schema 6: it binds the exact agreement SHA-256 and
 exposes a secret-free role/state/digest/signed-swap validation surface for the
-supervisor while keeping path schemas 3–5 compatible. Pair-specific manifest
-comparison in the supervisor, daemon provisioning, the supervisor itself, and
+supervisor while keeping path schemas 3–5 compatible. Pair-specific leased-
+manifest comparison, the supervisor itself, systemd actor execution, and
 actual-node crash composition remain. This checkpoint does not increase the M5
 score.
 

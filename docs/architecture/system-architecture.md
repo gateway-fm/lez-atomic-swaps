@@ -602,8 +602,12 @@ flowchart TB
         APP["M5 application service"]
         OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v15<br/>lock + claim + refund journals")]
+        DB[("Maker SQLite schema v16<br/>application + actor scheduler journals")]
         PR["Durable route price selector"]
+        MPV["Daemon Maker-only provisioner<br/>startup-pinned authority + durable no-clobber publish"]
+        SCH[("Schema-v16 actor scheduler<br/>atomic acceptance registration + fenced leases")]
+        SUP["Bounded sealed-FD supervisor<br/>composition pending"]
+        MA["One-shot Maker pair actor<br/>real BTC/ZEC sealed-config consumers GREEN"]
         PP["Bounded price process parent"]
         PW["One-shot Logos price worker"]
         PM["Pinned module plus SHA identity"]
@@ -624,7 +628,7 @@ flowchart TB
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
         TMO["Taker-only maker-lock observation"]
-        TDB[("Taker SQLite schema v15<br/>role-local recovery")]
+        TDB[("Taker SQLite schema v16<br/>role-local recovery")]
         TLB["Context-owning LEZ SDK ports + adapter"]
     end
 
@@ -770,10 +774,16 @@ flowchart TB
     TC -->|"key-pinned discovery"| DEL
     APP -->|"isolated maker proposal runtime"| CHAT
     TC -->|"countersign and atomic completion GREEN"| CHAT
+    APP -->|"validated final agreement"| MPV
+    MPV -->|"durable Maker-only bundle"| SCH
+    SCH -->|"same acceptance transaction"| DB
+    SCH -.->|"fenced lease and sealed FDs"| SUP
+    SUP -.->|"bounded one-shot execution"| MA
     OF --> DB
     APP --> CO
     CO --> DB
     CO --> PS
+    MA --> PS
     M5FZ -.->|"generated transition and restart checks"| CO
     PS -->|"stopped terminal offline replay"| OTP
     OTP --> DB

@@ -3,7 +3,10 @@
 use std::{
     fs::{self, OpenOptions},
     io::Write as _,
-    os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    os::unix::fs::{
+        DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
+    },
+    path::{Path, PathBuf},
     process::{Child, Command},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -15,23 +18,24 @@ use lez_maker_node::{
     PairConfigureRequest, RunLocalDelivery, ZecChatProposalV1, ZecChatProposeRequestV1,
     call_local_rpc,
 };
-use lez_swap_core::{Pair, SwapDirection};
+use lez_swap_core::{Pair, SwapDirection, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    LocalPriceV1, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind,
-    MakerRouteV1, MakerZecNegotiationStatus, SqliteSwapStore, maker_zec_chat_session_id,
+    LocalPriceV1, MakerActorKindV1, MakerActorScheduleState, MakerOfferId, MakerOfferStatus,
+    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationStatus,
+    SqliteSwapStore, maker_zec_chat_session_id, validate_maker_actor_program,
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
-    NegotiationTranscriptV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementDraftV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-    ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1,
+    NegotiationTranscriptV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashTransparentDestinationV1,
+    ZecAgreementBodyV1, ZecAgreementDraftV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rustix::process::{Pid, Signal, kill_process};
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
-use serde_json::Value;
+use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 use zcash_protocol::{
@@ -40,6 +44,7 @@ use zcash_protocol::{
 };
 use zcash_transparent::address::TransparentAddress;
 
+use zec_reference_actor::{ActorConfig, ActorRole};
 const CLAIM_PREIMAGE: [u8; 32] = [0x44; 32];
 
 #[tokio::test]
@@ -61,6 +66,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     write_raw_key(&key_file, 8);
     write_raw_key(&claim_key_file, 0x7a);
     write_raw_key(&claim_preimage_file, CLAIM_PREIMAGE[0]);
+    let actor = prepare_actor_deployment(run.path(), &key(8), &key(2));
     let daemon_paths = DaemonPaths {
         socket: &socket,
         chat_socket: &chat_socket,
@@ -70,6 +76,10 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         key_file: &key_file,
         claim_key_file: &claim_key_file,
         claim_preimage_file: &claim_preimage_file,
+        actor_root: &actor.root,
+        actor_source_config: &actor.source_config,
+        actor_program: &actor.program,
+        actor_program_sha256: &actor.program_sha256,
     };
     let mut daemon = start_daemon(&daemon_paths);
     wait_ready(&mut daemon, &ready, &socket);
@@ -132,21 +142,40 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     };
 
     assert_chat_outage_and_restart(&taker, &maker_key, accepted_at, &mut daemon, &daemon_paths);
-    let final_wire = assert_taker_accepts_and_replays(&taker, &maker_key, accepted_at);
-    let completed_health = run_maker_health(&socket);
-    assert_eq!(completed_health["ready"], true);
-    assert_eq!(completed_health["degraded"], false);
-    assert_eq!(completed_health["delivery"], "available");
-    assert_eq!(completed_health["chat"], "available");
-    assert_eq!(fs::read_dir(&delivery).unwrap().count(), 1);
-
-    stop_daemon_gracefully(&mut daemon, &daemon_paths);
-    assert_completed_durable(
-        &database,
+    let final_wire = assert_taker_accepts_and_replays(&taker, &maker_key, accepted_at, &database);
+    assert_completed_process(
+        &mut daemon,
+        &daemon_paths,
         &offer_id,
         &reservation_id,
         &authenticated,
         &final_wire,
+    );
+}
+
+fn assert_completed_process(
+    daemon: &mut Child,
+    paths: &DaemonPaths<'_>,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    authenticated: &AuthenticatedOfferRefV1,
+    final_wire: &[u8],
+) {
+    let database = paths.database;
+    let socket = paths.socket;
+    let completed_health = run_maker_health(socket);
+    assert_eq!(completed_health["ready"], true);
+    assert_eq!(completed_health["degraded"], false);
+    assert_eq!(completed_health["delivery"], "available");
+    assert_eq!(completed_health["chat"], "available");
+    assert_eq!(fs::read_dir(paths.delivery).unwrap().count(), 1);
+    stop_daemon_gracefully(daemon, paths);
+    assert_completed_durable(
+        database,
+        offer_id,
+        reservation_id,
+        authenticated,
+        final_wire,
     );
 }
 
@@ -281,6 +310,7 @@ fn assert_taker_accepts_and_replays(
     taker: &TakerProcess<'_>,
     maker_key: &PublicKey,
     accepted_at: u64,
+    database: &Path,
 ) -> Vec<u8> {
     let accepted = run_taker(taker, maker_key, accepted_at);
     assert_eq!(accepted["schema_version"], 1);
@@ -290,12 +320,59 @@ fn assert_taker_accepts_and_replays(
     assert_eq!(accepted["replay"]["completion"], false);
     assert_eq!(accepted["replay"]["agreement_file"], false);
     assert_eq!(accepted["private_material_disclosed"], false);
+    let first = SqliteSwapStore::open(database)
+        .unwrap()
+        .list_maker_actor_processes()
+        .unwrap();
+    assert_eq!(first.len(), 1, "acceptance must expose one scheduled actor");
+    let first = &first[0];
+    assert_eq!(first.manifest().kind(), MakerActorKindV1::Zcash);
+    assert_eq!(first.schedule_state(), MakerActorScheduleState::Queued);
+    let config_path = first.manifest().config_path();
+    let config_inode = fs::symlink_metadata(config_path).unwrap().ino();
+    let config_bytes = fs::read(config_path).unwrap();
+    let config = ActorConfig::load_private(config_path).unwrap();
+    assert_eq!(config.role(), ActorRole::Maker);
+    assert_eq!(config.swap_id().as_str(), "m5-chat-swap-001");
+    assert_eq!(
+        config.role_state_db(),
+        first.manifest().state_database_path()
+    );
+    assert!(
+        !config_path
+            .ancestors()
+            .nth(2)
+            .unwrap()
+            .join("taker")
+            .exists()
+    );
     thread::sleep(Duration::from_millis(1_100));
     let replay = run_taker(taker, maker_key, accepted_at);
     assert_eq!(replay["replay"]["proposal"], true);
     assert_eq!(replay["replay"]["completion"], true);
     assert_eq!(replay["replay"]["agreement_file"], true);
     assert_eq!(replay["agreement_sha256"], accepted["agreement_sha256"]);
+    let replayed = SqliteSwapStore::open(database)
+        .unwrap()
+        .list_maker_actor_processes()
+        .unwrap();
+    assert_eq!(
+        replayed.len(),
+        1,
+        "exact replay must not duplicate the actor"
+    );
+    assert_eq!(replayed[0].manifest(), first.manifest());
+    assert_eq!(
+        fs::symlink_metadata(replayed[0].manifest().config_path())
+            .unwrap()
+            .ino(),
+        config_inode,
+        "exact replay must not replace the provisioned config inode"
+    );
+    assert_eq!(
+        fs::read(replayed[0].manifest().config_path()).unwrap(),
+        config_bytes
+    );
     fs::read(taker.agreement_file).expect("read taker-persisted final agreement")
 }
 
@@ -496,6 +573,179 @@ fn unsigned_draft(
     ZecAgreementDraftV1::new(body).encode_wire().unwrap()
 }
 
+struct ActorDeployment {
+    root: PathBuf,
+    source_config: PathBuf,
+    program: PathBuf,
+    program_sha256: String,
+}
+
+fn prepare_actor_deployment(
+    run_root: &Path,
+    maker_secret: &SecretKey,
+    taker_secret: &SecretKey,
+) -> ActorDeployment {
+    let source_root = run_root.join("actor-source");
+    let actor_root = run_root.join("maker-actors");
+    for directory in [&source_root, &actor_root] {
+        fs::DirBuilder::new().mode(0o700).create(directory).unwrap();
+    }
+    let agreement = source_agreement_wire(maker_secret, taker_secret);
+    let agreement_file = source_root.join("agreement-v2.borsh");
+    let source_config = source_root.join("actor-config.json");
+    let claim_key = source_root.join("claim-recovery.key");
+    let preimage = source_root.join("claim-preimage.key");
+    let zcash_key = source_root.join("zcash.key");
+    let capability = source_root.join("bridge.capability");
+    write_private(&agreement_file, &agreement);
+    write_raw_key(&claim_key, 0x7a);
+    write_raw_key(&preimage, CLAIM_PREIMAGE[0]);
+    write_raw_key(&zcash_key, 8);
+    write_private(&capability, b"m5_actor_capability_0123456789abcdef");
+    let config = json!({
+        "schema_version": 3,
+        "role": "maker",
+        "run_id": "m5-chat-source",
+        "swap_id": "m5-chat-swap-001",
+        "signed_agreement_file": agreement_file,
+        "signed_agreement_sha256": hex::encode(Sha256::digest(&agreement)),
+        "role_state_db": source_root.join("unused-source-state.sqlite3"),
+        "claim_recovery": {
+            "key_id": "m5-chat-source-claim-v1",
+            "key_file": claim_key
+        },
+        "claim_preimage_file": preimage,
+        "zcash_key_file": zcash_key,
+        "bridge": {
+            "endpoint": "http://127.0.0.1:19001",
+            "journal_db": source_root.join("unused-source-bridge.sqlite3"),
+            "capability_file": capability,
+            "runtime": {
+                "sidecar_role": "maker",
+                "compatibility": "lee_v0_2_0",
+                "chain_id": "06".repeat(32),
+                "channel_id": "08".repeat(32),
+                "genesis_block_hash": "07".repeat(32),
+                "escrow_program_id": "01000000".repeat(8),
+                "signer_account_id": "03".repeat(32)
+            },
+            "request_timeout_millis": 5000
+        },
+        "zebra": {
+            "route": {
+                "kind": "deterministic_local",
+                "endpoint": "http://127.0.0.1:19101",
+                "cookie_file": null
+            },
+            "identity": {
+                "network": "regtest",
+                "rpc_chain": "test",
+                "consensus_branch_id": "c8e71055",
+                "genesis_hash": "77".repeat(32)
+            },
+            "counterparty_scan_blocks": 1000
+        },
+        "lez_discovery_window": {"start_height": 1, "max_blocks": 256},
+        "zcash_funding_outpoints": [{
+            "transaction_id": "aa".repeat(32),
+            "output_index": 0
+        }]
+    });
+    write_private(&source_config, &serde_json::to_vec_pretty(&config).unwrap());
+    let loaded = ActorConfig::load_private(&source_config).expect("valid source Maker config");
+    assert_eq!(loaded.role(), ActorRole::Maker);
+    loaded
+        .load_activate_material()
+        .expect("source Maker activation material");
+    let program = fs::canonicalize("/usr/bin/true").unwrap();
+    let program_identity: [u8; 32] = Sha256::digest(fs::read(&program).unwrap()).into();
+    validate_maker_actor_program(&program, program_identity)
+        .expect("fixture program satisfies production artifact policy");
+    let program_sha256 = hex::encode(program_identity);
+    ActorDeployment {
+        root: actor_root,
+        source_config,
+        program,
+        program_sha256,
+    }
+}
+
+fn source_agreement_wire(maker_secret: &SecretKey, taker_secret: &SecretKey) -> Vec<u8> {
+    let current = now();
+    let maker_public = public_key(maker_secret);
+    let taker_public = public_key(taker_secret);
+    let maker_hash = pubkey_hash(&maker_public);
+    let taker_hash = pubkey_hash(&taker_public);
+    let escrow_program = [1; 8];
+    let onchain_swap_id = derive_lez_swap_id_v1(b"m5-chat-swap-001");
+    let metadata = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
+    let custody = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
+    let secret_digest: [u8; 32] = Sha256::digest(CLAIM_PREIMAGE).into();
+    let binding = ZecSwapBinding::new(
+        ZecProfileId::DeterministicLocalV1,
+        ExpectedBip199Output::new(
+            NetworkType::Regtest,
+            BranchId::Nu6_2,
+            Zatoshis::from_u64(10_000).unwrap(),
+            Bip199Contract::new(120, maker_hash, secret_digest, taker_hash),
+        ),
+    )
+    .unwrap();
+    let body = ZecAgreementBodyV1::new(
+        "m5-chat-swap-001".to_owned(),
+        SwapDirection::TakerSellsLez,
+        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecParticipantsV1::new(
+            ZecParticipantIdentityV1::new([3; 32], maker_public.serialize()),
+            ZecParticipantIdentityV1::new([4; 32], taker_public.serialize()),
+        ),
+        secret_digest,
+        ZecLezTermsV1::new(
+            LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
+            escrow_program,
+            LezAssetV1::Native {
+                authenticated_transfer_program_id: [2; 8],
+            },
+            25_000,
+            metadata,
+            custody,
+        ),
+        ZecSwapBindingRecordV1::from_binding(&binding),
+        ZecTransactionPolicyV1::new(
+            [12; 32],
+            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            1,
+            1,
+            ZcashTransparentDestinationV1::p2pkh(taker_hash),
+            1,
+            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            1,
+            40,
+        ),
+        ZecRefundPlanV1::new(current, 116, (current + 60) * 1_000, current + 90),
+        NegotiationTranscriptV1::new([9; 32], [10; 32], current + 300),
+    );
+    let commitment = body.commitment();
+    let record = ZecAgreementRecordV1::from_parts(
+        ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+        body,
+        commitment,
+        sign_agreement(commitment, maker_secret),
+        sign_agreement(commitment, taker_secret),
+    );
+    ZecAgreementV1::validate_at(record, UnixSeconds::new(current))
+        .unwrap()
+        .encode_wire()
+        .unwrap()
+}
+
+fn sign_agreement(commitment: [u8; 32], secret: &SecretKey) -> [u8; 64] {
+    let mut signature =
+        Secp256k1::signing_only().sign_ecdsa(&Message::from_digest(commitment), secret);
+    signature.normalize_s();
+    signature.serialize_compact()
+}
+
 struct DaemonPaths<'a> {
     socket: &'a std::path::Path,
     chat_socket: &'a std::path::Path,
@@ -505,6 +755,10 @@ struct DaemonPaths<'a> {
     key_file: &'a std::path::Path,
     claim_key_file: &'a std::path::Path,
     claim_preimage_file: &'a std::path::Path,
+    actor_root: &'a Path,
+    actor_source_config: &'a Path,
+    actor_program: &'a Path,
+    actor_program_sha256: &'a str,
 }
 
 fn start_daemon(paths: &DaemonPaths<'_>) -> Child {
@@ -527,6 +781,14 @@ fn start_daemon(paths: &DaemonPaths<'_>) -> Child {
         .arg(paths.claim_key_file)
         .arg("--maker-claim-preimage-file")
         .arg(paths.claim_preimage_file)
+        .arg("--zec-source-maker-config")
+        .arg(paths.actor_source_config)
+        .arg("--zec-maker-actor-root")
+        .arg(paths.actor_root)
+        .arg("--zec-actor-program")
+        .arg(paths.actor_program)
+        .arg("--zec-actor-program-sha256")
+        .arg(paths.actor_program_sha256)
         .spawn()
         .expect("start isolated maker daemon")
 }

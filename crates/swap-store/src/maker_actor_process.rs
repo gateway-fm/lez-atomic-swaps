@@ -436,6 +436,25 @@ impl std::fmt::Debug for MakerActorArtifacts {
     }
 }
 
+/// Validates one exact actor executable against the scheduler artifact policy.
+///
+/// # Errors
+///
+/// Rejects an unsafe parent, type, owner, mode, link count, size, identity, or
+/// SHA-256 mismatch. This lets a daemon fail before accepting work.
+pub fn validate_maker_actor_program(
+    path: &Path,
+    expected_sha256: [u8; 32],
+) -> Result<(), MakerActorProcessError> {
+    read_verified_artifact(
+        path,
+        MakerActorArtifactKind::Program,
+        MAX_ACTOR_PROGRAM_BYTES,
+        expected_sha256,
+    )
+    .map(drop)
+}
+
 impl MakerActorArtifacts {
     /// Secure-opens, hashes, and seals one immutable config/program pair.
     ///

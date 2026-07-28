@@ -806,7 +806,7 @@ flowchart TB
     subgraph App[Owner-local application plane]
         MakerCli[Maker CLI]
         Daemon[Maker daemon]
-        Store[SQLite schema v15]
+        Store[SQLite schema v16]
         TerminalView[Display-only terminal projection]
         TerminalDaemon[Fresh owner-only daemon]
         PriceWorker[Bounded price worker]
@@ -814,6 +814,9 @@ flowchart TB
         Delivery[Signed run-local Delivery]
         TakerCli[Taker CLI]
         Finalizer[Agreement-to-actor finalizer]
+        Provisioner[Daemon Maker-only provisioner]
+        Scheduler[Atomic actor scheduler and fenced leases]
+        Supervisor[Bounded sealed-FD supervisor pending]
         MakerCli -->|owner Unix RPC| Daemon
         Daemon --> Store
         Daemon --> Delivery
@@ -821,7 +824,11 @@ flowchart TB
         TakerCli -->|Chat Unix RPC| Daemon
         Daemon -->|quote outside store lock| PriceWorker
         PriceWorker -->|versioned C ABI| PriceModule
-        Daemon --> Finalizer
+        Daemon -->|validated final wire and pinned template| Provisioner
+        Provisioner -->|durable no-clobber Maker bundle| Scheduler
+        Scheduler -->|same acceptance transaction| Store
+        Scheduler -.->|lease plus FDs 196 197 198| Supervisor
+        Supervisor -.-> MakerActor
         TakerCli --> Finalizer
         TerminalDaemon -->|offline import before ready| TerminalView
         TerminalView --> Store

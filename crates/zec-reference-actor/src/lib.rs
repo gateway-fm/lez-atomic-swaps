@@ -11,6 +11,7 @@ use lez_swap_store::MAKER_ACTOR_CONFIG_FD;
 mod command;
 mod config;
 mod local_poc;
+mod maker_provision;
 mod secure_file;
 #[cfg(feature = "test-crash-hooks")]
 mod test_crash_hook;
@@ -27,6 +28,10 @@ pub use local_poc::{
     LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocProvisionSummary,
     finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
     provision_local_v0_2_corridor,
+};
+pub use maker_provision::{
+    ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,
+    provision_zec_maker_actor_from_config,
 };
 #[cfg(feature = "test-crash-hooks")]
 pub use test_crash_hook::{TestCrashHookError, arm_test_crash_hook};

@@ -25,6 +25,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::Context as _;
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{
@@ -32,12 +33,13 @@ use lez_swap_core::{
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    AlertObservedEvent, EventCommit, LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit,
-    MakerOfferId, MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus,
-    MakerOfferV1, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
-    MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
-    OperatorAlertSeverity, OperatorTerminalProjectionCommit, SqliteSwapStore,
-    SqliteZecRecoveryStore, StoreError, VersionedMakerRecord, maker_zec_chat_session_id,
+    AlertObservedEvent, EventCommit, LocalPriceV1, MakerActorKindV1, MakerActorManifestV1,
+    MakerConfigurationCommit, MakerOfferCommit, MakerOfferId, MakerOfferPublicationPreflight,
+    MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerPairConfigurationV1,
+    MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind,
+    OperatorAlertRecordV1, OperatorAlertSeverity, OperatorTerminalProjectionCommit,
+    SqliteSwapStore, SqliteZecRecoveryStore, StoreError, VersionedMakerRecord,
+    maker_zec_chat_session_id, validate_maker_actor_program,
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ProtectedClaimKey,
@@ -48,6 +50,8 @@ use lez_zec_swap_sdk::{
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 
+use sha2::{Digest as _, Sha256};
+use zec_reference_actor::{ActorConfig, ActorRole, provision_zec_maker_actor_from_config};
 const NOT_FOUND: i32 = -32_004;
 const CONFLICT: i32 = -32_009;
 const INTERNAL_ERROR: i32 = -32_603;
@@ -62,6 +66,7 @@ pub struct MakerRpc {
     chat_signing_key: Option<Arc<SecretKey>>,
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
     maker_claim_preimage: Option<Arc<ClaimPreimage>>,
+    zec_actor_provisioner: Option<Arc<ZecMakerActorProvisioner>>,
 }
 
 impl std::fmt::Debug for MakerRpc {
@@ -87,6 +92,10 @@ impl std::fmt::Debug for MakerRpc {
                 "maker_claim_preimage",
                 &self.maker_claim_preimage.as_ref().map(|_| "[REDACTED]"),
             )
+            .field(
+                "zec_actor_provisioner",
+                &self.zec_actor_provisioner.as_ref().map(|_| "configured"),
+            )
             .finish()
     }
 }
@@ -103,6 +112,7 @@ impl MakerRpc {
             chat_signing_key: None,
             zec_completion_store: None,
             maker_claim_preimage: None,
+            zec_actor_provisioner: None,
         }
     }
 
@@ -114,6 +124,7 @@ impl MakerRpc {
         chat_signing_key: SecretKey,
         zec_completion_store: SqliteZecRecoveryStore,
         maker_claim_preimage: ClaimPreimage,
+        zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
     ) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),
@@ -123,6 +134,7 @@ impl MakerRpc {
             chat_signing_key: Some(Arc::new(chat_signing_key)),
             zec_completion_store: Some(Arc::new(zec_completion_store)),
             maker_claim_preimage: Some(Arc::new(maker_claim_preimage)),
+            zec_actor_provisioner: zec_actor_provisioner.map(Arc::new),
         }
     }
 
@@ -1430,6 +1442,10 @@ fn complete_zec_chat(
         return Err(invalid_request("unsupported ZEC Chat completion"));
     }
     let now_unix_seconds = trusted_now_unix_seconds()?;
+    let provisioner = context
+        .zec_actor_provisioner
+        .as_ref()
+        .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker actor provisioning is unavailable"))?;
     let completion_store = context
         .zec_completion_store
         .as_ref()
@@ -1445,15 +1461,20 @@ fn complete_zec_chat(
         0,
     )
     .map_err(invalid_request)?;
+    let actor = provisioner
+        .provision(&request.final_agreement_wire, now_unix_seconds)
+        .map_err(|_| rpc_error(INTERNAL_ERROR, "maker actor provisioning failed"))?;
     let swap_id: Box<str> = accepted.agreement().coordinator().id().as_str().into();
     let commit = completion_store
-        .complete_maker_zec_negotiation(
+        .complete_maker_zec_negotiation_and_register_actor(
             &request.request_id,
             &request.offer_id,
             request.expected_offer_revision,
             &request.reservation_id,
             &accepted,
             preimage,
+            &actor,
+            now_unix_seconds,
         )
         .map_err(application_store_error)?;
     Ok(ZecChatCompleteResponseV1 {
@@ -1462,6 +1483,120 @@ fn complete_zec_chat(
         was_replay: commit.was_replay(),
         swap_id,
     })
+}
+
+/// Validated immutable deployment inputs for daemon-owned ZEC actor creation.
+#[derive(Clone)]
+pub struct ZecMakerActorProvisioner {
+    source_maker_config: ActorConfig,
+    actor_root: PathBuf,
+    actor_program: PathBuf,
+    actor_program_sha256: [u8; 32],
+}
+
+impl std::fmt::Debug for ZecMakerActorProvisioner {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ZecMakerActorProvisioner")
+            .field("source_maker_config", &"[PINNED REDACTED]")
+            .field("actor_root", &"[REDACTED]")
+            .field("actor_program", &"[REDACTED]")
+            .field(
+                "actor_program_sha256",
+                &hex::encode(self.actor_program_sha256),
+            )
+            .finish()
+    }
+}
+
+impl ZecMakerActorProvisioner {
+    /// Validates one maker template and exact actor program before serving Chat.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-maker templates and unsafe or mismatched actor executables.
+    pub fn new(
+        source_maker_config: &Path,
+        actor_root: PathBuf,
+        actor_program: PathBuf,
+        actor_program_sha256: [u8; 32],
+    ) -> anyhow::Result<Self> {
+        let source_parent = source_maker_config
+            .parent()
+            .context("source maker config has no parent")?;
+        let source_parent_metadata =
+            fs::symlink_metadata(source_parent).context("inspect source maker config parent")?;
+        anyhow::ensure!(
+            source_maker_config.is_absolute()
+                && source_parent_metadata.file_type().is_dir()
+                && source_parent_metadata.uid() == rustix::process::geteuid().as_raw()
+                && source_parent_metadata.mode() & 0o7777 == 0o700
+                && fs::canonicalize(source_parent)
+                    .context("canonicalize source maker config parent")?
+                    == source_parent,
+            "source maker config parent is unsafe"
+        );
+        let source = ActorConfig::load_private(source_maker_config)
+            .map_err(|_| anyhow::anyhow!("source maker config is unavailable"))?;
+        anyhow::ensure!(
+            source.role() == ActorRole::Maker,
+            "source actor config is not Maker"
+        );
+        source
+            .load_activate_material()
+            .map_err(|_| anyhow::anyhow!("source maker authority is unavailable"))?;
+        let root_metadata =
+            fs::symlink_metadata(&actor_root).context("inspect ZEC maker actor root")?;
+        anyhow::ensure!(
+            actor_root.is_absolute()
+                && root_metadata.file_type().is_dir()
+                && root_metadata.uid() == rustix::process::geteuid().as_raw()
+                && root_metadata.mode() & 0o7777 == 0o700
+                && fs::canonicalize(&actor_root).context("canonicalize ZEC maker actor root")?
+                    == actor_root,
+            "ZEC maker actor root is unsafe"
+        );
+        validate_maker_actor_program(&actor_program, actor_program_sha256)
+            .map_err(|_| anyhow::anyhow!("ZEC actor program is unavailable"))?;
+        Ok(Self {
+            source_maker_config: source,
+            actor_root,
+            actor_program,
+            actor_program_sha256,
+        })
+    }
+
+    fn provision(
+        &self,
+        final_agreement_wire: &[u8],
+        accepted_at_unix_seconds: u64,
+    ) -> anyhow::Result<MakerActorManifestV1> {
+        let mut digest = Sha256::new();
+        digest.update(b"lez-atomic-swaps/maker-actor-root/v1\0");
+        digest.update(final_agreement_wire);
+        let output_root = self.actor_root.join(hex::encode(digest.finalize()));
+        let provisioned = provision_zec_maker_actor_from_config(
+            &self.source_maker_config,
+            final_agreement_wire,
+            lez_swap_core::UnixSeconds::new(accepted_at_unix_seconds),
+            &output_root,
+        )?;
+        let agreement_sha256: [u8; 32] = Sha256::digest(final_agreement_wire).into();
+        anyhow::ensure!(
+            provisioned.agreement_sha256() == agreement_sha256,
+            "provisioned agreement identity changed"
+        );
+        MakerActorManifestV1::new(
+            provisioned.swap_id().clone(),
+            MakerActorKindV1::Zcash,
+            provisioned.config_file().to_path_buf(),
+            provisioned.config_sha256(),
+            self.actor_program.clone(),
+            self.actor_program_sha256,
+            provisioned.state_database().to_path_buf(),
+        )
+        .map_err(Into::into)
+    }
 }
 
 fn validate_zec_chat_shape(request: &ZecChatProposeRequestV1) -> RpcResult<()> {

@@ -13,7 +13,7 @@ use jsonrpsee::server::{
     BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
 };
 use lez_maker_node::{
-    MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, chat_rpc_module,
+    MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, ZecMakerActorProvisioner, chat_rpc_module,
     import_terminal_zec_maker_projection, rpc_module,
 };
 use lez_swap_core::{Participant, SwapId};
@@ -62,6 +62,18 @@ struct Arguments {
     /// Owner-only file containing the maker-owned 32-byte claim preimage.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
     maker_claim_preimage_file: Option<PathBuf>,
+    /// Existing owner-private Maker actor config used as chain-fact and authority template.
+    #[arg(long, requires_all = ["delivery_directory", "zec_maker_actor_root", "zec_actor_program", "zec_actor_program_sha256"])]
+    zec_source_maker_config: Option<PathBuf>,
+    /// Existing owner-private mode-0700 base for deterministic per-swap actor bundles.
+    #[arg(long, requires_all = ["zec_source_maker_config", "zec_actor_program", "zec_actor_program_sha256"])]
+    zec_maker_actor_root: Option<PathBuf>,
+    /// Absolute exact ZEC one-shot actor executable.
+    #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program_sha256"])]
+    zec_actor_program: Option<PathBuf>,
+    /// Exact 32-byte SHA-256 identity of the ZEC actor executable.
+    #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program"])]
+    zec_actor_program_sha256: Option<Box<str>>,
     /// Stopped owner-private Maker actor database imported only as a terminal operator view.
     #[arg(long, requires_all = ["terminal_zec_swap_id", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
     terminal_zec_maker_state_db: Option<PathBuf>,
@@ -95,20 +107,13 @@ struct Arguments {
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let logos_price_source = configured_logos_price_source(&arguments)?;
+    let zec_actor_provisioner = configured_zec_actor_provisioner(&arguments)?;
     let _state_lease = acquire_state_lease(&arguments.database)?;
     import_terminal_projection(&arguments).await?;
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
     let (chat_listener, _chat_socket_guard) =
         bind_optional_owner_socket(arguments.chat_socket.as_deref())?;
-    let context = maker_context(
-        &arguments.database,
-        arguments.delivery_directory.as_deref(),
-        arguments.delivery_signing_key_file.as_deref(),
-        arguments.maker_claim_key_id.as_deref(),
-        arguments.maker_claim_key_file.as_deref(),
-        arguments.maker_claim_preimage_file.as_deref(),
-        logos_price_source,
-    )?;
+    let context = maker_context(&arguments, zec_actor_provisioner, logos_price_source)?;
     let context = attach_chat_health(context, arguments.chat_socket.as_deref());
     let module = rpc_module(context.clone())?;
     let chat_module = if chat_listener.is_some() {
@@ -344,22 +349,52 @@ fn configured_logos_price_source(
     .map(Some)
 }
 
+fn configured_zec_actor_provisioner(
+    arguments: &Arguments,
+) -> anyhow::Result<Option<ZecMakerActorProvisioner>> {
+    let configured = (
+        arguments.zec_source_maker_config.as_ref(),
+        arguments.zec_maker_actor_root.as_ref(),
+        arguments.zec_actor_program.as_ref(),
+        arguments.zec_actor_program_sha256.as_deref(),
+    );
+    let (Some(source), Some(root), Some(program), Some(program_sha256)) = configured else {
+        ensure!(
+            configured == (None, None, None, None),
+            "ZEC actor template, root, program, and SHA-256 must be configured together"
+        );
+        return Ok(None);
+    };
+    validate_runtime_directory(root).context("validate ZEC maker actor root")?;
+    ensure!(
+        root.is_absolute()
+            && fs::canonicalize(root).context("canonicalize ZEC maker actor root")? == *root,
+        "ZEC maker actor root must be absolute and canonical"
+    );
+    ensure!(
+        program_sha256.len() == 64,
+        "ZEC actor program SHA-256 must contain exactly 32 bytes as hexadecimal"
+    );
+    let mut identity = [0_u8; 32];
+    hex::decode_to_slice(program_sha256, &mut identity)
+        .context("decode ZEC actor program SHA-256")?;
+    ZecMakerActorProvisioner::new(source, root.clone(), program.clone(), identity)
+        .context("validate ZEC maker actor deployment")
+        .map(Some)
+}
+
 fn maker_context(
-    database: &Path,
-    delivery_directory: Option<&Path>,
-    delivery_signing_key_file: Option<&Path>,
-    maker_claim_key_id: Option<&str>,
-    maker_claim_key_file: Option<&Path>,
-    maker_claim_preimage_file: Option<&Path>,
+    arguments: &Arguments,
+    zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
     logos_price_source: Option<ProcessLogosPriceSource>,
 ) -> anyhow::Result<MakerRpc> {
-    let store = SqliteSwapStore::open(database).context("open maker database")?;
+    let store = SqliteSwapStore::open(&arguments.database).context("open maker database")?;
     let configured = (
-        delivery_directory,
-        delivery_signing_key_file,
-        maker_claim_key_id,
-        maker_claim_key_file,
-        maker_claim_preimage_file,
+        arguments.delivery_directory.as_deref(),
+        arguments.delivery_signing_key_file.as_deref(),
+        arguments.maker_claim_key_id.as_deref(),
+        arguments.maker_claim_key_file.as_deref(),
+        arguments.maker_claim_preimage_file.as_deref(),
     );
     let (
         Some(directory),
@@ -385,9 +420,12 @@ fn maker_context(
         .context("validate maker claim-recovery key ID")?;
     let preimage_material = load_raw_secret(preimage_file, "maker claim preimage")?;
     let preimage = ClaimPreimage::new(*preimage_material);
-    let recovery_store =
-        SqliteZecRecoveryStore::open_claim_capable(database, Participant::Maker, claim_key)
-            .context("open maker ZEC recovery store")?;
+    let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
+        &arguments.database,
+        Participant::Maker,
+        claim_key,
+    )
+    .context("open maker ZEC recovery store")?;
     let delivery = RunLocalDelivery::publisher(directory.to_path_buf(), signing_key)
         .context("open maker Delivery publisher")?;
     let now_unix_seconds = trusted_now_unix_seconds()?;
@@ -400,7 +438,14 @@ fn maker_context(
     delivery
         .reconcile(&active, now_unix_seconds)
         .context("reconcile Delivery advertisements")?;
-    let context = MakerRpc::with_delivery(store, delivery, signing_key, recovery_store, preimage);
+    let context = MakerRpc::with_delivery(
+        store,
+        delivery,
+        signing_key,
+        recovery_store,
+        preimage,
+        zec_actor_provisioner,
+    );
     Ok(match logos_price_source {
         Some(source) => context.with_logos_price_source(source),
         None => context,

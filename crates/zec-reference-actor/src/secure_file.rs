@@ -287,7 +287,10 @@ fn validate_metadata(
     if matches!(privacy, FilePrivacy::OwnerPrivate) {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-        if metadata.permissions().mode() & 0o7777 != 0o600 || metadata.nlink() != 1 {
+        if metadata.uid() != rustix::process::geteuid().as_raw()
+            || metadata.permissions().mode() & 0o7777 != 0o600
+            || metadata.nlink() != 1
+        {
             return Err(SecureFileError::Unsafe);
         }
     }
