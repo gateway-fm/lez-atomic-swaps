@@ -1,9 +1,9 @@
 # ADR 0100: fence maker actor process leases
 
 - Status: Accepted; schema-v16 transactional/race foundation GREEN;
-  inherited held-lock recovery and physical artifact binding components GREEN;
-  acceptance handoff, pair-specific semantic config binding, process supervisor,
-  and actual-node composition pending
+  inherited held-lock recovery, physical artifact binding, and atomic ZEC
+  acceptance-registration store components GREEN; daemon-owned provisioning,
+  semantic config binding, process supervisor, and actual-node composition pending
 - Date: 2026-07-28
 
 ## Context
@@ -31,10 +31,43 @@ The table never stores an agreement, key, transaction, chain observation,
 protocol phase, deadline, or effect bytes. Those remain authoritative only in
 the pair actor database and SDK journals.
 
-Registration of an already-durable swap is pair-bound and uses an immediate
-SQLite transaction for insert-once/exact-replay behavior under competing
-connections. The acceptance transaction is not yet joined to registration;
-that handoff must close before the supervisor is wired.
+Standalone registration of an already-durable swap is pair-bound and uses an
+immediate SQLite transaction for insert-once/exact-replay behavior under
+competing connections. The ZEC acceptance API now reuses that insert inside the
+existing acceptance transaction: coordinator, binding, agreement, protected
+claim material, completed negotiation, consumed offer, replay record, and one
+queued immutable actor manifest commit or roll back together. The manifest is
+part of the exact replay identity. A changed manifest conflicts, and a missing
+or drifted scheduler row on replay fails closed instead of being silently
+recreated. The actor's initial due time is deliberately not replay identity;
+the scheduler may already have advanced after a lost response.
+
+```mermaid
+sequenceDiagram
+    participant D as Maker daemon
+    participant F as Owner-private filesystem
+    participant Q as SQLite schema v16
+    participant T as Taker Chat client
+    D->>F: Prepare no-clobber maker config and exact hashes
+    T->>D: Countersigned final agreement
+    D->>Q: BEGIN IMMEDIATE
+    D->>Q: Insert swap, agreement, binding, protected claim
+    D->>Q: Insert immutable queued actor manifest
+    D->>Q: Consume offer and persist exact replay result
+    alt every write succeeds
+        D->>Q: COMMIT
+        D-->>T: Accepted swap ID
+    else any write fails
+        D->>Q: ROLLBACK all acceptance and scheduling rows
+        D-->>T: Fail closed
+    end
+```
+
+The storage primitive is GREEN. The running daemon still needs a maker-only,
+no-clobber provisioner that prepares and semantically validates the exact
+config before it calls this mandatory scheduled-acceptance API. Until that
+wiring exists, the legacy unscheduled completion method remains only a
+migration/test entry point and production handoff is not claimed closed.
 
 An immediate SQLite transaction claims one due row, installs a random 16-byte
 owner, increments a monotonic generation, and excludes every other claimant for
@@ -126,10 +159,13 @@ sequenceDiagram
 ## Atomicity argument
 
 The scheduler decides only whether and when to invoke an opaque actor. In the
-completed design, the primary key, immediate claim, owner/generation fence,
-secure physical artifact binding, and inherited kernel lock prevent concurrent
-workers for one swap across a daemon crash. Schema v16 alone does not make that
-crash-safety claim. The actor's exact
+completed design, accepted-swap creation and immutable ZEC actor registration
+share one rollback boundary, so a committed scheduled acceptance cannot expose
+the missing-row handoff. The primary key, immediate claim, owner/generation
+fence, secure physical artifact binding, and inherited kernel lock then prevent
+concurrent workers for one swap across a daemon crash. Schema v16 or the
+transactional API alone does not make the composed crash-safety claim; daemon
+provisioning and execution remain required. The actor's exact
 durable intent and observe-before-rebroadcast remain the at-most-once public-
 effect boundary. Different swaps use unique rows, configs, state databases,
 locks, agreements, escrows, outpoints, and deadlines.
@@ -148,8 +184,12 @@ locks, agreements, escrows, outpoints, and deadlines.
   verified bytes after both deployment paths are replaced. Wrong hashes,
   config symlinks, program hard links, unsafe state modes, and unexpected state
   creation fail closed.
+- Atomic acceptance tests force a later mutation failure and observe zero swap,
+  agreement, binding, claim-material, actor, and replay rows; success exposes
+  exactly one queued row. Exact and delayed replay preserve it, a changed
+  manifest conflicts, and a deleted scheduler row fails closed.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
-- Literal coordinator closure still requires atomic acceptance registration,
-  pair-specific config-to-state validation, the daemon supervisor, a real
-  role-process crash, and actual-node overlap evidence.
+- Literal coordinator closure still requires daemon-owned maker-only artifact
+  provisioning, pair-specific config-to-state validation, the daemon
+  supervisor, a real role-process crash, and actual-node overlap evidence.

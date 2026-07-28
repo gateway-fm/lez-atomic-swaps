@@ -12,11 +12,12 @@ use std::{
 
 use command_fds::{CommandFdExt as _, FdMapping};
 use lez_swap_core::{Pair, SwapCoordinator, SwapId};
-use rusqlite::{Connection, OptionalExtension as _, Row, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension as _, Row, Transaction, TransactionBehavior, params};
 use rustix::fs::{
     CWD, FlockOperation, MemfdFlags, Mode, OFlags, ResolveFlags, SealFlags, fcntl_add_seals,
     fcntl_get_seals, flock, memfd_create, openat2,
 };
+use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -37,7 +38,8 @@ pub const MAKER_ACTOR_PROGRAM_FD: i32 = 197;
 pub const MAKER_ACTOR_LOCK_FD: i32 = 198;
 
 /// Pair adapter executable used by one maker process record.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MakerActorKindV1 {
     /// One-shot Bitcoin reference actor.
     Bitcoin,
@@ -108,7 +110,7 @@ impl MakerActorScheduleState {
 }
 
 /// Immutable, secret-free binding between one accepted swap and one actor.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MakerActorManifestV1 {
     swap_id: SwapId,
     kind: MakerActorKindV1,
@@ -600,6 +602,74 @@ pub enum MakerActorProcessError {
     Sqlite(#[from] rusqlite::Error),
 }
 
+pub(crate) fn register_maker_actor_in_transaction(
+    transaction: &Transaction<'_>,
+    manifest: &MakerActorManifestV1,
+    now: u64,
+) -> Result<MakerActorRegistrationCommit, MakerActorProcessError> {
+    validate_manifest_swap(transaction, manifest)?;
+    if let Some(existing) = load_record(transaction, manifest.swap_id())? {
+        if existing.manifest == *manifest {
+            return Ok(MakerActorRegistrationCommit { was_replay: true });
+        }
+        return Err(MakerActorProcessError::RegistrationConflict);
+    }
+    let now = time_to_sql(now);
+    transaction.execute(
+        "INSERT INTO maker_actor_processes (
+            swap_id, actor_kind, manifest_version, manifest_path, manifest_sha256,
+            actor_program_path, actor_program_sha256, state_db_path,
+            desired_state, schedule_state, next_attempt_at, lease_generation,
+            attempt_count, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                   'running', 'queued', ?9, 0, 0, ?9, ?9)",
+        params![
+            manifest.swap_id().as_str(),
+            manifest.kind().name(),
+            MANIFEST_VERSION,
+            path_string(manifest.config_path())?,
+            manifest.config_sha256().as_slice(),
+            path_string(manifest.program_path())?,
+            manifest.program_sha256().as_slice(),
+            path_string(manifest.state_database_path())?,
+            now,
+        ],
+    )?;
+    Ok(MakerActorRegistrationCommit { was_replay: false })
+}
+
+pub(crate) fn require_exact_maker_actor_in_transaction(
+    transaction: &Transaction<'_>,
+    manifest: &MakerActorManifestV1,
+) -> Result<(), MakerActorProcessError> {
+    validate_manifest_swap(transaction, manifest)?;
+    let existing = load_record(transaction, manifest.swap_id())?
+        .ok_or(MakerActorProcessError::RegistrationConflict)?;
+    if existing.manifest != *manifest {
+        return Err(MakerActorProcessError::RegistrationConflict);
+    }
+    Ok(())
+}
+
+fn validate_manifest_swap(
+    connection: &Connection,
+    manifest: &MakerActorManifestV1,
+) -> Result<(), MakerActorProcessError> {
+    let swap_json = connection
+        .query_row(
+            "SELECT state_json FROM swaps WHERE id = ?1",
+            [manifest.swap_id().as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or(MakerActorProcessError::MissingSwap)?;
+    let swap: SwapCoordinator = serde_json::from_str(&swap_json).map_err(StoreError::from)?;
+    if swap.pair() != manifest.kind().pair() {
+        return Err(MakerActorProcessError::PairMismatch);
+    }
+    Ok(())
+}
+
 impl SqliteSwapStore {
     /// Inserts one immutable maker actor or exact-replays its registration.
     ///
@@ -611,52 +681,12 @@ impl SqliteSwapStore {
         manifest: &MakerActorManifestV1,
         now: u64,
     ) -> Result<MakerActorRegistrationCommit, MakerActorProcessError> {
-        let now = time_to_sql(now);
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let swap_json = transaction
-            .query_row(
-                "SELECT state_json FROM swaps WHERE id = ?1",
-                [manifest.swap_id().as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .ok_or(MakerActorProcessError::MissingSwap)?;
-        let swap: SwapCoordinator = serde_json::from_str(&swap_json).map_err(StoreError::from)?;
-        if swap.pair() != manifest.kind().pair() {
-            return Err(MakerActorProcessError::PairMismatch);
-        }
-        let existing = load_record(&transaction, manifest.swap_id())?;
-        if let Some(existing) = existing {
-            if existing.manifest == *manifest {
-                transaction.commit()?;
-                return Ok(MakerActorRegistrationCommit { was_replay: true });
-            }
-            return Err(MakerActorProcessError::RegistrationConflict);
-        }
-        transaction.execute(
-            "INSERT INTO maker_actor_processes (
-                swap_id, actor_kind, manifest_version, manifest_path, manifest_sha256,
-                actor_program_path, actor_program_sha256, state_db_path,
-                desired_state, schedule_state, next_attempt_at, lease_generation,
-                attempt_count, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                       'running', 'queued', ?9, 0, 0, ?9, ?9)",
-            params![
-                manifest.swap_id().as_str(),
-                manifest.kind().name(),
-                MANIFEST_VERSION,
-                path_string(manifest.config_path())?,
-                manifest.config_sha256().as_slice(),
-                path_string(manifest.program_path())?,
-                manifest.program_sha256().as_slice(),
-                path_string(manifest.state_database_path())?,
-                now,
-            ],
-        )?;
+        let commit = register_maker_actor_in_transaction(&transaction, manifest, now)?;
         transaction.commit()?;
-        Ok(MakerActorRegistrationCommit { was_replay: false })
+        Ok(commit)
     }
 
     /// Lists due, unleased maker actors in stable order.

@@ -33,7 +33,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    MakerOfferId, MakerOfferV1, SWAP_PAYLOAD_VERSION, StoreError, maker_zec_chat_session_id,
+    MakerActorKindV1, MakerActorManifestV1, MakerOfferId, MakerOfferV1, SWAP_PAYLOAD_VERSION,
+    StoreError, maker_actor_process::register_maker_actor_in_transaction,
+    maker_actor_process::require_exact_maker_actor_in_transaction, maker_zec_chat_session_id,
     open_configured_connection, open_existing_configured_connection, participant_name,
     revision_from_sql,
 };
@@ -68,6 +70,8 @@ struct CompleteMakerZecRequest<'a> {
     reservation_id: &'a RequestId,
     agreement_wire_sha256: [u8; 32],
     secret_digest: [u8; 32],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<&'a MakerActorManifestV1>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -183,13 +187,13 @@ impl SqliteZecRecoveryStore {
     /// The countersigned agreement, initial coordinator, immutable ZEC binding,
     /// protected first-claim material, completed negotiation, consumed offer,
     /// and global replay result share one `BEGIN IMMEDIATE` transaction. No
+    /// actor is registered by this legacy migration/test entry point, and no
     /// first-lock authority exists until this method commits.
     ///
     /// # Errors
     ///
     /// Fails closed on role, revision, reservation, identity, session, offer,
     /// amount, expiry, proposal, agreement, preimage, replay, or `SQLite` errors.
-    #[allow(clippy::similar_names, clippy::too_many_lines)]
     pub fn complete_maker_zec_negotiation(
         &self,
         request_id: &RequestId,
@@ -199,6 +203,66 @@ impl SqliteZecRecoveryStore {
         accepted: &AcceptedZecAgreementV1,
         preimage: &ClaimPreimage,
     ) -> Result<MakerZecAcceptanceCommit, StoreError> {
+        self.complete_maker_zec_negotiation_inner(
+            request_id,
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            accepted,
+            preimage,
+            None,
+        )
+    }
+
+    /// Atomically accepts a staged maker-first ZEC negotiation and schedules its actor.
+    ///
+    /// The immutable actor registration participates in the same `BEGIN IMMEDIATE`
+    /// transaction as the agreement, coordinator, binding, protected claim material,
+    /// consumed offer, completed negotiation, and replay record. A lost response may
+    /// replay only the same manifest; scheduler timing may already have advanced.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on every ordinary completion error, a manifest for another swap
+    /// or pair, an immutable registration conflict, or a missing/corrupt replay row.
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_maker_zec_negotiation_and_register_actor(
+        &self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        accepted: &AcceptedZecAgreementV1,
+        preimage: &ClaimPreimage,
+        actor: &MakerActorManifestV1,
+        actor_not_before: u64,
+    ) -> Result<MakerZecAcceptanceCommit, StoreError> {
+        self.complete_maker_zec_negotiation_inner(
+            request_id,
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            accepted,
+            preimage,
+            Some((actor, actor_not_before)),
+        )
+    }
+
+    #[allow(
+        clippy::similar_names,
+        clippy::too_many_lines,
+        clippy::too_many_arguments
+    )]
+    fn complete_maker_zec_negotiation_inner(
+        &self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        accepted: &AcceptedZecAgreementV1,
+        preimage: &ClaimPreimage,
+        actor: Option<(&MakerActorManifestV1, u64)>,
+    ) -> Result<MakerZecAcceptanceCommit, StoreError> {
         self.require_role(Participant::Maker)?;
         self.require_role(accepted.local_participant())?;
         let agreement = accepted.agreement();
@@ -206,6 +270,10 @@ impl SqliteZecRecoveryStore {
             || agreement.lez_claimant() != Participant::Maker
             || agreement.direction() != SwapDirection::TakerSellsLez
             || agreement.coordinator().pair() != Pair::Zcash
+            || actor.is_some_and(|(manifest, _)| {
+                manifest.swap_id() != agreement.coordinator().id()
+                    || manifest.kind() != MakerActorKindV1::Zcash
+            })
         {
             return Err(StoreError::InvalidZecRecoveryState);
         }
@@ -224,31 +292,40 @@ impl SqliteZecRecoveryStore {
             reservation_id,
             agreement_wire_sha256,
             secret_digest: actual_secret_digest,
+            actor: actor.map(|(manifest, _)| manifest),
         })?;
 
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let replay = transaction
             .query_row(
-                "SELECT operation, request_json, result_json
+                "SELECT operation, request_payload_version, request_json, result_json
                    FROM maker_application_mutations WHERE request_id = ?1",
                 params![request_id.as_str()],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
                     ))
                 },
             )
             .optional()?;
-        if let Some((operation, stored_request, stored_result)) = replay {
-            if operation != "zec_negotiation_complete" || stored_request != request_json {
+        if let Some((operation, stored_version, stored_request, stored_result)) = replay {
+            if operation != "zec_negotiation_complete"
+                || stored_version != 1
+                || stored_request != request_json
+            {
                 return Err(StoreError::MakerOfferRequestConflict);
             }
             let result: CompleteMakerZecResult = serde_json::from_str(&stored_result)?;
             if result.schema_version != 1 || result.offer_revision != committed_revision {
                 return Err(StoreError::CorruptMakerOffer);
+            }
+            if let Some((manifest, _)) = actor {
+                require_exact_maker_actor_in_transaction(&transaction, manifest)
+                    .map_err(|_| StoreError::InvalidMakerActorRegistration)?;
             }
             transaction.commit()?;
             return Ok(MakerZecAcceptanceCommit {
@@ -401,6 +478,10 @@ impl SqliteZecRecoveryStore {
                 coordinator_json
             ],
         )?;
+        if let Some((manifest, not_before)) = actor {
+            register_maker_actor_in_transaction(&transaction, manifest, not_before)
+                .map_err(|_| StoreError::InvalidMakerActorRegistration)?;
+        }
         transaction.execute(
             "INSERT INTO zcash_swap_bindings (swap_id, payload_version, payload_json)
              VALUES (?1, 1, ?2)",

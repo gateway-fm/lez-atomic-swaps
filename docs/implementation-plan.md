@@ -3321,12 +3321,22 @@ separately from runtime dependencies.
   creation fail closed. Full crate tests, strict Clippy/Rustdoc, and dependency
   policy are GREEN.
 
-  Next, join registration to final acceptance, add pair-specific validation that
-  the exact config state path equals the manifest, implement the pair-neutral
-  supervisor, route existing M3 overlap and M5 ZEC application flows through it,
-  then prove one exact SIGKILL/restart while a disjoint peer reaches terminal
-  without duplicate effects. This partial progress does not increase the 3/7
-  score.
+  The atomic-acceptance RED/GREEN slice now reuses registration inside the ZEC
+  completion transaction. Coordinator, agreement, binding, encrypted claim
+  material, offer/negotiation mutation, replay record, and immutable queued
+  actor row commit or roll back together. The manifest is exact replay identity;
+  a changed manifest conflicts and a missing durable actor row fails closed.
+  This closes the store primitive, not the running handoff: the current daemon
+  still calls the legacy unscheduled entry point.
+
+  Next, add a maker-only no-clobber ZEC actor provisioner and route Chat
+  completion through the mandatory scheduled API; add real BTC/ZEC
+  `--config-fd` loading plus pair-specific config/state/agreement validation;
+  explicitly permit and rehearse `memfd_create` under the hardened systemd unit;
+  implement the bounded pair-neutral supervisor; route existing M3 overlap and
+  M5 ZEC application flows through it; then prove one exact SIGKILL/restart while
+  a disjoint peer reaches terminal without duplicate effects. This partial
+  progress does not increase the 3/7 score.
 - [ ] After the working PoC, apply RED-GREEN-REFACTOR to restart, concurrent
   isolation, unavailable-chain, outage, stale price, request replay, and manual
   recovery cases.
@@ -3346,7 +3356,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 19 to 35 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 18 to 33 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordination, and post-PoC hardening remain explicitly open above.
 

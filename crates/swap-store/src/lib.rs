@@ -318,6 +318,9 @@ pub enum StoreError {
     /// `SQLite` operation failed.
     #[error("SQLite swap-store operation failed")]
     Sqlite(#[from] rusqlite::Error),
+    /// An accepted swap could not bind its exact immutable maker actor registration.
+    #[error("accepted swap maker actor registration is invalid")]
+    InvalidMakerActorRegistration,
     /// A terminal actor projection does not match the completed application agreement.
     #[error("operator terminal projection is invalid")]
     InvalidOperatorTerminalProjection,

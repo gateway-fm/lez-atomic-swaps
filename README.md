@@ -88,10 +88,16 @@ Config and program files are secure-opened, identity/mode/link/hash checked, and
 copied to write-sealed child FDs 196/197; path replacement cannot change the
 bytes read or executed. State paths are rebound as the same private inode or the
 same absence immediately before command construction, and lock FD 198 remains
-the process-liveness fence. Atomic acceptance-to-registration handoff,
-pair-specific proof that config state equals the manifest state, the supervisor,
-and actual-node crash composition remain. This checkpoint does not increase the
-M5 score.
+the process-liveness fence. The ZEC store API now joins final acceptance and one
+immutable queued actor manifest in the same immediate transaction: forced late
+failure rolls back the offer, swap, agreement, binding, encrypted claim
+material, actor row, and replay record together. Exact/delayed replay preserves
+one row, changed manifest replay conflicts, and a missing scheduler row fails
+closed. The running daemon still needs maker-only no-clobber artifact
+provisioning before it can call that mandatory scheduled-acceptance API.
+Pair-specific proof that config state equals the manifest state, real actor
+`--config-fd` support, the supervisor, and actual-node crash composition also
+remain. This checkpoint does not increase the M5 score.
 
 Build and repeat the current real process boundary with:
 

@@ -13,9 +13,10 @@ use lez_swap_core::{
     SwapDirection, SwapId, UnixSeconds,
 };
 use lez_swap_store::{
-    LocalPriceV1, MakerOfferId, MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind,
-    MakerRouteV1, MakerZecNegotiationStatus, MakerZecNegotiationV1, SqliteSwapStore,
-    SqliteZecRecoveryStore, StoreError, maker_zec_chat_session_id,
+    LocalPriceV1, MakerActorKindV1, MakerActorManifestV1, MakerActorScheduleState, MakerOfferId,
+    MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
+    MakerZecNegotiationStatus, MakerZecNegotiationV1, SqliteSwapStore, SqliteZecRecoveryStore,
+    StoreError, maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ActiveZecSwap, Bip199Contract, CLAIM_RECORD_SCHEMA_V1,
@@ -5099,6 +5100,16 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     drop(application_store);
 
     let accepted = accept(&artifacts.agreement_wire, Participant::Maker);
+    let actor = MakerActorManifestV1::new(
+        accepted.agreement().coordinator().id().clone(),
+        MakerActorKindV1::Zcash,
+        data.path().join("maker-actor-config.json"),
+        [0xa1; 32],
+        data.path().join("lez-zec-reference-actor"),
+        [0xb2; 32],
+        data.path().join("maker-actor-state.sqlite3"),
+    )
+    .unwrap();
     let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
         &path,
         Participant::Maker,
@@ -5114,23 +5125,27 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     )
     .unwrap();
     assert!(matches!(
-        recovery_store.complete_maker_zec_negotiation(
+        recovery_store.complete_maker_zec_negotiation_and_register_actor(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &accepted,
             &ClaimPreimage::new(secret),
+            &actor,
+            10,
         ),
         Err(StoreError::Sqlite(_))
     ));
-    let rolled_back: (String, i64, String, i64, i64, i64, i64, i64) = raw
+    let rolled_back: (String, i64, String, i64, i64, i64, i64, i64, i64) = raw
         .query_row(
             "SELECT o.state, o.revision, n.state,
                     n.final_agreement_wire IS NOT NULL, n.swap_id IS NOT NULL,
                     (SELECT COUNT(*) FROM swaps WHERE id = 'maker-zec-atomic-swap-001'),
                     (SELECT COUNT(*) FROM zec_sdk_agreements
                       WHERE local_role = 'maker' AND swap_id = 'maker-zec-atomic-swap-001'),
+                    (SELECT COUNT(*) FROM maker_actor_processes
+                      WHERE swap_id = 'maker-zec-atomic-swap-001'),
                     (SELECT COUNT(*) FROM maker_application_mutations
                       WHERE operation = 'zec_negotiation_complete')
                FROM maker_offers o
@@ -5147,13 +5162,14 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
                     row.get(5)?,
                     row.get(6)?,
                     row.get(7)?,
+                    row.get(8)?,
                 ))
             },
         )
         .unwrap();
     assert_eq!(
         rolled_back,
-        ("reserved".into(), 2, "proposed".into(), 0, 0, 0, 0, 0)
+        ("reserved".into(), 2, "proposed".into(), 0, 0, 0, 0, 0, 0)
     );
     let rolled_back_binding_and_claim: (i64, i64) = raw
         .query_row(
@@ -5171,25 +5187,29 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     raw.execute_batch("DROP TRIGGER fail_maker_zec_completion;")
         .unwrap();
     let committed = recovery_store
-        .complete_maker_zec_negotiation(
+        .complete_maker_zec_negotiation_and_register_actor(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &accepted,
             &ClaimPreimage::new(secret),
+            &actor,
+            10,
         )
         .unwrap();
     assert_eq!(committed.offer_revision(), 3);
     assert!(!committed.was_replay());
     let replay = recovery_store
-        .complete_maker_zec_negotiation(
+        .complete_maker_zec_negotiation_and_register_actor(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &accepted,
             &ClaimPreimage::new(secret),
+            &actor,
+            11,
         )
         .unwrap();
     assert_eq!(replay.offer_revision(), 3);
@@ -5202,21 +5222,74 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
     )
     .unwrap();
     let delayed_replay = recovery_store
-        .complete_maker_zec_negotiation(
+        .complete_maker_zec_negotiation_and_register_actor(
             &completion_request,
             &offer_id,
             2,
             &reservation_id,
             &changed_acceptance,
             &ClaimPreimage::new(secret),
+            &actor,
+            12,
         )
         .unwrap();
     assert_eq!(delayed_replay.offer_revision(), 3);
     assert!(delayed_replay.was_replay());
+
+    let changed_actor = MakerActorManifestV1::new(
+        accepted.agreement().coordinator().id().clone(),
+        MakerActorKindV1::Zcash,
+        data.path().join("maker-actor-config.json"),
+        [0xa2; 32],
+        data.path().join("lez-zec-reference-actor"),
+        [0xb2; 32],
+        data.path().join("maker-actor-state.sqlite3"),
+    )
+    .unwrap();
+    assert!(matches!(
+        recovery_store.complete_maker_zec_negotiation_and_register_actor(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &ClaimPreimage::new(secret),
+            &changed_actor,
+            10,
+        ),
+        Err(StoreError::MakerOfferRequestConflict)
+    ));
+    assert_eq!(
+        raw.execute(
+            "DELETE FROM maker_actor_processes WHERE swap_id = ?1",
+            [accepted.agreement().coordinator().id().as_str()],
+        )
+        .unwrap(),
+        1
+    );
+    assert!(matches!(
+        recovery_store.complete_maker_zec_negotiation_and_register_actor(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &ClaimPreimage::new(secret),
+            &actor,
+            10,
+        ),
+        Err(StoreError::InvalidMakerActorRegistration)
+    ));
     drop(raw);
     drop(recovery_store);
 
     let mut application_store = SqliteSwapStore::open(&path).unwrap();
+    assert!(
+        !application_store
+            .register_maker_actor(&actor, 10)
+            .unwrap()
+            .was_replay()
+    );
     let negotiation = application_store
         .load_zec_maker_negotiation(&offer_id)
         .unwrap()
@@ -5254,6 +5327,23 @@ async fn maker_chat_completion_is_one_atomic_replay_safe_restart_unit() {
             .load_zcash_binding(accepted.agreement().coordinator().id())
             .unwrap(),
         Some(accepted.agreement().binding().clone())
+    );
+    let actor_records = application_store.list_maker_actor_processes().unwrap();
+    assert_eq!(actor_records.len(), 1);
+    assert_eq!(actor_records[0].manifest(), &actor);
+    assert_eq!(
+        actor_records[0].schedule_state(),
+        MakerActorScheduleState::Queued
+    );
+    assert!(
+        application_store
+            .list_due_maker_actor_ids(9, 1)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        application_store.list_due_maker_actor_ids(10, 1).unwrap(),
+        vec![accepted.agreement().coordinator().id().clone()]
     );
 
     let mut terminal = accepted.agreement().coordinator().clone();
