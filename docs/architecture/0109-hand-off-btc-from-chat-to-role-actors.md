@@ -142,6 +142,44 @@ sequenceDiagram
     T->>R: Publish digest pinned receipt
 ```
 
+## Actual-node composition flow
+
+```mermaid
+sequenceDiagram
+    participant R as Isolated runner
+    participant X as Delivery
+    participant N as Core and LEZ nodes
+    participant D as Maker daemon
+    participant T as Taker CLI
+    participant F as Role fixed files
+    participant A as Maker and Taker actors
+
+    R->>D: Start Delivery only process group
+    D->>X: Publish signed bounded offer
+    R->>T: Plan offer and derive swap ID
+    T->>X: Authenticate exact envelope
+    R->>D: Stop and reap publication daemon
+    R->>N: Read actual chain facts
+    R->>R: Finalize agreement with derived swap ID
+    R->>F: Write schema 6 sources and canonical draft
+    R->>D: Start full Chat daemon with Maker source
+    R->>T: Accept with Taker source and draft
+    T->>D: Propose and complete exact agreement
+    D->>F: Publish no replace Maker bundle
+    T->>F: Publish no replace Taker bundle and receipt
+    R->>R: Verify source bytes and inodes unchanged
+    R->>D: Stop and reap full daemon process group
+    R->>X: Move Delivery offline
+    R->>T: Monitor from receipt without transport
+    R->>A: Activate from provisioned configs only
+    A->>N: Ordered locks after both roles activate
+    A->>N: Reveal then followup claim
+    Note over R,A: Later scan requests update evidence only
+```
+
+This sequence deliberately disables daemon actor supervision for the first
+splice. The daemon owns negotiation and atomic local registration, then exits
+
 ## Lost-response and offline replay flow
 
 ```mermaid

@@ -105,6 +105,49 @@ for required in \
     fail "direction driver is missing schema-6 agreement binding: ${required}"
 done
 
+for required in \
+  'complete_m5_btc_application_handoff() {' \
+  'export-draft' \
+  '--btc-source-maker-config "$maker_source_config"' \
+  '--btc-maker-actor-root "$maker_actor_root"' \
+  '--accept-btc-offer "$offer_id"' \
+  '--btc-source-taker-config "$taker_source_config"' \
+  '--btc-taker-actor-root "$taker_actor_root"' \
+  '--btc-acceptance-receipt "$receipt_file"' \
+  'm5_btc_actor_configs[maker]="$maker_config"' \
+  'm5_btc_actor_configs[taker]="$taker_config"' \
+  'actor_runtime_config() {' \
+  'register_m5_application_process' \
+  'stop_m5_application_process'; do
+  rg -Fq -- "$required" "$direction_driver" ||
+    fail "direction driver is missing full BTC application handoff: ${required}"
+done
+
+runtime_config_consumers="$(
+  rg -Fc 'config="$(actor_runtime_config "$role")"' "$direction_driver"
+)"
+[[ "$runtime_config_consumers" == 8 ]] ||
+  fail "all nine actor invocations must resolve one of eight role config declarations"
+source_config_assignments="$(
+  rg -Fc 'config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"' \
+    "$direction_driver"
+)"
+[[ "$source_config_assignments" == 2 ]] || fail "source config assignments drifted"
+
+initial_config_line="$(
+  rg -n -F 'write_actor_configs "$initial_tip" 4096' "$direction_driver" |
+    tail -n1 | cut -d: -f1
+)"
+handoff_line="$(
+  rg -n -F 'complete_m5_btc_application_handoff' "$direction_driver" |
+    tail -n1 | cut -d: -f1
+)"
+activate_line="$(rg -n -F 'activate_actors' "$direction_driver" | tail -n1 | cut -d: -f1)"
+[[ "$initial_config_line" =~ ^[0-9]+$ && "$handoff_line" =~ ^[0-9]+$ &&
+   "$activate_line" =~ ^[0-9]+$ && "$initial_config_line" -lt "$handoff_line" &&
+
+   "$handoff_line" -lt "$activate_line" ]] ||
+  fail "BTC application handoff must publish actor bundles before activation"
 plan_line="$(rg -n -F 'prepare_m5_btc_delivery_plan "$direction"' "$runner" |
   cut -d: -f1)"
 stage_two_line="$(rg -n -F 'run_stage_two "$direction"' "$runner" | tail -n1 |

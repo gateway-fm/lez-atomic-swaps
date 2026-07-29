@@ -126,6 +126,16 @@ Regtest plus LEZ v0.2 execution, XMR application composition, concurrent
 application supervision, and the M5 closure gates remain open; M5 is neither
 complete nor tagged.
 
+The opt-in BTC application runner now composes that same handoff into the actual
+M3 node lifecycle: schema-6 source configs bind the exact finalized agreement,
+the real daemon/Taker publish role-only no-clobber bundles before activation,
+all actor commands select those accepted bundles, Delivery and both application
+sockets are removed before chain effects, and later scan-window changes cannot
+replace runtime authority. Its orchestration contract and legacy regressions are
+GREEN; the first clean-pushed isolated-node replay is still pending and remains
+the evidence boundary between implemented composition and a proven on-chain
+application swap.
+
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,
 is killed and reaped, clears its child identity, and enters durable backoff;

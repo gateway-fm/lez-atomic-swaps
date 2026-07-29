@@ -2676,6 +2676,9 @@ with_direction_environment() {
   M3_POC_PROCESS_REGISTRY="$process_registry" \
   M3_POC_ACTOR_BIN="$actor_bin" \
   M3_POC_PROVISIONER_BIN="$provisioner_bin" \
+  M3_POC_M5_APPLICATION_ROOT="${direction_root}/application" \
+  M3_POC_MAKER_DAEMON_BIN="$maker_daemon_bin" \
+  M3_POC_TAKER_CLI_BIN="$taker_cli_bin" \
   M3_POC_ROLE_RUNNER_BIN="$role_runner_bin" \
   M3_POC_CORE_FIXTURE_BIN="$core_fixture_bin" \
   M3_POC_LEZ_SIDECAR_BIN="$sidecar_bin" \

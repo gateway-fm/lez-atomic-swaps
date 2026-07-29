@@ -3829,10 +3829,22 @@ bounded 4,096-block LEZ discovery window so the later no-clobber application
 bundle does not need a changed accepted config merely to advance a scan cursor;
 legacy and custom-token routes retain their schema and initial one-block window.
 The focused M5 contract, Bash syntax, diff hygiene, and the complete no-binary
-M3 orchestration regression are GREEN. Full Chat completion, role-fixed bundle
-selection by the actual actors, and an isolated node run remain open; until that
-handoff lands, later legacy direction steps can still rewrite their source
-window and this checkpoint does not claim immutable runtime configs.
+M3 orchestration regression are GREEN. The direction runner now exports the
+canonical draft, starts an identity-registered process-group-isolated full Chat
+daemon with supervision disabled, and invokes the real Taker CLI to complete
+both signatures and provision disjoint Maker/Taker bundles before activation.
+All nine actor invocations resolve through those provisioned configs. Later LEZ
+window requests must stay within the initial 4,096-block bound and update only
+diagnostic evidence; neither published bundle nor source authority is replaced.
+The focused real-process BTC handoff remains 1 of 1 GREEN in 0.86 seconds, and
+warning-fatal feature-complete Clippy is GREEN. The composed runner's static
+contract and full legacy M3 regression are GREEN. A clean pushed isolated-node
+execution remains the runtime gate, so this checkpoint does not yet claim a BTC
+application chain swap.
+The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
+0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
+security contracts. Its extracted legacy timing fixture now declares non-M5
+mode explicitly.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 tests the lifecycle contract against

@@ -75,6 +75,8 @@ prepare_case() {
   schedule="$selected_schedule"
   # shellcheck disable=SC2034 # Read by the extracted production functions.
   asset_mode="$selected_asset_mode"
+  # shellcheck disable=SC2034 # Read by the extracted production functions.
+  m5_btc_application_mode=0
   mkdir -p "${case_root}/private" "$evidence_dir"
   chmod 0700 "${case_root}/private" "$evidence_dir"
   initialize_phase_timings || fail "${label} timing initialization failed"

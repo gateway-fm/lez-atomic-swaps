@@ -5627,6 +5627,29 @@ prove Bitcoin or LEZ behavior. The next BTC application gate must run these
 role-fixed outputs against isolated Bitcoin Core 31.1 Regtest and LEZ v0.2
 nodes; public endpoints remain a later configuration and deployment choice.
 
+The opt-in composed runner is now available for the clean-pushed runtime gate:
+
+```bash
+RUN_ID="m5-btc-application-$(date -u +%Y%m%d%H%M%S)" \
+  ./scripts/run-m5-btc-application-poc.sh
+```
+
+It requires a clean `HEAD` already equal to `origin/main`, Docker, the pinned
+Rust toolchain and offline dependency cache, the pinned LEZ v0.2/Rapidsnark
+inputs documented by the M3 flow, and enough local disk for run-scoped images
+and `.e2e/$RUN_ID`. It creates uniquely named Bitcoin Core 31.1 Regtest and LEZ
+v0.2 stacks with dynamic loopback ports. Test funds come only from deterministic
+Regtest outputs and local LEZ genesis; no public RPC, faucet, peer, deployment,
+DNS route, public funds, or evidence upload participates. The pinned Bedrock
+component may attempt `pool.ntp.org:123/udp`, but certification does not depend
+on that response. Local container startup, build-cache misses, and finalized
+block production are the remaining flake/time sources. The runner records exact
+container IDs, RPC facts, process identities, actor configs, effects, terminal
+state, timing, and cleanup evidence and removes only resources bearing its own
+run ID. At this checkpoint the command is the intended reproducible gate; do not
+claim its on-chain result until a clean pushed run publishes a passing evidence
+packet.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

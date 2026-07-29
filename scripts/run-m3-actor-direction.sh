@@ -253,7 +253,7 @@ emit_effect_plan() {
 preflight() {
   local command_name binary
   for command_name in awk chmod cmp cp curl date docker jq kill mkdir mv openssl perl printf \
-    readlink rg sed sha256sum sleep stat timeout tr xxd; do
+    readlink rg sed sha256sum sleep sqlite3 stat timeout tr xxd; do
     command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
   done
   for binary in scripts/run-m3-actor-direction.sh target/debug/btc-local-poc-provision \
@@ -319,6 +319,11 @@ require_environment() {
       fail "required M5 BTC environment is missing: M3_POC_SWAP_ID"
     [[ "$value" =~ ^[0-9a-f]{64}$ ]] ||
       fail "M3_POC_SWAP_ID must be a canonical 32-byte lowercase hex value"
+    for variable in M3_POC_M5_APPLICATION_ROOT M3_POC_MAKER_DAEMON_BIN \
+      M3_POC_TAKER_CLI_BIN; do
+      value="${!variable:-}"
+      [[ -n "$value" ]] || fail "required M5 BTC environment is missing: ${variable}"
+    done
   elif [[ -n "${M3_POC_SWAP_ID:-}" ]]; then
     fail "M3_POC_SWAP_ID is reserved for M5 BTC application mode"
   fi
@@ -343,6 +348,16 @@ require_environment() {
     value="${!variable}"
     [[ "$value" == /* ]] || fail "path environment must be absolute: ${variable}"
   done
+  if [[ "$m5_btc_application_mode" == 1 ]]; then
+    for variable in M3_POC_M5_APPLICATION_ROOT M3_POC_MAKER_DAEMON_BIN \
+      M3_POC_TAKER_CLI_BIN; do
+      value="${!variable}"
+      [[ "$value" == /* ]] || fail "M5 BTC path environment must be absolute: ${variable}"
+    done
+    [[ -x "$M3_POC_MAKER_DAEMON_BIN" && ! -L "$M3_POC_MAKER_DAEMON_BIN" &&
+       -x "$M3_POC_TAKER_CLI_BIN" && ! -L "$M3_POC_TAKER_CLI_BIN" ]] ||
+      fail "M5 BTC application binaries are unavailable or unsafe"
+  fi
   if [[ "$asset_mode" == "custom_token" ]]; then
     for variable in M3_POC_LEZ_ACCOUNT_CODEC_BIN M3_POC_F7_FIXTURE_ROOT \
       M3_POC_F7_FIXTURE_EVIDENCE M3_POC_F7_FIXTURE_PRIVATE_DIR M3_POC_F7_WALLET_BIN; do
@@ -733,6 +748,87 @@ register_process() {
     >>"$M3_POC_PROCESS_REGISTRY"
   printf '%s\t%s\t%s\t%s\n' "$pid" "$start" "$executable" "$role" \
     >>"${M3_POC_DIRECTION_ROOT}/${phase}-sidecars.tsv"
+}
+
+m5_application_pid=""
+m5_application_start=""
+m5_application_executable=""
+m5_application_pgid=""
+m5_application_sid=""
+
+register_m5_application_process() {
+  local phase="$1" pid="$2" expected_executable="$3"
+  local fields state ppid pgid sid start executable
+  [[ "$phase" == chat && "$pid" =~ ^[1-9][0-9]*$ &&
+     "$expected_executable" == /* ]] || return 1
+  for _ in {1..200}; do
+    [[ -r "/proc/${pid}/stat" ]] || return 1
+    fields="$(awk '{print $3, $4, $5, $6, $22}' "/proc/${pid}/stat" 2>/dev/null)" ||
+      return 1
+    read -r state ppid pgid sid start <<<"$fields"
+    executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    if [[ "$state" != Z && "$ppid" == "$$" && "$pgid" == "$pid" &&
+          "$sid" == "$pid" && "$executable" == "$expected_executable" ]]; then
+      break
+    fi
+    sleep 0.01
+  done
+  [[ "$state" != Z && "$ppid" == "$$" && "$pgid" == "$pid" &&
+     "$sid" == "$pid" && -n "$start" && "$executable" == "$expected_executable" ]] ||
+    return 1
+  jq -nc --arg role maker --arg phase m5-btc-chat --argjson pid "$pid" \
+    --arg start "$start" --arg executable "$executable" --argjson ppid "$ppid" \
+    --argjson pgid "$pgid" --argjson sid "$sid" \
+    '{role:$role,phase:$phase,pid:$pid,start_ticks:$start,executable:$executable,
+      ppid:$ppid,pgid:$pgid,sid:$sid,group_owned:true,reap_child:false}' \
+    >>"$M3_POC_PROCESS_REGISTRY" || return 1
+  m5_application_pid="$pid"
+  m5_application_start="$start"
+  m5_application_executable="$executable"
+  m5_application_pgid="$pgid"
+  m5_application_sid="$sid"
+}
+
+stop_m5_application_process() {
+  local state actual_start actual_executable actual_pgid actual_sid status
+  [[ "$m5_application_pid" =~ ^[1-9][0-9]*$ &&
+     "$m5_application_pgid" == "$m5_application_pid" &&
+     "$m5_application_sid" == "$m5_application_pid" ]] || return 1
+  if [[ -r "/proc/${m5_application_pid}/stat" ]]; then
+    actual_start="$(awk '{print $22}' "/proc/${m5_application_pid}/stat" 2>/dev/null)"
+    actual_pgid="$(awk '{print $5}' "/proc/${m5_application_pid}/stat" 2>/dev/null)"
+    actual_sid="$(awk '{print $6}' "/proc/${m5_application_pid}/stat" 2>/dev/null)"
+    actual_executable="$(readlink -f "/proc/${m5_application_pid}/exe" 2>/dev/null || true)"
+    [[ "$actual_start" == "$m5_application_start" &&
+       "$actual_executable" == "$m5_application_executable" &&
+       "$actual_pgid" == "$m5_application_pgid" &&
+       "$actual_sid" == "$m5_application_sid" ]] || return 1
+    kill -TERM -- "-${m5_application_pgid}" 2>/dev/null || return 1
+    for _ in {1..100}; do
+      state="$(awk '{print $3}' "/proc/${m5_application_pid}/stat" 2>/dev/null || true)"
+      [[ -z "$state" || "$state" == Z ]] && break
+      sleep 0.05
+    done
+    state="$(awk '{print $3}' "/proc/${m5_application_pid}/stat" 2>/dev/null || true)"
+    if [[ -n "$state" && "$state" != Z ]]; then
+      actual_start="$(awk '{print $22}' "/proc/${m5_application_pid}/stat" 2>/dev/null)"
+      actual_pgid="$(awk '{print $5}' "/proc/${m5_application_pid}/stat" 2>/dev/null)"
+      actual_sid="$(awk '{print $6}' "/proc/${m5_application_pid}/stat" 2>/dev/null)"
+      actual_executable="$(readlink -f "/proc/${m5_application_pid}/exe" 2>/dev/null || true)"
+      [[ "$actual_start" == "$m5_application_start" &&
+         "$actual_executable" == "$m5_application_executable" &&
+         "$actual_pgid" == "$m5_application_pgid" &&
+         "$actual_sid" == "$m5_application_sid" ]] || return 1
+      kill -KILL -- "-${m5_application_pgid}" 2>/dev/null || return 1
+    fi
+  fi
+  if wait "$m5_application_pid" 2>/dev/null; then status=0; else status=$?; fi
+  [[ "$status" != 127 ]] || return 1
+  m5_application_pid=""
+  m5_application_start=""
+  m5_application_executable=""
+  m5_application_pgid=""
+  m5_application_sid=""
 }
 
 write_runtime() {
@@ -1620,6 +1716,10 @@ run_signing_ceremony() {
 
 accepted_at=0
 actor_prelock_lez_tip=0
+declare -A m5_btc_actor_configs=()
+m5_btc_window_start=0
+m5_btc_window_end=0
+
 write_actor_configs() {
   local start_height="$1" max_blocks="$2"
   local role basic endpoint config partial adaptor refund
@@ -1628,6 +1728,19 @@ write_actor_configs() {
   [[ "$start_height" =~ ^[0-9]+$ && "$max_blocks" =~ ^[0-9]+$ ]] ||
     fail "actor LEZ window is not numeric"
   (( max_blocks >= 1 && max_blocks <= 4096 )) || fail "actor LEZ window is out of bounds"
+  if [[ "$m5_btc_application_mode" == 1 &&
+        "${#m5_btc_actor_configs[@]}" == 2 ]]; then
+    local requested_end=$((start_height + max_blocks - 1))
+    (( start_height >= m5_btc_window_start && requested_end <= m5_btc_window_end )) ||
+      fail "M5 BTC actor observation escaped its provisioned LEZ window"
+    jq -n --argjson start "$start_height" --argjson blocks "$max_blocks" '
+      {schema_version:1,start_height:$start,max_blocks:$blocks,
+       config_publication:"unchanged_provisioned_schema_6"}
+    ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-actor-lez-window-latest.json"
+    chmod 0600 \
+      "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-actor-lez-window-latest.json"
+    return 0
+  fi
   agreement="${M3_POC_DIRECTION_ROOT}/fixture/agreement.borsh"
   maker_bitcoin_funding="${M3_POC_DIRECTION_ROOT}/fixture/funding-transaction.hex"
   if [[ "$asset_mode" == "custom_token" ]]; then
@@ -1742,6 +1855,27 @@ write_actor_configs() {
     {schema_version:1,start_height:$start,max_blocks:$blocks}
   ' >"${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-actor-lez-window-latest.json"
   chmod 0600 "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-actor-lez-window-latest.json"
+  if [[ "$m5_btc_application_mode" == 1 ]]; then
+    m5_btc_window_start="$start_height"
+    m5_btc_window_end=$((start_height + max_blocks - 1))
+  fi
+}
+
+actor_runtime_config() {
+  local role="$1" config
+  case "$role" in
+    maker | taker) ;;
+    *) fail "unsupported actor runtime role: ${role}" ;;
+  esac
+  if [[ "$m5_btc_application_mode" == 1 &&
+        "${#m5_btc_actor_configs[@]}" == 2 ]]; then
+    config="${m5_btc_actor_configs[$role]:-}"
+  else
+    config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  fi
+  [[ "$config" == /* && -f "$config" && ! -L "$config" ]] ||
+    fail "${role} actor runtime config is unavailable or unsafe"
+  printf '%s\n' "$config"
 }
 
 actor_last_output=""
@@ -1783,7 +1917,8 @@ assert_survivor_actor_invocation_allowed() {
 
 actor_invoke() {
   local role="$1" command="$2" label="$3"
-  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local config
+  config="$(actor_runtime_config "$role")"
   assert_survivor_actor_invocation_allowed "$role" "$label"
   actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
   [[ ! -e "$actor_last_output" ]] || fail "refusing to overwrite actor evidence: ${label}/${role}"
@@ -1794,7 +1929,8 @@ actor_invoke() {
 actor_invoke_awaiting_retry() {
   local role="$1" command="$2" chain="$3" phase="$4" revision="$5"
   local minimum_count="$6" target_count="$7" label="$8"
-  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local config
+  config="$(actor_runtime_config "$role")"
   local attempt attempt_output attempt_error error_text durable_count
   assert_survivor_actor_invocation_allowed "$role" "$label"
   [[ "$chain" == "lez" ]] ||
@@ -1868,7 +2004,8 @@ actor_invoke_awaiting_retry() {
 
 actor_invoke_bitcoin_lock_awaiting_retry() {
   local role="$1" command="$2" expected="$3" require_present="$4" label="$5"
-  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local config
+  config="$(actor_runtime_config "$role")"
   local attempt attempt_output attempt_error error_text mempool mempool_count lez_count
   local expected_lez_count
   assert_survivor_actor_invocation_allowed "$role" "$label"
@@ -1952,7 +2089,8 @@ actor_invoke_bitcoin_lock_awaiting_retry() {
 
 actor_invoke_observation_retry() {
   local role="$1" expected="$2" chain="$3" label="$4"
-  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local config
+  config="$(actor_runtime_config "$role")"
   local attempt attempt_output attempt_error error_text
   assert_survivor_actor_invocation_allowed "$role" "$label"
   actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
@@ -1995,7 +2133,8 @@ actor_invoke_observation_retry() {
 
 actor_invoke_recovery_retry() {
   local role="$1" expected="$2" chain="$3" label="$4"
-  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local config
+  config="$(actor_runtime_config "$role")"
   local attempt attempt_output attempt_error error_text
   assert_survivor_actor_invocation_allowed "$role" "$label"
   actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
@@ -2038,7 +2177,8 @@ actor_invoke_recovery_retry() {
 
 actor_invoke_recovery_pending_retry() {
   local role="$1" predecessor="$2" chain="$3" label="$4"
-  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local config
+  config="$(actor_runtime_config "$role")"
   local attempt attempt_output attempt_error error_text initial_count current_count
   assert_survivor_actor_invocation_allowed "$role" "$label"
   initial_count="$(lez_successful_submission_count)"
@@ -2085,7 +2225,7 @@ assert_recovery_pending_both() {
     *) fail "unsupported recovery predecessor: ${predecessor}" ;;
   esac
   for role in maker taker; do
-    config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+    config="$(actor_runtime_config "$role")"
     output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
     error="${output%.json}.stderr"
     status="${output%.json}-after-unavailable.json"
@@ -2119,7 +2259,8 @@ assert_recovery_pending_both() {
 
 actor_reconcile_bitcoin_claim_submission() {
   local role="$1" peer="$2" expected_revision="$3" label="$4"
-  local config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
+  local config
+  config="$(actor_runtime_config "$role")"
   local attempt attempt_output attempt_error mempool_output error_text mempool_count
   local actor_succeeded
   assert_survivor_actor_invocation_allowed "$role" "$label"
@@ -3953,6 +4094,173 @@ run_actor_refund_flow() {
   esac
 }
 
+complete_m5_btc_application_handoff() {
+  local application_root="$M3_POC_M5_APPLICATION_ROOT"
+  local fixture_root="${M3_POC_DIRECTION_ROOT}/fixture"
+  local owner_root="${application_root}/owner"
+  local socket="${application_root}/maker.sock"
+  local chat_socket="${application_root}/chat.sock"
+  local ready_file="${application_root}/maker.ready"
+  local database="${application_root}/maker.sqlite3"
+  local delivery="${application_root}/delivery"
+  local delivery_offline="${application_root}/delivery.offline"
+  local delivery_key="${fixture_root}/private/maker-signing.key"
+  local maker_signing_key="$delivery_key"
+  local taker_signing_key="${fixture_root}/private/taker-signing.key"
+  local maker_source_config="${M3_POC_DIRECTION_ROOT}/actors/maker/actor-config.json"
+  local taker_source_config="${M3_POC_DIRECTION_ROOT}/actors/taker/actor-config.json"
+  local maker_actor_root="${owner_root}/maker-actors"
+  local taker_actor_root="${owner_root}/taker-actor"
+  local draft_file="${owner_root}/unsigned-draft-v1.borsh"
+  local agreement_file="${owner_root}/agreement-v1.borsh"
+  local receipt_file="${owner_root}/acceptance-receipt.json"
+  local acceptance_file="${owner_root}/acceptance.json"
+  local monitor_file="${owner_root}/offline-monitor.json"
+  local daemon_log="${owner_root}/chat-daemon.log"
+  local plan_file="${application_root}/btc-plan.json"
+  local draft_evidence="${owner_root}/draft-export.json"
+  local offer_id reservation_id maker_public_key now actor_sha final_sha
+  local maker_config taker_config source_maker_sha source_taker_sha
+  local source_maker_inode source_taker_inode daemon_pid role_config
+  local -a maker_configs=()
+
+  [[ "$m5_btc_application_mode" == 1 &&
+     "$M3_POC_DIRECTION" == taker_sells_foreign && "$asset_mode" == native ]] ||
+    fail "M5 BTC application handoff is restricted to the native forward route"
+  [[ "$application_root" == "${M3_POC_DIRECTION_ROOT}/application" &&
+     -d "$application_root" && ! -L "$application_root" &&
+     "$(stat -c '%u:%a' "$application_root")" == "$(id -u):700" ]] ||
+    fail "M5 BTC application root is unavailable or unsafe"
+  for input in "$plan_file" "$delivery_key" "$taker_signing_key" \
+    "$maker_source_config" "$taker_source_config" \
+    "${fixture_root}/agreement.borsh"; do
+    [[ -f "$input" && ! -L "$input" ]] ||
+      fail "M5 BTC handoff input is unavailable or unsafe: ${input##*/}"
+  done
+  [[ ! -e "$owner_root" && ! -L "$owner_root" &&
+     ! -e "$delivery_offline" && ! -L "$delivery_offline" ]] ||
+    fail "M5 BTC owner output already exists"
+  mkdir -m 0700 "$owner_root"
+  mkdir -m 0700 "$maker_actor_root"
+
+  offer_id="$(jq -er '.offer_id | strings' "$plan_file")"
+  reservation_id="$(jq -er '.reservation_id | strings' "$plan_file")"
+  [[ "$(jq -er '.swap_id' "$plan_file")" == "$M3_POC_SWAP_ID" ]] ||
+    fail "M5 BTC planned swap identity drifted before Chat"
+  maker_public_key="$(jq -er '.maker.musig2_public_key' \
+    "${fixture_root}/public-spec.json")"
+  [[ "$maker_public_key" =~ ^0[23][0-9a-f]{64}$ ]] ||
+    fail "M5 BTC Delivery public key is invalid"
+
+  "$M3_POC_PROVISIONER_BIN" export-draft \
+    --agreement-file "${fixture_root}/agreement.borsh" \
+    --output-file "$draft_file" >"$draft_evidence"
+  chmod 0600 "$draft_evidence"
+  [[ -f "$draft_file" && ! -L "$draft_file" &&
+     "$(stat -c '%u:%a:%h' "$draft_file")" == "$(id -u):600:1" ]] ||
+    fail "M5 BTC canonical draft publication is unsafe"
+
+  source_maker_sha="$(sha256sum "$maker_source_config" | sed 's/ .*//')"
+  source_taker_sha="$(sha256sum "$taker_source_config" | sed 's/ .*//')"
+  source_maker_inode="$(stat -c '%d:%i' "$maker_source_config")"
+  source_taker_inode="$(stat -c '%d:%i' "$taker_source_config")"
+  actor_sha="$(sha256sum "$M3_POC_ACTOR_BIN" | sed 's/ .*//')"
+  [[ "$actor_sha" =~ ^[0-9a-f]{64}$ ]] || fail "M5 BTC actor digest is invalid"
+
+  setsid "$M3_POC_MAKER_DAEMON_BIN" --socket "$socket" \
+    --chat-socket "$chat_socket" --database "$database" --ready-file "$ready_file" \
+    --delivery-directory "$delivery" --delivery-signing-key-file "$delivery_key" \
+    --btc-maker-signing-key-file "$maker_signing_key" \
+    --btc-source-maker-config "$maker_source_config" \
+    --btc-maker-actor-root "$maker_actor_root" \
+    --btc-actor-program "$M3_POC_ACTOR_BIN" \
+    --btc-actor-program-sha256 "$actor_sha" >"$daemon_log" 2>&1 &
+  daemon_pid=$!
+  if ! register_m5_application_process chat "$daemon_pid" \
+      "$M3_POC_MAKER_DAEMON_BIN"; then
+    kill -TERM -- "-${daemon_pid}" 2>/dev/null || true
+    wait "$daemon_pid" 2>/dev/null || true
+    fail "M5 BTC Chat daemon registration failed"
+  fi
+  for _ in {1..200}; do
+    if [[ -f "$ready_file" && "$(cat "$ready_file")" == "$socket" &&
+         -S "$socket" && -S "$chat_socket" ]]; then
+      break
+    fi
+    kill -0 "$daemon_pid" 2>/dev/null || fail "M5 BTC Chat daemon exited before readiness"
+    sleep 0.05
+  done
+  [[ -S "$socket" && -S "$chat_socket" && -f "$ready_file" &&
+     "$(cat "$ready_file")" == "$socket" ]] ||
+    fail "M5 BTC Chat daemon readiness timed out"
+
+  now="$(date -u +%s)"
+  "$M3_POC_TAKER_CLI_BIN" --delivery-directory "$delivery" \
+    --maker-public-key "$maker_public_key" --now-unix-seconds "$now" \
+    --pair bitcoin --direction taker-sells-foreign \
+    --accept-btc-offer "$offer_id" --chat-socket "$chat_socket" \
+    --reservation-id "$reservation_id" --foreign-units 1000000 \
+    --unsigned-draft-file "$draft_file" \
+    --taker-signing-key-file "$taker_signing_key" \
+    --agreement-output-file "$agreement_file" \
+    --btc-source-taker-config "$taker_source_config" \
+    --btc-taker-actor-root "$taker_actor_root" \
+    --btc-acceptance-receipt "$receipt_file" >"$acceptance_file"
+  chmod 0600 "$acceptance_file" "$daemon_log"
+  jq -e --arg offer "$offer_id" --arg reservation "$reservation_id" \
+    --arg swap "$M3_POC_SWAP_ID" --arg agreement "$agreement_file" '
+    .schema_version == 1 and .offer_id == $offer and .offer_revision == 3
+    and .reservation_id == $reservation and .swap_id == $swap
+    and .agreement_file == $agreement
+    and (.agreement_sha256 | test("^[0-9a-f]{64}$"))
+    and .replay == {proposal:false,completion:false,agreement_file:false}
+    and .private_material_disclosed == false
+    and .actor.role == "taker" and .actor.provisioning_replay == false
+    and .actor.receipt_replay == false
+  ' "$acceptance_file" >/dev/null || fail "M5 BTC Taker acceptance output is invalid"
+  final_sha="$(jq -er '.agreement_sha256' "$acceptance_file")"
+  [[ "$(sha256sum "$agreement_file" | sed 's/ .*//')" == "$final_sha" ]] ||
+    fail "M5 BTC final agreement digest drifted"
+
+  mapfile -t maker_configs < <(sqlite3 -batch -noheader -readonly "$database" \
+    "SELECT manifest_path FROM maker_actor_processes WHERE swap_id = '${M3_POC_SWAP_ID}' AND actor_kind = 'bitcoin';")
+  [[ "${#maker_configs[@]}" == 1 ]] || fail "M5 BTC Maker actor manifest is ambiguous"
+  maker_config="${maker_configs[0]}"
+  taker_config="$(jq -er '.actor_config_file | strings' "$receipt_file")"
+  for role_config in "$maker_config" "$taker_config"; do
+    [[ "$role_config" == /* && -f "$role_config" && ! -L "$role_config" ]] ||
+      fail "M5 BTC provisioned actor config is unavailable or unsafe"
+    jq -e --arg agreement_sha "$final_sha" \
+      '.schema_version == 6 and .agreement_sha256 == $agreement_sha' \
+      "$role_config" >/dev/null || fail "M5 BTC provisioned actor config is unbound"
+    cmp "$(jq -er '.agreement_file' "$role_config")" "$agreement_file" ||
+      fail "M5 BTC provisioned actors do not share the exact final agreement"
+  done
+  jq -e --arg swap "$M3_POC_SWAP_ID" --arg agreement_sha "$final_sha" '
+    .schema_version == 1 and .pair == "bitcoin" and .role == "taker"
+    and .swap_id == $swap and .agreement_sha256 == $agreement_sha
+  ' "$receipt_file" >/dev/null || fail "M5 BTC acceptance receipt is invalid"
+  jq -e '.role == "maker"' "$maker_config" >/dev/null || fail "Maker role config drifted"
+  jq -e '.role == "taker"' "$taker_config" >/dev/null || fail "Taker role config drifted"
+  [[ "$(sha256sum "$maker_source_config" | sed 's/ .*//')" == "$source_maker_sha" &&
+     "$(sha256sum "$taker_source_config" | sed 's/ .*//')" == "$source_taker_sha" &&
+     "$(stat -c '%d:%i' "$maker_source_config")" == "$source_maker_inode" &&
+     "$(stat -c '%d:%i' "$taker_source_config")" == "$source_taker_inode" ]] ||
+    fail "M5 BTC Chat mutated source actor authority"
+
+  m5_btc_actor_configs[maker]="$maker_config"
+  m5_btc_actor_configs[taker]="$taker_config"
+  stop_m5_application_process || fail "M5 BTC Chat daemon shutdown failed"
+  [[ ! -e "$socket" && ! -e "$chat_socket" && ! -e "$ready_file" ]] ||
+    fail "M5 BTC Chat daemon left live endpoints"
+  mv "$delivery" "$delivery_offline"
+  "$M3_POC_TAKER_CLI_BIN" monitor --receipt "$receipt_file" >"$monitor_file"
+  chmod 0600 "$monitor_file"
+  jq -e '.schema_version == 1 and .pair == "bitcoin" and .role == "taker"
+    and .phase == "not_activated" and .revision == 0' "$monitor_file" >/dev/null ||
+    fail "M5 BTC offline Taker monitor is invalid"
+}
+
 prepare_actor_flow_runtime() {
   local initial_tip
   direction_phase_begin final_transcript ||
@@ -3970,6 +4278,7 @@ prepare_actor_flow_runtime() {
   actor_prelock_lez_tip="$initial_tip"
   if [[ "$m5_btc_application_mode" == "1" ]]; then
     write_actor_configs "$initial_tip" 4096
+    complete_m5_btc_application_handoff
   else
     write_actor_configs "$initial_tip" 1
   fi
