@@ -357,7 +357,22 @@ impl MakerActorHeldLock {
     ///
     /// Rejects an unsafe state parent/lock inode or a still-live lock owner.
     pub fn acquire(record: &MakerActorProcessRecordV1) -> Result<Self, MakerActorProcessError> {
-        let state_database_path = record.manifest.state_database_path().to_path_buf();
+        Self::acquire_for(record.swap_id(), record.manifest.state_database_path())
+    }
+
+    /// Securely creates or opens and non-blockingly locks one role-state path.
+    ///
+    /// This is the same per-swap kernel authority used by the Maker scheduler,
+    /// exposed for a synchronous role-fixed CLI that has no scheduler record.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsafe state parent/lock inode or a still-live lock owner.
+    pub fn acquire_for(
+        swap_id: &SwapId,
+        state_database_path: &Path,
+    ) -> Result<Self, MakerActorProcessError> {
+        let state_database_path = state_database_path.to_path_buf();
         let parent = state_database_path
             .parent()
             .ok_or(MakerActorProcessError::UnsafeLock)?;
@@ -381,7 +396,7 @@ impl MakerActorHeldLock {
             .metadata()
             .map_err(|_| MakerActorProcessError::UnsafeLock)?;
         Ok(Self {
-            swap_id: record.swap_id().clone(),
+            swap_id: swap_id.clone(),
             state_database_path,
             lock_path,
             file,

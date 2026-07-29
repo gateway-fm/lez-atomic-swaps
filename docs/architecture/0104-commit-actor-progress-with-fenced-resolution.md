@@ -141,7 +141,7 @@ admission after restart; the daemon never substitutes a newer generation. ZEC
 exposes claim and refund, while BTC exposes refund only. The black-box operator
 journey proves read-only monitoring, exact claim replay, payload conflict,
 missing-actor classification, and an identical monitor view after restart.
-Symmetric role-validated Taker provisioning and commands follow. Complete Maker
+Symmetric role-validated Taker provisioning and direct kernel-locked commands are GREEN; acceptance-receipt and actual-node composition follow. Complete Maker
 (with crash hooks), swap-store, and BTC actor suites, strict all-target and
 all-feature Clippy, warning-free Rustdoc, formatting, and diff hygiene are
 GREEN. The lifecycle methods use the existing owner-local Unix socket; they add

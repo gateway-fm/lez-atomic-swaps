@@ -141,5 +141,5 @@ funds, or network.
 
 Actual corridor composition is next. Reusing provisioned authority paths is
 acceptable for the isolated PoC but is not production key rotation or
-multi-user custody. Taker CLI receipt/lifecycle wiring, post-lock adapter
+multi-user custody. Taker acceptance-receipt binding and actual-node lifecycle use, post-lock adapter
 removal through that CLI, packaging, and hardened negative cases remain.

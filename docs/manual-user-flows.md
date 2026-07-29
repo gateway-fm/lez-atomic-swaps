@@ -5002,6 +5002,96 @@ and local deterministic funds already bound by its private config; on the Flow
 finality cadence, CPU/disk pressure, or premature shutdown can delay execution,
 but cannot change an exact admitted request into a different action.
 
+## Flow 1K: monitor, claim, or refund as the ZEC Taker
+
+Build the application binary, then use the exact owner-private Taker config
+published for the accepted swap:
+
+```sh
+cargo build --locked -p lez-maker-node --bin lez-taker
+target/debug/lez-taker monitor \
+  --actor-config /absolute/private/swap/taker/actor-config.json
+```
+
+An unactivated actor returns exactly this secret-free JSON without opening the
+role database or contacting Delivery, Chat, LEZ, or Zebra:
+
+```json
+{"schema_version":1,"role":"taker","state":"not_activated"}
+```
+
+For an accepted and activated swap, `monitor` returns the same bounded actor
+status schema. Use `claim` only when the signed agreement and current phase make
+the Taker claim eligible:
+
+```sh
+target/debug/lez-taker claim \
+  --actor-config /absolute/private/swap/taker/actor-config.json
+```
+
+Use `refund` only on the agreement-defined timeout path:
+
+```sh
+target/debug/lez-taker refund \
+  --actor-config /absolute/private/swap/taker/actor-config.json
+```
+
+The flags do not grant effect authority. The role-fixed config, accepted
+agreement, durable actor phase, and canonical chain observations decide whether
+an action is eligible. A Maker config is rejected before state access. A second
+process for the same role state fails closed while the first holds the per-swap
+kernel lock; retry after the original process exits.
+
+```mermaid
+sequenceDiagram
+    actor U as Taker user
+    participant C as lez-taker
+    participant L as Kernel lock
+    participant A as ZEC actor
+    participant D as Role SQLite
+    participant N as Local chain nodes
+
+    U->>C: monitor claim or refund
+    C->>C: Load private config and require Taker role
+    C->>L: Acquire exact swap and state lock
+    C->>A: Run Status Claim or Recover
+    A->>D: Reopen durable role journal
+    opt Eligible claim or refund effect
+        A->>D: Persist exact intent before send
+        A->>N: Submit or observe exact effect
+        A->>D: Persist canonical result
+    end
+    A-->>U: Secret-free versioned JSON
+```
+
+The command boundary is locally atomic with respect to competing processes
+because one kernel lock covers the complete role-state invocation. There is no
+atomic transaction across SQLite and two chains. Safety instead uses the signed
+hashlock/refund agreement, persist-before-send journals, at-most-one attempt
+authority, canonical observation before replay, and agreement-ordered claim and
+refund admission. That preserves the underlying conditional atomicity without
+pretending a distributed database transaction exists.
+
+Reproduce the current process component evidence with:
+
+```sh
+cargo test --locked -p lez-maker-node --test taker_lifecycle_process -- --nocapture
+```
+
+The four focused cases use temporary mode-0700 roots, private files, SQLite, and
+the real local binary only. They use no Docker service, chain RPC, faucet, DNS,
+peer, public network, or public funds. A real claim or refund uses only the LEZ
+sidecar and Zebra RPC already pinned in the accepted Taker config. In the local
+PoC these are ephemeral literal-loopback devnet services with deterministic
+genesis/Regtest funds; CPU or disk pressure, local finality cadence, or stopping
+a node early can delay progress, but no external public service participates.
+
+Current limitation: the role-aware provisioner produces the correct Taker
+config, but the acceptance command does not yet publish a receipt that selects
+it automatically. Supplying that exact private path is a component-level manual
+step. Actual-node claim/refund through these commands and receipt-bound replay
+must be completed before this is the final M5 user journey.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 

@@ -1,13 +1,16 @@
 use std::{path::PathBuf, str::FromStr as _};
 
 use anyhow::{Context as _, ensure};
-use clap::{Parser, ValueEnum};
+use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use lez_maker_node::{DeliveryOfferQueryV1, RunLocalDelivery};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
-use lez_swap_store::MakerRouteV1;
+use lez_swap_store::{MakerActorHeldLock, MakerRouteV1};
 use secp256k1::PublicKey;
 use serde::Serialize;
+use zec_reference_actor::{
+    ActorCommand as ZecActorCommand, ActorConfig, ActorRole, execute_actor_command,
+};
 
 #[path = "support/secure_file.rs"]
 mod secure_file;
@@ -18,15 +21,18 @@ use taker_accept::{ZecTakeInput, take_zec};
 #[derive(Parser)]
 #[command(about = "LEZ atomic-swap taker CLI")]
 struct Arguments {
+    /// Post-acceptance role-local lifecycle command.
+    #[command(subcommand)]
+    command: Option<LifecycleCommand>,
     /// Owner-private run-local Delivery directory.
     #[arg(long)]
-    delivery_directory: PathBuf,
+    delivery_directory: Option<PathBuf>,
     /// Expected compressed secp256k1 maker identity in hex.
     #[arg(long)]
-    maker_public_key: String,
+    maker_public_key: Option<String>,
     /// Trusted taker-local Unix time used for the half-open offer TTL.
     #[arg(long)]
-    now_unix_seconds: u64,
+    now_unix_seconds: Option<u64>,
     /// Optional exact pair filter.
     #[arg(long, value_enum)]
     pair: Option<PairArgument>,
@@ -54,6 +60,23 @@ struct Arguments {
     /// New owner-private file for the exact countersigned agreement.
     #[arg(long)]
     agreement_output_file: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
+enum LifecycleCommand {
+    /// Read one role-local durable status without chain or transport access.
+    Monitor(LifecycleArguments),
+    /// Attempt only the agreement-ordered Taker claim.
+    Claim(LifecycleArguments),
+    /// Attempt only the agreement-ordered Taker timeout recovery.
+    Refund(LifecycleArguments),
+}
+
+#[derive(ClapArgs)]
+struct LifecycleArguments {
+    /// Owner-private role-fixed Taker actor configuration.
+    #[arg(long, value_name = "PRIVATE_JSON")]
+    actor_config: PathBuf,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -110,15 +133,28 @@ async fn main() {
 }
 
 async fn execute() -> anyhow::Result<()> {
-    let arguments = Arguments::parse();
+    let mut arguments = Arguments::parse();
+    if let Some(command) = arguments.command.take() {
+        return execute_lifecycle(command).await;
+    }
     anyhow::ensure!(
         arguments.direction.is_none() || arguments.pair.is_some(),
         "--direction requires --pair"
     );
-    let expected_maker = PublicKey::from_str(&arguments.maker_public_key)
+    let maker_public_key = arguments
+        .maker_public_key
+        .as_deref()
+        .context("discovery requires --maker-public-key")?;
+    let expected_maker = PublicKey::from_str(maker_public_key)
         .map_err(|_| anyhow::anyhow!("maker public key is invalid"))?;
-    let delivery =
-        RunLocalDelivery::subscriber(arguments.delivery_directory.clone(), expected_maker)?;
+    let delivery_directory = arguments
+        .delivery_directory
+        .as_ref()
+        .context("discovery requires --delivery-directory")?;
+    let now_unix_seconds = arguments
+        .now_unix_seconds
+        .context("discovery requires --now-unix-seconds")?;
+    let delivery = RunLocalDelivery::subscriber(delivery_directory.clone(), expected_maker)?;
     if take_was_requested(&arguments) {
         ensure!(
             arguments
@@ -132,7 +168,7 @@ async fn execute() -> anyhow::Result<()> {
         let output = take_zec(ZecTakeInput {
             delivery: &delivery,
             expected_maker: &expected_maker,
-            now_unix_seconds: arguments.now_unix_seconds,
+            now_unix_seconds,
             offer_id: arguments
                 .accept_zec_offer
                 .as_deref()
@@ -171,9 +207,9 @@ async fn execute() -> anyhow::Result<()> {
                     .unwrap_or(DirectionArgument::TakerSellsForeign)
                     .into(),
             )?,
-            arguments.now_unix_seconds,
+            now_unix_seconds,
         ),
-        None => DeliveryOfferQueryV1::all(arguments.now_unix_seconds),
+        None => DeliveryOfferQueryV1::all(now_unix_seconds),
     };
     let offers = delivery.discover(&query).await?;
     let output = DiscoveryOutput {
@@ -187,6 +223,27 @@ async fn execute() -> anyhow::Result<()> {
             })
             .collect(),
     };
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
+    let (arguments, command) = match command {
+        LifecycleCommand::Monitor(arguments) => (arguments, ZecActorCommand::Status),
+        LifecycleCommand::Claim(arguments) => (arguments, ZecActorCommand::Claim),
+        LifecycleCommand::Refund(arguments) => (arguments, ZecActorCommand::Recover),
+    };
+    let config = ActorConfig::load_private(&arguments.actor_config)
+        .map_err(|_| anyhow::anyhow!("Taker actor configuration is unavailable"))?;
+    ensure!(
+        config.role() == ActorRole::Taker,
+        "Taker actor configuration has the wrong role"
+    );
+    let _held_lock = MakerActorHeldLock::acquire_for(config.swap_id(), config.role_state_db())
+        .map_err(|_| anyhow::anyhow!("Taker actor is already running or unsafe"))?;
+    let output = execute_actor_command(&config, command)
+        .await
+        .map_err(|_| anyhow::anyhow!("Taker lifecycle command failed"))?;
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }

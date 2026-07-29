@@ -3158,9 +3158,12 @@ its actual-node, disjoint-live-process, and systemd actor crash/restart
 compositions remain open. Symmetric ZEC Taker provisioning is now component-
 GREEN: the same role-aware provisioner validates Taker authority, stages an
 owner-private role-only bundle, publishes it with `RENAME_NOREPLACE`, excludes
-Maker state, and exact-replays the original inodes and bytes. Wiring that bundle
-into Taker lifecycle commands, manual effects, autonomous other-pair execution,
-and post-PoC hardening is still incomplete. The local Delivery/Chat outage output
+Maker state, and exact-replays the original inodes and bytes. The real `lez-taker`
+now exposes ZEC `monitor`, `claim`, and `refund` directly from that role-fixed
+config under the shared per-swap kernel lock, without Delivery or Chat.
+Acceptance-receipt wiring, actual-node command effects, manual effects, autonomous
+other-pair execution, and post-PoC hardening are still incomplete. The local
+Delivery/Chat outage output
 is process-GREEN under ADR 0098; LOGOS-020 remains an upstream production-parity
 caveat.
 
@@ -3630,14 +3633,19 @@ separately from runtime dependencies.
   no external runtime resource. ADRs 0103 and 0104 carry the updated component
   and flow diagrams.
 
-  Symmetric role-validated Taker provisioning and commands follow. Two disjoint
-  live swaps and a fresh actual-node supervisor replay must then pass. A unified
+  Symmetric role-validated ZEC Taker provisioning and direct kernel-locked
+  monitor, claim, and refund commands are GREEN. Acceptance-receipt binding,
+  actual-node command effects, two disjoint live swaps, and a fresh supervisor
+  replay must then pass. A unified
   XMR lifecycle actor still precedes honest all-pair CLI composition. This
   progress does not by itself make M5 complete.
 
-  The requested 2026-07-29 cleanup removed both rebuildable Cargo targets and
-  obsolete project tool/build caches, increasing actual free disk by about 21
-  GB while retaining the live devnets and evidence. The clean rebuild exposed
+  Project cleanup has reclaimed about 59 GB cumulatively. The latest 2026-07-28
+  pass removed rebuildable Cargo targets, stale E2E state, and compatibility
+  build caches, increasing free disk by about 38 GB while preserving source, Git,
+  fixtures, and unrelated running stacks. Four stale project containers remain
+  because containerd timed out on their zombie processes; Docker was not restarted
+  because that would interrupt unrelated stacks. The clean rebuild exposed
   the documented upstream `unzip` fallback assumption; continued verification
   uses the already pinned four rapidsnark v0.0.8 libraries only after exact
   SHA-256 validation and with Cargo offline.
