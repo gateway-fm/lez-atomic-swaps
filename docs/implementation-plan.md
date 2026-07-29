@@ -3649,9 +3649,9 @@ separately from runtime dependencies.
   still pass. A unified XMR lifecycle actor still precedes honest all-pair CLI
   composition. This progress does not by itself make M5 complete.
 
-  Project cleanup has reclaimed about 73 GB cumulatively. The latest 2026-07-28
-  pass removed another 14.4 GiB rebuildable Cargo target, reducing the repo to
-  about 128 MB and increasing free disk to about 530 GB while preserving source, Git,
+  Project cleanup has reclaimed about 85 GB cumulatively. The latest 2026-07-28
+  passes removed 26.4 GiB of rebuildable Cargo targets around verification,
+  reducing the repo to about 129 MB and increasing free disk to about 530 GB while preserving source, Git,
   fixtures, and unrelated running stacks. Four stale project containers remain
   because containerd timed out on their zombie processes; Docker was not restarted
   because that would interrupt unrelated stacks. The clean rebuild exposed
