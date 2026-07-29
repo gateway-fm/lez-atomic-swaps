@@ -125,10 +125,15 @@ the focused black-box test rejects incomplete journals, crossed signatures, and
 clobber while proving the exact private Taker claim partial is absent from both
 wires. This is pre-effect evidence: every chain effect remains, so the M4 count
 is still 0 of 1 swaps.
-The 2026-07-18 authority refresh pins the live RFP repository at master commit
-`121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
+The 2026-07-28 authority refresh pins the live RFP repository at master commit
+`b59c620d6ee8b8281657cbb6eca0381172a8e16d`, RFP-003 file blob
+`ec6b602ea4f14627173c9a5236e021d8eff83e16`, and raw-file SHA-256
+`a83d0b87ab32e459235a8fea7766519b7fe85ec99d7bcaf1dfe44d329bc3d498`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,
-and still supersedes issue #61. The commit/blob
+still supersedes issue #61, and its newline-normalized body SHA-256 remains
+`49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`.
+The intervening RFP changes do not alter the technical M5 output set. The
+commit/blob
 are immutable audit anchors; the issue state is mutable and must be reread
 before milestone acceptance.
 

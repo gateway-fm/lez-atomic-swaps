@@ -13,10 +13,15 @@ architecture, sequencing, risks, or acceptance evidence changes.
 3. Actual pinned upstream source and executable behavior, where prose and code
    disagree.
 
-The 2026-07-18 authority refresh pins the live RFP repository at master commit
-`121da225de1930c5ba693ebbef80ee788d55542a` and RFP-003 file blob `d0fa52b`.
+The 2026-07-28 authority refresh pins the live RFP repository at master commit
+`b59c620d6ee8b8281657cbb6eca0381172a8e16d`, RFP-003 file blob
+`ec6b602ea4f14627173c9a5236e021d8eff83e16`, and raw-file SHA-256
+`a83d0b87ab32e459235a8fea7766519b7fe85ec99d7bcaf1dfe44d329bc3d498`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,
-and continues to supersede issue #61. These
+continues to supersede issue #61, and retains newline-normalized body SHA-256
+`49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`.
+The intervening RFP changes alter legal/responsibility and privacy wording but
+do not alter the seven accepted M5 outputs. These
 immutable source identities anchor this plan; the issue state remains a mutable
 upstream fact that must be reread at milestone closure.
 
