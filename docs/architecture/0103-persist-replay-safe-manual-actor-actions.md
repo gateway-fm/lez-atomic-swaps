@@ -1,6 +1,6 @@
 # ADR 0103: Persist replay-safe manual actor actions
 
-- Status: Accepted foundation; actor and RPC routing pending
+- Status: Accepted; schema and ZEC supervisor routing GREEN, RPC/CLI pending
 - Date: 2026-07-29
 - Milestone: M5
 
@@ -53,13 +53,17 @@ flowchart LR
     Process --> Lease["Owner and generation lease"]
     Lease --> Lock["Per-swap kernel lock"]
     Lock --> Supervisor["Existing actor supervisor"]
-    Supervisor --> Actor["Sealed role-fixed actor"]
-    Actor --> PairState[("Role-local pair journal")]
+    Supervisor --> Status["Validated offline status"]
+    Status --> Command{"Attached action or next action"}
+    Command -->|claim| ActorClaim["Sealed actor claim"]
+    Command -->|refund| ActorRefund["Sealed actor recover"]
+    ActorClaim --> PairState[("Role-local pair journal")]
+    ActorRefund --> PairState
     PairState --> Chains["Configured chain RPCs"]
 ```
 
 This schema foundation does not add a new network endpoint, chain RPC, Docker
-container, faucet, or dependency. The eventual actor command and RPC layers
+container, faucet, or dependency. The RPC and CLI layers
 must use the same row and must never bypass the lease or lock.
 
 ## Enqueue and exact replay flow
@@ -124,6 +128,10 @@ sequenceDiagram
 - `Terminal` and `ManualActionCompleted` are distinct store outcomes. An actor
   that terminalized for a different reason cannot silently certify the manual
   request as successful.
+- The supervisor validates the bounded status output even when a manual action
+  is attached. Claim can execute only literal `claim`; refund can execute only
+  literal `recover`, and command-specific outcome vocabularies reject cross-action
+  or mismatched absorbing-phase output.
 
 These properties preserve the pair protocol's existing effect atomicity: the
 application action grants no new signing capability and does not replace the
@@ -132,15 +140,20 @@ which already role-authorized state machine the fenced worker may invoke.
 
 ## Evidence and remaining work
 
-Focused RED first failed on the absent schema-v17 API. Four GREEN integration
-tests now prove exact replay, global request-ID conflict, stale-generation and
+The schema RED first failed on the absent schema-v17 API. Four store integration
+tests prove exact replay, global request-ID conflict, stale-generation and
 wrong-owner rejection, one-open-action enforcement, nonterminal requeue,
 explicit terminal completion, SQLite reopen, and kernel-locked abandoned
-transfer. The complete `lez-swap-store` suite, strict all-target Clippy, and
-warning-free Rustdoc are GREEN.
+transfer. The actor RED then failed because `claim` did not exist. The actor
+boundary is now 34 of 34 GREEN and its focused unit suite proves claim-only
+phase admission and bounded output. The supervisor RED exposed an unattached
+action as `LeaseConflict`; GREEN now attaches only under the held kernel lock.
+The complete 11-test supervisor suite proves literal claim/recover invocation,
+same-transaction process/action completion, abandoned recovery, peer isolation,
+timeout, cancellation, bounded output, and terminal replay.
 
-The foundation is not yet a user flow. Remaining work is validated secret-free
-progress, explicit ZEC `claim`, command-specific supervisor allowlists,
+This component is not yet a user flow. Remaining work is validated secret-free
+progress,
 owner-local Maker `monitor/claim/refund`, symmetric Taker actor provisioning and
 role-validated commands, process restart tests, two disjoint live swaps, and a
 fresh actual-node replay. BTC claim and the unified XMR actor remain later M5

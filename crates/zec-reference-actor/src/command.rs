@@ -80,6 +80,7 @@ impl ActorEffectOutputV1 {
 enum ActorEffectCommandV1 {
     Activate,
     Drive,
+    Claim,
     Recover,
 }
 
@@ -277,6 +278,21 @@ pub enum ActorCommandError {
     /// One bounded lifecycle attempt failed closed.
     #[error("actor drive is unavailable")]
     DriveUnavailable,
+    /// Fresh claim material could not be loaded safely.
+    #[error("actor claim material is unavailable")]
+    ClaimMaterialUnavailable,
+    /// A role-local claim adapter could not be configured safely.
+    #[error("actor claim configuration is unavailable")]
+    ClaimConfigurationUnavailable,
+    /// The role-local claim stores could not be opened.
+    #[error("actor claim store is unavailable")]
+    ClaimStoreUnavailable,
+    /// Durable lifecycle state could not be resumed for a claim.
+    #[error("actor claim replay is unavailable")]
+    ClaimReplayUnavailable,
+    /// The durable lifecycle is not in a claim-capable phase.
+    #[error("actor claim is not currently available")]
+    ClaimUnavailable,
     /// Fresh timeout-recovery material could not be loaded safely.
     #[error("actor recovery material is unavailable")]
     RecoveryMaterialUnavailable,
@@ -325,6 +341,7 @@ pub async fn execute_actor_command(
         ActorCommand::Status => status(config).await.map(ActorCommandOutputV1::Status),
         ActorCommand::Activate => activate(config).await.map(ActorCommandOutputV1::Effect),
         ActorCommand::Drive => drive(config).await.map(ActorCommandOutputV1::Effect),
+        ActorCommand::Claim => claim(config).await.map(ActorCommandOutputV1::Effect),
         ActorCommand::Recover => recover(config).await.map(ActorCommandOutputV1::Effect),
     }
 }
@@ -604,27 +621,13 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                 operation: ActorOperationV1::MakerLock,
             },
         },
-        (_, Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable) => match active
-            .drive_claim()
-            .await
-            .map_err(|_| ActorCommandError::DriveUnavailable)?
-        {
-            ClaimDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
-                operation: claim_operation(step),
-            },
-            ClaimDriveOutcome::AwaitingStableObservation(step) => {
-                ActorEffectOutcomeV1::AwaitingObservation {
-                    operation: claim_operation(step),
-                }
-            }
-            ClaimDriveOutcome::AwaitingSafeZcashFunding(_) => {
-                ActorEffectOutcomeV1::AwaitingSafeZcashFunding
-            }
-            ClaimDriveOutcome::Projected { step, .. } => ActorEffectOutcomeV1::Projected {
-                operation: claim_operation(step),
-            },
-            ClaimDriveOutcome::Completed { .. } => ActorEffectOutcomeV1::Completed,
-        },
+        (_, Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable) => {
+            let outcome = active
+                .drive_claim()
+                .await
+                .map_err(|_| ActorCommandError::DriveUnavailable)?;
+            claim_outcome(outcome)
+        }
         (_, Phase::Completed) => ActorEffectOutcomeV1::Completed,
         _ => return Err(ActorCommandError::DriveUnavailable),
     };
@@ -635,6 +638,127 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         outcome,
         &active,
     ))
+}
+
+/// Runs only the agreement-derived claim state machine.
+///
+/// Unlike `drive`, this boundary cannot fund or lock either leg. A premature
+/// operator request therefore fails closed before an effect RPC rather than
+/// silently advancing a different lifecycle action.
+async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandError> {
+    let material = config
+        .load_drive_material()
+        .map_err(|_| ActorCommandError::ClaimMaterialUnavailable)?;
+    let participant = config.role().sdk_participant();
+    let identity =
+        zebra_identity(config).map_err(|_| ActorCommandError::ClaimConfigurationUnavailable)?;
+    let mut rpc_config = if let Some(api_key) = material.zebra_api_key() {
+        HttpZebraRpcConfig::public_https(config.zebra_endpoint().as_str())
+            .and_then(|route| route.with_public_api_key(api_key))
+            .map_err(|_| ActorCommandError::ClaimConfigurationUnavailable)?
+    } else {
+        HttpZebraRpcConfig::new(config.zebra_endpoint().as_str())
+    }
+    .with_request_timeout(Duration::from_secs(30))
+    .with_max_concurrent_requests(1);
+    if let Some(cookie) = material.zebra_cookie() {
+        rpc_config = rpc_config
+            .with_cookie_credentials(cookie)
+            .map_err(|_| ActorCommandError::ClaimConfigurationUnavailable)?;
+    }
+    let rpc = HttpZebraRpc::connect(&rpc_config)
+        .map_err(|_| ActorCommandError::ClaimConfigurationUnavailable)?;
+    let signer = RoleKeyedZcashSigner::new(
+        participant,
+        SecretKey::from_slice(material.zcash_secret_key())
+            .map_err(|_| ActorCommandError::ClaimMaterialUnavailable)?,
+    );
+    let store = SqliteZecRecoveryStore::open_claim_capable(
+        config.role_state_db(),
+        participant,
+        material.into_claim_recovery_key(),
+    )
+    .map_err(|_| ActorCommandError::ClaimStoreUnavailable)?;
+    let factory = CapabilityFileBridgeClientFactory::new(
+        config.bridge_endpoint().as_str(),
+        config.bridge_capability_file(),
+        config.run_id().clone(),
+        config.bridge_runtime().clone(),
+        config.bridge_request_timeout(),
+    );
+    let contexts = ActorBridgeRequestContextSource::new(ConfiguredDiscoveryWindow(
+        config.lez_discovery_window(),
+    ));
+    let funding = SqliteCanonicalLezFundingSource::new(store.clone(), participant);
+    let lez = ContextOwningLezBridgePorts::new(
+        config.run_id().clone(),
+        config.bridge_runtime().clone(),
+        participant,
+        factory,
+        contexts,
+        store.clone(),
+        funding,
+        SqliteBridgeOperationJournal::open(config.bridge_journal_db())
+            .map_err(|_| ActorCommandError::ClaimStoreUnavailable)?,
+    )
+    .map_err(|_| ActorCommandError::ClaimConfigurationUnavailable)?;
+    let zcash = ZebraRpcZcashPort::new(rpc, signer, identity, participant)
+        .map_err(|_| ActorCommandError::ClaimConfigurationUnavailable)?
+        .with_counterparty_scan_blocks(config.counterparty_scan_blocks());
+    let sdk = ZecPairSdk::new(participant, (), (), lez, zcash, store);
+    let mut active = sdk
+        .resume_all_capable(config.swap_id())
+        .await
+        .map_err(|_| ActorCommandError::ClaimReplayUnavailable)?
+        .ok_or(ActorCommandError::NotActivated)?;
+
+    ensure_claim_phase(active.status())?;
+    let outcome = if active.status() == Phase::Completed {
+        ActorEffectOutcomeV1::Completed
+    } else {
+        active
+            .drive_claim()
+            .await
+            .map(claim_outcome)
+            .map_err(|_| ActorCommandError::ClaimUnavailable)?
+    };
+    Ok(ActorEffectOutputV1::from_active(
+        config.role(),
+        ActorEffectCommandV1::Claim,
+        outcome,
+        &active,
+    ))
+}
+
+const fn ensure_claim_phase(phase: Phase) -> Result<(), ActorCommandError> {
+    if matches!(
+        phase,
+        Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable | Phase::Completed
+    ) {
+        Ok(())
+    } else {
+        Err(ActorCommandError::ClaimUnavailable)
+    }
+}
+
+const fn claim_outcome(outcome: ClaimDriveOutcome) -> ActorEffectOutcomeV1 {
+    match outcome {
+        ClaimDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
+            operation: claim_operation(step),
+        },
+        ClaimDriveOutcome::AwaitingStableObservation(step) => {
+            ActorEffectOutcomeV1::AwaitingObservation {
+                operation: claim_operation(step),
+            }
+        }
+        ClaimDriveOutcome::AwaitingSafeZcashFunding(_) => {
+            ActorEffectOutcomeV1::AwaitingSafeZcashFunding
+        }
+        ClaimDriveOutcome::Projected { step, .. } => ActorEffectOutcomeV1::Projected {
+            operation: claim_operation(step),
+        },
+        ClaimDriveOutcome::Completed { .. } => ActorEffectOutcomeV1::Completed,
+    }
 }
 
 /// Runs only the agreement-derived timeout-recovery state machine.
@@ -882,6 +1006,74 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn claim_admission_rejects_every_non_claim_phase() {
+        for phase in [
+            Phase::Offered,
+            Phase::AwaitingTakerConfirmations,
+            Phase::TakerLockConfirmed,
+            Phase::TakerLockReorged,
+            Phase::MakerLockReorged,
+            Phase::MakerLegRefunded,
+            Phase::TakerLegRefunded,
+            Phase::Refunded,
+            Phase::MakerRecoveryAvailable,
+        ] {
+            assert_eq!(
+                ensure_claim_phase(phase),
+                Err(ActorCommandError::ClaimUnavailable),
+                "phase {phase:?} must fail before a claim RPC"
+            );
+        }
+        for phase in [
+            Phase::BothLegsLocked,
+            Phase::ClaimEvidenceAvailable,
+            Phase::Completed,
+        ] {
+            assert_eq!(ensure_claim_phase(phase), Ok(()));
+        }
+    }
+
+    #[test]
+    fn claim_outputs_are_action_specific_bounded_json() {
+        assert_eq!(
+            serde_json::to_value(ActorEffectCommandV1::Claim).unwrap(),
+            json!("claim")
+        );
+        for (outcome, expected) in [
+            (
+                ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez),
+                json!({"outcome":"submitted","operation":"lez_revealing_claim"}),
+            ),
+            (
+                ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::FollowupZcash),
+                json!({"outcome":"awaiting_observation","operation":"zcash_followup_claim"}),
+            ),
+            (
+                ClaimDriveOutcome::AwaitingSafeZcashFunding(
+                    lez_zec_swap_sdk::ZcashFundingWaitReasonV1::Absent,
+                ),
+                json!({"outcome":"awaiting_safe_zcash_funding"}),
+            ),
+            (
+                ClaimDriveOutcome::Projected {
+                    step: ClaimStepV1::RevealingLez,
+                    revision: 4,
+                },
+                json!({"outcome":"projected","operation":"lez_revealing_claim"}),
+            ),
+            (
+                ClaimDriveOutcome::Completed { revision: 5 },
+                json!({"outcome":"completed"}),
+            ),
+        ] {
+            assert_eq!(
+                serde_json::to_value(claim_outcome(outcome)).unwrap(),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn recovery_admission_rejects_every_non_refund_phase() {

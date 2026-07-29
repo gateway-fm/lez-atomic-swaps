@@ -54,6 +54,7 @@ fn run() -> Result<(), &'static str> {
         }
         ActorCommand::Drive => terminal_output("drive"),
         ActorCommand::Activate => return Err("fixture actor is already active"),
+        ActorCommand::Claim => return Err("fixture claim is unavailable"),
         ActorCommand::Recover => return Err("fixture recovery is unavailable"),
     };
     let encoded = serde_json::to_string(&output).map_err(|_| "fixture output is unavailable")?;

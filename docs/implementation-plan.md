@@ -3571,11 +3571,23 @@ separately from runtime dependencies.
   one-open-action, stale-generation and wrong-owner rejection, nonterminal
   requeue, explicit completion, and crash transfer. ADR 0103 records the
   component, sequence, crash, and atomicity diagrams.
-  The next RED-GREEN slice adds secret-free live actor progress, owner-local
-  Maker `monitor/claim/refund`, symmetric role-validated Taker provisioning and
-  `monitor/claim/refund`, explicit ZEC `claim`, and supervisor routing that
-  never maps a claim request to generic `drive`. Process restart and two
-  disjoint live swaps must then pass.
+
+  The explicit ZEC claim and supervisor-routing RED-GREEN slice is now GREEN.
+  The role-fixed actor exposes literal `claim`, admits only both-locked,
+  claim-evidence, or completed phases, and retains generic `drive` only for
+  backward-compatible M2/M3 runners. The supervisor attaches an action only
+  after acquiring the exact per-swap kernel lock, validates status first,
+  selects claim to `claim` and refund to `recover`, and uses command-specific
+  outcome and absorbing-phase allowlists. Eleven supervisor tests prove atomic
+  action/process completion plus existing crash, cancellation, timeout, peer,
+  and terminal invariants; 34 actor-boundary and eight actor unit tests are
+  GREEN. No dependency, endpoint, container, RPC, faucet, or public resource
+  was added.
+
+  The next RED-GREEN slice adds schema-v18 secret-free live actor progress and
+  owner-local Maker `monitor/claim/refund`, then symmetric role-validated Taker
+  provisioning and `monitor/claim/refund`. Process restart and two disjoint
+  live swaps must then pass.
   BTC claim execution and a unified XMR lifecycle actor still precede honest
   all-pair CLI composition. This progress does not by itself make M5 complete.
 
@@ -3604,7 +3616,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 15 to 28 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 12 to 23 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordinator composition hardening, and post-PoC hardening remain explicitly
 open above.

@@ -45,8 +45,15 @@ admission, exact lease attachment, same-transaction process/action resolution,
 and kernel-locked crash transfer. Focused restart, stale-generation,
 wrong-owner, global-conflict, and exact-replay tests are GREEN. ADR
 [0103](docs/architecture/0103-persist-replay-safe-manual-actor-actions.md)
-records the component and atomicity flows. These rows are not yet exposed as a
-Maker or Taker user command, so they do not complete M5.
+records the component and atomicity flows. The ZEC actor now also exposes a
+literal claim-only command. The supervisor validates offline status, attaches
+an action only under the exact process lease and kernel lock, routes claim only
+to `claim` and refund only to `recover`, and atomically completes the process
+and action rows. Command-specific outcome and absorbing-phase allowlists reject
+cross-action output. The actor boundary is 34 of 34 GREEN and the supervisor
+integration suite is 11 of 11 GREEN. The durable rows are not yet exposed as a
+Maker or Taker user command, and no fresh actual-node run uses this supervisor
+path yet, so this component does not complete M5.
 
 Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
 33.400 protocol seconds with no retry. Exact packet-bearing replay
@@ -175,7 +182,7 @@ effect processes retain the lock through durable resolution, record and
 exact-clear PID/start-time identity only after reap, and run under finite
 process-group, time, and output bounds. SIGTERM cancels and reaps an in-flight
 group before socket/readiness cleanup. The packaged systemd unit and transient
-rehearsal enable this supervisor. Focused evidence is 12/12 store cases, 9/9
+rehearsal enable this supervisor. Focused evidence is 12/12 store cases and 11/11
 supervisor cases, and one local-only actual-daemon E2E: health stayed responsive
 while the actor ran, and cancellation, reap, durable lease release, socket
 cleanup, and readiness cleanup completed in under two seconds. The focused
@@ -204,9 +211,9 @@ composition and concurrent disjoint live-process composition.
 The application runner now also installs one private mode-0500, single-link ZEC
 actor and verifies that Chat acceptance atomically exposes the exact queued
 daemon-provisioned manifest. Its current settlement still drives a separately
-finalized Maker actor directly. Actual-node supervisor routing and durable
-maker/taker claim/refund controls plus concurrent disjoint live-node execution
-remain open. This checkpoint does not make M5 complete.
+finalized Maker actor directly. Component-level supervisor routing is GREEN;
+actual-node supervisor evidence, durable maker/taker claim/refund CLI controls,
+and concurrent disjoint live-node execution remain open. This checkpoint does not make M5 complete.
 
 Build and repeat the current real process boundary with:
 

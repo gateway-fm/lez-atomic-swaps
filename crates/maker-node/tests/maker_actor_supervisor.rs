@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorResolution,
     prepare_maker_actor, supervise_one_abandoned_maker_actor, supervise_one_due_maker_actor,
@@ -18,7 +19,8 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
-    MakerActorScheduleState, SqliteSwapStore, validate_maker_actor_program,
+    MakerActorManualAction, MakerActorManualActionState, MakerActorScheduleState, SqliteSwapStore,
+    validate_maker_actor_program,
 };
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -112,6 +114,138 @@ fn one_bounded_cycle_runs_exact_sealed_actor_and_durably_requeues() {
     assert_eq!(
         store.list_due_maker_actor_ids(15, 1).unwrap(),
         [SwapId::new(swap_id).unwrap()]
+    );
+}
+
+#[test]
+fn manual_claim_invokes_only_claim_and_atomically_completes_action() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-manual-claim";
+    let invocation_log = root.path().join("claim-invocations");
+    let program = format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         printf '%s\\n' \"$3\" >> '{}'\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"claim_lez\"}}' ;;\n\
+           claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":5}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n",
+        invocation_log.display()
+    );
+    let mut store = registered_store(root.path(), swap_id, program.as_bytes());
+    let id = SwapId::new(swap_id).unwrap();
+    store
+        .queue_maker_actor_manual_action(
+            &RequestId::new("m5-claim-001").unwrap(),
+            &id,
+            MakerActorManualAction::Claim,
+            0,
+            10,
+        )
+        .unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+
+    let outcome = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x71; 16]).unwrap(),
+        10,
+        &config,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        outcome.resolution(),
+        MakerActorSupervisorResolution::Terminal
+    );
+    assert_eq!(
+        fs::read_to_string(invocation_log).unwrap(),
+        "status\nclaim\n"
+    );
+    assert_eq!(
+        store
+            .maker_actor_manual_action(&id)
+            .unwrap()
+            .unwrap()
+            .state(),
+        MakerActorManualActionState::Completed
+    );
+    assert_eq!(
+        store
+            .list_maker_actor_processes()
+            .unwrap()
+            .remove(0)
+            .schedule_state(),
+        MakerActorScheduleState::Terminal
+    );
+}
+
+#[test]
+fn manual_refund_invokes_only_recover_and_atomically_completes_action() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-manual-refund";
+    let invocation_log = root.path().join("refund-invocations");
+    let program = format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         printf '%s\\n' \"$3\" >> '{}'\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"refund_zcash\"}}' ;;\n\
+           recover) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"recover\",\"outcome\":\"refunded\",\"phase\":\"refunded\",\"revision\":5}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n",
+        invocation_log.display()
+    );
+    let mut store = registered_store(root.path(), swap_id, program.as_bytes());
+    let id = SwapId::new(swap_id).unwrap();
+    store
+        .queue_maker_actor_manual_action(
+            &RequestId::new("m5-refund-001").unwrap(),
+            &id,
+            MakerActorManualAction::Refund,
+            0,
+            10,
+        )
+        .unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+
+    let outcome = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x72; 16]).unwrap(),
+        10,
+        &config,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        outcome.resolution(),
+        MakerActorSupervisorResolution::Terminal
+    );
+    assert_eq!(
+        fs::read_to_string(invocation_log).unwrap(),
+        "status\nrecover\n"
+    );
+    assert_eq!(
+        store
+            .maker_actor_manual_action(&id)
+            .unwrap()
+            .unwrap()
+            .state(),
+        MakerActorManualActionState::Completed
+    );
+    assert_eq!(
+        store
+            .list_maker_actor_processes()
+            .unwrap()
+            .remove(0)
+            .schedule_state(),
+        MakerActorScheduleState::Terminal
     );
 }
 
