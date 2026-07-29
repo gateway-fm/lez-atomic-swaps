@@ -3584,10 +3584,20 @@ separately from runtime dependencies.
   GREEN. No dependency, endpoint, container, RPC, faucet, or public resource
   was added.
 
-  The next RED-GREEN slice adds schema-v18 secret-free live actor progress and
-  owner-local Maker `monitor/claim/refund`, then symmetric role-validated Taker
-  provisioning and `monitor/claim/refund`. Process restart and two disjoint
-  live swaps must then pass.
+  The schema-v18 progress foundation is now GREEN. One bounded secret-free
+  observation per actor stores only kind, source generation, observation time,
+  and either `not_activated` or validated phase/revision/next-action fields.
+  The new resolution API updates process state, any attached action, and
+  monotonic progress in one immediate transaction under the existing exact
+  lease. Focused tests prove invalid-label rejection, completion, reopen,
+  actor-kind binding, and stale-owner rollback; the complete store suite,
+  strict Clippy, and warning-free Rustdoc pass. ADR 0104 records component,
+  sequence, and atomicity diagrams.
+
+  The next RED-GREEN slice makes strict supervisor parsing write schema-v18
+  progress and exposes owner-local Maker `monitor/claim/refund`, then adds
+  symmetric role-validated Taker provisioning and commands. Process restart
+  and two disjoint live swaps must then pass.
   BTC claim execution and a unified XMR lifecycle actor still precede honest
   all-pair CLI composition. This progress does not by itself make M5 complete.
 

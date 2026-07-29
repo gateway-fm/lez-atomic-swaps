@@ -189,6 +189,7 @@ flowchart TB
     M5Crash --> M5ProcessLease["0100 Fenced actor-process leases"]
     M5ProcessLease --> M5RefundRecovery["0102 Finalized-prefix refund recovery"]
     M5ProcessLease --> M5ManualActions["0103 Replay-safe manual actions"]
+    M5ManualActions --> M5ActorProgress["0104 Fenced actor progress"]
 ```
 
 | ADR | Decision | Status |
@@ -296,3 +297,4 @@ flowchart TB
 | [0101](0101-bind-fresh-lez-identities-into-m5-actors.md) | Derive and bind fresh canonical LEZ identities into isolated M5 actors without importing the incompatible Logos host graph | Accepted for the component boundary; fresh-stack actual-node supervisor replay remains |
 | [0102](0102-observe-refunds-from-finalized-window-prefixes.md) | Return a unique finalized refund from an available window prefix while keeping prefix absence non-terminal | Accepted; finalized old-page observation and restart-safe contiguous cursor component GREEN. Clean daemon/CLI actual-node replay, durable application actions, and all-pair M5 closure remain |
 | [0103](0103-persist-replay-safe-manual-actor-actions.md) | Bind explicit claim/refund requests to the global mutation ledger and the existing owner/generation/kernel-lock execution authority | Accepted; schema-v17 replay, conflict, fencing, atomic resolution, reopen, abandoned transfer, and literal ZEC claim/recover supervisor routing GREEN. Actor progress and Maker/Taker RPC/CLI commands remain |
+| [0104](0104-commit-actor-progress-with-fenced-resolution.md) | Commit validated secret-free actor progress in the same fenced transaction as process and manual-action resolution | Accepted foundation; schema-v18 atomic process/action/progress completion, bounded labels, reopen, actor-kind binding, and stale-owner rollback GREEN. Supervisor projection and Maker RPC/CLI remain |

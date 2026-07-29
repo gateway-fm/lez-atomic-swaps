@@ -8,8 +8,8 @@ use lez_swap_core::{
 use lez_swap_store::{
     MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner,
     MakerActorManifestV1, MakerActorManualAction, MakerActorManualActionState,
-    MakerActorProcessError, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
-    SqliteSwapStore,
+    MakerActorProcessError, MakerActorProgressObservationV1, MakerActorScheduleState,
+    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, SqliteSwapStore,
 };
 use tempfile::tempdir;
 
@@ -333,4 +333,89 @@ fn abandoned_action_transfers_only_with_the_exact_kernel_locked_lease() {
             .state(),
         MakerActorManualActionState::Queued
     );
+}
+
+#[test]
+fn actor_progress_commits_with_process_and_action_and_survives_restart() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let id = SwapId::new("zec-progress-atomic").unwrap();
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    register(&mut store, root.path(), id.as_str(), 13);
+    store
+        .queue_maker_actor_manual_action(
+            &RequestId::new("progress-claim-001").unwrap(),
+            &id,
+            MakerActorManualAction::Claim,
+            0,
+            11,
+        )
+        .unwrap();
+    let lease = store
+        .claim_maker_actor(&id, MakerActorLeaseOwner::new([13; 16]).unwrap(), 11)
+        .unwrap()
+        .unwrap();
+    store
+        .claim_maker_actor_manual_action(&lease)
+        .unwrap()
+        .unwrap();
+    let progress = MakerActorProgressObservationV1::active("completed", 4, "complete").unwrap();
+
+    store
+        .resolve_maker_actor_attempt_with_progress(
+            &lease,
+            MakerActorAttemptResolution::ManualActionCompleted,
+            &progress,
+            12,
+        )
+        .unwrap();
+
+    let process = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(process.schedule_state(), MakerActorScheduleState::Terminal);
+    assert_eq!(
+        store
+            .maker_actor_manual_action(&id)
+            .unwrap()
+            .unwrap()
+            .state(),
+        MakerActorManualActionState::Completed
+    );
+    let observed = store
+        .maker_actor_progress(&id)
+        .unwrap()
+        .expect("progress committed with resolution");
+    assert_eq!(observed.swap_id(), &id);
+    assert_eq!(observed.actor_kind(), MakerActorKindV1::Zcash);
+    assert_eq!(observed.source_generation(), 1);
+    assert_eq!(observed.observed_at(), 12);
+    assert_eq!(observed.observation(), &progress);
+    drop(store);
+
+    let mut reopened = SqliteSwapStore::open(&database).unwrap();
+    assert_eq!(
+        reopened.maker_actor_progress(&id).unwrap().unwrap(),
+        observed
+    );
+    let stale = lease.with_owner(MakerActorLeaseOwner::new([14; 16]).unwrap());
+    let forged = MakerActorProgressObservationV1::active("refunded", 99, "complete").unwrap();
+    assert!(matches!(
+        reopened.resolve_maker_actor_attempt_with_progress(
+            &stale,
+            MakerActorAttemptResolution::Terminal,
+            &forged,
+            20,
+        ),
+        Err(MakerActorProcessError::LeaseConflict)
+    ));
+    assert_eq!(
+        reopened.maker_actor_progress(&id).unwrap().unwrap(),
+        observed
+    );
+}
+
+#[test]
+fn actor_progress_rejects_unbounded_or_unstructured_public_labels() {
+    assert!(MakerActorProgressObservationV1::active("Both Legs", 1, "claim_lez").is_err());
+    assert!(MakerActorProgressObservationV1::active("offered", 1, "x".repeat(65)).is_err());
 }

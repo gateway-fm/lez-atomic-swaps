@@ -54,6 +54,14 @@ cross-action output. The actor boundary is 34 of 34 GREEN and the supervisor
 integration suite is 11 of 11 GREEN. The durable rows are not yet exposed as a
 Maker or Taker user command, and no fresh actual-node run uses this supervisor
 path yet, so this component does not complete M5.
+Schema v18 now adds the read-only progress foundation without creating a second
+actor reader or worker. The exact resolution transaction also commits one
+bounded secret-free phase/revision/next-action observation, while stale or
+forged leases roll back process, action, and progress together. ADR
+[0104](docs/architecture/0104-commit-actor-progress-with-fenced-resolution.md)
+records the component and sequence diagrams. Supervisor projection and the
+Maker monitor/action RPC and CLI remain the next slice.
+
 
 Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
 33.400 protocol seconds with no retry. Exact packet-bearing replay

@@ -28,6 +28,7 @@ use crate::{SqliteSwapStore, StoreError};
 const MANIFEST_VERSION: i64 = 1;
 const MAX_PATH_BYTES: usize = 4_096;
 const MAX_FAILURE_CLASS_BYTES: usize = 64;
+const MAX_PROGRESS_LABEL_BYTES: usize = 64;
 const MAX_DUE_LIMIT: usize = 128;
 const MAX_ACTOR_CONFIG_BYTES: u64 = 4 * 1_024 * 1_024;
 const MAX_ACTOR_PROGRAM_BYTES: u64 = 512 * 1_024 * 1_024;
@@ -734,6 +735,114 @@ impl MakerActorManualActionCommit {
     }
 }
 
+/// Validated secret-free output of one role-fixed actor observation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum MakerActorProgressObservationV1 {
+    /// No durable actor activation exists yet.
+    NotActivated,
+    /// Durable lifecycle state projected by the actor.
+    Active {
+        /// Stable pair-protocol phase name.
+        phase: Box<str>,
+        /// Monotonic role-local actor revision.
+        revision: u64,
+        /// Stable next-action name selected by the pair actor.
+        next_action: Box<str>,
+    },
+}
+
+impl MakerActorProgressObservationV1 {
+    /// Constructs one bounded active observation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects revision zero or labels outside lowercase snake-case ASCII.
+    pub fn active(
+        phase: impl Into<Box<str>>,
+        revision: u64,
+        next_action: impl Into<Box<str>>,
+    ) -> Result<Self, MakerActorProcessError> {
+        let phase = phase.into();
+        let next_action = next_action.into();
+        if revision == 0 || !valid_progress_label(&phase) || !valid_progress_label(&next_action) {
+            return Err(MakerActorProcessError::InvalidSchedulingInput);
+        }
+        Ok(Self::Active {
+            phase,
+            revision,
+            next_action,
+        })
+    }
+
+    fn validate(&self) -> Result<(), MakerActorProcessError> {
+        match self {
+            Self::NotActivated => Ok(()),
+            Self::Active {
+                phase,
+                revision,
+                next_action,
+            } if *revision > 0
+                && valid_progress_label(phase)
+                && valid_progress_label(next_action) =>
+            {
+                Ok(())
+            }
+            Self::Active { .. } => Err(MakerActorProcessError::CorruptRecord),
+        }
+    }
+}
+
+fn valid_progress_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_PROGRESS_LABEL_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+/// Durable secret-free actor progress committed under one process generation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MakerActorProgressSnapshotV1 {
+    swap_id: SwapId,
+    actor_kind: MakerActorKindV1,
+    source_generation: u64,
+    observation: MakerActorProgressObservationV1,
+    observed_at: u64,
+}
+
+impl MakerActorProgressSnapshotV1 {
+    /// Application swap identity.
+    #[must_use]
+    pub const fn swap_id(&self) -> &SwapId {
+        &self.swap_id
+    }
+
+    /// Pair actor that produced the observation.
+    #[must_use]
+    pub const fn actor_kind(&self) -> MakerActorKindV1 {
+        self.actor_kind
+    }
+
+    /// Exact process generation under which output was validated.
+    #[must_use]
+    pub const fn source_generation(&self) -> u64 {
+        self.source_generation
+    }
+
+    /// Validated secret-free lifecycle observation.
+    #[must_use]
+    pub const fn observation(&self) -> &MakerActorProgressObservationV1 {
+        &self.observation
+    }
+
+    /// Trusted application time when the observation was committed.
+    #[must_use]
+    pub const fn observed_at(&self) -> u64 {
+        self.observed_at
+    }
+}
+
 #[derive(Serialize)]
 struct StoredManualActionRequest<'a> {
     swap_id: &'a SwapId,
@@ -1015,6 +1124,21 @@ impl SqliteSwapStore {
         load_latest_manual_action(&self.connection, swap_id)
     }
 
+    /// Returns the latest validated secret-free actor progress snapshot.
+    ///
+    /// This pure `SQLite` read never opens the private actor database, invokes an
+    /// actor process, or contacts a chain RPC.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the durable row is malformed or unavailable.
+    pub fn maker_actor_progress(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<MakerActorProgressSnapshotV1>, MakerActorProcessError> {
+        load_actor_progress(&self.connection, swap_id)
+    }
+
     /// Attaches one queued action to the exact active actor lease.
     ///
     /// Repeating this call with the same owner and generation is an exact replay.
@@ -1238,6 +1362,39 @@ impl SqliteSwapStore {
         resolution: MakerActorAttemptResolution,
         now: u64,
     ) -> Result<(), MakerActorProcessError> {
+        self.resolve_maker_actor_attempt_inner(lease, resolution, None, now)
+    }
+
+    /// Resolves one attempt and commits its validated actor progress atomically.
+    ///
+    /// The process row, any attached manual action, and progress snapshot share
+    /// one immediate transaction under the exact owner and generation fence.
+    /// A stale worker therefore updates none of them.
+    ///
+    /// # Errors
+    ///
+    /// Fails for invalid progress, invalid resolution data, a stale lease, or
+    /// a durable-store error.
+    pub fn resolve_maker_actor_attempt_with_progress(
+        &mut self,
+        lease: &MakerActorLeaseV1,
+        resolution: MakerActorAttemptResolution,
+        progress: &MakerActorProgressObservationV1,
+        now: u64,
+    ) -> Result<(), MakerActorProcessError> {
+        progress
+            .validate()
+            .map_err(|_| MakerActorProcessError::InvalidSchedulingInput)?;
+        self.resolve_maker_actor_attempt_inner(lease, resolution, Some(progress), now)
+    }
+
+    fn resolve_maker_actor_attempt_inner(
+        &mut self,
+        lease: &MakerActorLeaseV1,
+        resolution: MakerActorAttemptResolution,
+        progress: Option<&MakerActorProgressObservationV1>,
+        now: u64,
+    ) -> Result<(), MakerActorProcessError> {
         let manual_state = match &resolution {
             MakerActorAttemptResolution::Requeue { .. }
             | MakerActorAttemptResolution::Backoff { .. } => MakerActorManualActionState::Queued,
@@ -1318,6 +1475,9 @@ impl SqliteSwapStore {
                 }
                 _ => return Err(MakerActorProcessError::LeaseConflict),
             }
+        }
+        if let Some(progress) = progress {
+            upsert_actor_progress(&transaction, lease, progress, now)?;
         }
         transaction.commit()?;
         Ok(())
@@ -1663,6 +1823,91 @@ fn load_latest_manual_action(
         .query_row(&sql, [swap_id.as_str()], read_raw_manual_action)
         .optional()?
         .map(decode_manual_action)
+        .transpose()
+}
+
+fn upsert_actor_progress(
+    transaction: &Transaction<'_>,
+    lease: &MakerActorLeaseV1,
+    progress: &MakerActorProgressObservationV1,
+    now: u64,
+) -> Result<(), MakerActorProcessError> {
+    let payload_json = serde_json::to_string(progress).map_err(StoreError::from)?;
+    let changed = transaction.execute(
+        "INSERT INTO maker_actor_progress (
+             swap_id, payload_version, actor_kind, source_generation,
+             payload_json, observed_at
+         ) VALUES (?1, 1, ?2, ?3, ?4, ?5)
+         ON CONFLICT (swap_id) DO UPDATE SET
+             actor_kind = excluded.actor_kind,
+             source_generation = excluded.source_generation,
+             payload_json = excluded.payload_json,
+             observed_at = excluded.observed_at
+         WHERE maker_actor_progress.source_generation <= excluded.source_generation",
+        params![
+            lease.record.swap_id().as_str(),
+            lease.record.manifest().kind().name(),
+            generation_to_sql(lease.generation)?,
+            payload_json,
+            time_to_sql(now),
+        ],
+    )?;
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err(MakerActorProcessError::LeaseConflict)
+    }
+}
+
+type RawActorProgress = (String, i64, String, i64, String, i64, String);
+
+fn decode_actor_progress(
+    raw: RawActorProgress,
+) -> Result<MakerActorProgressSnapshotV1, MakerActorProcessError> {
+    let (swap_id, payload_version, actor_kind, generation, payload, observed_at, process_kind) =
+        raw;
+    if payload_version != 1 || actor_kind != process_kind {
+        return Err(MakerActorProcessError::CorruptRecord);
+    }
+    let observation: MakerActorProgressObservationV1 =
+        serde_json::from_str(&payload).map_err(|_| MakerActorProcessError::CorruptRecord)?;
+    observation.validate()?;
+    Ok(MakerActorProgressSnapshotV1 {
+        swap_id: SwapId::new(swap_id).map_err(|_| MakerActorProcessError::CorruptRecord)?,
+        actor_kind: MakerActorKindV1::parse(&actor_kind)?,
+        source_generation: decode_u64(generation)?,
+        observation,
+        observed_at: decode_u64(observed_at)?,
+    })
+}
+
+fn load_actor_progress(
+    connection: &Connection,
+    swap_id: &SwapId,
+) -> Result<Option<MakerActorProgressSnapshotV1>, MakerActorProcessError> {
+    connection
+        .query_row(
+            "SELECT progress.swap_id, progress.payload_version,
+                    progress.actor_kind, progress.source_generation,
+                    progress.payload_json, progress.observed_at, process.actor_kind
+             FROM maker_actor_progress AS progress
+             JOIN maker_actor_processes AS process ON process.swap_id = progress.swap_id
+             WHERE progress.swap_id = ?1",
+            [swap_id.as_str()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()?
+        .map(decode_actor_progress)
         .transpose()
 }
 
@@ -2146,7 +2391,16 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
         ) STRICT;
         CREATE UNIQUE INDEX IF NOT EXISTS maker_actor_manual_actions_one_open
             ON maker_actor_manual_actions (swap_id)
-            WHERE state IN ('queued', 'leased');",
+            WHERE state IN ('queued', 'leased');
+        CREATE TABLE IF NOT EXISTS maker_actor_progress (
+            swap_id           TEXT PRIMARY KEY NOT NULL REFERENCES maker_actor_processes(swap_id)
+                                  ON DELETE CASCADE,
+            payload_version   INTEGER NOT NULL CHECK (payload_version = 1),
+            actor_kind        TEXT NOT NULL CHECK (actor_kind IN ('bitcoin', 'zcash')),
+            source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+            payload_json      TEXT NOT NULL,
+            observed_at       INTEGER NOT NULL CHECK (observed_at >= 0)
+        ) STRICT;",
     )?;
     Ok(())
 }
