@@ -73,18 +73,21 @@ records the updated component and sequence diagrams. The monitor response
 allowlists actor kind, scheduler state, generation, attempt count, validated
 progress, and latest action state. It never serializes actor paths, hashes,
 lease-owner identity, child PID, or private role state.
-The real Taker CLI now exposes ZEC `monitor`, `claim`, and `refund` directly
-from one role-fixed owner-private config. These commands reject Maker authority,
-need no Delivery or Chat arguments, and hold the same per-swap kernel lock as
-the Maker supervisor while reusing the existing actor journals and command
-boundary. Four real-process cases cover offline status, secret-free output,
-role rejection, command availability, lock contention, and recovery after lock
-release. ADR [0105](docs/architecture/0105-run-taker-lifecycle-from-role-state.md)
-records the component, sequence, and atomicity diagrams;
+The real Taker CLI now exposes ZEC `monitor`, `claim`, and `refund` from a
+post-completion owner-private acceptance receipt. The receipt pins the exact
+role-fixed config bytes, Taker role, swap, state path, and agreement digest from
+one identified config read. These commands need no Delivery or Chat arguments
+and hold the same per-swap kernel lock as the Maker supervisor while reusing the
+existing actor journals. Seven lifecycle cases cover receipt and direct-config
+offline status, secret-free output, tamper and unknown-field rejection, role
+rejection, command availability, lock contention, and recovery after release. ADR [0105](docs/architecture/0105-run-taker-lifecycle-from-role-state.md)
+records the receipt-aware component, sequence, and atomicity diagrams;
 [Flow 1K](docs/manual-user-flows.md#flow-1k-monitor-claim-or-refund-as-the-zec-taker)
-gives the manual commands and external-resource boundary. Acceptance-receipt
-binding and actual-node use through those commands remain before the final user
-journey.
+gives the manual commands and external-resource boundary. The real Chat process
+additionally proves no-clobber receipt publication, all seven bound fields,
+inode-stable exact replay, Delivery-independent persisted completion replay, and
+receipt-only monitor after both application transports are removed. Actual-node
+claim/refund through those commands remains before the final user journey.
 
 
 Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
@@ -113,7 +116,7 @@ a restart-safe SQLite cursor advances only validated fully covered pages, keeps
 partial/ambiguous/typed-error polls on the exact page, and restores the active
 page despite unchanged actor config. Both owner and counterparty paths pass a
 RED-GREEN reopen test, but the retained actual-node evidence remains
-intervention-assisted until a fresh daemon/CLI replay. M5 is not complete; acceptance-receipt-bound actual-node Taker lifecycle,
+intervention-assisted until a fresh daemon/CLI replay. M5 is not complete; actual-node receipt-bound Taker lifecycle effects,
 concurrent supervision, and BTC/XMR application lifecycle composition remain. Clean sidecar builds
 should set the documented
 absolute `RAPIDSNARK_LIB_DIR` only after verifying the four pinned v0.0.8

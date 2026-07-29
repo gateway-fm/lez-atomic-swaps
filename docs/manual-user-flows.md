@@ -5004,13 +5004,22 @@ but cannot change an exact admitted request into a different action.
 
 ## Flow 1K: monitor, claim, or refund as the ZEC Taker
 
-Build the application binary, then use the exact owner-private Taker config
-published for the accepted swap:
+Build the application binary. During `--accept-zec-offer`, require the Taker
+source authority, a fresh actor root, and a receipt outside that root:
+
+```text
+--zec-source-taker-config /absolute/private/source/taker.json
+--zec-taker-actor-root /absolute/private/swap/accepted-actor
+--zec-acceptance-receipt /absolute/private/swap/acceptance-receipt.json
+```
+
+The receipt is published only after durable Maker completion. Use it for the
+normal accepted-swap lifecycle:
 
 ```sh
 cargo build --locked -p lez-maker-node --bin lez-taker
 target/debug/lez-taker monitor \
-  --actor-config /absolute/private/swap/taker/actor-config.json
+  --receipt /absolute/private/swap/acceptance-receipt.json
 ```
 
 An unactivated actor returns exactly this secret-free JSON without opening the
@@ -5026,14 +5035,14 @@ the Taker claim eligible:
 
 ```sh
 target/debug/lez-taker claim \
-  --actor-config /absolute/private/swap/taker/actor-config.json
+  --receipt /absolute/private/swap/acceptance-receipt.json
 ```
 
 Use `refund` only on the agreement-defined timeout path:
 
 ```sh
 target/debug/lez-taker refund \
-  --actor-config /absolute/private/swap/taker/actor-config.json
+  --receipt /absolute/private/swap/acceptance-receipt.json
 ```
 
 The flags do not grant effect authority. The role-fixed config, accepted
@@ -5052,7 +5061,8 @@ sequenceDiagram
     participant N as Local chain nodes
 
     U->>C: monitor claim or refund
-    C->>C: Load private config and require Taker role
+    C->>C: Load receipt and pin exact config plus agreement
+    C->>C: Require Taker role swap and state
     C->>L: Acquire exact swap and state lock
     C->>A: Run Status Claim or Recover
     A->>D: Reopen durable role journal
@@ -5076,9 +5086,10 @@ Reproduce the current process component evidence with:
 
 ```sh
 cargo test --locked -p lez-maker-node --test taker_lifecycle_process -- --nocapture
+cargo test --locked -p lez-maker-node --test zec_chat_process -- --nocapture
 ```
 
-The four focused cases use temporary mode-0700 roots, private files, SQLite, and
+The seven focused cases use temporary mode-0700 roots, private files, SQLite, and
 the real local binary only. They use no Docker service, chain RPC, faucet, DNS,
 peer, public network, or public funds. A real claim or refund uses only the LEZ
 sidecar and Zebra RPC already pinned in the accepted Taker config. In the local
@@ -5086,11 +5097,13 @@ PoC these are ephemeral literal-loopback devnet services with deterministic
 genesis/Regtest funds; CPU or disk pressure, local finality cadence, or stopping
 a node early can delay progress, but no external public service participates.
 
-Current limitation: the role-aware provisioner produces the correct Taker
-config, but the acceptance command does not yet publish a receipt that selects
-it automatically. Supplying that exact private path is a component-level manual
-step. Actual-node claim/refund through these commands and receipt-bound replay
-must be completed before this is the final M5 user journey.
+The process proof also runs the real acceptance command, verifies all seven
+receipt fields and exact digests, preserves agreement/config/receipt bytes and
+inodes on retry, removes Delivery during persisted completion replay, and runs
+`monitor --receipt` after both application transports are absent. Direct
+`--actor-config` remains an expert component-debug/manual-recovery escape hatch;
+the receipt is the normal accepted-swap path. Actual-node claim/refund through
+these commands must still be completed before this is the final M5 user journey.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 

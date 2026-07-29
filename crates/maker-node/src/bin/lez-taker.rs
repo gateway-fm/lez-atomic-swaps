@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr as _};
 
 use anyhow::{Context as _, ensure};
-use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use lez_maker_node::{DeliveryOfferQueryV1, RunLocalDelivery};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
@@ -16,7 +16,7 @@ use zec_reference_actor::{
 mod secure_file;
 #[path = "support/taker_accept.rs"]
 mod taker_accept;
-use taker_accept::{ZecTakeInput, take_zec};
+use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
 
 #[derive(Parser)]
 #[command(about = "LEZ atomic-swap taker CLI")]
@@ -60,6 +60,15 @@ struct Arguments {
     /// New owner-private file for the exact countersigned agreement.
     #[arg(long)]
     agreement_output_file: Option<PathBuf>,
+    /// Owner-private source Taker actor authority template.
+    #[arg(long)]
+    zec_source_taker_config: Option<PathBuf>,
+    /// New owner-private root for the accepted Taker actor bundle.
+    #[arg(long)]
+    zec_taker_actor_root: Option<PathBuf>,
+    /// New owner-private acceptance receipt written after Maker completion.
+    #[arg(long)]
+    zec_acceptance_receipt: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -73,10 +82,14 @@ enum LifecycleCommand {
 }
 
 #[derive(ClapArgs)]
+#[command(group(ArgGroup::new("actor_source").required(true).multiple(false).args(["actor_config", "receipt"])))]
 struct LifecycleArguments {
     /// Owner-private role-fixed Taker actor configuration.
     #[arg(long, value_name = "PRIVATE_JSON")]
-    actor_config: PathBuf,
+    actor_config: Option<PathBuf>,
+    /// Owner-private acceptance receipt selecting the exact Taker actor.
+    #[arg(long, value_name = "PRIVATE_JSON")]
+    receipt: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -154,50 +167,16 @@ async fn execute() -> anyhow::Result<()> {
     let now_unix_seconds = arguments
         .now_unix_seconds
         .context("discovery requires --now-unix-seconds")?;
-    let delivery = RunLocalDelivery::subscriber(delivery_directory.clone(), expected_maker)?;
     if take_was_requested(&arguments) {
-        ensure!(
-            arguments
-                .pair
-                .is_none_or(|pair| matches!(pair, PairArgument::Zcash))
-                && arguments
-                    .direction
-                    .is_none_or(|direction| matches!(direction, DirectionArgument::TakerSellsLez)),
-            "M5 ZEC acceptance supports only zcash/taker-sells-lez"
-        );
-        let output = take_zec(ZecTakeInput {
-            delivery: &delivery,
-            expected_maker: &expected_maker,
+        return execute_zec_take(
+            &arguments,
+            &expected_maker,
+            delivery_directory,
             now_unix_seconds,
-            offer_id: arguments
-                .accept_zec_offer
-                .as_deref()
-                .context("ZEC acceptance requires --accept-zec-offer")?,
-            chat_socket: required_path(arguments.chat_socket.as_deref(), "--chat-socket")?,
-            reservation_id: arguments
-                .reservation_id
-                .as_deref()
-                .context("ZEC acceptance requires --reservation-id")?,
-            foreign_units: arguments
-                .foreign_units
-                .context("ZEC acceptance requires --foreign-units")?,
-            unsigned_draft_file: required_path(
-                arguments.unsigned_draft_file.as_deref(),
-                "--unsigned-draft-file",
-            )?,
-            taker_signing_key_file: required_path(
-                arguments.taker_signing_key_file.as_deref(),
-                "--taker-signing-key-file",
-            )?,
-            agreement_output_file: required_path(
-                arguments.agreement_output_file.as_deref(),
-                "--agreement-output-file",
-            )?,
-        })
-        .await?;
-        println!("{}", serde_json::to_string(&output)?);
-        return Ok(());
+        )
+        .await;
     }
+    let delivery = RunLocalDelivery::subscriber(delivery_directory.clone(), expected_maker)?;
     let query = match arguments.pair {
         Some(pair) => DeliveryOfferQueryV1::for_route(
             MakerRouteV1::new(
@@ -227,14 +206,98 @@ async fn execute() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn execute_zec_take(
+    arguments: &Arguments,
+    expected_maker: &PublicKey,
+    delivery_directory: &std::path::Path,
+    now_unix_seconds: u64,
+) -> anyhow::Result<()> {
+    ensure!(
+        arguments
+            .pair
+            .is_none_or(|pair| matches!(pair, PairArgument::Zcash))
+            && arguments
+                .direction
+                .is_none_or(|direction| matches!(direction, DirectionArgument::TakerSellsLez)),
+        "M5 ZEC acceptance supports only zcash/taker-sells-lez"
+    );
+    let agreement_output_file = required_path(
+        arguments.agreement_output_file.as_deref(),
+        "--agreement-output-file",
+    )?;
+    let agreement_is_durable = match std::fs::symlink_metadata(agreement_output_file) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error).context("inspect persisted ZEC agreement"),
+    };
+    let delivery = if agreement_is_durable {
+        None
+    } else {
+        Some(RunLocalDelivery::subscriber(
+            delivery_directory.to_path_buf(),
+            expected_maker.to_owned(),
+        )?)
+    };
+    let output = take_zec(ZecTakeInput {
+        delivery: delivery.as_ref(),
+        expected_maker,
+        now_unix_seconds,
+        offer_id: arguments
+            .accept_zec_offer
+            .as_deref()
+            .context("ZEC acceptance requires --accept-zec-offer")?,
+        chat_socket: required_path(arguments.chat_socket.as_deref(), "--chat-socket")?,
+        reservation_id: arguments
+            .reservation_id
+            .as_deref()
+            .context("ZEC acceptance requires --reservation-id")?,
+        foreign_units: arguments
+            .foreign_units
+            .context("ZEC acceptance requires --foreign-units")?,
+        unsigned_draft_file: required_path(
+            arguments.unsigned_draft_file.as_deref(),
+            "--unsigned-draft-file",
+        )?,
+        taker_signing_key_file: required_path(
+            arguments.taker_signing_key_file.as_deref(),
+            "--taker-signing-key-file",
+        )?,
+        agreement_output_file,
+        source_taker_config_file: required_path(
+            arguments.zec_source_taker_config.as_deref(),
+            "--zec-source-taker-config",
+        )?,
+        taker_actor_root: required_path(
+            arguments.zec_taker_actor_root.as_deref(),
+            "--zec-taker-actor-root",
+        )?,
+        acceptance_receipt_file: required_path(
+            arguments.zec_acceptance_receipt.as_deref(),
+            "--zec-acceptance-receipt",
+        )?,
+    })
+    .await?;
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
 async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
     let (arguments, command) = match command {
         LifecycleCommand::Monitor(arguments) => (arguments, ZecActorCommand::Status),
         LifecycleCommand::Claim(arguments) => (arguments, ZecActorCommand::Claim),
         LifecycleCommand::Refund(arguments) => (arguments, ZecActorCommand::Recover),
     };
-    let config = ActorConfig::load_private(&arguments.actor_config)
-        .map_err(|_| anyhow::anyhow!("Taker actor configuration is unavailable"))?;
+    let config = match (arguments.actor_config.as_ref(), arguments.receipt.as_ref()) {
+        (Some(path), None) => ActorConfig::load_private(path)
+            .map_err(|_| anyhow::anyhow!("Taker actor configuration is unavailable"))?,
+        (None, Some(path)) => load_taker_actor_from_receipt(path)
+            .map_err(|_| anyhow::anyhow!("Taker acceptance receipt is unavailable"))?,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "exactly one Taker actor source is required"
+            ));
+        }
+    };
     ensure!(
         config.role() == ActorRole::Taker,
         "Taker actor configuration has the wrong role"
@@ -256,6 +319,9 @@ fn take_was_requested(arguments: &Arguments) -> bool {
         || arguments.unsigned_draft_file.is_some()
         || arguments.taker_signing_key_file.is_some()
         || arguments.agreement_output_file.is_some()
+        || arguments.zec_source_taker_config.is_some()
+        || arguments.zec_taker_actor_root.is_some()
+        || arguments.zec_acceptance_receipt.is_some()
 }
 
 fn required_path<'a>(

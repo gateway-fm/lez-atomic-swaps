@@ -619,6 +619,31 @@ impl ActorConfig {
         Self::from_identified_bytes(&bytes, source_identity)
     }
 
+    /// Loads one owner-private config only when its exact bytes match `expected_sha256`.
+    ///
+    /// The digest and parsed configuration are derived from the same identified
+    /// file read, so callers do not introduce a check/use race by hashing and
+    /// loading the path separately.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every condition rejected by [`Self::load_private`] and any byte
+    /// identity mismatch.
+    pub fn load_private_pinned_sha256(
+        path: impl AsRef<Path>,
+        expected_sha256: [u8; 32],
+    ) -> Result<Self, ActorConfigError> {
+        let path = path.as_ref();
+        let (bytes, source_identity) =
+            read_bounded_identified(path, MAX_CONFIG_BYTES, FilePrivacy::OwnerPrivate)
+                .map_err(map_config_file_error)?;
+        let actual_sha256: [u8; 32] = Sha256::digest(bytes.as_slice()).into();
+        if actual_sha256 != expected_sha256 {
+            return Err(ActorConfigError::InvalidConfiguration);
+        }
+        Self::from_identified_bytes(&bytes, source_identity)
+    }
+
     /// Loads one anonymous, immutable config from the fixed inherited descriptor.
     ///
     /// # Errors
@@ -732,6 +757,12 @@ impl ActorConfig {
     #[must_use]
     pub fn role_state_db(&self) -> &Path {
         &self.role_state_db
+    }
+
+    /// Digest pinned by the configuration for the canonical countersigned agreement.
+    #[must_use]
+    pub const fn signed_agreement_sha256(&self) -> [u8; 32] {
+        *self.signed_agreement_sha256.as_bytes()
     }
 
     /// Sidecar HTTP endpoint.

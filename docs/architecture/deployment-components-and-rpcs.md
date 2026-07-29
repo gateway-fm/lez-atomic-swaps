@@ -636,8 +636,9 @@ flowchart LR
     end
 
     subgraph TakerBoundary["Taker-owned boundary"]
-        TakerCLI["lez-taker CLI<br/>persist-before-complete retry GREEN<br/>lifecycle commands planned"]
-        TakerState[("Private draft + countersigned agreement")]
+        TakerCLI["lez-taker CLI<br/>persisted replay and receipt lifecycle GREEN"]
+        TakerState[("Private agreement plus role-only actor")]
+        TakerReceipt[("Mode 0600 acceptance receipt")]
         TakerZebra["Schema-v3 taker Zebra route"]
         TakerLezBridge["Loopback capability LEZ adapter"]
         TakerLezSidecar["Official-wire LEZ sidecar"]
@@ -670,7 +671,10 @@ flowchart LR
     MakerLezBridge -->|"Loopback + run/role capability"| MakerLezSidecar
     MakerLezSidecar --> MakerLez
     Taker --> TakerCLI
-    TakerCLI -->|"persist before completion"| TakerState
+    TakerCLI -->|"persist agreement and actor before completion"| TakerState
+    NegotiationTxn -->|"durable completion"| TakerCLI
+    TakerState -->|"config and agreement digests"| TakerReceipt
+    TakerReceipt -->|"select exact Taker actor"| TakerCLI
     TakerCLI -->|"Typed Zebra JSON-RPC"| TakerZebra
     TakerCLI -->|"Bounded local adapter protocol"| TakerLezBridge
     TakerLezBridge -->|"Loopback + run/role capability"| TakerLezSidecar
@@ -696,8 +700,8 @@ flowchart LR
 
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
     classDef implemented fill:#ddf4ff,stroke:#0969da;
-    class MakerCLI,Core,MakerDaemon,TakerCLI,TakerState,Chat,PublicLezRisk planned;
-    class Delivery,DeliveryKey,NegotiationTxn,MakerZebra,MakerLezBridge,MakerLezSidecar,MakerLez,TakerZebra,TakerLezBridge,TakerLezSidecar,TakerLez,RouteGate,LocalLez,PublicLez,LocalZebra,SelfHostedZebra,TatumZebra implemented;
+    class MakerCLI,Core,MakerDaemon,PublicLezRisk planned;
+    class TakerCLI,TakerState,TakerReceipt,Chat,Delivery,DeliveryKey,NegotiationTxn,MakerZebra,MakerLezBridge,MakerLezSidecar,MakerLez,TakerZebra,TakerLezBridge,TakerLezSidecar,TakerLez,RouteGate,LocalLez,PublicLez,LocalZebra,SelfHostedZebra,TatumZebra implemented;
 ```
 
 Delivery and Chat are negotiation transports, never sources of chain truth or
@@ -972,7 +976,7 @@ a recoverable read model rather than a second coordinator.
 | Local reference-actor fixture provisioner | Direction-aware private pairs provisioned and reloadable; retained successful pairs are evidence, not reusable fixtures | Reads retained Zebra at dynamic loopback and emits distinct configured sidecar URLs; runner binds fresh role bridges | Separate `0700` roots and `0600` files; distinct recovery keys, capabilities, signers, stores, and journals. Only the direction-derived Zcash funder receives the preimage candidate | Validates Regtest identity and stable mature UTXO; emits and reloads configs and activation material; validates pair isolation | The old window 1..256 is never reused. Both canonical runs provisioned fresh inputs and bound only ProgramId `5cf8c5...29c1`; new effect-bearing runs require fresh funds or explicit owner recovery |
 | Reference actor configuration, status, activate, and drive | Unix schema-v3 configuration, paired-role validation, offline recovery, both canonical local directions, and dormant Zebra route contracts GREEN | Bridge endpoint remains explicit loopback. Zebra route is deterministic local loopback, self-hosted loopback with cookie, or exact Tatum Testnet HTTPS with `x-api-key` | Agreement, run, swap, role, runtime, network, branch, genesis, route, canonical ProgramId, separate capability/signer/state/claim/Zcash keys, and owner-only credentials validate before effects | `status` remains chain-impossible by type. `activate` and `drive` use fresh role-bound bridge and bounded Zebra clients; both canonical runs reached revision 4 `Completed` | Public construction is tested without calls. Self-hosted/Tatum availability, actual-node restart/refund/reorg, and hardening remain open |
 | `lez-maker-daemon` | Running M5 application shell | Bounded HTTP/1 JSON-RPC over disjoint absolute owner-control and taker-facing Chat Unix sockets; no TCP listener | Effective-UID-owned mode-0700 runtime, mode-0600 sockets, no-clobber paths and exact-inode cleanup | Owner methods plus isolated `zec_chat_propose_v1` and `zec_chat_complete_v1`; exact committed scheduled completion is preflighted from SQLite before live wall-clock parsing/provisioning; daemon-owned Delivery publication/reconciliation | Operator/service-manager-owned process; caller-selected owner-private SQLite, Delivery, and claim authority; Ctrl-C shutdown; pair-neutral supervisor, actor-bearing systemd, and chain watcher remain |
-| `lez-taker` | Running discovery and ZEC-acceptance M5 CLI | Owner-private run-local Delivery directory plus disjoint maker Chat Unix socket; no TCP listener | Pinned compressed maker key, trusted local time, exact offer/reservation, owner-private raw taker key, and mode-0700 output root | Key-pinned discovery; exact maker-proposal validation; local countersigning; no-clobber persistence before completion; persisted private agreement/draft/role validation; completion-only retry after expiry | Final actor configs, status, claim, refund, BTC/XMR initiation, and actual corridor composition remain |
+| `lez-taker` | Running discovery, ZEC acceptance, and Taker lifecycle M5 CLI | Fresh acceptance uses owner-private run-local Delivery plus disjoint Chat; persisted completion replay needs Chat but not Delivery; lifecycle monitor needs neither, while claim/refund use only config-pinned LEZ and Zebra loopback RPCs | Pinned maker key, trusted time, exact offer/reservation, private signing key, role-fixed source authority, no-clobber actor root, and post-completion receipt whose config and agreement digests are checked from one identified read | Key-pinned discovery; local countersigning; exact agreement and Taker-bundle publication before completion; receipt publication only after durable Maker acceptance; receipt-bound monitor/claim/refund under the shared kernel lock; inode-stable exact replay | Actual-node Taker effects, BTC/XMR initiation, concurrent composition, and production custody remain |
 | `lez-maker` | Running partial M5 CLI | Fresh bounded HTTP/1 connection over the daemon Unix socket per explicit command | Socket filesystem ownership; bounded request ID and route-local expected revision for configuration mutations | Actual CLI: `configure-pair`, `set-local-price`, `pairs`, `prices`, `quote`, `publish-offer`, `offers`, `withdraw-offer`, `history`, `create-swap`, `status`, `alerts`, `acknowledge-alert` | Independent operator process; lifecycle and manual claim/refund commands remain |
 | SQLite | Running | Local file; no RPC or port | Daemon/runtime process filesystem authority; SDK adapter fixes one local role per handle; claim key material is supplied externally and never stored | Pair policy, exact local price, immutable expiring offers, global request-result audit, aggregate, revision, ZEC journal, immutable binding, alerts, separate lock/claim/refund owner intents, protected claim material, owner/observer claim/refund transitions, and canonical observation transitions | WAL, `FULL` synchronous, foreign keys, immediate transactions; schema-v14 replay retains prior lock/claim journals, rejects inconsistent history, and closes/reopens both directions at revision 4 and `Completed` or `Refunded`. Owner refund commit copies the exact intent, inserts the transition, advances revision once, and deletes pending intent in one immediate transaction; observer rows retain no signing intent. The v8→v9 migration still replaces legacy plaintext claim evidence and scrubs SQLite/WAL remnants; 119 store tests pass; one process mutex remains |
 | Adapter-independent SDK core | Running library contract at `ed5cd77` | No socket, RPC, node, Docker, faucet, or public endpoint | Pair crates alone construct validated associated types; discovery and negotiation return untrusted inputs and cannot authorize post-lock effects | `SwapProtocol`, `OfferDiscovery`, `NegotiationChannel`, structured error category/disposition, explicit claim order, protocol/schema versions, and ordered exact-public-effect plans with stable step IDs, expected public IDs, complete bytes, hashes, and a domain-separated plan commitment | Eight invariant tests, two external-consumer API tests, one doctest, strict Clippy, and rustdoc pass. There is no actor, adapter, store, SQLite, or CLI coupling. The concrete BTC facade now layers its public durable lifecycle contract above this core; XMR remains M4 |

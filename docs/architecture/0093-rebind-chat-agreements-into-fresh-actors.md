@@ -43,7 +43,13 @@ role's already validated source authority, stages `shared/` plus exactly one of
 `maker/` or `taker/` under a private sibling directory, and publishes the whole
 bundle with `RENAME_NOREPLACE`. An existing destination succeeds only after
 byte, role, swap, state-path, authority, and counterparty-subtree checks all
-pass; replay never replaces the original files.
+pass; replay never replaces the original files. The acceptance command provisions the
+Taker bundle before requesting Chat completion, but publishes a separate bounded
+mode-0600 acceptance receipt only after the Maker returns its durable completion.
+That receipt binds the Taker role, swap, config bytes, state path, and final
+agreement digest. A lost completion response may therefore leave an inert exact-
+replayable bundle without a receipt; retry reuses the same bundle, completes the
+Maker handoff, and publishes the receipt without clobber.
 
 ## Components and authority
 
@@ -66,6 +72,8 @@ flowchart LR
     Bind --> TakerPub[No-clobber Taker publisher]
     MakerPub --> MakerActor[Fresh maker config and state]
     TakerPub --> TakerActor[Fresh taker config and state]
+    Chat --> Receipt[Post-completion acceptance receipt]
+    TakerPub --> Receipt
 ```
 
 The preparer holds no signing or claim authority. Chat never receives recovery
@@ -93,13 +101,15 @@ sequenceDiagram
     T->>M: Propose exact draft through Chat
     M-->>T: Maker-signed proposal after durable commit
     T->>T: Validate and countersign
-    T->>M: Complete exact dual-signed wire
-    M-->>T: Completion after atomic maker commit
-    T->>F: Final wire and source role configs
+    T->>F: Final wire and Taker source authority
     F->>F: Compare chain facts keys role and hashlock
-    F->>F: Stage one role-only private bundle
-    F->>F: Publish with RENAME_NOREPLACE
-    F-->>A: Fresh isolated config or exact inode-stable replay
+    F->>F: Stage and no-clobber publish Taker bundle
+    F-->>T: Fresh bundle or exact inode-stable replay
+    T->>M: Complete exact dual-signed wire
+    M->>M: Atomically commit Maker acceptance and actor
+    M-->>T: Durable completion or exact replay
+    T->>T: No-clobber publish acceptance receipt
+    T-->>A: Receipt-selected Taker actor
 ```
 
 ## Atomicity argument
@@ -111,18 +121,22 @@ and fail-closed publication:
 1. the draft changes only the authenticated pre-lock transcript of a validated
    agreement;
 2. maker and taker signatures cover the entire rebound body;
-3. Chat completion commits the agreement and maker recovery state before return;
-4. the taker publishes only its exact validated wire without replacement;
-5. finalization performs every comparison before creating output and hash-pins
-   both configs to that wire; application role provisioning additionally stages
-   the complete role-only tree before one no-replace rename and accepts an
-   existing tree only as an exact semantic and byte replay; and
-6. fresh state paths prevent inherited mutable lifecycle history.
+3. the Taker provisioner validates every role fact and publishes one complete
+   role-only tree by no-replace rename before completion; that inert tree alone
+   is not an acceptance receipt or chain-effect authorization;
+4. Chat completion atomically commits the agreement, Maker actor, coordinator,
+   offer consumption, and replay result before returning;
+5. only that durable response authorizes no-clobber receipt publication; the
+   receipt pins the exact Taker config bytes, role, swap, state, and agreement;
+6. exact retry may reuse only byte- and semantic-identical agreement, actor, and
+   receipt artifacts, and persisted agreement replay no longer requires Delivery;
+   and
+7. fresh state paths prevent inherited mutable lifecycle history.
 
-A crash while emitting the actor tree can leave an incomplete private root,
-but that root cannot be reused and success is reported only after both actors
-reload. The safe response is scoped deletion of that run-owned pre-effect root
-and a fresh reservation. No chain effect is authorized by this handoff alone.
+A crash can leave a private staging directory, or an exact published Taker
+bundle if the completion response is lost. The destination is never partially
+published, the bundle has no receipt, and retry either proves exact replay or
+fails closed. No chain effect is authorized by this handoff alone.
 
 Cross-chain atomicity remains the Zcash BIP-199 and LEZ hashlock/refund protocol
 proved by M2. This decision preserves its chain facts and authority while
@@ -141,5 +155,8 @@ funds, or network.
 
 Actual corridor composition is next. Reusing provisioned authority paths is
 acceptable for the isolated PoC but is not production key rotation or
-multi-user custody. Taker acceptance-receipt binding and actual-node lifecycle use, post-lock adapter
-removal through that CLI, packaging, and hardened negative cases remain.
+multi-user custody. Receipt-bound offline monitor, digest tamper rejection,
+role/path isolation, Delivery-independent persisted replay, and inode-stable
+receipt replay are process-GREEN. Actual-node lifecycle effects, a completion-
+response fault injection, post-lock adapter removal through this CLI, packaging,
+and broader hardened negative cases remain.

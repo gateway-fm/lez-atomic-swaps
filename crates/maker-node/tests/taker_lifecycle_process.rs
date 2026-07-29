@@ -46,6 +46,88 @@ fn monitor_runs_offline_for_taker_and_returns_only_actor_status() {
 }
 
 #[test]
+fn monitor_runs_offline_from_an_acceptance_receipt() {
+    let fixture = LifecycleFixture::new();
+
+    let output = taker_receipt_command("monitor", &fixture.taker_receipt);
+
+    assert!(
+        output.status.success(),
+        "receipt-bound monitor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).expect("one JSON status response"),
+        json!({
+            "schema_version": 1,
+            "role": "taker",
+            "state": "not_activated"
+        })
+    );
+    assert!(!fixture.taker_state.exists());
+    assert_secret_free(&output, fixture.root.path());
+}
+
+#[test]
+fn receipt_rejects_changed_config_bytes_and_wrong_agreement_identity() {
+    let changed_config = LifecycleFixture::new();
+    OpenOptions::new()
+        .append(true)
+        .open(&changed_config.taker_config)
+        .unwrap()
+        .write_all(b"\n")
+        .unwrap();
+    let output = taker_receipt_command("monitor", &changed_config.taker_receipt);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_secret_free(&output, changed_config.root.path());
+
+    let wrong_agreement = LifecycleFixture::new();
+    let mut receipt: Value =
+        serde_json::from_slice(&fs::read(&wrong_agreement.taker_receipt).unwrap()).unwrap();
+    receipt["agreement_sha256"] = json!("00".repeat(32));
+    fs::write(
+        &wrong_agreement.taker_receipt,
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+    let output = taker_receipt_command("monitor", &wrong_agreement.taker_receipt);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_secret_free(&output, wrong_agreement.root.path());
+}
+
+#[test]
+fn receipt_rejects_unknown_fields_and_cli_rejects_ambiguous_sources() {
+    let fixture = LifecycleFixture::new();
+    let mut receipt: Value =
+        serde_json::from_slice(&fs::read(&fixture.taker_receipt).unwrap()).unwrap();
+    receipt["unexpected"] = json!(true);
+    fs::write(
+        &fixture.taker_receipt,
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+    let output = taker_receipt_command("monitor", &fixture.taker_receipt);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_secret_free(&output, fixture.root.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg("monitor")
+        .arg("--actor-config")
+        .arg(&fixture.taker_config)
+        .arg("--receipt")
+        .arg(&fixture.taker_receipt)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_secret_free(&output, fixture.root.path());
+}
+
+#[test]
 fn monitor_rejects_a_maker_role_config_without_exposing_private_material() {
     let fixture = LifecycleFixture::new();
 
@@ -98,7 +180,7 @@ fn claim_and_refund_subcommands_expose_the_private_actor_config_boundary() {
         );
         let stdout = String::from_utf8(output.stdout).expect("UTF-8 help");
         assert!(
-            stdout.contains("--actor-config"),
+            stdout.contains("--actor-config") && stdout.contains("--receipt"),
             "{command} must require a private actor config"
         );
         assert!(
@@ -117,6 +199,15 @@ fn taker_command(command: &str, actor_config: &Path) -> Output {
         .arg(actor_config)
         .output()
         .expect("run real Taker CLI")
+}
+
+fn taker_receipt_command(command: &str, receipt: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg(command)
+        .arg("--receipt")
+        .arg(receipt)
+        .output()
+        .expect("run receipt-bound real Taker CLI")
 }
 
 fn assert_secret_free(output: &Output, root: &Path) {
@@ -141,6 +232,7 @@ struct LifecycleFixture {
     root: TempDir,
     maker_config: PathBuf,
     taker_config: PathBuf,
+    taker_receipt: PathBuf,
     maker_state: PathBuf,
     taker_state: PathBuf,
 }
@@ -177,12 +269,28 @@ impl LifecycleFixture {
             &serde_json::to_vec_pretty(&actor_config(root.path(), "taker", false))
                 .expect("serialize Taker config"),
         );
+        let taker_config_bytes = fs::read(&taker_config).unwrap();
+        let taker_receipt = root.path().join("taker-acceptance-receipt.json");
+        private_file(
+            &taker_receipt,
+            &serde_json::to_vec(&json!({
+                "schema_version": 1,
+                "swap_id": "m5-taker-lifecycle-001",
+                "role": "taker",
+                "agreement_sha256": hex::encode(Sha256::digest(AGREEMENT)),
+                "actor_config_file": taker_config,
+                "actor_config_sha256": hex::encode(Sha256::digest(&taker_config_bytes)),
+                "actor_state_database": root.path().join("taker-state.sqlite3")
+            }))
+            .unwrap(),
+        );
         Self {
             maker_state: root.path().join("maker-state.sqlite3"),
             taker_state: root.path().join("taker-state.sqlite3"),
             root,
             maker_config,
             taker_config,
+            taker_receipt,
         }
     }
 }

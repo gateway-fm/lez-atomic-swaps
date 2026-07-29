@@ -37,7 +37,7 @@ use lez_zec_swap_sdk::{
 };
 use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use support::actor_deployment;
 use tempfile::tempdir;
@@ -112,7 +112,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         &key(2),
         actor.agreement_basis_time,
     );
-    let taker_files = prepare_taker_files(run.path(), &draft_wire);
+    let taker_files = prepare_taker_files(run.path(), &draft_wire, &actor.source_config);
     let proposal_request = ZecChatProposeRequestV1 {
         schema_version: 1,
         request_id: derived_chat_request(&reservation_id, b"propose"),
@@ -125,10 +125,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     };
 
     assert_socket_method_isolation(&socket, &chat_socket, &proposal_request).await;
-    let staged: ZecChatProposalV1 =
-        call_local_rpc(&chat_socket, "zec_chat_propose_v1", &proposal_request)
-            .await
-            .expect("stage proposal before Chat outage");
+    let staged = stage_proposal(&chat_socket, &proposal_request).await;
     assert_eq!(staged.offer_revision, 2);
     let accepted_at = now();
     let taker = TakerProcess {
@@ -139,18 +136,56 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         draft_file: &taker_files.draft,
         taker_key_file: &taker_files.key,
         agreement_file: &taker_files.agreement,
+        source_actor_config: &taker_files.source_actor_config,
+        actor_root: &taker_files.actor_root,
+        receipt: &taker_files.receipt,
     };
 
     assert_chat_outage_and_restart(&taker, &maker_key, accepted_at, &mut daemon, &daemon_paths);
     let final_wire = accept_and_replay(&taker, &maker_key, accepted_at, &authenticated, &database);
-    assert_completed_process(
+    assert_post_acceptance_boundary(
         &mut daemon,
         &daemon_paths,
         &offer_id,
         &reservation_id,
         &authenticated,
         &final_wire,
+        &taker_files.receipt,
     );
+}
+
+async fn stage_proposal(
+    chat_socket: &Path,
+    request: &ZecChatProposeRequestV1,
+) -> ZecChatProposalV1 {
+    call_local_rpc(chat_socket, "zec_chat_propose_v1", request)
+        .await
+        .expect("stage proposal before Chat outage")
+}
+
+fn assert_post_acceptance_boundary(
+    daemon: &mut Child,
+    daemon_paths: &DaemonPaths<'_>,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    authenticated: &AuthenticatedOfferRefV1,
+    final_wire: &[u8],
+    receipt: &Path,
+) {
+    assert_completed_process(
+        daemon,
+        daemon_paths,
+        offer_id,
+        reservation_id,
+        authenticated,
+        final_wire,
+    );
+    fs::rename(
+        daemon_paths.delivery,
+        daemon_paths.delivery.with_file_name("delivery.offline"),
+    )
+    .expect("remove Delivery from the post-lock Taker boundary");
+    assert_receipt_monitor_is_offline(receipt);
 }
 
 fn assert_completed_process(
@@ -209,6 +244,14 @@ fn assert_chat_outage_and_restart(
     assert!(
         !taker.agreement_file.exists(),
         "Chat outage must not create a final agreement"
+    );
+    assert!(
+        !taker.actor_root.exists(),
+        "failed Chat completion must not publish Taker actor authority"
+    );
+    assert!(
+        !taker.receipt.exists(),
+        "failed Chat completion must not publish an acceptance receipt"
     );
     fs::rename(&offline_chat, paths.chat_socket)
         .expect("restore Chat socket identity before shutdown");
@@ -305,9 +348,12 @@ struct TakerFiles {
     draft: PathBuf,
     key: PathBuf,
     agreement: PathBuf,
+    source_actor_config: PathBuf,
+    actor_root: PathBuf,
+    receipt: PathBuf,
 }
 
-fn prepare_taker_files(run_root: &Path, draft_wire: &[u8]) -> TakerFiles {
+fn prepare_taker_files(run_root: &Path, draft_wire: &[u8], maker_source: &Path) -> TakerFiles {
     let root = run_root.join("taker");
     fs::DirBuilder::new()
         .mode(0o700)
@@ -317,10 +363,45 @@ fn prepare_taker_files(run_root: &Path, draft_wire: &[u8]) -> TakerFiles {
         draft: root.join("unsigned-draft.borsh"),
         key: root.join("agreement.key"),
         agreement: root.join("agreement.borsh"),
+        source_actor_config: root.join("source-actor-config.json"),
+        actor_root: root.join("accepted-actor"),
+        receipt: root.join("acceptance-receipt.json"),
     };
     write_private(&files.draft, draft_wire);
     write_raw_key(&files.key, 2);
+    prepare_taker_actor_source(&root, maker_source, &files.source_actor_config);
     files
+}
+
+fn prepare_taker_actor_source(root: &Path, maker_source: &Path, output: &Path) {
+    let claim_key = root.join("actor-claim-recovery.key");
+    let zcash_key = root.join("actor-zcash.key");
+    let capability = root.join("actor-bridge.capability");
+    write_raw_key(&claim_key, 0x7b);
+    write_raw_key(&zcash_key, 2);
+    write_private(&capability, b"m5_taker_actor_capability_0123456789");
+
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(maker_source).unwrap()).expect("Maker source JSON");
+    config["role"] = json!("taker");
+    config["role_state_db"] = json!(root.join("unused-taker-source-state.sqlite3"));
+    config["claim_recovery"]["key_id"] = json!("m5-chat-taker-claim-v1");
+    config["claim_recovery"]["key_file"] = json!(claim_key);
+    config["claim_preimage_file"] = Value::Null;
+    config["zcash_key_file"] = json!(zcash_key);
+    config["bridge"]["endpoint"] = json!("http://127.0.0.1:19002");
+    config["bridge"]["journal_db"] = json!(root.join("unused-taker-source-bridge.sqlite3"));
+    config["bridge"]["capability_file"] = json!(capability);
+    config["bridge"]["runtime"]["sidecar_role"] = json!("taker");
+    config["bridge"]["runtime"]["signer_account_id"] = json!("04".repeat(32));
+    config["zcash_funding_outpoints"] = json!([]);
+    write_private(output, &serde_json::to_vec_pretty(&config).unwrap());
+
+    let config = ActorConfig::load_private(output).expect("valid source Taker config");
+    assert_eq!(config.role(), ActorRole::Taker);
+    config
+        .load_activate_material()
+        .expect("source Taker activation material");
 }
 
 struct TakerProcess<'a> {
@@ -331,6 +412,124 @@ struct TakerProcess<'a> {
     draft_file: &'a std::path::Path,
     taker_key_file: &'a std::path::Path,
     agreement_file: &'a std::path::Path,
+    source_actor_config: &'a std::path::Path,
+    actor_root: &'a std::path::Path,
+    receipt: &'a std::path::Path,
+}
+
+struct TakerArtifactSnapshot {
+    config_path: PathBuf,
+    config_inode: u64,
+    config_bytes: Vec<u8>,
+    agreement_path: PathBuf,
+    agreement_inode: u64,
+    agreement_bytes: Vec<u8>,
+    receipt_inode: u64,
+    receipt_bytes: Vec<u8>,
+}
+
+fn assert_fresh_taker_artifacts(
+    taker: &TakerProcess<'_>,
+    maker_key: &PublicKey,
+    accepted_at: u64,
+    accepted: &Value,
+) -> TakerArtifactSnapshot {
+    assert_eq!(accepted["actor"]["role"], "taker");
+    assert_eq!(accepted["actor"]["provisioning_replay"], false);
+    assert_eq!(accepted["actor"]["receipt_replay"], false);
+    let config_path = taker.actor_root.join("taker/actor-config.json");
+    let agreement_path = taker.actor_root.join("shared/agreement-v2.borsh");
+    assert!(taker.actor_root.join("taker").is_dir());
+    assert!(!taker.actor_root.join("maker").exists());
+    let config = ActorConfig::load_private(&config_path).unwrap();
+    assert_eq!(config.role(), ActorRole::Taker);
+    assert_eq!(config.swap_id().as_str(), "m5-chat-swap-001");
+    let config_inode = fs::symlink_metadata(&config_path).unwrap().ino();
+    let config_bytes = fs::read(&config_path).unwrap();
+    let agreement_inode = fs::symlink_metadata(&agreement_path).unwrap().ino();
+    let agreement_bytes = fs::read(&agreement_path).unwrap();
+    assert_private_receipt(taker.receipt);
+    let receipt_inode = fs::symlink_metadata(taker.receipt).unwrap().ino();
+    let receipt_bytes = fs::read(taker.receipt).unwrap();
+    let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
+    assert_eq!(receipt.as_object().unwrap().len(), 7);
+    assert_eq!(receipt["schema_version"], 1);
+    assert_eq!(receipt["swap_id"], "m5-chat-swap-001");
+    assert_eq!(receipt["role"], "taker");
+    assert_eq!(receipt["actor_config_file"], json!(config_path));
+    assert_eq!(
+        receipt["actor_config_sha256"],
+        hex::encode(Sha256::digest(&config_bytes))
+    );
+    assert_eq!(
+        receipt["agreement_sha256"],
+        hex::encode(Sha256::digest(&agreement_bytes))
+    );
+    assert_eq!(
+        receipt["actor_state_database"],
+        json!(config.role_state_db())
+    );
+    assert_eq!(accepted["actor"]["receipt_file"], json!(taker.receipt));
+    assert_eq!(
+        accepted["actor"]["receipt_sha256"],
+        hex::encode(Sha256::digest(&receipt_bytes))
+    );
+    let poisoned_receipt = taker
+        .actor_root
+        .join("taker/poisoned-acceptance-receipt.json");
+    let poisoned = taker_command_with_receipt(taker, maker_key, accepted_at, &poisoned_receipt)
+        .output()
+        .unwrap();
+    assert!(!poisoned.status.success());
+    assert!(!poisoned_receipt.exists());
+    TakerArtifactSnapshot {
+        config_path,
+        config_inode,
+        config_bytes,
+        agreement_path,
+        agreement_inode,
+        agreement_bytes,
+        receipt_inode,
+        receipt_bytes,
+    }
+}
+
+fn assert_replayed_taker_artifacts(
+    taker: &TakerProcess<'_>,
+    accepted: &Value,
+    replay: &Value,
+    snapshot: &TakerArtifactSnapshot,
+) {
+    assert_eq!(replay["actor"]["role"], "taker");
+    assert_eq!(replay["actor"]["provisioning_replay"], true);
+    assert_eq!(replay["actor"]["receipt_replay"], true);
+    assert_eq!(
+        replay["actor"]["receipt_sha256"],
+        accepted["actor"]["receipt_sha256"]
+    );
+    assert_eq!(
+        fs::symlink_metadata(&snapshot.config_path).unwrap().ino(),
+        snapshot.config_inode
+    );
+    assert_eq!(
+        fs::read(&snapshot.config_path).unwrap(),
+        snapshot.config_bytes
+    );
+    assert_eq!(
+        fs::symlink_metadata(&snapshot.agreement_path)
+            .unwrap()
+            .ino(),
+        snapshot.agreement_inode
+    );
+    assert_eq!(
+        fs::read(&snapshot.agreement_path).unwrap(),
+        snapshot.agreement_bytes
+    );
+    assert_eq!(
+        fs::symlink_metadata(taker.receipt).unwrap().ino(),
+        snapshot.receipt_inode
+    );
+    assert_eq!(fs::read(taker.receipt).unwrap(), snapshot.receipt_bytes);
 }
 
 fn accept_and_replay(
@@ -349,6 +548,7 @@ fn accept_and_replay(
     assert_eq!(accepted["replay"]["completion"], false);
     assert_eq!(accepted["replay"]["agreement_file"], false);
     assert_eq!(accepted["private_material_disclosed"], false);
+    let taker_artifacts = assert_fresh_taker_artifacts(taker, maker_key, accepted_at, &accepted);
     let first = SqliteSwapStore::open(database)
         .unwrap()
         .list_maker_actor_processes()
@@ -384,11 +584,17 @@ fn accept_and_replay(
         thread::sleep(Duration::from_millis(25));
     }
     assert!(now() > expires_at_unix_seconds);
+    let offline_delivery = taker
+        .delivery
+        .with_file_name("delivery.acceptance-replay-offline");
+    fs::rename(taker.delivery, &offline_delivery).unwrap();
     let replay = run_taker(taker, maker_key, accepted_at);
+    fs::rename(&offline_delivery, taker.delivery).unwrap();
     assert_eq!(replay["replay"]["proposal"], true);
     assert_eq!(replay["replay"]["completion"], true);
     assert_eq!(replay["replay"]["agreement_file"], true);
     assert_eq!(replay["agreement_sha256"], accepted["agreement_sha256"]);
+    assert_replayed_taker_artifacts(taker, &accepted, &replay, &taker_artifacts);
     let replayed = SqliteSwapStore::open(database)
         .unwrap()
         .list_maker_actor_processes()
@@ -427,6 +633,15 @@ fn run_taker(taker: &TakerProcess<'_>, maker_key: &PublicKey, accepted_at: u64) 
 }
 
 fn taker_command(taker: &TakerProcess<'_>, maker_key: &PublicKey, accepted_at: u64) -> Command {
+    taker_command_with_receipt(taker, maker_key, accepted_at, taker.receipt)
+}
+
+fn taker_command_with_receipt(
+    taker: &TakerProcess<'_>,
+    maker_key: &PublicKey,
+    accepted_at: u64,
+    receipt: &Path,
+) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_lez-taker"));
     command
         .arg("--delivery-directory")
@@ -452,8 +667,40 @@ fn taker_command(taker: &TakerProcess<'_>, maker_key: &PublicKey, accepted_at: u
         .arg("--taker-signing-key-file")
         .arg(taker.taker_key_file)
         .arg("--agreement-output-file")
-        .arg(taker.agreement_file);
+        .arg(taker.agreement_file)
+        .arg("--zec-source-taker-config")
+        .arg(taker.source_actor_config)
+        .arg("--zec-taker-actor-root")
+        .arg(taker.actor_root)
+        .arg("--zec-acceptance-receipt")
+        .arg(receipt);
     command
+}
+
+fn assert_private_receipt(path: &Path) {
+    let metadata = fs::symlink_metadata(path).expect("acceptance receipt exists");
+    assert!(metadata.file_type().is_file());
+    assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+    assert_eq!(metadata.nlink(), 1);
+}
+
+fn assert_receipt_monitor_is_offline(receipt: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg("monitor")
+        .arg("--receipt")
+        .arg(receipt)
+        .output()
+        .expect("run receipt-bound Taker monitor");
+    assert!(
+        output.status.success(),
+        "receipt monitor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        json!({"schema_version": 1, "role": "taker", "state": "not_activated"})
+    );
 }
 
 fn assert_completed_durable(

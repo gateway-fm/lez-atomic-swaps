@@ -3161,8 +3161,8 @@ owner-private role-only bundle, publishes it with `RENAME_NOREPLACE`, excludes
 Maker state, and exact-replays the original inodes and bytes. The real `lez-taker`
 now exposes ZEC `monitor`, `claim`, and `refund` directly from that role-fixed
 config under the shared per-swap kernel lock, without Delivery or Chat.
-Acceptance-receipt wiring, actual-node command effects, manual effects, autonomous
-other-pair execution, and post-PoC hardening are still incomplete. The local
+Acceptance-receipt wiring and receipt-bound offline lifecycle are process-GREEN.
+Actual-node Taker command effects, manual effects, autonomous other-pair execution, and post-PoC hardening are still incomplete. The local
 Delivery/Chat outage output
 is process-GREEN under ADR 0098; LOGOS-020 remains an upstream production-parity
 caveat.
@@ -3633,16 +3633,25 @@ separately from runtime dependencies.
   no external runtime resource. ADRs 0103 and 0104 carry the updated component
   and flow diagrams.
 
-  Symmetric role-validated ZEC Taker provisioning and direct kernel-locked
-  monitor, claim, and refund commands are GREEN. Acceptance-receipt binding,
-  actual-node command effects, two disjoint live swaps, and a fresh supervisor
-  replay must then pass. A unified
-  XMR lifecycle actor still precedes honest all-pair CLI composition. This
-  progress does not by itself make M5 complete.
+  Symmetric role-validated ZEC Taker provisioning, acceptance-receipt binding,
+  and direct kernel-locked monitor, claim, and refund commands are process-GREEN.
+  Fresh acceptance provisions a role-only Taker bundle before completion and
+  publishes the bounded receipt only after the Maker durable commit. The receipt
+  pins config bytes, role, swap, state, and agreement from one identified read;
+  exact replay preserves agreement/config/receipt bytes and inodes. Persisted
+  completion replay works with Delivery removed, and receipt-only monitor works
+  after both application transports are absent. Seven lifecycle tests plus the
+  real Chat process reject tampering, unknown fields, Maker role, ambiguous
+  sources, actor-local receipt placement, and lock contention without exposing
+  private paths. Direct `--actor-config` is retained only as an expert component
+  and recovery escape hatch. Actual-node command effects, completion-response
+  fault injection, two disjoint live swaps, and a fresh supervisor replay must
+  still pass. A unified XMR lifecycle actor still precedes honest all-pair CLI
+  composition. This progress does not by itself make M5 complete.
 
-  Project cleanup has reclaimed about 59 GB cumulatively. The latest 2026-07-28
-  pass removed rebuildable Cargo targets, stale E2E state, and compatibility
-  build caches, increasing free disk by about 38 GB while preserving source, Git,
+  Project cleanup has reclaimed about 73 GB cumulatively. The latest 2026-07-28
+  pass removed another 14.4 GiB rebuildable Cargo target, reducing the repo to
+  about 128 MB and increasing free disk to about 530 GB while preserving source, Git,
   fixtures, and unrelated running stacks. Four stale project containers remain
   because containerd timed out on their zombie processes; Docker was not restarted
   because that would interrupt unrelated stacks. The clean rebuild exposed
@@ -3668,7 +3677,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 10 to 19 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 6 to 12 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordinator composition hardening, and post-PoC hardening remain explicitly
 open above.

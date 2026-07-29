@@ -19,9 +19,17 @@ create inconsistent recovery and concurrency semantics.
 ## Decision
 
 Add `monitor`, `claim`, and `refund` subcommands to the real `lez-taker` binary.
-Each command requires one owner-private Taker actor config, rejects the Maker
-role before state access, acquires the same deterministic nonblocking kernel lock
-as the Maker supervisor, and invokes the existing ZEC actor command boundary.
+Each command requires exactly one owner-private actor source. The normal accepted-
+swap path uses the acceptance receipt emitted only after successful Maker Chat
+completion. The loader strictly decodes that bounded receipt, hashes and parses
+the selected config from one identified read, and requires its exact byte digest,
+Taker role, swap ID, state path, and countersigned-agreement digest. A direct
+`--actor-config` source remains an explicit component-debug and manual-recovery
+escape hatch; it does not represent the final accepted-swap handoff.
+
+After source validation, the command rejects Maker authority before state access,
+acquires the same deterministic nonblocking kernel lock as the Maker supervisor,
+and invokes the existing ZEC actor command boundary.
 
 Discovery and Chat arguments are not accepted by these subcommands. Monitor uses
 only the config, recovery key, and role database. Claim and refund may use only
@@ -34,8 +42,10 @@ config path, keys, capabilities, or local root.
 ```mermaid
 flowchart LR
     User[Taker user] --> CLI[lez-taker lifecycle command]
-    Config[Private Taker config] --> CLI
-    CLI --> RoleCheck[Taker role check]
+    Receipt[Private acceptance receipt] --> Pin[Single-read config and agreement pin]
+    Config[Private Taker config] -.-> Pin
+    Pin --> CLI
+    CLI --> RoleCheck[Taker role and swap check]
     RoleCheck --> Lock[Per-swap kernel lock]
     Lock --> Actor[Existing ZEC actor command]
     Actor --> DB[Role-local SQLite journal]
@@ -59,8 +69,10 @@ sequenceDiagram
     participant D as Role SQLite
     participant N as Local chain nodes
 
-    U->>C: monitor claim or refund with private config
-    C->>C: Load config and require Taker role
+    U->>C: monitor claim or refund with private receipt
+    C->>C: Strictly decode bounded receipt
+    C->>C: Single-read config digest and semantic checks
+    C->>C: Require Taker role swap state and agreement
     C->>L: Acquire exact swap and state lock
     L-->>C: Exclusive ownership
     C->>A: Status Claim or Recover
@@ -85,14 +97,16 @@ refund recovery if progress stops.
 
 Local execution preserves that construction because:
 
-1. the private config fixes the role, agreement, swap, state database, routes,
-   and credentials;
-2. one kernel lock excludes concurrent processes for that exact role state;
-3. the existing actor journals exact intent before a public send and observes
+1. the post-completion receipt fixes the exact Taker config bytes, role, swap,
+   state database, and countersigned-agreement digest;
+2. that private config fixes the routes and credentials, and the digest check
+   and parse share one identified read rather than a check/use pair;
+3. one kernel lock excludes concurrent processes for that exact role state;
+4. the existing actor journals exact intent before a public send and observes
    persisted or canonical state before considering another send;
-4. claim and recover admission comes from the signed agreement and durable phase,
+5. claim and recover admission comes from the signed agreement and durable phase,
    not a CLI flag alone; and
-5. replay reopens the same role database and converges through the actor's
+6. replay reopens the same role database and converges through the actor's
    existing idempotence and observation rules.
 
 There is no atomic commit between SQLite and either chain. Persist-before-send,
