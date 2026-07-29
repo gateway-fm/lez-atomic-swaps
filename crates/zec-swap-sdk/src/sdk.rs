@@ -1929,6 +1929,12 @@ where
             Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged => {
                 RefundStepV1::Lez
             }
+            Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed => {
+                match self.agreement().direction() {
+                    lez_swap_core::SwapDirection::TakerSellsForeign => RefundStepV1::Zcash,
+                    lez_swap_core::SwapDirection::TakerSellsLez => RefundStepV1::Lez,
+                }
+            }
             phase if phase == lez_refunded_phase(self.agreement()) => RefundStepV1::Zcash,
             phase => return Err(ZecSdkError::RefundNotReady(phase)),
         };

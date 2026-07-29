@@ -16,6 +16,18 @@ fail() {
 rg -Fq 'export M5_APPLICATION_MODE=1' scripts/run-m5-zec-application-poc.sh ||
   fail "M5 wrapper does not force application mode"
 
+if rg -Fq 'SIDECAR_STARTUP_WORST_CASE_SECONDS' "$runner"; then
+  fail "fixed sidecar headroom must not reject a pre-effect run before the bounded readiness and pre-effect gates"
+fi
+for required in \
+  'readonly MAX_PRE_EFFECT_SECONDS=25' \
+  "remaining_budget_milliseconds 'sidecar-startup-before'" \
+  "remaining_budget_milliseconds 'pre-effect-gate'" \
+  'pre_effect_elapsed_ms <= MAX_PRE_EFFECT_SECONDS * 1000'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M5 runner is missing bounded pre-effect timing contract: ${required}"
+done
+
 for required in \
   'install -m 0700 "$actor_bin" "$m5_actor_program"' \
   'strip --strip-debug "$m5_actor_program"' \

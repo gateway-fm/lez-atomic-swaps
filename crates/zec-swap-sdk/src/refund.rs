@@ -1,6 +1,8 @@
 //! Agreement-derived, peer-independent timeout recovery contracts.
 
-use lez_swap_core::{Chain, ChainPosition, Participant, Phase, SwapCoordinator, SwapId};
+use lez_swap_core::{
+    Chain, ChainPosition, Participant, Phase, SwapCoordinator, SwapDirection, SwapId,
+};
 
 use crate::ZecAgreementV1;
 
@@ -50,11 +52,22 @@ impl RefundStepV1 {
         phase: Phase,
     ) -> Result<(), RefundError> {
         let ready = match self {
-            Self::Lez => matches!(
-                phase,
-                Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged
-            ),
-            Self::Zcash => phase == lez_refunded_phase(agreement),
+            Self::Lez => {
+                matches!(
+                    phase,
+                    Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged
+                ) || (matches!(
+                    phase,
+                    Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed
+                ) && agreement.direction() == SwapDirection::TakerSellsLez)
+            }
+            Self::Zcash => {
+                phase == lez_refunded_phase(agreement)
+                    || (matches!(
+                        phase,
+                        Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed
+                    ) && agreement.direction() == SwapDirection::TakerSellsForeign)
+            }
         };
         if ready {
             Ok(())

@@ -34,7 +34,9 @@ impl ZcashFundingContextV1 {
     ) -> Result<Self, ZcashClaimContextError> {
         if !matches!(
             coordinator.phase(),
-            Phase::BothLegsLocked
+            Phase::AwaitingTakerConfirmations
+                | Phase::TakerLockConfirmed
+                | Phase::BothLegsLocked
                 | Phase::ClaimEvidenceAvailable
                 | Phase::MakerLegRefunded
                 | Phase::TakerLegRefunded

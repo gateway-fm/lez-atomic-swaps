@@ -20,9 +20,10 @@ use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     DiscoveryWindow, Hex32, MAX_DISCOVERY_BLOCKS, MessageContext, NativeEscrowAccountObservation,
-    NativeRefundObservation, NativeRefundObservationTarget, ObserveNativeRefundRequest,
-    Participant, PrepareNativeRefundRequest, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
+    NativeEscrowTerms, NativeEscrowTermsInput, NativeRefundObservation,
+    NativeRefundObservationTarget, ObserveNativeRefundRequest, Participant,
+    PrepareNativeRefundRequest, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -144,6 +145,44 @@ impl FinalizedIndexerApi for ReplacingPinnedBlockIndexer {
         block_id: u64,
     ) -> Result<HistoricalAccount, BridgeRuntimeError> {
         self.base.account_at_block(account_id, block_id).await
+    }
+}
+
+#[derive(Debug)]
+struct ConcurrentAccountIndexer {
+    base: Arc<MockIndexer>,
+    in_flight: AtomicUsize,
+    max_in_flight: AtomicUsize,
+}
+
+#[async_trait]
+impl FinalizedIndexerApi for ConcurrentAccountIndexer {
+    async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+        self.base.last_finalized_block_id().await
+    }
+
+    async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+        self.base.block_by_id(block_id).await
+    }
+
+    async fn block_by_hash(
+        &self,
+        block_hash: [u8; 32],
+    ) -> Result<Option<Block>, BridgeRuntimeError> {
+        self.base.block_by_hash(block_hash).await
+    }
+
+    async fn account_at_block(
+        &self,
+        account_id: [u8; 32],
+        block_id: u64,
+    ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+        let active = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_in_flight.fetch_max(active, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let result = self.base.account_at_block(account_id, block_id).await;
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        result
     }
 }
 
@@ -421,6 +460,44 @@ fn advancing_indexer(fixture: &Fixture, finalized_after: u64) -> Arc<MockIndexer
     indexer
 }
 
+fn stable_long_indexer(fixture: &Fixture, finalized_tip: u64) -> Arc<MockIndexer> {
+    assert!(finalized_tip > FINALIZED_TIP_ID);
+    let mut indexer = indexer(fixture);
+    let inner = Arc::get_mut(&mut indexer).unwrap();
+    for height in (FINALIZED_TIP_ID + 1)..=finalized_tip {
+        let previous_hash = inner.by_id.get(&(height - 1)).unwrap().header.hash;
+        let mut hash = [0_u8; 32];
+        hash[..8].copy_from_slice(&height.to_le_bytes());
+        hash[8] = 0xa5;
+        let descendant = Block {
+            header: BlockHeader {
+                block_id: height,
+                prev_block_hash: previous_hash,
+                hash: HashType(hash),
+                timestamp: REFUND_AT_MS + (height - REFUND_BLOCK_ID),
+                signature: IndexedSignature([height.to_le_bytes()[0]; 64]),
+            },
+            body: BlockBody {
+                transactions: Vec::new(),
+            },
+            bedrock_status: BedrockStatus::Finalized,
+        };
+        inner
+            .by_hash
+            .insert(descendant.header.hash.0, descendant.clone());
+        inner.by_id.insert(height, descendant);
+    }
+    let tip_accounts: Vec<_> = inner
+        .accounts
+        .iter()
+        .filter(|((_, height), _)| *height == FINALIZED_TIP_ID)
+        .map(|((account, _), facts)| ((*account, finalized_tip), facts.clone()))
+        .collect();
+    inner.accounts.extend(tip_accounts);
+    *inner.tips.get_mut().unwrap() = VecDeque::from([Some(finalized_tip), Some(finalized_tip)]);
+    indexer
+}
+
 #[tokio::test]
 async fn exact_owned_refund_is_returned_only_from_stable_finalized_deadline_evidence() {
     let fixture = fixture().await;
@@ -448,6 +525,260 @@ async fn exact_owned_refund_is_returned_only_from_stable_finalized_deadline_evid
     };
     assert!(refund.transaction.signer_account_ids.as_slice().is_empty());
     assert_eq!(refund.transaction.position.height, REFUND_BLOCK_ID);
+}
+
+async fn hashlock_fixture() -> (Fixture, NativeEscrowTerms) {
+    let mut fixture = fixture().await;
+    let witnessed = fixture.request.terms.witnessed().unwrap();
+    let terms = NativeEscrowTerms::new(NativeEscrowTermsInput {
+        swap_id: witnessed.swap_id(),
+        terms_hash: witnessed.terms_hash(),
+        secret_digest: h(42),
+        depositor: witnessed.depositor(),
+        depositor_account_id: witnessed.depositor_account_id(),
+        claimant: witnessed.claimant(),
+        claimant_account_id: witnessed.claimant_account_id(),
+        amount: witnessed.amount().as_u128(),
+        refund_at_ms: witnessed.refund_at_ms(),
+        authenticated_transfer_program_id: witnessed.authenticated_transfer_program_id(),
+    })
+    .unwrap();
+    let depositor_private = PrivateKey::try_new([6; 32]).unwrap();
+    fixture.planner = Arc::new(
+        NativeEscrowPlanner::new(
+            Participant::Maker,
+            depositor_private,
+            program_words(fixture.runtime.escrow_program_id),
+            program_words(terms.authenticated_transfer_program_id()),
+            fixture.runtime.clone(),
+            Arc::new(FixedNonce),
+        )
+        .unwrap(),
+    );
+    let prepare = PrepareNativeRefundRequest::new(
+        MessageContext::new(
+            fixture.request.context.run_id.clone(),
+            RequestId::new("finalized-refund-hashlock-prepare-0001").unwrap(),
+            Participant::Maker,
+        ),
+        fixture.runtime.clone(),
+        terms.clone(),
+    );
+    let prepared = fixture
+        .planner
+        .prepare_native_refund(&prepare)
+        .await
+        .unwrap();
+    fixture.request = ObserveNativeRefundRequest::new(
+        MessageContext::new(
+            fixture.request.context.run_id.clone(),
+            RequestId::new("finalized-refund-hashlock-observe-0001").unwrap(),
+            Participant::Maker,
+        ),
+        fixture.runtime.clone(),
+        terms.clone(),
+        NativeRefundObservationTarget::Exact {
+            refund_transaction_id: prepared.refund.transaction_id,
+            window: DiscoveryWindow::new(REFUND_BLOCK_ID, 2).unwrap(),
+        },
+    );
+    let escrow_program = program_id_from_hex(fixture.runtime.escrow_program_id);
+    for account in fixture
+        .accounts
+        .values_mut()
+        .filter(|account| account.program_owner.0 == escrow_program)
+    {
+        let mut metadata = EscrowMetadata::try_from_slice(&account.data.0).unwrap();
+        metadata.claim_authority = ClaimAuthority::Sha256Preimage {
+            secret_digest: *terms.secret_digest().as_bytes(),
+        };
+        account.data = IndexedData(to_vec(&metadata).unwrap());
+    }
+    (fixture, terms)
+}
+
+#[tokio::test]
+async fn exact_hashlock_refund_preserves_the_legacy_zec_authority_shape() {
+    let (fixture, terms) = hashlock_fixture().await;
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        indexer(&fixture),
+    );
+
+    let result = observer.observe(&fixture.request).await.unwrap();
+
+    let NativeEscrowAccountObservation::Found(accounts) = result.accounts else {
+        panic!("refunded terminal hashlock accounts")
+    };
+    assert_eq!(
+        accounts.metadata.hashlock().unwrap().secret_digest,
+        terms.secret_digest()
+    );
+    assert!(matches!(result.refund, NativeRefundObservation::Found(_)));
+}
+
+#[tokio::test]
+async fn exact_terminal_refund_is_found_in_the_finalized_prefix_of_its_window() {
+    let mut fixture = fixture().await;
+    let NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        ..
+    } = fixture.request.target
+    else {
+        unreachable!()
+    };
+    fixture.request.target = NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        window: DiscoveryWindow::new(REFUND_BLOCK_ID, 3).unwrap(),
+    };
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        indexer(&fixture),
+    );
+
+    let result = observer.observe(&fixture.request).await.unwrap();
+
+    assert!(matches!(result.refund, NativeRefundObservation::Found(_)));
+    assert_eq!(result.clock_after.height, FINALIZED_TIP_ID);
+}
+
+#[tokio::test]
+async fn claimant_discovers_the_unique_hashlock_refund_by_terms() {
+    let (fixture, terms) = hashlock_fixture().await;
+    let claimant_key = PrivateKey::try_new([7; 32]).unwrap();
+    let claimant = AccountId::from(&PublicKey::new_from_private_key(&claimant_key));
+    assert_eq!(
+        Hex32::from_bytes(claimant.into_value()),
+        terms.claimant_account_id()
+    );
+    let runtime = RuntimeDescriptor::new(
+        Participant::Taker,
+        RuntimeCompatibility::LeeV0_2_0,
+        fixture.runtime.chain_id,
+        fixture.runtime.channel_id,
+        fixture.runtime.genesis_block_hash,
+        fixture.runtime.escrow_program_id,
+        terms.claimant_account_id(),
+    );
+    let planner = Arc::new(
+        NativeEscrowPlanner::new(
+            Participant::Taker,
+            claimant_key,
+            program_words(runtime.escrow_program_id),
+            program_words(terms.authenticated_transfer_program_id()),
+            runtime.clone(),
+            Arc::new(FixedNonce),
+        )
+        .unwrap(),
+    );
+    let request = ObserveNativeRefundRequest::new(
+        MessageContext::new(
+            fixture.request.context.run_id.clone(),
+            RequestId::new("finalized-refund-hashlock-discover-0001").unwrap(),
+            Participant::Taker,
+        ),
+        runtime.clone(),
+        terms,
+        NativeRefundObservationTarget::DiscoverByTerms {
+            window: DiscoveryWindow::new(REFUND_BLOCK_ID, 2).unwrap(),
+        },
+    );
+    let observer = FinalizedWitnessedRefundObserver::new(runtime, planner, indexer(&fixture));
+
+    let result = observer.observe(&request).await.unwrap();
+
+    assert!(matches!(result.refund, NativeRefundObservation::Found(_)));
+    let NativeEscrowAccountObservation::Found(accounts) = result.accounts else {
+        panic!("discovered terminal hashlock accounts")
+    };
+    assert!(accounts.metadata.hashlock().is_some());
+}
+
+#[tokio::test]
+async fn hashlock_refund_rejects_mismatched_finalized_secret_digest() {
+    let (mut fixture, _) = hashlock_fixture().await;
+    let escrow_program = program_id_from_hex(fixture.runtime.escrow_program_id);
+    for account in fixture
+        .accounts
+        .values_mut()
+        .filter(|account| account.program_owner.0 == escrow_program)
+    {
+        let mut metadata = EscrowMetadata::try_from_slice(&account.data.0).unwrap();
+        metadata.claim_authority = ClaimAuthority::Sha256Preimage {
+            secret_digest: [99; 32],
+        };
+        account.data = IndexedData(to_vec(&metadata).unwrap());
+    }
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        indexer(&fixture),
+    );
+
+    assert_eq!(
+        observer.observe(&fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::InvalidObservation
+    );
+}
+
+#[tokio::test]
+async fn refund_authority_variants_reject_mixed_finalized_metadata() {
+    let (mut hashlock_fixture, _) = hashlock_fixture().await;
+    let aggregate_private = PrivateKey::try_new([5; 32]).unwrap();
+    let aggregate_public = PublicKey::new_from_private_key(&aggregate_private);
+    let escrow_program = program_id_from_hex(hashlock_fixture.runtime.escrow_program_id);
+    for account in hashlock_fixture
+        .accounts
+        .values_mut()
+        .filter(|account| account.program_owner.0 == escrow_program)
+    {
+        let mut metadata = EscrowMetadata::try_from_slice(&account.data.0).unwrap();
+        metadata.claim_authority = ClaimAuthority::AggregateWitness {
+            x_only_public_key: *aggregate_public.value(),
+            account_id: AccountId::from(&aggregate_public),
+        };
+        account.data = IndexedData(to_vec(&metadata).unwrap());
+    }
+    let observer = FinalizedWitnessedRefundObserver::new(
+        hashlock_fixture.runtime.clone(),
+        Arc::clone(&hashlock_fixture.planner),
+        indexer(&hashlock_fixture),
+    );
+    assert_eq!(
+        observer
+            .observe(&hashlock_fixture.request)
+            .await
+            .unwrap_err(),
+        BridgeRuntimeError::InvalidObservation
+    );
+
+    let mut witnessed_fixture = fixture().await;
+    let escrow_program = program_id_from_hex(witnessed_fixture.runtime.escrow_program_id);
+    for account in witnessed_fixture
+        .accounts
+        .values_mut()
+        .filter(|account| account.program_owner.0 == escrow_program)
+    {
+        let mut metadata = EscrowMetadata::try_from_slice(&account.data.0).unwrap();
+        metadata.claim_authority = ClaimAuthority::Sha256Preimage {
+            secret_digest: [42; 32],
+        };
+        account.data = IndexedData(to_vec(&metadata).unwrap());
+    }
+    let observer = FinalizedWitnessedRefundObserver::new(
+        witnessed_fixture.runtime.clone(),
+        Arc::clone(&witnessed_fixture.planner),
+        indexer(&witnessed_fixture),
+    );
+    assert_eq!(
+        observer
+            .observe(&witnessed_fixture.request)
+            .await
+            .unwrap_err(),
+        BridgeRuntimeError::InvalidObservation
+    );
 }
 
 #[tokio::test]
@@ -533,6 +864,76 @@ async fn state_only_brackets_funded_state_before_and_at_the_deadline() {
 }
 
 #[tokio::test]
+async fn exact_observation_skips_an_incomplete_window_while_finalized_accounts_are_funded() {
+    let mut fixture = fixture().await;
+    let NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        ..
+    } = fixture.request.target
+    else {
+        unreachable!()
+    };
+    fixture.request.target = NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        window: DiscoveryWindow::new(FINALIZED_TIP_ID, 2).unwrap(),
+    };
+    let amount = fixture
+        .request
+        .terms
+        .witnessed()
+        .unwrap()
+        .amount()
+        .as_u128();
+    set_state(
+        &mut fixture,
+        [FINALIZED_TIP_ID],
+        EscrowStatus::Funded,
+        amount,
+    );
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        indexer(&fixture),
+    );
+
+    let result = observer.observe(&fixture.request).await.unwrap();
+
+    assert_eq!(result.refund, NativeRefundObservation::UnknownOrPending);
+    let NativeEscrowAccountObservation::Found(accounts) = result.accounts else {
+        panic!("funded exact-observation accounts")
+    };
+    assert_eq!(
+        accounts.metadata.status(),
+        lez_bridge_protocol::EscrowState::Funded
+    );
+}
+
+#[tokio::test]
+async fn state_only_reads_metadata_and_custody_concurrently() {
+    let mut fixture = fixture().await;
+    fixture.request.target = NativeRefundObservationTarget::StateOnly;
+    let indexer = Arc::new(ConcurrentAccountIndexer {
+        base: indexer(&fixture),
+        in_flight: AtomicUsize::new(0),
+        max_in_flight: AtomicUsize::new(0),
+    });
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        Arc::clone(&indexer) as Arc<dyn FinalizedIndexerApi>,
+    );
+
+    let result = observer.observe(&fixture.request).await.unwrap();
+
+    assert_eq!(result.refund, NativeRefundObservation::NotRequested);
+    assert_eq!(
+        indexer.max_in_flight.load(Ordering::SeqCst),
+        2,
+        "the two independent historical account reads must overlap"
+    );
+}
+
+#[tokio::test]
 async fn finalized_refund_requires_zero_custody_at_the_containing_block() {
     let mut fixture = fixture().await;
     fixture
@@ -603,7 +1004,7 @@ fn claimant_observer(
 }
 
 #[tokio::test]
-async fn claimant_discovers_unique_refund_and_complete_absence_but_not_incomplete_absence() {
+async fn claimant_scans_finalized_prefix_but_only_complete_absence_is_terminal() {
     let found_fixture = fixture().await;
     let (request, observer) = claimant_observer(&found_fixture, indexer(&found_fixture));
     let found = observer.observe(&request).await.unwrap();
@@ -621,9 +1022,30 @@ async fn claimant_discovers_unique_refund_and_complete_absence_but_not_incomplet
     request.target = NativeRefundObservationTarget::DiscoverByTerms {
         window: DiscoveryWindow::new(REFUND_BLOCK_ID, 3).unwrap(),
     };
+    let incomplete = observer.observe(&request).await.unwrap();
+    assert!(matches!(
+        incomplete.refund,
+        NativeRefundObservation::Found(_)
+    ));
+    assert_eq!(incomplete.clock_before.height, FINALIZED_TIP_ID);
+    assert_eq!(incomplete.clock_after.height, FINALIZED_TIP_ID);
+
+    let mut incomplete_absent_fixture = fixture().await;
+    incomplete_absent_fixture.blocks[0]
+        .body
+        .transactions
+        .clear();
+    let (mut request, observer) = claimant_observer(
+        &incomplete_absent_fixture,
+        indexer(&incomplete_absent_fixture),
+    );
+    request.target = NativeRefundObservationTarget::DiscoverByTerms {
+        window: DiscoveryWindow::new(REFUND_BLOCK_ID, 3).unwrap(),
+    };
+    let incomplete_absent = observer.observe(&request).await.unwrap();
     assert_eq!(
-        observer.observe(&request).await.unwrap_err(),
-        BridgeRuntimeError::Unavailable
+        incomplete_absent.refund,
+        NativeRefundObservation::UnknownOrPending
     );
 }
 
@@ -779,6 +1201,47 @@ async fn terminal_owned_refund_accepts_bounded_finalized_descendants_and_keeps_p
     assert_eq!(result.clock_after.height, FINALIZED_TIP_ID);
     assert_eq!(result.clock_after.block_hash, h(11));
     assert_eq!(result.clock_after.timestamp_ms, REFUND_AT_MS + 1);
+}
+
+#[tokio::test]
+async fn maximum_window_accepts_a_bounded_finalized_descendant() {
+    let mut fixture = fixture().await;
+    let NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        ..
+    } = fixture.request.target
+    else {
+        unreachable!()
+    };
+    fixture.request.target = NativeRefundObservationTarget::Exact {
+        refund_transaction_id,
+        window: DiscoveryWindow::new(REFUND_BLOCK_ID, MAX_DISCOVERY_BLOCKS).unwrap(),
+    };
+    let finalized_tip = REFUND_BLOCK_ID + u64::from(MAX_DISCOVERY_BLOCKS);
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        stable_long_indexer(&fixture, finalized_tip),
+    );
+
+    let result = observer.observe(&fixture.request).await.unwrap();
+    assert!(matches!(result.refund, NativeRefundObservation::Found(_)));
+}
+
+#[tokio::test]
+async fn initial_finalized_tip_beyond_the_bounded_window_fails_closed() {
+    let fixture = fixture().await;
+    let finalized_tip = FINALIZED_TIP_ID + u64::from(MAX_DISCOVERY_BLOCKS) + 1;
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        stable_long_indexer(&fixture, finalized_tip),
+    );
+
+    assert_eq!(
+        observer.observe(&fixture.request).await.unwrap_err(),
+        BridgeRuntimeError::Unavailable
+    );
 }
 
 #[tokio::test]

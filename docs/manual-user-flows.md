@@ -4780,6 +4780,111 @@ user-systemd crash/restart fencing. It does not certify a submitted Zcash effect
 Actual-node supervisor composition and durable maker/taker manual-action routing
 plus concurrent disjoint live-process composition remain M5 work.
 
+## Flow 1I: inspect the one-leg ZEC recovery checkpoint and target procedure
+
+This is the intended role-correct recovery procedure behind ADR 0102, plus the
+inspection boundary for the retained intervention-assisted checkpoint. It is
+not currently reproducible end to end as a supported user flow. The original
+run's provisioned window was 193 through 448, the refund finalized at block 608,
+and convergence required manual rotation to 590 through 845 plus manual
+retirement of an older active bridge-journal row. Do not repeat either internal
+edit as an operator procedure. The pending durable window progress and Maker and
+Taker application `monitor/claim/refund` commands must remove those interventions
+before this becomes daemon-supervised M5 evidence.
+
+Start from a fresh Flow 1B local LEZ and Zebra deployment and its freshly
+provisioned role configs. To create the abandonment case, stop lifecycle driving
+only after the Taker-owned LEZ first lock is finalized and before any Maker
+Zcash lock is submitted. The existing automated Flow 1B runner does not yet
+expose this pause as a supported flag; use the
+[M3 manual timeout/refund procedure](m3-local-poc-operator-guide.md#manual-actor-timeoutrefund-recovery)
+to inspect the phase and deadline. Never edit an agreement, swap ID, account,
+deadline, signer, or protected recovery field to manufacture eligibility.
+
+For direction `TakerSellsLez`, the Taker deposited LEZ and is the only role that
+may submit that LEZ refund. The Maker is an observer. Reverse those owner labels
+only when the signed agreement reverses the funded leg.
+
+```sh
+export MAKER_ACTOR_CONFIG=/absolute/private/maker/actor-config.json
+export TAKER_ACTOR_CONFIG=/absolute/private/taker/actor-config.json
+export LEZ_INDEXER_URL=http://127.0.0.1:PORT
+export EVIDENCE_ROOT=/absolute/private/recovery-evidence
+install -d -m 0700 "$EVIDENCE_ROOT"
+
+cargo build --locked -p zec-reference-actor --bin zec-reference-actor
+target/debug/zec-reference-actor --config "$MAKER_ACTOR_CONFIG" status
+target/debug/zec-reference-actor --config "$TAKER_ACTOR_CONFIG" status
+```
+
+Both statuses must describe the same swap and the expected one-leg phase. Query
+the finalized clock until it covers the signed refund deadline; a sequencer tip
+or host wall clock is not sufficient:
+
+```sh
+curl --fail --silent --show-error --noproxy '*' \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
+  "$LEZ_INDEXER_URL" | tee "$EVIDENCE_ROOT/finalized-tip.json"
+```
+
+Invoke the owner first. `awaiting_deadline` is a safe no-effect result; poll the
+finalized clock and retry the same actor state. `submitted` means the durable
+attempt is now observe-only on replay. Continue until `refunded`:
+
+```sh
+target/debug/zec-reference-actor --config "$TAKER_ACTOR_CONFIG" recover \
+  | tee "$EVIDENCE_ROOT/taker-recover.json"
+target/debug/zec-reference-actor --config "$TAKER_ACTOR_CONFIG" recover \
+  | tee "$EVIDENCE_ROOT/taker-terminal-replay.json"
+```
+
+Then invoke the non-owner. It must discover the unique finalized refund and
+must not submit one:
+
+```sh
+target/debug/zec-reference-actor --config "$MAKER_ACTOR_CONFIG" recover \
+  | tee "$EVIDENCE_ROOT/maker-observe-refund.json"
+target/debug/zec-reference-actor --config "$MAKER_ACTOR_CONFIG" status
+target/debug/zec-reference-actor --config "$TAKER_ACTOR_CONFIG" status
+```
+
+Require both statuses to end at `phase: refunded`, equal terminal revisions,
+and `next_action: complete`. From the public refund result, retain its
+transaction ID and containing finalized height. Query `getBlockById` and
+`getBlockByHash`; the decoded results must agree, report `Finalized`, and contain
+the transaction exactly once. Read the transaction's metadata and custody
+account IDs directly from its ordered public accounts and call
+`getAccountAtBlock` for that exact height. Custody must be zero and the observer
+must reject a conflicting authority, duplicate refund, broken ancestry, moving
+tip, or partial-window absence as terminal.
+
+Atomicity is conditional rather than a distributed commit: the refund owner
+persists exact intent before at-most-once submission, the non-owner only
+observes, a one-leg abandonment refunds only its funded leg, and when both legs
+are funded LEZ recovery precedes Zcash recovery. Both roles require one
+unique finalized transaction plus terminal metadata and zero custody, and an
+incomplete absence cannot advance either actor. The full argument and sequence
+diagram are in [ADR 0102](architecture/0102-observe-refunds-from-finalized-window-prefixes.md).
+
+The retained working-tree example used local LEZ v0.2 sequencer/indexer/Bedrock
+and Zebra Regtest only. It used deterministic local genesis funds, no public
+RPC, faucet, peer, public funds, or public deployment. Runtime flakiness can
+still come from local CPU/disk pressure, configured block cadence, or stopping
+the devnet before finality. Cold setup can require pinned Cargo/Git artifacts
+and the four pinned rapidsnark v0.0.8 libraries; verify their documented
+SHA-256 identities and set absolute `RAPIDSNARK_LIB_DIR` before building the
+LEZ sidecar. The upstream fallback also assumes `unzip`, so certified runs use
+the verified local libraries and Cargo offline.
+
+Current limitation: the exact working-tree result is one intervention-assisted
+real recovery, not a clean pushed-commit repeat or a supported one-command
+abandonment runner. The commands above define the target stable operator
+boundary; they do not reproduce the retained evidence without unsupported
+internal edits today. The next M5 slices add durable window progress,
+application manual-action intents, and CLI routing, then turn this procedure
+into an isolated repeatable daemon-supervised E2E.
+
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
 

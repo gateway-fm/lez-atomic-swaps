@@ -187,6 +187,7 @@ flowchart TB
     M5Entry --> M5Outage["0098 Transport outage recovery"]
     M5Entry --> M5Crash["0099 Actor submission fault seam"]
     M5Crash --> M5ProcessLease["0100 Fenced actor-process leases"]
+    M5ProcessLease --> M5RefundRecovery["0102 Finalized-prefix refund recovery"]
 ```
 
 | ADR | Decision | Status |
@@ -292,3 +293,4 @@ flowchart TB
 | [0099](0099-pause-actors-after-submission-only-in-fault-tests.md) | Pause a feature-gated real actor after an exact submitted effect and before stdout | Accepted; marker helper and node-free systemd/scheduler crash fixture GREEN. Real submitted ZEC-chain subprocess evidence remains |
 | [0100](0100-fence-maker-actor-process-leases.md) | Fence scheduling by swap, random owner, monotonic generation, kernel lock, and sealed artifacts rather than TTL/path trust | Accepted; schema-v16 foundation, atomic ZEC acceptance, daemon-owned provisioning, expiry-independent replay, bounded per-swap authority registry, held-lock recovery, sealed config consumers, physical artifact binding, exact pair semantics, persistent daemon supervisor, and node-free user-systemd actor crash/restart GREEN. Actual-node supervisor execution, durable manual-action routing, and concurrent disjoint live-process composition remain |
 | [0101](0101-bind-fresh-lez-identities-into-m5-actors.md) | Derive and bind fresh canonical LEZ identities into isolated M5 actors without importing the incompatible Logos host graph | Accepted for the component boundary; fresh-stack actual-node supervisor replay remains |
+| [0102](0102-observe-refunds-from-finalized-window-prefixes.md) | Return a unique finalized refund from an available window prefix while keeping prefix absence non-terminal | Accepted for local LEZ and Zcash two-role recovery; durable application actions and all-pair M5 closure remain |

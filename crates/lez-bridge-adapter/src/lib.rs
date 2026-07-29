@@ -1290,7 +1290,15 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
                     Ok(RefundObservationV1::Unstable)
                 }
             }
-            NativeRefundObservation::UnknownOrPending => Ok(RefundObservationV1::Unstable),
+            NativeRefundObservation::UnknownOrPending => {
+                if matches!(target, NativeRefundObservationTarget::Exact { .. })
+                    && account_state == Some(EscrowState::Funded)
+                {
+                    Ok(RefundObservationV1::Absent)
+                } else {
+                    Ok(RefundObservationV1::Unstable)
+                }
+            }
             NativeRefundObservation::Found(found) => {
                 if account_state != Some(EscrowState::Refunded) {
                     return Err(NativeRefundAdapterError::InconsistentFacts);

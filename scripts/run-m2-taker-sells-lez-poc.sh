@@ -31,7 +31,6 @@ readonly MAX_CORRIDOR_SECONDS=49
 readonly MAX_ACTOR_CALL_SECONDS=20
 readonly MAX_DRIVE_RETRIES=8
 readonly DRIVE_RETRY_DELAY_SECONDS=0.15
-readonly SIDECAR_STARTUP_WORST_CASE_SECONDS=40
 readonly RAPIDSNARK_LIB_DIR="${RAPIDSNARK_LIB_DIR:-/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227}"
 readonly BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--I/usr/lib/gcc/x86_64-linux-gnu/13/include}"
 export RAPIDSNARK_LIB_DIR BINDGEN_EXTRA_CLANG_ARGS
@@ -1065,11 +1064,9 @@ readonly taker_config="${actors_root}/taker/actor-config.json"
 readonly maker_log="${evidence_dir}/maker-sidecar.log"
 readonly taker_log="${evidence_dir}/taker-sidecar.log"
 
-startup_remaining_ms="$(remaining_budget_milliseconds 'sidecar-startup-before')"
-(( startup_remaining_ms >= SIDECAR_STARTUP_WORST_CASE_SECONDS * 1000 )) || {
-  echo "sidecar startup requires ${SIDECAR_STARTUP_WORST_CASE_SECONDS}s of bounded RPC headroom; ${startup_remaining_ms}ms remain" >&2
-  exit 2
-}
+# Readiness polls remain inside the absolute corridor deadline. The later
+# MAX_PRE_EFFECT_SECONDS gate forbids all effects if startup is too slow.
+remaining_budget_milliseconds 'sidecar-startup-before' >/dev/null
 
 "$sidecar_bin" \
   --listen-address "127.0.0.1:${maker_port}" \

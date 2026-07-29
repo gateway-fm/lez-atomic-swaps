@@ -7,12 +7,12 @@ use indexer_service_protocol::{
     Transaction as IndexedTransaction,
 };
 use lez_bridge_protocol::{
-    AccountIds, ChainClock, ChainPosition, EscrowState, Hex32, MAX_DISCOVERY_BLOCKS,
-    NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
-    NativeRefundFoundFacts, NativeRefundInstructionFacts, NativeRefundObservation,
-    NativeRefundObservationTarget, ObserveNativeRefundRequest, ObserveNativeRefundResult,
-    ObservedTransactionFacts, PreparedTransaction, WitnessedEscrowMetadataFacts,
-    WitnessedNativeEscrowTerms,
+    AccountIds, ChainClock, ChainPosition, EscrowMetadataFacts, EscrowState, Hex32,
+    MAX_DISCOVERY_BLOCKS, NativeCustodyFacts, NativeEscrowAccountFacts,
+    NativeEscrowAccountObservation, NativeRefundFoundFacts, NativeRefundInstructionFacts,
+    NativeRefundObservation, NativeRefundObservationTarget, NativeRefundTerms,
+    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObservedTransactionFacts,
+    PreparedTransaction, WitnessedEscrowMetadataFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{AccountId, PublicKey, public_transaction::Message};
@@ -30,7 +30,7 @@ struct FoundRefund {
     public: IndexedPublicTransaction,
 }
 
-/// Fail-closed observer for witnessed native refunds in one stable finalized window.
+/// Fail-closed observer for native refunds in one stable finalized window.
 pub struct FinalizedWitnessedRefundObserver {
     runtime: lez_bridge_protocol::RuntimeDescriptor,
     planner: Arc<NativeEscrowPlanner>,
@@ -96,51 +96,30 @@ impl FinalizedWitnessedRefundObserver {
             tip_before.header.block_id,
             tip_before.header.timestamp,
         );
+        let funded_exact_accounts =
+            if matches!(request.target, NativeRefundObservationTarget::Exact { .. }) {
+                let accounts = self.read_accounts(terms, finalized_before, None).await?;
+                (accounts.metadata.status() == EscrowState::Funded).then_some(accounts)
+            } else {
+                None
+            };
 
-        let (refund, expected_terminal) = match request.target {
-            NativeRefundObservationTarget::StateOnly => {
-                (NativeRefundObservation::NotRequested, None)
-            }
-            NativeRefundObservationTarget::Exact { window, .. } => {
-                let expected = expected
-                    .as_ref()
-                    .ok_or(BridgeRuntimeError::InvalidObservation)?;
-                let found = self
-                    .scan_refund(request, window, Some(expected), &tip_before)
-                    .await?;
-                match found {
-                    Some(found) => {
-                        self.validate_refunded_state(terms, found.header.block_id)
-                            .await?;
-                        let facts = self.validate_refund(request, &found, Some(expected))?;
-                        (
-                            NativeRefundObservation::found(facts),
-                            Some(EscrowState::Refunded),
-                        )
-                    }
-                    None => (NativeRefundObservation::UnknownOrPending, None),
-                }
-            }
-            NativeRefundObservationTarget::DiscoverByTerms { window } => {
-                let found = self.scan_refund(request, window, None, &tip_before).await?;
-                match found {
-                    Some(found) => {
-                        self.validate_refunded_state(terms, found.header.block_id)
-                            .await?;
-                        let facts = self.validate_refund(request, &found, None)?;
-                        (
-                            NativeRefundObservation::found(facts),
-                            Some(EscrowState::Refunded),
-                        )
-                    }
-                    None => (NativeRefundObservation::Absent, None),
-                }
-            }
-        };
-
-        let accounts = self
-            .read_accounts(terms, finalized_before, expected_terminal)
+        let (refund, expected_terminal) = self
+            .observe_refund(
+                request,
+                terms,
+                expected.as_ref(),
+                funded_exact_accounts.is_some(),
+                &tip_before,
+            )
             .await?;
+
+        let accounts = if let Some(accounts) = funded_exact_accounts {
+            accounts
+        } else {
+            self.read_accounts(terms, finalized_before, expected_terminal)
+                .await?
+        };
         if accounts.metadata.status() == EscrowState::Refunded
             && clock.timestamp_ms < terms.refund_at_ms()
         {
@@ -161,20 +140,76 @@ impl FinalizedWitnessedRefundObserver {
         ))
     }
 
+    async fn observe_refund(
+        &self,
+        request: &ObserveNativeRefundRequest,
+        terms: &NativeRefundTerms,
+        expected: Option<&PreparedTransaction>,
+        funded_exact: bool,
+        tip_before: &Block,
+    ) -> Result<(NativeRefundObservation, Option<EscrowState>), BridgeRuntimeError> {
+        match request.target {
+            NativeRefundObservationTarget::StateOnly => {
+                Ok((NativeRefundObservation::NotRequested, None))
+            }
+            NativeRefundObservationTarget::Exact { window, .. } => {
+                if funded_exact {
+                    return Ok((NativeRefundObservation::UnknownOrPending, None));
+                }
+                let expected = expected.ok_or(BridgeRuntimeError::InvalidObservation)?;
+                let found = self
+                    .scan_refund(request, window, Some(expected), tip_before)
+                    .await?;
+                match found {
+                    Some(found) => {
+                        self.validate_refunded_state(terms, found.header.block_id)
+                            .await?;
+                        let facts = self.validate_refund(request, &found, Some(expected))?;
+                        Ok((
+                            NativeRefundObservation::found(facts),
+                            Some(EscrowState::Refunded),
+                        ))
+                    }
+                    None => Ok((NativeRefundObservation::UnknownOrPending, None)),
+                }
+            }
+            NativeRefundObservationTarget::DiscoverByTerms { window } => {
+                let found = self.scan_refund(request, window, None, tip_before).await?;
+                if let Some(found) = found {
+                    self.validate_refunded_state(terms, found.header.block_id)
+                        .await?;
+                    let facts = self.validate_refund(request, &found, None)?;
+                    Ok((
+                        NativeRefundObservation::found(facts),
+                        Some(EscrowState::Refunded),
+                    ))
+                } else {
+                    let window_end = window
+                        .start_height()
+                        .checked_add(u64::from(window.max_blocks() - 1))
+                        .ok_or(BridgeRuntimeError::InvalidObservation)?;
+                    let observation = if tip_before.header.block_id >= window_end {
+                        NativeRefundObservation::Absent
+                    } else {
+                        NativeRefundObservation::UnknownOrPending
+                    };
+                    Ok((observation, None))
+                }
+            }
+        }
+    }
+
     fn validate_request<'a>(
         &self,
         request: &'a ObserveNativeRefundRequest,
-    ) -> Result<&'a WitnessedNativeEscrowTerms, BridgeRuntimeError> {
+    ) -> Result<&'a NativeRefundTerms, BridgeRuntimeError> {
         if request.runtime != self.runtime
             || request.context.sidecar_role != self.runtime.sidecar_role
             || request.runtime.compatibility != lez_bridge_protocol::RuntimeCompatibility::LeeV0_2_0
         {
             return Err(BridgeRuntimeError::Planner);
         }
-        let terms = request
-            .terms
-            .witnessed()
-            .ok_or(BridgeRuntimeError::Planner)?;
+        let terms = &request.terms;
         let expected_signer = match request.target {
             NativeRefundObservationTarget::StateOnly
             | NativeRefundObservationTarget::Exact { .. } => {
@@ -197,12 +232,15 @@ impl FinalizedWitnessedRefundObserver {
         {
             return Err(BridgeRuntimeError::Planner);
         }
-        let authority_key = PublicKey::try_new(*terms.aggregate_x_only_public_key().as_bytes())
-            .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
-        if AccountId::from(&authority_key).into_value()
-            != *terms.aggregate_authority_account_id().as_bytes()
-        {
-            return Err(BridgeRuntimeError::InvalidObservation);
+        if let Some(witnessed) = terms.witnessed() {
+            let authority_key =
+                PublicKey::try_new(*witnessed.aggregate_x_only_public_key().as_bytes())
+                    .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+            if AccountId::from(&authority_key).into_value()
+                != *witnessed.aggregate_authority_account_id().as_bytes()
+            {
+                return Err(BridgeRuntimeError::InvalidObservation);
+            }
         }
         Ok(terms)
     }
@@ -219,12 +257,11 @@ impl FinalizedWitnessedRefundObserver {
             .start_height()
             .checked_add(u64::from(window.max_blocks() - 1))
             .ok_or(BridgeRuntimeError::InvalidObservation)?;
-        let covered_length = finalized_height
-            .checked_sub(window.start_height())
-            .and_then(|distance| distance.checked_add(1));
-        if window_end > finalized_height
-            || covered_length.is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
-        {
+        if finalized_height < window.start_height() {
+            return Err(BridgeRuntimeError::Unavailable);
+        }
+        let finalized_descendant_count = finalized_height.saturating_sub(window_end);
+        if finalized_descendant_count > u64::from(MAX_DISCOVERY_BLOCKS) {
             return Err(BridgeRuntimeError::Unavailable);
         }
 
@@ -291,10 +328,7 @@ impl FinalizedWitnessedRefundObserver {
         request: &ObserveNativeRefundRequest,
         indexed: &IndexedPublicTransaction,
     ) -> Result<bool, BridgeRuntimeError> {
-        let terms = request
-            .terms
-            .witnessed()
-            .ok_or(BridgeRuntimeError::Planner)?;
+        let terms = &request.terms;
         let escrow_program = program_id_from_hex(self.runtime.escrow_program_id);
         if indexed.message.program_id.0 != escrow_program {
             return Ok(false);
@@ -330,10 +364,7 @@ impl FinalizedWitnessedRefundObserver {
         found: &FoundRefund,
         expected: Option<&PreparedTransaction>,
     ) -> Result<NativeRefundFoundFacts, BridgeRuntimeError> {
-        let terms = request
-            .terms
-            .witnessed()
-            .ok_or(BridgeRuntimeError::Planner)?;
+        let terms = &request.terms;
         let expected_id = expected.map(|prepared| prepared.transaction_id);
         let transcript_error = if expected.is_some() {
             BridgeRuntimeError::InvalidObservation
@@ -396,7 +427,7 @@ impl FinalizedWitnessedRefundObserver {
 
     fn validate_message(
         &self,
-        terms: &WitnessedNativeEscrowTerms,
+        terms: &NativeRefundTerms,
         message: &Message,
     ) -> Result<(), BridgeRuntimeError> {
         let expected_instruction = risc0_zkvm::serde::to_vec(&ZecEscrowInstruction::RefundNative {
@@ -421,7 +452,7 @@ impl FinalizedWitnessedRefundObserver {
         Ok(())
     }
 
-    fn expected_accounts(&self, terms: &WitnessedNativeEscrowTerms) -> [AccountId; 3] {
+    fn expected_accounts(&self, terms: &NativeRefundTerms) -> [AccountId; 3] {
         let escrow_program = program_id_from_hex(self.runtime.escrow_program_id);
         [
             compute_metadata_pda(&escrow_program, terms.swap_id().as_bytes()),
@@ -432,7 +463,7 @@ impl FinalizedWitnessedRefundObserver {
 
     async fn validate_refunded_state(
         &self,
-        terms: &WitnessedNativeEscrowTerms,
+        terms: &NativeRefundTerms,
         block_id: u64,
     ) -> Result<(), BridgeRuntimeError> {
         self.read_accounts(terms, block_id, Some(EscrowState::Refunded))
@@ -442,7 +473,7 @@ impl FinalizedWitnessedRefundObserver {
 
     async fn read_accounts(
         &self,
-        terms: &WitnessedNativeEscrowTerms,
+        terms: &NativeRefundTerms,
         block_id: u64,
         expected_status: Option<EscrowState>,
     ) -> Result<NativeEscrowAccountFacts, BridgeRuntimeError> {
@@ -450,24 +481,37 @@ impl FinalizedWitnessedRefundObserver {
         let transfer_program = program_id_from_hex(terms.authenticated_transfer_program_id());
         let metadata_id = compute_metadata_pda(&escrow_program, terms.swap_id().as_bytes());
         let custody_id = compute_custody_pda(&escrow_program, terms.swap_id().as_bytes());
-        let metadata_account = self
-            .indexer
-            .account_at_block(metadata_id.into_value(), block_id)
-            .await?
-            .require_present()?;
-        let custody_account = self
-            .indexer
-            .account_at_block(custody_id.into_value(), block_id)
-            .await?
-            .require_present()?;
+        let metadata_read = async {
+            self.indexer
+                .account_at_block(metadata_id.into_value(), block_id)
+                .await?
+                .require_present()
+        };
+        let custody_read = async {
+            self.indexer
+                .account_at_block(custody_id.into_value(), block_id)
+                .await?
+                .require_present()
+        };
+        let (metadata_account, custody_account) = tokio::try_join!(metadata_read, custody_read)?;
         let metadata = EscrowMetadata::try_from_slice(metadata_account.data.0.as_ref())
             .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
-        let ClaimAuthority::AggregateWitness {
-            x_only_public_key,
-            account_id,
-        } = metadata.claim_authority
-        else {
-            return Err(BridgeRuntimeError::InvalidObservation);
+        let authority_valid = match (terms, &metadata.claim_authority) {
+            (
+                NativeRefundTerms::Hashlock(terms),
+                ClaimAuthority::Sha256Preimage { secret_digest },
+            ) => secret_digest == terms.secret_digest().as_bytes(),
+            (
+                NativeRefundTerms::Witnessed(terms),
+                ClaimAuthority::AggregateWitness {
+                    x_only_public_key,
+                    account_id,
+                },
+            ) => {
+                x_only_public_key == terms.aggregate_x_only_public_key().as_bytes()
+                    && account_id.into_value() == *terms.aggregate_authority_account_id().as_bytes()
+            }
+            _ => false,
         };
         let (status, expected_balance) = match metadata.status {
             EscrowStatus::Funded => (EscrowState::Funded, terms.amount().as_u128()),
@@ -475,12 +519,11 @@ impl FinalizedWitnessedRefundObserver {
             _ => return Err(BridgeRuntimeError::InvalidObservation),
         };
         if expected_status.is_some_and(|expected| expected != status)
+            || !authority_valid
             || metadata_account.program_owner.0 != escrow_program
             || metadata.version != 2
             || metadata.swap_id != *terms.swap_id().as_bytes()
             || metadata.terms_hash != *terms.terms_hash().as_bytes()
-            || x_only_public_key != *terms.aggregate_x_only_public_key().as_bytes()
-            || account_id.into_value() != *terms.aggregate_authority_account_id().as_bytes()
             || metadata.depositor.into_value() != *terms.depositor_account_id().as_bytes()
             || metadata.depositor_asset != metadata.depositor
             || metadata.claimant.into_value() != *terms.claimant_account_id().as_bytes()
@@ -498,20 +541,33 @@ impl FinalizedWitnessedRefundObserver {
         }
         let metadata_id = Hex32::from_bytes(metadata_id.into_value());
         let custody_id = Hex32::from_bytes(custody_id.into_value());
-        Ok(NativeEscrowAccountFacts::new_witnessed(
-            WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
-                metadata_id,
-                self.runtime.escrow_program_id,
-                custody_id,
-                terms,
-                status,
+        let custody = NativeCustodyFacts::new(
+            custody_id,
+            program_id_to_hex(custody_account.program_owner.0),
+            custody_account.balance,
+        );
+        Ok(match terms {
+            NativeRefundTerms::Hashlock(terms) => NativeEscrowAccountFacts::new(
+                EscrowMetadataFacts::from_lee_v0_2_native_terms(
+                    metadata_id,
+                    self.runtime.escrow_program_id,
+                    custody_id,
+                    terms,
+                    status,
+                ),
+                custody,
             ),
-            NativeCustodyFacts::new(
-                custody_id,
-                program_id_to_hex(custody_account.program_owner.0),
-                custody_account.balance,
+            NativeRefundTerms::Witnessed(terms) => NativeEscrowAccountFacts::new_witnessed(
+                WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
+                    metadata_id,
+                    self.runtime.escrow_program_id,
+                    custody_id,
+                    terms,
+                    status,
+                ),
+                custody,
             ),
-        ))
+        })
     }
 
     async fn read_finalized_block(&self, block_id: u64) -> Result<Block, BridgeRuntimeError> {

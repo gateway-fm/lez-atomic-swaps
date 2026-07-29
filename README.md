@@ -50,8 +50,28 @@ and no public RPC or faucet participated. See the
 [terminal-projection evidence packet](docs/evidence/m5-zec-application-terminal-projection-20260724.json)
 and the preceding
 [corridor checkpoint](docs/evidence/m5-zec-application-corridor-20260724.json).
-The progressive local ZEC application PoC gate is certified. Full swap-store,
-maker-process, strict Clippy, and Rustdoc gates are GREEN. The literal pinned
+The progressive local ZEC application PoC gate is certified.
+The current M5 working tree also contains an intervention-assisted actual-node
+one-leg recovery checkpoint. In isolated run
+`m5fresh-a390dd8-20260728a-app3`, the Taker refunded its only locked LEZ leg
+once after expiry; transaction `3a7ffaa5...16e25` occurs once in finalized block
+608, the by-ID and by-hash indexer reads agree, custody is zero at that block,
+and both role-fixed actors finish at `Refunded` revision 2. ADR
+[0102](docs/architecture/0102-observe-refunds-from-finalized-window-prefixes.md)
+documents why finalized-prefix discovery preserves atomicity while a partial
+absence remains non-terminal. The original observation window ended before the
+refund block, so the retained run required manual actor-window rotation and
+retirement of an old active bridge-journal row. Those unsupported interventions
+mean this is not yet a clean reproducible or daemon/CLI-driven result and does
+not complete M5; durable window progress, manual actions, concurrent
+supervision, and BTC/XMR application lifecycles remain. Clean sidecar builds
+should set the documented
+absolute `RAPIDSNARK_LIB_DIR` only after verifying the four pinned v0.0.8
+library hashes and should use Cargo offline rather than the upstream download
+fallback.
+
+Full swap-store, maker-process, strict Clippy, and Rustdoc gates are GREEN. The
+literal pinned
 coordinator fuzz target, seven-seed corpus, bounded CI smoke, and separate
 dependency audit are also GREEN locally; reproduce them with
 `./scripts/run-m5-coordinator-fuzz-smoke.sh`. The same maker daemon now has a

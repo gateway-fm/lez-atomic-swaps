@@ -5588,6 +5588,177 @@ async fn independent_actors_complete_lez_then_zcash_claims_in_both_directions() 
     }
 }
 
+async fn assert_early_one_leg_deadline(fixture: &mut ClaimActorFixture, step: RefundStepV1) {
+    let early_position = match step {
+        RefundStepV1::Lez => {
+            ChainPosition::lez_timestamp_from_milliseconds_floor(LezUnixMilliseconds::new(
+                fixture
+                    .taker
+                    .agreement()
+                    .lez_refund_at_ms()
+                    .saturating_sub(1_000),
+            ))
+        }
+        RefundStepV1::Zcash => ChainPosition::block_height(
+            Chain::Zcash,
+            u64::from(fixture.taker.agreement().zcash_refund_at_height()).saturating_sub(1),
+        ),
+    };
+    fixture.refunds.set_eligibility(
+        step,
+        RefundEligibilityObservationV1::canonical(early_position),
+    );
+    assert_eq!(
+        fixture
+            .taker
+            .drive_refund()
+            .await
+            .expect("early one-leg deadline is a wait"),
+        RefundDriveOutcome::AwaitingDeadline(step)
+    );
+    assert!(fixture.refunds.submissions().is_empty());
+    assert!(
+        !fixture.refunds.events().iter().any(
+            |event| matches!(event, RefundPortEvent::Prepare(candidate) if *candidate == step)
+        )
+    );
+}
+
+async fn project_one_leg_refund(fixture: &mut ClaimActorFixture, step: RefundStepV1) {
+    let position = match step {
+        RefundStepV1::Lez => ChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(fixture.taker.agreement().lez_refund_at_ms()),
+        ),
+        RefundStepV1::Zcash => ChainPosition::block_height(
+            Chain::Zcash,
+            u64::from(fixture.taker.agreement().zcash_refund_at_height()),
+        ),
+    };
+    fixture
+        .refunds
+        .set_eligibility(step, RefundEligibilityObservationV1::canonical(position));
+    assert_eq!(
+        fixture
+            .taker
+            .drive_refund()
+            .await
+            .expect("Taker submits its one-leg refund"),
+        RefundDriveOutcome::Submitted(step)
+    );
+    let submissions = fixture.refunds.submissions();
+    assert_eq!(submissions.len(), 1);
+    assert_eq!(submissions[0].0, step);
+    fixture.refunds.confirm(step);
+    assert_eq!(
+        fixture
+            .taker
+            .drive_refund()
+            .await
+            .expect("Taker projects its one-leg refund"),
+        RefundDriveOutcome::Refunded { revision: 2 }
+    );
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund()
+            .await
+            .expect("Maker only observes the one-leg refund"),
+        RefundDriveOutcome::Refunded { revision: 2 }
+    );
+    assert_eq!(fixture.maker.status(), Phase::Refunded);
+    assert_eq!(fixture.taker.status(), Phase::Refunded);
+    let submissions = fixture.refunds.submissions();
+    assert_eq!(submissions.len(), 1);
+    assert_eq!(submissions[0].0, step);
+}
+
+async fn assert_one_leg_terminal_replay(id: &str, fixture: &mut ClaimActorFixture) {
+    let events_before_replay = fixture.refunds.events();
+    let submissions_before_replay = fixture.refunds.submissions();
+    restart_refund_actor(id, fixture, Participant::Maker).await;
+    restart_refund_actor(id, fixture, Participant::Taker).await;
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund()
+            .await
+            .expect("maker terminal replay"),
+        RefundDriveOutcome::Refunded { revision: 2 }
+    );
+    assert_eq!(
+        fixture
+            .taker
+            .drive_refund()
+            .await
+            .expect("taker terminal replay"),
+        RefundDriveOutcome::Refunded { revision: 2 }
+    );
+    assert_eq!(
+        (fixture.maker.status(), fixture.maker.revision()),
+        (Phase::Refunded, 2)
+    );
+    assert_eq!(
+        (fixture.taker.status(), fixture.taker.revision()),
+        (Phase::Refunded, 2)
+    );
+    assert_eq!(fixture.refunds.events(), events_before_replay);
+    assert_eq!(fixture.refunds.submissions(), submissions_before_replay);
+}
+
+async fn assert_taker_one_leg_recovery(
+    id: &str,
+    direction: SwapDirection,
+    first_claimant: Participant,
+    secret: [u8; 32],
+) {
+    let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+    project_actor_taker_first_lock(direction, &mut fixture.taker, &fixture.lez, &fixture.zcash)
+        .await;
+    expose_taker_lock_to_maker(direction, &fixture.maker, &fixture.lez, &fixture.zcash);
+    fixture
+        .maker
+        .observe_taker_first_lock()
+        .await
+        .expect("maker observes the only funded leg");
+    assert_eq!(fixture.maker.status(), Phase::TakerLockConfirmed);
+    assert_eq!(fixture.taker.status(), Phase::TakerLockConfirmed);
+
+    let step = match direction {
+        SwapDirection::TakerSellsForeign => RefundStepV1::Zcash,
+        SwapDirection::TakerSellsLez => RefundStepV1::Lez,
+    };
+    assert_eq!(step.owner(fixture.taker.agreement()), Participant::Taker);
+    assert_early_one_leg_deadline(&mut fixture, step).await;
+    project_one_leg_refund(&mut fixture, step).await;
+    assert_one_leg_terminal_replay(id, &mut fixture).await;
+}
+
+#[tokio::test]
+async fn taker_recovers_its_only_funded_leg_in_both_directions() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-one-leg-refund-zcash",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0xa1; 32],
+        ),
+        (
+            "sdk-one-leg-refund-lez",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0xa2; 32],
+        ),
+    ] {
+        Box::pin(assert_taker_one_leg_recovery(
+            id,
+            direction,
+            first_claimant,
+            secret,
+        ))
+        .await;
+    }
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn refund_contract_keeps_lez_before_zcash_in_both_directions() {

@@ -724,7 +724,9 @@ async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComma
 const fn ensure_recovery_phase(phase: Phase) -> Result<(), ActorCommandError> {
     if matches!(
         phase,
-        Phase::BothLegsLocked
+        Phase::AwaitingTakerConfirmations
+            | Phase::TakerLockConfirmed
+            | Phase::BothLegsLocked
             | Phase::TakerLockReorged
             | Phase::MakerLockReorged
             | Phase::MakerLegRefunded
@@ -882,8 +884,6 @@ mod tests {
     fn recovery_admission_rejects_every_non_refund_phase() {
         for phase in [
             Phase::Offered,
-            Phase::AwaitingTakerConfirmations,
-            Phase::TakerLockConfirmed,
             Phase::AwaitingMakerConfirmations,
             Phase::ClaimEvidenceAvailable,
             Phase::Completed,
@@ -896,6 +896,8 @@ mod tests {
             );
         }
         for phase in [
+            Phase::AwaitingTakerConfirmations,
+            Phase::TakerLockConfirmed,
             Phase::BothLegsLocked,
             Phase::TakerLockReorged,
             Phase::MakerLockReorged,

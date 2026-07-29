@@ -1931,7 +1931,7 @@ async fn refund_absence_requires_a_stable_fully_covered_window() {
                 agreement.lez_terms().amount(),
             ),
             NativeRefundObservation::UnknownOrPending,
-            RefundObservationV1::Unstable,
+            RefundObservationV1::Absent,
         ),
         (
             "terminal",

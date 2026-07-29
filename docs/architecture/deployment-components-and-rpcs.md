@@ -849,6 +849,7 @@ flowchart TB
         TakerActor[Taker ZEC actor]
         MakerSidecar[Maker LEZ sidecar]
         TakerSidecar[Taker LEZ sidecar]
+        RecoveryProof[("Intervention-assisted one-leg recovery checkpoint<br/>one finalized refund + zero custody<br/>both actors Refunded revision 2")]
         Finalizer --> MakerActor
         Finalizer --> TakerActor
         MakerActor --> MakerSidecar
@@ -868,6 +869,9 @@ flowchart TB
     MakerSidecar --> Indexer
     TakerSidecar --> Sequencer
     TakerSidecar --> Indexer
+    MakerActor --> RecoveryProof
+    TakerActor --> RecoveryProof
+    Indexer --> RecoveryProof
     Cutover[Cutover after confirmed Zcash first lock] --> Daemon
     Cutover --> Delivery
 ```
@@ -879,7 +883,15 @@ stops the exact PID/start-time/executable tuple and moves only that run's
 Delivery path offline. Later LEZ reveal and Zcash follow-up operations use only
 fresh role state, capability-authenticated sidecars, and the chain RPCs. After
 both actors are terminal, a fresh daemon imports only the stopped Maker actor's
-fully replayed terminal coordinator and exposes only the owner socket.
+fully replayed terminal coordinator and exposes only the owner socket. ADR 0102
+adds the separate intervention-assisted actual-node abandonment image: the refund
+owner submitted one
+LEZ transaction after expiry, the counterparty discovered it from the finalized
+window prefix, and both role actors reached `Refunded` revision 2 with zero
+custody. The original window aged out and required unsupported actor-window and
+bridge-journal intervention. This checkpoint uses the role binaries directly;
+the dashed supervisor edge remains accurate until durable window progress, the
+daemon, and the application CLIs drive the same recovery without intervention.
 
 ```mermaid
 sequenceDiagram
