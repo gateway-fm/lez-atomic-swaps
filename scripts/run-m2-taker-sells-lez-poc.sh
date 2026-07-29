@@ -599,11 +599,13 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   chat_draft_bin="$(readlink -f target/debug/zec-local-poc-chat-draft)"
   chat_finalize_bin="$(readlink -f target/debug/zec-local-poc-chat-finalize)"
   actor_inspector_bin="$(readlink -f target/debug/examples/maker-actor-inspect)"
+  m5_pair_inspector_bin="$(readlink -f target/debug/zec-actor-pair-inspect)"
   m5_intent_inspector_bin="$(readlink -f target/debug/examples/maker-zec-lock-intent-inspect)"
   readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin
-  readonly actor_inspector_bin m5_intent_inspector_bin
+  readonly actor_inspector_bin m5_pair_inspector_bin m5_intent_inspector_bin
   required_binaries+=("$maker_daemon_bin" "$maker_cli_bin" "$taker_bin")
   required_binaries+=("$chat_draft_bin" "$chat_finalize_bin" "$actor_inspector_bin")
+  required_binaries+=("$m5_pair_inspector_bin")
   required_binaries+=("$m5_handoff_driver")
   required_binaries+=("$m5_intent_inspector_bin")
 fi
@@ -925,6 +927,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     --actor-program "$m5_actor_program" \
     --actor-program-sha256 "$m5_actor_program_sha256" \
     --actor-inspector-bin "$actor_inspector_bin" \
+    --pair-inspector-bin "$m5_pair_inspector_bin" \
     >"${evidence_dir}/m5-handoff-path.txt"
   [[ "$(<"${evidence_dir}/m5-handoff-path.txt")" == \
       "${evidence_dir}/m5-chat-handoff.json" ]] || {
@@ -939,11 +942,28 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     and .scheduled_maker_actor.lease_generation == 0
     and .scheduled_maker_actor.attempt_count == 0
     and .scheduled_maker_actor.child_identity_absent == true
+    and .effect_actor_pair_validated == true
+    and (.effect_actor_pair_receipt_sha256 | test("^[0-9a-f]{64}$"))
     and .scheduled_maker_actor.actor_program_path == $program
     and .scheduled_maker_actor.actor_program_sha256 == $program_sha256
     and (.scheduled_maker_actor.config_sha256 | test("^[0-9a-f]{64}$"))
   ' "${evidence_dir}/m5-chat-handoff.json" >/dev/null || {
     echo 'M5 handoff did not return the exact queued Maker manifest' >&2
+    exit 2
+  }
+  m5_effect_actor_pair_receipt_sha256="$(jq -er \
+    '.effect_actor_pair_receipt_sha256 | strings | select(test("^[0-9a-f]{64}$"))' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  [[ -f "${evidence_dir}/m5-effect-actor-pair.json" \
+    && ! -L "${evidence_dir}/m5-effect-actor-pair.json" \
+    && "$(stat -c %a -- "${evidence_dir}/m5-effect-actor-pair.json")" == 600 \
+    && "$(stat -c %u -- "${evidence_dir}/m5-effect-actor-pair.json")" == "$(id -u)" \
+    && "$(stat -c %h -- "${evidence_dir}/m5-effect-actor-pair.json")" == 1 \
+    && "$(stat -c %s -- "${evidence_dir}/m5-effect-actor-pair.json")" -gt 0 \
+    && "$(stat -c %s -- "${evidence_dir}/m5-effect-actor-pair.json")" -le 65536 \
+    && "$(sha256sum "${evidence_dir}/m5-effect-actor-pair.json" | cut -d ' ' -f1)" == \
+      "$m5_effect_actor_pair_receipt_sha256" ]] || {
+    echo 'M5 effect-bearing actor-pair evidence changed after handoff' >&2
     exit 2
   }
   remaining_budget_milliseconds 'm5-handoff-after' >/dev/null
@@ -966,6 +986,77 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     "${evidence_dir}/m5-chat-handoff.json")"
   process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
     echo 'M5 maker daemon handoff is not the exact live process' >&2
+    exit 2
+  }
+  m5_taker_acceptance_receipt="$(jq -er '.taker_lifecycle.acceptance_receipt_file | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_taker_acceptance_receipt_sha256="$(jq -er \
+    '.taker_lifecycle.acceptance_receipt_sha256 | strings | select(test("^[0-9a-f]{64}$"))' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_taker_actor_config="$(jq -er '.taker_lifecycle.taker_actor_config | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_taker_actor_config_sha256="$(jq -er \
+    '.taker_lifecycle.taker_actor_config_sha256 | strings | select(test("^[0-9a-f]{64}$"))' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_taker_actor_state="$(jq -er '.taker_lifecycle.taker_actor_state | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_swap_id="$(jq -er '.swap_id | strings' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  m5_agreement_sha256="$(jq -er \
+    '.agreement_sha256 | strings | select(test("^[0-9a-f]{64}$"))' \
+    "${evidence_dir}/m5-chat-handoff.json")"
+  [[ "$m5_taker_acceptance_receipt" == "$application_root/taker-acceptance-receipt.json" \
+    && -f "$m5_taker_acceptance_receipt" && ! -L "$m5_taker_acceptance_receipt" \
+    && "$(stat -c %a -- "$m5_taker_acceptance_receipt")" == 600 \
+    && "$(stat -c %u -- "$m5_taker_acceptance_receipt")" == "$(id -u)" \
+    && "$(stat -c %h -- "$m5_taker_acceptance_receipt")" == 1 \
+    && "$(stat -c %s -- "$m5_taker_acceptance_receipt")" -gt 0 \
+    && "$(stat -c %s -- "$m5_taker_acceptance_receipt")" -le 65536 \
+    && "$(sha256sum "$m5_taker_acceptance_receipt" | cut -d ' ' -f1)" == \
+      "$m5_taker_acceptance_receipt_sha256" ]] || {
+    echo 'M5 Taker acceptance receipt changed after handoff' >&2
+    exit 2
+  }
+  m5_taker_acceptance_receipt_identity="$(stat -c %d:%i -- \
+    "$m5_taker_acceptance_receipt")"
+  [[ "$m5_taker_acceptance_receipt_identity" =~ ^[0-9]+:[0-9]+$ ]] || {
+    echo 'M5 Taker acceptance receipt identity is invalid' >&2
+    exit 2
+  }
+  [[ "$m5_taker_actor_config" == \
+      "$application_root/taker-actors/taker/actor-config.json" \
+    && -f "$m5_taker_actor_config" && ! -L "$m5_taker_actor_config" \
+    && "$(stat -c %a -- "$m5_taker_actor_config")" == 600 \
+    && "$(stat -c %u -- "$m5_taker_actor_config")" == "$(id -u)" \
+    && "$(stat -c %h -- "$m5_taker_actor_config")" == 1 \
+    && "$(sha256sum "$m5_taker_actor_config" | cut -d ' ' -f1)" == \
+      "$m5_taker_actor_config_sha256" \
+    && "$m5_taker_actor_state" == \
+      "$application_root/taker-actors/taker/state/actor.sqlite3" \
+    && ! -e "$application_root/taker-actors/maker" ]] || {
+    echo 'M5 receipt-bound Taker config or state changed after handoff' >&2
+    exit 2
+  }
+  jq -e --arg swap "$m5_swap_id" --arg agreement "$m5_agreement_sha256" \
+    --arg config "$m5_taker_actor_config" \
+    --arg config_sha256 "$m5_taker_actor_config_sha256" \
+    --arg state "$m5_taker_actor_state" '
+    (keys | length) == 7 and .schema_version == 1 and .role == "taker"
+    and .swap_id == $swap and .agreement_sha256 == $agreement
+    and .actor_config_file == $config
+    and .actor_config_sha256 == $config_sha256
+    and .actor_state_database == $state
+  ' "$m5_taker_acceptance_receipt" >/dev/null || {
+    echo 'M5 Taker acceptance receipt binding changed after handoff' >&2
+    exit 2
+  }
+  jq -e --arg swap "$m5_swap_id" --arg agreement "$m5_agreement_sha256" \
+    --arg state "$m5_taker_actor_state" '
+    .role == "taker" and .swap_id == $swap
+    and .signed_agreement_sha256 == $agreement
+    and .role_state_db == $state
+  ' "$m5_taker_actor_config" >/dev/null || {
+    echo 'M5 receipt-bound Taker config semantics changed after handoff' >&2
     exit 2
   }
   m5_maker_actor_config="$(jq -er '.scheduled_maker_actor.config_path | strings' \
@@ -1055,12 +1146,16 @@ remaining_budget_milliseconds 'lez-depositor-preflight-after' >/dev/null
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   maker_config="$m5_maker_actor_config"
   maker_sidecar_state_dir="$m5_maker_state_dir"
+  taker_config="$m5_taker_actor_config"
+  taker_sidecar_state_dir="${m5_taker_actor_state%/actor.sqlite3}"
 else
   maker_config="${actors_root}/maker/actor-config.json"
   maker_sidecar_state_dir="${actors_root}/maker/state"
+  taker_config="${actors_root}/taker/actor-config.json"
+  taker_sidecar_state_dir="${actors_root}/taker/state"
 fi
 readonly maker_config maker_sidecar_state_dir
-readonly taker_config="${actors_root}/taker/actor-config.json"
+readonly taker_config taker_sidecar_state_dir
 readonly maker_log="${evidence_dir}/maker-sidecar.log"
 readonly taker_log="${evidence_dir}/taker-sidecar.log"
 
@@ -1090,7 +1185,7 @@ maker_start_ticks="$(process_start_ticks "$maker_pid")"
   --runtime-file "${provision_actors_root}/taker/lez-runtime.json" \
   --capability-file "${provision_actors_root}/taker/sidecar.capability" \
   --private-key-file "${provision_actors_root}/taker/lez-signer.key" \
-  --state-directory "${actors_root}/taker/state" \
+  --state-directory "$taker_sidecar_state_dir" \
   --authenticated-transfer-program-id "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" \
   >"$taker_log" 2>&1 &
 taker_pid=$!
@@ -1292,6 +1387,8 @@ fi
 
 : >"${evidence_dir}/actor-drive.ndjson"
 : >"${evidence_dir}/drive-retries.ndjson"
+: >"${evidence_dir}/m5-taker-receipt-claim.ndjson"
+: >"${evidence_dir}/m5-taker-receipt-monitor.ndjson"
 zcash_fund_mined=0
 zcash_claim_mined=0
 lez_revealing_claim_seen=0
@@ -1343,6 +1440,129 @@ drive_actor() {
   jq -c --argjson round "$round" '. + {round: $round}' <<<"$output" \
     >>"${evidence_dir}/actor-drive.ndjson"
   remaining_budget_milliseconds "${role}-drive-${round}-after" >/dev/null || return
+  printf '%s\n' "$output"
+}
+
+assert_m5_taker_receipt_unchanged() {
+  [[ "$m5_taker_acceptance_receipt" == \
+      "$application_root/taker-acceptance-receipt.json" \
+    && -f "$m5_taker_acceptance_receipt" \
+    && ! -L "$m5_taker_acceptance_receipt" \
+    && "$(stat -c %a -- "$m5_taker_acceptance_receipt")" == 600 \
+    && "$(stat -c %u -- "$m5_taker_acceptance_receipt")" == "$(id -u)" \
+    && "$(stat -c %h -- "$m5_taker_acceptance_receipt")" == 1 \
+    && "$(stat -c %s -- "$m5_taker_acceptance_receipt")" -gt 0 \
+    && "$(stat -c %s -- "$m5_taker_acceptance_receipt")" -le 65536 \
+    && "$(stat -c %d:%i -- "$m5_taker_acceptance_receipt")" == \
+      "$m5_taker_acceptance_receipt_identity" \
+    && "$(sha256sum "$m5_taker_acceptance_receipt" | cut -d ' ' -f1)" == \
+      "$m5_taker_acceptance_receipt_sha256" ]] || {
+    echo 'M5 Taker acceptance receipt identity or bytes changed at point of use' >&2
+    return 1
+  }
+}
+
+drive_m5_taker() {
+  local round="$1"
+  if [[ "$M5_APPLICATION_MODE" != 1 ]]; then
+    drive_actor taker "$taker_config" "$round"
+    return
+  fi
+
+  local status_file="${evidence_dir}/m5-taker-receipt-status-${round}.json"
+  local monitor_stderr="${evidence_dir}/m5-taker-receipt-status-${round}.stderr"
+  local claim_stderr="${evidence_dir}/m5-taker-receipt-claim-${round}.stderr"
+  local monitor_timeout claim_timeout output
+  local raw_taker_drive_admitted=0
+  assert_m5_taker_receipt_unchanged || return
+  monitor_timeout="$(bounded_actor_timeout "m5-taker-monitor-${round}")" || return
+  timeout --signal=KILL "${monitor_timeout}s" \
+    "$taker_bin" monitor --receipt "$m5_taker_acceptance_receipt" \
+    >"$status_file" 2>"$monitor_stderr" || {
+    echo "receipt-bound Taker monitor failed in round ${round}" >&2
+    sed -n '1,20p' "$monitor_stderr" >&2
+    return 1
+  }
+  assert_m5_taker_receipt_unchanged || return
+  remaining_budget_milliseconds "m5-taker-monitor-${round}-after" >/dev/null || return
+  jq -e '
+    .schema_version == 1 and .role == "taker" and .state == "active"
+    and (.phase | strings) and (.revision | numbers) >= 0
+    and (.next_action | strings)
+  ' "$status_file" >/dev/null || {
+    echo 'receipt-bound Taker monitor returned invalid status' >&2
+    return 1
+  }
+  jq -nc --argjson round "$round" --arg swap "$m5_swap_id" \
+    --arg receipt_sha256 "$m5_taker_acceptance_receipt_sha256" \
+    --slurpfile status "$status_file" '
+    {schema_version:1,round:$round,swap_id:$swap,
+      acceptance_receipt_sha256:$receipt_sha256,status:$status[0]}
+  ' >>"${evidence_dir}/m5-taker-receipt-monitor.ndjson"
+
+  if ! jq -e '
+    .phase == "claim_evidence_available" and .next_action == "claim_zcash"
+  ' "$status_file" >/dev/null; then
+    if jq -e '
+      (.phase == "offered" and .next_action == "create_and_fund_lez")
+      or (.phase == "taker_lock_confirmed" and .next_action == "wait")
+      or (.phase == "both_legs_locked" and .next_action == "wait")
+      or (.phase == "completed" and .next_action == "complete")
+    ' "$status_file" >/dev/null; then
+      raw_taker_drive_admitted=1
+    fi
+    (( raw_taker_drive_admitted == 1 )) || {
+      echo 'receipt-bound Taker status is not admitted to raw drive or claim' >&2
+      return 1
+    }
+    output="$(drive_actor taker "$taker_config" "$round")" || return
+    if jq -e '.operation == "zcash_followup_claim"' <<<"$output" >/dev/null; then
+      echo 'direct Taker drive crossed the receipt-bound claim boundary' >&2
+      return 1
+    fi
+    printf '%s\n' "$output"
+    return
+  fi
+
+  (( m5_transport_cutover_complete == 1 )) || {
+    echo 'receipt-bound Taker claim became eligible before post-lock cutover' >&2
+    return 1
+  }
+  [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" \
+    && ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || {
+    echo 'receipt-bound Taker claim retained an application transport' >&2
+    return 1
+  }
+  assert_m5_taker_receipt_unchanged || return
+  claim_timeout="$(bounded_actor_timeout "m5-taker-claim-${round}")" || return
+  if ! output="$(timeout --signal=KILL "${claim_timeout}s" \
+    "$taker_bin" claim --receipt "$m5_taker_acceptance_receipt" \
+    2>"$claim_stderr")"; then
+    assert_m5_taker_receipt_unchanged || return
+    echo "receipt-bound Taker claim failed in round ${round}" >&2
+    sed -n '1,20p' "$claim_stderr" >&2
+    return 1
+  fi
+  assert_m5_taker_receipt_unchanged || return
+  remaining_budget_milliseconds "m5-taker-claim-${round}-after" >/dev/null || return
+  jq -e '
+    .schema_version == 1 and .role == "taker" and .command == "claim"
+    and (.phase | strings) and (.revision | numbers) >= 0
+    and ((.operation == "zcash_followup_claim"
+      and (.outcome == "awaiting_observation" or .outcome == "projected"
+        or .outcome == "submitted"))
+      or .outcome == "completed")
+  ' <<<"$output" >/dev/null || {
+    echo 'receipt-bound Taker claim returned invalid output' >&2
+    return 1
+  }
+  jq -nc --argjson round "$round" --arg swap "$m5_swap_id" \
+    --arg receipt_sha256 "$m5_taker_acceptance_receipt_sha256" \
+    --slurpfile admission "$status_file" --argjson effect "$output" '
+    {schema_version:1,round:$round,swap_id:$swap,
+      acceptance_receipt_sha256:$receipt_sha256,
+      admission:$admission[0],effect:$effect}
+  ' >>"${evidence_dir}/m5-taker-receipt-claim.ndjson"
   printf '%s\n' "$output"
 }
 
@@ -1604,7 +1824,7 @@ while true; do
   round=$((round + 1))
   remaining_budget_milliseconds "round-${round}-before" >/dev/null
 
-  taker_output="$(drive_actor taker "$taker_config" "$round")"
+  taker_output="$(drive_m5_taker "$round")"
   handle_lez_revealing_claim taker "$taker_output"
   handle_zcash_submission taker "$taker_output"
 
@@ -1666,6 +1886,50 @@ jq -e '.role == "maker" and .state == "active" and .phase == "completed"' \
 jq -e '.role == "taker" and .state == "active" and .phase == "completed"' \
   "${evidence_dir}/taker-status-final.json" >/dev/null
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  assert_m5_taker_receipt_unchanged
+  terminal_taker_timeout="$(bounded_actor_timeout 'm5-taker-terminal-monitor')"
+  timeout --signal=KILL "${terminal_taker_timeout}s" \
+    "$taker_bin" monitor --receipt "$m5_taker_acceptance_receipt" \
+    >"${evidence_dir}/m5-taker-receipt-terminal.json" \
+    2>"${evidence_dir}/m5-taker-receipt-terminal.stderr"
+  assert_m5_taker_receipt_unchanged
+  remaining_budget_milliseconds 'm5-taker-terminal-monitor-after' >/dev/null
+  jq -e '
+    .schema_version == 1 and .role == "taker" and .state == "active"
+    and .phase == "completed" and (.revision | numbers) > 0
+    and .next_action == "complete"
+  ' "${evidence_dir}/m5-taker-receipt-terminal.json" >/dev/null
+  jq -nc --argjson round "$round" --arg swap "$m5_swap_id" \
+    --arg receipt_sha256 "$m5_taker_acceptance_receipt_sha256" \
+    --slurpfile status "${evidence_dir}/m5-taker-receipt-terminal.json" '
+    {schema_version:1,round:$round,terminal:true,swap_id:$swap,
+      acceptance_receipt_sha256:$receipt_sha256,status:$status[0]}
+  ' >>"${evidence_dir}/m5-taker-receipt-monitor.ndjson"
+  jq -s -e --arg swap "$m5_swap_id" \
+    --arg receipt_sha256 "$m5_taker_acceptance_receipt_sha256" '
+    length > 0
+    and all(.[]; .schema_version == 1 and .swap_id == $swap
+      and .acceptance_receipt_sha256 == $receipt_sha256
+      and .status.schema_version == 1 and .status.role == "taker"
+      and .status.state == "active")
+    and any(.[]; .terminal == true and .status.phase == "completed"
+      and .status.next_action == "complete")
+  ' "${evidence_dir}/m5-taker-receipt-monitor.ndjson" >/dev/null
+  jq -s -e --arg swap "$m5_swap_id" \
+    --arg receipt_sha256 "$m5_taker_acceptance_receipt_sha256" '
+    length > 0
+    and all(.[]; .schema_version == 1 and .swap_id == $swap
+      and .acceptance_receipt_sha256 == $receipt_sha256
+      and .admission.role == "taker" and .admission.state == "active"
+      and .admission.phase == "claim_evidence_available"
+      and .admission.next_action == "claim_zcash"
+      and .effect.schema_version == 1 and .effect.role == "taker"
+      and .effect.command == "claim")
+    and ([.[] | select(.effect.outcome == "submitted"
+      and .effect.operation == "zcash_followup_claim")] | length) == 1
+  ' "${evidence_dir}/m5-taker-receipt-claim.ndjson" >/dev/null
+fi
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   prove_m5_terminal_operator_projection
   jq -e '
     .result == "passed" and .source.role == "maker"
@@ -1711,6 +1975,12 @@ jq -n \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-status.ndjson" | cut -d ' ' -f1; fi)" \
   --arg maker_supervisor_final_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-final.json" | cut -d ' ' -f1; fi)" \
+  --arg taker_acceptance_receipt_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then printf '%s' "$m5_taker_acceptance_receipt_sha256"; fi)" \
+  --arg taker_claim_trace_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-taker-receipt-claim.ndjson" | cut -d ' ' -f1; fi)" \
+  --arg taker_monitor_trace_sha256 \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-taker-receipt-monitor.ndjson" | cut -d ' ' -f1; fi)" \
   --arg expected_zebra_funding_txid "$m5_expected_funding_txid" \
   --arg lez_escrow_program_id "$ESCROW_PROGRAM_ID" \
   --arg lez_escrow_guest_sha256 "$M5_LEZ_GUEST_SHA256" \
@@ -1772,6 +2042,16 @@ jq -n \
         (if $m5_application_mode == 1 then $maker_supervisor_trace_sha256 else null end),
       maker_supervisor_final_sha256:
         (if $m5_application_mode == 1 then $maker_supervisor_final_sha256 else null end),
+      taker_acceptance_receipt_sha256:
+        (if $m5_application_mode == 1 then $taker_acceptance_receipt_sha256 else null end),
+      taker_claim_trace_sha256:
+        (if $m5_application_mode == 1 then $taker_claim_trace_sha256 else null end),
+      taker_monitor_trace_sha256:
+        (if $m5_application_mode == 1 then $taker_monitor_trace_sha256 else null end),
+      taker_claim_authority:
+        (if $m5_application_mode == 1 then "receipt_bound_cli" else null end),
+      direct_taker_claim_effects:
+        (if $m5_application_mode == 1 then false else null end),
       expected_zebra_funding_txid:
         (if $m5_application_mode == 1 then $expected_zebra_funding_txid else null end),
       maker_effect_authority:

@@ -17,7 +17,7 @@ usage() {
     '  --maker-daemon-bin FILE --maker-cli-bin FILE --taker-bin FILE' \
     '  --draft-bin FILE --finalize-bin FILE' \
     '  --actor-program FILE --actor-program-sha256 HEX32' \
-    '  --actor-inspector-bin FILE'
+    '  --actor-inspector-bin FILE --pair-inspector-bin FILE'
 }
 
 run_id=''
@@ -34,6 +34,7 @@ finalize_bin=''
 actor_program=''
 actor_program_sha256=''
 actor_inspector_bin=''
+pair_inspector_bin=''
 while (( $# > 0 )); do
   case "$1" in
     --run-id) run_id="${2:-}"; shift 2 ;;
@@ -49,6 +50,7 @@ while (( $# > 0 )); do
     --actor-program) actor_program="${2:-}"; shift 2 ;;
     --actor-program-sha256) actor_program_sha256="${2:-}"; shift 2 ;;
     --actor-inspector-bin) actor_inspector_bin="${2:-}"; shift 2 ;;
+    --pair-inspector-bin) pair_inspector_bin="${2:-}"; shift 2 ;;
     --finalize-bin) finalize_bin="${2:-}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; fail "unknown argument $1" ;;
@@ -57,14 +59,16 @@ done
 
 for value in run_id source_actors_root source_provision_summary output_actors_root \
   application_root evidence_dir maker_daemon_bin maker_cli_bin taker_bin draft_bin \
-  finalize_bin actor_program actor_program_sha256 actor_inspector_bin; do
+  finalize_bin actor_program actor_program_sha256 actor_inspector_bin \
+  pair_inspector_bin; do
   [[ -n "${!value}" ]] || fail "missing --${value//_/-}"
 done
 [[ "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]] || fail 'run ID is unsafe'
 for path in "$source_actors_root" "$source_provision_summary" \
   "$output_actors_root" "$application_root" "$evidence_dir" \
   "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
-  "$finalize_bin" "$actor_program" "$actor_inspector_bin"; do
+  "$finalize_bin" "$actor_program" "$actor_inspector_bin" \
+  "$pair_inspector_bin"; do
   [[ "$path" == /* ]] || fail "path must be absolute: $path"
 done
 [[ -d "$source_actors_root" && ! -L "$source_actors_root" ]] || \
@@ -76,7 +80,7 @@ done
 [[ ! -e "$application_root" && ! -L "$application_root" ]] || \
   fail 'application root already exists'
 for binary in "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
-  "$finalize_bin" "$actor_inspector_bin"; do
+  "$finalize_bin" "$actor_inspector_bin" "$pair_inspector_bin"; do
   [[ -f "$binary" && -x "$binary" && ! -L "$binary" ]] || \
     fail "binary is unavailable or unsafe: $binary"
 done
@@ -118,6 +122,8 @@ runtime_root="$application_root/runtime"
 mkdir -m 0700 "$runtime_root"
 actor_root="$application_root/maker-actors"
 mkdir -m 0700 "$actor_root"
+taker_actor_root="$application_root/taker-actors"
+acceptance_receipt="$application_root/taker-acceptance-receipt.json"
 maker_socket="$runtime_root/maker.sock"
 chat_socket="$runtime_root/chat.sock"
 ready_file="$runtime_root/ready"
@@ -136,6 +142,7 @@ taker_receipt="$evidence_dir/m5-taker-acceptance.json"
 result_receipt="$evidence_dir/m5-chat-handoff.json"
 
 queued_actor_receipt="$evidence_dir/m5-queued-maker-actor.json"
+effect_pair_receipt="$evidence_dir/m5-effect-actor-pair.json"
 token="$(printf '%s' "$run_id" | sha256sum)"
 token="${token%% *}"
 token="${token:0:16}"
@@ -333,13 +340,63 @@ jq -e --arg maker "$maker_public_key" --arg reservation "$reservation_id" \
   --chat-socket "$chat_socket" --reservation-id "$reservation_id" \
   --foreign-units "$foreign_units" --unsigned-draft-file "$draft_file" \
   --taker-signing-key-file "$source_actors_root/taker/zcash.key" \
-  --agreement-output-file "$agreement_file" >"$taker_receipt"
-jq -e --arg swap "$(jq -er '.swap_id' "$draft_receipt")" '
+  --agreement-output-file "$agreement_file" \
+  --zec-source-taker-config "$source_actors_root/taker/actor-config.json" \
+  --zec-taker-actor-root "$taker_actor_root" \
+  --zec-acceptance-receipt "$acceptance_receipt" >"$taker_receipt"
+jq -e --arg swap "$(jq -er '.swap_id' "$draft_receipt")" \
+  --arg acceptance_receipt "$acceptance_receipt" '
   .schema_version == 1 and .swap_id == $swap and .offer_revision == 3
   and .replay == {proposal:false,completion:false,agreement_file:false}
+  and .actor.role == "taker"
+  and .actor.receipt_file == $acceptance_receipt
+  and .actor.provisioning_replay == false and .actor.receipt_replay == false
+  and (.actor.receipt_sha256 | test("^[0-9a-f]{64}$"))
   and .private_material_disclosed == false
   and (.agreement_sha256 | test("^[0-9a-f]{64}$"))
 ' "$taker_receipt" >/dev/null
+
+[[ -f "$acceptance_receipt" && ! -L "$acceptance_receipt" \
+  && "$(stat -c %a -- "$acceptance_receipt")" == 600 \
+  && "$(stat -c %u -- "$acceptance_receipt")" == "$(id -u)" \
+  && "$(stat -c %h -- "$acceptance_receipt")" == 1 \
+  && "$(stat -c %s -- "$acceptance_receipt")" -gt 0 \
+  && "$(stat -c %s -- "$acceptance_receipt")" -le 65536 ]] ||
+  fail 'Taker acceptance receipt is unavailable or unsafe'
+acceptance_receipt_sha256="$(sha256sum "$acceptance_receipt" | cut -d ' ' -f1)"
+[[ "$acceptance_receipt_sha256" == "$(jq -er '.actor.receipt_sha256' "$taker_receipt")" ]] ||
+  fail 'Taker acceptance receipt hash differs from acceptance output'
+taker_actor_config="$(jq -er '.actor_config_file | strings' "$acceptance_receipt")"
+taker_actor_config_sha256="$(jq -er '.actor_config_sha256 | strings' "$acceptance_receipt")"
+taker_actor_state="$(jq -er '.actor_state_database | strings' "$acceptance_receipt")"
+jq -e --arg swap "$(jq -er '.swap_id' "$taker_receipt")" \
+  --arg agreement_sha256 "$(jq -er '.agreement_sha256' "$taker_receipt")" '
+  (keys | length) == 7 and .schema_version == 1 and .role == "taker"
+  and .swap_id == $swap and .agreement_sha256 == $agreement_sha256
+  and (.actor_config_sha256 | test("^[0-9a-f]{64}$"))
+' "$acceptance_receipt" >/dev/null || fail 'Taker acceptance receipt is invalid'
+[[ "$taker_actor_config" == "$taker_actor_root/taker/actor-config.json" \
+  && "$taker_actor_state" == "$taker_actor_root/taker/state/actor.sqlite3" ]] ||
+  fail 'Taker acceptance receipt paths escape the role-only actor root'
+[[ -f "$taker_actor_config" && ! -L "$taker_actor_config" \
+  && "$(stat -c %a -- "$taker_actor_config")" == 600 \
+  && "$(stat -c %h -- "$taker_actor_config")" == 1 ]] ||
+  fail 'receipt-bound Taker config is unavailable or unsafe'
+[[ "$(sha256sum "$taker_actor_config" | cut -d ' ' -f1)" == "$taker_actor_config_sha256" ]] ||
+  fail 'receipt-bound Taker config hash changed'
+agreement_sha256="$(sha256sum "$agreement_file" | cut -d ' ' -f1)"
+[[ "$agreement_sha256" == "$(jq -er '.agreement_sha256' "$acceptance_receipt")" ]] ||
+  fail 'receipt-bound Taker agreement hash changed'
+[[ ! -e "$taker_actor_root/maker" ]] || fail 'Taker actor root contains Maker authority'
+[[ "$(stat -c %i -- "$taker_actor_config")" != \
+  "$(stat -c %i -- "$source_actors_root/taker/actor-config.json")" ]] ||
+  fail 'receipt-bound Taker config aliases its source inode'
+jq -e --arg swap "$(jq -er '.swap_id' "$taker_receipt")" \
+  --arg state "$taker_actor_state" --arg agreement_sha256 "$agreement_sha256" '
+  .role == "taker" and .swap_id == $swap and .role_state_db == $state
+  and .signed_agreement_sha256 == $agreement_sha256
+' "$taker_actor_config" >/dev/null ||
+  fail 'receipt-bound Taker config semantics changed'
 
 "$actor_inspector_bin" --database "$database" >"$queued_actor_receipt"
 chmod 0600 "$queued_actor_receipt"
@@ -382,6 +439,26 @@ jq -e --arg swap "$queued_swap_id" --arg state "$queued_state" '
   .role == "maker" and .swap_id == $swap and .role_state_db == $state
 ' "$queued_config" >/dev/null ||
   fail 'queued Maker config semantics differ from the manifest'
+
+"$pair_inspector_bin" --maker-config "$queued_config" \
+  --taker-config "$taker_actor_config" >"$effect_pair_receipt"
+chmod 0600 "$effect_pair_receipt"
+[[ -f "$effect_pair_receipt" && ! -L "$effect_pair_receipt" \
+  && "$(stat -c %a -- "$effect_pair_receipt")" == 600 \
+  && "$(stat -c %u -- "$effect_pair_receipt")" == "$(id -u)" \
+  && "$(stat -c %h -- "$effect_pair_receipt")" == 1 \
+  && "$(stat -c %s -- "$effect_pair_receipt")" -gt 0 \
+  && "$(stat -c %s -- "$effect_pair_receipt")" -le 65536 ]] ||
+  fail "effect-bearing actor-pair receipt is unavailable or unsafe"
+jq -e --arg swap "$queued_swap_id" '
+  .schema_version == 1 and .swap_id == $swap
+  and .actor_pair_validated == true
+  and .private_material_disclosed == false
+' "$effect_pair_receipt" >/dev/null ||
+  fail 'effect-bearing Maker and Taker configs are not one valid pair'
+effect_pair_receipt_sha256="$(sha256sum "$effect_pair_receipt" | cut -d ' ' -f1)"
+[[ "$effect_pair_receipt_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+  fail 'effect-bearing actor-pair receipt hash is invalid'
 
 "$finalize_bin" --source-maker-config "$source_actors_root/maker/actor-config.json" \
   --source-taker-config "$source_actors_root/taker/actor-config.json" \
@@ -428,6 +505,12 @@ jq -n \
   --arg maker_public_key "$maker_public_key" --arg taker_public_key "$taker_public_key" \
   --arg maker_daemon_bin "$maker_daemon_bin" --arg maker_socket "$maker_socket" \
   --arg application_database "$database" \
+  --arg acceptance_receipt_file "$acceptance_receipt" \
+  --arg acceptance_receipt_sha256 "$acceptance_receipt_sha256" \
+  --arg taker_actor_config "$taker_actor_config" \
+  --arg taker_actor_config_sha256 "$taker_actor_config_sha256" \
+  --arg taker_actor_state "$taker_actor_state" \
+  --arg effect_actor_pair_receipt_sha256 "$effect_pair_receipt_sha256" \
   --arg chat_socket "$chat_socket" --arg delivery_directory "$delivery_directory" \
   --arg delivery_offline "$delivery_offline" --argjson daemon_pid "$daemon_pid" \
   --arg daemon_start_ticks "$daemon_start_ticks" --argjson accepted_at "$accepted_at" \
@@ -445,8 +528,18 @@ jq -n \
     role_public_keys: {maker:$maker_public_key,taker:$taker_public_key},
     real_processes: {maker_daemon:true,maker_cli:true,taker_cli:true},
     actor_pair_validated: true,
+    effect_actor_pair_validated: true,
+    effect_actor_pair_receipt_sha256: $effect_actor_pair_receipt_sha256,
+    source_pair_validated: true,
     daemon_restart_history_validated: true,
     actor_supervisor_enabled: false,
+    taker_lifecycle: {
+      acceptance_receipt_file: $acceptance_receipt_file,
+      acceptance_receipt_sha256: $acceptance_receipt_sha256,
+      taker_actor_config: $taker_actor_config,
+      taker_actor_config_sha256: $taker_actor_config_sha256,
+      taker_actor_state: $taker_actor_state
+    },
     scheduled_maker_actor: $queued[0][0],
     transport_cutover: {
       state:"armed_after_restart",
@@ -464,8 +557,16 @@ jq -n \
   }' >"$result_receipt"
 chmod 0600 "$result_receipt"
 jq -e '.result == "passed" and .actor_pair_validated == true
+  and .effect_actor_pair_validated == true
+  and (.effect_actor_pair_receipt_sha256 | test("^[0-9a-f]{64}$"))
+  and .source_pair_validated == true
   and .daemon_restart_history_validated == true
   and .actor_supervisor_enabled == false
+  and (.taker_lifecycle.acceptance_receipt_sha256 | test("^[0-9a-f]{64}$"))
+  and (.taker_lifecycle.taker_actor_config_sha256 | test("^[0-9a-f]{64}$"))
+  and (.taker_lifecycle.acceptance_receipt_file | strings | length) > 0
+  and (.taker_lifecycle.taker_actor_config | strings | length) > 0
+  and (.taker_lifecycle.taker_actor_state | strings | length) > 0
   and .transport_cutover.state == "armed_after_restart"
   and .scheduled_maker_actor.actor_kind == "zcash"
   and .scheduled_maker_actor.schedule_state == "queued"

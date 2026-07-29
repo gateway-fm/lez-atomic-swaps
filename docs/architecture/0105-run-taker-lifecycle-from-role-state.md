@@ -1,6 +1,6 @@
 # ADR 0105: Run Taker lifecycle commands from role-local state
 
-- Status: Accepted; ZEC process component GREEN
+- Status: Accepted; receipt-bound runner contract GREEN; fresh actual-node execution pending
 - Date: 2026-07-28
 - Milestone: M5 progressive local-functional PoC
 
@@ -88,6 +88,57 @@ sequenceDiagram
     C-->>U: Secret-free JSON
 ```
 
+## Composed application sequence
+
+The M5 application runner now uses the acceptance-provisioned Taker config and
+state rather than the separately finalized legacy pair. Before activation, a
+small inspector reuses `validate_rebound_actor_pair` to prove that the queued
+Maker bundle and receipt-provisioned Taker bundle are one exact swap despite
+having distinct agreement files. Every receipt CLI invocation is bracketed by
+mode, owner, link-count, size, device/inode, and SHA-256 checks. Raw `drive` is
+admitted only for the fixed happy-path phase/action pairs and cannot cross the
+`claim_zcash` boundary; the exact `claim_evidence_available` plus `claim_zcash`
+state routes to `lez-taker claim --receipt` after transport cutover.
+
+```mermaid
+sequenceDiagram
+    actor U as Taker user
+    participant R as Corridor runner
+    participant T as lez-taker
+    participant H as Maker daemon and Chat
+    participant V as Pair inspector
+    participant M as Maker supervisor
+    participant A as Taker actor
+    participant L as LEZ node
+    participant Z as Zebra node
+    participant C as Chat and Delivery
+
+    U->>T: Discover and accept signed offer
+    T->>H: Countersigned agreement and Taker source
+    H->>H: Atomically publish queued Maker bundle
+    T->>T: Publish accepted Taker bundle and receipt
+    R->>V: Validate exact effect-bearing actor pair
+    V-->>R: Secret-free pair receipt
+    R->>T: Monitor pinned acceptance receipt
+    T->>A: Read role-local status
+    R->>A: Raw drive only for admitted pre-claim state
+    A->>L: Submit and observe Taker LEZ lock
+    M->>Z: Submit Maker Zcash lock
+    Z-->>M: Two local confirmations
+    R->>C: Remove negotiation transports
+    M->>L: Claim LEZ and reveal preimage
+    R->>A: Observe canonical LEZ reveal
+    A-->>R: Claim evidence available
+    R->>T: Claim through pinned receipt
+    T->>A: Run exact claim command
+    A->>Z: Submit Zcash follow-up claim
+    R->>T: Terminal monitor through same receipt
+```
+
+This diagram is the executable runner contract. A fresh isolated LEZ v0.2 and
+Zebra Regtest replay is still required before treating these exact arrows as
+new actual-node evidence.
+
 ## Atomicity argument
 
 This CLI does not create a cross-chain transaction. Cross-chain atomicity remains
@@ -107,7 +158,14 @@ Local execution preserves that construction because:
 5. claim and recover admission comes from the signed agreement and durable phase,
    not a CLI flag alone; and
 6. replay reopens the same role database and converges through the actor's
-   existing idempotence and observation rules.
+   existing idempotence and observation rules;
+7. the pre-effect rebound-pair validator rejects role, run, swap, agreement,
+   chain, endpoint, signer, funder, config, or mutable-path divergence between
+   the effect-bearing Maker and Taker bundles; and
+8. the runner pins the receipt identity and bytes around every receipt-based
+   monitor or claim invocation,
+   admits raw drive only from exact non-claim states, and binds every monitor and
+   claim trace entry to the accepted swap and receipt digest.
 
 There is no atomic commit between SQLite and either chain. Persist-before-send,
 one-attempt journals, bounded canonical observation, and fail-closed unknown

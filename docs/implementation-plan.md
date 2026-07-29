@@ -3650,17 +3650,32 @@ separately from runtime dependencies.
   commit, and drops it before the Taker receives any response. The failed Taker
   publishes no receipt; the Maker is durably `Completed`, the role-only Taker
   bundle is inert and exact, and direct retry reuses agreement/config inodes,
-  exact-replays completion, then publishes a fresh receipt. Actual-node command
-  effects, two disjoint live swaps, and a fresh supervisor replay must still
-  pass. A unified XMR lifecycle actor still precedes honest all-pair CLI
-  composition. This progress does not by itself make M5 complete.
+  exact-replays completion, then publishes a fresh receipt. The composed runner now consumes only the acceptance-provisioned Taker config
+  and state. Before activation, a dependency-free inspector reuses the public
+  rebound-pair invariant to validate the effect-bearing queued Maker and accepted
+  Taker bundles. Every receipt invocation is bracketed by exact mode, owner,
+  link-count, size, device/inode, and SHA-256 checks. The runner admits legacy
+  drive only from the fixed non-claim phase/action pairs and routes the exact
+  `claim_evidence_available` plus `claim_zcash` state through one receipt-bound
+  `claim` after confirmed-lock transport cutover. Terminal receipt monitor,
+  exactly one submitted Zcash follow-up claim, accepted swap ID, receipt digest,
+  and admission/effect traces are mandatory result evidence. The focused
+  rebound-pair test, warning-fatal Clippy, Rust formatting, syntax, pinned
+  ShellCheck 0.11.0, M5 application contract, and diff hygiene are GREEN. This
+  is runner-contract evidence; a fresh isolated actual-node execution has not
+  yet exercised the new Taker claim route. Two disjoint live swaps and a fresh
+  supervisor replay must still pass. A unified XMR lifecycle actor still
+  precedes honest all-pair CLI composition. This progress does not by itself
+  make M5 complete.
 
   Project cleanup has reclaimed about 85 GB cumulatively. The latest 2026-07-28
   passes removed 26.4 GiB of rebuildable Cargo targets around verification,
-  reducing the repo to about 129 MB and increasing free disk to about 530 GB while preserving source, Git,
-  fixtures, and unrelated running stacks. Four stale project containers remain
-  because containerd timed out on their zombie processes; Docker was not restarted
-  because that would interrupt unrelated stacks. The clean rebuild exposed
+  reducing the repo to about 129 MB and increasing free disk to about 530 GB
+  while preserving source, Git,
+  fixtures, and unrelated running stacks. Four running project containers were deliberately preserved. Docker inventory
+  and
+  pruning calls timed out at containerd; Docker was not restarted because that
+  could interrupt active project or unrelated stacks. The clean rebuild exposed
   the documented upstream `unzip` fallback assumption; continued verification
   uses the already pinned four rapidsnark v0.0.8 libraries only after exact
   SHA-256 validation and with Cargo offline.
@@ -3683,7 +3698,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 5 to 10 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 4 to 9 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordinator composition hardening, and post-PoC hardening remain explicitly
 open above.

@@ -86,11 +86,20 @@ records the receipt-aware component, sequence, and atomicity diagrams;
 gives the manual commands and external-resource boundary. The real Chat process
 additionally proves no-clobber receipt publication, all seven bound fields,
 inode-stable exact replay, Delivery-independent persisted completion replay, and
-receipt-only monitor after both application transports are removed. Actual-node
-claim/refund through those commands remains before the final user journey.
+receipt-only monitor after both application transports are removed. The composed
+application runner now uses that acceptance-provisioned Taker
+config and state, validates it against the queued Maker bundle before activation,
+pins receipt identity and SHA-256 around every receipt-based monitor or claim
+invocation, and permits raw
+drive only for exact non-claim phase/action pairs. The happy-path Zcash
+follow-up routes only through `lez-taker claim --receipt`; accepted-swap monitor
+and claim traces bind the swap and receipt digest. The focused runner contract
+is GREEN, while a fresh isolated actual-node execution and receipt-bound refund
+remain before the final user journey.
 
 
-Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
+Exact pushed-tree run `m5appee8424520260724a` completed the earlier direct-actor local application
+corridor in
 33.400 protocol seconds with no retry. Exact packet-bearing replay
 `m5app6c3bbbe20260724a` then repeated it from pushed commit `6c3bbbe` in 27.860
 seconds and 56 drive rounds with zero retry: both actors reached revision 4,
@@ -100,7 +109,9 @@ and no public RPC or faucet participated. See the
 [terminal-projection evidence packet](docs/evidence/m5-zec-application-terminal-projection-20260724.json)
 and the preceding
 [corridor checkpoint](docs/evidence/m5-zec-application-corridor-20260724.json).
-The progressive local ZEC application PoC gate is certified.
+The progressive local ZEC application PoC gate is certified for that earlier
+corridor.
+Those historical runs are not evidence of the current receipt-bound claim route.
 The current M5 working tree also contains an intervention-assisted actual-node
 one-leg recovery checkpoint. In isolated run
 `m5fresh-a390dd8-20260728a-app3`, the Taker refunded its only locked LEZ leg

@@ -54,10 +54,88 @@ for required in \
     fail "M5 handoff is missing queued actor contract: ${required}"
 done
 
-for required in 'actor_supervisor_enabled: false'; do
+for required in \
+  'taker_actor_root="$application_root/taker-actors"' \
+  'acceptance_receipt="$application_root/taker-acceptance-receipt.json"' \
+  '--zec-source-taker-config "$source_actors_root/taker/actor-config.json"' \
+  '--zec-taker-actor-root "$taker_actor_root"' \
+  '--zec-acceptance-receipt "$acceptance_receipt"' \
+  '"$pair_inspector_bin" --maker-config "$queued_config"' \
+  'm5-effect-actor-pair.json' \
+  'effect_actor_pair_validated' \
+  'acceptance_receipt_file' \
+  'taker_actor_config' \
+  'taker_actor_state'; do
   rg -Fq -- "$required" "$handoff" ||
-    fail "M5 handoff must return a queued actor before supervision: ${required}"
+    fail "M5 handoff is missing receipt-bound Taker contract: ${required}"
 done
+
+for required in \
+  'drive_m5_taker' \
+  'assert_m5_taker_receipt_unchanged' \
+  '2>"$claim_stderr")"; then' \
+  'raw_taker_drive_admitted' \
+  'taker_sidecar_state_dir' \
+  '--state-directory "$taker_sidecar_state_dir"' \
+  '.phase == "claim_evidence_available" and .next_action == "claim_zcash"' \
+  '.phase == "offered" and .next_action == "create_and_fund_lez"' \
+  '"$taker_bin" claim --receipt "$m5_taker_acceptance_receipt"' \
+  '.command == "claim"' \
+  'm5-taker-receipt-claim.ndjson' \
+  'm5-taker-receipt-monitor.ndjson' \
+  'acceptance_receipt_sha256:$receipt_sha256' \
+  'swap_id:$swap' \
+  'taker_claim_authority:' \
+  'then "receipt_bound_cli" else null end' \
+  'direct_taker_claim_effects:'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M5 runner is missing receipt-bound Taker claim contract: ${required}"
+done
+
+[[ "$(rg -Fc '"$taker_bin" claim --receipt "$m5_taker_acceptance_receipt"' "$runner")" == 1 ]] ||
+  fail 'M5 runner must have exactly one receipt-bound Taker claim call site'
+rg -UFq '2>"$claim_stderr")"; then
+    assert_m5_taker_receipt_unchanged || return' "$runner" ||
+  fail 'failed or timed-out Taker claim must re-pin the receipt after use'
+if rg -Fq 'claim --actor-config' "$runner"; then
+  fail 'M5 runner must not bypass the receipt for Taker claim'
+fi
+claim_guard_line="$(rg -n -F '.next_action == "claim_zcash"' "$runner" |
+  sed -n '1s/:.*//p')"
+receipt_claim_line="$(rg -n -F '"$taker_bin" claim --receipt "$m5_taker_acceptance_receipt"' \
+  "$runner" | cut -d: -f1)"
+[[ "$claim_guard_line" =~ ^[0-9]+$ && "$receipt_claim_line" =~ ^[0-9]+$ \
+  && "$claim_guard_line" -lt "$receipt_claim_line" ]] ||
+  fail 'receipt-bound Taker claim must follow exact next-action admission'
+
+claimable_status='{"schema_version":1,"role":"taker","state":"active","phase":"claim_evidence_available","revision":3,"next_action":"claim_zcash"}'
+waiting_status='{"schema_version":1,"role":"taker","state":"active","phase":"both_legs_locked","revision":2,"next_action":"wait"}'
+jq -e '.schema_version == 1 and .role == "taker" and .state == "active"
+  and .phase == "claim_evidence_available" and .next_action == "claim_zcash"' \
+  <<<"$claimable_status" >/dev/null ||
+  fail 'valid receipt-bound claim admission fixture was rejected'
+if jq -e '.phase == "claim_evidence_available" and .next_action == "claim_zcash"' \
+  <<<"$waiting_status" >/dev/null; then
+  fail 'waiting Taker status incorrectly admitted a claim'
+fi
+wrong_phase_claim_status='{"schema_version":1,"role":"taker","state":"active","phase":"both_legs_locked","revision":2,"next_action":"claim_zcash"}'
+if jq -e '.phase == "claim_evidence_available" and .next_action == "claim_zcash"' \
+  <<<"$wrong_phase_claim_status" >/dev/null; then
+  fail 'wrong-phase Taker status incorrectly admitted a claim'
+fi
+raw_drive_status='{"schema_version":1,"role":"taker","state":"active","phase":"offered","revision":0,"next_action":"create_and_fund_lez"}'
+jq -e '(.phase == "offered" and .next_action == "create_and_fund_lez")' \
+  <<<"$raw_drive_status" >/dev/null ||
+  fail 'valid raw Taker drive admission fixture was rejected'
+unknown_drive_status='{"schema_version":1,"role":"taker","state":"active","phase":"offered","revision":0,"next_action":"wait"}'
+if jq -e '(.phase == "offered" and .next_action == "create_and_fund_lez")' \
+  <<<"$unknown_drive_status" >/dev/null; then
+  fail 'unknown raw Taker drive status was admitted'
+fi
+
+required='actor_supervisor_enabled: false'
+rg -Fq -- "$required" "$handoff" ||
+  fail "M5 handoff must return a queued actor before supervision: ${required}"
 
 for required in \
   'ESCROW_PROGRAM_ID:-4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82' \

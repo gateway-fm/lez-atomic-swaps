@@ -4233,19 +4233,29 @@ On success, inspect without printing private key/config files:
 ```sh
 EVIDENCE=/tmp/lez-atomic-swaps-${RUN_ID}/evidence
 jq . "$EVIDENCE/m5-chat-handoff.json"
+jq . "$EVIDENCE/m5-effect-actor-pair.json"
 jq . "$EVIDENCE/m5-post-lock-cutover.json"
+jq -s . "$EVIDENCE/m5-taker-receipt-monitor.ndjson"
+jq -s . "$EVIDENCE/m5-taker-receipt-claim.ndjson"
 jq . "$EVIDENCE/result.json"
 jq . "$EVIDENCE/m5-terminal-operator-projection.json"
 ```
 
 Required facts are: the real daemon/maker/taker processes completed one
-agreement; pre-effect restart retained exact pair, price, consumed offer, and
-swap history; the maker actor submitted confirmed Zcash funding; only then were
-both Unix sockets and Delivery removed; the LEZ revealing claim and Zcash
-follow-up claim still completed; both roles are terminal; a new owner-only
-daemon reports the same completed swap in `history` and `status` while Chat and
-Delivery stay absent; and all three application receipt hashes are bound into
-`result.json`.
+agreement; the pre-effect pair receipt validates the exact queued Maker and
+receipt-provisioned Taker bundles; pre-effect restart retained exact pair, price,
+consumed offer, and swap history; the Maker supervisor submitted confirmed Zcash
+funding; only then were both Unix sockets and Delivery removed; every Taker
+monitor and claim trace entry binds the accepted swap and unchanged receipt
+digest; exactly one submitted Zcash follow-up claim came from
+`lez-taker claim --receipt`, never raw drive; both roles are terminal; a new
+owner-only daemon reports the same completed swap in `history` and `status`
+while Chat and Delivery stay absent; and all application evidence hashes are
+bound into `result.json`.
+
+The current repository contract enforces these requirements, but the new
+receipt-bound claim route has not yet completed a fresh isolated actual-node
+run. Do not infer that proof from the earlier packet-bearing M5 corridor runs.
 
 Runtime external-resource inventory:
 
@@ -5110,8 +5120,14 @@ direct retry must report proposal, completion, agreement, and provisioning
 replay while publishing the first receipt, and the following retry must preserve
 all three artifact inodes and bytes. Direct
 `--actor-config` remains an expert component-debug/manual-recovery escape hatch;
-the receipt is the normal accepted-swap path. Actual-node claim/refund through
-these commands must still be completed before this is the final M5 user journey.
+the receipt is the normal accepted-swap path. The composed happy-path runner now
+selects the acceptance-provisioned Taker
+config and state, validates it against the queued Maker before effects, pins the
+receipt around every receipt-based monitor or claim invocation, and routes the
+eligible Zcash follow-up
+through `claim --receipt`. Its focused contract and lint gates are GREEN; a
+fresh isolated actual-node execution of that route and an actual-node refund
+through the receipt remain required before this is the final M5 user journey.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 
