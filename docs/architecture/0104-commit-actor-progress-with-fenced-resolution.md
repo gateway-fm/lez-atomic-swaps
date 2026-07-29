@@ -1,6 +1,6 @@
 # ADR 0104: Commit actor progress with fenced resolution
 
-- Status: Accepted; store and strict supervisor projection GREEN, RPC/CLI pending
+- Status: Accepted; store, supervisor projection, and Maker RPC/CLI GREEN
 - Date: 2026-07-29
 - Milestone: M5
 
@@ -49,7 +49,8 @@ flowchart LR
     Tx --> Process[("Actor process row")]
     Tx --> Action[("Optional manual action")]
     Tx --> Progress[("Schema v18 progress")]
-    Progress --> Monitor["Future owner-local monitor"]
+    Progress --> RPC["maker_actor_monitor_v1"]
+    RPC --> Monitor["Maker CLI monitor"]
 ```
 
 ## Resolution flow
@@ -79,8 +80,8 @@ sequenceDiagram
     else stale or forged lease
         DB-->>S: rollback all three
     end
-    O->>DB: read progress by swap ID
-    DB-->>O: validated secret-free snapshot
+    O->>DB: monitor by swap ID
+    DB-->>O: allowlisted process action and progress snapshot
 ```
 
 ## Why the projection is atomic
@@ -95,6 +96,13 @@ sequenceDiagram
   reaches the upsert path.
 - The kernel lock remains the nonforgeable execution capability. Schema v18
   adds no second worker or effect authority.
+
+The owner response includes only schema version, swap ID, actor kind, scheduler
+state, lease generation, attempt count, validated progress, and latest manual
+action state. It omits manifest paths and hashes, state-database paths,
+lease-owner identity, child PID/start ticks, and every private actor value.
+`monitor` reads only application SQLite; it does not open the role-local actor
+database, spawn an actor, or contact a chain RPC.
 
 This is application-level publication atomicity. Pair-level chain atomicity is
 still supplied by the existing role journals, persist-before-send transitions,
@@ -126,11 +134,16 @@ without that field fails closed at the new supervisor boundary and must be
 reprovisioned with its new executable hash; no compatibility fallback guesses
 protocol state.
 
-Maker `monitor/claim/refund` RPC and CLI remain the next application slice. They
-must return an allowlisted view and require the caller-supplied expected
-process generation for replay-safe action requests. Symmetric role-validated
-Taker provisioning and commands follow. Complete Maker (with crash hooks), swap-store, and BTC actor suites, strict
-all-target/all-feature Clippy, warning-free Rustdoc, formatting, and diff hygiene are
-GREEN. No dependency, endpoint, RPC, chain
-service, container, faucet, or public resource was added by this projection
-slice. It does not authorize an M5 tag.
+Maker `monitor/claim/refund` RPC and CLI are now GREEN. The versioned methods
+return the allowlisted view above and require the caller-supplied expected
+process generation for every action. Exact replay returns the original durable
+admission after restart; the daemon never substitutes a newer generation. ZEC
+exposes claim and refund, while BTC exposes refund only. The black-box operator
+journey proves read-only monitoring, exact claim replay, payload conflict,
+missing-actor classification, and an identical monitor view after restart.
+Symmetric role-validated Taker provisioning and commands follow. Complete Maker
+(with crash hooks), swap-store, and BTC actor suites, strict all-target and
+all-feature Clippy, warning-free Rustdoc, formatting, and diff hygiene are
+GREEN. The lifecycle methods use the existing owner-local Unix socket; they add
+no chain service, container, faucet, or public resource. This slice does not
+authorize an M5 tag.

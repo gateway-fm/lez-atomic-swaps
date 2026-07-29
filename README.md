@@ -51,9 +51,15 @@ an action only under the exact process lease and kernel lock, routes claim only
 to `claim` and refund only to `recover`, and atomically completes the process
 and action rows. Command-specific outcome and absorbing-phase allowlists reject
 cross-action output. The actor boundary is 34 of 34 GREEN and the supervisor
-integration suite is 12 of 12 GREEN. The durable rows are not yet exposed as a
-Maker or Taker user command, and no fresh actual-node run uses this supervisor
-path yet, so this component does not complete M5.
+integration suite is 12 of 12 GREEN. The owner-local Maker CLI now exposes
+`monitor`, `claim`, and `refund` through `maker_actor_monitor_v1`,
+`maker_actor_claim_v1`, and `maker_actor_refund_v1` on the existing owner Unix
+socket. Every action requires the generation shown by `monitor`; exact replay
+of the request ID, swap ID, action, and generation returns the original
+admission, while stale generations and changed payloads fail closed. ZEC Maker
+actors support claim and refund. BTC Maker actors support refund only; manual
+BTC claim is rejected. No fresh actual-node run uses this supervisor path yet,
+so this component does not complete M5.
 Schema v18 now carries that authority into a read-only progress projection
 without creating a second actor reader or worker. The strict supervisor parses
 the actual pair-specific BTC and ZEC status/effect vocabularies, accepts their
@@ -63,8 +69,10 @@ process and optional action resolution. A rejected effect preserves only the
 last validated status. BTC effect output now obtains `next_action` from the
 same actor-local derivation used by offline status. ADR
 [0104](docs/architecture/0104-commit-actor-progress-with-fenced-resolution.md)
-records the updated component and sequence diagrams. Maker monitor/action RPC
-and CLI are the next slice; the durable rows are still not user-facing.
+records the updated component and sequence diagrams. The monitor response
+allowlists actor kind, scheduler state, generation, attempt count, validated
+progress, and latest action state. It never serializes actor paths, hashes,
+lease-owner identity, child PID, or private role state.
 
 
 Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
@@ -94,8 +102,8 @@ partial/ambiguous/typed-error polls on the exact page, and restores the active
 page despite unchanged actor config. Both owner and counterparty paths pass a
 RED-GREEN reopen test, but the retained actual-node evidence remains
 intervention-assisted until a fresh daemon/CLI replay. M5 is not complete;
-user-facing lifecycle commands, concurrent supervision, and BTC/XMR application
-lifecycles remain. Clean sidecar builds
+Taker lifecycle commands, concurrent supervision, and BTC/XMR application
+lifecycle composition remain. Clean sidecar builds
 should set the documented
 absolute `RAPIDSNARK_LIB_DIR` only after verifying the four pinned v0.0.8
 library hashes and should use Cargo offline rather than the upstream download
@@ -224,8 +232,9 @@ The application runner now also installs one private mode-0500, single-link ZEC
 actor and verifies that Chat acceptance atomically exposes the exact queued
 daemon-provisioned manifest. Its current settlement still drives a separately
 finalized Maker actor directly. Component-level supervisor routing is GREEN;
-actual-node supervisor evidence, durable maker/taker claim/refund CLI controls,
-and concurrent disjoint live-node execution remain open. This checkpoint does not make M5 complete.
+owner-local Maker monitor/claim/refund controls are process-GREEN. Actual-node
+supervisor evidence, Taker lifecycle controls, and concurrent disjoint live-node
+execution remain open. This checkpoint does not make M5 complete.
 
 Build and repeat the current real process boundary with:
 

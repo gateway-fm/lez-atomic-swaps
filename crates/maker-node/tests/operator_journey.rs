@@ -21,7 +21,7 @@ use lez_swap_core::{
     Chain, ChainPosition, ChainProof, ConfirmationPolicy, Pair, Participant, RecoverySchedule,
     SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
-use lez_swap_store::SqliteSwapStore;
+use lez_swap_store::{MakerActorKindV1, MakerActorManifestV1, SqliteSwapStore};
 use lez_zec_swap_sdk::{
     Bip199Contract, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
     ExpectedBip199Output, TransparentFundingRequest, TransparentUtxo, ZcashNodeRemovalSnapshot,
@@ -30,6 +30,7 @@ use lez_zec_swap_sdk::{
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 use zcash_primitives::block::BlockHash;
 use zcash_protocol::{
@@ -40,6 +41,7 @@ use zcash_transparent::{
     address::{Script, TransparentAddress},
     bundle::{OutPoint, TxOut},
 };
+use zec_reference_actor::ActorConfig;
 
 struct Daemon(Child);
 
@@ -200,6 +202,211 @@ fn owner_lists_and_acknowledges_durable_alert_across_daemon_restart() {
         &["alerts", "--id", "operator-alert-swap", "--all"],
     );
     assert_alert_list(&all, alert_sequence, true);
+}
+
+#[test]
+fn maker_actor_lifecycle_commands_are_read_only_replay_safe_and_restart_durable() {
+    let run = tempdir().expect("isolated test directory");
+    let database = run.path().join("actor-lifecycle.sqlite3");
+    let swap_id = "m5-maker-lifecycle-zec";
+    seed_maker_actor(run.path(), &database, swap_id);
+
+    let (first_daemon, first_socket) =
+        start_daemon(run.path(), &database, "actor-lifecycle-first.ready");
+    assert_initial_actor_monitor(&first_socket, swap_id);
+    assert_actor_generation_guards(&first_socket, swap_id);
+    let after = queue_claim_and_assert_replay(&first_socket, swap_id);
+
+    drop(first_daemon);
+    let (_second_daemon, second_socket) =
+        start_daemon(run.path(), &database, "actor-lifecycle-second.ready");
+    assert_eq!(maker_actor_monitor(&second_socket, swap_id), after);
+    assert_missing_actor_errors(&second_socket);
+}
+
+fn maker_actor_monitor(socket: &Path, swap_id: &str) -> Value {
+    let output = maker_cli(socket, &["monitor", "--id", swap_id]);
+    assert_success(&output);
+    serde_json::from_slice(&output.stdout).expect("monitor JSON")
+}
+
+fn assert_initial_actor_monitor(socket: &Path, swap_id: &str) {
+    let monitor = maker_actor_monitor(socket, swap_id);
+    let fields = monitor.as_object().expect("monitor object");
+    assert_eq!(fields.len(), 8);
+    for field in [
+        "schema_version",
+        "swap_id",
+        "actor_kind",
+        "schedule_state",
+        "lease_generation",
+        "attempt_count",
+        "progress",
+        "manual_action",
+    ] {
+        assert!(
+            fields.contains_key(field),
+            "missing allowlisted field {field}"
+        );
+    }
+    assert_eq!(monitor["schema_version"], 1);
+    assert_eq!(monitor["swap_id"], swap_id);
+    assert_eq!(monitor["actor_kind"], "zcash");
+    assert_eq!(monitor["schedule_state"], "queued");
+    assert_eq!(monitor["lease_generation"], 0);
+    assert_eq!(monitor["attempt_count"], 0);
+    assert!(monitor["progress"].is_null());
+    assert!(monitor["manual_action"].is_null());
+}
+
+fn assert_actor_generation_guards(socket: &Path, swap_id: &str) {
+    let missing_generation = maker_cli(
+        socket,
+        &[
+            "claim",
+            "--id",
+            swap_id,
+            "--request-id",
+            "missing-generation",
+        ],
+    );
+    assert!(!missing_generation.status.success());
+    assert!(String::from_utf8_lossy(&missing_generation.stderr).contains("--expected-generation"));
+
+    let stale = maker_cli(
+        socket,
+        &[
+            "claim",
+            "--id",
+            swap_id,
+            "--request-id",
+            "m5-maker-claim-stale-001",
+            "--expected-generation",
+            "1",
+        ],
+    );
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("-32009"));
+}
+
+fn queue_claim_and_assert_replay(socket: &Path, swap_id: &str) -> Value {
+    let action = [
+        "claim",
+        "--id",
+        swap_id,
+        "--request-id",
+        "m5-maker-claim-001",
+        "--expected-generation",
+        "0",
+    ];
+    let claim = maker_cli(socket, &action);
+    assert_success(&claim);
+    let claim: Value = serde_json::from_slice(&claim.stdout).expect("claim JSON");
+    assert_eq!(claim.as_object().expect("claim object").len(), 5);
+    assert_eq!(claim["schema_version"], 1);
+    assert_eq!(claim["swap_id"], swap_id);
+    assert_eq!(claim["action"], "claim");
+    assert_eq!(claim["requested_after_generation"], 0);
+    assert_eq!(claim["was_replay"], false);
+
+    let replay = maker_cli(socket, &action);
+    assert_success(&replay);
+    let replay: Value = serde_json::from_slice(&replay.stdout).expect("claim replay JSON");
+    assert_eq!(replay["was_replay"], true);
+
+    let conflicting = maker_cli(
+        socket,
+        &[
+            "refund",
+            "--id",
+            swap_id,
+            "--request-id",
+            "m5-maker-claim-001",
+            "--expected-generation",
+            "0",
+        ],
+    );
+    assert!(!conflicting.status.success());
+    assert!(String::from_utf8_lossy(&conflicting.stderr).contains("-32009"));
+
+    let monitor = maker_actor_monitor(socket, swap_id);
+    assert_eq!(monitor.as_object().expect("monitor action object").len(), 8);
+    assert_eq!(
+        monitor["manual_action"]
+            .as_object()
+            .expect("action object")
+            .len(),
+        5
+    );
+    assert_eq!(monitor["lease_generation"], 0);
+    assert_eq!(monitor["attempt_count"], 0);
+    assert_eq!(monitor["manual_action"]["request_id"], "m5-maker-claim-001");
+    assert_eq!(monitor["manual_action"]["action"], "claim");
+    assert_eq!(monitor["manual_action"]["state"], "queued");
+    assert_eq!(monitor["manual_action"]["requested_after_generation"], 0);
+    assert!(monitor["manual_action"]["lease_generation"].is_null());
+    monitor
+}
+
+fn assert_missing_actor_errors(socket: &Path) {
+    let missing = maker_cli(socket, &["monitor", "--id", "missing-maker-actor"]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("-32004"));
+
+    let missing_action = maker_cli(
+        socket,
+        &[
+            "refund",
+            "--id",
+            "missing-maker-actor",
+            "--request-id",
+            "m5-maker-missing-001",
+            "--expected-generation",
+            "0",
+        ],
+    );
+    assert!(!missing_action.status.success());
+    assert!(String::from_utf8_lossy(&missing_action.stderr).contains("-32004"));
+}
+
+fn seed_maker_actor(run: &Path, database: &Path, swap_id: &str) {
+    let deployment = actor_deployment(run, swap_id);
+    let actor = ActorConfig::load_private(&deployment.source_config).unwrap();
+    let direction = SwapDirection::TakerSellsLez;
+    let swap = SwapCoordinator::new_with_direction(
+        SwapId::new(swap_id).unwrap(),
+        Pair::Zcash,
+        direction,
+        ConfirmationPolicy::new(1).unwrap(),
+        RecoverySchedule::new(
+            Pair::Zcash,
+            direction,
+            ChainPosition::block_height(Chain::Zcash, 120),
+            ChainPosition::block_height(Chain::Lez, 100),
+            TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100).unwrap(),
+        )
+        .unwrap(),
+    );
+    let mut store = SqliteSwapStore::open(database).unwrap();
+    store.save(&swap).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                SwapId::new(swap_id).unwrap(),
+                MakerActorKindV1::Zcash,
+                deployment.source_config.clone(),
+                Sha256::digest(fs::read(&deployment.source_config).unwrap()).into(),
+                deployment.program.clone(),
+                hex::decode(&deployment.program_sha256)
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                actor.role_state_db().to_path_buf(),
+            )
+            .unwrap(),
+            10,
+        )
+        .unwrap();
 }
 
 fn configure_zec_route(socket: &Path) {

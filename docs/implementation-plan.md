@@ -3604,13 +3604,27 @@ separately from runtime dependencies.
   rollback. ADR 0104 records the updated component, sequence, and atomicity
   diagrams. No dependency or runtime resource was added.
 
-  The next RED-GREEN slice exposes owner-local Maker `monitor/claim/refund`;
-  requests retain an explicit expected generation so exact idempotent replay
-  cannot drift after the process advances. Symmetric role-validated Taker
-  provisioning and commands follow. Process restart and two disjoint live swaps
-  must then pass. BTC claim execution and a unified XMR lifecycle actor still
-  precede honest all-pair CLI composition. This progress does not by itself make
-  M5 complete.
+  The owner-local Maker `monitor/claim/refund` RED-GREEN slice is now
+  process-GREEN. Versioned RPC methods on the existing owner Unix socket expose
+  only actor kind, scheduler state, current generation, attempt count, validated
+  progress, and latest action state. They never expose actor paths, hashes,
+  lease owner, child identity, or private role state. Monitor performs only
+  application-SQLite reads and has no actor or chain effect.
+
+  Claim and refund require an explicit expected generation and global request
+  ID. Exact payload replay returns the original admission after restart; changed
+  payload, stale generation, or a second open action fails closed. ZEC supports
+  claim and refund. BTC supports refund only and rejects manual claim. The
+  black-box daemon/CLI journey proves generation-zero monitoring, claim
+  admission and replay, conflict, durable queued-action visibility, daemon
+  restart, identical post-restart view, and missing-actor classification using
+  no external runtime resource. ADRs 0103 and 0104 carry the updated component
+  and flow diagrams.
+
+  Symmetric role-validated Taker provisioning and commands follow. Two disjoint
+  live swaps and a fresh actual-node supervisor replay must then pass. A unified
+  XMR lifecycle actor still precedes honest all-pair CLI composition. This
+  progress does not by itself make M5 complete.
 
   The requested 2026-07-29 cleanup removed both rebuildable Cargo targets and
   obsolete project tool/build caches, increasing actual free disk by about 21

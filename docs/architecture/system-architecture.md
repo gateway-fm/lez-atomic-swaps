@@ -599,6 +599,7 @@ flowchart TB
         MM["Maker mini-app"]
         LC["Logos Core lifecycle adapter"]
         MD["Maker daemon"]
+        MRPC["Owner lifecycle RPC<br/>monitor claim refund GREEN"]
         APP["M5 application service"]
         OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
         CO["Durable swap coordinator"]
@@ -762,7 +763,8 @@ flowchart TB
     MO --> MC
     MO --> MM
     MO --> LC
-    MC -->|"authenticated local RPC"| MD
+    MC -->|"owner Unix RPC"| MRPC
+    MRPC --> MD
     MM -.->|"M6 authenticated local RPC"| MD
     LC -.->|"start / stop / health"| MD
     MD --> APP
@@ -780,6 +782,8 @@ flowchart TB
     APP -->|"validated final agreement"| MPV
     MPV -->|"durable Maker-only bundle"| SCH
     SCH -->|"same acceptance transaction"| DB
+    MRPC -->|"allowlisted read"| PG
+    MRPC -->|"request ID and expected generation"| ACT
     ACT -->|"same fenced resolution"| DB
     PG -->|"same fenced resolution"| DB
     DB -->|"expiry-independent committed replay preflight"| APP

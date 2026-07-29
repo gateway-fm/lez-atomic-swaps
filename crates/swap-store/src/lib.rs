@@ -44,9 +44,9 @@ pub use maker_actor_process::{
     MAKER_ACTOR_CONFIG_FD, MakerActorArtifacts, MakerActorAttemptResolution, MakerActorHeldLock,
     MakerActorKindV1, MakerActorLeaseOwner, MakerActorLeaseV1, MakerActorManifestV1,
     MakerActorManualAction, MakerActorManualActionCommit, MakerActorManualActionSnapshot,
-    MakerActorManualActionState, MakerActorProcessError, MakerActorProcessRecordV1,
-    MakerActorProgressObservationV1, MakerActorProgressSnapshotV1, MakerActorRegistrationCommit,
-    MakerActorScheduleState, validate_maker_actor_program,
+    MakerActorManualActionState, MakerActorMonitorSnapshotV1, MakerActorProcessError,
+    MakerActorProcessRecordV1, MakerActorProgressObservationV1, MakerActorProgressSnapshotV1,
+    MakerActorRegistrationCommit, MakerActorScheduleState, validate_maker_actor_program,
 };
 pub use maker_application::{
     LocalPriceV1, MakerConfigurationCommit, MakerConfigurationError, MakerPairConfigurationV1,

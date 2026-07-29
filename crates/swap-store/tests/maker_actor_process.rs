@@ -65,6 +65,33 @@ fn registration_is_immutable_exact_replay_and_pair_bound() {
     let replay = store.register_maker_actor(&original, 11).unwrap();
     assert!(replay.was_replay());
     assert_eq!(store.list_maker_actor_processes().unwrap().len(), 1);
+    assert_eq!(
+        store
+            .maker_actor_process(zec.id())
+            .unwrap()
+            .unwrap()
+            .manifest(),
+        &original
+    );
+    assert!(
+        store
+            .maker_actor_process(&SwapId::new("valid-absent-actor").unwrap())
+            .unwrap()
+            .is_none()
+    );
+    let monitor = store
+        .maker_actor_monitor_snapshot(zec.id())
+        .unwrap()
+        .unwrap();
+    assert_eq!(monitor.process().manifest(), &original);
+    assert!(monitor.progress().is_none());
+    assert!(monitor.manual_action().is_none());
+    assert!(
+        store
+            .maker_actor_monitor_snapshot(&SwapId::new("valid-absent-actor").unwrap())
+            .unwrap()
+            .is_none()
+    );
 
     let changed = manifest(root.path(), "zec-a", MakerActorKindV1::Zcash, 8);
     assert!(matches!(

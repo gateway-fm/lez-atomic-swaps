@@ -4,9 +4,10 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AlertAcknowledgeRequest, AlertListRequest, CreateSwapRequest, ListRequest,
-    LocalPriceSetRequest, MakerHealthV1, OfferPublishRequest, OfferWithdrawRequest,
-    OperatorAlertView, PairConfigureRequest, PriceQuoteRequest, PriceQuoteV1, RecoveryRequest,
-    StatusRequest, SwapView, call_local_rpc,
+    LocalPriceSetRequest, MakerActorActionCommitV1, MakerActorActionRequestV1,
+    MakerActorMonitorRequestV1, MakerActorMonitorV1, MakerHealthV1, OfferPublishRequest,
+    OfferWithdrawRequest, OperatorAlertView, PairConfigureRequest, PriceQuoteRequest, PriceQuoteV1,
+    RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
 };
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 use lez_swap_store::{
@@ -139,6 +140,29 @@ enum Command {
         id: String,
         #[arg(long = "alert")]
         alert_sequence: u64,
+    },
+    /// Reads one allowlisted durable Maker actor lifecycle snapshot.
+    Monitor {
+        #[arg(long)]
+        id: String,
+    },
+    /// Queues one replay-safe Zcash Maker claim action.
+    Claim {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        expected_generation: u64,
+    },
+    /// Queues one replay-safe Maker timeout-recovery action.
+    Refund {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        expected_generation: u64,
     },
 }
 
@@ -277,7 +301,57 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
             let view: SwapView = call_local_rpc(socket, "swap_alert_acknowledge", &request).await?;
             serde_json::to_value(view).map_err(Into::into)
         }
+        Command::Monitor { id } => {
+            let request = MakerActorMonitorRequestV1 { id: id.into() };
+            let view: MakerActorMonitorV1 =
+                call_local_rpc(socket, "maker_actor_monitor_v1", &request).await?;
+            serde_json::to_value(view).map_err(Into::into)
+        }
+        Command::Claim {
+            id,
+            request_id,
+            expected_generation,
+        } => {
+            maker_actor_action(
+                socket,
+                id,
+                request_id,
+                expected_generation,
+                "maker_actor_claim_v1",
+            )
+            .await
+        }
+        Command::Refund {
+            id,
+            request_id,
+            expected_generation,
+        } => {
+            maker_actor_action(
+                socket,
+                id,
+                request_id,
+                expected_generation,
+                "maker_actor_refund_v1",
+            )
+            .await
+        }
     }
+}
+
+async fn maker_actor_action(
+    socket: &Path,
+    id: String,
+    request_id: String,
+    expected_generation: u64,
+    method: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let request = MakerActorActionRequestV1 {
+        request_id: RequestId::new(request_id)?,
+        id: id.into(),
+        expected_generation,
+    };
+    let commit: MakerActorActionCommitV1 = call_local_rpc(socket, method, &request).await?;
+    serde_json::to_value(commit).map_err(Into::into)
 }
 
 async fn configure_pair(socket: &Path, command: Command) -> anyhow::Result<serde_json::Value> {

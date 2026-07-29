@@ -4791,8 +4791,9 @@ bridge-journal row. Do not repeat either internal edit. Current code makes the
 configured window an initial page and size: each validated full-page miss
 atomically reserves the next contiguous page in SQLite, and restart resumes it
 with unchanged config. Partial, ambiguous, and typed-error polls retain the same
-page. Maker and Taker application `monitor/claim/refund` commands and a supported
-pause/abandonment runner still precede daemon-supervised M5 evidence.
+page. Maker lifecycle `monitor/claim/refund` commands are now available. Taker
+lifecycle commands and a supported pause/abandonment runner still precede
+daemon-supervised actual-node M5 evidence.
 
 Start from a fresh Flow 1B local LEZ and Zebra deployment and its freshly
 provisioned role configs. To create the abandonment case, stop lifecycle driving
@@ -4884,8 +4885,122 @@ the verified local libraries and Cargo offline.
 Current limitation: the retained actual-node result is one
 intervention-assisted recovery, not a clean pushed-commit repeat or a supported
 one-command abandonment runner. The current component no longer needs window or
-journal edits, but this exact procedure still lacks application manual-action
-intents, CLI routing, and a fresh isolated daemon-supervised E2E replay.
+journal edits, and Maker manual-action intent plus CLI routing are GREEN. A
+fresh isolated daemon-supervised actual-node replay and Taker controls remain.
+
+## Flow 1J: monitor and request a Maker actor claim or refund
+
+Use this flow only for a swap already accepted by the Maker application and
+registered with its exact actor manifest. Do not create or edit scheduler rows
+by hand. Start the same owner-local daemon used by Flow 1B or Flow 1D with the
+actor supervisor enabled, then build the operator CLI:
+
+```sh
+cargo build --locked -p lez-maker-node --bins
+export MAKER_SOCKET=/absolute/owner/runtime/maker.sock
+export SWAP_ID=the-accepted-application-swap-id
+
+target/debug/lez-maker --socket "$MAKER_SOCKET" monitor --id "$SWAP_ID" \
+  | tee /tmp/maker-actor-monitor.json
+export EXPECTED_GENERATION="$(jq -er .lease_generation /tmp/maker-actor-monitor.json)"
+```
+
+The response is deliberately secret-free. Its top-level fields are
+`schema_version`, `swap_id`, `actor_kind`, `schedule_state`,
+`lease_generation`, `attempt_count`, `progress`, and `manual_action`. It must
+not contain config/program/state paths, artifact hashes, a lease-owner value,
+PID/start ticks, keys, capabilities, preimages, or raw actor output. Monitor
+reads only application SQLite and performs no actor invocation or chain RPC.
+
+Choose exactly one action justified by the signed agreement and current actor
+progress. ZEC Maker actors support both commands. BTC Maker actors support
+`refund` only; `claim` fails as an invalid request. XMR has no unified Maker
+lifecycle actor at this boundary. A claim example is:
+
+```sh
+export ACTION_REQUEST_ID=maker-claim-local-001
+target/debug/lez-maker --socket "$MAKER_SOCKET" claim \
+  --id "$SWAP_ID" \
+  --request-id "$ACTION_REQUEST_ID" \
+  --expected-generation "$EXPECTED_GENERATION" \
+  | tee /tmp/maker-actor-claim-admission.json
+```
+
+For an eligible timeout path, use a different swap and stable request ID:
+
+```sh
+export ACTION_REQUEST_ID=maker-refund-local-001
+target/debug/lez-maker --socket "$MAKER_SOCKET" refund \
+  --id "$SWAP_ID" \
+  --request-id "$ACTION_REQUEST_ID" \
+  --expected-generation "$EXPECTED_GENERATION" \
+  | tee /tmp/maker-actor-refund-admission.json
+```
+
+The command admits durable intent; it does not mean a transaction has already
+been submitted. `was_replay: false` means the request was newly committed. To
+recover from a lost response, repeat the exact same command with the same
+request ID, swap ID, action, and expected generation. The result must report
+`was_replay: true` and the original `requested_after_generation`. Never replace
+that generation with a newer monitor value for the same request ID. A changed
+payload, stale generation, or second open action returns conflict. A missing
+actor returns not found. An unsupported pair/action or ineligible scheduler
+state returns invalid request.
+
+```mermaid
+sequenceDiagram
+    actor O as Maker operator
+    participant C as Maker CLI
+    participant D as Maker daemon
+    participant DB as Application SQLite
+    participant S as Actor supervisor
+    participant A as Sealed pair actor
+
+    O->>C: monitor swap ID
+    C->>D: maker_actor_monitor_v1
+    D->>DB: read allowlisted lifecycle fields
+    DB-->>O: generation and secret-free state
+    O->>C: claim or refund with request ID and generation
+    C->>D: versioned action RPC
+    D->>DB: commit request result action and process wakeup
+    DB-->>O: durable admission
+    S->>DB: take next eligible fenced lease
+    S->>A: exact claim or recover command
+    A-->>S: bounded validated result
+    S->>DB: resolve process action and progress atomically
+    O->>C: monitor swap ID again
+    C->>D: maker_actor_monitor_v1
+    DB-->>O: current allowlisted lifecycle state
+```
+
+Action admission is atomic because the global mutation result, manual-action
+row, and process wakeup commit in one immediate transaction. Execution remains
+atomic with respect to local publication because the exact owner/generation
+lease, action resolution, process resolution, and validated progress commit
+together while the supervisor holds the per-swap kernel lock. Cross-chain
+atomicity still comes from the pair agreement, role journal, persist-before-send
+transition, canonical observation, and ordered refund/claim rules; this RPC
+creates no new signing authority.
+
+After a daemon restart, repeat `monitor`. The durable generation, progress, and
+action state must reappear. If the action is still queued, do not invent a new
+request. Let the enabled supervisor take its next eligible lease. For a local
+process-only reproduction of monitor, exact replay, conflict, missing actor, and
+restart durability, run:
+
+```sh
+cargo test --locked -p lez-maker-node --test operator_journey \
+  maker_actor_lifecycle_commands_are_read_only_replay_safe_and_restart_durable \
+  -- --exact --nocapture
+```
+
+That focused test uses temporary owner-private files, SQLite, Unix sockets, and
+local binaries only. It uses no Docker service, chain RPC, faucet, DNS, public
+network, or public funds. A real accepted actor action uses the chain endpoints
+and local deterministic funds already bound by its private config; on the Flow
+1B PoC those are the isolated LEZ v0.2 and Zebra Regtest services. Their local
+finality cadence, CPU/disk pressure, or premature shutdown can delay execution,
+but cannot change an exact admitted request into a different action.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 

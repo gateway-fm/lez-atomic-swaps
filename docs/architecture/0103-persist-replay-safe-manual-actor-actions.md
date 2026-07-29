@@ -1,6 +1,6 @@
 # ADR 0103: Persist replay-safe manual actor actions
 
-- Status: Accepted; schema and ZEC supervisor routing GREEN, RPC/CLI pending
+- Status: Accepted; schema, supervisor routing, and Maker RPC/CLI GREEN
 - Date: 2026-07-29
 - Milestone: M5
 
@@ -15,9 +15,9 @@ another lifecycle effect that the operator did not request.
 
 Retries must be exact after a lost RPC response or daemon restart. A request
 must not be inserted into a worker that is already running, and a stale worker
-must not resolve a newer request. The user-facing monitor must eventually show
-validated secret-free actor progress, but schema v17 deliberately does not
-claim that RPC or projection layer yet.
+must not resolve a newer request. The user-facing monitor shows only validated
+secret-free schema-v18 progress and the allowlisted process/action fields
+described by ADR 0104.
 
 ## Decision
 
@@ -43,6 +43,13 @@ Abandoned-process recovery can retarget a leased action only in the same
 transaction that transfers the process row, and only while holding the exact
 per-swap kernel lock.
 
+The owner-local methods are `maker_actor_claim_v1` and
+`maker_actor_refund_v1`; the CLI commands are `claim` and `refund`. Both require
+an explicit `expected_generation` obtained from `monitor`. The daemon never
+derives that value during a retry because it is part of the persisted
+idempotency payload. ZEC Maker actors admit both actions. BTC Maker actors admit
+refund only; `maker_actor_claim_v1` rejects a BTC actor before queuing work.
+
 ```mermaid
 flowchart LR
     Operator["Maker operator"] --> CLI["Maker CLI claim or refund"]
@@ -63,8 +70,8 @@ flowchart LR
 ```
 
 This schema foundation does not add a new network endpoint, chain RPC, Docker
-container, faucet, or dependency. The RPC and CLI layers
-must use the same row and must never bypass the lease or lock.
+container, faucet, or dependency. The RPC and CLI layers use the same row and
+never bypass the lease or lock.
 
 ## Enqueue and exact replay flow
 
@@ -76,7 +83,7 @@ sequenceDiagram
     participant S as Supervisor
     participant A as Role fixed actor
 
-    Owner->>RPC: claim request ID swap ID expected generation
+    Owner->>RPC: claim or refund with request ID swap ID and expected generation
     RPC->>DB: begin immediate
     alt exact request already committed
         DB-->>RPC: original admission result
@@ -152,9 +159,13 @@ The complete 11-test supervisor suite proves literal claim/recover invocation,
 same-transaction process/action completion, abandoned recovery, peer isolation,
 timeout, cancellation, bounded output, and terminal replay.
 
-This component is not yet a user flow. Remaining work is validated secret-free
-progress,
-owner-local Maker `monitor/claim/refund`, symmetric Taker actor provisioning and
-role-validated commands, process restart tests, two disjoint live swaps, and a
-fresh actual-node replay. BTC claim and the unified XMR actor remain later M5
-scope. No M5 tag is authorized by this component result.
+The black-box operator journey now runs the real daemon and Maker CLI, reads a
+generation-zero ZEC actor, queues claim, exact-replays it, rejects request-ID
+payload conflict, observes the allowlisted queued action, restarts the daemon,
+and reads the identical lifecycle view. A missing actor is reported as not
+found. It uses only temporary owner-private files, SQLite, and Unix sockets; no
+chain RPC, Docker service, faucet, DNS, public network, or public funds.
+
+Remaining work is symmetric Taker provisioning and commands, two disjoint live
+swaps, and a fresh actual-node supervisor replay. BTC manual claim and a unified
+XMR actor are not supported by this surface. No M5 tag is authorized.

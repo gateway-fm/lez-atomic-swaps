@@ -1,7 +1,6 @@
 # ADR 0007: Maker local RPC and process ownership
 
-Status: Accepted; owner-local Unix transport implemented, durable mutation
-outbox pending — 2026-07-24
+Status: Accepted; owner-local Unix transport and versioned lifecycle controls implemented — 2026-07-29
 
 ```mermaid
 flowchart LR
@@ -10,8 +9,13 @@ flowchart LR
     CoreAdapter --> Socket
     Systemd["Hardened systemd supervisor"] --> Daemon["Maker daemon"]
     Socket --> Daemon
-    Daemon --> Coordinator["Coordinator + chain adapters"]
-    Daemon --> Writer["Single SQLite writer"]
+    Daemon --> Coordinator["Coordinator and chain adapters"]
+    Daemon --> Writer["Application SQLite"]
+    Daemon --> Monitor["Allowlisted read-only monitor"]
+    Daemon --> Actions["Replay-safe claim or refund admission"]
+    Monitor --> Writer
+    Actions --> Writer
+    Actions --> Scheduler["Generation-fenced actor supervisor"]
     Runtime["Owner mode-0700 runtime directory"] --> Socket
     Ready["No-clobber socket-path readiness file"] --> Systemd
 ```
@@ -44,14 +48,16 @@ Socket and readiness cleanup capture device/inode identity and remove only the
 exact path created by that daemon. The optional readiness file is create-new,
 mode 0600, shares the runtime directory, and contains only the socket path.
 
-Before M5 freeze, the remaining control-plane work is:
+The implemented surface separates read-only `maker_health` and
+`maker_actor_monitor_v1` from idempotent configuration/offer mutations and the
+fund-moving action admissions `maker_actor_claim_v1` and
+`maker_actor_refund_v1`. Actor actions require a global request ID and explicit
+observed generation. Their durable mutation result commits before the response,
+so an exact retry returns the original admission without deriving a newer
+generation. The hardened systemd package uses the same socket and RPC module.
 
-- Version the RPC surface and classify methods as read-only, idempotent mutation,
-  or fund-moving mutation. Mutations receive request IDs and durable audit/outbox
-  records so retries cannot duplicate effects.
-- Expose health separately from the control surface and rehearse the hardened
-  systemd package under a dedicated service user.
-- On non-Unix platforms, supply an equivalent owner-restricted local transport.
+A non-Unix deployment must still provide an equivalent owner-restricted local
+transport; no TCP fallback is authorized.
 
 Tests allocate distinct temporary runtime directories and kill only the child
 process they created, so no host port or another developer's daemon can collide.
@@ -78,10 +84,12 @@ cannot strand a post-lock recovery workflow.
 runtime/socket modes, proves a wrong socket cannot reach the daemon, kills the
 daemon, restarts it with a fresh owner runtime and the same database, and reads
 the persisted swaps and alert history through the CLI. Fifteen passing tests plus one justified Docker-only ignored test in the
-full maker-node package, strict Clippy, and warning-fatal Rustdoc pass. This
-covers the UJ-007 control seam. ADR 0081 separately proves the local
-pricing adapter through the same process journey; chain actions, a taker role,
-and a complete swap remain open.
+full maker-node package, strict Clippy, and warning-fatal Rustdoc pass. This covers the UJ-007 control seam. The lifecycle journey additionally proves
+allowlisted monitoring, exact claim replay, request conflict, missing-actor
+classification, and an identical queued-action view after daemon restart. ZEC
+Maker actors admit claim/refund; BTC Maker actors admit refund only. ADR 0081
+separately proves pricing. Fresh actual-node supervisor execution, Taker
+lifecycle controls, and complete all-pair composition remain open.
 
 The prototype serializes SQLite access with a mutex on `jsonrpsee` blocking
 workers. Replace this with the dedicated persistence actor and atomic outbox

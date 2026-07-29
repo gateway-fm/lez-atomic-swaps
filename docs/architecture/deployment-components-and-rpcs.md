@@ -767,8 +767,8 @@ flowchart TB
 | systemd service | `lez-maker-daemon.service` | Dedicated `lez-swap` user; owns `/run/lez-atomic-swaps` and `/var/lib/lez-atomic-swaps`; reports active only after daemon notification; restarts after failure with a bounded storm policy |
 | Encrypted credentials | `/etc/lez-atomic-swaps/credentials/*.cred` to systemd `%d` | systemd decrypts named Delivery, claim-recovery, and preimage values into private mode-0400 runtime files; the unit never places secret bytes in arguments or environment variables |
 | ZEC Maker authority registry | `/var/lib/lez-atomic-swaps/authority/zec-maker.json` plus repeatable daemon inputs | One to 256 startup-pinned Maker configs; duplicate swap/state identities and incomplete Chat deployment fail before readiness; an accepted agreement selects only its exact application swap |
-| ZEC actor deployment | `/usr/bin/zec-reference-actor`, exact SHA-256 environment, and `/var/lib/lez-atomic-swaps/actors` | Installer carries the real actor and digest template; daemon verifies program metadata/hash and private root before sockets or SQLite; leased sealed execution remains supervisor work |
-| Maker owner RPC | `/run/lez-atomic-swaps/maker.sock` | Owner-only bounded HTTP/1 JSON-RPC over Unix transport; `maker_health` keeps schema 1 and owner/SQLite readiness while separately reporting `degraded` plus Delivery/Chat states; operator CLI runs as the service user |
+| ZEC actor deployment | `/usr/bin/zec-reference-actor`, exact SHA-256 environment, and `/var/lib/lez-atomic-swaps/actors` | Installer carries the real actor and digest template; daemon verifies program metadata/hash and private root before sockets or SQLite; the fenced supervisor executes sealed status and selected claim/recover commands |
+| Maker owner RPC | `/run/lez-atomic-swaps/maker.sock` | Owner-only bounded HTTP/1 JSON-RPC over Unix transport. `maker_health` reports readiness/dependencies; `maker_actor_monitor_v1` returns an allowlisted application-SQLite view; `maker_actor_claim_v1` and `maker_actor_refund_v1` durably admit explicit generation-fenced actions. The operator CLI runs as the service user |
 | Taker Chat RPC | `/run/lez-atomic-swaps/chat.sock` | Separate owner-only Unix listener with the isolated negotiation method set; no owner-control method crossover |
 | Maker database | `/var/lib/lez-atomic-swaps/maker.sqlite3` | SQLite transactions and effect journals remain protocol authority; a sibling owner-only `.lock` admits one process writer for its whole lifetime |
 | Delivery adapter | `/var/lib/lez-atomic-swaps/delivery` | Signed pre-lock discovery and winning-request retry projection; durable commit precedes visible projection failure; exact request replay repairs without duplication; it is not chain truth and may disappear after the first lock |
@@ -789,8 +789,13 @@ sequenceDiagram
     D->>DB: Open migrate and reconcile
     D->>U: Bind socket and readiness file
     D-->>S: READY after maker_health can succeed
-    U->>D: Configure inspect or recover
-    D->>R: Pair-specific bounded chain calls
+    U->>D: Monitor actor by swap ID
+    D->>DB: Read allowlisted process action and progress fields
+    DB-->>U: Secret-free lifecycle view
+    U->>D: Claim or refund with request ID and expected generation
+    D->>DB: Commit exact replay-safe action admission
+    D-->>U: Durable admission or classified error
+    D->>R: Supervisor performs only the selected pair action
     S->>D: SIGTERM
     D-->>S: STOPPING then drain and exit
     D->>L: Release lease
@@ -815,7 +820,7 @@ flowchart TB
     subgraph App[Owner-local application plane]
         MakerCli[Maker CLI]
         Daemon[Maker daemon]
-        Store[SQLite schema v16]
+        Store[SQLite schema v18]
         TerminalView[Display-only terminal projection]
         TerminalDaemon[Fresh owner-only daemon]
         PriceWorker[Bounded price worker]
@@ -825,9 +830,15 @@ flowchart TB
         Finalizer[Agreement-to-actor finalizer]
         Provisioner[Daemon Maker-only provisioner]
         Scheduler[Atomic actor scheduler and fenced leases]
-        Supervisor[Bounded sealed-FD supervisor pending]
-        MakerCli -->|owner Unix RPC| Daemon
+        Actions[Replay-safe manual actions]
+        Progress[Allowlisted secret-free progress]
+        Supervisor[Bounded sealed-FD supervisor GREEN]
+        MakerCli -->|monitor claim or refund| Daemon
         Daemon --> Store
+        Daemon --> Actions
+        Daemon --> Progress
+        Actions --> Scheduler
+        Supervisor --> Progress
         Daemon --> Delivery
         Delivery --> TakerCli
         TakerCli -->|Chat Unix RPC| Daemon
@@ -836,8 +847,8 @@ flowchart TB
         Daemon -->|validated final wire and pinned template| Provisioner
         Provisioner -->|durable no-clobber Maker bundle| Scheduler
         Scheduler -->|same acceptance transaction| Store
-        Scheduler -.->|lease plus FDs 196 197 198| Supervisor
-        Supervisor -.-> MakerActor
+        Scheduler -->|lease plus FDs 196 197 198| Supervisor
+        Supervisor --> MakerActor
         TakerCli --> Finalizer
         TerminalDaemon -->|offline import before ready| TerminalView
         TerminalView --> Store
@@ -895,9 +906,9 @@ window prefix, and both role actors reached `Refunded` revision 2 with zero
 custody. The original window aged out and that historical run required unsupported
 actor-window and bridge-journal intervention. Current role-local journals now
 automatically advance only fully covered contiguous pages and restore the active
-page after restart with unchanged actor config. The checkpoint still uses the
-role binaries directly; the dashed supervisor edge remains accurate until the
-daemon and application CLIs drive a fresh recovery without intervention.
+page after restart with unchanged actor config. The historical checkpoint still uses the role binaries directly. The supervisor
+and Maker lifecycle controls are component-GREEN, but a fresh application-driven
+actual-node recovery without intervention remains required.
 
 ```mermaid
 sequenceDiagram

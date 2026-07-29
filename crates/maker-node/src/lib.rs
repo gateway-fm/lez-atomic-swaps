@@ -41,12 +41,14 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     AlertObservedEvent, EventCommit, LocalPriceV1, MakerActorKindV1, MakerActorManifestV1,
-    MakerConfigurationCommit, MakerOfferCommit, MakerOfferId, MakerOfferPublicationPreflight,
-    MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerPairConfigurationV1,
-    MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind,
-    OperatorAlertRecordV1, OperatorAlertSeverity, OperatorTerminalProjectionCommit,
-    SqliteSwapStore, SqliteZecRecoveryStore, StoreError, VersionedMakerRecord,
-    maker_zec_chat_session_id, validate_maker_actor_program,
+    MakerActorManualAction, MakerActorManualActionState, MakerActorProcessError,
+    MakerActorProgressObservationV1, MakerActorScheduleState, MakerConfigurationCommit,
+    MakerOfferCommit, MakerOfferId, MakerOfferPublicationPreflight, MakerOfferRecordV1,
+    MakerOfferStatus, MakerOfferV1, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
+    MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
+    OperatorAlertSeverity, OperatorTerminalProjectionCommit, SqliteSwapStore,
+    SqliteZecRecoveryStore, StoreError, VersionedMakerRecord, maker_zec_chat_session_id,
+    validate_maker_actor_program,
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ProtectedClaimKey,
@@ -850,6 +852,135 @@ pub enum RecoveryRequest {
     },
 }
 
+/// Parameters for reading one secret-free Maker actor lifecycle snapshot.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MakerActorMonitorRequestV1 {
+    /// Stable application swap identity.
+    pub id: Box<str>,
+}
+
+/// Parameters for one explicit, generation-fenced Maker actor action.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MakerActorActionRequestV1 {
+    /// Stable idempotency identity for exact request replay.
+    pub request_id: RequestId,
+    /// Stable application swap identity.
+    pub id: Box<str>,
+    /// Actor generation observed by the operator before requesting the action.
+    pub expected_generation: u64,
+}
+
+/// Allowlisted pair-actor kind exposed to the owner CLI.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MakerActorKindViewV1 {
+    /// Bitcoin reference actor.
+    Bitcoin,
+    /// Zcash reference actor.
+    Zcash,
+}
+
+impl From<MakerActorKindV1> for MakerActorKindViewV1 {
+    fn from(kind: MakerActorKindV1) -> Self {
+        match kind {
+            MakerActorKindV1::Bitcoin => Self::Bitcoin,
+            MakerActorKindV1::Zcash => Self::Zcash,
+        }
+    }
+}
+
+/// Allowlisted process-scheduler state exposed to the owner CLI.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MakerActorScheduleStateViewV1 {
+    /// Ready for a worker attempt.
+    Queued,
+    /// Owned by one generation-fenced worker.
+    Leased,
+    /// Waiting for a bounded retry.
+    Backoff,
+    /// Actor reported an absorbing protocol outcome.
+    Terminal,
+    /// Operator attention is required.
+    Failed,
+}
+
+impl From<MakerActorScheduleState> for MakerActorScheduleStateViewV1 {
+    fn from(state: MakerActorScheduleState) -> Self {
+        match state {
+            MakerActorScheduleState::Queued => Self::Queued,
+            MakerActorScheduleState::Leased => Self::Leased,
+            MakerActorScheduleState::Backoff => Self::Backoff,
+            MakerActorScheduleState::Terminal => Self::Terminal,
+            MakerActorScheduleState::Failed => Self::Failed,
+        }
+    }
+}
+
+/// Allowlisted validated actor progress exposed to the owner CLI.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MakerActorProgressViewV1 {
+    /// Exact process generation that produced the observation.
+    pub source_generation: u64,
+    /// Pair-specific, schema-validated lifecycle observation.
+    pub observation: MakerActorProgressObservationV1,
+    /// Trusted application timestamp of the projection.
+    pub observed_at: u64,
+}
+
+/// Allowlisted latest owner action exposed to the owner CLI.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MakerActorManualActionViewV1 {
+    /// Stable idempotency identity.
+    pub request_id: RequestId,
+    /// Explicit claim or refund action.
+    pub action: MakerActorManualAction,
+    /// Current durable request state.
+    pub state: MakerActorManualActionState,
+    /// Actor generation against which the request was admitted.
+    pub requested_after_generation: u64,
+    /// Exact execution generation while leased.
+    pub lease_generation: Option<u64>,
+}
+
+/// Secret-free, explicitly allowlisted Maker actor lifecycle response.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MakerActorMonitorV1 {
+    /// Response schema version; currently one.
+    pub schema_version: u16,
+    /// Stable application swap identity.
+    pub swap_id: Box<str>,
+    /// Pair actor implementation.
+    pub actor_kind: MakerActorKindViewV1,
+    /// Durable process-scheduler state.
+    pub schedule_state: MakerActorScheduleStateViewV1,
+    /// Current actor generation fence.
+    pub lease_generation: u64,
+    /// Number of bounded worker attempts.
+    pub attempt_count: u64,
+    /// Latest validated actor lifecycle projection, when available.
+    pub progress: Option<MakerActorProgressViewV1>,
+    /// Latest explicit owner action, when available.
+    pub manual_action: Option<MakerActorManualActionViewV1>,
+}
+
+/// Durable admission result for one explicit Maker actor action.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MakerActorActionCommitV1 {
+    /// Response schema version; currently one.
+    pub schema_version: u16,
+    /// Stable application swap identity.
+    pub swap_id: Box<str>,
+    /// Explicit claim or refund action.
+    pub action: MakerActorManualAction,
+    /// Generation against which the original request was admitted.
+    pub requested_after_generation: u64,
+    /// Whether this exact request and payload were already durable.
+    pub was_replay: bool,
+}
+
 /// Parameters for reading one swap.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct StatusRequest {
@@ -987,6 +1118,7 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
     register_health_method(module)?;
     register_pair_and_price_methods(module)?;
     register_offer_methods(module)?;
+    register_maker_actor_methods(module)?;
     module.register_blocking_method::<RpcResult<Vec<SwapView>>, _>(
         "swap_history",
         |params, context, _| {
@@ -1011,6 +1143,123 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
     Ok(())
 }
 
+fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<MakerActorMonitorV1>, _>(
+        "maker_actor_monitor_v1",
+        |params, context, _| {
+            let request: MakerActorMonitorRequestV1 = params.one()?;
+            let id = SwapId::new(request.id).map_err(invalid_request)?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            let snapshot = store
+                .maker_actor_monitor_snapshot(&id)
+                .map_err(maker_actor_process_error)?
+                .ok_or_else(|| rpc_error(NOT_FOUND, "maker actor not found"))?;
+            let progress = snapshot
+                .progress()
+                .map(|snapshot| MakerActorProgressViewV1 {
+                    source_generation: snapshot.source_generation(),
+                    observation: snapshot.observation().clone(),
+                    observed_at: snapshot.observed_at(),
+                });
+            let manual_action =
+                snapshot
+                    .manual_action()
+                    .map(|snapshot| MakerActorManualActionViewV1 {
+                        request_id: snapshot.request_id().clone(),
+                        action: snapshot.action(),
+                        state: snapshot.state(),
+                        requested_after_generation: snapshot.requested_after_generation(),
+                        lease_generation: snapshot.lease_generation(),
+                    });
+            let record = snapshot.process();
+            Ok(MakerActorMonitorV1 {
+                schema_version: 1,
+                swap_id: record.swap_id().as_str().into(),
+                actor_kind: record.manifest().kind().into(),
+                schedule_state: record.schedule_state().into(),
+                lease_generation: record.lease_generation(),
+                attempt_count: record.attempt_count(),
+                progress,
+                manual_action,
+            })
+        },
+    )?;
+    register_maker_actor_action_method(
+        module,
+        "maker_actor_claim_v1",
+        MakerActorManualAction::Claim,
+    )?;
+    register_maker_actor_action_method(
+        module,
+        "maker_actor_refund_v1",
+        MakerActorManualAction::Refund,
+    )?;
+    Ok(())
+}
+
+fn register_maker_actor_action_method(
+    module: &mut RpcModule<MakerRpc>,
+    method: &'static str,
+    action: MakerActorManualAction,
+) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<MakerActorActionCommitV1>, _>(
+        method,
+        move |params, context, _| {
+            let request: MakerActorActionRequestV1 = params.one()?;
+            let id = SwapId::new(request.id).map_err(invalid_request)?;
+            let now = trusted_now_unix_seconds()?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            let record = store
+                .maker_actor_process(&id)
+                .map_err(maker_actor_process_error)?
+                .ok_or_else(|| rpc_error(NOT_FOUND, "maker actor not found"))?;
+            if action == MakerActorManualAction::Claim
+                && record.manifest().kind() == MakerActorKindV1::Bitcoin
+            {
+                return Err(invalid_request(
+                    "Bitcoin Maker actors do not expose a manual claim action",
+                ));
+            }
+            let commit = store
+                .queue_maker_actor_manual_action(
+                    &request.request_id,
+                    &id,
+                    action,
+                    request.expected_generation,
+                    now,
+                )
+                .map_err(maker_actor_process_error)?;
+            Ok(MakerActorActionCommitV1 {
+                schema_version: 1,
+                swap_id: id.as_str().into(),
+                action,
+                requested_after_generation: commit.requested_after_generation(),
+                was_replay: commit.was_replay(),
+            })
+        },
+    )?;
+    Ok(())
+}
+
+fn maker_actor_process_error(error: MakerActorProcessError) -> ErrorObjectOwned {
+    match error {
+        MakerActorProcessError::ManualActionRequestConflict
+        | MakerActorProcessError::ManualActionGenerationConflict
+        | MakerActorProcessError::ManualActionPending => rpc_error(CONFLICT, error.to_string()),
+        MakerActorProcessError::ManualActionUnavailable
+        | MakerActorProcessError::InvalidManifest
+        | MakerActorProcessError::PairMismatch
+        | MakerActorProcessError::InvalidSchedulingInput => invalid_request(error),
+        MakerActorProcessError::MissingSwap => rpc_error(NOT_FOUND, error.to_string()),
+        other => internal_store_error(other),
+    }
+}
 fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<MakerHealthV1>, _>(
         "maker_health",

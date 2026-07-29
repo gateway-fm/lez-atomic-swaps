@@ -836,6 +836,34 @@ impl MakerActorProgressSnapshotV1 {
     }
 }
 
+/// One transactionally consistent, secret-free scheduler projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MakerActorMonitorSnapshotV1 {
+    process: MakerActorProcessRecordV1,
+    progress: Option<MakerActorProgressSnapshotV1>,
+    manual_action: Option<MakerActorManualActionSnapshot>,
+}
+
+impl MakerActorMonitorSnapshotV1 {
+    /// Exact durable scheduler record observed in this read transaction.
+    #[must_use]
+    pub const fn process(&self) -> &MakerActorProcessRecordV1 {
+        &self.process
+    }
+
+    /// Latest validated actor progress from the same read transaction.
+    #[must_use]
+    pub const fn progress(&self) -> Option<&MakerActorProgressSnapshotV1> {
+        self.progress.as_ref()
+    }
+
+    /// Latest owner action from the same read transaction.
+    #[must_use]
+    pub const fn manual_action(&self) -> Option<&MakerActorManualActionSnapshot> {
+        self.manual_action.as_ref()
+    }
+}
+
 #[derive(Serialize)]
 struct StoredManualActionRequest<'a> {
     swap_id: &'a SwapId,
@@ -1563,6 +1591,55 @@ impl SqliteSwapStore {
             owner: new_owner,
             generation,
         })
+    }
+
+    /// Returns one exact secret-free scheduler record by application swap ID.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a durable row is unavailable, malformed, or unsupported.
+    pub fn maker_actor_process(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<MakerActorProcessRecordV1>, MakerActorProcessError> {
+        load_record(&self.connection, swap_id)
+    }
+
+    /// Reads process, progress, and latest action from one consistent `SQLite` snapshot.
+    ///
+    /// This read never opens an actor-private database or contacts a chain RPC.
+    ///
+    /// # Errors
+    ///
+    /// Fails when any durable row is malformed or the snapshot cannot be committed.
+    pub fn maker_actor_monitor_snapshot(
+        &mut self,
+        swap_id: &SwapId,
+    ) -> Result<Option<MakerActorMonitorSnapshotV1>, MakerActorProcessError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let Some(process) = load_record(&transaction, swap_id)? else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+        let progress = load_actor_progress(&transaction, swap_id)?;
+        let manual_action = load_latest_manual_action(&transaction, swap_id)?;
+        if progress
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.actor_kind() != process.manifest().kind())
+            || manual_action
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.swap_id() != process.swap_id())
+        {
+            return Err(MakerActorProcessError::CorruptRecord);
+        }
+        transaction.commit()?;
+        Ok(Some(MakerActorMonitorSnapshotV1 {
+            process,
+            progress,
+            manual_action,
+        }))
     }
 
     /// Lists every process record in stable swap-ID order.
