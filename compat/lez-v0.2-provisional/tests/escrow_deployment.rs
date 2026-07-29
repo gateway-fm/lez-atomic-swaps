@@ -63,6 +63,11 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
             "refund_token",
             "initialize_token_witnessed",
             "claim_token_witnessed",
+            "initialize_native_xmr",
+            "authorize_native_xmr_claim",
+            "claim_native_xmr",
+            "refund_native_xmr",
+            "punish_native_xmr",
         ]
     );
 
