@@ -3806,6 +3806,11 @@ Shared containerd timeouts add wall-clock uncertainty but are not counted as
 implementation time and will not be worked around by restarting a daemon that
 owns unrelated stacks.
 
+The BTC actual-node splice has entered contract-first implementation. Its fixed
+wrapper permits only the native sequential claim journey and records the exact
+Delivery-to-actor order plus isolated Core/LEZ resource boundary. The RED was an
+absent wrapper; the GREEN contract, Bash syntax, and CI invocation now pass.
+
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 tests the lifecycle contract against
 the same daemon binary and records the missing upstream integration in the

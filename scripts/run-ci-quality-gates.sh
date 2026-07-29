@@ -75,6 +75,7 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m3-private-demo-video-contract.sh
 ./scripts/check-m3-cryptographic-vectors.sh
 ./scripts/test-m5-application-contract.sh
+./scripts/test-m5-btc-application-contract.sh
 ./scripts/test-m5-coordinator-fuzz-contract.sh
 ./scripts/test-m5-service-lifecycle-contract.sh
 ./scripts/test-bitcoin-testnet4-route-contract.sh
