@@ -12,6 +12,11 @@ readonly pda_probe_secret_digest="2222222222222222222222222222222222222222222222
 # reconstruction budget without turning one bridge request into a retry.
 readonly actor_lez_bridge_request_timeout_millis=120000
 readonly asset_mode="${M3_POC_ASSET_MODE:-native}"
+readonly m5_btc_application_mode="${M5_BTC_APPLICATION_MODE:-0}"
+if [[ "$m5_btc_application_mode" != 0 && "$m5_btc_application_mode" != 1 ]]; then
+  echo 'M5_BTC_APPLICATION_MODE must be 0 or 1' >&2
+  exit 2
+fi
 direction_timing_execution_mode=""
 direction_timing_dir=""
 direction_timing_journal=""
@@ -30,10 +35,21 @@ fail() {
 
 emit_contract() {
   jq -n --arg asset_mode "$asset_mode" \
+    --arg m5_btc_application_mode "$m5_btc_application_mode" \
     --argjson bridge_timeout "$actor_lez_bridge_request_timeout_millis" '
     {
       schema_version: 1,
       kind: "m3_actor_direction_driver_contract",
+      m5_btc_application_mode: ($m5_btc_application_mode == "1"),
+      stage_two_swap_id_source:
+        (if $m5_btc_application_mode == "1" then
+           "authenticated_delivery_reservation"
+         else "fresh_local_random" end),
+      application_route:
+        (if $m5_btc_application_mode == "1" then {
+          pair:"bitcoin", direction:"taker_sells_foreign",
+          asset_mode:"native", journey:"claim"
+        } else null end),
       runtime_backend: "repository_owned_actual_node_implementation",
       stage_two_spec_uses_actual_node_facts: true,
       fresh_actor_process_per_command: true,
@@ -292,6 +308,18 @@ require_environment() {
     fail "M3_POC_ASSET_MODE must be native or custom_token"
   [[ "$asset_mode" != "custom_token" || "$M3_POC_JOURNEY" == "claim" ]] ||
     fail "custom_token currently requires the claim journey"
+  if [[ "$m5_btc_application_mode" == 1 ]]; then
+    [[ "$asset_mode" == native && "$M3_POC_DIRECTION" == taker_sells_foreign &&
+       "$M3_POC_JOURNEY" == claim ]] ||
+      fail "M5 BTC application runtime requires native taker_sells_foreign claim"
+    value="${M3_POC_SWAP_ID:-}"
+    [[ -n "$value" ]] ||
+      fail "required M5 BTC environment is missing: M3_POC_SWAP_ID"
+    [[ "$value" =~ ^[0-9a-f]{64}$ ]] ||
+      fail "M3_POC_SWAP_ID must be a canonical 32-byte lowercase hex value"
+  elif [[ -n "${M3_POC_SWAP_ID:-}" ]]; then
+    fail "M3_POC_SWAP_ID is reserved for M5 BTC application mode"
+  fi
   if [[ "$asset_mode" == "custom_token" ]]; then
     for variable in M3_POC_LEZ_ACCOUNT_CODEC_BIN M3_POC_F7_FIXTURE_ROOT \
       M3_POC_F7_FIXTURE_EVIDENCE M3_POC_F7_FIXTURE_PRIVATE_DIR \
@@ -1019,7 +1047,11 @@ prepare_stage_two_spec() {
     taker_sells_lez) refund_seconds="$later" ;;
   esac
   refund_at_ms=$((refund_seconds * 1000))
-  swap_id="$(openssl rand -hex 32)"
+  if [[ "$m5_btc_application_mode" == 1 ]]; then
+    swap_id="$M3_POC_SWAP_ID"
+  else
+    swap_id="$(openssl rand -hex 32)"
+  fi
   terms_file="${M3_POC_DIRECTION_ROOT}/planning-terms.json"
   jq -n --arg swap "$swap_id" --arg terms "$initial_terms_hash" \
     --arg depositor "$depositor" --arg claimant "$claimant" \

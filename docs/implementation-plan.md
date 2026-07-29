@@ -3810,6 +3810,11 @@ The BTC actual-node splice has entered contract-first implementation. Its fixed
 wrapper permits only the native sequential claim journey and records the exact
 Delivery-to-actor order plus isolated Core/LEZ resource boundary. The RED was an
 absent wrapper; the GREEN contract, Bash syntax, and CI invocation now pass.
+The outer runner now restricts this opt-in to the single supported forward route
+without changing the legacy two-direction contract. The direction driver accepts
+only a canonical 32-byte Delivery-derived swap ID in application mode and uses it
+as stage-two identity; random identity remains the non-application behavior. The
+next RED supplies that ID from the real Delivery-only daemon and Taker planner.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 tests the lifecycle contract against

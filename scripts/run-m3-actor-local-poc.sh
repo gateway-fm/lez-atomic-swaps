@@ -7,6 +7,11 @@ export LC_ALL=C
 umask 077
 
 readonly mode="${M3_ACTOR_POC_MODE:-execute}"
+readonly m5_btc_application_mode="${M5_BTC_APPLICATION_MODE:-0}"
+if [[ "$m5_btc_application_mode" != 0 && "$m5_btc_application_mode" != 1 ]]; then
+  echo 'M5_BTC_APPLICATION_MODE must be 0 or 1' >&2
+  exit 2
+fi
 asset_mode="${M3_ACTOR_POC_ASSET_MODE:-native}"
 if [[ "$asset_mode" != "native" && "$asset_mode" != "custom_token" ]]; then
   echo "M3_ACTOR_POC_ASSET_MODE must be native or custom_token" >&2
@@ -43,6 +48,18 @@ if [[ "$asset_mode" == "custom_token" && "$journey" != "claim" ]]; then
 fi
 if [[ "$asset_mode" == "custom_token" && "$schedule" != "sequential" ]]; then
   echo "M3_ACTOR_POC_ASSET_MODE=custom_token currently requires the sequential schedule" >&2
+  exit 2
+fi
+if [[ "$m5_btc_application_mode" == 1 && "$asset_mode" != native ]]; then
+  echo 'M5_BTC_APPLICATION_MODE=1 requires M3_ACTOR_POC_ASSET_MODE=native' >&2
+  exit 2
+fi
+if [[ "$m5_btc_application_mode" == 1 && "$schedule" != sequential ]]; then
+  echo 'M5_BTC_APPLICATION_MODE=1 requires M3_ACTOR_POC_SCHEDULE=sequential' >&2
+  exit 2
+fi
+if [[ "$m5_btc_application_mode" == 1 && "$journey" != claim ]]; then
+  echo 'M5_BTC_APPLICATION_MODE=1 requires M3_ACTOR_POC_JOURNEY=claim' >&2
   exit 2
 fi
 case "$journey" in
@@ -146,7 +163,11 @@ readonly expected_lez_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61
 readonly expected_lez_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
 readonly lez_token_program_id="c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c"
 readonly lez_ata_program_id="95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
-readonly -a directions=(taker_sells_foreign taker_sells_lez)
+if [[ "$m5_btc_application_mode" == 1 ]]; then
+  readonly -a directions=(taker_sells_foreign)
+else
+  readonly -a directions=(taker_sells_foreign taker_sells_lez)
+fi
 declare -A overlap_pids=()
 declare -A overlap_logs=()
 phase_timing_now_ms=0
@@ -171,6 +192,7 @@ emit_contract() {
     --arg journey "$journey" \
     --arg schedule "$schedule" \
     --arg asset_mode "$asset_mode" \
+    --arg m5_btc_application_mode "$m5_btc_application_mode" \
     --arg token_program_id "$lez_token_program_id" \
     --arg ata_program_id "$lez_ata_program_id" \
     --argjson terminal_revision "$terminal_revision" \
@@ -182,6 +204,7 @@ emit_contract() {
       schema_version: 1,
       kind: "m3_actor_local_poc_contract",
       execution_performed: false,
+      m5_btc_application_mode: ($m5_btc_application_mode == "1"),
       asset_mode: $asset_mode,
       journey: $journey,
       schedule: $schedule,
@@ -195,7 +218,17 @@ emit_contract() {
       service_configuration: {
         lez_v0_2: {slot_duration_seconds: $lez_slot_duration_seconds}
       },
-      directions: ["taker_sells_foreign", "taker_sells_lez"],
+      directions:
+        (if $m5_btc_application_mode == "1" then
+           ["taker_sells_foreign"]
+         else ["taker_sells_foreign", "taker_sells_lez"] end),
+      application_route:
+        (if $m5_btc_application_mode == "1" then {
+          pair:"bitcoin", direction:"taker_sells_foreign",
+          delivery_before_stage_two:true, authenticated_swap_id:true,
+          real_maker_cli:true, real_taker_cli:true,
+          schema_6_role_provisioning:true
+        } else null end),
       process_model: {
         actor: "fresh_process_for_every_command_and_revision",
         roles: ["maker", "taker"],
