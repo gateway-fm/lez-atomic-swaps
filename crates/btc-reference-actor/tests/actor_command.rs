@@ -671,6 +671,7 @@ fn maker_and_taker_activate_only_with_their_role_bound_runtime() {
         );
         assert_eq!(activated["role"], expected);
         assert_eq!(activated["revision"], 0);
+        assert_eq!(activated["next_action"], "observe_taker_first_lock");
     }
 }
 

@@ -12,7 +12,7 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ### M5 active progressive application PoC
 
 M5 is active. The owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v17
+Unix-socket daemon, maker CLI, durable schema-v18
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
@@ -51,16 +51,20 @@ an action only under the exact process lease and kernel lock, routes claim only
 to `claim` and refund only to `recover`, and atomically completes the process
 and action rows. Command-specific outcome and absorbing-phase allowlists reject
 cross-action output. The actor boundary is 34 of 34 GREEN and the supervisor
-integration suite is 11 of 11 GREEN. The durable rows are not yet exposed as a
+integration suite is 12 of 12 GREEN. The durable rows are not yet exposed as a
 Maker or Taker user command, and no fresh actual-node run uses this supervisor
 path yet, so this component does not complete M5.
-Schema v18 now adds the read-only progress foundation without creating a second
-actor reader or worker. The exact resolution transaction also commits one
-bounded secret-free phase/revision/next-action observation, while stale or
-forged leases roll back process, action, and progress together. ADR
+Schema v18 now carries that authority into a read-only progress projection
+without creating a second actor reader or worker. The strict supervisor parses
+the actual pair-specific BTC and ZEC status/effect vocabularies, accepts their
+real revision-zero activation state, enforces terminal phase/action/outcome
+coherence, and commits validated progress in the same fenced transaction as
+process and optional action resolution. A rejected effect preserves only the
+last validated status. BTC effect output now obtains `next_action` from the
+same actor-local derivation used by offline status. ADR
 [0104](docs/architecture/0104-commit-actor-progress-with-fenced-resolution.md)
-records the component and sequence diagrams. Supervisor projection and the
-Maker monitor/action RPC and CLI remain the next slice.
+records the updated component and sequence diagrams. Maker monitor/action RPC
+and CLI are the next slice; the durable rows are still not user-facing.
 
 
 Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
@@ -90,8 +94,8 @@ partial/ambiguous/typed-error polls on the exact page, and restores the active
 page despite unchanged actor config. Both owner and counterparty paths pass a
 RED-GREEN reopen test, but the retained actual-node evidence remains
 intervention-assisted until a fresh daemon/CLI replay. M5 is not complete;
-manual actions, concurrent supervision, and BTC/XMR application lifecycles
-remain. Clean sidecar builds
+user-facing lifecycle commands, concurrent supervision, and BTC/XMR application
+lifecycles remain. Clean sidecar builds
 should set the documented
 absolute `RAPIDSNARK_LIB_DIR` only after verifying the four pinned v0.0.8
 library hashes and should use Cargo offline rather than the upstream download

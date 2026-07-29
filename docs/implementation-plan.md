@@ -3578,28 +3578,39 @@ separately from runtime dependencies.
   backward-compatible M2/M3 runners. The supervisor attaches an action only
   after acquiring the exact per-swap kernel lock, validates status first,
   selects claim to `claim` and refund to `recover`, and uses command-specific
-  outcome and absorbing-phase allowlists. Eleven supervisor tests prove atomic
+  outcome and absorbing-phase allowlists. Twelve supervisor tests prove atomic
   action/process completion plus existing crash, cancellation, timeout, peer,
   and terminal invariants; 34 actor-boundary and eight actor unit tests are
   GREEN. No dependency, endpoint, container, RPC, faucet, or public resource
   was added.
 
-  The schema-v18 progress foundation is now GREEN. One bounded secret-free
-  observation per actor stores only kind, source generation, observation time,
-  and either `not_activated` or validated phase/revision/next-action fields.
-  The new resolution API updates process state, any attached action, and
-  monotonic progress in one immediate transaction under the existing exact
-  lease. Focused tests prove invalid-label rejection, completion, reopen,
-  actor-kind binding, and stale-owner rollback; the complete store suite,
-  strict Clippy, and warning-free Rustdoc pass. ADR 0104 records component,
-  sequence, and atomicity diagrams.
+  The schema-v18 actor progress path is now GREEN end to end. One bounded
+  secret-free observation per actor stores only kind, source generation,
+  observation time, and either `not_activated` or validated
+  phase/revision/next-action fields. Active revision zero is valid because both
+  real actors use it immediately after activation. The supervisor accepts only
+  the actual pair-specific phase and next-action vocabularies, enforces
+  phase/action/outcome terminal coherence, and replaces status progress only
+  with a validated effect. If an effect exits, times out, or is rejected, the
+  last validated status remains the committed observation. Process, attached
+  action, and progress resolve in one immediate transaction under the exact
+  owner/generation fence.
 
-  The next RED-GREEN slice makes strict supervisor parsing write schema-v18
-  progress and exposes owner-local Maker `monitor/claim/refund`, then adds
-  symmetric role-validated Taker provisioning and commands. Process restart
-  and two disjoint live swaps must then pass.
-  BTC claim execution and a unified XMR lifecycle actor still precede honest
-  all-pair CLI composition. This progress does not by itself make M5 complete.
+  BTC effect output now exposes the actor-derived next action through the same
+  function as offline status. Focused tests prove revision-zero activation, ZEC
+  claim/refund completion, BTC completed claim and refund across both roles and
+  directions, terminal status without an effect, invalid or regressing-effect status
+  preservation, cross-pair rejection, reopen, actor-kind binding, and stale
+  rollback. ADR 0104 records the updated component, sequence, and atomicity
+  diagrams. No dependency or runtime resource was added.
+
+  The next RED-GREEN slice exposes owner-local Maker `monitor/claim/refund`;
+  requests retain an explicit expected generation so exact idempotent replay
+  cannot drift after the process advances. Symmetric role-validated Taker
+  provisioning and commands follow. Process restart and two disjoint live swaps
+  must then pass. BTC claim execution and a unified XMR lifecycle actor still
+  precede honest all-pair CLI composition. This progress does not by itself make
+  M5 complete.
 
   The requested 2026-07-29 cleanup removed both rebuildable Cargo targets and
   obsolete project tool/build caches, increasing actual free disk by about 21
@@ -3626,7 +3637,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 12 to 23 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 10 to 19 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordinator composition hardening, and post-PoC hardening remain explicitly
 open above.

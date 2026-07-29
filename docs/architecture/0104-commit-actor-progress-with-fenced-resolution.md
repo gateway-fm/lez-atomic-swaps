@@ -1,6 +1,6 @@
 # ADR 0104: Commit actor progress with fenced resolution
 
-- Status: Accepted foundation; supervisor projection and RPC/CLI pending
+- Status: Accepted; store and strict supervisor projection GREEN, RPC/CLI pending
 - Date: 2026-07-29
 - Milestone: M5
 
@@ -12,7 +12,9 @@ already resolves each worker through an owner-and-generation lease while
 holding the per-swap kernel lock. Progress must share that authority or a stale
 worker could publish an observation after a replacement generation took over.
 
-The projection must remain secret-free. Private paths, artifact hashes, lease
+The projection must remain secret-free. Both pair actors legitimately begin active life at
+revision zero, so `not_activated` versus `active` is the lifecycle discriminator;
+revision zero cannot be rejected as absence. Private paths, artifact hashes, lease
 owners, child identities, keys, capabilities, preimages, and raw child output
 do not belong in the operator view.
 
@@ -21,8 +23,15 @@ do not belong in the operator view.
 Schema v18 adds one `maker_actor_progress` row per registered actor. It stores
 only the swap ID, actor kind, source generation, trusted observation time, and
 a versioned bounded observation. An observation is either `not_activated` or an
-active lowercase snake-case phase, nonzero revision, and lowercase snake-case
+active lowercase snake-case phase, actor-owned revision, and lowercase snake-case
 next action. Each public label is limited to 64 bytes.
+
+The supervisor accepts only the phase and next-action vocabularies emitted by the
+actual ZEC and BTC actor schemas. It validates terminal phase/next-action
+coherence and pair-specific terminal outcomes before publication. ZEC effect
+outputs already carry `next_action`; BTC effect output now reuses the same
+actor-owned derivation as offline status, preventing the supervisor from
+reimplementing protocol state.
 
 Progress is written only by `resolve_maker_actor_attempt_with_progress`. The
 method first proves the exact leased process owner and generation, resolves any
@@ -33,7 +42,7 @@ and revalidates the stored payload before returning it.
 
 ```mermaid
 flowchart LR
-    Child["Sealed role-fixed actor"] --> Parser["Bounded status parser"]
+    Child["Sealed BTC or ZEC actor"] --> Parser["Strict pair-specific status and effect parser"]
     Parser --> Worker["Supervisor holding kernel lock"]
     Worker --> Lease["Exact owner and generation lease"]
     Lease --> Tx["Immediate SQLite transaction"]
@@ -52,8 +61,15 @@ sequenceDiagram
     participant DB as Application SQLite
     actor O as Owner monitor
 
-    A-->>S: bounded secret-free observation
-    S->>S: validate schema role phase revision next action
+    A-->>S: bounded secret-free status
+    S->>S: validate schema role pair vocabulary and terminal coherence
+    alt effect is required and valid
+        S->>A: exact activate drive claim or recover command
+        A-->>S: bounded secret-free effect
+        S->>S: replace status progress with validated effect progress
+    else effect fails or is rejected
+        S->>S: retain the last validated status progress
+    end
     S->>DB: begin immediate with exact lease
     DB->>DB: compare owner and generation
     alt exact lease
@@ -87,16 +103,34 @@ row grants no signing or submission capability.
 
 ## Evidence and remaining work
 
-The RED failed on the absent progress type, read API, and atomic resolution
-method. Two new GREEN cases prove bounded-label rejection, process/action/
-progress completion in one call, SQLite reopen, exact actor-kind binding, and
-stale-owner rollback that preserves the prior snapshot. The complete
-`lez-swap-store` suite, strict all-target Clippy, warning-free Rustdoc,
-formatting, and diff checks are GREEN.
+The store RED failed on the absent progress type, read API, and atomic resolution
+method. Its GREEN suite proves bounded-label validation, the real revision-zero
+post-activation state, process/action/progress completion in one call, SQLite
+reopen, exact actor-kind binding, and stale-owner rollback that preserves the
+prior snapshot.
 
-The supervisor does not yet write this row, and no RPC or CLI exposes it.
-Next, strict pair-specific status/effect parsing must produce this observation
-and resolve through the new method. Maker `monitor/claim/refund` can then return
-an allowlisted view without serializing process manifests or lease owners.
-No dependency, endpoint, RPC, chain service, container, faucet, or public
-resource was added by this foundation. It does not authorize an M5 tag.
+The supervisor RED then proved real manual claim and refund flows reached their
+terminal process/action state without a progress row. The GREEN implementation
+parses actual BTC and ZEC schemas, publishes effect-derived progress, publishes
+terminal status without spawning an effect, and preserves the last validated
+status when a later effect is rejected. Parser tables reject cross-pair actions,
+unknown phases, incoherent terminal phase/action pairs, and effect revision
+regression while preserving the preceding status. Actual BTC actor
+tests cover revision-zero activation, completed claim, intermediate recovery,
+and terminal refund outputs across both roles and directions. The supervisor
+integration suite is 12 of 12 GREEN.
+
+BTC effect schema v1 gained the additive `next_action` field by factoring the
+same actor-local function already used by status. An older sealed BTC actor
+without that field fails closed at the new supervisor boundary and must be
+reprovisioned with its new executable hash; no compatibility fallback guesses
+protocol state.
+
+Maker `monitor/claim/refund` RPC and CLI remain the next application slice. They
+must return an allowlisted view and require the caller-supplied expected
+process generation for replay-safe action requests. Symmetric role-validated
+Taker provisioning and commands follow. Complete Maker (with crash hooks), swap-store, and BTC actor suites, strict
+all-target/all-feature Clippy, warning-free Rustdoc, formatting, and diff hygiene are
+GREEN. No dependency, endpoint, RPC, chain
+service, container, faucet, or public resource was added by this projection
+slice. It does not authorize an M5 tag.

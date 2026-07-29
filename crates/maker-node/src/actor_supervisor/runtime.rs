@@ -18,7 +18,8 @@ use std::{
 use lez_swap_core::SwapId;
 use lez_swap_store::{
     MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner,
-    MakerActorLeaseV1, MakerActorManualAction, MakerActorProcessError, SqliteSwapStore,
+    MakerActorLeaseV1, MakerActorManualAction, MakerActorProcessError,
+    MakerActorProgressObservationV1, SqliteSwapStore,
 };
 use rustix::process::{Pid, Signal, kill_process_group};
 use serde_json::Value;
@@ -338,7 +339,11 @@ fn resolve_claimed_attempt(
     config: &MakerActorSupervisorConfig,
     claimed: ClaimedAttemptResult,
 ) -> Result<MakerActorSupervisorOutcome, MakerActorSupervisorError> {
-    let attempt = claimed.attempt;
+    let ClaimedAttemptResult {
+        attempt,
+        progress,
+        held_lock,
+    } = claimed;
     let (durable, resolution) = match attempt {
         ClaimedAttempt::Requeue => (
             MakerActorAttemptResolution::Requeue {
@@ -368,8 +373,12 @@ fn resolve_claimed_attempt(
             MakerActorSupervisorResolution::Failed,
         ),
     };
-    store.resolve_maker_actor_attempt(lease, durable, now)?;
-    drop(claimed.held_lock);
+    if let Some(progress) = progress.as_ref() {
+        store.resolve_maker_actor_attempt_with_progress(lease, durable, progress, now)?;
+    } else {
+        store.resolve_maker_actor_attempt(lease, durable, now)?;
+    }
+    drop(held_lock);
     Ok(MakerActorSupervisorOutcome {
         swap_id: lease.record().swap_id().clone(),
         generation: lease.generation(),
@@ -387,6 +396,7 @@ enum ClaimedAttempt {
 
 struct ClaimedAttemptResult {
     attempt: ClaimedAttempt,
+    progress: Option<MakerActorProgressObservationV1>,
     held_lock: Option<MakerActorHeldLock>,
 }
 
@@ -424,12 +434,14 @@ fn run_claimed_attempt(
         Err(MakerActorProcessError::LockUnavailable) => {
             return Ok(ClaimedAttemptResult {
                 attempt: ClaimedAttempt::Backoff("actor_lock_unavailable"),
+                progress: None,
                 held_lock: None,
             });
         }
         Err(_) => {
             return Ok(ClaimedAttemptResult {
                 attempt: ClaimedAttempt::Failed("actor_lock_invalid"),
+                progress: None,
                 held_lock: None,
             });
         }
@@ -447,6 +459,7 @@ fn run_claimed_attempt_with_lock(
     if cancellation.is_cancelled() {
         return Ok(ClaimedAttemptResult {
             attempt: ClaimedAttempt::Backoff("actor_cancelled"),
+            progress: None,
             held_lock: Some(held_lock),
         });
     }
@@ -454,6 +467,7 @@ fn run_claimed_attempt_with_lock(
         .claim_maker_actor_manual_action(lease)
         .map_err(ClaimedAttemptError::Scheduling)?
         .map(|action| action.action());
+    let mut progress = None;
     let attempt = (|| {
         let status = match run_child(store, lease, &held_lock, "status", config, cancellation) {
             Ok(output) => output,
@@ -463,9 +477,15 @@ fn run_claimed_attempt_with_lock(
                 return Err(ClaimedAttemptError::Scheduling(error));
             }
         };
-        let Ok(status_decision) = parse_status(&status, lease.record().manifest().kind()) else {
+        let Ok(parsed_status) = parse_status(&status, lease.record().manifest().kind()) else {
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         };
+        let ParsedStatus {
+            decision: status_decision,
+            progress: status_progress,
+            revision: status_revision,
+        } = parsed_status;
+        progress = Some(status_progress);
         let command = match manual_action {
             Some(MakerActorManualAction::Claim) => ActorEffectCommand::Claim,
             Some(MakerActorManualAction::Refund) => ActorEffectCommand::Recover,
@@ -489,15 +509,23 @@ fn run_claimed_attempt_with_lock(
                 return Err(ClaimedAttemptError::Scheduling(error));
             }
         };
-        match parse_effect(&effect, command, lease.record().manifest().kind()) {
-            Ok(true) if manual_action.is_some() => Ok(ClaimedAttempt::ManualActionCompleted),
-            Ok(true) => Ok(ClaimedAttempt::Terminal),
-            Ok(false) => Ok(ClaimedAttempt::Requeue),
-            Err(()) => Ok(ClaimedAttempt::Failed("actor_output_invalid")),
+        let Ok(parsed_effect) = parse_effect(&effect, command, lease.record().manifest().kind())
+        else {
+            return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
+        };
+        if status_revision.is_some_and(|revision| parsed_effect.revision < revision) {
+            return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
+        }
+        progress = Some(parsed_effect.progress);
+        match (parsed_effect.terminal, manual_action) {
+            (true, Some(_)) => Ok(ClaimedAttempt::ManualActionCompleted),
+            (true, None) => Ok(ClaimedAttempt::Terminal),
+            (false, _) => Ok(ClaimedAttempt::Requeue),
         }
     })()?;
     Ok(ClaimedAttemptResult {
         attempt,
+        progress,
         held_lock: Some(held_lock),
     })
 }
@@ -674,12 +702,18 @@ fn child_start_ticks(pid: u32) -> Result<u64, ()> {
         .map_err(|_| ())
 }
 
+struct ParsedStatus {
+    decision: StatusDecision,
+    progress: MakerActorProgressObservationV1,
+    revision: Option<u64>,
+}
+
 enum StatusDecision {
     Run(ActorEffectCommand),
     Terminal,
 }
 
-fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<StatusDecision, ()> {
+fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ())?;
     if value.get("schema_version").and_then(Value::as_u64) != Some(1)
         || value.get("role").and_then(Value::as_str) != Some("maker")
@@ -687,60 +721,127 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<StatusDecision, 
         return Err(());
     }
     match value.get("state").and_then(Value::as_str) {
-        Some("not_activated") => Ok(StatusDecision::Run(ActorEffectCommand::Activate)),
+        Some("not_activated") => Ok(ParsedStatus {
+            decision: StatusDecision::Run(ActorEffectCommand::Activate),
+            progress: MakerActorProgressObservationV1::NotActivated,
+            revision: None,
+        }),
         Some("active") => {
             let phase = value.get("phase").and_then(Value::as_str).ok_or(())?;
-            let next_action = value.get("next_action").and_then(Value::as_str);
-            if terminal_phase(phase) {
-                Ok(StatusDecision::Terminal)
+            let next_action = value.get("next_action").and_then(Value::as_str).ok_or(())?;
+            let revision = value.get("revision").and_then(Value::as_u64).ok_or(())?;
+            let progress = parse_active_progress(&value, kind)?;
+            if terminal_phase(phase) != (next_action == "complete") {
+                return Err(());
+            }
+            let decision = if terminal_phase(phase) {
+                StatusDecision::Terminal
             } else if kind == MakerActorKindV1::Zcash
-                && matches!(next_action, Some("claim_lez" | "claim_zcash"))
+                && matches!(next_action, "claim_lez" | "claim_zcash")
             {
-                Ok(StatusDecision::Run(ActorEffectCommand::Claim))
+                StatusDecision::Run(ActorEffectCommand::Claim)
             } else if matches!(
                 (kind, next_action),
-                (MakerActorKindV1::Zcash, Some("refund_zcash"))
-                    | (MakerActorKindV1::Bitcoin, Some("recover_taker_leg"))
+                (MakerActorKindV1::Zcash, "refund_zcash")
+                    | (MakerActorKindV1::Bitcoin, "recover_taker_leg")
             ) {
-                Ok(StatusDecision::Run(ActorEffectCommand::Recover))
+                StatusDecision::Run(ActorEffectCommand::Recover)
             } else {
-                Ok(StatusDecision::Run(ActorEffectCommand::Drive))
-            }
+                StatusDecision::Run(ActorEffectCommand::Drive)
+            };
+            Ok(ParsedStatus {
+                decision,
+                progress,
+                revision: Some(revision),
+            })
         }
         _ => Err(()),
     }
+}
+
+struct ParsedEffect {
+    terminal: bool,
+    progress: MakerActorProgressObservationV1,
+    revision: u64,
 }
 
 fn parse_effect(
     bytes: &[u8],
     command: ActorEffectCommand,
     kind: MakerActorKindV1,
-) -> Result<bool, ()> {
+) -> Result<ParsedEffect, ()> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ())?;
     let outcome = value.get("outcome").and_then(Value::as_str).ok_or(())?;
     if value.get("schema_version").and_then(Value::as_u64) != Some(1)
         || value.get("role").and_then(Value::as_str) != Some("maker")
         || value.get("command").and_then(Value::as_str) != Some(command.name())
         || !known_effect_outcome(kind, command, outcome)
-        || value.get("revision").and_then(Value::as_u64).is_none()
     {
         return Err(());
     }
     let phase = value.get("phase").and_then(Value::as_str).ok_or(())?;
+    let revision = value.get("revision").and_then(Value::as_u64).ok_or(())?;
+    let progress = parse_active_progress(&value, kind)?;
+    let next_action = value.get("next_action").and_then(Value::as_str).ok_or(())?;
+    if terminal_phase(phase) != (next_action == "complete") {
+        return Err(());
+    }
     let terminal = terminal_phase(phase);
-    let exact_absorbing = matches!(
-        (command, outcome, phase),
-        (
-            ActorEffectCommand::Drive | ActorEffectCommand::Claim,
-            "completed",
-            "completed"
-        ) | (ActorEffectCommand::Recover, "refunded", "refunded")
-    );
-    if terminal != exact_absorbing || matches!(outcome, "completed" | "refunded") != exact_absorbing
+    let exact_absorbing = exact_absorbing_effect(kind, command, outcome, phase);
+    let terminal_outcome = matches!(outcome, "completed" | "refunded");
+    if terminal != exact_absorbing
+        || (kind == MakerActorKindV1::Zcash && terminal_outcome != exact_absorbing)
     {
         return Err(());
     }
-    Ok(terminal)
+    Ok(ParsedEffect {
+        terminal,
+        progress,
+        revision,
+    })
+}
+
+fn exact_absorbing_effect(
+    kind: MakerActorKindV1,
+    command: ActorEffectCommand,
+    outcome: &str,
+    phase: &str,
+) -> bool {
+    match kind {
+        MakerActorKindV1::Zcash => matches!(
+            (command, outcome, phase),
+            (
+                ActorEffectCommand::Drive | ActorEffectCommand::Claim,
+                "completed",
+                "completed"
+            ) | (ActorEffectCommand::Recover, "refunded", "refunded")
+        ),
+        MakerActorKindV1::Bitcoin => matches!(
+            (command, outcome, phase),
+            (
+                ActorEffectCommand::Drive,
+                "observed_then_projected" | "converged_on_existing_projection",
+                "completed"
+            ) | (
+                ActorEffectCommand::Recover,
+                "observed_then_projected" | "converged_on_existing_projection",
+                "refunded"
+            )
+        ),
+    }
+}
+
+fn parse_active_progress(
+    value: &Value,
+    kind: MakerActorKindV1,
+) -> Result<MakerActorProgressObservationV1, ()> {
+    let phase = value.get("phase").and_then(Value::as_str).ok_or(())?;
+    let revision = value.get("revision").and_then(Value::as_u64).ok_or(())?;
+    let next_action = value.get("next_action").and_then(Value::as_str).ok_or(())?;
+    if !known_phase(phase) || !known_next_action(kind, next_action) {
+        return Err(());
+    }
+    MakerActorProgressObservationV1::active(phase, revision, next_action).map_err(|_| ())
 }
 
 fn known_effect_outcome(
@@ -795,6 +896,50 @@ fn known_effect_outcome(
     }
 }
 
+fn known_phase(phase: &str) -> bool {
+    matches!(
+        phase,
+        "offered"
+            | "awaiting_taker_confirmations"
+            | "taker_lock_confirmed"
+            | "awaiting_maker_confirmations"
+            | "both_legs_locked"
+            | "taker_lock_reorged"
+            | "maker_lock_reorged"
+            | "claim_evidence_available"
+            | "completed"
+            | "maker_leg_refunded"
+            | "taker_leg_refunded"
+            | "refunded"
+            | "maker_recovery_available"
+    )
+}
+
+fn known_next_action(kind: MakerActorKindV1, next_action: &str) -> bool {
+    match kind {
+        MakerActorKindV1::Zcash => matches!(
+            next_action,
+            "wait"
+                | "create_and_fund_lez"
+                | "fund_zcash"
+                | "claim_lez"
+                | "claim_zcash"
+                | "refund_zcash"
+                | "complete"
+        ),
+        MakerActorKindV1::Bitcoin => matches!(
+            next_action,
+            "observe_taker_first_lock"
+                | "observe_maker_second_lock_or_recover_taker_leg"
+                | "observe_revealing_claim"
+                | "observe_followup_claim"
+                | "recover_taker_leg"
+                | "later_revision_not_yet_composed"
+                | "complete"
+        ),
+    }
+}
+
 fn terminal_phase(phase: &str) -> bool {
     matches!(phase, "completed" | "refunded")
 }
@@ -803,14 +948,33 @@ fn terminal_phase(phase: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn effect(command: &str, outcome: &str, phase: &str) -> Vec<u8> {
+    fn effect(
+        command: &str,
+        outcome: &str,
+        phase: &str,
+        revision: u64,
+        next_action: &str,
+    ) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "schema_version": 1,
             "role": "maker",
             "command": command,
             "outcome": outcome,
             "phase": phase,
-            "revision": 4
+            "revision": revision,
+            "next_action": next_action
+        }))
+        .unwrap()
+    }
+
+    fn status(phase: &str, revision: u64, next_action: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "role": "maker",
+            "state": "active",
+            "phase": phase,
+            "revision": revision,
+            "next_action": next_action
         }))
         .unwrap()
     }
@@ -823,18 +987,12 @@ mod tests {
             ("refund_zcash", ActorEffectCommand::Recover),
             ("wait", ActorEffectCommand::Drive),
         ] {
-            let status = serde_json::to_vec(&serde_json::json!({
-                "schema_version": 1,
-                "role": "maker",
-                "state": "active",
-                "phase": "both_legs_locked",
-                "revision": 3,
-                "next_action": next_action
-            }))
+            let parsed = parse_status(
+                &status("both_legs_locked", 3, next_action),
+                MakerActorKindV1::Zcash,
+            )
             .unwrap();
-            let StatusDecision::Run(actual) =
-                parse_status(&status, MakerActorKindV1::Zcash).unwrap()
-            else {
+            let StatusDecision::Run(actual) = parsed.decision else {
                 panic!("nonterminal status must select one command");
             };
             assert_eq!(actual.name(), expected.name());
@@ -842,54 +1000,122 @@ mod tests {
     }
 
     #[test]
-    fn effect_parser_binds_outcome_and_absorbing_phase_to_exact_command() {
+    fn parser_accepts_real_revision_zero_and_pair_specific_terminal_effects() {
+        let activated = parse_status(
+            &status("offered", 0, "observe_taker_first_lock"),
+            MakerActorKindV1::Bitcoin,
+        )
+        .unwrap();
         assert_eq!(
-            parse_effect(
-                &effect("claim", "completed", "completed"),
-                ActorEffectCommand::Claim,
-                MakerActorKindV1::Zcash,
-            ),
-            Ok(true)
+            activated.progress,
+            MakerActorProgressObservationV1::active("offered", 0, "observe_taker_first_lock")
+                .unwrap()
         );
-        assert_eq!(
-            parse_effect(
-                &effect("recover", "refunded", "refunded"),
+
+        for (kind, command, output, phase) in [
+            (
+                MakerActorKindV1::Zcash,
+                ActorEffectCommand::Claim,
+                effect("claim", "completed", "completed", 4, "complete"),
+                "completed",
+            ),
+            (
+                MakerActorKindV1::Zcash,
                 ActorEffectCommand::Recover,
-                MakerActorKindV1::Zcash,
+                effect("recover", "refunded", "refunded", 4, "complete"),
+                "refunded",
             ),
-            Ok(true)
-        );
-        assert_eq!(
-            parse_effect(
-                &effect("claim", "submitted", "both_legs_locked"),
+            (
+                MakerActorKindV1::Bitcoin,
+                ActorEffectCommand::Drive,
+                effect(
+                    "drive",
+                    "observed_then_projected",
+                    "completed",
+                    4,
+                    "complete",
+                ),
+                "completed",
+            ),
+            (
+                MakerActorKindV1::Bitcoin,
+                ActorEffectCommand::Recover,
+                effect(
+                    "recover",
+                    "converged_on_existing_projection",
+                    "refunded",
+                    4,
+                    "complete",
+                ),
+                "refunded",
+            ),
+        ] {
+            let parsed = parse_effect(&output, command, kind).unwrap();
+            assert!(parsed.terminal);
+            assert_eq!(
+                parsed.progress,
+                MakerActorProgressObservationV1::active(phase, 4, "complete").unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn parser_rejects_cross_pair_unknown_and_incoherent_progress() {
+        for (kind, bytes) in [
+            (
+                MakerActorKindV1::Zcash,
+                status("both_legs_locked", 3, "observe_revealing_claim"),
+            ),
+            (
+                MakerActorKindV1::Bitcoin,
+                status("future_phase", 3, "observe_revealing_claim"),
+            ),
+            (MakerActorKindV1::Zcash, status("completed", 4, "claim_lez")),
+            (
+                MakerActorKindV1::Zcash,
+                status("both_legs_locked", 3, "complete"),
+            ),
+        ] {
+            assert!(parse_status(&bytes, kind).is_err());
+        }
+
+        for (command, output_command, outcome, phase, next_action) in [
+            (
                 ActorEffectCommand::Claim,
-                MakerActorKindV1::Zcash,
+                "claim",
+                "refunded",
+                "refunded",
+                "complete",
             ),
-            Ok(false)
-        );
-        for (command, output_command, outcome, phase) in [
-            (ActorEffectCommand::Claim, "claim", "refunded", "refunded"),
             (
                 ActorEffectCommand::Recover,
                 "recover",
                 "completed",
                 "completed",
+                "complete",
             ),
             (
                 ActorEffectCommand::Claim,
                 "claim",
                 "completed",
                 "both_legs_locked",
+                "claim_lez",
             ),
-            (ActorEffectCommand::Claim, "drive", "completed", "completed"),
+            (
+                ActorEffectCommand::Claim,
+                "drive",
+                "completed",
+                "completed",
+                "complete",
+            ),
         ] {
-            assert_eq!(
+            assert!(
                 parse_effect(
-                    &effect(output_command, outcome, phase),
+                    &effect(output_command, outcome, phase, 4, next_action),
                     command,
                     MakerActorKindV1::Zcash,
-                ),
-                Err(())
+                )
+                .is_err()
             );
         }
     }

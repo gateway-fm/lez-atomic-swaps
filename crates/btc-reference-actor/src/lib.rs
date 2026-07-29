@@ -701,6 +701,7 @@ pub struct ActorEffectOutputV1 {
     outcome: ActorEffectOutcomeV1,
     phase: ActorPhaseV1,
     revision: u64,
+    next_action: ActorNextActionV1,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -8324,11 +8325,25 @@ fn effect_output(
         outcome,
         phase: status.phase().into(),
         revision: status.revision(),
+        next_action: actor_next_action(status),
     }
 }
 
 fn status_output(config: &ActorConfig, status: &BtcOfflineStatus) -> ActorStatusV1 {
-    let next_action = if status.terminal().is_some() {
+    let next_action = actor_next_action(status);
+    ActorStatusV1 {
+        schema_version: OUTPUT_SCHEMA_VERSION,
+        role: config.role,
+        state: ActorStateV1::Active {
+            phase: status.phase().into(),
+            revision: status.revision(),
+            next_action,
+        },
+    }
+}
+
+fn actor_next_action(status: &BtcOfflineStatus) -> ActorNextActionV1 {
+    if status.terminal().is_some() {
         ActorNextActionV1::Complete
     } else if status.revision() == 0 {
         ActorNextActionV1::ObserveTakerFirstLock
@@ -8342,15 +8357,6 @@ fn status_output(config: &ActorConfig, status: &BtcOfflineStatus) -> ActorStatus
         ActorNextActionV1::RecoverTakerLeg
     } else {
         ActorNextActionV1::LaterRevisionNotYetComposed
-    };
-    ActorStatusV1 {
-        schema_version: OUTPUT_SCHEMA_VERSION,
-        role: config.role,
-        state: ActorStateV1::Active {
-            phase: status.phase().into(),
-            revision: status.revision(),
-            next_action,
-        },
     }
 }
 

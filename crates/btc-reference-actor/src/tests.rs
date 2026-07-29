@@ -4317,6 +4317,7 @@ async fn refund_projector_reaches_terminal_for_both_roles_and_directions() {
             assert_eq!(maker_json["command"], "recover");
             assert_eq!(maker_json["phase"], "maker_leg_refunded");
             assert_eq!(maker_json["revision"], 3);
+            assert_eq!(maker_json["next_action"], "recover_taker_leg");
             assert_eq!(maker.transitions(), vec![RefundTransition::MakerLeg]);
 
             let taker = FixedRefundObserver::new(ready_refund_observation(
@@ -4335,6 +4336,7 @@ async fn refund_projector_reaches_terminal_for_both_roles_and_directions() {
             assert_eq!(taker_json["command"], "recover");
             assert_eq!(taker_json["phase"], "refunded");
             assert_eq!(taker_json["revision"], 4);
+            assert_eq!(taker_json["next_action"], "complete");
             assert_eq!(taker.transitions(), vec![RefundTransition::TakerLeg]);
 
             let durable = durable_status(&fixture);
@@ -4963,6 +4965,7 @@ async fn followup_claim_completes_both_roles_and_directions() {
             assert_eq!(completed["outcome"], "observed_then_projected");
             assert_eq!(completed["revision"], 4);
             assert_eq!(completed["phase"], "completed");
+            assert_eq!(completed["next_action"], "complete");
             assert_eq!(observer.calls(), 1);
 
             let status = output_json(

@@ -49,7 +49,8 @@ fn run() -> Result<(), &'static str> {
                 "outcome": "submitted",
                 "operation": "zcash_fund",
                 "phase": "awaiting_maker_confirmations",
-                "revision": 2
+                "revision": 2,
+                "next_action": "wait"
             })
         }
         ActorCommand::Drive => terminal_output("drive"),
@@ -99,7 +100,8 @@ fn terminal_output(command: &str) -> Value {
             "command": "drive",
             "outcome": "completed",
             "phase": "completed",
-            "revision": 4
+            "revision": 4,
+            "next_action": "complete"
         })
     }
 }

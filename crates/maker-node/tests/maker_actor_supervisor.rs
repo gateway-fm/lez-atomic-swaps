@@ -19,8 +19,8 @@ use lez_swap_core::{
 };
 use lez_swap_store::{
     MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
-    MakerActorManualAction, MakerActorManualActionState, MakerActorScheduleState, SqliteSwapStore,
-    validate_maker_actor_program,
+    MakerActorManualAction, MakerActorManualActionState, MakerActorProgressObservationV1,
+    MakerActorScheduleState, SqliteSwapStore, validate_maker_actor_program,
 };
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -46,7 +46,7 @@ fn one_bounded_cycle_runs_exact_sealed_actor_and_durably_requeues() {
          printf '%s\\n' \"$3\" >> '{}'\n\
          case \"$3\" in\n\
            status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"not_activated\"}}' ;;\n\
-           activate) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"activate\",\"outcome\":\"activated\",\"phase\":\"offered\",\"revision\":1}}' ;;\n\
+           activate) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"activate\",\"outcome\":\"activated\",\"phase\":\"offered\",\"revision\":0,\"next_action\":\"create_and_fund_lez\"}}' ;;\n\
            *) exit 95 ;;\n\
          esac\n",
         invocation_log.display()
@@ -110,6 +110,14 @@ fn one_bounded_cycle_runs_exact_sealed_actor_and_durably_requeues() {
     assert_eq!(record.schedule_state(), MakerActorScheduleState::Queued);
     assert_eq!(record.attempt_count(), 1);
     assert_eq!(record.child_identity(), None);
+    assert_eq!(
+        store
+            .maker_actor_progress(&SwapId::new(swap_id).unwrap())
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active("offered", 0, "create_and_fund_lez").unwrap()
+    );
     assert!(store.list_due_maker_actor_ids(14, 1).unwrap().is_empty());
     assert_eq!(
         store.list_due_maker_actor_ids(15, 1).unwrap(),
@@ -130,7 +138,7 @@ fn manual_claim_invokes_only_claim_and_atomically_completes_action() {
          printf '%s\\n' \"$3\" >> '{}'\n\
          case \"$3\" in\n\
            status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"claim_lez\"}}' ;;\n\
-           claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":5}}' ;;\n\
+           claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":5,\"next_action\":\"complete\"}}' ;;\n\
            *) exit 95 ;;\n\
          esac\n",
         invocation_log.display()
@@ -181,6 +189,14 @@ fn manual_claim_invokes_only_claim_and_atomically_completes_action() {
             .schedule_state(),
         MakerActorScheduleState::Terminal
     );
+    assert_eq!(
+        store
+            .maker_actor_progress(&id)
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active("completed", 5, "complete").unwrap()
+    );
 }
 
 #[test]
@@ -196,7 +212,7 @@ fn manual_refund_invokes_only_recover_and_atomically_completes_action() {
          printf '%s\\n' \"$3\" >> '{}'\n\
          case \"$3\" in\n\
            status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"refund_zcash\"}}' ;;\n\
-           recover) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"recover\",\"outcome\":\"refunded\",\"phase\":\"refunded\",\"revision\":5}}' ;;\n\
+           recover) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"recover\",\"outcome\":\"refunded\",\"phase\":\"refunded\",\"revision\":5,\"next_action\":\"complete\"}}' ;;\n\
            *) exit 95 ;;\n\
          esac\n",
         invocation_log.display()
@@ -247,6 +263,14 @@ fn manual_refund_invokes_only_recover_and_atomically_completes_action() {
             .schedule_state(),
         MakerActorScheduleState::Terminal
     );
+    assert_eq!(
+        store
+            .maker_actor_progress(&id)
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active("refunded", 5, "complete").unwrap()
+    );
 }
 
 #[test]
@@ -261,7 +285,7 @@ fn abandoned_lease_is_generation_transferred_and_run_without_an_unleased_gap() {
         test -r /proc/self/fd/198 || exit 94\n\
         case \"$3\" in\n\
           status) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"not_activated\"}' ;;\n\
-          activate) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"activate\",\"outcome\":\"activated\",\"phase\":\"offered\",\"revision\":1}' ;;\n\
+          activate) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"activate\",\"outcome\":\"activated\",\"phase\":\"offered\",\"revision\":0,\"next_action\":\"create_and_fund_lez\"}' ;;\n\
           *) exit 95 ;;\n\
         esac\n";
     let mut store = registered_store(root.path(), swap_id, program);
@@ -432,6 +456,14 @@ fn successful_actor_leader_cannot_leave_stdout_holding_descendant() {
     let record = store.list_maker_actor_processes().unwrap().remove(0);
     assert_eq!(record.schedule_state(), MakerActorScheduleState::Terminal);
     assert_eq!(record.child_identity(), None);
+    assert_eq!(
+        store
+            .maker_actor_progress(&SwapId::new(swap_id).unwrap())
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active("completed", 4, "complete").unwrap()
+    );
 }
 
 #[test]
@@ -528,7 +560,7 @@ fn unknown_actor_outcome_is_reaped_and_failed_closed() {
         test \"$2\" = \"196\" || exit 92\n\
         case \"$3\" in\n\
           status) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"not_activated\"}' ;;\n\
-          activate) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"activate\",\"outcome\":\"future_untrusted_outcome\",\"phase\":\"offered\",\"revision\":1}' ;;\n\
+          activate) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"activate\",\"outcome\":\"future_untrusted_outcome\",\"phase\":\"offered\",\"revision\":0,\"next_action\":\"create_and_fund_lez\"}' ;;\n\
           *) exit 93 ;;\n\
         esac\n";
     let mut store = registered_store(root.path(), swap_id, program);
@@ -548,6 +580,53 @@ fn unknown_actor_outcome_is_reaped_and_failed_closed() {
     let record = store.list_maker_actor_processes().unwrap().remove(0);
     assert_eq!(record.schedule_state(), MakerActorScheduleState::Failed);
     assert_eq!(record.child_identity(), None);
+    assert_eq!(
+        store
+            .maker_actor_progress(&SwapId::new(swap_id).unwrap())
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::NotActivated
+    );
+}
+
+#[test]
+fn regressing_effect_revision_fails_and_preserves_valid_status_progress() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-regressing-effect";
+    let program = b"#!/bin/sh\n\
+        test \"$1\" = \"--config-fd\" || exit 91\n\
+        test \"$2\" = \"196\" || exit 92\n\
+        case \"$3\" in\n\
+          status) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"claim_lez\"}' ;;\n\
+          claim) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"submitted\",\"phase\":\"both_legs_locked\",\"revision\":2,\"next_action\":\"claim_lez\"}' ;;\n\
+          *) exit 93 ;;\n\
+        esac\n";
+    let mut store = registered_store(root.path(), swap_id, program);
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+        .expect("bounded regressing-output config");
+
+    let outcome = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x58; 16]).unwrap(),
+        10,
+        &config,
+    )
+    .expect("regressing-output cycle")
+    .expect("one due actor");
+
+    assert_eq!(outcome.resolution(), MakerActorSupervisorResolution::Failed);
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Failed);
+    assert_eq!(
+        store
+            .maker_actor_progress(&SwapId::new(swap_id).unwrap())
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active("both_legs_locked", 3, "claim_lez").unwrap()
+    );
 }
 
 #[test]
@@ -586,6 +665,14 @@ fn terminal_offline_status_resolves_without_an_effect_process() {
     let record = store.list_maker_actor_processes().unwrap().remove(0);
     assert_eq!(record.schedule_state(), MakerActorScheduleState::Terminal);
     assert_eq!(record.child_identity(), None);
+    assert_eq!(
+        store
+            .maker_actor_progress(&SwapId::new(swap_id).unwrap())
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active("completed", 4, "complete").unwrap()
+    );
 }
 
 fn registered_store(root: &std::path::Path, swap_id: &str, program: &[u8]) -> SqliteSwapStore {

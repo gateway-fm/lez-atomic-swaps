@@ -602,11 +602,13 @@ flowchart TB
         APP["M5 application service"]
         OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v16<br/>application + actor scheduler journals")]
+        DB[("Maker SQLite schema v18<br/>application + actor scheduler journals")]
         PR["Durable route price selector"]
         MPV["Daemon Maker-only provisioner<br/>startup-pinned authority + durable no-clobber publish"]
-        SCH[("Schema-v16 actor scheduler<br/>atomic acceptance registration + fenced leases")]
-        SUP["Bounded sealed-FD supervisor cycle GREEN<br/>actual-node composition pending"]
+        SCH[("Schema-v18 actor scheduler<br/>atomic registration + fenced leases")]
+        ACT[("Schema-v17 manual actions<br/>request replay + generation-fenced attach")]
+        PG[("Schema-v18 secret-free progress<br/>pair vocabulary + source generation")]
+        SUP["Bounded sealed-FD supervisor cycle GREEN<br/>strict BTC/ZEC schema projection<br/>actual-node composition pending"]
         MA["One-shot Maker pair actor<br/>real BTC/ZEC sealed-config consumers GREEN"]
         PP["Bounded price process parent"]
         PW["One-shot Logos price worker"]
@@ -778,9 +780,13 @@ flowchart TB
     APP -->|"validated final agreement"| MPV
     MPV -->|"durable Maker-only bundle"| SCH
     SCH -->|"same acceptance transaction"| DB
+    ACT -->|"same fenced resolution"| DB
+    PG -->|"same fenced resolution"| DB
     DB -->|"expiry-independent committed replay preflight"| APP
     SCH -.->|"fenced lease and sealed FDs"| SUP
+    ACT -.->|"attached explicit action"| SUP
     SUP -.->|"bounded one-shot execution"| MA
+    SUP -->|"validated status or effect"| PG
     OF --> DB
     APP --> CO
     CO --> DB

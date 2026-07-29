@@ -419,3 +419,10 @@ fn actor_progress_rejects_unbounded_or_unstructured_public_labels() {
     assert!(MakerActorProgressObservationV1::active("Both Legs", 1, "claim_lez").is_err());
     assert!(MakerActorProgressObservationV1::active("offered", 1, "x".repeat(65)).is_err());
 }
+
+#[test]
+fn actor_progress_accepts_the_real_post_activation_revision_zero() {
+    assert!(
+        MakerActorProgressObservationV1::active("offered", 0, "observe_taker_first_lock").is_ok()
+    );
+}

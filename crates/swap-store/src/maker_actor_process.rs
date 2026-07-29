@@ -757,7 +757,7 @@ impl MakerActorProgressObservationV1 {
     ///
     /// # Errors
     ///
-    /// Rejects revision zero or labels outside lowercase snake-case ASCII.
+    /// Rejects labels outside bounded lowercase snake-case ASCII.
     pub fn active(
         phase: impl Into<Box<str>>,
         revision: u64,
@@ -765,7 +765,7 @@ impl MakerActorProgressObservationV1 {
     ) -> Result<Self, MakerActorProcessError> {
         let phase = phase.into();
         let next_action = next_action.into();
-        if revision == 0 || !valid_progress_label(&phase) || !valid_progress_label(&next_action) {
+        if !valid_progress_label(&phase) || !valid_progress_label(&next_action) {
             return Err(MakerActorProcessError::InvalidSchedulingInput);
         }
         Ok(Self::Active {
@@ -779,15 +779,8 @@ impl MakerActorProgressObservationV1 {
         match self {
             Self::NotActivated => Ok(()),
             Self::Active {
-                phase,
-                revision,
-                next_action,
-            } if *revision > 0
-                && valid_progress_label(phase)
-                && valid_progress_label(next_action) =>
-            {
-                Ok(())
-            }
+                phase, next_action, ..
+            } if valid_progress_label(phase) && valid_progress_label(next_action) => Ok(()),
             Self::Active { .. } => Err(MakerActorProcessError::CorruptRecord),
         }
     }
