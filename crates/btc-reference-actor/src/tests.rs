@@ -1,6 +1,6 @@
 use std::{
     fs::{self, OpenOptions},
-    os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _, symlink},
+    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _, symlink},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -639,6 +639,232 @@ fn configure_schema4_maker_material(fixture: &mut ActorFixture) {
         }
     });
     fixture.config.validate().expect("schema-4 maker config");
+}
+
+fn upgrade_fixture_for_supervised_provision(fixture: &mut ActorFixture) {
+    fs::set_permissions(fixture.directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private provision parent");
+    if fixture.config.role == ActorRole::Maker {
+        configure_schema4_maker_material(fixture);
+    }
+    fixture.config.schema_version = SUPERVISED_CONFIG_SCHEMA_VERSION;
+    fixture.config.agreement_sha256 = Some(Hex32::from_bytes(
+        Sha256::digest(&fixture.agreement_wire).into(),
+    ));
+    fixture.config.validate().expect("supervised source config");
+    let (source, _) = load_agreement(&fixture.config).expect("supervised source agreement");
+    validate_activation_material(&fixture.config, &source)
+        .expect("supervised source activation authority");
+}
+
+#[test]
+fn maker_and_taker_provision_role_only_bundles_with_exact_replay() {
+    for role in [ActorRole::Maker, ActorRole::Taker] {
+        let mut fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, role);
+        upgrade_fixture_for_supervised_provision(&mut fixture);
+        let output = fixture.directory.path().join("published-actor");
+        let accepted_at = fixture.config.accepted_at_unix_seconds;
+        assert_eq!(
+            fs::symlink_metadata(fixture.directory.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o700
+        );
+        assert_eq!(
+            fs::canonicalize(fixture.directory.path()).unwrap(),
+            fixture.directory.path()
+        );
+        let mut expected_config = fixture.config.clone();
+        expected_config.agreement_file = output.join("shared/agreement-v1.borsh");
+        expected_config.state_db = output.join(match role {
+            ActorRole::Maker => "maker/state/actor.sqlite3",
+            ActorRole::Taker => "taker/state/actor.sqlite3",
+        });
+        expected_config.validate().expect("rebound config shape");
+        let first = match role {
+            ActorRole::Maker => provision_btc_maker_actor_from_config(
+                &fixture.config,
+                &fixture.agreement_wire,
+                accepted_at,
+                &output,
+            ),
+            ActorRole::Taker => provision_btc_taker_actor_from_config(
+                &fixture.config,
+                &fixture.agreement_wire,
+                accepted_at,
+                &output,
+            ),
+        }
+        .expect("first role-fixed publication");
+
+        let (role_name, other_role) = match role {
+            ActorRole::Maker => ("maker", "taker"),
+            ActorRole::Taker => ("taker", "maker"),
+        };
+        let agreement_sha256: [u8; 32] = Sha256::digest(&fixture.agreement_wire).into();
+        let config_bytes = fs::read(first.config_file()).unwrap();
+        let agreement_bytes = fs::read(first.agreement_file()).unwrap();
+        assert!(!first.was_replay());
+        assert_eq!(first.role(), role);
+        assert_eq!(first.swap_id(), fixture.agreement.coordinator().id());
+        assert_eq!(first.agreement_sha256(), agreement_sha256);
+        assert_eq!(
+            first.config_sha256(),
+            <[u8; 32]>::from(Sha256::digest(&config_bytes))
+        );
+        assert!(first.config_file().starts_with(output.join(role_name)));
+        assert!(first.state_database().starts_with(output.join(role_name)));
+        assert!(output.join("shared").is_dir());
+        assert!(output.join(role_name).join("state").is_dir());
+        assert!(!output.join(other_role).exists());
+
+        let published = ActorConfig::load_private(first.config_file()).unwrap();
+        assert_eq!(published.schema_version, SUPERVISED_CONFIG_SCHEMA_VERSION);
+        assert_eq!(published.role(), role);
+        assert_eq!(published.state_db(), first.state_database());
+        assert_eq!(published.agreement_sha256(), Some(agreement_sha256));
+        assert_eq!(published.supervised_swap_id().unwrap(), *first.swap_id());
+
+        let config_inode = fs::symlink_metadata(first.config_file()).unwrap().ino();
+        let agreement_inode = fs::symlink_metadata(first.agreement_file()).unwrap().ino();
+        let replay = match role {
+            ActorRole::Maker => provision_btc_maker_actor_from_config(
+                &fixture.config,
+                &fixture.agreement_wire,
+                accepted_at,
+                &output,
+            ),
+            ActorRole::Taker => provision_btc_taker_actor_from_config(
+                &fixture.config,
+                &fixture.agreement_wire,
+                accepted_at,
+                &output,
+            ),
+        }
+        .expect("exact role-fixed replay");
+        assert!(replay.was_replay());
+        assert_eq!(fs::read(replay.config_file()).unwrap(), config_bytes);
+        assert_eq!(fs::read(replay.agreement_file()).unwrap(), agreement_bytes);
+        assert_eq!(
+            fs::symlink_metadata(replay.config_file()).unwrap().ino(),
+            config_inode
+        );
+        assert_eq!(
+            fs::symlink_metadata(replay.agreement_file()).unwrap().ino(),
+            agreement_inode
+        );
+        assert!(!output.join(other_role).exists());
+    }
+}
+
+#[test]
+fn role_specific_provision_wrappers_reject_opposite_sources_without_output() {
+    for (source_role, call_maker) in [(ActorRole::Taker, true), (ActorRole::Maker, false)] {
+        let mut fixture =
+            ActorFixture::for_direction(SwapDirection::TakerSellsForeign, source_role);
+        upgrade_fixture_for_supervised_provision(&mut fixture);
+        let output = fixture.directory.path().join("published-actor");
+        let result = if call_maker {
+            provision_btc_maker_actor_from_config(
+                &fixture.config,
+                &fixture.agreement_wire,
+                fixture.config.accepted_at_unix_seconds,
+                &output,
+            )
+        } else {
+            provision_btc_taker_actor_from_config(
+                &fixture.config,
+                &fixture.agreement_wire,
+                fixture.config.accepted_at_unix_seconds,
+                &output,
+            )
+        };
+
+        assert_eq!(result.unwrap_err(), BtcActorProvisionError::Invalid);
+        assert!(!output.exists());
+    }
+}
+
+#[test]
+fn provision_rejects_preseeded_destination_without_clobbering_marker() {
+    const MARKER_BYTES: &[u8] = b"preexisting actor destination\n";
+
+    for role in [ActorRole::Maker, ActorRole::Taker] {
+        let mut fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, role);
+        upgrade_fixture_for_supervised_provision(&mut fixture);
+        let output = fixture.directory.path().join("published-actor");
+        fs::create_dir(&output).expect("create preexisting actor destination");
+        fs::set_permissions(&output, fs::Permissions::from_mode(0o700))
+            .expect("make destination private");
+        let marker = output.join("marker");
+        fs::write(&marker, MARKER_BYTES).expect("write collision marker");
+        fs::set_permissions(&marker, fs::Permissions::from_mode(0o600))
+            .expect("make collision marker private");
+        let marker_inode = fs::symlink_metadata(&marker).unwrap().ino();
+
+        let result = match role {
+            ActorRole::Maker => provision_btc_maker_actor_from_config(
+                &fixture.config,
+                &fixture.agreement_wire,
+                fixture.config.accepted_at_unix_seconds,
+                &output,
+            ),
+            ActorRole::Taker => provision_btc_taker_actor_from_config(
+                &fixture.config,
+                &fixture.agreement_wire,
+                fixture.config.accepted_at_unix_seconds,
+                &output,
+            ),
+        };
+
+        assert_eq!(result.unwrap_err(), BtcActorProvisionError::Invalid);
+        assert_eq!(fs::read(&marker).unwrap(), MARKER_BYTES);
+        assert_eq!(fs::symlink_metadata(&marker).unwrap().ino(), marker_inode);
+        assert_eq!(
+            fs::symlink_metadata(&marker).unwrap().permissions().mode() & 0o7777,
+            0o600
+        );
+        assert!(!output.join("shared").exists());
+        assert!(!output.join("maker").exists());
+        assert!(!output.join("taker").exists());
+    }
+}
+
+#[test]
+fn provision_replay_rejects_dangling_opposite_role_symlink() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    upgrade_fixture_for_supervised_provision(&mut fixture);
+    let output = fixture.directory.path().join("published-actor");
+    let accepted_at = fixture.config.accepted_at_unix_seconds;
+    provision_btc_maker_actor_from_config(
+        &fixture.config,
+        &fixture.agreement_wire,
+        accepted_at,
+        &output,
+    )
+    .expect("first role-fixed publication");
+    symlink("missing-counterparty", output.join("taker"))
+        .expect("create dangling opposite-role symlink");
+
+    assert_eq!(
+        provision_btc_maker_actor_from_config(
+            &fixture.config,
+            &fixture.agreement_wire,
+            accepted_at,
+            &output,
+        )
+        .unwrap_err(),
+        BtcActorProvisionError::Invalid
+    );
+    assert!(
+        fs::symlink_metadata(output.join("taker"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
 }
 
 fn custom_token_asset_extension(fixture: &ActorFixture) -> BtcLezAssetExtensionV1 {

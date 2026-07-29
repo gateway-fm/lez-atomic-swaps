@@ -104,15 +104,19 @@ Bitcoin genesis and confirmation policy before signing. A Maker-only proposal
 verifies the body-selected Schnorr signature, and Taker completion can return
 authority only through the existing dual-signature validator. Both directions,
 wrong-policy cases, and bounded wire mutations are SDK-GREEN with no chain RPC,
-Docker, faucet, DNS, public network, or public funds. Chat persistence, actor
-provisioning, and real CLI/node composition remain open, so this is not a BTC
+Docker, faucet, DNS, public network, or public funds. Chat persistence and real
+CLI/node composition remain open, so this is not a BTC
 application swap or M5 completion. Schema 19 now closes the durable store part:
 one real Maker-signed proposal reserves one offer before response, and the final
 dual-signed wire, agreement-derived coordinator, consumed offer, immutable
 Bitcoin Maker actor, and replay result commit or roll back together. Restart,
 competing reservations, exact replay, schema-18 migration, and forced rollback
-are GREEN. Role-fixed BTC provisioning, daemon/Taker CLI wiring, and local
-Bitcoin Core Regtest plus LEZ v0.2 execution remain open.
+are GREEN. Symmetric role-fixed BTC provisioning now publishes only the
+selected role through a private sibling stage and no-replace rename, rejects
+cross-role sources and existing output without mutation, and exact-replays
+published bytes and inodes. Its 100-test actor boundary is GREEN without any
+external runtime resource. Daemon/Taker CLI wiring and local Bitcoin Core
+Regtest plus LEZ v0.2 execution remain open.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

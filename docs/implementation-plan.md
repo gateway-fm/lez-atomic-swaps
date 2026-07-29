@@ -3748,19 +3748,33 @@ separately from runtime dependencies.
   and diff hygiene pass. ADR 0107 records component, sequence, resource, crash,
   and atomicity diagrams and arguments. No chain node, RPC, Docker service,
   faucet, DNS, public network, or public funds participated; this is durable
-  application authority, not yet a BTC application swap. Role-fixed no-clobber
-  BTC provisioning and daemon/Taker CLI handoff are next, followed by actual
-  local-node composition. The under-specified Maker-process RED file was removed for repository
+  application authority, not yet a BTC application swap.
+
+  Symmetric role-fixed BTC provisioning is now GREEN. The public Maker and Taker
+  entry points accept only a startup-pinned schema-6 source of their own role,
+  reparse a canonical dual-signed final agreement with the exact source body,
+  preserve role-private signing and recovery authority, and rebind only the
+  trusted acceptance time plus final agreement, digest, and lifecycle paths.
+  They write a mode-0700 sibling stage with mode-0600 files, synchronize it, and
+  publish at one `RENAME_NOREPLACE` linearization point. Exact replay preserves
+  bytes and inodes; cross-role authority and a preseeded destination fail without
+  output mutation. The full actor all-target suite is 100 of 100 GREEN, with
+  warning-fatal Clippy and Rustdoc also GREEN. ADR 0108 records the component,
+  publication sequence, atomicity argument, and resource boundary. No node, RPC,
+  Docker service, faucet, DNS, network, or public funds participated.
+
+  BTC Chat/daemon/Taker CLI handoff is next, followed by actual local-node
+  composition. The under-specified Maker-process RED file was removed for repository
   hygiene; it will return only with explicit draft, signer, and per-swap authority inputs.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is now 9 to 17 focused implementation hours once
+literal M5 ETA is now 8 to 15 focused implementation hours once
 isolated local-node control is healthy, under the owner-approved Logos-upstream
 exception. The earlier 4-to-9-hour estimate assumed the mature M3/M4 pair actors
 already shared the ZEC application handoff. The 2026-07-29 code audit instead
-confirmed that BTC still needs durable application negotiation and role provisioning,
-while XMR has no unified one-shot lifecycle actor or scheduler kind. BTC durable
-negotiation is now complete; provisioning and process composition remain. Fresh
+confirmed that BTC required durable application negotiation and role provisioning;
+those boundaries are now GREEN, while XMR has no unified one-shot lifecycle actor
+or scheduler kind. BTC process composition remains. Fresh
 receipt-bound ZEC execution, unavailable-chain isolation, simultaneous
 application composition, all-pair CLI completion, and closure gates also remain.
 Shared containerd timeouts add wall-clock uncertainty but are not counted as

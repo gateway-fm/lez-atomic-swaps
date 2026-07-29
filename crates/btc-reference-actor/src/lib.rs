@@ -2,6 +2,13 @@
 
 #![forbid(unsafe_code)]
 
+mod provision;
+
+pub use provision::{
+    BtcActorProvisionError, BtcActorProvisionV1, provision_btc_maker_actor_from_config,
+    provision_btc_taker_actor_from_config,
+};
+
 #[cfg(not(unix))]
 compile_error!("btc-reference-actor requires Unix file permissions and inode identity");
 

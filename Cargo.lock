@@ -408,6 +408,7 @@ dependencies = [
  "clap",
  "command-fds",
  "corepc-types",
+ "getrandom 0.3.4",
  "hex",
  "lez-bridge-adapter",
  "lez-bridge-client",

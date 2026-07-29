@@ -5531,6 +5531,41 @@ flow will use isolated Bitcoin Core Regtest and LEZ v0.2 endpoints selected by
 configuration; switching to public routes will remain a configuration and
 deployment change, not a different agreement or store format.
 
+## Flow 1M: repeat role-fixed BTC actor provisioning
+
+This component is the filesystem handoff between a completed BTC negotiation and
+one independently operated Maker or Taker actor. It does not yet run either
+role's end-user swap command or make a chain effect.
+
+From the repository root, with the pinned Rust 1.96.0 toolchain already
+installed, run:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p btc-reference-actor --lib provision
+```
+
+Expected result is four passing provisioning tests. They prove symmetric
+Maker/Taker role-only bundles, schema-6 reload, exact digest and swap binding,
+byte- and inode-stable replay, cross-role rejection without output, and
+no-clobber rejection that preserves an existing private marker. For the complete
+actor package boundary, run:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p btc-reference-actor --all-targets
+```
+
+Expected result is 100 passing tests: 89 library tests and 11 command tests.
+External runtime resources used: none. The tests create deterministic
+agreements, local SQLite signing material, and mode-0700 temporary role roots;
+they do not start Docker, Bitcoin Core, LEZ, an RPC endpoint, a faucet, DNS, or
+public networking, and they spend no public funds. This makes the component
+repeatable and free of chain-finality flakiness, but it proves only
+crash-consistent local actor publication. The forthcoming full BTC application
+flow must separately prove the role processes against isolated Bitcoin Core
+Regtest and LEZ v0.2.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

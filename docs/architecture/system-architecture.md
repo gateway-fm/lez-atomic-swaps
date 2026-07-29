@@ -654,6 +654,7 @@ flowchart TB
         M3F7R["F7 sidecar and finalized scanner<br/>lifecycle-aware terms discovery + containing-block anchors GREEN<br/>90s max3 historical reads in 120s actor budget<br/>four actual-node pairs GREEN"]
         M3F7P["F7 peer funding projection<br/>schema 5 v2 DiscoverByTerms<br/>nonowner has no submit authority GREEN"]
         M3RA["btc-reference-actor<br/>schema 4 live locks and schema 5 peer projection GREEN<br/>four complete F7 actual-node pairs GREEN"]
+        BTP["Schema-6 BTC role provisioner<br/>private stage + no-replace publish GREEN"]
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3CACHE["Policy-2 official-wallet artifact cache<br/>executable plus manifest only<br/>202.42s cold and 10.35s hit GREEN"]
         M5FZ["M5 cargo-fuzz coordinator harness<br/>all supported profiles + restart invariants<br/>bounded CI smoke GREEN locally"]
@@ -796,6 +797,9 @@ flowchart TB
     OF --> DB
     BTN --> DB
     APP --> CO
+    APP -.->|"next Maker handoff"| BTP
+    TC -.->|"next Taker handoff"| BTP
+    BTP -->|"one role-only actor root"| M3RA
     CO --> DB
     CO --> PS
     MA --> PS
@@ -960,7 +964,7 @@ flowchart TB
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
-    class TC,M3AS,M3RK,M3PE,M3RF,M3BR,M3BC,M3SDK,M3ML,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
+    class TC,BTP,M3AS,M3RK,M3PE,M3RF,M3BR,M3BC,M3SDK,M3ML,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
     class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO,M3CF,M3ID,M3LI,M3LC,M3RA,M3RUN running;
 ```
 
