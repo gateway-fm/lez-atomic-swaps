@@ -97,6 +97,17 @@ and claim traces bind the swap and receipt digest. The focused runner contract
 is GREEN, while a fresh isolated actual-node execution and receipt-bound refund
 remain before the final user journey.
 
+The BTC application path now has its first reusable pre-effect component. A
+bounded canonical unsigned draft runs the same executable Bitcoin, LEZ, role,
+and recovery checks as the final agreement and must match the exact local
+Bitcoin genesis and confirmation policy before signing. A Maker-only proposal
+verifies the body-selected Schnorr signature, and Taker completion can return
+authority only through the existing dual-signature validator. Both directions,
+wrong-policy cases, and bounded wire mutations are SDK-GREEN with no chain RPC,
+Docker, faucet, DNS, public network, or public funds. Chat persistence, actor
+provisioning, and real CLI/node composition remain open, so this is not a BTC
+application swap or M5 completion.
+
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,
 is killed and reaped, clears its child identity, and enters durable backoff;

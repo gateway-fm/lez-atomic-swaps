@@ -3712,12 +3712,29 @@ separately from runtime dependencies.
   create the annotated M5 completion tag only after every literal output is
   proven.
 
+  The first BTC application slice is now SDK-GREEN. `BtcAgreementDraftV1`
+  bounded-decodes a canonical unsigned body and shares every non-signature
+  executable invariant with final agreement validation;
+  `BtcMakerAgreementProposalV1` verifies the body-selected Maker Schnorr
+  signature and delegates Taker completion to the unchanged dual-signature
+  `BtcAgreementV1` validator. Policy-pinned entry points reject a different
+  Bitcoin genesis or confirmation requirement before either role signs. Both
+  directions round-trip and complete; wrong-role signatures plus draft and
+  proposal schema, commitment, truncation, trailing, and oversize mutations
+  fail closed. Warning-fatal
+  Clippy and all BTC SDK targets pass. ADR 0106 records component and sequence
+  diagrams, the pre-effect resource boundary, and why this is cryptographic
+  all-or-nothing binding rather than the still-pending database transaction.
+  BTC durable staging/offer binding, atomic completion and actor registration,
+  role provisioning, and daemon/Taker CLI composition remain next; the
+  under-specified black-box RED test is deliberately not counted as GREEN.
+
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is corrected to 14 to 24 focused implementation hours once
+literal M5 ETA is now 12 to 22 focused implementation hours once
 isolated local-node control is healthy, under the owner-approved Logos-upstream
 exception. The earlier 4-to-9-hour estimate assumed the mature M3/M4 pair actors
 already shared the ZEC application handoff. The 2026-07-29 code audit instead
-confirmed that BTC still needs application negotiation and role provisioning,
+confirmed that BTC still needs durable application negotiation and role provisioning,
 while XMR has no unified one-shot lifecycle actor or scheduler kind. Fresh
 receipt-bound ZEC execution, unavailable-chain isolation, simultaneous
 application composition, all-pair CLI completion, and closure gates also remain.

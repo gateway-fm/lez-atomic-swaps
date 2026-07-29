@@ -13,13 +13,13 @@ mod transaction;
 
 pub use agreement_v1::{
     BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_V1_DOMAIN,
-    BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementRecordV1, BtcAgreementV1,
-    BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
+    BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementDraftV1, BtcAgreementRecordV1,
+    BtcAgreementV1, BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
     BtcLezAssetExtensionBodyV1, BtcLezAssetExtensionRecordV1, BtcLezAssetExtensionV1,
     BtcLezAssetExtensionV1Error, BtcLezAssetV1, BtcLezCustomTokenTermsV1, BtcLezTermsV1,
-    BtcOutputKeyParityV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1,
-    BtcRecoveryPlanV1, MAX_BITCOIN_REQUIRED_CONFIRMATIONS, MAX_BTC_AGREEMENT_RECORD_BYTES,
-    MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
+    BtcMakerAgreementProposalV1, BtcOutputKeyParityV1, BtcP2trTermsV1, BtcParticipantIdentityV1,
+    BtcParticipantsV1, BtcRecoveryPlanV1, MAX_BITCOIN_REQUIRED_CONFIRMATIONS,
+    MAX_BTC_AGREEMENT_RECORD_BYTES, MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
 };
 pub use asset_sdk::{
     ActiveBtcLezAssetSwapV1, BtcLezAssetFirstLockEvidenceV1, BtcLezAssetPreparedLockEffectsV1,

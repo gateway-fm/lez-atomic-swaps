@@ -4,13 +4,13 @@ use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
-    BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementRecordV1, BtcAgreementV1,
-    BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
+    BtcAdaptorSessionDomain, BtcAgreementBodyV1, BtcAgreementDraftV1, BtcAgreementRecordV1,
+    BtcAgreementV1, BtcAgreementV1Error, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
     BtcLezAssetExtensionBodyV1, BtcLezAssetExtensionRecordV1, BtcLezAssetExtensionV1,
     BtcLezAssetExtensionV1Error, BtcLezAssetV1, BtcLezCustomTokenTermsV1, BtcLezTermsV1,
-    BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1, CsvBlockDelay,
-    MAX_BITCOIN_REQUIRED_CONFIRMATIONS, MAX_BTC_AGREEMENT_RECORD_BYTES, P2trSwapOutput,
-    RefundXOnlyKey, TwoPartyAggregateKey,
+    BtcMakerAgreementProposalV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1,
+    BtcRecoveryPlanV1, CsvBlockDelay, MAX_BITCOIN_REQUIRED_CONFIRMATIONS,
+    MAX_BTC_AGREEMENT_RECORD_BYTES, P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
 };
 use lez_swap_core::{Chain, MakerRecoveryTrigger, Pair, Participant, Phase, SwapDirection};
 
@@ -505,6 +505,176 @@ fn canonical_countersigned_agreement_reconstructs_both_directions() {
             agreement.lez_terms().refund_at_ms() / 1_000
         );
     }
+}
+
+#[test]
+fn canonical_maker_proposal_round_trips_and_completes_both_directions() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let fixture = fixture(direction, FixtureOptions::default());
+        let body_wire = fixture.body.encode_canonical().expect("canonical body");
+        let draft = BtcAgreementDraftV1::from_wire(&body_wire).expect("validated draft");
+        assert_eq!(draft.encode_wire().expect("draft replay"), body_wire);
+
+        let commitment = draft.commitment();
+        let proposal = BtcMakerAgreementProposalV1::from_parts(
+            draft,
+            signature(&fixture.maker_secret, commitment),
+        )
+        .expect("Maker proposal");
+        let proposal_wire = proposal.encode_wire().expect("proposal wire");
+        let proposal =
+            BtcMakerAgreementProposalV1::from_wire(&proposal_wire).expect("proposal replay");
+        assert_eq!(
+            proposal.encode_wire().expect("proposal replay"),
+            proposal_wire
+        );
+        assert_eq!(proposal.commitment(), commitment);
+
+        let agreement = proposal
+            .complete(signature(&fixture.taker_secret, commitment))
+            .expect("Taker completion");
+        assert_eq!(agreement.direction(), direction);
+        assert_eq!(agreement.agreement_commitment(), &commitment);
+        assert_eq!(agreement.body(), &fixture.body);
+    }
+}
+
+#[test]
+fn maker_proposal_rejects_wrong_role_signature_and_trailing_wire() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign, FixtureOptions::default());
+    let draft = BtcAgreementDraftV1::validate(fixture.body.clone()).expect("validated draft");
+    let commitment = draft.commitment();
+    assert_eq!(
+        BtcMakerAgreementProposalV1::from_parts(
+            draft.clone(),
+            signature(&fixture.taker_secret, commitment),
+        ),
+        Err(BtcAgreementV1Error::SignatureMismatch(Participant::Maker))
+    );
+
+    let proposal = BtcMakerAgreementProposalV1::from_parts(
+        draft,
+        signature(&fixture.maker_secret, commitment),
+    )
+    .expect("Maker proposal");
+    let mut trailing = proposal.encode_wire().expect("proposal wire");
+    trailing.push(0);
+    assert_eq!(
+        BtcMakerAgreementProposalV1::from_wire(&trailing),
+        Err(BtcAgreementV1Error::MalformedWireRecord)
+    );
+    assert_eq!(
+        proposal.complete(signature(&fixture.maker_secret, commitment)),
+        Err(BtcAgreementV1Error::SignatureMismatch(Participant::Taker))
+    );
+}
+
+#[test]
+fn draft_and_proposal_require_exact_local_bitcoin_policy_before_signing() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign, FixtureOptions::default());
+    let body_wire = fixture.body.encode_canonical().expect("canonical body");
+    let expected = BtcChainPolicyV1::new(BITCOIN_GENESIS_HASH, REQUIRED_CONFIRMATIONS);
+    let wrong_genesis = BtcChainPolicyV1::new([9; 32], REQUIRED_CONFIRMATIONS);
+    let wrong_confirmations =
+        BtcChainPolicyV1::new(BITCOIN_GENESIS_HASH, REQUIRED_CONFIRMATIONS + 1);
+
+    for wrong in [&wrong_genesis, &wrong_confirmations] {
+        assert_eq!(
+            BtcAgreementDraftV1::validate_for_bitcoin_policy(fixture.body.clone(), wrong),
+            Err(BtcAgreementV1Error::BitcoinChainPolicyMismatch)
+        );
+        assert_eq!(
+            BtcAgreementDraftV1::from_wire_for_bitcoin_policy(&body_wire, wrong),
+            Err(BtcAgreementV1Error::BitcoinChainPolicyMismatch)
+        );
+    }
+
+    let draft =
+        BtcAgreementDraftV1::from_wire_for_bitcoin_policy(&body_wire, &expected).expect("draft");
+    let commitment = draft.commitment();
+    let proposal = BtcMakerAgreementProposalV1::from_parts_for_bitcoin_policy(
+        draft,
+        signature(&fixture.maker_secret, commitment),
+        &expected,
+    )
+    .expect("policy-pinned proposal");
+    let proposal_wire = proposal.encode_wire().expect("proposal wire");
+    for wrong in [&wrong_genesis, &wrong_confirmations] {
+        assert_eq!(
+            proposal.ensure_bitcoin_policy(wrong),
+            Err(BtcAgreementV1Error::BitcoinChainPolicyMismatch)
+        );
+        assert_eq!(
+            BtcMakerAgreementProposalV1::from_wire_for_bitcoin_policy(&proposal_wire, wrong),
+            Err(BtcAgreementV1Error::BitcoinChainPolicyMismatch)
+        );
+    }
+    BtcMakerAgreementProposalV1::from_wire_for_bitcoin_policy(&proposal_wire, &expected)
+        .expect("policy-pinned proposal replay");
+}
+
+#[test]
+fn draft_and_proposal_decoders_fail_closed_on_wire_mutations() {
+    let fixture = fixture(SwapDirection::TakerSellsForeign, FixtureOptions::default());
+    let draft = BtcAgreementDraftV1::validate(fixture.body.clone()).expect("draft");
+    let draft_wire = draft.encode_wire().expect("draft wire");
+
+    let mut trailing_draft = draft_wire.clone();
+    trailing_draft.push(0);
+    assert_eq!(
+        BtcAgreementDraftV1::from_wire(&trailing_draft),
+        Err(BtcAgreementV1Error::MalformedWireRecord)
+    );
+    let mut truncated_draft = draft_wire;
+    truncated_draft.pop();
+    assert_eq!(
+        BtcAgreementDraftV1::from_wire(&truncated_draft),
+        Err(BtcAgreementV1Error::MalformedWireRecord)
+    );
+    assert_eq!(
+        BtcAgreementDraftV1::from_wire(&vec![0; MAX_BTC_AGREEMENT_RECORD_BYTES + 1]),
+        Err(BtcAgreementV1Error::OversizedWireRecord {
+            actual: MAX_BTC_AGREEMENT_RECORD_BYTES + 1,
+            maximum: MAX_BTC_AGREEMENT_RECORD_BYTES,
+        })
+    );
+
+    let commitment = draft.commitment();
+    let proposal = BtcMakerAgreementProposalV1::from_parts(
+        draft,
+        signature(&fixture.maker_secret, commitment),
+    )
+    .expect("proposal");
+    let proposal_wire = proposal.encode_wire().expect("proposal wire");
+    let mut wrong_schema = proposal_wire.clone();
+    wrong_schema[..2].copy_from_slice(&2_u16.to_le_bytes());
+    assert_eq!(
+        BtcMakerAgreementProposalV1::from_wire(&wrong_schema),
+        Err(BtcAgreementV1Error::UnsupportedSchema(2))
+    );
+    let mut wrong_commitment = proposal_wire.clone();
+    let commitment_offset = wrong_commitment.len() - 96;
+    wrong_commitment[commitment_offset] ^= 1;
+    assert_eq!(
+        BtcMakerAgreementProposalV1::from_wire(&wrong_commitment),
+        Err(BtcAgreementV1Error::CommitmentMismatch)
+    );
+    let mut truncated_proposal = proposal_wire;
+    truncated_proposal.pop();
+    assert_eq!(
+        BtcMakerAgreementProposalV1::from_wire(&truncated_proposal),
+        Err(BtcAgreementV1Error::MalformedWireRecord)
+    );
+    assert_eq!(
+        BtcMakerAgreementProposalV1::from_wire(&vec![0; MAX_BTC_AGREEMENT_RECORD_BYTES + 1]),
+        Err(BtcAgreementV1Error::OversizedWireRecord {
+            actual: MAX_BTC_AGREEMENT_RECORD_BYTES + 1,
+            maximum: MAX_BTC_AGREEMENT_RECORD_BYTES,
+        })
+    );
 }
 
 #[test]

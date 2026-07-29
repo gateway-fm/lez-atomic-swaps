@@ -1315,6 +1315,292 @@ impl BtcAgreementBodyV1 {
     }
 }
 
+/// Validated canonical agreement body before either role signature is attached.
+///
+/// This is the application negotiation boundary: every executable Bitcoin,
+/// LEZ, role, amount, and recovery invariant is checked before a Maker signs
+/// the commitment. Only the two role signatures are deliberately absent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BtcAgreementDraftV1 {
+    body: BtcAgreementBodyV1,
+}
+
+impl BtcAgreementDraftV1 {
+    /// Validates one untrusted canonical body without accepting either role.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed identities, derived chain fields, role projections,
+    /// amounts, policies, or recovery schedules.
+    pub fn validate(body: BtcAgreementBodyV1) -> Result<Self, BtcAgreementV1Error> {
+        validate_fixed_body(&body)?;
+        let _ = validate_executable_body(&body)?;
+        let draft = Self { body };
+        let _ = draft.encode_wire()?;
+        Ok(draft)
+    }
+
+    /// Validates an unsigned body and requires the exact local Bitcoin policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns every intrinsic body error, an invalid expected policy, or a
+    /// mismatch before the body is eligible for a role signature.
+    pub fn validate_for_bitcoin_policy(
+        body: BtcAgreementBodyV1,
+        expected: &BtcChainPolicyV1,
+    ) -> Result<Self, BtcAgreementV1Error> {
+        validate_bitcoin_chain_policy(expected)?;
+        let draft = Self::validate(body)?;
+        draft.ensure_bitcoin_policy(expected)?;
+        Ok(draft)
+    }
+
+    /// Bounded canonical decode followed by complete unsigned-body validation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized, truncated, malformed, trailing, non-canonical, or
+    /// semantically invalid bodies.
+    pub fn from_wire(bytes: &[u8]) -> Result<Self, BtcAgreementV1Error> {
+        if bytes.len() > MAX_BTC_AGREEMENT_RECORD_BYTES {
+            return Err(BtcAgreementV1Error::OversizedWireRecord {
+                actual: bytes.len(),
+                maximum: MAX_BTC_AGREEMENT_RECORD_BYTES,
+            });
+        }
+        let mut reader = BoundedWireReader::new(bytes);
+        let body = decode_bounded_body(&mut reader)?;
+        reader.finish()?;
+        let draft = Self::validate(body)?;
+        if draft.encode_wire()?.as_slice() != bytes {
+            return Err(BtcAgreementV1Error::MalformedWireRecord);
+        }
+        Ok(draft)
+    }
+
+    /// Bounded canonical decode with an exact local Bitcoin policy requirement.
+    ///
+    /// # Errors
+    ///
+    /// Returns every wire or body validation error, an invalid expected policy,
+    /// or a network/confirmation mismatch before signing.
+    pub fn from_wire_for_bitcoin_policy(
+        bytes: &[u8],
+        expected: &BtcChainPolicyV1,
+    ) -> Result<Self, BtcAgreementV1Error> {
+        validate_bitcoin_chain_policy(expected)?;
+        let draft = Self::from_wire(bytes)?;
+        draft.ensure_bitcoin_policy(expected)?;
+        Ok(draft)
+    }
+
+    /// Encodes the exact canonical unsigned body within the agreement bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns an encoding or oversize error.
+    pub fn encode_wire(&self) -> Result<Vec<u8>, BtcAgreementV1Error> {
+        let encoded = self.body.encode_canonical()?;
+        if encoded.len() > MAX_BTC_AGREEMENT_RECORD_BYTES {
+            return Err(BtcAgreementV1Error::OversizedWireRecord {
+                actual: encoded.len(),
+                maximum: MAX_BTC_AGREEMENT_RECORD_BYTES,
+            });
+        }
+        Ok(encoded)
+    }
+
+    /// Exact canonical body selected by the application.
+    #[must_use]
+    pub const fn body(&self) -> &BtcAgreementBodyV1 {
+        &self.body
+    }
+
+    /// Fixed-domain commitment that both roles must sign.
+    #[must_use]
+    pub fn commitment(&self) -> [u8; 32] {
+        self.body.commitment()
+    }
+
+    /// Requires this validated draft to match the exact local Bitcoin policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns a mismatch when network identity or confirmation policy differs.
+    pub fn ensure_bitcoin_policy(
+        &self,
+        expected: &BtcChainPolicyV1,
+    ) -> Result<(), BtcAgreementV1Error> {
+        if self.body.bitcoin_chain_policy() == expected {
+            Ok(())
+        } else {
+            Err(BtcAgreementV1Error::BitcoinChainPolicyMismatch)
+        }
+    }
+}
+
+/// Maker-authenticated proposal awaiting only the Taker's signature.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BtcMakerAgreementProposalV1 {
+    draft: BtcAgreementDraftV1,
+    maker_signature: [u8; 64],
+}
+
+impl BtcMakerAgreementProposalV1 {
+    /// Verifies that the Maker signed the exact validated draft commitment.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed or mismatched Maker signatures.
+    pub fn from_parts(
+        draft: BtcAgreementDraftV1,
+        maker_signature: [u8; 64],
+    ) -> Result<Self, BtcAgreementV1Error> {
+        let maker_key = parse_participant_key(draft.body().participants(), Participant::Maker)?;
+        verify_role_signature(
+            Participant::Maker,
+            &maker_key,
+            maker_signature,
+            draft.commitment(),
+        )?;
+        let proposal = Self {
+            draft,
+            maker_signature,
+        };
+        let _ = proposal.encode_wire()?;
+        Ok(proposal)
+    }
+
+    /// Verifies a Maker proposal under the exact local Bitcoin policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns every draft/signature error, an invalid expected policy, or a
+    /// policy mismatch before the proposal is sent or accepted.
+    pub fn from_parts_for_bitcoin_policy(
+        draft: BtcAgreementDraftV1,
+        maker_signature: [u8; 64],
+        expected: &BtcChainPolicyV1,
+    ) -> Result<Self, BtcAgreementV1Error> {
+        validate_bitcoin_chain_policy(expected)?;
+        draft.ensure_bitcoin_policy(expected)?;
+        Self::from_parts(draft, maker_signature)
+    }
+
+    /// Bounded canonical decode and Maker-signature validation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsupported schemas, malformed bodies, trailing bytes, or a
+    /// signature that is not by the body-selected Maker.
+    pub fn from_wire(bytes: &[u8]) -> Result<Self, BtcAgreementV1Error> {
+        if bytes.len() > MAX_BTC_AGREEMENT_RECORD_BYTES {
+            return Err(BtcAgreementV1Error::OversizedWireRecord {
+                actual: bytes.len(),
+                maximum: MAX_BTC_AGREEMENT_RECORD_BYTES,
+            });
+        }
+        let mut reader = BoundedWireReader::new(bytes);
+        let schema = reader.u16()?;
+        if schema != BTC_AGREEMENT_SCHEMA_V1 {
+            return Err(BtcAgreementV1Error::UnsupportedSchema(schema));
+        }
+        let body = decode_bounded_body(&mut reader)?;
+        let commitment: [u8; 32] = reader.fixed()?;
+        let maker_signature: [u8; 64] = reader.fixed()?;
+        reader.finish()?;
+        let draft = BtcAgreementDraftV1::validate(body)?;
+        if commitment.ct_eq(&draft.commitment()).unwrap_u8() == 0 {
+            return Err(BtcAgreementV1Error::CommitmentMismatch);
+        }
+        let proposal = Self::from_parts(draft, maker_signature)?;
+        if proposal.encode_wire()?.as_slice() != bytes {
+            return Err(BtcAgreementV1Error::MalformedWireRecord);
+        }
+        Ok(proposal)
+    }
+
+    /// Bounded canonical proposal decode with an exact local policy requirement.
+    ///
+    /// # Errors
+    ///
+    /// Returns every proposal error, an invalid expected policy, or a mismatch
+    /// before the Taker may add its signature.
+    pub fn from_wire_for_bitcoin_policy(
+        bytes: &[u8],
+        expected: &BtcChainPolicyV1,
+    ) -> Result<Self, BtcAgreementV1Error> {
+        validate_bitcoin_chain_policy(expected)?;
+        let proposal = Self::from_wire(bytes)?;
+        proposal.ensure_bitcoin_policy(expected)?;
+        Ok(proposal)
+    }
+
+    /// Canonical proposal wire: schema, body, commitment, and Maker signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an encoding or oversize error.
+    pub fn encode_wire(&self) -> Result<Vec<u8>, BtcAgreementV1Error> {
+        let mut encoded = BTC_AGREEMENT_SCHEMA_V1.to_le_bytes().to_vec();
+        encoded.extend_from_slice(&self.draft.encode_wire()?);
+        encoded.extend_from_slice(&self.draft.commitment());
+        encoded.extend_from_slice(&self.maker_signature);
+        if encoded.len() > MAX_BTC_AGREEMENT_RECORD_BYTES {
+            return Err(BtcAgreementV1Error::OversizedWireRecord {
+                actual: encoded.len(),
+                maximum: MAX_BTC_AGREEMENT_RECORD_BYTES,
+            });
+        }
+        Ok(encoded)
+    }
+
+    /// Validated canonical body signed by the Maker.
+    #[must_use]
+    pub const fn body(&self) -> &BtcAgreementBodyV1 {
+        self.draft.body()
+    }
+
+    /// Exact commitment signed by the Maker and expected from the Taker.
+    #[must_use]
+    pub fn commitment(&self) -> [u8; 32] {
+        self.draft.commitment()
+    }
+
+    /// Requires the proposal body to match the exact local Bitcoin policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns a mismatch when network identity or confirmation policy differs.
+    pub fn ensure_bitcoin_policy(
+        &self,
+        expected: &BtcChainPolicyV1,
+    ) -> Result<(), BtcAgreementV1Error> {
+        self.draft.ensure_bitcoin_policy(expected)
+    }
+
+    /// Adds the Taker signature and validates the complete executable agreement.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a malformed or mismatched Taker signature and revalidates every
+    /// canonical agreement invariant.
+    pub fn complete(
+        self,
+        taker_signature: [u8; 64],
+    ) -> Result<BtcAgreementV1, BtcAgreementV1Error> {
+        let commitment = self.draft.commitment();
+        BtcAgreementV1::validate(BtcAgreementRecordV1::from_parts(
+            BTC_AGREEMENT_SCHEMA_V1,
+            self.draft.body,
+            commitment,
+            self.maker_signature,
+            taker_signature,
+        ))
+    }
+}
+
 /// Primitive untrusted wire record.
 #[derive(BorshSerialize, Clone, Debug, Eq, PartialEq)]
 pub struct BtcAgreementRecordV1 {
@@ -1441,26 +1727,8 @@ impl BtcAgreementV1 {
             expected_commitment,
         )?;
 
-        let aggregate_key = derive_aggregate_key(&record.body.participants)?;
-        if aggregate_key != record.body.p2tr.aggregate_internal_key {
-            return Err(BtcAgreementV1Error::BitcoinAggregateKeyMismatch);
-        }
-        let bitcoin_funder = bitcoin_funder(record.body.direction());
-        if record.body.p2tr.refund_key
-            != *record
-                .body
-                .participants
-                .for_participant(bitcoin_funder)
-                .bitcoin_refund_key()
-        {
-            return Err(BtcAgreementV1Error::BitcoinRefundRoleMismatch);
-        }
-        let contract = reconstruct_contract(&record.body.p2tr)?;
-        let cooperative_claim = reconstruct_claim(&record.body, &contract)?;
-        let bitcoin_refund =
-            reconstruct_bitcoin_refund(&record.body, &contract, cooperative_claim.fee())?;
-        let recovery_schedule = reconstruct_recovery(&record.body)?;
-        let coordinator = derive_initial_coordinator(&record.body, recovery_schedule)?;
+        let (contract, cooperative_claim, bitcoin_refund, coordinator) =
+            validate_executable_body(&record.body)?;
         Ok(Self {
             record,
             contract,
@@ -1749,6 +2017,38 @@ impl BtcAgreementV1 {
     pub const fn lez_claimant(&self) -> Participant {
         self.lez_depositor().other()
     }
+}
+
+fn validate_executable_body(
+    body: &BtcAgreementBodyV1,
+) -> Result<
+    (
+        P2trSwapOutput,
+        CooperativeKeyPathSpend,
+        RefundScriptPathSpend,
+        SwapCoordinator,
+    ),
+    BtcAgreementV1Error,
+> {
+    let aggregate_key = derive_aggregate_key(&body.participants)?;
+    if aggregate_key != body.p2tr.aggregate_internal_key {
+        return Err(BtcAgreementV1Error::BitcoinAggregateKeyMismatch);
+    }
+    let bitcoin_funder = bitcoin_funder(body.direction());
+    if body.p2tr.refund_key
+        != *body
+            .participants
+            .for_participant(bitcoin_funder)
+            .bitcoin_refund_key()
+    {
+        return Err(BtcAgreementV1Error::BitcoinRefundRoleMismatch);
+    }
+    let contract = reconstruct_contract(&body.p2tr)?;
+    let cooperative_claim = reconstruct_claim(body, &contract)?;
+    let bitcoin_refund = reconstruct_bitcoin_refund(body, &contract, cooperative_claim.fee())?;
+    let recovery_schedule = reconstruct_recovery(body)?;
+    let coordinator = derive_initial_coordinator(body, recovery_schedule)?;
+    Ok((contract, cooperative_claim, bitcoin_refund, coordinator))
 }
 
 /// Rejection taxonomy for untrusted version-1 agreements.
