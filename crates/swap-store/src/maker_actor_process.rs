@@ -1015,6 +1015,13 @@ pub(crate) fn require_exact_maker_actor_in_transaction(
     Ok(())
 }
 
+pub(crate) fn load_maker_actor_manifest_in_transaction(
+    transaction: &Transaction<'_>,
+    swap_id: &SwapId,
+) -> Result<Option<MakerActorManifestV1>, MakerActorProcessError> {
+    Ok(load_record(transaction, swap_id)?.map(|record| record.manifest))
+}
+
 fn validate_manifest_swap(
     connection: &Connection,
     manifest: &MakerActorManifestV1,

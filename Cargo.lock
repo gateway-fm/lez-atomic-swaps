@@ -2057,9 +2057,11 @@ name = "lez-swap-store"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitcoin",
  "command-fds",
  "getrandom 0.3.4",
  "lez-bridge-protocol",
+ "lez-btc-swap-sdk",
  "lez-swap-core",
  "lez-swap-sdk-core",
  "lez-zec-swap-sdk",

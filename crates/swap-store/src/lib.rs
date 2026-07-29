@@ -53,9 +53,11 @@ pub use maker_application::{
     MakerPriceSourceKind, MakerRouteV1, VersionedMakerRecord,
 };
 pub use maker_offer::{
-    MakerOfferCommit, MakerOfferError, MakerOfferId, MakerOfferPublicationPreflight,
-    MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerZecNegotiationStatus,
-    MakerZecNegotiationV1, maker_zec_chat_session_id,
+    MakerBtcAcceptanceCommit, MakerBtcAcceptanceReplay, MakerBtcNegotiationStatus,
+    MakerBtcNegotiationV1, MakerOfferCommit, MakerOfferError, MakerOfferId,
+    MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1,
+    MakerZecNegotiationStatus, MakerZecNegotiationV1, maker_btc_chat_swap_id,
+    maker_zec_chat_session_id,
 };
 pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
@@ -79,7 +81,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 18;
+const DATABASE_SCHEMA_VERSION: i64 = 19;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
@@ -326,6 +328,9 @@ pub enum StoreError {
     /// An accepted swap could not bind its exact immutable maker actor registration.
     #[error("accepted swap maker actor registration is invalid")]
     InvalidMakerActorRegistration,
+    /// A signed Bitcoin application agreement disagrees with durable offer state.
+    #[error("Bitcoin maker application state is invalid")]
+    InvalidBtcApplicationState,
     /// A terminal actor projection does not match the completed application agreement.
     #[error("operator terminal projection is invalid")]
     InvalidOperatorTerminalProjection,

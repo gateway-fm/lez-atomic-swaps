@@ -1568,6 +1568,12 @@ impl BtcMakerAgreementProposalV1 {
         self.draft.commitment()
     }
 
+    /// Exact validated Maker signature retained in the proposal transcript.
+    #[must_use]
+    pub const fn maker_signature(&self) -> &[u8; 64] {
+        &self.maker_signature
+    }
+
     /// Requires the proposal body to match the exact local Bitcoin policy.
     ///
     /// # Errors

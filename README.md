@@ -12,7 +12,7 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ### M5 active progressive application PoC
 
 M5 is active. The owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v18
+Unix-socket daemon, maker CLI, durable schema-v19
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
@@ -60,7 +60,7 @@ admission, while stale generations and changed payloads fail closed. ZEC Maker
 actors support claim and refund. BTC Maker actors support refund only; manual
 BTC claim is rejected. No fresh actual-node run uses this supervisor path yet,
 so this component does not complete M5.
-Schema v18 now carries that authority into a read-only progress projection
+Schema v19 now carries that authority into a read-only progress projection
 without creating a second actor reader or worker. The strict supervisor parses
 the actual pair-specific BTC and ZEC status/effect vocabularies, accepts their
 real revision-zero activation state, enforces terminal phase/action/outcome
@@ -106,7 +106,13 @@ authority only through the existing dual-signature validator. Both directions,
 wrong-policy cases, and bounded wire mutations are SDK-GREEN with no chain RPC,
 Docker, faucet, DNS, public network, or public funds. Chat persistence, actor
 provisioning, and real CLI/node composition remain open, so this is not a BTC
-application swap or M5 completion.
+application swap or M5 completion. Schema 19 now closes the durable store part:
+one real Maker-signed proposal reserves one offer before response, and the final
+dual-signed wire, agreement-derived coordinator, consumed offer, immutable
+Bitcoin Maker actor, and replay result commit or roll back together. Restart,
+competing reservations, exact replay, schema-18 migration, and forced rollback
+are GREEN. Role-fixed BTC provisioning, daemon/Taker CLI wiring, and local
+Bitcoin Core Regtest plus LEZ v0.2 execution remain open.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

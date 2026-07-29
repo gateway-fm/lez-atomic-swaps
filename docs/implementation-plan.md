@@ -3729,13 +3729,38 @@ separately from runtime dependencies.
   role provisioning, and daemon/Taker CLI composition remain next; the
   under-specified black-box RED test is deliberately not counted as GREEN.
 
+  The schema-v19 BTC durable negotiation slice is now GREEN. One real SDK draft,
+  Maker Schnorr signature, and Taker Schnorr signature drive the focused store
+  journey. Staging retains the caller-authenticated Delivery commitment, winning reservation, derived
+  swap identity, both role keys, exact Bitcoin and LEZ amounts, proposal body,
+  and offer quote before the proposal may be exposed. Completion reparses the
+  canonical final wire and commits the agreement-derived coordinator, completed
+  negotiation, consumed offer, immutable Bitcoin Maker actor, and global replay
+  result in one immediate transaction. A trigger at the last mutation insert
+  proves all earlier writes roll back. Exact replay verifies the final wire,
+  coordinator bytes, consumed revision, and actor without resetting scheduler
+  time. A read-only preflight recovers the exact committed actor manifest before
+  filesystem provisioning after a lost response. Stage replay verifies both durable request owners, the original half-open reservation window, proposal direction, exact quote, and proposal/offer rows. The lost-response preflight reparses the completed proposal and final agreement, rebinds the exact staged Maker signature, route, quote, coordinator, consumed revision, and immutable actor before returning provisioning authority.
+
+  The full `lez-swap-store` all-target suite is 142 of 142 GREEN. Schema 18 to
+  19 migration retains prior global request rows while adding the two BTC
+  mutation operations. Warning-fatal all-target Clippy, Rustdoc, formatting,
+  and diff hygiene pass. ADR 0107 records component, sequence, resource, crash,
+  and atomicity diagrams and arguments. No chain node, RPC, Docker service,
+  faucet, DNS, public network, or public funds participated; this is durable
+  application authority, not yet a BTC application swap. Role-fixed no-clobber
+  BTC provisioning and daemon/Taker CLI handoff are next, followed by actual
+  local-node composition. The under-specified Maker-process RED file was removed for repository
+  hygiene; it will return only with explicit draft, signer, and per-swap authority inputs.
+
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is now 12 to 22 focused implementation hours once
+literal M5 ETA is now 9 to 17 focused implementation hours once
 isolated local-node control is healthy, under the owner-approved Logos-upstream
 exception. The earlier 4-to-9-hour estimate assumed the mature M3/M4 pair actors
 already shared the ZEC application handoff. The 2026-07-29 code audit instead
 confirmed that BTC still needs durable application negotiation and role provisioning,
-while XMR has no unified one-shot lifecycle actor or scheduler kind. Fresh
+while XMR has no unified one-shot lifecycle actor or scheduler kind. BTC durable
+negotiation is now complete; provisioning and process composition remain. Fresh
 receipt-bound ZEC execution, unavailable-chain isolation, simultaneous
 application composition, all-pair CLI completion, and closure gates also remain.
 Shared containerd timeouts add wall-clock uncertainty but are not counted as

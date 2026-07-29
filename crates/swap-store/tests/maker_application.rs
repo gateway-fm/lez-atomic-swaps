@@ -171,8 +171,81 @@ fn schema_v10_migrates_to_current_without_rewriting_coordinator_bytes() {
             |row| row.get(0),
         )
         .expect("read retained aggregate bytes");
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
     assert_eq!(retained, encoded);
+}
+
+#[test]
+fn schema_v18_migrates_btc_mutation_operations_without_losing_requests() {
+    let run = tempdir().expect("isolated schema-v18 migration store");
+    let database = run.path().join("schema-v18.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).expect("create current store");
+    store
+        .configure_maker_pair(
+            &request("schema-v18-retained-request"),
+            None,
+            &MakerPairConfigurationV1::new(
+                route(Pair::Bitcoin, SwapDirection::TakerSellsForeign),
+                false,
+                MakerPriceSourceKind::Local,
+                1,
+                1,
+                60,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    drop(store);
+
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE maker_application_mutations
+                 RENAME TO maker_application_mutations_current;
+             CREATE TABLE maker_application_mutations (
+                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                 request_id TEXT NOT NULL UNIQUE,
+                 operation TEXT NOT NULL CHECK (
+                     operation IN ('pair_configure', 'local_price_set', 'offer_publish',
+                       'offer_reserve', 'offer_consume', 'offer_withdraw',
+                       'zec_negotiation_stage', 'zec_negotiation_complete',
+                       'actor_action_request')
+                 ),
+                 request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
+                 request_json TEXT NOT NULL,
+                 result_json TEXT NOT NULL
+             ) STRICT;
+             INSERT INTO maker_application_mutations
+             SELECT * FROM maker_application_mutations_current;
+             DROP TABLE maker_application_mutations_current;
+             DROP TABLE maker_btc_negotiations;
+             PRAGMA user_version = 18;",
+        )
+        .unwrap();
+    drop(connection);
+
+    drop(SqliteSwapStore::open(&database).expect("migrate schema v18 to v19"));
+    let connection = Connection::open(&database).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let (retained, table_sql, btc_table): (i64, String, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM maker_application_mutations
+                       WHERE request_id = 'schema-v18-retained-request'), sql,
+                    (SELECT COUNT(*) FROM sqlite_master
+                      WHERE type = 'table' AND name = 'maker_btc_negotiations')
+               FROM sqlite_master
+              WHERE type = 'table' AND name = 'maker_application_mutations'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(version, 19);
+    assert_eq!(retained, 1);
+    assert!(table_sql.contains("btc_negotiation_stage"));
+    assert!(table_sql.contains("btc_negotiation_complete"));
+    assert_eq!(btc_table, 1);
 }
 
 fn zcash_swap(id: &str) -> SwapCoordinator {

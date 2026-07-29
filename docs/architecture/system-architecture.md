@@ -602,8 +602,9 @@ flowchart TB
         MRPC["Owner lifecycle RPC<br/>monitor claim refund GREEN"]
         APP["M5 application service"]
         OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
+        BTN[("Schema-v19 BTC negotiation<br/>signed staging + atomic actor activation GREEN")]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v18<br/>application + actor scheduler journals")]
+        DB[("Maker SQLite schema v19<br/>application + actor scheduler journals")]
         PR["Durable route price selector"]
         MPV["Daemon Maker-only provisioner<br/>startup-pinned authority + durable no-clobber publish"]
         SCH[("Schema-v18 actor scheduler<br/>atomic registration + fenced leases")]
@@ -769,6 +770,7 @@ flowchart TB
     LC -.->|"start / stop / health"| MD
     MD --> APP
     APP --> OF
+    APP --> BTN
     APP --> PR
     PR -->|"local route"| DB
     PR -->|"Logos route outside DB lock"| PP
@@ -792,6 +794,7 @@ flowchart TB
     SUP -.->|"bounded one-shot execution"| MA
     SUP -->|"validated status or effect"| PG
     OF --> DB
+    BTN --> DB
     APP --> CO
     CO --> DB
     CO --> PS

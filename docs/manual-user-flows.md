@@ -5491,6 +5491,46 @@ full runner has passed with exit `0`; a direct launch is still only a local
 v0.1.2 node handoff and must not be reported as a v0.2 public deployment or a
 composed actor corridor.
 
+## Flow 1L: repeat the BTC durable negotiation checkpoint
+
+This is the current reproducible BTC application component boundary. It is not
+yet the end-user BTC swap command and makes no Bitcoin or LEZ chain effect.
+
+From the repository root, with the pinned Rust 1.96.0 toolchain already
+installed, run:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p lez-swap-store --test btc_maker_negotiation
+```
+
+Expected result is one passing
+`btc_maker_negotiation_is_one_winner_restart_safe_and_completes_atomically`
+test. The fixture constructs a real canonical BTC body, Maker-signed proposal,
+and Taker-countersigned final agreement. It then proves one-winner staging,
+changed-request conflict, competing-reservation rejection, SQLite reopen,
+durable negotiation and offer-owner drift rejection, corrupted reservation-window rejection, signed offer-direction binding, accepted-before-reserved and expiry-boundary rejection, exact staged Maker-signature binding, trigger-forced rollback,
+lost-response preflight, scheduler-time-insensitive replay, request conflict,
+and completed-row tamper rejection.
+
+For the complete package regression and lint boundary, run:
+
+```bash
+cargo +1.96.0 test --locked --offline -p lez-swap-store --all-targets
+cargo +1.96.0 clippy --locked --offline \
+  -p lez-swap-store --all-targets -- -D warnings
+cargo +1.96.0 doc --locked --offline -p lez-swap-store --no-deps
+```
+
+External runtime resources used: none. There is no Docker project, Bitcoin
+Core, LEZ process, RPC endpoint, faucet, DNS lookup, public network, or public
+fund. The deterministic cryptographic keys and SQLite database live only in a
+test-owned temporary directory. Accordingly, this flow has no chain-finality
+flake source and does not prove node behavior. The forthcoming user-visible BTC
+flow will use isolated Bitcoin Core Regtest and LEZ v0.2 endpoints selected by
+configuration; switching to public routes will remain a configuration and
+deployment change, not a different agreement or store format.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

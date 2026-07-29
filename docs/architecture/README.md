@@ -191,6 +191,7 @@ flowchart TB
     M5ProcessLease --> M5ManualActions["0103 Replay-safe manual actions"]
     M5ManualActions --> M5ActorProgress["0104 Fenced progress and owner lifecycle RPC"]
     M5Entry --> M5BtcNegotiation["0106 Validated BTC draft and role signatures"]
+    M5BtcNegotiation --> M5BtcStore["0107 Atomic BTC staging and activation"]
 ```
 
 | ADR | Decision | Status |
@@ -301,3 +302,4 @@ flowchart TB
 | [0104](0104-commit-actor-progress-with-fenced-resolution.md) | Commit validated secret-free actor progress in the same fenced transaction as process and manual-action resolution | Accepted; strict actual-schema BTC/ZEC projection plus allowlisted read-only Maker monitor, exact action replay, restart durability, and error classification plus receipt-bound kernel-locked ZEC Taker lifecycle commands GREEN. Actual-node and concurrent live-node composition remain |
 | [0105](0105-run-taker-lifecycle-from-role-state.md) | Run Taker monitor, claim, and refund directly from role-local authority under the shared per-swap kernel lock | Accepted; seven lifecycle cases plus the real Chat process prove pinned receipts, exact replay, and offline monitor. Actual-node lifecycle effects remain |
 | [0106](0106-negotiate-btc-with-validated-drafts.md) | Validate a canonical unsigned BTC body, verify a Maker-only proposal, and complete only through the existing dual-signature final validator | Accepted and SDK component GREEN; durable Chat staging, actor provisioning, daemon/CLI composition, and actual-node BTC application execution remain |
+| [0107](0107-stage-and-complete-btc-negotiations-atomically.md) | Stage one real Maker-signed BTC proposal before response and atomically commit the final agreement, coordinator, offer consumption, and Maker actor | Accepted and schema-v19 store component GREEN; role provisioning, daemon/Taker CLI composition, and actual-node BTC application execution remain |

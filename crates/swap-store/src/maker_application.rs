@@ -716,21 +716,21 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
              sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
              request_id              TEXT NOT NULL UNIQUE,
              operation               TEXT NOT NULL CHECK (
-                 operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'zec_negotiation_stage', 'zec_negotiation_complete', 'actor_action_request')
+                 operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'actor_action_request')
              ),
              request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
              request_json            TEXT NOT NULL,
              result_json             TEXT NOT NULL
          ) STRICT;",
     )?;
-    let supports_actor_action: bool = transaction.query_row(
-        "SELECT instr(sql, 'actor_action_request') > 0
+    let supports_btc_negotiation: bool = transaction.query_row(
+        "SELECT instr(sql, 'btc_negotiation_complete') > 0
            FROM sqlite_master
           WHERE type = 'table' AND name = 'maker_application_mutations'",
         [],
         |row| row.get(0),
     )?;
-    if !supports_actor_action {
+    if !supports_btc_negotiation {
         transaction.execute_batch(
             "ALTER TABLE maker_application_mutations
                  RENAME TO maker_application_mutations_before_actor_action;
@@ -738,7 +738,7 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
                  sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
                  request_id              TEXT NOT NULL UNIQUE,
                  operation               TEXT NOT NULL CHECK (
-                     operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'zec_negotiation_stage', 'zec_negotiation_complete', 'actor_action_request')
+                     operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'actor_action_request')
                  ),
                  request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
                  request_json            TEXT NOT NULL,
