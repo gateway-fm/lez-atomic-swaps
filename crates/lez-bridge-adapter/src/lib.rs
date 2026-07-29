@@ -512,6 +512,34 @@ pub enum NativeRefundAdapterError<E: std::error::Error + 'static> {
     Refund(#[source] RefundError),
 }
 
+/// Validated refund observation plus private page-progression evidence.
+///
+/// The SDK-facing observation deliberately does not expose whether a raw miss
+/// covered the whole requested page. The context-owning composition needs that
+/// fact to advance its durable cursor without conflating other unstable results.
+#[derive(Debug)]
+pub(crate) struct NativeRefundPageObservation {
+    observation: RefundObservationV1,
+    fully_covered_miss: bool,
+}
+
+impl NativeRefundPageObservation {
+    const fn new(observation: RefundObservationV1, fully_covered_miss: bool) -> Self {
+        Self {
+            observation,
+            fully_covered_miss,
+        }
+    }
+
+    pub(crate) const fn fully_covered_miss(&self) -> bool {
+        self.fully_covered_miss
+    }
+
+    pub(crate) fn into_observation(self) -> RefundObservationV1 {
+        self.observation
+    }
+}
+
 /// One conservative result from exactly one revealing-claim submission attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RevealingClaimSubmitOutcome {
@@ -1173,6 +1201,18 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
         prepared: &PreparedRefundSubmissionV1,
         window: DiscoveryWindow,
     ) -> Result<RefundObservationV1, NativeRefundAdapterError<T::Error>> {
+        self.observe_prepared_native_refund_page(agreement, request_id, prepared, window)
+            .await
+            .map(NativeRefundPageObservation::into_observation)
+    }
+
+    pub(crate) async fn observe_prepared_native_refund_page(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        prepared: &PreparedRefundSubmissionV1,
+        window: DiscoveryWindow,
+    ) -> Result<NativeRefundPageObservation, NativeRefundAdapterError<T::Error>> {
         if self.local_participant != agreement.lez_depositor() {
             return Err(NativeRefundAdapterError::ExactTargetRequiresOwner);
         }
@@ -1200,6 +1240,17 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
         request_id: RequestId,
         window: DiscoveryWindow,
     ) -> Result<RefundObservationV1, NativeRefundAdapterError<T::Error>> {
+        self.observe_counterparty_native_refund_page(agreement, request_id, window)
+            .await
+            .map(NativeRefundPageObservation::into_observation)
+    }
+
+    pub(crate) async fn observe_counterparty_native_refund_page(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        window: DiscoveryWindow,
+    ) -> Result<NativeRefundPageObservation, NativeRefundAdapterError<T::Error>> {
         if self.local_participant != agreement.lez_claimant() {
             return Err(NativeRefundAdapterError::DiscoveryRequiresClaimant);
         }
@@ -1258,7 +1309,7 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
         request_id: RequestId,
         target: NativeRefundObservationTarget,
         prepared: Option<&PreparedRefundSubmissionV1>,
-    ) -> Result<RefundObservationV1, NativeRefundAdapterError<T::Error>> {
+    ) -> Result<NativeRefundPageObservation, NativeRefundAdapterError<T::Error>> {
         let terms = refund_terms(agreement, &self.runtime, self.local_participant)?;
         let context = self.refund_context(request_id);
         let response = self
@@ -1278,33 +1329,47 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
                 Err(NativeRefundAdapterError::InconsistentFacts)
             }
             NativeRefundObservation::Absent => {
+                let fully_covered_miss =
+                    refund_window_is_fully_covered(target, response.clock_after.height);
                 if matches!(
                     account_state,
                     Some(EscrowState::Claimed | EscrowState::Refunded)
                 ) {
-                    return Ok(RefundObservationV1::Unstable);
+                    return Ok(NativeRefundPageObservation::new(
+                        RefundObservationV1::Unstable,
+                        fully_covered_miss,
+                    ));
                 }
-                if refund_window_is_fully_covered(target, response.clock_after.height) {
-                    Ok(RefundObservationV1::Absent)
+                let observation = if fully_covered_miss {
+                    RefundObservationV1::Absent
                 } else {
-                    Ok(RefundObservationV1::Unstable)
-                }
+                    RefundObservationV1::Unstable
+                };
+                Ok(NativeRefundPageObservation::new(
+                    observation,
+                    fully_covered_miss,
+                ))
             }
             NativeRefundObservation::UnknownOrPending => {
-                if matches!(target, NativeRefundObservationTarget::Exact { .. })
+                let observation = if matches!(target, NativeRefundObservationTarget::Exact { .. })
                     && account_state == Some(EscrowState::Funded)
                 {
-                    Ok(RefundObservationV1::Absent)
+                    RefundObservationV1::Absent
                 } else {
-                    Ok(RefundObservationV1::Unstable)
-                }
+                    RefundObservationV1::Unstable
+                };
+                Ok(NativeRefundPageObservation::new(observation, false))
             }
             NativeRefundObservation::Found(found) => {
                 if account_state != Some(EscrowState::Refunded) {
                     return Err(NativeRefundAdapterError::InconsistentFacts);
                 }
-                validate_refund_found(agreement, &terms, target, &response, found, prepared)
-                    .map(RefundObservationV1::Confirmed)
+                let evidence =
+                    validate_refund_found(agreement, &terms, target, &response, found, prepared)?;
+                Ok(NativeRefundPageObservation::new(
+                    RefundObservationV1::Confirmed(evidence),
+                    false,
+                ))
             }
         }
     }

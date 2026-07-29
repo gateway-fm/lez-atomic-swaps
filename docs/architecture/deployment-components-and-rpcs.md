@@ -849,11 +849,15 @@ flowchart TB
         TakerActor[Taker ZEC actor]
         MakerSidecar[Maker LEZ sidecar]
         TakerSidecar[Taker LEZ sidecar]
-        RecoveryProof[("Intervention-assisted one-leg recovery checkpoint<br/>one finalized refund + zero custody<br/>both actors Refunded revision 2")]
+        MakerCursor[("Maker bridge journal<br/>restart-safe contiguous refund pages")]
+        TakerCursor[("Taker bridge journal<br/>restart-safe contiguous refund pages")]
+        RecoveryProof[("Historical one-leg recovery checkpoint<br/>actual-node run intervention-assisted<br/>current durable cursor component GREEN")]
         Finalizer --> MakerActor
         Finalizer --> TakerActor
-        MakerActor --> MakerSidecar
-        TakerActor --> TakerSidecar
+        MakerActor --> MakerCursor
+        MakerCursor --> MakerSidecar
+        TakerActor --> TakerCursor
+        TakerCursor --> TakerSidecar
         MakerActor -->|stopped terminal actor database| TerminalDaemon
     end
 
@@ -888,10 +892,12 @@ adds the separate intervention-assisted actual-node abandonment image: the refun
 owner submitted one
 LEZ transaction after expiry, the counterparty discovered it from the finalized
 window prefix, and both role actors reached `Refunded` revision 2 with zero
-custody. The original window aged out and required unsupported actor-window and
-bridge-journal intervention. This checkpoint uses the role binaries directly;
-the dashed supervisor edge remains accurate until durable window progress, the
-daemon, and the application CLIs drive the same recovery without intervention.
+custody. The original window aged out and that historical run required unsupported
+actor-window and bridge-journal intervention. Current role-local journals now
+automatically advance only fully covered contiguous pages and restore the active
+page after restart with unchanged actor config. The checkpoint still uses the
+role binaries directly; the dashed supervisor edge remains accurate until the
+daemon and application CLIs drive a fresh recovery without intervention.
 
 ```mermaid
 sequenceDiagram

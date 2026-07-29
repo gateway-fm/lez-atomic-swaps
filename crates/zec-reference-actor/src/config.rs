@@ -507,7 +507,7 @@ pub(crate) struct DeterministicLocalV0_2ActorConfigInput {
     pub(crate) zebra_genesis_hash: Hex32,
     /// Finite counterparty observation horizon.
     pub(crate) counterparty_scan_blocks: u32,
-    /// Bounded LEZ canonical discovery window.
+    /// Initial bounded LEZ discovery page; the journal advances contiguous pages.
     pub(crate) lez_discovery_window: DiscoveryWindow,
     /// Exact candidates disclosed only to the local Zcash funder.
     pub(crate) zcash_funding_outpoints: Vec<CandidateOutpoint>,
@@ -797,7 +797,7 @@ impl ActorConfig {
         self.zebra.counterparty_scan_blocks
     }
 
-    /// Fixed bounded LEZ discovery window.
+    /// Initial bounded LEZ discovery page and durable cursor page size.
     pub const fn lez_discovery_window(&self) -> DiscoveryWindow {
         self.lez_discovery_window
     }

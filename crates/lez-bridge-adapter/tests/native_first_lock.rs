@@ -633,6 +633,150 @@ async fn refund_unknown_reuses_the_exact_submit_context_after_sqlite_reopen() {
     remove_sqlite_files(&store_path);
 }
 
+fn paged_refund_observations(
+    agreement: &ZecAgreementV1,
+    participant: Participant,
+    first_request_id: &str,
+    second_request_id: &str,
+) -> [ObserveNativeRefundResult; 2] {
+    let first_clock = refund_clock();
+    let first = ObserveNativeRefundResult::new(
+        refund_context(participant, first_request_id),
+        first_clock,
+        refund_accounts(agreement, EscrowState::Refunded, 0),
+        NativeRefundObservation::Absent,
+        first_clock,
+    );
+    let second_clock = ChainClock::new(Hex32::from_bytes([0x95; 32]), 15, 203_000);
+    let mut second =
+        refund_found_observation(agreement, refund_context(participant, second_request_id));
+    second.clock_before = second_clock;
+    second.clock_after = second_clock;
+    let NativeRefundObservation::Found(found) = &mut second.refund else {
+        panic!("canonical refund fixture is found")
+    };
+    found.transaction.position = ChainPosition::new(Hex32::from_bytes([0x94; 32]), 14, 0);
+    [first, second]
+}
+
+fn refund_request_window(request: &ObserveNativeRefundRequest) -> DiscoveryWindow {
+    match request.target {
+        NativeRefundObservationTarget::Exact { window, .. }
+        | NativeRefundObservationTarget::DiscoverByTerms { window } => window,
+        NativeRefundObservationTarget::StateOnly => panic!("refund lookup has a window"),
+    }
+}
+
+fn assert_confirmed_refund(observation: &RefundObservationV1) {
+    assert!(matches!(observation, RefundObservationV1::Confirmed(_)));
+}
+
+#[tokio::test]
+async fn refund_observation_advances_contiguous_pages_across_sqlite_reopen() {
+    let agreement = agreement();
+    let prepared = prepared_refund_submission();
+    let seed_window = DiscoveryWindow::new(10, 3).expect("bounded seed window");
+
+    for (suffix, participant, exact) in [
+        ("owner", Participant::Taker, true),
+        ("counterparty", Participant::Maker, false),
+    ] {
+        let journal_path = isolated_sqlite_path(&format!("lez-wrapper-refund-page-{suffix}"));
+        let first_request_id = format!("refund-page-{suffix}-0001");
+        let second_request_id = format!("refund-page-{suffix}-0002");
+        let third_request_id = format!("refund-page-{suffix}-0003");
+        let transport = RefundTransport::new(paged_refund_observations(
+            &agreement,
+            participant,
+            &first_request_id,
+            &second_request_id,
+        ));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let factory = CloneTransportFactory {
+            transport: transport.clone(),
+            opens: Arc::clone(&opens),
+        };
+        let allocation_calls = Arc::new(AtomicUsize::new(0));
+        let request_spec = |request_id: &str| {
+            BridgeRequestSpec::new(
+                RequestId::new(request_id).expect("request ID"),
+                Some(seed_window),
+            )
+        };
+        let first = ContextOwningLezBridgePorts::new(
+            RunId::new("native-run-0001").expect("run ID"),
+            runtime_for_participant(&agreement, participant),
+            participant,
+            factory.clone(),
+            QueuedContexts {
+                requests: Arc::new(Mutex::new(VecDeque::from([
+                    request_spec(&first_request_id),
+                    request_spec(&second_request_id),
+                ]))),
+                calls: Arc::clone(&allocation_calls),
+            },
+            (),
+            (),
+            SqliteBridgeOperationJournal::open(&journal_path).expect("operation journal"),
+        )
+        .expect("role-local refund wrapper");
+
+        let first_observation = if exact {
+            first.observe_prepared_refund(&agreement, &prepared).await
+        } else {
+            first.observe_counterparty_refund(&agreement).await
+        }
+        .expect("fully covered first page is definitive");
+        assert_eq!(first_observation, RefundObservationV1::Unstable);
+        drop(first);
+
+        let resumed = ContextOwningLezBridgePorts::new(
+            RunId::new("native-run-0001").expect("run ID"),
+            runtime_for_participant(&agreement, participant),
+            participant,
+            factory,
+            QueuedContexts {
+                requests: Arc::new(Mutex::new(VecDeque::from([request_spec(
+                    &third_request_id,
+                )]))),
+                calls: Arc::clone(&allocation_calls),
+            },
+            (),
+            (),
+            SqliteBridgeOperationJournal::open(&journal_path).expect("reopened operation journal"),
+        )
+        .expect("restarted role-local refund wrapper");
+        let second_observation = if exact {
+            resumed.observe_prepared_refund(&agreement, &prepared).await
+        } else {
+            resumed.observe_counterparty_refund(&agreement).await
+        }
+        .expect("refund in the next contiguous page");
+        assert_confirmed_refund(&second_observation);
+
+        assert_eq!(allocation_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+        let requests = transport.observe_requests.lock().expect("observe log");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(refund_request_window(&requests[0]), seed_window);
+        assert_eq!(
+            refund_request_window(&requests[1]),
+            DiscoveryWindow::new(13, 3).expect("next contiguous window")
+        );
+        assert_eq!(
+            requests[0].context.request_id,
+            RequestId::new(first_request_id).expect("request ID")
+        );
+        assert_eq!(
+            requests[1].context.request_id,
+            RequestId::new(second_request_id).expect("request ID")
+        );
+        drop(requests);
+        drop(resumed);
+        remove_sqlite_files(&journal_path);
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ClaimTransport {
     prepare_requests: Arc<Mutex<Vec<PrepareRevealingClaimRequest>>>,

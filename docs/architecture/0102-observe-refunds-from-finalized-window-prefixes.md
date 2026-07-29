@@ -1,7 +1,7 @@
 # ADR 0102: observe refunds from finalized window prefixes
 
-- Status: Accepted component design; intervention-assisted actual-node LEZ
-  recovery observed; clean application replay remains
+- Status: Accepted; finalized-page observer and restart-safe durable cursor
+  component-GREEN; clean actual-node application replay remains
 - Date: 2026-07-29
 
 ## Context
@@ -26,13 +26,25 @@ immediately. An absence is terminal only when the adapter proves that the whole
 window is covered; a prefix-only absence remains `Unstable` and cannot advance
 the SDK.
 
+The actor config supplies only the initial page and fixed page size. The
+role-local bridge journal owns the active page after first reservation. On a
+validated full-page miss, one SQLite transaction completes that request and
+inserts a fresh request ID for the next contiguous page. A partial miss,
+transport ambiguity, or typed validation error retains the exact current page.
+Restart restores the active journal page and ignores the original seed. Page
+start arithmetic is checked and exhaustion fails closed. The public SDK result
+does not expose or infer this progression bit; only a raw validated sidecar
+`Absent` covering the full page may move the cursor. In particular, the stable
+funded exact-lookup shortcut does not advance it.
+
 The observer validates the refund variant as well as its common fields.
 Hashlock terms require the exact SHA-256 preimage authority and digest.
 Witnessed terms require the exact aggregate authority key and account. Mixed
 variants fail closed. Terminal evidence requires a finalized containing block,
 stable by-ID and by-hash identity, valid ancestry, the deadline, exact program
 and accounts, terminal metadata, and zero custody at that block. Historical
-work remains bounded by the configured window and the fixed descendant limit.
+block reads remain bounded by the active page even when the current finalized
+tip is far ahead.
 
 An exact owner observation may classify a stable finalized `Funded` snapshot as
 absent without scanning the entire window. This permits the existing durable
@@ -57,6 +69,8 @@ flowchart LR
     Sidecar --> Indexer
     Indexer --> Escrow
     Sidecar --> Adapter
+    Adapter -->|"full covered miss"| Journal
+    Journal -->|"next contiguous page"| Adapter
     Adapter --> SDK
     SDK --> OwnerActor
     SDK --> PeerActor
@@ -77,7 +91,12 @@ sequenceDiagram
     L-->>I: Finalized refund and terminal accounts
     T->>I: Observe exact transaction and zero custody
     T->>J: Commit Refunded revision 2
-    M->>I: Discover matching refund in finalized prefix
+    loop Bounded pages until the refund is found
+        M->>J: Reserve durable active page
+        M->>I: Discover matching refund in finalized page prefix
+        I-->>M: Full-page miss or unique finalized refund
+        M->>J: On full miss atomically reserve next page
+    end
     I-->>M: Unique transaction terminal metadata zero custody
     M->>J: Commit Refunded revision 2 without submission
 ```
@@ -102,6 +121,14 @@ authoritative-indexer assumptions. It does not make LEZ and Zcash one atomic
 state machine, and it does not remove the upstream lack of proof-bearing LEZ
 historical accounts recorded as LOGOS-016.
 
+The bounded old-page liveness claim trusts the official indexer `Finalized`
+status, exact by-ID and by-hash equality, within-page ancestry, and stable
+bracketed current tip. The v0.2 wire does not carry a proof from an old page to
+the current finalized tip. Removing that trust would require an upstream
+protocol extension with durable hash checkpoints or proof-bearing historical
+reads. This is a Logos-owned production caveat, not a reason to block local RFP
+milestone certification.
+
 ## Verified local result
 
 The isolated local run `m5fresh-a390dd8-20260728a-app3` began from a deliberate
@@ -120,14 +147,24 @@ while the refund finalized at block 608. The retained run therefore required
 manual rotation of both actor observation windows to 590 through 845 and manual
 retirement of an older active bridge-journal row before the two actor commands
 could converge. Those operations are neither a supported operator procedure nor
-daemon/CLI evidence. A durable observation cursor or supported bounded-window
-rotation plus daemon-supervised replay remains required before this result can
-upgrade the M5 certification claim.
+daemon/CLI evidence, so the retained run remains intervention-assisted.
 
-The focused test was RED on the old `Unavailable` guard, then GREEN. The full
-finalized-refund observer suite is 25 of 25 GREEN across exact and discovery,
-hashlock and witnessed authorities, deadlines, ancestry, moving tips,
-ambiguity, custody, and bounded windows.
+The current component removes that implementation gap. A RED integration test
+showed both owner exact lookup and counterparty discovery reopening SQLite on
+the unchanged configured page 10 through 12 and rejecting a refund at height
+14. GREEN durably advances to 13 through 15, restores that page after reopen,
+finds the same refund for both roles, and uses fresh request IDs. The test also
+proves checked non-overlapping arithmetic and fail-closed height exhaustion. No
+schema migration is required because the existing bridge-operation journal
+already stores poll sequence, request ID, and window. A fresh actual-node replay
+through the daemon and application CLIs is still required before upgrading the
+retained evidence claim.
+
+The focused observer test was RED on the old `Unavailable` guard, then GREEN.
+The full finalized-refund observer suite is 26 of 26 GREEN across exact and
+discovery, hashlock and witnessed authorities, deadlines, ancestry, moving
+tips, ambiguity, custody, old pages, and bounded windows. The full bridge-adapter
+integration suite is 47 of 47 GREEN.
 
 ## Consequences
 
@@ -136,7 +173,9 @@ ambiguity, custody, and bounded windows.
 - Prefix absence remains a polling state and cannot be misreported as a refund.
 - The same rule works for the legacy ZEC hashlock and witnessed asset corridors
   without weakening either authority shape.
-- This closes an actual-node two-role ZEC recovery slice. Durable application
-  manual-action intents, daemon-supervised actual-node recovery, concurrent
+- Durable contiguous-page progress is automatic and restart-safe; operators do
+  not edit actor config or bridge-journal rows.
+- The historical actual-node slice remains intervention-assisted. Application
+  manual-action intents, a clean daemon-supervised actual-node replay, concurrent
   composed swaps, and BTC and XMR application lifecycle completion remain M5
   work, so no M5 completion tag is authorized by this result.

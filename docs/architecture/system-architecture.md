@@ -653,7 +653,7 @@ flowchart TB
         M3RUN["Schema 4 private-local runner<br/>external Taker first lock<br/>actor-owned Maker second lock GREEN"]
         M3CACHE["Policy-2 official-wallet artifact cache<br/>executable plus manifest only<br/>202.42s cold and 10.35s hit GREEN"]
         M5FZ["M5 cargo-fuzz coordinator harness<br/>all supported profiles + restart invariants<br/>bounded CI smoke GREEN locally"]
-        M5RR[("M5 intervention-assisted one-leg ZEC recovery checkpoint<br/>one finalized LEZ refund + zero custody<br/>both role actors Refunded revision 2")]
+        M5RR[("M5 one-leg ZEC recovery<br/>historical actual-node checkpoint intervention-assisted<br/>durable contiguous cursor component GREEN")]
         M3F7A --> M3F7C
         M3F7C --> M3F7D
         M3F7D --> M3F7S
@@ -684,7 +684,7 @@ flowchart TB
         M3FF["M3 finalized witnessed-funding observer<br/>parent-linked stable-tip ancestry<br/>historical Funded state GREEN"]
         M3CF["M3 generic current funded-escrow proof<br/>stable state-only clock and custody GREEN<br/>923586b; not finality"]
         M3FO["M3 finalized witnessed-claim observer<br/>parent-linked stable-tip ancestry<br/>dual role + BIP340 GREEN"]
-        M3RF["Native-refund planner + finalized observer<br/>hashlock and witnessed prefix discovery GREEN"]
+        M3RF["Native-refund planner + finalized observer<br/>hashlock and witnessed bounded old-page discovery GREEN"]
         M3LI["Live LEZ init admission<br/>exact same ID and bytes<br/>one role-local send GREEN"]
         M3LC["Joined LEZ first-lock view<br/>stable current state plus exact bytes<br/>and finalized ancestry GREEN"]
         MBRJ[("Maker-only request store<br/>PREPARE replay + submit unknown-before-I/O GREEN")]

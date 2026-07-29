@@ -4784,13 +4784,15 @@ plus concurrent disjoint live-process composition remain M5 work.
 
 This is the intended role-correct recovery procedure behind ADR 0102, plus the
 inspection boundary for the retained intervention-assisted checkpoint. It is
-not currently reproducible end to end as a supported user flow. The original
-run's provisioned window was 193 through 448, the refund finalized at block 608,
-and convergence required manual rotation to 590 through 845 plus manual
-retirement of an older active bridge-journal row. Do not repeat either internal
-edit as an operator procedure. The pending durable window progress and Maker and
-Taker application `monitor/claim/refund` commands must remove those interventions
-before this becomes daemon-supervised M5 evidence.
+not yet reproducible end to end through the application as a supported one-command
+flow. The historical run provisioned 193 through 448, finalized the refund at
+block 608, and required manual rotation plus retirement of an older active
+bridge-journal row. Do not repeat either internal edit. Current code makes the
+configured window an initial page and size: each validated full-page miss
+atomically reserves the next contiguous page in SQLite, and restart resumes it
+with unchanged config. Partial, ambiguous, and typed-error polls retain the same
+page. Maker and Taker application `monitor/claim/refund` commands and a supported
+pause/abandonment runner still precede daemon-supervised M5 evidence.
 
 Start from a fresh Flow 1B local LEZ and Zebra deployment and its freshly
 provisioned role configs. To create the abandonment case, stop lifecycle driving
@@ -4840,7 +4842,9 @@ target/debug/zec-reference-actor --config "$TAKER_ACTOR_CONFIG" recover \
 ```
 
 Then invoke the non-owner. It must discover the unique finalized refund and
-must not submit one:
+must not submit one. If the refund lies after the active page, repeat the same
+command without editing config; each fully covered miss advances exactly one
+durable page, while an incomplete page remains a safe polling result:
 
 ```sh
 target/debug/zec-reference-actor --config "$MAKER_ACTOR_CONFIG" recover \
@@ -4877,13 +4881,11 @@ SHA-256 identities and set absolute `RAPIDSNARK_LIB_DIR` before building the
 LEZ sidecar. The upstream fallback also assumes `unzip`, so certified runs use
 the verified local libraries and Cargo offline.
 
-Current limitation: the exact working-tree result is one intervention-assisted
-real recovery, not a clean pushed-commit repeat or a supported one-command
-abandonment runner. The commands above define the target stable operator
-boundary; they do not reproduce the retained evidence without unsupported
-internal edits today. The next M5 slices add durable window progress,
-application manual-action intents, and CLI routing, then turn this procedure
-into an isolated repeatable daemon-supervised E2E.
+Current limitation: the retained actual-node result is one
+intervention-assisted recovery, not a clean pushed-commit repeat or a supported
+one-command abandonment runner. The current component no longer needs window or
+journal edits, but this exact procedure still lacks application manual-action
+intents, CLI routing, and a fresh isolated daemon-supervised E2E replay.
 
 ## Flow 2: Zcash SDK, reconciliation, then actor claim/refund/fork
 

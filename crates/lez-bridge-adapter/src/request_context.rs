@@ -16,7 +16,8 @@ pub trait BridgeDiscoveryWindowSource: Send + Sync {
     /// Structured authority failure, redacted at the actor context boundary.
     type Error: Error + Send + Sync + 'static;
 
-    /// Returns the authoritative bounded window for one window-bearing operation.
+    /// Returns the authoritative initial bounded page for one window-bearing operation.
+    /// The durable journal owns any later contiguous-page progression.
     ///
     /// # Errors
     ///
@@ -24,7 +25,7 @@ pub trait BridgeDiscoveryWindowSource: Send + Sync {
     fn discovery_window(&self, key: &BridgeOperationKey) -> Result<DiscoveryWindow, Self::Error>;
 }
 
-/// Generates one OS-random request ID and attaches an authoritative scan window.
+/// Generates one OS-random request ID and attaches an authoritative initial scan page.
 ///
 /// This source retains no generated identifier and performs no collision check.
 /// The caller must immediately offer each returned specification to the durable

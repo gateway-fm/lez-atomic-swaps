@@ -909,6 +909,23 @@ async fn exact_observation_skips_an_incomplete_window_while_finalized_accounts_a
 }
 
 #[tokio::test]
+async fn exact_full_page_miss_is_absent_after_finalized_coverage() {
+    let mut fixture = fixture().await;
+    fixture.blocks[0].body.transactions.clear();
+    let observer = FinalizedWitnessedRefundObserver::new(
+        fixture.runtime.clone(),
+        Arc::clone(&fixture.planner),
+        indexer(&fixture),
+    );
+
+    let result = observer.observe(&fixture.request).await.unwrap();
+
+    assert_eq!(result.refund, NativeRefundObservation::Absent);
+    assert_eq!(result.clock_before.height, FINALIZED_TIP_ID);
+    assert_eq!(result.clock_after.height, FINALIZED_TIP_ID);
+}
+
+#[tokio::test]
 async fn state_only_reads_metadata_and_custody_concurrently() {
     let mut fixture = fixture().await;
     fixture.request.target = NativeRefundObservationTarget::StateOnly;
@@ -1229,7 +1246,7 @@ async fn maximum_window_accepts_a_bounded_finalized_descendant() {
 }
 
 #[tokio::test]
-async fn initial_finalized_tip_beyond_the_bounded_window_fails_closed() {
+async fn aged_finalized_page_still_returns_its_exact_refund() {
     let fixture = fixture().await;
     let finalized_tip = FINALIZED_TIP_ID + u64::from(MAX_DISCOVERY_BLOCKS) + 1;
     let observer = FinalizedWitnessedRefundObserver::new(
@@ -1238,10 +1255,10 @@ async fn initial_finalized_tip_beyond_the_bounded_window_fails_closed() {
         stable_long_indexer(&fixture, finalized_tip),
     );
 
-    assert_eq!(
-        observer.observe(&fixture.request).await.unwrap_err(),
-        BridgeRuntimeError::Unavailable
-    );
+    let result = observer.observe(&fixture.request).await.unwrap();
+
+    assert!(matches!(result.refund, NativeRefundObservation::Found(_)));
+    assert_eq!(result.clock_after.height, finalized_tip);
 }
 
 #[tokio::test]

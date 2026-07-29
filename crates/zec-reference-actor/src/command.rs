@@ -380,6 +380,9 @@ fn trusted_wall_clock() -> Result<UnixSeconds, ActorCommandError> {
         .map_err(|_| ActorCommandError::ActivationUnavailable)
 }
 
+// The configured page seeds new operations. Once reserved, the bridge journal
+// owns the exact current page and advances fully covered misses contiguously
+// across process restarts.
 #[derive(Clone, Copy, Debug)]
 struct ConfiguredDiscoveryWindow(DiscoveryWindow);
 

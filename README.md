@@ -60,11 +60,15 @@ and both role-fixed actors finish at `Refunded` revision 2. ADR
 [0102](docs/architecture/0102-observe-refunds-from-finalized-window-prefixes.md)
 documents why finalized-prefix discovery preserves atomicity while a partial
 absence remains non-terminal. The original observation window ended before the
-refund block, so the retained run required manual actor-window rotation and
-retirement of an old active bridge-journal row. Those unsupported interventions
-mean this is not yet a clean reproducible or daemon/CLI-driven result and does
-not complete M5; durable window progress, manual actions, concurrent
-supervision, and BTC/XMR application lifecycles remain. Clean sidecar builds
+refund block, so that historical run required manual actor-window rotation and
+retirement of an old active bridge-journal row. Current code removes that gap:
+a restart-safe SQLite cursor advances only validated fully covered pages, keeps
+partial/ambiguous/typed-error polls on the exact page, and restores the active
+page despite unchanged actor config. Both owner and counterparty paths pass a
+RED-GREEN reopen test, but the retained actual-node evidence remains
+intervention-assisted until a fresh daemon/CLI replay. M5 is not complete;
+manual actions, concurrent supervision, and BTC/XMR application lifecycles
+remain. Clean sidecar builds
 should set the documented
 absolute `RAPIDSNARK_LIB_DIR` only after verifying the four pinned v0.0.8
 library hashes and should use Cargo offline rather than the upstream download

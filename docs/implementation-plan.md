@@ -3544,16 +3544,23 @@ separately from runtime dependencies.
   prefix, returns a unique matching transaction immediately, and keeps partial
   absence non-terminal in the adapter. The Maker observed the same transaction
   and reached `Refunded` revision 2 without submission. The full observer suite
-  is 25 of 25 GREEN for exact and discovery, both authority variants, deadlines,
-  ancestry, ambiguity, stable tips, custody, and bounded windows.
+  is 26 of 26 GREEN for exact and discovery, both authority variants, deadlines,
+  ancestry, ambiguity, stable tips, custody, old pages, and bounded windows; the
+  bridge-adapter integration suite is 47 of 47 GREEN.
 
   This is intervention-assisted actual-node evidence, not a clean reproducible
   proof. The provisioned window 193 through 448 had aged out before the refund
   finalized at block 608; the retained run manually rotated both actor windows
   to 590 through 845 and manually retired one older active bridge-journal row.
-  Neither operation is a supported user flow. Implement durable bounded-window
-  progress or supported rotation, then replay from an exact pushed tree through
-  the daemon supervisor and application CLI before upgrading the evidence claim.
+  Neither operation was a supported user flow. The current RED-GREEN slice now
+  makes the configured page only an initial seed and page size: the existing
+  bridge-operation journal atomically advances validated fully covered misses to
+  the next contiguous page, retains partial/ambiguous/typed-error polls, restores
+  the active page across SQLite reopen, and fails closed on height overflow. Both
+  exact-owner and counterparty-discovery paths prove 10..12 to 13..15 progression
+  after restart with unchanged config and fresh request IDs. No schema migration
+  was required. Replay from an exact pushed tree through the daemon supervisor
+  and application CLI still precedes any upgrade of the historical evidence claim.
   The next RED-GREEN slice is schema-v17 replay-safe manual claim/refund intent plus secret-free live actor
   progress, owner-local Maker `monitor/claim/refund`, role-validated Taker
   `monitor/claim/refund`, explicit ZEC `claim`, and supervisor routing that never

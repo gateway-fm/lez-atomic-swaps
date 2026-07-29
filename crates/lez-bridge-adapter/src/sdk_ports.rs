@@ -8,7 +8,7 @@ use std::{
 
 use async_trait::async_trait;
 use lez_bridge_protocol::{
-    EscrowObservationTarget, Hex32, RunId, RuntimeDescriptor, TransactionId,
+    DiscoveryWindow, EscrowObservationTarget, Hex32, RunId, RuntimeDescriptor, TransactionId,
 };
 use lez_swap_core::Participant;
 use lez_swap_store::{
@@ -30,8 +30,8 @@ use crate::{
     LezBridgeAdapter, LezBridgeClaimTransport, LezBridgeConfigurationError,
     LezBridgeFirstLockTransport, LezBridgeObservationTransport, LezBridgeRefundTransport,
     LezBridgeTransport, NativeFirstLockSubmitOutcome, NativeRefundAdapterError,
-    NativeRevealingClaimAdapterError, ObserveNativeEscrowError, PrepareNativeFirstLockError,
-    RevealingClaimSubmitOutcome, bridge_participant,
+    NativeRefundPageObservation, NativeRevealingClaimAdapterError, ObserveNativeEscrowError,
+    PrepareNativeFirstLockError, RevealingClaimSubmitOutcome, bridge_participant,
 };
 
 type BoxError = Box<dyn Error + Send + Sync + 'static>;
@@ -39,7 +39,9 @@ type BoxError = Box<dyn Error + Send + Sync + 'static>;
 /// Supplies one caller-owned request ID and optional bounded discovery window.
 ///
 /// Implementations normally draw these values from an actor-owned secure request
-/// allocator. The adapter never derives, randomizes, or widens either value.
+/// allocator. The adapter never derives or widens the supplied initial page. For
+/// journal-owned pagination, it derives only the next contiguous page and asks the
+/// allocator for a fresh request ID before atomically advancing durable state.
 pub trait BridgeRequestContextSource: Send + Sync {
     /// Structured allocator error.
     type Error: Error + Send + Sync + 'static;
@@ -123,6 +125,9 @@ pub enum ContextOwningLezPortError {
     /// An unstable or typed-error poll attempted to silently replace its scan window.
     #[error("LEZ bridge retry changed the active discovery window")]
     DiscoveryWindowChanged,
+    /// A fully covered page ended at the largest representable chain height.
+    #[error("LEZ bridge discovery cursor cannot advance past the chain-height limit")]
+    DiscoveryWindowExhausted,
     /// Canonical funding evidence was missing, non-final-step, under-depth, or inconsistent.
     #[error("canonical LEZ funding context is invalid")]
     InvalidCanonicalFunding,
@@ -295,6 +300,28 @@ where
         if retain_window && next.discovery_window() != current.discovery_window() {
             return Err(ContextOwningLezPortError::DiscoveryWindowChanged);
         }
+        let mut journal = self.journal()?;
+        match journal.advance_observation(key, current, outcome, &next) {
+            Ok(_) => Ok(()),
+            Err(_) => journal
+                .advance_observation(key, current, outcome, &next)
+                .map(|_| ())
+                .map_err(ContextOwningLezPortError::Journal),
+        }
+    }
+
+    fn finish_observation_in_window(
+        &self,
+        key: &BridgeOperationKey,
+        current: &DurableBridgeRequestContext,
+        outcome: BridgeObservationOutcome,
+        next_window: DiscoveryWindow,
+    ) -> Result<(), ContextOwningLezPortError> {
+        let allocated = self
+            .contexts
+            .next_request(key)
+            .map_err(|error| ContextOwningLezPortError::Context(Box::new(error)))?;
+        let next = BridgeRequestSpec::new(allocated.request_id().clone(), Some(next_window));
         let mut journal = self.journal()?;
         match journal.advance_observation(key, current, outcome, &next) {
             Ok(_) => Ok(()),
@@ -645,16 +672,17 @@ where
             .ok_or(ContextOwningLezPortError::MissingDiscoveryWindow)?;
         let result = self
             .fresh_adapter()?
-            .observe_prepared_native_refund(
+            .observe_prepared_native_refund_page(
                 agreement,
                 context.request_id().clone(),
                 prepared,
                 window,
             )
             .await;
-        let retain = matches!(&result, Ok(RefundObservationV1::Unstable) | Err(_));
-        self.finish_refund_observation(&key, &context, &result, retain)?;
-        result.map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))
+        self.finish_refund_page_observation(&key, &context, &result)?;
+        result
+            .map(NativeRefundPageObservation::into_observation)
+            .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))
     }
 
     async fn observe_counterparty_refund(
@@ -668,11 +696,16 @@ where
             .ok_or(ContextOwningLezPortError::MissingDiscoveryWindow)?;
         let result = self
             .fresh_adapter()?
-            .observe_counterparty_native_refund(agreement, context.request_id().clone(), window)
+            .observe_counterparty_native_refund_page(
+                agreement,
+                context.request_id().clone(),
+                window,
+            )
             .await;
-        let retain = matches!(&result, Ok(RefundObservationV1::Unstable) | Err(_));
-        self.finish_refund_observation(&key, &context, &result, retain)?;
-        result.map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))
+        self.finish_refund_page_observation(&key, &context, &result)?;
+        result
+            .map(NativeRefundPageObservation::into_observation)
+            .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))
     }
 
     async fn submit_refund(
@@ -721,6 +754,49 @@ where
             )
         }
     }
+
+    fn finish_refund_page_observation<E: Error + Send + Sync + 'static>(
+        &self,
+        key: &BridgeOperationKey,
+        context: &DurableBridgeRequestContext,
+        result: &Result<NativeRefundPageObservation, NativeRefundAdapterError<E>>,
+    ) -> Result<(), ContextOwningLezPortError> {
+        if matches!(&result, Err(NativeRefundAdapterError::Transport(_))) {
+            return self.resume_ambiguous(key, context);
+        }
+        let current_window = context
+            .discovery_window()
+            .ok_or(ContextOwningLezPortError::MissingDiscoveryWindow)?;
+        let next_window = if matches!(
+            result,
+            Ok(observation) if observation.fully_covered_miss()
+        ) {
+            next_contiguous_window(current_window)?
+        } else {
+            current_window
+        };
+        self.finish_observation_in_window(
+            key,
+            context,
+            if result.is_ok() {
+                BridgeObservationOutcome::Succeeded
+            } else {
+                BridgeObservationOutcome::TypedError
+            },
+            next_window,
+        )
+    }
+}
+
+fn next_contiguous_window(
+    current: DiscoveryWindow,
+) -> Result<DiscoveryWindow, ContextOwningLezPortError> {
+    let start_height = current
+        .start_height()
+        .checked_add(u64::from(current.max_blocks()))
+        .ok_or(ContextOwningLezPortError::DiscoveryWindowExhausted)?;
+    DiscoveryWindow::new(start_height, current.max_blocks())
+        .map_err(|_| ContextOwningLezPortError::DiscoveryWindowExhausted)
 }
 
 #[async_trait]
@@ -998,6 +1074,107 @@ mod tests {
         let diagnostic = format!("{ports:?}");
         assert!(!diagnostic.contains("sdk-port-secret-must-not-leak"));
         assert_eq!(diagnostic.matches("<redacted>").count(), 5);
+
+        drop(ports);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("sqlite-wal"));
+        let _ = fs::remove_file(path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn contiguous_refund_pages_advance_without_overlap_and_fail_closed_at_overflow() {
+        let current = DiscoveryWindow::new(10, 3).expect("current window");
+
+        assert_eq!(
+            next_contiguous_window(current).expect("next contiguous page"),
+            DiscoveryWindow::new(13, 3).expect("expected next page")
+        );
+
+        let final_window = DiscoveryWindow::new(u64::MAX - 2, 3).expect("last representable page");
+        assert!(matches!(
+            next_contiguous_window(final_window),
+            Err(ContextOwningLezPortError::DiscoveryWindowExhausted)
+        ));
+    }
+
+    #[test]
+    fn partial_refund_page_and_transport_ambiguity_retain_durable_progress() {
+        let path = std::env::temp_dir().join(format!(
+            "lez-bridge-refund-page-retain-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_DB.fetch_add(1, Ordering::Relaxed)
+        ));
+        let run_id = RunId::new("sdk-port-refund-page-run").expect("run id");
+        let key = BridgeOperationKey::new(
+            run_id.clone(),
+            SwapId::new("sdk-port-refund-page-swap").expect("swap id"),
+            Participant::Taker,
+            BridgeOperationKind::NativeRefundExactObserve,
+        );
+        let active_window = DiscoveryWindow::new(11, 3).expect("active page");
+        let first = BridgeRequestSpec::new(
+            RequestId::new("sdk-port-refund-page-first").expect("request id"),
+            Some(active_window),
+        );
+        let next = BridgeRequestSpec::new(
+            RequestId::new("sdk-port-refund-page-next").expect("request id"),
+            Some(DiscoveryWindow::new(10, 3).expect("unchanged config seed")),
+        );
+        let mut journal = SqliteBridgeOperationJournal::open(&path).expect("journal");
+        let current = journal
+            .begin_or_resume(&key, &first)
+            .expect("first context")
+            .context()
+            .clone();
+        let ports = ContextOwningLezBridgePorts {
+            run_id,
+            runtime: RuntimeDescriptor::new(
+                BridgeParticipant::Taker,
+                RuntimeCompatibility::NssaV0_1_2,
+                Hex32::from_bytes([1; 32]),
+                Hex32::from_bytes([2; 32]),
+                Hex32::from_bytes([3; 32]),
+                Hex32::from_bytes([4; 32]),
+                Hex32::from_bytes([5; 32]),
+            ),
+            local_participant: Participant::Taker,
+            factory: (),
+            contexts: FixedContext(next),
+            store: (),
+            funding: (),
+            journal: Arc::new(Mutex::new(journal)),
+        };
+        let partial: Result<_, NativeRefundAdapterError<std::io::Error>> = Ok(
+            NativeRefundPageObservation::new(RefundObservationV1::Unstable, false),
+        );
+
+        ports
+            .finish_refund_page_observation(&key, &current, &partial)
+            .expect("partial page retains current bounds");
+        let resumed = ports
+            .journal()
+            .expect("journal lock")
+            .current(&key)
+            .expect("journal read")
+            .expect("active context");
+        assert_eq!(resumed.poll_sequence(), 1);
+        assert_eq!(resumed.discovery_window(), Some(active_window));
+
+        let ambiguous: Result<NativeRefundPageObservation, _> = Err(
+            NativeRefundAdapterError::Transport(std::io::Error::other("ambiguous")),
+        );
+        ports
+            .finish_refund_page_observation(&key, &resumed, &ambiguous)
+            .expect("ambiguity reopens exact active context");
+        assert_eq!(
+            ports
+                .journal()
+                .expect("journal lock")
+                .current(&key)
+                .expect("journal read")
+                .expect("active context"),
+            resumed
+        );
 
         drop(ports);
         let _ = fs::remove_file(&path);

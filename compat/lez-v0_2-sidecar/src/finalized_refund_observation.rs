@@ -160,17 +160,25 @@ impl FinalizedWitnessedRefundObserver {
                 let found = self
                     .scan_refund(request, window, Some(expected), tip_before)
                     .await?;
-                match found {
-                    Some(found) => {
-                        self.validate_refunded_state(terms, found.header.block_id)
-                            .await?;
-                        let facts = self.validate_refund(request, &found, Some(expected))?;
-                        Ok((
-                            NativeRefundObservation::found(facts),
-                            Some(EscrowState::Refunded),
-                        ))
-                    }
-                    None => Ok((NativeRefundObservation::UnknownOrPending, None)),
+                if let Some(found) = found {
+                    self.validate_refunded_state(terms, found.header.block_id)
+                        .await?;
+                    let facts = self.validate_refund(request, &found, Some(expected))?;
+                    Ok((
+                        NativeRefundObservation::found(facts),
+                        Some(EscrowState::Refunded),
+                    ))
+                } else {
+                    let window_end = window
+                        .start_height()
+                        .checked_add(u64::from(window.max_blocks() - 1))
+                        .ok_or(BridgeRuntimeError::InvalidObservation)?;
+                    let observation = if tip_before.header.block_id >= window_end {
+                        NativeRefundObservation::Absent
+                    } else {
+                        NativeRefundObservation::UnknownOrPending
+                    };
+                    Ok((observation, None))
                 }
             }
             NativeRefundObservationTarget::DiscoverByTerms { window } => {
@@ -260,14 +268,11 @@ impl FinalizedWitnessedRefundObserver {
         if finalized_height < window.start_height() {
             return Err(BridgeRuntimeError::Unavailable);
         }
-        let finalized_descendant_count = finalized_height.saturating_sub(window_end);
-        if finalized_descendant_count > u64::from(MAX_DISCOVERY_BLOCKS) {
-            return Err(BridgeRuntimeError::Unavailable);
-        }
+        let scan_end = finalized_height.min(window_end);
 
         let mut found = None;
         let mut previous_hash = None;
-        for block_id in window.start_height()..=finalized_height {
+        for block_id in window.start_height()..=scan_end {
             let block = self.read_finalized_block(block_id).await?;
             if block_id == finalized_height && block != *finalized_tip {
                 return Err(BridgeRuntimeError::MovingTip);
@@ -276,9 +281,6 @@ impl FinalizedWitnessedRefundObserver {
                 return Err(BridgeRuntimeError::InvalidObservation);
             }
             previous_hash = Some(block.header.hash);
-            if block_id > window_end {
-                continue;
-            }
             for (transaction_index, transaction) in block.body.transactions.iter().enumerate() {
                 let public = match request.target {
                     NativeRefundObservationTarget::Exact {
