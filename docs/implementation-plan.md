@@ -3155,10 +3155,14 @@ request replay result; daemon selection and signed Delivery replay are now
 process-GREEN. The persistent coordinator is local-process GREEN through daemon
 startup, abandoned-lease recovery, bounded actor execution, and SIGTERM cleanup;
 its actual-node, disjoint-live-process, and systemd actor crash/restart
-compositions remain open. Taker lifecycle commands, manual effects, autonomous
-other-pair execution, and post-PoC hardening are still incomplete. The local
-Delivery/Chat outage output is process-GREEN under ADR 0098; LOGOS-020 remains
-an upstream production-parity caveat.
+compositions remain open. Symmetric ZEC Taker provisioning is now component-
+GREEN: the same role-aware provisioner validates Taker authority, stages an
+owner-private role-only bundle, publishes it with `RENAME_NOREPLACE`, excludes
+Maker state, and exact-replays the original inodes and bytes. Wiring that bundle
+into Taker lifecycle commands, manual effects, autonomous other-pair execution,
+and post-PoC hardening is still incomplete. The local Delivery/Chat outage output
+is process-GREEN under ADR 0098; LOGOS-020 remains an upstream production-parity
+caveat.
 
 ### Progressive PoC gate
 

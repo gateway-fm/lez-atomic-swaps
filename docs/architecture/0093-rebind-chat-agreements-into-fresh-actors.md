@@ -1,6 +1,6 @@
 # ADR 0093: Rebind Chat agreements into fresh actors
 
-- Status: Accepted; actor-handoff component GREEN
+- Status: Accepted; role-aware no-clobber handoff component GREEN
 - Date: 2026-07-24
 - Milestone: M5 progressive local-functional PoC
 
@@ -37,6 +37,14 @@ The maker daemon accepts the same owner-private raw 32-byte Zcash key used by
 the actor, as well as the earlier hexadecimal form. This avoids a duplicated
 secret file while preserving backward compatibility.
 
+Application handoff uses one shared role-aware provisioner for Maker and Taker.
+It validates the final wire for the selected participant, rebinds only that
+role's already validated source authority, stages `shared/` plus exactly one of
+`maker/` or `taker/` under a private sibling directory, and publishes the whole
+bundle with `RENAME_NOREPLACE`. An existing destination succeeds only after
+byte, role, swap, state-path, authority, and counterparty-subtree checks all
+pass; replay never replaces the original files.
+
 ## Components and authority
 
 ```mermaid
@@ -54,8 +62,10 @@ flowchart LR
     MakerKey --> Bind
     TakerKey --> Bind
     Preimage[Funder preimage] --> Bind
-    Bind --> MakerActor[Fresh maker config and state]
-    Bind --> TakerActor[Fresh taker config and state]
+    Bind --> MakerPub[No-clobber Maker publisher]
+    Bind --> TakerPub[No-clobber Taker publisher]
+    MakerPub --> MakerActor[Fresh maker config and state]
+    TakerPub --> TakerActor[Fresh taker config and state]
 ```
 
 The preparer holds no signing or claim authority. Chat never receives recovery
@@ -87,7 +97,9 @@ sequenceDiagram
     M-->>T: Completion after atomic maker commit
     T->>F: Final wire and source role configs
     F->>F: Compare chain facts keys role and hashlock
-    F-->>A: Fresh isolated configs and mutable state paths
+    F->>F: Stage one role-only private bundle
+    F->>F: Publish with RENAME_NOREPLACE
+    F-->>A: Fresh isolated config or exact inode-stable replay
 ```
 
 ## Atomicity argument
@@ -102,7 +114,9 @@ and fail-closed publication:
 3. Chat completion commits the agreement and maker recovery state before return;
 4. the taker publishes only its exact validated wire without replacement;
 5. finalization performs every comparison before creating output and hash-pins
-   both configs to that wire; and
+   both configs to that wire; application role provisioning additionally stages
+   the complete role-only tree before one no-replace rename and accepts an
+   existing tree only as an exact semantic and byte replay; and
 6. fresh state paths prevent inherited mutable lifecycle history.
 
 A crash while emitting the actor tree can leave an incomplete private root,
@@ -120,9 +134,12 @@ activation, first lock, transport removal, and terminal state.
 The real `zec_chat_process` proves the daemon consumes the actor's raw key
 format and a separate taker completes and replays Chat. The draft and finalizer
 binaries pass warning-fatal Clippy, and the reference-actor suite is GREEN.
-This checkpoint uses no chain RPC, Docker, faucet, public funds, or network.
+Seven focused filesystem/authority cases now include symmetric Taker creation,
+counterparty exclusion, private paths, valid activation material, and exact
+inode/byte replay. This checkpoint uses no chain RPC, Docker, faucet, public
+funds, or network.
 
 Actual corridor composition is next. Reusing provisioned authority paths is
 acceptable for the isolated PoC but is not production key rotation or
-multi-user custody. Atomic directory publication, post-lock adapter removal,
-terminal daemon restart, packaging, and hardened negative cases remain.
+multi-user custody. Taker CLI receipt/lifecycle wiring, post-lock adapter
+removal through that CLI, packaging, and hardened negative cases remain.

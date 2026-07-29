@@ -30,7 +30,10 @@ use zcash_protocol::{
     value::Zatoshis,
 };
 use zcash_transparent::address::TransparentAddress;
-use zec_reference_actor::{ActorConfig, ActorRole, provision_zec_maker_actor_from_chat};
+use zec_reference_actor::{
+    ActorConfig, ActorRole, provision_zec_maker_actor_from_chat,
+    provision_zec_taker_actor_from_chat,
+};
 
 const SWAP_ID: &str = "maker-provision-swap-001";
 const PREIMAGE: [u8; 32] = [0x44; 32];
@@ -95,6 +98,77 @@ fn maker_only_publish_is_exactly_replayable_without_replacing_artifacts() {
         agreement_inode
     );
     assert_eq!(fs::read(replay.config_file()).unwrap(), config_bytes);
+}
+
+#[test]
+fn taker_only_publish_is_role_bound_and_exactly_replayable_without_clobbering() {
+    let fixture = Fixture::new();
+    let output = fixture.output("taker-success");
+
+    let first = provision_zec_taker_actor_from_chat(
+        &fixture.taker_config,
+        &fixture.final_wire,
+        fixture.accepted_at,
+        &output,
+    )
+    .expect("publish Taker actor");
+    assert!(!first.was_replay());
+    assert_eq!(first.role(), ActorRole::Taker);
+    assert_eq!(first.swap_id().as_str(), SWAP_ID);
+    assert!(first.config_file().starts_with(output.join("taker")));
+    assert!(first.state_database().starts_with(output.join("taker")));
+    assert_eq!(
+        fs::read(first.agreement_file()).unwrap(),
+        fixture.final_wire
+    );
+    assert_private_file(first.agreement_file());
+    assert_private_file(first.config_file());
+    assert_private_directory(&output);
+    assert_private_directory(&output.join("shared"));
+    assert_private_directory(&output.join("taker"));
+    assert_private_directory(&output.join("taker/state"));
+    assert!(
+        !output.join("maker").exists(),
+        "Taker provisioning must not publish a Maker subtree"
+    );
+
+    let config = ActorConfig::load_private(first.config_file()).expect("reload Taker config");
+    assert_eq!(config.role(), ActorRole::Taker);
+    assert_eq!(config.swap_id(), first.swap_id());
+    assert_eq!(config.role_state_db(), first.state_database());
+    config
+        .load_activate_material()
+        .expect("provisioned Taker config activates");
+
+    let config_inode = fs::symlink_metadata(first.config_file()).unwrap().ino();
+    let agreement_inode = fs::symlink_metadata(first.agreement_file()).unwrap().ino();
+    let config_bytes = fs::read(first.config_file()).unwrap();
+    let agreement_bytes = fs::read(first.agreement_file()).unwrap();
+    let replay = provision_zec_taker_actor_from_chat(
+        &fixture.taker_config,
+        &fixture.final_wire,
+        fixture.accepted_at,
+        &output,
+    )
+    .expect("exact Taker replay");
+    assert!(replay.was_replay());
+    assert_eq!(replay.role(), ActorRole::Taker);
+    assert_eq!(replay.config_file(), first.config_file());
+    assert_eq!(replay.state_database(), first.state_database());
+    assert_eq!(
+        fs::symlink_metadata(replay.config_file()).unwrap().ino(),
+        config_inode
+    );
+    assert_eq!(
+        fs::symlink_metadata(replay.agreement_file()).unwrap().ino(),
+        agreement_inode
+    );
+    assert_eq!(fs::read(replay.config_file()).unwrap(), config_bytes);
+    assert_eq!(fs::read(replay.agreement_file()).unwrap(), agreement_bytes);
+    assert!(
+        !output.join("maker").exists(),
+        "exact replay must not publish a Maker subtree"
+    );
 }
 
 #[test]

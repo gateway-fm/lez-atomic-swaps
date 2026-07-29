@@ -31,8 +31,9 @@ pub use local_poc::{
     provision_local_v0_2_corridor, provision_local_v0_2_corridor_with_signers,
 };
 pub use maker_provision::{
-    ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,
-    provision_zec_maker_actor_from_config,
+    ZecActorProvisionV1, ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,
+    provision_zec_maker_actor_from_config, provision_zec_taker_actor_from_chat,
+    provision_zec_taker_actor_from_config,
 };
 #[cfg(feature = "test-crash-hooks")]
 pub use test_crash_hook::{TestCrashHookError, arm_test_crash_hook};

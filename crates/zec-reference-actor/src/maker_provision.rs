@@ -1,4 +1,4 @@
-//! Maker-only, no-clobber actor provisioning from one accepted Chat agreement.
+//! Role-fixed, no-clobber actor provisioning from one accepted Chat agreement.
 
 use std::{
     fs::{self, File},
@@ -28,11 +28,12 @@ use crate::{
 
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 
-/// Secret-free immutable result used to construct one durable scheduler manifest.
+/// Secret-free immutable result for one role-fixed actor bundle.
 #[derive(Clone, Debug, Serialize)]
-pub struct ZecMakerActorProvisionV1 {
+pub struct ZecActorProvisionV1 {
     schema_version: u16,
     was_replay: bool,
+    role: ActorRole,
     swap_id: SwapId,
     agreement_file: PathBuf,
     agreement_sha256: Hex32,
@@ -41,11 +42,17 @@ pub struct ZecMakerActorProvisionV1 {
     state_database: PathBuf,
 }
 
-impl ZecMakerActorProvisionV1 {
+impl ZecActorProvisionV1 {
     /// Whether a previously published byte-identical bundle was reused.
     #[must_use]
     pub const fn was_replay(&self) -> bool {
         self.was_replay
+    }
+
+    /// Role permanently bound to the published bundle.
+    #[must_use]
+    pub const fn role(&self) -> ActorRole {
+        self.role
     }
 
     /// Exact accepted application swap identity.
@@ -66,13 +73,13 @@ impl ZecMakerActorProvisionV1 {
         *self.agreement_sha256.as_bytes()
     }
 
-    /// Owner-private maker actor configuration path.
+    /// Owner-private role-fixed actor configuration path.
     #[must_use]
     pub fn config_file(&self) -> &Path {
         &self.config_file
     }
 
-    /// SHA-256 of the exact maker actor configuration bytes.
+    /// SHA-256 of the exact role-fixed actor configuration bytes.
     #[must_use]
     pub const fn config_sha256(&self) -> [u8; 32] {
         *self.config_sha256.as_bytes()
@@ -82,6 +89,30 @@ impl ZecMakerActorProvisionV1 {
     #[must_use]
     pub fn state_database(&self) -> &Path {
         &self.state_database
+    }
+}
+
+/// Backward-compatible name for Maker callers.
+pub type ZecMakerActorProvisionV1 = ZecActorProvisionV1;
+
+const fn participant(role: ActorRole) -> Participant {
+    match role {
+        ActorRole::Maker => Participant::Maker,
+        ActorRole::Taker => Participant::Taker,
+    }
+}
+
+const fn role_name(role: ActorRole) -> &'static str {
+    match role {
+        ActorRole::Maker => "maker",
+        ActorRole::Taker => "taker",
+    }
+}
+
+const fn other_role_name(role: ActorRole) -> &'static str {
+    match role {
+        ActorRole::Maker => "taker",
+        ActorRole::Taker => "maker",
     }
 }
 
@@ -103,8 +134,37 @@ pub fn provision_zec_maker_actor_from_chat(
     output_root: &Path,
 ) -> Result<ZecMakerActorProvisionV1> {
     let source = ActorConfig::load_private(source_maker_config_file)
-        .context("source maker config is unsafe or invalid")?;
-    provision_zec_maker_actor_from_config(&source, final_agreement_wire, accepted_at, output_root)
+        .context("source Maker config is unsafe or invalid")?;
+    provision_zec_actor_from_config(
+        &source,
+        final_agreement_wire,
+        accepted_at,
+        output_root,
+        ActorRole::Maker,
+    )
+}
+
+/// Publishes one Taker-only actor bundle from an accepted Chat agreement.
+///
+/// # Errors
+///
+/// Fails closed on unsafe paths, non-Taker authority, changed executable terms,
+/// invalid signatures, output collision, partial publication, or semantic drift.
+pub fn provision_zec_taker_actor_from_chat(
+    source_taker_config_file: &Path,
+    final_agreement_wire: &[u8],
+    accepted_at: UnixSeconds,
+    output_root: &Path,
+) -> Result<ZecActorProvisionV1> {
+    let source = ActorConfig::load_private(source_taker_config_file)
+        .context("source Taker config is unsafe or invalid")?;
+    provision_zec_actor_from_config(
+        &source,
+        final_agreement_wire,
+        accepted_at,
+        output_root,
+        ActorRole::Taker,
+    )
 }
 
 /// Publishes one maker-only actor bundle from a startup-pinned configuration.
@@ -119,8 +179,45 @@ pub fn provision_zec_maker_actor_from_config(
     accepted_at: UnixSeconds,
     output_root: &Path,
 ) -> Result<ZecMakerActorProvisionV1> {
-    let prepared = prepare_provision(source, final_agreement_wire, accepted_at, output_root)?;
-    let paths = ProvisionPaths::new(output_root);
+    provision_zec_actor_from_config(
+        source,
+        final_agreement_wire,
+        accepted_at,
+        output_root,
+        ActorRole::Maker,
+    )
+}
+
+/// Publishes one Taker-only actor bundle from a startup-pinned configuration.
+///
+/// # Errors
+///
+/// Fails closed if any source file identity changed after the configuration was
+/// loaded, or on the same validation and publication errors as the path API.
+pub fn provision_zec_taker_actor_from_config(
+    source: &ActorConfig,
+    final_agreement_wire: &[u8],
+    accepted_at: UnixSeconds,
+    output_root: &Path,
+) -> Result<ZecActorProvisionV1> {
+    provision_zec_actor_from_config(
+        source,
+        final_agreement_wire,
+        accepted_at,
+        output_root,
+        ActorRole::Taker,
+    )
+}
+
+fn provision_zec_actor_from_config(
+    source: &ActorConfig,
+    final_agreement_wire: &[u8],
+    accepted_at: UnixSeconds,
+    output_root: &Path,
+    role: ActorRole,
+) -> Result<ZecActorProvisionV1> {
+    let prepared = prepare_provision(source, final_agreement_wire, accepted_at, output_root, role)?;
+    let paths = ProvisionPaths::new(output_root, role);
     if output_root.exists() {
         validate_exact_replay(
             &paths,
@@ -131,8 +228,8 @@ pub fn provision_zec_maker_actor_from_config(
         return Ok(prepared.summary(paths, true));
     }
 
-    let stage_root = create_stage(output_root)?;
-    let stage_paths = ProvisionPaths::new(&stage_root);
+    let stage_root = create_stage(output_root, role)?;
+    let stage_paths = ProvisionPaths::new(&stage_root, role);
     let publication = publish_stage(
         &stage_paths,
         &stage_root,
@@ -151,7 +248,7 @@ pub fn provision_zec_maker_actor_from_config(
             Ok(prepared.summary(paths, false))
         }
         Ok(PublishOutcome::Existing) => {
-            fs::remove_dir_all(&stage_root).context("remove collided maker actor stage")?;
+            fs::remove_dir_all(&stage_root).context("remove collided actor stage")?;
             validate_exact_replay(
                 &paths,
                 final_agreement_wire,
@@ -172,29 +269,27 @@ fn prepare_provision(
     final_agreement_wire: &[u8],
     accepted_at: UnixSeconds,
     output_root: &Path,
+    role: ActorRole,
 ) -> Result<PreparedProvision> {
     ensure!(
         !final_agreement_wire.is_empty()
             && final_agreement_wire.len() <= MAX_ZEC_AGREEMENT_RECORD_BYTES,
         "final Chat agreement is unavailable or unsafe"
     );
-    ensure!(
-        source.role() == ActorRole::Maker,
-        "source config is not Maker"
-    );
+    ensure!(source.role() == role, "source config role mismatch");
     let source_material = source
         .load_activate_material()
-        .context("source maker activation material is invalid")?;
+        .context("source actor activation material is invalid")?;
     let source_agreement =
         ZecAgreementV1::from_wire_at(source_material.signed_agreement_wire(), accepted_at)
             .context("source agreement is invalid at final acceptance")?;
     let accepted = AcceptedZecAgreementV1::accept_wire_at(
         final_agreement_wire,
         accepted_at,
-        Participant::Maker,
+        participant(role),
         0,
     )
-    .context("final Chat agreement is invalid for maker")?;
+    .context("final Chat agreement is invalid for actor role")?;
     let agreement = accepted.agreement();
     ensure!(
         agreement.application_swap_id() == source.swap_id().as_str(),
@@ -216,7 +311,7 @@ fn prepare_provision(
     validate_role_authority(
         &source_material,
         agreement,
-        Participant::Maker,
+        participant(role),
         source.is_local_zcash_funder(),
     )?;
 
@@ -224,7 +319,7 @@ fn prepare_provision(
     let agreement_sha256 = Hex32::from_bytes(Sha256::digest(final_agreement_wire).into());
     let swap_id = SwapId::new(agreement.application_swap_id().to_owned())
         .context("final application swap ID is invalid")?;
-    let paths = ProvisionPaths::new(output_root);
+    let paths = ProvisionPaths::new(output_root, role);
     let config_bytes = encode_rebound_local_v0_2_actor_config(
         source,
         swap_id.clone(),
@@ -233,7 +328,7 @@ fn prepare_provision(
         paths.state_database.clone(),
         paths.bridge_journal.clone(),
     )
-    .context("failed to encode rebound maker config")?;
+    .context("failed to encode rebound actor config")?;
     let config_sha256 = Hex32::from_bytes(Sha256::digest(&config_bytes).into());
     Ok(PreparedProvision {
         agreement: agreement.clone(),
@@ -241,6 +336,7 @@ fn prepare_provision(
         swap_id,
         agreement_sha256,
         config_sha256,
+        role,
     })
 }
 
@@ -250,12 +346,14 @@ struct PreparedProvision {
     swap_id: SwapId,
     agreement_sha256: Hex32,
     config_sha256: Hex32,
+    role: ActorRole,
 }
 
 impl PreparedProvision {
-    fn summary(self, paths: ProvisionPaths, was_replay: bool) -> ZecMakerActorProvisionV1 {
+    fn summary(self, paths: ProvisionPaths, was_replay: bool) -> ZecActorProvisionV1 {
         summary(
             paths,
+            self.role,
             self.swap_id,
             self.agreement_sha256,
             self.config_sha256,
@@ -267,7 +365,8 @@ impl PreparedProvision {
 struct ProvisionPaths {
     root: PathBuf,
     shared: PathBuf,
-    maker: PathBuf,
+    role: ActorRole,
+    role_root: PathBuf,
     state: PathBuf,
     agreement: PathBuf,
     config: PathBuf,
@@ -276,18 +375,19 @@ struct ProvisionPaths {
 }
 
 impl ProvisionPaths {
-    fn new(root: &Path) -> Self {
+    fn new(root: &Path, role: ActorRole) -> Self {
         let shared = root.join("shared");
-        let maker = root.join("maker");
-        let state = maker.join("state");
+        let role_root = root.join(role_name(role));
+        let state = role_root.join("state");
         Self {
             root: root.to_path_buf(),
+            role,
             agreement: shared.join("agreement-v2.borsh"),
-            config: maker.join("actor-config.json"),
+            config: role_root.join("actor-config.json"),
             state_database: state.join("actor.sqlite3"),
             bridge_journal: state.join("bridge.sqlite3"),
             shared,
-            maker,
+            role_root,
             state,
         }
     }
@@ -295,14 +395,16 @@ impl ProvisionPaths {
 
 fn summary(
     paths: ProvisionPaths,
+    role: ActorRole,
     swap_id: SwapId,
     agreement_sha256: Hex32,
     config_sha256: Hex32,
     was_replay: bool,
-) -> ZecMakerActorProvisionV1 {
-    ZecMakerActorProvisionV1 {
+) -> ZecActorProvisionV1 {
+    ZecActorProvisionV1 {
         schema_version: 1,
         was_replay,
+        role,
         swap_id,
         agreement_file: paths.agreement,
         agreement_sha256,
@@ -336,11 +438,15 @@ fn validate_private_directory(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn create_stage(output_root: &Path) -> Result<PathBuf> {
+fn create_stage(output_root: &Path, role: ActorRole) -> Result<PathBuf> {
     let parent = output_root.parent().context("output root has no parent")?;
     let mut nonce = [0_u8; 16];
     getrandom::fill(&mut nonce).map_err(|_| anyhow::anyhow!("staging randomness unavailable"))?;
-    let stage = parent.join(format!(".lez-maker-actor-stage-{}", hex::encode(nonce)));
+    let stage = parent.join(format!(
+        ".lez-{}-actor-stage-{}",
+        role_name(role),
+        hex::encode(nonce)
+    ));
     create_private_directory(&stage)?;
     Ok(stage)
 }
@@ -358,12 +464,12 @@ fn publish_stage(
     agreement: &[u8],
     config: &[u8],
 ) -> Result<PublishOutcome> {
-    for directory in [&paths.shared, &paths.maker, &paths.state] {
+    for directory in [&paths.shared, &paths.role_root, &paths.state] {
         create_private_directory(directory)?;
     }
     write_private_new(&paths.agreement, agreement)?;
     write_private_new(&paths.config, config)?;
-    for directory in [&paths.state, &paths.shared, &paths.maker, stage_root] {
+    for directory in [&paths.state, &paths.shared, &paths.role_root, stage_root] {
         sync_directory(directory)?;
     }
     match renameat_with(CWD, stage_root, CWD, output_root, RenameFlags::NOREPLACE) {
@@ -372,7 +478,7 @@ fn publish_stage(
             Ok(PublishOutcome::Published)
         }
         Err(Errno::EXIST) => Ok(PublishOutcome::Existing),
-        Err(_) => Err(anyhow::anyhow!("failed to publish maker actor output")),
+        Err(_) => Err(anyhow::anyhow!("failed to publish actor output")),
     }
 }
 
@@ -391,53 +497,53 @@ fn validate_exact_replay(
     for (path, label) in [
         (&paths.root, "actor root"),
         (&paths.shared, "actor shared root"),
-        (&paths.maker, "maker root"),
-        (&paths.state, "maker state root"),
+        (&paths.role_root, "role root"),
+        (&paths.state, "role state root"),
     ] {
         validate_private_directory(path, label)?;
     }
     ensure!(
-        !paths.root.join("taker").exists(),
-        "maker bundle contains taker state"
+        !paths.root.join(other_role_name(paths.role)).exists(),
+        "actor bundle contains counterparty state"
     );
-    validate_optional_private_file(&paths.state_database, "maker state database")?;
-    validate_optional_private_file(&paths.bridge_journal, "maker bridge journal")?;
+    validate_optional_private_file(&paths.state_database, "role state database")?;
+    validate_optional_private_file(&paths.bridge_journal, "role bridge journal")?;
     let (actual_agreement, _) = read_bounded_identified(
         &paths.agreement,
         MAX_ZEC_AGREEMENT_RECORD_BYTES,
         FilePrivacy::OwnerPrivate,
     )
-    .map_err(|_| anyhow::anyhow!("published maker agreement is unsafe"))?;
+    .map_err(|_| anyhow::anyhow!("published actor agreement is unsafe"))?;
     let (actual_config, _) =
         read_bounded_identified(&paths.config, MAX_CONFIG_BYTES, FilePrivacy::OwnerPrivate)
-            .map_err(|_| anyhow::anyhow!("published maker config is unsafe"))?;
+            .map_err(|_| anyhow::anyhow!("published actor config is unsafe"))?;
     ensure!(
         actual_agreement.as_slice() == agreement_wire,
-        "maker agreement collision"
+        "actor agreement collision"
     );
     ensure!(
         actual_config.as_slice() == config_bytes,
-        "maker config collision"
+        "actor config collision"
     );
     let config = ActorConfig::load_private(&paths.config)
-        .context("published maker config did not reload")?;
+        .context("published actor config did not reload")?;
     ensure!(
-        config.role() == ActorRole::Maker
+        config.role() == paths.role
             && config.swap_id().as_str() == agreement.application_swap_id()
             && config.role_state_db() == paths.state_database,
-        "published maker config changed semantic binding"
+        "published actor config changed semantic binding"
     );
     let material = config
         .load_activate_material()
-        .context("published maker activation material is invalid")?;
+        .context("published actor activation material is invalid")?;
     ensure!(
         material.signed_agreement_wire() == agreement_wire,
-        "published maker agreement drifted"
+        "published actor agreement drifted"
     );
     validate_role_authority(
         &material,
         agreement,
-        Participant::Maker,
+        participant(paths.role),
         config.is_local_zcash_funder(),
     )?;
     for file in [
@@ -448,7 +554,7 @@ fn validate_exact_replay(
     ] {
         sync_file_if_present(file)?;
     }
-    for directory in [&paths.state, &paths.shared, &paths.maker, &paths.root] {
+    for directory in [&paths.state, &paths.shared, &paths.role_root, &paths.root] {
         sync_directory(directory)?;
     }
     sync_directory(paths.root.parent().context("actor root has no parent")?)?;
