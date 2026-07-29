@@ -123,6 +123,14 @@ absolute `RAPIDSNARK_LIB_DIR` only after verifying the four pinned v0.0.8
 library hashes and should use Cargo offline rather than the upstream download
 fallback.
 
+The real `zec_chat_process` boundary now also proves lost-completion-response
+recovery: it fully observes a successful durable Maker completion through a
+bounded local Unix HTTP proxy, drops the response before the Taker sees it,
+verifies that no acceptance receipt exists, and exact-retries without replacing
+the agreement or role config before publishing the first receipt. This test
+uses only temporary local process, filesystem, Unix socket, and SQLite resources;
+there is no chain RPC, Docker service, faucet, DNS, or public network.
+
 Full swap-store, maker-process, strict Clippy, and Rustdoc gates are GREEN. The
 literal pinned
 coordinator fuzz target, seven-seed corpus, bounded CI smoke, and separate

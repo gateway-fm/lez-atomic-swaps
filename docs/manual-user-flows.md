@@ -5100,7 +5100,15 @@ a node early can delay progress, but no external public service participates.
 The process proof also runs the real acceptance command, verifies all seven
 receipt fields and exact digests, preserves agreement/config/receipt bytes and
 inodes on retry, removes Delivery during persisted completion replay, and runs
-`monitor --receipt` after both application transports are absent. Direct
+`monitor --receipt` after both application transports are absent. It also
+forwards the real proposal through a mode-0600 Unix HTTP fault proxy, observes
+the Maker's successful durable completion response upstream, and deliberately
+drops it before the Taker receives a response. Expect that invocation to fail
+with empty stdout, leave the role-only Taker bundle and agreement intact, leave
+no receipt, and leave the Maker negotiation durably `Completed`; the immediate
+direct retry must report proposal, completion, agreement, and provisioning
+replay while publishing the first receipt, and the following retry must preserve
+all three artifact inodes and bytes. Direct
 `--actor-config` remains an expert component-debug/manual-recovery escape hatch;
 the receipt is the normal accepted-swap path. Actual-node claim/refund through
 these commands must still be completed before this is the final M5 user journey.

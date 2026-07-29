@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -3644,9 +3644,15 @@ separately from runtime dependencies.
   real Chat process reject tampering, unknown fields, Maker role, ambiguous
   sources, actor-local receipt placement, and lock contention without exposing
   private paths. Direct `--actor-config` is retained only as an expert component
-  and recovery escape hatch. Actual-node command effects, completion-response
-  fault injection, two disjoint live swaps, and a fresh supervisor replay must
-  still pass. A unified XMR lifecycle actor still precedes honest all-pair CLI
+  and recovery escape hatch. Completion-response loss is now process-GREEN:
+  a bounded Unix HTTP fault proxy forwards proposal replay, fully observes the
+  Maker's successful non-replay completion response after its atomic SQLite
+  commit, and drops it before the Taker receives any response. The failed Taker
+  publishes no receipt; the Maker is durably `Completed`, the role-only Taker
+  bundle is inert and exact, and direct retry reuses agreement/config inodes,
+  exact-replays completion, then publishes a fresh receipt. Actual-node command
+  effects, two disjoint live swaps, and a fresh supervisor replay must still
+  pass. A unified XMR lifecycle actor still precedes honest all-pair CLI
   composition. This progress does not by itself make M5 complete.
 
   Project cleanup has reclaimed about 85 GB cumulatively. The latest 2026-07-28
@@ -3677,7 +3683,7 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 6 to 12 focused hours under the owner-approved Logos-upstream
+literal M5 ETA is 5 to 10 focused hours under the owner-approved Logos-upstream
 exception; C-API upstream compatibility, other pairs, CLI completion, persistent
 coordinator composition hardening, and post-PoC hardening remain explicitly
 open above.

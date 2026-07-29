@@ -112,6 +112,40 @@ sequenceDiagram
     T-->>A: Receipt-selected Taker actor
 ```
 
+## Lost completion response sequence
+
+```mermaid
+sequenceDiagram
+    participant T as Taker CLI
+    participant X as Bounded fault proxy
+    participant C as Maker Chat
+    participant S as Maker SQLite
+    participant A as Maker actor registry
+    participant R as Acceptance receipt
+
+    T->>X: Replay proposal
+    X->>C: Forward exact proposal
+    C-->>X: Durable proposal replay
+    X-->>T: Forward proposal response
+    T->>X: Complete dual-signed agreement
+    X->>C: Forward exact completion
+    C->>S: Atomic acceptance transaction
+    S->>A: Register one Maker actor in same transaction
+    S-->>C: Commit completed revision
+    C-->>X: Successful non-replay completion
+    X--xT: Drop connection before downstream response
+    T->>T: Keep exact inert bundle and publish no receipt
+    T->>C: Retry exact proposal and completion
+    C-->>T: Exact durable replays
+    T->>R: No-clobber publish first receipt
+```
+
+The proxy exists only in the process test. It uses the same bounded HTTP/1
+over owner-private Unix sockets as the real CLI and daemon, validates the exact
+method order, reads the complete successful upstream response, and then closes
+the downstream connection. It therefore proves loss after the Maker commit, not
+a synthetic pre-commit failure.
+
 ## Atomicity argument
 
 This handoff does not claim one transaction across Delivery, Chat, two files,
@@ -157,6 +191,11 @@ Actual corridor composition is next. Reusing provisioned authority paths is
 acceptable for the isolated PoC but is not production key rotation or
 multi-user custody. Receipt-bound offline monitor, digest tamper rejection,
 role/path isolation, Delivery-independent persisted replay, and inode-stable
-receipt replay are process-GREEN. Actual-node lifecycle effects, a completion-
-response fault injection, post-lock adapter removal through this CLI, packaging,
-and broader hardened negative cases remain.
+receipt replay are process-GREEN. The real process proof now routes proposal and
+completion over a bounded Unix HTTP fault proxy, fully receives the Maker's
+successful non-replay completion response, and drops it before the Taker sees
+any response. SQLite is already `Completed` with one Maker actor, the Taker
+bundle exists without a receipt, and exact retry preserves agreement and config
+inodes while replaying completion and publishing the receipt. Actual-node
+lifecycle effects, post-lock adapter removal through this CLI, packaging, and
+broader hardened negative cases remain.

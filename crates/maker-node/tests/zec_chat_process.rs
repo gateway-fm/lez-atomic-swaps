@@ -4,10 +4,11 @@ mod support;
 
 use std::{
     fs::{self, OpenOptions},
-    io::Write as _,
+    io::{Read as _, Write as _},
     os::unix::fs::{
         DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
     },
+    os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
     process::{Child, Command},
     thread,
@@ -87,12 +88,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     assert_duplicate_actor_authority_is_rejected(&daemon_paths);
     let mut daemon = start_daemon(&daemon_paths);
     wait_ready(&mut daemon, &ready, &socket);
-    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
-    configure_live_route(&socket, route).await;
-    let offer_id = MakerOfferId::new("m5-chat-offer-001").unwrap();
-    assert_delivery_outage_is_visible_and_exact_retry_recovers(
-        &socket, &database, &delivery, &offer_id,
-    );
+    let (route, offer_id) = prepare_live_offer(&socket, &database, &delivery).await;
 
     let maker_secret = key(8);
     let maker_key = public_key(&maker_secret);
@@ -142,7 +138,15 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     };
 
     assert_chat_outage_and_restart(&taker, &maker_key, accepted_at, &mut daemon, &daemon_paths);
-    let final_wire = accept_and_replay(&taker, &maker_key, accepted_at, &authenticated, &database);
+    let pre_receipt = assert_completion_response_loss(&taker, &maker_key, accepted_at, &database);
+    let final_wire = accept_and_replay(
+        &taker,
+        &maker_key,
+        accepted_at,
+        &authenticated,
+        &database,
+        &pre_receipt,
+    );
     assert_post_acceptance_boundary(
         &mut daemon,
         &daemon_paths,
@@ -152,6 +156,20 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         &final_wire,
         &taker_files.receipt,
     );
+}
+
+async fn prepare_live_offer(
+    socket: &Path,
+    database: &Path,
+    delivery: &Path,
+) -> (MakerRouteV1, MakerOfferId) {
+    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+    configure_live_route(socket, route).await;
+    let offer_id = MakerOfferId::new("m5-chat-offer-001").unwrap();
+    assert_delivery_outage_is_visible_and_exact_retry_recovers(
+        socket, database, delivery, &offer_id,
+    );
+    (route, offer_id)
 }
 
 async fn stage_proposal(
@@ -417,6 +435,15 @@ struct TakerProcess<'a> {
     receipt: &'a std::path::Path,
 }
 
+struct PreReceiptArtifactSnapshot {
+    config_path: PathBuf,
+    config_inode: u64,
+    config_bytes: Vec<u8>,
+    agreement_path: PathBuf,
+    agreement_inode: u64,
+    agreement_bytes: Vec<u8>,
+}
+
 struct TakerArtifactSnapshot {
     config_path: PathBuf,
     config_inode: u64,
@@ -433,9 +460,10 @@ fn assert_fresh_taker_artifacts(
     maker_key: &PublicKey,
     accepted_at: u64,
     accepted: &Value,
+    pre_receipt: &PreReceiptArtifactSnapshot,
 ) -> TakerArtifactSnapshot {
     assert_eq!(accepted["actor"]["role"], "taker");
-    assert_eq!(accepted["actor"]["provisioning_replay"], false);
+    assert_eq!(accepted["actor"]["provisioning_replay"], true);
     assert_eq!(accepted["actor"]["receipt_replay"], false);
     let config_path = taker.actor_root.join("taker/actor-config.json");
     let agreement_path = taker.actor_root.join("shared/agreement-v2.borsh");
@@ -448,6 +476,12 @@ fn assert_fresh_taker_artifacts(
     let config_bytes = fs::read(&config_path).unwrap();
     let agreement_inode = fs::symlink_metadata(&agreement_path).unwrap().ino();
     let agreement_bytes = fs::read(&agreement_path).unwrap();
+    assert_eq!(config_path, pre_receipt.config_path);
+    assert_eq!(config_inode, pre_receipt.config_inode);
+    assert_eq!(config_bytes, pre_receipt.config_bytes);
+    assert_eq!(agreement_path, pre_receipt.agreement_path);
+    assert_eq!(agreement_inode, pre_receipt.agreement_inode);
+    assert_eq!(agreement_bytes, pre_receipt.agreement_bytes);
     assert_private_receipt(taker.receipt);
     let receipt_inode = fs::symlink_metadata(taker.receipt).unwrap().ino();
     let receipt_bytes = fs::read(taker.receipt).unwrap();
@@ -532,12 +566,176 @@ fn assert_replayed_taker_artifacts(
     assert_eq!(fs::read(taker.receipt).unwrap(), snapshot.receipt_bytes);
 }
 
+const MAX_FAULT_PROXY_HTTP_BYTES: usize = 128 * 1024;
+
+fn assert_completion_response_loss(
+    taker: &TakerProcess<'_>,
+    maker_key: &PublicKey,
+    accepted_at: u64,
+    database: &Path,
+) -> PreReceiptArtifactSnapshot {
+    let proxy_socket = taker.chat_socket.with_file_name("chat-drop-complete.sock");
+    let listener = UnixListener::bind(&proxy_socket).expect("bind completion-loss proxy");
+    fs::set_permissions(&proxy_socket, fs::Permissions::from_mode(0o600)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let upstream = taker.chat_socket.to_path_buf();
+    let proxy = thread::spawn(move || proxy_completion_response_loss(&listener, &upstream));
+
+    let output = taker_command_with_chat(taker, maker_key, accepted_at, &proxy_socket)
+        .output()
+        .expect("run Taker through completion-loss proxy");
+    assert!(!output.status.success(), "lost response must fail closed");
+    assert!(
+        output.stdout.is_empty(),
+        "failed acceptance must not emit JSON"
+    );
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(!diagnostic.contains(taker.taker_key_file.to_str().unwrap()));
+    assert!(!diagnostic.contains(&hex::encode(fs::read(taker.taker_key_file).unwrap())));
+    proxy.join().expect("completion-loss proxy succeeds");
+    fs::remove_file(&proxy_socket).expect("remove completion-loss proxy socket");
+
+    assert!(taker.agreement_file.is_file());
+    assert!(taker.actor_root.join("taker").is_dir());
+    assert!(!taker.actor_root.join("maker").exists());
+    assert!(
+        !taker.receipt.exists(),
+        "no receipt before observed completion"
+    );
+    let store = SqliteSwapStore::open(database).unwrap();
+    let durable = store
+        .load_zec_maker_negotiation(taker.offer_id)
+        .unwrap()
+        .expect("Maker completion committed before response loss");
+    assert_eq!(durable.status(), MakerZecNegotiationStatus::Completed);
+    assert_eq!(store.list_maker_actor_processes().unwrap().len(), 1);
+    pre_receipt_artifact_snapshot(taker)
+}
+
+fn pre_receipt_artifact_snapshot(taker: &TakerProcess<'_>) -> PreReceiptArtifactSnapshot {
+    let config_path = taker.actor_root.join("taker/actor-config.json");
+    let agreement_path = taker.actor_root.join("shared/agreement-v2.borsh");
+    PreReceiptArtifactSnapshot {
+        config_inode: fs::symlink_metadata(&config_path).unwrap().ino(),
+        config_bytes: fs::read(&config_path).unwrap(),
+        agreement_inode: fs::symlink_metadata(&agreement_path).unwrap().ino(),
+        agreement_bytes: fs::read(&agreement_path).unwrap(),
+        config_path,
+        agreement_path,
+    }
+}
+
+fn proxy_completion_response_loss(listener: &UnixListener, upstream_path: &Path) {
+    for (expected_method, drop_response) in [
+        ("zec_chat_propose_v1", false),
+        ("zec_chat_complete_v1", true),
+    ] {
+        let mut downstream = accept_proxy_connection(listener);
+        let request = read_bounded_http_message(&mut downstream);
+        let request_json: Value = serde_json::from_slice(http_body(&request)).unwrap();
+        assert_eq!(request_json["method"], expected_method);
+
+        let mut upstream = UnixStream::connect(upstream_path).unwrap();
+        configure_proxy_stream(&upstream);
+        upstream.write_all(&request).unwrap();
+        upstream.flush().unwrap();
+        let response = read_bounded_http_message(&mut upstream);
+        let response_json: Value = serde_json::from_slice(http_body(&response)).unwrap();
+        assert!(response_json.get("error").is_none());
+        if drop_response {
+            assert_eq!(response_json["result"]["was_replay"], false);
+            assert_eq!(response_json["result"]["swap_id"], "m5-chat-swap-001");
+        } else {
+            downstream.write_all(&response).unwrap();
+            downstream.flush().unwrap();
+        }
+    }
+}
+
+fn accept_proxy_connection(listener: &UnixListener) -> UnixStream {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                configure_proxy_stream(&stream);
+                return stream;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline, "fault proxy accept timed out");
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("fault proxy accept failed: {error}"),
+        }
+    }
+}
+
+fn configure_proxy_stream(stream: &UnixStream) {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+}
+
+fn read_bounded_http_message(stream: &mut UnixStream) -> Vec<u8> {
+    let mut message = Vec::new();
+    let mut expected_total = None;
+    loop {
+        if let Some(total) = expected_total
+            && message.len() >= total
+        {
+            message.truncate(total);
+            return message;
+        }
+        let mut chunk = [0_u8; 4096];
+        let read = stream.read(&mut chunk).expect("read proxied HTTP message");
+        assert!(read > 0, "proxied HTTP message closed before completion");
+        message.extend_from_slice(&chunk[..read]);
+        assert!(message.len() <= MAX_FAULT_PROXY_HTTP_BYTES);
+        if expected_total.is_none()
+            && let Some(header_end) = message.windows(4).position(|bytes| bytes == b"\r\n\r\n")
+        {
+            let body_start = header_end + 4;
+            let content_length = parse_content_length(&message[..header_end]);
+            let total = body_start.checked_add(content_length).unwrap();
+            assert!(total <= MAX_FAULT_PROXY_HTTP_BYTES);
+            expected_total = Some(total);
+        }
+    }
+}
+
+fn parse_content_length(header: &[u8]) -> usize {
+    let header = std::str::from_utf8(header).expect("HTTP header is ASCII");
+    let mut length = None;
+    for line in header.lines().skip(1) {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("content-length") {
+            assert!(length.is_none(), "duplicate Content-Length");
+            length = Some(value.trim().parse::<usize>().unwrap());
+        }
+        assert!(!name.eq_ignore_ascii_case("transfer-encoding"));
+    }
+    length.expect("proxied HTTP message has Content-Length")
+}
+
+fn http_body(message: &[u8]) -> &[u8] {
+    let header_end = message
+        .windows(4)
+        .position(|bytes| bytes == b"\r\n\r\n")
+        .expect("complete HTTP header");
+    &message[(header_end + 4)..]
+}
+
 fn accept_and_replay(
     taker: &TakerProcess<'_>,
     maker_key: &PublicKey,
     accepted_at: u64,
     authenticated: &AuthenticatedOfferRefV1,
     database: &Path,
+    pre_receipt: &PreReceiptArtifactSnapshot,
 ) -> Vec<u8> {
     let expires_at_unix_seconds = authenticated.offer().expires_at_unix_seconds();
     let accepted = run_taker(taker, maker_key, accepted_at);
@@ -545,10 +743,11 @@ fn accept_and_replay(
     assert_eq!(accepted["offer_revision"], 3);
     assert_eq!(accepted["swap_id"], "m5-chat-swap-001");
     assert_eq!(accepted["replay"]["proposal"], true);
-    assert_eq!(accepted["replay"]["completion"], false);
-    assert_eq!(accepted["replay"]["agreement_file"], false);
+    assert_eq!(accepted["replay"]["completion"], true);
+    assert_eq!(accepted["replay"]["agreement_file"], true);
     assert_eq!(accepted["private_material_disclosed"], false);
-    let taker_artifacts = assert_fresh_taker_artifacts(taker, maker_key, accepted_at, &accepted);
+    let taker_artifacts =
+        assert_fresh_taker_artifacts(taker, maker_key, accepted_at, &accepted, pre_receipt);
     let first = SqliteSwapStore::open(database)
         .unwrap()
         .list_maker_actor_processes()
@@ -642,6 +841,25 @@ fn taker_command_with_receipt(
     accepted_at: u64,
     receipt: &Path,
 ) -> Command {
+    taker_command_with_overrides(taker, maker_key, accepted_at, taker.chat_socket, receipt)
+}
+
+fn taker_command_with_chat(
+    taker: &TakerProcess<'_>,
+    maker_key: &PublicKey,
+    accepted_at: u64,
+    chat_socket: &Path,
+) -> Command {
+    taker_command_with_overrides(taker, maker_key, accepted_at, chat_socket, taker.receipt)
+}
+
+fn taker_command_with_overrides(
+    taker: &TakerProcess<'_>,
+    maker_key: &PublicKey,
+    accepted_at: u64,
+    chat_socket: &Path,
+    receipt: &Path,
+) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_lez-taker"));
     command
         .arg("--delivery-directory")
@@ -657,7 +875,7 @@ fn taker_command_with_receipt(
         .arg("--accept-zec-offer")
         .arg(taker.offer_id.as_str())
         .arg("--chat-socket")
-        .arg(taker.chat_socket)
+        .arg(chat_socket)
         .arg("--reservation-id")
         .arg(taker.reservation_id.as_str())
         .arg("--foreign-units")
