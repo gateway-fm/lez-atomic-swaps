@@ -69,6 +69,7 @@ direction_contract="$(
 jq -e '
   .m5_btc_application_mode == true and
   .stage_two_swap_id_source == "authenticated_delivery_reservation" and
+  .actor_config_schema_version == 6 and
   .application_route == {
     pair: "bitcoin",
     direction: "taker_sells_foreign",
@@ -93,6 +94,15 @@ for required in \
   'stop_provisional_owned_process "$daemon_pid"'; do
   rg -Fq -- "$required" "$runner" ||
     fail "outer runner is missing real Delivery planning: ${required}"
+done
+
+for required in \
+  'schema=6' \
+  '--arg agreement_sha256 "$agreement_sha256"' \
+  '{agreement_sha256:$agreement_sha256}' \
+  'write_actor_configs "$initial_tip" 4096'; do
+  rg -Fq -- "$required" "$direction_driver" ||
+    fail "direction driver is missing schema-6 agreement binding: ${required}"
 done
 
 plan_line="$(rg -n -F 'prepare_m5_btc_delivery_plan "$direction"' "$runner" |

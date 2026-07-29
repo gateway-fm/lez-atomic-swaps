@@ -91,7 +91,9 @@ emit_contract() {
       default_journey: "claim",
       timeout_terminal_phase: "refunded",
       asset_mode: $asset_mode,
-      actor_config_schema_version: (if $asset_mode == "custom_token" then 5 else 4 end),
+      actor_config_schema_version:
+        (if $m5_btc_application_mode == "1" then 6
+         elif $asset_mode == "custom_token" then 5 else 4 end),
       asset_extension_required: ($asset_mode == "custom_token"),
       official_token_ata_derivation_required: ($asset_mode == "custom_token"),
       asset_first_lock_order:
@@ -1622,10 +1624,11 @@ write_actor_configs() {
   local start_height="$1" max_blocks="$2"
   local role basic endpoint config partial adaptor refund
   local maker_bitcoin_funding maker_lez_request maker_lez_result
-  local schema asset_record current_asset_commitment
+  local schema asset_record current_asset_commitment agreement agreement_sha256
   [[ "$start_height" =~ ^[0-9]+$ && "$max_blocks" =~ ^[0-9]+$ ]] ||
     fail "actor LEZ window is not numeric"
   (( max_blocks >= 1 && max_blocks <= 4096 )) || fail "actor LEZ window is out of bounds"
+  agreement="${M3_POC_DIRECTION_ROOT}/fixture/agreement.borsh"
   maker_bitcoin_funding="${M3_POC_DIRECTION_ROOT}/fixture/funding-transaction.hex"
   if [[ "$asset_mode" == "custom_token" ]]; then
     schema=5
@@ -1637,11 +1640,18 @@ write_actor_configs() {
        "$current_asset_commitment" =~ ^[0-9a-f]{64}$ ]] ||
       fail "exact countersigned asset extension is unavailable"
   else
-    schema=4
+    if [[ "$m5_btc_application_mode" == "1" ]]; then
+      schema=6
+    else
+      schema=4
+    fi
     maker_lez_request="${M3_POC_DIRECTION_ROOT}/final-prepare-escrow-request.json"
     asset_record=""
     current_asset_commitment=""
   fi
+  [[ -f "$agreement" && ! -L "$agreement" ]] || fail "exact agreement is unavailable"
+  agreement_sha256="$(sha256sum "$agreement" | sed 's/ .*//')"
+  [[ "$agreement_sha256" =~ ^[0-9a-f]{64}$ ]] || fail "agreement SHA-256 is invalid"
   maker_lez_result="$final_prepared_escrow"
   [[ -f "$maker_bitcoin_funding" && ! -L "$maker_bitcoin_funding" ]] ||
     fail "exact signed Bitcoin maker-lock material is unavailable"
@@ -1669,7 +1679,8 @@ write_actor_configs() {
     config="${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-config.json"
     partial="${config}.partial"
     jq -n --arg role "$role" --argjson schema "$schema" \
-      --arg agreement "${M3_POC_DIRECTION_ROOT}/fixture/agreement.borsh" \
+      --arg agreement "$agreement" \
+      --arg agreement_sha256 "$agreement_sha256" \
       --arg state "${M3_POC_DIRECTION_ROOT}/actors/${role}/actor-state.sqlite" \
       --argjson accepted "$accepted_at" --arg core "$M3_POC_BITCOIN_RPC_URL" \
       --arg basic "$basic" --arg bridge "$endpoint" \
@@ -1691,7 +1702,9 @@ write_actor_configs() {
         schema_version:$schema,role:$role,agreement_file:$agreement,state_db:$state,
         accepted_at_unix_seconds:$accepted,
         bitcoin_core:{endpoint:$core,cookie_file:$basic,connectivity:"isolated_local"},
-        lez_bridge:{endpoint:$bridge,capability_file:$capability,run_id:$run,
+      }
+      + (if $schema == 6 then {agreement_sha256:$agreement_sha256} else {} end)
+      + {lez_bridge:{endpoint:$bridge,capability_file:$capability,run_id:$run,
           runtime:$runtime[0],request_timeout_millis:$bridge_timeout,
           discovery_start_height:$start,discovery_max_blocks:$blocks},
         signing:({
@@ -1700,7 +1713,7 @@ write_actor_configs() {
           prepared_witnessed_claim_result_file:$prepared
         } + (if $role == "taker" then {adaptor_secret_file:$adaptor} else {} end)),
         refund:(if $refund == "" then {} else {bitcoin_refund_key_file:$refund} end)
-      }
+      }}
       + (if $asset_mode == "custom_token" then
           {asset_extension:{record_file:$asset_record,
             expected_asset_commitment:$asset_commitment}}
@@ -3955,7 +3968,11 @@ prepare_actor_flow_runtime() {
   accepted_at="$(date -u +%s)"
   initial_tip="$(finalized_tip)"
   actor_prelock_lez_tip="$initial_tip"
-  write_actor_configs "$initial_tip" 1
+  if [[ "$m5_btc_application_mode" == "1" ]]; then
+    write_actor_configs "$initial_tip" 4096
+  else
+    write_actor_configs "$initial_tip" 1
+  fi
   activate_actors
   direction_phase_end presign_and_activate ||
     fail "could not end presign-and-activate timing"

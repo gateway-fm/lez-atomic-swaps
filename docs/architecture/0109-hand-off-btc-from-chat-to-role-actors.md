@@ -43,6 +43,14 @@ exact Bitcoin policy and publishes a new mode-0600 draft beneath a canonical
 mode-0700 directory with no-clobber semantics. The application never retypes or
 maintains a second representation of executable chain terms.
 
+For actual-node composition, the direction runner creates schema-6 Maker and
+Taker source authority from that same finalized agreement and records its exact
+SHA-256 in both configs. The initial discovery range is one bounded 4,096-block
+window. This is broad enough for the isolated lifecycle without changing signed
+terms and remains within the actor's existing bound. It is source authority,
+not the final published bundle: the no-clobber provisioner remains the only
+linearization point for the configs consumed after application acceptance.
+
 The real Taker CLI accepts one authenticated BTC offer, canonical unsigned
 draft, owner-private Taker agreement key, role-fixed schema-6 source config,
 fresh actor root, final-wire output, and receipt output. It validates the
@@ -60,6 +68,7 @@ flowchart LR
     Delivery[Signed Delivery directory]
     Chat[Owner private Chat socket]
     Store[(Maker SQLite schema 19)]
+    Source[Schema 6 source and agreement digest]
     MakerAuthority[BTC Maker key and source config]
     MakerProvision[Digest scoped Maker provisioner]
     MakerActor[Role fixed Maker actor]
@@ -71,6 +80,8 @@ flowchart LR
 
     Operator --> MakerCli
     MakerCli --> Daemon
+    Source --> MakerAuthority
+    Source --> TakerAuthority
     MakerAuthority --> Daemon
     Daemon --> Delivery
     Taker --> TakerCli
@@ -193,6 +204,11 @@ These guarantees make application acceptance all-or-nothing at each local
 authority boundary. Cross-chain atomicity begins only after actor activation;
 it still depends on the agreement-ordered lock, reveal, claim, and refund flows
 documented for the M3 BTC corridor.
+
+The agreement digest prevents a source config from silently selecting different
+executable terms. It does not make a mutable source pathname atomic; that
+property begins only at the provisioner's no-replace publication described in
+ADR 0108.
 
 ## Resources and evidence boundary
 

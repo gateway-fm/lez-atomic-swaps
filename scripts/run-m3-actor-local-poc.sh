@@ -1914,10 +1914,12 @@ verify_direction_driver_contract() {
   local contract driver_sha
   driver_sha="$(sha256sum "$direction_driver" | sed 's/ .*//')"
   [[ "$driver_sha" =~ ^[0-9a-f]{64}$ ]] || fail "direction-driver SHA-256 is invalid"
-  contract="$(M3_POC_ASSET_MODE="$asset_mode" M3_POC_JOURNEY="$journey" \
+  contract="$(M5_BTC_APPLICATION_MODE="$m5_btc_application_mode" \
+    M3_POC_ASSET_MODE="$asset_mode" M3_POC_JOURNEY="$journey" \
     "$direction_driver" contract)" ||
     fail "direction-driver contract is unavailable"
-  jq -e --arg journey "$journey" --arg asset_mode "$asset_mode" '
+  jq -e --arg journey "$journey" --arg asset_mode "$asset_mode" \
+    --arg m5_btc_application_mode "$m5_btc_application_mode" '
     .schema_version == 1
     and .kind == "m3_actor_direction_driver_contract"
     and .stage_two_spec_uses_actual_node_facts == true
@@ -1952,7 +1954,8 @@ verify_direction_driver_contract() {
          else .actor_owned_first_lock_refund_effects end) == true
     and .asset_mode == $asset_mode
     and .actor_config_schema_version ==
-      (if $asset_mode == "custom_token" then 5 else 4 end)
+      (if $m5_btc_application_mode == "1" then 6
+       elif $asset_mode == "custom_token" then 5 else 4 end)
     and .asset_extension_required == ($asset_mode == "custom_token")
     and .official_token_ata_derivation_required == ($asset_mode == "custom_token")
     and .expected_unique_effects ==

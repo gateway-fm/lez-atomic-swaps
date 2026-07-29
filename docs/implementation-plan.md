@@ -3821,6 +3821,19 @@ offer, and uses the real Taker CLI to authenticate and plan 1,000,000 sats as
 reaps the daemon, and supplies that ID before stage two. Static order, syntax, and
 legacy M3 contracts are GREEN; a fresh isolated execution remains the runtime gate.
 
+The next contract-first RED showed that this opt-in route still advertised and
+wrote legacy schema 4 actor authority. It now selects schema 6 only in M5 BTC
+application mode, computes the exact finalized agreement SHA-256 once, and binds
+that digest into each role source config. The M5 source authority begins with one
+bounded 4,096-block LEZ discovery window so the later no-clobber application
+bundle does not need a changed accepted config merely to advance a scan cursor;
+legacy and custom-token routes retain their schema and initial one-block window.
+The focused M5 contract, Bash syntax, diff hygiene, and the complete no-binary
+M3 orchestration regression are GREEN. Full Chat completion, role-fixed bundle
+selection by the actual actors, and an isolated node run remain open; until that
+handoff lands, later legacy direction steps can still rewrite their source
+window and this checkpoint does not claim immutable runtime configs.
+
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 tests the lifecycle contract against
 the same daemon binary and records the missing upstream integration in the
