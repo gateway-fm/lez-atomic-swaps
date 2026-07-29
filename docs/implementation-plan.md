@@ -3561,11 +3561,21 @@ separately from runtime dependencies.
   after restart with unchanged config and fresh request IDs. No schema migration
   was required. Replay from an exact pushed tree through the daemon supervisor
   and application CLI still precedes any upgrade of the historical evidence claim.
-  The next RED-GREEN slice is schema-v17 replay-safe manual claim/refund intent plus secret-free live actor
-  progress, owner-local Maker `monitor/claim/refund`, role-validated Taker
-  `monitor/claim/refund`, explicit ZEC `claim`, and supervisor routing that never
-  maps a claim request to generic `drive`. Process restart, stale-generation
-  fencing, wrong-owner rejection, and two disjoint live swaps must then pass.
+  The schema-v17 manual-action foundation is now GREEN. One immediate
+  transaction binds the existing global mutation request ID, swap, explicit
+  `claim` or `refund`, observed generation, open action, and process wakeup.
+  The existing process owner/generation lease attaches the action; resolution
+  updates both rows atomically; kernel-locked abandoned recovery retargets both
+  rows. Exact replay precedes current-generation validation. Four focused
+  tests plus the complete store suite prove restart, global request conflict,
+  one-open-action, stale-generation and wrong-owner rejection, nonterminal
+  requeue, explicit completion, and crash transfer. ADR 0103 records the
+  component, sequence, crash, and atomicity diagrams.
+  The next RED-GREEN slice adds secret-free live actor progress, owner-local
+  Maker `monitor/claim/refund`, symmetric role-validated Taker provisioning and
+  `monitor/claim/refund`, explicit ZEC `claim`, and supervisor routing that
+  never maps a claim request to generic `drive`. Process restart and two
+  disjoint live swaps must then pass.
   BTC claim execution and a unified XMR lifecycle actor still precede honest
   all-pair CLI composition. This progress does not by itself make M5 complete.
 

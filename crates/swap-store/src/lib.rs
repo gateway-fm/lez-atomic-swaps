@@ -43,8 +43,9 @@ pub use btc_recovery::{
 pub use maker_actor_process::{
     MAKER_ACTOR_CONFIG_FD, MakerActorArtifacts, MakerActorAttemptResolution, MakerActorHeldLock,
     MakerActorKindV1, MakerActorLeaseOwner, MakerActorLeaseV1, MakerActorManifestV1,
-    MakerActorProcessError, MakerActorProcessRecordV1, MakerActorRegistrationCommit,
-    MakerActorScheduleState, validate_maker_actor_program,
+    MakerActorManualAction, MakerActorManualActionCommit, MakerActorManualActionSnapshot,
+    MakerActorManualActionState, MakerActorProcessError, MakerActorProcessRecordV1,
+    MakerActorRegistrationCommit, MakerActorScheduleState, validate_maker_actor_program,
 };
 pub use maker_application::{
     LocalPriceV1, MakerConfigurationCommit, MakerConfigurationError, MakerPairConfigurationV1,
@@ -77,7 +78,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 16;
+const DATABASE_SCHEMA_VERSION: i64 = 17;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;

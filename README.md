@@ -12,7 +12,7 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ### M5 active progressive application PoC
 
 M5 is active. The owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v16
+Unix-socket daemon, maker CLI, durable schema-v17
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
@@ -30,7 +30,7 @@ and kill/reopen durability are process-GREEN. Exact final-wire actor
 configuration and scheduling are now component-GREEN: the daemon holds a
 startup-pinned Maker template and authority identities, revalidates every chain
 fact, key, funder role, and preimage, durably publishes only a Maker bundle with
-no-clobber rename, and commits its immutable schema-v16 scheduler manifest in
+no-clobber rename, and commits its immutable scheduler manifest in
 the same SQLite transaction as acceptance. The opt-in M5 runner now composes
 that handoff with the stable LEZ/ZEC actor corridor, retains the restarted
 daemon through the first confirmed Zcash lock, and then removes Chat and
@@ -39,6 +39,14 @@ actor with unit chain ports, binds its terminal coordinator to the exact Chat
 agreement, and imports a display-only projection before a fresh owner-only
 daemon becomes ready. Owner `status` and `history` overlay that record while
 ordinary lifecycle loads remain unchanged and cannot gain effect authority.
+Schema v17 now adds the replay-safe manual-action foundation: global request-ID
+binding, one open explicit `claim` or `refund` per swap, current-generation
+admission, exact lease attachment, same-transaction process/action resolution,
+and kernel-locked crash transfer. Focused restart, stale-generation,
+wrong-owner, global-conflict, and exact-replay tests are GREEN. ADR
+[0103](docs/architecture/0103-persist-replay-safe-manual-actor-actions.md)
+records the component and atomicity flows. These rows are not yet exposed as a
+Maker or Taker user command, so they do not complete M5.
 
 Exact pushed-tree run `m5appee8424520260724a` completed this whole local path in
 33.400 protocol seconds with no retry. Exact packet-bearing replay

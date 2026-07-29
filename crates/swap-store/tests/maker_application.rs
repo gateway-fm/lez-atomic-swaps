@@ -171,7 +171,7 @@ fn schema_v10_migrates_to_current_without_rewriting_coordinator_bytes() {
             |row| row.get(0),
         )
         .expect("read retained aggregate bytes");
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     assert_eq!(retained, encoded);
 }
 

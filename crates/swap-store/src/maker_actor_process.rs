@@ -11,13 +11,14 @@ use std::{
 };
 
 use command_fds::{CommandFdExt as _, FdMapping};
+use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, SwapCoordinator, SwapId};
 use rusqlite::{Connection, OptionalExtension as _, Row, Transaction, TransactionBehavior, params};
 use rustix::fs::{
     CWD, FlockOperation, MemfdFlags, Mode, OFlags, ResolveFlags, SealFlags, fcntl_add_seals,
     fcntl_get_seals, flock, memfd_create, openat2,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -584,6 +585,8 @@ pub enum MakerActorAttemptResolution {
     },
     /// Actor reported an absorbing state.
     Terminal,
+    /// The explicit leased action reached its intended absorbing state.
+    ManualActionCompleted,
     /// Disable automatic retry pending operator action.
     Failed {
         /// Stable payload-free failure class.
@@ -603,6 +606,145 @@ impl MakerActorRegistrationCommit {
     pub const fn was_replay(self) -> bool {
         self.was_replay
     }
+}
+
+/// Explicit owner-requested effect class for one maker actor.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MakerActorManualAction {
+    /// Execute only the pair actor's ordered claim state machine.
+    Claim,
+    /// Execute only the pair actor's ordered timeout-recovery state machine.
+    Refund,
+}
+
+impl MakerActorManualAction {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Claim => "claim",
+            Self::Refund => "refund",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, MakerActorProcessError> {
+        match value {
+            "claim" => Ok(Self::Claim),
+            "refund" => Ok(Self::Refund),
+            _ => Err(MakerActorProcessError::CorruptRecord),
+        }
+    }
+}
+
+/// Durable lifecycle of one replay-safe manual action request.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MakerActorManualActionState {
+    /// Waiting for the next exact actor lease.
+    Queued,
+    /// Attached to one owner-and-generation fenced actor lease.
+    Leased,
+    /// The explicit action reached its intended terminal state.
+    Completed,
+    /// The action failed closed and requires a new operator decision.
+    Failed,
+}
+
+impl MakerActorManualActionState {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Leased => "leased",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, MakerActorProcessError> {
+        match value {
+            "queued" => Ok(Self::Queued),
+            "leased" => Ok(Self::Leased),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err(MakerActorProcessError::CorruptRecord),
+        }
+    }
+}
+
+/// Secret-free durable snapshot of the latest manual action for one actor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MakerActorManualActionSnapshot {
+    request_id: RequestId,
+    swap_id: SwapId,
+    action: MakerActorManualAction,
+    state: MakerActorManualActionState,
+    requested_after_generation: u64,
+    lease_owner: Option<MakerActorLeaseOwner>,
+    lease_generation: Option<u64>,
+}
+
+impl MakerActorManualActionSnapshot {
+    /// Stable idempotency identity supplied by the operator.
+    pub const fn request_id(&self) -> &RequestId {
+        &self.request_id
+    }
+    /// Application swap targeted by this action.
+    #[must_use]
+    pub const fn swap_id(&self) -> &SwapId {
+        &self.swap_id
+    }
+    /// Explicit effect class; never a generic lifecycle drive.
+    #[must_use]
+    pub const fn action(&self) -> MakerActorManualAction {
+        self.action
+    }
+    /// Current durable request state.
+    #[must_use]
+    pub const fn state(&self) -> MakerActorManualActionState {
+        self.state
+    }
+    /// Actor generation observed when the owner queued this request.
+    #[must_use]
+    pub const fn requested_after_generation(&self) -> u64 {
+        self.requested_after_generation
+    }
+    /// Exact execution generation while leased.
+    #[must_use]
+    pub const fn lease_generation(&self) -> Option<u64> {
+        self.lease_generation
+    }
+}
+
+/// Immutable enqueue result for exact request replay.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MakerActorManualActionCommit {
+    requested_after_generation: u64,
+    was_replay: bool,
+}
+
+impl MakerActorManualActionCommit {
+    /// Generation against which the original request was admitted.
+    #[must_use]
+    pub const fn requested_after_generation(self) -> u64 {
+        self.requested_after_generation
+    }
+    /// Whether this exact request and payload were already durable.
+    #[must_use]
+    pub const fn was_replay(self) -> bool {
+        self.was_replay
+    }
+}
+
+#[derive(Serialize)]
+struct StoredManualActionRequest<'a> {
+    swap_id: &'a SwapId,
+    action: MakerActorManualAction,
+    expected_generation: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+struct StoredManualActionResultV1 {
+    schema_version: u16,
+    requested_after_generation: u64,
 }
 
 /// Stable process-scheduling failure.
@@ -629,6 +771,18 @@ pub enum MakerActorProcessError {
     /// Lease owner or generation is stale.
     #[error("maker actor lease conflicts with durable owner")]
     LeaseConflict,
+    /// A request ID was already bound to another application mutation or payload.
+    #[error("maker actor manual action request conflicts with durable state")]
+    ManualActionRequestConflict,
+    /// The operator based a new action on an obsolete process generation.
+    #[error("maker actor manual action generation is stale")]
+    ManualActionGenerationConflict,
+    /// Another action remains queued or leased for this swap.
+    #[error("maker actor already has a pending manual action")]
+    ManualActionPending,
+    /// The actor cannot safely admit a new manual action in its current schedule state.
+    #[error("maker actor manual action is unavailable")]
+    ManualActionUnavailable,
     /// Lock root or deterministic lock inode is unsafe.
     #[error("maker actor process lock is unsafe")]
     UnsafeLock,
@@ -752,6 +906,174 @@ impl SqliteSwapStore {
         let commit = register_maker_actor_in_transaction(&transaction, manifest, now)?;
         transaction.commit()?;
         Ok(commit)
+    }
+
+    /// Atomically queues one explicit action or exact-replays its original admission.
+    ///
+    /// The expected generation is checked only for a new request. Exact replay
+    /// remains valid after later leases or restart. A new action never splices
+    /// into an already leased worker and at most one action is open per swap.
+    ///
+    /// # Errors
+    ///
+    /// Fails for request-ID reuse, stale generation, an unavailable actor,
+    /// another open action, corrupt state, or a durable-store error.
+    pub fn queue_maker_actor_manual_action(
+        &mut self,
+        request_id: &RequestId,
+        swap_id: &SwapId,
+        action: MakerActorManualAction,
+        expected_generation: u64,
+        now: u64,
+    ) -> Result<MakerActorManualActionCommit, MakerActorProcessError> {
+        let request_json = serde_json::to_string(&StoredManualActionRequest {
+            swap_id,
+            action,
+            expected_generation,
+        })
+        .map_err(StoreError::from)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(commit) = replay_manual_action_request(&transaction, request_id, &request_json)?
+        {
+            transaction.commit()?;
+            return Ok(commit);
+        }
+
+        let record = load_record(&transaction, swap_id)?
+            .ok_or(MakerActorProcessError::ManualActionUnavailable)?;
+        if record.lease_generation != expected_generation {
+            return Err(MakerActorProcessError::ManualActionGenerationConflict);
+        }
+        if record.schedule_state == MakerActorScheduleState::Terminal {
+            return Err(MakerActorProcessError::ManualActionUnavailable);
+        }
+        if load_open_manual_action(&transaction, swap_id)?.is_some() {
+            return Err(MakerActorProcessError::ManualActionPending);
+        }
+        let now = time_to_sql(now);
+        transaction.execute(
+            "INSERT INTO maker_actor_manual_actions (
+                 request_id, swap_id, action, state, requested_after_generation,
+                 created_at, updated_at
+             ) VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?5)",
+            params![
+                request_id.as_str(),
+                swap_id.as_str(),
+                action.name(),
+                generation_to_sql(expected_generation)?,
+                now,
+            ],
+        )?;
+        if record.schedule_state != MakerActorScheduleState::Leased {
+            let changed = transaction.execute(
+                "UPDATE maker_actor_processes SET
+                     desired_state = 'running', schedule_state = 'queued',
+                     next_attempt_at = ?1, lease_owner = NULL, leased_at = NULL,
+                     child_pid = NULL, child_start_ticks = NULL,
+                     last_failure_class = NULL, updated_at = ?1
+                 WHERE swap_id = ?2 AND schedule_state IN ('queued', 'backoff', 'failed')
+                   AND lease_generation = ?3",
+                params![
+                    now,
+                    swap_id.as_str(),
+                    generation_to_sql(expected_generation)?,
+                ],
+            )?;
+            if changed != 1 {
+                return Err(MakerActorProcessError::ManualActionUnavailable);
+            }
+        }
+        let result_json = serde_json::to_string(&StoredManualActionResultV1 {
+            schema_version: 1,
+            requested_after_generation: expected_generation,
+        })
+        .map_err(StoreError::from)?;
+        transaction.execute(
+            "INSERT INTO maker_application_mutations (
+                 request_id, operation, request_payload_version, request_json, result_json
+             ) VALUES (?1, 'actor_action_request', 1, ?2, ?3)",
+            params![request_id.as_str(), request_json, result_json],
+        )?;
+        transaction.commit()?;
+        Ok(MakerActorManualActionCommit {
+            requested_after_generation: expected_generation,
+            was_replay: false,
+        })
+    }
+
+    /// Returns the latest secret-free manual-action snapshot for one actor.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the durable row is malformed or unavailable.
+    pub fn maker_actor_manual_action(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<MakerActorManualActionSnapshot>, MakerActorProcessError> {
+        load_latest_manual_action(&self.connection, swap_id)
+    }
+
+    /// Attaches one queued action to the exact active actor lease.
+    ///
+    /// Repeating this call with the same owner and generation is an exact replay.
+    /// A forged or stale lease cannot observe or take action authority.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the actor lease is stale or the action row is corrupt.
+    pub fn claim_maker_actor_manual_action(
+        &mut self,
+        lease: &MakerActorLeaseV1,
+    ) -> Result<Option<MakerActorManualActionSnapshot>, MakerActorProcessError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let record = load_record(&transaction, lease.record.swap_id())?
+            .ok_or(MakerActorProcessError::LeaseConflict)?;
+        if record.schedule_state != MakerActorScheduleState::Leased
+            || record.lease_owner != Some(lease.owner)
+            || record.lease_generation != lease.generation
+        {
+            return Err(MakerActorProcessError::LeaseConflict);
+        }
+        let Some(action) = load_open_manual_action(&transaction, lease.record.swap_id())? else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+        match action.state {
+            MakerActorManualActionState::Queued => {
+                if lease.generation < action.requested_after_generation {
+                    return Err(MakerActorProcessError::CorruptRecord);
+                }
+                if lease.generation == action.requested_after_generation {
+                    transaction.commit()?;
+                    return Ok(None);
+                }
+                let changed = transaction.execute(
+                    "UPDATE maker_actor_manual_actions SET
+                         state = 'leased', lease_owner = ?1, lease_generation = ?2
+                     WHERE request_id = ?3 AND state = 'queued'",
+                    params![
+                        lease.owner.bytes().as_slice(),
+                        generation_to_sql(lease.generation)?,
+                        action.request_id.as_str(),
+                    ],
+                )?;
+                if changed != 1 {
+                    return Err(MakerActorProcessError::LeaseConflict);
+                }
+            }
+            MakerActorManualActionState::Leased
+                if action.lease_owner == Some(lease.owner)
+                    && action.lease_generation == Some(lease.generation) => {}
+            _ => return Err(MakerActorProcessError::LeaseConflict),
+        }
+        let leased = load_manual_action_by_request(&transaction, &action.request_id)?
+            .ok_or(MakerActorProcessError::CorruptRecord)?;
+        transaction.commit()?;
+        Ok(Some(leased))
     }
 
     /// Lists due, unleased maker actors in stable order.
@@ -916,8 +1238,21 @@ impl SqliteSwapStore {
         resolution: MakerActorAttemptResolution,
         now: u64,
     ) -> Result<(), MakerActorProcessError> {
+        let manual_state = match &resolution {
+            MakerActorAttemptResolution::Requeue { .. }
+            | MakerActorAttemptResolution::Backoff { .. } => MakerActorManualActionState::Queued,
+            MakerActorAttemptResolution::ManualActionCompleted => {
+                MakerActorManualActionState::Completed
+            }
+            MakerActorAttemptResolution::Terminal | MakerActorAttemptResolution::Failed { .. } => {
+                MakerActorManualActionState::Failed
+            }
+        };
         let (state, next, failure) = resolution_fields(resolution)?;
-        let changed = self.connection.execute(
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
             "UPDATE maker_actor_processes SET
                  schedule_state = ?1, next_attempt_at = ?2, lease_owner = NULL,
                  leased_at = NULL, child_pid = NULL, child_start_ticks = NULL,
@@ -934,11 +1269,58 @@ impl SqliteSwapStore {
                 generation_to_sql(lease.generation)?,
             ],
         )?;
-        if changed == 1 {
-            Ok(())
-        } else {
-            Err(MakerActorProcessError::LeaseConflict)
+        if changed != 1 {
+            return Err(MakerActorProcessError::LeaseConflict);
         }
+        let leased_action = load_open_manual_action(&transaction, lease.record.swap_id())?;
+        if let Some(action) = leased_action {
+            match action.state {
+                MakerActorManualActionState::Queued
+                    if action.requested_after_generation == lease.generation =>
+                {
+                    match manual_state {
+                        MakerActorManualActionState::Queued => {}
+                        MakerActorManualActionState::Failed => {
+                            let changed = transaction.execute(
+                                "UPDATE maker_actor_manual_actions SET
+                                     state = 'failed', updated_at = ?1
+                                 WHERE request_id = ?2 AND state = 'queued'",
+                                params![time_to_sql(now), action.request_id.as_str()],
+                            )?;
+                            if changed != 1 {
+                                return Err(MakerActorProcessError::LeaseConflict);
+                            }
+                        }
+                        _ => return Err(MakerActorProcessError::LeaseConflict),
+                    }
+                }
+                MakerActorManualActionState::Leased
+                    if action.lease_owner == Some(lease.owner)
+                        && action.lease_generation == Some(lease.generation) =>
+                {
+                    let changed = transaction.execute(
+                        "UPDATE maker_actor_manual_actions SET
+                             state = ?1, lease_owner = NULL, lease_generation = NULL,
+                             updated_at = ?2
+                         WHERE request_id = ?3 AND state = 'leased'
+                           AND lease_owner = ?4 AND lease_generation = ?5",
+                        params![
+                            manual_state.name(),
+                            time_to_sql(now),
+                            action.request_id.as_str(),
+                            lease.owner.bytes().as_slice(),
+                            generation_to_sql(lease.generation)?,
+                        ],
+                    )?;
+                    if changed != 1 {
+                        return Err(MakerActorProcessError::LeaseConflict);
+                    }
+                }
+                _ => return Err(MakerActorProcessError::LeaseConflict),
+            }
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Atomically transfers one abandoned lease while holding its exact kernel lock.
@@ -985,6 +1367,34 @@ impl SqliteSwapStore {
         )?;
         if changed != 1 {
             return Err(MakerActorProcessError::LeaseConflict);
+        }
+        if let Some(action) = load_open_manual_action(&transaction, lease.record.swap_id())? {
+            match action.state {
+                MakerActorManualActionState::Queued => {}
+                MakerActorManualActionState::Leased
+                    if action.lease_owner == Some(lease.owner)
+                        && action.lease_generation == Some(lease.generation) =>
+                {
+                    let changed = transaction.execute(
+                        "UPDATE maker_actor_manual_actions SET
+                             lease_owner = ?1, lease_generation = ?2, updated_at = ?3
+                         WHERE request_id = ?4 AND state = 'leased'
+                           AND lease_owner = ?5 AND lease_generation = ?6",
+                        params![
+                            new_owner.bytes().as_slice(),
+                            generation_to_sql(generation)?,
+                            now,
+                            action.request_id.as_str(),
+                            lease.owner.bytes().as_slice(),
+                            generation_to_sql(lease.generation)?,
+                        ],
+                    )?;
+                    if changed != 1 {
+                        return Err(MakerActorProcessError::LeaseConflict);
+                    }
+                }
+                _ => return Err(MakerActorProcessError::LeaseConflict),
+            }
         }
         let record = load_record(&transaction, lease.record.swap_id())?
             .ok_or(MakerActorProcessError::CorruptRecord)?;
@@ -1056,7 +1466,10 @@ fn resolution_fields(
                 Some(failure_class),
             ))
         }
-        MakerActorAttemptResolution::Terminal => Ok((MakerActorScheduleState::Terminal, 0, None)),
+        MakerActorAttemptResolution::Terminal
+        | MakerActorAttemptResolution::ManualActionCompleted => {
+            Ok((MakerActorScheduleState::Terminal, 0, None))
+        }
         MakerActorAttemptResolution::Failed { failure_class } => {
             validate_failure_class(&failure_class)?;
             Ok((MakerActorScheduleState::Failed, 0, Some(failure_class)))
@@ -1119,6 +1532,137 @@ fn decode_owner(
                 .map_err(|_| MakerActorProcessError::CorruptRecord)?;
             MakerActorLeaseOwner::new(bytes).map_err(|_| MakerActorProcessError::CorruptRecord)
         })
+        .transpose()
+}
+
+fn replay_manual_action_request(
+    transaction: &Transaction<'_>,
+    request_id: &RequestId,
+    request_json: &str,
+) -> Result<Option<MakerActorManualActionCommit>, MakerActorProcessError> {
+    let prior = transaction
+        .query_row(
+            "SELECT operation, request_json, result_json
+               FROM maker_application_mutations WHERE request_id = ?1",
+            [request_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((operation, stored_request, stored_result)) = prior else {
+        return Ok(None);
+    };
+    if operation != "actor_action_request" || stored_request != request_json {
+        return Err(MakerActorProcessError::ManualActionRequestConflict);
+    }
+    let result: StoredManualActionResultV1 =
+        serde_json::from_str(&stored_result).map_err(StoreError::from)?;
+    if result.schema_version != 1
+        || load_manual_action_by_request(transaction, request_id)?.is_none()
+    {
+        return Err(MakerActorProcessError::CorruptRecord);
+    }
+    Ok(Some(MakerActorManualActionCommit {
+        requested_after_generation: result.requested_after_generation,
+        was_replay: true,
+    }))
+}
+
+type RawManualAction = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<Vec<u8>>,
+    Option<i64>,
+);
+
+fn read_raw_manual_action(row: &Row<'_>) -> rusqlite::Result<RawManualAction> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+    ))
+}
+
+fn decode_manual_action(
+    raw: RawManualAction,
+) -> Result<MakerActorManualActionSnapshot, MakerActorProcessError> {
+    let (request_id, swap_id, action, state, requested_generation, owner, lease_generation) = raw;
+    let state = MakerActorManualActionState::parse(&state)?;
+    let lease_owner = decode_owner(owner)?;
+    let lease_generation = lease_generation.map(decode_u64).transpose()?;
+    if (state == MakerActorManualActionState::Leased)
+        != (lease_owner.is_some() && lease_generation.is_some())
+    {
+        return Err(MakerActorProcessError::CorruptRecord);
+    }
+    Ok(MakerActorManualActionSnapshot {
+        request_id: RequestId::new(request_id)
+            .map_err(|_| MakerActorProcessError::CorruptRecord)?,
+        swap_id: SwapId::new(swap_id).map_err(|_| MakerActorProcessError::CorruptRecord)?,
+        action: MakerActorManualAction::parse(&action)?,
+        state,
+        requested_after_generation: decode_u64(requested_generation)?,
+        lease_owner,
+        lease_generation,
+    })
+}
+
+const MANUAL_ACTION_COLUMNS: &str =
+    "request_id, swap_id, action, state, requested_after_generation, lease_owner, lease_generation";
+
+fn load_manual_action_by_request(
+    connection: &Connection,
+    request_id: &RequestId,
+) -> Result<Option<MakerActorManualActionSnapshot>, MakerActorProcessError> {
+    let sql = format!(
+        "SELECT {MANUAL_ACTION_COLUMNS} FROM maker_actor_manual_actions WHERE request_id = ?1"
+    );
+    connection
+        .query_row(&sql, [request_id.as_str()], read_raw_manual_action)
+        .optional()?
+        .map(decode_manual_action)
+        .transpose()
+}
+
+fn load_open_manual_action(
+    connection: &Connection,
+    swap_id: &SwapId,
+) -> Result<Option<MakerActorManualActionSnapshot>, MakerActorProcessError> {
+    let sql = format!(
+        "SELECT {MANUAL_ACTION_COLUMNS} FROM maker_actor_manual_actions
+         WHERE swap_id = ?1 AND state IN ('queued', 'leased') ORDER BY sequence DESC LIMIT 1"
+    );
+    connection
+        .query_row(&sql, [swap_id.as_str()], read_raw_manual_action)
+        .optional()?
+        .map(decode_manual_action)
+        .transpose()
+}
+
+fn load_latest_manual_action(
+    connection: &Connection,
+    swap_id: &SwapId,
+) -> Result<Option<MakerActorManualActionSnapshot>, MakerActorProcessError> {
+    let sql = format!(
+        "SELECT {MANUAL_ACTION_COLUMNS} FROM maker_actor_manual_actions
+         WHERE swap_id = ?1 ORDER BY sequence DESC LIMIT 1"
+    );
+    connection
+        .query_row(&sql, [swap_id.as_str()], read_raw_manual_action)
+        .optional()?
+        .map(decode_manual_action)
         .transpose()
 }
 
@@ -1576,7 +2120,33 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
             )
         ) STRICT;
         CREATE INDEX IF NOT EXISTS maker_actor_processes_due
-            ON maker_actor_processes (desired_state, schedule_state, next_attempt_at, swap_id);",
+            ON maker_actor_processes (desired_state, schedule_state, next_attempt_at, swap_id);
+        CREATE TABLE IF NOT EXISTS maker_actor_manual_actions (
+            sequence                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id                 TEXT NOT NULL UNIQUE,
+            swap_id                    TEXT NOT NULL REFERENCES maker_actor_processes(swap_id)
+                                           ON DELETE CASCADE,
+            action                     TEXT NOT NULL CHECK (action IN ('claim', 'refund')),
+            state                      TEXT NOT NULL CHECK (
+                                           state IN ('queued', 'leased', 'completed', 'failed')
+                                       ),
+            requested_after_generation INTEGER NOT NULL CHECK (requested_after_generation >= 0),
+            lease_owner                BLOB CHECK (
+                                           lease_owner IS NULL OR length(lease_owner) = 16
+                                       ),
+            lease_generation           INTEGER CHECK (
+                                           lease_generation IS NULL OR lease_generation > 0
+                                       ),
+            created_at                 INTEGER NOT NULL CHECK (created_at >= 0),
+            updated_at                 INTEGER NOT NULL CHECK (updated_at >= created_at),
+            CHECK (
+                (state = 'leased' AND lease_owner IS NOT NULL AND lease_generation IS NOT NULL)
+                OR (state != 'leased' AND lease_owner IS NULL AND lease_generation IS NULL)
+            )
+        ) STRICT;
+        CREATE UNIQUE INDEX IF NOT EXISTS maker_actor_manual_actions_one_open
+            ON maker_actor_manual_actions (swap_id)
+            WHERE state IN ('queued', 'leased');",
     )?;
     Ok(())
 }
