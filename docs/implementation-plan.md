@@ -3465,7 +3465,7 @@ separately from runtime dependencies.
   as failed without storing payloads. The packaged systemd unit and transient
   lifecycle rehearsal now enable the supervisor.
 
-  Focused evidence is 12/12 store cases and 9/9 pair-neutral supervisor cases.
+  Focused evidence is 12/12 store cases and 12/12 pair-neutral supervisor cases.
   One actual-daemon process E2E starts a leased local actor, proves owner health
   remains responsive through the supervisor's dedicated connection, then
   SIGTERMs the daemon and proves cancellation, process-group reap, durable
@@ -3474,6 +3474,21 @@ separately from runtime dependencies.
   primitives only; no node, chain RPC, Docker, faucet, DNS, public network, or
   public funds participate. A cold Cargo build may need the pinned registry
   cache or dependency download.
+
+  A second real-daemon process journey now composes two distinct scheduled
+  swaps on the same persistent service. Actor A records its PID and exceeds a
+  two-second status bound; the supervisor terminates and reaps its process
+  group, exact-clears child identity, and commits 600-second backoff. Actor B
+  then reports schema-valid allowlisted `Completed` revision-four fixture status
+  and commits terminal from a different config, program, state path, lock,
+  manifest, and row. Both have one attempt, owner health stays responsive, and daemon restart preserves the
+  exact records; both one-entry invocation logs remain unchanged during the
+  300-millisecond post-readiness observation window.
+  This closes the node-free sequential process-composition and durable
+  failure-isolation sub-slice. It does not close simultaneous subprocess
+  overlap, actual-chain execution, unavailable-chain route isolation, or
+  all-pair composition. Runtime external resources are none: temporary private
+  files, SQLite, Unix sockets, and local processes only.
 
   The user-systemd scheduler crash slice is now node-free process GREEN. Exact
   run `lez-m5-systemd-1000-3497452-2505` reached an allowlisted submitted-effect
@@ -3698,10 +3713,17 @@ separately from runtime dependencies.
   proven.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is 4 to 9 focused hours under the owner-approved Logos-upstream
-exception; C-API upstream compatibility, other pairs, CLI completion, persistent
-coordinator composition hardening, and post-PoC hardening remain explicitly
-open above.
+literal M5 ETA is corrected to 14 to 24 focused implementation hours once
+isolated local-node control is healthy, under the owner-approved Logos-upstream
+exception. The earlier 4-to-9-hour estimate assumed the mature M3/M4 pair actors
+already shared the ZEC application handoff. The 2026-07-29 code audit instead
+confirmed that BTC still needs application negotiation and role provisioning,
+while XMR has no unified one-shot lifecycle actor or scheduler kind. Fresh
+receipt-bound ZEC execution, unavailable-chain isolation, simultaneous
+application composition, all-pair CLI completion, and closure gates also remain.
+Shared containerd timeouts add wall-clock uncertainty but are not counted as
+implementation time and will not be worked around by restarting a daemon that
+owns unrelated stacks.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 tests the lifecycle contract against

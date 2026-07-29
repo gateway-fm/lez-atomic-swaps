@@ -4721,8 +4721,8 @@ cargo test --locked -p lez-maker-node \
   --test daemon_actor_supervisor_process -- --nocapture
 ```
 
-Expected result: 12 store cases, 9 supervisor cases, and one daemon-process E2E
-pass. At startup the opt-in daemon generates one nonzero 128-bit owner with the
+Expected result: 12 store cases, 12 supervisor cases, and two daemon-process E2E
+passes. At startup the opt-in daemon generates one nonzero 128-bit owner with the
 OS CSPRNG, opens a dedicated SQLite connection, and scans abandoned leases
 before readiness. Only acquisition of the exact per-swap kernel lock authorizes
 the CAS transfer to the new owner and generation plus one; the row never becomes
@@ -4734,6 +4734,15 @@ The daemon E2E uses a local long-running actor, observes `ready: true` health in
 under one second while that actor is leased, then sends SIGTERM. Cancellation,
 process-group reap, durable non-leased resolution, child-identity clear, and
 socket/readiness cleanup complete in under two seconds.
+
+The second daemon E2E schedules two disjoint rows. The first actor exceeds a
+two-second status bound and must be reaped into 600-second backoff; the
+second reports terminal revision four. Expect both attempt counts to remain one,
+both child identities to be absent, owner health to stay responsive, and daemon
+restart to preserve the exact distinct manifests; both invocation logs must
+stay unchanged through the 300-millisecond post-readiness observation window.
+This proves sequential process failure isolation. It is not simultaneous child
+overlap and it performs no chain effect.
 
 Run the actual node-free user-systemd crash proof with:
 
@@ -4787,8 +4796,8 @@ Cargo registry dependencies from cache or download.
 
 This flow certifies persistent local-process coordination and node-free
 user-systemd crash/restart fencing. It does not certify a submitted Zcash effect.
-Actual-node supervisor composition and durable maker/taker manual-action routing
-plus concurrent disjoint live-process composition remain M5 work.
+Actual-node supervisor composition, receipt-bound Taker effects, and simultaneous
+disjoint live-process composition remain M5 work.
 
 ## Flow 1I: inspect the one-leg ZEC recovery checkpoint and target procedure
 

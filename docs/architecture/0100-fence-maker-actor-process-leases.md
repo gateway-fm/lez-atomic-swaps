@@ -5,8 +5,9 @@
   expiry-independent replay, real BTC/ZEC sealed-config consumers, daemon-owned
   Maker-only ZEC provisioning, exact-snapshot pair comparison, and the opt-in
   persistent daemon supervisor with abandoned-lease recovery and prompt
-  process-group cancellation GREEN; actual-node composition, concurrent
-  disjoint live-process overlap, and systemd actor crash/restart pending
+  process-group cancellation plus two-row timeout/terminal failure isolation
+  across daemon restart GREEN; actual-node composition, simultaneous disjoint
+  live-process overlap, and actual-actor systemd crash/restart pending
 - Date: 2026-07-28
 
 ## Context
@@ -305,6 +306,45 @@ sequenceDiagram
     D->>D: Remove socket and readiness file
 ```
 
+## Two-row failure-isolation flow
+
+```mermaid
+sequenceDiagram
+    participant D as Real maker daemon
+    participant Q as Dedicated scheduler connection
+    participant A as Timed-out sealed actor A
+    participant B as Terminal sealed actor B
+    actor O as Operator
+    D->>Q: Claim due A with owner and generation 1
+    D->>A: Run status with exact config program and lock
+    A--xD: Exceeds the finite attempt deadline
+    D->>A: Terminate process group and reap
+    D->>Q: Exact-clear A child and commit backoff
+    D->>Q: Claim disjoint due B with generation 1
+    D->>B: Run status with its distinct sealed artifacts
+    B-->>D: Completed revision 4
+    D->>Q: Exact-clear B child and commit terminal
+    O->>D: Read owner health
+    D-->>O: Ready through independent RPC connection
+    O->>D: SIGTERM then restart same database
+    D->>Q: Reopen exact A backoff and B terminal rows
+    Note over D,B: During 300ms observation neither actor reruns and manifests stay distinct
+```
+
+The real-daemon process test supplies two different swap IDs, configs,
+programs, role-state paths, and scheduler manifests. Actor A records its PID and
+then sleeps past a two-second bound; the daemon kills and reaps it before
+committing a 600-second backoff. Actor B then reports a schema-valid allowlisted terminal ZEC fixture
+status and commits independently. Both rows have exactly one attempt and no
+child identity. Restart preserves the byte-for-byte records. During the
+300-millisecond post-readiness observation window, both one-entry invocation
+logs remain unchanged, proving no premature rerun or row aliasing.
+Runtime external resources are none: temporary owner-private files, SQLite,
+Unix sockets, and local child processes only. This is process-composition and
+failure-isolation evidence; the current supervisor still executes one bounded
+cycle at a time, so it is not simultaneous child overlap or actual-chain
+concurrency evidence.
+
 ## Crash and peer-isolation flow
 
 ```mermaid
@@ -362,6 +402,11 @@ Different
 swaps use unique rows, configs, state databases, locks, agreements, escrows,
 outpoints, and deadlines.
 
+The two-row daemon test exercises that separation at the process boundary: A's
+timeout can mutate only A's fenced row, while B reaches terminal from its own
+sealed snapshot. The restart equality and invocation-count assertions prove
+that this isolation is durable, not an in-memory scheduling observation.
+
 ## Consequences
 
 - Store tests prove transactional exact registration, pair binding, stable due
@@ -400,7 +445,7 @@ outpoints, and deadlines.
   is rejected, and terminal status resolves without spawning an effect process.
   The child-clear CAS rejects a forged owner or wrong start ticks. These tests
   use no RPC, node, Docker, faucet, DNS, or public network. The focused
-  supervisor matrix is 9/9.
+  supervisor matrix is 12/12.
 - One actual-daemon process E2E proves the opt-in supervisor uses a dedicated
   store connection: owner health remains responsive while a local actor is
   leased. SIGTERM cancels and reaps that process group, clears child identity,
@@ -408,6 +453,15 @@ outpoints, and deadlines.
   two seconds. Runtime external resources are none; the test contacts no node,
   RPC, Docker service, faucet, DNS service, network, or public funds. Cold Cargo
   compilation may use the pinned registry cache or download dependencies.
+- A second actual-daemon process E2E proves two-row failure isolation. One
+  sealed actor times out, is killed and reaped, clears its child identity, and
+  enters durable backoff; the disjoint actor then reaches terminal. Both exact
+  manifests retain attempt count one, owner health stays responsive, and a
+  restart preserves both records and invocation logs stay unchanged during the
+  300-millisecond observation window. The test uses no
+  node, chain RPC, Docker service, faucet, DNS service, network, or public
+  funds. It proves sequential process composition, not simultaneous subprocess
+  overlap or live-chain isolation.
 - The store actor-process matrix is 12/12, including nonzero unique sampled
   OS-CSPRNG owners and the fencing, recovery, artifact, and peer-isolation
   cases above.
@@ -420,5 +474,5 @@ outpoints, and deadlines.
 - XMR is not advertised yet because its role process is a multi-command
   ceremony rather than the one-shot Bitcoin/Zcash actor contract.
 - Literal coordinator closure still requires actual-node composition,
-  concurrent disjoint live-process overlap, and a real actor crash/restart
-  beneath systemd.
+  simultaneous disjoint live-process overlap, and a real chain-capable actor
+  crash/restart beneath systemd.

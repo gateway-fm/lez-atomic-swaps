@@ -97,6 +97,18 @@ and claim traces bind the swap and receipt digest. The focused runner contract
 is GREEN, while a fresh isolated actual-node execution and receipt-bound refund
 remain before the final user journey.
 
+The persistent coordinator now also has a real-daemon two-swap
+failure-isolation journey. One sealed actor exceeds a finite status deadline,
+is killed and reaped, clears its child identity, and enters durable backoff;
+the disjoint actor then reaches schema-valid allowlisted terminal fixture
+status. Both retain one attempt and distinct immutable manifests. Owner health remains responsive, and
+restart preserves both exact rows; both invocation logs remain unchanged during
+the 300-millisecond post-readiness observation window. This test
+uses only temporary owner-private files, SQLite, Unix sockets, and local child
+processes: no chain RPC, Docker service, faucet, DNS service, public network, or
+public funds participate. It proves sequential process composition and durable
+failure isolation, not simultaneous subprocess overlap or actual-chain
+concurrency.
 
 Exact pushed-tree run `m5appee8424520260724a` completed the earlier direct-actor local application
 corridor in

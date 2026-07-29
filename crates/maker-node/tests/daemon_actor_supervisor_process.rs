@@ -155,6 +155,237 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
     assert!(!ready.exists(), "daemon must remove its readiness file");
 }
 
+#[test]
+#[allow(clippy::too_many_lines)] // One process journey keeps both durable actor rows visible.
+fn daemon_isolates_timed_out_actor_from_terminal_peer_across_restart() {
+    let root = tempdir().expect("isolated two-swap daemon root");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
+        .expect("owner-only test root");
+    let timed_out_id = "m5-daemon-a-timeout";
+    let terminal_id = "m5-daemon-b-terminal";
+    let timed_out_root = root.path().join("timed-out");
+    let terminal_root = root.path().join("terminal");
+    for directory in [&timed_out_root, &terminal_root] {
+        fs::create_dir(directory).expect("create disjoint actor fixture root");
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .expect("owner-only actor fixture root");
+    }
+    let timed_out_deployment = actor_deployment(&timed_out_root, timed_out_id);
+    let terminal_deployment = actor_deployment(&terminal_root, terminal_id);
+    let timed_out_config =
+        ActorConfig::load_private(&timed_out_deployment.source_config).expect("timeout config");
+    let terminal_config =
+        ActorConfig::load_private(&terminal_deployment.source_config).expect("terminal config");
+
+    let timed_out_pid_file = root.path().join("timed-out.pid");
+    let timed_out_invocations = root.path().join("timed-out.invocations");
+    let timed_out_program_path = root.path().join("timed-out-zec-maker-actor");
+    let timed_out_program = format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         test -r /proc/self/fd/196 || exit 93\n\
+         test -r /proc/self/fd/198 || exit 94\n\
+         test \"$3\" = \"status\" || exit 95\n\
+         printf '%s\\n' \"$3\" >> \"{}\"\n\
+         printf '%s\\n' \"$$\" > \"{}\"\n\
+         exec /usr/bin/sleep 300\n",
+        timed_out_invocations.display(),
+        timed_out_pid_file.display()
+    );
+    write_private(&timed_out_program_path, timed_out_program.as_bytes(), 0o700);
+
+    let terminal_invocations = root.path().join("terminal.invocations");
+    let terminal_program_path = root.path().join("terminal-zec-maker-actor");
+    let terminal_program = format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         test -r /proc/self/fd/196 || exit 93\n\
+         test -r /proc/self/fd/198 || exit 94\n\
+         test \"$3\" = \"status\" || exit 95\n\
+         printf '%s\\n' \"$3\" >> \"{}\"\n\
+         printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}'\n",
+        terminal_invocations.display()
+    );
+    write_private(&terminal_program_path, terminal_program.as_bytes(), 0o700);
+
+    let timed_out_manifest = MakerActorManifestV1::new(
+        SwapId::new(timed_out_id).unwrap(),
+        MakerActorKindV1::Zcash,
+        timed_out_deployment.source_config.clone(),
+        Sha256::digest(fs::read(&timed_out_deployment.source_config).expect("read timeout config"))
+            .into(),
+        timed_out_program_path,
+        Sha256::digest(timed_out_program.as_bytes()).into(),
+        timed_out_config.role_state_db().to_path_buf(),
+    )
+    .expect("valid timeout manifest");
+    let terminal_manifest = MakerActorManifestV1::new(
+        SwapId::new(terminal_id).unwrap(),
+        MakerActorKindV1::Zcash,
+        terminal_deployment.source_config.clone(),
+        Sha256::digest(fs::read(&terminal_deployment.source_config).expect("read terminal config"))
+            .into(),
+        terminal_program_path,
+        Sha256::digest(terminal_program.as_bytes()).into(),
+        terminal_config.role_state_db().to_path_buf(),
+    )
+    .expect("valid terminal manifest");
+    assert_ne!(timed_out_manifest, terminal_manifest);
+    assert_ne!(
+        timed_out_manifest.state_database_path(),
+        terminal_manifest.state_database_path()
+    );
+
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).expect("open isolated coordinator database");
+    for (id, manifest) in [
+        (timed_out_id, &timed_out_manifest),
+        (terminal_id, &terminal_manifest),
+    ] {
+        store.save(&swap(id)).expect("save disjoint ZEC swap");
+        store
+            .register_maker_actor(manifest, 0)
+            .expect("register disjoint actor row");
+    }
+    drop(store);
+
+    let runtime = root.path().join("runtime");
+    fs::create_dir(&runtime).expect("create runtime directory");
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("owner-only runtime");
+    let socket = runtime.join("maker.sock");
+    let ready = runtime.join("ready");
+    let mut daemon = TestDaemon::spawn_with_limits(&database, &socket, &ready, 2_000, 600);
+    wait_for_file(
+        &mut daemon,
+        &ready,
+        Duration::from_secs(10),
+        "two-swap daemon readiness",
+    );
+    wait_for_file(
+        &mut daemon,
+        &timed_out_pid_file,
+        Duration::from_secs(5),
+        "timed-out actor identity",
+    );
+    let child_pid: u32 = fs::read_to_string(&timed_out_pid_file)
+        .expect("read timed-out actor PID")
+        .trim()
+        .parse()
+        .expect("numeric timed-out actor PID");
+
+    let leased = SqliteSwapStore::open(&database)
+        .expect("open observer while timed-out actor is running")
+        .list_maker_actor_processes()
+        .expect("inspect leased timed-out actor");
+    let leased = leased
+        .iter()
+        .find(|record| record.swap_id().as_str() == timed_out_id)
+        .expect("leased timed-out row");
+    assert_eq!(leased.schedule_state(), MakerActorScheduleState::Leased);
+    assert_eq!(
+        leased.child_identity().map(|identity| identity.0),
+        Some(child_pid)
+    );
+    let health = command_output_with_timeout(
+        Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+            .arg("--socket")
+            .arg(&socket)
+            .arg("health"),
+        Duration::from_secs(1),
+        "owner health while timed-out peer is leased",
+    );
+    assert!(
+        health.status.success(),
+        "owner health must remain responsive while the actor is leased"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&health.stdout).expect("health JSON")["ready"],
+        true
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let durable = loop {
+        let records = SqliteSwapStore::open(&database)
+            .expect("open independent two-swap observer")
+            .list_maker_actor_processes()
+            .expect("inspect two actor rows");
+        let timed_out = records
+            .iter()
+            .find(|record| record.swap_id().as_str() == timed_out_id)
+            .expect("timed-out row");
+        let terminal = records
+            .iter()
+            .find(|record| record.swap_id().as_str() == terminal_id)
+            .expect("terminal row");
+        if timed_out.schedule_state() == MakerActorScheduleState::Backoff
+            && terminal.schedule_state() == MakerActorScheduleState::Terminal
+        {
+            break records;
+        }
+        if let Some(status) = daemon.child_mut().try_wait().expect("poll maker daemon") {
+            panic!("maker daemon exited during two-swap journey: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed-out and terminal peers did not resolve independently: {records:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    let timed_out = durable
+        .iter()
+        .find(|record| record.swap_id().as_str() == timed_out_id)
+        .unwrap();
+    let terminal = durable
+        .iter()
+        .find(|record| record.swap_id().as_str() == terminal_id)
+        .unwrap();
+    assert_eq!(timed_out.attempt_count(), 1);
+    assert_eq!(terminal.attempt_count(), 1);
+    assert_eq!(timed_out.child_identity(), None);
+    assert_eq!(terminal.child_identity(), None);
+    assert_eq!(timed_out.manifest(), &timed_out_manifest);
+    assert_eq!(terminal.manifest(), &terminal_manifest);
+    assert!(
+        !Path::new("/proc").join(child_pid.to_string()).exists(),
+        "timed-out child must be killed and reaped before its peer completes"
+    );
+
+    assert!(daemon.terminate(Duration::from_secs(2)).success());
+    assert!(
+        !socket.exists(),
+        "first daemon must remove its owner socket"
+    );
+    assert!(
+        !ready.exists(),
+        "first daemon must remove its readiness file"
+    );
+
+    let mut restarted = TestDaemon::spawn_with_limits(&database, &socket, &ready, 2_000, 600);
+    wait_for_file(
+        &mut restarted,
+        &ready,
+        Duration::from_secs(10),
+        "restarted two-swap daemon readiness",
+    );
+    thread::sleep(Duration::from_millis(300));
+    let reopened = SqliteSwapStore::open(&database)
+        .expect("reopen durable two-swap coordinator")
+        .list_maker_actor_processes()
+        .expect("inspect durable rows after restart");
+    assert_eq!(reopened, durable);
+    assert_eq!(
+        fs::read_to_string(&timed_out_invocations).expect("timeout invocation log"),
+        "status\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&terminal_invocations).expect("terminal invocation log"),
+        "status\n"
+    );
+    assert!(restarted.terminate(Duration::from_secs(2)).success());
+}
+
 fn swap(id: &str) -> SwapCoordinator {
     let direction = SwapDirection::TakerSellsForeign;
     SwapCoordinator::new_with_direction(
@@ -177,6 +408,16 @@ struct TestDaemon(Option<Child>);
 
 impl TestDaemon {
     fn spawn(database: &Path, socket: &Path, ready: &Path) -> Self {
+        Self::spawn_with_limits(database, socket, ready, 30_000, 30)
+    }
+
+    fn spawn_with_limits(
+        database: &Path,
+        socket: &Path,
+        ready: &Path,
+        attempt_timeout_milliseconds: u64,
+        failure_backoff_seconds: u64,
+    ) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
             .arg("--socket")
             .arg(socket)
@@ -187,6 +428,10 @@ impl TestDaemon {
             .arg("--actor-supervisor")
             .arg("--actor-poll-milliseconds")
             .arg("10")
+            .arg("--actor-attempt-timeout-milliseconds")
+            .arg(attempt_timeout_milliseconds.to_string())
+            .arg("--actor-failure-backoff-seconds")
+            .arg(failure_backoff_seconds.to_string())
             .spawn()
             .expect("start actor-supervising maker daemon");
         Self(Some(child))
