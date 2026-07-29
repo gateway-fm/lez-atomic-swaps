@@ -168,6 +168,7 @@ if [[ "$m5_btc_application_mode" == 1 ]]; then
 else
   readonly -a directions=(taker_sells_foreign taker_sells_lez)
 fi
+declare -A m5_btc_swap_ids=()
 declare -A overlap_pids=()
 declare -A overlap_logs=()
 phase_timing_now_ms=0
@@ -559,7 +560,8 @@ read_monotonic_ms() {
 expected_phase_timings_json() {
   [[ "$schedule" == "sequential" || "$schedule" == "overlap" ]] || return 1
   [[ "$asset_mode" == "native" || "$asset_mode" == "custom_token" ]] || return 1
-  jq -cn --arg schedule "$schedule" --arg asset_mode "$asset_mode" '
+  jq -cn --arg schedule "$schedule" --arg asset_mode "$asset_mode" \
+    --arg m5_btc_application_mode "$m5_btc_application_mode" '
     [
       {phase_id:"contract_validation",direction:null},
       {phase_id:"prebuild",direction:null},
@@ -588,7 +590,7 @@ expected_phase_timings_json() {
             [{phase_id:"direction_taker_sells_foreign_terminal_balances",
               direction:"taker_sells_foreign"}]
           else [] end)
-        + [
+        + (if $m5_btc_application_mode == "1" then [] else [
           {phase_id:"direction_taker_sells_lez_reserve_funding",
             direction:"taker_sells_lez"},
           {phase_id:"direction_taker_sells_lez_stage_two",
@@ -601,7 +603,7 @@ expected_phase_timings_json() {
         + (if $asset_mode == "custom_token" then
             [{phase_id:"direction_taker_sells_lez_terminal_balances",
               direction:"taker_sells_lez"}]
-          else [] end))
+          else [] end) end))
       end)
     + [{phase_id:"effect_validation",direction:null}]
   '
@@ -1991,6 +1993,10 @@ prebuild() {
       -p btc-local-poc-provision -p btc-reference-actor -p lez-adaptor-role-runner --bins; then
     fail "offline M3 prebuild failed; populate the pinned Cargo cache before certification"
   fi
+  if [[ "$m5_btc_application_mode" == 1 ]] &&
+     ! cargo +"$toolchain" build --locked --offline -p lez-maker-node --bins; then
+    fail "offline M5 BTC application prebuild failed; populate the pinned Cargo cache"
+  fi
   if ! cargo +"$toolchain" build --locked --offline \
       -p lez-btc-swap-sdk --example btc-core-p2tr-fixture; then
     fail "offline BTC fixture prebuild failed; populate the pinned Cargo cache before certification"
@@ -2078,6 +2084,9 @@ readonly native_escrow_bin="${sidecar_target}/lez-v02-native-escrow-poc"
 readonly identity_bin="${sidecar_target}/examples/lez-v02-local-actor-identity"
 readonly nssa_mapping_bin="${sidecar_target}/examples/lez-v02-account-id"
 readonly account_codec_bin="${sidecar_target}/examples/lez-v02-account-codec"
+readonly maker_daemon_bin="${repo_root}/target/debug/lez-maker-daemon"
+readonly maker_cli_bin="${repo_root}/target/debug/lez-maker"
+readonly taker_cli_bin="${repo_root}/target/debug/lez-taker"
 
 assert_prebuilt() {
   local binary
@@ -2086,6 +2095,11 @@ assert_prebuilt() {
     "$native_escrow_bin" "$identity_bin" "$nssa_mapping_bin" "$lez_deployer"; do
     [[ -x "$binary" && ! -L "$binary" ]] || fail "prebuilt binary is missing: ${binary}"
   done
+  if [[ "$m5_btc_application_mode" == 1 ]]; then
+    for binary in "$maker_daemon_bin" "$maker_cli_bin" "$taker_cli_bin"; do
+      [[ -x "$binary" && ! -L "$binary" ]] || fail "M5 BTC binary is missing: ${binary}"
+    done
+  fi
   if [[ "$asset_mode" == "custom_token" ]]; then
     [[ -x "$account_codec_bin" && ! -L "$account_codec_bin" ]] ||
       fail "prebuilt LEZ account codec is missing"
@@ -2538,11 +2552,110 @@ direction_command() {
   fi
 }
 
+prepare_m5_btc_delivery_plan() {
+  local direction="$1"
+  local direction_root="${directions_dir}/${direction}"
+  local fixture_root="${direction_root}/fixture"
+  local application_root="${direction_root}/application"
+  local socket="${application_root}/maker.sock"
+  local ready_file="${application_root}/maker.ready"
+  local database="${application_root}/maker.sqlite3"
+  local delivery="${application_root}/delivery"
+  local delivery_key="${fixture_root}/private/maker-signing.key"
+  local plan_file="${application_root}/btc-plan.json"
+  local daemon_log="${application_root}/delivery-daemon.log"
+  local offer_id="m5btc-offer-${run_id:0:24}"
+  local reservation_id="m5btc-reservation-${run_id:0:24}"
+  local maker_public_key now swap_id
+  local daemon_pid daemon_start="" daemon_ppid="" daemon_executable=""
+  local daemon_pgid="" daemon_sid=""
+
+  [[ "$m5_btc_application_mode" == 1 && "$direction" == taker_sells_foreign ]] ||
+    fail "M5 BTC planning is restricted to taker_sells_foreign"
+  [[ ! -e "$application_root" && ! -L "$application_root" ]] ||
+    fail "M5 BTC application root already exists"
+  mkdir -m 0700 "$application_root"
+  maker_public_key="$(jq -er '.maker.musig2_public_key' \
+    "${fixture_root}/public-spec.json")"
+  [[ "$maker_public_key" =~ ^0[23][0-9a-f]{64}$ ]] ||
+    fail "stage-one Maker public key is invalid"
+
+  setsid "$maker_daemon_bin" \
+    --socket "$socket" --database "$database" --ready-file "$ready_file" \
+    --delivery-directory "$delivery" --delivery-signing-key-file "$delivery_key" \
+    >"$daemon_log" 2>&1 &
+  daemon_pid=$!
+  if ! register_owned_process m5-btc-delivery planning "$daemon_pid" \
+      "$maker_daemon_bin" true true daemon_start daemon_ppid daemon_executable \
+      daemon_pgid daemon_sid; then
+    stop_provisional_owned_process "$daemon_pid" "$daemon_start" "$daemon_ppid" \
+      "$daemon_executable" "$daemon_pgid" "$daemon_sid" || true
+    fail "M5 BTC Delivery-only daemon registration failed"
+  fi
+
+  for _ in {1..200}; do
+    if [[ -f "$ready_file" ]] &&
+       [[ "$(cat "$ready_file")" == "$socket" ]] && [[ -S "$socket" ]]; then
+      break
+    fi
+    kill -0 "$daemon_pid" 2>/dev/null ||
+      fail "M5 BTC Delivery-only daemon exited before readiness"
+    sleep 0.05
+  done
+  [[ -S "$socket" && -f "$ready_file" && "$(cat "$ready_file")" == "$socket" ]] ||
+    fail "M5 BTC Delivery-only daemon readiness timed out"
+
+  "$maker_cli_bin" --socket "$socket" configure-pair --request-id \
+    "${run_id}-btc-pair-create" --pair bitcoin --direction taker-sells-foreign \
+    --enabled false --minimum-foreign-units 1 --maximum-foreign-units 100000000 \
+    --offer-ttl-seconds 7200 >"${application_root}/pair-create.json"
+  "$maker_cli_bin" --socket "$socket" set-local-price --request-id \
+    "${run_id}-btc-price" --pair bitcoin --direction taker-sells-foreign \
+    --lez-units-per-lot 1 --foreign-units-per-lot 1000 \
+    >"${application_root}/price.json"
+  "$maker_cli_bin" --socket "$socket" configure-pair --request-id \
+    "${run_id}-btc-pair-enable" --expected-revision 1 --pair bitcoin \
+    --direction taker-sells-foreign --enabled true --minimum-foreign-units 1 \
+    --maximum-foreign-units 100000000 --offer-ttl-seconds 7200 \
+    >"${application_root}/pair-enable.json"
+  "$maker_cli_bin" --socket "$socket" publish-offer --request-id \
+    "${run_id}-btc-offer" --offer-id "$offer_id" --pair bitcoin \
+    --direction taker-sells-foreign >"${application_root}/offer.json"
+
+  now="$(date -u +%s)"
+  "$taker_cli_bin" --delivery-directory "$delivery" \
+    --maker-public-key "$maker_public_key" --now-unix-seconds "$now" \
+    --pair bitcoin --direction taker-sells-foreign \
+    --plan-btc-offer "$offer_id" --reservation-id "$reservation_id" \
+    --foreign-units 1000000 >"$plan_file"
+  chmod 0600 "$plan_file" "$daemon_log" "${application_root}"/*.json
+  jq -e --arg offer "$offer_id" --arg reservation "$reservation_id" '
+    .schema_version == 1 and .offer_id == $offer and
+    .reservation_id == $reservation and
+    (.signed_envelope_sha256 | test("^[0-9a-f]{64}$")) and
+    (.swap_id | test("^[0-9a-f]{64}$")) and
+    .foreign_units == 1000000 and .lez_units == 1000 and
+    .private_material_disclosed == false
+  ' "$plan_file" >/dev/null || fail "M5 BTC Taker planning output is invalid"
+  swap_id="$(jq -er '.swap_id' "$plan_file")"
+  m5_btc_swap_ids["$direction"]="$swap_id"
+
+  stop_provisional_owned_process "$daemon_pid" "$daemon_start" "$daemon_ppid" \
+    "$daemon_executable" "$daemon_pgid" "$daemon_sid" ||
+    fail "M5 BTC Delivery-only daemon shutdown failed"
+  [[ ! -e "$socket" && ! -e "$ready_file" ]] ||
+    fail "M5 BTC Delivery-only daemon left live endpoints"
+}
+
 with_direction_environment() {
   local direction="$1"
   shift
   local direction_root="${directions_dir}/${direction}"
-  local bitcoin_container_id
+  local bitcoin_container_id m5_swap_id=""
+  if [[ "$m5_btc_application_mode" == 1 ]]; then
+    m5_swap_id="${m5_btc_swap_ids[$direction]:-}"
+    [[ "$m5_swap_id" =~ ^[0-9a-f]{64}$ ]] || fail "M5 BTC planned swap ID is unavailable"
+  fi
   bitcoin_container_id="$(single_owned_container_id \
     "$bitcoin_container_ids" bitcoin-core)" ||
     fail "Bitcoin container inventory is malformed at actor handoff"
@@ -2550,6 +2663,8 @@ with_direction_environment() {
     bitcoin-core-regtest-e2e bitcoin-core ||
     fail "captured Bitcoin container ownership identity drifted at actor handoff"
   M3_POC_RUN_ID="$run_id" \
+  M5_BTC_APPLICATION_MODE="$m5_btc_application_mode" \
+  M3_POC_SWAP_ID="$m5_swap_id" \
   M3_POC_JOURNEY="$journey" \
   M3_POC_DIRECTION="$direction" \
   M3_POC_DIRECTION_ROOT="$direction_root" \
@@ -4098,6 +4213,9 @@ else
     reserve_bitcoin_funding_anchors sequential "$direction"
     phase_timing_end "direction_${direction}_reserve_funding" ||
       fail "${direction} funding-reservation timing end failed"
+    if [[ "$m5_btc_application_mode" == 1 ]]; then
+      prepare_m5_btc_delivery_plan "$direction"
+    fi
     phase_timing_begin "direction_${direction}_stage_two" "$direction" ||
       fail "${direction} stage-two timing start failed"
     run_stage_two "$direction"

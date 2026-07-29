@@ -3814,7 +3814,12 @@ The outer runner now restricts this opt-in to the single supported forward route
 without changing the legacy two-direction contract. The direction driver accepts
 only a canonical 32-byte Delivery-derived swap ID in application mode and uses it
 as stage-two identity; random identity remains the non-application behavior. The
-next RED supplies that ID from the real Delivery-only daemon and Taker planner.
+outer runner now starts a registered process-group-isolated Delivery-only daemon,
+uses the real Maker CLI to configure the BTC route, exact 1:1000 price, and bounded
+offer, and uses the real Taker CLI to authenticate and plan 1,000,000 sats as
+1,000 LEZ. It validates the secret-free envelope/reservation-derived ID, stops and
+reaps the daemon, and supplies that ID before stage two. Static order, syntax, and
+legacy M3 contracts are GREEN; a fresh isolated execution remains the runtime gate.
 
 Logos Core daemon mode is acknowledged by issue #112 as not yet delivered.
 Until Logos publishes that capability, M5 tests the lifecycle contract against

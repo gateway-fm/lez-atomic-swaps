@@ -78,4 +78,28 @@ jq -e '
 ' <<<"$direction_contract" >/dev/null ||
   fail "direction driver emitted the wrong authenticated swap-ID contract"
 
+for required in \
+  'prepare_m5_btc_delivery_plan() {' \
+  'setsid "$maker_daemon_bin"' \
+  'register_owned_process m5-btc-delivery planning' \
+  'configure-pair --request-id' \
+  'set-local-price --request-id' \
+  'publish-offer --request-id' \
+  '--plan-btc-offer "$offer_id"' \
+  '--reservation-id "$reservation_id"' \
+  '.private_material_disclosed == false' \
+  'm5_btc_swap_ids["$direction"]="$swap_id"' \
+  'M3_POC_SWAP_ID="$m5_swap_id"' \
+  'stop_provisional_owned_process "$daemon_pid"'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "outer runner is missing real Delivery planning: ${required}"
+done
+
+plan_line="$(rg -n -F 'prepare_m5_btc_delivery_plan "$direction"' "$runner" |
+  cut -d: -f1)"
+stage_two_line="$(rg -n -F 'run_stage_two "$direction"' "$runner" | tail -n1 |
+  cut -d: -f1)"
+[[ "$plan_line" =~ ^[0-9]+$ && "$stage_two_line" =~ ^[0-9]+$ &&
+   "$plan_line" -lt "$stage_two_line" ]] ||
+  fail "real Delivery planning must precede stage two"
 echo "M5 BTC runner splice contract passed"
