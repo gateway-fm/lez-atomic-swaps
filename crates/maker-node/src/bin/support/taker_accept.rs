@@ -28,7 +28,7 @@ use zec_reference_actor::{
 
 use super::secure_file::{load_raw_secret, read_private_file};
 
-const MAX_TAKER_RECEIPT_BYTES: u64 = 16 * 1024;
+pub(crate) const MAX_TAKER_RECEIPT_BYTES: u64 = 16 * 1024;
 
 pub(crate) struct ZecTakeInput<'a> {
     pub(crate) delivery: Option<&'a RunLocalDelivery>,
@@ -61,10 +61,10 @@ pub(crate) struct ZecAcceptanceOutput {
 }
 
 #[derive(Serialize)]
-struct ReplayOutput {
-    proposal: bool,
-    completion: bool,
-    agreement_file: bool,
+pub(crate) struct ReplayOutput {
+    pub(crate) proposal: bool,
+    pub(crate) completion: bool,
+    pub(crate) agreement_file: bool,
 }
 
 #[derive(Serialize)]
@@ -337,7 +337,7 @@ pub(crate) fn load_taker_actor_from_receipt(path: &Path) -> anyhow::Result<Actor
     Ok(config)
 }
 
-fn decode_sha256(value: &str, label: &str) -> anyhow::Result<[u8; 32]> {
+pub(crate) fn decode_sha256(value: &str, label: &str) -> anyhow::Result<[u8; 32]> {
     let decoded = hex::decode(value).with_context(|| format!("decode receipt {label} digest"))?;
     decoded
         .try_into()
@@ -355,7 +355,7 @@ fn validate_acceptance_paths(input: &ZecTakeInput<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resolved_new_path(path: &Path, label: &str) -> anyhow::Result<PathBuf> {
+pub(crate) fn resolved_new_path(path: &Path, label: &str) -> anyhow::Result<PathBuf> {
     ensure!(
         normalized_absolute(path),
         "{label} path must be normalized and absolute"
@@ -380,7 +380,7 @@ fn resolved_new_path(path: &Path, label: &str) -> anyhow::Result<PathBuf> {
         .join(file_name))
 }
 
-fn normalized_absolute(path: &Path) -> bool {
+pub(crate) fn normalized_absolute(path: &Path) -> bool {
     path.is_absolute()
         && path
             .components()
@@ -454,7 +454,7 @@ fn derived_request_id(reservation_id: &RequestId, label: &[u8]) -> anyhow::Resul
     RequestId::new(hex::encode(digest.finalize())).map_err(Into::into)
 }
 
-fn publish_exact_new(
+pub(crate) fn publish_exact_new(
     path: &Path,
     bytes: &[u8],
     max_bytes: u64,

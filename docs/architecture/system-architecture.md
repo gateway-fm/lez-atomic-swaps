@@ -627,7 +627,8 @@ flowchart TB
     end
 
     subgraph TakerDevice["Taker-controlled device"]
-        TC["lez-taker CLI<br/>persist-before-complete and expiry retry GREEN<br/>lifecycle planned"]
+        TC["lez-taker CLI<br/>BTC and ZEC acceptance receipt replay GREEN<br/>local-node effects pending"]
+        TR[("Role-bound acceptance receipt")]
         TM["Taker mini-app"]
         TS["Taker pair SDK + durable recovery state"]
         TA["Taker-side concrete agreement validator"]
@@ -797,8 +798,9 @@ flowchart TB
     OF --> DB
     BTN --> DB
     APP --> CO
-    APP -.->|"next Maker handoff"| BTP
-    TC -.->|"next Taker handoff"| BTP
+    APP -->|"durable Maker handoff"| BTP
+    TC -->|"persist-before-complete Taker handoff"| BTP
+    BTP -->|"config and agreement digests"| TR
     BTP -->|"one role-only actor root"| M3RA
     CO --> DB
     CO --> PS
@@ -980,9 +982,13 @@ For a lost completion response, the taker persists its countersigned agreement
 before the RPC. A rerun validates that private wire against its executable
 draft and both role identities, then retries only Chat completion. The maker
 consults SQLite before current-time agreement validation or provisioning and
-returns the original result only when the request, negotiation, protected
-preimage digest, and scheduled actor row all match. Expired Delivery projection
-drift degrades transport health but cannot change that durable result.
+returns the original result only when the request, negotiation, pair authority,
+and scheduled actor row all match. For BTC, the agreement signer is distinct
+from the Delivery signer: the Maker signs only after binding the exact Delivery
+commitment and reservation, schema 19 commits the dual-signed wire and Maker
+actor together, and the Taker publishes a receipt only after durable completion.
+Expired Delivery projection drift degrades transport health but cannot change
+that durable result.
 
 The concrete LEZ/ZEC agreement validator is integrated on both actor sides as
 one bounded canonical wire contract. Negotiation yields untrusted bytes;

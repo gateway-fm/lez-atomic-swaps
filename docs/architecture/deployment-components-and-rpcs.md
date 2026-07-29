@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-07-28
+Status: Living executable inventory — 2026-07-29
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -22,7 +22,7 @@ flowchart TB
     subgraph MakerHost["Maker host"]
         CLI["lez-maker CLI"]
         Daemon["lez-maker-daemon"]
-        Store[("SQLite schema v15")]
+        Store[("SQLite schema v19")]
         Offers["Durable offer lifecycle<br/>snapshot + expiry + one-winner CAS"]
         RuntimeDir["Effective-UID-owned mode-0700 runtime"]
         Socket["Owner mode-0600 Unix socket"]
@@ -65,8 +65,8 @@ flowchart TB
     Operator --> CLI
     Daemon -->|"Publish and reconcile signed offers"| DeliveryDir
     DeliveryDir -->|"Key-pinned exact envelope"| TakerProcess
-    TakerProcess -->|"Bound unsigned ZEC draft"| ChatSocket
-    ChatSocket -->|"zec_chat_propose_v1 only"| Daemon
+    TakerProcess -->|"Bound unsigned ZEC or BTC draft"| ChatSocket
+    ChatSocket -->|"Pair-specific propose and complete"| Daemon
     RuntimeDir --> Socket
     RuntimeDir --> Ready
     CLI -->|"Bounded HTTP JSON-RPC over Unix stream"| Socket
@@ -110,7 +110,8 @@ real effective-UID-owned mode-0700 runtime directory. It refuses a pre-existing
 path, applies mode 0600, disables WebSocket and batch calls, caps connections at
 16, and caps request/response bodies at 64 KiB. A Delivery-enabled daemon also
 requires a separate absolute mode-0600 Chat socket in an owner-only runtime;
-that socket registers only `zec_chat_propose_v1` and `zec_chat_complete_v1`, while the owner socket never
+that socket registers only `zec_chat_propose_v1`, `zec_chat_complete_v1`,
+`btc_chat_propose_v1`, and `btc_chat_complete_v1`, while the owner socket never
 registers Chat methods. Its optional create-new readiness
 file contains only the socket path and is removed only if device/inode identity
 still matches. The CLI uses that socket directly and opens one connection per
@@ -120,18 +121,23 @@ explicit command. Registered methods are `maker_pair_configure`, `maker_pair_lis
 `swap_status`,
 `swap_history`, `swap_alerts`, and `swap_alert_acknowledge`. Status includes pending
 count/highest severity; list supports a cursor and acknowledged-history flag.
-Acknowledgment never changes protocol phase. The Chat proposal authenticates the exact signed Delivery envelope, validates
-and signs the canonical unsigned ZEC draft, and commits the one-winner schema-v14
-reservation plus byte-exact proposal before responding. The owner socket also
-exposes typed `maker_health`. There is no daemon-integrated chain watcher,
-chain-key owner, or production ZEC ingestion RPC yet.
+Acknowledgment never changes protocol phase. A Chat proposal authenticates the
+exact signed Delivery envelope, validates and signs the pair-specific canonical
+unsigned draft, and commits the one-winner reservation plus byte-exact proposal
+before responding. BTC completion uses schema 19 to commit the final
+dual-signed agreement, consumed offer, coordinator, and immutable Maker actor in
+one transaction. The Taker persists the final wire and role-only actor before
+completion and publishes its digest-pinned receipt only after durable Maker
+acceptance. Exact replay no longer needs Delivery. The owner socket also exposes
+typed `maker_health`. There is no daemon-integrated chain watcher, chain-key
+owner, or production ZEC/BTC ingestion RPC yet.
 
 For a Logos-priced route, daemon startup validates an all-or-none absolute
 worker/module/SHA configuration plus bounded timeout and quote age. Quote and
 offer RPCs read the route's durable source kind; there is no local or zero-price
 fallback. The bounded worker runs with an empty environment, root working
 directory, null input and diagnostics, bounded output, timeout kill/reap, and
-pre/post module validation. SQLite schema v15 is the offer linearization point;
+pre/post module validation. SQLite schema v19 is the offer linearization point;
 Delivery signs only the committed snapshot and restart reconciliation repairs a
 missing advertisement. This component path uses no chain RPC or public feed.
 
@@ -630,6 +636,8 @@ flowchart LR
         DeliveryKey[("Mode 0600 Delivery signing key")]
         NegotiationTxn["Schema-v19 BTC and ZEC negotiation handoff<br/>atomic accept + exact expiry retry"]
         MakerZebra["Schema-v3 maker Zebra route"]
+        MakerBtcAuthority[("Mode 0600 BTC Maker signing key and schema 6 authority")]
+        MakerBtcActor["Role-only BTC Maker actor"]
         MakerLezBridge["Loopback capability LEZ adapter"]
         MakerLezSidecar["Official-wire LEZ sidecar"]
         MakerLez["Typed outbound LEZ profile"]
@@ -641,6 +649,8 @@ flowchart LR
         TakerReceipt[("Mode 0600 acceptance receipt")]
         TakerZebra["Schema-v3 taker Zebra route"]
         TakerLezBridge["Loopback capability LEZ adapter"]
+        TakerBtcAuthority[("Mode 0600 BTC Taker schema 6 authority")]
+        TakerBtcActor["Role-only BTC Taker actor"]
         TakerLezSidecar["Official-wire LEZ sidecar"]
         TakerLez["Typed outbound LEZ profile"]
     end
@@ -656,6 +666,7 @@ flowchart LR
         LocalZebra["Deterministic Zebra Regtest"]
         SelfHostedZebra["Self-hosted loopback Zebra + cookie"]
         TatumZebra["Exact Tatum HTTPS + x-api-key"]
+        LocalCore["Isolated Bitcoin Core 31.1 Regtest RPC"]
     end
 
     Maker --> MakerCLI
@@ -669,6 +680,9 @@ flowchart LR
     MakerDaemon -->|"Typed Zebra JSON-RPC"| MakerZebra
     MakerDaemon -->|"Bounded local adapter protocol"| MakerLezBridge
     MakerLezBridge -->|"Loopback + run/role capability"| MakerLezSidecar
+    MakerBtcAuthority --> MakerDaemon
+    NegotiationTxn -->|"no-clobber provision"| MakerBtcActor
+    MakerBtcActor -.->|"actual-node lifecycle pending"| LocalCore
     MakerLezSidecar --> MakerLez
     Taker --> TakerCLI
     TakerCLI -->|"persist agreement and actor before completion"| TakerState
@@ -677,6 +691,9 @@ flowchart LR
     TakerReceipt -->|"select exact Taker actor"| TakerCLI
     TakerCLI -->|"Typed Zebra JSON-RPC"| TakerZebra
     TakerCLI -->|"Bounded local adapter protocol"| TakerLezBridge
+    TakerBtcAuthority --> TakerCLI
+    TakerCLI -->|"persist before completion"| TakerBtcActor
+    TakerBtcActor -.->|"actual-node lifecycle pending"| LocalCore
     TakerLezBridge -->|"Loopback + run/role capability"| TakerLezSidecar
     TakerLezSidecar --> TakerLez
     MakerDaemon -->|"Authenticated expiring offers only"| Delivery
@@ -701,7 +718,7 @@ flowchart LR
     classDef planned stroke-dasharray: 5 5,fill:#fff7e6,stroke:#9a6700;
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     class MakerCLI,Core,MakerDaemon,PublicLezRisk planned;
-    class TakerCLI,TakerState,TakerReceipt,Chat,Delivery,DeliveryKey,NegotiationTxn,MakerZebra,MakerLezBridge,MakerLezSidecar,MakerLez,TakerZebra,TakerLezBridge,TakerLezSidecar,TakerLez,RouteGate,LocalLez,PublicLez,LocalZebra,SelfHostedZebra,TatumZebra implemented;
+    class TakerCLI,TakerState,TakerReceipt,Chat,Delivery,DeliveryKey,NegotiationTxn,MakerBtcAuthority,MakerBtcActor,TakerBtcAuthority,TakerBtcActor,MakerZebra,MakerLezBridge,MakerLezSidecar,MakerLez,TakerZebra,TakerLezBridge,TakerLezSidecar,TakerLez,RouteGate,LocalLez,PublicLez,LocalCore,LocalZebra,SelfHostedZebra,TatumZebra implemented;
 ```
 
 Delivery and Chat are negotiation transports, never sources of chain truth or

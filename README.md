@@ -97,26 +97,27 @@ and claim traces bind the swap and receipt digest. The focused runner contract
 is GREEN, while a fresh isolated actual-node execution and receipt-bound refund
 remain before the final user journey.
 
-The BTC application path now has its first reusable pre-effect component. A
+The BTC application path now has a reproducible pre-effect process PoC. The real
+Maker CLI publishes a signed Delivery offer, the real Taker CLI discovers it,
+and a separate real maker daemon runs BTC Chat proposal and completion. A
 bounded canonical unsigned draft runs the same executable Bitcoin, LEZ, role,
 and recovery checks as the final agreement and must match the exact local
-Bitcoin genesis and confirmation policy before signing. A Maker-only proposal
-verifies the body-selected Schnorr signature, and Taker completion can return
-authority only through the existing dual-signature validator. Both directions,
-wrong-policy cases, and bounded wire mutations are SDK-GREEN with no chain RPC,
-Docker, faucet, DNS, public network, or public funds. Chat persistence and real
-CLI/node composition remain open, so this is not a BTC
-application swap or M5 completion. Schema 19 now closes the durable store part:
-one real Maker-signed proposal reserves one offer before response, and the final
-dual-signed wire, agreement-derived coordinator, consumed offer, immutable
-Bitcoin Maker actor, and replay result commit or roll back together. Restart,
-competing reservations, exact replay, schema-18 migration, and forced rollback
-are GREEN. Symmetric role-fixed BTC provisioning now publishes only the
-selected role through a private sibling stage and no-replace rename, rejects
-cross-role sources and existing output without mutation, and exact-replays
-published bytes and inodes. Its 100-test actor boundary is GREEN without any
-external runtime resource. Daemon/Taker CLI wiring and local Bitcoin Core
-Regtest plus LEZ v0.2 execution remain open.
+Bitcoin genesis and confirmation policy before signing. The daemon supplies the
+Maker Schnorr signature; the Taker validates and countersigns it; schema 19
+atomically commits the exact dual-signed wire, agreement-derived coordinator,
+consumed offer, immutable Bitcoin Maker actor, and replay result. The two
+process roles publish only their own role-fixed actor bundles through private
+staging and no-replace rename. The Taker persists the final agreement before
+completion, publishes its receipt only after durable Maker completion, and can
+repeat exact completion and monitor offline after Delivery is removed without
+replacing the final agreement, actor config, or their inodes. The focused
+[Flow 1N](docs/manual-user-flows.md#flow-1n-repeat-the-btc-application-process-poc)
+passes 1 of 1 in 0.87 seconds and uses no chain RPC, node, Docker service,
+faucet, DNS lookup, network, or public funds. It proves the application and
+crash-safe pre-effect handoff, not an on-chain swap. Isolated Bitcoin Core 31.1
+Regtest plus LEZ v0.2 execution, XMR application composition, concurrent
+application supervision, and the M5 closure gates remain open; M5 is neither
+complete nor tagged.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,
@@ -160,8 +161,10 @@ a restart-safe SQLite cursor advances only validated fully covered pages, keeps
 partial/ambiguous/typed-error polls on the exact page, and restores the active
 page despite unchanged actor config. Both owner and counterparty paths pass a
 RED-GREEN reopen test, but the retained actual-node evidence remains
-intervention-assisted until a fresh daemon/CLI replay. M5 is not complete; actual-node receipt-bound Taker lifecycle effects,
-concurrent supervision, and BTC/XMR application lifecycle composition remain. Clean sidecar builds
+intervention-assisted until a fresh daemon/CLI replay. M5 is not complete;
+actual-node receipt-bound Taker lifecycle effects, concurrent supervision, BTC
+actual-chain application execution, and XMR application lifecycle composition
+remain. Clean sidecar builds
 should set the documented
 absolute `RAPIDSNARK_LIB_DIR` only after verifying the four pinned v0.0.8
 library hashes and should use Cargo offline rather than the upstream download

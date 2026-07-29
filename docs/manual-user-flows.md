@@ -5566,6 +5566,58 @@ crash-consistent local actor publication. The forthcoming full BTC application
 flow must separately prove the role processes against isolated Bitcoin Core
 Regtest and LEZ v0.2.
 
+## Flow 1N: repeat the BTC application process PoC
+
+This is the first reproducible end-user-shaped BTC application handoff. It runs
+the actual Maker CLI, maker daemon, and Taker CLI as separate processes, but
+stops before either actor submits a chain effect.
+
+From the repository root, with the pinned Rust 1.96.0 toolchain already
+installed, run:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p lez-maker-node --test btc_chat_process -- \
+  --exact real_taker_and_daemon_handoff_exact_btc_agreement_to_role_fixed_actors \
+  --nocapture
+```
+
+Expected result is one passing test in about one second; the recorded focused
+run passed 1 of 1 in 0.87 seconds. The process roles emulate the real operator
+boundary:
+
+1. The Maker CLI publishes its signed, bounded Delivery offer.
+2. The Taker CLI discovers that exact offer and asks the maker daemon for a BTC
+   proposal through the taker-facing Chat socket.
+3. The daemon authenticates the Delivery envelope and draft, contributes only
+   the Maker Schnorr signature, and durably stages it before replying.
+4. The Taker validates the proposal, contributes only the Taker Schnorr
+   signature, and persists the final agreement before requesting completion.
+5. Schema 19 atomically consumes the offer and commits the exact dual-signed
+   wire, coordinator, Maker role actor, and replay result; the Taker provisions
+   only its own role actor.
+6. The Taker publishes its pair-pinned acceptance receipt only after durable
+   Maker completion.
+7. The test removes Delivery, repeats completion from the persisted final wire,
+   verifies the agreement and actor-config inodes did not change, and monitors
+   the accepted swap offline through the receipt.
+
+The no-clobber role split and persist-before-completion ordering are the local
+atomicity boundary: a crash can leave a retryable staged/final artifact, but
+cannot expose a receipt before durable Maker acceptance or silently replace
+either role's agreement or actor bundle. This is not a distributed atomic
+commit with either chain.
+
+External runtime resources used: none. The test starts no Bitcoin Core or LEZ
+node, opens no chain RPC, starts no Docker project, contacts no faucet or DNS,
+uses no network or public funds, and depends on no finality clock. Its signed
+offers, keys, SQLite state, sockets, agreements, receipts, and actor roots are
+deterministic or test-owned local fixtures. That makes this pre-effect process
+gate fast and insensitive to node/faucet/network flakiness, but it does not
+prove Bitcoin or LEZ behavior. The next BTC application gate must run these
+role-fixed outputs against isolated Bitcoin Core 31.1 Regtest and LEZ v0.2
+nodes; public endpoints remain a later configuration and deployment choice.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

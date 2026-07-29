@@ -125,10 +125,10 @@ authority publication, not a chain effect or complete application swap.
 
 ## Consequences and remaining work
 
-The Maker scheduler and Taker CLI can consume the same proven BTC actor format
-without sharing a role tree or accepting partial output. The next M5 slice adds
-BTC Chat proposal/completion methods, daemon-side Maker provisioning, Taker CLI
-provisioning and receipt replay, then composes those actors with isolated
-Bitcoin Core Regtest and LEZ v0.2. Broader crash injection, orphan-stage cleanup,
+The Maker scheduler and Taker CLI now consume the same proven BTC actor format
+without sharing a role tree or accepting partial output. ADR 0109 records the
+process-GREEN Chat proposal/completion, daemon-side Maker provisioning, Taker
+provisioning, receipt replay, and offline monitoring boundary. The next M5 slice
+composes those actors with isolated Bitcoin Core Regtest and LEZ v0.2. Broader crash injection, orphan-stage cleanup,
 different-UID isolation, credential rotation, and atomic signer-journal import
 remain hardening work. This decision does not authorize an M5 tag.

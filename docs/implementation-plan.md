@@ -3763,20 +3763,34 @@ separately from runtime dependencies.
   publication sequence, atomicity argument, and resource boundary. No node, RPC,
   Docker service, faucet, DNS, network, or public funds participated.
 
-  BTC Chat/daemon/Taker CLI handoff is next, followed by actual local-node
-  composition. The under-specified Maker-process RED file was removed for repository
-  hygiene; it will return only with explicit draft, signer, and per-swap authority inputs.
+  The BTC application pre-effect process PoC is now GREEN. One black-box test
+  drives the real Maker CLI, maker daemon, and Taker CLI through signed Delivery,
+  pair-isolated BTC Chat proposal and completion, both Schnorr signatures,
+  schema-19 activation, independent Maker/Taker schema-6 provisioning, a durable
+  final agreement and receipt, and exact replay after Delivery removal without
+  replacing either role artifact. Receipt-only offline monitor then reads the
+  Taker actor. The exact test passes 1 of 1 in 0.87 seconds. It uses only
+  deterministic owner-private fixtures, Unix sockets, local processes, SQLite,
+  and files: no node, RPC, Docker service, faucet, DNS, network, or public funds.
+  ADR 0109 records its components, sequences, and atomicity argument. This is a
+  reproducible pre-effect handoff, not a BTC chain swap. Actual isolated Bitcoin
+  Core 31.1 Regtest plus LEZ v0.2 lifecycle execution remains next.
+  The first exact locked/offline rerun exposed a create-before-write readiness
+  race. Readiness now stages and synchronizes the full socket path before a
+  no-replace publication and parent-directory sync. The formerly failing process
+  case then passed ten consecutive locked/offline replays, preserving the
+  production readiness contract instead of teaching the test to accept emptiness.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is now 8 to 15 focused implementation hours once
+literal M5 ETA is now 7 to 14 focused implementation hours once
 isolated local-node control is healthy, under the owner-approved Logos-upstream
 exception. The earlier 4-to-9-hour estimate assumed the mature M3/M4 pair actors
 already shared the ZEC application handoff. The 2026-07-29 code audit instead
 confirmed that BTC required durable application negotiation and role provisioning;
-those boundaries are now GREEN, while XMR has no unified one-shot lifecycle actor
-or scheduler kind. BTC process composition remains. Fresh
-receipt-bound ZEC execution, unavailable-chain isolation, simultaneous
-application composition, all-pair CLI completion, and closure gates also remain.
+those boundaries and process composition are now GREEN, while XMR has no unified
+one-shot lifecycle actor or scheduler kind. BTC actual-node execution, fresh
+receipt-bound ZEC execution, unavailable-chain isolation, simultaneous application
+composition, XMR/all-pair CLI completion, and closure gates remain.
 Shared containerd timeouts add wall-clock uncertainty but are not counted as
 implementation time and will not be worked around by restarting a daemon that
 owns unrelated stacks.

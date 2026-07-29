@@ -1,21 +1,21 @@
 use std::{
     ffi::OsString,
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, Write as _},
-    os::unix::fs::{FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    os::unix::fs::{FileTypeExt as _, MetadataExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context as _, bail, ensure};
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use jsonrpsee::server::{
     BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
 };
 use lez_maker_node::{
-    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerRpc,
-    ProcessLogosPriceSource, RunLocalDelivery, ZecMakerActorProvisioner, chat_rpc_module,
+    BtcMakerActorProvisioner, MakerActorSupervisorCancellation, MakerActorSupervisorConfig,
+    MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, ZecMakerActorProvisioner, chat_rpc_module,
     import_terminal_zec_maker_projection, rpc_module, supervise_one_abandoned_maker_actor,
     supervise_one_abandoned_maker_actor_until, supervise_one_due_maker_actor_until,
 };
@@ -35,8 +35,15 @@ use secure_file::{load_raw_secret, read_private_file};
 const MAXIMUM_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CONNECTIONS: u32 = 16;
 
+type BtcChatAuthority = (SecretKey, BtcMakerActorProvisioner);
+
 #[derive(Parser)]
-#[command(about = "Headless LEZ atomic-swap maker daemon")]
+#[command(
+    about = "Headless LEZ atomic-swap maker daemon",
+    group(ArgGroup::new("pair_chat_authority")
+        .args(["maker_claim_key_id", "btc_maker_signing_key_file"])
+        .multiple(true))
+)]
 struct Arguments {
     /// Owner-only Unix-domain control socket.
     #[arg(long, default_value = "/run/lez-atomic-swaps/maker.sock")]
@@ -59,7 +66,15 @@ struct Arguments {
         requires_all = [
             "delivery_directory",
             "delivery_signing_key_file",
-            "maker_claim_key_id",
+            "pair_chat_authority"
+        ]
+    )]
+    chat_socket: Option<PathBuf>,
+    /// Non-secret rotation identifier for the maker claim-recovery key.
+    #[arg(
+        long,
+        requires_all = [
+            "delivery_directory",
             "maker_claim_key_file",
             "maker_claim_preimage_file",
             "zec_source_maker_config",
@@ -68,9 +83,6 @@ struct Arguments {
             "zec_actor_program_sha256"
         ]
     )]
-    chat_socket: Option<PathBuf>,
-    /// Non-secret rotation identifier for the maker claim-recovery key.
-    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_file", "maker_claim_preimage_file"])]
     maker_claim_key_id: Option<Box<str>>,
     /// Owner-only file containing one raw 32-byte claim-recovery key.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_preimage_file"])]
@@ -79,7 +91,19 @@ struct Arguments {
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
     maker_claim_preimage_file: Option<PathBuf>,
     /// Existing owner-private per-swap Maker configs used as authority templates.
-    #[arg(long, action = clap::ArgAction::Append, requires_all = ["delivery_directory", "zec_maker_actor_root", "zec_actor_program", "zec_actor_program_sha256"])]
+    #[arg(
+        long,
+        action = clap::ArgAction::Append,
+        requires_all = [
+            "delivery_directory",
+            "maker_claim_key_id",
+            "maker_claim_key_file",
+            "maker_claim_preimage_file",
+            "zec_maker_actor_root",
+            "zec_actor_program",
+            "zec_actor_program_sha256"
+        ]
+    )]
     zec_source_maker_config: Vec<PathBuf>,
     /// Existing owner-private mode-0700 base for deterministic per-swap actor bundles.
     #[arg(long, requires_all = ["zec_source_maker_config", "zec_actor_program", "zec_actor_program_sha256"])]
@@ -90,6 +114,40 @@ struct Arguments {
     /// Exact 32-byte SHA-256 identity of the ZEC actor executable.
     #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program"])]
     zec_actor_program_sha256: Option<Box<str>>,
+    /// Existing owner-private per-swap BTC Maker configs used as authority templates.
+    #[arg(
+        long,
+        action = clap::ArgAction::Append,
+        requires_all = [
+            "delivery_directory",
+            "btc_maker_signing_key_file",
+            "btc_maker_actor_root",
+            "btc_actor_program",
+            "btc_actor_program_sha256"
+        ]
+    )]
+    btc_source_maker_config: Vec<PathBuf>,
+    /// Owner-only raw or hexadecimal secp256k1 key used to sign BTC agreements.
+    #[arg(
+        long,
+        requires_all = [
+            "delivery_directory",
+            "btc_source_maker_config",
+            "btc_maker_actor_root",
+            "btc_actor_program",
+            "btc_actor_program_sha256"
+        ]
+    )]
+    btc_maker_signing_key_file: Option<PathBuf>,
+    /// Existing owner-private mode-0700 base for deterministic BTC actor bundles.
+    #[arg(long, requires_all = ["btc_source_maker_config", "btc_maker_signing_key_file", "btc_actor_program", "btc_actor_program_sha256"])]
+    btc_maker_actor_root: Option<PathBuf>,
+    /// Absolute exact BTC one-shot actor executable.
+    #[arg(long, requires_all = ["btc_source_maker_config", "btc_maker_signing_key_file", "btc_maker_actor_root", "btc_actor_program_sha256"])]
+    btc_actor_program: Option<PathBuf>,
+    /// Exact 32-byte SHA-256 identity of the BTC actor executable.
+    #[arg(long, requires_all = ["btc_source_maker_config", "btc_maker_signing_key_file", "btc_maker_actor_root", "btc_actor_program"])]
+    btc_actor_program_sha256: Option<Box<str>>,
     /// Stopped owner-private Maker actor database imported only as a terminal operator view.
     #[arg(long, requires_all = ["terminal_zec_swap_id", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
     terminal_zec_maker_state_db: Option<PathBuf>,
@@ -306,13 +364,19 @@ async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let logos_price_source = configured_logos_price_source(&arguments)?;
     let zec_actor_provisioner = configured_zec_actor_provisioner(&arguments)?;
+    let btc_chat_authority = configured_btc_chat_authority(&arguments)?;
     let _state_lease = acquire_state_lease(&arguments.database)?;
     import_terminal_projection(&arguments).await?;
     let actor_supervisor = configured_actor_supervisor(&arguments)?;
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
     let (chat_listener, _chat_socket_guard) =
         bind_optional_owner_socket(arguments.chat_socket.as_deref())?;
-    let context = maker_context(&arguments, zec_actor_provisioner, logos_price_source)?;
+    let context = maker_context(
+        &arguments,
+        zec_actor_provisioner,
+        btc_chat_authority,
+        logos_price_source,
+    )?;
     let context = attach_chat_health(context, arguments.chat_socket.as_deref());
     let module = rpc_module(context.clone())?;
     let chat_module = if chat_listener.is_some() {
@@ -621,49 +685,119 @@ fn configured_zec_actor_provisioner(
     .map(Some)
 }
 
+fn configured_btc_chat_authority(
+    arguments: &Arguments,
+) -> anyhow::Result<Option<BtcChatAuthority>> {
+    let deployment = (
+        arguments.btc_maker_signing_key_file.as_ref(),
+        arguments.btc_maker_actor_root.as_ref(),
+        arguments.btc_actor_program.as_ref(),
+        arguments.btc_actor_program_sha256.as_deref(),
+    );
+    if arguments.btc_source_maker_config.is_empty() {
+        ensure!(
+            deployment == (None, None, None, None),
+            "BTC actor templates, signing key, root, program, and SHA-256 must be configured together"
+        );
+        return Ok(None);
+    }
+    let (Some(signing_key_file), Some(root), Some(program), Some(program_sha256)) = deployment
+    else {
+        bail!(
+            "BTC actor templates, signing key, root, program, and SHA-256 must be configured together"
+        );
+    };
+    validate_runtime_directory(root).context("validate BTC maker actor root")?;
+    ensure!(
+        root.is_absolute()
+            && fs::canonicalize(root).context("canonicalize BTC maker actor root")? == *root,
+        "BTC maker actor root must be absolute and canonical"
+    );
+    ensure!(
+        program_sha256.len() == 64,
+        "BTC actor program SHA-256 must contain exactly 32 bytes as hexadecimal"
+    );
+    let mut identity = [0_u8; 32];
+    hex::decode_to_slice(program_sha256, &mut identity)
+        .context("decode BTC actor program SHA-256")?;
+    let signing_key = load_secp256k1_key(signing_key_file, "BTC Maker signing key")?;
+    let provisioner = BtcMakerActorProvisioner::new(
+        &arguments.btc_source_maker_config,
+        root.clone(),
+        program.clone(),
+        identity,
+    )
+    .context("validate BTC maker actor deployment")?;
+    Ok(Some((signing_key, provisioner)))
+}
+
 fn maker_context(
     arguments: &Arguments,
     zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
+    btc_chat_authority: Option<BtcChatAuthority>,
     logos_price_source: Option<ProcessLogosPriceSource>,
 ) -> anyhow::Result<MakerRpc> {
     let store = SqliteSwapStore::open(&arguments.database).context("open maker database")?;
-    let configured = (
+    let delivery_configured = (
         arguments.delivery_directory.as_deref(),
         arguments.delivery_signing_key_file.as_deref(),
+    );
+    let (directory, signing_file) = match delivery_configured {
+        (Some(directory), Some(signing_file)) => (directory, signing_file),
+        (None, None) => {
+            ensure!(
+                arguments.chat_socket.is_none()
+                    && arguments.maker_claim_key_id.is_none()
+                    && arguments.maker_claim_key_file.is_none()
+                    && arguments.maker_claim_preimage_file.is_none()
+                    && zec_actor_provisioner.is_none()
+                    && btc_chat_authority.is_none(),
+                "Delivery, Chat, and pair authority require a complete Delivery transport"
+            );
+            let context = MakerRpc::new(store);
+            return Ok(match logos_price_source {
+                Some(source) => context.with_logos_price_source(source),
+                None => context,
+            });
+        }
+        _ => bail!("Delivery directory and signing key must be configured together"),
+    };
+    ensure!(
+        arguments.chat_socket.is_some(),
+        "Delivery transport requires a Chat socket"
+    );
+
+    let zec_authority = match (
         arguments.maker_claim_key_id.as_deref(),
         arguments.maker_claim_key_file.as_deref(),
         arguments.maker_claim_preimage_file.as_deref(),
-    );
-    let (
-        Some(directory),
-        Some(signing_file),
-        Some(claim_key_id),
-        Some(claim_key_file),
-        Some(preimage_file),
-    ) = configured
-    else {
-        ensure!(
-            configured == (None, None, None, None, None),
-            "Delivery, Chat, claim-recovery, and preimage authority must be configured together"
-        );
-        let context = MakerRpc::new(store);
-        return Ok(match logos_price_source {
-            Some(source) => context.with_logos_price_source(source),
-            None => context,
-        });
+        zec_actor_provisioner,
+    ) {
+        (None, None, None, None) => None,
+        (Some(claim_key_id), Some(claim_key_file), Some(preimage_file), Some(provisioner)) => {
+            let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;
+            let claim_key = ProtectedClaimKey::new(claim_key_id, *claim_key_material)
+                .context("validate maker claim-recovery key ID")?;
+            let preimage_material = load_raw_secret(preimage_file, "maker claim preimage")?;
+            let preimage = ClaimPreimage::new(*preimage_material);
+            let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
+                &arguments.database,
+                Participant::Maker,
+                claim_key,
+            )
+            .context("open maker ZEC recovery store")?;
+            Some((recovery_store, preimage, provisioner))
+        }
+        _ => bail!(
+            "ZEC claim, preimage, templates, root, program, and SHA-256 authority must be configured together"
+        ),
     };
+    ensure!(
+        zec_authority.is_some() || btc_chat_authority.is_some(),
+        "Chat requires at least one complete pair authority"
+    );
+
     let signing_key = load_delivery_key(signing_file)?;
-    let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;
-    let claim_key = ProtectedClaimKey::new(claim_key_id, *claim_key_material)
-        .context("validate maker claim-recovery key ID")?;
-    let preimage_material = load_raw_secret(preimage_file, "maker claim preimage")?;
-    let preimage = ClaimPreimage::new(*preimage_material);
-    let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
-        &arguments.database,
-        Participant::Maker,
-        claim_key,
-    )
-    .context("open maker ZEC recovery store")?;
     let delivery = RunLocalDelivery::publisher(directory.to_path_buf(), signing_key)
         .context("open maker Delivery publisher")?;
     let now_unix_seconds = trusted_now_unix_seconds()?;
@@ -676,14 +810,19 @@ fn maker_context(
     delivery
         .reconcile(&active, now_unix_seconds)
         .context("reconcile Delivery advertisements")?;
-    let context = MakerRpc::with_delivery(
-        store,
-        delivery,
-        signing_key,
-        recovery_store,
-        preimage,
-        zec_actor_provisioner,
-    );
+    let context = MakerRpc::with_delivery_transport(store, delivery, signing_key);
+    let context = match zec_authority {
+        Some((recovery_store, preimage, provisioner)) => {
+            context.with_zec_chat_authority(recovery_store, preimage, Some(provisioner))
+        }
+        None => context,
+    };
+    let context = match btc_chat_authority {
+        Some((signing_key, provisioner)) => {
+            context.with_btc_chat_authority(signing_key, provisioner)
+        }
+        None => context,
+    };
     Ok(match logos_price_source {
         Some(source) => context.with_logos_price_source(source),
         None => context,
@@ -701,20 +840,25 @@ fn server_config() -> ServerConfig {
 }
 
 fn load_delivery_key(path: &Path) -> anyhow::Result<SecretKey> {
-    let encoded = read_private_file(path, 65, "Delivery signing key")?;
+    load_secp256k1_key(path, "Delivery signing key")
+}
+
+fn load_secp256k1_key(path: &Path, purpose: &str) -> anyhow::Result<SecretKey> {
+    let encoded = read_private_file(path, 65, purpose)?;
     if encoded.len() == 32 {
-        return SecretKey::from_slice(encoded.as_slice()).context("validate Delivery signing key");
+        return SecretKey::from_slice(encoded.as_slice())
+            .with_context(|| format!("validate {purpose}"));
     }
     let text = std::str::from_utf8(&encoded)
-        .context("Delivery signing key must be raw bytes or UTF-8 hex")?
+        .with_context(|| format!("{purpose} must be raw bytes or UTF-8 hex"))?
         .trim();
     ensure!(
         text.len() == 64,
-        "Delivery signing key must contain exactly 32 raw bytes or 32 bytes as hex"
+        "{purpose} must contain exactly 32 raw bytes or 32 bytes as hex"
     );
     let mut bytes = Zeroizing::new([0_u8; 32]);
-    hex::decode_to_slice(text, bytes.as_mut()).context("decode Delivery signing key")?;
-    SecretKey::from_slice(bytes.as_ref()).context("validate Delivery signing key")
+    hex::decode_to_slice(text, bytes.as_mut()).with_context(|| format!("decode {purpose}"))?;
+    SecretKey::from_slice(bytes.as_ref()).with_context(|| format!("validate {purpose}"))
 }
 
 fn trusted_now_unix_seconds() -> anyhow::Result<u64> {
@@ -774,15 +918,24 @@ fn create_ready_file(path: &Path, socket: &Path) -> anyhow::Result<OwnedPath> {
         path.parent() == socket.parent(),
         "maker readiness file must share the socket runtime directory"
     );
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .context("create maker readiness file")?;
+    let parent = path
+        .parent()
+        .context("maker readiness path has no parent")?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".maker-ready.")
+        .tempfile_in(parent)
+        .context("stage maker readiness file")?;
+    writeln!(staged, "{}", socket.display()).context("write maker readiness file")?;
+    staged
+        .as_file_mut()
+        .sync_all()
+        .context("sync staged maker readiness file")?;
+    staged
+        .persist_noclobber(path)
+        .map_err(|error| error.error)
+        .context("publish maker readiness file without clobber")?;
+    File::open(parent)?.sync_all()?;
     let guard = OwnedPath::capture(path).context("capture maker readiness file identity")?;
-    writeln!(file, "{}", socket.display()).context("write maker readiness file")?;
-    file.sync_all().context("sync maker readiness file")?;
     Ok(guard)
 }
 

@@ -428,6 +428,28 @@ impl ActorConfig {
         Self::from_private_bytes(&bytes, false)
     }
 
+    /// Loads one owner-private config only when its exact bytes match `expected_sha256`.
+    ///
+    /// The digest and parsed configuration are derived from the same stable
+    /// file read, so receipt consumers do not introduce a check/use race.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every condition rejected by [`Self::load_private`] and any byte
+    /// identity mismatch.
+    pub fn load_private_pinned_sha256(
+        path: impl AsRef<Path>,
+        expected_sha256: [u8; 32],
+    ) -> Result<Self, ActorConfigError> {
+        let bytes = read_stable_file(path.as_ref(), MAX_CONFIG_BYTES, true)
+            .map_err(|()| ActorConfigError::Unavailable)?;
+        let actual_sha256: [u8; 32] = Sha256::digest(&bytes).into();
+        if actual_sha256 != expected_sha256 {
+            return Err(ActorConfigError::Invalid);
+        }
+        Self::from_private_bytes(&bytes, false)
+    }
+
     /// Loads one immutable supervised configuration from the fixed inherited descriptor.
     ///
     /// # Errors

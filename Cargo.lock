@@ -1995,6 +1995,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bitcoin",
  "btc-reference-actor",
  "bytes",
  "clap",
@@ -2005,6 +2006,7 @@ dependencies = [
  "jsonrpsee",
  "jsonrpsee-http-client",
  "lez-bridge-protocol",
+ "lez-btc-swap-sdk",
  "lez-logos-price-c-api",
  "lez-swap-core",
  "lez-swap-sdk-core",

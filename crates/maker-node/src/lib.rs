@@ -1,6 +1,7 @@
 //! Authenticated local JSON-RPC boundary for the headless maker.
 
 mod actor_supervisor;
+mod btc_chat;
 mod daemon_lifecycle;
 mod local_rpc;
 mod logos_price_source;
@@ -12,6 +13,8 @@ pub use actor_supervisor::{
     supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
     supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
 };
+pub use btc_chat::BtcMakerActorProvisioner;
+use btc_chat::register_btc_chat_methods;
 pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,
@@ -33,21 +36,29 @@ use std::{
 };
 
 use anyhow::Context as _;
+use btc_reference_actor::{
+    ActorConfig as BtcActorConfig, ActorRole as BtcActorRole, provision_btc_maker_actor_from_config,
+};
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
+use lez_btc_swap_sdk::{
+    BtcAgreementDraftV1, BtcAgreementV1, BtcMakerAgreementProposalV1,
+    MAX_BTC_AGREEMENT_RECORD_BYTES,
+};
 use lez_swap_core::{
     Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    AlertObservedEvent, EventCommit, LocalPriceV1, MakerActorKindV1, MakerActorManifestV1,
-    MakerActorManualAction, MakerActorManualActionState, MakerActorProcessError,
-    MakerActorProgressObservationV1, MakerActorScheduleState, MakerConfigurationCommit,
-    MakerOfferCommit, MakerOfferId, MakerOfferPublicationPreflight, MakerOfferRecordV1,
-    MakerOfferStatus, MakerOfferV1, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
-    MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
-    OperatorAlertSeverity, OperatorTerminalProjectionCommit, SqliteSwapStore,
-    SqliteZecRecoveryStore, StoreError, VersionedMakerRecord, maker_zec_chat_session_id,
+    AlertObservedEvent, BtcAgreementAcceptance, EventCommit, LocalPriceV1, MakerActorKindV1,
+    MakerActorManifestV1, MakerActorManualAction, MakerActorManualActionState,
+    MakerActorProcessError, MakerActorProgressObservationV1, MakerActorScheduleState,
+    MakerBtcNegotiationV1, MakerConfigurationCommit, MakerOfferCommit, MakerOfferId,
+    MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1,
+    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationV1,
+    OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1, OperatorAlertSeverity,
+    OperatorTerminalProjectionCommit, SqliteSwapStore, SqliteZecRecoveryStore, StoreError,
+    VersionedMakerRecord, maker_btc_chat_swap_id, maker_zec_chat_session_id,
     validate_maker_actor_program,
 };
 use lez_zec_swap_sdk::{
@@ -56,7 +67,7 @@ use lez_zec_swap_sdk::{
     ZcashObservationTracker, ZecAgreementDraftV1, ZecBindingRecordError, ZecPairSdk,
     ZecRefundProfile, ZecSwapBinding, replay_zcash_observation_history,
 };
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 
 use sha2::{Digest as _, Sha256};
@@ -74,6 +85,8 @@ pub struct MakerRpc {
     delivery: Option<Arc<RunLocalDelivery>>,
     chat_socket: Option<Arc<PathBuf>>,
     chat_signing_key: Option<Arc<SecretKey>>,
+    btc_chat_signing_key: Option<Arc<SecretKey>>,
+    btc_actor_provisioner: Option<Arc<BtcMakerActorProvisioner>>,
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
     maker_claim_preimage: Option<Arc<ClaimPreimage>>,
     zec_actor_provisioner: Option<Arc<ZecMakerActorProvisioner>>,
@@ -93,6 +106,14 @@ impl std::fmt::Debug for MakerRpc {
             .field(
                 "chat_signing_key",
                 &self.chat_signing_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "btc_chat_signing_key",
+                &self.btc_chat_signing_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "btc_actor_provisioner",
+                &self.btc_actor_provisioner.as_ref().map(|_| "configured"),
             )
             .field(
                 "zec_completion_store",
@@ -121,6 +142,8 @@ impl MakerRpc {
             chat_socket: None,
             chat_signing_key: None,
             zec_completion_store: None,
+            btc_chat_signing_key: None,
+            btc_actor_provisioner: None,
             maker_claim_preimage: None,
             zec_actor_provisioner: None,
         }
@@ -136,16 +159,58 @@ impl MakerRpc {
         maker_claim_preimage: ClaimPreimage,
         zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
     ) -> Self {
+        Self::with_delivery_transport(store, delivery, chat_signing_key).with_zec_chat_authority(
+            zec_completion_store,
+            maker_claim_preimage,
+            zec_actor_provisioner,
+        )
+    }
+
+    /// Creates a shared Delivery and isolated-Chat transport without pair authority.
+    #[must_use]
+    pub fn with_delivery_transport(
+        store: SqliteSwapStore,
+        delivery: RunLocalDelivery,
+        chat_signing_key: SecretKey,
+    ) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),
             logos_price_source: None,
             delivery: Some(Arc::new(delivery)),
             chat_socket: None,
             chat_signing_key: Some(Arc::new(chat_signing_key)),
-            zec_completion_store: Some(Arc::new(zec_completion_store)),
-            maker_claim_preimage: Some(Arc::new(maker_claim_preimage)),
-            zec_actor_provisioner: zec_actor_provisioner.map(Arc::new),
+            btc_chat_signing_key: None,
+            btc_actor_provisioner: None,
+            zec_completion_store: None,
+            maker_claim_preimage: None,
+            zec_actor_provisioner: None,
         }
+    }
+
+    /// Attaches ZEC agreement acceptance and Maker actor authority.
+    #[must_use]
+    pub fn with_zec_chat_authority(
+        mut self,
+        completion_store: SqliteZecRecoveryStore,
+        maker_claim_preimage: ClaimPreimage,
+        actor_provisioner: Option<ZecMakerActorProvisioner>,
+    ) -> Self {
+        self.zec_completion_store = Some(Arc::new(completion_store));
+        self.maker_claim_preimage = Some(Arc::new(maker_claim_preimage));
+        self.zec_actor_provisioner = actor_provisioner.map(Arc::new);
+        self
+    }
+
+    /// Attaches BTC Schnorr agreement signing and Maker actor authority.
+    #[must_use]
+    pub fn with_btc_chat_authority(
+        mut self,
+        signing_key: SecretKey,
+        actor_provisioner: BtcMakerActorProvisioner,
+    ) -> Self {
+        self.btc_chat_signing_key = Some(Arc::new(signing_key));
+        self.btc_actor_provisioner = Some(Arc::new(actor_provisioner));
+        self
     }
 
     /// Installs the bounded external-price process used only by Logos-configured routes.
@@ -726,6 +791,84 @@ pub struct ZecChatCompleteRequestV1 {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ZecChatCompleteResponseV1 {
+    /// This response schema version.
+    pub schema_version: u16,
+    /// Durable consumed offer revision.
+    pub offer_revision: u64,
+    /// Whether the exact completion request was already committed.
+    pub was_replay: bool,
+    /// Agreement-derived application swap identity.
+    pub swap_id: Box<str>,
+}
+
+/// Versioned untrusted taker request for one Maker-first BTC proposal.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcChatProposeRequestV1 {
+    /// Must be one for this DTO shape.
+    pub schema_version: u16,
+    /// Global exact-replay identity for durable proposal staging.
+    pub request_id: RequestId,
+    /// Selected immutable offer identity.
+    pub offer_id: MakerOfferId,
+    /// Current active offer revision, normally one.
+    pub expected_offer_revision: u64,
+    /// Winning reservation and Chat-session identity.
+    pub reservation_id: RequestId,
+    /// Exact selected Bitcoin principal in satoshis.
+    pub foreign_units: u64,
+    /// Exact signed Delivery envelope previously authenticated by the Taker.
+    pub signed_offer_envelope: Vec<u8>,
+    /// Canonical bounded unsigned BTC agreement draft.
+    pub unsigned_draft_wire: Vec<u8>,
+}
+
+/// Exact durable BTC Maker proposal returned only after staging commits.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcChatProposalV1 {
+    /// This response schema version.
+    pub schema_version: u16,
+    /// Durable reserved offer revision.
+    pub offer_revision: u64,
+    /// Whether the exact stage request was already committed.
+    pub was_replay: bool,
+    /// Winning reservation and Chat-session identity.
+    pub reservation_id: RequestId,
+    /// Exact no-rounding LEZ principal.
+    pub lez_units: u128,
+    /// BTC agreement identity that produced the Maker signature.
+    pub maker_identity: Vec<u8>,
+    /// Taker identity committed by the validated unsigned draft.
+    pub taker_identity: Vec<u8>,
+    /// Canonical body commitment signed by the Maker.
+    pub agreement_commitment: [u8; 32],
+    /// Exact bounded Maker-proposal wire for Taker validation and countersigning.
+    pub proposal_wire: Vec<u8>,
+}
+
+/// Versioned Taker response carrying the exact countersigned BTC agreement.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcChatCompleteRequestV1 {
+    /// Must be one for this DTO shape.
+    pub schema_version: u16,
+    /// Global exact-replay identity for atomic final acceptance.
+    pub request_id: RequestId,
+    /// Reserved immutable offer identity.
+    pub offer_id: MakerOfferId,
+    /// Current reserved offer revision, normally two.
+    pub expected_offer_revision: u64,
+    /// Winning reservation and Chat-session identity.
+    pub reservation_id: RequestId,
+    /// Exact bounded dual-signed BTC agreement wire validated by the Taker.
+    pub final_agreement_wire: Vec<u8>,
+}
+
+/// Durable BTC final-acceptance result returned after every linked row commits.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcChatCompleteResponseV1 {
     /// This response schema version.
     pub schema_version: u16,
     /// Durable consumed offer revision.
@@ -1578,6 +1721,12 @@ pub fn chat_rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>>
 }
 
 fn register_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    register_zec_chat_methods(module)?;
+    register_btc_chat_methods(module)?;
+    Ok(())
+}
+
+fn register_zec_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<ZecChatProposalV1>, _>(
         "zec_chat_propose_v1",
         |params, context, _| {

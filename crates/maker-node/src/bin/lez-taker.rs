@@ -1,6 +1,10 @@
 use std::{path::PathBuf, str::FromStr as _};
 
 use anyhow::{Context as _, ensure};
+use btc_reference_actor::{
+    ActorCommand as BtcActorCommand, ActorConfig as BtcActorConfig, ActorRole as BtcActorRole,
+    execute_actor_command as execute_btc_actor_command,
+};
 use clap::{ArgGroup, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use lez_maker_node::{DeliveryOfferQueryV1, RunLocalDelivery};
 use lez_swap_core::{Pair, SwapDirection};
@@ -16,6 +20,10 @@ use zec_reference_actor::{
 mod secure_file;
 #[path = "support/taker_accept.rs"]
 mod taker_accept;
+#[path = "support/taker_accept_btc.rs"]
+mod taker_accept_btc;
+use taker_accept_btc::{BtcTakeInput, load_btc_taker_actor_from_receipt, take_btc};
+
 use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
 
 #[derive(Parser)]
@@ -42,6 +50,9 @@ struct Arguments {
     /// Accept this exact ZEC offer instead of only listing discovery results.
     #[arg(long)]
     accept_zec_offer: Option<String>,
+    /// Accept this exact BTC offer instead of only listing discovery results.
+    #[arg(long)]
+    accept_btc_offer: Option<String>,
     /// Taker-facing maker Chat Unix socket.
     #[arg(long)]
     chat_socket: Option<PathBuf>,
@@ -69,8 +80,16 @@ struct Arguments {
     /// New owner-private acceptance receipt written after Maker completion.
     #[arg(long)]
     zec_acceptance_receipt: Option<PathBuf>,
+    /// Owner-private source Taker Bitcoin actor authority template.
+    #[arg(long)]
+    btc_source_taker_config: Option<PathBuf>,
+    /// New owner-private root for the accepted Taker Bitcoin actor bundle.
+    #[arg(long)]
+    btc_taker_actor_root: Option<PathBuf>,
+    /// New owner-private Bitcoin acceptance receipt written after Maker completion.
+    #[arg(long)]
+    btc_acceptance_receipt: Option<PathBuf>,
 }
-
 #[derive(Subcommand)]
 enum LifecycleCommand {
     /// Read one role-local durable status without chain or transport access.
@@ -167,7 +186,22 @@ async fn execute() -> anyhow::Result<()> {
     let now_unix_seconds = arguments
         .now_unix_seconds
         .context("discovery requires --now-unix-seconds")?;
-    if take_was_requested(&arguments) {
+    let btc_take_requested = btc_take_was_requested(&arguments);
+    let zec_take_requested = zec_take_was_requested(&arguments);
+    ensure!(
+        !(btc_take_requested && zec_take_requested),
+        "exactly one BTC or ZEC acceptance may be requested"
+    );
+    if btc_take_requested {
+        return execute_btc_take(
+            &arguments,
+            &expected_maker,
+            delivery_directory,
+            now_unix_seconds,
+        )
+        .await;
+    }
+    if zec_take_requested || shared_take_was_requested(&arguments) {
         return execute_zec_take(
             &arguments,
             &expected_maker,
@@ -281,47 +315,206 @@ async fn execute_zec_take(
     Ok(())
 }
 
+async fn execute_btc_take(
+    arguments: &Arguments,
+    expected_maker: &PublicKey,
+    delivery_directory: &std::path::Path,
+    now_unix_seconds: u64,
+) -> anyhow::Result<()> {
+    ensure!(
+        arguments
+            .pair
+            .is_none_or(|pair| matches!(pair, PairArgument::Bitcoin))
+            && arguments.direction.is_none_or(|direction| {
+                matches!(direction, DirectionArgument::TakerSellsForeign)
+            }),
+        "M5 BTC acceptance supports only bitcoin/taker-sells-foreign"
+    );
+    let agreement_output_file = required_btc_path(
+        arguments.agreement_output_file.as_deref(),
+        "--agreement-output-file",
+    )?;
+    let agreement_is_durable = match std::fs::symlink_metadata(agreement_output_file) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error).context("inspect persisted BTC agreement"),
+    };
+    let delivery = if agreement_is_durable {
+        None
+    } else {
+        Some(RunLocalDelivery::subscriber(
+            delivery_directory.to_path_buf(),
+            expected_maker.to_owned(),
+        )?)
+    };
+    let output = take_btc(BtcTakeInput {
+        delivery: delivery.as_ref(),
+        now_unix_seconds,
+        offer_id: arguments
+            .accept_btc_offer
+            .as_deref()
+            .context("BTC acceptance requires --accept-btc-offer")?,
+        chat_socket: required_btc_path(arguments.chat_socket.as_deref(), "--chat-socket")?,
+        reservation_id: arguments
+            .reservation_id
+            .as_deref()
+            .context("BTC acceptance requires --reservation-id")?,
+        foreign_units: arguments
+            .foreign_units
+            .context("BTC acceptance requires --foreign-units")?,
+        unsigned_draft_file: required_btc_path(
+            arguments.unsigned_draft_file.as_deref(),
+            "--unsigned-draft-file",
+        )?,
+        taker_signing_key_file: required_btc_path(
+            arguments.taker_signing_key_file.as_deref(),
+            "--taker-signing-key-file",
+        )?,
+        agreement_output_file,
+        source_taker_config_file: required_btc_path(
+            arguments.btc_source_taker_config.as_deref(),
+            "--btc-source-taker-config",
+        )?,
+        taker_actor_root: required_btc_path(
+            arguments.btc_taker_actor_root.as_deref(),
+            "--btc-taker-actor-root",
+        )?,
+        acceptance_receipt_file: required_btc_path(
+            arguments.btc_acceptance_receipt.as_deref(),
+            "--btc-acceptance-receipt",
+        )?,
+    })
+    .await?;
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum LifecycleAction {
+    Monitor,
+    Claim,
+    Refund,
+}
+
+enum LoadedTakerActor {
+    Zec(Box<ActorConfig>),
+    Btc(Box<BtcActorConfig>),
+}
+
+#[derive(Serialize)]
+struct BtcLifecycleOutput {
+    pair: &'static str,
+    #[serde(flatten)]
+    output: btc_reference_actor::ActorCommandOutputV1,
+}
+
 async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
-    let (arguments, command) = match command {
-        LifecycleCommand::Monitor(arguments) => (arguments, ZecActorCommand::Status),
-        LifecycleCommand::Claim(arguments) => (arguments, ZecActorCommand::Claim),
-        LifecycleCommand::Refund(arguments) => (arguments, ZecActorCommand::Recover),
+    let (arguments, action) = match command {
+        LifecycleCommand::Monitor(arguments) => (arguments, LifecycleAction::Monitor),
+        LifecycleCommand::Claim(arguments) => (arguments, LifecycleAction::Claim),
+        LifecycleCommand::Refund(arguments) => (arguments, LifecycleAction::Refund),
     };
     let config = match (arguments.actor_config.as_ref(), arguments.receipt.as_ref()) {
-        (Some(path), None) => ActorConfig::load_private(path)
-            .map_err(|_| anyhow::anyhow!("Taker actor configuration is unavailable"))?,
-        (None, Some(path)) => load_taker_actor_from_receipt(path)
-            .map_err(|_| anyhow::anyhow!("Taker acceptance receipt is unavailable"))?,
+        (Some(path), None) => match (
+            ActorConfig::load_private(path),
+            BtcActorConfig::load_private(path),
+        ) {
+            (Ok(config), Err(_)) => LoadedTakerActor::Zec(Box::new(config)),
+            (Err(_), Ok(config)) => LoadedTakerActor::Btc(Box::new(config)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Taker actor configuration is unavailable or ambiguous"
+                ));
+            }
+        },
+        (None, Some(path)) => match (
+            load_taker_actor_from_receipt(path),
+            load_btc_taker_actor_from_receipt(path),
+        ) {
+            (Ok(config), Err(_)) => LoadedTakerActor::Zec(Box::new(config)),
+            (Err(_), Ok(config)) => LoadedTakerActor::Btc(Box::new(config)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Taker acceptance receipt is unavailable or ambiguous"
+                ));
+            }
+        },
         _ => {
             return Err(anyhow::anyhow!(
                 "exactly one Taker actor source is required"
             ));
         }
     };
-    ensure!(
-        config.role() == ActorRole::Taker,
-        "Taker actor configuration has the wrong role"
-    );
-    let _held_lock = MakerActorHeldLock::acquire_for(config.swap_id(), config.role_state_db())
-        .map_err(|_| anyhow::anyhow!("Taker actor is already running or unsafe"))?;
-    let output = execute_actor_command(&config, command)
-        .await
-        .map_err(|_| anyhow::anyhow!("Taker lifecycle command failed"))?;
-    println!("{}", serde_json::to_string(&output)?);
+    match config {
+        LoadedTakerActor::Zec(config) => {
+            ensure!(
+                config.role() == ActorRole::Taker,
+                "Taker actor configuration has the wrong role"
+            );
+            let _held_lock =
+                MakerActorHeldLock::acquire_for(config.swap_id(), config.role_state_db())
+                    .map_err(|_| anyhow::anyhow!("Taker actor is already running or unsafe"))?;
+            let command = match action {
+                LifecycleAction::Monitor => ZecActorCommand::Status,
+                LifecycleAction::Claim => ZecActorCommand::Claim,
+                LifecycleAction::Refund => ZecActorCommand::Recover,
+            };
+            let output = execute_actor_command(&config, command)
+                .await
+                .map_err(|_| anyhow::anyhow!("Taker lifecycle command failed"))?;
+            println!("{}", serde_json::to_string(&output)?);
+        }
+        LoadedTakerActor::Btc(config) => {
+            ensure!(
+                config.role() == BtcActorRole::Taker,
+                "BTC Taker actor configuration has the wrong role"
+            );
+            let swap_id = config
+                .supervised_swap_id()
+                .map_err(|_| anyhow::anyhow!("BTC Taker actor agreement is unavailable"))?;
+            let _held_lock = MakerActorHeldLock::acquire_for(&swap_id, config.state_db())
+                .map_err(|_| anyhow::anyhow!("BTC Taker actor is already running or unsafe"))?;
+            let command = match action {
+                LifecycleAction::Monitor => BtcActorCommand::Status,
+                LifecycleAction::Claim => BtcActorCommand::Drive,
+                LifecycleAction::Refund => BtcActorCommand::Recover,
+            };
+            let output = execute_btc_actor_command(&config, command)
+                .await
+                .map_err(|_| anyhow::anyhow!("BTC Taker lifecycle command failed"))?;
+            println!(
+                "{}",
+                serde_json::to_string(&BtcLifecycleOutput {
+                    pair: "bitcoin",
+                    output
+                })?
+            );
+        }
+    }
     Ok(())
 }
 
-fn take_was_requested(arguments: &Arguments) -> bool {
+fn btc_take_was_requested(arguments: &Arguments) -> bool {
+    arguments.accept_btc_offer.is_some()
+        || arguments.btc_source_taker_config.is_some()
+        || arguments.btc_taker_actor_root.is_some()
+        || arguments.btc_acceptance_receipt.is_some()
+}
+
+fn zec_take_was_requested(arguments: &Arguments) -> bool {
     arguments.accept_zec_offer.is_some()
-        || arguments.chat_socket.is_some()
+        || arguments.zec_source_taker_config.is_some()
+        || arguments.zec_taker_actor_root.is_some()
+        || arguments.zec_acceptance_receipt.is_some()
+}
+
+fn shared_take_was_requested(arguments: &Arguments) -> bool {
+    arguments.chat_socket.is_some()
         || arguments.reservation_id.is_some()
         || arguments.foreign_units.is_some()
         || arguments.unsigned_draft_file.is_some()
         || arguments.taker_signing_key_file.is_some()
         || arguments.agreement_output_file.is_some()
-        || arguments.zec_source_taker_config.is_some()
-        || arguments.zec_taker_actor_root.is_some()
-        || arguments.zec_acceptance_receipt.is_some()
 }
 
 fn required_path<'a>(
@@ -329,4 +522,11 @@ fn required_path<'a>(
     flag: &str,
 ) -> anyhow::Result<&'a std::path::Path> {
     value.with_context(|| format!("ZEC acceptance requires {flag}"))
+}
+
+fn required_btc_path<'a>(
+    value: Option<&'a std::path::Path>,
+    flag: &str,
+) -> anyhow::Result<&'a std::path::Path> {
+    value.with_context(|| format!("BTC acceptance requires {flag}"))
 }
