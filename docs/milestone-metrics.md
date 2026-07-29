@@ -53,8 +53,9 @@ certified.
 | Cleanup leaks | 0 in the exact-tree corridor run; about 85 GB reclaimed cumulatively by 2026-07-28 | The latest two cleanup passes reclaimed 26.4 GiB around verification by removing the regrown project Cargo targets; the repo returned to about 129 MB and free disk to about 530 GB; source/Git/fixtures and unrelated running stacks were preserved. Four running project containers were deliberately preserved; Docker inventory and pruning calls timed out at containerd, and no Docker-service restart was attempted because active stacks could be interrupted |
 
 The progressive local ZEC application PoC gate is closed. Remaining literal M5
-ETA is tracked after each verified push under the owner-approved Logos-upstream
-exception. Actual-node receipt-bound Taker lifecycle effects,
+ETA is 12 to 22 focused implementation hours and is updated after each verified
+push under the owner-approved Logos-upstream exception. Actual-node receipt-bound
+Taker lifecycle effects,
 daemon-supervised and concurrent actual-node coordination, BTC actual-chain
 execution, XMR application lifecycle, and closure gates
 remain open and are not inferred from this component result.

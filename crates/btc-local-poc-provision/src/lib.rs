@@ -30,12 +30,12 @@ use bitcoin::{
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
-    BtcAgreementBodyV1, BtcAgreementRecordV1, BtcAgreementV1, BtcChainPolicyV1, BtcClaimTermsV1,
-    BtcFundingTermsV1, BtcLezAssetExtensionBodyV1, BtcLezAssetExtensionRecordV1,
-    BtcLezAssetExtensionV1, BtcLezAssetV1, BtcLezCustomTokenTermsV1, BtcLezTermsV1, BtcP2trTermsV1,
-    BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1, CooperativeKeyPathSpend,
-    CsvBlockDelay, MAX_BTC_AGREEMENT_RECORD_BYTES, P2trSwapOutput, RefundXOnlyKey,
-    TwoPartyAggregateKey,
+    BtcAgreementBodyV1, BtcAgreementDraftV1, BtcAgreementRecordV1, BtcAgreementV1,
+    BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1, BtcLezAssetExtensionBodyV1,
+    BtcLezAssetExtensionRecordV1, BtcLezAssetExtensionV1, BtcLezAssetV1, BtcLezCustomTokenTermsV1,
+    BtcLezTermsV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1,
+    CooperativeKeyPathSpend, CsvBlockDelay, MAX_BTC_AGREEMENT_RECORD_BYTES, P2trSwapOutput,
+    RefundXOnlyKey, TwoPartyAggregateKey,
 };
 use lez_swap_core::{Participant, SwapDirection};
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,18 @@ const TAKER_CLAIM_FILE: &str = "taker-claim-destination.key";
 const ADAPTOR_FILE: &str = "adaptor-scalar.key";
 const ASSET_EXTENSION_FILE: &str = "lez-asset-extension.borsh";
 const ASSET_EXTENSION_SUMMARY_FILE: &str = "lez-asset-extension-summary.json";
+
+/// Secret-free result of extracting one canonical unsigned application draft.
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftExportSummary {
+    schema_version: u16,
+    agreement_file: PathBuf,
+    output_file: PathBuf,
+    agreement_sha256: String,
+    draft_sha256: String,
+    private_material_disclosed: bool,
+}
 
 /// Secret-free result emitted by stage one.
 #[derive(Debug, Serialize)]
@@ -703,6 +715,46 @@ pub fn prepare_funding(spec_file: &Path, output_root: &Path) -> Result<FundingPr
     write_private_new(&transaction_file, &transaction_file_bytes)?;
     write_private_new(&summary_file, &summary_bytes)?;
     Ok(summary)
+}
+
+/// Extracts and revalidates the canonical unsigned body of one finalized agreement.
+///
+/// # Errors
+///
+/// Rejects unsafe paths, a malformed agreement, non-canonical policy/body data,
+/// an existing output, or any private-file publication failure.
+pub fn export_draft(agreement_file: &Path, output_file: &Path) -> Result<DraftExportSummary> {
+    ensure_normalized_absolute(agreement_file)?;
+    ensure_normalized_absolute(output_file)?;
+    let parent = output_file.parent().context("draft output has no parent")?;
+    match fs::symlink_metadata(parent) {
+        Ok(_) => validate_private_directory(parent)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            validate_new_output_root(parent)?;
+            create_private_directory(parent)?;
+            fs::File::open(parent.parent().context("draft parent has no parent")?)?.sync_all()?;
+        }
+        Err(error) => return Err(error).context("draft parent unavailable"),
+    }
+    ensure_new_file_path(output_file)?;
+    let agreement_wire = read_stable_file(agreement_file, MAX_BTC_AGREEMENT_RECORD_BYTES, true)?;
+    let agreement =
+        BtcAgreementV1::from_wire(&agreement_wire).context("validate finalized BTC agreement")?;
+    let draft = BtcAgreementDraftV1::validate_for_bitcoin_policy(
+        agreement.body().clone(),
+        agreement.bitcoin_chain_policy(),
+    )?;
+    let draft_wire = draft.encode_wire()?;
+    write_private_new(output_file, &draft_wire)?;
+    fs::File::open(parent)?.sync_all()?;
+    Ok(DraftExportSummary {
+        schema_version: SCHEMA_VERSION,
+        agreement_file: agreement_file.to_path_buf(),
+        output_file: output_file.to_path_buf(),
+        agreement_sha256: sha256_hex(&agreement_wire),
+        draft_sha256: sha256_hex(&draft_wire),
+        private_material_disclosed: false,
+    })
 }
 
 /// Constructs, countersigns, validates, and writes the canonical agreement.

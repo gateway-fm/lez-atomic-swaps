@@ -3765,6 +3765,13 @@ separately from runtime dependencies.
 
   The BTC application pre-effect process PoC is now GREEN. One black-box test
   drives the real Maker CLI, maker daemon, and Taker CLI through signed Delivery,
+  beginning with a Delivery-only daemon that has no Chat, signing, provisioning,
+  or actor authority. The Taker planning command authenticates the exact offer
+  and derives its reservation-bound swap ID without private material; the daemon
+  then restarts with only the selected BTC authority. A canonical draft exporter
+  reparses the finalized fixture under its exact Bitcoin policy and creates one
+  owner-private no-clobber draft, eliminating duplicated shell representation of
+  executable terms before the real process handoff continues through
   pair-isolated BTC Chat proposal and completion, both Schnorr signatures,
   schema-19 activation, independent Maker/Taker schema-6 provisioning, a durable
   final agreement and receipt, and exact replay after Delivery removal without
@@ -3782,13 +3789,17 @@ separately from runtime dependencies.
   production readiness contract instead of teaching the test to accept emptiness.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is now 7 to 14 focused implementation hours once
+literal M5 ETA is now 12 to 22 focused implementation hours once
 isolated local-node control is healthy, under the owner-approved Logos-upstream
 exception. The earlier 4-to-9-hour estimate assumed the mature M3/M4 pair actors
 already shared the ZEC application handoff. The 2026-07-29 code audit instead
 confirmed that BTC required durable application negotiation and role provisioning;
-those boundaries and process composition are now GREEN, while XMR has no unified
-one-shot lifecycle actor or scheduler kind. BTC actual-node execution, fresh
+those boundaries, Delivery-first planning, canonical draft export, and process
+composition are now GREEN. The corrected range includes 2 to 4 hours for the BTC
+actual-node splice, 7 to 12 hours for XMR pre-effect and scheduler-safe application
+composition, and 3 to 6 hours for XMR actual effects, with partial overlap reserved
+for closure. XMR still has no unified one-shot lifecycle actor or scheduler kind.
+BTC actual-node execution, fresh
 receipt-bound ZEC execution, unavailable-chain isolation, simultaneous application
 composition, XMR/all-pair CLI completion, and closure gates remain.
 Shared containerd timeouts add wall-clock uncertainty but are not counted as

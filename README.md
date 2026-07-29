@@ -100,7 +100,14 @@ remain before the final user journey.
 The BTC application path now has a reproducible pre-effect process PoC. The real
 Maker CLI publishes a signed Delivery offer, the real Taker CLI discovers it,
 and a separate real maker daemon runs BTC Chat proposal and completion. A
-bounded canonical unsigned draft runs the same executable Bitcoin, LEZ, role,
+Delivery-only daemon can publish before any Chat, signing, provisioning, or
+actor authority exists. The Taker planning command authenticates the envelope
+and derives its reservation-bound swap ID without private material; the daemon
+then restarts with only the selected BTC authority. The canonical draft is
+exported from the finalized actual-node fixture under its exact Bitcoin policy
+using owner-private no-clobber storage, so the forthcoming node splice does not
+retype executable terms in shell. The bounded canonical unsigned draft runs the
+same executable Bitcoin, LEZ, role,
 and recovery checks as the final agreement and must match the exact local
 Bitcoin genesis and confirmation policy before signing. The daemon supplies the
 Maker Schnorr signature; the Taker validates and countersigns it; schema 19

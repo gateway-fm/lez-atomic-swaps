@@ -20,7 +20,9 @@ use bitcoin::{
 use btc_local_poc_provision::{
     finalize_asset_extension, finalize_stage2, generate_stage1, prepare_funding,
 };
-use lez_btc_swap_sdk::{BtcAgreementV1, BtcLezAssetExtensionV1, BtcLezAssetV1};
+use lez_btc_swap_sdk::{
+    BtcAgreementDraftV1, BtcAgreementV1, BtcLezAssetExtensionV1, BtcLezAssetV1,
+};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
@@ -357,6 +359,52 @@ fn happy_path_revalidates_agreement_in_both_directions() {
         assert_eq!(stage2_summary["bitcoin_funding_authorization"], "verified");
         assert_eq!(stage2_summary["bitcoin_node_state"], "not_asserted");
     }
+}
+
+#[test]
+fn export_draft_cli_emits_exact_private_canonical_body_without_clobbering() {
+    let (temp, summary, _) = provision("taker_sells_foreign");
+    let agreement_wire = fs::read(summary.agreement_file()).unwrap();
+    let agreement = BtcAgreementV1::from_wire(&agreement_wire).unwrap();
+    let expected = BtcAgreementDraftV1::validate_for_bitcoin_policy(
+        agreement.body().clone(),
+        agreement.bitcoin_chain_policy(),
+    )
+    .unwrap()
+    .encode_wire()
+    .unwrap();
+    let output_file = temp.path().join("owner/draft.borsh");
+
+    let first = Command::new(env!("CARGO_BIN_EXE_btc-local-poc-provision"))
+        .arg("export-draft")
+        .arg("--agreement-file")
+        .arg(summary.agreement_file())
+        .arg("--output-file")
+        .arg(&output_file)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "export-draft failed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(fs::read(&output_file).unwrap(), expected);
+    let metadata = fs::metadata(&output_file).unwrap();
+    assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+    assert_eq!(metadata.nlink(), 1);
+    let inode = metadata.ino();
+
+    let retry = Command::new(env!("CARGO_BIN_EXE_btc-local-poc-provision"))
+        .arg("export-draft")
+        .arg("--agreement-file")
+        .arg(summary.agreement_file())
+        .arg("--output-file")
+        .arg(&output_file)
+        .output()
+        .unwrap();
+    assert!(!retry.status.success());
+    assert_eq!(fs::read(&output_file).unwrap(), expected);
+    assert_eq!(fs::metadata(&output_file).unwrap().ino(), inode);
 }
 
 #[test]

@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use btc_local_poc_provision::{
-    finalize_asset_extension, finalize_stage2, generate_stage1, prepare_funding,
+    export_draft, finalize_asset_extension, finalize_stage2, generate_stage1, prepare_funding,
 };
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -58,6 +58,15 @@ enum Action {
         #[arg(long)]
         output_root: PathBuf,
     },
+    /// Extract one canonical unsigned application draft from a finalized agreement.
+    ExportDraft {
+        /// Existing owner-private canonical finalized agreement.
+        #[arg(long)]
+        agreement_file: PathBuf,
+        /// New owner-private no-clobber canonical draft file.
+        #[arg(long)]
+        output_file: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -88,6 +97,10 @@ fn execute(arguments: Arguments) -> Result<()> {
             spec_file,
             output_root,
         } => print_json(&finalize_asset_extension(&spec_file, &output_root)?),
+        Action::ExportDraft {
+            agreement_file,
+            output_file,
+        } => print_json(&export_draft(&agreement_file, &output_file)?),
     }
 }
 

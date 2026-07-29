@@ -54,11 +54,11 @@ struct Arguments {
     #[arg(long)]
     ready_file: Option<PathBuf>,
     /// Owner-private run-local Delivery directory; requires the signing key file.
-    #[arg(long, requires_all = ["delivery_signing_key_file", "chat_socket"])]
+    #[arg(long, requires = "delivery_signing_key_file")]
     delivery_directory: Option<PathBuf>,
     /// Owner-only file containing one raw 32-byte secp256k1 key or its 64-byte
     /// lowercase hexadecimal encoding.
-    #[arg(long, requires_all = ["delivery_directory", "chat_socket"])]
+    #[arg(long, requires = "delivery_directory")]
     delivery_signing_key_file: Option<PathBuf>,
     /// Taker-facing run-local Chat socket, isolated from owner-control methods.
     #[arg(
@@ -762,10 +762,6 @@ fn maker_context(
         }
         _ => bail!("Delivery directory and signing key must be configured together"),
     };
-    ensure!(
-        arguments.chat_socket.is_some(),
-        "Delivery transport requires a Chat socket"
-    );
 
     let zec_authority = match (
         arguments.maker_claim_key_id.as_deref(),
@@ -792,10 +788,17 @@ fn maker_context(
             "ZEC claim, preimage, templates, root, program, and SHA-256 authority must be configured together"
         ),
     };
-    ensure!(
-        zec_authority.is_some() || btc_chat_authority.is_some(),
-        "Chat requires at least one complete pair authority"
-    );
+    if arguments.chat_socket.is_some() {
+        ensure!(
+            zec_authority.is_some() || btc_chat_authority.is_some(),
+            "Chat requires at least one complete pair authority"
+        );
+    } else {
+        ensure!(
+            zec_authority.is_none() && btc_chat_authority.is_none(),
+            "pair authority requires a Chat socket"
+        );
+    }
 
     let signing_key = load_delivery_key(signing_file)?;
     let delivery = RunLocalDelivery::publisher(directory.to_path_buf(), signing_key)

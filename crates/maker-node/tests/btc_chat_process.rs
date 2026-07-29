@@ -76,19 +76,18 @@ async fn real_taker_and_daemon_handoff_exact_btc_agreement_to_role_fixed_actors(
     let offer_id = MakerOfferId::new(OFFER_ID).unwrap();
     let reservation_id = request(RESERVATION_ID);
 
-    // Bootstrap with valid, unrelated role authority only long enough to create
-    // the live offer through the real control RPC and Maker CLI. The production
-    // swap ID is derived from that exact signed Delivery envelope, so the daemon
-    // is then restarted with independently generated authority bound to it.
-    let bootstrap = BtcAuthorityFixture::new(run.path(), "bootstrap", [20; 32]);
-    let bootstrap_paths = daemon_base.with_authority(&bootstrap);
-    let mut bootstrap_daemon = start_daemon(&bootstrap_paths);
-    wait_ready(&mut bootstrap_daemon, &bootstrap_paths);
+    // Bootstrap Delivery without Chat or pair/actor authority. Its only job is
+    // to publish the exact signed offer through the real control RPC and Maker
+    // CLI; agreement authority is introduced only after the public swap ID can
+    // be derived from that envelope.
+    let mut bootstrap_daemon = start_delivery_only_daemon(&daemon_base);
+    wait_delivery_only_ready(&mut bootstrap_daemon, &daemon_base);
     configure_live_route(&socket, route).await;
     publish_offer(&socket, &offer_id);
     let delivery_maker = public_key(&key(8));
-    let authenticated = discover_exact_offer(&delivery, delivery_maker, route).await;
-    stop_daemon(&mut bootstrap_daemon, &bootstrap_paths);
+    let authenticated =
+        plan_and_discover(&delivery, &offer_id, &reservation_id, delivery_maker, route).await;
+    stop_delivery_only_daemon(&mut bootstrap_daemon, &daemon_base);
 
     // These are explicit per-role authority inputs, not authority copied out of
     // the peer or derived by Chat. Only the public application swap ID is bound
@@ -237,6 +236,19 @@ async fn discover_exact_offer(
         .expect("published BTC offer is discoverable")
 }
 
+async fn plan_and_discover(
+    delivery: &Path,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    maker_key: PublicKey,
+    route: MakerRouteV1,
+) -> AuthenticatedOfferRefV1 {
+    let planned = plan_btc_offer(delivery, offer_id, reservation_id, &maker_key, now());
+    let authenticated = discover_exact_offer(delivery, maker_key, route).await;
+    assert_btc_plan(&planned, offer_id, reservation_id, &authenticated);
+    authenticated
+}
+
 async fn configure_live_route(socket: &Path, route: MakerRouteV1) {
     let disabled = MakerPairConfigurationV1::new(
         route,
@@ -312,6 +324,66 @@ fn publish_offer(socket: &Path, offer_id: &MakerOfferId) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn plan_btc_offer(
+    delivery: &Path,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    maker_key: &PublicKey,
+    planned_at: u64,
+) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg("--delivery-directory")
+        .arg(delivery)
+        .arg("--maker-public-key")
+        .arg(hex::encode(maker_key.serialize()))
+        .arg("--now-unix-seconds")
+        .arg(planned_at.to_string())
+        .arg("--pair")
+        .arg("bitcoin")
+        .arg("--direction")
+        .arg("taker-sells-foreign")
+        .arg("--plan-btc-offer")
+        .arg(offer_id.as_str())
+        .arg("--reservation-id")
+        .arg(reservation_id.as_str())
+        .arg("--foreign-units")
+        .arg(FOREIGN_UNITS_SAT.to_string())
+        .output()
+        .expect("run real BTC Taker planning process");
+    assert!(
+        output.status.success(),
+        "real BTC Taker planning failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("real Taker returns a bounded BTC plan")
+}
+
+fn assert_btc_plan(
+    planned: &Value,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    authenticated: &AuthenticatedOfferRefV1,
+) {
+    assert_eq!(planned["schema_version"], 1);
+    assert_eq!(planned["offer_id"], offer_id.as_str());
+    assert_eq!(planned["reservation_id"], reservation_id.as_str());
+    assert_eq!(
+        planned["signed_envelope_sha256"],
+        hex::encode(authenticated.commitment())
+    );
+    assert_eq!(
+        planned["swap_id"],
+        hex::encode(maker_btc_chat_swap_id(
+            &authenticated.commitment(),
+            reservation_id
+        ))
+    );
+    assert_eq!(planned["foreign_units"], FOREIGN_UNITS_SAT);
+    assert_eq!(planned["lez_units"], 5_000);
+    assert_eq!(planned["private_material_disclosed"], false);
 }
 
 struct TakerFiles {
@@ -608,6 +680,70 @@ impl DaemonBase<'_> {
             actor_program_sha256: &authority.actor_program_sha256,
         }
     }
+}
+
+fn delivery_only_daemon_command(base: &DaemonBase<'_>) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"));
+    command
+        .arg("--socket")
+        .arg(base.socket)
+        .arg("--database")
+        .arg(base.database)
+        .arg("--ready-file")
+        .arg(base.ready)
+        .arg("--delivery-directory")
+        .arg(base.delivery)
+        .arg("--delivery-signing-key-file")
+        .arg(base.delivery_key);
+    command
+}
+
+fn start_delivery_only_daemon(base: &DaemonBase<'_>) -> Child {
+    delivery_only_daemon_command(base)
+        .spawn()
+        .expect("start isolated Delivery-only Maker daemon")
+}
+
+fn wait_delivery_only_ready(daemon: &mut Child, base: &DaemonBase<'_>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(published) = fs::read_to_string(base.ready) {
+            assert_eq!(published.trim(), base.socket.to_str().unwrap());
+            return;
+        }
+        assert!(
+            daemon.try_wait().unwrap().is_none(),
+            "Delivery-only daemon exited before readiness"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "Delivery-only daemon readiness timed out"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn stop_delivery_only_daemon(daemon: &mut Child, base: &DaemonBase<'_>) {
+    kill_process(Pid::from_child(daemon), Signal::INT).expect("signal Delivery-only daemon");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = daemon.try_wait().expect("poll Delivery-only daemon") {
+            assert!(
+                status.success(),
+                "Delivery-only daemon shutdown failed: {status}"
+            );
+            break;
+        }
+        if Instant::now() >= deadline {
+            daemon.kill().expect("kill wedged Delivery-only daemon");
+            daemon.wait().expect("reap wedged Delivery-only daemon");
+            panic!("Delivery-only daemon did not stop");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!base.socket.exists());
+    assert!(!base.chat_socket.exists());
+    assert!(!base.ready.exists());
 }
 
 fn daemon_command(paths: &DaemonPaths<'_>) -> Command {

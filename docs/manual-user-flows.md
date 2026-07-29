@@ -5586,19 +5586,28 @@ Expected result is one passing test in about one second; the recorded focused
 run passed 1 of 1 in 0.87 seconds. The process roles emulate the real operator
 boundary:
 
-1. The Maker CLI publishes its signed, bounded Delivery offer.
-2. The Taker CLI discovers that exact offer and asks the maker daemon for a BTC
+1. A Delivery-only maker daemon starts without Chat, agreement signing,
+   provisioning, or actor authority, and the real Maker CLI publishes its
+   signed bounded offer.
+2. `lez-taker --plan-btc-offer` authenticates that exact envelope and prints the
+   reservation ID, envelope commitment, derived swap ID, and quoted amounts with
+   `private_material_disclosed: false`.
+3. The daemon restarts with the selected BTC authority, while
+   `btc-local-poc-provision export-draft` reparses the finalized fixture and
+   creates the exact canonical unsigned body under mode 0700/0600 no-clobber
+   storage.
+4. The Taker CLI discovers that exact offer and asks the maker daemon for a BTC
    proposal through the taker-facing Chat socket.
-3. The daemon authenticates the Delivery envelope and draft, contributes only
+5. The daemon authenticates the Delivery envelope and draft, contributes only
    the Maker Schnorr signature, and durably stages it before replying.
-4. The Taker validates the proposal, contributes only the Taker Schnorr
+6. The Taker validates the proposal, contributes only the Taker Schnorr
    signature, and persists the final agreement before requesting completion.
-5. Schema 19 atomically consumes the offer and commits the exact dual-signed
+7. Schema 19 atomically consumes the offer and commits the exact dual-signed
    wire, coordinator, Maker role actor, and replay result; the Taker provisions
    only its own role actor.
-6. The Taker publishes its pair-pinned acceptance receipt only after durable
+8. The Taker publishes its pair-pinned acceptance receipt only after durable
    Maker completion.
-7. The test removes Delivery, repeats completion from the persisted final wire,
+9. The test removes Delivery, repeats completion from the persisted final wire,
    verifies the agreement and actor-config inodes did not change, and monitors
    the accepted swap offline through the receipt.
 

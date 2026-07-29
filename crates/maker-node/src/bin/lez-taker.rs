@@ -6,10 +6,11 @@ use btc_reference_actor::{
     execute_actor_command as execute_btc_actor_command,
 };
 use clap::{ArgGroup, Args as ClapArgs, Parser, Subcommand, ValueEnum};
+use lez_bridge_protocol::RequestId;
 use lez_maker_node::{DeliveryOfferQueryV1, RunLocalDelivery};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
-use lez_swap_store::{MakerActorHeldLock, MakerRouteV1};
+use lez_swap_store::{MakerActorHeldLock, MakerRouteV1, maker_btc_chat_swap_id};
 use secp256k1::PublicKey;
 use serde::Serialize;
 use zec_reference_actor::{
@@ -47,6 +48,9 @@ struct Arguments {
     /// Optional exact direction filter; requires `--pair`.
     #[arg(long, value_enum)]
     direction: Option<DirectionArgument>,
+    /// Plan this exact BTC offer before constructing its chain-complete draft.
+    #[arg(long)]
+    plan_btc_offer: Option<String>,
     /// Accept this exact ZEC offer instead of only listing discovery results.
     #[arg(long)]
     accept_zec_offer: Option<String>,
@@ -155,6 +159,17 @@ struct OfferView<'a> {
     maker_public_key: String,
     signed_envelope_sha256: String,
 }
+#[derive(Serialize)]
+struct BtcPlanOutput {
+    schema_version: u16,
+    offer_id: String,
+    reservation_id: String,
+    signed_envelope_sha256: String,
+    swap_id: String,
+    foreign_units: u64,
+    lez_units: u128,
+    private_material_disclosed: bool,
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -188,10 +203,24 @@ async fn execute() -> anyhow::Result<()> {
         .context("discovery requires --now-unix-seconds")?;
     let btc_take_requested = btc_take_was_requested(&arguments);
     let zec_take_requested = zec_take_was_requested(&arguments);
+    let btc_plan_requested = arguments.plan_btc_offer.is_some();
     ensure!(
         !(btc_take_requested && zec_take_requested),
         "exactly one BTC or ZEC acceptance may be requested"
     );
+    ensure!(
+        !(btc_plan_requested && (btc_take_requested || zec_take_requested)),
+        "BTC planning and acceptance are mutually exclusive"
+    );
+    if btc_plan_requested {
+        return execute_btc_plan(
+            &arguments,
+            &expected_maker,
+            delivery_directory,
+            now_unix_seconds,
+        )
+        .await;
+    }
     if btc_take_requested {
         return execute_btc_take(
             &arguments,
@@ -394,6 +423,72 @@ enum LifecycleAction {
     Monitor,
     Claim,
     Refund,
+}
+async fn execute_btc_plan(
+    arguments: &Arguments,
+    expected_maker: &PublicKey,
+    delivery_directory: &std::path::Path,
+    now_unix_seconds: u64,
+) -> anyhow::Result<()> {
+    ensure!(
+        arguments
+            .pair
+            .is_none_or(|pair| matches!(pair, PairArgument::Bitcoin))
+            && arguments.direction.is_none_or(|direction| {
+                matches!(direction, DirectionArgument::TakerSellsForeign)
+            }),
+        "M5 BTC planning supports only bitcoin/taker-sells-foreign"
+    );
+    ensure!(
+        arguments.chat_socket.is_none()
+            && arguments.unsigned_draft_file.is_none()
+            && arguments.taker_signing_key_file.is_none()
+            && arguments.agreement_output_file.is_none()
+            && arguments.zec_source_taker_config.is_none()
+            && arguments.zec_taker_actor_root.is_none()
+            && arguments.zec_acceptance_receipt.is_none()
+            && arguments.btc_source_taker_config.is_none()
+            && arguments.btc_taker_actor_root.is_none()
+            && arguments.btc_acceptance_receipt.is_none(),
+        "BTC planning accepts no Chat, signing, agreement, actor, or receipt authority"
+    );
+    let offer_id = arguments
+        .plan_btc_offer
+        .as_deref()
+        .context("BTC planning requires --plan-btc-offer")?;
+    let reservation_id = RequestId::new(
+        arguments
+            .reservation_id
+            .as_deref()
+            .context("BTC planning requires --reservation-id")?,
+    )?;
+    let foreign_units = arguments
+        .foreign_units
+        .context("BTC planning requires --foreign-units")?;
+    ensure!(foreign_units > 0, "BTC principal must be nonzero");
+    let route = MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsForeign)?;
+    let delivery =
+        RunLocalDelivery::subscriber(delivery_directory.to_path_buf(), expected_maker.to_owned())?;
+    let selected = delivery
+        .discover(&DeliveryOfferQueryV1::for_route(route, now_unix_seconds))
+        .await?
+        .into_iter()
+        .find(|candidate| candidate.offer().id().as_str() == offer_id)
+        .context("selected BTC offer is unavailable, expired, or not authentic")?;
+    let lez_units = selected.offer().quote_foreign_amount(foreign_units)?;
+    let commitment = selected.commitment();
+    let output = BtcPlanOutput {
+        schema_version: 1,
+        offer_id: offer_id.to_owned(),
+        reservation_id: reservation_id.as_str().to_owned(),
+        signed_envelope_sha256: hex::encode(commitment),
+        swap_id: hex::encode(maker_btc_chat_swap_id(&commitment, &reservation_id)),
+        foreign_units,
+        lez_units,
+        private_material_disclosed: false,
+    };
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
 }
 
 enum LoadedTakerActor {

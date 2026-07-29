@@ -28,6 +28,21 @@ The group is all-or-none. A Chat-enabled daemon must have a complete Delivery
 transport and at least one complete ZEC or BTC pair authority. BTC-only Chat no
 longer requires ZEC claim or preimage material.
 
+Before an agreement exists, the daemon may instead start with only a complete
+Delivery directory/key pair. This publication-only mode exposes offer RPCs but
+has no Chat listener, agreement signer, provisioner, or actor authority. Pair
+authority is rejected unless Chat is configured, and Chat is rejected unless at
+least one complete pair authority is configured. The operator can therefore
+publish first, let `lez-taker --plan-btc-offer` authenticate the exact envelope
+and derive its reservation-bound swap ID without disclosing private material,
+then restart the daemon with the already selected per-swap authority.
+
+`btc-local-poc-provision export-draft` extracts the canonical unsigned body from
+the finalized actual-node fixture. It reparses the final agreement under its
+exact Bitcoin policy and publishes a new mode-0600 draft beneath a canonical
+mode-0700 directory with no-clobber semantics. The application never retypes or
+maintains a second representation of executable chain terms.
+
 The real Taker CLI accepts one authenticated BTC offer, canonical unsigned
 draft, owner-private Taker agreement key, role-fixed schema-6 source config,
 fresh actor root, final-wire output, and receipt output. It validates the
@@ -87,9 +102,13 @@ sequenceDiagram
     participant R as Taker receipt
 
     O->>M: Configure BTC route price and offer
-    M->>D: Owner Unix RPC mutations
+    M->>D: Owner RPC to Delivery only daemon
     D->>S: Commit immutable offer
     D->>X: Publish signed offer envelope
+    U->>T: Plan exact offer without chain authority
+    T->>X: Discover by pinned Delivery key
+    T->>T: Derive envelope bound reservation and swap ID
+    O->>D: Restart with BTC Chat and selected authority
     U->>T: Accept exact offer with draft and Taker authority
     T->>X: Discover by pinned Delivery key
     X-->>T: Exact signed envelope and commitment
@@ -166,6 +185,9 @@ The handoff preserves the narrower authorities needed before chain execution:
 7. Daemon readiness is synchronized in a private sibling file, then published
    without replacement. An observer sees no path or the complete socket path,
    never the create-before-write empty state exposed by a locked/offline replay.
+8. Draft export revalidates the canonical final body and Bitcoin policy, then
+   uses owner-private create-new publication. Retry cannot replace the draft or
+   change the executable terms used by Chat.
 
 These guarantees make application acceptance all-or-nothing at each local
 authority boundary. Cross-chain atomicity begins only after actor activation;
@@ -186,6 +208,9 @@ therefore fast and deterministic, but it proves only the pre-effect application
 handoff. The next slice configures the same published actor configs for isolated
 Bitcoin Core Regtest and LEZ v0.2; changing to a public route remains a config
 and deployment operation, not a negotiation-format change. The exact
+process boundary now includes a real Delivery-only boot, Maker CLI publication,
+Taker planning, an authority-bearing daemon restart, and canonical draft export.
+The next proof uses those exact identities and terms in the isolated nodes. The exact
 locked/offline test first exposed the readiness publication race, then passed ten
 consecutive process replays after atomic publication replaced direct
 create-before-write. That hardening changes no chain or negotiation authority.
