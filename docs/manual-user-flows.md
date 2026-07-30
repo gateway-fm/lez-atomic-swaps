@@ -5990,13 +5990,14 @@ funds. This absence removes node/finality flakiness but also means the checkpoin
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The remaining PoC gate is the isolated official Monero 0.18.5.1 Regtest plus LEZ
 v0.2 corridor under this accepted authority, followed by concurrent/all-pair
-closure. From pushed base `5f9cb12`, current ETA is 8 to 16 focused hours for the
-M5 PoC and 12 to 22 focused hours for the milestone tag.
+closure. From pushed base `5044875`, current ETA is 7 to 15 focused hours for the
+M5 PoC and 11 to 21 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
-Status: **SOURCE/CONTRACT-GREEN; 0 node or chain executions.** Four
-exact-commit attempts failed safely before nodes. The first two exposed stale
+Status: **SOURCE/CONTRACT-GREEN; one safe actual-node pre-tag-13 execution; zero
+swap-chain/tag-13 executions.** Four exact-commit attempts failed safely before
+nodes. The first two exposed stale
 sidecar and release-service locks. `m5-xmr-app-20260730-7b8ec43-c` built both
 repaired graphs, then exposed a stale artifact-verifier hash for the intentional
 M5 bootstrap mode. The first three created no node or chain resource or tag-13 latch
@@ -6006,7 +6007,14 @@ artifact proof, then exposed a missing environment handoff from the pinned
 `RISC0_SERVER_PATH` to the nested stack's `LEZ_V02_R0VM` input. The already
 provisioned binary matches the required SHA-256 and version; the handoff is now
 explicit and regression-pinned. The exact hash chain is refreshed, and artifact
-source verification now precedes every heavy build. Use a fresh run ID. This is
+source verification now precedes every heavy build. The fifth run,
+`m5-xmr-app-20260730-58e1ee1-e`, reached real local LEZ deployment and Vault
+Claims, official Monero Regtest, application planning, Stage A/B, role
+installation, real acceptance, and typed `Blocked`. It stopped before tag 13
+because the harness rejected intentional consumed-offer reconciliation. Scoped
+cleanup passed with no tag-13 latch or swap-chain effect. The corrected path
+authenticates and archives the retry advertisement before emulating an empty
+Delivery outage and replay. Use a fresh run ID. This is
 not evidence that the M5 XMR PoC has passed. It composes the accepted application
 authority ahead of the existing M4 claim tail against official isolated local
 nodes.
@@ -6060,9 +6068,9 @@ deterministic local genesis and Monero funds from deterministic Regtest outputs.
 These are real local node processes, not mocked RPC responses. Ephemeral
 loopback ports prevent clashes with other work, but local Docker/containerd
 contention, node readiness, block production/finality, and wallet scanning can
-still affect wall time. The M4 baseline budgets roughly 25 to 45 minutes warm
-and 1 to 3 hours cold; this combined M5 path has not run, so it has no measured
-duration yet. A cold build can additionally depend on already pinned downloads,
+still affect wall time. The fifth combined attempt took roughly 36 minutes to
+build and reach its pre-tag-13 application checkpoint; the full corridor remains
+unmeasured. A cold build can additionally depend on already pinned downloads,
 archives, and caches being present; record any such pre-runtime fetch separately
 and never describe it as a runtime chain dependency.
 
@@ -6073,10 +6081,13 @@ Before tag 13 the runner must prove this exact order:
 3. provision Maker authority, run real Taker acceptance, and publish only the
    role-owned actor bundles and Taker receipt;
 4. obtain the exact typed `Blocked` revision-0/no-effect supervisor result;
-5. remove the original Delivery tree, replay from an empty replacement without
-   a Delivery argument, and preserve journal device/inode/size/digest plus actor
+5. remove the original Delivery tree and restart the daemon, which intentionally
+   republishes the consumed retryable offer for lost-response recovery;
+6. authenticate the identical swap and terms with the real Taker, archive that
+   retry mailbox, create an empty Delivery outage mailbox, replay without a
+   Delivery argument, and preserve journal device/inode/size/digest plus actor
    and receipt bytes/inodes; and
-6. synchronously reap the daemon process group and prove its PID, group, owner
+7. synchronously reap the daemon process group and prove its PID, group, owner
    socket, Chat socket, readiness files, SQLite sidecars, and replacement offers
    absent immediately before the one-shot tag 13 path begins.
 
@@ -6100,6 +6111,7 @@ jq . "$M5_XMR_EVIDENCE/m5-xmr-plan.json"
 jq . "$M5_XMR_EVIDENCE/xmr-agreement-receipt.json"
 jq . "$M5_XMR_EVIDENCE/m5-xmr-maker-provision.json"
 jq . "$M5_XMR_EVIDENCE/m5-xmr-initial-acceptance.json"
+jq . "$M5_XMR_EVIDENCE/m5-xmr-reconciled-delivery-plan.json"
 jq . "$M5_XMR_EVIDENCE/m5-xmr-blocked-monitor.json"
 jq . "$M5_XMR_EVIDENCE/m5-xmr-replay-acceptance.json"
 jq . "$M5_XMR_EVIDENCE/m5-xmr-replay-monitor.json"

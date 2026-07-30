@@ -3791,9 +3791,9 @@ separately from runtime dependencies.
 The progressive local ZEC application PoC gate closed on 2026-07-24, and the
 exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
-actual-runner splice described below, remaining M5 PoC ETA is 8 to 16 focused
-implementation hours; the milestone-tag ETA is 12 to 22 focused hours from
-pushed base `5f9cb12`. Update both ranges on every push. The PoC range
+actual-runner splice described below, remaining M5 PoC ETA is 7 to 15 focused
+implementation hours; the milestone-tag ETA is 11 to 21 focused hours from
+pushed base `5044875`. Update both ranges on every push. The PoC range
 covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
 and the remaining concurrent/unavailable-route closure. The tag range additionally
 includes evidence synchronization, manual-flow/README closure, the final CI and
@@ -4042,9 +4042,11 @@ an exact clean commit and delegates to the existing M4 actual-claim runner with
 `M5_XMR_APPLICATION_MODE=1`. The composed order is Delivery-only publication
 and authenticated plan; canonical Stage A/B; Maker provisioning; authorized
 daemon; real Taker acceptance and role receipt; typed-Blocked supervisor
-observation; removal of the original Delivery tree; Delivery-free exact replay;
-and a synchronous daemon/process-group/socket/readiness cutoff immediately
-before the one-shot legacy tag 13 tail. Exact journal
+observation; removal of the original Delivery tree; restart reconciliation of
+the consumed retryable advertisement; real-Taker authentication of the
+identical swap and terms; archival into an empty Delivery outage; Delivery-free
+exact replay; and a synchronous daemon/process-group/socket/readiness cutoff
+immediately before the one-shot legacy tag 13 tail. Exact journal
 device/inode/size/digest snapshots, artifact byte/inode snapshots, absent SQLite
 sidecars, and one swap ID across plan, agreement, provisioning, acceptance, and
 replay are required. Cleanup is ledger-, PID/start-time/binary-, and
@@ -4070,12 +4072,24 @@ LEZ artifact proof, then stopped at LEZ stack startup because the outer runner's
 pinned `RISC0_SERVER_PATH` was not handed to the nested stack's
 `LEZ_V02_R0VM` input. The existing binary has the required
 `36c016a5...15b` SHA-256 and reports version 3.0.5; the handoff is now explicit
-and regression-pinned. All four cleanups passed and no chain execution or swap
-is claimed. A fresh exact isolated replay is the next gate, followed by new
+and regression-pinned. All four pre-runtime cleanups passed.
+
+The fifth exact attempt, `m5-xmr-app-20260730-58e1ee1-e`, passed the repaired
+builds, exact artifact proof, local LEZ stack and finalized deployment, both
+fresh Vault Claims, official four-service Monero topology, Delivery planning,
+canonical Stage A/B, agreement and role journals, real Maker/Taker acceptance,
+and the schema-v2 typed-`Blocked` checkpoint. It stopped before tag 13 because
+the runner expected the restart publisher not to reconstruct a consumed offer,
+while the production store deliberately keeps consumed offers retryable for
+lost-response recovery. Cleanup passed with no tag-13 latch or swap-chain
+effect. The corrected contract authenticates the identical reconciled offer,
+archives it, creates an empty outage mailbox, and only then performs the
+Delivery-free replay and cutoff. A fresh exact isolated replay is the next
+gate, followed by new
 executable concurrent/all-pair and unavailable-route gates. A read-only audit
 confirmed those gates cannot honestly be closed by launching the existing
-single-worker wrappers in parallel. From pushed base `5f9cb12`, remaining M5
-PoC ETA is 8 to 16 focused hours and milestone-tag ETA is 12 to 22 focused
+single-worker wrappers in parallel. From pushed base `5044875`, remaining M5
+PoC ETA is 7 to 15 focused hours and milestone-tag ETA is 11 to 21 focused
 hours; neither range hides the still-open runtime evidence or code.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
