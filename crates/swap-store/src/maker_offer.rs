@@ -3,6 +3,9 @@
 use lez_bridge_protocol::RequestId;
 use lez_btc_swap_sdk::{BtcAgreementV1, BtcMakerAgreementProposalV1};
 use lez_swap_core::{Pair, Participant, Phase, SwapCoordinator, SwapDirection, SwapId};
+use lez_xmr_swap_sdk::{
+    MAX_XMR_AGREEMENT_WIRE_BYTES, XmrAgreementV1, XmrRoleV1, XmrSwapDirectionV1,
+};
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -22,8 +25,10 @@ const OFFER_PAYLOAD_VERSION: i64 = 1;
 const MAX_LOGOS_QUOTE_AGE_SECONDS: u64 = 3_600;
 const MAXIMUM_ZEC_PROPOSAL_BYTES: usize = 16 * 1024;
 const MAXIMUM_BTC_PROPOSAL_BYTES: usize = 16 * 1024;
+const MAXIMUM_XMR_STAGE_A_BYTES: usize = MAX_XMR_AGREEMENT_WIRE_BYTES;
 const ZEC_CHAT_SESSION_DOMAIN: &[u8] = b"lez-atomic-swaps/maker-zec-chat-session/v1";
 const BTC_CHAT_SWAP_ID_DOMAIN: &[u8] = b"lez-atomic-swaps/maker-btc-chat-swap-id/v1";
+const XMR_CHAT_SWAP_ID_DOMAIN: &[u8] = b"lez-atomic-swaps/maker-xmr-chat-swap-id/v1";
 
 /// Invalid immutable maker-offer input.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -580,6 +585,135 @@ impl MakerZecNegotiationV1 {
     }
 }
 
+/// Durable XMR negotiation phase persisted before executable Stage B.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MakerXmrNegotiationStatus {
+    /// The exact dual-signed Stage-A agreement reserved the offer.
+    StageAAccepted,
+}
+
+/// Exact durable, non-executable XMR Stage-A agreement bound to one offer.
+///
+/// Debug output deliberately excludes the potentially large agreement wire.
+#[derive(Clone, Eq, PartialEq)]
+pub struct MakerXmrNegotiationV1 {
+    reservation_id: RequestId,
+    offer_commitment: [u8; 32],
+    foreign_units: u64,
+    lez_units: u128,
+    reserved_at_unix_seconds: u64,
+    stage_a_wire: Vec<u8>,
+    status: MakerXmrNegotiationStatus,
+}
+
+impl std::fmt::Debug for MakerXmrNegotiationV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MakerXmrNegotiationV1")
+            .field("reservation_id", &self.reservation_id)
+            .field("offer_commitment", &self.offer_commitment)
+            .field("foreign_units", &self.foreign_units)
+            .field("lez_units", &self.lez_units)
+            .field("reserved_at_unix_seconds", &self.reserved_at_unix_seconds)
+            .field("stage_a_wire", &"<redacted>")
+            .field("status", &self.status)
+            .finish()
+    }
+}
+
+impl MakerXmrNegotiationV1 {
+    /// Constructs one bounded untrusted Stage-A candidate.
+    ///
+    /// Semantic agreement validation is deferred to the transactional store
+    /// boundary so malformed peer input can be rejected with zero durable write.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid metadata or an empty/oversized wire.
+    pub fn stage_a(
+        reservation_id: RequestId,
+        offer_commitment: [u8; 32],
+        foreign_units: u64,
+        lez_units: u128,
+        reserved_at_unix_seconds: u64,
+        stage_a_wire: Vec<u8>,
+    ) -> Result<Self, MakerOfferError> {
+        let value = Self {
+            reservation_id,
+            offer_commitment,
+            foreign_units,
+            lez_units,
+            reserved_at_unix_seconds,
+            stage_a_wire,
+            status: MakerXmrNegotiationStatus::StageAAccepted,
+        };
+        value.validate_metadata()?;
+        Ok(value)
+    }
+
+    /// Winning Delivery/Chat reservation identity.
+    pub const fn reservation_id(&self) -> &RequestId {
+        &self.reservation_id
+    }
+
+    /// Exact authenticated Delivery envelope commitment.
+    #[must_use]
+    pub const fn offer_commitment(&self) -> &[u8; 32] {
+        &self.offer_commitment
+    }
+
+    /// Selected Monero amount in piconero.
+    #[must_use]
+    pub const fn foreign_units(&self) -> u64 {
+        self.foreign_units
+    }
+
+    /// Selected LEZ atomic-unit amount.
+    #[must_use]
+    pub const fn lez_units(&self) -> u128 {
+        self.lez_units
+    }
+
+    /// Trusted reservation time.
+    #[must_use]
+    pub const fn reserved_at_unix_seconds(&self) -> u64 {
+        self.reserved_at_unix_seconds
+    }
+
+    /// Exact canonical dual-signed Stage-A wire.
+    #[must_use]
+    pub fn stage_a_wire(&self) -> &[u8] {
+        &self.stage_a_wire
+    }
+
+    /// Durable Stage-A phase.
+    #[must_use]
+    pub const fn status(&self) -> MakerXmrNegotiationStatus {
+        self.status
+    }
+
+    /// Delivery-and-reservation-derived binary agreement swap identity.
+    #[must_use]
+    pub fn swap_id(&self) -> [u8; 32] {
+        maker_xmr_chat_swap_id(&self.offer_commitment, &self.reservation_id)
+    }
+
+    fn validate_metadata(&self) -> Result<(), MakerOfferError> {
+        if self.offer_commitment == [0; 32]
+            || self.foreign_units == 0
+            || self.lez_units == 0
+            || self.reserved_at_unix_seconds == 0
+            || self.reserved_at_unix_seconds > i64::MAX as u64
+            || self.stage_a_wire.is_empty()
+            || self.stage_a_wire.len() > MAXIMUM_XMR_STAGE_A_BYTES
+            || self.status != MakerXmrNegotiationStatus::StageAAccepted
+        {
+            return Err(MakerOfferError::InvalidNegotiation);
+        }
+        Ok(())
+    }
+}
+
 /// Durable pre-lock Bitcoin Chat negotiation phase.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MakerBtcNegotiationStatus {
@@ -833,6 +967,20 @@ struct StageZecNegotiationRequest<'a> {
     lez_units: String,
     agreement_commitment: &'a [u8],
     maker_proposal_sha256: [u8; 32],
+}
+
+#[derive(Serialize)]
+struct StageXmrNegotiationRequest<'a> {
+    offer_id: &'a MakerOfferId,
+    expected_revision: u64,
+    reservation_id: &'a RequestId,
+    offer_commitment: &'a [u8],
+    maker_agreement_identity: &'a [u8],
+    taker_agreement_identity: &'a [u8],
+    foreign_units: u64,
+    lez_units: String,
+    agreement_commitment: [u8; 32],
+    stage_a_wire_sha256: [u8; 32],
 }
 
 #[derive(Serialize)]
@@ -1282,6 +1430,207 @@ impl SqliteSwapStore {
             &transaction,
             request_id,
             "zec_negotiation_stage",
+            &request_json,
+            revision,
+        )?;
+        transaction.commit()?;
+        Ok(MakerOfferCommit {
+            revision,
+            was_replay: false,
+        })
+    }
+
+    /// Atomically reserves one Monero offer with a dual-signed canonical Stage A.
+    ///
+    /// Stage A is deliberately non-executable: this transaction does not consume
+    /// the offer, create a coordinator, or register an actor.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on malformed signatures/wire, wrong route, identity, derived
+    /// swap ID, quote, time, replay, or durable-row drift.
+    #[allow(clippy::too_many_lines)]
+    pub fn stage_xmr_maker_negotiation(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_revision: u64,
+        negotiation: &MakerXmrNegotiationV1,
+    ) -> Result<MakerOfferCommit, StoreError> {
+        let agreement = validate_xmr_stage_a(negotiation)?;
+        let maker_identity = agreement
+            .body()
+            .participants()
+            .for_role(XmrRoleV1::Maker)
+            .agreement_public_key();
+        let taker_identity = agreement
+            .body()
+            .participants()
+            .for_role(XmrRoleV1::Taker)
+            .agreement_public_key();
+        let agreement_commitment = agreement.agreement_commitment();
+        let stage_a_wire_sha256: [u8; 32] = Sha256::digest(negotiation.stage_a_wire()).into();
+        let request_json = serde_json::to_string(&StageXmrNegotiationRequest {
+            offer_id,
+            expected_revision,
+            reservation_id: negotiation.reservation_id(),
+            offer_commitment: negotiation.offer_commitment(),
+            maker_agreement_identity: &maker_identity,
+            taker_agreement_identity: &taker_identity,
+            foreign_units: negotiation.foreign_units(),
+            lez_units: negotiation.lez_units().to_string(),
+            agreement_commitment,
+            stage_a_wire_sha256,
+        })?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(commit) = replay_offer_mutation(
+            &transaction,
+            request_id,
+            "xmr_negotiation_stage",
+            &request_json,
+        )? {
+            let committed_revision = expected_revision
+                .checked_add(1)
+                .ok_or(StoreError::RevisionOverflow)?;
+            let exact: bool = transaction.query_row(
+                "SELECT EXISTS(
+                     SELECT 1
+                       FROM maker_offers o
+                       JOIN maker_xmr_negotiations n USING (offer_id)
+                      WHERE o.offer_id = ?1
+                        AND o.state = 'reserved' AND o.revision = ?2
+                        AND o.reservation_id = ?3 AND o.swap_id IS NULL
+                        AND o.updated_request_id = ?12
+                        AND n.payload_version = 1
+                        AND n.reservation_id = ?3
+                        AND n.offer_commitment = ?4
+                        AND n.maker_agreement_identity = ?5
+                        AND n.taker_agreement_identity = ?6
+                        AND n.foreign_units = ?7 AND n.lez_units = ?8
+                        AND n.reserved_at_unix_seconds = ?9
+                        AND n.agreement_commitment = ?10
+                        AND n.stage_a_wire = ?11
+                        AND n.state = 'stage_a_accepted'
+                        AND n.updated_request_id = ?12
+                 )",
+                params![
+                    offer_id.as_str(),
+                    u64_to_sql(committed_revision)?,
+                    negotiation.reservation_id().as_str(),
+                    negotiation.offer_commitment().as_slice(),
+                    maker_identity.as_slice(),
+                    taker_identity.as_slice(),
+                    u64_to_sql(negotiation.foreign_units())?,
+                    negotiation.lez_units().to_be_bytes().as_slice(),
+                    u64_to_sql(negotiation.reserved_at_unix_seconds())?,
+                    agreement_commitment.as_slice(),
+                    negotiation.stage_a_wire(),
+                    request_id.as_str(),
+                ],
+                |row| row.get(0),
+            )?;
+            let record =
+                load_offer(&transaction, offer_id, 0)?.ok_or(StoreError::CorruptMakerOffer)?;
+            if !exact
+                || commit.revision() != committed_revision
+                || record.offer.route()
+                    != MakerRouteV1::new(Pair::Monero, SwapDirection::TakerSellsLez)?
+                || negotiation.reserved_at_unix_seconds() < record.offer.created_at_unix_seconds()
+                || negotiation.reserved_at_unix_seconds() >= record.offer.expires_at_unix_seconds()
+                || record
+                    .offer
+                    .quote_foreign_amount(negotiation.foreign_units())?
+                    != negotiation.lez_units()
+            {
+                return Err(StoreError::CorruptMakerOffer);
+            }
+            transaction.commit()?;
+            return Ok(commit);
+        }
+        let record = load_offer(
+            &transaction,
+            offer_id,
+            negotiation.reserved_at_unix_seconds(),
+        )?
+        .ok_or(StoreError::MissingMakerOffer)?;
+        if record.revision != expected_revision {
+            return Err(StoreError::StaleMakerOffer {
+                expected: expected_revision,
+                actual: record.revision,
+            });
+        }
+        if record.offer.route().pair() != Pair::Monero
+            || record.offer.route().direction() != SwapDirection::TakerSellsLez
+        {
+            return Err(StoreError::MakerOfferSwapMismatch);
+        }
+        if negotiation.reserved_at_unix_seconds() < record.offer.created_at_unix_seconds() {
+            return Err(MakerOfferError::InvalidNegotiation.into());
+        }
+        if negotiation.reserved_at_unix_seconds() >= record.offer.expires_at_unix_seconds() {
+            return Err(StoreError::MakerOfferExpired);
+        }
+        if record.status != MakerOfferStatus::Active {
+            return Err(StoreError::MakerOfferUnavailable);
+        }
+        if record
+            .offer
+            .quote_foreign_amount(negotiation.foreign_units())?
+            != negotiation.lez_units()
+        {
+            return Err(MakerOfferError::InvalidNegotiation.into());
+        }
+        transaction.execute(
+            "INSERT INTO maker_xmr_negotiations (
+                 offer_id, reservation_id, payload_version, offer_commitment,
+                 maker_agreement_identity, taker_agreement_identity, foreign_units, lez_units,
+                 reserved_at_unix_seconds, agreement_commitment, stage_a_wire,
+                 state, updated_request_id
+             ) VALUES (
+                 ?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                 'stage_a_accepted', ?11
+             )",
+            params![
+                offer_id.as_str(),
+                negotiation.reservation_id().as_str(),
+                negotiation.offer_commitment().as_slice(),
+                maker_identity.as_slice(),
+                taker_identity.as_slice(),
+                u64_to_sql(negotiation.foreign_units())?,
+                negotiation.lez_units().to_be_bytes().as_slice(),
+                u64_to_sql(negotiation.reserved_at_unix_seconds())?,
+                agreement_commitment.as_slice(),
+                negotiation.stage_a_wire(),
+                request_id.as_str(),
+            ],
+        )?;
+        let revision = expected_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let updated = transaction.execute(
+            "UPDATE maker_offers SET state = 'reserved', revision = ?1,
+                 reservation_id = ?2, updated_request_id = ?3
+             WHERE offer_id = ?4 AND revision = ?5 AND state = 'active'",
+            params![
+                u64_to_sql(revision)?,
+                negotiation.reservation_id().as_str(),
+                request_id.as_str(),
+                offer_id.as_str(),
+                u64_to_sql(expected_revision)?,
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::StaleMakerOffer {
+                expected: expected_revision,
+                actual: record.revision,
+            });
+        }
+        persist_offer_mutation(
+            &transaction,
+            request_id,
+            "xmr_negotiation_stage",
             &request_json,
             revision,
         )?;
@@ -1904,6 +2253,7 @@ impl SqliteSwapStore {
             "SELECT EXISTS(
                  SELECT 1 FROM maker_zec_negotiations WHERE offer_id = ?1
                  UNION ALL SELECT 1 FROM maker_btc_negotiations WHERE offer_id = ?1
+                 UNION ALL SELECT 1 FROM maker_xmr_negotiations WHERE offer_id = ?1
              )",
             params![offer_id.as_str()],
             |row| row.get(0),
@@ -2074,6 +2424,44 @@ impl SqliteSwapStore {
             )
             .optional()?
             .map(decode_zec_negotiation_row)
+            .transpose()
+    }
+
+    /// Loads the exact durable XMR Stage-A negotiation for one offer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed, noncanonical, or corrupt durable state.
+    pub fn load_xmr_maker_negotiation(
+        &self,
+        offer_id: &MakerOfferId,
+    ) -> Result<Option<MakerXmrNegotiationV1>, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT reservation_id, payload_version, offer_commitment,
+                        maker_agreement_identity, taker_agreement_identity, foreign_units,
+                        lez_units, reserved_at_unix_seconds, agreement_commitment,
+                        stage_a_wire, state
+                   FROM maker_xmr_negotiations WHERE offer_id = ?1",
+                params![offer_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(decode_xmr_negotiation_row)
             .transpose()
     }
 
@@ -2561,6 +2949,102 @@ fn decode_btc_negotiation_row(row: BtcNegotiationRow) -> Result<MakerBtcNegotiat
     Ok(value)
 }
 
+fn validate_xmr_stage_a(
+    negotiation: &MakerXmrNegotiationV1,
+) -> Result<XmrAgreementV1, MakerOfferError> {
+    negotiation.validate_metadata()?;
+    let agreement = XmrAgreementV1::from_wire(negotiation.stage_a_wire())
+        .map_err(|_| MakerOfferError::InvalidNegotiation)?;
+    if agreement
+        .encode_wire()
+        .map_err(|_| MakerOfferError::InvalidNegotiation)?
+        != negotiation.stage_a_wire()
+        || agreement.body().direction() != XmrSwapDirectionV1::TakerSellsLez
+        || agreement.body().swap_id() != negotiation.swap_id()
+        || agreement.body().monero().amount_piconero() != negotiation.foreign_units()
+        || agreement.body().lez().amount() != negotiation.lez_units()
+    {
+        return Err(MakerOfferError::InvalidNegotiation);
+    }
+    Ok(agreement)
+}
+
+type XmrNegotiationRow = (
+    String,
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    i64,
+    Vec<u8>,
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+    String,
+);
+
+fn decode_xmr_negotiation_row(row: XmrNegotiationRow) -> Result<MakerXmrNegotiationV1, StoreError> {
+    let (
+        reservation_id,
+        payload_version,
+        offer_commitment,
+        maker_agreement_identity,
+        taker_agreement_identity,
+        foreign_units,
+        lez_units,
+        reserved_at_unix_seconds,
+        agreement_commitment,
+        stage_a_wire,
+        state,
+    ) = row;
+    check_version(payload_version, "maker XMR negotiation")?;
+    let offer_commitment: [u8; 32] = offer_commitment
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let maker_agreement_identity: [u8; 33] = maker_agreement_identity
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let taker_agreement_identity: [u8; 33] = taker_agreement_identity
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let lez_units: [u8; 16] = lez_units
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let agreement_commitment: [u8; 32] = agreement_commitment
+        .try_into()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    if state != "stage_a_accepted" {
+        return Err(StoreError::CorruptMakerOffer);
+    }
+    let value = MakerXmrNegotiationV1::stage_a(
+        RequestId::new(reservation_id).map_err(|_| StoreError::CorruptMakerOffer)?,
+        offer_commitment,
+        sql_to_u64(foreign_units)?,
+        u128::from_be_bytes(lez_units),
+        sql_to_u64(reserved_at_unix_seconds)?,
+        stage_a_wire,
+    )
+    .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let agreement = validate_xmr_stage_a(&value).map_err(|_| StoreError::CorruptMakerOffer)?;
+    if agreement.agreement_commitment() != agreement_commitment
+        || agreement
+            .body()
+            .participants()
+            .for_role(XmrRoleV1::Maker)
+            .agreement_public_key()
+            != maker_agreement_identity
+        || agreement
+            .body()
+            .participants()
+            .for_role(XmrRoleV1::Taker)
+            .agreement_public_key()
+            != taker_agreement_identity
+    {
+        return Err(StoreError::CorruptMakerOffer);
+    }
+    Ok(value)
+}
+
 type OfferRow = (
     String,
     String,
@@ -2733,6 +3217,7 @@ const fn direction_name(direction: SwapDirection) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), StoreError> {
     transaction.execute_batch(
         "CREATE TABLE IF NOT EXISTS maker_offers (
@@ -2830,6 +3315,27 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
          ) STRICT;
          CREATE INDEX IF NOT EXISTS maker_btc_negotiations_state_reservation
              ON maker_btc_negotiations (state, reservation_id);
+         CREATE TABLE IF NOT EXISTS maker_xmr_negotiations (
+             offer_id                     TEXT PRIMARY KEY NOT NULL,
+             reservation_id               TEXT NOT NULL UNIQUE,
+             payload_version              INTEGER NOT NULL CHECK (payload_version = 1),
+             offer_commitment              BLOB NOT NULL CHECK (length(offer_commitment) = 32),
+             maker_agreement_identity      BLOB NOT NULL CHECK (length(maker_agreement_identity) = 33),
+             taker_agreement_identity      BLOB NOT NULL CHECK (length(taker_agreement_identity) = 33),
+             foreign_units                 INTEGER NOT NULL CHECK (foreign_units > 0),
+             lez_units                     BLOB NOT NULL CHECK (length(lez_units) = 16),
+             reserved_at_unix_seconds      INTEGER NOT NULL CHECK (reserved_at_unix_seconds > 0),
+             agreement_commitment          BLOB NOT NULL CHECK (length(agreement_commitment) = 32),
+             stage_a_wire                  BLOB NOT NULL CHECK (
+                 length(stage_a_wire) BETWEEN 1 AND 276480
+             ),
+             state                         TEXT NOT NULL CHECK (state = 'stage_a_accepted'),
+             updated_request_id            TEXT NOT NULL,
+             FOREIGN KEY (offer_id) REFERENCES maker_offers(offer_id) ON DELETE RESTRICT,
+             CHECK (maker_agreement_identity != taker_agreement_identity)
+         ) STRICT;
+         CREATE INDEX IF NOT EXISTS maker_xmr_negotiations_state_reservation
+             ON maker_xmr_negotiations (state, reservation_id);
 ",
     )?;
     Ok(())
@@ -2842,6 +3348,18 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
 pub fn maker_zec_chat_session_id(reservation_id: &RequestId) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(ZEC_CHAT_SESSION_DOMAIN);
+    hasher.update(reservation_id.as_str().as_bytes());
+    hasher.finalize().into()
+}
+
+/// Derives the signed XMR Stage-A swap ID from Delivery and reservation.
+///
+/// A domain distinct from every other pair prevents cross-pair replay.
+#[must_use]
+pub fn maker_xmr_chat_swap_id(offer_commitment: &[u8; 32], reservation_id: &RequestId) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(XMR_CHAT_SWAP_ID_DOMAIN);
+    hasher.update(offer_commitment);
     hasher.update(reservation_id.as_str().as_bytes());
     hasher.finalize().into()
 }

@@ -3974,6 +3974,30 @@ foreign resource. The tracked secret-safe evidence packet binds clean
 IDs, timings, external-resource facts, replay, and cleanup. XMR application
 composition and the literal all-pair closure gates are now the critical path.
 
+The first XMR application store slice is now GREEN. Schema v20 adds a strict
+Stage-A negotiation row and a domain-separated swap ID derived from the exact
+authenticated Delivery commitment plus winning reservation. The store parses
+and canonically re-encodes the complete dual-signed XMR agreement before its
+write lock, then verifies its LEZ-first direction, both role identities,
+piconero and LEZ principals, no-rounding offer quote, acceptance window, and
+derived ID. One immediate transaction inserts the exact agreement, CASes the
+active offer to reserved, and records the global replay result. Exact replay
+also checks the complete offer and negotiation rows; the mutation ledger alone
+is never authority. Generic offer consumption rejects any staged XMR row.
+
+The focused RED covered absent public types and stage/load methods. GREEN now
+covers exact replay and reopen, request conflict, malformed wire, wrong
+signature, unsupported direction, wrong reservation-derived ID, wrong quote,
+zero-write failure with reusable request identity, forced final-write rollback,
+and concurrent one-winner staging. Schema 19 to 20 preserves existing global
+requests. The complete store gate is 148 tests, with warning-fatal all-target
+Clippy, formatting, diff hygiene, and warning-fatal Rustdoc GREEN. ADR 0111
+records current component, reservation, replay, resource, and atomicity flows.
+No Docker service, node, RPC, faucet, DNS, public network, or funds participated.
+This checkpoint deliberately creates no coordinator, actor, effect journal, or
+chain authority. Stage-B completion, role-only process provisioning, the Monero
+scheduler kind, and actual local Monero plus LEZ execution remain next.
+
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
 security contracts. Its extracted legacy timing fixture now declares non-M5

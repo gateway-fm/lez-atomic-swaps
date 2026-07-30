@@ -195,6 +195,9 @@ flowchart TB
     M5BtcStore --> M5BtcProvision["0108 Role fixed BTC actor provisioning"]
     M5BtcProvision --> M5BtcHandoff["0109 BTC daemon and Taker actor handoff"]
     M5BtcHandoff --> M5LezPrefix["0110 Immutable LEZ finalized prefixes"]
+    M5Entry --> M5XmrStageA["0111 Reserve dual signed XMR Stage A"]
+    XmrRoleJournals --> M5XmrStageA
+    M5XmrStageA -.-> M5XmrStageB["Future executable Stage B activation"]
 ```
 
 | ADR | Decision | Status |
@@ -307,5 +310,6 @@ flowchart TB
 | [0106](0106-negotiate-btc-with-validated-drafts.md) | Validate a canonical unsigned BTC body, verify a Maker-only proposal, and complete only through the existing dual-signature final validator | Accepted and SDK component GREEN; process handoff is GREEN under ADR 0109, while actual-node BTC application execution remains |
 | [0107](0107-stage-and-complete-btc-negotiations-atomically.md) | Stage one real Maker-signed BTC proposal before response and atomically commit the final agreement, coordinator, offer consumption, and Maker actor | Accepted and schema-v19 store component GREEN; process handoff is GREEN under ADR 0109, while actual-node BTC application execution remains |
 | [0108](0108-provision-role-fixed-btc-actors-without-clobber.md) | Publish independent schema-6 Maker or Taker BTC actor bundles through private staging and a no-replace rename | Accepted and component GREEN; real daemon/Taker composition is GREEN under ADR 0109, while actual-node BTC application execution remains |
-| [0109](0109-hand-off-btc-from-chat-to-role-actors.md) | Compose signed Delivery, BTC Chat, dual-role countersigning, durable completion, role-only provisioning, receipt replay, and offline monitor through the real daemon and Taker CLI | Accepted and process PoC GREEN; isolated Bitcoin Core Regtest plus LEZ v0.2 lifecycle execution remains |
-| [0110](0110-scan-immutable-lez-windows-as-finalized-prefixes.md) | Treat immutable schema-6 discovery windows as authorization envelopes and report only honest finalized prefixes | Accepted and component GREEN; exact isolated BTC application replay remains |
+| [0109](0109-hand-off-btc-from-chat-to-role-actors.md) | Compose signed Delivery, BTC Chat, dual-role countersigning, durable completion, role-only provisioning, receipt replay, and offline monitor through the real daemon and Taker CLI | Accepted and exact pushed isolated-node BTC application execution GREEN |
+| [0110](0110-scan-immutable-lez-windows-as-finalized-prefixes.md) | Treat immutable schema-6 discovery windows as authorization envelopes and report only honest finalized prefixes | Accepted and exact pushed isolated-node BTC application execution GREEN; `LOGOS-022` remains a non-blocking production caveat |
+| [0111](0111-reserve-dual-signed-xmr-stage-a-before-activation.md) | Reserve one authenticated XMR offer only after exact canonical dual-signed Stage A, without creating executable authority | Accepted for schema-v20 store boundary; Stage-B activation and process composition remain |

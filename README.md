@@ -139,6 +139,21 @@ runtime external-resource boundary, timings, and cleanup. XMR application
 composition, concurrent all-pair closure, and the final M5 gates remain open;
 M5 is neither complete nor tagged.
 
+The XMR application path has now entered its first schema-v20 store slice. An
+exact canonical dual-signed Stage-A agreement can reserve one authenticated
+Delivery offer only when its domain-separated swap ID, role identities,
+piconero amount, LEZ amount, direction, quote, and acceptance window all match.
+The agreement is intentionally non-executable: the same transaction creates no
+coordinator, actor, effect journal, or chain call. Exact replay rechecks the
+complete offer and negotiation rows; malformed wires, wrong signatures,
+direction, identity, or quote leave no write; concurrent reservations have one
+winner; and forced final-write failure rolls everything back. Three focused
+XMR tests and the complete 148-test store suite pass with warning-fatal Clippy
+and Rustdoc. [ADR 0111](docs/architecture/0111-reserve-dual-signed-xmr-stage-a-before-activation.md)
+records the component, reservation, replay, and atomicity diagrams. Stage-B
+activation, role-only process handoff, scheduler support, and the actual local
+Monero plus LEZ corridor remain before the XMR application PoC is complete.
+
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,
 is killed and reaped, clears its child identity, and enters durable backoff;
