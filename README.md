@@ -245,12 +245,15 @@ genesis/Regtest funds and ephemeral loopback RPCs; no public RPC, faucet, peer,
 or public funds are used.
 [Flow 1R](docs/manual-user-flows.md#flow-1r-run-the-xmr-application-to-chain-corridor)
 documents the exact operator command, resources, evidence, cleanup, and
-non-retry boundary. A fresh RFP/issue acceptance audit confirms the literal M5
-score remains 3 of 7: Maker CLI start/stop, Taker XMR lifecycle commands,
-autonomous multi-worker composition, and unavailable-route isolation still need
-executable user journeys rather than parallel wrapper invocations. From pushed
-base `2c6aec1`, the corrected estimate is 18 to 32 focused hours to M5 PoC and
-28 to 48 focused hours to the reviewed milestone tag.
+non-retry boundary. A fresh RFP/issue acceptance audit confirms the literal M5 score remains 3
+of 7. Explicit selected-route disable is now process-GREEN: disabled Zcash quote
+and publication fail before price or Delivery I/O, an enabled Bitcoin quote is
+unaffected across restart, and revisioned Zcash re-enable restores quotes. Full
+R3 still requires automatic unavailable-node behavior and an actual unaffected-
+pair application. Maker CLI start/stop, receipt-bound Taker XMR lifecycle, and
+autonomous multi-worker composition also remain. Updated estimate after this
+slice: 16 to 29 focused hours to M5 PoC and 26 to 45 focused hours to the
+reviewed milestone tag.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

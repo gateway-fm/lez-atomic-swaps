@@ -45,7 +45,7 @@ certified.
 | XMR application process and semantic supervisor | Handoff process-GREEN at 1 of 1 in 307.71 seconds; exact schema-v2 supervisor process GREEN at 1 of 1 in 79.22 seconds; 3 exact functional actual-node completions including 1 clean-certified replay | Exact run `m5-xmr-app-20260730-2c6aec1-h` repeated plan → Stage A/B → real acceptance → typed no-effect `Blocked` → authenticated restart reconciliation → empty Delivery outage → Delivery-free replay → synchronous cutoff → finalized tag 13/14/15 → extraction → sweep → binding. Claim transaction `05cb9052...349fce` was in LEZ block 139 and finalized by tip 142. Monero sweep `37930570...1603c8` received 998191600000 of 1000000000000 piconero after a 1808400000 fee and reached 10 confirmations at tip 130. Cleanup schema v2 passed with source zero, exact absence, preserved sentinel/latch, no foreign/broad cleanup, and no failure reasons |
 | Persistent restart evidence | Exact packet-bearing replay `m5app6c3bbbe20260724a` retained pre-effect state and returned `Completed` from fresh post-terminal owner history/status while Chat/Delivery stayed absent; receipt `929c9a7c...c58e` binds source revision 4 and no-RPC offline replay | GREEN for the progressive local ZEC application PoC |
 | Concurrent application swaps | 0 actual applications composed; 1 real-daemon sequential two-row process composition GREEN | One actor times out into durable backoff while a disjoint actor reaches terminal; restart retains both exact manifests with one attempt; invocation logs stay unchanged during the 300-millisecond post-readiness observation window. This is the process-isolation precursor only. Simultaneous child overlap plus distinct application agreements, escrows, deadlines, and actual-chain effects remain |
-| Missing-chain degradation | 0 composed | Each unavailable route disables only affected pairs and reports operator state |
+| Missing-chain degradation | 1 explicit route-control process journey; 0 unavailable-node application compositions | Disabled Zcash quote/publication rejection, unaffected Bitcoin quote, restart durability, and revisioned Zcash re-enable are GREEN. Next add automatic health behavior and one actual unaffected-pair swap |
 | Delivery/Chat removal after lock | 3 exact-tree actual-node runs GREEN | The latest run retained the exact restarted daemon through two-confirmation Zcash funding, then removed owner/Chat sockets and Delivery before LEZ reveal, terminal settlement, and offline terminal projection |
 | Coordinator fuzzing | Literal cargo-fuzz target plus 7 retained seeds; local 512-run smoke GREEN at 1,161 covered counters and 4,926 features | BTC/ZEC both directions and LEZ-first XMR cover transition rejection, reorg/removal, claim/refund/recovery, immutable terms, terminal absorption, and restart after every action; the isolated graph audit is GREEN |
 | Actual local application swaps | 7 functional happy-path completions; 6 checked records including 1 packet-bearing ZEC replay, clean BTC, clean XMR, and 2 cleanup-uncertified XMR diagnostics | Run H clean-certified the same XMR corridor completed by runs F/G and closes the XMR cleanup gate. Literal multi-application concurrency remains separate and open |
@@ -55,9 +55,9 @@ certified.
 
 The progressive local ZEC and exact pushed BTC application PoC gates are closed,
 and the exact pushed XMR application corridor is clean-certified. Literal M5
-completion remains 3 of 7. Remaining M5 PoC ETA is 18 to 32 focused
-implementation hours and milestone-tag ETA is 28 to 48 focused hours from
-pushed base `2c6aec1`; update both after every push. Maker CLI start/stop, Taker
+completion remains 3 of 7. Remaining M5 PoC ETA is 16 to 29 focused
+implementation hours and milestone-tag ETA is 26 to 45 focused hours after the
+explicit route-control slice; update both after every push. Maker CLI start/stop, Taker
 XMR lifecycle, concurrent and unavailable-route composition, synchronized
 evidence/docs, composite CI/security gates, and tag review remain.
 

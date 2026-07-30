@@ -1649,6 +1649,9 @@ fn quote_selected_price_source(
         .into_iter()
         .find(|record| record.value().route() == route)
         .ok_or_else(|| application_store_error(StoreError::MissingMakerPair))?;
+    if !configuration.value().enabled() {
+        return Err(application_store_error(StoreError::MakerRouteDisabled));
+    }
     match configuration.value().price_source() {
         MakerPriceSourceKind::Local => LocalPriceSource::new(&store)
             .quote(route, now_unix_seconds)

@@ -5989,11 +5989,11 @@ LEZ sequencer/indexer/sidecar, Docker service, faucet, DNS lookup, network, or
 funds. This absence removes node/finality flakiness but also means the checkpoint
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor under this
-accepted authority is clean-certified in Flow 1R. Remaining PoC work is literal
-Maker service control, Taker XMR lifecycle controls, concurrent/all-pair
-composition, and unavailable-route isolation. From pushed base `2c6aec1`, the
-corrected ETA is 18 to 32 focused hours for the M5 PoC and 28 to 48 focused hours
-for the milestone tag.
+accepted authority is clean-certified in Flow 1R. Remaining PoC work is literal Maker service control, Taker XMR lifecycle
+controls, concurrent/all-pair composition, and automatic unavailable-node
+behavior. Explicit route control is GREEN in Flow 1S. The updated ETA is 16 to
+29 focused hours for the M5 PoC and 26 to 45 focused hours for the milestone
+tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
@@ -6163,6 +6163,71 @@ failed cleanup even when the final absence probe is clean.
 is a one-shot mutation boundary; retain the latch and evidence, diagnose the
 run, and use a fresh run ID only after review. Do not delete the latch, repeat
 the wrapper, or manually continue a partial tail.
+
+## Flow 1S: disable one maker route without disabling another pair
+
+This node-free owner journey exercises the real Maker CLI and daemon against an
+owner-private temporary SQLite database and Unix socket:
+
+```bash
+cargo test -p lez-maker-node --test operator_journey \
+  disabled_route_rejects_quote_and_publication_without_disabling_another_pair \
+  -- --exact --nocapture
+```
+
+Expected result: one test passes. To repeat it manually against the daemon from
+Flow 1, set `MAKER_SOCKET` to that daemon's readiness socket and use fresh
+request IDs:
+
+```bash
+target/debug/lez-maker --socket "$MAKER_SOCKET" configure-pair \
+  --request-id manual-zec-disable-001 --pair zcash \
+  --direction taker-sells-lez --enabled false \
+  --minimum-foreign-units 10 --maximum-foreign-units 10000 \
+  --offer-ttl-seconds 300
+target/debug/lez-maker --socket "$MAKER_SOCKET" set-local-price \
+  --request-id manual-zec-price-001 --pair zcash \
+  --direction taker-sells-lez --lez-units-per-lot 5 \
+  --foreign-units-per-lot 2
+target/debug/lez-maker --socket "$MAKER_SOCKET" quote \
+  --pair zcash --direction taker-sells-lez
+target/debug/lez-maker --socket "$MAKER_SOCKET" publish-offer \
+  --request-id manual-zec-offer-001 --offer-id manual-zec-disabled \
+  --pair zcash --direction taker-sells-lez
+```
+
+The last two commands must fail with JSON-RPC code `-32602` and message
+`maker route is disabled`. Configure an independent Bitcoin route disabled,
+set its local price, then enable it at expected revision 1:
+
+```bash
+target/debug/lez-maker --socket "$MAKER_SOCKET" configure-pair \
+  --request-id manual-btc-create-001 --pair bitcoin \
+  --direction taker-sells-lez --enabled false \
+  --minimum-foreign-units 10 --maximum-foreign-units 10000 \
+  --offer-ttl-seconds 300
+target/debug/lez-maker --socket "$MAKER_SOCKET" set-local-price \
+  --request-id manual-btc-price-001 --pair bitcoin \
+  --direction taker-sells-lez --lez-units-per-lot 7 \
+  --foreign-units-per-lot 3
+target/debug/lez-maker --socket "$MAKER_SOCKET" configure-pair \
+  --request-id manual-btc-enable-001 --expected-revision 1 \
+  --pair bitcoin --direction taker-sells-lez --enabled true \
+  --minimum-foreign-units 10 --maximum-foreign-units 10000 \
+  --offer-ttl-seconds 300
+target/debug/lez-maker --socket "$MAKER_SOCKET" quote \
+  --pair bitcoin --direction taker-sells-lez
+```
+
+The Bitcoin quote must succeed before and after restarting the daemon on the
+same database. The Zcash failures must also survive restart. Finally re-enable
+Zcash with `--expected-revision 1`; its next quote must succeed. Do not reuse a
+request ID with changed fields.
+
+External resources: none. This flow opens no chain RPC, starts no local node or
+Docker service, uses no faucet or funds, and performs no DNS or public-network
+request. It proves explicit route isolation, not automatic health detection or
+an actual swap on the unaffected pair.
 
 ## Troubleshooting
 

@@ -162,6 +162,216 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
 }
 
 #[test]
+fn disabled_route_rejects_quote_and_publication_without_disabling_another_pair() {
+    let run = tempdir().expect("isolated test directory");
+    let database = run.path().join("disabled-route.sqlite3");
+    let (first_daemon, first_socket) =
+        start_daemon(run.path(), &database, "disabled-route-first.ready");
+
+    configure_disabled_zec_route(&first_socket);
+    configure_enabled_btc_route(&first_socket);
+
+    assert_disabled_route(&first_socket);
+    assert_enabled_btc_route(&first_socket);
+    drop(first_daemon);
+
+    let (_second_daemon, second_socket) =
+        start_daemon(run.path(), &database, "disabled-route-second.ready");
+    assert_disabled_route(&second_socket);
+    assert_enabled_btc_route(&second_socket);
+
+    let zec_enabled = maker_cli(
+        &second_socket,
+        &[
+            "configure-pair",
+            "--request-id",
+            "disabled-route-zec-enable",
+            "--expected-revision",
+            "1",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+            "--enabled",
+            "true",
+            "--minimum-foreign-units",
+            "10",
+            "--maximum-foreign-units",
+            "10000",
+            "--offer-ttl-seconds",
+            "300",
+        ],
+    );
+    assert_configuration_commit(&zec_enabled, 2, false);
+    let zec_quote = maker_cli(
+        &second_socket,
+        &["quote", "--pair", "zcash", "--direction", "taker-sells-lez"],
+    );
+    assert_success(&zec_quote);
+}
+
+fn configure_disabled_zec_route(first_socket: &Path) {
+    let zec_disabled = maker_cli(
+        first_socket,
+        &[
+            "configure-pair",
+            "--request-id",
+            "disabled-route-zec-create",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+            "--enabled",
+            "false",
+            "--minimum-foreign-units",
+            "10",
+            "--maximum-foreign-units",
+            "10000",
+            "--offer-ttl-seconds",
+            "300",
+        ],
+    );
+    assert_configuration_commit(&zec_disabled, 1, false);
+    let zec_price = maker_cli(
+        first_socket,
+        &[
+            "set-local-price",
+            "--request-id",
+            "disabled-route-zec-price",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+            "--lez-units-per-lot",
+            "5",
+            "--foreign-units-per-lot",
+            "2",
+        ],
+    );
+    assert_configuration_commit(&zec_price, 1, false);
+}
+
+fn configure_enabled_btc_route(first_socket: &Path) {
+    let btc_disabled = maker_cli(
+        first_socket,
+        &[
+            "configure-pair",
+            "--request-id",
+            "disabled-route-btc-create",
+            "--pair",
+            "bitcoin",
+            "--direction",
+            "taker-sells-lez",
+            "--enabled",
+            "false",
+            "--minimum-foreign-units",
+            "10",
+            "--maximum-foreign-units",
+            "10000",
+            "--offer-ttl-seconds",
+            "300",
+        ],
+    );
+    assert_configuration_commit(&btc_disabled, 1, false);
+    let btc_price = maker_cli(
+        first_socket,
+        &[
+            "set-local-price",
+            "--request-id",
+            "disabled-route-btc-price",
+            "--pair",
+            "bitcoin",
+            "--direction",
+            "taker-sells-lez",
+            "--lez-units-per-lot",
+            "7",
+            "--foreign-units-per-lot",
+            "3",
+        ],
+    );
+    assert_configuration_commit(&btc_price, 1, false);
+    let btc_enabled = maker_cli(
+        first_socket,
+        &[
+            "configure-pair",
+            "--request-id",
+            "disabled-route-btc-enable",
+            "--expected-revision",
+            "1",
+            "--pair",
+            "bitcoin",
+            "--direction",
+            "taker-sells-lez",
+            "--enabled",
+            "true",
+            "--minimum-foreign-units",
+            "10",
+            "--maximum-foreign-units",
+            "10000",
+            "--offer-ttl-seconds",
+            "300",
+        ],
+    );
+    assert_configuration_commit(&btc_enabled, 2, false);
+}
+
+fn assert_disabled_route(socket: &Path) {
+    let quote = maker_cli(
+        socket,
+        &["quote", "--pair", "zcash", "--direction", "taker-sells-lez"],
+    );
+    assert!(
+        !quote.status.success(),
+        "disabled route unexpectedly quoted"
+    );
+    let quote_error = String::from_utf8_lossy(&quote.stderr);
+    assert!(
+        quote_error.contains("-32602"),
+        "unexpected quote error: {quote_error}"
+    );
+    assert!(
+        quote_error.contains("maker route is disabled"),
+        "unexpected quote error: {quote_error}"
+    );
+
+    let publish = maker_cli(
+        socket,
+        &[
+            "publish-offer",
+            "--request-id",
+            "disabled-route-zec-publish",
+            "--offer-id",
+            "disabled-route-zec-offer",
+            "--pair",
+            "zcash",
+            "--direction",
+            "taker-sells-lez",
+        ],
+    );
+    assert!(
+        !publish.status.success(),
+        "disabled route unexpectedly published"
+    );
+    let publish_error = String::from_utf8_lossy(&publish.stderr);
+    assert!(publish_error.contains("-32602"));
+    assert!(publish_error.contains("maker route is disabled"));
+}
+
+fn assert_enabled_btc_route(socket: &Path) {
+    let quote = maker_cli(
+        socket,
+        &[
+            "quote",
+            "--pair",
+            "bitcoin",
+            "--direction",
+            "taker-sells-lez",
+        ],
+    );
+    assert_success(&quote);
+}
+
+#[test]
 fn owner_lists_and_acknowledges_durable_alert_across_daemon_restart() {
     let run = tempdir().expect("isolated test directory");
     let database = run.path().join("alerts.sqlite3");

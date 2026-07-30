@@ -3793,8 +3793,8 @@ exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
 actual-runner splice described below, that corridor is now clean-certified.
 A current literal-output audit keeps M5 at 3 of 7 and corrects the remaining PoC
-ETA to 18 to 32 focused implementation hours; the milestone-tag ETA is 28 to 48
-focused hours from pushed base `2c6aec1`. Update both ranges on every push. The
+ETA to 16 to 29 focused implementation hours; the milestone-tag ETA is 26 to 45
+focused hours after the explicit route-control checkpoint. Update both ranges on every push. The
 PoC range covers Maker CLI service start/stop, Taker XMR lifecycle controls,
 one-daemon multi-worker application composition, and honest unavailable-route
 isolation. The tag range additionally includes evidence synchronization,
@@ -4139,8 +4139,35 @@ The current RFP/issue audit keeps literal M5 completion at 3 of 7. Remaining
 implementation is Maker CLI start/stop, Taker XMR monitor/claim/refund, honest
 multi-worker application composition under one daemon/database, and route
 disable/unavailable behavior including quote/publication rejection and
-unaffected-pair progress. From pushed base `2c6aec1`, corrected M5 PoC ETA is 18
-to 32 focused hours and milestone-tag ETA is 28 to 48 focused hours.
+unaffected-pair progress. After the explicit route-control checkpoint, M5 PoC ETA is 16 to 29 focused
+hours and milestone-tag ETA is 26 to 45 focused hours.
+
+### M5 explicit route-control checkpoint (2026-07-30)
+
+RED reproduced a real application defect: after committing a disabled Zcash
+route with a valid local price, the owner CLI still returned a Zcash quote.
+Offer publication already rejected the route. GREEN adds one guard in the
+shared quote selector before local or Logos C-API price-source I/O. REFACTOR
+extracts the black-box fixture setup into pair-scoped helpers and passes the
+complete four-journey operator test, warning-fatal Maker Clippy, and
+warning-fatal Maker Rustdoc.
+
+The executable journey disables Zcash, keeps Bitcoin enabled, rejects Zcash
+quote and publication with stable JSON-RPC `-32602`, proves the Bitcoin quote is
+unaffected, restarts the daemon on the same SQLite database, repeats both
+outcomes, then re-enables Zcash with expected revision 1 and obtains its quote.
+No chain RPC, Docker service, faucet, DNS lookup, public network, or funds
+participate. ADR 0115 records the component, sequence, and local-isolation
+argument; Flow 1S gives the operator reproduction.
+
+This closes explicit pre-publication route control only. Automatic unhealthy-
+node detection, withdrawal of an already active offer, mid-negotiation policy,
+and an actual unaffected-pair application while another node is absent remain
+R3 work. Literal M5 therefore remains 3 of 7. Remaining order is: autonomous
+multi-worker application overlap, Maker CLI systemd start/stop, receipt-bound
+Taker XMR monitor/claim, the missing tag-16 XMR refund execution path, then
+composite closure/security/evidence review. Updated ETA after this checkpoint is
+16 to 29 focused hours to M5 PoC and 26 to 45 focused hours to the reviewed tag.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
