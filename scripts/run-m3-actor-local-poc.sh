@@ -2957,6 +2957,81 @@ run_overlapping_actor_flows() {
   done
 }
 
+terminal_replay_actor_config() {
+  local direction="$1" role="$2"
+  local direction_root="${directions_dir}/${direction}"
+  local application_root="${direction_root}/application"
+  local owner_root="${application_root}/owner"
+  local database="${application_root}/maker.sqlite3"
+  local receipt="${application_root}/owner/acceptance-receipt.json"
+  local agreement_file="${owner_root}/agreement-v1.borsh"
+  local swap_id="${m5_btc_swap_ids[$direction]:-}"
+  local config config_sha state_db agreement_sha receipt_agreement_sha row
+  local -a rows=()
+
+  if [[ "$m5_btc_application_mode" != 1 ]]; then
+    config="${direction_root}/actors/${role}/actor-config.json"
+    printf '%s\n' "$config"
+    return
+  fi
+  [[ "$direction" == taker_sells_foreign && "$role" =~ ^(maker|taker)$ &&
+     "$swap_id" =~ ^[0-9a-f]{64}$ && -d "$owner_root" && ! -L "$owner_root" &&
+     -f "$receipt" && ! -L "$receipt" && -f "$agreement_file" &&
+     ! -L "$agreement_file" ]] ||
+    fail "M5 terminal replay application authority is unavailable"
+  receipt_agreement_sha="$(jq -er --arg swap "$swap_id" '
+    select(.schema_version == 1 and .pair == "bitcoin" and .swap_id == $swap
+      and .role == "taker") | .agreement_sha256
+  ' "$receipt")" || fail "M5 terminal replay receipt is invalid"
+  agreement_sha="$(sha256sum "$agreement_file" | sed 's/ .*//')"
+  [[ "$agreement_sha" =~ ^[0-9a-f]{64}$ &&
+     "$receipt_agreement_sha" == "$agreement_sha" ]] ||
+    fail "M5 terminal replay agreement digest is invalid"
+
+  case "$role" in
+    maker)
+      [[ -f "$database" && ! -L "$database" ]] ||
+        fail "M5 terminal replay Maker database is unavailable"
+      mapfile -t rows < <(sqlite3 -batch -noheader -readonly -separator $'\t' \
+        "$database" "SELECT manifest_path, lower(hex(manifest_sha256)), state_db_path
+          FROM maker_actor_processes
+          WHERE swap_id = '${swap_id}' AND actor_kind = 'bitcoin';")
+      [[ "${#rows[@]}" == 1 ]] ||
+        fail "M5 terminal replay Maker manifest is ambiguous"
+      row="${rows[0]}"
+      IFS=$'\t' read -r config config_sha state_db <<<"$row"
+      [[ "$config" == "${owner_root}/maker-actors/"*/maker/actor-config.json ]] ||
+        fail "M5 terminal replay Maker manifest escaped its owner root"
+      ;;
+    taker)
+      config="$(jq -er '.actor_config_file | strings' "$receipt")" ||
+        fail "M5 terminal replay Taker config is unavailable"
+      config_sha="$(jq -er '.actor_config_sha256 | strings' "$receipt")" ||
+        fail "M5 terminal replay Taker digest is unavailable"
+      state_db="$(jq -er '.actor_state_database | strings' "$receipt")" ||
+        fail "M5 terminal replay Taker state is unavailable"
+      [[ "$config" == "${owner_root}/taker-actor/taker/actor-config.json" ]] ||
+        fail "M5 terminal replay Taker manifest escaped its owner root"
+      ;;
+  esac
+
+  [[ "$config" == /* && -f "$config" && ! -L "$config" ]] ||
+    fail "M5 terminal replay role artifact is unsafe or changed"
+  [[
+     "$(readlink -f "$config")" == "$config" &&
+     "$config_sha" =~ ^[0-9a-f]{64}$ &&
+     "$(sha256sum "$config" | sed 's/ .*//')" == "$config_sha" &&
+     "$state_db" == /* && -f "$state_db" && ! -L "$state_db" &&
+     "$(readlink -f "$state_db")" == "$state_db" ]] ||
+    fail "M5 terminal replay role artifact is unsafe or changed"
+  jq -e --arg role "$role" --arg agreement_sha "$agreement_sha" \
+    --arg state_db "$state_db" '
+    .schema_version == 6 and .role == $role
+    and .agreement_sha256 == $agreement_sha and .state_db == $state_db
+  ' "$config" >/dev/null || fail "M5 terminal replay role binding drifted"
+  printf '%s\n' "$config"
+}
+
 assert_actor_terminal_status() {
   local status_file="$1"
   local role="$2"
@@ -2989,7 +3064,7 @@ assert_terminal_and_replay() {
   ' "$counts_before" >/dev/null
 
   for role in maker taker; do
-    config="${direction_root}/actors/${role}/actor-config.json"
+    config="$(terminal_replay_actor_config "$direction" "$role")"
     terminal="${evidence_dir}/${direction}-${role}-terminal.json"
     replay="${evidence_dir}/${direction}-${role}-replay-${replay_command}.json"
     after="${evidence_dir}/${direction}-${role}-after-replay.json"

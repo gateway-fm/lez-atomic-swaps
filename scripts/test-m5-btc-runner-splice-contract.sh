@@ -215,4 +215,32 @@ stage_two_line="$(rg -n -F 'run_stage_two "$direction"' "$runner" | tail -n1 |
 [[ "$plan_line" =~ ^[0-9]+$ && "$stage_two_line" =~ ^[0-9]+$ &&
    "$plan_line" -lt "$stage_two_line" ]] ||
   fail "real Delivery planning must precede stage two"
+
+for required in \
+  'terminal_replay_actor_config() {' \
+  'local application_root="${direction_root}/application"' \
+  'local owner_root="${application_root}/owner"' \
+  'local database="${application_root}/maker.sqlite3"' \
+  'local receipt="${application_root}/owner/acceptance-receipt.json"' \
+  'local agreement_file="${owner_root}/agreement-v1.borsh"' \
+  'swap_id="${m5_btc_swap_ids[$direction]:-}"' \
+  'SELECT manifest_path, lower(hex(manifest_sha256)), state_db_path' \
+  "WHERE swap_id = '\${swap_id}' AND actor_kind = 'bitcoin';" \
+  '.actor_config_file | strings' \
+  '.actor_config_sha256 | strings' \
+  'config="${direction_root}/actors/${role}/actor-config.json"' \
+  '[[ "$config" == /* && -f "$config" && ! -L "$config"' \
+  'agreement_sha="$(sha256sum "$agreement_file"' \
+  '"$receipt_agreement_sha" == "$agreement_sha"' \
+  'sha256sum "$config"' \
+  '== "$config_sha"' \
+  '"$(readlink -f "$state_db")" == "$state_db"' \
+  '.schema_version == 6 and .role == $role' \
+  '.agreement_sha256 == $agreement_sha' \
+  '.state_db == $state_db' \
+  'config="$(terminal_replay_actor_config "$direction" "$role")"'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "terminal replay is missing role-provisioned authority: ${required}"
+done
+
 echo "M5 BTC runner splice contract passed"

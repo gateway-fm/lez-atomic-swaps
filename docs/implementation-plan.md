@@ -3939,6 +3939,30 @@ sequence flows, exact atomicity boundary, and `LOGOS-022` authoritative-indexer
 production limitation. A clean pushed commit and exact isolated BTC replay
 remain the runtime gate; no M5 tag is claimed.
 
+Exact pushed replay `m5-btc-app-20260730-836f75b-d` then completed both legs.
+It passed the hash-pinned deployment/bootstrap, Delivery and Chat negotiation,
+role-only provisioning, both actor activations, confirmed Bitcoin first lock,
+one finalized LEZ initialization, one finalized LEZ funding, both revision-2
+dual-lock projections, one revealing LEZ claim through the exact
+`PrefixUncertain` authority, both revision-3 projections, one confirmed Bitcoin
+follow-up claim, and both revision-4 `Completed` terminal states. Retained
+submission evidence contains exactly two unique Bitcoin effects and three
+unique LEZ effects.
+
+The outer wrapper nevertheless exited nonzero during its post-terminal
+replay-only tail because that verifier still opened the obsolete source
+configs rather than the no-clobber role-provisioned configs that performed the
+swap. Direct offline `status`, `drive`, and second `status` calls using the
+retained Maker database manifest and Taker acceptance receipt proved both
+actors remained revision-4 `Completed` and the replay composed no effect. The
+runner now resolves those exact authorities, independently verifies the
+canonical agreement digest, recorded config digest, role/schema/state binding,
+owner-root confinement, and regular canonical files, while retaining the
+legacy source-config route outside M5. Syntax, both M5 contracts, the complete
+no-binary M3 orchestration regression, and diff hygiene are GREEN. One fresh
+pushed replay must still make the complete wrapper and evidence packet exit
+cleanly before the BTC application runtime gate is closed.
+
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
 security contracts. Its extracted legacy timing fixture now declares non-M5
