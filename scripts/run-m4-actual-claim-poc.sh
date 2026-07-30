@@ -426,9 +426,13 @@ docker_label_resources_absent() {
 }
 
 safe_ephemeral_path() {
-  local path="$1"
-  case "$path" in
-    "${run_root}/build/"* | "${repo_root}/.e2e/${run_id}/lez-v02/image-context" | "${private_namespace}") return 0 ;;
+  local path="$1" canonical
+  [[ "$path" == /* ]] || return 1
+  canonical="$(readlink -f -- "$path")" || return 1
+  [[ "$canonical" == "$path" ]] || return 1
+  case "$canonical" in
+    "${run_root}/build/"* | "${repo_root}/.e2e/${run_id}/lez-v02/image-context" | \
+      "${private_namespace}" | "${private_root}/"*) return 0 ;;
     *) return 1 ;;
   esac
 }

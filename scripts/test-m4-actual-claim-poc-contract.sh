@@ -19,7 +19,7 @@ function_source() {
   sed -n "/^${function_name}() {$/,/^}$/p" "$runner"
 }
 
-for command_name in bash chmod id jq mkdir mktemp rg rm sed stat unlink wc; do
+for command_name in bash chmod id jq mkdir mktemp readlink rg rm sed stat unlink wc; do
   command -v "$command_name" >/dev/null || fail "missing test dependency: ${command_name}"
 done
 [[ -f "$evidence_contract" && ! -L "$evidence_contract" ]] ||
@@ -198,6 +198,36 @@ if ! M4_LEDGER_FIXTURE_ROOT="$ledger_fixture_root" \
     done
   '; then
   fail "resource-ledger validator did not reject corrupt/ambiguous cleanup input"
+fi
+
+safe_path_fixture_root="${test_root}/safe-paths"
+mkdir -p \
+  "${safe_path_fixture_root}/run/build/target" \
+  "${safe_path_fixture_root}/repo/.e2e/fixture-run/lez-v02/image-context" \
+  "${safe_path_fixture_root}/private/private/nested" \
+  "${safe_path_fixture_root}/foreign"
+ln -s "${safe_path_fixture_root}/foreign" \
+  "${safe_path_fixture_root}/private/private/linked"
+safe_path_source="$(function_source safe_ephemeral_path)"
+readonly safe_path_fixture_root safe_path_source
+if ! M4_SAFE_PATH_SOURCE="$safe_path_source" \
+  M4_SAFE_PATH_FIXTURE_ROOT="$safe_path_fixture_root" bash -c '
+    set -euo pipefail
+    eval "$M4_SAFE_PATH_SOURCE"
+    run_id=fixture-run
+    run_root="${M4_SAFE_PATH_FIXTURE_ROOT}/run"
+    repo_root="${M4_SAFE_PATH_FIXTURE_ROOT}/repo"
+    private_namespace="${M4_SAFE_PATH_FIXTURE_ROOT}/private"
+    private_root="${private_namespace}/private"
+    safe_ephemeral_path "${run_root}/build/target"
+    safe_ephemeral_path "${repo_root}/.e2e/${run_id}/lez-v02/image-context"
+    safe_ephemeral_path "$private_namespace"
+    safe_ephemeral_path "${private_root}/nested"
+    ! safe_ephemeral_path "${private_root}/../foreign"
+    ! safe_ephemeral_path "${private_root}/linked"
+    ! safe_ephemeral_path "${M4_SAFE_PATH_FIXTURE_ROOT}/foreign"
+  '; then
+  fail "safe ephemeral-path boundary rejected owned private descendants or admitted traversal/symlink paths"
 fi
 
 for required in \
