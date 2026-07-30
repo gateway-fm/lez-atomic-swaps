@@ -7,6 +7,7 @@ export LC_ALL=C
 readonly wrapper="scripts/run-m5-xmr-application-poc.sh"
 readonly runner="scripts/run-m4-actual-claim-poc.sh"
 readonly sidecar_lock="compat/lez-v0_2-sidecar/Cargo.lock"
+readonly release_lock="compat/lez-v0_2-xmr-release-service/Cargo.lock"
 
 fail() {
   echo "M5 XMR application-to-chain contract failed: $*" >&2
@@ -206,12 +207,26 @@ dependencies = \[
  "thiserror 2.0.18",
 \]' "$sidecar_lock" ||
   fail 'sidecar lock omits the reachable lez-swap-core package'
-rg -Uq 'name = "lez-xmr-swap-sdk"
+for xmr_lock in "$sidecar_lock" "$release_lock"; do
+  rg -Uq 'name = "lez-xmr-swap-sdk"
 version = "0.1.0"
 dependencies = \[
  "hex",
  "lez-adaptor-signature",
- "lez-swap-core",' "$sidecar_lock" ||
-  fail 'sidecar lock omits XMR SDK runtime dependency edges'
+ "lez-swap-core",' "$xmr_lock" ||
+    fail "locked graph omits XMR SDK runtime dependency edges: ${xmr_lock}"
+done
+
+rg -Uq 'name = "command-fds"
+version = "0.3.3"
+source = "registry\+https://github.com/rust-lang/crates.io-index"
+checksum = "1b60b5124979fccd9addd89d8b97a1d6eebb4950694520c75ddd722535ea443f"' "$release_lock" ||
+  fail 'release lock omits the checksum-pinned command-fds package'
+release_store_block="$(sed -n '/^name = "lez-swap-store"$/,/^$/p' "$release_lock")"
+readonly release_store_block
+for required_edge in command-fds lez-btc-swap-sdk lez-xmr-swap-sdk rustix; do
+  rg -Fqx -- " \"${required_edge}\"," <<<"$release_store_block" ||
+    fail "release lock omits swap-store runtime edge: ${required_edge}"
+done
 
 echo 'M5 XMR application-to-chain contract passed'

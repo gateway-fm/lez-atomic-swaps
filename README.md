@@ -200,7 +200,7 @@ effect. The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 application
 corridor remains open.
 
 The follow-on opt-in actual runner is now **SOURCE/CONTRACT-GREEN only** on the
-work based on pushed commit `a5a5d0e`; its first pre-runtime attempt stopped before nodes on a stale sidecar lock and is not
+work based on pushed commits through `edd5217`; two pre-runtime attempts stopped before nodes on stale separate lock graphs and it is not
 runtime/PoC GREEN. `scripts/run-m5-xmr-application-poc.sh execute` delegates to
 the existing M4 actual-claim runner with `M5_XMR_APPLICATION_MODE=1`. Before
 legacy tag 13, it runs exact Delivery planning, canonical Stage A/B, Maker and
@@ -214,7 +214,7 @@ final absence probe. The runtime topology is entirely local: official Monero
 ephemeral loopback RPCs; no public RPC, faucet, peer, or public funds are used.
 [Flow 1R](docs/manual-user-flows.md#flow-1r-run-the-xmr-application-to-chain-corridor)
 documents the exact operator command, resources, evidence, cleanup, and
-non-retry boundary without claiming a run. From pushed base `a5a5d0e`, the
+non-retry boundary without claiming a run. From pushed base `edd5217`, the
 remaining estimate is 3 to 6 focused hours to M5 PoC and 6 to 11 focused hours
 to the reviewed milestone tag.
 

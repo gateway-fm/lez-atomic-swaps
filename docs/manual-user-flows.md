@@ -5990,17 +5990,17 @@ funds. This absence removes node/finality flakiness but also means the checkpoin
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The remaining PoC gate is the isolated official Monero 0.18.5.1 Regtest plus LEZ
 v0.2 corridor under this accepted authority, followed by concurrent/all-pair
-closure. From pushed base `a5a5d0e`, current ETA is 3 to 6 focused hours for the
+closure. From pushed base `edd5217`, current ETA is 3 to 6 focused hours for the
 M5 PoC and 6 to 11 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
-Status: **SOURCE/CONTRACT-GREEN; 0 node or chain executions.** The first
-exact-commit attempt, `m5-xmr-app-20260730-a5a5d0e-a`, failed safely in the
-initial offline sidecar build because two reachable local dependency edges were
-missing from its separate lockfile. The run started no node or chain resource,
-created no tag-13 latch, and passed scoped cleanup. The minimal lock repair and
-regression contract are GREEN; use a fresh run ID. This is not evidence that
+Status: **SOURCE/CONTRACT-GREEN; 0 node or chain executions.** Two exact-commit attempts failed safely in offline builds: the first at the
+sidecar graph and `m5-xmr-app-20260730-edd5217-b` at the release-service
+graph. Both started no node or chain resource, created no tag-13 latch, and
+passed scoped cleanup. Minimal lock repairs now cover the XMR SDK and reachable
+swap-store runtime graph; the strengthened regression contract is GREEN. Use a
+fresh run ID. This is not evidence that
 the M5 XMR PoC has passed. It composes the
 accepted application authority ahead of the existing M4 claim tail against
 official isolated local nodes.
