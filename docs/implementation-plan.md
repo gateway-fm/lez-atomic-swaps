@@ -3841,6 +3841,22 @@ warning-fatal feature-complete Clippy is GREEN. The composed runner's static
 contract and full legacy M3 regression are GREEN. A clean pushed isolated-node
 execution remains the runtime gate, so this checkpoint does not yet claim a BTC
 application chain swap.
+
+Exact pushed replay `m5-btc-app-20260730-65cee8e-m` then passed the two local
+nodes, current M4 deployment, fresh LEZ identities, Delivery planning, Chat
+acceptance, role-only provisioning, daemon shutdown, offline receipt monitor,
+both actor activations, and the confirmed Bitcoin first lock. It failed closed
+before the first Maker LEZ submission. Retained state proved both actors at
+revision 1, zero Maker-lock intents, and zero Maker-lock steps. The cause was a
+schema-routing omission: supervised native schema 6 fell through to the generic
+found-only LEZ observer instead of the Maker-owned one-attempt send journal.
+A focused RED reproduced `ActivationMaterialUnavailable`; the GREEN treats
+schema 6 as a supervision overlay over the validated native shape, validates
+prepared Maker authority during activation, and routes revision 1 through the
+same SDK plan, cutoff check, durable CAS, and ordered send path as schema 4.
+All 90 actor unit tests, 11 actor CLI integration tests, and both M3/M5 shell
+contracts are GREEN. The failed replay created no LEZ effect and reached no
+secret reveal; a new exact pushed replay remains the runtime gate.
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
 security contracts. Its extracted legacy timing fixture now declares non-M5

@@ -629,6 +629,16 @@ impl ActorConfig {
         }
     }
 
+    fn uses_native_protocol(&self) -> bool {
+        self.schema_version == CONFIG_SCHEMA_VERSION
+            || (self.schema_version == SUPERVISED_CONFIG_SCHEMA_VERSION
+                && self.asset_extension.is_none())
+    }
+
+    fn supports_owned_maker_lock(&self) -> bool {
+        self.uses_native_protocol() || self.schema_version == ASSET_CONFIG_SCHEMA_VERSION
+    }
+
     fn native_schema_shape_is_valid(&self) -> bool {
         if self.taker_first_lock.is_some() || self.asset_extension.is_some() {
             return false;
@@ -2693,17 +2703,13 @@ fn validate_activation_material(
             }
         }
     }
-    if matches!(
-        config.schema_version,
-        CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
-    ) && config.role == ActorRole::Maker
-    {
+    if config.supports_owned_maker_lock() && config.role == ActorRole::Maker {
         let _ = load_prepared_maker_lock_material(config, agreement)?;
     }
     Ok(())
 }
 
-/// Agreement-bound maker second-lock material reconstructed from schema-4 or schema-5 files.
+/// Agreement-bound Maker second-lock material reconstructed from a supported protocol config.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PreparedMakerLockMaterialV1 {
     Bitcoin(PreparedBitcoinFundingV1),
@@ -2738,11 +2744,7 @@ fn load_prepared_maker_lock_material(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
 ) -> Result<PreparedMakerLockMaterialV1, ActorCommandError> {
-    if !matches!(
-        config.schema_version,
-        CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
-    ) || config.role != ActorRole::Maker
-    {
+    if !config.supports_owned_maker_lock() || config.role != ActorRole::Maker {
         return Err(ActorCommandError::ActivationMaterialUnavailable);
     }
     match (
@@ -2751,7 +2753,7 @@ fn load_prepared_maker_lock_material(
         config.maker_lock.as_ref(),
     ) {
         (
-            CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION,
+            CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION | SUPERVISED_CONFIG_SCHEMA_VERSION,
             SwapDirection::TakerSellsLez,
             Some(MakerLockMaterialConfig::Bitcoin {
                 exact_funding_transaction_file,
@@ -2767,7 +2769,7 @@ fn load_prepared_maker_lock_material(
                 .map_err(|_| ActorCommandError::ActivationMaterialUnavailable)
         }
         (
-            CONFIG_SCHEMA_VERSION,
+            CONFIG_SCHEMA_VERSION | SUPERVISED_CONFIG_SCHEMA_VERSION,
             SwapDirection::TakerSellsForeign,
             Some(MakerLockMaterialConfig::Lez {
                 preparation_request_file,
@@ -3192,10 +3194,7 @@ async fn drive_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCo
     drop(store);
     if let Some(transition) = FundingTransition::from_predecessor(durable.revision()) {
         if transition == FundingTransition::MakerLock
-            && matches!(
-                config.schema_version,
-                CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
-            )
+            && config.supports_owned_maker_lock()
             && config.role == ActorRole::Maker
         {
             let port = LiveMakerLockExecutionPort::new(config)?;
@@ -3426,7 +3425,9 @@ fn validate_fresh_maker_lock_plan(
         .accept_wire(agreement_wire)
         .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
     let validated = match config.schema_version {
-        CONFIG_SCHEMA_VERSION => {
+        CONFIG_SCHEMA_VERSION | SUPERVISED_CONFIG_SCHEMA_VERSION
+            if config.uses_native_protocol() =>
+        {
             let effects = match (
                 agreement.direction(),
                 eligibility.prepared_first_lock,
@@ -3574,7 +3575,7 @@ fn maker_lock_awaiting_output(
     )
 }
 
-/// Drives one schema-4 or schema-5 maker-owned second lock through exact SDK validation,
+/// Drives one supported Maker-owned second lock through exact SDK validation,
 /// durable one-attempt authority, and atomic lifecycle projection plus intent close.
 #[allow(clippy::too_many_lines)] // Keep the audited observe-check-CAS-send order linear.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -3584,11 +3585,7 @@ async fn drive_maker_lock_with_port(
     agreement_wire: Vec<u8>,
     port: &dyn MakerLockExecutionPort,
 ) -> Result<ActorEffectOutputV1, ActorCommandError> {
-    if !matches!(
-        config.schema_version,
-        CONFIG_SCHEMA_VERSION | ASSET_CONFIG_SCHEMA_VERSION
-    ) || config.role != ActorRole::Maker
-    {
+    if !config.supports_owned_maker_lock() || config.role != ActorRole::Maker {
         return Err(ActorCommandError::ActivationMaterialUnavailable);
     }
     if !state_file_exists(&config.state_db)? {

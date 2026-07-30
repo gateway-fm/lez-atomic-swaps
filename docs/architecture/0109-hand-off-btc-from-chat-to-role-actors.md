@@ -172,8 +172,12 @@ sequenceDiagram
     R->>X: Move Delivery offline
     R->>T: Monitor from receipt without transport
     R->>A: Activate from provisioned configs only
-    A->>N: Ordered locks after both roles activate
-    A->>N: Reveal then followup claim
+    A->>N: Taker submits exact Bitcoin first lock
+    N-->>A: Stable confirmation projects revision 1
+    A->>A: Maker validates schema 6 native plan and journals one attempt
+    A->>N: Maker submits LEZ initialization then funding
+    N-->>A: Finalized exact pair projects revision 2
+    A->>N: Reveal then followup claim in signed order
     Note over R,A: Later scan requests update evidence only
 ```
 
@@ -242,6 +246,12 @@ These guarantees make application acceptance all-or-nothing at each local
 authority boundary. Cross-chain atomicity begins only after actor activation;
 it still depends on the agreement-ordered lock, reveal, claim, and refund flows
 documented for the M3 BTC corridor.
+
+Schema 6 changes supervision metadata and pins the exact agreement digest; it
+does not change the native lock protocol. A supervised native Maker therefore
+uses the same prepared-plan validation and durable one-attempt journal as schema
+4. Any routing or observation failure remains before send authority and cannot
+be interpreted as affirmative absence or permission to reveal.
 
 The agreement digest prevents a source config from silently selecting different
 executable terms. It does not make a mutable source pathname atomic; that

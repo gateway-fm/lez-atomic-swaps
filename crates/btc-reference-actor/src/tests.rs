@@ -1693,6 +1693,46 @@ fn schema4_maker_material_is_role_shaped_and_agreement_direction_bound() {
     assert_eq!(taker.config.validate(), Err(ActorConfigError::Invalid));
 }
 
+#[tokio::test]
+async fn supervised_native_maker_owns_the_second_lock_send_path() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    upgrade_fixture_for_supervised_provision(&mut fixture);
+    activate_and_project_taker_lock(&fixture).await;
+    let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+        .expect("supervised native maker material")
+        .plan()
+        .clone();
+    let first_step = plan.steps().first().expect("maker lock first step");
+    let port = FixedMakerLockPort::new(
+        MakerLockStepChainObservationV1::Absent,
+        fresh_maker_eligibility(&fixture),
+        exact_maker_lock_complete_observation(&fixture.agreement, &plan, 0xa2),
+    )
+    .with_submission_result(BtcMakerLockSubmissionResult::Accepted(
+        first_step.expected_public_id().as_str().into(),
+    ));
+
+    let output = drive_maker_lock_with_port(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &port,
+    )
+    .await
+    .expect("supervised native Maker owns one exact submission");
+
+    assert_eq!(output.revision, 1);
+    assert_eq!(port.submissions(), 1);
+    assert_eq!(port.eligibility_checks(), 1);
+    let snapshot = SqliteBtcMakerLockJournal::open(&fixture.config.state_db)
+        .expect("supervised maker lock journal")
+        .load_intent(fixture.agreement.coordinator().id())
+        .expect("load supervised maker lock intent")
+        .expect("supervised maker lock intent");
+    assert_eq!(snapshot.steps().len(), plan.steps().len());
+}
+
 #[test]
 fn schema5_bridge_timeout_accepts_actor_outer_deadline_and_rejects_above_it() {
     let mut fixture =
