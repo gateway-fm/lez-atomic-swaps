@@ -64,6 +64,11 @@ if [[ "$#" == 1 && "$1" == contract ]]; then
   exit 0
 fi
 
+[[ -n "${M5_LEZ_DEPLOYER_SHA256:-}" ]] ||
+  fail 'M5_LEZ_DEPLOYER_SHA256 is required'
+[[ "$M5_LEZ_DEPLOYER_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+  fail 'M5_LEZ_DEPLOYER_SHA256 must be a lowercase SHA-256 digest'
+
 export M5_BTC_APPLICATION_MODE=1
 export M3_ACTOR_POC_ASSET_MODE=native
 export M3_ACTOR_POC_SCHEDULE=sequential

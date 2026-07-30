@@ -5,6 +5,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly runner="scripts/run-m3-actor-local-poc.sh"
 readonly direction_driver="scripts/run-m3-actor-direction.sh"
+readonly wrapper="scripts/run-m5-btc-application-poc.sh"
+readonly bootstrap_driver="scripts/run-m3-lez-bootstrap.sh"
 
 fail() {
   echo "M5 BTC runner splice contract failed: $*" >&2
@@ -17,6 +19,7 @@ for required in \
   'M5_BTC_APPLICATION_MODE=1 requires M3_ACTOR_POC_ASSET_MODE=native' \
   'M5_BTC_APPLICATION_MODE=1 requires M3_ACTOR_POC_SCHEDULE=sequential' \
   'M5_BTC_APPLICATION_MODE=1 requires M3_ACTOR_POC_JOURNEY=claim' \
+  'M5_LEZ_DEPLOYER_SHA256' \
   'directions=(taker_sells_foreign)' \
   'm5_btc_application_mode: ($m5_btc_application_mode == "1")'; do
   rg -Fq -- "$required" "$runner" ||
@@ -37,6 +40,8 @@ jq -e '
   .execution_performed == false and
   .m5_btc_application_mode == true and
   .asset_mode == "native" and
+  .evidence_packet_kind == "m5_btc_application_local_poc" and
+  .service_configuration.lez_v0_2.deployment_profile == "m4_checked_local" and
   .schedule == "sequential" and
   .journey == "claim" and
   .directions == ["taker_sells_foreign"] and
@@ -50,6 +55,61 @@ jq -e '
     schema_6_role_provisioning: true
   }
 ' <<<"$contract" >/dev/null || fail "outer runner emitted the wrong M5 BTC contract"
+
+for required in \
+  'M5_LEZ_DEPLOYER_SHA256 is required' \
+  'M5_LEZ_DEPLOYER_SHA256 must be a lowercase SHA-256 digest'; do
+  rg -Fq -- "$required" "$wrapper" ||
+    fail "M5 wrapper is missing explicit deployer identity validation: ${required}"
+done
+
+for required in \
+  'dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292' \
+  '4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82' \
+  'deployment_profile="m4_checked_local"' \
+  'deployment_command="deploy-m4-local"' \
+  'selected_deployer_sha256="${M5_LEZ_DEPLOYER_SHA256:-}"'; do
+  rg -Fq -- "$required" "$bootstrap_driver" ||
+    fail "LEZ bootstrap is missing M5 deployment identity: ${required}"
+done
+m5_bootstrap_contract="$(M5_BTC_APPLICATION_MODE=1 "$bootstrap_driver" contract)" ||
+  fail "LEZ bootstrap rejected the M5 checked deployment profile"
+jq -e '
+  .embedded_guest_sha256 ==
+    "dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292" and
+  .escrow_program_id ==
+    "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82" and
+  .deployment_profile == "m4_checked_local"
+' <<<"$m5_bootstrap_contract" >/dev/null ||
+  fail "LEZ bootstrap emitted the wrong M5 checked deployment profile"
+
+legacy_bootstrap_contract="$("$bootstrap_driver" contract)" ||
+  fail "LEZ bootstrap rejected the legacy M3 checked deployment profile"
+jq -e '
+  .embedded_guest_sha256 ==
+    "bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7" and
+  .escrow_program_id ==
+    "f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e" and
+  .deployment_profile == "m3_f7_checked_local"
+' <<<"$legacy_bootstrap_contract" >/dev/null ||
+  fail "LEZ bootstrap no longer preserves the legacy checked deployment profile"
+
+for required in 'm5_btc_application_local_poc' \
+  'if [[ "$m5_btc_application_mode" != 1 ]]; then' \
+  'if $m5_btc_application_mode == "1" then .[0:1] else . end' \
+  'if $m5_btc_application_mode == "1" then 1 else 2 end'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M5 final evidence remains two-direction-only: ${required}"
+done
+
+
+for required in \
+  'M5_BTC_APPLICATION_MODE="$m5_btc_application_mode"' \
+  'M5_LEZ_DEPLOYER_SHA256="$expected_lez_deployer_sha256"' \
+  '--arg deployment_profile "$expected_lez_deployment_profile"'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "outer runner is missing M5 bootstrap handoff: ${required}"
+done
 
 for required in \
   'readonly m5_btc_application_mode="${M5_BTC_APPLICATION_MODE:-0}"' \

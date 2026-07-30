@@ -10,11 +10,30 @@ readonly expected_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53
 readonly expected_program_id="f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
 readonly expected_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
 readonly auth_transfer_program_id="dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71"
+readonly m5_btc_application_mode="${M5_BTC_APPLICATION_MODE:-0}"
 
 fail() {
   echo "M3 LEZ bootstrap failed: $*" >&2
   exit 2
 }
+
+[[ "$m5_btc_application_mode" == 0 || "$m5_btc_application_mode" == 1 ]] ||
+  fail 'M5_BTC_APPLICATION_MODE must be 0 or 1'
+if [[ "$m5_btc_application_mode" == 1 ]]; then
+  selected_guest_sha256="dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292"
+  selected_program_id="4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82"
+  selected_deployer_sha256="${M5_LEZ_DEPLOYER_SHA256:-}"
+  deployment_profile="m4_checked_local"
+  deployment_command="deploy-m4-local"
+else
+  selected_guest_sha256="$expected_guest_sha256"
+  selected_program_id="$expected_program_id"
+  selected_deployer_sha256="$expected_deployer_sha256"
+  deployment_profile="m3_f7_checked_local"
+  deployment_command="deploy-local"
+fi
+readonly selected_guest_sha256 selected_program_id selected_deployer_sha256
+readonly deployment_profile deployment_command
 
 transaction_occurrences() {
   local block_file="$1" transaction_id="$2" variant="$3"
@@ -51,7 +70,8 @@ self_test_finality_selector() {
 }
 
 emit_contract() {
-  jq -n --arg guest "$expected_guest_sha256" --arg program "$expected_program_id" '
+  jq -n --arg guest "$selected_guest_sha256" --arg program "$selected_program_id" \
+    --arg deployment_profile "$deployment_profile" '
     {
       schema_version: 1,
       kind: "m3_lez_bootstrap_contract",
@@ -61,6 +81,7 @@ emit_contract() {
       finality_membership_variants: ["ProgramDeployment", "Public"],
       embedded_guest_sha256: $guest,
       escrow_program_id: $program,
+      deployment_profile: $deployment_profile,
       deployment_submission_count: 1,
       deployment_finality: "sequential_indexer_block_id_and_hash",
       fresh_identity_vault_claims: ["maker", "taker"],
@@ -86,6 +107,13 @@ if [[ "${1:-}" == "self-test-finality-selector" ]]; then
   exit 0
 fi
 [[ "${1:-}" == "execute" && "$#" == 1 ]] || fail "expected contract or execute"
+
+if [[ "$m5_btc_application_mode" == 1 ]]; then
+  [[ -n "$selected_deployer_sha256" ]] ||
+    fail 'M5_LEZ_DEPLOYER_SHA256 is required'
+  [[ "$selected_deployer_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+    fail 'M5_LEZ_DEPLOYER_SHA256 must be a lowercase SHA-256 digest'
+fi
 
 for command_name in chmod curl date jq mkdir mv readlink sed sha256sum sleep stat; do
   command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
@@ -141,14 +169,24 @@ for binary in "$deployer" "$M3_POC_VAULT_CLAIM_BIN"; do
 done
 deployer_sha256_at_start="$(sha256sum "$deployer" | sed 's/ .*//')"
 readonly deployer_sha256_at_start
-[[ "$deployer_sha256_at_start" == "$expected_deployer_sha256" ]] ||
-  fail "LEZ deployer SHA-256 does not match the pinned F7 artifact"
+if [[ "$m5_btc_application_mode" == 1 ]]; then
+  [[ "$deployer_sha256_at_start" == "$selected_deployer_sha256" ]] ||
+    fail "LEZ deployer SHA-256 does not match the selected M5 artifact"
+else
+  [[ "$deployer_sha256_at_start" == "$expected_deployer_sha256" ]] ||
+    fail "LEZ deployer SHA-256 does not match the pinned F7 artifact"
+fi
 [[ -f "$guest_elf" && ! -L "$guest_elf" && "$(readlink -f "$guest_elf")" == "$guest_elf" ]] ||
   fail "canonical checked guest ELF is missing or unsafe"
 guest_elf_sha256="$(sha256sum "$guest_elf" | sed 's/ .*//')"
 readonly guest_elf_sha256
-[[ "$guest_elf_sha256" == "$expected_guest_sha256" ]] ||
-  fail "independent checked guest ELF SHA-256 does not match the pinned artifact"
+if [[ "$m5_btc_application_mode" == 1 ]]; then
+  [[ "$guest_elf_sha256" == "$selected_guest_sha256" ]] ||
+    fail "independent checked guest ELF SHA-256 does not match the selected M5 artifact"
+else
+  [[ "$guest_elf_sha256" == "$expected_guest_sha256" ]] ||
+    fail "independent checked guest ELF SHA-256 does not match the pinned artifact"
+fi
 for source_file in "$deployer_manifest" "$deployer_source" "$guest_manifest" "$guest_source" \
   "$vault_manifest" "$vault_source"; do
   [[ -f "$source_file" && ! -L "$source_file" ]] ||
@@ -267,12 +305,12 @@ prove_finalized_transaction() {
 deployment_start="$(finalized_tip)"
 [[ "$(sha256sum "$deployer" | sed 's/ .*//')" == "$deployer_sha256_at_start" ]] ||
   fail "LEZ deployer changed before point of use"
-"$deployer" deploy-local --rpc-url "$M3_POC_LEZ_SEQUENCER_RPC_URL" \
+"$deployer" "$deployment_command" --rpc-url "$M3_POC_LEZ_SEQUENCER_RPC_URL" \
   --channel-id "$M3_POC_LEZ_CHANNEL_ID" --timeout-seconds 300 >"$deployment_evidence"
 chmod 0600 "$deployment_evidence"
 jq -e --arg rpc "$M3_POC_LEZ_SEQUENCER_RPC_URL" \
-  --arg channel "$M3_POC_LEZ_CHANNEL_ID" --arg guest "$expected_guest_sha256" \
-  --arg program "$expected_program_id" '
+  --arg channel "$M3_POC_LEZ_CHANNEL_ID" --arg guest "$selected_guest_sha256" \
+  --arg program "$selected_program_id" '
   .schema_version == 1
   and .preflight.rpc_url == $rpc
   and .preflight.channel_id == $channel
@@ -316,7 +354,7 @@ claim_vault_for_role() {
   "$M3_POC_VAULT_CLAIM_BIN" --role "$role" --run-id "$M3_POC_RUN_ID" \
     --request-id "${role}-vault-claim-0001" --state-directory "$role_root" \
     --private-key-file "$private_key" --sequencer-url "$M3_POC_LEZ_SEQUENCER_RPC_URL" \
-    --chain-id "$M3_POC_LEZ_CHANNEL_ID" --escrow-program-id "$expected_program_id" \
+    --chain-id "$M3_POC_LEZ_CHANNEL_ID" --escrow-program-id "$selected_program_id" \
     --allocation "$allocation" >"$claim_evidence"
   chmod 0600 "$claim_evidence"
   jq -e --arg role "$role" --argjson allocation "$allocation" '
@@ -363,8 +401,9 @@ guest_source_sha="$(sha256sum "$guest_source" | sed 's/ .*//')"
 vault_manifest_sha="$(sha256sum "$vault_manifest" | sed 's/ .*//')"
 vault_source_sha="$(sha256sum "$vault_source" | sed 's/ .*//')"
 genesis_hash="$(jq -er '.preflight.genesis_block_hash' "$deployment_evidence")"
-jq -n --arg run "$M3_POC_RUN_ID" --arg guest "$expected_guest_sha256" \
-  --arg program "$expected_program_id" --arg genesis "$genesis_hash" \
+jq -n --arg run "$M3_POC_RUN_ID" --arg guest "$selected_guest_sha256" \
+  --arg program "$selected_program_id" --arg genesis "$genesis_hash" \
+  --arg deployment_profile "$deployment_profile" \
   --arg deployment_tx "$deployment_tx" --argjson deployment_block "$deployment_block" \
   --arg bootstrap_script_sha "$bootstrap_script_sha" \
   --arg guest_path "$guest_elf" --arg guest_manifest "$guest_manifest" \
@@ -385,7 +424,7 @@ jq -n --arg run "$M3_POC_RUN_ID" --arg guest "$expected_guest_sha256" \
    deployer:{binary_path:$deployer_path,binary_sha256:$deployer_sha,
      source_identity:{manifest:$deployer_manifest,manifest_sha256:$deployer_manifest_sha,
        entrypoint:$deployer_source,entrypoint_sha256:$deployer_source_sha}},
-   runtime:{genesis_block_hash:$genesis},
+   runtime:{genesis_block_hash:$genesis,deployment_profile:$deployment_profile},
    deployment:{transaction_id:$deployment_tx,finalized_block_id:$deployment_block,submission_count:1},
    vault_claims:{maker:{submission_count:1,finalized_account_effect:true},
      taker:{submission_count:1,finalized_account_effect:true},
@@ -396,7 +435,7 @@ jq -n --arg run "$M3_POC_RUN_ID" --arg guest "$expected_guest_sha256" \
 chmod 0600 "$bootstrap_evidence"
 
 {
-  printf 'M3_POC_LEZ_ESCROW_PROGRAM_ID=%s\n' "$expected_program_id"
+  printf 'M3_POC_LEZ_ESCROW_PROGRAM_ID=%s\n' "$selected_program_id"
   printf 'M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID=%s\n' "$auth_transfer_program_id"
   printf 'M3_POC_LEZ_GENESIS_BLOCK_HASH=%s\n' "$genesis_hash"
   printf 'M3_POC_LEZ_DEPLOYMENT_TRANSACTION_ID=%s\n' "$deployment_tx"

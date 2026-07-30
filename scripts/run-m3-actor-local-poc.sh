@@ -67,7 +67,10 @@ case "$journey" in
     terminal_revision=4
     terminal_phase="completed"
     replay_command="drive"
-    if [[ "$asset_mode" == "custom_token" ]]; then
+    if [[ "$m5_btc_application_mode" == 1 ]]; then
+      packet_kind="m5_btc_application_local_poc"
+      success_label="M5 BTC application local PoC"
+    elif [[ "$asset_mode" == "custom_token" ]]; then
       packet_kind="m3_actor_two_direction_custom_token_local_poc"
       success_label="M3 actor two-direction custom-token local PoC"
     elif [[ "$schedule" == "overlap" ]]; then
@@ -159,8 +162,22 @@ readonly official_wallet_cache_helper="${repo_root}/scripts/prepare-m3-official-
 readonly official_wallet_cache_evidence="${evidence_dir}/official-wallet-artifact.json"
 readonly official_wallet_cache_root="${M3_OFFICIAL_WALLET_CACHE_ROOT:-/tmp/lez-atomic-swaps-cache-$(id -u)/m3-official-wallet-v1}"
 readonly lez_v02_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
-readonly expected_lez_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
-readonly expected_lez_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
+readonly m3_f7_lez_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
+readonly m3_f7_lez_program_id="f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
+readonly m3_f7_lez_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
+if [[ "$m5_btc_application_mode" == 1 ]]; then
+  expected_lez_guest_sha256="dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292"
+  expected_lez_program_id="4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82"
+  expected_lez_deployer_sha256="${M5_LEZ_DEPLOYER_SHA256:-}"
+  expected_lez_deployment_profile="m4_checked_local"
+else
+  expected_lez_guest_sha256="$m3_f7_lez_guest_sha256"
+  expected_lez_program_id="$m3_f7_lez_program_id"
+  expected_lez_deployer_sha256="$m3_f7_lez_deployer_sha256"
+  expected_lez_deployment_profile="m3_f7_checked_local"
+fi
+readonly expected_lez_guest_sha256 expected_lez_program_id
+readonly expected_lez_deployer_sha256 expected_lez_deployment_profile
 readonly lez_token_program_id="c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c"
 readonly lez_ata_program_id="95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
 if [[ "$m5_btc_application_mode" == 1 ]]; then
@@ -194,6 +211,7 @@ emit_contract() {
     --arg schedule "$schedule" \
     --arg asset_mode "$asset_mode" \
     --arg m5_btc_application_mode "$m5_btc_application_mode" \
+    --arg deployment_profile "$expected_lez_deployment_profile" \
     --arg token_program_id "$lez_token_program_id" \
     --arg ata_program_id "$lez_ata_program_id" \
     --argjson terminal_revision "$terminal_revision" \
@@ -217,7 +235,10 @@ emit_contract() {
         lez_v0_2: $lez_run
       },
       service_configuration: {
-        lez_v0_2: {slot_duration_seconds: $lez_slot_duration_seconds}
+        lez_v0_2: {
+          slot_duration_seconds: $lez_slot_duration_seconds,
+          deployment_profile: $deployment_profile
+        }
       },
       directions:
         (if $m5_btc_application_mode == "1" then
@@ -391,6 +412,13 @@ fail() {
   echo "M3 actor local PoC failed: $*" >&2
   exit 2
 }
+
+if [[ "$m5_btc_application_mode" == 1 ]]; then
+  [[ -n "$expected_lez_deployer_sha256" ]] ||
+    fail "M5_LEZ_DEPLOYER_SHA256 is required"
+  [[ "$expected_lez_deployer_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "M5_LEZ_DEPLOYER_SHA256 must be a lowercase SHA-256 digest"
+fi
 
 for command_name in awk cargo chmod curl date docker find git id jq kill mkdir mv ps readlink rg rm sed setsid sha256sum sleep stat; do
   command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
@@ -1178,17 +1206,20 @@ validate_actor_direction_phase_timing_for_run_evidence() {
 actor_direction_phase_timings_hash_stable() {
   local expected="$1" direction child_path effects_path
   local expected_child_sha expected_effects_sha child_sha effects_sha
-  jq -e '
-    (keys | sort) == (["taker_sells_foreign","taker_sells_lez"] | sort)
+  jq -e --arg m5_btc_application_mode "$m5_btc_application_mode" '
+    (keys | sort) ==
+      (if $m5_btc_application_mode == "1" then ["taker_sells_foreign"]
+       else (["taker_sells_foreign","taker_sells_lez"] | sort) end)
     and .taker_sells_foreign.direction == "taker_sells_foreign"
-    and .taker_sells_lez.direction == "taker_sells_lez"
+    and (if $m5_btc_application_mode == "1" then has("taker_sells_lez") | not
+         else .taker_sells_lez.direction == "taker_sells_lez" end)
     and ([.[] |
       (.evidence_sha256 | type) == "string"
       and (.evidence_sha256 | test("^[0-9a-f]{64}$"))
       and (.actual_effects_sha256 | type) == "string"
       and (.actual_effects_sha256 | test("^[0-9a-f]{64}$"))] | all)
   ' <<<"$expected" >/dev/null || return 1
-  for direction in taker_sells_foreign taker_sells_lez; do
+  for direction in "${directions[@]}"; do
     child_path="${evidence_dir}/${direction}-actor-phase-timings.json"
     effects_path="${evidence_dir}/${direction}-actual-effects.json"
     [[ -f "$child_path" && ! -L "$child_path" &&
@@ -1974,13 +2005,18 @@ verify_direction_driver_contract() {
 
 verify_lez_bootstrap_contract() {
   local contract
-  contract="$($lez_bootstrap_driver contract)" || fail "LEZ bootstrap contract is unavailable"
-  jq -e '
+  contract="$(M5_BTC_APPLICATION_MODE="$m5_btc_application_mode" \
+    M5_LEZ_DEPLOYER_SHA256="$expected_lez_deployer_sha256" \
+    "$lez_bootstrap_driver" contract)" || fail "LEZ bootstrap contract is unavailable"
+  jq -e --arg guest "$expected_lez_guest_sha256" \
+    --arg program "$expected_lez_program_id" \
+    --arg deployment_profile "$expected_lez_deployment_profile" '
     .schema_version == 1
     and .kind == "m3_lez_bootstrap_contract"
     and .verified_artifact_target_required == true
-    and .embedded_guest_sha256 == "bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
-    and .escrow_program_id == "f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
+    and .embedded_guest_sha256 == $guest
+    and .escrow_program_id == $program
+    and .deployment_profile == $deployment_profile
     and .deployment_submission_count == 1
     and .fresh_identity_vault_claims == ["maker", "taker"]
     and .vault_claim_submission_count_per_role == 1
@@ -2483,6 +2519,8 @@ reserve_bitcoin_funding_anchors() {
 
 bootstrap_lez_runtime() {
   M3_POC_RUN_ID="$run_id" \
+  M5_BTC_APPLICATION_MODE="$m5_btc_application_mode" \
+  M5_LEZ_DEPLOYER_SHA256="$expected_lez_deployer_sha256" \
   M3_POC_EVIDENCE_DIR="$evidence_dir" \
   M3_POC_LEZ_BOOTSTRAP_ROOT="$lez_bootstrap_root" \
   M3_POC_LEZ_BOOTSTRAP_MANIFEST="$lez_bootstrap_manifest" \
@@ -3309,6 +3347,7 @@ validate_actual_effect_manifests() {
     ' "$manifest" >/dev/null ||
       fail "${direction} actual-effect manifest does not match the ${journey} journey"
   done
+  if (( ${#directions[@]} > 1 )); then
   jq -e --slurpfile foreign "${evidence_dir}/taker_sells_foreign-actual-effects.json" \
     --slurpfile lez "${evidence_dir}/taker_sells_lez-actual-effects.json" '
     (($foreign[0].bitcoin_effect_ids + $lez[0].bitcoin_effect_ids) as $ids |
@@ -3316,6 +3355,7 @@ validate_actual_effect_manifests() {
     and (($foreign[0].lez_effect_ids + $lez[0].lez_effect_ids) as $ids |
       ($ids | unique | length) == ($ids | length))
   ' <<<null >/dev/null || fail "direction effect IDs overlap across independent swaps"
+  fi
 }
 
 validate_survivor_direction_evidence() {
@@ -3538,6 +3578,7 @@ write_run_evidence() {
   local official_wallet_cache_summary="null" official_wallet_cache_evidence_sha=""
   local official_wallet_cache_helper_sha=""
   local foreign_terminal_balance_summary="null" lez_terminal_balance_summary="null"
+  local foreign_stage2_sha lez_stage2_sha=""
   local terminal_file terminal_sha effects_sha
   local phase_timing_summary="" phase_timing_sha=""
   local foreign_actor_direction_timing_summary=""
@@ -3548,14 +3589,21 @@ write_run_evidence() {
   validate_actor_direction_phase_timing_for_run_evidence \
     taker_sells_foreign foreign_actor_direction_timing_summary "$phase_timing_sha" ||
     fail "forward actor direction timing evidence is invalid"
-  validate_actor_direction_phase_timing_for_run_evidence \
-    taker_sells_lez lez_actor_direction_timing_summary "$phase_timing_sha" ||
-    fail "reverse actor direction timing evidence is invalid"
-  actor_direction_timing_summary="$(jq -cn \
-    --argjson foreign "$foreign_actor_direction_timing_summary" \
-    --argjson lez "$lez_actor_direction_timing_summary" \
-    '{taker_sells_foreign:$foreign,taker_sells_lez:$lez}')" ||
-    fail "actor direction timing summary construction failed"
+  if [[ "$m5_btc_application_mode" == 1 ]]; then
+    actor_direction_timing_summary="$(jq -cn \
+      --argjson foreign "$foreign_actor_direction_timing_summary" \
+      '{taker_sells_foreign:$foreign}')" ||
+      fail "M5 actor direction timing summary construction failed"
+  else
+    validate_actor_direction_phase_timing_for_run_evidence \
+      taker_sells_lez lez_actor_direction_timing_summary "$phase_timing_sha" ||
+      fail "reverse actor direction timing evidence is invalid"
+    actor_direction_timing_summary="$(jq -cn \
+      --argjson foreign "$foreign_actor_direction_timing_summary" \
+      --argjson lez "$lez_actor_direction_timing_summary" \
+      '{taker_sells_foreign:$foreign,taker_sells_lez:$lez}')" ||
+      fail "actor direction timing summary construction failed"
+  fi
   actor_direction_phase_timings_hash_stable "$actor_direction_timing_summary" ||
     fail "actor direction timing evidence changed during validation"
   service_launcher_hashes_stable ||
@@ -3689,6 +3737,12 @@ write_run_evidence() {
   if [[ "$schedule" == "overlap" ]]; then
     overlap_summary="$(jq -c . "${evidence_dir}/overlap-revision-two-window.json")"
   fi
+  foreign_stage2_sha="$(sha256sum \
+    "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')"
+  if [[ "$m5_btc_application_mode" != 1 ]]; then
+    lez_stage2_sha="$(sha256sum \
+      "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')"
+  fi
   jq -n \
     --arg run_id "$run_id" \
     --arg journey "$journey" \
@@ -3703,6 +3757,11 @@ write_run_evidence() {
     --arg completed_at "$completed_at" \
     --arg outer_runner "scripts/run-m3-actor-local-poc.sh" \
     --arg outer_runner_sha "$outer_runner_sha" \
+    --arg m5_btc_application_mode "$m5_btc_application_mode" \
+    --arg deployment_profile "$expected_lez_deployment_profile" \
+    --arg lez_guest_sha256 "$expected_lez_guest_sha256" \
+    --arg lez_program_id "$expected_lez_program_id" \
+    --arg lez_deployer_sha256 "$expected_lez_deployer_sha256" \
     --arg direction_driver "scripts/run-m3-actor-direction.sh" \
     --arg direction_driver_sha "$direction_driver_sha" \
     --arg lez_bootstrap "scripts/run-m3-lez-bootstrap.sh" \
@@ -3730,14 +3789,25 @@ write_run_evidence() {
     --argjson official_wallet_cache_summary "$official_wallet_cache_summary" \
     --argjson phase_timing_summary "$phase_timing_summary" \
     --argjson actor_direction_timing_summary "$actor_direction_timing_summary" \
-    --arg foreign_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')" \
-    --arg lez_stage2_sha "$(sha256sum "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')" --argjson foreign_terminal_balance "$foreign_terminal_balance_summary" --argjson lez_terminal_balance "$lez_terminal_balance_summary" '
+    --arg foreign_stage2_sha "$foreign_stage2_sha" \
+    --arg lez_stage2_sha "$lez_stage2_sha" --argjson foreign_terminal_balance "$foreign_terminal_balance_summary" --argjson lez_terminal_balance "$lez_terminal_balance_summary" '
     {
       schema_version: 1,
       kind: $packet_kind,
       journey: $journey,
       schedule: $schedule,
       asset_mode: $asset_mode,
+      m5_btc_application_mode: ($m5_btc_application_mode == "1"),
+      application:
+        (if $m5_btc_application_mode == "1" then {
+          pair:"bitcoin",
+          direction:"taker_sells_foreign",
+          lez_deployment:{
+            profile:$deployment_profile,
+            guest_sha256:$lez_guest_sha256,
+            program_id:$lez_program_id,
+            deployer_sha256:$lez_deployer_sha256}
+        } else null end),
       result: "passed",
       run_id: $run_id,
       repository_commit: $repository_commit,
@@ -3784,9 +3854,10 @@ write_run_evidence() {
       services: {
         bitcoin_core: {run_id: $bitcoin_run, version: "31.1", network: "regtest"},
         lez: {run_id: $lez_run, version: "v0.2.0", network: "private_local",
-              slot_duration_seconds:$lez_slot_duration_seconds}
+              slot_duration_seconds:$lez_slot_duration_seconds,
+              deployment_profile:$deployment_profile}
       },
-      directions: [
+      directions: ([
         ({direction: "taker_sells_foreign", terminal_revision: $terminal_revision,
          terminal_phase: $terminal_phase,
          expected_unique_effects:
@@ -3811,7 +3882,7 @@ write_run_evidence() {
          + (if $asset_mode == "custom_token" then
               {custom_token_terminal_balances:$lez_terminal_balance}
             else {} end))
-      ],
+      ] | if $m5_btc_application_mode == "1" then .[0:1] else . end),
       actor_process_model: "fresh_one_shot_process_per_command",
       concurrency:
         (if $schedule == "overlap" then {
@@ -3916,7 +3987,9 @@ write_run_evidence() {
             ($foreign_survivor.secret_recorded or $lez_survivor.secret_recorded)
         } else null end),
       expected_unique_effects_by_direction:
-        (if $asset_mode == "custom_token" then
+        (if $m5_btc_application_mode == "1" then
+           {taker_sells_foreign:{bitcoin:2,lez:3}}
+         elif $asset_mode == "custom_token" then
            {taker_sells_foreign:{bitcoin:2,lez:4},
             taker_sells_lez:{bitcoin:2,lez:4}}
          elif $journey == "first_lock_refund" then
@@ -3964,6 +4037,11 @@ write_run_evidence() {
   mv "${run_evidence}.partial" "$run_evidence"
   jq -e --arg journey "$journey" --arg schedule "$schedule" \
     --arg asset_mode "$asset_mode" \
+    --arg m5_btc_application_mode "$m5_btc_application_mode" \
+    --arg deployment_profile "$expected_lez_deployment_profile" \
+    --arg lez_guest_sha256 "$expected_lez_guest_sha256" \
+    --arg lez_program_id "$expected_lez_program_id" \
+    --arg lez_deployer_sha256 "$expected_lez_deployer_sha256" \
     --arg packet_kind "$packet_kind" \
     --arg repository_commit "$repository_commit_at_start" \
     --arg outer_runner_sha "$outer_runner_sha_at_start" \
@@ -3981,6 +4059,19 @@ write_run_evidence() {
     and .journey == $journey
     and .schedule == $schedule
     and .asset_mode == $asset_mode
+    and .m5_btc_application_mode == ($m5_btc_application_mode == "1")
+    and .services.lez.deployment_profile == $deployment_profile
+    and (if $m5_btc_application_mode == "1" then
+      .application == {
+        pair:"bitcoin",
+        direction:"taker_sells_foreign",
+        lez_deployment:{
+          profile:$deployment_profile,
+          guest_sha256:$lez_guest_sha256,
+          program_id:$lez_program_id,
+          deployer_sha256:$lez_deployer_sha256}}
+      and .directions[0].direction == "taker_sells_foreign"
+    else .application == null end)
     and .result == "passed"
     and .repository_commit == $repository_commit
     and .execution_provenance == {repository_clean_exact_head:true,
@@ -3994,7 +4085,8 @@ write_run_evidence() {
     and .certified_executable_scripts.bitcoin_service_driver.sha256 ==
       $bitcoin_service_driver_sha
     and .certified_executable_scripts.lez_service_driver.sha256 == $lez_service_driver_sha
-    and (.directions | length == 2)
+    and (.directions | length) ==
+      (if $m5_btc_application_mode == "1" then 1 else 2 end)
     and all(.directions[];
       .terminal_revision == $terminal_revision and .terminal_phase == $terminal_phase)
     and (if $asset_mode == "custom_token" then
@@ -4041,7 +4133,9 @@ write_run_evidence() {
       and .concurrency.arbitrary_n_or_same_direction_scheduler_proven == false
     else .concurrency == null end)
     and .expected_unique_effects_by_direction ==
-      (if $asset_mode == "custom_token" then
+      (if $m5_btc_application_mode == "1" then
+         {taker_sells_foreign:{bitcoin:2,lez:3}}
+       elif $asset_mode == "custom_token" then
          {taker_sells_foreign:{bitcoin:2,lez:4},
           taker_sells_lez:{bitcoin:2,lez:4}}
        elif $journey == "first_lock_refund" then
