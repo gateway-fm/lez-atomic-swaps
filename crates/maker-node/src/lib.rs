@@ -7,6 +7,7 @@ mod local_rpc;
 mod logos_price_source;
 mod price_source;
 mod run_local_delivery;
+mod xmr_chat;
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
     MakerActorSupervisorOutcome, MakerActorSupervisorResolution, prepare_maker_actor,
@@ -19,12 +20,17 @@ pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,
 };
-pub use local_rpc::call_local_rpc;
+pub use local_rpc::{call_local_chat_rpc, call_local_rpc};
 pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
 pub use run_local_delivery::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery,
     RunLocalDeliveryError,
+};
+use xmr_chat::register_xmr_chat_methods;
+pub use xmr_chat::{
+    XmrChatActivateRequestV1, XmrChatActivateResponseV1, XmrChatStageARequestV1,
+    XmrChatStageAResponseV1, XmrMakerChatAuthority,
 };
 
 use std::{
@@ -55,11 +61,16 @@ use lez_swap_store::{
     MakerActorProcessError, MakerActorProgressObservationV1, MakerActorScheduleState,
     MakerBtcNegotiationV1, MakerConfigurationCommit, MakerOfferCommit, MakerOfferId,
     MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1,
-    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationV1,
-    OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1, OperatorAlertSeverity,
+    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerXmrActivationAcceptance,
+    MakerXmrNegotiationStatus, MakerXmrNegotiationV1, MakerZecNegotiationV1, OperatorAlert,
+    OperatorAlertKind, OperatorAlertRecordV1, OperatorAlertSeverity,
     OperatorTerminalProjectionCommit, SqliteSwapStore, SqliteZecRecoveryStore, StoreError,
-    VersionedMakerRecord, maker_btc_chat_swap_id, maker_zec_chat_session_id,
-    validate_maker_actor_program,
+    VersionedMakerRecord, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
+    maker_zec_chat_session_id, validate_maker_actor_program,
+};
+use lez_xmr_swap_sdk::{
+    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
+    XmrActivatedAgreementV1, XmrAgreementV1, XmrRoleV1, XmrSwapDirectionV1,
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ProtectedClaimKey,
@@ -87,6 +98,7 @@ pub struct MakerRpc {
     chat_signing_key: Option<Arc<SecretKey>>,
     btc_chat_signing_key: Option<Arc<SecretKey>>,
     btc_actor_provisioner: Option<Arc<BtcMakerActorProvisioner>>,
+    xmr_chat_authority: Option<Arc<XmrMakerChatAuthority>>,
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
     maker_claim_preimage: Option<Arc<ClaimPreimage>>,
     zec_actor_provisioner: Option<Arc<ZecMakerActorProvisioner>>,
@@ -114,6 +126,10 @@ impl std::fmt::Debug for MakerRpc {
             .field(
                 "btc_actor_provisioner",
                 &self.btc_actor_provisioner.as_ref().map(|_| "configured"),
+            )
+            .field(
+                "xmr_chat_authority",
+                &self.xmr_chat_authority.as_ref().map(|_| "configured"),
             )
             .field(
                 "zec_completion_store",
@@ -144,6 +160,7 @@ impl MakerRpc {
             zec_completion_store: None,
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
+            xmr_chat_authority: None,
             maker_claim_preimage: None,
             zec_actor_provisioner: None,
         }
@@ -181,6 +198,7 @@ impl MakerRpc {
             chat_signing_key: Some(Arc::new(chat_signing_key)),
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
+            xmr_chat_authority: None,
             zec_completion_store: None,
             maker_claim_preimage: None,
             zec_actor_provisioner: None,
@@ -210,6 +228,13 @@ impl MakerRpc {
     ) -> Self {
         self.btc_chat_signing_key = Some(Arc::new(signing_key));
         self.btc_actor_provisioner = Some(Arc::new(actor_provisioner));
+        self
+    }
+
+    /// Attaches daemon-owned Monero validation and actor authority.
+    #[must_use]
+    pub fn with_xmr_chat_authority(mut self, authority: XmrMakerChatAuthority) -> Self {
+        self.xmr_chat_authority = Some(Arc::new(authority));
         self
     }
 
@@ -1726,6 +1751,7 @@ pub fn chat_rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>>
 fn register_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     register_zec_chat_methods(module)?;
     register_btc_chat_methods(module)?;
+    register_xmr_chat_methods(module)?;
     Ok(())
 }
 

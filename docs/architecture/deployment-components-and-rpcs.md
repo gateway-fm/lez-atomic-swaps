@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-07-29
+Status: Living executable inventory — 2026-07-30
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -22,7 +22,7 @@ flowchart TB
     subgraph MakerHost["Maker host"]
         CLI["lez-maker CLI"]
         Daemon["lez-maker-daemon"]
-        Store[("SQLite schema v19")]
+        Store[("SQLite schema v21")]
         Offers["Durable offer lifecycle<br/>snapshot + expiry + one-winner CAS"]
         RuntimeDir["Effective-UID-owned mode-0700 runtime"]
         Socket["Owner mode-0600 Unix socket"]
@@ -108,10 +108,10 @@ The maker daemon exposes no TCP listener. Its owner-control socket defaults to
 `/run/lez-atomic-swaps/maker.sock` and accepts only an absolute socket beneath a
 real effective-UID-owned mode-0700 runtime directory. It refuses a pre-existing
 path, applies mode 0600, disables WebSocket and batch calls, caps connections at
-16, and caps request/response bodies at 64 KiB. A Delivery-enabled daemon also
+16, and caps owner request/response bodies at 64 KiB and the disjoint Chat listener at 1 MiB so the already SDK-bounded XMR Stage-A wire fits without changing the owner surface. A Delivery-enabled daemon also
 requires a separate absolute mode-0600 Chat socket in an owner-only runtime;
 that socket registers only `zec_chat_propose_v1`, `zec_chat_complete_v1`,
-`btc_chat_propose_v1`, and `btc_chat_complete_v1`, while the owner socket never
+`btc_chat_propose_v1`, `btc_chat_complete_v1`, `xmr_chat_stage_a_v1`, and `xmr_chat_activate_v1`, while the owner socket never
 registers Chat methods. Its optional create-new readiness
 file contains only the socket path and is removed only if device/inode identity
 still matches. The CLI uses that socket directly and opens one connection per
@@ -137,7 +137,7 @@ worker/module/SHA configuration plus bounded timeout and quote age. Quote and
 offer RPCs read the route's durable source kind; there is no local or zero-price
 fallback. The bounded worker runs with an empty environment, root working
 directory, null input and diagnostics, bounded output, timeout kill/reap, and
-pre/post module validation. SQLite schema v19 is the offer linearization point;
+pre/post module validation. SQLite schema v21 is the offer linearization point;
 Delivery signs only the committed snapshot and restart reconciliation repairs a
 missing advertisement. This component path uses no chain RPC or public feed.
 
@@ -730,6 +730,102 @@ connections. Only the local targets have execution evidence. The dashed public
 edges still require endpoint/authentication smoke, funding/deployment, identity
 revalidation, propagation, and finality evidence before release.
 
+### M5 XMR role-process pre-effect deployment
+
+Status: process-GREEN; the exact locked/offline black-box passed 1 of 1 in 307.71 seconds. Solid edges below were exercised in that run. Dashed edges are the open semantic supervisor and actual isolated chain corridor.
+
+```mermaid
+flowchart TB
+    subgraph MakerBoundary["Maker owner boundary"]
+        MakerCli["lez-maker CLI"]
+        OwnerSocket["Mode 0600 owner Unix socket"]
+        Daemon["lez-maker-daemon"]
+        ChatSocket["Mode 0600 Chat Unix socket"]
+        Store[("SQLite schema v21")]
+        Delivery["Owner-private signed Delivery directory"]
+        AgreementKey[("Compressed Maker agreement public key")]
+        ViewKey[("Raw shared private view key")]
+        Registry[("Bounded Maker-only actor registry")]
+        MakerManifest[("Canonical Maker provision manifest")]
+        MakerJournal[("Maker role journal")]
+        MakerActor[("Queued Monero Maker actor")]
+    end
+
+    subgraph TakerBoundary["Taker owner boundary"]
+        TakerCli["lez-taker CLI"]
+        TakerRoot[("Taker private role root")]
+        TakerJournal[("Taker role journal")]
+        TakerActor[("Taker-only no-clobber actor bundle")]
+        Receipt[("Mode 0600 acceptance receipt")]
+    end
+
+    MakerCli --> OwnerSocket
+    OwnerSocket --> Daemon
+    Daemon --> Store
+    Daemon --> Delivery
+    Delivery --> TakerCli
+    TakerCli --> ChatSocket
+    ChatSocket --> Daemon
+    AgreementKey --> Daemon
+    ViewKey --> Daemon
+    Registry --> Daemon
+    Registry --> MakerManifest
+    Registry --> MakerJournal
+    Store --> MakerActor
+    TakerRoot --> TakerCli
+    TakerJournal --> TakerCli
+    TakerCli --> TakerActor
+    TakerCli --> Receipt
+    MakerActor -.-> SemanticSupervisor["Semantic XMR supervisor adapter open"]
+    SemanticSupervisor -.-> LezNodes["Isolated LEZ v0.2 sequencer indexer and sidecars"]
+    SemanticSupervisor -.-> MoneroNodes["Official monerod 0.18.5.1 Regtest and wallets"]
+```
+
+| Component or method | Exact endpoint or authority | Pre-effect behavior |
+|---|---|---|
+| Maker control | `--socket` and `lez-maker publish-offer` | Owner-only 64 KiB RPC publishes the already committed signed offer; no Chat method is registered |
+| Taker Chat | `--chat-socket` | Separate 1 MiB RPC exposes only pair Chat methods; XMR uses `xmr_chat_stage_a_v1` then `xmr_chat_activate_v1` |
+| XMR Maker identity | `--xmr-maker-agreement-public-key-file` | Owner-only raw 33-byte compressed key; Stage A must name this Maker identity |
+| XMR view authority | `--xmr-private-view-key-file` | Owner-only raw 32-byte Monero private view key; validates Stage B server-side and is never returned or debug-printed |
+| XMR actor registry | `--xmr-actor-manifest-registry-file` | Bounded schema-1 JSON. Every entry pins lowercase swap ID, config path/SHA-256, installed owner-owned single-link program path/SHA-256, and state database path |
+| Maker role manifest | `actor-provision.json` from `xmr-reference-actor provision-application maker` | Daemon requires canonical schema 1, Maker role, exact swap, exact role-journal state path, normalized authority paths, and lowercase digests before readiness |
+| Taker acceptance | `lez-taker --accept-xmr-offer` plus Stage A/B, role root, public packets, role journal, actor root, and receipt flags | Taker authenticates Delivery only on first acceptance, provisions only Taker authority, activates over Chat, and publishes its receipt after Maker commit |
+| Durable replay | Same database, registry, actor root, receipt, reservation, and command after Delivery removal | Durable actor bypasses discovery; exact Stage A/B replay returns revision 3 without replacing role artifacts |
+| Public effects | Maker application database and immutable role journals | The application database has no public-effect table; any participating effect journal must be absent or contain zero rows, and both input role journals remain byte-identical |
+
+```mermaid
+sequenceDiagram
+    participant C as Maker CLI
+    participant O as Delivery
+    participant T as Taker CLI
+    participant D as Maker daemon
+    participant DB as SQLite
+    participant A as Role artifacts
+
+    C->>D: Publish LEZ-first Monero offer
+    D->>DB: Commit active revision 1
+    D->>O: Publish signed envelope
+    T->>O: Authenticate envelope and quote
+    T->>D: Stage A on Chat
+    D->>DB: Reserve revision 2
+    DB-->>D: No coordinator actor or effect
+    D-->>T: Stage-A result
+    T->>A: Publish Taker-only actor bundle
+    T->>D: Stage B on Chat
+    D->>DB: Atomic activation transaction
+    DB-->>D: Revision 3 with coordinator consumed offer actor and replay
+    D-->>T: Activation result
+    T->>A: Publish receipt
+    T->>O: Remove exact advertisement
+    T->>D: Replay after daemon reopen
+    D->>DB: Reload and revalidate durable result
+    D-->>T: Exact replay without artifact replacement
+```
+
+Stage A is non-executable by construction. Stage B is locally atomic because one immediate SQLite transaction activates the negotiation, derives and persists the coordinator, consumes the exact offer, registers one immutable Maker actor, and records global replay. Any failed write restores the revision-2 reservation. The Taker actor bundle is written before activation as a crash latch; its receipt appears only after the Maker commit. This does not create a distributed cross-chain transaction.
+
+Runtime external resources are empty: no chain RPC, local node, Docker project, faucet, DNS, network, or funds. The process proof uses only temporary Unix sockets, SQLite, and owner-private files. This isolates application semantics from chain/finality flakiness. It does not validate Monero or LEZ behavior. Keep the opt-in actor supervisor disabled until the semantic XMR adapter is wired; then compose these exact role bundles with isolated dynamic-loopback Monero and LEZ nodes rather than replacing them.
+
 ### M5 maker service supervision and RPC inventory
 
 ADR 0097 adds a production-shaped standalone supervisor without changing the
@@ -841,7 +937,7 @@ flowchart TB
     subgraph App[Owner-local application plane]
         MakerCli[Maker CLI]
         Daemon[Maker daemon]
-        Store[SQLite schema v19]
+        Store[SQLite schema v21]
         TerminalView[Display-only terminal projection]
         TerminalDaemon[Fresh owner-only daemon]
         PriceWorker[Bounded price worker]

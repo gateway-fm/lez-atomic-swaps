@@ -12,7 +12,7 @@ The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 ### M5 active progressive application PoC
 
 M5 is active. The owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v19
+Unix-socket daemon, maker CLI, durable schema-v21
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
@@ -167,8 +167,12 @@ existing process, manual-action, and progress rows while widening their actor
 kind checks. Maker-node exposes Monero inspection but fails closed before spawn
 until the semantic actor adapter exists. [ADR 0112](docs/architecture/0112-activate-xmr-stage-b-atomically.md)
 records the component, commit/replay sequence, and atomicity argument. Role-only
-process handoff, semantic scheduler execution, and the actual isolated Monero
+process handoff is process-GREEN; semantic scheduler execution and the actual isolated Monero
 plus LEZ corridor remain before the XMR application PoC is complete.
+
+The M5 XMR application path now has a process-GREEN real-process pre-effect checkpoint. It runs the actual Maker CLI, `lez-maker-daemon`, and Taker CLI around role-generated canonical Stage A/B material. Stage A advances only to reserved revision 2; Stage B is the sole transaction that creates the coordinator, consumes the offer, registers one Maker-only Monero actor, and records revision 3 replay. The Taker publishes only its own no-clobber actor bundle and acceptance receipt. A crossed reservation must leave the active offer at revision 1 with no negotiation, coordinator, actor, or public effect. After the exact Delivery advertisement is removed and the daemon is restarted, the durable Taker actor bypasses discovery and exact replay must preserve every captured actor/receipt byte and inode.
+
+This checkpoint is deliberately zero-effect: it starts no Monero or LEZ node, opens no chain RPC, uses no Docker service, faucet, DNS, network, or funds, and leaves the actor supervisor disabled. The daemon validates a bounded canonical Maker-only role manifest, its swap and state binding, and the installed owner-owned single-link program and pinned digest before readiness, but that admission is not semantic execution authority. Reproduce the checkpoint with `cargo +1.96.0 test --locked --offline -p lez-maker-node --test xmr_chat_process real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically -- --exact --nocapture`; [Flow 1P](docs/manual-user-flows.md#flow-1p-repeat-the-xmr-role-process-pre-effect-checkpoint) documents the equivalent flags and restart boundary. The exact black-box proof passed 1 of 1 in 307.71 seconds. The semantic supervisor adapter and isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor remain open.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

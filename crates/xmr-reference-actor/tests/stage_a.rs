@@ -19,8 +19,12 @@ use lez_xmr_swap_sdk::{
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
-use xmr_reference_actor::ValidatedRolePacket;
+use xmr_reference_actor::{
+    ActorRole, ValidatedRolePacket, provision_xmr_maker_actor_from_material,
+    provision_xmr_taker_actor_from_material,
+};
 
 const TAKER_OWNER: &str = "1515151515151515151515151515151515151515151515151515151515151515";
 const MAKER_OWNER: &str = "2424242424242424242424242424242424242424242424242424242424242424";
@@ -758,8 +762,9 @@ fn completed_role_journals_activate_without_disclosing_taker_claim_partial() {
     assert!(String::from_utf8_lossy(&incomplete.stderr).contains("claim journal is incomplete"));
     assert!(!incomplete_output.exists());
 
-    let maker_journal = fixture.maker_root.join("stage-b.sqlite");
-    let taker_journal = fixture.taker_root.join("stage-b.sqlite");
+    let private_journals = owner_directory(&fixture.material, "stage-b-private");
+    let maker_journal = private_journals.join("maker.sqlite");
+    let taker_journal = private_journals.join("taker.sqlite");
     let taker_claim_partial = run_adaptor_round(
         &fixture,
         "claim",
@@ -916,4 +921,196 @@ fn completed_role_journals_activate_without_disclosing_taker_claim_partial() {
     assert!(!collided.status.success());
     assert!(String::from_utf8_lossy(&collided.stderr).contains("already exists"));
     assert_eq!(fs::read(&collision).expect("collision file"), b"untouched");
+
+    let actor_parent = owner_directory(&fixture.material, "application-actors");
+    let maker_actor = actor_parent.join("maker");
+    let taker_actor = actor_parent.join("taker");
+    let maker_view = fixture.maker_root.join("monero-view.key");
+    let taker_view = fixture.taker_root.join("monero-view.key");
+    let source_inodes = [
+        fs::symlink_metadata(&maker_view).unwrap().ino(),
+        fs::symlink_metadata(&taker_view).unwrap().ino(),
+        fs::symlink_metadata(&maker_journal).unwrap().ino(),
+        fs::symlink_metadata(&taker_journal).unwrap().ino(),
+    ];
+
+    let wrong_role = provision_xmr_maker_actor_from_material(
+        &fixture.taker_root,
+        &fixture.taker_packet,
+        &fixture.maker_packet,
+        &agreement,
+        &activated,
+        &taker_journal,
+        &actor_parent.join("wrong-role"),
+    )
+    .expect_err("Maker wrapper rejects Taker authority");
+    assert!(wrong_role.to_string().contains("wrong role"));
+    let crossed = provision_xmr_maker_actor_from_material(
+        &fixture.maker_root,
+        &fixture.maker_packet,
+        &fixture.taker_packet,
+        &agreement,
+        &activated,
+        &taker_journal,
+        &actor_parent.join("crossed-journal"),
+    )
+    .expect_err("Maker rejects Taker journal");
+    assert!(crossed.to_string().contains("identity"));
+
+    let tampered_stage_b = fixture.exchange.join("tampered-stage-b.bin");
+    let mut tampered_bytes = activated_bytes.clone();
+    tampered_bytes[20] ^= 1;
+    write_new_private(&tampered_stage_b, &tampered_bytes);
+    assert!(
+        provision_xmr_taker_actor_from_material(
+            &fixture.taker_root,
+            &fixture.taker_packet,
+            &fixture.maker_packet,
+            &agreement,
+            &tampered_stage_b,
+            &taker_journal,
+            &actor_parent.join("tampered"),
+        )
+        .is_err()
+    );
+
+    let linked_journal = private_journals.join("linked-maker.sqlite");
+    std::os::unix::fs::symlink(&maker_journal, &linked_journal).expect("journal symlink");
+    assert!(
+        provision_xmr_maker_actor_from_material(
+            &fixture.maker_root,
+            &fixture.maker_packet,
+            &fixture.taker_packet,
+            &agreement,
+            &activated,
+            &linked_journal,
+            &actor_parent.join("linked"),
+        )
+        .is_err()
+    );
+
+    let wal = PathBuf::from(format!("{}-wal", maker_journal.display()));
+    write_new_private(&wal, b"incomplete SQLite state");
+    let wal_error = provision_xmr_maker_actor_from_material(
+        &fixture.maker_root,
+        &fixture.maker_packet,
+        &fixture.taker_packet,
+        &agreement,
+        &activated,
+        &maker_journal,
+        &actor_parent.join("live-wal"),
+    )
+    .expect_err("live WAL cannot be digest-bound");
+    assert!(wal_error.to_string().contains("SQLite state"));
+    fs::remove_file(wal).expect("remove WAL fixture");
+
+    let maker = provision_xmr_maker_actor_from_material(
+        &fixture.maker_root,
+        &fixture.maker_packet,
+        &fixture.taker_packet,
+        &agreement,
+        &activated,
+        &maker_journal,
+        &maker_actor,
+    )
+    .expect("Maker application provision");
+    let taker = provision_xmr_taker_actor_from_material(
+        &fixture.taker_root,
+        &fixture.taker_packet,
+        &fixture.maker_packet,
+        &agreement,
+        &activated,
+        &taker_journal,
+        &taker_actor,
+    )
+    .expect("Taker application provision");
+    assert_eq!(
+        (maker.role(), taker.role()),
+        (ActorRole::Maker, ActorRole::Taker)
+    );
+    assert_eq!(maker.swap_id(), stage_a.body().swap_id());
+    assert_eq!(maker.swap_id(), taker.swap_id());
+    assert_eq!(maker.agreement_commitment(), stage_a.agreement_commitment());
+    assert_eq!(maker.agreement_commitment(), taker.agreement_commitment());
+    assert_eq!(
+        maker.activation_commitment(),
+        activated_agreement.activation_commitment()
+    );
+    assert_eq!(maker.activation_commitment(), taker.activation_commitment());
+    assert_eq!(
+        maker.stage_a_sha256(),
+        <[u8; 32]>::from(Sha256::digest(fs::read(&agreement).unwrap()))
+    );
+    assert_eq!(
+        maker.stage_b_sha256(),
+        <[u8; 32]>::from(Sha256::digest(fs::read(&activated).unwrap()))
+    );
+    assert_eq!(maker.stage_a_sha256(), taker.stage_a_sha256());
+    assert_eq!(maker.stage_b_sha256(), taker.stage_b_sha256());
+    assert!(!maker_actor.join("taker").exists());
+    assert!(!taker_actor.join("maker").exists());
+    assert!(maker.state_directory().is_dir());
+    assert!(taker.state_directory().is_dir());
+
+    let maker_manifest = fs::read_to_string(maker.manifest_file()).unwrap();
+    let taker_manifest = fs::read_to_string(taker.manifest_file()).unwrap();
+    assert!(!maker_manifest.contains(fs::read_to_string(&maker_view).unwrap().trim()));
+    assert!(!taker_manifest.contains(fs::read_to_string(&taker_view).unwrap().trim()));
+    assert!(!maker_manifest.contains(fixture.taker_root.to_str().unwrap()));
+    assert!(!taker_manifest.contains(fixture.maker_root.to_str().unwrap()));
+
+    let published_inodes = [
+        fs::symlink_metadata(maker.manifest_file()).unwrap().ino(),
+        fs::symlink_metadata(maker.stage_a_file()).unwrap().ino(),
+        fs::symlink_metadata(maker.stage_b_file()).unwrap().ino(),
+    ];
+    let replay = provision_xmr_maker_actor_from_material(
+        &fixture.maker_root,
+        &fixture.maker_packet,
+        &fixture.taker_packet,
+        &agreement,
+        &activated,
+        &maker_journal,
+        &maker_actor,
+    )
+    .expect("exact Maker replay");
+    assert!(replay.was_replay());
+    assert_eq!(replay.manifest_sha256(), maker.manifest_sha256());
+    assert_eq!(replay.stage_a_sha256(), maker.stage_a_sha256());
+    assert_eq!(replay.stage_b_sha256(), maker.stage_b_sha256());
+    assert_eq!(
+        [
+            fs::symlink_metadata(replay.manifest_file()).unwrap().ino(),
+            fs::symlink_metadata(replay.stage_a_file()).unwrap().ino(),
+            fs::symlink_metadata(replay.stage_b_file()).unwrap().ino(),
+        ],
+        published_inodes
+    );
+    assert_eq!(
+        [
+            fs::symlink_metadata(&maker_view).unwrap().ino(),
+            fs::symlink_metadata(&taker_view).unwrap().ino(),
+            fs::symlink_metadata(&maker_journal).unwrap().ino(),
+            fs::symlink_metadata(&taker_journal).unwrap().ino(),
+        ],
+        source_inodes
+    );
+
+    fs::write(replay.stage_b_file(), b"tampered published Stage B").unwrap();
+    assert!(
+        provision_xmr_maker_actor_from_material(
+            &fixture.maker_root,
+            &fixture.maker_packet,
+            &fixture.taker_packet,
+            &agreement,
+            &activated,
+            &maker_journal,
+            &maker_actor,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        fs::symlink_metadata(replay.stage_b_file()).unwrap().ino(),
+        published_inodes[2]
+    );
 }

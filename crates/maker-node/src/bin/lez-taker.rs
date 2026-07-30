@@ -10,7 +10,9 @@ use lez_bridge_protocol::RequestId;
 use lez_maker_node::{DeliveryOfferQueryV1, RunLocalDelivery};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
-use lez_swap_store::{MakerActorHeldLock, MakerRouteV1, maker_btc_chat_swap_id};
+use lez_swap_store::{
+    MakerActorHeldLock, MakerRouteV1, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
+};
 use secp256k1::PublicKey;
 use serde::Serialize;
 use zec_reference_actor::{
@@ -23,7 +25,10 @@ mod secure_file;
 mod taker_accept;
 #[path = "support/taker_accept_btc.rs"]
 mod taker_accept_btc;
+#[path = "support/taker_accept_xmr.rs"]
+mod taker_accept_xmr;
 use taker_accept_btc::{BtcTakeInput, load_btc_taker_actor_from_receipt, take_btc};
+use taker_accept_xmr::{XmrTakeInput, take_xmr};
 
 use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
 
@@ -51,12 +56,18 @@ struct Arguments {
     /// Plan this exact BTC offer before constructing its chain-complete draft.
     #[arg(long)]
     plan_btc_offer: Option<String>,
+    /// Plan this exact XMR offer before composing role-separated Stage A/B.
+    #[arg(long)]
+    plan_xmr_offer: Option<String>,
     /// Accept this exact ZEC offer instead of only listing discovery results.
     #[arg(long)]
     accept_zec_offer: Option<String>,
     /// Accept this exact BTC offer instead of only listing discovery results.
     #[arg(long)]
     accept_btc_offer: Option<String>,
+    /// Accept this exact XMR offer using already role-separated Stage A/B material.
+    #[arg(long)]
+    accept_xmr_offer: Option<String>,
     /// Taker-facing maker Chat Unix socket.
     #[arg(long)]
     chat_socket: Option<PathBuf>,
@@ -93,6 +104,30 @@ struct Arguments {
     /// New owner-private Bitcoin acceptance receipt written after Maker completion.
     #[arg(long)]
     btc_acceptance_receipt: Option<PathBuf>,
+    /// Owner-private canonical dual-signed XMR Stage-A agreement.
+    #[arg(long)]
+    xmr_stage_a_file: Option<PathBuf>,
+    /// Owner-private canonical dual-signed XMR Stage-B activation.
+    #[arg(long)]
+    xmr_activation_file: Option<PathBuf>,
+    /// Existing owner-private Taker XMR role root.
+    #[arg(long)]
+    xmr_source_taker_root: Option<PathBuf>,
+    /// Existing Taker public role packet.
+    #[arg(long)]
+    xmr_taker_public_packet: Option<PathBuf>,
+    /// Existing Maker public role packet.
+    #[arg(long)]
+    xmr_maker_public_packet: Option<PathBuf>,
+    /// Existing owner-private completed Taker adaptor-session journal.
+    #[arg(long)]
+    xmr_taker_role_journal: Option<PathBuf>,
+    /// New owner-private root for the accepted Taker XMR actor bundle.
+    #[arg(long)]
+    xmr_taker_actor_root: Option<PathBuf>,
+    /// New owner-private XMR acceptance receipt written after Maker completion.
+    #[arg(long)]
+    xmr_acceptance_receipt: Option<PathBuf>,
 }
 #[derive(Subcommand)]
 enum LifecycleCommand {
@@ -171,6 +206,18 @@ struct BtcPlanOutput {
     private_material_disclosed: bool,
 }
 
+#[derive(Serialize)]
+struct XmrPlanOutput {
+    schema_version: u16,
+    offer_id: String,
+    reservation_id: String,
+    signed_envelope_sha256: String,
+    swap_id: String,
+    foreign_units: u64,
+    lez_units: u128,
+    private_material_disclosed: bool,
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(error) = execute().await {
@@ -179,6 +226,7 @@ async fn main() {
     }
 }
 
+#[allow(clippy::too_many_lines)] // Central CLI dispatch validates every mutually exclusive mode.
 async fn execute() -> anyhow::Result<()> {
     let mut arguments = Arguments::parse();
     if let Some(command) = arguments.command.take() {
@@ -194,35 +242,58 @@ async fn execute() -> anyhow::Result<()> {
         .context("discovery requires --maker-public-key")?;
     let expected_maker = PublicKey::from_str(maker_public_key)
         .map_err(|_| anyhow::anyhow!("maker public key is invalid"))?;
-    let delivery_directory = arguments
-        .delivery_directory
-        .as_ref()
-        .context("discovery requires --delivery-directory")?;
+    let delivery_directory = arguments.delivery_directory.as_deref();
     let now_unix_seconds = arguments
         .now_unix_seconds
         .context("discovery requires --now-unix-seconds")?;
     let btc_take_requested = btc_take_was_requested(&arguments);
     let zec_take_requested = zec_take_was_requested(&arguments);
+    let xmr_take_requested = xmr_take_was_requested(&arguments);
     let btc_plan_requested = arguments.plan_btc_offer.is_some();
+    let xmr_plan_requested = arguments.plan_xmr_offer.is_some();
     ensure!(
-        !(btc_take_requested && zec_take_requested),
-        "exactly one BTC or ZEC acceptance may be requested"
+        usize::from(btc_take_requested)
+            + usize::from(zec_take_requested)
+            + usize::from(xmr_take_requested)
+            <= 1,
+        "exactly one BTC, XMR, or ZEC acceptance may be requested"
     );
     ensure!(
-        !(btc_plan_requested && (btc_take_requested || zec_take_requested)),
-        "BTC planning and acceptance are mutually exclusive"
+        usize::from(btc_plan_requested)
+            + usize::from(xmr_plan_requested)
+            + usize::from(btc_take_requested || zec_take_requested || xmr_take_requested)
+            <= 1,
+        "planning and acceptance operations are mutually exclusive"
     );
     if btc_plan_requested {
         return execute_btc_plan(
             &arguments,
             &expected_maker,
-            delivery_directory,
+            delivery_directory.context("BTC planning requires --delivery-directory")?,
+            now_unix_seconds,
+        )
+        .await;
+    }
+    if xmr_plan_requested {
+        return execute_xmr_plan(
+            &arguments,
+            &expected_maker,
+            delivery_directory.context("XMR planning requires --delivery-directory")?,
             now_unix_seconds,
         )
         .await;
     }
     if btc_take_requested {
         return execute_btc_take(
+            &arguments,
+            &expected_maker,
+            delivery_directory.context("BTC acceptance requires --delivery-directory")?,
+            now_unix_seconds,
+        )
+        .await;
+    }
+    if xmr_take_requested {
+        return execute_xmr_take(
             &arguments,
             &expected_maker,
             delivery_directory,
@@ -234,12 +305,14 @@ async fn execute() -> anyhow::Result<()> {
         return execute_zec_take(
             &arguments,
             &expected_maker,
-            delivery_directory,
+            delivery_directory.context("ZEC acceptance requires --delivery-directory")?,
             now_unix_seconds,
         )
         .await;
     }
-    let delivery = RunLocalDelivery::subscriber(delivery_directory.clone(), expected_maker)?;
+    let delivery_directory =
+        delivery_directory.context("discovery requires --delivery-directory")?;
+    let delivery = RunLocalDelivery::subscriber(delivery_directory.to_path_buf(), expected_maker)?;
     let query = match arguments.pair {
         Some(pair) => DeliveryOfferQueryV1::for_route(
             MakerRouteV1::new(
@@ -418,6 +491,86 @@ async fn execute_btc_take(
     Ok(())
 }
 
+async fn execute_xmr_take(
+    arguments: &Arguments,
+    expected_maker: &PublicKey,
+    delivery_directory: Option<&std::path::Path>,
+    now_unix_seconds: u64,
+) -> anyhow::Result<()> {
+    ensure!(
+        arguments
+            .pair
+            .is_none_or(|pair| matches!(pair, PairArgument::Monero))
+            && arguments
+                .direction
+                .is_none_or(|direction| matches!(direction, DirectionArgument::TakerSellsLez)),
+        "M5 XMR acceptance supports only monero/taker-sells-lez"
+    );
+    let actor_root = required_xmr_path(
+        arguments.xmr_taker_actor_root.as_deref(),
+        "--xmr-taker-actor-root",
+    )?;
+    let durable_actor = xmr_actor_bundle_is_durable(actor_root)?;
+    let delivery = if durable_actor {
+        None
+    } else {
+        Some(RunLocalDelivery::subscriber(
+            delivery_directory
+                .context("fresh XMR acceptance requires --delivery-directory")?
+                .to_path_buf(),
+            expected_maker.to_owned(),
+        )?)
+    };
+    let output = take_xmr(XmrTakeInput {
+        delivery: delivery.as_ref(),
+        now_unix_seconds,
+        offer_id: arguments
+            .accept_xmr_offer
+            .as_deref()
+            .context("XMR acceptance requires --accept-xmr-offer")?,
+        chat_socket: required_xmr_path(arguments.chat_socket.as_deref(), "--chat-socket")?,
+        reservation_id: arguments
+            .reservation_id
+            .as_deref()
+            .context("XMR acceptance requires --reservation-id")?,
+        foreign_units: arguments
+            .foreign_units
+            .context("XMR acceptance requires --foreign-units")?,
+        stage_a_file: required_xmr_path(
+            arguments.xmr_stage_a_file.as_deref(),
+            "--xmr-stage-a-file",
+        )?,
+        activation_file: required_xmr_path(
+            arguments.xmr_activation_file.as_deref(),
+            "--xmr-activation-file",
+        )?,
+        source_taker_root: required_xmr_path(
+            arguments.xmr_source_taker_root.as_deref(),
+            "--xmr-source-taker-root",
+        )?,
+        taker_public_packet: required_xmr_path(
+            arguments.xmr_taker_public_packet.as_deref(),
+            "--xmr-taker-public-packet",
+        )?,
+        maker_public_packet: required_xmr_path(
+            arguments.xmr_maker_public_packet.as_deref(),
+            "--xmr-maker-public-packet",
+        )?,
+        taker_role_journal: required_xmr_path(
+            arguments.xmr_taker_role_journal.as_deref(),
+            "--xmr-taker-role-journal",
+        )?,
+        taker_actor_root: actor_root,
+        acceptance_receipt_file: required_xmr_path(
+            arguments.xmr_acceptance_receipt.as_deref(),
+            "--xmr-acceptance-receipt",
+        )?,
+    })
+    .await?;
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 enum LifecycleAction {
     Monitor,
@@ -483,6 +636,73 @@ async fn execute_btc_plan(
         reservation_id: reservation_id.as_str().to_owned(),
         signed_envelope_sha256: hex::encode(commitment),
         swap_id: hex::encode(maker_btc_chat_swap_id(&commitment, &reservation_id)),
+        foreign_units,
+        lez_units,
+        private_material_disclosed: false,
+    };
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
+}
+
+async fn execute_xmr_plan(
+    arguments: &Arguments,
+    expected_maker: &PublicKey,
+    delivery_directory: &std::path::Path,
+    now_unix_seconds: u64,
+) -> anyhow::Result<()> {
+    ensure!(
+        arguments
+            .pair
+            .is_none_or(|pair| matches!(pair, PairArgument::Monero))
+            && arguments
+                .direction
+                .is_none_or(|direction| matches!(direction, DirectionArgument::TakerSellsLez)),
+        "M5 XMR planning supports only monero/taker-sells-lez"
+    );
+    ensure!(
+        arguments.chat_socket.is_none()
+            && arguments.unsigned_draft_file.is_none()
+            && arguments.taker_signing_key_file.is_none()
+            && arguments.agreement_output_file.is_none()
+            && arguments.zec_source_taker_config.is_none()
+            && arguments.zec_taker_actor_root.is_none()
+            && arguments.zec_acceptance_receipt.is_none()
+            && arguments.btc_source_taker_config.is_none()
+            && arguments.btc_taker_actor_root.is_none()
+            && arguments.btc_acceptance_receipt.is_none(),
+        "XMR planning accepts no Chat, signing, agreement, actor, or receipt authority"
+    );
+    let offer_id = arguments
+        .plan_xmr_offer
+        .as_deref()
+        .context("XMR planning requires --plan-xmr-offer")?;
+    let reservation_id = RequestId::new(
+        arguments
+            .reservation_id
+            .as_deref()
+            .context("XMR planning requires --reservation-id")?,
+    )?;
+    let foreign_units = arguments
+        .foreign_units
+        .context("XMR planning requires --foreign-units")?;
+    ensure!(foreign_units > 0, "XMR principal must be nonzero");
+    let route = MakerRouteV1::new(Pair::Monero, SwapDirection::TakerSellsLez)?;
+    let delivery =
+        RunLocalDelivery::subscriber(delivery_directory.to_path_buf(), expected_maker.to_owned())?;
+    let selected = delivery
+        .discover(&DeliveryOfferQueryV1::for_route(route, now_unix_seconds))
+        .await?
+        .into_iter()
+        .find(|candidate| candidate.offer().id().as_str() == offer_id)
+        .context("selected XMR offer is unavailable, expired, or not authentic")?;
+    let lez_units = selected.offer().quote_foreign_amount(foreign_units)?;
+    let commitment = selected.commitment();
+    let output = XmrPlanOutput {
+        schema_version: 1,
+        offer_id: offer_id.to_owned(),
+        reservation_id: reservation_id.as_str().to_owned(),
+        signed_envelope_sha256: hex::encode(commitment),
+        swap_id: hex::encode(maker_xmr_chat_swap_id(&commitment, &reservation_id)),
         foreign_units,
         lez_units,
         private_material_disclosed: false,
@@ -596,6 +816,26 @@ fn btc_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.btc_acceptance_receipt.is_some()
 }
 
+fn xmr_actor_bundle_is_durable(path: &std::path::Path) -> anyhow::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).context("inspect persisted XMR Taker actor"),
+    }
+}
+
+fn xmr_take_was_requested(arguments: &Arguments) -> bool {
+    arguments.accept_xmr_offer.is_some()
+        || arguments.xmr_stage_a_file.is_some()
+        || arguments.xmr_activation_file.is_some()
+        || arguments.xmr_source_taker_root.is_some()
+        || arguments.xmr_taker_public_packet.is_some()
+        || arguments.xmr_maker_public_packet.is_some()
+        || arguments.xmr_taker_role_journal.is_some()
+        || arguments.xmr_taker_actor_root.is_some()
+        || arguments.xmr_acceptance_receipt.is_some()
+}
+
 fn zec_take_was_requested(arguments: &Arguments) -> bool {
     arguments.accept_zec_offer.is_some()
         || arguments.zec_source_taker_config.is_some()
@@ -619,9 +859,31 @@ fn required_path<'a>(
     value.with_context(|| format!("ZEC acceptance requires {flag}"))
 }
 
+fn required_xmr_path<'a>(
+    value: Option<&'a std::path::Path>,
+    flag: &str,
+) -> anyhow::Result<&'a std::path::Path> {
+    value.with_context(|| format!("XMR acceptance requires {flag}"))
+}
+
 fn required_btc_path<'a>(
     value: Option<&'a std::path::Path>,
     flag: &str,
 ) -> anyhow::Result<&'a std::path::Path> {
     value.with_context(|| format!("BTC acceptance requires {flag}"))
+}
+
+#[cfg(test)]
+mod xmr_cli_tests {
+    use super::xmr_actor_bundle_is_durable;
+
+    #[test]
+    fn actor_root_becomes_delivery_free_crash_latch_only_after_publication() {
+        let parent = tempfile::tempdir().expect("temporary owner root");
+        let actor_root = parent.path().join("xmr-taker-actor");
+        assert!(!xmr_actor_bundle_is_durable(&actor_root).expect("inspect absent actor"));
+
+        std::fs::create_dir(&actor_root).expect("publish actor-root latch");
+        assert!(xmr_actor_bundle_is_durable(&actor_root).expect("inspect durable actor"));
+    }
 }

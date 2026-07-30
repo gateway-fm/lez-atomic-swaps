@@ -9,6 +9,16 @@
 #[cfg(not(unix))]
 compile_error!("xmr-reference-actor requires Unix file-permission semantics");
 
+#[cfg(feature = "sessions")]
+mod application_provision;
+
+#[cfg(feature = "sessions")]
+pub use application_provision::{
+    XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XmrActorProvisionV1,
+    provision_xmr_maker_actor_from_material, provision_xmr_taker_actor_from_material,
+    validate_maker_manifest_config_bytes,
+};
+
 use std::{
     ffi::OsString,
     fs::File,
@@ -149,6 +159,34 @@ pub enum Action {
         /// New canonical public role packet under an exact owner-only parent.
         #[arg(long, value_name = "NEW_PUBLIC_JSON")]
         public_packet: PathBuf,
+    },
+    /// Publish a role-fixed application bundle from canonical Stage A/B and private authority.
+    #[cfg(feature = "sessions")]
+    ProvisionApplication {
+        /// Fixed role bound by the source private root and journal.
+        #[arg(value_enum)]
+        role: ActorRole,
+        /// Existing owner-only role material root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// This role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// The other role's canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// Canonical countersigned Stage-B wire.
+        #[arg(long, value_name = "STAGE_B")]
+        activation_stage_b: PathBuf,
+        /// Existing owner-private role adaptor journal.
+        #[arg(long, value_name = "PRIVATE_SQLITE")]
+        role_journal: PathBuf,
+        /// New owner-private no-clobber application root.
+        #[arg(long, value_name = "NEW_ACTOR_ROOT")]
+        output_root: PathBuf,
     },
     /// Sign one canonical unsigned Stage-A wire with this role's private agreement key.
     SignStageA {
@@ -704,6 +742,26 @@ pub fn execute(cli: Cli) -> Result<()> {
             &lez_owner_account,
             shared_view_key_file.as_deref(),
             &public_packet,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::ProvisionApplication {
+            role,
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            activation_stage_b,
+            role_journal,
+            output_root,
+        } => provision_application_actor(
+            role,
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &activation_stage_b,
+            &role_journal,
+            &output_root,
         ),
         Action::SignStageA {
             role,
@@ -1414,6 +1472,79 @@ fn load_completed_taker_session(
         taker_partial: *taker_partial.bytes(),
         presignature: *presignature.bytes(),
     })
+}
+
+#[cfg(feature = "sessions")]
+#[derive(Serialize)]
+struct XmrActorProvisionCliSummaryV1<'a> {
+    schema_version: u16,
+    was_replay: bool,
+    role: ActorRole,
+    swap_id: String,
+    agreement_commitment: String,
+    activation_commitment: String,
+    config_path: &'a Path,
+    config_sha256: String,
+    state_database_path: &'a Path,
+    stage_a_path: &'a Path,
+    stage_a_sha256: String,
+    stage_b_path: &'a Path,
+    stage_b_sha256: String,
+    private_material_disclosed: bool,
+}
+
+#[cfg(feature = "sessions")]
+#[allow(clippy::too_many_arguments)]
+fn provision_application_actor(
+    role: ActorRole,
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    activation_stage_b: &Path,
+    role_journal: &Path,
+    output_root: &Path,
+) -> Result<()> {
+    let provision = match role {
+        ActorRole::Maker => provision_xmr_maker_actor_from_material(
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            activation_stage_b,
+            role_journal,
+            output_root,
+        )?,
+        ActorRole::Taker => provision_xmr_taker_actor_from_material(
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            activation_stage_b,
+            role_journal,
+            output_root,
+        )?,
+    };
+    let summary = XmrActorProvisionCliSummaryV1 {
+        schema_version: 1,
+        was_replay: provision.was_replay(),
+        role: provision.role(),
+        swap_id: hex::encode(provision.swap_id()),
+        agreement_commitment: hex::encode(provision.agreement_commitment()),
+        activation_commitment: hex::encode(provision.activation_commitment()),
+        config_path: provision.manifest_file(),
+        config_sha256: hex::encode(provision.manifest_sha256()),
+        state_database_path: provision.state_database(),
+        stage_a_path: provision.stage_a_file(),
+        stage_a_sha256: hex::encode(provision.stage_a_sha256()),
+        stage_b_path: provision.stage_b_file(),
+        stage_b_sha256: hex::encode(provision.stage_b_sha256()),
+        private_material_disclosed: false,
+    };
+    let bytes = canonical_json_bytes(&summary, "encode XMR actor provision summary")?;
+    std::io::stdout()
+        .write_all(&bytes)
+        .context("write XMR actor provision summary")
 }
 
 fn provision(

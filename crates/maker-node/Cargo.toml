@@ -15,6 +15,7 @@ test-crash-hooks = ["zec-reference-actor/test-crash-hooks"]
 
 [dependencies]
 anyhow = "1.0.102"
+base64 = "0.22.1"
 async-trait = "0.1.89"
 bytes = "1.12.1"
 btc-reference-actor = { version = "0.1.0", path = "../btc-reference-actor" }
@@ -30,7 +31,9 @@ lez-logos-price-c-api = { version = "0.1.0", path = "../logos-price-c-api", defa
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-swap-sdk-core = { version = "0.1.0", path = "../swap-sdk-core" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
+lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
+xmr-reference-actor = { version = "0.1.0", path = "../xmr-reference-actor", features = ["sessions"] }
 zec-reference-actor = { version = "0.1.0", path = "../zec-reference-actor" }
 rustix = { version = "1.1.4", features = ["fs", "process"] }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
@@ -46,6 +49,7 @@ zeroize = "=1.9.0"
 zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+lez-adaptor-role-runner = { version = "0.1.0", path = "../adaptor-role-runner" }
 bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
 hex = "0.4.3"
 jsonrpsee-http-client = { version = "0.26.0", default-features = false }

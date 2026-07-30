@@ -5,6 +5,7 @@ use std::{
     process::Command,
 };
 
+use clap::Parser as _;
 use lez_xmr_swap_sdk::CrossCurveDleqProofV1;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -336,4 +337,55 @@ fn packet_validation_rejects_compressed_xonly_and_dleq_key_reuse() {
     fs::write(&packet, dleq_alias).expect("write DLEQ alias");
     let error = ValidatedRolePacket::read(&packet).expect_err("DLEQ alias rejected");
     assert!(error.to_string().contains("DLEQ point aliases"));
+}
+
+#[test]
+fn application_provision_cli_requires_every_role_fixed_authority_path() {
+    let arguments = [
+        "xmr-reference-actor",
+        "provision-application",
+        "maker",
+        "--private-root",
+        "/private/maker",
+        "--own-public-packet",
+        "/exchange/maker.json",
+        "--peer-public-packet",
+        "/exchange/taker.json",
+        "--agreement-stage-a",
+        "/exchange/stage-a.bin",
+        "--activation-stage-b",
+        "/exchange/stage-b.bin",
+        "--role-journal",
+        "/private/journals/maker.sqlite",
+        "--output-root",
+        "/private/actors/maker",
+    ];
+    let cli = Cli::try_parse_from(arguments).expect("parse application provision CLI");
+    match cli.action {
+        Action::ProvisionApplication {
+            role,
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            activation_stage_b,
+            role_journal,
+            output_root,
+        } => {
+            assert_eq!(role, ActorRole::Maker);
+            assert_eq!(private_root, Path::new("/private/maker"));
+            assert_eq!(own_public_packet, Path::new("/exchange/maker.json"));
+            assert_eq!(peer_public_packet, Path::new("/exchange/taker.json"));
+            assert_eq!(agreement_stage_a, Path::new("/exchange/stage-a.bin"));
+            assert_eq!(activation_stage_b, Path::new("/exchange/stage-b.bin"));
+            assert_eq!(role_journal, Path::new("/private/journals/maker.sqlite"));
+            assert_eq!(output_root, Path::new("/private/actors/maker"));
+        }
+        _ => panic!("wrong CLI action"),
+    }
+    let without_journal = arguments
+        .into_iter()
+        .filter(|value| *value != "--role-journal" && *value != "/private/journals/maker.sqlite")
+        .collect::<Vec<_>>();
+    assert!(Cli::try_parse_from(without_journal).is_err());
 }

@@ -12,7 +12,8 @@ use tokio::net::UnixStream;
 
 const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_ID: u64 = 1;
-const MAXIMUM_RPC_BODY_BYTES: usize = 64 * 1024;
+const MAXIMUM_CONTROL_RPC_BODY_BYTES: usize = 64 * 1024;
+const MAXIMUM_CHAT_RPC_BODY_BYTES: usize = 1024 * 1024;
 
 #[derive(Serialize)]
 struct RpcRequest<'a, P> {
@@ -51,6 +52,39 @@ where
     P: Serialize,
     R: DeserializeOwned,
 {
+    call_local_rpc_bounded(socket, method, parameter, MAXIMUM_CONTROL_RPC_BODY_BYTES).await
+}
+
+/// Calls one typed taker-facing Chat method through a Unix socket.
+///
+/// Chat byte arrays need more JSON framing space than owner-control messages,
+/// which remain independently constrained to 64 KiB.
+///
+/// # Errors
+///
+/// Returns the same bounded transport and JSON-RPC errors as `call_local_rpc`.
+pub async fn call_local_chat_rpc<P, R>(
+    socket: &Path,
+    method: &str,
+    parameter: &P,
+) -> anyhow::Result<R>
+where
+    P: Serialize,
+    R: DeserializeOwned,
+{
+    call_local_rpc_bounded(socket, method, parameter, MAXIMUM_CHAT_RPC_BODY_BYTES).await
+}
+
+async fn call_local_rpc_bounded<P, R>(
+    socket: &Path,
+    method: &str,
+    parameter: &P,
+    maximum_body_bytes: usize,
+) -> anyhow::Result<R>
+where
+    P: Serialize,
+    R: DeserializeOwned,
+{
     ensure!(
         !method.is_empty() && method.len() <= 128 && method.is_ascii(),
         "local RPC method must be 1..=128 ASCII bytes"
@@ -63,8 +97,8 @@ where
     })
     .context("encode local JSON-RPC request")?;
     ensure!(
-        payload.len() <= MAXIMUM_RPC_BODY_BYTES,
-        "local RPC request exceeds {MAXIMUM_RPC_BODY_BYTES} bytes"
+        payload.len() <= maximum_body_bytes,
+        "local RPC request exceeds {maximum_body_bytes} bytes"
     );
 
     let stream = UnixStream::connect(socket)
@@ -86,7 +120,7 @@ where
     if !response.status().is_success() {
         bail!("local RPC returned HTTP status {}", response.status());
     }
-    let body = Limited::new(response.into_body(), MAXIMUM_RPC_BODY_BYTES)
+    let body = Limited::new(response.into_body(), maximum_body_bytes)
         .collect()
         .await
         .map_err(|error| anyhow::anyhow!("read bounded local RPC response: {error}"))?

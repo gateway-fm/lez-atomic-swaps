@@ -891,6 +891,29 @@ fn xmr_stage_b_completion_is_atomic_replay_safe_and_mints_one_actor() {
     assert_eq!(actors.len(), 1);
     assert_eq!(actors[0].manifest(), &actor);
 
+    let stage_after_activation = reopened
+        .preflight_maker_xmr_stage_a_replay(&stage_request, &offer_id, 1, &candidate)
+        .unwrap()
+        .expect("original Stage A remains replayable after activation");
+    assert_eq!(stage_after_activation.revision(), 2);
+    assert!(stage_after_activation.was_replay());
+
+    let changed_stage = MakerXmrNegotiationV1::stage_a(
+        reservation_id.clone(),
+        OFFER_COMMITMENT,
+        XMR_PICONERO,
+        LEZ_UNITS,
+        102,
+        candidate.stage_a_wire().to_vec(),
+    )
+    .unwrap();
+    assert!(
+        reopened
+            .preflight_maker_xmr_stage_a_replay(&stage_request, &offer_id, 1, &changed_stage)
+            .is_err(),
+        "changed Stage-A fingerprint must fail closed"
+    );
+
     let replay = reopened
         .complete_maker_xmr_negotiation_and_register_actor(
             &complete_request,
@@ -958,6 +981,10 @@ fn xmr_stage_b_completion_is_atomic_replay_safe_and_mints_one_actor() {
         params![offer_id.as_str()],
     )
     .unwrap();
+    assert!(matches!(
+        reopened.preflight_maker_xmr_stage_a_replay(&stage_request, &offer_id, 1, &candidate,),
+        Err(StoreError::CorruptMakerOffer)
+    ));
     assert!(matches!(
         reopened.complete_maker_xmr_negotiation_and_register_actor(
             &complete_request,

@@ -15,33 +15,66 @@ use jsonrpsee::server::{
 };
 use lez_maker_node::{
     BtcMakerActorProvisioner, MakerActorSupervisorCancellation, MakerActorSupervisorConfig,
-    MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, ZecMakerActorProvisioner, chat_rpc_module,
-    import_terminal_zec_maker_projection, rpc_module, supervise_one_abandoned_maker_actor,
-    supervise_one_abandoned_maker_actor_until, supervise_one_due_maker_actor_until,
+    MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, XmrMakerChatAuthority,
+    ZecMakerActorProvisioner, chat_rpc_module, import_terminal_zec_maker_projection, rpc_module,
+    supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
+    supervise_one_due_maker_actor_until,
 };
 use lez_swap_core::{Participant, SwapId};
-use lez_swap_store::{MakerActorLeaseOwner, SqliteSwapStore, SqliteZecRecoveryStore};
+use lez_swap_store::{
+    MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1, SqliteSwapStore,
+    SqliteZecRecoveryStore, validate_maker_actor_program,
+};
+use lez_xmr_swap_sdk::MoneroPrivateViewKey;
 use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
 use rustix::fs::{CWD, FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
 use sd_notify::NotifyState;
-use secp256k1::SecretKey;
+use secp256k1::{PublicKey, SecretKey};
+use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use tokio::{net::UnixListener, task::JoinSet};
+use xmr_reference_actor::{
+    XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, validate_maker_manifest_config_bytes,
+};
 use zeroize::Zeroizing;
 
 #[path = "support/secure_file.rs"]
 mod secure_file;
 use secure_file::{load_raw_secret, read_private_file};
 
-const MAXIMUM_RPC_BODY_BYTES: u32 = 64 * 1024;
+const MAXIMUM_CONTROL_RPC_BODY_BYTES: u32 = 64 * 1024;
+const MAXIMUM_CHAT_RPC_BODY_BYTES: u32 = 1024 * 1024;
 const MAXIMUM_CONNECTIONS: u32 = 16;
 
 type BtcChatAuthority = (SecretKey, BtcMakerActorProvisioner);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct XmrActorManifestRegistryV1 {
+    schema_version: u16,
+    actors: Vec<XmrActorManifestEntryV1>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct XmrActorManifestEntryV1 {
+    swap_id: Box<str>,
+    config_path: PathBuf,
+    config_sha256: Box<str>,
+    program_path: PathBuf,
+    program_sha256: Box<str>,
+    state_database_path: PathBuf,
+}
 
 #[derive(Parser)]
 #[command(
     about = "Headless LEZ atomic-swap maker daemon",
     group(ArgGroup::new("pair_chat_authority")
-        .args(["maker_claim_key_id", "btc_maker_signing_key_file"])
+        .args([
+            "maker_claim_key_id",
+            "btc_maker_signing_key_file",
+            "xmr_actor_manifest_registry_file",
+        ])
         .multiple(true))
 )]
 struct Arguments {
@@ -148,6 +181,36 @@ struct Arguments {
     /// Exact 32-byte SHA-256 identity of the BTC actor executable.
     #[arg(long, requires_all = ["btc_source_maker_config", "btc_maker_signing_key_file", "btc_maker_actor_root", "btc_actor_program"])]
     btc_actor_program_sha256: Option<Box<str>>,
+    /// Owner-only compressed secp256k1 Maker agreement public key.
+    #[arg(
+        long,
+        requires_all = [
+            "delivery_directory",
+            "xmr_private_view_key_file",
+            "xmr_actor_manifest_registry_file"
+        ]
+    )]
+    xmr_maker_agreement_public_key_file: Option<PathBuf>,
+    /// Owner-only raw 32-byte shared Monero private view key.
+    #[arg(
+        long,
+        requires_all = [
+            "delivery_directory",
+            "xmr_maker_agreement_public_key_file",
+            "xmr_actor_manifest_registry_file"
+        ]
+    )]
+    xmr_private_view_key_file: Option<PathBuf>,
+    /// Owner-only bounded JSON registry of Maker-only XMR actor manifests.
+    #[arg(
+        long,
+        requires_all = [
+            "delivery_directory",
+            "xmr_maker_agreement_public_key_file",
+            "xmr_private_view_key_file"
+        ]
+    )]
+    xmr_actor_manifest_registry_file: Option<PathBuf>,
     /// Stopped owner-private Maker actor database imported only as a terminal operator view.
     #[arg(long, requires_all = ["terminal_zec_swap_id", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
     terminal_zec_maker_state_db: Option<PathBuf>,
@@ -365,6 +428,7 @@ async fn main() -> anyhow::Result<()> {
     let logos_price_source = configured_logos_price_source(&arguments)?;
     let zec_actor_provisioner = configured_zec_actor_provisioner(&arguments)?;
     let btc_chat_authority = configured_btc_chat_authority(&arguments)?;
+    let xmr_chat_authority = configured_xmr_chat_authority(&arguments)?;
     let _state_lease = acquire_state_lease(&arguments.database)?;
     import_terminal_projection(&arguments).await?;
     let actor_supervisor = configured_actor_supervisor(&arguments)?;
@@ -375,6 +439,7 @@ async fn main() -> anyhow::Result<()> {
         &arguments,
         zec_actor_provisioner,
         btc_chat_authority,
+        xmr_chat_authority,
         logos_price_source,
     )?;
     let context = attach_chat_health(context, arguments.chat_socket.as_deref());
@@ -391,12 +456,12 @@ async fn main() -> anyhow::Result<()> {
         .transpose()?;
     let (stop_handle, server_handle) = stop_channel();
     let service = ServerBuilder::default()
-        .set_config(server_config())
+        .set_config(server_config(MAXIMUM_CONTROL_RPC_BODY_BYTES))
         .to_service_builder()
         .build(module, stop_handle.clone());
     let chat_service = chat_module.map(|module| {
         ServerBuilder::default()
-            .set_config(server_config())
+            .set_config(server_config(MAXIMUM_CHAT_RPC_BODY_BYTES))
             .to_service_builder()
             .build(module, stop_handle.clone())
     });
@@ -731,10 +796,114 @@ fn configured_btc_chat_authority(
     Ok(Some((signing_key, provisioner)))
 }
 
+fn configured_xmr_chat_authority(
+    arguments: &Arguments,
+) -> anyhow::Result<Option<XmrMakerChatAuthority>> {
+    let configured = (
+        arguments.xmr_maker_agreement_public_key_file.as_deref(),
+        arguments.xmr_private_view_key_file.as_deref(),
+        arguments.xmr_actor_manifest_registry_file.as_deref(),
+    );
+    let (public_key_file, view_key_file, registry_file) = match configured {
+        (None, None, None) => return Ok(None),
+        (Some(public_key), Some(view_key), Some(registry)) => (public_key, view_key, registry),
+        _ => bail!(
+            "XMR Maker agreement key, private view key, and actor registry must be configured together"
+        ),
+    };
+    let maker_identity = load_compressed_public_key(public_key_file)?;
+    let view_key = load_raw_secret(view_key_file, "XMR private view key")?;
+    let private_view_key = MoneroPrivateViewKey::from_monero_little_endian(*view_key)
+        .context("validate XMR private view key")?;
+    let registry_bytes = read_private_file(registry_file, 1024 * 1024, "XMR actor registry")?;
+    let registry: XmrActorManifestRegistryV1 =
+        serde_json::from_slice(&registry_bytes).context("decode XMR actor registry")?;
+    ensure!(
+        registry.schema_version == 1 && !registry.actors.is_empty(),
+        "XMR actor registry is empty or unsupported"
+    );
+    let actors = registry
+        .actors
+        .into_iter()
+        .map(|entry| {
+            let swap_id = SwapId::new(entry.swap_id).context("validate XMR actor swap ID")?;
+            let mut binary_swap_id = [0_u8; 32];
+            ensure!(
+                swap_id.as_str().len() == 64
+                    && hex::decode_to_slice(swap_id.as_str(), &mut binary_swap_id).is_ok()
+                    && hex::encode(binary_swap_id) == swap_id.as_str(),
+                "XMR actor swap ID must be exactly 32 lowercase hexadecimal bytes"
+            );
+            let config_sha256 = decode_sha256(&entry.config_sha256, "XMR actor config SHA-256")?;
+            let program_sha256 = decode_sha256(&entry.program_sha256, "XMR actor program SHA-256")?;
+            let config_bytes = read_private_file(
+                &entry.config_path,
+                XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+                "XMR Maker actor config",
+            )?;
+            let observed_config_sha256: [u8; 32] = Sha256::digest(config_bytes.as_slice()).into();
+            ensure!(
+                observed_config_sha256 == config_sha256,
+                "XMR Maker actor config SHA-256 changed"
+            );
+            validate_maker_manifest_config_bytes(
+                config_bytes.as_slice(),
+                binary_swap_id,
+                &entry.state_database_path,
+            )
+            .context("validate XMR Maker-only actor config semantics")?;
+            validate_maker_actor_program(&entry.program_path, program_sha256)
+                .context("validate XMR Maker actor program")?;
+            MakerActorManifestV1::new(
+                swap_id,
+                MakerActorKindV1::Monero,
+                entry.config_path,
+                config_sha256,
+                entry.program_path,
+                program_sha256,
+                entry.state_database_path,
+            )
+            .context("validate XMR Maker actor manifest")
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    XmrMakerChatAuthority::new(maker_identity, private_view_key, actors)
+        .context("validate XMR Chat authority")
+        .map(Some)
+}
+
+fn load_compressed_public_key(path: &Path) -> anyhow::Result<[u8; 33]> {
+    let encoded = read_private_file(path, 66, "XMR Maker agreement public key")?;
+    let mut bytes = [0_u8; 33];
+    match encoded.len() {
+        33 => bytes.copy_from_slice(&encoded),
+        66 => hex::decode_to_slice(&encoded, &mut bytes)
+            .context("decode XMR Maker agreement public key")?,
+        _ => bail!("XMR Maker agreement public key must be 33 raw or 66 hexadecimal bytes"),
+    }
+    let parsed =
+        PublicKey::from_slice(&bytes).context("validate XMR Maker agreement public key")?;
+    ensure!(
+        parsed.serialize() == bytes,
+        "XMR Maker agreement public key must be compressed"
+    );
+    Ok(bytes)
+}
+
+fn decode_sha256(encoded: &str, purpose: &str) -> anyhow::Result<[u8; 32]> {
+    ensure!(
+        encoded.len() == 64,
+        "{purpose} must contain exactly 32 hexadecimal bytes"
+    );
+    let mut digest = [0_u8; 32];
+    hex::decode_to_slice(encoded, &mut digest).with_context(|| format!("decode {purpose}"))?;
+    Ok(digest)
+}
+
 fn maker_context(
     arguments: &Arguments,
     zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
     btc_chat_authority: Option<BtcChatAuthority>,
+    xmr_chat_authority: Option<XmrMakerChatAuthority>,
     logos_price_source: Option<ProcessLogosPriceSource>,
 ) -> anyhow::Result<MakerRpc> {
     let store = SqliteSwapStore::open(&arguments.database).context("open maker database")?;
@@ -751,7 +920,8 @@ fn maker_context(
                     && arguments.maker_claim_key_file.is_none()
                     && arguments.maker_claim_preimage_file.is_none()
                     && zec_actor_provisioner.is_none()
-                    && btc_chat_authority.is_none(),
+                    && btc_chat_authority.is_none()
+                    && xmr_chat_authority.is_none(),
                 "Delivery, Chat, and pair authority require a complete Delivery transport"
             );
             let context = MakerRpc::new(store);
@@ -790,12 +960,12 @@ fn maker_context(
     };
     if arguments.chat_socket.is_some() {
         ensure!(
-            zec_authority.is_some() || btc_chat_authority.is_some(),
+            zec_authority.is_some() || btc_chat_authority.is_some() || xmr_chat_authority.is_some(),
             "Chat requires at least one complete pair authority"
         );
     } else {
         ensure!(
-            zec_authority.is_none() && btc_chat_authority.is_none(),
+            zec_authority.is_none() && btc_chat_authority.is_none() && xmr_chat_authority.is_none(),
             "pair authority requires a Chat socket"
         );
     }
@@ -826,16 +996,20 @@ fn maker_context(
         }
         None => context,
     };
+    let context = match xmr_chat_authority {
+        Some(authority) => context.with_xmr_chat_authority(authority),
+        None => context,
+    };
     Ok(match logos_price_source {
         Some(source) => context.with_logos_price_source(source),
         None => context,
     })
 }
 
-fn server_config() -> ServerConfig {
+fn server_config(maximum_body_bytes: u32) -> ServerConfig {
     ServerConfig::builder()
-        .max_request_body_size(MAXIMUM_RPC_BODY_BYTES)
-        .max_response_body_size(MAXIMUM_RPC_BODY_BYTES)
+        .max_request_body_size(maximum_body_bytes)
+        .max_response_body_size(maximum_body_bytes)
         .max_connections(MAXIMUM_CONNECTIONS)
         .set_batch_request_config(BatchRequestConfig::Disabled)
         .http_only()
@@ -1028,6 +1202,45 @@ mod tests {
         Arguments::try_parse_from(complete.clone()).expect("complete Chat deployment parses");
         complete.extend(["--zec-source-maker-config", "/tmp/second-actor.json"]);
         Arguments::try_parse_from(complete).expect("per-swap source registry parses");
+    }
+
+    #[test]
+    fn chat_cli_requires_complete_xmr_authority() {
+        let complete = vec![
+            "lez-maker-daemon",
+            "--database",
+            "/tmp/maker.sqlite3",
+            "--delivery-directory",
+            "/tmp/delivery",
+            "--delivery-signing-key-file",
+            "/tmp/delivery.key",
+            "--chat-socket",
+            "/tmp/chat.sock",
+            "--xmr-maker-agreement-public-key-file",
+            "/tmp/xmr-maker.pub",
+            "--xmr-private-view-key-file",
+            "/tmp/xmr-view.key",
+            "--xmr-actor-manifest-registry-file",
+            "/tmp/xmr-actors.json",
+        ];
+        Arguments::try_parse_from(complete.clone()).expect("complete XMR Chat authority parses");
+
+        for omitted in [
+            "--xmr-maker-agreement-public-key-file",
+            "--xmr-private-view-key-file",
+            "--xmr-actor-manifest-registry-file",
+        ] {
+            let index = complete
+                .iter()
+                .position(|value| *value == omitted)
+                .expect("flag exists");
+            let mut incomplete = complete.clone();
+            incomplete.drain(index..=index + 1);
+            assert!(
+                Arguments::try_parse_from(incomplete).is_err(),
+                "XMR Chat authority must reject omission of {omitted}"
+            );
+        }
     }
 
     #[test]

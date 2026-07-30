@@ -1633,6 +1633,112 @@ impl SqliteSwapStore {
         })
     }
 
+    /// Verifies an exact previously committed XMR Stage-A request without mutation.
+    ///
+    /// This preflight deliberately accepts the durable row after Stage B has
+    /// consumed the offer: transport retry semantics must not disappear merely
+    /// because a later atomic transition advanced the same negotiation.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when the global request fingerprint conflicts or any
+    /// immutable Stage-A, offer, reservation, quote, or revision field drifted.
+    #[allow(clippy::too_many_lines)]
+    pub fn preflight_maker_xmr_stage_a_replay(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_revision: u64,
+        negotiation: &MakerXmrNegotiationV1,
+    ) -> Result<Option<MakerOfferCommit>, StoreError> {
+        let agreement = validate_xmr_stage_a(negotiation)?;
+        let maker_identity = agreement
+            .body()
+            .participants()
+            .for_role(XmrRoleV1::Maker)
+            .agreement_public_key();
+        let taker_identity = agreement
+            .body()
+            .participants()
+            .for_role(XmrRoleV1::Taker)
+            .agreement_public_key();
+        let agreement_commitment = agreement.agreement_commitment();
+        let stage_a_wire_sha256: [u8; 32] = Sha256::digest(negotiation.stage_a_wire()).into();
+        let request_json = serde_json::to_string(&StageXmrNegotiationRequest {
+            offer_id,
+            expected_revision,
+            reservation_id: negotiation.reservation_id(),
+            offer_commitment: negotiation.offer_commitment(),
+            maker_agreement_identity: &maker_identity,
+            taker_agreement_identity: &taker_identity,
+            foreign_units: negotiation.foreign_units(),
+            lez_units: negotiation.lez_units().to_string(),
+            agreement_commitment,
+            stage_a_wire_sha256,
+        })?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(commit) = replay_offer_mutation(
+            &transaction,
+            request_id,
+            "xmr_negotiation_stage",
+            &request_json,
+        )?
+        else {
+            return Ok(None);
+        };
+        let committed_revision = expected_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let replayed =
+            load_xmr_negotiation(&transaction, offer_id)?.ok_or(StoreError::CorruptMakerOffer)?;
+        let replayed_agreement =
+            validate_xmr_stage_a(&replayed).map_err(|_| StoreError::CorruptMakerOffer)?;
+        let record = load_offer(&transaction, offer_id, replayed.reserved_at_unix_seconds())?
+            .ok_or(StoreError::CorruptMakerOffer)?;
+        let phase_exact = match replayed.status() {
+            MakerXmrNegotiationStatus::StageAAccepted => {
+                record.status == MakerOfferStatus::Reserved
+                    && record.revision == committed_revision
+                    && record.swap_id.is_none()
+                    && replayed.activation_wire().is_none()
+                    && replayed.coordinator_swap_id().is_none()
+            }
+            MakerXmrNegotiationStatus::Activated => {
+                record.status == MakerOfferStatus::Consumed
+                    && Some(record.revision) == committed_revision.checked_add(1)
+                    && record.swap_id.as_deref() == replayed.coordinator_swap_id()
+                    && replayed.activation_wire().is_some()
+                    && replayed.coordinator_swap_id().is_some()
+            }
+        };
+        if commit.revision() != committed_revision
+            || !phase_exact
+            || record.reservation_id.as_ref() != Some(negotiation.reservation_id())
+            || replayed.reservation_id() != negotiation.reservation_id()
+            || replayed.offer_commitment() != negotiation.offer_commitment()
+            || replayed.foreign_units() != negotiation.foreign_units()
+            || replayed.lez_units() != negotiation.lez_units()
+            || replayed.reserved_at_unix_seconds() != negotiation.reserved_at_unix_seconds()
+            || replayed.stage_a_wire() != negotiation.stage_a_wire()
+            || replayed_agreement.agreement_commitment() != agreement_commitment
+            || record.offer.route().pair() != Pair::Monero
+            || record.offer.route().direction() != SwapDirection::TakerSellsLez
+            || record
+                .offer
+                .quote_foreign_amount(replayed.foreign_units())?
+                != replayed.lez_units()
+        {
+            return Err(StoreError::CorruptMakerOffer);
+        }
+        transaction.commit()?;
+        Ok(Some(MakerOfferCommit {
+            revision: committed_revision,
+            was_replay: true,
+        }))
+    }
+
     /// Atomically reserves one Monero offer with a dual-signed canonical Stage A.
     ///
     /// Stage A is deliberately non-executable: this transaction does not consume

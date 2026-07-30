@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-18
+Status: Living target architecture — 2026-07-30
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -604,7 +604,7 @@ flowchart TB
         OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
         BTN[("Schema-v19 BTC negotiation<br/>signed staging + atomic actor activation GREEN")]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v19<br/>application + actor scheduler journals")]
+        DB[("Maker SQLite schema v21<br/>application + actor scheduler journals")]
         PR["Durable route price selector"]
         MPV["Daemon Maker-only provisioner<br/>startup-pinned authority + durable no-clobber publish"]
         SCH[("Schema-v18 actor scheduler<br/>atomic registration + fenced leases")]
@@ -627,7 +627,7 @@ flowchart TB
     end
 
     subgraph TakerDevice["Taker-controlled device"]
-        TC["lez-taker CLI<br/>BTC and ZEC acceptance receipt replay GREEN<br/>local-node effects pending"]
+        TC["lez-taker CLI<br/>BTC, XMR, and ZEC acceptance replay GREEN<br/>local-node effects pending"]
         TR[("Role-bound acceptance receipt")]
         TM["Taker mini-app"]
         TS["Taker pair SDK + durable recovery state"]
@@ -2217,11 +2217,56 @@ consumes the offer, and records replay; any failed write restores the
 Stage-A-only state. Exact replay revalidates the signed Stage A, offer route and
 quote, activation, coordinator, actor, and mutation rows.
 
-This component currently uses no RPC or node. The dotted RPC path is the next
-composition gate: the real daemon and Taker CLI must first provision independent
-role bundles, after which the semantic supervisor adapter will reuse the actual
-local components below. Merely admitting `monero` in the scheduler schema does
-not authorize a process or chain effect.
+The store component uses no chain RPC or node. The real-process pre-effect checkpoint around it is GREEN 1 of 1 in 307.71 seconds. It adds the actual Maker CLI, daemon, Taker CLI, signed Delivery projection, separate owner and Chat Unix sockets, independent role roots and journals, Maker-only startup registry, Taker-only actor publication, Delivery removal, and daemon reopen. The process boundary still emits zero public effects and leaves the actor supervisor disabled.
+
+```mermaid
+flowchart LR
+    MakerOperator["Maker operator"] --> MakerCli["lez-maker CLI"]
+    MakerCli -->|"owner Unix RPC"| Daemon["lez-maker-daemon"]
+    MakerKey[("Maker agreement public key")] --> Daemon
+    ViewKey[("Shared private view key")] --> Daemon
+    Registry[("Maker-only actor registry")] --> Daemon
+    Daemon --> Delivery["Signed run-local Delivery"]
+    Delivery --> TakerCli["lez-taker CLI"]
+    TakerRoot[("Taker private role root")] --> TakerCli
+    TakerJournal[("Taker role journal")] --> TakerCli
+    PublicPackets["Maker and Taker public packets"] --> TakerCli
+    TakerCli -->|"Stage A and Stage B over Chat Unix RPC"| Daemon
+    Daemon --> Store[("SQLite schema v21")]
+    TakerCli --> TakerBundle[("Taker-only no-clobber actor bundle")]
+    TakerCli --> Receipt[("Taker acceptance receipt")]
+    Store --> MakerActor[("Queued Maker-only Monero actor")]
+    MakerActor -.-> SemanticActor["Semantic XMR supervisor adapter open"]
+    SemanticActor -.-> LezRpc["LEZ v0.2 sequencer and indexer"]
+    SemanticActor -.-> MoneroRpc["Official monerod and wallet RPCs"]
+```
+
+```mermaid
+sequenceDiagram
+    participant T as Taker CLI
+    participant D as Maker daemon
+    participant DB as SQLite
+    participant F as Taker filesystem
+
+    T->>D: Authenticated Stage A for reservation
+    D->>DB: Begin immediate reserve transaction
+    DB-->>D: Revision 2 and no executable authority
+    D-->>T: Durable Stage-A response
+    T->>F: Publish Taker-only bundle without replacement
+    T->>D: Canonical Stage B
+    D->>DB: Begin immediate activation transaction
+    DB->>DB: Activate negotiation
+    DB->>DB: Create coordinator and one Maker actor
+    DB->>DB: Consume offer and record exact replay
+    DB-->>D: Commit revision 3
+    D-->>T: Durable activation response
+    T->>F: Publish receipt after Maker commit
+    T->>D: Replay after Delivery removal and restart
+    D->>DB: Revalidate original rows
+    D-->>T: Original result without replacement
+```
+
+The atomicity claim is deliberately local. Stage A cannot create a coordinator, actor, or effect. Stage B performs every executable application transition in one SQLite transaction, so any failed member restores the Stage-A-only state. The Taker bundle is a pre-activation crash latch and the receipt is post-commit evidence. No cross-chain transaction or chain safety is inferred. The semantic XMR supervisor and actual isolated Monero plus LEZ flow remain the next composition gate; merely admitting `monero` in the scheduler schema does not authorize a process or chain effect.
 
 #### Actual local components and RPCs
 

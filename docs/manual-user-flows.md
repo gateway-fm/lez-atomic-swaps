@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last verified: 2026-07-20
+Last updated: 2026-07-30
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -5713,6 +5713,214 @@ composer, and stop before effects for its first fast gate. The following gate
 will splice those exact accepted role bundles into the isolated official Monero
 0.18.5.1 Regtest plus LEZ v0.2 claim runner. Until those two gates are GREEN,
 there is no supported claim that a user can repeat an M5 XMR application swap.
+
+## Flow 1P: repeat the XMR role-process pre-effect checkpoint
+
+Status: process-GREEN; the exact locked/offline black-box passed 1 of 1 in 307.71 seconds. This is an end-user-shaped application handoff through real Maker and Taker processes, but it deliberately stops before any chain effect. Do not report it as a completed XMR swap.
+
+### Fast exact reproduction
+
+From the repository root with the pinned toolchain and warm offline cache:
+
+```bash
+cargo +1.96.0 build --locked --offline \
+  -p lez-maker-node --bins
+cargo +1.96.0 build --locked --offline \
+  -p xmr-reference-actor --features sessions --bin xmr-reference-actor
+cargo +1.96.0 test --locked --offline \
+  -p lez-maker-node --test xmr_chat_process \
+  real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically -- --exact --nocapture
+```
+
+The exact test owns one temporary mode-0700 root, two Unix sockets, one SQLite database, one signed Delivery directory, independent Maker/Taker role roots and journals, and one no-clobber Taker actor root and receipt. It executes the actual `lez-maker`, `lez-maker-daemon`, and `lez-taker` binaries. The role fixture calls the same `xmr-reference-actor` parsing, signing, session, Stage-B, and application-provisioning code used by the public role CLI.
+
+The exact 307.71-second run proved: crossed reservation leaves revision 1 and zero application writes; Stage A alone returns revision 2 and creates no coordinator, actor, or public effect; the Maker application database has no public-effect table and both role journals remain byte-identical; Stage B returns revision 3 and atomically creates one coordinator, consumes the offer, registers exactly one Maker-only Monero actor, and records replay; the Taker publishes only its own role bundle and receipt; Delivery removal plus daemon reopen still exact-replays; and every captured Taker actor/receipt byte and inode remains unchanged.
+
+### Manual process shape and authority registry
+
+First use Flow 0 to create independent Maker/Taker private roots and public packets, canonical dual-signed Stage A, separate completed role journals, and canonical countersigned Stage B. Stage A must contain the exact swap ID derived by `lez-taker --plan-xmr-offer` from the authenticated Delivery commitment and chosen reservation. Do not hand-edit that ID or any principal.
+
+Use absolute paths under one new owner-private root:
+
+```bash
+export XMR_APP_ROOT=/absolute/owner-private/m5-xmr-app
+export MAKER_SOCKET="$XMR_APP_ROOT/runtime/maker.sock"
+export CHAT_SOCKET="$XMR_APP_ROOT/runtime/chat.sock"
+export MAKER_DB="$XMR_APP_ROOT/maker.sqlite3"
+export DELIVERY_ROOT="$XMR_APP_ROOT/delivery"
+export OFFER_ID=m5-xmr-offer-001
+export RESERVATION_ID=m5-xmr-reservation-001
+export FOREIGN_UNITS=1000000000000
+install -d -m 0700 "$XMR_APP_ROOT" "$XMR_APP_ROOT/runtime"
+install -m 0600 /absolute/delivery-signing.key "$XMR_APP_ROOT/delivery.key"
+```
+
+Start a Delivery-only daemon, configure the LEZ-first Monero route, and publish one offer. The example uses the required reduced ratio of 1 LEZ atomic unit per 1000000000 piconero, which quotes exactly 1000 LEZ atomic units for 1000000000000 piconero:
+
+```bash
+target/debug/lez-maker-daemon \
+  --socket "$MAKER_SOCKET" \
+  --database "$MAKER_DB" \
+  --ready-file "$XMR_APP_ROOT/runtime/ready" \
+  --delivery-directory "$DELIVERY_ROOT" \
+  --delivery-signing-key-file "$XMR_APP_ROOT/delivery.key" &
+export MAKER_PID=$!
+for _ in $(seq 1 120); do
+  test -s "$XMR_APP_ROOT/runtime/ready" && break
+  kill -0 "$MAKER_PID"
+  sleep 1
+done
+test -s "$XMR_APP_ROOT/runtime/ready"
+
+target/debug/lez-maker --socket "$MAKER_SOCKET" configure-pair \
+  --request-id xmr-route-create-001 --pair monero \
+  --direction taker-sells-lez --enabled false --price-source local \
+  --minimum-foreign-units "$FOREIGN_UNITS" \
+  --maximum-foreign-units "$FOREIGN_UNITS" --offer-ttl-seconds 300
+target/debug/lez-maker --socket "$MAKER_SOCKET" set-local-price \
+  --request-id xmr-price-create-001 --pair monero \
+  --direction taker-sells-lez --lez-units-per-lot 1 \
+  --foreign-units-per-lot 1000000000
+target/debug/lez-maker --socket "$MAKER_SOCKET" configure-pair \
+  --request-id xmr-route-enable-001 --expected-revision 1 \
+  --pair monero --direction taker-sells-lez --enabled true \
+  --price-source local --minimum-foreign-units "$FOREIGN_UNITS" \
+  --maximum-foreign-units "$FOREIGN_UNITS" --offer-ttl-seconds 300
+target/debug/lez-maker --socket "$MAKER_SOCKET" publish-offer \
+  --request-id xmr-publish-001 --offer-id "$OFFER_ID" \
+  --pair monero --direction taker-sells-lez
+```
+
+Use the compressed Delivery public key from the configured signing key:
+
+```bash
+target/debug/lez-taker \
+  --delivery-directory "$DELIVERY_ROOT" \
+  --maker-public-key "$DELIVERY_PUBLIC_KEY_HEX" \
+  --now-unix-seconds "$(date +%s)" \
+  --pair monero --direction taker-sells-lez \
+  --plan-xmr-offer "$OFFER_ID" \
+  --reservation-id "$RESERVATION_ID" \
+  --foreign-units "$FOREIGN_UNITS"
+```
+
+After Flow 0 has generated Stage A/B with that plan, provision the Maker application manifest and derive the daemon authority files. The input role journal remains the state authority; no secret journal is copied into a shared bundle:
+
+```bash
+target/debug/xmr-reference-actor provision-application maker \
+  --private-root "$MAKER_PRIVATE_ROOT" \
+  --own-public-packet "$MAKER_PUBLIC_PACKET" \
+  --peer-public-packet "$TAKER_PUBLIC_PACKET" \
+  --agreement-stage-a "$STAGE_A_FILE" \
+  --activation-stage-b "$STAGE_B_FILE" \
+  --role-journal "$MAKER_ROLE_JOURNAL" \
+  --output-root "$XMR_APP_ROOT/maker-actor" \
+  >"$XMR_APP_ROOT/maker-provision.json"
+
+export XMR_CONFIG_PATH="$(jq -er .config_path "$XMR_APP_ROOT/maker-provision.json")"
+export XMR_STATE_PATH="$(jq -er .state_database_path "$XMR_APP_ROOT/maker-provision.json")"
+export XMR_SWAP_ID="$(jq -er .swap_id "$XMR_APP_ROOT/maker-provision.json")"
+install -d -m 0700 "/bin"
+install -m 0700 target/debug/xmr-reference-actor \
+  "/bin/xmr-reference-actor"
+export XMR_PROGRAM="/bin/xmr-reference-actor"
+jq -er .agreement_public_key "$MAKER_PUBLIC_PACKET" | xxd -r -p \
+  >"$XMR_APP_ROOT/maker-agreement.pub"
+tr -d "\n" <"$MAKER_PRIVATE_ROOT/monero-view.key" | xxd -r -p \
+  >"$XMR_APP_ROOT/maker-view.raw"
+chmod 0600 "$XMR_APP_ROOT/maker-agreement.pub" "$XMR_APP_ROOT/maker-view.raw"
+
+jq -n \
+  --arg swap "$XMR_SWAP_ID" \
+  --arg config "$XMR_CONFIG_PATH" \
+  --arg config_sha "$(sha256sum "$XMR_CONFIG_PATH" | cut -d " " -f 1)" \
+  --arg program "$XMR_PROGRAM" \
+  --arg program_sha "$(sha256sum "$XMR_PROGRAM" | cut -d " " -f 1)" \
+  --arg state "$XMR_STATE_PATH" \
+  "{schema_version:1,actors:[{swap_id:\$swap,config_path:\$config,config_sha256:\$config_sha,program_path:\$program,program_sha256:\$program_sha,state_database_path:\$state}]}" \
+  >"$XMR_APP_ROOT/maker-registry.json"
+chmod 0600 "$XMR_APP_ROOT/maker-registry.json"
+```
+
+Stop the Delivery-only daemon and restart the same database with the disjoint Chat socket and complete XMR authority set. These three XMR flags are all-or-none. Startup rereads and digest-checks the registry, validates the canonical Maker-only provision manifest against the exact lowercase swap ID and role-journal path, and validates the installed owner-owned single-link executable and pinned digest before readiness:
+
+```bash
+kill -INT "$MAKER_PID"
+wait "$MAKER_PID"
+
+target/debug/lez-maker-daemon \
+  --socket "$MAKER_SOCKET" --chat-socket "$CHAT_SOCKET" \
+  --database "$MAKER_DB" \
+  --ready-file "$XMR_APP_ROOT/runtime/ready" \
+  --delivery-directory "$DELIVERY_ROOT" \
+  --delivery-signing-key-file "$XMR_APP_ROOT/delivery.key" \
+  --xmr-maker-agreement-public-key-file "$XMR_APP_ROOT/maker-agreement.pub" \
+  --xmr-private-view-key-file "$XMR_APP_ROOT/maker-view.raw" \
+  --xmr-actor-manifest-registry-file "$XMR_APP_ROOT/maker-registry.json" &
+export MAKER_PID=$!
+for _ in $(seq 1 120); do
+  test -s "$XMR_APP_ROOT/runtime/ready" && break
+  kill -0 "$MAKER_PID"
+  sleep 1
+done
+test -s "$XMR_APP_ROOT/runtime/ready"
+```
+
+Run the real Taker with only Taker-owned role authority plus public Maker packet and Chat/Delivery inputs:
+
+```bash
+target/debug/lez-taker \
+  --delivery-directory "$DELIVERY_ROOT" \
+  --maker-public-key "$DELIVERY_PUBLIC_KEY_HEX" \
+  --now-unix-seconds "$(date +%s)" \
+  --pair monero --direction taker-sells-lez \
+  --accept-xmr-offer "$OFFER_ID" --chat-socket "$CHAT_SOCKET" \
+  --reservation-id "$RESERVATION_ID" --foreign-units "$FOREIGN_UNITS" \
+  --xmr-stage-a-file "$STAGE_A_FILE" \
+  --xmr-activation-file "$STAGE_B_FILE" \
+  --xmr-source-taker-root "$TAKER_PRIVATE_ROOT" \
+  --xmr-taker-public-packet "$TAKER_PUBLIC_PACKET" \
+  --xmr-maker-public-packet "$MAKER_PUBLIC_PACKET" \
+  --xmr-taker-role-journal "$TAKER_ROLE_JOURNAL" \
+  --xmr-taker-actor-root "$XMR_APP_ROOT/taker-actor" \
+  --xmr-acceptance-receipt "$XMR_APP_ROOT/taker-receipt.json"
+```
+
+The first successful output must report offer revision 3, Stage-A replay according to whether it was pre-staged, fresh activation, `private_material_disclosed:false`, Taker role, fresh provisioning, and fresh receipt. To test transport independence, stop the daemon, move only this run-owned Delivery directory aside, restart the same daemon and database with the same authority flags, and repeat the identical Taker command. The replay must report both stages replayed and both Taker publications replayed; byte and inode snapshots must remain identical.
+
+```mermaid
+sequenceDiagram
+    participant M as Maker CLI
+    participant D as Maker daemon
+    participant DB as SQLite
+    participant O as Signed Delivery
+    participant T as Taker CLI
+    participant TA as Taker actor bundle
+    participant H as Test harness
+
+    M->>D: Publish LEZ-first Monero offer
+    D->>DB: Commit active offer revision 1
+    D->>O: Publish signed envelope
+    T->>O: Authenticate exact offer and quote
+    T->>D: XMR Stage A over Chat
+    D->>DB: Reserve revision 2 only
+    DB-->>D: No coordinator actor or effect
+    D-->>T: Durable Stage-A response
+    T->>TA: Publish Taker-only bundle without replacement
+    T->>D: XMR Stage B over Chat
+    D->>DB: One activation transaction
+    DB-->>D: Revision 3 coordinator actor consumed offer and replay
+    D-->>T: Durable activation response
+    T->>TA: Publish acceptance receipt
+    H->>O: Remove exact advertisement after acceptance
+    T->>D: Restarted exact replay without Delivery
+    D->>DB: Revalidate durable Stage A and B
+    D-->>T: Original result without new write
+```
+
+Why this checkpoint is locally atomic: Stage A cannot schedule an actor or create an effect; Stage B derives the coordinator from the canonical agreement and private-view-key validation, then commits negotiation activation, offer consumption, coordinator, one immutable Maker actor, and replay in one immediate SQLite transaction. A failed member rolls the transaction back to the Stage-A-only state. The Taker publishes its role bundle before Stage B as a crash latch and publishes the receipt only after the Maker commit. This is application atomicity, not cross-chain atomicity and not a distributed transaction.
+
+External runtime resources: none. No `monerod`, wallet RPC, LEZ sequencer/indexer/sidecar, Docker service, faucet, DNS, network, or funds participate. The empty boundary removes chain and finality flakiness but cannot prove chain semantics. The semantic supervisor adapter and isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor are the next gate; keep `--actor-supervisor` disabled at this checkpoint.
 
 ## Troubleshooting
 

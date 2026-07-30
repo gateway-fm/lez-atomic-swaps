@@ -4017,16 +4017,9 @@ activation, coordinator, actor, and mutation state. Corrupt Stage-A or offer
 rows fail closed. The scheduling not-before value is intentionally replay
 insensitive because it cannot replace the already committed actor manifest.
 
-ADR 0112 records the updated component, commit/replay sequence, local atomicity
-argument, private-view-key validation boundary, and resource inventory. The
-next executable seam is the real daemon and Taker CLI pre-effect handoff using
-the already existing M4 role-separated Stage-A/Stage-B composer. It must prove
-separate role roots, Stage-A reserve-only state, Stage-B actor registration,
-receipt persistence, transport-free inode-stable replay, and zero chain effects.
-After that, a separate semantic supervisor adapter will splice the application
-handoff into the existing actual Monero plus LEZ claim runner. Role-only process
-handoff, semantic supervisor execution, actual isolated corridor replay, and
-literal all-pair closure remain before the M5 PoC exit gate.
+ADR 0112 records the updated component, commit/replay sequence, local atomicity argument, private-view-key validation boundary, and resource inventory. The real daemon and Taker CLI pre-effect handoff is now process-GREEN. It uses the M4 role-separated Stage-A/Stage-B material, a bounded daemon-owned Maker agreement key, shared private view key, and Maker-only actor-manifest registry. The daemon semantically validates the canonical role-provision manifest against the exact swap and state database before readiness. Stage A remains reserve-only; Stage B atomically activates the coordinator, consumed offer, one Maker actor, and replay row. The Taker no-clobber publishes only its role bundle and receipt.
+
+The exact process proof covers a crossed-reservation zero-write negative, revision-2 Stage A with no coordinator/actor/effect, revision-3 Stage B, Delivery removal, daemon reopen, Delivery-independent exact replay, and actor/receipt byte and inode stability. It uses temporary Unix sockets and SQLite only: no chain node, RPC, Docker service, faucet, DNS, network, or funds. Its exact locked/offline black-box proof is GREEN 1 of 1 in 307.71 seconds. The next gate remains a semantic XMR supervisor adapter followed by the existing isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 claim corridor. Actual effects and literal all-pair closure remain before the M5 PoC exit gate.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
