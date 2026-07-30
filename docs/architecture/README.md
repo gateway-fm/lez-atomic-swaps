@@ -198,7 +198,7 @@ flowchart TB
     M5Entry --> M5XmrStageA["0111 Reserve dual signed XMR Stage A"]
     XmrRoleJournals --> M5XmrStageA
     M5XmrStageA --> M5XmrStageB["0112 Atomic XMR Stage B activation"]
-    M5XmrStageB --> M5XmrHandoff["0113 Role-only XMR process handoff"]
+    M5XmrStageB --> M5XmrHandoff["0113 Sealed XMR pre-effect handoff"]
 ```
 
 | ADR | Decision | Status |
@@ -315,4 +315,4 @@ flowchart TB
 | [0110](0110-scan-immutable-lez-windows-as-finalized-prefixes.md) | Treat immutable schema-6 discovery windows as authorization envelopes and report only honest finalized prefixes | Accepted and exact pushed isolated-node BTC application execution GREEN; `LOGOS-022` remains a non-blocking production caveat |
 | [0111](0111-reserve-dual-signed-xmr-stage-a-before-activation.md) | Reserve one authenticated XMR offer only after exact canonical dual-signed Stage A, without creating executable authority | Accepted for schema-v20 store boundary; Stage-B activation and process composition remain |
 | [0112](0112-activate-xmr-stage-b-atomically.md) | Derive executable XMR authority only from countersigned Stage B and atomically commit the coordinator, consumed offer, and Monero Maker actor | Accepted for schema-v21 store boundary; role-only process handoff, semantic supervisor execution, and actual isolated Monero plus LEZ replay remain |
-| [0113](0113-hand-off-xmr-stage-material-by-role.md) | Pass only authenticated public XMR stage wires through real Taker and daemon processes while each side retains digest-pinned role-private authority | Accepted for the M5 process boundary; semantic supervisor execution and exact isolated Monero plus LEZ replay remain |
+| [0113](0113-hand-off-xmr-stage-material-by-role.md) | Pass authenticated public XMR stage wires while schema-v2 role authority crosses the Maker process boundary only through a fully sealed fixed descriptor | Accepted and pre-effect GREEN: the child semantically validates Stage A/B plus an immutable Maker-journal snapshot and returns a typed zero-effect blocked status; actual isolated LEZ and Monero effects remain |

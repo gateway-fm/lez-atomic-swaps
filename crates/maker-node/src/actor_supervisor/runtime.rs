@@ -25,6 +25,9 @@ use rustix::process::{Pid, Signal, kill_process_group};
 use serde_json::Value;
 use thiserror::Error;
 use wait_timeout::ChildExt as _;
+use xmr_reference_actor::{
+    XMR_MAKER_ACTOR_ABI_V1, XMR_MAKER_ACTOR_NEXT_ACTION, XMR_MAKER_ACTOR_PROGRAM_ID,
+};
 
 use super::prepare_maker_actor;
 
@@ -32,6 +35,7 @@ const MAX_ATTEMPT_TIMEOUT: Duration = Duration::from_mins(5);
 const CHILD_WAIT_POLL: Duration = Duration::from_millis(20);
 const MIN_OUTPUT_BYTES: usize = 256;
 const MAX_OUTPUT_BYTES: usize = 64 * 1_024;
+const XMR_BLOCKED_RECHECK_SECONDS: u64 = 60;
 
 /// Immutable bounds for one supervisor scheduling cycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -149,6 +153,8 @@ impl MakerActorSupervisorCancellation {
 pub enum MakerActorSupervisorResolution {
     /// Actor remains live and is queued for its next bounded observation/effect.
     Requeued,
+    /// Valid XMR authority is queued, but chain effects are explicitly not composed yet.
+    Blocked,
     /// A transient process/dependency failure was durably backed off.
     Backoff,
     /// Actor reported an absorbing completed/refunded phase.
@@ -351,6 +357,16 @@ fn resolve_claimed_attempt(
             },
             MakerActorSupervisorResolution::Requeued,
         ),
+        ClaimedAttempt::Blocked => (
+            MakerActorAttemptResolution::Requeue {
+                not_before: now.saturating_add(
+                    config
+                        .requeue_delay_seconds
+                        .max(XMR_BLOCKED_RECHECK_SECONDS),
+                ),
+            },
+            MakerActorSupervisorResolution::Blocked,
+        ),
         ClaimedAttempt::Backoff(failure_class) => (
             MakerActorAttemptResolution::Backoff {
                 not_before: now.saturating_add(config.failure_backoff_seconds),
@@ -388,6 +404,7 @@ fn resolve_claimed_attempt(
 
 enum ClaimedAttempt {
     Requeue,
+    Blocked,
     Backoff(&'static str),
     Terminal,
     ManualActionCompleted,
@@ -486,10 +503,14 @@ fn run_claimed_attempt_with_lock(
             revision: status_revision,
         } = parsed_status;
         progress = Some(status_progress);
+        if matches!(status_decision, StatusDecision::Blocked) {
+            return Ok(ClaimedAttempt::Blocked);
+        }
         let command = match manual_action {
             Some(MakerActorManualAction::Claim) => ActorEffectCommand::Claim,
             Some(MakerActorManualAction::Refund) => ActorEffectCommand::Recover,
             None => match status_decision {
+                StatusDecision::Blocked => return Ok(ClaimedAttempt::Blocked),
                 StatusDecision::Terminal => return Ok(ClaimedAttempt::Terminal),
                 StatusDecision::Run(command) => command,
             },
@@ -708,22 +729,46 @@ struct ParsedStatus {
     revision: Option<u64>,
 }
 
+#[derive(Clone, Copy)]
 enum StatusDecision {
     Run(ActorEffectCommand),
+    Blocked,
     Terminal,
 }
 
+fn exact_xmr_pre_effect_status_shape(value: &Value) -> bool {
+    const KEYS: [&str; 9] = [
+        "schema_version",
+        "actor_program",
+        "actor_abi",
+        "role",
+        "state",
+        "phase",
+        "revision",
+        "next_action",
+        "chain_effect_executed",
+    ];
+    value.as_object().is_some_and(|object| {
+        object.len() == KEYS.len()
+            && KEYS.iter().all(|key| object.contains_key(*key))
+            && object.get("chain_effect_executed").and_then(Value::as_bool) == Some(false)
+    })
+}
+
 fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()> {
-    if kind == MakerActorKindV1::Monero {
-        return Err(());
-    }
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ())?;
     if value.get("schema_version").and_then(Value::as_u64) != Some(1)
         || value.get("role").and_then(Value::as_str) != Some("maker")
+        || (kind == MakerActorKindV1::Monero
+            && (!exact_xmr_pre_effect_status_shape(&value)
+                || value.get("actor_program").and_then(Value::as_str)
+                    != Some(XMR_MAKER_ACTOR_PROGRAM_ID)
+                || value.get("actor_abi").and_then(Value::as_str) != Some(XMR_MAKER_ACTOR_ABI_V1)))
     {
         return Err(());
     }
     match value.get("state").and_then(Value::as_str) {
+        Some("not_activated") if kind == MakerActorKindV1::Monero => Err(()),
         Some("not_activated") => Ok(ParsedStatus {
             decision: StatusDecision::Run(ActorEffectCommand::Activate),
             progress: MakerActorProgressObservationV1::NotActivated,
@@ -737,7 +782,13 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()
             if terminal_phase(phase) != (next_action == "complete") {
                 return Err(());
             }
-            let decision = if terminal_phase(phase) {
+            let decision = if kind == MakerActorKindV1::Monero {
+                if phase != "offered" || revision != 0 || next_action != XMR_MAKER_ACTOR_NEXT_ACTION
+                {
+                    return Err(());
+                }
+                StatusDecision::Blocked
+            } else if terminal_phase(phase) {
                 StatusDecision::Terminal
             } else if kind == MakerActorKindV1::Zcash
                 && matches!(next_action, "claim_lez" | "claim_zcash")
@@ -923,7 +974,7 @@ fn known_phase(phase: &str) -> bool {
 
 fn known_next_action(kind: MakerActorKindV1, next_action: &str) -> bool {
     match kind {
-        MakerActorKindV1::Monero => false,
+        MakerActorKindV1::Monero => next_action == XMR_MAKER_ACTOR_NEXT_ACTION,
         MakerActorKindV1::Zcash => matches!(
             next_action,
             "wait"
@@ -984,6 +1035,88 @@ mod tests {
             "next_action": next_action
         }))
         .unwrap()
+    }
+
+    fn xmr_pre_effect_status() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "actor_program": XMR_MAKER_ACTOR_PROGRAM_ID,
+            "actor_abi": XMR_MAKER_ACTOR_ABI_V1,
+            "role": "maker",
+            "state": "active",
+            "phase": "offered",
+            "revision": 0,
+            "next_action": XMR_MAKER_ACTOR_NEXT_ACTION,
+            "chain_effect_executed": false
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn xmr_pre_effect_status_is_typed_blocked_and_binds_program_abi() {
+        let parsed = parse_status(&xmr_pre_effect_status(), MakerActorKindV1::Monero).unwrap();
+        assert!(matches!(parsed.decision, StatusDecision::Blocked));
+        assert_eq!(
+            parsed.progress,
+            MakerActorProgressObservationV1::active(
+                "offered",
+                0,
+                "xmr_chain_effects_not_yet_composed"
+            )
+            .unwrap()
+        );
+
+        for (field, value) in [
+            ("actor_program", "not-the-xmr-reference-actor"),
+            ("actor_abi", "lez_maker_xmr_future_v2"),
+        ] {
+            let mut output: Value = serde_json::from_slice(&xmr_pre_effect_status()).unwrap();
+            output[field] = Value::from(value);
+            assert!(
+                parse_status(
+                    &serde_json::to_vec(&output).unwrap(),
+                    MakerActorKindV1::Monero
+                )
+                .is_err()
+            );
+        }
+
+        for invalid in [
+            serde_json::json!(true),
+            serde_json::json!("false"),
+            Value::Null,
+        ] {
+            let mut output: Value = serde_json::from_slice(&xmr_pre_effect_status()).unwrap();
+            output["chain_effect_executed"] = invalid;
+            assert!(
+                parse_status(
+                    &serde_json::to_vec(&output).unwrap(),
+                    MakerActorKindV1::Monero
+                )
+                .is_err()
+            );
+        }
+        let mut missing: Value = serde_json::from_slice(&xmr_pre_effect_status()).unwrap();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("chain_effect_executed");
+        assert!(
+            parse_status(
+                &serde_json::to_vec(&missing).unwrap(),
+                MakerActorKindV1::Monero
+            )
+            .is_err()
+        );
+        let mut extra: Value = serde_json::from_slice(&xmr_pre_effect_status()).unwrap();
+        extra["unexpected"] = Value::from(false);
+        assert!(
+            parse_status(
+                &serde_json::to_vec(&extra).unwrap(),
+                MakerActorKindV1::Monero
+            )
+            .is_err()
+        );
     }
 
     #[test]

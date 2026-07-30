@@ -1,4 +1,7 @@
 mod support;
+#[allow(dead_code)]
+#[path = "support/xmr_chat_fixture.rs"]
+mod xmr_chat_fixture;
 
 use std::{
     fs::{self, OpenOptions},
@@ -27,6 +30,86 @@ use tempfile::tempdir;
 use zec_reference_actor::ActorConfig;
 
 use support::actor_deployment;
+use xmr_chat_fixture::XmrChatFixture;
+
+#[test]
+fn xmr_pre_effect_cycle_validates_real_authority_and_never_invokes_an_effect() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_bytes = [0x5a; 32];
+    let swap_id = hex::encode(swap_bytes);
+    let built_actor_program = std::path::Path::new(env!("CARGO_BIN_EXE_xmr-maker-actor"));
+    let actor_program = root.path().join("xmr-maker-actor");
+    fs::copy(built_actor_program, &actor_program).unwrap();
+    fs::set_permissions(&actor_program, fs::Permissions::from_mode(0o700)).unwrap();
+    let fixture = XmrChatFixture::new(root.path(), swap_bytes, 1_000_000, 25_000, &actor_program);
+    let config_bytes = fs::read(&fixture.maker_actor_config).unwrap();
+    let program_bytes = fs::read(&actor_program).unwrap();
+
+    let mut store = SqliteSwapStore::open(root.path().join("xmr-maker.sqlite3")).unwrap();
+    store.save(&xmr_swap(&swap_id)).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                SwapId::new(swap_id.clone()).unwrap(),
+                MakerActorKindV1::Monero,
+                fixture.maker_actor_config,
+                Sha256::digest(config_bytes).into(),
+                actor_program,
+                Sha256::digest(program_bytes).into(),
+                fixture.maker_actor_state,
+            )
+            .unwrap(),
+            10,
+        )
+        .unwrap();
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    prepare_maker_actor(&record).expect("exact XMR deployment preflight");
+
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let outcome = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x58; 16]).unwrap(),
+        10,
+        &config,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        outcome.resolution(),
+        MakerActorSupervisorResolution::Blocked
+    );
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Queued);
+    assert_eq!(record.child_identity(), None);
+    assert_eq!(
+        record.attempt_count(),
+        1,
+        "attempt_count records one successful authority observation, not a failure retry"
+    );
+    let swap_id = SwapId::new(swap_id).unwrap();
+    assert!(store.maker_actor_manual_action(&swap_id).unwrap().is_none());
+    assert!(store.list_due_maker_actor_ids(69, 1).unwrap().is_empty());
+    assert_eq!(
+        store.list_due_maker_actor_ids(70, 1).unwrap(),
+        std::slice::from_ref(&swap_id),
+        "typed blocked authority is rechecked conservatively without backoff"
+    );
+    assert_eq!(
+        store
+            .maker_actor_progress(&swap_id)
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active(
+            "offered",
+            0,
+            "xmr_chain_effects_not_yet_composed",
+        )
+        .unwrap()
+    );
+}
 
 #[test]
 fn one_bounded_cycle_runs_exact_sealed_actor_and_durably_requeues() {
@@ -716,6 +799,17 @@ fn register_actor(
         .find(|record| record.swap_id().as_str() == swap_id)
         .unwrap();
     prepare_maker_actor(&record).expect("exact deployment preflight");
+}
+
+fn xmr_swap(id: &str) -> SwapCoordinator {
+    SwapCoordinator::new_with_confirmation_policies(
+        SwapId::new(id).unwrap(),
+        Pair::Monero,
+        SwapDirection::TakerSellsLez,
+        ConfirmationPolicy::new(2).unwrap(),
+        ConfirmationPolicy::new(10).unwrap(),
+        RecoverySchedule::xmr_lez_first(ChainPosition::timestamp(Chain::Lez, 20), 2).unwrap(),
+    )
 }
 
 fn swap(id: &str) -> SwapCoordinator {

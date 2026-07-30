@@ -5820,10 +5820,10 @@ target/debug/xmr-reference-actor provision-application maker \
 export XMR_CONFIG_PATH="$(jq -er .config_path "$XMR_APP_ROOT/maker-provision.json")"
 export XMR_STATE_PATH="$(jq -er .state_database_path "$XMR_APP_ROOT/maker-provision.json")"
 export XMR_SWAP_ID="$(jq -er .swap_id "$XMR_APP_ROOT/maker-provision.json")"
-install -d -m 0700 "/bin"
-install -m 0700 target/debug/xmr-reference-actor \
-  "/bin/xmr-reference-actor"
-export XMR_PROGRAM="/bin/xmr-reference-actor"
+install -d -m 0700 "$XMR_APP_ROOT/bin"
+install -m 0700 target/debug/xmr-maker-actor \
+  "$XMR_APP_ROOT/bin/xmr-maker-actor"
+export XMR_PROGRAM="$XMR_APP_ROOT/bin/xmr-maker-actor"
 jq -er .agreement_public_key "$MAKER_PUBLIC_PACKET" | xxd -r -p \
   >"$XMR_APP_ROOT/maker-agreement.pub"
 tr -d "\n" <"$MAKER_PRIVATE_ROOT/monero-view.key" | xxd -r -p \
@@ -5920,7 +5920,78 @@ sequenceDiagram
 
 Why this checkpoint is locally atomic: Stage A cannot schedule an actor or create an effect; Stage B derives the coordinator from the canonical agreement and private-view-key validation, then commits negotiation activation, offer consumption, coordinator, one immutable Maker actor, and replay in one immediate SQLite transaction. A failed member rolls the transaction back to the Stage-A-only state. The Taker publishes its role bundle before Stage B as a crash latch and publishes the receipt only after the Maker commit. This is application atomicity, not cross-chain atomicity and not a distributed transaction.
 
-External runtime resources: none. No `monerod`, wallet RPC, LEZ sequencer/indexer/sidecar, Docker service, faucet, DNS, network, or funds participate. The empty boundary removes chain and finality flakiness but cannot prove chain semantics. The semantic supervisor adapter and isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor are the next gate; keep `--actor-supervisor` disabled at this checkpoint.
+External runtime resources: none. No `monerod`, wallet RPC, LEZ
+sequencer/indexer/sidecar, Docker service, faucet, DNS, network, or funds
+participate. The empty boundary removes chain and finality flakiness but cannot
+prove chain semantics. This Flow 1P checkpoint still keeps
+`--actor-supervisor` disabled; Flow 1Q exercises the now-GREEN semantic
+pre-effect supervisor. The isolated official Monero 0.18.5.1 Regtest plus LEZ
+v0.2 corridor remains the next chain-effect gate.
+
+## Flow 1Q: repeat the XMR schema-v2 semantic-supervisor checkpoint
+
+Status: process-GREEN; the exact real-process proof passed 1 of 1 in 79.22
+seconds. This flow proves execution-time authority validation and scheduler
+behavior only. It performs no LEZ or Monero effect and is not a completed swap.
+
+From the repository root, use the pinned toolchain and offline cache:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p lez-maker-node --test maker_actor_supervisor \
+  xmr_pre_effect_cycle_validates_real_authority_and_never_invokes_an_effect \
+  -- --exact --nocapture
+```
+
+The test builds the real `xmr-maker-actor`, installs a fresh single-link
+mode-0700 copy beneath one mode-0700 owner root, hashes that installed program,
+and registers it with the Maker actor manifest. The ordinary supervisor then
+opens and seals the schema-v2 config as FD 196 and invokes only `status`.
+Running the built binary directly with a named config file is intentionally not
+equivalent: the production ABI requires the daemon-created fully sealed
+descriptor.
+
+Expected assertions:
+
+1. pre-spawn validation binds the exact lowercase swap ID, Maker role, state
+   database path, installed program digest, `xmr-maker-actor` identity, and
+   `lez_maker_xmr_pre_effect_v1` ABI;
+2. the child execution-time validator rehashes and semantically revalidates
+   canonical Stage A/B, both public packets, the Maker private manifest and view
+   key, and an immutable snapshot of the current external role journal;
+3. the supervisor accepts only the exact nine-key status object with
+   `chain_effect_executed:false`, `phase:"offered"`, revision 0, and
+   `next_action:"xmr_chain_effects_not_yet_composed"`;
+4. the durable result is typed `Blocked`, remains queued, records one successful
+   authority observation rather than failure/backoff, leaves manual-action state
+   absent, and is not due for another observation for at least 60 seconds; and
+5. no activate, drive, claim, or refund command executes.
+
+The focused fail-closed validator negatives can be repeated separately:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p xmr-reference-actor --lib \
+  application_provision::tests::sealed_config_pinned_digest_and_sidecar_boundaries_fail_closed \
+  -- --exact --nocapture
+```
+
+They reject the wrong descriptor, incomplete seals, referenced-file digest
+drift, and SQLite sidecars. The optimized complete authority replay measured
+29.02 seconds on this development host versus 194.75 seconds before the narrow
+development-profile optimization of four portable XMR cryptography kernels.
+That optimization does not change debug assertions, validation, ordering, RPC,
+finality, or effect semantics; timings on other hosts are informative only.
+
+External runtime resources: none. Both commands use owner-private temporary
+files, SQLite, and local child processes. They start no `monerod`, wallet RPC,
+LEZ sequencer/indexer/sidecar, Docker service, faucet, DNS lookup, network, or
+funds. This absence removes node/finality flakiness but also means the checkpoint
+cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
+The remaining PoC gate is the isolated official Monero 0.18.5.1 Regtest plus LEZ
+v0.2 corridor under this accepted authority, followed by concurrent/all-pair
+closure. Current ETA remains 6 to 11 focused hours for the M5 PoC and 9 to 17
+focused hours for the milestone tag from the last verified push.
 
 ## Troubleshooting
 

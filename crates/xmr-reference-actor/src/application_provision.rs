@@ -1,24 +1,29 @@
 //! Role-fixed, no-copy XMR application actor provisioning.
 
 use std::{
+    fmt,
     fs::{self, DirBuilder, File},
+    io::{Read as _, Seek as _, SeekFrom},
     os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _},
     path::{Component, Path, PathBuf},
 };
 
 use anyhow::{Context as _, Result, anyhow, ensure};
 use lez_adaptor_role_runner::{Role as RunnerRole, ValidatedSession};
-use lez_swap_store::{AdaptorSessionPhase, AdaptorSessionSnapshot, SqliteAdaptorSessionJournal};
+use lez_swap_store::{
+    AdaptorSessionPhase, AdaptorSessionSnapshot, MAKER_ACTOR_CONFIG_FD, SqliteAdaptorSessionJournal,
+};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrActivatedAgreementV1,
     XmrAgreementV1, XmrSessionTranscriptV1,
 };
 use rustix::{
-    fs::{RenameFlags, renameat_with},
+    fs::{RenameFlags, SealFlags, fcntl_get_seals, renameat_with},
     io::Errno,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use zeroize::Zeroizing;
 
 use crate::{
     ActorRole, FilePolicy, PRIVATE_KEY_MAX_BYTES, PRIVATE_MANIFEST_FILE, SecureDestination,
@@ -27,7 +32,7 @@ use crate::{
     validate_private_role, write_new_at,
 };
 
-const APPLICATION_PROVISION_SCHEMA_V1: u16 = 1;
+const APPLICATION_PROVISION_SCHEMA_V2: u16 = 2;
 const APPLICATION_MANIFEST_FILE: &str = "actor-provision.json";
 const STAGE_A_FILE: &str = "stage-a-v1.borsh";
 const STAGE_B_FILE: &str = "stage-b-v1.borsh";
@@ -36,6 +41,12 @@ const APPLICATION_JOURNAL_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// Maximum accepted canonical role-authority manifest size.
 pub const XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES: u64 = 16 * 1024;
 
+/// Program identifier pinned by the Maker supervisor and one-shot child.
+pub const XMR_MAKER_ACTOR_PROGRAM_ID: &str = "xmr-maker-actor";
+/// Pre-effect ABI pinned by the Maker supervisor and one-shot child.
+pub const XMR_MAKER_ACTOR_ABI_V1: &str = "lez_maker_xmr_pre_effect_v1";
+/// Current bounded action: validate authority without publishing a chain effect.
+pub const XMR_MAKER_ACTOR_NEXT_ACTION: &str = "xmr_chain_effects_not_yet_composed";
 /// Secret-free result for one immutable role-fixed XMR application bundle.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[must_use]
@@ -138,11 +149,13 @@ impl XmrActorProvisionV1 {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct XmrActorProvisionManifestV1 {
+struct XmrActorProvisionManifestV2 {
     schema_version: u16,
     role: ActorRole,
     swap_id: String,
+    published_stage_a: PathBuf,
     stage_a_sha256: String,
+    published_stage_b: PathBuf,
     stage_b_sha256: String,
     source_private_root: PathBuf,
     source_private_manifest_sha256: String,
@@ -153,6 +166,65 @@ struct XmrActorProvisionManifestV1 {
     peer_public_packet_sha256: String,
     role_journal: PathBuf,
     role_journal_sha256: String,
+}
+
+/// Execution-time Maker authority derived from a fully sealed schema-v2 manifest.
+///
+/// The journal bytes are intentionally private: successful construction proves
+/// their semantics against the pinned Stage A/B and retains the exact immutable
+/// snapshot for this one-shot pre-effect invocation.
+#[must_use]
+pub struct ValidatedXmrMakerAuthorityV2 {
+    swap_id: [u8; 32],
+    state_database: PathBuf,
+    agreement_commitment: [u8; 32],
+    activation_commitment: [u8; 32],
+    _role_journal_snapshot: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for ValidatedXmrMakerAuthorityV2 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValidatedXmrMakerAuthorityV2")
+            .field("swap_id", &hex::encode(self.swap_id))
+            .field("state_database", &self.state_database)
+            .field(
+                "agreement_commitment",
+                &hex::encode(self.agreement_commitment),
+            )
+            .field(
+                "activation_commitment",
+                &hex::encode(self.activation_commitment),
+            )
+            .field("_role_journal_snapshot", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl ValidatedXmrMakerAuthorityV2 {
+    /// Exact signed Stage-A swap identity.
+    #[must_use]
+    pub const fn swap_id(&self) -> [u8; 32] {
+        self.swap_id
+    }
+
+    /// Exact role-local state database named by scheduler authority.
+    #[must_use]
+    pub fn state_database(&self) -> &Path {
+        &self.state_database
+    }
+
+    /// Exact countersigned Stage-A agreement commitment.
+    #[must_use]
+    pub const fn agreement_commitment(&self) -> [u8; 32] {
+        self.agreement_commitment
+    }
+
+    /// Exact countersigned Stage-B activation commitment.
+    #[must_use]
+    pub const fn activation_commitment(&self) -> [u8; 32] {
+        self.activation_commitment
+    }
 }
 
 /// Publishes one Maker-only application bundle without copying private authority.
@@ -286,19 +358,22 @@ fn provision_xmr_actor_from_material(
         super::PRIVATE_MANIFEST_MAX_BYTES,
         "private role manifest",
     )?;
-    let source_view_key_bytes = read_private_source(
+    let source_view_key_bytes = Zeroizing::new(read_private_source(
         &private_root.join(VIEW_KEY_FILE),
         PRIVATE_KEY_MAX_BYTES,
         "private Monero view key",
-    )?;
+    )?);
+    let paths = ProvisionPaths::new(output_root, role);
 
     let stage_a_sha256 = sha256(&stage_a_wire);
     let stage_b_sha256 = sha256(&stage_b_wire);
-    let manifest = XmrActorProvisionManifestV1 {
-        schema_version: APPLICATION_PROVISION_SCHEMA_V1,
+    let manifest = XmrActorProvisionManifestV2 {
+        schema_version: APPLICATION_PROVISION_SCHEMA_V2,
         role,
         swap_id: hex::encode(agreement.body().swap_id()),
+        published_stage_a: paths.stage_a.clone(),
         stage_a_sha256: hex::encode(stage_a_sha256),
+        published_stage_b: paths.stage_b.clone(),
         stage_b_sha256: hex::encode(stage_b_sha256),
         source_private_root: private_root.to_path_buf(),
         source_private_manifest_sha256: hex::encode(sha256(&source_manifest_bytes)),
@@ -312,7 +387,6 @@ fn provision_xmr_actor_from_material(
     };
     let manifest_bytes = canonical_manifest_bytes(&manifest)?;
     let manifest_sha256 = sha256(&manifest_bytes);
-    let paths = ProvisionPaths::new(output_root, role);
     let prepared = PreparedProvision {
         role,
         swap_id: agreement.body().swap_id(),
@@ -379,7 +453,7 @@ struct PreparedProvision {
     stage_a_sha256: [u8; 32],
     stage_b_wire: Vec<u8>,
     stage_b_sha256: [u8; 32],
-    manifest: XmrActorProvisionManifestV1,
+    manifest: XmrActorProvisionManifestV2,
     manifest_bytes: Vec<u8>,
     manifest_sha256: [u8; 32],
 }
@@ -387,7 +461,7 @@ struct PreparedProvision {
 impl PreparedProvision {
     fn summary(&self, paths: ProvisionPaths, was_replay: bool) -> XmrActorProvisionV1 {
         XmrActorProvisionV1 {
-            schema_version: APPLICATION_PROVISION_SCHEMA_V1,
+            schema_version: APPLICATION_PROVISION_SCHEMA_V2,
             was_replay,
             role: self.role,
             swap_id: self.swap_id,
@@ -489,7 +563,7 @@ fn validate_exact_replay(paths: &ProvisionPaths, prepared: &PreparedProvision) -
         XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
         "XMR actor provision manifest",
     )?;
-    let manifest: XmrActorProvisionManifestV1 =
+    let manifest: XmrActorProvisionManifestV2 =
         serde_json::from_slice(&manifest_bytes).context("XMR actor manifest is malformed")?;
     ensure!(
         canonical_manifest_bytes(&manifest)? == manifest_bytes
@@ -722,27 +796,178 @@ pub fn validate_maker_manifest_config_bytes(
     expected_state_database: &Path,
 ) -> Result<()> {
     ensure!(
-        u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
-        "XMR actor provision manifest is oversized"
-    );
-    ensure!(
         normalized_absolute(expected_state_database),
         "expected XMR actor state database path is invalid"
     );
-    let manifest: XmrActorProvisionManifestV1 =
+    let manifest = parse_maker_manifest_config_bytes(bytes)?;
+    ensure!(
+        super::decode_exact::<32>(&manifest.swap_id)? == expected_swap_id
+            && manifest.role_journal == expected_state_database,
+        "XMR Maker actor manifest differs from scheduler authority"
+    );
+    Ok(())
+}
+
+/// Loads and fully validates Maker authority from fixed sealed descriptor 196.
+///
+/// Every authority file is securely reread, digest-pinned, and semantically
+/// checked. The result privately owns the exact validated journal snapshot, so
+/// later mutation of the named `SQLite` path cannot affect this invocation.
+///
+/// # Errors
+///
+/// Rejects any descriptor other than 196, incomplete memfd seals, unsafe or
+/// changed authority files, digest drift, role crossing, or Stage A/B/journal
+/// semantic mismatch.
+#[allow(clippy::similar_names, clippy::too_many_lines)]
+// The complete immutable-authority validation is one deliberate audit surface.
+pub fn load_validated_xmr_maker_authority_fd(fd: i32) -> Result<ValidatedXmrMakerAuthorityV2> {
+    let config = read_sealed_config_fd(fd)?;
+    let manifest = parse_maker_manifest_config_bytes(config.as_slice())?;
+
+    let own_packet = read_pinned_private_source(
+        &manifest.own_public_packet,
+        super::ROLE_PACKET_MAX_BYTES,
+        "Maker public role packet",
+        &manifest.own_public_packet_sha256,
+    )?;
+    let peer_packet = read_pinned_private_source(
+        &manifest.peer_public_packet,
+        super::ROLE_PACKET_MAX_BYTES,
+        "Taker public role packet",
+        &manifest.peer_public_packet_sha256,
+    )?;
+    let source_manifest_path = manifest.source_private_root.join(PRIVATE_MANIFEST_FILE);
+    let source_view_key_path = manifest.source_private_root.join(VIEW_KEY_FILE);
+    let source_manifest = read_pinned_private_source(
+        &source_manifest_path,
+        super::PRIVATE_MANIFEST_MAX_BYTES,
+        "Maker private role manifest",
+        &manifest.source_private_manifest_sha256,
+    )?;
+    let source_view_key = Zeroizing::new(read_pinned_private_source(
+        &source_view_key_path,
+        PRIVATE_KEY_MAX_BYTES,
+        "Maker private Monero view key",
+        &manifest.source_view_key_sha256,
+    )?);
+    let stage_a_wire = read_pinned_private_source(
+        &manifest.published_stage_a,
+        u64::try_from(MAX_XMR_AGREEMENT_WIRE_BYTES).unwrap_or(u64::MAX),
+        "published Stage-A wire",
+        &manifest.stage_a_sha256,
+    )?;
+    let stage_b_wire = read_pinned_private_source(
+        &manifest.published_stage_b,
+        u64::try_from(MAX_XMR_ACTIVATION_WIRE_BYTES).unwrap_or(u64::MAX),
+        "published Stage-B wire",
+        &manifest.stage_b_sha256,
+    )?;
+
+    let packets = StageRolePackets::read(
+        ActorRole::Maker,
+        &manifest.own_public_packet,
+        &manifest.peer_public_packet,
+    )?;
+    let material =
+        validate_private_role(&manifest.source_private_root, ActorRole::Maker, &packets)?;
+    let agreement = read_validated_stage_a(&manifest.published_stage_a, &packets)
+        .context("validate published Stage A")?;
+    ensure!(
+        agreement
+            .encode_wire()
+            .context("encode published Stage A")?
+            == stage_a_wire,
+        "published Stage-A wire changed"
+    );
+    let activation = XmrActivatedAgreementV1::from_wire(&agreement, &stage_b_wire, &material.view)
+        .context("published Stage-B wire is invalid")?;
+    let _coordinator = activation
+        .initial_coordinator(&agreement)
+        .context("derive XMR Maker actor swap identity")?;
+    ensure!(
+        agreement.body().swap_id() == super::decode_exact::<32>(&manifest.swap_id)?,
+        "published Stage A differs from XMR Maker actor manifest"
+    );
+
+    let journal_snapshot = validate_role_journal_snapshot(
+        ActorRole::Maker,
+        &manifest.role_journal,
+        &agreement,
+        &activation,
+    )?;
+    ensure!(
+        sha256(&journal_snapshot) == super::decode_exact::<32>(&manifest.role_journal_sha256)?,
+        "Maker role journal digest differs from provision manifest"
+    );
+
+    revalidate_exact_private_source(
+        &manifest.own_public_packet,
+        super::ROLE_PACKET_MAX_BYTES,
+        "Maker public role packet",
+        &own_packet,
+    )?;
+    revalidate_exact_private_source(
+        &manifest.peer_public_packet,
+        super::ROLE_PACKET_MAX_BYTES,
+        "Taker public role packet",
+        &peer_packet,
+    )?;
+    revalidate_exact_private_source(
+        &source_manifest_path,
+        super::PRIVATE_MANIFEST_MAX_BYTES,
+        "Maker private role manifest",
+        &source_manifest,
+    )?;
+    revalidate_exact_private_source(
+        &source_view_key_path,
+        PRIVATE_KEY_MAX_BYTES,
+        "Maker private Monero view key",
+        &source_view_key,
+    )?;
+    revalidate_exact_private_source(
+        &manifest.published_stage_a,
+        u64::try_from(MAX_XMR_AGREEMENT_WIRE_BYTES).unwrap_or(u64::MAX),
+        "published Stage-A wire",
+        &stage_a_wire,
+    )?;
+    revalidate_exact_private_source(
+        &manifest.published_stage_b,
+        u64::try_from(MAX_XMR_ACTIVATION_WIRE_BYTES).unwrap_or(u64::MAX),
+        "published Stage-B wire",
+        &stage_b_wire,
+    )?;
+
+    Ok(ValidatedXmrMakerAuthorityV2 {
+        swap_id: agreement.body().swap_id(),
+        state_database: manifest.role_journal,
+        agreement_commitment: agreement.agreement_commitment(),
+        activation_commitment: activation.activation_commitment(),
+        _role_journal_snapshot: Zeroizing::new(journal_snapshot),
+    })
+}
+
+fn parse_maker_manifest_config_bytes(bytes: &[u8]) -> Result<XmrActorProvisionManifestV2> {
+    ensure!(
+        !bytes.is_empty()
+            && u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+                <= XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+        "XMR actor provision manifest is oversized"
+    );
+    let manifest: XmrActorProvisionManifestV2 =
         serde_json::from_slice(bytes).context("XMR actor manifest is malformed")?;
     ensure!(
         canonical_manifest_bytes(&manifest)? == bytes,
         "XMR actor manifest is noncanonical"
     );
     ensure!(
-        manifest.schema_version == APPLICATION_PROVISION_SCHEMA_V1
-            && manifest.role == ActorRole::Maker
-            && super::decode_exact::<32>(&manifest.swap_id)? == expected_swap_id
-            && manifest.role_journal == expected_state_database,
-        "XMR Maker actor manifest differs from scheduler authority"
+        manifest.schema_version == APPLICATION_PROVISION_SCHEMA_V2
+            && manifest.role == ActorRole::Maker,
+        "XMR Maker actor manifest role or schema is invalid"
     );
     for path in [
+        &manifest.published_stage_a,
+        &manifest.published_stage_b,
         &manifest.source_private_root,
         &manifest.own_public_packet,
         &manifest.peer_public_packet,
@@ -753,6 +978,29 @@ pub fn validate_maker_manifest_config_bytes(
             "XMR Maker actor manifest path is invalid"
         );
     }
+    let shared = manifest
+        .published_stage_a
+        .parent()
+        .ok_or_else(|| anyhow!("published XMR Stage A has no parent"))?;
+    let application_root = shared
+        .parent()
+        .ok_or_else(|| anyhow!("published XMR shared authority has no application root"))?;
+    ensure!(
+        shared.file_name().is_some_and(|name| name == "shared")
+            && manifest
+                .published_stage_a
+                .file_name()
+                .is_some_and(|name| name == STAGE_A_FILE)
+            && manifest.published_stage_b.parent() == Some(shared)
+            && manifest
+                .published_stage_b
+                .file_name()
+                .is_some_and(|name| name == STAGE_B_FILE)
+            && normalized_absolute(application_root)
+            && application_root != manifest.source_private_root
+            && !application_root.starts_with(&manifest.source_private_root),
+        "published XMR Stage authority escapes its application bundle"
+    );
     for digest in [
         &manifest.stage_a_sha256,
         &manifest.stage_b_sha256,
@@ -764,6 +1012,34 @@ pub fn validate_maker_manifest_config_bytes(
     ] {
         let _ = super::decode_exact::<32>(digest)?;
     }
+    let _ = super::decode_exact::<32>(&manifest.swap_id)?;
+    Ok(manifest)
+}
+
+fn read_pinned_private_source(
+    path: &Path,
+    maximum: u64,
+    label: &'static str,
+    expected_sha256: &str,
+) -> Result<Vec<u8>> {
+    let bytes = read_private_source(path, maximum, label)?;
+    ensure!(
+        sha256(&bytes) == super::decode_exact::<32>(expected_sha256)?,
+        "{label} digest differs from provision manifest"
+    );
+    Ok(bytes)
+}
+
+fn revalidate_exact_private_source(
+    path: &Path,
+    maximum: u64,
+    label: &'static str,
+    expected: &[u8],
+) -> Result<()> {
+    ensure!(
+        read_private_source(path, maximum, label)? == expected,
+        "{label} changed during XMR Maker authority validation"
+    );
     Ok(())
 }
 
@@ -794,6 +1070,78 @@ fn validate_no_journal_sidecars(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn read_sealed_config_fd(fd: i32) -> Result<Zeroizing<Vec<u8>>> {
+    ensure!(
+        fd == MAKER_ACTOR_CONFIG_FD,
+        "XMR Maker actor config descriptor must be {MAKER_ACTOR_CONFIG_FD}"
+    );
+    let mut file =
+        File::open(format!("/proc/self/fd/{fd}")).context("open sealed XMR Maker actor config")?;
+    let before = file
+        .metadata()
+        .context("inspect sealed XMR Maker actor config")?;
+    validate_sealed_config_metadata(&before)?;
+    validate_config_seals(&file)?;
+
+    file.seek(SeekFrom::Start(0))
+        .context("rewind sealed XMR Maker actor config")?;
+    let mut bytes = Zeroizing::new(Vec::with_capacity(
+        usize::try_from(XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES)
+            .unwrap_or(16 * 1024)
+            .saturating_add(1),
+    ));
+    file.by_ref()
+        .take(XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES.saturating_add(1))
+        .read_to_end(bytes.as_mut())
+        .context("read sealed XMR Maker actor config")?;
+
+    let after = file
+        .metadata()
+        .context("reinspect sealed XMR Maker actor config")?;
+    validate_sealed_config_metadata(&after)?;
+    validate_config_seals(&file)?;
+    ensure!(
+        same_file(&before, &after)
+            && !bytes.is_empty()
+            && u64::try_from(bytes.len()).unwrap_or(u64::MAX) == before.len(),
+        "sealed XMR Maker actor config changed or is invalid"
+    );
+    Ok(bytes)
+}
+
+fn validate_sealed_config_metadata(metadata: &fs::Metadata) -> Result<()> {
+    ensure!(
+        metadata.file_type().is_file()
+            && metadata.uid() == rustix::process::geteuid().as_raw()
+            && metadata.permissions().mode() & 0o7777 == 0o600
+            && metadata.nlink() == 0
+            && metadata.len() > 0
+            && metadata.len() <= XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+        "sealed XMR Maker actor config metadata is invalid"
+    );
+    Ok(())
+}
+
+fn validate_config_seals(file: &File) -> Result<()> {
+    let required = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
+    let actual = fcntl_get_seals(file).context("inspect XMR Maker actor config seals")?;
+    ensure!(
+        actual.contains(required),
+        "XMR Maker actor config is not fully sealed"
+    );
+    Ok(())
+}
+
+fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.len() == right.len()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
+}
+
 fn read_private_source(path: &Path, max_bytes: u64, label: &'static str) -> Result<Vec<u8>> {
     let file = open_path_no_symlinks(path, label)?;
     read_bounded_file(file, max_bytes, FilePolicy::Private, label)
@@ -819,7 +1167,7 @@ fn normalized_absolute(path: &Path) -> bool {
             .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
 }
 
-fn canonical_manifest_bytes(manifest: &XmrActorProvisionManifestV1) -> Result<Vec<u8>> {
+fn canonical_manifest_bytes(manifest: &XmrActorProvisionManifestV2) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(manifest).context("encode XMR actor provision manifest")?;
     bytes.push(b'\n');
     ensure!(
@@ -844,13 +1192,19 @@ const fn role_name(role: ActorRole) -> &'static str {
 mod tests {
     use super::*;
 
-    fn manifest() -> XmrActorProvisionManifestV1 {
-        XmrActorProvisionManifestV1 {
-            schema_version: APPLICATION_PROVISION_SCHEMA_V1,
+    use std::{ffi::CString, io::Write as _};
+
+    use rustix::fs::{MemfdFlags, Mode, fchmod, fcntl_add_seals, memfd_create};
+
+    fn manifest() -> XmrActorProvisionManifestV2 {
+        XmrActorProvisionManifestV2 {
+            schema_version: APPLICATION_PROVISION_SCHEMA_V2,
             role: ActorRole::Maker,
             swap_id: "11".repeat(32),
             stage_a_sha256: "21".repeat(32),
+            published_stage_a: PathBuf::from("/application/shared/stage-a-v1.borsh"),
             stage_b_sha256: "22".repeat(32),
+            published_stage_b: PathBuf::from("/application/shared/stage-b-v1.borsh"),
             source_private_root: PathBuf::from("/private/maker"),
             source_private_manifest_sha256: "23".repeat(32),
             source_view_key_sha256: "24".repeat(32),
@@ -888,6 +1242,12 @@ mod tests {
         value.source_private_root = PathBuf::from("relative/private");
         invalid.push(value);
         let mut value = manifest();
+        value.published_stage_b = PathBuf::from("relative/stage-b-v1.borsh");
+        invalid.push(value);
+        let mut value = manifest();
+        value.published_stage_b = PathBuf::from("/other/shared/stage-b-v1.borsh");
+        invalid.push(value);
+        let mut value = manifest();
         value.stage_b_sha256 = "AA".repeat(32);
         invalid.push(value);
         for value in invalid {
@@ -906,5 +1266,58 @@ mod tests {
             )
             .is_err()
         );
+    }
+    fn config_memfd(bytes: &[u8], seals: SealFlags) -> File {
+        let name = CString::new("lez-xmr-actor-test-config").expect("memfd name");
+        let descriptor = memfd_create(
+            name.as_c_str(),
+            MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+        )
+        .expect("create config memfd");
+        let mut file = File::from(descriptor);
+        fchmod(&file, Mode::RUSR | Mode::WUSR).expect("set config memfd mode");
+        file.write_all(bytes).expect("write config memfd");
+        fcntl_add_seals(&file, seals).expect("seal config memfd");
+        file
+    }
+
+    #[test]
+    fn sealed_config_pinned_digest_and_sidecar_boundaries_fail_closed() {
+        assert!(load_validated_xmr_maker_authority_fd(MAKER_ACTOR_CONFIG_FD - 1).is_err());
+
+        let incomplete = config_memfd(
+            b"{}\n",
+            SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW,
+        );
+        assert!(validate_sealed_config_metadata(&incomplete.metadata().unwrap()).is_ok());
+        assert!(validate_config_seals(&incomplete).is_err());
+
+        let complete = config_memfd(
+            b"{}\n",
+            SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+        );
+        assert!(validate_sealed_config_metadata(&complete.metadata().unwrap()).is_ok());
+        assert!(validate_config_seals(&complete).is_ok());
+
+        let directory = tempfile::tempdir().expect("private source root");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("private root mode");
+        let source = directory.path().join("authority.bin");
+        fs::write(&source, b"authority-v1").expect("write private authority");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o600))
+            .expect("private authority mode");
+        let digest = hex::encode(sha256(b"authority-v1"));
+        assert_eq!(
+            read_pinned_private_source(&source, 64, "test authority", &digest).unwrap(),
+            b"authority-v1"
+        );
+        fs::write(&source, b"authority-v2").expect("tamper private authority");
+        assert!(read_pinned_private_source(&source, 64, "test authority", &digest).is_err());
+
+        let journal = directory.path().join("maker.sqlite");
+        assert!(validate_no_journal_sidecars(&journal).is_ok());
+        fs::write(journal_sidecar_path(&journal, "-wal"), b"uncheckpointed")
+            .expect("write fake WAL");
+        assert!(validate_no_journal_sidecars(&journal).is_err());
     }
 }

@@ -30,6 +30,7 @@ jq -e '
   and .terms_bound_to_stage_material_by_helper == false
   and .composer_receipt_validation_scope == "schema_shape_and_unsigned_wire_length_only"
   and .deterministic_swap_id == "sha256(run_id + \":stage-a:001\")"
+  and .explicit_swap_id_override == "--swap-id"
   and .dynamic_literal_loopback_endpoints == true
   and .independent_role_roots == ["taker", "maker"]
   and .owner_private_view_key_handoff == true
@@ -306,8 +307,12 @@ readonly expected_swap_id
 run_fixture() {
   local destination="$1"
   local selected_actor="${2:-$fake_actor}"
+  local explicit_swap_id="${3:-}"
+  local swap_id_args=()
+  [[ -z "$explicit_swap_id" ]] || swap_id_args=(--swap-id "$explicit_swap_id")
   "$helper" execute \
     --run-id "$run_id" \
+    "${swap_id_args[@]}" \
     --output-root "$destination" \
     --taker-lez-owner "$taker_owner" \
     --maker-lez-owner "$maker_owner" \
@@ -466,6 +471,24 @@ fi
 rg -F "runner_full|taker|--journal|${happy_root}/stage-b/private/taker.sqlite|--session|${happy_root}/material/taker-sessions/claim.json|accept-nonce-sign" \
   "$FAKE_LOG" | rg -F "|--output|${happy_root}/stage-b/private/taker-outbox/claim-partial.json" >/dev/null ||
   fail "Taker claim partial was not routed to the private outbox"
+
+readonly override_swap_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+readonly override_root="${test_root}/explicit-swap"
+readonly override_receipt="${test_root}/explicit-swap.stdout.json"
+run_fixture "$override_root" "$fake_actor" "$override_swap_id" >"$override_receipt"
+jq -e --arg swap_id "$override_swap_id" '.swap_id == $swap_id' "$override_receipt" >/dev/null ||
+  fail "explicit swap ID did not reach the durable receipt"
+[[ "$(rg '^composer_full\|' "$FAKE_LOG" | tail -n 1)" == *"|--swap-id|${override_swap_id}"* ]] ||
+  fail "explicit swap ID did not reach the composer"
+
+readonly invalid_swap_root="${test_root}/invalid-explicit-swap"
+if run_fixture "$invalid_swap_root" "$fake_actor" not-hex >"${test_root}/invalid-swap.stdout" 2>"${test_root}/invalid-swap.stderr"; then
+  fail "malformed explicit swap ID unexpectedly succeeded"
+fi
+rg -F "explicit swap ID must be one nonzero lowercase-hex 32-byte value" "${test_root}/invalid-swap.stderr" >/dev/null ||
+  fail "malformed explicit swap ID failure was not precise"
+[[ ! -e "$invalid_swap_root" && ! -L "$invalid_swap_root" ]] ||
+  fail "malformed explicit swap ID created output"
 
 before_reuse="$(wc -l <"$FAKE_LOG")"
 if run_fixture "$happy_root" >"${test_root}/reuse.stdout" 2>"${test_root}/reuse.stderr"; then

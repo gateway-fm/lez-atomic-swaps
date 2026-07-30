@@ -36,11 +36,9 @@ use tokio::{net::UnixListener, task::JoinSet};
 use xmr_reference_actor::{
     XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, validate_maker_manifest_config_bytes,
 };
-use zeroize::Zeroizing;
-
 #[path = "support/secure_file.rs"]
 mod secure_file;
-use secure_file::{load_raw_secret, read_private_file};
+use secure_file::{load_raw_secret, load_secp256k1_secret, read_private_file};
 
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: u32 = 1024 * 1024;
@@ -785,7 +783,7 @@ fn configured_btc_chat_authority(
     let mut identity = [0_u8; 32];
     hex::decode_to_slice(program_sha256, &mut identity)
         .context("decode BTC actor program SHA-256")?;
-    let signing_key = load_secp256k1_key(signing_key_file, "BTC Maker signing key")?;
+    let signing_key = load_secp256k1_secret(signing_key_file, "BTC Maker signing key")?;
     let provisioner = BtcMakerActorProvisioner::new(
         &arguments.btc_source_maker_config,
         root.clone(),
@@ -1017,25 +1015,7 @@ fn server_config(maximum_body_bytes: u32) -> ServerConfig {
 }
 
 fn load_delivery_key(path: &Path) -> anyhow::Result<SecretKey> {
-    load_secp256k1_key(path, "Delivery signing key")
-}
-
-fn load_secp256k1_key(path: &Path, purpose: &str) -> anyhow::Result<SecretKey> {
-    let encoded = read_private_file(path, 65, purpose)?;
-    if encoded.len() == 32 {
-        return SecretKey::from_slice(encoded.as_slice())
-            .with_context(|| format!("validate {purpose}"));
-    }
-    let text = std::str::from_utf8(&encoded)
-        .with_context(|| format!("{purpose} must be raw bytes or UTF-8 hex"))?
-        .trim();
-    ensure!(
-        text.len() == 64,
-        "{purpose} must contain exactly 32 raw bytes or 32 bytes as hex"
-    );
-    let mut bytes = Zeroizing::new([0_u8; 32]);
-    hex::decode_to_slice(text, bytes.as_mut()).with_context(|| format!("decode {purpose}"))?;
-    SecretKey::from_slice(bytes.as_ref()).with_context(|| format!("validate {purpose}"))
+    load_secp256k1_secret(path, "Delivery signing key")
 }
 
 fn trusted_now_unix_seconds() -> anyhow::Result<u64> {

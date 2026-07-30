@@ -14,9 +14,10 @@ mod application_provision;
 
 #[cfg(feature = "sessions")]
 pub use application_provision::{
-    XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XmrActorProvisionV1,
-    provision_xmr_maker_actor_from_material, provision_xmr_taker_actor_from_material,
-    validate_maker_manifest_config_bytes,
+    ValidatedXmrMakerAuthorityV2, XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XMR_MAKER_ACTOR_ABI_V1,
+    XMR_MAKER_ACTOR_NEXT_ACTION, XMR_MAKER_ACTOR_PROGRAM_ID, XmrActorProvisionV1,
+    load_validated_xmr_maker_authority_fd, provision_xmr_maker_actor_from_material,
+    provision_xmr_taker_actor_from_material, validate_maker_manifest_config_bytes,
 };
 
 use std::{

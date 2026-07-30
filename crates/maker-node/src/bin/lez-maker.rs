@@ -14,6 +14,11 @@ use lez_swap_store::{
     LocalPriceV1, MakerConfigurationCommit, MakerOfferCommit, MakerOfferId, MakerOfferRecordV1,
     MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, VersionedMakerRecord,
 };
+use secp256k1::{PublicKey, Secp256k1};
+use serde::Serialize;
+
+#[path = "support/secure_file.rs"]
+mod secure_file;
 
 #[derive(Parser)]
 #[command(about = "Operator CLI for the LEZ atomic-swap maker daemon")]
@@ -26,6 +31,12 @@ struct Arguments {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Derives the public Delivery identity without contacting the Maker daemon.
+    DeliveryIdentity {
+        /// Existing owner-private raw or hexadecimal secp256k1 signing key.
+        #[arg(long, value_name = "PRIVATE_KEY")]
+        signing_key_file: PathBuf,
+    },
     ConfigurePair {
         #[arg(long)]
         request_id: String,
@@ -166,6 +177,12 @@ enum Command {
     },
 }
 
+#[derive(Serialize)]
+struct DeliveryIdentityOutput {
+    schema_version: u16,
+    public_key: String,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum PairArgument {
     Bitcoin,
@@ -241,6 +258,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::Value> {
     match command {
+        Command::DeliveryIdentity { signing_key_file } => delivery_identity(&signing_key_file),
         command @ Command::ConfigurePair { .. } => configure_pair(socket, command).await,
         command @ Command::SetLocalPrice { .. } => set_local_price(socket, command).await,
         command @ Command::CreateSwap { .. } => create_swap(socket, command).await,
@@ -336,6 +354,17 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
             .await
         }
     }
+}
+
+fn delivery_identity(signing_key_file: &Path) -> anyhow::Result<serde_json::Value> {
+    let signing_key = secure_file::load_secp256k1_secret(signing_key_file, "Delivery signing key")?;
+    let public_key =
+        PublicKey::from_secret_key(&Secp256k1::signing_only(), &signing_key).serialize();
+    serde_json::to_value(DeliveryIdentityOutput {
+        schema_version: 1,
+        public_key: hex::encode(public_key),
+    })
+    .map_err(Into::into)
 }
 
 async fn maker_actor_action(

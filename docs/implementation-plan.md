@@ -3788,23 +3788,21 @@ separately from runtime dependencies.
   case then passed ten consecutive locked/offline replays, preserving the
   production readiness contract instead of teaching the test to accept emptiness.
 
-The progressive local ZEC application PoC gate closed on 2026-07-24. Remaining
-literal M5 ETA is now 12 to 22 focused implementation hours once
-isolated local-node control is healthy, under the owner-approved Logos-upstream
-exception. The earlier 4-to-9-hour estimate assumed the mature M3/M4 pair actors
-already shared the ZEC application handoff. The 2026-07-29 code audit instead
-confirmed that BTC required durable application negotiation and role provisioning;
-those boundaries, Delivery-first planning, canonical draft export, and process
-composition are now GREEN. The corrected range includes 2 to 4 hours for the BTC
-actual-node splice, 7 to 12 hours for XMR pre-effect and scheduler-safe application
-composition, and 3 to 6 hours for XMR actual effects, with partial overlap reserved
-for closure. XMR still has no unified one-shot lifecycle actor or scheduler kind.
-BTC actual-node execution, fresh
-receipt-bound ZEC execution, unavailable-chain isolation, simultaneous application
-composition, XMR/all-pair CLI completion, and closure gates remain.
-Shared containerd timeouts add wall-clock uncertainty but are not counted as
-implementation time and will not be worked around by restarting a daemon that
-owns unrelated stacks.
+The progressive local ZEC application PoC gate closed on 2026-07-24, and the
+exact pushed BTC application corridor is also GREEN. After the verified XMR
+schema-v2 semantic-supervisor checkpoint, remaining M5 PoC ETA is 6 to 11
+focused implementation hours; the milestone-tag ETA is 9 to 17 focused hours
+from the last verified push. Update both ranges on every push. The PoC range
+covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
+and the remaining concurrent/unavailable-route closure. The tag range additionally
+includes evidence synchronization, manual-flow/README closure, the final CI and
+vulnerability gates, and tag review; those tasks partially overlap. XMR now has
+a real schema-v2 pre-effect actor and typed scheduler kind, but intentionally has
+no supervised chain-effect command yet. Fresh receipt-bound ZEC execution and
+broader hardening remain follow-up gates unless they expose a milestone-owned
+regression. Shared containerd timeouts add wall-clock uncertainty but are not
+counted as implementation time and will not be worked around by restarting a
+daemon that owns unrelated stacks.
 
 The BTC actual-node splice has entered contract-first implementation. Its fixed
 wrapper permits only the native sequential claim journey and records the exact
@@ -4019,7 +4017,27 @@ insensitive because it cannot replace the already committed actor manifest.
 
 ADR 0112 records the updated component, commit/replay sequence, local atomicity argument, private-view-key validation boundary, and resource inventory. The real daemon and Taker CLI pre-effect handoff is now process-GREEN. It uses the M4 role-separated Stage-A/Stage-B material, a bounded daemon-owned Maker agreement key, shared private view key, and Maker-only actor-manifest registry. The daemon semantically validates the canonical role-provision manifest against the exact swap and state database before readiness. Stage A remains reserve-only; Stage B atomically activates the coordinator, consumed offer, one Maker actor, and replay row. The Taker no-clobber publishes only its role bundle and receipt.
 
-The exact process proof covers a crossed-reservation zero-write negative, revision-2 Stage A with no coordinator/actor/effect, revision-3 Stage B, Delivery removal, daemon reopen, Delivery-independent exact replay, and actor/receipt byte and inode stability. It uses temporary Unix sockets and SQLite only: no chain node, RPC, Docker service, faucet, DNS, network, or funds. Its exact locked/offline black-box proof is GREEN 1 of 1 in 307.71 seconds. The next gate remains a semantic XMR supervisor adapter followed by the existing isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 claim corridor. Actual effects and literal all-pair closure remain before the M5 PoC exit gate.
+The exact process proof covers a crossed-reservation zero-write negative, revision-2 Stage A with no coordinator/actor/effect, revision-3 Stage B, Delivery removal, daemon reopen, Delivery-independent exact replay, and actor/receipt byte and inode stability. It uses temporary Unix sockets and SQLite only: no chain node, RPC, Docker service, faucet, DNS, network, or funds. Its exact locked/offline black-box proof is GREEN 1 of 1 in 307.71 seconds.
+
+The schema-v2 semantic-supervisor checkpoint is now independently GREEN. The
+real `xmr-maker-actor` accepts only fully sealed config FD 196 and reconstructs
+execution authority by rehashing and semantically validating the pinned Stage A
+and Stage B, public packets, Maker private manifest and view key, and an
+immutable snapshot of the external role journal. The supervisor requires the
+exact `xmr-maker-actor` program identity, `lez_maker_xmr_pre_effect_v1` ABI, and
+nine-key status contract. The only accepted result is typed `Blocked`,
+`chain_effect_executed:false`, revision 0, and
+`xmr_chain_effects_not_yet_composed`; no effect subcommand runs, the row does
+not enter failure/backoff, and its next authority observation is delayed at
+least 60 seconds. The exact real-process proof is GREEN 1 of 1 in 79.22 seconds.
+Optimizing only the four portable XMR cryptography kernels reduced complete
+authority replay from 194.75 to 29.02 seconds without changing debug assertions,
+validation, ordering, RPC, finality, or effect semantics. Runtime chain resources
+remain empty. The next gate is the existing isolated official Monero 0.18.5.1
+Regtest plus LEZ v0.2 claim corridor under this accepted authority, followed by
+concurrent/all-pair closure. Remaining M5 PoC ETA is 6 to 11 focused hours and
+milestone-tag ETA is 9 to 17 focused hours from the last verified push; neither
+range claims completion or hides the still-open actual-chain execution.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

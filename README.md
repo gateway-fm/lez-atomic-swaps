@@ -164,15 +164,40 @@ not incorrectly reapply the already-linearized advertisement TTL. Replay binds
 the acceptance time and rechecks the canonical Stage A, complete offer route and
 quote, activation, coordinator, actor, and mutation rows. Schema 20 to 21 keeps
 existing process, manual-action, and progress rows while widening their actor
-kind checks. Maker-node exposes Monero inspection but fails closed before spawn
-until the semantic actor adapter exists. [ADR 0112](docs/architecture/0112-activate-xmr-stage-b-atomically.md)
+kind checks. Maker-node now admits Monero execution only through the exact
+`xmr-maker-actor` schema-v2 pre-effect ABI described below. [ADR 0112](docs/architecture/0112-activate-xmr-stage-b-atomically.md)
 records the component, commit/replay sequence, and atomicity argument. Role-only
-process handoff is process-GREEN; semantic scheduler execution and the actual isolated Monero
-plus LEZ corridor remain before the XMR application PoC is complete.
+process handoff and semantic pre-effect scheduler execution are process-GREEN;
+the actual isolated Monero plus LEZ corridor remains before the XMR application
+PoC is complete.
 
 The M5 XMR application path now has a process-GREEN real-process pre-effect checkpoint. It runs the actual Maker CLI, `lez-maker-daemon`, and Taker CLI around role-generated canonical Stage A/B material. Stage A advances only to reserved revision 2; Stage B is the sole transaction that creates the coordinator, consumes the offer, registers one Maker-only Monero actor, and records revision 3 replay. The Taker publishes only its own no-clobber actor bundle and acceptance receipt. A crossed reservation must leave the active offer at revision 1 with no negotiation, coordinator, actor, or public effect. After the exact Delivery advertisement is removed and the daemon is restarted, the durable Taker actor bypasses discovery and exact replay must preserve every captured actor/receipt byte and inode.
 
-This checkpoint is deliberately zero-effect: it starts no Monero or LEZ node, opens no chain RPC, uses no Docker service, faucet, DNS, network, or funds, and leaves the actor supervisor disabled. The daemon validates a bounded canonical Maker-only role manifest, its swap and state binding, and the installed owner-owned single-link program and pinned digest before readiness, but that admission is not semantic execution authority. Reproduce the checkpoint with `cargo +1.96.0 test --locked --offline -p lez-maker-node --test xmr_chat_process real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically -- --exact --nocapture`; [Flow 1P](docs/manual-user-flows.md#flow-1p-repeat-the-xmr-role-process-pre-effect-checkpoint) documents the equivalent flags and restart boundary. The exact black-box proof passed 1 of 1 in 307.71 seconds. The semantic supervisor adapter and isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor remain open.
+That first checkpoint is deliberately zero-effect: it starts no Monero or LEZ
+node, opens no chain RPC, and uses no Docker service, faucet, DNS, network, or
+funds. [Flow 1P](docs/manual-user-flows.md#flow-1p-repeat-the-xmr-role-process-pre-effect-checkpoint)
+reproduces its real Maker/daemon/Taker handoff; the exact black-box proof passed
+1 of 1 in 307.71 seconds.
+
+The follow-on schema-v2 semantic-supervisor checkpoint is also GREEN. The
+supervisor runs the real installed `xmr-maker-actor` from its digest-pinned
+single-link executable, supplies only fully sealed config FD 196, and requires
+the exact `xmr-maker-actor` program identity,
+`lez_maker_xmr_pre_effect_v1` ABI, and nine-key status object. Execution-time
+validation rehashes and semantically revalidates Stage A, Stage B, both public
+packets, the Maker private manifest/view-key authority, and an immutable
+snapshot of the external role journal. The only accepted result is typed
+`Blocked` with `chain_effect_executed:false` and
+`xmr_chain_effects_not_yet_composed`; it invokes no activate, drive, claim, or
+refund effect and waits at least 60 seconds before another authority
+observation. The exact real-process supervisor proof passed 1 of 1 in 79.22
+seconds. The optimized complete authority replay took 29.02 seconds, down from
+194.75 seconds, without changing protocol or validation semantics.
+[Flow 1Q](docs/manual-user-flows.md#flow-1q-repeat-the-xmr-schema-v2-semantic-supervisor-checkpoint)
+gives the focused reproduction. It uses no chain node, RPC, Docker service,
+faucet, DNS, network, or funds and therefore does not certify a swap or chain
+effect. The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 application
+corridor remains open.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

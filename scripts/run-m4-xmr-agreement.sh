@@ -28,6 +28,7 @@ emit_contract() {
       terms_bound_to_stage_material_by_helper: false,
       composer_receipt_validation_scope: "schema_shape_and_unsigned_wire_length_only",
       deterministic_swap_id: "sha256(run_id + \":stage-a:001\")",
+      explicit_swap_id_override: "--swap-id",
       dynamic_literal_loopback_endpoints: true,
       independent_role_roots: ["taker", "maker"],
       owner_private_view_key_handoff: true,
@@ -212,6 +213,7 @@ sha256_file() {
 
 parse_execute_arguments() {
   run_id=""
+  explicit_swap_id=""
   output_root=""
   taker_lez_owner=""
   maker_lez_owner=""
@@ -234,7 +236,7 @@ parse_execute_arguments() {
     local option="$1"
     shift
     case "$option" in
-      --run-id|--output-root|--taker-lez-owner|--maker-lez-owner|--sequencer-url|--indexer-url|\
+      --run-id|--swap-id|--output-root|--taker-lez-owner|--maker-lez-owner|--sequencer-url|--indexer-url|\
       --monero-daemon-url|--monero-rpc-username-file|--monero-rpc-password-file|\
       --monero-amount-piconero|--lez-amount|--maker-xmr-funding-cutoff-ms|\
       --refund-at-ms|--punish-at-ms|--actor-bin|--role-runner-bin|--composer-bin)
@@ -246,6 +248,7 @@ parse_execute_arguments() {
     esac
     case "$option" in
       --run-id) run_id="$1" ;;
+      --swap-id) explicit_swap_id="$1" ;;
       --output-root) output_root="$1" ;;
       --taker-lez-owner) taker_lez_owner="$1" ;;
       --maker-lez-owner) maker_lez_owner="$1" ;;
@@ -272,6 +275,7 @@ parse_execute_arguments() {
       monero_amount_piconero lez_amount maker_xmr_funding_cutoff_ms refund_at_ms punish_at_ms; do
     [[ -n "${!required}" ]] || fail "missing required execute option for ${required}"
   done
+  [[ -z "$explicit_swap_id" ]] || require_hex32 "$explicit_swap_id" "explicit swap ID"
 }
 
 validate_execute_arguments() {
@@ -469,7 +473,11 @@ run_execute() {
   verify_public_role_pair
 
   local swap_id
-  swap_id="$(printf '%s' "${run_id}:stage-a:001" | sha256sum | cut -d' ' -f1)"
+  if [[ -n "$explicit_swap_id" ]]; then
+    swap_id="$explicit_swap_id"
+  else
+    swap_id="$(printf '%s' "${run_id}:stage-a:001" | sha256sum | cut -d' ' -f1)"
+  fi
   readonly swap_id
   readonly unsigned_stage_a="${exchange_root}/unsigned-stage-a.bin"
   readonly composer_receipt="${exchange_root}/stage-a-composer-receipt.json"

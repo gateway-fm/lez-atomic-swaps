@@ -37,3 +37,18 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+
+# XMR role/process tests repeatedly verify cross-curve DLEQ proofs. Optimize
+# only those portable crypto kernels in development builds; release artifacts,
+# debug assertions, overflow checks, and every non-XMR dependency are unchanged.
+[profile.dev.package.lez-xmr-swap-sdk]
+opt-level = 3
+
+[profile.dev.package.sigma_fun]
+opt-level = 3
+
+[profile.dev.package.secp256kfun]
+opt-level = 3
+
+[profile.dev.package.curve25519-dalek-ng]
+opt-level = 3

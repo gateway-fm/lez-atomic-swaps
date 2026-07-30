@@ -1,6 +1,6 @@
 # ADR 0113: Hand off XMR stage material without crossing role authority
 
-- Status: Accepted for the M5 application process boundary
+- Status: Accepted and pre-effect supervisor GREEN for M5
 - Date: 2026-07-30
 - Milestone: M5 progressive local-functional PoC
 
@@ -17,6 +17,13 @@ role-local adaptor journals. Reimplementing that cryptography inside Chat would
 duplicate a proven wheel and would expand the daemon's custody. The first M5
 application PoC therefore consumes those reproducible artifacts while retaining
 their role boundary.
+
+The later M5 process slice now also reaches the normal Maker scheduler. Its
+scope is intentionally pre-effect: it proves that the queued Maker actor is
+started with immutable role authority, semantically revalidates that authority
+inside the child process, and reports a typed blocked status without contacting
+LEZ or Monero RPCs. It does not claim that the application corridor has opened
+or that either chain has received an effect.
 
 ## Decision
 
@@ -52,104 +59,120 @@ their role boundary.
    has a separate bounded body limit large enough for the SDK's canonical XMR
    wire maxima plus JSON encoding overhead.
 
+9. The role application manifest is schema v2. It pins the exact absolute
+   application-bundle Stage-A and Stage-B paths and their digests, the source
+   private manifest and view-key digests, both public role packets, and the
+   external role journal. The published stages must be the exact
+   `shared/stage-a-v1.borsh` and `shared/stage-b-v1.borsh` pair outside the
+   private source root.
+10. Before spawn, the supervisor validates canonical manifest bytes against the
+    scheduled swap ID and role-local state database. It pins the exact
+    `xmr-maker-actor` program identity and `lez_maker_xmr_pre_effect_v1` ABI,
+    copies the bounded manifest into an anonymous memfd, applies all four
+    required seals, and passes it only as descriptor 196.
+11. The child accepts no other config descriptor. It securely rereads and
+    digest-checks every referenced authority file, revalidates canonical Stage
+    A and Stage B as Maker, and validates an immutable copy of the SQLite role
+    journal against the signed claim and refund transcripts. The returned
+    authority retains that snapshot privately and zeroizes transient view-key
+    bytes.
+12. This ABI truthfully reports that XMR chain effects are not yet composed.
+    The supervisor records a typed blocked observation and leaves the actor
+    queued; it creates no manual action, backoff failure, or public effect.
+
 ## Components and authority
 
 ```mermaid
 flowchart LR
-    subgraph TakerHost["Taker owner boundary"]
+    subgraph TakerHost["Taker boundary"]
         TakerCli["lez-taker"]
-        TakerRoot["Taker private role root"]
-        TakerJournal[("Taker adaptor journal")]
-        TakerBundle["No-clobber Taker bundle"]
-        Receipt["Acceptance receipt"]
+        TakerAuthority["Taker root and journal"]
     end
 
-    subgraph PublicExchange["Public authenticated material"]
+    subgraph Exchange["Authenticated exchange"]
         Delivery["Signed run-local Delivery"]
-        StageA["Dual-signed Stage A"]
-        StageB["Dual-signed Stage B"]
+        Stages["Canonical Stage A and Stage B"]
     end
 
-    subgraph MakerHost["Maker daemon owner boundary"]
+    subgraph MakerHost["Maker boundary"]
         Chat["Isolated Chat Unix socket"]
-        MakerAuthority["Maker identity, view key, actor registry"]
-        MakerStore[("Application SQLite")]
-        MakerBundle["No-clobber Maker bundle"]
+        Store["Application SQLite"]
+        Scheduler["Fenced Maker scheduler"]
+        Supervisor["XMR process supervisor"]
+        Memfd["Sealed config FD 196"]
+        Actor["xmr-maker-actor"]
+        Authority["Schema-v2 Maker authority"]
     end
 
     Delivery --> TakerCli
-    TakerRoot --> TakerCli
-    TakerJournal --> TakerCli
-    StageA --> TakerCli
-    StageB --> TakerCli
-    TakerCli -->|"envelope, terms, Stage A or B only"| Chat
-    MakerAuthority --> Chat
-    Chat --> MakerStore
-    TakerCli --> TakerBundle
-    TakerBundle --> Receipt
-    MakerAuthority --> MakerBundle
+    Stages --> TakerCli
+    TakerAuthority --> TakerCli
+    TakerCli -->|"public stage wires only"| Chat
+    Chat --> Store
+    Store --> Scheduler
+    Authority --> Supervisor
+    Scheduler --> Supervisor
+    Supervisor --> Memfd
+    Memfd --> Actor
+    Authority --> Actor
+    Actor -->|"typed blocked status"| Supervisor
+    Supervisor --> Store
+    Actor -.->|"zero requests"| ChainRpc["LEZ and Monero RPCs"]
 ```
 
 The apparent public exchange does not imply public networking in the local
 PoC. Delivery is a signed run-local directory and Chat is an owner-controlled
-Unix socket. The diagram distinguishes disclosure class and role custody.
+Unix socket. The dotted chain edge is a denied or future boundary, not current
+I/O: the verified pre-effect process makes zero LEZ and Monero RPC requests.
 
 ## Process and replay flow
 
 ```mermaid
 sequenceDiagram
-    actor User
     participant Taker as lez-taker
-    participant Delivery as Signed Delivery
-    participant Chat as Maker Chat socket
-    participant SDK as XMR SDK
-    participant Store as Maker SQLite
-    participant Bundle as Role bundle and receipt
+    participant Daemon as Maker daemon
+    participant Store as Application SQLite
+    participant Scheduler as Maker scheduler
+    participant Supervisor as XMR supervisor
+    participant Child as xmr-maker-actor
 
-    User->>Taker: Select offer and role-separated Stage A and B
-    Taker->>Delivery: Authenticate exact envelope and quote
-    Delivery-->>Taker: Offer commitment
-    Taker->>Taker: Derive swap ID and validate Stage A
-    Taker->>Chat: Stage-A request with public wire
-    Chat->>SDK: Canonically validate Stage A and authority
-    Chat->>Store: Reserve exact offer
-    Store-->>Chat: Durable revision 2
-    Chat-->>Taker: Stage-A receipt
-    Taker->>Taker: Validate Stage B and publish Taker bundle
-    Taker->>Chat: Stage-B request with public activation wire
-    Chat->>Store: Reload exact durable Stage A
-    Chat->>SDK: Validate Stage B with Maker-owned view key
-    SDK-->>Chat: Derived initial coordinator
-    Chat->>Store: Activate with daemon-owned actor manifest
-    Store-->>Chat: Atomic durable revision 3
-    Chat-->>Taker: Activation receipt
-    Taker->>Bundle: Publish acceptance receipt no-clobber
-
-    opt Exact replay after Delivery removal
-        User->>Taker: Repeat acceptance
-        Taker->>Chat: Exact Stage-B request
-        Chat->>Store: Revalidate replay record and all durable rows
-        Store-->>Chat: Original revision 3, replay
-        Chat-->>Taker: Identical activation receipt
-        Taker->>Bundle: Revalidate bytes, digests, and inodes
-    end
+    Taker->>Daemon: Authenticated Stage A
+    Daemon->>Store: Reserve offer in one transaction
+    Store-->>Daemon: Revision 2 with no actor
+    Taker->>Daemon: Countersigned Stage B
+    Daemon->>Store: Activate in one transaction
+    Store-->>Daemon: Revision 3 and queued Maker actor
+    Scheduler->>Store: Acquire fenced actor lease
+    Scheduler->>Supervisor: Run exact program and ABI
+    Supervisor->>Supervisor: Validate v2 manifest binding
+    Supervisor->>Child: Pass fully sealed config on FD 196
+    Child->>Child: Revalidate stages, keys, packets, and journal snapshot
+    Child-->>Supervisor: Blocked, chain effects not composed
+    Supervisor->>Store: Persist one progress observation
+    Store-->>Scheduler: Keep queued for bounded recheck
 ```
 
-## Why the handoff remains atomic
+Exact Chat replay after Delivery removal still returns the original revision 3
+without replacing bundle bytes or inodes. Exact supervisor re-observation does
+not spin: the blocked result remains queued under the normal bounded recheck.
+
+## Why the handoff remains atomic and fail closed
 
 ```mermaid
 flowchart TD
     A["Stage A request"] --> R["SQLite offer reservation"]
-    R --> P["No executable coordinator or actor"]
-    P --> B["Stage B request"]
-    B --> V["Validate with daemon-owned Maker authority"]
-    V --> D["Derive coordinator and select actor by swap ID"]
-    D --> T["One SQLite immediate transaction"]
-    T --> C{"Commit succeeds?"}
-    C -->|"yes"| E["Offer consumed, coordinator and one actor visible"]
-    C -->|"no"| N["Stage A remains reserved, no executable authority"]
-    E --> Q["Taker receipt published"]
-    N --> X["No success receipt"]
+    R --> B["Stage B request"]
+    B --> T["One activation transaction"]
+    T --> C{"Commit succeeds"}
+    C -->|"no"| Reserved["Stage A only, no actor"]
+    C -->|"yes"| Queued["One queued Maker actor"]
+    Queued --> P{"Manifest preflight valid"}
+    P -->|"no"| Reject["Reject before spawn, zero effect"]
+    P -->|"yes"| Sealed["Fully sealed FD 196"]
+    Sealed --> V{"Child semantic validation valid"}
+    V -->|"no"| Closed["Fail closed, zero effect"]
+    V -->|"yes"| Blocked["Typed blocked status, zero effect"]
+    Blocked --> Recheck["Queued bounded recheck"]
 ```
 
 Local atomicity is the indivisible Stage-B SQLite commit. Filesystem publication
@@ -157,6 +180,12 @@ does not participate in that transaction: Maker actor material must already be
 present and digest-pinned, and a Taker receipt is only an owner-local projection
 published after the commit. A crash before the commit exposes no executable
 coordinator; a crash after it is recovered through exact completion replay.
+
+The process handoff adds no distributed commit. The supervisor preflight and
+child semantic validation are fail-closed gates after the durable Stage-B
+commit: rejecting a path, digest, seal, role, transcript, or journal sidecar can
+never create a chain effect. A successful pre-effect run also creates no chain
+effect; it persists one typed blocked observation and retains the queued actor.
 
 This still is not a distributed transaction across LEZ and Monero. Cross-chain
 conditional atomicity comes from the signed protocol: Stage B fixes the claim
@@ -172,5 +201,6 @@ only the share needed by its corresponding spend.
   M4 provisioning handoff; spend and agreement keys remain role-private.
 - Canonical Stage A can exceed the owner-control RPC body limit, so Chat and
   control listeners must not share the same size policy.
-- The semantic XMR supervisor adapter and exact isolated LEZ plus Monero
-  application replay remain the next gates before M5 certification.
+- The schema-v2 semantic pre-effect supervisor is GREEN. The next corridor gate
+  is composing actual isolated LEZ and Monero RPC effects behind the validated
+  authority; this ADR does not claim those effects or M5 certification.

@@ -2,6 +2,7 @@ use std::{fs::File, io::Read as _, os::unix::fs::MetadataExt as _, path::Path};
 
 use anyhow::{Context as _, ensure};
 use rustix::fs::{CWD, Mode, OFlags, ResolveFlags, openat2};
+use secp256k1::SecretKey;
 use zeroize::Zeroizing;
 
 pub(crate) fn read_private_file(
@@ -39,6 +40,7 @@ pub(crate) fn read_private_file(
     Ok(bytes)
 }
 
+#[allow(dead_code)]
 pub(crate) fn load_raw_secret(path: &Path, purpose: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
     let bytes = read_private_file(path, 32, purpose)?;
     ensure!(
@@ -52,6 +54,25 @@ pub(crate) fn load_raw_secret(path: &Path, purpose: &str) -> anyhow::Result<Zero
         "{purpose} must be nonzero"
     );
     Ok(secret)
+}
+
+#[allow(dead_code)]
+pub(crate) fn load_secp256k1_secret(path: &Path, purpose: &str) -> anyhow::Result<SecretKey> {
+    let encoded = read_private_file(path, 65, purpose)?;
+    if encoded.len() == 32 {
+        return SecretKey::from_slice(encoded.as_slice())
+            .with_context(|| format!("validate {purpose}"));
+    }
+    let text = std::str::from_utf8(&encoded)
+        .with_context(|| format!("{purpose} must be raw bytes or UTF-8 hex"))?
+        .trim();
+    ensure!(
+        text.len() == 64,
+        "{purpose} must contain exactly 32 raw bytes or 32 bytes as hex"
+    );
+    let mut bytes = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(text, bytes.as_mut()).with_context(|| format!("decode {purpose}"))?;
+    SecretKey::from_slice(bytes.as_ref()).with_context(|| format!("validate {purpose}"))
 }
 
 fn validate_private_file(
