@@ -4107,6 +4107,8 @@ complete_m5_btc_application_handoff() {
   local delivery_key="${fixture_root}/private/maker-signing.key"
   local maker_signing_key="$delivery_key"
   local taker_signing_key="${fixture_root}/private/taker-signing.key"
+  local actor_program_root="${M3_POC_SECURE_STATE_ROOT}/m5-btc-actor-program"
+  local actor_program="${actor_program_root}/btc-reference-actor"
   local maker_source_config="${M3_POC_DIRECTION_ROOT}/actors/maker/actor-config.json"
   local taker_source_config="${M3_POC_DIRECTION_ROOT}/actors/taker/actor-config.json"
   local maker_actor_root="${owner_root}/maker-actors"
@@ -4166,6 +4168,14 @@ complete_m5_btc_application_handoff() {
   source_taker_inode="$(stat -c '%d:%i' "$taker_source_config")"
   actor_sha="$(sha256sum "$M3_POC_ACTOR_BIN" | sed 's/ .*//')"
   [[ "$actor_sha" =~ ^[0-9a-f]{64}$ ]] || fail "M5 BTC actor digest is invalid"
+  [[ ! -e "$actor_program_root" && ! -L "$actor_program_root" ]] ||
+    fail "M5 BTC staged actor runtime already exists"
+  mkdir -m 0700 "$actor_program_root"
+  cp --reflink=auto -- "$M3_POC_ACTOR_BIN" "$actor_program"
+  chmod 0700 "$actor_program"
+  [[ "$(stat -c '%u:%a:%h' "$actor_program")" == "$(id -u):700:1" &&
+     "$(sha256sum "$actor_program" | sed 's/ .*//')" == "$actor_sha" ]] ||
+    fail "M5 BTC staged actor runtime is unsafe or changed"
 
   setsid "$M3_POC_MAKER_DAEMON_BIN" --socket "$socket" \
     --chat-socket "$chat_socket" --database "$database" --ready-file "$ready_file" \
@@ -4173,7 +4183,7 @@ complete_m5_btc_application_handoff() {
     --btc-maker-signing-key-file "$maker_signing_key" \
     --btc-source-maker-config "$maker_source_config" \
     --btc-maker-actor-root "$maker_actor_root" \
-    --btc-actor-program "$M3_POC_ACTOR_BIN" \
+    --btc-actor-program "$actor_program" \
     --btc-actor-program-sha256 "$actor_sha" >"$daemon_log" 2>&1 &
   daemon_pid=$!
   if ! register_m5_application_process chat "$daemon_pid" \

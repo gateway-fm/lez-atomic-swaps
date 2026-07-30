@@ -164,6 +164,15 @@ neutral_actor_config_filter="$(sed -E \
 jq -n "$neutral_actor_config_filter" >/dev/null ||
   fail "direction boundary actor-config jq filter does not compile"
 
+for staged_actor_term in \
+  'local actor_program_root="${M3_POC_SECURE_STATE_ROOT}/m5-btc-actor-program"' \
+  'cp --reflink=auto -- "$M3_POC_ACTOR_BIN" "$actor_program"' \
+  'stat -c '\''%u:%a:%h'\'' "$actor_program"' \
+  '--btc-actor-program "$actor_program"'; do
+  rg -Fq -- "$staged_actor_term" "$direction_driver" ||
+    fail "direction boundary omits staged BTC actor invariant: ${staged_actor_term}"
+done
+
 readonly dual_lock_gate_filter="scripts/jq/m3-dual-lock-gate.jq"
 [[ -f "$dual_lock_gate_filter" && ! -L "$dual_lock_gate_filter" ]] ||
   fail "dual-lock evidence filter is missing or unsafe"
