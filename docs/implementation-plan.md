@@ -3791,17 +3791,19 @@ separately from runtime dependencies.
 The progressive local ZEC application PoC gate closed on 2026-07-24, and the
 exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
-actual-runner splice described below, remaining M5 PoC ETA is 4 to 10 focused
-implementation hours; the milestone-tag ETA is 8 to 16 focused hours from
-pushed base `fb4e279`. Update both ranges on every push. The PoC range
-covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
-and the remaining concurrent/unavailable-route closure. The tag range additionally
-includes evidence synchronization, manual-flow/README closure, the final CI and
-vulnerability gates, and tag review; those tasks partially overlap. XMR now has
-a real schema-v2 pre-effect actor and typed scheduler kind, but intentionally has
-no supervised chain-effect command yet. Fresh receipt-bound ZEC execution and
-broader hardening remain follow-up gates unless they expose a milestone-owned
-regression. Shared containerd timeouts add wall-clock uncertainty but are not
+actual-runner splice described below, that corridor is now clean-certified.
+A current literal-output audit keeps M5 at 3 of 7 and corrects the remaining PoC
+ETA to 18 to 32 focused implementation hours; the milestone-tag ETA is 28 to 48
+focused hours from pushed base `2c6aec1`. Update both ranges on every push. The
+PoC range covers Maker CLI service start/stop, Taker XMR lifecycle controls,
+one-daemon multi-worker application composition, and honest unavailable-route
+isolation. The tag range additionally includes evidence synchronization,
+requirements/manual/README closure, a composite M5 evidence verifier, the final
+CI and vulnerability gates, secret scanning, and tag review; those tasks
+partially overlap. XMR has a real schema-v2 pre-effect actor and a clean composed
+legacy chain-effect handoff, but intentionally has no daemon-owned supervised
+chain-effect command yet. Broader hardening remains a follow-up unless it
+exposes a milestone-owned regression. Shared containerd timeouts add wall-clock uncertainty but are not
 counted as implementation time and will not be worked around by restarting a
 daemon that owns unrelated stacks.
 
@@ -4036,9 +4038,9 @@ authority replay from 194.75 to 29.02 seconds without changing debug assertions,
 validation, ordering, RPC, finality, or effect semantics. Runtime chain resources
 remain empty.
 
-The opt-in XMR application-to-chain runner is now SOURCE/CONTRACT-GREEN only,
-not runtime/PoC GREEN. `scripts/run-m5-xmr-application-poc.sh execute` validates
-an exact clean commit and delegates to the existing M4 actual-claim runner with
+The opt-in XMR application-to-chain runner is now clean local PoC GREEN.
+`scripts/run-m5-xmr-application-poc.sh execute` validates an exact clean commit
+and delegates to the existing M4 actual-claim runner with
 `M5_XMR_APPLICATION_MODE=1`. The composed order is Delivery-only publication
 and authenticated plan; canonical Stage A/B; Maker provisioning; authorized
 daemon; real Taker acceptance and role receipt; typed-Blocked supervisor
@@ -4118,10 +4120,27 @@ admitted the namespace but rejected its children before later removing the
 namespace itself. Commit `fb4e279` canonicalizes paths and permits only
 descendants of the run-owned private root while regression tests continue to
 reject traversal, symlinks, and foreign paths. The cleanup result correctly
-remains failed; a fresh run must prove the fix. From pushed base `fb4e279`,
-remaining M5 PoC ETA is 4 to 10 focused hours and milestone-tag ETA is 8 to 16
-focused hours; clean XMR replay plus concurrent and unavailable-route gates
-remain.
+remains failed for run G.
+
+Exact pushed-tree run `m5-xmr-app-20260730-2c6aec1-h` then repeated the full
+corridor from commit `2c6aec1` and passed cleanup schema v2. Swap
+`9d627d18...abfeb7c` retained one identity through application cutoff, tag
+13/14/15, adaptor extraction, sweep, and binding. Claim transaction
+`05cb9052...349fce` was included at LEZ height 139 and observed at finalized tip
+142. Monero sweep transaction `37930570...1603c8` received 998191600000 of
+1000000000000 funded piconero after a 1808400000 fee and reached 10
+confirmations at tip 130. Source status was zero; every exact resource, process,
+and port was absent; the foreign sentinel and no-retry latch survived; no
+foreign or broad cleanup occurred; and `failure_reasons` was empty. The binder
+claims conditional successful-claim atomicity, not a distributed transaction or
+future-reorg immunity. ADR 0114 is accepted at this local PoC boundary.
+
+The current RFP/issue audit keeps literal M5 completion at 3 of 7. Remaining
+implementation is Maker CLI start/stop, Taker XMR monitor/claim/refund, honest
+multi-worker application composition under one daemon/database, and route
+disable/unavailable behavior including quote/publication rejection and
+unaffected-pair progress. From pushed base `2c6aec1`, corrected M5 PoC ETA is 18
+to 32 focused hours and milestone-tag ETA is 28 to 48 focused hours.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

@@ -5988,14 +5988,16 @@ files, SQLite, and local child processes. They start no `monerod`, wallet RPC,
 LEZ sequencer/indexer/sidecar, Docker service, faucet, DNS lookup, network, or
 funds. This absence removes node/finality flakiness but also means the checkpoint
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
-The remaining PoC gate is the isolated official Monero 0.18.5.1 Regtest plus LEZ
-v0.2 corridor under this accepted authority, followed by concurrent/all-pair
-closure. From pushed base `fb4e279`, current ETA is 4 to 10 focused hours for the
-M5 PoC and 8 to 16 focused hours for the milestone tag.
+The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor under this
+accepted authority is clean-certified in Flow 1R. Remaining PoC work is literal
+Maker service control, Taker XMR lifecycle controls, concurrent/all-pair
+composition, and unavailable-route isolation. From pushed base `2c6aec1`, the
+corrected ETA is 18 to 32 focused hours for the M5 PoC and 28 to 48 focused hours
+for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
-Status: **FUNCTIONAL HAPPY-PATH GREEN; clean cleanup certification open.** Four
+Status: **CLEAN LOCAL HAPPY-PATH GREEN.** Four
 exact-commit attempts failed safely before
 nodes. The first two exposed stale
 sidecar and release-service locks. `m5-xmr-app-20260730-7b8ec43-c` built both
@@ -6033,9 +6035,19 @@ exactly three `ephemeral_path_boundary_failed` reasons, all nested directories
 under the exact run-owned private namespace. The guard admitted the namespace
 but not its children. Commit `fb4e279` now canonicalizes paths and admits only
 descendants of that private root; the focused contract rejects traversal,
-symlinks, and foreign paths. Use a fresh run ID to prove the fix. This is a
-second functional end-to-end execution, not the clean certifying replay or M5
-completion.
+symlinks, and foreign paths. Eighth run
+`m5-xmr-app-20260730-2c6aec1-h` clean-certified the exact pushed tree. Swap
+`9d627d18...abfeb7c` crossed the application cutoff and completed tag 13/14/15,
+extraction, sweep, and binding. Claim transaction `05cb9052...349fce` was in LEZ
+block 139 and observed at finalized tip 142. Monero sweep transaction
+`37930570...1603c8` received 998191600000 piconero after a 1808400000 fee and
+reached 10 confirmations at tip 130. Cleanup schema v2 passed with source status
+zero, exact resources/processes/ports absent, the foreign sentinel and no-retry
+latch preserved, no foreign/broad cleanup, and an empty failure list. The
+binding explicitly claims conditional successful-claim atomicity, not a
+distributed transaction or future-reorg immunity. This closes the clean XMR
+application-corridor gate, not the remaining literal M5 CLI, concurrency, or
+unavailable-route outputs.
 
 Reuse all prerequisites from
 [Flow 0](#flow-0-m4-official-monero-regtest-topology): Docker, the pinned Rust

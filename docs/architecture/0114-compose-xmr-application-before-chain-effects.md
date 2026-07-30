@@ -1,6 +1,6 @@
 # ADR 0114: Compose the XMR application before chain effects
 
-- Status: Proposed and in progress
+- Status: Accepted for the M5 local-functional PoC boundary
 - Date: 2026-07-30
 - Milestone: M5 progressive local-functional PoC
 
@@ -20,8 +20,9 @@ pre-effect bytes, so the application supervisor must finish and stop before
 legacy journal progression begins.
 
 This record defines the composition and evidence boundary. Exact isolated run
-`m5-xmr-app-20260730-da9be26-f` completed every functional step, but its
-fail-closed cleanup result was not GREEN. This decision is not yet accepted.
+`m5-xmr-app-20260730-2c6aec1-h` completed every functional step from the exact
+pushed tree and passed fail-closed cleanup schema v2. This decision is accepted
+only for the private local-functional PoC boundary described here.
 
 ## Decision
 
@@ -270,7 +271,7 @@ LEZ, and Monero. The cutoff prevents concurrent effect ownership. Stopping the
 supervisor can reduce liveness if the legacy runner never starts, but cannot
 authorize a claim, refund, or sweep.
 
-## Execution evidence and remaining acceptance gate
+## Execution evidence and acceptance
 
 Exact run `m5-xmr-app-20260730-da9be26-f` proved:
 
@@ -306,5 +307,22 @@ the namespace itself but not its descendants. Commit `fb4e279` canonicalizes
 paths and admits only descendants of the run-owned private root, while focused
 tests reject traversal, symlinks, and foreign paths.
 
-This ADR cannot become accepted until a fresh run passes the exact cleanup
-gate; neither latched successful-effect run ID is ever reused.
+Exact pushed-tree run `m5-xmr-app-20260730-2c6aec1-h` then passed the same
+functional sequence and cleanup schema v2. Swap `9d627d18...abfeb7c` retained
+one identity through the application cutoff, tag 13/14/15, extraction, sweep,
+and binding. Claim transaction `05cb9052...349fce` was included at LEZ height
+139 and observed at finalized tip 142. Monero sweep transaction
+`37930570...1603c8` received 998191600000 of 1000000000000 funded piconero
+after a 1808400000 fee and reached 10 confirmations at tip 130. Cleanup recorded
+source status zero, exact resources/processes/ports absent, preserved foreign
+sentinel and no-retry latch, no foreign target, no broad cleanup, and no failure
+reason.
+
+The cross-chain binder scopes the result to
+`successful_claim_path_conditional_atomicity`. It explicitly sets both
+`distributed_cross_chain_transaction_claimed` and
+`future_reorg_immunity_claimed` to false. No public RPC, faucet, peer, or public
+fund participates. This evidence accepts the cutoff/ownership decision for the
+local PoC; it does not accept daemon-owned XMR lifecycle execution, arbitrary
+concurrency, adverse reorg/race behavior, or production readiness. No latched
+successful-effect run ID is ever reused.

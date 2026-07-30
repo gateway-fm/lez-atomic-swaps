@@ -135,9 +135,9 @@ and three LEZ effects, submitted nothing on terminal replay, and removed only
 its exact run-scoped resources. The checked
 [BTC application evidence packet](docs/evidence/m5-btc-application-corridor-20260730.json)
 records the pushed-clean provenance, exact effect IDs, local-node versions,
-runtime external-resource boundary, timings, and cleanup. XMR application
-composition, concurrent all-pair closure, and the final M5 gates remain open;
-M5 is neither complete nor tagged.
+runtime external-resource boundary, timings, and cleanup. The XMR application
+corridor is also clean-certified below. Literal CLI lifecycle, concurrent
+all-pair, unavailable-route, and final M5 gates remain open; M5 is not tagged.
 
 The XMR application path has now entered its first schema-v20 store slice. An
 exact canonical dual-signed Stage-A agreement can reserve one authenticated
@@ -168,8 +168,8 @@ kind checks. Maker-node now admits Monero execution only through the exact
 `xmr-maker-actor` schema-v2 pre-effect ABI described below. [ADR 0112](docs/architecture/0112-activate-xmr-stage-b-atomically.md)
 records the component, commit/replay sequence, and atomicity argument. Role-only
 process handoff and semantic pre-effect scheduler execution are process-GREEN;
-the actual isolated Monero plus LEZ corridor remains before the XMR application
-PoC is complete.
+the clean isolated Monero plus LEZ corridor described below now certifies their
+composition through the existing one-shot chain-effect owner.
 
 The M5 XMR application path now has a process-GREEN real-process pre-effect checkpoint. It runs the actual Maker CLI, `lez-maker-daemon`, and Taker CLI around role-generated canonical Stage A/B material. Stage A advances only to reserved revision 2; Stage B is the sole transaction that creates the coordinator, consumes the offer, registers one Maker-only Monero actor, and records revision 3 replay. The Taker publishes only its own no-clobber actor bundle and acceptance receipt. A crossed reservation must leave the active offer at revision 1 with no negotiation, coordinator, actor, or public effect. After the exact Delivery advertisement is removed and the daemon is restarted, the durable Taker actor bypasses discovery and exact replay must preserve every captured actor/receipt byte and inode.
 
@@ -196,11 +196,11 @@ seconds. The optimized complete authority replay took 29.02 seconds, down from
 [Flow 1Q](docs/manual-user-flows.md#flow-1q-repeat-the-xmr-schema-v2-semantic-supervisor-checkpoint)
 gives the focused reproduction. It uses no chain node, RPC, Docker service,
 faucet, DNS, network, or funds and therefore does not certify a swap or chain
-effect. The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 application
-corridor remains open.
+effect by itself. The separately composed isolated official Monero 0.18.5.1
+Regtest plus LEZ v0.2 application corridor is clean-certified below.
 
-The opt-in XMR application runner is now **FUNCTIONAL HAPPY-PATH GREEN; clean
-certification remains open**. Four pre-runtime attempts repaired stale graphs,
+The opt-in XMR application runner is now **CLEAN LOCAL HAPPY-PATH GREEN**. Four
+pre-runtime attempts repaired stale graphs,
 an artifact hash, and the Risc0 handoff. Fifth run
 `m5-xmr-app-20260730-58e1ee1-e` reached real local nodes and exposed the
 harness's incorrect rejection of intended consumed-offer reconciliation before
@@ -227,18 +227,30 @@ Schema v2 isolated cleanup failure to exactly three
 under the exact run-owned private namespace: the guard admitted the namespace
 itself but not its children. Commit `fb4e279` fixes that boundary by
 canonicalizing and admitting only descendants of the run-owned private root;
-focused tests retain rejection of traversal, symlinks, and foreign paths. A
-fresh run remains required for clean certification. Runtime is entirely local:
+focused tests retain rejection of traversal, symlinks, and foreign paths.
+Exact pushed-tree run `m5-xmr-app-20260730-2c6aec1-h` then repeated the entire
+corridor from commit `2c6aec1` and passed cleanup schema v2. Its application
+cutoff, finalized tag 13/14/15, extraction, sweep, and binding all completed for
+swap `9d627d18...abfeb7c`. Claim transaction `05cb9052...349fce` was included
+at LEZ height 139 and observed at finalized tip 142. Monero sweep transaction
+`37930570...1603c8` received 998191600000 of 1000000000000 funded piconero
+after a 1808400000-piconero fee and reached 10 confirmations at tip 130.
+Cleanup returned `passed`: source status zero, every exact resource/process/port
+absent, the foreign sentinel and tag-13 latch preserved, no foreign target, no
+broad cleanup, and no failure reason. The binding claims conditional
+successful-claim atomicity, not a distributed transaction or future-reorg
+immunity. Runtime is entirely local:
 official Monero 0.18.5.1 Regtest and LEZ v0.2 with deterministic
 genesis/Regtest funds and ephemeral loopback RPCs; no public RPC, faucet, peer,
 or public funds are used.
 [Flow 1R](docs/manual-user-flows.md#flow-1r-run-the-xmr-application-to-chain-corridor)
 documents the exact operator command, resources, evidence, cleanup, and
-non-retry boundary without claiming clean certification. A read-only acceptance audit also
-confirmed that concurrent multi-user and unavailable-route closure require new
-executable gates rather than parallel wrapper invocations. From pushed base
-`fb4e279`, the remaining estimate is 4 to 10 focused hours to M5 PoC and 8 to
-16 focused hours to the reviewed milestone tag.
+non-retry boundary. A fresh RFP/issue acceptance audit confirms the literal M5
+score remains 3 of 7: Maker CLI start/stop, Taker XMR lifecycle commands,
+autonomous multi-worker composition, and unavailable-route isolation still need
+executable user journeys rather than parallel wrapper invocations. From pushed
+base `2c6aec1`, the corrected estimate is 18 to 32 focused hours to M5 PoC and
+28 to 48 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,
