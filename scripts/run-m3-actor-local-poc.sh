@@ -2606,7 +2606,7 @@ prepare_m5_btc_delivery_plan() {
   local fixture_root="${direction_root}/fixture"
   local application_root="${direction_root}/application"
   local socket="${secure_state_root}/m5-btc-maker.sock"
-  local ready_file="${application_root}/maker.ready"
+  local ready_file="${secure_state_root}/m5-btc-maker.ready"
   local database="${application_root}/maker.sqlite3"
   local delivery="${application_root}/delivery"
   local delivery_key="${fixture_root}/private/maker-signing.key"

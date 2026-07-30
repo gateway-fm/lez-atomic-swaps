@@ -2418,6 +2418,7 @@ required_terms=(
   'lez-adaptor-role-runner'
   'lez-v02-bridge-poc'
   'local socket="${secure_state_root}/m5-btc-maker.sock"'
+  'local ready_file="${secure_state_root}/m5-btc-maker.ready"'
   'lez-v02-local-actor-identity'
   'lez-v02-account-id'
   'btc-core-p2tr-fixture'
