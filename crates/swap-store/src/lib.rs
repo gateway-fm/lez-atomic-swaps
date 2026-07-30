@@ -56,9 +56,9 @@ pub use maker_offer::{
     MakerBtcAcceptanceCommit, MakerBtcAcceptanceReplay, MakerBtcNegotiationStatus,
     MakerBtcNegotiationV1, MakerOfferCommit, MakerOfferError, MakerOfferId,
     MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1,
-    MakerXmrNegotiationStatus, MakerXmrNegotiationV1, MakerZecNegotiationStatus,
-    MakerZecNegotiationV1, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
-    maker_zec_chat_session_id,
+    MakerXmrAcceptanceCommit, MakerXmrActivationAcceptance, MakerXmrNegotiationStatus,
+    MakerXmrNegotiationV1, MakerZecNegotiationStatus, MakerZecNegotiationV1,
+    maker_btc_chat_swap_id, maker_xmr_chat_swap_id, maker_zec_chat_session_id,
 };
 pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
@@ -82,7 +82,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 20;
+const DATABASE_SCHEMA_VERSION: i64 = 21;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
@@ -332,6 +332,9 @@ pub enum StoreError {
     /// A signed Bitcoin application agreement disagrees with durable offer state.
     #[error("Bitcoin maker application state is invalid")]
     InvalidBtcApplicationState,
+    /// A signed Monero activation disagrees with durable offer state.
+    #[error("Monero maker application state is invalid")]
+    InvalidXmrApplicationState,
     /// A terminal actor projection does not match the completed application agreement.
     #[error("operator terminal projection is invalid")]
     InvalidOperatorTerminalProjection,

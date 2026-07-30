@@ -2185,6 +2185,44 @@ Only `TakerSellsLez` is in the current M4 protocol scope: the Taker first locks 
 
 XMR-first is rejected by signed-term validation and the operator boundary because the reviewed construction requires the scriptable LEZ lock and its recovery schedule to precede Monero funding; role symmetry alone is not evidence of a safe reverse protocol.
 
+#### M5 application activation boundary
+
+The application store now separates offer reservation from executable
+authority. Schema-v20 Stage A reserves one authenticated offer and creates no
+coordinator or actor. Schema-v21 Stage B is the only boundary that can derive
+the coordinator and atomically register a Monero Maker actor.
+
+```mermaid
+flowchart TB
+    Delivery["Authenticated Delivery offer"] --> StageA["Canonical dual-signed Stage A"]
+    StageA --> Reserve["SQLite reserve transaction"]
+    Reserve --> Reserved[("Reserved offer and non-executable Stage A")]
+    Reserved --> StageB["Canonical countersigned Stage B"]
+    StageB --> Derive["XMR SDK derives coordinator and policies"]
+    Derive --> Activate["SQLite activation transaction"]
+    Activate --> Swap[("Monero coordinator")]
+    Activate --> Consumed[("Consumed offer")]
+    Activate --> Actor[("Immutable Monero Maker actor")]
+    Activate --> Replay[("Exact replay record")]
+    Actor -.-> Supervisor["Maker-node supervisor"]
+    Supervisor -.->|"currently fails closed"| RoleActor["Semantic XMR role actor"]
+    RoleActor -.-> LezRpc["LEZ v0.2 sequencer and indexer RPCs"]
+    RoleActor -.-> MoneroRpc["monerod and wallet RPCs"]
+```
+
+Stage-B acceptance is bounded by the signed Maker funding cutoff, not by the
+expired public listing after Stage A has already won the reservation. One local
+transaction inserts the coordinator and actor, activates the negotiation,
+consumes the offer, and records replay; any failed write restores the
+Stage-A-only state. Exact replay revalidates the signed Stage A, offer route and
+quote, activation, coordinator, actor, and mutation rows.
+
+This component currently uses no RPC or node. The dotted RPC path is the next
+composition gate: the real daemon and Taker CLI must first provision independent
+role bundles, after which the semantic supervisor adapter will reuse the actual
+local components below. Merely admitting `monero` in the scheduler schema does
+not authorize a process or chain effect.
+
 #### Actual local components and RPCs
 
 ```mermaid

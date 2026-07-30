@@ -150,9 +150,25 @@ direction, identity, or quote leave no write; concurrent reservations have one
 winner; and forced final-write failure rolls everything back. Three focused
 XMR tests and the complete 148-test store suite pass with warning-fatal Clippy
 and Rustdoc. [ADR 0111](docs/architecture/0111-reserve-dual-signed-xmr-stage-a-before-activation.md)
-records the component, reservation, replay, and atomicity diagrams. Stage-B
-activation, role-only process handoff, scheduler support, and the actual local
-Monero plus LEZ corridor remain before the XMR application PoC is complete.
+records the component, reservation, replay, and atomicity diagrams.
+
+Schema v21 now completes the Stage-B store boundary. Only canonical
+countersigned Stage B can derive the lowercase-hex Monero coordinator and its
+signed LEZ/Monero confirmation plus recovery policy. One immediate transaction
+creates the coordinator, changes the negotiation to activated, consumes the
+reserved offer, registers one immutable Monero Maker actor, and records the
+global replay result. Forced failure restores the Stage-A-only reservation;
+restart and exact replay retain one coordinator and actor. Acceptance is valid
+through the signed whole-second Maker funding cutoff, fails afterward, and does
+not incorrectly reapply the already-linearized advertisement TTL. Replay binds
+the acceptance time and rechecks the canonical Stage A, complete offer route and
+quote, activation, coordinator, actor, and mutation rows. Schema 20 to 21 keeps
+existing process, manual-action, and progress rows while widening their actor
+kind checks. Maker-node exposes Monero inspection but fails closed before spawn
+until the semantic actor adapter exists. [ADR 0112](docs/architecture/0112-activate-xmr-stage-b-atomically.md)
+records the component, commit/replay sequence, and atomicity argument. Role-only
+process handoff, semantic scheduler execution, and the actual isolated Monero
+plus LEZ corridor remain before the XMR application PoC is complete.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

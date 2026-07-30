@@ -1021,6 +1021,8 @@ pub struct MakerActorActionRequestV1 {
 pub enum MakerActorKindViewV1 {
     /// Bitcoin reference actor.
     Bitcoin,
+    /// Monero reference actor.
+    Monero,
     /// Zcash reference actor.
     Zcash,
 }
@@ -1029,6 +1031,7 @@ impl From<MakerActorKindV1> for MakerActorKindViewV1 {
     fn from(kind: MakerActorKindV1) -> Self {
         match kind {
             MakerActorKindV1::Bitcoin => Self::Bitcoin,
+            MakerActorKindV1::Monero => Self::Monero,
             MakerActorKindV1::Zcash => Self::Zcash,
         }
     }

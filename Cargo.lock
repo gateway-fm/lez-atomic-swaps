@@ -2063,6 +2063,7 @@ dependencies = [
  "bitcoin",
  "command-fds",
  "getrandom 0.3.4",
+ "lez-adaptor-signature",
  "lez-bridge-protocol",
  "lez-btc-swap-sdk",
  "lez-swap-core",
@@ -2146,6 +2147,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "lez-adaptor-signature",
+ "lez-swap-core",
  "monero",
  "musig2",
  "postcard",

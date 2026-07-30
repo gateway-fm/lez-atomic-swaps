@@ -4,9 +4,10 @@ use lez_bridge_protocol::RequestId;
 use lez_btc_swap_sdk::{BtcAgreementV1, BtcMakerAgreementProposalV1};
 use lez_swap_core::{Pair, Participant, Phase, SwapCoordinator, SwapDirection, SwapId};
 use lez_xmr_swap_sdk::{
-    MAX_XMR_AGREEMENT_WIRE_BYTES, XmrAgreementV1, XmrRoleV1, XmrSwapDirectionV1,
+    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrActivatedAgreementV1,
+    XmrAgreementV1, XmrRoleV1, XmrSwapDirectionV1,
 };
-use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
@@ -26,6 +27,7 @@ const MAX_LOGOS_QUOTE_AGE_SECONDS: u64 = 3_600;
 const MAXIMUM_ZEC_PROPOSAL_BYTES: usize = 16 * 1024;
 const MAXIMUM_BTC_PROPOSAL_BYTES: usize = 16 * 1024;
 const MAXIMUM_XMR_STAGE_A_BYTES: usize = MAX_XMR_AGREEMENT_WIRE_BYTES;
+const MAXIMUM_XMR_STAGE_B_BYTES: usize = MAX_XMR_ACTIVATION_WIRE_BYTES;
 const ZEC_CHAT_SESSION_DOMAIN: &[u8] = b"lez-atomic-swaps/maker-zec-chat-session/v1";
 const BTC_CHAT_SWAP_ID_DOMAIN: &[u8] = b"lez-atomic-swaps/maker-btc-chat-swap-id/v1";
 const XMR_CHAT_SWAP_ID_DOMAIN: &[u8] = b"lez-atomic-swaps/maker-xmr-chat-swap-id/v1";
@@ -343,6 +345,27 @@ impl MakerOfferCommit {
     }
 }
 
+/// Result of one atomic XMR activation, coordinator, and actor commit.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MakerXmrAcceptanceCommit {
+    offer_revision: u64,
+    was_replay: bool,
+}
+
+impl MakerXmrAcceptanceCommit {
+    /// Durable offer revision after activation.
+    #[must_use]
+    pub const fn offer_revision(self) -> u64 {
+        self.offer_revision
+    }
+
+    /// Whether the exact globally idempotent completion already committed.
+    #[must_use]
+    pub const fn was_replay(self) -> bool {
+        self.was_replay
+    }
+}
+
 /// Result of one atomic Bitcoin negotiation, coordinator, and actor commit.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MakerBtcAcceptanceCommit {
@@ -585,11 +608,112 @@ impl MakerZecNegotiationV1 {
     }
 }
 
+/// Validated Maker-side XMR Stage-B acceptance bound to one coordinator.
+///
+/// Debug output deliberately excludes the activation wire.
+#[derive(Clone, Eq, PartialEq)]
+pub struct MakerXmrActivationAcceptance {
+    local_role: Participant,
+    agreement_commitment: [u8; 32],
+    activation_wire: Vec<u8>,
+    activation_commitment: [u8; 32],
+    initial_snapshot_digest: [u8; 32],
+    accepted_at_unix_seconds: u64,
+}
+
+impl std::fmt::Debug for MakerXmrActivationAcceptance {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MakerXmrActivationAcceptance")
+            .field("local_role", &self.local_role)
+            .field("agreement_commitment", &self.agreement_commitment)
+            .field("activation_wire", &"<redacted>")
+            .field("activation_commitment", &self.activation_commitment)
+            .field("initial_snapshot_digest", &self.initial_snapshot_digest)
+            .field("accepted_at_unix_seconds", &self.accepted_at_unix_seconds)
+            .finish()
+    }
+}
+
+impl MakerXmrActivationAcceptance {
+    /// Binds canonical Stage B to its exact Stage A and SDK-derived coordinator.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a wrong role, wire, base agreement, coordinator, or trusted time.
+    pub fn new(
+        initial: &SwapCoordinator,
+        local_role: Participant,
+        agreement: &XmrAgreementV1,
+        activation: &XmrActivatedAgreementV1,
+        activation_wire: Vec<u8>,
+        accepted_at_unix_seconds: u64,
+    ) -> Result<Self, MakerOfferError> {
+        let canonical_wire = activation
+            .encode_wire()
+            .map_err(|_| MakerOfferError::InvalidNegotiation)?;
+        let expected_initial = activation
+            .initial_coordinator(agreement)
+            .map_err(|_| MakerOfferError::InvalidNegotiation)?;
+        let initial_json =
+            serde_json::to_vec(initial).map_err(|_| MakerOfferError::InvalidNegotiation)?;
+        let accepted_at_ms = accepted_at_unix_seconds
+            .checked_mul(1_000)
+            .ok_or(MakerOfferError::InvalidNegotiation)?;
+        if local_role != Participant::Maker
+            || activation_wire.is_empty()
+            || activation_wire.len() > MAXIMUM_XMR_STAGE_B_BYTES
+            || activation_wire != canonical_wire
+            || activation.body().base_agreement_commitment() != agreement.agreement_commitment()
+            || &expected_initial != initial
+            || accepted_at_unix_seconds == 0
+            || accepted_at_unix_seconds > i64::MAX as u64
+            || accepted_at_ms > agreement.body().windows().maker_xmr_funding_cutoff_ms()
+        {
+            return Err(MakerOfferError::InvalidNegotiation);
+        }
+        Ok(Self {
+            local_role,
+            agreement_commitment: agreement.agreement_commitment(),
+            activation_wire,
+            activation_commitment: activation.activation_commitment(),
+            initial_snapshot_digest: Sha256::digest(initial_json).into(),
+            accepted_at_unix_seconds,
+        })
+    }
+
+    const fn local_role(&self) -> Participant {
+        self.local_role
+    }
+
+    const fn agreement_commitment(&self) -> [u8; 32] {
+        self.agreement_commitment
+    }
+
+    fn activation_wire(&self) -> &[u8] {
+        &self.activation_wire
+    }
+
+    const fn activation_commitment(&self) -> [u8; 32] {
+        self.activation_commitment
+    }
+
+    const fn initial_snapshot_digest(&self) -> [u8; 32] {
+        self.initial_snapshot_digest
+    }
+
+    const fn accepted_at_unix_seconds(&self) -> u64 {
+        self.accepted_at_unix_seconds
+    }
+}
+
 /// Durable XMR negotiation phase persisted before executable Stage B.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MakerXmrNegotiationStatus {
     /// The exact dual-signed Stage-A agreement reserved the offer.
     StageAAccepted,
+    /// Stage B activated the agreement and atomically scheduled execution.
+    Activated,
 }
 
 /// Exact durable, non-executable XMR Stage-A agreement bound to one offer.
@@ -603,6 +727,10 @@ pub struct MakerXmrNegotiationV1 {
     lez_units: u128,
     reserved_at_unix_seconds: u64,
     stage_a_wire: Vec<u8>,
+    activation_wire: Option<Vec<u8>>,
+    activation_commitment: Option<[u8; 32]>,
+    activated_at_unix_seconds: Option<u64>,
+    coordinator_swap_id: Option<Box<str>>,
     status: MakerXmrNegotiationStatus,
 }
 
@@ -616,6 +744,13 @@ impl std::fmt::Debug for MakerXmrNegotiationV1 {
             .field("lez_units", &self.lez_units)
             .field("reserved_at_unix_seconds", &self.reserved_at_unix_seconds)
             .field("stage_a_wire", &"<redacted>")
+            .field(
+                "activation_wire",
+                &self.activation_wire.as_ref().map(|_| "<redacted>"),
+            )
+            .field("activation_commitment", &self.activation_commitment)
+            .field("activated_at_unix_seconds", &self.activated_at_unix_seconds)
+            .field("coordinator_swap_id", &self.coordinator_swap_id)
             .field("status", &self.status)
             .finish()
     }
@@ -645,6 +780,10 @@ impl MakerXmrNegotiationV1 {
             lez_units,
             reserved_at_unix_seconds,
             stage_a_wire,
+            activation_wire: None,
+            activation_commitment: None,
+            activated_at_unix_seconds: None,
+            coordinator_swap_id: None,
             status: MakerXmrNegotiationStatus::StageAAccepted,
         };
         value.validate_metadata()?;
@@ -686,7 +825,31 @@ impl MakerXmrNegotiationV1 {
         &self.stage_a_wire
     }
 
-    /// Durable Stage-A phase.
+    /// Exact canonical dual-signed Stage-B activation wire, after completion.
+    #[must_use]
+    pub fn activation_wire(&self) -> Option<&[u8]> {
+        self.activation_wire.as_deref()
+    }
+
+    /// Exact Stage-B activation commitment, after completion.
+    #[must_use]
+    pub const fn activation_commitment(&self) -> Option<[u8; 32]> {
+        self.activation_commitment
+    }
+
+    /// Trusted Stage-B acceptance time, after completion.
+    #[must_use]
+    pub const fn activated_at_unix_seconds(&self) -> Option<u64> {
+        self.activated_at_unix_seconds
+    }
+
+    /// Application coordinator identity, after completion.
+    #[must_use]
+    pub fn coordinator_swap_id(&self) -> Option<&str> {
+        self.coordinator_swap_id.as_deref()
+    }
+
+    /// Durable XMR negotiation phase.
     #[must_use]
     pub const fn status(&self) -> MakerXmrNegotiationStatus {
         self.status
@@ -706,9 +869,26 @@ impl MakerXmrNegotiationV1 {
             || self.reserved_at_unix_seconds > i64::MAX as u64
             || self.stage_a_wire.is_empty()
             || self.stage_a_wire.len() > MAXIMUM_XMR_STAGE_A_BYTES
-            || self.status != MakerXmrNegotiationStatus::StageAAccepted
         {
             return Err(MakerOfferError::InvalidNegotiation);
+        }
+        match self.status {
+            MakerXmrNegotiationStatus::StageAAccepted
+                if self.activation_wire.is_none()
+                    && self.activation_commitment.is_none()
+                    && self.activated_at_unix_seconds.is_none()
+                    && self.coordinator_swap_id.is_none() => {}
+            MakerXmrNegotiationStatus::Activated
+                if self.activation_wire.as_ref().is_some_and(|wire| {
+                    !wire.is_empty() && wire.len() <= MAXIMUM_XMR_STAGE_B_BYTES
+                }) && self
+                    .activation_commitment
+                    .is_some_and(|value| value != [0; 32])
+                    && self
+                        .activated_at_unix_seconds
+                        .is_some_and(|value| value > 0 && i64::try_from(value).is_ok())
+                    && self.coordinator_swap_id.is_some() => {}
+            _ => return Err(MakerOfferError::InvalidNegotiation),
         }
         Ok(())
     }
@@ -995,6 +1175,19 @@ struct StageBtcNegotiationRequest<'a> {
     lez_units: String,
     agreement_commitment: &'a [u8],
     maker_proposal_sha256: [u8; 32],
+}
+
+#[derive(Serialize)]
+struct CompleteXmrNegotiationRequest<'a> {
+    offer_id: &'a MakerOfferId,
+    expected_offer_revision: u64,
+    reservation_id: &'a RequestId,
+    agreement_commitment: [u8; 32],
+    activation_wire_sha256: [u8; 32],
+    activation_commitment: [u8; 32],
+    accepted_at_unix_seconds: u64,
+    initial_snapshot_sha256: [u8; 32],
+    actor: &'a MakerActorManifestV1,
 }
 
 #[derive(Serialize)]
@@ -2012,6 +2205,255 @@ impl SqliteSwapStore {
         }))
     }
 
+    /// Atomically activates one XMR negotiation and schedules its Maker actor.
+    ///
+    /// Stage B, the SDK-derived coordinator, consumed offer, swap snapshot,
+    /// actor registration, and replay result share one immediate transaction.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on any activation, coordinator, offer, actor, replay, or
+    /// durable-state mismatch.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn complete_maker_xmr_negotiation_and_register_actor(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        accepted: &MakerXmrActivationAcceptance,
+        initial: &SwapCoordinator,
+        actor: &MakerActorManifestV1,
+        actor_not_before: u64,
+    ) -> Result<MakerXmrAcceptanceCommit, StoreError> {
+        let staged = self
+            .load_xmr_maker_negotiation(offer_id)?
+            .ok_or(StoreError::InvalidXmrApplicationState)?;
+        let agreement =
+            validate_xmr_stage_a(&staged).map_err(|_| StoreError::InvalidXmrApplicationState)?;
+        let initial_json = serde_json::to_string(initial)?;
+        let initial_snapshot_sha256: [u8; 32] = Sha256::digest(initial_json.as_bytes()).into();
+        if staged.reservation_id() != reservation_id
+            || agreement.agreement_commitment() != accepted.agreement_commitment()
+            || accepted.local_role() != Participant::Maker
+            || accepted.initial_snapshot_digest() != initial_snapshot_sha256
+            || initial.pair() != Pair::Monero
+            || initial.direction() != SwapDirection::TakerSellsLez
+            || initial.phase() != Phase::Offered
+            || actor.swap_id() != initial.id()
+            || actor.kind() != MakerActorKindV1::Monero
+            || actor_not_before > i64::MAX as u64
+        {
+            return Err(StoreError::InvalidXmrApplicationState);
+        }
+        let activation_wire_sha256: [u8; 32] = Sha256::digest(accepted.activation_wire()).into();
+        let request_json = serde_json::to_string(&CompleteXmrNegotiationRequest {
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            agreement_commitment: accepted.agreement_commitment(),
+            activation_wire_sha256,
+            activation_commitment: accepted.activation_commitment(),
+            accepted_at_unix_seconds: accepted.accepted_at_unix_seconds(),
+            initial_snapshot_sha256,
+            actor,
+        })?;
+        let committed_revision = expected_offer_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(commit) = replay_offer_mutation(
+            &transaction,
+            request_id,
+            "xmr_negotiation_complete",
+            &request_json,
+        )? {
+            let exact: bool = transaction.query_row(
+                "SELECT EXISTS(
+                     SELECT 1
+                       FROM maker_offers o
+                       JOIN maker_xmr_negotiations n USING (offer_id)
+                       JOIN swaps s ON s.id = n.swap_id
+                      WHERE o.offer_id = ?1
+                        AND o.state = 'consumed' AND o.revision = ?2
+                        AND o.reservation_id = ?3 AND o.swap_id = ?4
+                        AND o.updated_request_id = ?8
+                        AND n.state = 'activated' AND n.reservation_id = ?3
+                        AND n.activation_wire = ?5
+                        AND n.activation_commitment = ?6
+                        AND n.activated_at_unix_seconds = ?7
+                        AND n.swap_id = ?4 AND n.updated_request_id = ?8
+                        AND s.state_json = ?9
+                 )",
+                params![
+                    offer_id.as_str(),
+                    u64_to_sql(committed_revision)?,
+                    reservation_id.as_str(),
+                    initial.id().as_str(),
+                    accepted.activation_wire(),
+                    accepted.activation_commitment().as_slice(),
+                    u64_to_sql(accepted.accepted_at_unix_seconds())?,
+                    request_id.as_str(),
+                    initial_json,
+                ],
+                |row| row.get(0),
+            )?;
+            let record = load_offer(&transaction, offer_id, accepted.accepted_at_unix_seconds())?
+                .ok_or(StoreError::CorruptMakerOffer)?;
+            let replayed = load_xmr_negotiation(&transaction, offer_id)?
+                .ok_or(StoreError::CorruptMakerOffer)?;
+            let replayed_agreement =
+                validate_xmr_stage_a(&replayed).map_err(|_| StoreError::CorruptMakerOffer)?;
+            if !exact
+                || commit.revision() != committed_revision
+                || record.status() != MakerOfferStatus::Consumed
+                || record.revision() != committed_revision
+                || record.reservation_id() != Some(reservation_id)
+                || record.swap_id() != Some(initial.id().as_str())
+                || replayed.status() != MakerXmrNegotiationStatus::Activated
+                || replayed.reservation_id() != reservation_id
+                || replayed_agreement.agreement_commitment() != accepted.agreement_commitment()
+                || maker_xmr_chat_swap_id(replayed.offer_commitment(), reservation_id)
+                    != replayed_agreement.body().swap_id()
+                || replayed.activation_wire() != Some(accepted.activation_wire())
+                || replayed.activation_commitment() != Some(accepted.activation_commitment())
+                || replayed.activated_at_unix_seconds() != Some(accepted.accepted_at_unix_seconds())
+                || replayed.coordinator_swap_id() != Some(initial.id().as_str())
+                || record.offer().route().pair() != Pair::Monero
+                || record.offer().route().direction() != SwapDirection::TakerSellsLez
+                || record
+                    .offer()
+                    .quote_foreign_amount(replayed.foreign_units())?
+                    != replayed.lez_units()
+            {
+                return Err(StoreError::CorruptMakerOffer);
+            }
+            require_exact_maker_actor_in_transaction(&transaction, actor)
+                .map_err(|_| StoreError::InvalidMakerActorRegistration)?;
+            transaction.commit()?;
+            return Ok(MakerXmrAcceptanceCommit {
+                offer_revision: committed_revision,
+                was_replay: true,
+            });
+        }
+        let record = load_offer(&transaction, offer_id, accepted.accepted_at_unix_seconds())?
+            .ok_or(StoreError::MissingMakerOffer)?;
+        let negotiation = transaction
+            .query_row(
+                "SELECT reservation_id, payload_version, offer_commitment,
+                        maker_agreement_identity, taker_agreement_identity, foreign_units,
+                        lez_units, reserved_at_unix_seconds, agreement_commitment,
+                        stage_a_wire, state, activation_wire, activation_commitment,
+                        activated_at_unix_seconds, swap_id
+                   FROM maker_xmr_negotiations WHERE offer_id = ?1",
+                params![offer_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                        row.get(13)?,
+                        row.get(14)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(decode_xmr_negotiation_row)
+            .transpose()?
+            .ok_or(StoreError::InvalidXmrApplicationState)?;
+        let durable_agreement = validate_xmr_stage_a(&negotiation)
+            .map_err(|_| StoreError::InvalidXmrApplicationState)?;
+        if record.revision != expected_offer_revision {
+            return Err(StoreError::StaleMakerOffer {
+                expected: expected_offer_revision,
+                actual: record.revision,
+            });
+        }
+        if record.status != MakerOfferStatus::Reserved
+            || record.reservation_id.as_ref() != Some(reservation_id)
+            || negotiation.status() != MakerXmrNegotiationStatus::StageAAccepted
+            || negotiation.reservation_id() != reservation_id
+            || accepted.accepted_at_unix_seconds() < negotiation.reserved_at_unix_seconds()
+            || record.offer.route().pair() != Pair::Monero
+            || record.offer.route().direction() != SwapDirection::TakerSellsLez
+            || record.offer.route().direction() != initial.direction()
+            || durable_agreement.agreement_commitment() != accepted.agreement_commitment()
+            || maker_xmr_chat_swap_id(negotiation.offer_commitment(), reservation_id)
+                != durable_agreement.body().swap_id()
+            || record
+                .offer
+                .quote_foreign_amount(negotiation.foreign_units())?
+                != negotiation.lez_units()
+        {
+            return Err(StoreError::InvalidXmrApplicationState);
+        }
+        transaction.execute(
+            "INSERT INTO swaps (id, schema_version, state_json) VALUES (?1, ?2, ?3)",
+            params![initial.id().as_str(), SWAP_PAYLOAD_VERSION, initial_json],
+        )?;
+        register_maker_actor_in_transaction(&transaction, actor, actor_not_before)
+            .map_err(|_| StoreError::InvalidMakerActorRegistration)?;
+        let negotiation_updated = transaction.execute(
+            "UPDATE maker_xmr_negotiations
+                SET state = 'activated', activation_wire = ?1,
+                    activation_commitment = ?2, activated_at_unix_seconds = ?3,
+                    swap_id = ?4, updated_request_id = ?5
+              WHERE offer_id = ?6 AND reservation_id = ?7
+                AND state = 'stage_a_accepted'",
+            params![
+                accepted.activation_wire(),
+                accepted.activation_commitment().as_slice(),
+                u64_to_sql(accepted.accepted_at_unix_seconds())?,
+                initial.id().as_str(),
+                request_id.as_str(),
+                offer_id.as_str(),
+                reservation_id.as_str(),
+            ],
+        )?;
+        let offer_updated = transaction.execute(
+            "UPDATE maker_offers
+                SET state = 'consumed', revision = ?1, swap_id = ?2,
+                    updated_request_id = ?3
+              WHERE offer_id = ?4 AND revision = ?5 AND state = 'reserved'
+                AND reservation_id = ?6",
+            params![
+                u64_to_sql(committed_revision)?,
+                initial.id().as_str(),
+                request_id.as_str(),
+                offer_id.as_str(),
+                u64_to_sql(expected_offer_revision)?,
+                reservation_id.as_str(),
+            ],
+        )?;
+        if negotiation_updated != 1 || offer_updated != 1 {
+            return Err(StoreError::InvalidXmrApplicationState);
+        }
+        persist_offer_mutation(
+            &transaction,
+            request_id,
+            "xmr_negotiation_complete",
+            &request_json,
+            committed_revision,
+        )?;
+        transaction.commit()?;
+        Ok(MakerXmrAcceptanceCommit {
+            offer_revision: committed_revision,
+            was_replay: false,
+        })
+    }
+
     /// Atomically completes one signed Bitcoin negotiation and schedules its Maker actor.
     ///
     /// The canonical countersigned agreement, agreement-derived coordinator,
@@ -2436,33 +2878,7 @@ impl SqliteSwapStore {
         &self,
         offer_id: &MakerOfferId,
     ) -> Result<Option<MakerXmrNegotiationV1>, StoreError> {
-        self.connection
-            .query_row(
-                "SELECT reservation_id, payload_version, offer_commitment,
-                        maker_agreement_identity, taker_agreement_identity, foreign_units,
-                        lez_units, reserved_at_unix_seconds, agreement_commitment,
-                        stage_a_wire, state
-                   FROM maker_xmr_negotiations WHERE offer_id = ?1",
-                params![offer_id.as_str()],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        row.get(7)?,
-                        row.get(8)?,
-                        row.get(9)?,
-                        row.get(10)?,
-                    ))
-                },
-            )
-            .optional()?
-            .map(decode_xmr_negotiation_row)
-            .transpose()
+        load_xmr_negotiation(&self.connection, offer_id)
     }
 
     /// Loads the exact durable Bitcoin Chat negotiation for one offer.
@@ -2981,7 +3397,49 @@ type XmrNegotiationRow = (
     Vec<u8>,
     Vec<u8>,
     String,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<String>,
 );
+
+fn load_xmr_negotiation(
+    connection: &Connection,
+    offer_id: &MakerOfferId,
+) -> Result<Option<MakerXmrNegotiationV1>, StoreError> {
+    connection
+        .query_row(
+            "SELECT reservation_id, payload_version, offer_commitment,
+                    maker_agreement_identity, taker_agreement_identity, foreign_units,
+                    lez_units, reserved_at_unix_seconds, agreement_commitment,
+                    stage_a_wire, state, activation_wire, activation_commitment,
+                    activated_at_unix_seconds, swap_id
+               FROM maker_xmr_negotiations WHERE offer_id = ?1",
+            params![offer_id.as_str()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                    row.get(10)?,
+                    row.get(11)?,
+                    row.get(12)?,
+                    row.get(13)?,
+                    row.get(14)?,
+                ))
+            },
+        )
+        .optional()?
+        .map(decode_xmr_negotiation_row)
+        .transpose()
+}
 
 fn decode_xmr_negotiation_row(row: XmrNegotiationRow) -> Result<MakerXmrNegotiationV1, StoreError> {
     let (
@@ -2996,6 +3454,10 @@ fn decode_xmr_negotiation_row(row: XmrNegotiationRow) -> Result<MakerXmrNegotiat
         agreement_commitment,
         stage_a_wire,
         state,
+        activation_wire,
+        activation_commitment,
+        activated_at_unix_seconds,
+        coordinator_swap_id,
     ) = row;
     check_version(payload_version, "maker XMR negotiation")?;
     let offer_commitment: [u8; 32] = offer_commitment
@@ -3013,18 +3475,35 @@ fn decode_xmr_negotiation_row(row: XmrNegotiationRow) -> Result<MakerXmrNegotiat
     let agreement_commitment: [u8; 32] = agreement_commitment
         .try_into()
         .map_err(|_| StoreError::CorruptMakerOffer)?;
-    if state != "stage_a_accepted" {
-        return Err(StoreError::CorruptMakerOffer);
-    }
-    let value = MakerXmrNegotiationV1::stage_a(
-        RequestId::new(reservation_id).map_err(|_| StoreError::CorruptMakerOffer)?,
+    let status = match state.as_str() {
+        "stage_a_accepted" => MakerXmrNegotiationStatus::StageAAccepted,
+        "activated" => MakerXmrNegotiationStatus::Activated,
+        _ => return Err(StoreError::CorruptMakerOffer),
+    };
+    let activation_commitment = activation_commitment
+        .map(|value| value.try_into().map_err(|_| StoreError::CorruptMakerOffer))
+        .transpose()?;
+    let coordinator_swap_id = coordinator_swap_id
+        .map(|value| SwapId::new(value.clone()).map(|_| value.into_boxed_str()))
+        .transpose()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
+    let value = MakerXmrNegotiationV1 {
+        reservation_id: RequestId::new(reservation_id)
+            .map_err(|_| StoreError::CorruptMakerOffer)?,
         offer_commitment,
-        sql_to_u64(foreign_units)?,
-        u128::from_be_bytes(lez_units),
-        sql_to_u64(reserved_at_unix_seconds)?,
+        foreign_units: sql_to_u64(foreign_units)?,
+        lez_units: u128::from_be_bytes(lez_units),
+        reserved_at_unix_seconds: sql_to_u64(reserved_at_unix_seconds)?,
         stage_a_wire,
-    )
-    .map_err(|_| StoreError::CorruptMakerOffer)?;
+        activation_wire,
+        activation_commitment,
+        activated_at_unix_seconds: activated_at_unix_seconds.map(sql_to_u64).transpose()?,
+        coordinator_swap_id,
+        status,
+    };
+    value
+        .validate_metadata()
+        .map_err(|_| StoreError::CorruptMakerOffer)?;
     let agreement = validate_xmr_stage_a(&value).map_err(|_| StoreError::CorruptMakerOffer)?;
     if agreement.agreement_commitment() != agreement_commitment
         || agreement
@@ -3329,15 +3808,96 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
              stage_a_wire                  BLOB NOT NULL CHECK (
                  length(stage_a_wire) BETWEEN 1 AND 276480
              ),
-             state                         TEXT NOT NULL CHECK (state = 'stage_a_accepted'),
+             state                         TEXT NOT NULL CHECK (state IN ('stage_a_accepted', 'activated')),
+             activation_wire               BLOB CHECK (
+                 activation_wire IS NULL OR length(activation_wire) BETWEEN 1 AND 2048
+             ),
+             activation_commitment         BLOB CHECK (
+                 activation_commitment IS NULL OR length(activation_commitment) = 32
+             ),
+             activated_at_unix_seconds     INTEGER CHECK (
+                 activated_at_unix_seconds IS NULL OR activated_at_unix_seconds > 0
+             ),
+             swap_id                       TEXT,
              updated_request_id            TEXT NOT NULL,
              FOREIGN KEY (offer_id) REFERENCES maker_offers(offer_id) ON DELETE RESTRICT,
-             CHECK (maker_agreement_identity != taker_agreement_identity)
+             FOREIGN KEY (swap_id) REFERENCES swaps(id) ON DELETE RESTRICT,
+             CHECK (maker_agreement_identity != taker_agreement_identity),
+             CHECK (
+                 (state = 'stage_a_accepted'
+                  AND activation_wire IS NULL AND activation_commitment IS NULL
+                  AND activated_at_unix_seconds IS NULL AND swap_id IS NULL)
+                 OR
+                 (state = 'activated'
+                  AND activation_wire IS NOT NULL AND activation_commitment IS NOT NULL
+                  AND activated_at_unix_seconds IS NOT NULL AND swap_id IS NOT NULL)
+             )
          ) STRICT;
          CREATE INDEX IF NOT EXISTS maker_xmr_negotiations_state_reservation
              ON maker_xmr_negotiations (state, reservation_id);
 ",
     )?;
+    let supports_xmr_activation: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('maker_xmr_negotiations')
+              WHERE name = 'activation_wire'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !supports_xmr_activation {
+        transaction.execute_batch(
+            "DROP INDEX IF EXISTS maker_xmr_negotiations_state_reservation;
+             ALTER TABLE maker_xmr_negotiations
+                 RENAME TO maker_xmr_negotiations_before_activation;
+             CREATE TABLE maker_xmr_negotiations (
+                 offer_id                     TEXT PRIMARY KEY NOT NULL,
+                 reservation_id               TEXT NOT NULL UNIQUE,
+                 payload_version              INTEGER NOT NULL CHECK (payload_version = 1),
+                 offer_commitment              BLOB NOT NULL CHECK (length(offer_commitment) = 32),
+                 maker_agreement_identity      BLOB NOT NULL CHECK (length(maker_agreement_identity) = 33),
+                 taker_agreement_identity      BLOB NOT NULL CHECK (length(taker_agreement_identity) = 33),
+                 foreign_units                 INTEGER NOT NULL CHECK (foreign_units > 0),
+                 lez_units                     BLOB NOT NULL CHECK (length(lez_units) = 16),
+                 reserved_at_unix_seconds      INTEGER NOT NULL CHECK (reserved_at_unix_seconds > 0),
+                 agreement_commitment          BLOB NOT NULL CHECK (length(agreement_commitment) = 32),
+                 stage_a_wire                  BLOB NOT NULL CHECK (length(stage_a_wire) BETWEEN 1 AND 276480),
+                 state                         TEXT NOT NULL CHECK (state IN ('stage_a_accepted', 'activated')),
+                 activation_wire               BLOB CHECK (activation_wire IS NULL OR length(activation_wire) BETWEEN 1 AND 2048),
+                 activation_commitment         BLOB CHECK (activation_commitment IS NULL OR length(activation_commitment) = 32),
+                 activated_at_unix_seconds     INTEGER CHECK (activated_at_unix_seconds IS NULL OR activated_at_unix_seconds > 0),
+                 swap_id                       TEXT,
+                 updated_request_id            TEXT NOT NULL,
+                 FOREIGN KEY (offer_id) REFERENCES maker_offers(offer_id) ON DELETE RESTRICT,
+                 FOREIGN KEY (swap_id) REFERENCES swaps(id) ON DELETE RESTRICT,
+                 CHECK (maker_agreement_identity != taker_agreement_identity),
+                 CHECK (
+                     (state = 'stage_a_accepted' AND activation_wire IS NULL
+                      AND activation_commitment IS NULL AND activated_at_unix_seconds IS NULL
+                      AND swap_id IS NULL)
+                     OR
+                     (state = 'activated' AND activation_wire IS NOT NULL
+                      AND activation_commitment IS NOT NULL AND activated_at_unix_seconds IS NOT NULL
+                      AND swap_id IS NOT NULL)
+                 )
+             ) STRICT;
+             INSERT INTO maker_xmr_negotiations (
+                 offer_id, reservation_id, payload_version, offer_commitment,
+                 maker_agreement_identity, taker_agreement_identity, foreign_units,
+                 lez_units, reserved_at_unix_seconds, agreement_commitment, stage_a_wire,
+                 state, activation_wire, activation_commitment,
+                 activated_at_unix_seconds, swap_id, updated_request_id
+             )
+             SELECT offer_id, reservation_id, payload_version, offer_commitment,
+                    maker_agreement_identity, taker_agreement_identity, foreign_units,
+                    lez_units, reserved_at_unix_seconds, agreement_commitment, stage_a_wire,
+                    state, NULL, NULL, NULL, NULL, updated_request_id
+               FROM maker_xmr_negotiations_before_activation;
+             DROP TABLE maker_xmr_negotiations_before_activation;
+             CREATE INDEX maker_xmr_negotiations_state_reservation
+                 ON maker_xmr_negotiations (state, reservation_id);",
+        )?;
+    }
     Ok(())
 }
 /// Derives the signed 32-byte Chat session from its durable reservation ID.

@@ -53,6 +53,7 @@ fn project(record: &MakerActorProcessRecordV1) -> Result<ActorRecord> {
         swap_id: record.swap_id().as_str().into(),
         actor_kind: match manifest.kind() {
             MakerActorKindV1::Bitcoin => "bitcoin",
+            MakerActorKindV1::Monero => "monero",
             MakerActorKindV1::Zcash => "zcash",
         },
         config_path: exact_path(manifest.config_path())?,

@@ -14,9 +14,11 @@ use bitcoin::{
 };
 use btc_reference_actor::{ActorConfig, ActorRole};
 use lez_bridge_protocol::{
-    ExactMessageBytes, Hex32, MessageContext, Participant as BridgeParticipant,
-    PrepareWitnessedClaimResult, PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor,
+    ExactMessageBytes, ExactTransactionBytes, Hex32, MessageContext,
+    Participant as BridgeParticipant, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
+    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, TransactionId, WitnessedNativeEscrowTerms,
+    WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BtcAdaptorSessionDomain, BtcAgreementBodyV1,
@@ -33,7 +35,7 @@ use lez_swap_store::{
     AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, SecretNonceBytes,
     SqliteAdaptorSessionJournal,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 const MAKER_SIGNING_SECRET: u8 = 1;
@@ -242,7 +244,10 @@ fn role_config(
     let adaptor_secret = role_root.join("adaptor-secret.key");
     let refund_secret = role_root.join("bitcoin-refund.key");
     let exact_funding = role_root.join("maker-bitcoin-funding.hex");
+    let lez_lock_request = role_root.join("maker-lez-lock-request.json");
+    let lez_lock_result = role_root.join("maker-lez-lock-result.json");
     let run_id = RunId::new(format!("m5-btc-chat-{name}-authority")).unwrap();
+    let runtime = role_runtime(role);
 
     seed_prepared_claim(&prepared_claim, &run_id, agreement);
     seed_signing_journal(
@@ -259,7 +264,7 @@ fn role_config(
         [42; 32],
         &lez_journal,
     );
-    if role == ActorRole::Taker {
+    let maker_lock = if role == ActorRole::Taker {
         write_private(
             &adaptor_secret,
             hex::encode([ADAPTOR_SECRET; 32]).as_bytes(),
@@ -268,12 +273,18 @@ fn role_config(
             &refund_secret,
             hex::encode([TAKER_REFUND_SECRET; 32]).as_bytes(),
         );
+        None
     } else {
-        let exact = funding_transaction(agreement.p2tr_contract().script_pubkey_bytes().to_vec());
-        write_private(&exact_funding, hex::encode(serialize(&exact)).as_bytes());
-    }
+        Some(prepare_maker_lock(
+            agreement,
+            &run_id,
+            &runtime,
+            &exact_funding,
+            &lez_lock_request,
+            &lez_lock_result,
+        ))
+    };
 
-    let runtime = role_runtime(role);
     let config_path = role_root.join("actor-config.json");
     let mut signing = json!({
         "bitcoin": { "session_id": hex::encode([41; 32]), "journal_db": bitcoin_journal },
@@ -311,21 +322,104 @@ fn role_config(
             json!({})
         }
     });
-    if role == ActorRole::Maker {
-        config["maker_lock"] =
-            json!({ "chain": "bitcoin", "exact_funding_transaction_file": exact_funding });
+    if let Some(maker_lock) = maker_lock {
+        config["maker_lock"] = maker_lock;
     }
     write_private(
         &config_path,
         &serde_json::to_vec_pretty(&config).expect("schema-6 config JSON"),
     );
-    let loaded = ActorConfig::load_private(&config_path).expect("load schema-6 source config");
+    validate_role_config(&config_path, role, agreement);
+    config_path
+}
+
+fn validate_role_config(path: &Path, role: ActorRole, agreement: &BtcAgreementV1) {
+    let loaded = ActorConfig::load_private(path).expect("load schema-6 source config");
     assert_eq!(loaded.role(), role);
     assert_eq!(
         loaded.supervised_swap_id().unwrap(),
         *agreement.coordinator().id()
     );
-    config_path
+}
+
+fn prepare_maker_lock(
+    agreement: &BtcAgreementV1,
+    run_id: &RunId,
+    runtime: &RuntimeDescriptor,
+    exact_funding: &Path,
+    lez_lock_request: &Path,
+    lez_lock_result: &Path,
+) -> Value {
+    match agreement.direction() {
+        SwapDirection::TakerSellsForeign => {
+            let context = MessageContext::new(
+                run_id.clone(),
+                RequestId::new("m5-btc-chat-maker-lez-lock").unwrap(),
+                BridgeParticipant::Maker,
+            );
+            let request = PrepareWitnessedEscrowRequest::new(
+                context.clone(),
+                runtime.clone(),
+                witnessed_lez_terms(agreement),
+            );
+            let result = PrepareWitnessedEscrowResult::new(
+                context,
+                PreparedTransaction::new(
+                    TransactionId::from_bytes([81; 32]),
+                    ExactTransactionBytes::new(b"m5-btc-chat-lez-initialize".to_vec()).unwrap(),
+                ),
+                PreparedTransaction::new(
+                    TransactionId::from_bytes([82; 32]),
+                    ExactTransactionBytes::new(b"m5-btc-chat-lez-fund".to_vec()).unwrap(),
+                ),
+            );
+            write_private(lez_lock_request, &serde_json::to_vec(&request).unwrap());
+            write_private(lez_lock_result, &serde_json::to_vec(&result).unwrap());
+            json!({
+                "chain": "lez",
+                "preparation_request_file": lez_lock_request,
+                "preparation_result_file": lez_lock_result
+            })
+        }
+        SwapDirection::TakerSellsLez => {
+            let exact =
+                funding_transaction(agreement.p2tr_contract().script_pubkey_bytes().to_vec());
+            write_private(exact_funding, hex::encode(serialize(&exact)).as_bytes());
+            json!({
+                "chain": "bitcoin",
+                "exact_funding_transaction_file": exact_funding
+            })
+        }
+    }
+}
+
+fn witnessed_lez_terms(agreement: &BtcAgreementV1) -> WitnessedNativeEscrowTerms {
+    let signed = agreement.lez_terms();
+    WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
+        swap_id: Hex32::from_bytes(*agreement.body().swap_id()),
+        terms_hash: Hex32::from_bytes(*agreement.agreement_commitment()),
+        depositor: bridge_participant(agreement.lez_depositor()),
+        depositor_account_id: Hex32::from_bytes(*signed.depositor_account()),
+        claimant: bridge_participant(agreement.lez_claimant()),
+        claimant_account_id: Hex32::from_bytes(*signed.claimant_account()),
+        aggregate_authority_account_id: Hex32::from_bytes(*signed.aggregate_authority_account()),
+        aggregate_x_only_public_key: Hex32::from_bytes(
+            agreement.p2tr_contract().aggregate_internal_key_bytes(),
+        ),
+        amount: signed.amount(),
+        refund_at_ms: signed.refund_at_ms(),
+        authenticated_transfer_program_id: Hex32::from_bytes(
+            *signed.authenticated_transfer_program_id(),
+        ),
+    })
+    .expect("valid witnessed LEZ terms")
+}
+
+const fn bridge_participant(participant: Participant) -> BridgeParticipant {
+    match participant {
+        Participant::Maker => BridgeParticipant::Maker,
+        Participant::Taker => BridgeParticipant::Taker,
+    }
 }
 
 fn role_runtime(role: ActorRole) -> RuntimeDescriptor {

@@ -38,6 +38,17 @@ fn swap(id: &str, pair: Pair) -> SwapCoordinator {
     )
 }
 
+fn xmr_swap(id: &str) -> SwapCoordinator {
+    SwapCoordinator::new_with_confirmation_policies(
+        SwapId::new(id).unwrap(),
+        Pair::Monero,
+        SwapDirection::TakerSellsLez,
+        ConfirmationPolicy::new(2).unwrap(),
+        ConfirmationPolicy::new(10).unwrap(),
+        RecoverySchedule::xmr_lez_first(ChainPosition::timestamp(Chain::Lez, 20), 2).unwrap(),
+    )
+}
+
 fn manifest(root: &Path, id: &str, kind: MakerActorKindV1, byte: u8) -> MakerActorManifestV1 {
     MakerActorManifestV1::new(
         SwapId::new(id).unwrap(),
@@ -716,5 +727,137 @@ fn random_lease_owners_are_nonzero_and_unique_in_a_small_sample() {
         let owner = MakerActorLeaseOwner::random().unwrap();
         assert!(!owners.contains(&owner));
         owners.push(owner);
+    }
+}
+
+#[test]
+fn monero_actor_registration_is_pair_bound_and_survives_reopen() {
+    let root = tempdir().unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let actor = manifest(root.path(), "xmr-a", MakerActorKindV1::Monero, 71);
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    store.save(&xmr_swap("xmr-a")).unwrap();
+    assert!(!store.register_maker_actor(&actor, 10).unwrap().was_replay());
+    drop(store);
+
+    let reopened = SqliteSwapStore::open(&database).unwrap();
+    let record = reopened
+        .maker_actor_process(&SwapId::new("xmr-a").unwrap())
+        .unwrap()
+        .expect("reopened Monero actor row");
+    assert_eq!(record.manifest(), &actor);
+    assert_eq!(record.manifest().kind(), MakerActorKindV1::Monero);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // The migration proof exercises every preserved dependent table.
+fn schema_20_actor_kind_checks_widen_to_monero_without_losing_existing_rows() {
+    let root = tempdir().unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    for (id, kind, pair, byte) in [
+        (
+            "migration-btc",
+            MakerActorKindV1::Bitcoin,
+            Pair::Bitcoin,
+            81,
+        ),
+        ("migration-zec", MakerActorKindV1::Zcash, Pair::Zcash, 82),
+    ] {
+        store.save(&swap(id, pair)).unwrap();
+        store
+            .register_maker_actor(&manifest(root.path(), id, kind, byte), 10)
+            .unwrap();
+    }
+    drop(store);
+
+    let raw = rusqlite::Connection::open(&database).unwrap();
+    raw.execute(
+        "INSERT INTO maker_actor_manual_actions (
+             request_id, swap_id, action, state, requested_after_generation, created_at, updated_at
+         ) VALUES (?1, ?2, 'claim', 'queued', 0, 11, 11)",
+        rusqlite::params!["migration-request", "migration-btc"],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO maker_actor_progress (
+             swap_id, payload_version, actor_kind, source_generation, payload_json, observed_at
+         ) VALUES (?1, 1, 'zcash', 1, ?2, 12)",
+        rusqlite::params!["migration-zec", "{\"state\":\"not_activated\"}"],
+    )
+    .unwrap();
+    raw.pragma_update(None, "writable_schema", true).unwrap();
+    for table in ["maker_actor_processes", "maker_actor_progress"] {
+        let sql: String = raw
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = \"table\" AND name = ?1",
+                rusqlite::params![table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let narrowed = sql.replace(", 'monero'", "").replace("'monero', ", "");
+        assert_ne!(narrowed, sql, "fresh schema must already admit Monero");
+        assert!(!narrowed.contains("'monero'"));
+        raw.execute(
+            "UPDATE sqlite_schema SET sql = ?1 WHERE type = \"table\" AND name = ?2",
+            rusqlite::params![narrowed, table],
+        )
+        .unwrap();
+    }
+    raw.pragma_update(None, "user_version", 20).unwrap();
+    let schema_version: i64 = raw
+        .pragma_query_value(None, "schema_version", |row| row.get(0))
+        .unwrap();
+    raw.pragma_update(None, "schema_version", schema_version + 1)
+        .unwrap();
+    raw.pragma_update(None, "writable_schema", false).unwrap();
+    drop(raw);
+
+    let mut migrated = SqliteSwapStore::open(&database).unwrap();
+    let preserved = migrated.list_maker_actor_processes().unwrap();
+    assert_eq!(preserved.len(), 2);
+    assert!(preserved.iter().any(|row| {
+        row.swap_id().as_str() == "migration-btc"
+            && row.manifest().kind() == MakerActorKindV1::Bitcoin
+    }));
+    assert!(preserved.iter().any(|row| {
+        row.swap_id().as_str() == "migration-zec"
+            && row.manifest().kind() == MakerActorKindV1::Zcash
+    }));
+
+    migrated.save(&xmr_swap("migration-xmr")).unwrap();
+    migrated
+        .register_maker_actor(
+            &manifest(root.path(), "migration-xmr", MakerActorKindV1::Monero, 83),
+            10,
+        )
+        .unwrap();
+    drop(migrated);
+
+    let reopened = SqliteSwapStore::open(&database).unwrap();
+    let rows = reopened.list_maker_actor_processes().unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().any(|row| {
+        row.swap_id().as_str() == "migration-xmr"
+            && row.manifest().kind() == MakerActorKindV1::Monero
+    }));
+    let raw = rusqlite::Connection::open(&database).unwrap();
+    for table in ["maker_actor_manual_actions", "maker_actor_progress"] {
+        let count: i64 = raw
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1, "{table} row was lost during widening");
+    }
+    for table in ["maker_actor_processes", "maker_actor_progress"] {
+        let sql: String = raw
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = \"table\" AND name = ?1",
+                rusqlite::params![table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(sql.contains("'monero'"), "{table} CHECK was not widened");
     }
 }

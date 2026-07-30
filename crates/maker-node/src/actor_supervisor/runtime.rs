@@ -714,6 +714,9 @@ enum StatusDecision {
 }
 
 fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()> {
+    if kind == MakerActorKindV1::Monero {
+        return Err(());
+    }
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ())?;
     if value.get("schema_version").and_then(Value::as_u64) != Some(1)
         || value.get("role").and_then(Value::as_str) != Some("maker")
@@ -808,6 +811,7 @@ fn exact_absorbing_effect(
     phase: &str,
 ) -> bool {
     match kind {
+        MakerActorKindV1::Monero => false,
         MakerActorKindV1::Zcash => matches!(
             (command, outcome, phase),
             (
@@ -892,7 +896,9 @@ fn known_effect_outcome(
                 | "projected"
                 | "refunded"
         ),
-        (MakerActorKindV1::Bitcoin, ActorEffectCommand::Claim) => false,
+        (MakerActorKindV1::Monero, _) | (MakerActorKindV1::Bitcoin, ActorEffectCommand::Claim) => {
+            false
+        }
     }
 }
 
@@ -917,6 +923,7 @@ fn known_phase(phase: &str) -> bool {
 
 fn known_next_action(kind: MakerActorKindV1, next_action: &str) -> bool {
     match kind {
+        MakerActorKindV1::Monero => false,
         MakerActorKindV1::Zcash => matches!(
             next_action,
             "wait"

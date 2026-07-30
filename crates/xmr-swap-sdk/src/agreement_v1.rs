@@ -9,6 +9,10 @@ use lez_adaptor_signature::{
     AdaptorSessionContext, AdaptorSessionError, SigningRole, aggregate_adaptor_presignature,
     verify_adaptor_partial_signature, verify_nonce_commitment,
 };
+use lez_swap_core::{
+    Chain, ChainPosition, ConfirmationPolicy, LezUnixMilliseconds, Pair, RecoverySchedule,
+    SwapCoordinator, SwapDirection, SwapId,
+};
 use musig2::{KeyAggContext, secp::Point as MusigPoint};
 use secp256k1::{
     Message, PublicKey, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
@@ -1783,6 +1787,45 @@ impl XmrActivatedAgreementV1 {
         &self.record.body
     }
 
+    /// Derives the exact pair-neutral application coordinator from countersigned Stage B.
+    ///
+    /// Stage A deliberately exposes no equivalent method: no executable lifecycle exists until
+    /// both roles countersign the claim/refund transcripts in this activation. The LEZ refund
+    /// timestamp is rounded up so millisecond precision can never make recovery available early.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an activation crossed with another Stage A or an invalid application projection.
+    pub fn initial_coordinator(
+        &self,
+        agreement: &XmrAgreementV1,
+    ) -> Result<SwapCoordinator, XmrAgreementV1Error> {
+        self.require_base(agreement)?;
+        let body = agreement.body();
+        let taker_confirmations = ConfirmationPolicy::new(body.lez().required_finality_units())
+            .map_err(|_| XmrAgreementV1Error::InvalidInitialCoordinator)?;
+        let maker_confirmations = ConfirmationPolicy::new(body.monero().required_confirmations())
+            .map_err(|_| XmrAgreementV1Error::InvalidInitialCoordinator)?;
+        let refund_at = LezUnixMilliseconds::new(body.windows().refund_at_ms())
+            .to_unix_seconds_ceil()
+            .value();
+        let recovery = RecoverySchedule::xmr_lez_first(
+            ChainPosition::timestamp(Chain::Lez, refund_at),
+            body.lez().required_finality_units(),
+        )
+        .map_err(|_| XmrAgreementV1Error::InvalidInitialCoordinator)?;
+        let swap_id = SwapId::new(hex::encode(body.swap_id()))
+            .map_err(|_| XmrAgreementV1Error::InvalidInitialCoordinator)?;
+        Ok(SwapCoordinator::new_with_confirmation_policies(
+            swap_id,
+            Pair::Monero,
+            SwapDirection::TakerSellsLez,
+            taker_confirmations,
+            maker_confirmations,
+            recovery,
+        ))
+    }
+
     /// Verifies the Taker partial later retrieved from the LEZ publication.
     ///
     /// This is verification only. The SDK intentionally exposes no method that
@@ -2324,6 +2367,9 @@ pub enum XmrAgreementV1Error {
     /// Published Taker claim partial differs from its exact guest commitment.
     #[error("published Taker claim partial differs from activation commitment")]
     PublishedClaimPartialMismatch,
+    /// Valid Stage-B terms could not project into the pair-neutral application lifecycle.
+    #[error("XMR initial application coordinator is invalid")]
+    InvalidInitialCoordinator,
     /// LEZ candidate differs from the Stage-B init plan or uses empty facts.
     #[error("LEZ lock candidate differs from exact Stage-B terms")]
     LezLockCandidateMismatch,
@@ -3723,6 +3769,7 @@ mod tests {
         ));
     }
     #[test]
+    #[allow(clippy::too_many_lines)] // One canonical fixture proves Stage-B projection and LEZ boundaries.
     fn canonical_stage_b_activation_enables_lez_init_and_candidate_validation() {
         let record = signed_record(body());
         let wire = record.encode_wire().expect("bounded wire");
@@ -3770,6 +3817,35 @@ mod tests {
         assert_eq!(
             activation.encode_wire().expect("canonical activation"),
             activation_wire
+        );
+        let initial = activation
+            .initial_coordinator(&agreement)
+            .expect("Stage-B application projection");
+        assert_eq!(initial.id().as_str(), hex::encode([19; 32]));
+        assert_eq!(initial.pair(), Pair::Monero);
+        assert_eq!(initial.direction(), SwapDirection::TakerSellsLez);
+        assert_eq!(
+            initial.required_confirmations(lez_swap_core::Participant::Taker),
+            LEZ_FINALITY_UNITS
+        );
+        assert_eq!(
+            initial.required_confirmations(lez_swap_core::Participant::Maker),
+            XMR_CONFIRMATIONS
+        );
+        assert_eq!(
+            initial.recovery_schedule().deadline_for_chain(Chain::Lez),
+            Some(ChainPosition::timestamp(Chain::Lez, 20)),
+            "validated whole-second refund projects without weakening its boundary"
+        );
+        let mut crossed_body = body();
+        crossed_body.swap_id[0] ^= 1;
+        let crossed =
+            XmrAgreementV1::validate(signed_record(crossed_body)).expect("crossed agreement");
+        assert_eq!(
+            activation
+                .initial_coordinator(&crossed)
+                .expect_err("Stage B crossed with another Stage A"),
+            XmrAgreementV1Error::ActivationBindingMismatch
         );
         activation
             .verify_published_taker_claim_partial(&agreement, taker_claim_partial)

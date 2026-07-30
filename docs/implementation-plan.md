@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -3994,9 +3994,39 @@ requests. The complete store gate is 148 tests, with warning-fatal all-target
 Clippy, formatting, diff hygiene, and warning-fatal Rustdoc GREEN. ADR 0111
 records current component, reservation, replay, resource, and atomicity flows.
 No Docker service, node, RPC, faucet, DNS, public network, or funds participated.
-This checkpoint deliberately creates no coordinator, actor, effect journal, or
-chain authority. Stage-B completion, role-only process provisioning, the Monero
-scheduler kind, and actual local Monero plus LEZ execution remain next.
+That schema-v20 checkpoint deliberately creates no coordinator, actor, effect
+journal, or chain authority.
+
+Schema v21 now closes the Stage-B store boundary. RED first proved missing
+coordinator projection and Monero actor persistence. GREEN derives the exact
+lowercase-hex coordinator only from canonical countersigned Stage B, including
+the signed LEZ finality, Monero confirmations, and canonical LEZ refund-event
+schedule. One immediate transaction inserts the coordinator and immutable
+Monero Maker actor, changes the negotiation to activated, consumes the reserved
+offer, and records global replay. A forced final insert failure restores the
+Stage-A reservation with no coordinator or actor. Restart, exact replay,
+changed-request conflict, and schema-20 process/manual-action/progress
+preservation are GREEN.
+
+Integration review added a second RED-GREEN cycle. Stage-B acceptance now
+allows the exact signed Maker funding cutoff and rejects one second later. It
+does not reapply the public advertisement TTL after Stage A has linearized the
+reservation. The immutable replay fingerprint includes acceptance time, and
+replay reloads canonical Stage A plus the complete durable offer route, quote,
+activation, coordinator, actor, and mutation state. Corrupt Stage-A or offer
+rows fail closed. The scheduling not-before value is intentionally replay
+insensitive because it cannot replace the already committed actor manifest.
+
+ADR 0112 records the updated component, commit/replay sequence, local atomicity
+argument, private-view-key validation boundary, and resource inventory. The
+next executable seam is the real daemon and Taker CLI pre-effect handoff using
+the already existing M4 role-separated Stage-A/Stage-B composer. It must prove
+separate role roots, Stage-A reserve-only state, Stage-B actor registration,
+receipt persistence, transport-free inode-stable replay, and zero chain effects.
+After that, a separate semantic supervisor adapter will splice the application
+handoff into the existing actual Monero plus LEZ claim runner. Role-only process
+handoff, semantic supervisor execution, actual isolated corridor replay, and
+literal all-pair closure remain before the M5 PoC exit gate.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

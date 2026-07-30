@@ -35,6 +35,7 @@ pub fn prepare_maker_actor(
             validate_btc_config(config, manifest.swap_id(), manifest.state_database_path())
                 .map_err(|_| ())
         }
+        MakerActorKindV1::Monero => Err(()),
         MakerActorKindV1::Zcash => {
             validate_zec_config(config, manifest.swap_id(), manifest.state_database_path())
                 .map_err(|_| ())

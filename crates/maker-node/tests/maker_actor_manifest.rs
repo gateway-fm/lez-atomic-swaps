@@ -8,7 +8,8 @@ use lez_swap_core::{
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    MakerActorKindV1, MakerActorManifestV1, MakerActorProcessRecordV1, SqliteSwapStore,
+    MakerActorKindV1, MakerActorManifestV1, MakerActorProcessError, MakerActorProcessRecordV1,
+    SqliteSwapStore,
 };
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -65,6 +66,44 @@ fn zec_manifest_semantics_match_exact_role_swap_and_state_before_spawn() {
     assert!(prepare_maker_actor(&wrong_state).is_err());
 }
 
+#[test]
+fn monero_manifest_is_visible_but_execution_fails_closed_without_a_semantic_parser() {
+    let root = tempdir().unwrap();
+    let deployment = actor_deployment(root.path(), "m5-supervisor-xmr");
+    let config = ActorConfig::load_private(&deployment.source_config).unwrap();
+    let config_sha256: [u8; 32] =
+        Sha256::digest(std::fs::read(&deployment.source_config).unwrap()).into();
+    let program_sha256: [u8; 32] = hex::decode(&deployment.program_sha256)
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let id = SwapId::new("m5-supervisor-xmr").unwrap();
+    let database = root.path().join("xmr-maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    store.save(&xmr_swap(id.as_str())).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                id,
+                MakerActorKindV1::Monero,
+                deployment.source_config,
+                config_sha256,
+                deployment.program,
+                program_sha256,
+                config.role_state_db().to_path_buf(),
+            )
+            .unwrap(),
+            1,
+        )
+        .unwrap();
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+
+    assert!(matches!(
+        prepare_maker_actor(&record),
+        Err(MakerActorProcessError::ArtifactSemanticMismatch)
+    ));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record(
     root: &Path,
@@ -95,6 +134,17 @@ fn record(
         )
         .unwrap();
     store.list_maker_actor_processes().unwrap().remove(0)
+}
+
+fn xmr_swap(id: &str) -> SwapCoordinator {
+    SwapCoordinator::new_with_confirmation_policies(
+        SwapId::new(id).unwrap(),
+        Pair::Monero,
+        SwapDirection::TakerSellsLez,
+        ConfirmationPolicy::new(2).unwrap(),
+        ConfirmationPolicy::new(10).unwrap(),
+        RecoverySchedule::xmr_lez_first(ChainPosition::timestamp(Chain::Lez, 20), 2).unwrap(),
+    )
 }
 
 fn swap(id: &str) -> SwapCoordinator {

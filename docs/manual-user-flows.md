@@ -5668,6 +5668,52 @@ jq . "$EVIDENCE/taker_sells_foreign-taker-replay-drive.json"
 jq . "$EVIDENCE/cleanup-attestation.json"
 ```
 
+## Flow 1O: repeat the XMR Stage-B atomic store checkpoint
+
+This is a reproducible developer/component checkpoint, not yet an end-user XMR
+swap flow. It proves the exact executable handoff that the forthcoming real
+Maker daemon and Taker CLI flow will call.
+
+From the repository root, with Rust 1.96.0 and the offline Cargo cache already
+available, run:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p lez-swap-store --test xmr_maker_negotiation \
+  xmr_stage_b_completion_is_atomic_replay_safe_and_mints_one_actor -- --exact
+```
+
+Expected result is one passing test. The test performs deliberately expensive
+cross-curve proof validation and can take roughly 80 to 110 seconds on this
+development host.
+
+The checkpoint proves:
+
+1. dual-signed Stage A reserves the offer before its public advertisement TTL;
+2. canonical countersigned Stage B derives the exact Monero coordinator;
+3. Stage B may finish after the advertisement TTL but no later than the signed
+   whole-second Maker funding cutoff;
+4. one SQLite transaction creates the coordinator and one immutable Monero
+   Maker actor, activates the XMR row, consumes the offer, and records replay;
+5. forced final-write failure leaves Stage A reserved and creates no coordinator
+   or actor;
+6. reopen and exact replay return the original revision without duplicating the
+   actor; changed acceptance or actor authority conflicts;
+7. corruption of signed Stage A or the complete offer route fails closed.
+
+External runtime resources used: none. The test starts no `monerod`, wallet RPC,
+LEZ node, Docker project, faucet, DNS lookup, public network, or public funds.
+It uses test-owned temporary SQLite state and deterministic cryptographic
+fixtures. This removes node/finality flakiness but deliberately does not prove a
+real user process, chain effect, or cross-chain outcome.
+
+The next manual XMR application flow will use the actual Maker daemon and Taker
+CLI with separate role roots, reuse the existing M4 Stage-A/Stage-B role
+composer, and stop before effects for its first fast gate. The following gate
+will splice those exact accepted role bundles into the isolated official Monero
+0.18.5.1 Regtest plus LEZ v0.2 claim runner. Until those two gates are GREEN,
+there is no supported claim that a user can repeat an M5 XMR application swap.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

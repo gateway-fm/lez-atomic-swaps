@@ -171,7 +171,7 @@ fn schema_v10_migrates_to_current_without_rewriting_coordinator_bytes() {
             |row| row.get(0),
         )
         .expect("read retained aggregate bytes");
-    assert_eq!(version, 20);
+    assert_eq!(version, 21);
     assert_eq!(retained, encoded);
 }
 
@@ -241,7 +241,7 @@ fn schema_v18_migrates_btc_mutation_operations_without_losing_requests() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
-    assert_eq!(version, 20);
+    assert_eq!(version, 21);
     assert_eq!(retained, 1);
     assert!(table_sql.contains("btc_negotiation_stage"));
     assert!(table_sql.contains("btc_negotiation_complete"));
@@ -316,7 +316,7 @@ fn schema_v19_adds_xmr_stage_a_without_losing_global_requests() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
-    assert_eq!(version, 20);
+    assert_eq!(version, 21);
     assert_eq!(retained, 1);
     assert!(table_sql.contains("xmr_negotiation_stage"));
     assert_eq!(xmr_table, 1);

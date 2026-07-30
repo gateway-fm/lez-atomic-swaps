@@ -45,6 +45,8 @@ pub const MAKER_ACTOR_LOCK_FD: i32 = 198;
 pub enum MakerActorKindV1 {
     /// One-shot Bitcoin reference actor.
     Bitcoin,
+    /// One-shot Monero reference actor.
+    Monero,
     /// One-shot Zcash reference actor.
     Zcash,
 }
@@ -53,6 +55,7 @@ impl MakerActorKindV1 {
     const fn name(self) -> &'static str {
         match self {
             Self::Bitcoin => "bitcoin",
+            Self::Monero => "monero",
             Self::Zcash => "zcash",
         }
     }
@@ -60,6 +63,7 @@ impl MakerActorKindV1 {
     const fn pair(self) -> Pair {
         match self {
             Self::Bitcoin => Pair::Bitcoin,
+            Self::Monero => Pair::Monero,
             Self::Zcash => Pair::Zcash,
         }
     }
@@ -67,6 +71,7 @@ impl MakerActorKindV1 {
     pub(crate) fn parse(value: &str) -> Result<Self, MakerActorProcessError> {
         match value {
             "bitcoin" => Ok(Self::Bitcoin),
+            "monero" => Ok(Self::Monero),
             "zcash" => Ok(Self::Zcash),
             _ => Err(MakerActorProcessError::CorruptRecord),
         }
@@ -2428,7 +2433,7 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
     transaction.execute_batch(
         "CREATE TABLE IF NOT EXISTS maker_actor_processes (
             swap_id              TEXT PRIMARY KEY NOT NULL REFERENCES swaps(id) ON DELETE CASCADE,
-            actor_kind           TEXT NOT NULL CHECK (actor_kind IN ('bitcoin', 'zcash')),
+            actor_kind           TEXT NOT NULL CHECK (actor_kind IN ('bitcoin', 'monero', 'zcash')),
             manifest_version     INTEGER NOT NULL CHECK (manifest_version = 1),
             manifest_path        TEXT NOT NULL UNIQUE,
             manifest_sha256      BLOB NOT NULL CHECK (length(manifest_sha256) = 32),
@@ -2488,11 +2493,147 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
             swap_id           TEXT PRIMARY KEY NOT NULL REFERENCES maker_actor_processes(swap_id)
                                   ON DELETE CASCADE,
             payload_version   INTEGER NOT NULL CHECK (payload_version = 1),
-            actor_kind        TEXT NOT NULL CHECK (actor_kind IN ('bitcoin', 'zcash')),
+            actor_kind        TEXT NOT NULL CHECK (actor_kind IN ('bitcoin', 'monero', 'zcash')),
             source_generation INTEGER NOT NULL CHECK (source_generation > 0),
             payload_json      TEXT NOT NULL,
             observed_at       INTEGER NOT NULL CHECK (observed_at >= 0)
         ) STRICT;",
+    )?;
+    if !actor_kind_tables_support_monero(transaction)? {
+        rebuild_actor_kind_tables_for_monero(transaction)?;
+    }
+    Ok(())
+}
+
+fn actor_kind_tables_support_monero(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<bool, StoreError> {
+    for table in ["maker_actor_processes", "maker_actor_progress"] {
+        let sql: String = transaction.query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            rusqlite::params![table],
+            |row| row.get(0),
+        )?;
+        if !sql.contains("'monero'") {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[allow(clippy::too_many_lines)] // Explicit column copies make migration preservation auditable.
+fn rebuild_actor_kind_tables_for_monero(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<(), StoreError> {
+    transaction.execute_batch(
+        "DROP INDEX IF EXISTS maker_actor_processes_due;
+         DROP INDEX IF EXISTS maker_actor_manual_actions_one_open;
+         ALTER TABLE maker_actor_progress RENAME TO maker_actor_progress_before_monero;
+         ALTER TABLE maker_actor_manual_actions RENAME TO maker_actor_manual_actions_before_monero;
+         ALTER TABLE maker_actor_processes RENAME TO maker_actor_processes_before_monero;
+
+         CREATE TABLE maker_actor_processes (
+             swap_id              TEXT PRIMARY KEY NOT NULL REFERENCES swaps(id) ON DELETE CASCADE,
+             actor_kind           TEXT NOT NULL CHECK (actor_kind IN ('bitcoin', 'monero', 'zcash')),
+             manifest_version     INTEGER NOT NULL CHECK (manifest_version = 1),
+             manifest_path        TEXT NOT NULL UNIQUE,
+             manifest_sha256      BLOB NOT NULL CHECK (length(manifest_sha256) = 32),
+             actor_program_path   TEXT NOT NULL,
+             actor_program_sha256 BLOB NOT NULL CHECK (length(actor_program_sha256) = 32),
+             state_db_path        TEXT NOT NULL UNIQUE,
+             desired_state        TEXT NOT NULL CHECK (desired_state IN ('running', 'stopped')),
+             schedule_state       TEXT NOT NULL CHECK (
+                 schedule_state IN ('queued', 'leased', 'backoff', 'terminal', 'failed')
+             ),
+             next_attempt_at      INTEGER NOT NULL CHECK (next_attempt_at >= 0),
+             lease_generation     INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
+             lease_owner          BLOB CHECK (lease_owner IS NULL OR length(lease_owner) = 16),
+             leased_at            INTEGER CHECK (leased_at IS NULL OR leased_at >= 0),
+             child_pid            INTEGER CHECK (child_pid IS NULL OR child_pid > 0),
+             child_start_ticks    INTEGER CHECK (child_start_ticks IS NULL OR child_start_ticks > 0),
+             attempt_count        INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+             last_failure_class   TEXT,
+             created_at           INTEGER NOT NULL CHECK (created_at >= 0),
+             updated_at           INTEGER NOT NULL CHECK (updated_at >= created_at),
+             CHECK ((child_pid IS NULL) = (child_start_ticks IS NULL)),
+             CHECK (
+                 (schedule_state = 'leased' AND lease_owner IS NOT NULL AND leased_at IS NOT NULL)
+                 OR (schedule_state != 'leased' AND lease_owner IS NULL AND leased_at IS NULL
+                     AND child_pid IS NULL AND child_start_ticks IS NULL)
+             )
+         ) STRICT;
+         CREATE INDEX maker_actor_processes_due
+             ON maker_actor_processes (desired_state, schedule_state, next_attempt_at, swap_id);
+
+         CREATE TABLE maker_actor_manual_actions (
+             sequence                   INTEGER PRIMARY KEY AUTOINCREMENT,
+             request_id                 TEXT NOT NULL UNIQUE,
+             swap_id                    TEXT NOT NULL REFERENCES maker_actor_processes(swap_id)
+                                            ON DELETE CASCADE,
+             action                     TEXT NOT NULL CHECK (action IN ('claim', 'refund')),
+             state                      TEXT NOT NULL CHECK (
+                                            state IN ('queued', 'leased', 'completed', 'failed')
+                                        ),
+             requested_after_generation INTEGER NOT NULL CHECK (requested_after_generation >= 0),
+             lease_owner                BLOB CHECK (
+                                            lease_owner IS NULL OR length(lease_owner) = 16
+                                        ),
+             lease_generation           INTEGER CHECK (
+                                            lease_generation IS NULL OR lease_generation > 0
+                                        ),
+             created_at                 INTEGER NOT NULL CHECK (created_at >= 0),
+             updated_at                 INTEGER NOT NULL CHECK (updated_at >= created_at),
+             CHECK (
+                 (state = 'leased' AND lease_owner IS NOT NULL AND lease_generation IS NOT NULL)
+                 OR (state != 'leased' AND lease_owner IS NULL AND lease_generation IS NULL)
+             )
+         ) STRICT;
+         CREATE UNIQUE INDEX maker_actor_manual_actions_one_open
+             ON maker_actor_manual_actions (swap_id)
+             WHERE state IN ('queued', 'leased');
+
+         CREATE TABLE maker_actor_progress (
+             swap_id           TEXT PRIMARY KEY NOT NULL REFERENCES maker_actor_processes(swap_id)
+                                   ON DELETE CASCADE,
+             payload_version   INTEGER NOT NULL CHECK (payload_version = 1),
+             actor_kind        TEXT NOT NULL CHECK (actor_kind IN ('bitcoin', 'monero', 'zcash')),
+             source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+             payload_json      TEXT NOT NULL,
+             observed_at       INTEGER NOT NULL CHECK (observed_at >= 0)
+         ) STRICT;
+
+         INSERT INTO maker_actor_processes (
+             swap_id, actor_kind, manifest_version, manifest_path, manifest_sha256,
+             actor_program_path, actor_program_sha256, state_db_path, desired_state,
+             schedule_state, next_attempt_at, lease_generation, lease_owner, leased_at,
+             child_pid, child_start_ticks, attempt_count, last_failure_class, created_at, updated_at
+         )
+         SELECT
+             swap_id, actor_kind, manifest_version, manifest_path, manifest_sha256,
+             actor_program_path, actor_program_sha256, state_db_path, desired_state,
+             schedule_state, next_attempt_at, lease_generation, lease_owner, leased_at,
+             child_pid, child_start_ticks, attempt_count, last_failure_class, created_at, updated_at
+         FROM maker_actor_processes_before_monero;
+
+         INSERT INTO maker_actor_manual_actions (
+             sequence, request_id, swap_id, action, state, requested_after_generation,
+             lease_owner, lease_generation, created_at, updated_at
+         )
+         SELECT
+             sequence, request_id, swap_id, action, state, requested_after_generation,
+             lease_owner, lease_generation, created_at, updated_at
+         FROM maker_actor_manual_actions_before_monero;
+
+         INSERT INTO maker_actor_progress (
+             swap_id, payload_version, actor_kind, source_generation, payload_json, observed_at
+         )
+         SELECT
+             swap_id, payload_version, actor_kind, source_generation, payload_json, observed_at
+         FROM maker_actor_progress_before_monero;
+
+         DROP TABLE maker_actor_progress_before_monero;
+         DROP TABLE maker_actor_manual_actions_before_monero;
+         DROP TABLE maker_actor_processes_before_monero;",
     )?;
     Ok(())
 }

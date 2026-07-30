@@ -863,8 +863,46 @@ fn completed_role_journals_activate_without_disclosing_taker_claim_partial() {
     .expect("view key width");
     let view =
         MoneroPrivateViewKey::from_monero_little_endian(view_bytes).expect("private view key");
-    XmrActivatedAgreementV1::from_wire(&stage_a, &activated_bytes, &view)
+    let activated_agreement = XmrActivatedAgreementV1::from_wire(&stage_a, &activated_bytes, &view)
         .expect("validated activated agreement");
+    let initial = activated_agreement
+        .initial_coordinator(&stage_a)
+        .expect("only countersigned Stage B mints the initial coordinator");
+    let initial_json =
+        serde_json::to_value(&initial).expect("serialize exact initial XMR coordinator");
+    assert_eq!(
+        initial_json,
+        serde_json::json!({
+            "id": hex::encode(stage_a.body().swap_id()),
+            "pair": "Monero",
+            "direction": "TakerSellsLez",
+            "confirmation_policy": 2,
+            "maker_confirmation_policy": 10,
+            "recovery_schedule": {
+                "maker_trigger": {
+                    "CanonicalTakerRefund": {
+                        "chain": "Lez",
+                        "required_confirmations": 2
+                    }
+                },
+                "taker_refund": {
+                    "chain": "Lez",
+                    "basis": "Timestamp",
+                    "value": 20
+                },
+                "safety": null
+            },
+            "phase": "Offered",
+            "taker_lock_transaction_id": null,
+            "maker_lock_transaction_id": null,
+            "claim_evidence": null,
+            "revealing_claim_transaction_id": null,
+            "followup_claim_transaction_id": null,
+            "taker_refund_event_transaction_id": null,
+            "maker_recovery_transaction_id": null
+        }),
+        "Stage B must derive the exact signed XMR application parameters"
+    );
 
     let crossed_output = fixture.exchange.join("crossed-stage-b.bin");
     let crossed = assemble(&taker_signature, &maker_signature, &crossed_output);
