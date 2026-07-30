@@ -1826,7 +1826,7 @@ write_actor_configs() {
           prepared_witnessed_claim_result_file:$prepared
         } + (if $role == "taker" then {adaptor_secret_file:$adaptor} else {} end)),
         refund:(if $refund == "" then {} else {bitcoin_refund_key_file:$refund} end)
-      }}
+      }
       + (if $asset_mode == "custom_token" then
           {asset_extension:{record_file:$asset_record,
             expected_asset_commitment:$asset_commitment}}

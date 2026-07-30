@@ -150,6 +150,20 @@ for bitcoin_identity_term in org.logos-co.atomic-swaps.run \
   rg -Fq "$bitcoin_identity_term" <<<"$direction_core_admin_source" ||
     fail "direction Core boundary omits ${bitcoin_identity_term}"
 done
+write_actor_configs_source="$(sed -n '/^write_actor_configs() {$/,/^}$/p' \
+  "$direction_driver")"
+actor_config_filter="$(awk '
+  /--slurpfile runtime/ { capture=1; next }
+  capture && />"\$partial"$/ { exit }
+  capture { print }
+' <<<"$write_actor_configs_source")"
+[[ -n "$actor_config_filter" ]] ||
+  fail "direction boundary actor-config jq filter is unavailable"
+neutral_actor_config_filter="$(sed -E \
+  's/\$[A-Za-z_][A-Za-z0-9_]*/null/g' <<<"$actor_config_filter")"
+jq -n "$neutral_actor_config_filter" >/dev/null ||
+  fail "direction boundary actor-config jq filter does not compile"
+
 readonly dual_lock_gate_filter="scripts/jq/m3-dual-lock-gate.jq"
 [[ -f "$dual_lock_gate_filter" && ! -L "$dual_lock_gate_filter" ]] ||
   fail "dual-lock evidence filter is missing or unsafe"
