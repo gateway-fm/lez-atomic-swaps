@@ -1275,6 +1275,7 @@ prepare_m5_xmr_delivery_plan() {
   readonly m5_xmr_runtime_root="${m5_xmr_application_root}/runtime"
   readonly m5_xmr_delivery_root="${m5_xmr_application_root}/delivery"
   readonly m5_xmr_removed_delivery_root="${m5_xmr_application_root}/delivery-removed"
+  readonly m5_xmr_reconciled_delivery_root="${m5_xmr_application_root}/delivery-reconciled"
   readonly m5_xmr_delivery_key="${m5_xmr_application_root}/delivery.key"
   readonly m5_xmr_delivery_identity="${evidence_root}/m5-xmr-delivery-identity.json"
   readonly m5_xmr_maker_socket="${m5_xmr_runtime_root}/maker.sock"
@@ -1660,8 +1661,32 @@ complete_m5_xmr_application_handoff() {
     fail "replacement M5 XMR Delivery root was not created empty"
 
   start_m5_xmr_application_daemon replay 1
-  m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
-    fail "M5 XMR replay daemon reconstructed a Delivery offer"
+  require_owner_file "${m5_xmr_delivery_root}/${m5_xmr_offer_id}.offer.json" \
+    "reconciled M5 XMR Delivery offer"
+  readonly m5_xmr_reconciled_delivery_plan="${evidence_root}/m5-xmr-reconciled-delivery-plan.json"
+  "$m5_lez_taker_binary" --delivery-directory "$m5_xmr_delivery_root" \
+    --maker-public-key "$m5_xmr_delivery_public_key" --now-unix-seconds "$(date -u +%s)" \
+    --pair monero --direction taker-sells-lez --plan-xmr-offer "$m5_xmr_offer_id" \
+    --reservation-id "$m5_xmr_reservation_id" --foreign-units "$m5_xmr_foreign_units" \
+    >"$m5_xmr_reconciled_delivery_plan"
+  chmod 0600 "$m5_xmr_reconciled_delivery_plan"
+  require_owner_file "$m5_xmr_reconciled_delivery_plan" \
+    "authenticated reconciled M5 XMR Delivery plan"
+  jq -e --arg offer "$m5_xmr_offer_id" --arg reservation "$m5_xmr_reservation_id" \
+    --arg swap "$m5_xmr_planned_swap_id" --argjson foreign "$m5_xmr_foreign_units" \
+    --argjson lez "$m5_xmr_lez_units" '
+      .schema_version==1 and .offer_id==$offer and .reservation_id==$reservation
+      and .swap_id==$swap and .foreign_units==$foreign and .lez_units==$lez
+      and (.signed_envelope_sha256|test("^[0-9a-f]{64}$"))
+      and .private_material_disclosed==false
+    ' "$m5_xmr_reconciled_delivery_plan" >/dev/null ||
+    fail "reconciled M5 XMR Delivery offer changed authenticated terms"
+  [[ ! -e "$m5_xmr_reconciled_delivery_root" && ! -L "$m5_xmr_reconciled_delivery_root" ]] ||
+    fail "M5 XMR reconciled Delivery archive exists"
+  mv "$m5_xmr_delivery_root" "$m5_xmr_reconciled_delivery_root"
+  mkdir -m 0700 "$m5_xmr_delivery_root"
+  [[ -z "$(find "$m5_xmr_delivery_root" -mindepth 1 -print -quit)" ]] ||
+    fail "M5 XMR Delivery outage root was not created empty"
   run_m5_xmr_taker_acceptance "$m5_xmr_replay_acceptance" 0
   m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
     fail "Delivery-free M5 XMR replay observed or created an offer file"
@@ -1695,6 +1720,8 @@ complete_m5_xmr_application_handoff() {
     --arg receipt_swap "$(jq -er .swap_id "$agreement_receipt")" \
     --arg initial_swap "$(jq -er .swap_id "$m5_xmr_initial_acceptance")" \
     --arg replay_swap "$(jq -er .swap_id "$m5_xmr_replay_acceptance")" \
+    --arg reconciled_swap "$(jq -er .swap_id "$m5_xmr_reconciled_delivery_plan")" \
+    --arg reconciled_envelope "$(jq -er .signed_envelope_sha256 "$m5_xmr_reconciled_delivery_plan")" \
     --argjson daemon_pid "$m5_last_stopped_daemon_pid" \
     --argjson process_group "$m5_last_stopped_daemon_group" '
       {schema_version:1,kind:"m5_xmr_application_pre_tag13_cutoff",result:"passed",
@@ -1706,7 +1733,11 @@ complete_m5_xmr_application_handoff() {
          child_process:null,manual_action:null,chain_effect_executed:false,
          phase:"offered",revision:0,next_action:"xmr_chain_effects_not_yet_composed",
          minimum_reobservation_seconds:60,configured_reobservation_seconds:3600},
-       replay:{original_delivery_root_removed:true,replacement_offer_files_present:false,taker_delivery_argument_present:false,artifact_bytes_and_inodes_unchanged:true,
+       replay:{original_delivery_root_removed:true,
+         publisher_reconciled_consumed_offer_before_outage:true,
+         reconciled_offer_authenticated:true,reconciled_offer_swap_id:$reconciled_swap,
+         reconciled_offer_envelope_sha256:$reconciled_envelope,reconciled_delivery_root_archived:true,
+         replacement_offer_files_present:false,taker_delivery_argument_present:false,artifact_bytes_and_inodes_unchanged:true,
          journal_device_inode_size_hash_unchanged:true,sqlite_sidecars_present:false},
        cutoff:{daemon_pid:$daemon_pid,process_group:$process_group,pid_absent:true,
          process_group_absent:true,owner_socket_absent:true,chat_socket_absent:true,
@@ -1730,6 +1761,8 @@ verify_m5_xmr_application_cutoff() {
     fail "M5 XMR readiness evidence survived daemon cutoff"
   require_no_sqlite_sidecars "$m5_xmr_maker_role_journal" "M5 XMR Maker role journal at cutoff"
   require_no_sqlite_sidecars "$m5_xmr_taker_role_journal" "M5 XMR Taker role journal at cutoff"
+  require_owner_file "${m5_xmr_reconciled_delivery_root}/${m5_xmr_offer_id}.offer.json" \
+    "archived authenticated M5 XMR reconciled Delivery offer"
   m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
     fail "M5 XMR replacement Delivery root gained an offer before Tag 13"
   jq -e --arg swap "$m5_xmr_planned_swap_id" '
@@ -1740,6 +1773,11 @@ verify_m5_xmr_application_cutoff() {
     and .supervisor.minimum_reobservation_seconds==60
     and .supervisor.configured_reobservation_seconds==3600
     and .replay.original_delivery_root_removed==true
+    and .replay.publisher_reconciled_consumed_offer_before_outage==true
+    and .replay.reconciled_offer_authenticated==true
+    and .replay.reconciled_offer_swap_id==$swap
+    and (.replay.reconciled_offer_envelope_sha256|test("^[0-9a-f]{64}$"))
+    and .replay.reconciled_delivery_root_archived==true
     and .replay.replacement_offer_files_present==false
     and .replay.taker_delivery_argument_present==false
     and .cutoff.pid_absent==true and .cutoff.process_group_absent==true

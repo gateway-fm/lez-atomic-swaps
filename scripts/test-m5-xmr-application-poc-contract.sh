@@ -59,7 +59,10 @@ jq -e '
     "authorized_maker_daemon",
     "real_taker_acceptance",
     "taker_role_actor_installation_and_receipt",
+    "publisher_restart_reconciles_retryable_offer",
+    "delivery_outage_after_authenticated_reconciliation",
     "exact_replay_without_delivery",
+    "synchronous_application_cutoff",
     "m4_tag13_initialize_and_fund",
     "m4_monero_funding_and_verification",
     "m4_tag14_authorize_claim",
@@ -176,6 +179,10 @@ for required in \
   'configured_reobservation_seconds:3600' \
   'ps -eo pgid=,stat=' \
   '$2 !~ /^Z/' \
+  'readonly m5_xmr_reconciled_delivery_root=' \
+  'require_owner_file "${m5_xmr_delivery_root}/${m5_xmr_offer_id}.offer.json"' \
+  'mv "$m5_xmr_delivery_root" "$m5_xmr_reconciled_delivery_root"' \
+  'run_m5_xmr_taker_acceptance "$m5_xmr_replay_acceptance" 0' \
   'if [[ "$m5_xmr_application_mode" == 1 && -n "${m5_application_daemon_pid:-}" ]]; then' \
   'stop_m5_xmr_application_daemon || cleanup_failed=1'; do
   require_runner_source "$required" "M5 source boundary: ${required}"
@@ -185,6 +192,9 @@ done
   fail 'cleanup failure state is reset after an earlier identity/removal error'
 if rg -Fq '# Cleanup is judged by the final resource state' "$runner"; then
   fail 'legacy cleanup-error reset comment survived the fail-closed fix'
+fi
+if rg -Fq 'fail "M5 XMR replay daemon reconstructed a Delivery offer"' "$runner"; then
+  fail 'runner still rejects intentional durable Delivery reconciliation'
 fi
 
 artifact_preflight_line="$(unique_line '^  RUN_ID="\$artifact_run_id" "\$artifact_runner" verify-source$' 'artifact fast-preflight invocation')"
@@ -199,6 +209,19 @@ readonly artifact_preflight_line build_line plan_line compose_line handoff_line 
    plan_line < compose_line && compose_line < handoff_line &&
    handoff_line < cutoff_line && cutoff_line < tag13_line )) ||
   fail 'M5 application plan/handoff/cutoff does not precede legacy Tag13 exactly'
+
+replay_daemon_line="$(unique_line '^  start_m5_xmr_application_daemon replay 1$' 'M5 replay daemon invocation')"
+reconciled_offer_line="$(unique_line '^  require_owner_file "\$\{m5_xmr_delivery_root\}/\$\{m5_xmr_offer_id\}\.offer\.json" \\$' 'M5 reconciled offer check')"
+reconciled_archive_line="$(unique_line '^  mv "\$m5_xmr_delivery_root" "\$m5_xmr_reconciled_delivery_root"$' 'M5 reconciled offer archive')"
+delivery_free_replay_line="$(unique_line '^  run_m5_xmr_taker_acceptance "\$m5_xmr_replay_acceptance" 0$' 'M5 Delivery-free replay')"
+readonly replay_daemon_line reconciled_offer_line reconciled_archive_line delivery_free_replay_line
+(( replay_daemon_line < reconciled_offer_line &&
+   reconciled_offer_line < reconciled_archive_line &&
+   reconciled_archive_line < delivery_free_replay_line &&
+   delivery_free_replay_line < cutoff_line &&
+   cutoff_line < tag13_line )) ||
+  fail 'M5 retry reconciliation/authentication/outage/replay does not precede cutoff and Tag13'
+
 
 cleanup_line="$(unique_line '^cleanup\(\) \{$' 'cleanup function')"
 cleanup_hook_line="$(unique_line '^    stop_m5_xmr_application_daemon \|\| cleanup_failed=1$' 'M5 cleanup hook')"

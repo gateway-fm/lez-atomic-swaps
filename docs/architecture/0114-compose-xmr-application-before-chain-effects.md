@@ -48,11 +48,18 @@ isolated execution and evidence remain pending. This decision is not GREEN.
    due cycle. The sealed child returns typed `Blocked`, remains queued without a
    child identity or manual action, records
    `xmr_chain_effects_not_yet_composed`, and creates no RPC or public effect.
-7. The full daemon and supervisor then stop synchronously using registered PID,
-   start ticks, binary digest, and process-group identity. Process and group
-   absence, Chat-socket and readiness-file absence, application state, and both
-   pre-effect journal digests are checked. Only this durable cutoff permits
-   chain effects.
+7. The full daemon and supervisor stop by exact identity, the original Delivery
+   mailbox is archived, and the same daemon restarts from durable SQLite. Its
+   publisher intentionally reconciles the consumed offer because consumed
+   offers remain retryable for lost-response recovery. The real Taker
+   authenticates that reconstructed advertisement, the mailbox is archived,
+   and an empty outage mailbox replaces it. The Taker then exact-replays from
+   durable Stage A, Stage B, actor, and receipt state without a Delivery
+   argument. The daemon stops synchronously using registered PID, start ticks,
+   binary digest, and process-group identity. Process and group absence,
+   mailbox emptiness, Chat-socket and readiness-file absence, application state,
+   and both pre-effect journal digests are checked. Only this durable cutoff
+   permits chain effects.
 8. After the cutoff, the legacy actual-chain path owns liveness and advances
    the same signed swap in this exact order: finalized LEZ Initialize, finalized
    LEZ Fund, confirmed Monero lock, prepared and finalized Tag14 authorization,
@@ -75,6 +82,8 @@ flowchart LR
     subgraph Application["M5 application boundary"]
         Planner["Delivery-only Maker"]
         Delivery["Signed run-local Delivery"]
+        Reconciled["Authenticated retry advertisement"]
+        Outage["Empty Delivery outage mailbox"]
         Taker["lez-taker"]
         Composer["M4 Stage composer"]
         Bundles["Maker and Taker bundles"]
@@ -108,6 +117,9 @@ flowchart LR
 
     Planner --> Delivery
     Delivery --> Taker
+    Daemon -->|"durable reconcile"| Reconciled
+    Reconciled --> Taker
+    Reconciled -->|"archive then isolate"| Outage
     Taker -->|"derived swap ID"| Composer
     Composer --> Bundles
     Bundles --> Taker
@@ -175,13 +187,19 @@ sequenceDiagram
     Daemon->>Store: Reserve revision 2 with no actor
     Taker->>Daemon: Submit Stage B
     Daemon->>Store: Atomically activate revision 3 and queue actor
-    Taker->>Daemon: Replay exact stages
-    Daemon->>Store: Revalidate with no duplicate rows or files
     Daemon->>Supervisor: Run one due cycle
     Supervisor->>Child: Pass sealed authority on FD 196
     Child-->>Supervisor: Typed Blocked with zero chain requests
     Supervisor->>Store: Persist zero-effect bounded recheck
-    Taker->>Daemon: Stop exact process and group
+    Taker->>Daemon: Stop exact authority process and group
+    Taker->>Delivery: Archive original advertisement mailbox
+    Taker->>Daemon: Restart from durable SQLite
+    Daemon->>Delivery: Reconcile consumed retry advertisement
+    Taker->>Delivery: Authenticate identical swap and terms
+    Taker->>Delivery: Archive reconciliation and create empty outage mailbox
+    Taker->>Daemon: Replay Stage A and Stage B without Delivery argument
+    Daemon->>Store: Revalidate with no duplicate rows or files
+    Taker->>Daemon: Stop replay process and group
     Taker->>Taker: Prove process, socket, and readiness absence
     Taker->>Legacy: Cross exclusive cutoff
     Legacy->>LEZ: Finalize Initialize then Fund
@@ -212,7 +230,12 @@ flowchart TD
     Local -->|"yes"| Queued["One coordinator and queued actor"]
     Queued --> Validate["Sealed semantic validation"]
     Validate --> Blocked["Typed Blocked with zero effect"]
-    Blocked --> Stop["Synchronous process stop"]
+    Blocked --> Reconcile["Restart reconciles consumed retry advertisement"]
+    Reconcile --> Authenticate{"Same signed swap and terms"}
+    Authenticate -->|"no"| Abort
+    Authenticate -->|"yes"| Outage["Archive advertisement and create empty mailbox"]
+    Outage --> Replay["Delivery-free durable replay"]
+    Replay --> Stop["Synchronous process stop"]
     Stop --> Absent{"Exact absence proven"}
     Absent -->|"no"| Abort["Abort before chain effects"]
     Absent -->|"yes"| Handoff["Legacy runner owns liveness"]
@@ -255,6 +278,9 @@ This ADR cannot become accepted or GREEN until one isolated run proves:
   coordinator and actor without replacing published files;
 - both journal bytes and inodes remain unchanged through application replay and
   the typed blocked cycle;
+- restart reconciliation republishes the exact retryable consumed offer, the
+  real Taker authenticates it, and exact replay remains unchanged after that
+  mailbox is archived and replaced by an empty Delivery outage mailbox;
 - supervisor status, child absence, bounded recheck, zero effects, zero chain
   RPCs, and the process cutoff are durable evidence rather than log inference;
 - Tag13, funding, Tag14, Tag15, extraction, sweep, and binding all succeed for
