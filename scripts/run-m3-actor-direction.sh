@@ -4192,7 +4192,10 @@ complete_m5_btc_application_handoff() {
     wait "$daemon_pid" 2>/dev/null || true
     fail "M5 BTC Chat daemon registration failed"
   fi
-  for _ in {1..200}; do
+  # Debug actor validation reads and hashes the complete staged executable before
+  # readiness. The measured cold local startup is about 20.4 seconds; this
+  # 60-second ceiling preserves fail-closed validation without delaying success.
+  for _ in {1..1200}; do
     if [[ -f "$ready_file" && "$(cat "$ready_file")" == "$socket" &&
          -S "$socket" && -S "$chat_socket" ]]; then
       break
