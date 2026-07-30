@@ -4275,8 +4275,11 @@ complete_m5_btc_application_handoff() {
   mv "$delivery" "$delivery_offline"
   "$M3_POC_TAKER_CLI_BIN" monitor --receipt "$receipt_file" >"$monitor_file"
   chmod 0600 "$monitor_file"
-  jq -e '.schema_version == 1 and .pair == "bitcoin" and .role == "taker"
-    and .phase == "not_activated" and .revision == 0' "$monitor_file" >/dev/null ||
+  jq -e '
+    (keys | sort) == (["pair","role","schema_version","state"] | sort)
+    and .schema_version == 1 and .pair == "bitcoin" and .role == "taker"
+    and .state == "not_activated"
+  ' "$monitor_file" >/dev/null ||
     fail "M5 BTC offline Taker monitor is invalid"
 }
 

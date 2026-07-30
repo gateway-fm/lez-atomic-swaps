@@ -173,6 +173,7 @@ for staged_actor_term in \
   'cp --reflink=auto -- "$M3_POC_ACTOR_BIN" "$actor_program"' \
   'stat -c '\''%u:%a:%h'\'' "$actor_program"' \
   '--btc-actor-program "$actor_program"' \
+  'and .state == "not_activated"' \
   'for _ in {1..1200}; do'; do
   rg -Fq -- "$staged_actor_term" "$direction_driver" ||
     fail "direction boundary omits staged BTC actor invariant: ${staged_actor_term}"
