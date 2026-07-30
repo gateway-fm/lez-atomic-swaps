@@ -166,6 +166,10 @@ jq -n "$neutral_actor_config_filter" >/dev/null ||
 
 for staged_actor_term in \
   'local actor_program_root="${M3_POC_SECURE_STATE_ROOT}/m5-btc-actor-program"' \
+  'local runtime_root="$M3_POC_M5_RUNTIME_ROOT"' \
+  'local socket="${runtime_root}/m.sock"' \
+  'local chat_socket="${runtime_root}/c.sock"' \
+  'local ready_file="${runtime_root}/m.ready"' \
   'cp --reflink=auto -- "$M3_POC_ACTOR_BIN" "$actor_program"' \
   'stat -c '\''%u:%a:%h'\'' "$actor_program"' \
   '--btc-actor-program "$actor_program"' \
@@ -2473,6 +2477,7 @@ required_terms=(
   'all_exact_run_resources_absent'
   'verify_lez_bootstrap_contract'
   'bootstrap_lez_runtime'
+  'M3_POC_M5_RUNTIME_ROOT="${secure_state_root}/c"'
   'LEZ_V02_ARTIFACT_TARGET_DIR'
   'LEZ_V02_MAKER_VAULT_ACCOUNT_ID'
   'LEZ_V02_TAKER_VAULT_ACCOUNT_ID'
@@ -2491,6 +2496,9 @@ max_run_id="$(printf 'a%.0s' {1..48})"
 max_m5_socket="/tmp/lez-atomic-swaps-m3-${max_run_id}-secure-state/m5-btc-maker.sock"
 (( ${#max_m5_socket} < 108 )) ||
   fail "M5 application socket can exceed the portable Unix SUN_LEN bound"
+max_m5_chat_socket="/tmp/lez-atomic-swaps-m3-${max_run_id}-secure-state/c/m.sock"
+(( ${#max_m5_chat_socket} < 108 )) ||
+  fail "M5 Chat socket can exceed the portable Unix SUN_LEN bound"
 
 
 

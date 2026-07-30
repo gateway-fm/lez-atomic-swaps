@@ -319,7 +319,7 @@ require_environment() {
       fail "required M5 BTC environment is missing: M3_POC_SWAP_ID"
     [[ "$value" =~ ^[0-9a-f]{64}$ ]] ||
       fail "M3_POC_SWAP_ID must be a canonical 32-byte lowercase hex value"
-    for variable in M3_POC_M5_APPLICATION_ROOT M3_POC_MAKER_DAEMON_BIN \
+    for variable in M3_POC_M5_APPLICATION_ROOT M3_POC_M5_RUNTIME_ROOT M3_POC_MAKER_DAEMON_BIN \
       M3_POC_TAKER_CLI_BIN; do
       value="${!variable:-}"
       [[ -n "$value" ]] || fail "required M5 BTC environment is missing: ${variable}"
@@ -349,7 +349,7 @@ require_environment() {
     [[ "$value" == /* ]] || fail "path environment must be absolute: ${variable}"
   done
   if [[ "$m5_btc_application_mode" == 1 ]]; then
-    for variable in M3_POC_M5_APPLICATION_ROOT M3_POC_MAKER_DAEMON_BIN \
+    for variable in M3_POC_M5_APPLICATION_ROOT M3_POC_M5_RUNTIME_ROOT M3_POC_MAKER_DAEMON_BIN \
       M3_POC_TAKER_CLI_BIN; do
       value="${!variable}"
       [[ "$value" == /* ]] || fail "M5 BTC path environment must be absolute: ${variable}"
@@ -4098,9 +4098,10 @@ complete_m5_btc_application_handoff() {
   local application_root="$M3_POC_M5_APPLICATION_ROOT"
   local fixture_root="${M3_POC_DIRECTION_ROOT}/fixture"
   local owner_root="${application_root}/owner"
-  local socket="${application_root}/maker.sock"
-  local chat_socket="${application_root}/chat.sock"
-  local ready_file="${application_root}/maker.ready"
+  local runtime_root="$M3_POC_M5_RUNTIME_ROOT"
+  local socket="${runtime_root}/m.sock"
+  local chat_socket="${runtime_root}/c.sock"
+  local ready_file="${runtime_root}/m.ready"
   local database="${application_root}/maker.sqlite3"
   local delivery="${application_root}/delivery"
   local delivery_offline="${application_root}/delivery.offline"
@@ -4129,6 +4130,8 @@ complete_m5_btc_application_handoff() {
   [[ "$m5_btc_application_mode" == 1 &&
      "$M3_POC_DIRECTION" == taker_sells_foreign && "$asset_mode" == native ]] ||
     fail "M5 BTC application handoff is restricted to the native forward route"
+  [[ "$runtime_root" == "$(dirname "$(dirname "$M3_POC_SECURE_STATE_ROOT")")/c" ]] ||
+    fail "M5 BTC Chat runtime root escaped the exact run-owned secure root"
   [[ "$application_root" == "${M3_POC_DIRECTION_ROOT}/application" &&
      -d "$application_root" && ! -L "$application_root" &&
      "$(stat -c '%u:%a' "$application_root")" == "$(id -u):700" ]] ||
@@ -4142,6 +4145,9 @@ complete_m5_btc_application_handoff() {
   [[ ! -e "$owner_root" && ! -L "$owner_root" &&
      ! -e "$delivery_offline" && ! -L "$delivery_offline" ]] ||
     fail "M5 BTC owner output already exists"
+  [[ ! -e "$runtime_root" && ! -L "$runtime_root" ]] ||
+    fail "M5 BTC Chat runtime root already exists"
+  mkdir -m 0700 "$runtime_root"
   mkdir -m 0700 "$owner_root"
   mkdir -m 0700 "$maker_actor_root"
 

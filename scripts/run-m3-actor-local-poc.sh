@@ -2722,6 +2722,7 @@ with_direction_environment() {
   M3_POC_ACTOR_BIN="$actor_bin" \
   M3_POC_PROVISIONER_BIN="$provisioner_bin" \
   M3_POC_M5_APPLICATION_ROOT="${direction_root}/application" \
+  M3_POC_M5_RUNTIME_ROOT="${secure_state_root}/c" \
   M3_POC_MAKER_DAEMON_BIN="$maker_daemon_bin" \
   M3_POC_TAKER_CLI_BIN="$taker_cli_bin" \
   M3_POC_ROLE_RUNNER_BIN="$role_runner_bin" \
