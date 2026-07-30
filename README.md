@@ -216,8 +216,20 @@ all exact resources are absent, but cleanup certification failed because one
 exact cleanup command returned nonzero. The existing evidence schema did not
 identify which command, so this run is not the clean certifying replay and its
 one-shot ID must never be reused. Cleanup evidence is now versioned and records
-stable failure reason codes without relaxing fail-closed behavior. Runtime is
-entirely local: official Monero 0.18.5.1 Regtest and LEZ v0.2 with deterministic
+stable failure reason codes without relaxing fail-closed behavior. Exact
+pushed-tree run `m5-xmr-app-20260730-9067ba3-g` then repeated the complete
+functional corridor. LEZ Claim finalized in block 140 at tip 143; the same
+1 XMR amount swept 998191600000 piconero after a 1808400000-piconero fee and
+reached 10 confirmations at Monero tip 130. Source status was zero, binding
+completed, every exact resource was absent, and the foreign sentinel survived.
+Schema v2 isolated cleanup failure to exactly three
+`ephemeral_path_boundary_failed` reasons. All three were nested directories
+under the exact run-owned private namespace: the guard admitted the namespace
+itself but not its children. Commit `fb4e279` fixes that boundary by
+canonicalizing and admitting only descendants of the run-owned private root;
+focused tests retain rejection of traversal, symlinks, and foreign paths. A
+fresh run remains required for clean certification. Runtime is entirely local:
+official Monero 0.18.5.1 Regtest and LEZ v0.2 with deterministic
 genesis/Regtest funds and ephemeral loopback RPCs; no public RPC, faucet, peer,
 or public funds are used.
 [Flow 1R](docs/manual-user-flows.md#flow-1r-run-the-xmr-application-to-chain-corridor)
@@ -225,8 +237,8 @@ documents the exact operator command, resources, evidence, cleanup, and
 non-retry boundary without claiming clean certification. A read-only acceptance audit also
 confirmed that concurrent multi-user and unavailable-route closure require new
 executable gates rather than parallel wrapper invocations. From pushed base
-`da9be26`, the remaining estimate is 6 to 13 focused hours to M5 PoC and 10 to
-19 focused hours to the reviewed milestone tag.
+`fb4e279`, the remaining estimate is 4 to 10 focused hours to M5 PoC and 8 to
+16 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

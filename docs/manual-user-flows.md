@@ -5990,8 +5990,8 @@ funds. This absence removes node/finality flakiness but also means the checkpoin
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The remaining PoC gate is the isolated official Monero 0.18.5.1 Regtest plus LEZ
 v0.2 corridor under this accepted authority, followed by concurrent/all-pair
-closure. From pushed base `da9be26`, current ETA is 6 to 13 focused hours for the
-M5 PoC and 10 to 19 focused hours for the milestone tag.
+closure. From pushed base `fb4e279`, current ETA is 4 to 10 focused hours for the
+M5 PoC and 8 to 16 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
@@ -6023,8 +6023,19 @@ Cleanup nevertheless failed closed because one exact removal command returned
 nonzero; cleanup schema v1 did not retain the failing operation. Do not convert
 that final absence into a pass, and never reuse the tag-13-latched run ID. The
 runner now emits cleanup schema v2 `failure_reasons` so the next fresh run is
-diagnosable without weakening cleanup. Use a fresh run ID. This is functional
-end-to-end evidence, not the clean certifying replay or M5 completion.
+diagnosable without weakening cleanup. Seventh run
+`m5-xmr-app-20260730-9067ba3-g` repeated the full functional corridor with
+source status zero: Claim finalized at LEZ height 140 and tip 143, and the
+998191600000-piconero sweep reached 10 confirmations at Monero tip 130 after a
+1808400000-piconero fee. Binding completed, every exact resource was absent,
+and the foreign sentinel survived. Its schema-v2 cleanup packet reported
+exactly three `ephemeral_path_boundary_failed` reasons, all nested directories
+under the exact run-owned private namespace. The guard admitted the namespace
+but not its children. Commit `fb4e279` now canonicalizes paths and admits only
+descendants of that private root; the focused contract rejects traversal,
+symlinks, and foreign paths. Use a fresh run ID to prove the fix. This is a
+second functional end-to-end execution, not the clean certifying replay or M5
+completion.
 
 Reuse all prerequisites from
 [Flow 0](#flow-0-m4-official-monero-regtest-topology): Docker, the pinned Rust

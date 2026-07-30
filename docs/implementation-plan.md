@@ -3791,9 +3791,9 @@ separately from runtime dependencies.
 The progressive local ZEC application PoC gate closed on 2026-07-24, and the
 exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
-actual-runner splice described below, remaining M5 PoC ETA is 6 to 13 focused
-implementation hours; the milestone-tag ETA is 10 to 19 focused hours from
-pushed base `da9be26`. Update both ranges on every push. The PoC range
+actual-runner splice described below, remaining M5 PoC ETA is 4 to 10 focused
+implementation hours; the milestone-tag ETA is 8 to 16 focused hours from
+pushed base `fb4e279`. Update both ranges on every push. The PoC range
 covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
 and the remaining concurrent/unavailable-route closure. The tag range additionally
 includes evidence synchronization, manual-flow/README closure, the final CI and
@@ -4104,9 +4104,24 @@ fail-closed cleanup result is `failed`: one removal command returned nonzero and
 the v1 cleanup packet could not identify which. The run remains functional
 happy-path evidence, not clean certification, and its tag-13-latched ID must not
 be reused. The cleanup packet is now schema v2 with stable reason codes while
-preserving all earlier-failure semantics. From pushed base `da9be26`, remaining
-M5 PoC ETA is 6 to 13 focused hours and milestone-tag ETA is 10 to 19 focused
-hours; clean XMR replay plus concurrent and unavailable-route gates remain.
+preserving all earlier-failure semantics.
+
+Exact pushed-tree run `m5-xmr-app-20260730-9067ba3-g` then repeated the entire
+functional corridor with source status zero. Claim finalized at LEZ height 140
+and tip 143. The Monero sweep again received 998191600000 of
+1000000000000 funded piconero with fee 1808400000 and 10 confirmations at tip
+130; cross-chain binding completed without a distributed-transaction claim.
+Every exact resource is absent and the foreign sentinel survived. Schema v2
+identified exactly three `ephemeral_path_boundary_failed` reasons, all for
+nested directories below the exact run-owned private namespace. The guard had
+admitted the namespace but rejected its children before later removing the
+namespace itself. Commit `fb4e279` canonicalizes paths and permits only
+descendants of the run-owned private root while regression tests continue to
+reject traversal, symlinks, and foreign paths. The cleanup result correctly
+remains failed; a fresh run must prove the fix. From pushed base `fb4e279`,
+remaining M5 PoC ETA is 4 to 10 focused hours and milestone-tag ETA is 8 to 16
+focused hours; clean XMR replay plus concurrent and unavailable-route gates
+remain.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

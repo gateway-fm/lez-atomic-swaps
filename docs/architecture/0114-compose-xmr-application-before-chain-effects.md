@@ -292,6 +292,19 @@ Exact run `m5-xmr-app-20260730-da9be26-f` proved:
 Every exact run resource was absent and the foreign sentinel survived, but one
 cleanup command returned nonzero. The fail-closed result therefore remained
 `failed` even though the source result was zero. Cleanup schema v1 did not
-identify the operation. Schema v2 now records stable failure reason codes. This
-ADR cannot become accepted until a fresh run passes the exact cleanup gate; the
-latched successful-effect run ID is never reused.
+identify the operation. Schema v2 now records stable failure reason codes.
+
+Exact pushed-tree run `m5-xmr-app-20260730-9067ba3-g` repeated the same
+functional sequence with source status zero. Claim finalized at LEZ height 140
+and tip 143; the Monero sweep received 998191600000 of 1000000000000 funded
+piconero after a 1808400000 fee and reached 10 confirmations at tip 130.
+Binding completed, every exact resource was absent, and the foreign sentinel
+survived. Schema v2 isolated exactly three
+`ephemeral_path_boundary_failed` reasons. Each rejected path was a nested
+directory below the exact run-owned private namespace; the boundary accepted
+the namespace itself but not its descendants. Commit `fb4e279` canonicalizes
+paths and admits only descendants of the run-owned private root, while focused
+tests reject traversal, symlinks, and foreign paths.
+
+This ADR cannot become accepted until a fresh run passes the exact cleanup
+gate; neither latched successful-effect run ID is ever reused.
