@@ -20,6 +20,7 @@ readonly expected_rapidsnark_sha256="d4133227f845ff5bfa3672eb5b9c018a6a086bfa164
 readonly expected_gmp_sha256="0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b"
 readonly expected_fq_sha256="797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0"
 readonly expected_fr_sha256="40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82"
+readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"
 
 fail() {
   echo "M4 actual-claim runner failed: $*" >&2
@@ -227,6 +228,13 @@ environment_preflight() {
       install jq ln mkdir mktemp openssl readlink rg sed sha256sum sort stat sync tac tr unlink wc xxd; do
     require_command "$command_name"
   done
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    for command_name in find mv ps setsid; do
+      require_command "$command_name"
+    done
+  elif [[ "$m5_xmr_application_mode" != 0 ]]; then
+    fail "M5_XMR_APPLICATION_MODE must be unset, 0, or 1"
+  fi
   [[ "${RAPIDSNARK_LIB_DIR:-}" == /* && -d "$RAPIDSNARK_LIB_DIR" ]] ||
     fail "RAPIDSNARK_LIB_DIR must be an absolute verified library directory"
   [[ "${BINDGEN_EXTRA_CLANG_ARGS:-}" == '-I/usr/lib/gcc/x86_64-linux-gnu/13/include' ]] ||
@@ -503,6 +511,9 @@ cleanup() {
   local -a ledger_rows=()
   trap - EXIT
   set +e
+  if [[ "$m5_xmr_application_mode" == 1 && -n "${m5_application_daemon_pid:-}" ]]; then
+    stop_m5_xmr_application_daemon || cleanup_failed=1
+  fi
   if [[ "$cleanup_started" != 1 ]]; then
     exit "$source_status"
   fi
@@ -620,9 +631,8 @@ cleanup() {
   else
     cleanup_failed=1
   fi
-  # Cleanup is judged by the final resource state; repeated/idempotent remove
-  # races must not turn an actually clean run into a false failure.
-  cleanup_failed=0
+  # Cleanup requires both successful bounded removal and an absent final state.
+  # Never erase an earlier identity, label, or removal failure.
   [[ "$resources_absent" == true ]] || cleanup_failed=1
   if [[ -n "${sentinel_name:-}" ]] && docker network inspect "$sentinel_name" >/dev/null 2>&1; then
     cleanup_failed=1
@@ -706,6 +716,11 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
       --bin xmr-reference-actor --bin xmr-reference-tag15
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+      cargo +1.96.0 build --locked --offline -p lez-maker-node \
+        --bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor
+  fi
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p lez-adaptor-role-runner \
       --bin lez-adaptor-role-runner
@@ -733,7 +748,21 @@ build_identity_and_artifact() {
   readonly release_service_binary="${staged_binary_root}/lez-v0-2-xmr-release-service"
   readonly classifier_binary="${staged_binary_root}/lez-v02-xmr-classify-finalized"
   readonly vault_claim_staged_binary="${staged_binary_root}/lez-v02-vault-claim-poc"
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    readonly m5_lez_maker_binary="${staged_binary_root}/lez-maker"
+    readonly m5_lez_maker_daemon_binary="${staged_binary_root}/lez-maker-daemon"
+    readonly m5_lez_taker_binary="${staged_binary_root}/lez-taker"
+    readonly m5_xmr_maker_actor_binary="${staged_binary_root}/xmr-maker-actor"
+  fi
   stage_executable "$vault_claim_binary" "$vault_claim_staged_binary" "Vault Claim"
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    stage_executable "${workspace_target}/debug/lez-maker" "$m5_lez_maker_binary" "M5 Maker CLI"
+    stage_executable "${workspace_target}/debug/lez-maker-daemon" \
+      "$m5_lez_maker_daemon_binary" "M5 Maker daemon"
+    stage_executable "${workspace_target}/debug/lez-taker" "$m5_lez_taker_binary" "M5 Taker CLI"
+    stage_executable "${workspace_target}/debug/xmr-maker-actor" \
+      "$m5_xmr_maker_actor_binary" "M5 XMR Maker actor"
+  fi
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/xmr-reference-tag15" "$tag15_binary" "Tag15 driver"
@@ -814,6 +843,18 @@ write_build_manifest() {
       agreement_composer:$agreement_composer,tag13_runner:$tag13,bridge:$bridge,tag13_export:$tag13_export,
       deployer:$deployer,checked_guest:$guest}}' >"$output"
   chmod 0600 "$output"
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    local m5_temporary
+    m5_temporary="$(mktemp "${output}.m5.XXXXXX")"
+    jq --arg maker "$(sha256_file "$m5_lez_maker_binary")" \
+      --arg daemon "$(sha256_file "$m5_lez_maker_daemon_binary")" \
+      --arg taker "$(sha256_file "$m5_lez_taker_binary")" \
+      --arg xmr_actor "$(sha256_file "$m5_xmr_maker_actor_binary")" '.binary_sha256 += {m5_lez_maker:$maker,m5_lez_maker_daemon:$daemon,m5_lez_taker:$taker,m5_xmr_maker_actor:$xmr_actor}' \
+      "$output" >"$m5_temporary"
+    chmod 0600 "$m5_temporary"
+    mv "$m5_temporary" "$output"
+  fi
+  require_owner_file "$output" "build identity manifest"
 }
 
 provision_identities() {
@@ -1066,6 +1107,234 @@ start_monero_child() {
   record_phase monero_stack completed
 }
 
+m5_application_daemon_pid=""
+m5_application_daemon_start_ticks=""
+m5_application_daemon_group=""
+m5_application_daemon_binary_sha256=""
+m5_application_daemon_ready=""
+m5_application_daemon_had_chat=0
+m5_last_stopped_daemon_pid=""
+m5_last_stopped_daemon_group=""
+
+m5_application_process_group_has_members() {
+  local process_group="$1" snapshot
+  [[ "$process_group" =~ ^[1-9][0-9]*$ ]] || return 0
+  snapshot="$(ps -eo pgid=,stat=)" || return 0
+  awk -v expected="$process_group" '$1 == expected && $2 !~ /^Z/ {found=1} END {exit !found}' <<<"$snapshot"
+}
+
+m5_application_process_group_members() {
+  local process_group="$1" snapshot
+  snapshot="$(ps -eo pid=,pgid=,stat=)" || return 1
+  awk -v expected="$process_group" '$2 == expected && $3 !~ /^Z/ {print $1}' <<<"$snapshot"
+}
+
+start_m5_xmr_application_daemon() {
+  local instance="$1" with_chat="$2" start="" observed_group="" published=""
+  local log_file="${evidence_root}/m5-xmr-daemon-${instance}.log"
+  local ready_file="${m5_xmr_runtime_root}/ready-${instance}"
+  local -a arguments=(
+    --socket "$m5_xmr_maker_socket"
+    --database "$m5_xmr_maker_database"
+    --ready-file "$ready_file"
+    --delivery-directory "$m5_xmr_delivery_root"
+    --delivery-signing-key-file "$m5_xmr_delivery_key"
+  )
+  [[ -z "$m5_application_daemon_pid" ]] || fail "M5 XMR Maker daemon is already tracked"
+  [[ ! -e "$ready_file" && ! -L "$ready_file" ]] || fail "M5 XMR daemon ready path exists"
+  [[ ! -e "$m5_xmr_maker_socket" && ! -L "$m5_xmr_maker_socket" ]] ||
+    fail "M5 XMR owner socket survived a prior daemon"
+  if [[ "$with_chat" == 1 ]]; then
+    [[ ! -e "$m5_xmr_chat_socket" && ! -L "$m5_xmr_chat_socket" ]] ||
+      fail "M5 XMR Chat socket survived a prior daemon"
+    arguments+=(
+      --chat-socket "$m5_xmr_chat_socket"
+      --xmr-maker-agreement-public-key-file "$m5_xmr_maker_agreement_public_key"
+      --xmr-private-view-key-file "$m5_xmr_maker_private_view_key"
+      --xmr-actor-manifest-registry-file "$m5_xmr_actor_registry"
+      --actor-supervisor
+      --actor-attempt-timeout-milliseconds 120000
+      --actor-poll-milliseconds 20
+      --actor-requeue-delay-seconds 3600
+      --actor-failure-backoff-seconds 30
+      --actor-max-output-bytes 8192
+    )
+  fi
+  setsid "$m5_lez_maker_daemon_binary" "${arguments[@]}" >"$log_file" 2>&1 &
+  m5_application_daemon_pid=$!
+  m5_application_daemon_binary_sha256="$(sha256_file "$m5_lez_maker_daemon_binary")"
+  for _ in {1..100}; do
+    start="$(process_start_ticks "$m5_application_daemon_pid")"
+    if [[ -n "$start" ]] && process_is_owned "$m5_application_daemon_pid" "$start" \
+      "$m5_application_daemon_binary_sha256"; then
+      break
+    fi
+    sleep 0.01
+  done
+  [[ -n "$start" ]] || fail "M5 XMR Maker daemon did not expose a process identity"
+  process_is_owned "$m5_application_daemon_pid" "$start" \
+    "$m5_application_daemon_binary_sha256" || fail "M5 XMR Maker daemon identity drifted at launch"
+  observed_group="$(ps -o pgid= -p "$m5_application_daemon_pid" | tr -d " ")"
+  [[ "$observed_group" == "$m5_application_daemon_pid" ]] ||
+    fail "M5 XMR Maker daemon does not own a fresh process group"
+  m5_application_daemon_start_ticks="$start"
+  m5_application_daemon_group="$observed_group"
+  m5_application_daemon_ready="$ready_file"
+  m5_application_daemon_had_chat="$with_chat"
+  record_resource process "$m5_application_daemon_pid" "m5-xmr-daemon-${instance}" \
+    "$m5_application_daemon_start_ticks" "$m5_application_daemon_binary_sha256"
+  for _ in {1..1200}; do
+    [[ -s "$ready_file" ]] && break
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M5 XMR Maker daemon exited before readiness; inspect ${log_file}"
+    sleep 0.05
+  done
+  require_owner_file "$ready_file" "M5 XMR Maker daemon readiness"
+  published="$(sed -n "1p" "$ready_file")"
+  [[ "$published" == "$m5_xmr_maker_socket" ]] || fail "M5 XMR readiness socket drift"
+  [[ -S "$m5_xmr_maker_socket" ]] || fail "M5 XMR owner socket is unavailable"
+  if [[ "$with_chat" == 1 ]]; then
+    [[ -S "$m5_xmr_chat_socket" ]] || fail "M5 XMR Chat socket is unavailable"
+  else
+    [[ ! -e "$m5_xmr_chat_socket" && ! -L "$m5_xmr_chat_socket" ]] ||
+      fail "Delivery-only daemon exposed Chat"
+  fi
+}
+
+stop_m5_xmr_application_daemon() {
+  local pid="${m5_application_daemon_pid:-}" process_group="${m5_application_daemon_group:-}"
+  local start="${m5_application_daemon_start_ticks:-}" binary_sha="${m5_application_daemon_binary_sha256:-}"
+  local ready="${m5_application_daemon_ready:-}" had_chat="${m5_application_daemon_had_chat:-0}"
+  local status=0
+  [[ -n "$pid" ]] || return 0
+  process_is_owned "$pid" "$start" "$binary_sha" || return 1
+  [[ "$process_group" == "$pid" ]] || return 1
+  kill -INT -- "-${process_group}" 2>/dev/null || return 1
+  for _ in {1..200}; do
+    process_is_owned "$pid" "$start" "$binary_sha" || break
+    sleep 0.05
+  done
+  if process_is_owned "$pid" "$start" "$binary_sha"; then
+    kill -TERM -- "-${process_group}" 2>/dev/null || return 1
+    for _ in {1..100}; do
+      process_is_owned "$pid" "$start" "$binary_sha" || break
+      sleep 0.05
+    done
+  fi
+  if process_is_owned "$pid" "$start" "$binary_sha"; then
+    kill -KILL -- "-${process_group}" 2>/dev/null || return 1
+    for _ in {1..100}; do
+      process_is_owned "$pid" "$start" "$binary_sha" || break
+      sleep 0.05
+    done
+  fi
+  process_is_owned "$pid" "$start" "$binary_sha" && return 1
+  if wait "$pid" 2>/dev/null; then status=0; else status=$?; fi
+  [[ "$status" == 0 ]] || return 1
+  for _ in {1..100}; do
+    m5_application_process_group_has_members "$process_group" || break
+    sleep 0.05
+  done
+  if m5_application_process_group_has_members "$process_group"; then
+    kill -TERM -- "-${process_group}" 2>/dev/null || return 1
+    for _ in {1..100}; do
+      m5_application_process_group_has_members "$process_group" || break
+      sleep 0.05
+    done
+  fi
+  if m5_application_process_group_has_members "$process_group"; then
+    kill -KILL -- "-${process_group}" 2>/dev/null || return 1
+    for _ in {1..100}; do
+      m5_application_process_group_has_members "$process_group" || break
+      sleep 0.05
+    done
+  fi
+  m5_application_process_group_has_members "$process_group" && return 1
+  [[ ! -e "/proc/${pid}" ]] || return 1
+  [[ ! -e "$m5_xmr_maker_socket" && ! -L "$m5_xmr_maker_socket" ]] || return 1
+  if [[ "$had_chat" == 1 ]]; then
+    [[ ! -e "$m5_xmr_chat_socket" && ! -L "$m5_xmr_chat_socket" ]] || return 1
+  fi
+  [[ -z "$ready" || ( ! -e "$ready" && ! -L "$ready" ) ]] || return 1
+  m5_last_stopped_daemon_pid="$pid"
+  m5_last_stopped_daemon_group="$process_group"
+  m5_application_daemon_pid=""
+  m5_application_daemon_start_ticks=""
+  m5_application_daemon_group=""
+  m5_application_daemon_binary_sha256=""
+  m5_application_daemon_ready=""
+  m5_application_daemon_had_chat=0
+}
+
+prepare_m5_xmr_delivery_plan() {
+  record_phase m5_xmr_application_plan started
+  readonly m5_xmr_application_root="${private_root}/m5-xmr-application"
+  readonly m5_xmr_runtime_root="${m5_xmr_application_root}/runtime"
+  readonly m5_xmr_delivery_root="${m5_xmr_application_root}/delivery"
+  readonly m5_xmr_removed_delivery_root="${m5_xmr_application_root}/delivery-removed"
+  readonly m5_xmr_delivery_key="${m5_xmr_application_root}/delivery.key"
+  readonly m5_xmr_delivery_identity="${evidence_root}/m5-xmr-delivery-identity.json"
+  readonly m5_xmr_maker_socket="${m5_xmr_runtime_root}/maker.sock"
+  readonly m5_xmr_chat_socket="${m5_xmr_runtime_root}/chat.sock"
+  readonly m5_xmr_maker_database="${m5_xmr_application_root}/maker.sqlite3"
+  readonly m5_xmr_offer_id="m5-xmr-application-offer-001"
+  readonly m5_xmr_reservation_id="m5-xmr-application-reservation-001"
+  readonly m5_xmr_foreign_units=1000000000000
+  readonly m5_xmr_lez_units=700
+  readonly m5_xmr_offer_ttl_seconds=14400
+  mkdir -m 0700 "$m5_xmr_application_root" "$m5_xmr_runtime_root"
+  openssl rand -out "$m5_xmr_delivery_key" 32
+  chmod 0600 "$m5_xmr_delivery_key"
+  require_owner_file "$m5_xmr_delivery_key" "M5 XMR Delivery signing key"
+  "$m5_lez_maker_binary" delivery-identity --signing-key-file "$m5_xmr_delivery_key" \
+    >"$m5_xmr_delivery_identity"
+  chmod 0600 "$m5_xmr_delivery_identity"
+  require_owner_file "$m5_xmr_delivery_identity" "M5 XMR public Delivery identity"
+  m5_xmr_delivery_public_key="$(jq -er 'if .schema_version==1 and (.public_key|test("^[0-9a-f]{66}$")) then .public_key else error("invalid Delivery identity") end' \
+    "$m5_xmr_delivery_identity")"
+  readonly m5_xmr_delivery_public_key
+
+  start_m5_xmr_application_daemon delivery 0
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" configure-pair \
+    --request-id m5-xmr-route-create-001 --pair monero --direction taker-sells-lez \
+    --enabled false --price-source local --minimum-foreign-units "$m5_xmr_foreign_units" \
+    --maximum-foreign-units "$m5_xmr_foreign_units" --offer-ttl-seconds "$m5_xmr_offer_ttl_seconds" \
+    >"${evidence_root}/m5-xmr-route-created.json"
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" set-local-price \
+    --request-id m5-xmr-price-create-001 --pair monero --direction taker-sells-lez \
+    --lez-units-per-lot 7 --foreign-units-per-lot 10000000000 \
+    >"${evidence_root}/m5-xmr-price-created.json"
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" configure-pair \
+    --request-id m5-xmr-route-enable-001 --expected-revision 1 --pair monero \
+    --direction taker-sells-lez --enabled true --price-source local \
+    --minimum-foreign-units "$m5_xmr_foreign_units" \
+    --maximum-foreign-units "$m5_xmr_foreign_units" --offer-ttl-seconds "$m5_xmr_offer_ttl_seconds" \
+    >"${evidence_root}/m5-xmr-route-enabled.json"
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" publish-offer \
+    --request-id m5-xmr-publish-001 --offer-id "$m5_xmr_offer_id" \
+    --pair monero --direction taker-sells-lez >"${evidence_root}/m5-xmr-offer-published.json"
+  readonly m5_xmr_plan_receipt="${evidence_root}/m5-xmr-plan.json"
+  "$m5_lez_taker_binary" --delivery-directory "$m5_xmr_delivery_root" \
+    --maker-public-key "$m5_xmr_delivery_public_key" --now-unix-seconds "$(date -u +%s)" \
+    --pair monero --direction taker-sells-lez --plan-xmr-offer "$m5_xmr_offer_id" \
+    --reservation-id "$m5_xmr_reservation_id" --foreign-units "$m5_xmr_foreign_units" \
+    >"$m5_xmr_plan_receipt"
+  chmod 0600 "$m5_xmr_plan_receipt"
+  require_owner_file "$m5_xmr_plan_receipt" "M5 XMR authenticated plan"
+  jq -e --arg offer "$m5_xmr_offer_id" --arg reservation "$m5_xmr_reservation_id" \
+    --argjson foreign "$m5_xmr_foreign_units" --argjson lez "$m5_xmr_lez_units" '
+      .schema_version==1 and .offer_id==$offer and .reservation_id==$reservation
+      and (.signed_envelope_sha256|test("^[0-9a-f]{64}$"))
+      and (.swap_id|test("^[0-9a-f]{64}$")) and .foreign_units==$foreign
+      and .lez_units==$lez and .private_material_disclosed==false
+    ' "$m5_xmr_plan_receipt" >/dev/null || fail "M5 XMR plan changed authenticated terms"
+  m5_xmr_planned_swap_id="$(jq -er .swap_id "$m5_xmr_plan_receipt")"
+  readonly m5_xmr_planned_swap_id
+  stop_m5_xmr_application_daemon || fail "M5 XMR Delivery-only daemon did not stop exactly"
+  record_phase m5_xmr_application_plan completed
+}
+
 compose_xmr_agreement() {
   record_phase agreement started
   readonly agreement_root="${private_root}/xmr-agreement"
@@ -1083,6 +1352,12 @@ compose_xmr_agreement() {
   readonly maker_xmr_funding_cutoff_ms="$(((now_seconds + 14400) * 1000))"
   readonly refund_at_ms="$((maker_xmr_funding_cutoff_ms + 10000))"
   readonly punish_at_ms="$((refund_at_ms + 10000))"
+  local -a m5_swap_id_argument=()
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    [[ "$agreement_monero_amount_piconero" == "$m5_xmr_foreign_units" && \
+       "$agreement_lez_amount" == "$m5_xmr_lez_units" ]] || fail "M5 XMR plan/agreement terms drift"
+    m5_swap_id_argument=(--swap-id "$m5_xmr_planned_swap_id")
+  fi
 
   record_phase journals started
   "$agreement_runner" execute --run-id "$run_id" --output-root "$agreement_root" \
@@ -1095,6 +1370,7 @@ compose_xmr_agreement() {
     --lez-amount "$agreement_lez_amount" \
     --maker-xmr-funding-cutoff-ms "$maker_xmr_funding_cutoff_ms" \
     --refund-at-ms "$refund_at_ms" --punish-at-ms "$punish_at_ms" \
+    "${m5_swap_id_argument[@]}" \
     --actor-bin "$agreement_actor_binary" --role-runner-bin "$agreement_role_runner_binary" \
     --composer-bin "$agreement_composer_binary" >"$agreement_stdout"
   chmod 0600 "$agreement_stdout"
@@ -1126,6 +1402,10 @@ compose_xmr_agreement() {
       and .sessions_equal_across_roles==true and .taker_claim_material_private==true
       and .refund_presignatures_equal==true and .stage_b_countersigned==true
     ' "$agreement_receipt" >/dev/null || fail "agreement receipt violates the exact M4 boundary"
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    jq -e --arg swap "$m5_xmr_planned_swap_id" '.swap_id==$swap' "$agreement_receipt" >/dev/null ||
+      fail "M5 XMR plan swap ID did not survive agreement composition"
+  fi
   jq -e '(.wire_bytes|type)=="number" and .wire_bytes>0
     and (.agreement_commitment|test("^[0-9a-f]{64}$"))
     and (.monero_genesis_hash|test("^[0-9a-f]{64}$"))
@@ -1164,6 +1444,306 @@ compose_xmr_agreement() {
     fail "refund presignatures differ"
   record_phase journals completed
   record_phase agreement completed
+}
+
+m5_delivery_offer_files_absent() {
+  local directory="$1"
+  [[ -d "$directory" && ! -L "$directory" ]] || return 1
+  [[ -z "$(find "$directory" -mindepth 1 -maxdepth 1 -name "*.offer.json" -print -quit)" ]]
+}
+
+require_no_sqlite_sidecars() {
+  local database="$1" label="$2" suffix
+  for suffix in -wal -shm -journal; do
+    [[ ! -e "${database}${suffix}" && ! -L "${database}${suffix}" ]] ||
+      fail "${label} has a forbidden SQLite sidecar: ${suffix}"
+  done
+}
+
+write_m5_journal_snapshot() {
+  local output="$1" maker_journal="$2" taker_journal="$3"
+  [[ ! -e "$output" && ! -L "$output" ]] || fail "M5 XMR journal snapshot exists"
+  require_owner_file "$maker_journal" "M5 XMR Maker role journal"
+  require_owner_file "$taker_journal" "M5 XMR Taker role journal"
+  require_no_sqlite_sidecars "$maker_journal" "M5 XMR Maker role journal"
+  require_no_sqlite_sidecars "$taker_journal" "M5 XMR Taker role journal"
+  jq -n --arg maker_path "$maker_journal" --arg taker_path "$taker_journal" \
+    --argjson maker_device "$(stat -c %d "$maker_journal")" \
+    --argjson maker_inode "$(stat -c %i "$maker_journal")" \
+    --argjson maker_size "$(stat -c %s "$maker_journal")" \
+    --arg maker_sha256 "$(sha256_file "$maker_journal")" \
+    --argjson taker_device "$(stat -c %d "$taker_journal")" \
+    --argjson taker_inode "$(stat -c %i "$taker_journal")" \
+    --argjson taker_size "$(stat -c %s "$taker_journal")" \
+    --arg taker_sha256 "$(sha256_file "$taker_journal")" '
+      {schema_version:1,sqlite_sidecars_present:false,
+       maker:{path:$maker_path,device:$maker_device,inode:$maker_inode,size:$maker_size,sha256:$maker_sha256},
+       taker:{path:$taker_path,device:$taker_device,inode:$taker_inode,size:$taker_size,sha256:$taker_sha256}}
+    ' >"$output"
+  chmod 0600 "$output"
+  require_owner_file "$output" "M5 XMR journal snapshot"
+}
+
+write_m5_application_artifact_snapshot() {
+  local output="$1" path
+  [[ ! -e "$output" && ! -L "$output" ]] || fail "M5 XMR artifact snapshot exists"
+  [[ -z "$(find "$m5_xmr_maker_actor_root" "$m5_xmr_taker_actor_root" -type l -print -quit)" ]] ||
+    fail "M5 XMR actor tree contains a symlink"
+  {
+    for path in "$m5_xmr_taker_receipt" "$m5_xmr_maker_role_journal" "$m5_xmr_taker_role_journal"; do
+      require_owner_file "$path" "M5 XMR immutable application artifact"
+      printf "%s\t%s\t%s\t%s\t%s\n" "$(stat -c %d "$path")" "$(stat -c %i "$path")" \
+        "$(stat -c %s "$path")" "$(sha256_file "$path")" "$path"
+    done
+    while IFS= read -r -d "" path; do
+      require_owner_file "$path" "M5 XMR immutable actor artifact"
+      printf "%s\t%s\t%s\t%s\t%s\n" "$(stat -c %d "$path")" "$(stat -c %i "$path")" \
+        "$(stat -c %s "$path")" "$(sha256_file "$path")" "$path"
+    done < <(find "$m5_xmr_maker_actor_root" "$m5_xmr_taker_actor_root" -type f -print0 | sort -z)
+  } | sort >"$output"
+  chmod 0600 "$output"
+  require_owner_file "$output" "M5 XMR application artifact snapshot"
+}
+
+run_m5_xmr_taker_acceptance() {
+  local output="$1" use_delivery="$2"
+  local -a arguments=(
+    --maker-public-key "$m5_xmr_delivery_public_key"
+    --now-unix-seconds "$(date -u +%s)"
+    --pair monero
+    --direction taker-sells-lez
+    --accept-xmr-offer "$m5_xmr_offer_id"
+    --chat-socket "$m5_xmr_chat_socket"
+    --reservation-id "$m5_xmr_reservation_id"
+    --foreign-units "$m5_xmr_foreign_units"
+    --xmr-stage-a-file "$agreement_stage_a"
+    --xmr-activation-file "$agreement_stage_b"
+    --xmr-source-taker-root "${agreement_root}/material/taker"
+    --xmr-taker-public-packet "${agreement_root}/exchange/taker.json"
+    --xmr-maker-public-packet "${agreement_root}/exchange/maker.json"
+    --xmr-taker-role-journal "$m5_xmr_taker_role_journal"
+    --xmr-taker-actor-root "$m5_xmr_taker_actor_root"
+    --xmr-acceptance-receipt "$m5_xmr_taker_receipt"
+  )
+  if [[ "$use_delivery" == 1 ]]; then
+    arguments=(--delivery-directory "$m5_xmr_delivery_root" "${arguments[@]}")
+  fi
+  "$m5_lez_taker_binary" "${arguments[@]}" >"$output"
+  chmod 0600 "$output"
+  require_owner_file "$output" "M5 XMR Taker acceptance output"
+}
+
+wait_m5_xmr_typed_blocked() {
+  local monitor_tmp="${evidence_root}/.m5-xmr-monitor.tmp" members=""
+  for _ in {1..1200}; do
+    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+      --id "$m5_xmr_planned_swap_id" >"$monitor_tmp" 2>/dev/null &&
+      jq -e --arg swap "$m5_xmr_planned_swap_id" '
+        .schema_version==1 and .swap_id==$swap and .actor_kind=="monero"
+        and .schedule_state=="queued" and .lease_generation==1 and .attempt_count==1
+        and .progress.source_generation==1 and .progress.observation.state=="active"
+        and .progress.observation.phase=="offered" and .progress.observation.revision==0
+        and .progress.observation.next_action=="xmr_chain_effects_not_yet_composed"
+        and (.progress.observed_at|type)=="number" and .manual_action==null
+      ' "$monitor_tmp" >/dev/null 2>&1; then
+      break
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" || fail "M5 XMR supervisor daemon exited before Blocked"
+    sleep 0.05
+  done
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    .swap_id==$swap and .schedule_state=="queued" and .attempt_count==1
+    and .progress.observation=={state:"active",phase:"offered",revision:0,
+      next_action:"xmr_chain_effects_not_yet_composed"} and .manual_action==null
+  ' "$monitor_tmp" >/dev/null || fail "M5 XMR supervisor did not commit the exact typed Blocked projection"
+  members="$(m5_application_process_group_members "$m5_application_daemon_group")"
+  [[ "$members" == "$m5_application_daemon_pid" ]] ||
+    fail "M5 XMR supervisor retained an actor child after the bounded observation"
+  mv "$monitor_tmp" "$m5_xmr_blocked_monitor"
+  chmod 0600 "$m5_xmr_blocked_monitor"
+  require_owner_file "$m5_xmr_blocked_monitor" "M5 XMR typed Blocked monitor"
+}
+
+complete_m5_xmr_application_handoff() {
+  record_phase m5_xmr_application started
+  readonly m5_xmr_maker_role_journal="${agreement_root}/stage-b/private/maker.sqlite"
+  readonly m5_xmr_taker_role_journal="${agreement_root}/stage-b/private/taker.sqlite"
+  readonly m5_xmr_journals_before="${evidence_root}/m5-xmr-journals-before.json"
+  readonly m5_xmr_journals_after="${evidence_root}/m5-xmr-journals-after.json"
+  write_m5_journal_snapshot "$m5_xmr_journals_before" \
+    "$m5_xmr_maker_role_journal" "$m5_xmr_taker_role_journal"
+
+  readonly m5_xmr_maker_actor_root="${m5_xmr_application_root}/maker-actor"
+  readonly m5_xmr_maker_provision="${evidence_root}/m5-xmr-maker-provision.json"
+  "$agreement_actor_binary" provision-application maker \
+    --private-root "${agreement_root}/material/maker" \
+    --own-public-packet "${agreement_root}/exchange/maker.json" \
+    --peer-public-packet "${agreement_root}/exchange/taker.json" \
+    --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" \
+    --role-journal "$m5_xmr_maker_role_journal" --output-root "$m5_xmr_maker_actor_root" \
+    >"$m5_xmr_maker_provision"
+  chmod 0600 "$m5_xmr_maker_provision"
+  require_owner_file "$m5_xmr_maker_provision" "M5 XMR Maker application provision"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" --arg stage_a "$(sha256_file "$agreement_stage_a")" \
+    --arg stage_b "$(sha256_file "$agreement_stage_b")" '
+      .schema_version==1 and .role=="maker" and .was_replay==false and .swap_id==$swap
+      and .stage_a_sha256==$stage_a and .stage_b_sha256==$stage_b
+      and .private_material_disclosed==false
+    ' "$m5_xmr_maker_provision" >/dev/null ||
+    fail "decoded Stage A did not retain the authenticated M5 XMR swap ID and terms"
+  m5_xmr_decoded_stage_a_swap_id="$(jq -er .swap_id "$m5_xmr_maker_provision")"
+  m5_xmr_actor_config="$(jq -er .config_path "$m5_xmr_maker_provision")"
+  m5_xmr_actor_state="$(jq -er .state_database_path "$m5_xmr_maker_provision")"
+  readonly m5_xmr_decoded_stage_a_swap_id m5_xmr_actor_config m5_xmr_actor_state
+  require_owner_file "$m5_xmr_actor_config" "M5 XMR Maker actor manifest"
+  require_owner_file "$m5_xmr_actor_state" "M5 XMR Maker actor state"
+
+  readonly m5_xmr_maker_agreement_public_key="${m5_xmr_application_root}/maker-agreement.pub"
+  readonly m5_xmr_maker_private_view_key="${m5_xmr_application_root}/maker-view.raw"
+  readonly m5_xmr_actor_registry="${m5_xmr_application_root}/maker-registry.json"
+  jq -er .agreement_public_key "${agreement_root}/exchange/maker.json" | xxd -r -p \
+    >"$m5_xmr_maker_agreement_public_key"
+  tr -d "\n" <"${agreement_root}/material/maker/monero-view.key" | xxd -r -p \
+    >"$m5_xmr_maker_private_view_key"
+  chmod 0600 "$m5_xmr_maker_agreement_public_key" "$m5_xmr_maker_private_view_key"
+  require_owner_file "$m5_xmr_maker_agreement_public_key" "M5 XMR Maker public agreement key"
+  require_owner_file "$m5_xmr_maker_private_view_key" "M5 XMR Maker private view key"
+  [[ "$(stat -c %s "$m5_xmr_maker_agreement_public_key")" == 33 ]] ||
+    fail "M5 XMR Maker public agreement key width drift"
+  [[ "$(stat -c %s "$m5_xmr_maker_private_view_key")" == 32 ]] ||
+    fail "M5 XMR Maker private view key width drift"
+  jq -n --arg swap "$m5_xmr_planned_swap_id" --arg config "$m5_xmr_actor_config" \
+    --arg config_sha "$(sha256_file "$m5_xmr_actor_config")" \
+    --arg program "$m5_xmr_maker_actor_binary" \
+    --arg program_sha "$(sha256_file "$m5_xmr_maker_actor_binary")" \
+    --arg state "$m5_xmr_actor_state" '
+      {schema_version:1,actors:[{swap_id:$swap,config_path:$config,
+       config_sha256:$config_sha,program_path:$program,program_sha256:$program_sha,
+       state_database_path:$state}]}
+    ' >"$m5_xmr_actor_registry"
+  chmod 0600 "$m5_xmr_actor_registry"
+  require_owner_file "$m5_xmr_actor_registry" "M5 XMR strict actor registry"
+
+  readonly m5_xmr_taker_actor_root="${m5_xmr_application_root}/taker-actor"
+  readonly m5_xmr_taker_receipt="${m5_xmr_application_root}/taker-receipt.json"
+  readonly m5_xmr_initial_acceptance="${evidence_root}/m5-xmr-initial-acceptance.json"
+  readonly m5_xmr_replay_acceptance="${evidence_root}/m5-xmr-replay-acceptance.json"
+  readonly m5_xmr_blocked_monitor="${evidence_root}/m5-xmr-blocked-monitor.json"
+  start_m5_xmr_application_daemon authority 1
+  run_m5_xmr_taker_acceptance "$m5_xmr_initial_acceptance" 1
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    .schema_version==1 and .offer_revision==3 and .swap_id==$swap
+    and .replay=={stage_a:false,activation:false} and .private_material_disclosed==false
+    and .actor.role=="taker" and .actor.provisioning_replay==false
+    and .actor.receipt_replay==false
+  ' "$m5_xmr_initial_acceptance" >/dev/null || fail "M5 XMR fresh application acceptance drift"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" --arg offer "$m5_xmr_offer_id" \
+    --arg reservation "$m5_xmr_reservation_id" '
+      .schema_version==1 and .pair=="monero" and .role=="taker"
+      and .swap_id==$swap and .offer_id==$offer and .reservation_id==$reservation
+    ' "$m5_xmr_taker_receipt" >/dev/null || fail "M5 XMR Taker receipt drift"
+  wait_m5_xmr_typed_blocked
+
+  readonly m5_xmr_artifacts_before="${evidence_root}/m5-xmr-artifacts-before.tsv"
+  readonly m5_xmr_artifacts_after="${evidence_root}/m5-xmr-artifacts-after.tsv"
+  write_m5_application_artifact_snapshot "$m5_xmr_artifacts_before"
+  stop_m5_xmr_application_daemon || fail "M5 XMR authority daemon did not stop before replay"
+  [[ ! -e "$m5_xmr_removed_delivery_root" && ! -L "$m5_xmr_removed_delivery_root" ]] ||
+    fail "M5 XMR removed Delivery destination exists"
+  mv "$m5_xmr_delivery_root" "$m5_xmr_removed_delivery_root"
+  require_owner_file "${m5_xmr_removed_delivery_root}/${m5_xmr_offer_id}.offer.json" "removed original M5 XMR Delivery offer"
+  mkdir -m 0700 "$m5_xmr_delivery_root"
+  [[ -z "$(find "$m5_xmr_delivery_root" -mindepth 1 -print -quit)" ]] ||
+    fail "replacement M5 XMR Delivery root was not created empty"
+
+  start_m5_xmr_application_daemon replay 1
+  m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
+    fail "M5 XMR replay daemon reconstructed a Delivery offer"
+  run_m5_xmr_taker_acceptance "$m5_xmr_replay_acceptance" 0
+  m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
+    fail "Delivery-free M5 XMR replay observed or created an offer file"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    .schema_version==1 and .offer_revision==3 and .swap_id==$swap
+    and .replay=={stage_a:true,activation:true} and .private_material_disclosed==false
+    and .actor.role=="taker" and .actor.provisioning_replay==true
+    and .actor.receipt_replay==true
+  ' "$m5_xmr_replay_acceptance" >/dev/null || fail "M5 XMR Delivery-free exact replay drift"
+  write_m5_application_artifact_snapshot "$m5_xmr_artifacts_after"
+  cmp -- "$m5_xmr_artifacts_before" "$m5_xmr_artifacts_after" ||
+    fail "M5 XMR receipt, actor, or journal bytes/inodes changed through replay"
+  write_m5_journal_snapshot "$m5_xmr_journals_after" \
+    "$m5_xmr_maker_role_journal" "$m5_xmr_taker_role_journal"
+  cmp -- "$m5_xmr_journals_before" "$m5_xmr_journals_after" ||
+    fail "M5 XMR role journal device/inode/size/hash changed through application replay"
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+    --id "$m5_xmr_planned_swap_id" >"${evidence_root}/m5-xmr-replay-monitor.json"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    .swap_id==$swap and .actor_kind=="monero" and .schedule_state=="queued"
+    and .attempt_count==1 and .progress.observation.state=="active"
+    and .progress.observation.phase=="offered" and .progress.observation.revision==0
+    and .progress.observation.next_action=="xmr_chain_effects_not_yet_composed"
+    and .manual_action==null
+  ' "${evidence_root}/m5-xmr-replay-monitor.json" >/dev/null ||
+    fail "M5 XMR replay lost the typed Blocked owner projection"
+  stop_m5_xmr_application_daemon || fail "M5 XMR replay daemon did not stop before legacy Tag 13"
+
+  readonly m5_xmr_cutoff_evidence="${evidence_root}/m5-xmr-application-cutoff.json"
+  jq -n --arg swap "$m5_xmr_planned_swap_id" --arg decoded "$m5_xmr_decoded_stage_a_swap_id" \
+    --arg receipt_swap "$(jq -er .swap_id "$agreement_receipt")" \
+    --arg initial_swap "$(jq -er .swap_id "$m5_xmr_initial_acceptance")" \
+    --arg replay_swap "$(jq -er .swap_id "$m5_xmr_replay_acceptance")" \
+    --argjson daemon_pid "$m5_last_stopped_daemon_pid" \
+    --argjson process_group "$m5_last_stopped_daemon_group" '
+      {schema_version:1,kind:"m5_xmr_application_pre_tag13_cutoff",result:"passed",
+       plan_swap_id:$swap,agreement_receipt_swap_id:$receipt_swap,
+       decoded_stage_a_swap_id:$decoded,initial_acceptance_swap_id:$initial_swap,
+       replay_acceptance_swap_id:$replay_swap,
+       exact_terms:{monero_amount_piconero:1000000000000,lez_amount:700},
+       supervisor:{resolution:"blocked",schedule_state:"queued",attempt_count:1,
+         child_process:null,manual_action:null,chain_effect_executed:false,
+         phase:"offered",revision:0,next_action:"xmr_chain_effects_not_yet_composed",
+         minimum_reobservation_seconds:60,configured_reobservation_seconds:3600},
+       replay:{original_delivery_root_removed:true,replacement_offer_files_present:false,taker_delivery_argument_present:false,artifact_bytes_and_inodes_unchanged:true,
+         journal_device_inode_size_hash_unchanged:true,sqlite_sidecars_present:false},
+       cutoff:{daemon_pid:$daemon_pid,process_group:$process_group,pid_absent:true,
+         process_group_absent:true,owner_socket_absent:true,chat_socket_absent:true,
+         ready_files_absent:true},legacy_tag13_started:false}
+    ' >"$m5_xmr_cutoff_evidence"
+  chmod 0600 "$m5_xmr_cutoff_evidence"
+  require_owner_file "$m5_xmr_cutoff_evidence" "M5 XMR pre-Tag13 cutoff evidence"
+  record_phase m5_xmr_application completed
+}
+
+verify_m5_xmr_application_cutoff() {
+  [[ -z "$m5_application_daemon_pid" ]] || fail "M5 XMR daemon remains tracked at Tag 13 cutoff"
+  [[ ! -e "/proc/${m5_last_stopped_daemon_pid}" ]] || fail "M5 XMR daemon PID exists at Tag 13 cutoff"
+  m5_application_process_group_has_members "$m5_last_stopped_daemon_group" &&
+    fail "M5 XMR daemon process group exists at Tag 13 cutoff"
+  [[ ! -e "$m5_xmr_maker_socket" && ! -L "$m5_xmr_maker_socket" ]] ||
+    fail "M5 XMR owner socket exists at Tag 13 cutoff"
+  [[ ! -e "$m5_xmr_chat_socket" && ! -L "$m5_xmr_chat_socket" ]] ||
+    fail "M5 XMR Chat socket exists at Tag 13 cutoff"
+  [[ -z "$(find "$m5_xmr_runtime_root" -mindepth 1 -maxdepth 1 -name "ready-*" -print -quit)" ]] ||
+    fail "M5 XMR readiness evidence survived daemon cutoff"
+  require_no_sqlite_sidecars "$m5_xmr_maker_role_journal" "M5 XMR Maker role journal at cutoff"
+  require_no_sqlite_sidecars "$m5_xmr_taker_role_journal" "M5 XMR Taker role journal at cutoff"
+  m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
+    fail "M5 XMR replacement Delivery root gained an offer before Tag 13"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    .result=="passed" and .plan_swap_id==$swap and .agreement_receipt_swap_id==$swap
+    and .decoded_stage_a_swap_id==$swap and .initial_acceptance_swap_id==$swap
+    and .replay_acceptance_swap_id==$swap and .supervisor.resolution=="blocked"
+    and .supervisor.chain_effect_executed==false and .supervisor.child_process==null
+    and .supervisor.minimum_reobservation_seconds==60
+    and .supervisor.configured_reobservation_seconds==3600
+    and .replay.original_delivery_root_removed==true
+    and .replay.replacement_offer_files_present==false
+    and .replay.taker_delivery_argument_present==false
+    and .cutoff.pid_absent==true and .cutoff.process_group_absent==true
+    and .cutoff.owner_socket_absent==true and .cutoff.chat_socket_absent==true
+    and .cutoff.ready_files_absent==true and .legacy_tag13_started==false
+  ' "$m5_xmr_cutoff_evidence" >/dev/null || fail "M5 XMR pre-Tag13 cutoff evidence drift"
 }
 
 submit_tag13() {
@@ -1446,7 +2026,14 @@ execute_run() {
   deploy_m4_program
   actor_onboarding
   start_monero_child
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    prepare_m5_xmr_delivery_plan
+  fi
   compose_xmr_agreement
+  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+    complete_m5_xmr_application_handoff
+    verify_m5_xmr_application_cutoff
+  fi
   submit_tag13
   export_tag13_handoff
   start_role_sidecars

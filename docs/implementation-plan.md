@@ -3790,9 +3790,10 @@ separately from runtime dependencies.
 
 The progressive local ZEC application PoC gate closed on 2026-07-24, and the
 exact pushed BTC application corridor is also GREEN. After the verified XMR
-schema-v2 semantic-supervisor checkpoint, remaining M5 PoC ETA is 6 to 11
-focused implementation hours; the milestone-tag ETA is 9 to 17 focused hours
-from the last verified push. Update both ranges on every push. The PoC range
+schema-v2 semantic-supervisor checkpoint and the source/contract-complete
+actual-runner splice described below, remaining M5 PoC ETA is 4 to 8 focused
+implementation hours; the milestone-tag ETA is 7 to 14 focused hours from
+pushed base `d7827c9`. Update both ranges on every push. The PoC range
 covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
 and the remaining concurrent/unavailable-route closure. The tag range additionally
 includes evidence synchronization, manual-flow/README closure, the final CI and
@@ -4033,11 +4034,30 @@ least 60 seconds. The exact real-process proof is GREEN 1 of 1 in 79.22 seconds.
 Optimizing only the four portable XMR cryptography kernels reduced complete
 authority replay from 194.75 to 29.02 seconds without changing debug assertions,
 validation, ordering, RPC, finality, or effect semantics. Runtime chain resources
-remain empty. The next gate is the existing isolated official Monero 0.18.5.1
-Regtest plus LEZ v0.2 claim corridor under this accepted authority, followed by
-concurrent/all-pair closure. Remaining M5 PoC ETA is 6 to 11 focused hours and
-milestone-tag ETA is 9 to 17 focused hours from the last verified push; neither
-range claims completion or hides the still-open actual-chain execution.
+remain empty.
+
+The opt-in XMR application-to-chain runner is now SOURCE/CONTRACT-GREEN only,
+not runtime/PoC GREEN. `scripts/run-m5-xmr-application-poc.sh execute` validates
+an exact clean commit and delegates to the existing M4 actual-claim runner with
+`M5_XMR_APPLICATION_MODE=1`. The composed order is Delivery-only publication
+and authenticated plan; canonical Stage A/B; Maker provisioning; authorized
+daemon; real Taker acceptance and role receipt; typed-Blocked supervisor
+observation; removal of the original Delivery tree; Delivery-free exact replay;
+and a synchronous daemon/process-group/socket/readiness cutoff immediately
+before the one-shot legacy tag 13 tail. Exact journal
+device/inode/size/digest snapshots, artifact byte/inode snapshots, absent SQLite
+sidecars, and one swap ID across plan, agreement, provisioning, acceptance, and
+replay are required. Cleanup is ledger-, PID/start-time/binary-, and
+Docker-label-scoped; an earlier cleanup error is no longer erased by a later
+absence check. The runner uses official Monero 0.18.5.1 Regtest and LEZ v0.2
+local nodes, ephemeral loopback RPCs, and deterministic local genesis/Regtest
+funds only. No public RPC, faucet, peer, or public funds participate.
+
+No execution of this opt-in path is claimed yet. Its exact isolated replay is
+the next gate, followed by concurrent/all-pair and unavailable-route closure.
+From pushed base `d7827c9`, remaining M5 PoC ETA is 4 to 8 focused hours and
+milestone-tag ETA is 7 to 14 focused hours; neither range hides the still-open
+runtime evidence.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

@@ -5,7 +5,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export LC_ALL=C
 umask 077
 
-readonly repo_root="$(pwd)"
+repo_root="$(pwd)"
+readonly repo_root
 readonly m4_runner="scripts/run-m4-actual-claim-poc.sh"
 
 fail() {

@@ -5990,8 +5990,126 @@ funds. This absence removes node/finality flakiness but also means the checkpoin
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The remaining PoC gate is the isolated official Monero 0.18.5.1 Regtest plus LEZ
 v0.2 corridor under this accepted authority, followed by concurrent/all-pair
-closure. Current ETA remains 6 to 11 focused hours for the M5 PoC and 9 to 17
-focused hours for the milestone tag from the last verified push.
+closure. From pushed base `d7827c9`, current ETA is 4 to 8 focused hours for the
+M5 PoC and 7 to 14 focused hours for the milestone tag.
+
+## Flow 1R: run the XMR application-to-chain corridor
+
+Status: **SOURCE/CONTRACT-GREEN only; 0 executions.** This is the next manual
+flow, not evidence that the M5 XMR PoC has run or passed. It composes the
+accepted application authority ahead of the existing M4 claim tail against
+official isolated local nodes.
+
+Reuse all prerequisites from
+[Flow 0](#flow-0-m4-official-monero-regtest-topology): Docker, the pinned Rust
+toolchain and offline Cargo cache, the verified RapidSnark v0.0.8 libraries,
+the existing absolute Risc0 tool directory, and the checked
+`logos-blockchain-circuits` directory. Start from the exact commit containing
+this runner and a clean worktree. Choose a new run ID; the wrapper rejects any
+existing M4, LEZ, or Monero child namespace.
+
+```bash
+test -z "$(git status --porcelain=v1 --untracked-files=normal)"
+
+export RUN_ID=m5-xmr-app-20260730a
+export M4_EXPECTED_COMMIT="$(git rev-parse --verify HEAD)"
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+
+scripts/run-m5-xmr-application-poc.sh contract | jq .
+scripts/run-m5-xmr-application-poc.sh execute
+```
+
+The `contract` command must still report `execution_performed:false`,
+`certification.status:"not_yet_executed"`, official Monero `0.18.5.1`
+`isolated_regtest`, LEZ `0.2` `isolated_local_devnet`, and deterministic local
+funds. `execute` validates the clean commit again, sets
+`M5_XMR_APPLICATION_MODE=1`, and delegates to the existing actual-claim runner.
+Do not set that implementation flag manually.
+
+The expected Docker topology is:
+
+- LEZ v0.2 Bedrock, indexer, and sequencer services. Their dynamically assigned
+  literal-loopback endpoints are `BEDROCK_RPC_URL`, `LEZ_INDEXER_RPC_URL`, and
+  `LEZ_SEQUENCER_RPC_URL` in `.e2e/$RUN_ID/lez-v02/run.env`.
+- Official Monero 0.18.5.1 `monerod`, a deterministic funding wallet RPC, a
+  Maker wallet RPC, and a Taker wallet RPC. Their literal-loopback endpoints are
+  `MONERO_DAEMON_ENDPOINT`, `MONERO_FUNDING_WALLET_ENDPOINT`,
+  `MONERO_MAKER_WALLET_ENDPOINT`, and `MONERO_TAKER_WALLET_ENDPOINT` in
+  `.e2e/${RUN_ID}-xmr/monero/run.env`.
+- The Maker daemon, Maker/Taker CLIs, `xmr-maker-actor`, and later LEZ role
+  sidecars are run-scoped host processes or Unix-socket services; they do not
+  add public listeners.
+
+There are no public runtime resources: no public RPC, faucet, peer, public
+funds, DNS dependency, or external finality service. LEZ funds come from the
+deterministic local genesis and Monero funds from deterministic Regtest outputs.
+These are real local node processes, not mocked RPC responses. Ephemeral
+loopback ports prevent clashes with other work, but local Docker/containerd
+contention, node readiness, block production/finality, and wallet scanning can
+still affect wall time. The M4 baseline budgets roughly 25 to 45 minutes warm
+and 1 to 3 hours cold; this combined M5 path has not run, so it has no measured
+duration yet. A cold build can additionally depend on already pinned downloads,
+archives, and caches being present; record any such pre-runtime fetch separately
+and never describe it as a runtime chain dependency.
+
+Before tag 13 the runner must prove this exact order:
+
+1. publish the Delivery-only offer and authenticate the Taker plan;
+2. carry the same swap ID through canonical Stage A/B and the agreement receipt;
+3. provision Maker authority, run real Taker acceptance, and publish only the
+   role-owned actor bundles and Taker receipt;
+4. obtain the exact typed `Blocked` revision-0/no-effect supervisor result;
+5. remove the original Delivery tree, replay from an empty replacement without
+   a Delivery argument, and preserve journal device/inode/size/digest plus actor
+   and receipt bytes/inodes; and
+6. synchronously reap the daemon process group and prove its PID, group, owner
+   socket, Chat socket, readiness files, SQLite sidecars, and replacement offers
+   absent immediately before the one-shot tag 13 path begins.
+
+Only after that cutoff may tag 13 initialize/fund LEZ, Monero funding and
+verification run, tag 14 authorize the claim, tag 15 claim, adaptor extraction
+complete, and the Monero sweep and cross-chain binding be recorded. Application
+atomicity comes from reserve-only Stage A plus the single Stage-B SQLite
+transaction that activates the negotiation, consumes the offer, creates the
+coordinator and one immutable Maker actor, and records replay. Cross-chain
+atomicity comes from the existing adaptor-signature claim/sweep tail; the
+pre-tag-13 cutoff prevents the application supervisor and legacy one-shot
+authority from being live concurrently.
+
+Inspect these run-owned paths even after a failed command:
+
+```bash
+export M5_XMR_EVIDENCE=".e2e/$RUN_ID/m4-actual-claim/evidence"
+export M5_XMR_MANIFESTS=".e2e/$RUN_ID/m4-actual-claim/manifests"
+
+jq . "$M5_XMR_EVIDENCE/m5-xmr-plan.json"
+jq . "$M5_XMR_EVIDENCE/xmr-agreement-receipt.json"
+jq . "$M5_XMR_EVIDENCE/m5-xmr-maker-provision.json"
+jq . "$M5_XMR_EVIDENCE/m5-xmr-initial-acceptance.json"
+jq . "$M5_XMR_EVIDENCE/m5-xmr-blocked-monitor.json"
+jq . "$M5_XMR_EVIDENCE/m5-xmr-replay-acceptance.json"
+jq . "$M5_XMR_EVIDENCE/m5-xmr-replay-monitor.json"
+jq . "$M5_XMR_EVIDENCE/m5-xmr-application-cutoff.json"
+jq . "$M5_XMR_EVIDENCE/cleanup.json"
+```
+
+The same directory retains `m5-xmr-journals-before.json`,
+`m5-xmr-journals-after.json`, `m5-xmr-artifacts-before.tsv`,
+`m5-xmr-artifacts-after.tsv`, the legacy claim-tail evidence, and
+`phases.jsonl`. `manifests/resource-ledger.jsonl` records exact cleanup
+ownership. Cleanup validates process PID/start time/binary identity and Docker
+run labels, removes only ledgered run resources, preserves a foreign sentinel,
+and forbids broad pruning. A label, identity, or removal failure remains a
+failed cleanup even when the final absence probe is clean.
+
+**Never rerun this `RUN_ID` if
+`.e2e/$RUN_ID/m4-actual-claim/manifests/tag13-no-retry.latch` exists.** Tag 13
+is a one-shot mutation boundary; retain the latch and evidence, diagnose the
+run, and use a fresh run ID only after review. Do not delete the latch, repeat
+the wrapper, or manually continue a partial tail.
 
 ## Troubleshooting
 
