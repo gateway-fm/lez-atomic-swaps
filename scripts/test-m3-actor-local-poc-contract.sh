@@ -2417,6 +2417,7 @@ required_terms=(
   'btc-reference-actor'
   'lez-adaptor-role-runner'
   'lez-v02-bridge-poc'
+  'local socket="${secure_state_root}/m5-btc-maker.sock"'
   'lez-v02-local-actor-identity'
   'lez-v02-account-id'
   'btc-core-p2tr-fixture'
@@ -2461,6 +2462,12 @@ required_terms=(
 for term in "${required_terms[@]}"; do
   require_fixed "$term"
 done
+max_run_id="$(printf 'a%.0s' {1..48})"
+max_m5_socket="/tmp/lez-atomic-swaps-m3-${max_run_id}-secure-state/m5-btc-maker.sock"
+(( ${#max_m5_socket} < 108 )) ||
+  fail "M5 application socket can exceed the portable Unix SUN_LEN bound"
+
+
 
 artifact_identity_line="$(rg -n '^validate_lez_artifact_identity$' "$runner" |
   tail -n1 | cut -d: -f1)"
