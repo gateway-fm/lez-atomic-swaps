@@ -3791,9 +3791,9 @@ separately from runtime dependencies.
 The progressive local ZEC application PoC gate closed on 2026-07-24, and the
 exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
-actual-runner splice described below, remaining M5 PoC ETA is 4 to 8 focused
-implementation hours; the milestone-tag ETA is 7 to 14 focused hours from
-pushed base `d7827c9`. Update both ranges on every push. The PoC range
+actual-runner splice described below, remaining M5 PoC ETA is 3 to 6 focused
+implementation hours; the milestone-tag ETA is 6 to 11 focused hours from
+pushed base `a5a5d0e`. Update both ranges on every push. The PoC range
 covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
 and the remaining concurrent/unavailable-route closure. The tag range additionally
 includes evidence synchronization, manual-flow/README closure, the final CI and
@@ -4053,11 +4053,16 @@ absence check. The runner uses official Monero 0.18.5.1 Regtest and LEZ v0.2
 local nodes, ephemeral loopback RPCs, and deterministic local genesis/Regtest
 funds only. No public RPC, faucet, peer, or public funds participate.
 
-No execution of this opt-in path is claimed yet. Its exact isolated replay is
-the next gate, followed by concurrent/all-pair and unavailable-route closure.
-From pushed base `d7827c9`, remaining M5 PoC ETA is 4 to 8 focused hours and
-milestone-tag ETA is 7 to 14 focused hours; neither range hides the still-open
-runtime evidence.
+One exact-commit attempt, `m5-xmr-app-20260730-a5a5d0e-a`, stopped during
+the first offline build before any node, RPC, Docker chain resource, or tag-13
+latch existed. It exposed a stale separately locked sidecar edge: XMR SDK
+`hex` and `lez-swap-core` runtime dependencies had reached the root lock but
+not the sidecar lock. The minimal 11-line lock repair resolves fully offline,
+and the focused M5 contract now pins both edges. Cleanup passed and no chain
+execution or swap is claimed. A fresh exact isolated replay is the next gate,
+followed by concurrent/all-pair and unavailable-route closure. From pushed base
+`a5a5d0e`, remaining M5 PoC ETA is 3 to 6 focused hours and milestone-tag ETA
+is 6 to 11 focused hours; neither range hides the still-open runtime evidence.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

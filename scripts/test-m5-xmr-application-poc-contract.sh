@@ -6,6 +6,7 @@ export LC_ALL=C
 
 readonly wrapper="scripts/run-m5-xmr-application-poc.sh"
 readonly runner="scripts/run-m4-actual-claim-poc.sh"
+readonly sidecar_lock="compat/lez-v0_2-sidecar/Cargo.lock"
 
 fail() {
   echo "M5 XMR application-to-chain contract failed: $*" >&2
@@ -196,5 +197,21 @@ cleanup_line="$(unique_line '^cleanup\(\) \{$' 'cleanup function')"
 cleanup_hook_line="$(unique_line '^    stop_m5_xmr_application_daemon \|\| cleanup_failed=1$' 'M5 cleanup hook')"
 readonly cleanup_line cleanup_hook_line
 (( cleanup_line < cleanup_hook_line )) || fail 'M5 daemon cleanup hook is outside cleanup()'
+
+rg -Uq 'name = "lez-swap-core"
+version = "0.1.0"
+dependencies = \[
+ "serde",
+ "sha2",
+ "thiserror 2.0.18",
+\]' "$sidecar_lock" ||
+  fail 'sidecar lock omits the reachable lez-swap-core package'
+rg -Uq 'name = "lez-xmr-swap-sdk"
+version = "0.1.0"
+dependencies = \[
+ "hex",
+ "lez-adaptor-signature",
+ "lez-swap-core",' "$sidecar_lock" ||
+  fail 'sidecar lock omits XMR SDK runtime dependency edges'
 
 echo 'M5 XMR application-to-chain contract passed'
