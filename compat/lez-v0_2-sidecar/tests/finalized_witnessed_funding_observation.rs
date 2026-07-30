@@ -645,6 +645,46 @@ async fn finalized_initialization_miss_is_uncertain_not_absent() {
 }
 
 #[tokio::test]
+async fn finalized_initialization_scans_available_prefix_before_authorized_window_end() {
+    let mut fixture = initialization_fixture();
+    fixture.request.window = DiscoveryWindow::new(FUNDING_BLOCK_ID, 4).unwrap();
+    let observer = FinalizedWitnessedInitializationObserver::new(
+        fixture.runtime.clone(),
+        initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]),
+    );
+
+    let result = observer.classify(&fixture.request).await.unwrap();
+
+    assert_eq!(
+        result.scanned_window,
+        DiscoveryWindow::new(FUNDING_BLOCK_ID, 2).unwrap()
+    );
+    assert!(matches!(
+        result.outcome,
+        FinalizedWitnessedInitializationScanOutcome::Found { initialization }
+            if initialization.transaction.transaction_id
+                == fixture.request.initialization.transaction_id
+    ));
+}
+
+#[tokio::test]
+async fn incomplete_finalized_initialization_prefix_is_uncertain_not_absent() {
+    let mut fixture = initialization_fixture();
+    fixture.blocks[0].body.transactions.clear();
+    fixture.request.window = DiscoveryWindow::new(FUNDING_BLOCK_ID, 4).unwrap();
+    let observer = FinalizedWitnessedInitializationObserver::new(
+        fixture.runtime.clone(),
+        initialization_indexer(&fixture, [Some(FINALIZED_TIP_ID)]),
+    );
+
+    let result = observer.classify(&fixture.request).await.unwrap();
+
+    assert!(matches!(
+        result.outcome,
+        FinalizedWitnessedInitializationScanOutcome::Uncertain {}
+    ));
+}
+#[tokio::test]
 async fn finalized_initialization_never_treats_wrong_exact_bytes_as_absence() {
     let mut fixture = initialization_fixture();
     fixture.request.initialization.exact_bytes = ExactTransactionBytes::new(vec![1, 2, 3]).unwrap();
@@ -898,10 +938,11 @@ async fn exact_funding_is_returned_only_after_dual_lookup_and_stable_finalized_t
         *indexer.calls.lock().unwrap(),
         vec![
             "tip".to_owned(),
-            format!("id:{FINALIZED_TIP_ID}"),
-            format!("hash:{}", hex::encode([11; 32])),
+            "tip".to_owned(),
             format!("id:{FUNDING_BLOCK_ID}"),
             format!("hash:{}", hex::encode([10; 32])),
+            format!("id:{FINALIZED_TIP_ID}"),
+            format!("hash:{}", hex::encode([11; 32])),
             format!("id:{FINALIZED_TIP_ID}"),
             format!("hash:{}", hex::encode([11; 32])),
             format!(
@@ -994,6 +1035,53 @@ async fn classifier_distinguishes_exact_funding_from_affirmative_stable_absence(
 }
 
 #[tokio::test]
+async fn finalized_funding_scans_available_prefix_before_authorized_window_end() {
+    let mut fixture = fixture();
+    fixture.request.window = DiscoveryWindow::new(FUNDING_BLOCK_ID, 4).unwrap();
+    let observer = FinalizedWitnessedFundingObserver::new(
+        fixture.runtime.clone(),
+        indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]),
+    );
+
+    let result = observer.classify(&fixture.request).await.unwrap();
+
+    assert_eq!(
+        result.scanned_window,
+        DiscoveryWindow::new(FUNDING_BLOCK_ID, 2).unwrap()
+    );
+    assert!(matches!(
+        result.outcome,
+        FinalizedWitnessedFundingScanOutcome::Found { funding }
+            if funding.transaction.transaction_id
+                == match fixture.request.target {
+                    FinalizedWitnessedFundingObservationTarget::Exact {
+                        funding_transaction_id,
+                    } => funding_transaction_id,
+                    FinalizedWitnessedFundingObservationTarget::DiscoverByTerms => {
+                        panic!("exact fixture")
+                    }
+                }
+    ));
+}
+
+#[tokio::test]
+async fn incomplete_finalized_funding_prefix_never_proves_absence() {
+    let mut fixture = fixture();
+    fixture.blocks[0].body.transactions.clear();
+    fixture.request.window = DiscoveryWindow::new(FUNDING_BLOCK_ID, 4).unwrap();
+    let observer = FinalizedWitnessedFundingObserver::new(
+        fixture.runtime.clone(),
+        indexer(&fixture, [Some(FINALIZED_TIP_ID)]),
+    );
+
+    let result = observer.classify(&fixture.request).await.unwrap();
+    assert!(matches!(
+        result.outcome,
+        FinalizedWitnessedFundingScanOutcome::Uncertain {}
+    ));
+}
+
+#[tokio::test]
 async fn classifier_never_collapses_unavailable_moving_or_malformed_evidence_into_absence() {
     let base_fixture = fixture();
     let observer = FinalizedWitnessedFundingObserver::new(
@@ -1009,10 +1097,14 @@ async fn classifier_never_collapses_unavailable_moving_or_malformed_evidence_int
         base_fixture.runtime.clone(),
         indexer(&base_fixture, [Some(FINALIZED_TIP_ID), Some(12)]),
     );
-    assert_eq!(
-        observer.classify(&base_fixture.request).await.unwrap_err(),
-        BridgeRuntimeError::MovingTip
-    );
+    assert!(matches!(
+        observer
+            .classify(&base_fixture.request)
+            .await
+            .unwrap()
+            .outcome,
+        FinalizedWitnessedFundingScanOutcome::Found { .. }
+    ));
 
     let mut malformed = fixture();
     mutate_metadata(&mut malformed, |metadata| metadata.amount += 1);
@@ -1152,7 +1244,7 @@ async fn authenticated_bridge_server_observation_is_repeatable_and_never_submits
             .iter()
             .filter(|call| call.as_str() == "tip")
             .count(),
-        6,
+        9,
         "repeatable observation and classification must execute fresh stable-tip reads"
     );
     assert_eq!(submission_calls.load(Ordering::SeqCst), 0);
@@ -1163,7 +1255,7 @@ async fn authenticated_bridge_server_observation_is_repeatable_and_never_submits
 }
 
 #[tokio::test]
-async fn pending_or_incompletely_covered_window_fails_closed() {
+async fn pending_fails_closed_but_finalized_prefix_found_is_accepted() {
     let mut pending_fixture = fixture();
     pending_fixture.blocks[0].bedrock_status = BedrockStatus::Pending;
     let observer = FinalizedWitnessedFundingObserver::new(
@@ -1186,23 +1278,19 @@ async fn pending_or_incompletely_covered_window_fails_closed() {
         fixture.runtime.clone(),
         indexer(&fixture, [Some(FUNDING_BLOCK_ID), Some(FUNDING_BLOCK_ID)]),
     );
-    assert_eq!(
-        observer.observe(&fixture.request).await.unwrap_err(),
-        BridgeRuntimeError::Unavailable
-    );
+    let found = observer.observe(&fixture.request).await.unwrap();
+    assert_eq!(found.finalized_tip.height, FUNDING_BLOCK_ID);
 }
 
 #[tokio::test]
-async fn moved_tip_or_by_id_hash_disagreement_fails_closed() {
+async fn forward_finality_is_safe_but_by_id_hash_disagreement_fails_closed() {
     let fixture = fixture();
     let observer = FinalizedWitnessedFundingObserver::new(
         fixture.runtime.clone(),
         indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(12)]),
     );
-    assert_eq!(
-        observer.observe(&fixture.request).await.unwrap_err(),
-        BridgeRuntimeError::MovingTip
-    );
+    let advanced = observer.observe(&fixture.request).await.unwrap();
+    assert_eq!(advanced.finalized_tip.height, FINALIZED_TIP_ID);
 
     let good = indexer(&fixture, [Some(FINALIZED_TIP_ID), Some(FINALIZED_TIP_ID)]);
     let mut different = fixture.blocks[0].clone();
@@ -1265,7 +1353,7 @@ async fn finalized_funding_must_be_ancestral_to_the_stable_tip() {
         ),
     );
     let result = observer.observe(&unanchored.request).await.unwrap();
-    assert_eq!(result.finalized_tip.height, FINALIZED_TIP_ID);
+    assert_eq!(result.finalized_tip.height, FUNDING_BLOCK_ID);
     assert_eq!(result.funding.containing_block.block_id, FUNDING_BLOCK_ID);
 
     let over_bound = fixture();
@@ -1273,10 +1361,8 @@ async fn finalized_funding_must_be_ancestral_to_the_stable_tip() {
         over_bound.runtime.clone(),
         indexer(&over_bound, [Some(FUNDING_BLOCK_ID + 4_096)]),
     );
-    assert_eq!(
-        observer.observe(&over_bound.request).await.unwrap_err(),
-        BridgeRuntimeError::Unavailable
-    );
+    let found = observer.observe(&over_bound.request).await.unwrap();
+    assert_eq!(found.finalized_tip.height, FINALIZED_TIP_ID);
 }
 
 #[tokio::test]

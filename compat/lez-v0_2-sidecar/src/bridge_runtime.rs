@@ -674,14 +674,17 @@ impl BridgeRuntime {
         }
         let current = self.observe_witnessed_escrow(&current_request).await?;
         Ok(match current.initialization {
-            WitnessedInitializationObservation::Absent => {
+            WitnessedInitializationObservation::Absent
+                if finalized.scanned_window == request.window =>
+            {
                 ClassifyFinalizedWitnessedInitializationResult::absent(
                     finalized.context,
                     finalized.finalized_clock,
                     finalized.scanned_window,
                 )
             }
-            WitnessedInitializationObservation::Found(_)
+            WitnessedInitializationObservation::Absent
+            | WitnessedInitializationObservation::Found(_)
             | WitnessedInitializationObservation::UnknownOrPending => {
                 ClassifyFinalizedWitnessedInitializationResult::uncertain(
                     finalized.context,

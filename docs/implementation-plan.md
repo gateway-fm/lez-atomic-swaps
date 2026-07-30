@@ -3857,6 +3857,33 @@ same SDK plan, cutoff check, durable CAS, and ordered send path as schema 4.
 All 90 actor unit tests, 11 actor CLI integration tests, and both M3/M5 shell
 contracts are GREEN. The failed replay created no LEZ effect and reached no
 secret reveal; a new exact pushed replay remains the runtime gate.
+
+That exact replay then entered the correct Maker-owned classifier but exposed a
+second fail-closed boundary: the immutable schema-6 config authorized blocks 18
+through 4,113, while the local finalized tip was still near the beginning of the
+range. The old sidecar refused to scan any block before the complete range
+existed. RED tests now cover initialization and funding found in a strict
+finalized prefix, initialization prefix uncertainty, funding prefix
+uncertainty, forbidden strict-prefix absence, forward finality, and
+scanned-end drift. The GREEN treats the 4,096-block config range as immutable
+authorization rather than a mutable cursor, reuses the fixed finalized-window
+reader for the available same-start prefix, and independently pins its endpoint.
+The client accepts only an in-envelope same-start prefix and rejects every
+strict-prefix `Absent`; the composed runtime also prevents a future current-state
+absence from bypassing the full-window rule. Exact positive evidence may advance,
+but incomplete history never creates duplicate-send or recovery authority.
+
+This additive response shape requires coordinated sidecar/client deployment.
+Older clients fail closed on the response, producing availability loss only;
+they cannot convert a prefix miss into absence or send/refund authority.
+
+All 23 native finalized-observation integration tests and all 35 bridge-client
+contract tests are GREEN. ADR 0110 records the component/RPC flow, sequence, and
+atomicity argument. Provisioned config bytes, digest, inode, prepared exact
+transactions, and role remain unchanged. The next clean pushed isolated-node
+replay must prove both ordered LEZ effects and the downstream claim before this
+BTC application chain gate can close.
+
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
 security contracts. Its extracted legacy timing fixture now declares non-M5

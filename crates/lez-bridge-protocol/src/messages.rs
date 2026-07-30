@@ -2081,7 +2081,8 @@ pub enum FinalizedWitnessedInitializationScanOutcome {
     },
     /// Stable finalized and current observations both proved exact absence.
     Absent {},
-    /// Finalized absence could not exclude current pending or unknown presence.
+    /// Available finalized ancestry could not prove exact presence or full-window absence.
+    /// This includes a current pending/unknown result and an incomplete authorized window.
     Uncertain {},
 }
 
@@ -2092,9 +2093,9 @@ pub enum FinalizedWitnessedInitializationScanOutcome {
 pub struct ClassifyFinalizedWitnessedInitializationResult {
     /// Echoed request context.
     pub context: MessageContext,
-    /// Stable finalized clock covering the exact requested window.
+    /// Stable finalized clock covering `scanned_window`.
     pub finalized_clock: ChainClock,
-    /// Exact inclusive bounded range completely scanned.
+    /// Exact same-start finalized prefix completely scanned inside the authorized request window.
     pub scanned_window: DiscoveryWindow,
     /// Finalized exact presence, affirmative absence, or conservative uncertainty.
     pub outcome: FinalizedWitnessedInitializationScanOutcome,
@@ -2321,9 +2322,10 @@ impl ObserveFinalizedWitnessedFundingResult {
 
 /// Exact outcome of one completely validated finalized witnessed-funding scan.
 ///
-/// `Absent` is affirmative only because the enclosing result carries the exact
-/// fully scanned window and stable finalized tip. Transport, history, finality,
-/// malformed evidence, and moving-tip failures cannot inhabit this enum.
+/// `Absent` is affirmative only when the enclosing result carries the complete
+/// authorized window and stable finalized clock. A strict-prefix miss is
+/// `Uncertain`; transport, unavailable history, malformed evidence, and moving
+/// scanned-end failures cannot inhabit this enum.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 #[must_use]
@@ -2335,6 +2337,8 @@ pub enum FinalizedWitnessedFundingScanOutcome {
     },
     /// The complete stable finalized scan contained no matching funding effect.
     Absent {},
+    /// The available stable finalized prefix contained no exact funding effect.
+    Uncertain {},
 }
 
 /// Result of the additive v1 witnessed-funding classifier.
@@ -2346,9 +2350,9 @@ pub struct ClassifyFinalizedWitnessedFundingResult {
     pub context: MessageContext,
     /// Stable finalized indexer clock completely covering `scanned_window`.
     pub finalized_clock: ChainClock,
-    /// Exact inclusive bounded range completely scanned.
+    /// Exact same-start finalized prefix completely scanned inside the authorized request window.
     pub scanned_window: DiscoveryWindow,
-    /// Exact funding evidence or affirmative stable-finalized absence.
+    /// Exact funding evidence, full-window absence, or strict-prefix uncertainty.
     pub outcome: FinalizedWitnessedFundingScanOutcome,
 }
 
@@ -2381,6 +2385,20 @@ impl ClassifyFinalizedWitnessedFundingResult {
             finalized_clock,
             scanned_window,
             outcome: FinalizedWitnessedFundingScanOutcome::Absent {},
+        }
+    }
+
+    /// Creates conservative uncertainty for a completely scanned strict prefix.
+    pub const fn uncertain(
+        context: MessageContext,
+        finalized_clock: ChainClock,
+        scanned_window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            finalized_clock,
+            scanned_window,
+            outcome: FinalizedWitnessedFundingScanOutcome::Uncertain {},
         }
     }
 }

@@ -123,12 +123,19 @@ enum Behavior {
     MutatedFinalizedFundingPositionHash,
     FinalizedFundingTipBeforeWindowEnd,
     PresenceNotFound,
+    FundingPresencePrefixFound,
+    FundingPresencePrefixUncertain,
+    FundingPresenceFullUncertain,
+    FundingPresencePrefixAbsent,
     PresenceUnavailable,
     PresenceMovingTip,
     PresenceWrongWindow,
     FundingPresenceZeroTimestamp,
     InitializationPresenceAbsent,
     InitializationPresenceUncertain,
+    InitializationPresencePrefixFound,
+    InitializationPresencePrefixAbsent,
+    InitializationPresencePrefixUncertain,
     MutatedFinalizedInitializationBytes,
     CurrentClockZeroTimestamp,
     CurrentClockZeroHash,
@@ -484,25 +491,37 @@ fn register_finalized_witnessed_initialization_presence_method(module: &mut RpcM
                     ),
                 );
                 let clock = ChainClock::new(Hex32::from_bytes([100; 32]), 61, 1_850_000_000_061);
+                let scanned_window = if matches!(
+                    fixture.behavior,
+                    Behavior::InitializationPresencePrefixFound
+                        | Behavior::InitializationPresencePrefixAbsent
+                        | Behavior::InitializationPresencePrefixUncertain
+                ) {
+                    DiscoveryWindow::new(request.window.start_height(), 1).unwrap()
+                } else {
+                    request.window
+                };
                 let result = match fixture.behavior {
-                    Behavior::InitializationPresenceAbsent => {
+                    Behavior::InitializationPresenceAbsent
+                    | Behavior::InitializationPresencePrefixAbsent => {
                         ClassifyFinalizedWitnessedInitializationResult::absent(
                             response_context(&request.context, fixture.behavior),
                             clock,
-                            request.window,
+                            scanned_window,
                         )
                     }
-                    Behavior::InitializationPresenceUncertain => {
+                    Behavior::InitializationPresenceUncertain
+                    | Behavior::InitializationPresencePrefixUncertain => {
                         ClassifyFinalizedWitnessedInitializationResult::uncertain(
                             response_context(&request.context, fixture.behavior),
                             clock,
-                            request.window,
+                            scanned_window,
                         )
                     }
                     _ => ClassifyFinalizedWitnessedInitializationResult::found(
                         response_context(&request.context, fixture.behavior),
                         clock,
-                        request.window,
+                        scanned_window,
                         facts,
                     ),
                 };
@@ -688,6 +707,13 @@ fn register_finalized_witnessed_funding_presence_method(module: &mut RpcModule<F
                 let observed = finalized_witnessed_funding_result(&request, fixture.behavior);
                 let scanned_window = if matches!(fixture.behavior, Behavior::PresenceWrongWindow) {
                     DiscoveryWindow::new(request.window.start_height() + 1, 1).unwrap()
+                } else if matches!(
+                    fixture.behavior,
+                    Behavior::FundingPresencePrefixFound
+                        | Behavior::FundingPresencePrefixUncertain
+                        | Behavior::FundingPresencePrefixAbsent
+                ) {
+                    DiscoveryWindow::new(request.window.start_height(), 1).unwrap()
                 } else {
                     request.window
                 };
@@ -700,7 +726,20 @@ fn register_finalized_witnessed_funding_presence_method(module: &mut RpcModule<F
                         1_850_000_000_062
                     },
                 );
-                let result = if matches!(fixture.behavior, Behavior::PresenceNotFound) {
+                let result = if matches!(
+                    fixture.behavior,
+                    Behavior::FundingPresencePrefixUncertain
+                        | Behavior::FundingPresenceFullUncertain
+                ) {
+                    ClassifyFinalizedWitnessedFundingResult::uncertain(
+                        observed.context,
+                        finalized_clock,
+                        scanned_window,
+                    )
+                } else if matches!(
+                    fixture.behavior,
+                    Behavior::PresenceNotFound | Behavior::FundingPresencePrefixAbsent
+                ) {
                     ClassifyFinalizedWitnessedFundingResult::absent(
                         observed.context,
                         finalized_clock,
@@ -1710,6 +1749,40 @@ async fn finalized_witnessed_initialization_classifier_preserves_three_way_seman
 }
 
 #[tokio::test]
+async fn finalized_witnessed_initialization_accepts_honest_prefixes_but_not_prefix_absence() {
+    assert!(matches!(
+        classify_initialization_for_behavior(
+            Behavior::InitializationPresencePrefixFound,
+            "initialization-prefix-found",
+        )
+        .await
+        .unwrap(),
+        FinalizedWitnessedInitializationPresence::Found { scanned_window, .. }
+            if scanned_window == DiscoveryWindow::new(60, 1).unwrap()
+    ));
+    assert!(matches!(
+        classify_initialization_for_behavior(
+            Behavior::InitializationPresencePrefixUncertain,
+            "initialization-prefix-uncertain",
+        )
+        .await
+        .unwrap(),
+        FinalizedWitnessedInitializationPresence::Uncertain { scanned_window, .. }
+            if scanned_window == DiscoveryWindow::new(60, 1).unwrap()
+    ));
+    assert!(matches!(
+        classify_initialization_for_behavior(
+            Behavior::InitializationPresencePrefixAbsent,
+            "initialization-prefix-absent",
+        )
+        .await
+        .unwrap_err(),
+        BridgeClientError::MalformedObservation {
+            operation: BridgeOperation::ClassifyFinalizedWitnessedInitialization,
+        }
+    ));
+}
+#[tokio::test]
 async fn finalized_witnessed_initialization_never_turns_malformed_facts_into_absence() {
     assert!(matches!(
         classify_initialization_for_behavior(
@@ -1725,7 +1798,7 @@ async fn finalized_witnessed_initialization_never_turns_malformed_facts_into_abs
 }
 
 #[tokio::test]
-async fn finalized_witnessed_funding_classifier_has_only_found_or_affirmative_absent_successes() {
+async fn finalized_witnessed_funding_full_window_has_found_or_affirmative_absent_successes() {
     let found = classify_funding_for_behavior(Behavior::Happy, "funding-presence-found")
         .await
         .unwrap();
@@ -1762,6 +1835,51 @@ async fn finalized_witnessed_funding_classifier_has_only_found_or_affirmative_ab
     ));
 }
 
+#[tokio::test]
+async fn finalized_witnessed_funding_accepts_prefix_found_and_uncertain_but_not_absence() {
+    assert!(matches!(
+        classify_funding_for_behavior(
+            Behavior::FundingPresencePrefixFound,
+            "funding-prefix-found",
+        )
+        .await
+        .unwrap(),
+        FinalizedWitnessedFundingPresence::Found { scanned_window, .. }
+            if scanned_window == DiscoveryWindow::new(60, 1).unwrap()
+    ));
+    assert!(matches!(
+        classify_funding_for_behavior(
+            Behavior::FundingPresencePrefixUncertain,
+            "funding-prefix-uncertain",
+        )
+        .await
+        .unwrap(),
+        FinalizedWitnessedFundingPresence::Uncertain { scanned_window, .. }
+            if scanned_window == DiscoveryWindow::new(60, 1).unwrap()
+    ));
+    assert!(matches!(
+        classify_funding_for_behavior(
+            Behavior::FundingPresencePrefixAbsent,
+            "funding-prefix-absent",
+        )
+        .await
+        .unwrap_err(),
+        BridgeClientError::MalformedObservation {
+            operation: BridgeOperation::ClassifyFinalizedWitnessedFunding,
+        }
+    ));
+    assert!(matches!(
+        classify_funding_for_behavior(
+            Behavior::FundingPresenceFullUncertain,
+            "funding-full-uncertain",
+        )
+        .await
+        .unwrap_err(),
+        BridgeClientError::MalformedObservation {
+            operation: BridgeOperation::ClassifyFinalizedWitnessedFunding,
+        }
+    ));
+}
 #[tokio::test]
 async fn finalized_witnessed_funding_classifier_keeps_failures_typed_and_fail_closed() {
     for (behavior, suffix, expected_code) in [

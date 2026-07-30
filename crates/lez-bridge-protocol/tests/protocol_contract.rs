@@ -301,7 +301,7 @@ fn finalized_witnessed_funding_wire_is_strict_bounded_and_complete() {
 }
 
 #[test]
-fn finalized_witnessed_funding_classifier_wire_has_only_found_or_absent_successes() {
+fn finalized_witnessed_funding_classifier_wire_preserves_three_way_semantics() {
     let terms = WitnessedNativeEscrowTerms::new(WitnessedNativeEscrowTermsInput {
         swap_id: h(60),
         terms_hash: h(61),
@@ -328,6 +328,11 @@ fn finalized_witnessed_funding_classifier_wire_has_only_found_or_absent_successe
         ChainClock::new(h(73), 70, 1_850_000_001_470),
         window,
     );
+    let uncertain = ClassifyFinalizedWitnessedFundingResult::uncertain(
+        context(),
+        ChainClock::new(h(73), 70, 1_850_000_001_470),
+        window,
+    );
 
     assert!(matches!(
         found.outcome,
@@ -336,6 +341,10 @@ fn finalized_witnessed_funding_classifier_wire_has_only_found_or_absent_successe
     assert_eq!(
         serde_json::to_value(&absent).unwrap()["outcome"],
         serde_json::json!({"status": "absent"})
+    );
+    assert_eq!(
+        serde_json::to_value(&uncertain).unwrap()["outcome"],
+        serde_json::json!({"status": "uncertain"})
     );
     assert_eq!(
         serde_json::from_value::<ClassifyFinalizedWitnessedFundingResult>(

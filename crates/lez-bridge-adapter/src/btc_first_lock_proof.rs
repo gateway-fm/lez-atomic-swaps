@@ -214,7 +214,8 @@ where
                 scanned_window,
                 funding,
             } => (context, finalized_clock, scanned_window, funding),
-            FinalizedWitnessedFundingPresence::Absent { .. } => {
+            FinalizedWitnessedFundingPresence::Absent { .. }
+            | FinalizedWitnessedFundingPresence::Uncertain { .. } => {
                 return Err(BtcLezFirstLockProofError::FinalizedFundingUnavailable);
             }
         };

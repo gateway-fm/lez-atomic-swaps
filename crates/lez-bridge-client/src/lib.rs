@@ -304,7 +304,7 @@ pub enum FinalizedWitnessedFundingPresence {
         context: MessageContext,
         /// Stable finalized clock covering the exact scan.
         finalized_clock: ChainClock,
-        /// Exact caller-owned bounded range that was scanned.
+        /// Exact same-start finalized prefix scanned inside the caller's authorized range.
         scanned_window: DiscoveryWindow,
         /// Complete independently validated canonical funding facts.
         funding: Box<lez_bridge_protocol::FinalizedWitnessedFundingFacts>,
@@ -315,7 +315,16 @@ pub enum FinalizedWitnessedFundingPresence {
         context: MessageContext,
         /// Stable finalized clock covering the exact scan.
         finalized_clock: ChainClock,
-        /// Exact caller-owned bounded range that was scanned.
+        /// Complete caller-authorized range; absence is invalid for a strict prefix.
+        scanned_window: DiscoveryWindow,
+    },
+    /// The available finalized prefix did not yet contain the exact funding effect.
+    Uncertain {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized clock covering the exact prefix scan.
+        finalized_clock: ChainClock,
+        /// Exact same-start finalized prefix scanned inside the authorized range.
         scanned_window: DiscoveryWindow,
     },
 }
@@ -336,7 +345,7 @@ pub enum FinalizedWitnessedInitializationPresence {
         context: MessageContext,
         /// Stable finalized clock covering the scan.
         finalized_clock: ChainClock,
-        /// Exact caller-owned bounded range that was scanned.
+        /// Exact same-start finalized prefix scanned inside the caller's authorized range.
         scanned_window: DiscoveryWindow,
         /// Complete independently validated initialization facts.
         initialization: Box<FinalizedWitnessedInitializationFacts>,
@@ -347,7 +356,7 @@ pub enum FinalizedWitnessedInitializationPresence {
         context: MessageContext,
         /// Stable finalized clock covering the scan.
         finalized_clock: ChainClock,
-        /// Exact caller-owned bounded range that was scanned.
+        /// Complete caller-authorized range; absence is invalid for a strict prefix.
         scanned_window: DiscoveryWindow,
     },
     /// Finalized history did not contain the exact initialization, but current
@@ -357,7 +366,7 @@ pub enum FinalizedWitnessedInitializationPresence {
         context: MessageContext,
         /// Stable finalized clock covering the scan.
         finalized_clock: ChainClock,
-        /// Exact caller-owned bounded range that was scanned.
+        /// Exact same-start finalized prefix scanned inside the caller's authorized range.
         scanned_window: DiscoveryWindow,
     },
 }
@@ -1287,10 +1296,6 @@ impl BridgeClient {
         let expected_terms = request.terms.clone();
         let expected_program = request.runtime.escrow_program_id;
         let expected_window = request.window;
-        let window_start = expected_window.start_height();
-        let window_end = window_start
-            .checked_add(u64::from(expected_window.max_blocks() - 1))
-            .ok_or(BridgeClientError::MalformedObservation { operation })?;
         self.validate_request_runtime(operation, &context, &request.runtime)?;
         let expected_observer = if request.runtime.sidecar_role == expected_terms.depositor() {
             Some(expected_terms.depositor_account_id())
@@ -1312,12 +1317,12 @@ impl BridgeClient {
             )
             .await?;
         Self::validate_response_context(operation, &context, &result.context)?;
-        if result.scanned_window != expected_window
-            || result.finalized_clock.timestamp_ms == 0
-            || window_end > result.finalized_clock.height
-        {
-            return Err(BridgeClientError::MalformedObservation { operation });
-        }
+        let (window_start, window_end, window_complete) = validate_scanned_prefix(
+            operation,
+            expected_window,
+            result.scanned_window,
+            result.finalized_clock,
+        )?;
         match result.outcome {
             FinalizedWitnessedFundingScanOutcome::Found { funding } => {
                 validate_finalized_witnessed_funding_facts(
@@ -1341,7 +1346,20 @@ impl BridgeClient {
                 })
             }
             FinalizedWitnessedFundingScanOutcome::Absent {} => {
+                if !window_complete {
+                    return Err(BridgeClientError::MalformedObservation { operation });
+                }
                 Ok(FinalizedWitnessedFundingPresence::Absent {
+                    context: result.context,
+                    finalized_clock: result.finalized_clock,
+                    scanned_window: result.scanned_window,
+                })
+            }
+            FinalizedWitnessedFundingScanOutcome::Uncertain {} => {
+                if window_complete {
+                    return Err(BridgeClientError::MalformedObservation { operation });
+                }
+                Ok(FinalizedWitnessedFundingPresence::Uncertain {
                     context: result.context,
                     finalized_clock: result.finalized_clock,
                     scanned_window: result.scanned_window,
@@ -1374,10 +1392,6 @@ impl BridgeClient {
         let expected_terms = request.terms.clone();
         let expected_program = request.runtime.escrow_program_id;
         let expected_window = request.window;
-        let window_start = expected_window.start_height();
-        let window_end = window_start
-            .checked_add(u64::from(expected_window.max_blocks() - 1))
-            .ok_or(BridgeClientError::MalformedObservation { operation })?;
         self.validate_request_runtime(operation, &context, &request.runtime)?;
         if request.runtime.sidecar_role != expected_terms.depositor()
             || request.runtime.signer_account_id != expected_terms.depositor_account_id()
@@ -1395,12 +1409,12 @@ impl BridgeClient {
             )
             .await?;
         Self::validate_response_context(operation, &context, &result.context)?;
-        if result.scanned_window != expected_window
-            || result.finalized_clock.timestamp_ms == 0
-            || window_end > result.finalized_clock.height
-        {
-            return Err(BridgeClientError::MalformedObservation { operation });
-        }
+        let (window_start, window_end, window_complete) = validate_scanned_prefix(
+            operation,
+            expected_window,
+            result.scanned_window,
+            result.finalized_clock,
+        )?;
         match result.outcome {
             FinalizedWitnessedInitializationScanOutcome::Found { initialization } => {
                 validate_finalized_witnessed_initialization_facts(
@@ -1425,6 +1439,9 @@ impl BridgeClient {
                 })
             }
             FinalizedWitnessedInitializationScanOutcome::Absent {} => {
+                if !window_complete {
+                    return Err(BridgeClientError::MalformedObservation { operation });
+                }
                 Ok(FinalizedWitnessedInitializationPresence::Absent {
                     context: result.context,
                     finalized_clock: result.finalized_clock,
@@ -2668,6 +2685,34 @@ fn validate_asset_finalized_claim_echo(
         return Err(BridgeClientError::MalformedObservation { operation });
     }
     Ok(())
+}
+
+fn validate_scanned_prefix(
+    operation: BridgeOperation,
+    authorized_window: DiscoveryWindow,
+    scanned_window: DiscoveryWindow,
+    finalized_clock: ChainClock,
+) -> Result<(u64, u64, bool), BridgeClientError> {
+    let authorized_start = authorized_window.start_height();
+    let authorized_end = authorized_start
+        .checked_add(u64::from(authorized_window.max_blocks() - 1))
+        .ok_or(BridgeClientError::MalformedObservation { operation })?;
+    let scanned_start = scanned_window.start_height();
+    let scanned_end = scanned_start
+        .checked_add(u64::from(scanned_window.max_blocks() - 1))
+        .ok_or(BridgeClientError::MalformedObservation { operation })?;
+    if scanned_start != authorized_start
+        || scanned_end > authorized_end
+        || scanned_end > finalized_clock.height
+        || finalized_clock.timestamp_ms == 0
+    {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok((
+        scanned_start,
+        scanned_end,
+        scanned_window == authorized_window,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

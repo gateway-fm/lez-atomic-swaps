@@ -13,8 +13,8 @@ use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
     ClassifyFinalizedWitnessedClaimResult, ClassifyFinalizedWitnessedFundingResult,
     ClassifyFinalizedWitnessedInitializationRequest,
-    ClassifyFinalizedWitnessedInitializationResult, EscrowState, FinalizedBlockIdentity,
-    FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
+    ClassifyFinalizedWitnessedInitializationResult, DiscoveryWindow, EscrowState,
+    FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
     FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
     FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
     FinalizedWitnessedInitializationFacts, Hex32, MAX_DISCOVERY_BLOCKS, NativeCustodyFacts,
@@ -133,24 +133,6 @@ impl StableFinalizedWindow {
         Ok(())
     }
 
-    pub(crate) async fn confirm_unchanged(
-        &self,
-        indexer: &dyn FinalizedIndexerApi,
-    ) -> Result<(), BridgeRuntimeError> {
-        let finalized_after = indexer
-            .last_finalized_block_id()
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        if finalized_after != self.finalized_tip.header.block_id {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
-        let finalized_tip_after = read_finalized_block(indexer, finalized_after).await?;
-        if finalized_tip_after != self.finalized_tip {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
-        Ok(())
-    }
-
     pub(crate) async fn confirm_pinned_snapshot(
         &self,
         indexer: &dyn FinalizedIndexerApi,
@@ -167,55 +149,34 @@ impl StableFinalizedWindow {
     }
 }
 
-pub(crate) async fn read_stable_finalized_window(
+async fn read_stable_finalized_prefix(
     indexer: &dyn FinalizedIndexerApi,
-    window: lez_bridge_protocol::DiscoveryWindow,
-) -> Result<StableFinalizedWindow, BridgeRuntimeError> {
+    authorized_window: DiscoveryWindow,
+) -> Result<(StableFinalizedWindow, DiscoveryWindow, bool), BridgeRuntimeError> {
     let finalized_before = indexer
         .last_finalized_block_id()
         .await?
         .ok_or(BridgeRuntimeError::Unavailable)?;
-    let requested_end = window
-        .start_height()
-        .checked_add(u64::from(window.max_blocks() - 1))
-        .ok_or(BridgeRuntimeError::InvalidObservation)?;
-    let covered_length = finalized_before
-        .checked_sub(window.start_height())
-        .and_then(|distance| distance.checked_add(1));
-    if requested_end > finalized_before
-        || covered_length.is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
-    {
+    let start_height = authorized_window.start_height();
+    if finalized_before < start_height {
         return Err(BridgeRuntimeError::Unavailable);
     }
+    let authorized_end = start_height
+        .checked_add(u64::from(authorized_window.max_blocks() - 1))
+        .ok_or(BridgeRuntimeError::InvalidObservation)?;
+    let prefix_end = authorized_end.min(finalized_before);
+    let prefix_blocks = prefix_end
+        .checked_sub(start_height)
+        .and_then(|distance| distance.checked_add(1))
+        .ok_or(BridgeRuntimeError::InvalidObservation)?;
+    let scanned_window = DiscoveryWindow::new(
+        start_height,
+        u32::try_from(prefix_blocks).map_err(|_| BridgeRuntimeError::Unavailable)?,
+    )
+    .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+    let stable = read_fixed_finalized_window(indexer, scanned_window).await?;
 
-    let finalized_tip_before = read_finalized_block(indexer, finalized_before).await?;
-    let mut blocks = Vec::with_capacity(
-        usize::try_from(covered_length.unwrap_or_default())
-            .map_err(|_| BridgeRuntimeError::Unavailable)?,
-    );
-    let mut previous_hash = None;
-    for block_id in window.start_height()..=finalized_before {
-        let block = read_finalized_block(indexer, block_id).await?;
-        if block_id == finalized_before && block != finalized_tip_before {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
-        if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
-            return Err(BridgeRuntimeError::InvalidObservation);
-        }
-        previous_hash = Some(block.header.hash);
-        blocks.push(block);
-    }
-
-    Ok(StableFinalizedWindow {
-        finalized_clock: ChainClock::new(
-            Hex32::from_bytes(finalized_tip_before.header.hash.0),
-            finalized_tip_before.header.block_id,
-            finalized_tip_before.header.timestamp,
-        ),
-        finalized_tip: finalized_tip_before,
-        blocks,
-        requested_end,
-    })
+    Ok((stable, scanned_window, prefix_end == authorized_end))
 }
 
 /// Reads one fail-closed finalized clock whose indexer chain is bound to the
@@ -980,7 +941,8 @@ impl FinalizedWitnessedInitializationObserver {
         request: &ClassifyFinalizedWitnessedInitializationRequest,
     ) -> Result<ClassifyFinalizedWitnessedInitializationResult, BridgeRuntimeError> {
         self.validate_request(request)?;
-        let stable = read_stable_finalized_window(self.indexer.as_ref(), request.window).await?;
+        let (stable, scanned_window, _window_complete) =
+            read_stable_finalized_prefix(self.indexer.as_ref(), request.window).await?;
         let mut found = None;
         for block in &stable.blocks {
             if block.header.block_id > stable.requested_end {
@@ -1004,19 +966,21 @@ impl FinalizedWitnessedInitializationObserver {
                 }
             }
         }
-        stable.confirm_unchanged(self.indexer.as_ref()).await?;
+        stable
+            .confirm_pinned_snapshot(self.indexer.as_ref())
+            .await?;
         Ok(if let Some(initialization) = found {
             ClassifyFinalizedWitnessedInitializationResult::found(
                 request.context.clone(),
                 stable.finalized_clock,
-                request.window,
+                scanned_window,
                 initialization,
             )
         } else {
             ClassifyFinalizedWitnessedInitializationResult::uncertain(
                 request.context.clone(),
                 stable.finalized_clock,
-                request.window,
+                scanned_window,
             )
         })
     }
@@ -1305,7 +1269,10 @@ impl FinalizedWitnessedFundingObserver {
                     *funding,
                 ))
             }
-            FinalizedWitnessedFundingScanOutcome::Absent {} => Err(BridgeRuntimeError::Unavailable),
+            FinalizedWitnessedFundingScanOutcome::Absent {}
+            | FinalizedWitnessedFundingScanOutcome::Uncertain {} => {
+                Err(BridgeRuntimeError::Unavailable)
+            }
         }
     }
 
@@ -1322,7 +1289,8 @@ impl FinalizedWitnessedFundingObserver {
         request: &ObserveFinalizedWitnessedFundingRequest,
     ) -> Result<ClassifyFinalizedWitnessedFundingResult, BridgeRuntimeError> {
         self.validate_request(request)?;
-        let stable = read_stable_finalized_window(self.indexer.as_ref(), request.window).await?;
+        let (stable, scanned_window, window_complete) =
+            read_stable_finalized_prefix(self.indexer.as_ref(), request.window).await?;
 
         let mut found = None;
         for block in &stable.blocks {
@@ -1370,20 +1338,28 @@ impl FinalizedWitnessedFundingObserver {
             None
         };
 
-        stable.confirm_unchanged(self.indexer.as_ref()).await?;
+        stable
+            .confirm_pinned_snapshot(self.indexer.as_ref())
+            .await?;
 
         Ok(if let Some(funding) = funding {
             ClassifyFinalizedWitnessedFundingResult::found(
                 request.context.clone(),
                 stable.finalized_clock,
-                request.window,
+                scanned_window,
                 funding,
             )
-        } else {
+        } else if window_complete {
             ClassifyFinalizedWitnessedFundingResult::absent(
                 request.context.clone(),
                 stable.finalized_clock,
-                request.window,
+                scanned_window,
+            )
+        } else {
+            ClassifyFinalizedWitnessedFundingResult::uncertain(
+                request.context.clone(),
+                stable.finalized_clock,
+                scanned_window,
             )
         })
     }

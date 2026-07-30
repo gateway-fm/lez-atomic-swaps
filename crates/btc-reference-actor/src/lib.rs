@@ -1384,7 +1384,8 @@ async fn observe_live_lez_maker_step(
                         Ok(MakerLockStepChainObservationV1::ConflictingPresence)
                     }
                 }
-                FinalizedWitnessedFundingPresence::Absent { .. } => {
+                FinalizedWitnessedFundingPresence::Absent { .. }
+                | FinalizedWitnessedFundingPresence::Uncertain { .. } => {
                     observe_current_lez_maker_step(client, config, agreement, plan, step).await
                 }
             }
@@ -7277,6 +7278,9 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     observed_unix_seconds,
                     absence_evidence,
                 })
+            }
+            FinalizedWitnessedFundingPresence::Uncertain { .. } => {
+                Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain })
             }
         }
     }

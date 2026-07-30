@@ -560,6 +560,7 @@ const FUNDING_BYTES: &[u8] = b"exact-witnessed-funding";
 enum ProofMutation {
     None,
     FinalizedAbsent,
+    FinalizedUncertain,
     FinalizedInstruction,
     FinalizedPosition,
     CurrentSigner,
@@ -664,6 +665,17 @@ impl LezBridgeBtcFirstLockProofTransport for BtcFirstLockProofTransport {
                 context: request.context,
                 finalized_clock,
                 scanned_window: request.window,
+            });
+        }
+        if matches!(self.mutation, ProofMutation::FinalizedUncertain) {
+            return Ok(FinalizedWitnessedFundingPresence::Uncertain {
+                context: request.context,
+                finalized_clock,
+                scanned_window: DiscoveryWindow::new(
+                    request.window.start_height(),
+                    request.window.max_blocks() - 1,
+                )
+                .expect("strict finalized prefix"),
             });
         }
         let mut instruction = proof_funding_instruction(&request);
@@ -914,6 +926,10 @@ async fn proof_fails_closed_on_finality_current_state_pair_and_cross_binding_dri
     for (mutation, expected) in [
         (
             ProofMutation::FinalizedAbsent,
+            "finalized funding is unavailable",
+        ),
+        (
+            ProofMutation::FinalizedUncertain,
             "finalized funding is unavailable",
         ),
         (
