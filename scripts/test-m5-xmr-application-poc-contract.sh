@@ -184,9 +184,27 @@ for required in \
   'mv "$m5_xmr_delivery_root" "$m5_xmr_reconciled_delivery_root"' \
   'run_m5_xmr_taker_acceptance "$m5_xmr_replay_acceptance" 0' \
   'if [[ "$m5_xmr_application_mode" == 1 && -n "${m5_application_daemon_pid:-}" ]]; then' \
-  'stop_m5_xmr_application_daemon || cleanup_failed=1'; do
+  'stop_m5_xmr_application_daemon || {'; do
   require_runner_source "$required" "M5 source boundary: ${required}"
 done
+
+for required in \
+  'local -a ledger_rows=() cleanup_failure_reasons=()' \
+  'schema_version:2' \
+  'failure_reasons:$reasons' \
+  'cleanup_failure_reasons+=("unclassified_cleanup_failure")' \
+  'cleanup_failure_reasons+=("image_label_mismatch")' \
+  'cleanup_failure_reasons+=("ephemeral_path_boundary_failed")'; do
+  require_runner_source "$required" "fail-closed cleanup diagnostics: ${required}"
+done
+
+cleanup_reason_fallback_line="$(unique_line '^  if \[\[ "\$cleanup_failed" != 0 && \$\{#cleanup_failure_reasons\[@\]\} == 0 \]\]; then$' 'cleanup reason fallback')"
+cleanup_final_probe_line="$(unique_line '^  if \[\[ -n "\$\{sentinel_name:-\}" \]\] && docker network inspect ' 'cleanup final sentinel probe')"
+cleanup_result_line="$(unique_line '^  local cleanup_result=passed$' 'cleanup result publication')"
+readonly cleanup_reason_fallback_line cleanup_final_probe_line cleanup_result_line
+(( cleanup_final_probe_line < cleanup_reason_fallback_line &&
+   cleanup_reason_fallback_line < cleanup_result_line )) ||
+  fail 'cleanup failure fallback is not after all final probes and before result publication'
 
 [[ "$(rg -c 'cleanup_failed=0' "$runner")" == 1 ]] ||
   fail 'cleanup failure state is reset after an earlier identity/removal error'
@@ -224,7 +242,7 @@ readonly replay_daemon_line reconciled_offer_line reconciled_archive_line delive
 
 
 cleanup_line="$(unique_line '^cleanup\(\) \{$' 'cleanup function')"
-cleanup_hook_line="$(unique_line '^    stop_m5_xmr_application_daemon \|\| cleanup_failed=1$' 'M5 cleanup hook')"
+cleanup_hook_line="$(unique_line '^    stop_m5_xmr_application_daemon \|\| \{$' 'M5 cleanup hook')"
 readonly cleanup_line cleanup_hook_line
 (( cleanup_line < cleanup_hook_line )) || fail 'M5 daemon cleanup hook is outside cleanup()'
 

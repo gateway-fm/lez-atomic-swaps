@@ -3791,9 +3791,9 @@ separately from runtime dependencies.
 The progressive local ZEC application PoC gate closed on 2026-07-24, and the
 exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
-actual-runner splice described below, remaining M5 PoC ETA is 7 to 15 focused
-implementation hours; the milestone-tag ETA is 11 to 21 focused hours from
-pushed base `5044875`. Update both ranges on every push. The PoC range
+actual-runner splice described below, remaining M5 PoC ETA is 6 to 13 focused
+implementation hours; the milestone-tag ETA is 10 to 19 focused hours from
+pushed base `da9be26`. Update both ranges on every push. The PoC range
 covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
 and the remaining concurrent/unavailable-route closure. The tag range additionally
 includes evidence synchronization, manual-flow/README closure, the final CI and
@@ -4088,9 +4088,25 @@ Delivery-free replay and cutoff. A fresh exact isolated replay is the next
 gate, followed by new
 executable concurrent/all-pair and unavailable-route gates. A read-only audit
 confirmed those gates cannot honestly be closed by launching the existing
-single-worker wrappers in parallel. From pushed base `5044875`, remaining M5
-PoC ETA is 7 to 15 focused hours and milestone-tag ETA is 11 to 21 focused
-hours; neither range hides the still-open runtime evidence or code.
+single-worker wrappers in parallel.
+
+Exact pushed-tree run `m5-xmr-app-20260730-da9be26-f` completed the entire
+functional corridor. The application cutoff passed with one swap ID, identical
+reconciled signed envelope, empty outage mailbox, unchanged artifact inodes and
+journal hashes, no SQLite sidecars, and exact process/socket absence. The
+one-shot tail finalized tag 13, tag 14 authorization, and tag 15 Claim; extracted
+the adaptor scalar; swept official Monero Regtest; and emitted the cross-chain
+binding without claiming a distributed transaction. Claim was included at LEZ
+height 141 and finalized by tip 146. The Monero sweep received 998191600000 of
+1000000000000 funded piconero with fee 1808400000 and 10 confirmations at tip
+130. The source returned zero and every exact run resource is absent, but the
+fail-closed cleanup result is `failed`: one removal command returned nonzero and
+the v1 cleanup packet could not identify which. The run remains functional
+happy-path evidence, not clean certification, and its tag-13-latched ID must not
+be reused. The cleanup packet is now schema v2 with stable reason codes while
+preserving all earlier-failure semantics. From pushed base `da9be26`, remaining
+M5 PoC ETA is 6 to 13 focused hours and milestone-tag ETA is 10 to 19 focused
+hours; clean XMR replay plus concurrent and unavailable-route gates remain.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

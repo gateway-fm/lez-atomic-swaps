@@ -5990,13 +5990,13 @@ funds. This absence removes node/finality flakiness but also means the checkpoin
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The remaining PoC gate is the isolated official Monero 0.18.5.1 Regtest plus LEZ
 v0.2 corridor under this accepted authority, followed by concurrent/all-pair
-closure. From pushed base `5044875`, current ETA is 7 to 15 focused hours for the
-M5 PoC and 11 to 21 focused hours for the milestone tag.
+closure. From pushed base `da9be26`, current ETA is 6 to 13 focused hours for the
+M5 PoC and 10 to 19 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
-Status: **SOURCE/CONTRACT-GREEN; one safe actual-node pre-tag-13 execution; zero
-swap-chain/tag-13 executions.** Four exact-commit attempts failed safely before
+Status: **FUNCTIONAL HAPPY-PATH GREEN; clean cleanup certification open.** Four
+exact-commit attempts failed safely before
 nodes. The first two exposed stale
 sidecar and release-service locks. `m5-xmr-app-20260730-7b8ec43-c` built both
 repaired graphs, then exposed a stale artifact-verifier hash for the intentional
@@ -6014,10 +6014,17 @@ installation, real acceptance, and typed `Blocked`. It stopped before tag 13
 because the harness rejected intentional consumed-offer reconciliation. Scoped
 cleanup passed with no tag-13 latch or swap-chain effect. The corrected path
 authenticates and archives the retry advertisement before emulating an empty
-Delivery outage and replay. Use a fresh run ID. This is
-not evidence that the M5 XMR PoC has passed. It composes the accepted application
-authority ahead of the existing M4 claim tail against official isolated local
-nodes.
+Delivery outage and replay. Sixth run `m5-xmr-app-20260730-da9be26-f` completed
+that application cutoff and the full local tag-13/tag-14/tag-15/extraction/sweep
+tail. LEZ Claim finalized at tip 146 and the Monero sweep reached 10
+confirmations at tip 130. The source returned zero, the cross-chain binding was
+written, every exact resource is absent, and the foreign sentinel survived.
+Cleanup nevertheless failed closed because one exact removal command returned
+nonzero; cleanup schema v1 did not retain the failing operation. Do not convert
+that final absence into a pass, and never reuse the tag-13-latched run ID. The
+runner now emits cleanup schema v2 `failure_reasons` so the next fresh run is
+diagnosable without weakening cleanup. Use a fresh run ID. This is functional
+end-to-end evidence, not the clean certifying replay or M5 completion.
 
 Reuse all prerequisites from
 [Flow 0](#flow-0-m4-official-monero-regtest-topology): Docker, the pinned Rust
@@ -6068,9 +6075,9 @@ deterministic local genesis and Monero funds from deterministic Regtest outputs.
 These are real local node processes, not mocked RPC responses. Ephemeral
 loopback ports prevent clashes with other work, but local Docker/containerd
 contention, node readiness, block production/finality, and wallet scanning can
-still affect wall time. The fifth combined attempt took roughly 36 minutes to
-build and reach its pre-tag-13 application checkpoint; the full corridor remains
-unmeasured. A cold build can additionally depend on already pinned downloads,
+still affect wall time. Exact run `m5-xmr-app-20260730-da9be26-f` took about 50
+minutes cold end to end; its application plan-to-cutoff segment took about two
+minutes and its real-node segment about 24 minutes. A cold build can additionally depend on already pinned downloads,
 archives, and caches being present; record any such pre-runtime fetch separately
 and never describe it as a runtime chain dependency.
 

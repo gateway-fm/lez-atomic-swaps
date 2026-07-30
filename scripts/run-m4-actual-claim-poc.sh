@@ -509,11 +509,14 @@ cleanup() {
   local kind identity name start_ticks binary_sha256 run_label
   local validated_ledger
   local ledger_valid=false index sentinel_name="" sentinel_expected=""
-  local -a ledger_rows=()
+  local -a ledger_rows=() cleanup_failure_reasons=()
   trap - EXIT
   set +e
   if [[ "$m5_xmr_application_mode" == 1 && -n "${m5_application_daemon_pid:-}" ]]; then
-    stop_m5_xmr_application_daemon || cleanup_failed=1
+    stop_m5_xmr_application_daemon || {
+      cleanup_failed=1
+      cleanup_failure_reasons+=("m5_application_daemon_stop_failed")
+    }
   fi
   if [[ "$cleanup_started" != 1 ]]; then
     exit "$source_status"
@@ -526,6 +529,7 @@ cleanup() {
     ledger_valid=true
   else
     cleanup_failed=1
+    cleanup_failure_reasons+=("resource_ledger_validation_failed")
     resources_absent=false
   fi
 
@@ -547,41 +551,60 @@ cleanup() {
       container)
         if docker container inspect "$identity" >/dev/null 2>&1; then
           if docker_resource_run_label_matches container "$identity" "$run_label"; then
-            docker container rm --force "$identity" >/dev/null 2>&1 || cleanup_failed=1
+            docker container rm --force "$identity" >/dev/null 2>&1 || {
+              cleanup_failed=1
+              cleanup_failure_reasons+=("container_remove_failed")
+            }
           else
             cleanup_failed=1
+            cleanup_failure_reasons+=("container_label_mismatch")
           fi
         fi
         ;;
       volume)
         if docker volume inspect "$name" >/dev/null 2>&1; then
           if docker_resource_run_label_matches volume "$name" "$run_label"; then
-            docker volume rm "$name" >/dev/null 2>&1 || cleanup_failed=1
+            docker volume rm "$name" >/dev/null 2>&1 || {
+              cleanup_failed=1
+              cleanup_failure_reasons+=("volume_remove_failed")
+            }
           else
             cleanup_failed=1
+            cleanup_failure_reasons+=("volume_label_mismatch")
           fi
         fi
         ;;
       network)
         if docker network inspect "$name" >/dev/null 2>&1; then
           if docker_resource_run_label_matches network "$name" "$run_label"; then
-            docker network rm "$name" >/dev/null 2>&1 || cleanup_failed=1
+            docker network rm "$name" >/dev/null 2>&1 || {
+              cleanup_failed=1
+              cleanup_failure_reasons+=("network_remove_failed")
+            }
           else
             cleanup_failed=1
+            cleanup_failure_reasons+=("network_label_mismatch")
           fi
         fi
         ;;
       image)
         if docker image inspect "$name" >/dev/null 2>&1; then
           if docker_resource_run_label_matches image "$name" "$run_label"; then
-            docker image rm "$name" >/dev/null 2>&1 || cleanup_failed=1
+            docker image rm "$name" >/dev/null 2>&1 || {
+              cleanup_failed=1
+              cleanup_failure_reasons+=("image_remove_failed")
+            }
           else
             cleanup_failed=1
+            cleanup_failure_reasons+=("image_label_mismatch")
           fi
         fi
         ;;
       monero_child)
-        cleanup_monero_child_by_label "$run_label" || cleanup_failed=1
+        cleanup_monero_child_by_label "$run_label" || {
+          cleanup_failed=1
+          cleanup_failure_reasons+=("monero_child_cleanup_failed")
+        }
         ;;
       ephemeral_path)
         if [[ -e "$name" || -L "$name" ]]; then
@@ -589,11 +612,12 @@ cleanup() {
             rm -rf -- "$name"
           else
             cleanup_failed=1
+            cleanup_failure_reasons+=("ephemeral_path_boundary_failed")
           fi
         fi
         ;;
       sentinel_network) ;;
-      *) cleanup_failed=1 ;;
+      *) cleanup_failed=1; cleanup_failure_reasons+=("unknown_resource_kind") ;;
     esac
     done
   fi
@@ -617,6 +641,7 @@ cleanup() {
           sentinel_expected="$run_label"
         else
           cleanup_failed=1
+          cleanup_failure_reasons+=("sentinel_missing_or_label_mismatch")
         fi
         ;;
     esac
@@ -625,18 +650,30 @@ cleanup() {
 
   if [[ "$sentinel_survived" == true ]]; then
     if [[ -n "$sentinel_name" ]] && sentinel_label_matches "$sentinel_name" "$sentinel_expected"; then
-      docker network rm "$sentinel_name" >/dev/null 2>&1 || cleanup_failed=1
+      docker network rm "$sentinel_name" >/dev/null 2>&1 || {
+        cleanup_failed=1
+        cleanup_failure_reasons+=("sentinel_remove_failed")
+      }
     else
       cleanup_failed=1
+      cleanup_failure_reasons+=("sentinel_revalidation_failed")
     fi
   else
     cleanup_failed=1
+    cleanup_failure_reasons+=("sentinel_cleanup_incomplete")
   fi
   # Cleanup requires both successful bounded removal and an absent final state.
   # Never erase an earlier identity, label, or removal failure.
-  [[ "$resources_absent" == true ]] || cleanup_failed=1
+  if [[ "$resources_absent" != true ]]; then
+    cleanup_failed=1
+    cleanup_failure_reasons+=("exact_run_resources_remain")
+  fi
   if [[ -n "${sentinel_name:-}" ]] && docker network inspect "$sentinel_name" >/dev/null 2>&1; then
     cleanup_failed=1
+    cleanup_failure_reasons+=("sentinel_remove_incomplete")
+  fi
+  if [[ "$cleanup_failed" != 0 && ${#cleanup_failure_reasons[@]} == 0 ]]; then
+    cleanup_failure_reasons+=("unclassified_cleanup_failure")
   fi
   local cleanup_result=passed
   [[ "$cleanup_failed" == 0 ]] || cleanup_result=failed
@@ -644,14 +681,18 @@ cleanup() {
   if [[ -n "${tag13_no_retry_latch:-}" && -f "$tag13_no_retry_latch" && ! -L "$tag13_no_retry_latch" ]]; then
     no_retry_latch_preserved=true
   fi
+  local cleanup_failure_reasons_json
+  cleanup_failure_reasons_json="$(printf '%s\n' "${cleanup_failure_reasons[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')"
   jq -n --arg result "$cleanup_result" --argjson source_status "$source_status" \
     --argjson absent "$resources_absent" --argjson sentinel "$sentinel_survived" \
     --argjson no_retry_latch_preserved "$no_retry_latch_preserved" \
-    '{schema_version:1,result:$result,source_exit_status:$source_status,
+    --argjson reasons "$cleanup_failure_reasons_json" \
+    '{schema_version:2,result:$result,source_exit_status:$source_status,
       exact_run_resources_absent:$absent,sidecar_processes_absent:$absent,
       sidecar_ports_closed:$absent,foreign_sentinel_survived_exact_cleanup:$sentinel,
       tag13_no_retry_latch_preserved:$no_retry_latch_preserved,
-      foreign_resources_targeted:false,broad_cleanup_used:false}' \
+      foreign_resources_targeted:false,broad_cleanup_used:false,
+      failure_reasons:$reasons}' \
     >"${evidence_root}/cleanup.json"
   chmod 0600 "${evidence_root}/cleanup.json"
   record_phase cleanup "$cleanup_result"

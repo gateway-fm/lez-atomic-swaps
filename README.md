@@ -199,32 +199,34 @@ faucet, DNS, network, or funds and therefore does not certify a swap or chain
 effect. The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 application
 corridor remains open.
 
-The follow-on opt-in actual runner is **SOURCE/CONTRACT-GREEN only** through
-pushed correction `5044875`; it is not runtime/PoC GREEN. Four pre-runtime
-attempts stopped before nodes on stale lock graphs, a stale artifact-source
-hash, and a missing explicit Risc0 handoff. A fifth exact attempt,
-`m5-xmr-app-20260730-58e1ee1-e`, passed every build and artifact proof, started
-the isolated LEZ v0.2 stack, finalized the program deployment and both Vault
-Claims, started official Monero 0.18.5.1 Regtest, and reached the real
-Maker/Taker Stage A/B plus typed-`Blocked` supervisor checkpoint. It stopped
-before tag 13 because the harness incorrectly rejected the publisher's intended
-restart reconciliation of a consumed retryable offer. Exact cleanup passed;
-no tag-13 latch or swap-chain effect existed. The corrected flow authenticates
-that identical retry advertisement, archives it, creates an empty Delivery
-outage mailbox, then proves Delivery-free durable replay and the synchronous
-process/socket/readiness cutoff. Only after that cutoff may the existing
-one-shot tag-13-to-claim-and-Monero-sweep tail begin. Cleanup retains any
-earlier identity, label, or removal failure instead of resetting it after a
-final absence probe. Runtime remains entirely local: official Monero 0.18.5.1
-Regtest and LEZ v0.2 with deterministic genesis/Regtest funds and ephemeral
-loopback RPCs; no public RPC, faucet, peer, or public funds are used.
+The opt-in XMR application runner is now **FUNCTIONAL HAPPY-PATH GREEN; clean
+certification remains open**. Four pre-runtime attempts repaired stale graphs,
+an artifact hash, and the Risc0 handoff. Fifth run
+`m5-xmr-app-20260730-58e1ee1-e` reached real local nodes and exposed the
+harness's incorrect rejection of intended consumed-offer reconciliation before
+tag 13. Exact pushed-tree run `m5-xmr-app-20260730-da9be26-f` then completed
+the corrected flow: signed Delivery, canonical Stage A/B, real Maker/Taker
+acceptance, typed no-effect `Blocked`, authenticated restart reconciliation,
+empty Delivery outage, inode/hash-stable replay, synchronous application
+cutoff, finalized tag 13/14/15, adaptor extraction, confirmed Monero sweep, and
+cross-chain binding. LEZ Claim finalized in block 141 with finalized tip 146;
+the 1 XMR lock swept 998191600000 piconero after a 1808400000-piconero fee and
+reached 10 confirmations at Monero tip 130. The source path returned zero and
+all exact resources are absent, but cleanup certification failed because one
+exact cleanup command returned nonzero. The existing evidence schema did not
+identify which command, so this run is not the clean certifying replay and its
+one-shot ID must never be reused. Cleanup evidence is now versioned and records
+stable failure reason codes without relaxing fail-closed behavior. Runtime is
+entirely local: official Monero 0.18.5.1 Regtest and LEZ v0.2 with deterministic
+genesis/Regtest funds and ephemeral loopback RPCs; no public RPC, faucet, peer,
+or public funds are used.
 [Flow 1R](docs/manual-user-flows.md#flow-1r-run-the-xmr-application-to-chain-corridor)
 documents the exact operator command, resources, evidence, cleanup, and
-non-retry boundary without claiming completion. A read-only acceptance audit also
+non-retry boundary without claiming clean certification. A read-only acceptance audit also
 confirmed that concurrent multi-user and unavailable-route closure require new
 executable gates rather than parallel wrapper invocations. From pushed base
-`5044875`, the remaining estimate is 7 to 15 focused hours to M5 PoC and 11 to
-21 focused hours to the reviewed milestone tag.
+`da9be26`, the remaining estimate is 6 to 13 focused hours to M5 PoC and 10 to
+19 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

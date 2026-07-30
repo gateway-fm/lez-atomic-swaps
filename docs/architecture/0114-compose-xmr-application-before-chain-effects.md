@@ -19,8 +19,9 @@ Tag15, extraction, and sweep. Schema-v2 application authority pins their raw
 pre-effect bytes, so the application supervisor must finish and stop before
 legacy journal progression begins.
 
-This record defines the intended composition and evidence boundary. Actual
-isolated execution and evidence remain pending. This decision is not GREEN.
+This record defines the composition and evidence boundary. Exact isolated run
+`m5-xmr-app-20260730-da9be26-f` completed every functional step, but its
+fail-closed cleanup result was not GREEN. This decision is not yet accepted.
 
 ## Decision
 
@@ -269,9 +270,9 @@ LEZ, and Monero. The cutoff prevents concurrent effect ownership. Stopping the
 supervisor can reduce liveness if the legacy runner never starts, but cannot
 authorize a claim, refund, or sweep.
 
-## Pending execution and evidence
+## Execution evidence and remaining acceptance gate
 
-This ADR cannot become accepted or GREEN until one isolated run proves:
+Exact run `m5-xmr-app-20260730-da9be26-f` proved:
 
 - plan, composer, decoded stages, bundles, and receipts share one swap ID;
 - Stage A has no executable rows and Stage B plus replay retain exactly one
@@ -283,7 +284,14 @@ This ADR cannot become accepted or GREEN until one isolated run proves:
   mailbox is archived and replaced by an empty Delivery outage mailbox;
 - supervisor status, child absence, bounded recheck, zero effects, zero chain
   RPCs, and the process cutoff are durable evidence rather than log inference;
-- Tag13, funding, Tag14, Tag15, extraction, sweep, and binding all succeed for
-  the application-derived swap; and
-- exact cleanup removes all run-owned resources, preserves unrelated resources,
-  and proves the addressed cleanup-reset hazard no longer masks failure.
+- Tag13, funding, Tag14, Tag15, extraction, sweep, and binding succeeded for the
+  application-derived swap. Claim finalized at LEZ tip 146; the Monero sweep
+  reached 10 confirmations at tip 130; and the binder explicitly rejected a
+  distributed-transaction claim.
+
+Every exact run resource was absent and the foreign sentinel survived, but one
+cleanup command returned nonzero. The fail-closed result therefore remained
+`failed` even though the source result was zero. Cleanup schema v1 did not
+identify the operation. Schema v2 now records stable failure reason codes. This
+ADR cannot become accepted until a fresh run passes the exact cleanup gate; the
+latched successful-effect run ID is never reused.
