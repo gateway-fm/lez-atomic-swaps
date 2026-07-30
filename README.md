@@ -121,20 +121,23 @@ replacing the final agreement, actor config, or their inodes. The focused
 [Flow 1N](docs/manual-user-flows.md#flow-1n-repeat-the-btc-application-process-poc)
 passes 1 of 1 in 0.87 seconds and uses no chain RPC, node, Docker service,
 faucet, DNS lookup, network, or public funds. It proves the application and
-crash-safe pre-effect handoff, not an on-chain swap. Isolated Bitcoin Core 31.1
-Regtest plus LEZ v0.2 execution, XMR application composition, concurrent
-application supervision, and the M5 closure gates remain open; M5 is neither
-complete nor tagged.
+crash-safe pre-effect handoff.
 
 The opt-in BTC application runner now composes that same handoff into the actual
 M3 node lifecycle: schema-6 source configs bind the exact finalized agreement,
 the real daemon/Taker publish role-only no-clobber bundles before activation,
 all actor commands select those accepted bundles, Delivery and both application
 sockets are removed before chain effects, and later scan-window changes cannot
-replace runtime authority. Its orchestration contract and legacy regressions are
-GREEN; the first clean-pushed isolated-node replay is still pending and remains
-the evidence boundary between implemented composition and a proven on-chain
-application swap.
+replace runtime authority. Exact pushed run
+`m5-btc-app-20260730-992b6d4-e` completed both role actors at revision 4 against
+Bitcoin Core 31.1 Regtest and LEZ v0.2. It retained exactly two Bitcoin effects
+and three LEZ effects, submitted nothing on terminal replay, and removed only
+its exact run-scoped resources. The checked
+[BTC application evidence packet](docs/evidence/m5-btc-application-corridor-20260730.json)
+records the pushed-clean provenance, exact effect IDs, local-node versions,
+runtime external-resource boundary, timings, and cleanup. XMR application
+composition, concurrent all-pair closure, and the final M5 gates remain open;
+M5 is neither complete nor tagged.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

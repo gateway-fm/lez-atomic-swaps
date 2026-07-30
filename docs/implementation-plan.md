@@ -3963,6 +3963,17 @@ no-binary M3 orchestration regression, and diff hygiene are GREEN. One fresh
 pushed replay must still make the complete wrapper and evidence packet exit
 cleanly before the BTC application runtime gate is closed.
 
+Exact pushed replay `m5-btc-app-20260730-992b6d4-e` closes that BTC gate. Both
+role actors reached revision 4 `Completed`; the retained manifest contains two
+unique Bitcoin effects and three unique LEZ effects; both terminal `drive`
+replays returned `not_yet_composed` without changing any effect ID or count.
+The wrapper exited zero and attested that every exact run container, network,
+volume, image, and secure reservation root was absent without targeting a
+foreign resource. The tracked secret-safe evidence packet binds clean
+`origin/main` commit `992b6d4`, stable executable hashes, node versions, effect
+IDs, timings, external-resource facts, replay, and cleanup. XMR application
+composition and the literal all-pair closure gates are now the critical path.
+
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
 security contracts. Its extracted legacy timing fixture now declares non-M5

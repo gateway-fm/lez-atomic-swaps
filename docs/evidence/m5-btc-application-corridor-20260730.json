@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "kind": "m5_btc_application_corridor_exact_tree_checkpoint",
+  "result": "completed",
+  "certification_scope": "BTC application-to-chain corridor; not full M5 milestone completion",
+  "run": {
+    "id": "m5-btc-app-20260730-992b6d4-e",
+    "completed_at": "2026-07-30T05:51:05Z",
+    "git_commit": "992b6d4ecaca9d1051ee1a0d414debc13b393200",
+    "git_commit_pushed_to_origin_main_before_run": true,
+    "working_tree_clean_before_run": true,
+    "executable_hashes_stable_from_start_to_publication": true,
+    "direction": "taker_sells_foreign",
+    "journey": "claim",
+    "total_duration_ms": 345600,
+    "actor_flow_duration_ms": 178840
+  },
+  "application": {
+    "pair": "bitcoin",
+    "delivery_and_chat_negotiation": true,
+    "role_only_provisioning": true,
+    "delivery_and_chat_absent_during_effects": true,
+    "maker_terminal_revision": 4,
+    "taker_terminal_revision": 4,
+    "terminal_phase": "completed"
+  },
+  "services": {
+    "bitcoin_core": {
+      "version": "31.1",
+      "network": "regtest",
+      "run_id": "m5-btc-app-20260730-992b6d4-e-btc"
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "network": "private_local",
+      "slot_duration_seconds": "1.0",
+      "run_id": "m5-btc-app-20260730-992b6d4-e-lez",
+      "deployment_profile": "m4_checked_local",
+      "guest_sha256": "dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292",
+      "program_id": "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82",
+      "deployer_sha256": "229edf0dad4aa527b2e5c2debd6c779265ec4159cc7c84b95bc4ca9767beec33"
+    }
+  },
+  "effects": {
+    "bitcoin": [
+      "e13e9d1cbf29a89ff558b3c1e8afec2b56b3411c0ef02340abe3fc03fef5969c",
+      "2367f16e3ec4f53e1e53ee8142ff7ff2aab183ac8f85b82fb9f638dd61cd3436"
+    ],
+    "lez": [
+      "8a380f6128ce30469bf87c1f13f100c485f3274f4c683704d14081b122108dc8",
+      "801fee5fbd378d7b00a3dc59999af0e095325c244273ee4f9b00b501b0852554",
+      "ecb04768fa1ce42d8520e9cb3d2bd6e0200d5f4dc36d3c5bc02e28721884245c"
+    ],
+    "expected_unique_counts": {
+      "bitcoin": 2,
+      "lez": 3
+    }
+  },
+  "terminal_replay": {
+    "maker_outcome": "not_yet_composed",
+    "taker_outcome": "not_yet_composed",
+    "durable_revision": 4,
+    "resubmission_count": 0,
+    "effect_ids_and_counts_unchanged": true
+  },
+  "external_resources": {
+    "public_rpc": false,
+    "faucet": false,
+    "public_peer": false,
+    "public_funds": false,
+    "test_funds": "deterministic_local_genesis_and_regtest_outputs",
+    "bedrock_ntp_attempted": "pool.ntp.org:123/udp",
+    "bedrock_ntp_required_for_certification": false,
+    "bedrock_ntp_observed_timeout_count": 23,
+    "certification_success_depends_on_external_network": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "scope": "captured exact IDs, names, and secure state root",
+    "broad_cleanup_used": false,
+    "all_exact_run_resources_absent": true,
+    "foreign_resources_targeted": false
+  },
+  "source_evidence": {
+    "stage_two_sha256": "be9404dcb6fc2d2281a81be925a4b22216c7b9d6106121b9e7203cf3de47ab1a",
+    "actual_effects_sha256": "3626eac11eaf9b6361e314a2d86f3b0a04dc4a0cd840fd5c22882ed3b2508510",
+    "phase_timings_sha256": "8ab058db8c8778befbd0942f5ed02ffe45eda6b8bc16f4d9f5dd927a830ea07d"
+  }
+}

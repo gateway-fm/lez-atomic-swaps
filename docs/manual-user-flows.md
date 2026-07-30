@@ -5634,6 +5634,13 @@ RUN_ID="m5-btc-application-$(date -u +%Y%m%d%H%M%S)" \
   ./scripts/run-m5-btc-application-poc.sh
 ```
 
+Exact pushed run `m5-btc-app-20260730-992b6d4-e` completed this command from
+commit `992b6d4`: both actors reached revision 4 `completed`, exactly two
+Bitcoin effects and three LEZ effects were retained, terminal replay submitted
+nothing, and exact scoped cleanup passed. The secret-safe checked packet is
+[`m5-btc-application-corridor-20260730.json`](evidence/m5-btc-application-corridor-20260730.json).
+This closes the BTC application runtime gate, not the whole M5 milestone.
+
 It requires a clean `HEAD` already equal to `origin/main`, Docker, the pinned
 Rust toolchain and offline dependency cache, the pinned LEZ v0.2/Rapidsnark
 inputs documented by the M3 flow, and enough local disk for run-scoped images
@@ -5646,9 +5653,20 @@ on that response. Local container startup, build-cache misses, and finalized
 block production are the remaining flake/time sources. The runner records exact
 container IDs, RPC facts, process identities, actor configs, effects, terminal
 state, timing, and cleanup evidence and removes only resources bearing its own
-run ID. At this checkpoint the command is the intended reproducible gate; do not
-claim its on-chain result until a clean pushed run publishes a passing evidence
-packet.
+run ID.
+
+After success, verify the public packet without opening owner-private configs or
+signer files:
+
+```bash
+EVIDENCE=".e2e/$RUN_ID/m3-actor-poc/evidence"
+jq '{result,run_id,repository_commit,directions,replay_resubmission_count,services,external_resources,execution_provenance}' \
+  "$EVIDENCE/m3-actor-local-poc.json"
+jq . "$EVIDENCE/taker_sells_foreign-actual-submission-counts.json"
+jq . "$EVIDENCE/taker_sells_foreign-maker-replay-drive.json"
+jq . "$EVIDENCE/taker_sells_foreign-taker-replay-drive.json"
+jq . "$EVIDENCE/cleanup-attestation.json"
+```
 
 ## Troubleshooting
 
