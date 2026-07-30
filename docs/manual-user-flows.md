@@ -4721,13 +4721,14 @@ cargo test --locked -p lez-maker-node \
   --test daemon_actor_supervisor_process -- --nocapture
 ```
 
-Expected result: 12 store cases, 12 supervisor cases, and two daemon-process E2E
+Expected result: 12 store cases, 13 supervisor cases, and two daemon-process E2E
 passes. At startup the opt-in daemon generates one nonzero 128-bit owner with the
-OS CSPRNG, opens a dedicated SQLite connection, and scans abandoned leases
-before readiness. Only acquisition of the exact per-swap kernel lock authorizes
+OS CSPRNG, exhaustively recovers abandoned leases before readiness, then opens
+one WAL SQLite connection per configured worker. `--actor-worker-count` requires
+`--actor-supervisor`, defaults to 1, and accepts only 1 through 32. Only acquisition of the exact per-swap kernel lock authorizes
 the CAS transfer to the new owner and generation plus one; the row never becomes
 queued or unleased. A live old lock is left untouched while a distinct due peer
-progresses. The same supervisor executes `status` and the selected effect from
+progresses. The selected worker executes `status` and the selected effect from
 one sealed deployment while retaining lock FD 198 through durable resolution.
 
 The daemon E2E uses a local long-running actor, observes `ready: true` health in
@@ -4735,14 +4736,15 @@ under one second while that actor is leased, then sends SIGTERM. Cancellation,
 process-group reap, durable non-leased resolution, child-identity clear, and
 socket/readiness cleanup complete in under two seconds.
 
-The second daemon E2E schedules two disjoint rows. The first actor exceeds a
-two-second status bound and must be reaped into 600-second backoff; the
-second reports terminal revision four. Expect both attempt counts to remain one,
-both child identities to be absent, owner health to stay responsive, and daemon
-restart to preserve the exact distinct manifests; both invocation logs must
-stay unchanged through the 300-millisecond post-readiness observation window.
-This proves sequential process failure isolation. It is not simultaneous child
-overlap and it performs no chain effect.
+The second daemon E2E starts two workers on two disjoint rows. A terminal actor
+completes while the other actor is simultaneously live, Leased, and bound to its
+recorded child identity. An owner-private release file makes the second actor
+exit nonzero; only that row enters 600-second Backoff. Both attempt counts remain
+one, both child identities clear, owner health stays responsive, and restart
+preserves the exact distinct manifests with unchanged invocation logs. The
+deterministic case passed 10 of 10 local repetitions in 0.49 to 0.54 seconds. It
+proves simultaneous process authority and failure isolation, not accepted-
+application escrow/deadline overlap or any chain effect.
 
 Run the actual node-free user-systemd crash proof with:
 
@@ -5989,11 +5991,11 @@ LEZ sequencer/indexer/sidecar, Docker service, faucet, DNS lookup, network, or
 funds. This absence removes node/finality flakiness but also means the checkpoint
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor under this
-accepted authority is clean-certified in Flow 1R. Remaining PoC work is literal Maker service control, Taker XMR lifecycle
-controls, concurrent/all-pair composition, and automatic unavailable-node
-behavior. Explicit route control is GREEN in Flow 1S. The updated ETA is 16 to
-29 focused hours for the M5 PoC and 26 to 45 focused hours for the milestone
-tag.
+accepted authority is clean-certified in Flow 1R. Remaining PoC work is literal Maker service control, Taker XMR lifecycle,
+accepted-application/actual-chain concurrency, and automatic unavailable-node
+behavior. Explicit route control is GREEN in Flow 1S; bounded simultaneous
+workers are GREEN in Flow 1H. The updated ETA is 14 to 27 focused hours for the
+M5 PoC and 24 to 43 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 

@@ -5,9 +5,9 @@
   expiry-independent replay, real BTC/ZEC sealed-config consumers, daemon-owned
   Maker-only ZEC provisioning, exact-snapshot pair comparison, and the opt-in
   persistent daemon supervisor with abandoned-lease recovery and prompt
-  process-group cancellation plus two-row timeout/terminal failure isolation
-  across daemon restart GREEN; actual-node composition, simultaneous disjoint
-  live-process overlap, and actual-actor systemd crash/restart pending
+  process-group cancellation plus ADR 0116 bounded simultaneous-worker overlap
+  and deterministic peer-failure isolation across daemon restart GREEN; actual-
+  application/node composition and actual-actor systemd crash/restart pending
 - Date: 2026-07-28
 
 ## Context
@@ -453,15 +453,13 @@ that this isolation is durable, not an in-memory scheduling observation.
   two seconds. Runtime external resources are none; the test contacts no node,
   RPC, Docker service, faucet, DNS service, network, or public funds. Cold Cargo
   compilation may use the pinned registry cache or download dependencies.
-- A second actual-daemon process E2E proves two-row failure isolation. One
-  sealed actor times out, is killed and reaped, clears its child identity, and
-  enters durable backoff; the disjoint actor then reaches terminal. Both exact
-  manifests retain attempt count one, owner health stays responsive, and a
-  restart preserves both records and invocation logs stay unchanged during the
-  300-millisecond observation window. The test uses no
-  node, chain RPC, Docker service, faucet, DNS service, network, or public
-  funds. It proves sequential process composition, not simultaneous subprocess
-  overlap or live-chain isolation.
+- ADR 0116 supersedes the second daemon checkpoint with bounded simultaneous
+  workers. A terminal peer completes while a disjoint child remains live and
+  Leased; owner-private release then moves only that peer to Backoff. Exact
+  manifests, attempt counts, child cleanup, health, restart equality, and no
+  replay pass 10 of 10 deterministic repetitions. The test uses no node, chain
+  RPC, Docker service, faucet, DNS service, network, or public funds. Accepted-
+  application escrow/deadline and live-chain overlap remain open.
 - The store actor-process matrix is 12/12, including nonzero unique sampled
   OS-CSPRNG owners and the fencing, recovery, artifact, and peer-isolation
   cases above.

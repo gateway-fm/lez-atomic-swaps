@@ -250,23 +250,23 @@ of 7. Explicit selected-route disable is now process-GREEN: disabled Zcash quote
 and publication fail before price or Delivery I/O, an enabled Bitcoin quote is
 unaffected across restart, and revisioned Zcash re-enable restores quotes. Full
 R3 still requires automatic unavailable-node behavior and an actual unaffected-
-pair application. Maker CLI start/stop, receipt-bound Taker XMR lifecycle, and
-autonomous multi-worker composition also remain. Updated estimate after this
-slice: 16 to 29 focused hours to M5 PoC and 26 to 45 focused hours to the
-reviewed milestone tag.
+pair application. Maker CLI start/stop, receipt-bound Taker XMR lifecycle,
+and actual-application concurrency also remain. Updated estimate after the
+route-control and multi-worker checkpoints: 14 to 27 focused hours to M5 PoC
+and 24 to 43 focused hours to the reviewed milestone tag.
 
-The persistent coordinator now also has a real-daemon two-swap
-failure-isolation journey. One sealed actor exceeds a finite status deadline,
-is killed and reaped, clears its child identity, and enters durable backoff;
-the disjoint actor then reaches schema-valid allowlisted terminal fixture
-status. Both retain one attempt and distinct immutable manifests. Owner health remains responsive, and
-restart preserves both exact rows; both invocation logs remain unchanged during
-the 300-millisecond post-readiness observation window. This test
-uses only temporary owner-private files, SQLite, Unix sockets, and local child
-processes: no chain RPC, Docker service, faucet, DNS service, public network, or
-public funds participate. It proves sequential process composition and durable
-failure isolation, not simultaneous subprocess overlap or actual-chain
-concurrency.
+The persistent coordinator now runs 1 to 32 independent actor workers with one
+SQLite connection each, one shared daemon lease identity, per-row CAS and
+generation fences, per-swap kernel locks, and joined cancellation. A real-daemon
+two-swap journey proves one terminal actor completes while a disjoint actor is
+simultaneously live and leased; releasing the peer to a typed failure changes
+only it to Backoff. Restart preserves both exact manifests and performs no new
+invocation. The deterministic journey passed 10 of 10 repetitions in 0.49 to
+0.54 seconds. It uses only owner-private files, SQLite, Unix sockets, and local
+child processes: no chain RPC, Docker service, faucet, DNS, public network, or
+funds participate. ADR 0116 records the worker, sequence, and isolation model.
+Distinct accepted application agreements, escrows, deadlines, and actual-chain
+overlap remain before full R5 closure.
 
 Exact pushed-tree run `m5appee8424520260724a` completed the earlier direct-actor local application
 corridor in

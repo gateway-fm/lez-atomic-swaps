@@ -239,6 +239,9 @@ struct Arguments {
     /// Runs the persistent pair-neutral actor coordinator on a dedicated store connection.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     actor_supervisor: bool,
+    /// Independent actor workers sharing one fenced daemon lease identity (1..=32).
+    #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..=32))]
+    actor_worker_count: Option<u64>,
     /// Finite deadline for one actor status/effect cycle (1..=300000 milliseconds).
     #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..=300_000))]
     actor_attempt_timeout_milliseconds: Option<u64>,
@@ -289,8 +292,9 @@ impl Drop for ActorSupervisorCancellationGuard {
 
 fn configured_actor_supervisor(
     arguments: &Arguments,
-) -> anyhow::Result<Option<ActorSupervisorRuntime>> {
+) -> anyhow::Result<Vec<ActorSupervisorRuntime>> {
     let tuning = (
+        arguments.actor_worker_count,
         arguments.actor_attempt_timeout_milliseconds,
         arguments.actor_poll_milliseconds,
         arguments.actor_requeue_delay_seconds,
@@ -299,10 +303,10 @@ fn configured_actor_supervisor(
     );
     if !arguments.actor_supervisor {
         ensure!(
-            tuning == (None, None, None, None, None),
+            tuning == (None, None, None, None, None, None),
             "actor supervisor tuning requires explicit opt-in"
         );
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let max_output_bytes = usize::try_from(arguments.actor_max_output_bytes.unwrap_or(8_192))
         .context("convert validated actor output bound")?;
@@ -376,12 +380,35 @@ fn configured_actor_supervisor(
         }
     }
 
-    Ok(Some(ActorSupervisorRuntime {
+    actor_supervisor_runtimes(arguments, store, owner, &config)
+}
+
+fn actor_supervisor_runtimes(
+    arguments: &Arguments,
+    store: SqliteSwapStore,
+    owner: MakerActorLeaseOwner,
+    config: &MakerActorSupervisorConfig,
+) -> anyhow::Result<Vec<ActorSupervisorRuntime>> {
+    let worker_count = usize::try_from(arguments.actor_worker_count.unwrap_or(1))
+        .context("convert validated actor worker count")?;
+    let poll_interval = Duration::from_millis(arguments.actor_poll_milliseconds.unwrap_or(50));
+    let mut runtimes = Vec::with_capacity(worker_count);
+    runtimes.push(ActorSupervisorRuntime {
         store,
         owner,
-        config,
-        poll_interval: Duration::from_millis(arguments.actor_poll_milliseconds.unwrap_or(50)),
-    }))
+        config: config.clone(),
+        poll_interval,
+    });
+    for _ in 1..worker_count {
+        runtimes.push(ActorSupervisorRuntime {
+            store: SqliteSwapStore::open(&arguments.database)
+                .context("open additional actor supervisor database connection")?,
+            owner,
+            config: config.clone(),
+            poll_interval,
+        });
+    }
+    Ok(runtimes)
 }
 
 fn run_actor_supervisor(
@@ -390,18 +417,6 @@ fn run_actor_supervisor(
 ) -> anyhow::Result<()> {
     while !cancellation.is_cancelled() {
         let now = trusted_now_unix_seconds()?;
-        if supervise_one_abandoned_maker_actor_until(
-            &mut runtime.store,
-            runtime.owner,
-            now,
-            &runtime.config,
-            cancellation,
-        )
-        .context("recover abandoned maker actor")?
-        .is_some()
-        {
-            continue;
-        }
         if supervise_one_due_maker_actor_until(
             &mut runtime.store,
             runtime.owner,
@@ -414,9 +429,54 @@ fn run_actor_supervisor(
         {
             continue;
         }
+        if supervise_one_abandoned_maker_actor_until(
+            &mut runtime.store,
+            runtime.owner,
+            now,
+            &runtime.config,
+            cancellation,
+        )
+        .context("recover abandoned maker actor")?
+        .is_some()
+        {
+            continue;
+        }
         thread::sleep(runtime.poll_interval);
     }
     Ok(())
+}
+
+fn run_actor_supervisors(
+    runtimes: Vec<ActorSupervisorRuntime>,
+    cancellation: &MakerActorSupervisorCancellation,
+) -> anyhow::Result<()> {
+    thread::scope(|scope| {
+        let workers = runtimes
+            .into_iter()
+            .map(|runtime| {
+                let cancellation = cancellation.clone();
+                scope.spawn(move || {
+                    let _cancellation_guard =
+                        ActorSupervisorCancellationGuard(cancellation.clone());
+                    run_actor_supervisor(runtime, &cancellation)
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut first_error = None;
+        for worker in workers {
+            let result = match worker.join() {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!("actor supervisor worker panicked")),
+            };
+            if first_error.is_none() {
+                first_error = result.err();
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    })
 }
 
 #[tokio::main]
@@ -468,9 +528,10 @@ async fn main() -> anyhow::Result<()> {
     let _supervisor_cancellation_guard =
         ActorSupervisorCancellationGuard(supervisor_cancellation.clone());
     let mut supervisor_tasks = JoinSet::new();
-    if let Some(runtime) = actor_supervisor {
+    if !actor_supervisor.is_empty() {
         let cancellation = supervisor_cancellation.clone();
-        supervisor_tasks.spawn_blocking(move || run_actor_supervisor(runtime, &cancellation));
+        supervisor_tasks
+            .spawn_blocking(move || run_actor_supervisors(actor_supervisor, &cancellation));
     }
     let mut daemon_error = None;
     notify_ready()?;
@@ -1231,6 +1292,8 @@ mod tests {
         let mut enabled = daemon_arguments();
         enabled.extend([
             "--actor-supervisor",
+            "--actor-worker-count",
+            "2",
             "--actor-attempt-timeout-milliseconds",
             "30000",
             "--actor-poll-milliseconds",
@@ -1249,6 +1312,7 @@ mod tests {
     #[test]
     fn actor_supervisor_tuning_requires_explicit_opt_in() {
         for (flag, value) in [
+            ("--actor-worker-count", "2"),
             ("--actor-attempt-timeout-milliseconds", "30000"),
             ("--actor-poll-milliseconds", "50"),
             ("--actor-requeue-delay-seconds", "5"),
@@ -1264,6 +1328,8 @@ mod tests {
     #[test]
     fn actor_supervisor_rejects_out_of_range_tuning() {
         for (flag, value) in [
+            ("--actor-worker-count", "0"),
+            ("--actor-worker-count", "33"),
             ("--actor-attempt-timeout-milliseconds", "0"),
             ("--actor-attempt-timeout-milliseconds", "300001"),
             ("--actor-poll-milliseconds", "0"),

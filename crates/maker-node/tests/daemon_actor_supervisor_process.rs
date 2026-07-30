@@ -157,7 +157,7 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
 
 #[test]
 #[allow(clippy::too_many_lines)] // One process journey keeps both durable actor rows visible.
-fn daemon_isolates_timed_out_actor_from_terminal_peer_across_restart() {
+fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
     let root = tempdir().expect("isolated two-swap daemon root");
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
         .expect("owner-only test root");
@@ -178,6 +178,7 @@ fn daemon_isolates_timed_out_actor_from_terminal_peer_across_restart() {
         ActorConfig::load_private(&terminal_deployment.source_config).expect("terminal config");
 
     let timed_out_pid_file = root.path().join("timed-out.pid");
+    let timed_out_release = root.path().join("timed-out.release");
     let timed_out_invocations = root.path().join("timed-out.invocations");
     let timed_out_program_path = root.path().join("timed-out-zec-maker-actor");
     let timed_out_program = format!(
@@ -189,9 +190,11 @@ fn daemon_isolates_timed_out_actor_from_terminal_peer_across_restart() {
          test \"$3\" = \"status\" || exit 95\n\
          printf '%s\\n' \"$3\" >> \"{}\"\n\
          printf '%s\\n' \"$$\" > \"{}\"\n\
-         exec /usr/bin/sleep 300\n",
+         while test ! -f \"{}\"; do /usr/bin/sleep 0.01; done\n\
+         exit 73\n",
         timed_out_invocations.display(),
-        timed_out_pid_file.display()
+        timed_out_pid_file.display(),
+        timed_out_release.display()
     );
     write_private(&timed_out_program_path, timed_out_program.as_bytes(), 0o700);
 
@@ -256,7 +259,7 @@ fn daemon_isolates_timed_out_actor_from_terminal_peer_across_restart() {
     fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("owner-only runtime");
     let socket = runtime.join("maker.sock");
     let ready = runtime.join("ready");
-    let mut daemon = TestDaemon::spawn_with_limits(&database, &socket, &ready, 2_000, 600);
+    let mut daemon = TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 600, 2);
     wait_for_file(
         &mut daemon,
         &ready,
@@ -305,6 +308,37 @@ fn daemon_isolates_timed_out_actor_from_terminal_peer_across_restart() {
         true
     );
 
+    let overlap_deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let records = SqliteSwapStore::open(&database)
+            .expect("open independent overlap observer")
+            .list_maker_actor_processes()
+            .expect("inspect overlapping actor rows");
+        let timed_out = records
+            .iter()
+            .find(|record| record.swap_id().as_str() == timed_out_id)
+            .expect("timed-out overlap row");
+        let terminal = records
+            .iter()
+            .find(|record| record.swap_id().as_str() == terminal_id)
+            .expect("terminal overlap row");
+        if timed_out.schedule_state() == MakerActorScheduleState::Leased
+            && timed_out.child_identity().is_some()
+            && terminal.schedule_state() == MakerActorScheduleState::Terminal
+        {
+            break;
+        }
+        if let Some(status) = daemon.child_mut().try_wait().expect("poll maker daemon") {
+            panic!("maker daemon exited during overlap proof: {status}");
+        }
+        assert!(
+            Instant::now() < overlap_deadline,
+            "terminal peer did not finish while timed-out peer remained live: {records:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    write_private(&timed_out_release, b"release\n", 0o600);
     let deadline = Instant::now() + Duration::from_secs(10);
     let durable = loop {
         let records = SqliteSwapStore::open(&database)
@@ -349,7 +383,7 @@ fn daemon_isolates_timed_out_actor_from_terminal_peer_across_restart() {
     assert_eq!(terminal.manifest(), &terminal_manifest);
     assert!(
         !Path::new("/proc").join(child_pid.to_string()).exists(),
-        "timed-out child must be killed and reaped before its peer completes"
+        "timed-out child must be killed and reaped after its peer completes"
     );
 
     assert!(daemon.terminate(Duration::from_secs(2)).success());
@@ -362,7 +396,7 @@ fn daemon_isolates_timed_out_actor_from_terminal_peer_across_restart() {
         "first daemon must remove its readiness file"
     );
 
-    let mut restarted = TestDaemon::spawn_with_limits(&database, &socket, &ready, 2_000, 600);
+    let mut restarted = TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 600, 2);
     wait_for_file(
         &mut restarted,
         &ready,
@@ -418,6 +452,24 @@ impl TestDaemon {
         attempt_timeout_milliseconds: u64,
         failure_backoff_seconds: u64,
     ) -> Self {
+        Self::spawn_with_workers(
+            database,
+            socket,
+            ready,
+            attempt_timeout_milliseconds,
+            failure_backoff_seconds,
+            1,
+        )
+    }
+
+    fn spawn_with_workers(
+        database: &Path,
+        socket: &Path,
+        ready: &Path,
+        attempt_timeout_milliseconds: u64,
+        failure_backoff_seconds: u64,
+        worker_count: u16,
+    ) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
             .arg("--socket")
             .arg(socket)
@@ -426,6 +478,8 @@ impl TestDaemon {
             .arg("--ready-file")
             .arg(ready)
             .arg("--actor-supervisor")
+            .arg("--actor-worker-count")
+            .arg(worker_count.to_string())
             .arg("--actor-poll-milliseconds")
             .arg("10")
             .arg("--actor-attempt-timeout-milliseconds")

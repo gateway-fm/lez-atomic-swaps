@@ -3484,10 +3484,11 @@ separately from runtime dependencies.
   manifest, and row. Both have one attempt, owner health stays responsive, and daemon restart preserves the
   exact records; both one-entry invocation logs remain unchanged during the
   300-millisecond post-readiness observation window.
-  This closes the node-free sequential process-composition and durable
-  failure-isolation sub-slice. It does not close simultaneous subprocess
-  overlap, actual-chain execution, unavailable-chain route isolation, or
-  all-pair composition. Runtime external resources are none: temporary private
+  This historical checkpoint closed node-free sequential composition. ADR 0116
+  now supersedes its single-worker limitation with simultaneous worker overlap,
+  deterministic peer-failure isolation, restart equality, and no replay.
+  Accepted-application/actual-chain execution, unavailable-chain route
+  isolation, and all-pair composition remain open. Runtime external resources are none: temporary private
   files, SQLite, Unix sockets, and local processes only.
 
   The user-systemd scheduler crash slice is now node-free process GREEN. Exact
@@ -3793,10 +3794,10 @@ exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
 actual-runner splice described below, that corridor is now clean-certified.
 A current literal-output audit keeps M5 at 3 of 7 and corrects the remaining PoC
-ETA to 16 to 29 focused implementation hours; the milestone-tag ETA is 26 to 45
-focused hours after the explicit route-control checkpoint. Update both ranges on every push. The
+ETA to 14 to 27 focused implementation hours; the milestone-tag ETA is 24 to 43
+focused hours after the route-control and multi-worker checkpoints. Update both ranges on every push. The
 PoC range covers Maker CLI service start/stop, Taker XMR lifecycle controls,
-one-daemon multi-worker application composition, and honest unavailable-route
+one-daemon accepted-application and actual-chain concurrency, and honest unavailable-route
 isolation. The tag range additionally includes evidence synchronization,
 requirements/manual/README closure, a composite M5 evidence verifier, the final
 CI and vulnerability gates, secret scanning, and tag review; those tasks
@@ -4137,10 +4138,10 @@ future-reorg immunity. ADR 0114 is accepted at this local PoC boundary.
 
 The current RFP/issue audit keeps literal M5 completion at 3 of 7. Remaining
 implementation is Maker CLI start/stop, Taker XMR monitor/claim/refund, honest
-multi-worker application composition under one daemon/database, and route
+accepted-application concurrency under one daemon/database, and route
 disable/unavailable behavior including quote/publication rejection and
-unaffected-pair progress. After the explicit route-control checkpoint, M5 PoC ETA is 16 to 29 focused
-hours and milestone-tag ETA is 26 to 45 focused hours.
+unaffected-pair progress. After the route-control and multi-worker checkpoints, M5 PoC ETA is 14 to 27
+focused hours and milestone-tag ETA is 24 to 43 focused hours.
 
 ### M5 explicit route-control checkpoint (2026-07-30)
 
@@ -4163,11 +4164,42 @@ argument; Flow 1S gives the operator reproduction.
 This closes explicit pre-publication route control only. Automatic unhealthy-
 node detection, withdrawal of an already active offer, mid-negotiation policy,
 and an actual unaffected-pair application while another node is absent remain
-R3 work. Literal M5 therefore remains 3 of 7. Remaining order is: autonomous
-multi-worker application overlap, Maker CLI systemd start/stop, receipt-bound
+R3 work. Literal M5 therefore remains 3 of 7. Remaining order is: accepted-application and actual-chain overlap, Maker CLI systemd start/stop, receipt-bound
 Taker XMR monitor/claim, the missing tag-16 XMR refund execution path, then
-composite closure/security/evidence review. Updated ETA after this checkpoint is
-16 to 29 focused hours to M5 PoC and 26 to 45 focused hours to the reviewed tag.
+composite closure/security/evidence review. Updated ETA after the route-control and multi-worker checkpoints is 14 to 27
+focused hours to M5 PoC and 24 to 43 focused hours to the reviewed tag.
+
+### M5 bounded multi-worker checkpoint (2026-07-30)
+
+RED passed `--actor-worker-count 2` to the real daemon and failed at readiness
+because production exposed no such option. The first GREEN created bounded
+worker runtimes but the overlap assertion exposed scheduler starvation when two
+workers raced for the same first due row. Runtime ordering now claims due work
+before scanning for an abandoned lease; startup still exhaustively recovers
+abandoned leases before publishing readiness.
+
+The daemon accepts 1 through 32 workers only with explicit supervisor opt-in,
+opens one WAL SQLite connection per worker, reuses one random daemon lease
+identity, and runs exactly N scoped OS threads under one aggregate task. Every
+thread retains the existing per-row CAS/generation fence and per-swap kernel
+lock. A worker return or panic cancels its peers through a guard; the aggregate
+joins every thread before daemon shutdown completes.
+
+REFACTOR replaced timing-dependent sleep/timeout observation with an owner-
+private release-gated fixture. One terminal actor completes while a disjoint
+actor remains live and Leased with its exact child identity. Releasing the peer
+to a nonzero exit changes only that row to Backoff. Both manifests, state paths,
+one-attempt generations, child cleanup, responsive owner health, restart
+equality, and no replay are asserted. The exact case passed 10 of 10 repetitions
+in 0.49 to 0.54 seconds; daemon CLI tests, both process journeys, strict Clippy,
+and strict Rustdoc are GREEN.
+
+ADR 0116 and Flow 1H record the component, commands, worker sequence, and local
+authority argument. Runtime external resources are none: no node, chain RPC,
+Docker service, faucet, DNS, network, or funds. This proves persistent daemon
+worker concurrency, not yet two accepted application agreements with distinct
+escrows/deadlines and actual chain effects. Literal M5 remains 3 of 7; updated
+ETA is 14 to 27 focused hours to PoC and 24 to 43 hours to reviewed tag closure.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
