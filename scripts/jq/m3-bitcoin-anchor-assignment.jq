@@ -12,10 +12,16 @@ def valid_sources:
   and (.base_height | floor) == .base_height
   and .base_height >= 0
   and (.sources | type) == "array"
-  and (.sources | length) == 2
-  and ([.sources[].direction] | sort) ==
-    ["taker_sells_foreign", "taker_sells_lez"]
-  and ([.sources[].direction] | unique | length) == 2
+  and (
+    (.allocation == "one_mature_coinbase_outpoint"
+      and (.sources | length) == 1
+      and [.sources[].direction] == ["taker_sells_foreign"])
+    or
+    (.allocation == "two_distinct_mature_coinbase_outpoints"
+      and (.sources | length) == 2
+      and ([.sources[].direction] | sort) ==
+        ["taker_sells_foreign", "taker_sells_lez"]
+      and ([.sources[].direction] | unique | length) == 2))
   and all(.sources[];
     (.planned_bitcoin_funding_anchor_height == null
       or ((.planned_bitcoin_funding_anchor_height | type) == "number"
@@ -51,7 +57,9 @@ elif $mode == "sequential" then
       else . end)
   end
 elif $mode == "overlap" then
-  if $base_height >= 4294967294 then
+  if .allocation != "two_distinct_mature_coinbase_outpoints" then
+    fail("overlap Bitcoin anchors require both direction sources")
+  elif $base_height >= 4294967294 then
     fail("overlap Bitcoin funding anchors overflow u32")
   elif $direction != "" then
     fail("overlap assignment must not select one direction")

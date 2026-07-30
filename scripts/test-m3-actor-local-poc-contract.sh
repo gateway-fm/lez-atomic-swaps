@@ -156,7 +156,7 @@ readonly dual_lock_gate_filter="scripts/jq/m3-dual-lock-gate.jq"
 readonly bitcoin_anchor_assignment_filter="scripts/jq/m3-bitcoin-anchor-assignment.jq"
 [[ -f "$bitcoin_anchor_assignment_filter" && ! -L "$bitcoin_anchor_assignment_filter" ]] ||
   fail "Bitcoin anchor-assignment filter is missing or unsafe"
-anchor_fixture='{"schema_version":1,"network":"regtest","base_height":102,"sources":[{"direction":"taker_sells_foreign","planned_bitcoin_funding_anchor_height":null},{"direction":"taker_sells_lez","planned_bitcoin_funding_anchor_height":null}]}'
+anchor_fixture='{"schema_version":1,"network":"regtest","allocation":"two_distinct_mature_coinbase_outpoints","base_height":102,"sources":[{"direction":"taker_sells_foreign","planned_bitcoin_funding_anchor_height":null},{"direction":"taker_sells_lez","planned_bitcoin_funding_anchor_height":null}]}'
 sequential_first="$(jq -c --arg mode sequential --arg direction taker_sells_foreign \
   --argjson base_height 102 -f "$bitcoin_anchor_assignment_filter" \
   <<<"$anchor_fixture")" || fail "sequential first anchor assignment failed"
@@ -184,6 +184,21 @@ jq -e '
     {mode:"overlap",core_tip_before_stage_two:102})
 ' <<<"$overlap_anchors" >/dev/null ||
   fail "overlap anchor assignment lost consecutive pre-settlement heights"
+m5_anchor_fixture='{"schema_version":1,"network":"regtest","allocation":"one_mature_coinbase_outpoint","base_height":102,"sources":[{"direction":"taker_sells_foreign","planned_bitcoin_funding_anchor_height":null}]}'
+m5_anchor="$(jq -c --arg mode sequential --arg direction taker_sells_foreign \
+  --argjson base_height 102 -f "$bitcoin_anchor_assignment_filter" \
+  <<<"$m5_anchor_fixture")" || fail "M5 one-direction anchor assignment failed"
+jq -e '
+  (.sources | length) == 1
+  and .sources[0].planned_bitcoin_funding_anchor_height == 103
+  and .sources[0].anchor_assignment ==
+    {mode:"sequential",core_tip_before_stage_two:102}
+' <<<"$m5_anchor" >/dev/null ||
+  fail "M5 one-direction anchor assignment changed its exact source"
+if jq -e --arg mode overlap --arg direction '' --argjson base_height 102 \
+    -f "$bitcoin_anchor_assignment_filter" <<<"$m5_anchor_fixture" >/dev/null 2>&1; then
+  fail "overlap anchor assignment accepted the M5 one-direction manifest"
+fi
 if jq -e --arg mode sequential --arg direction taker_sells_foreign \
     --argjson base_height 105 -f "$bitcoin_anchor_assignment_filter" \
     <<<"$sequential_first" >/dev/null 2>&1; then
