@@ -140,9 +140,12 @@ impl LezBridgeObservationTransport for BridgeClient {
 /// One read-only attempt to classify exact witnessed-claim presence.
 ///
 /// This boundary is intentionally separate from submission. Implementations
-/// must preserve the client's four-way `PresentExact` / `NotFound` /
-/// `Unavailable` / `Uncertain` classification; only `NotFound` may authorize
-/// an actor's first exact submission attempt.
+/// must preserve the client's five-way `PresentExact` / `NotFound` /
+/// `PrefixUncertain` / `Unavailable` / `Uncertain` classification. `NotFound`
+/// is the only chain-absence authority. A role actor may separately combine
+/// `PrefixUncertain` with its retained exact LEZ-claim ID and bytes plus a
+/// durable one-attempt CAS; that narrow idempotent admission is not absence or
+/// lifecycle evidence.
 #[async_trait]
 pub trait LezBridgeWitnessedClaimPresenceTransport: Send + Sync {
     /// Concrete transport or evidence-validation failure.

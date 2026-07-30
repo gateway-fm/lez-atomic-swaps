@@ -393,11 +393,13 @@ pub enum FinalizedWitnessedClaimUncertain {
 
 /// Actor-facing exact witnessed-claim presence classification.
 ///
-/// Only `NotFound` authorizes an initial submission attempt. It is returned
-/// solely from a strict success response proving the caller's exact bounded
-/// window was completely scanned under one stable finalized tip. Every node,
-/// history, maturity, moving-tip, timeout, and transport failure is distinct
-/// and fails closed.
+/// Only `NotFound` is chain-absence authority. It proves the caller's complete
+/// bounded window was scanned under one stable finalized tip. `PrefixUncertain`
+/// proves only that a stable same-start prefix was scanned without finding the
+/// claim; it is not absence or lifecycle evidence. A role actor may combine that
+/// structural prefix result with its separately retained exact LEZ-claim ID and
+/// bytes plus a durable one-attempt CAS. Every node, history, maturity,
+/// moving-tip, timeout, and transport failure remains distinct and fails closed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use]
 pub enum FinalizedWitnessedClaimPresence {
@@ -419,6 +421,15 @@ pub enum FinalizedWitnessedClaimPresence {
         /// Stable finalized tip covering the exact scan.
         finalized_tip: ChainTip,
         /// Exact caller-owned bounded range that was scanned.
+        scanned_window: DiscoveryWindow,
+    },
+    /// A stable finalized strict prefix did not yet contain the exact claim.
+    PrefixUncertain {
+        /// Echoed operation context.
+        context: MessageContext,
+        /// Stable finalized tip covering the exact prefix scan.
+        finalized_tip: ChainTip,
+        /// Exact same-start finalized prefix scanned inside the authorized range.
         scanned_window: DiscoveryWindow,
     },
     /// Canonical presence cannot currently be classified from node evidence.
@@ -1596,10 +1607,13 @@ impl BridgeClient {
     /// Classifies exact witnessed-claim presence in one caller-owned finalized window.
     ///
     /// The caller may choose a later fresh window on a later poll; this method
-    /// never reuses or widens the funding-observation window. Only a strict
-    /// `NotFound` success covering the exact requested range authorizes an
-    /// initial submission attempt through
-    /// [`FinalizedWitnessedClaimPresence::authorizes_initial_submission`].
+    /// never reuses or widens the funding-observation window. A strict
+    /// `NotFound` success covering the exact requested range is the only
+    /// chain-absence authority exposed through
+    /// [`FinalizedWitnessedClaimPresence::authorizes_initial_submission`]. A
+    /// strict-prefix miss is returned as structural `PrefixUncertain`; only an
+    /// actor's separate exact-idempotent LEZ-claim contract may use it to consume
+    /// already-persisted one-attempt authority.
     ///
     /// # Errors
     ///
@@ -1623,10 +1637,6 @@ impl BridgeClient {
         let expected_terms = request.terms.clone();
         let expected_program = request.runtime.escrow_program_id;
         let expected_window = request.window;
-        let window_start = expected_window.start_height();
-        let window_end = window_start
-            .checked_add(u64::from(expected_window.max_blocks() - 1))
-            .ok_or(BridgeClientError::MalformedObservation { operation })?;
         self.validate_request_runtime(operation, &context, &request.runtime)?;
         validate_witnessed_preparation(operation, &request.claim)?;
         self.reserve_context(operation, &context)?;
@@ -1664,9 +1674,12 @@ impl BridgeClient {
             Err(error) => return Err(error),
         };
         Self::validate_response_context(operation, &context, &result.context)?;
-        if result.scanned_window != expected_window || window_end > result.finalized_tip.height {
-            return Err(BridgeClientError::MalformedObservation { operation });
-        }
+        let (window_start, window_end, window_complete) = validate_scanned_tip_prefix(
+            operation,
+            expected_window,
+            result.scanned_window,
+            result.finalized_tip,
+        )?;
         match result.outcome {
             FinalizedWitnessedClaimScanOutcome::PresentExact { claim } => {
                 validate_finalized_witnessed_claim_facts(
@@ -1688,7 +1701,20 @@ impl BridgeClient {
                 })
             }
             FinalizedWitnessedClaimScanOutcome::NotFound => {
+                if !window_complete {
+                    return Err(BridgeClientError::MalformedObservation { operation });
+                }
                 Ok(FinalizedWitnessedClaimPresence::NotFound {
+                    context: result.context,
+                    finalized_tip: result.finalized_tip,
+                    scanned_window: result.scanned_window,
+                })
+            }
+            FinalizedWitnessedClaimScanOutcome::Uncertain {} => {
+                if window_complete {
+                    return Err(BridgeClientError::MalformedObservation { operation });
+                }
+                Ok(FinalizedWitnessedClaimPresence::PrefixUncertain {
                     context: result.context,
                     finalized_tip: result.finalized_tip,
                     scanned_window: result.scanned_window,
@@ -2685,6 +2711,33 @@ fn validate_asset_finalized_claim_echo(
         return Err(BridgeClientError::MalformedObservation { operation });
     }
     Ok(())
+}
+
+fn validate_scanned_tip_prefix(
+    operation: BridgeOperation,
+    authorized_window: DiscoveryWindow,
+    scanned_window: DiscoveryWindow,
+    finalized_tip: ChainTip,
+) -> Result<(u64, u64, bool), BridgeClientError> {
+    let authorized_start = authorized_window.start_height();
+    let authorized_end = authorized_start
+        .checked_add(u64::from(authorized_window.max_blocks() - 1))
+        .ok_or(BridgeClientError::MalformedObservation { operation })?;
+    let scanned_start = scanned_window.start_height();
+    let scanned_end = scanned_start
+        .checked_add(u64::from(scanned_window.max_blocks() - 1))
+        .ok_or(BridgeClientError::MalformedObservation { operation })?;
+    if scanned_start != authorized_start
+        || scanned_end > authorized_end
+        || scanned_end > finalized_tip.height
+    {
+        return Err(BridgeClientError::MalformedObservation { operation });
+    }
+    Ok((
+        scanned_start,
+        scanned_end,
+        scanned_window == authorized_window,
+    ))
 }
 
 fn validate_scanned_prefix(

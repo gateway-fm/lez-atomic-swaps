@@ -3902,6 +3902,43 @@ prefixes cannot. The focused evidence test, all 90 actor unit tests, all 11 acto
 CLI tests, and actor all-target/all-feature Clippy are GREEN. A new exact pushed
 replay remains the runtime gate.
 
+Exact pushed replay `m5-btc-app-20260730-0e77fdb-c` then passed deployment,
+fresh-identity bootstrap, Delivery/Chat application negotiation, independent
+role provisioning, actor activation, the confirmed Bitcoin first lock, both
+ordered finalized LEZ Maker effects, and the dual-lock revision-2 gate. It
+failed closed at the first revealing-claim submission: the claim classifier
+still required the complete 4,096-block envelope, returned unavailable, and the
+actor correctly performed zero claim submissions. No secret was revealed and
+no unsafe effect occurred.
+
+The claim classifier now uses the same stable same-start finalized prefix
+reader. An exact claim may be returned from the prefix; a strict-prefix miss is
+the new structural `PrefixUncertain`, never `NotFound`; full-window absence
+remains the only chain-absence authority. The client rejects shifted,
+out-of-envelope, prefix-`NotFound`, full-window-uncertain, and out-of-prefix
+positive facts.
+
+For an owning role only, `PrefixUncertain` may reach a new payload-bearing
+journal observation containing the already persisted LEZ claim ID and complete
+exact bytes. Inside one immediate SQLite transaction the journal verifies both
+against its durable snapshot, permits only LEZ `Claim`, and consumes
+`Prepared` to `Started` once. Funding, refunds, Bitcoin claims, payload drift,
+peerless discovery, generic node unavailability, timeouts, and transport
+ambiguity cannot use this path. `Started`, `Unknown`, or terminal state never
+rearms. Only later finalized `PresentExact` evidence can project lifecycle
+progress or expose the revealing signature.
+
+The affected workspace gate is GREEN: 91 actor unit tests, 11 actor CLI tests,
+45 protocol contracts, 37 bridge-client contracts, 18 public-effect journal
+tests, and their remaining package targets all pass locked/offline. The pinned
+LEZ v0.2 sidecar gate is also GREEN with 207 tests and warning-fatal
+all-target/all-feature Clippy. Workspace formatting, diff hygiene, warning-fatal
+all-target/all-feature Clippy, and warning-fatal Rustdoc are GREEN across every
+affected workspace crate. ADRs 0036 and 0110 record the component and claim
+sequence flows, exact atomicity boundary, and `LOGOS-022` authoritative-indexer
+production limitation. A clean pushed commit and exact isolated BTC replay
+remain the runtime gate; no M5 tag is claimed.
+
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
 security contracts. Its extracted legacy timing fixture now declares non-M5

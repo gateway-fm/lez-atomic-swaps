@@ -46,6 +46,29 @@ fn prepared_refund() -> PreparedPublicEffect {
     .unwrap()
 }
 
+fn prepared_lez_claim() -> PreparedPublicEffect {
+    PreparedPublicEffect::new(
+        PublicEffectKey::new(
+            SwapId::new("m5-lez-claim-effect").unwrap(),
+            Participant::Maker,
+            PublicEffectChain::Lez,
+            PublicEffectOperation::Claim,
+            2,
+        ),
+        [0xc1; 32],
+        "lez-claim-transaction-0001",
+        vec![0x21, 0x22, 0x23, 0x24],
+    )
+    .unwrap()
+}
+
+fn exact_idempotent_lez_claim(effect: &PreparedPublicEffect) -> PublicEffectObservation {
+    PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe {
+        expected_effect_id: effect.expected_effect_id().to_owned().into_boxed_str(),
+        exact_public_bytes: effect.exact_public_bytes().to_vec(),
+    }
+}
+
 #[test]
 fn prepared_effect_is_exactly_replayable_and_conflicts_on_any_immutable_drift() {
     let directory = tempdir().unwrap();
@@ -125,6 +148,105 @@ fn absent_observation_commits_started_before_granting_the_only_send_authorizatio
             panic!("started or uncertain work must never rearm submission");
         };
         assert_eq!(durable.state(), PublicEffectState::Started);
+    }
+}
+
+#[test]
+fn exact_idempotent_lez_claim_admission_starts_once_without_claiming_absence() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("lez-claim.sqlite3");
+    let candidate = prepared_lez_claim();
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let _ = journal.record_prepared(&candidate).unwrap();
+
+    let PublicEffectDecision::SubmitOnce(started) = journal
+        .reconcile(candidate.key(), exact_idempotent_lez_claim(&candidate))
+        .unwrap()
+    else {
+        panic!("exact idempotent LEZ claim admission must grant one durable send");
+    };
+    assert_eq!(started.state(), PublicEffectState::Started);
+    assert_eq!(started.attempt_count(), 1);
+    assert_eq!(started.revision(), 1);
+
+    drop(journal);
+    let mut restarted = SqlitePublicEffectJournal::open(&path).unwrap();
+    let PublicEffectDecision::ObserveOnly(durable) = restarted
+        .reconcile(candidate.key(), exact_idempotent_lez_claim(&candidate))
+        .unwrap()
+    else {
+        panic!("consumed exact idempotent claim authority must never rearm");
+    };
+    assert_eq!(durable.state(), PublicEffectState::Started);
+    assert_eq!(durable.attempt_count(), 1);
+    assert_eq!(durable.revision(), 1);
+}
+
+#[test]
+fn exact_idempotent_admission_is_lez_claim_only_and_payload_bound() {
+    let directory = tempdir().unwrap();
+
+    for (case, candidate) in [
+        ("bitcoin-claim", prepared()),
+        (
+            "lez-funding",
+            PreparedPublicEffect::new(
+                PublicEffectKey::new(
+                    SwapId::new("m5-lez-funding-effect").unwrap(),
+                    Participant::Maker,
+                    PublicEffectChain::Lez,
+                    PublicEffectOperation::Funding,
+                    1,
+                ),
+                [0xd1; 32],
+                "lez-funding-transaction-0001",
+                vec![0x31, 0x32],
+            )
+            .unwrap(),
+        ),
+        ("lez-refund", prepared_refund()),
+    ] {
+        let mut journal =
+            SqlitePublicEffectJournal::open(directory.path().join(format!("{case}.sqlite3")))
+                .unwrap();
+        let _ = journal.record_prepared(&candidate).unwrap();
+        assert!(matches!(
+            journal.reconcile(candidate.key(), exact_idempotent_lez_claim(&candidate)),
+            Err(StoreError::InvalidPublicEffect)
+        ));
+        let durable = journal.current(candidate.key()).unwrap().unwrap();
+        assert_eq!(durable.state(), PublicEffectState::Prepared);
+        assert_eq!(durable.attempt_count(), 0);
+    }
+
+    let candidate = prepared_lez_claim();
+    for (case, observation) in [
+        (
+            "wrong-id",
+            PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe {
+                expected_effect_id: "different-lez-claim".into(),
+                exact_public_bytes: candidate.exact_public_bytes().to_vec(),
+            },
+        ),
+        (
+            "wrong-bytes",
+            PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe {
+                expected_effect_id: candidate.expected_effect_id().to_owned().into_boxed_str(),
+                exact_public_bytes: vec![0x21, 0x22, 0x23, 0xff],
+            },
+        ),
+    ] {
+        let mut journal =
+            SqlitePublicEffectJournal::open(directory.path().join(format!("{case}.sqlite3")))
+                .unwrap();
+        let _ = journal.record_prepared(&candidate).unwrap();
+        assert!(matches!(
+            journal.reconcile(candidate.key(), observation),
+            Err(StoreError::PublicEffectConflict)
+        ));
+        let durable = journal.current(candidate.key()).unwrap().unwrap();
+        assert_eq!(durable.state(), PublicEffectState::Prepared);
+        assert_eq!(durable.attempt_count(), 0);
     }
 }
 

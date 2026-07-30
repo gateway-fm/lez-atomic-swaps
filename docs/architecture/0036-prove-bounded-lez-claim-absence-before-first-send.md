@@ -2,7 +2,8 @@
 
 Status: Accepted and GREEN through the reference actor in both actual-node
 happy directions. Equivalent bounded finalized refund absence/presence evidence
-remains active.
+remains active. ADR 0110 adds the M5 strict-prefix exact-idempotent claim path
+without weakening this ADR's definition of chain absence.
 
 ## Context
 
@@ -19,18 +20,25 @@ one initial submission case from temporary unavailability.
 ## Decision
 
 The LEZ bridge exposes an additive strict
-`classify_finalized_witnessed_claim` method. Its actor-facing result has four
+`classify_finalized_witnessed_claim` method. Its actor-facing result has five
 classes:
 
 - `PresentExact` carries the complete validated canonical claim facts;
 - `NotFound` carries the exact completely scanned window and stable finalized
   tip;
+- `PrefixUncertain` carries a stable same-start strict prefix that did not yet
+  contain the exact claim;
 - `Unavailable` identifies missing node finality/history or a moving tip; and
 - `Uncertain` identifies timeout or transport ambiguity.
 
-Only `NotFound` satisfies the chain-absence precondition for an initial send.
-It does not itself authorize submission. The caller must also win the separate
-`Prepared` to `Started` public-effect compare-and-swap from ADR 0033.
+Only `NotFound` satisfies the chain-absence precondition. It does not itself
+authorize submission. The caller must also win the separate `Prepared` to
+`Started` public-effect compare-and-swap from ADR 0033. `PrefixUncertain` is not
+absence and cannot project lifecycle evidence. Under ADR 0110, an owning role
+may combine it only with the exact LEZ claim ID and bytes already retained in
+that journal; the same compare-and-swap then grants at most one byte-identical
+submission attempt. Funding, refund, peerless discovery, generic unavailable,
+and transport-uncertain paths cannot use that authority.
 
 `NotFound` is returned only after every block in the caller-owned bounded
 window is available as finalized by numeric ID and hash, the blocks form the
@@ -51,6 +59,7 @@ flowchart TB
     Unavailable["Unavailable"]
     Uncertain["Uncertain"]
     Journal[("Public effect journal")]
+    Prefix["PrefixUncertain with stable strict prefix"]
 
     Actor --> Request
     Request --> Sidecar
@@ -60,6 +69,7 @@ flowchart TB
     Sidecar --> Absent
     Sidecar --> Unavailable
     Sidecar --> Uncertain
+    Sidecar --> Prefix
     Present --> Identity
     Identity -->|"Match"| Journal
     Identity -->|"Conflict"| Conflict
@@ -67,12 +77,15 @@ flowchart TB
     Absent --> Journal
     Unavailable -.-> Actor
     Uncertain -.-> Actor
+    Prefix -->|"Exact retained LEZ claim only"| Journal
 ```
 
 Presence maps to `PresentExact` reconciliation. Stable complete absence maps
-to `Absent` reconciliation. Unavailable and uncertain states map to
-`Uncertain` reconciliation and can never consume send authority. A later
-poll may use a fresh request identity and a deliberately selected later
+to `Absent` reconciliation. Prefix uncertainty maps to the payload-bearing
+exact-idempotent LEZ-claim observation only when the actor owns the prepared
+effect; otherwise it remains observe-only. Unavailable and transport-uncertain
+states map to `Uncertain` reconciliation and can never consume send authority.
+A later poll may use a fresh request identity and a deliberately selected later
 window; durable `Started` or `Unknown` state still cannot rearm.
 
 `PresentExact` is reconciled against the complete durable public identity. An
@@ -109,6 +122,10 @@ sequenceDiagram
     else History, finality, or tip unavailable
         Sidecar-->>SwapActor: Unavailable
         SwapActor->>Journal: Observe only
+    else Stable strict prefix has no claim
+        Sidecar-->>SwapActor: PrefixUncertain
+        SwapActor->>Journal: CAS exact retained LEZ claim ID and bytes
+        Journal-->>SwapActor: SubmitOnce or ObserveOnly after prior attempt
     else Timeout or transport ambiguity
         Sidecar-->>SwapActor: Uncertain
         SwapActor->>Journal: Observe only
@@ -125,8 +142,14 @@ PoC compensation and remains an upstream production-readiness exception.
 
 This decision does not make the indexer read, SQLite CAS, RPC send, and later
 lifecycle projection atomic. Exact public bytes become durable first. Only one
-caller can consume send authority. A crash or ambiguous result after that
-point leaves observation-only recovery.
+caller can consume send authority. A crash or ambiguous result after that point
+leaves observation-only recovery.
+
+The progressive reader pins and links the requested prefix but cannot prove an
+older prefix endpoint descends from the indexer's current finalized head because
+the upstream API exposes neither a snapshot token nor proof-bearing ancestry.
+This authoritative-indexer limitation is recorded as `LOGOS-022`; under ADR
+0018 it does not block private local milestone evidence.
 
 An accepted submission is not lifecycle evidence. The actor remains at its
 predecessor revision until a later `PresentExact` response passes the complete
@@ -135,18 +158,19 @@ finalized evidence binding and the recovery-store predecessor CAS.
 ## Consequences
 
 - Protocol, client, adapter, and pinned-sidecar tests distinguish exact
-  presence, definitive bounded absence, immature/partial history, moving tips,
-  timeouts, and transport failures.
+  presence, definitive bounded absence, stable prefix uncertainty,
+  immature/unavailable history, moving snapshots, timeouts, and transport
+  failures.
+- Journal and actor tests prove that prefix uncertainty can submit only the
+  already retained exact LEZ claim once and can never rearm or project progress.
 - The legacy affirmative finalized observer remains externally compatible; a
   definitive absence maps back to its legacy unavailable result.
 - The actor now composes LEZ completion, persist-before-presence, bounded
   classification, one-attempt submission, peerless observation, and revisions
   three and four without treating upstream flakiness as absence or retry
   authority.
-- Eight focused LEZ actor tests cover both owned directions, both peer roles,
-  stable absence, later-window finalized presence, unavailable/uncertain
-  classes, `Started`/`Unknown` restart, activation reruns, contradictory
-  bytes/signatures, and out-of-window evidence. The complete actor gate is 34
-  library tests plus seven CLI integration tests.
-- Actual local-node actor execution and retained terminal evidence remain
-  required before M3 local-PoC certification.
+- Focused actor tests cover owned and peerless claims, stable absence and prefix
+  uncertainty, later finalized presence, generic unavailability, restart,
+  conflicting bytes/signatures, and out-of-window evidence. The complete
+  affected actor gate is 91 library tests plus 11 CLI integration tests.
+- The exact pushed BTC application replay remains the M5 runtime gate.

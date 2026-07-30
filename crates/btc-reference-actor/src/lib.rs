@@ -6229,7 +6229,7 @@ where
                 scanned_window,
                 ..
             }
-            | FinalizedWitnessedClaimPresence::NotFound {
+            | FinalizedWitnessedClaimPresence::PrefixUncertain {
                 context,
                 finalized_tip,
                 scanned_window,
@@ -6239,6 +6239,21 @@ where
                 *finalized_tip,
                 *scanned_window,
             )?,
+            FinalizedWitnessedClaimPresence::NotFound {
+                context,
+                finalized_tip,
+                scanned_window,
+            } => {
+                validate_finalized_lez_presence_envelope(
+                    &durable_request,
+                    context,
+                    *finalized_tip,
+                    *scanned_window,
+                )?;
+                if *scanned_window != durable_request.window {
+                    return Err(ActorCommandError::AgreementBindingInvalid);
+                }
+            }
             FinalizedWitnessedClaimPresence::Unavailable(_)
             | FinalizedWitnessedClaimPresence::Uncertain(_) => {}
         }
@@ -6267,6 +6282,7 @@ where
                 claim,
             )?),
             FinalizedWitnessedClaimPresence::NotFound { .. }
+            | FinalizedWitnessedClaimPresence::PrefixUncertain { .. }
             | FinalizedWitnessedClaimPresence::Unavailable(_)
             | FinalizedWitnessedClaimPresence::Uncertain(_) => None,
         };
@@ -6312,6 +6328,12 @@ where
                 )
             }
             FinalizedWitnessedClaimPresence::NotFound { .. } => PublicEffectObservation::Absent,
+            FinalizedWitnessedClaimPresence::PrefixUncertain { .. } => {
+                PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe {
+                    expected_effect_id: effect.effect.expected_effect_id().into(),
+                    exact_public_bytes: effect.effect.exact_public_bytes().to_vec(),
+                }
+            }
             FinalizedWitnessedClaimPresence::PresentExact { .. } => {
                 PublicEffectObservation::ConflictingPresence
             }
@@ -7067,9 +7089,14 @@ fn validate_finalized_lez_presence_envelope(
     let window_end = window_start
         .checked_add(u64::from(request.window.max_blocks() - 1))
         .ok_or(ActorCommandError::ObservationUnavailable)?;
+    let scanned_end = scanned_window
+        .start_height()
+        .checked_add(u64::from(scanned_window.max_blocks() - 1))
+        .ok_or(ActorCommandError::ObservationUnavailable)?;
     if context != &request.context
-        || scanned_window != request.window
-        || window_end > finalized_tip.height
+        || scanned_window.start_height() != window_start
+        || scanned_end > window_end
+        || scanned_end > finalized_tip.height
     {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }

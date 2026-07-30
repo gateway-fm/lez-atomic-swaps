@@ -492,10 +492,11 @@ async fn exact_claim_is_returned_only_after_sequential_dual_lookup_and_stable_fi
         *indexer.calls.lock().unwrap(),
         vec![
             "tip".to_owned(),
-            "id:11".to_owned(),
-            format!("hash:{}", hex::encode([11; 32])),
+            "tip".to_owned(),
             "id:10".to_owned(),
             format!("hash:{}", hex::encode([10; 32])),
+            "id:11".to_owned(),
+            format!("hash:{}", hex::encode([11; 32])),
             "id:11".to_owned(),
             format!("hash:{}", hex::encode([11; 32])),
             format!(
@@ -555,31 +556,63 @@ async fn exact_presence_and_stable_complete_absence_are_distinct_successes() {
             .iter()
             .filter(|call| call.as_str() == "tip")
             .count(),
-        2,
-        "absence is definitive only after the second stable-tip read"
+        3,
+        "absence is definitive only after the pinned prefix is confirmed"
     );
 }
 
 #[tokio::test]
-async fn incomplete_or_moving_absence_never_becomes_not_found() {
+async fn strict_finalized_prefix_can_prove_exact_presence() {
+    let mut fixture = fixture();
+    fixture.request.window = DiscoveryWindow::new(10, 4).unwrap();
+    let observer = FinalizedWitnessedClaimObserver::new(
+        fixture.runtime.clone(),
+        indexer(&fixture, [Some(11)]),
+    );
+
+    let result = observer.classify(&fixture.request).await.unwrap();
+
+    assert_eq!(result.scanned_window, DiscoveryWindow::new(10, 2).unwrap());
+    assert!(matches!(
+        result.outcome,
+        FinalizedWitnessedClaimScanOutcome::PresentExact { claim }
+            if claim.transaction.transaction_id
+                == match fixture.request.target {
+                    FinalizedWitnessedClaimObservationTarget::Exact {
+                        claim_transaction_id,
+                    } => claim_transaction_id,
+                    FinalizedWitnessedClaimObservationTarget::DiscoverByTerms => {
+                        panic!("exact fixture")
+                    }
+                }
+    ));
+}
+
+#[tokio::test]
+async fn strict_finalized_prefix_miss_is_uncertain_not_absence() {
     let mut absent = fixture();
     absent.blocks[0].body.transactions.clear();
-    let observer = FinalizedWitnessedClaimObserver::new(
-        absent.runtime.clone(),
-        indexer(&absent, [Some(10), Some(10)]),
+    absent.request.window = DiscoveryWindow::new(10, 4).unwrap();
+    let observer =
+        FinalizedWitnessedClaimObserver::new(absent.runtime.clone(), indexer(&absent, [Some(11)]));
+
+    let result = observer.classify(&absent.request).await.unwrap();
+
+    assert_eq!(result.scanned_window, DiscoveryWindow::new(10, 2).unwrap());
+    assert_eq!(
+        result.outcome,
+        FinalizedWitnessedClaimScanOutcome::Uncertain {}
     );
+}
+
+#[tokio::test]
+async fn unavailable_before_authorized_start_never_becomes_not_found() {
+    let absent = fixture();
+    let observer =
+        FinalizedWitnessedClaimObserver::new(absent.runtime.clone(), indexer(&absent, [Some(9)]));
     assert_eq!(
         observer.classify(&absent.request).await.unwrap_err(),
         BridgeRuntimeError::Unavailable
-    );
-
-    let observer = FinalizedWitnessedClaimObserver::new(
-        absent.runtime.clone(),
-        indexer(&absent, [Some(11), Some(12)]),
-    );
-    assert_eq!(
-        observer.classify(&absent.request).await.unwrap_err(),
-        BridgeRuntimeError::MovingTip
     );
 }
 
@@ -670,7 +703,7 @@ async fn peerless_discovery_distinguishes_ambiguity_conflict_and_absence() {
 }
 
 #[tokio::test]
-async fn pending_or_incompletely_covered_window_fails_closed() {
+async fn pending_or_strict_prefix_miss_fails_closed_for_found_only_observation() {
     let mut pending_fixture = fixture();
     pending_fixture.blocks[0].bedrock_status = BedrockStatus::Pending;
     let observer = FinalizedWitnessedClaimObserver::new(
@@ -685,7 +718,8 @@ async fn pending_or_incompletely_covered_window_fails_closed() {
         BridgeRuntimeError::InvalidObservation
     );
 
-    let fixture = fixture();
+    let mut fixture = fixture();
+    fixture.blocks[0].body.transactions.clear();
     let observer = FinalizedWitnessedClaimObserver::new(
         fixture.runtime.clone(),
         indexer(&fixture, [Some(10), Some(10)]),
@@ -697,16 +731,15 @@ async fn pending_or_incompletely_covered_window_fails_closed() {
 }
 
 #[tokio::test]
-async fn moved_tip_or_by_id_hash_disagreement_fails_closed() {
+async fn advancing_tip_preserves_pinned_prefix_but_by_id_hash_disagreement_fails_closed() {
     let fixture = fixture();
     let observer = FinalizedWitnessedClaimObserver::new(
         fixture.runtime.clone(),
         indexer(&fixture, [Some(11), Some(12)]),
     );
-    assert_eq!(
-        observer.observe(&fixture.request).await.unwrap_err(),
-        BridgeRuntimeError::MovingTip
-    );
+    let result = observer.observe(&fixture.request).await.unwrap();
+    assert_eq!(result.finalized_tip.height, 11);
+    assert_eq!(result.claim.containing_block.block_id, 10);
 
     let bad = indexer(&fixture, [Some(11), Some(11)]);
     bad.by_hash.get(&[10; 32]).expect("fixture");
@@ -760,18 +793,16 @@ async fn finalized_claim_must_be_ancestral_to_the_stable_tip() {
         indexer(&unanchored, [Some(11), Some(11)]),
     );
     let result = observer.observe(&unanchored.request).await.unwrap();
-    assert_eq!(result.finalized_tip.height, 11);
+    assert_eq!(result.finalized_tip.height, 10);
     assert_eq!(result.claim.containing_block.block_id, 10);
 
-    let over_bound = fixture();
+    let far_advanced = fixture();
     let observer = FinalizedWitnessedClaimObserver::new(
-        over_bound.runtime.clone(),
-        indexer(&over_bound, [Some(10 + 4_096)]),
+        far_advanced.runtime.clone(),
+        indexer(&far_advanced, [Some(10 + 4_096)]),
     );
-    assert_eq!(
-        observer.observe(&over_bound.request).await.unwrap_err(),
-        BridgeRuntimeError::Unavailable
-    );
+    let result = observer.observe(&far_advanced.request).await.unwrap();
+    assert_eq!(result.finalized_tip.height, 11);
 }
 
 #[tokio::test]
@@ -912,7 +943,7 @@ async fn authenticated_bridge_server_peerless_observation_is_repeatable_and_neve
             .iter()
             .filter(|call| call.as_str() == "tip")
             .count(),
-        6,
+        9,
         "repeatable observation must execute a fresh stable-tip read"
     );
     assert_eq!(submission_calls.load(Ordering::SeqCst), 0);

@@ -484,7 +484,7 @@ fn finalized_witnessed_claim_wire_binds_exact_transcript_witness_and_block() {
 }
 
 #[test]
-fn finalized_witnessed_claim_presence_wire_is_strict_and_carries_exact_coverage() {
+fn finalized_witnessed_claim_presence_wire_is_strict_and_carries_three_way_coverage() {
     let window = DiscoveryWindow::new(50, 3).unwrap();
     let not_found = ClassifyFinalizedWitnessedClaimResult::not_found(
         context(),
@@ -506,6 +506,29 @@ fn finalized_witnessed_claim_presence_wire_is_strict_and_carries_exact_coverage(
         )
         .unwrap(),
         not_found
+    );
+
+    let prefix = DiscoveryWindow::new(50, 2).unwrap();
+    let uncertain = ClassifyFinalizedWitnessedClaimResult::uncertain(
+        context(),
+        ChainTip::new(h(58), 51),
+        prefix,
+    );
+    assert_eq!(
+        uncertain.outcome,
+        FinalizedWitnessedClaimScanOutcome::Uncertain {}
+    );
+    assert_eq!(uncertain.scanned_window, prefix);
+    assert_eq!(
+        serde_json::to_value(&uncertain).unwrap()["outcome"],
+        serde_json::json!({"status": "uncertain"})
+    );
+    assert_eq!(
+        serde_json::from_value::<ClassifyFinalizedWitnessedClaimResult>(
+            serde_json::to_value(&uncertain).unwrap()
+        )
+        .unwrap(),
+        uncertain
     );
 
     let mut unknown = serde_json::to_value(&not_found).unwrap();

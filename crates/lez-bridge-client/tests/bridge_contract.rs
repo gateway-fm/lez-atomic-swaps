@@ -123,6 +123,10 @@ enum Behavior {
     MutatedFinalizedFundingPositionHash,
     FinalizedFundingTipBeforeWindowEnd,
     PresenceNotFound,
+    ClaimPresencePrefixFound,
+    ClaimPresencePrefixUncertain,
+    ClaimPresenceFullUncertain,
+    ClaimPresencePrefixNotFound,
     FundingPresencePrefixFound,
     FundingPresencePrefixUncertain,
     FundingPresenceFullUncertain,
@@ -869,10 +873,29 @@ fn register_finalized_witnessed_claim_presence_method(module: &mut RpcModule<Fix
                 let observed = finalized_witnessed_claim_result(&request, fixture.behavior);
                 let scanned_window = if matches!(fixture.behavior, Behavior::PresenceWrongWindow) {
                     DiscoveryWindow::new(request.window.start_height() + 1, 1).unwrap()
+                } else if matches!(
+                    fixture.behavior,
+                    Behavior::ClaimPresencePrefixFound
+                        | Behavior::ClaimPresencePrefixUncertain
+                        | Behavior::ClaimPresencePrefixNotFound
+                ) {
+                    DiscoveryWindow::new(request.window.start_height(), 1).unwrap()
                 } else {
                     request.window
                 };
-                let result = if matches!(fixture.behavior, Behavior::PresenceNotFound) {
+                let result = if matches!(
+                    fixture.behavior,
+                    Behavior::ClaimPresencePrefixUncertain | Behavior::ClaimPresenceFullUncertain
+                ) {
+                    ClassifyFinalizedWitnessedClaimResult::uncertain(
+                        observed.context,
+                        observed.finalized_tip,
+                        scanned_window,
+                    )
+                } else if matches!(
+                    fixture.behavior,
+                    Behavior::PresenceNotFound | Behavior::ClaimPresencePrefixNotFound
+                ) {
                     ClassifyFinalizedWitnessedClaimResult::not_found(
                         observed.context,
                         observed.finalized_tip,
@@ -2040,6 +2063,57 @@ async fn finalized_witnessed_claim_presence_distinguishes_exact_present_and_defi
             ..
         } if scanned_window == DiscoveryWindow::new(60, 2).unwrap()
     ));
+}
+
+#[tokio::test]
+async fn finalized_witnessed_claim_accepts_prefix_present_and_typed_uncertainty() {
+    let present =
+        classify_presence_for_behavior(Behavior::ClaimPresencePrefixFound, "claim-prefix-present")
+            .await
+            .unwrap();
+    assert!(matches!(
+        present,
+        FinalizedWitnessedClaimPresence::PresentExact {
+            scanned_window,
+            ..
+        } if scanned_window == DiscoveryWindow::new(60, 1).unwrap()
+    ));
+
+    let uncertain = classify_presence_for_behavior(
+        Behavior::ClaimPresencePrefixUncertain,
+        "claim-prefix-uncertain",
+    )
+    .await
+    .unwrap();
+    assert!(!uncertain.authorizes_initial_submission());
+    assert!(matches!(
+        uncertain,
+        FinalizedWitnessedClaimPresence::PrefixUncertain {
+            finalized_tip: ChainTip { height: 61, .. },
+            scanned_window,
+            ..
+        } if scanned_window == DiscoveryWindow::new(60, 1).unwrap()
+    ));
+}
+
+#[tokio::test]
+async fn finalized_witnessed_claim_rejects_prefix_not_found_and_full_uncertainty() {
+    for (behavior, suffix) in [
+        (
+            Behavior::ClaimPresencePrefixNotFound,
+            "claim-prefix-not-found",
+        ),
+        (Behavior::ClaimPresenceFullUncertain, "claim-full-uncertain"),
+    ] {
+        assert!(matches!(
+            classify_presence_for_behavior(behavior, suffix)
+                .await
+                .unwrap_err(),
+            BridgeClientError::MalformedObservation {
+                operation: BridgeOperation::ClassifyFinalizedWitnessedClaim,
+            }
+        ));
+    }
 }
 
 #[tokio::test]

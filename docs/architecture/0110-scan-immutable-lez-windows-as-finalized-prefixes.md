@@ -1,6 +1,6 @@
 # ADR 0110: Scan immutable LEZ windows as finalized prefixes
 
-- Status: Accepted for the native BTC application classifier boundary
+- Status: Accepted for the native BTC application Maker-lock and claim boundaries
 - Date: 2026-07-30
 - Milestone: M5 progressive application plane
 
@@ -33,11 +33,17 @@ The result rules are asymmetric:
 - an initialization miss in a strict prefix is `Uncertain`, never `Absent`;
 - exact funding `Found` may be returned from a finalized prefix;
 - a funding miss in a strict prefix is `Uncertain`, never `Absent`; and
-- either `Absent` outcome requires the complete authorized range.
+- either `Absent` outcome requires the complete authorized range;
+- exact claim `PresentExact` may be returned from a finalized prefix;
+- a claim miss in a strict prefix is `PrefixUncertain`, never `NotFound`; and
+- claim `NotFound` requires the complete authorized range.
 
 The client independently requires the reported scan to begin at the authorized
 start, end no later than the authorized end and finalized clock, and contain any
-returned transaction facts. It rejects every strict-prefix `Absent` response.
+returned transaction facts. It rejects every strict-prefix `Absent` or
+`NotFound` response and every full-window prefix-uncertainty response. Claim
+facts must also lie inside the reported prefix.
+
 Forward finality advancement is safe when the independently re-read prefix end
 is unchanged; scanned-end identity drift, regression, malformed history, or
 transport uncertainty remains fail-closed.
@@ -46,12 +52,12 @@ transport uncertainty remains fail-closed.
 flowchart LR
     Config[Immutable schema 6 actor config]
     Envelope[Authorized LEZ discovery envelope]
-    Actor[Role fixed Maker actor]
+    Actor[Role fixed swap actor]
     Client[LEZ bridge client]
     Sidecar[LEZ v0.2 sidecar]
     Indexer[Official indexer RPC]
     Sequencer[Official sequencer RPC]
-    Journal[(Maker effect journal)]
+    Journal[(Exact public effect journal)]
 
     Config --> Envelope
     Config --> Actor
@@ -100,7 +106,40 @@ sequenceDiagram
     A->>J: Persist prefix clock and project revision 2
 ```
 
+## Native claim continuation
+
+```mermaid
+sequenceDiagram
+    participant A as Claim owning actor
+    participant J as Exact public effect journal
+    participant C as Bridge client
+    participant S as LEZ sidecar
+    participant I as Finalized indexer
+    participant Q as Sequencer
+
+    A->>J: Persist claim ID and exact public bytes
+    A->>C: Classify exact claim in immutable envelope
+    C->>S: Exact target and envelope
+    S->>I: Read and pin same start finalized prefix
+    alt Exact claim already finalized
+        I-->>S: PresentExact with canonical facts
+        S-->>A: PresentExact
+        A->>J: Reconcile exact presence
+    else Strict prefix has no exact claim
+        I-->>S: Stable strict prefix miss
+        S-->>A: PrefixUncertain
+        A->>J: CAS exact ID and bytes from Prepared to Started
+        J-->>A: SubmitOnce or ObserveOnly after prior attempt
+        A->>S: Submit retained byte identical claim once
+        S->>Q: One exact transaction call
+    end
+    Note over A,J: No prefix result projects progress
+    I-->>S: Later PresentExact finalized evidence
+    S-->>A: PresentExact through validated client
+    A->>J: Accept exact claim and project next revision
+```
 ## Atomicity argument
+
 
 This decision does not claim a distributed transaction across Bitcoin and LEZ.
 It preserves the narrower atomic authorities required by the swap protocol:
@@ -109,28 +148,40 @@ It preserves the narrower atomic authorities required by the swap protocol:
    and 4,096-block envelope never change after no-clobber publication.
 2. A strict prefix can prove only exact positive evidence or uncertainty. It can
    never create absence authority.
-3. Current `UnknownOrPending` does not assert absence. It permits only the exact
-   durable idempotent transaction already owned by the actor, after the effect
-   journal has consumed the one-attempt authority.
-4. Canonical progress requires the same exact transaction in independently
+3. Maker-lock `UnknownOrPending` does not assert absence. It permits only the
+   exact durable idempotent transaction already owned by the actor, after the
+   effect journal has consumed the one-attempt authority.
+4. Claim `PrefixUncertain` likewise does not assert absence. It can consume
+   authority only for a LEZ claim whose ID and complete exact bytes match the
+   durable snapshot inside the same SQLite transaction. Started, Unknown, and
+   terminal states never rearm; refunds and funding reject this observation.
+5. Canonical progress requires the same exact transaction in independently
    re-read finalized history, with decoded signer, instruction, accounts, and
    historical custody state all bound to the agreement.
-5. Initialization must become canonical before funding is eligible. Secret
+6. Initialization must become canonical before funding is eligible. Secret
    reveal remains downstream of the complete Maker-lock pair.
 
 A crash before the journal commit leaves no send authority consumed. A crash
 after commit replays the exact intent without inventing a second attempt. A
 moving or malformed scanned endpoint yields no progress and no absence.
 
+The progressive reader links and pins the requested prefix endpoint. Logos v0.2
+does not expose proof-bearing ancestry or a snapshot token tying an older prefix
+endpoint to the current finalized head. The implementation therefore treats the
+indexer as authoritative, never calls these facts consensus proofs, and records
+the production disposition as `LOGOS-022`. ADR 0018 keeps that Logos-owned trust
+limitation nonblocking for private local milestone evidence.
 ## Consequences
+
 
 - Local and public runtimes use the same config; changing endpoints remains a
   deployment configuration change rather than a different actor protocol.
 - Local tests no longer mine thousands of irrelevant blocks merely to fill an
   authorization envelope.
-- Tests cover prefix `Found`, prefix initialization `Uncertain`, prefix funding
-  `Uncertain`, forbidden prefix `Absent`, forward finality, and scanned-end
-  drift. The exact isolated BTC application replay remains the runtime gate.
+- Tests cover prefix `Found`, initialization/funding `Uncertain`, claim
+  `PrefixUncertain`, forbidden prefix absence, exact ID/byte binding, one-attempt
+  restart behavior, generic uncertainty, peerless observe-only behavior,
+  forward finality, and scanned-end drift.
 - Final Maker-lock evidence stores the authenticated same-start scanned prefix
   and finalized clock. It no longer calls the legacy full-window observer after
   both steps are canonical; `Absent` and `Uncertain` still remain pending.

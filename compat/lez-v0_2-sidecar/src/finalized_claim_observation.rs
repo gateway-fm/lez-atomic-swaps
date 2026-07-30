@@ -17,11 +17,10 @@ use lez_bridge_protocol::{
     FinalizedBlockIdentity, FinalizedWitnessedClaimFacts, FinalizedWitnessedClaimObservationTarget,
     FinalizedWitnessedClaimScanOutcome, FinalizedWitnessedFundingFacts,
     FinalizedWitnessedFundingObservationTarget, FinalizedWitnessedFundingScanOutcome,
-    FinalizedWitnessedInitializationFacts, Hex32, MAX_DISCOVERY_BLOCKS, NativeCustodyFacts,
-    NativeFundInstructionFacts, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
-    ObserveFinalizedWitnessedFundingResult, ObservedTransactionFacts,
-    WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
+    FinalizedWitnessedInitializationFacts, Hex32, NativeCustodyFacts, NativeFundInstructionFacts,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
+    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
+    ObservedTransactionFacts, WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts,
     WitnessedNativeInitializeInstructionFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
@@ -469,44 +468,31 @@ impl FinalizedWitnessedClaimObserver {
                     *claim,
                 ))
             }
-            FinalizedWitnessedClaimScanOutcome::NotFound => Err(BridgeRuntimeError::Unavailable),
+            FinalizedWitnessedClaimScanOutcome::NotFound
+            | FinalizedWitnessedClaimScanOutcome::Uncertain {} => {
+                Err(BridgeRuntimeError::Unavailable)
+            }
         }
     }
 
-    /// Classifies the exact transaction once in a fully covered, stable finalized window.
+    /// Classifies the exact transaction in the stable finalized prefix of an authorized window.
     ///
     /// # Errors
     ///
-    /// Fails closed on role/runtime/message/terms drift, incomplete finality, missing
+    /// Fails closed on role/runtime/message/terms drift, unavailable finality, missing
     /// blocks, by-ID/by-hash disagreement, noncanonical transactions, duplicates,
-    /// or movement of the finalized tip. This method performs no submission.
+    /// or movement of the pinned finalized prefix. A strict-prefix miss is
+    /// `Uncertain`, never definitive absence. This method performs no submission.
     pub async fn classify(
         &self,
         request: &ObserveFinalizedWitnessedClaimRequest,
     ) -> Result<ClassifyFinalizedWitnessedClaimResult, BridgeRuntimeError> {
         self.validate_request(request)?;
-        let finalized_before = self
-            .indexer
-            .last_finalized_block_id()
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        let window_end = Self::validated_window_end(request, finalized_before)?;
-        let finalized_tip_before = self.read_finalized_block(finalized_before).await?;
+        let (stable, scanned_window, window_complete) =
+            read_stable_finalized_prefix(self.indexer.as_ref(), request.window).await?;
 
         let mut found = None;
-        let mut previous_hash = None;
-        for block_id in request.window.start_height()..=finalized_before {
-            let block = self.read_finalized_block(block_id).await?;
-            if block_id == finalized_before && block != finalized_tip_before {
-                return Err(BridgeRuntimeError::MovingTip);
-            }
-            if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
-                return Err(BridgeRuntimeError::InvalidObservation);
-            }
-            previous_hash = Some(block.header.hash);
-            if block_id > window_end {
-                continue;
-            }
+        for block in &stable.blocks {
             for (transaction_index, transaction) in block.body.transactions.iter().enumerate() {
                 let public = match request.target {
                     FinalizedWitnessedClaimObservationTarget::Exact {
@@ -548,56 +534,33 @@ impl FinalizedWitnessedClaimObserver {
             None
         };
 
-        let finalized_after = self
-            .indexer
-            .last_finalized_block_id()
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        if finalized_after != finalized_before {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
-        let tip_block = self.read_finalized_block(finalized_after).await?;
-        if tip_block != finalized_tip_before {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
+        stable
+            .confirm_pinned_snapshot(self.indexer.as_ref())
+            .await?;
         let finalized_tip = ChainTip::new(
-            Hex32::from_bytes(tip_block.header.hash.0),
-            tip_block.header.block_id,
+            stable.finalized_clock.block_hash,
+            stable.finalized_clock.height,
         );
         Ok(if let Some(claim) = claim {
             ClassifyFinalizedWitnessedClaimResult::present_exact(
                 request.context.clone(),
                 finalized_tip,
-                request.window,
+                scanned_window,
                 claim,
             )
-        } else {
+        } else if window_complete {
             ClassifyFinalizedWitnessedClaimResult::not_found(
                 request.context.clone(),
                 finalized_tip,
-                request.window,
+                scanned_window,
+            )
+        } else {
+            ClassifyFinalizedWitnessedClaimResult::uncertain(
+                request.context.clone(),
+                finalized_tip,
+                scanned_window,
             )
         })
-    }
-
-    fn validated_window_end(
-        request: &ObserveFinalizedWitnessedClaimRequest,
-        finalized_before: u64,
-    ) -> Result<u64, BridgeRuntimeError> {
-        let window_end = request
-            .window
-            .start_height()
-            .checked_add(u64::from(request.window.max_blocks() - 1))
-            .ok_or(BridgeRuntimeError::InvalidObservation)?;
-        let covered_length = finalized_before
-            .checked_sub(request.window.start_height())
-            .and_then(|distance| distance.checked_add(1));
-        if window_end > finalized_before
-            || covered_length.is_none_or(|length| length > u64::from(MAX_DISCOVERY_BLOCKS))
-        {
-            return Err(BridgeRuntimeError::Unavailable);
-        }
-        Ok(window_end)
     }
 
     fn validate_request(
@@ -636,26 +599,6 @@ impl FinalizedWitnessedClaimObserver {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
         self.validate_message(request, &message)
-    }
-
-    async fn read_finalized_block(&self, block_id: u64) -> Result<Block, BridgeRuntimeError> {
-        let by_id = self
-            .indexer
-            .block_by_id(block_id)
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        if by_id.header.block_id != block_id || by_id.bedrock_status != BedrockStatus::Finalized {
-            return Err(BridgeRuntimeError::InvalidObservation);
-        }
-        let by_hash = self
-            .indexer
-            .block_by_hash(by_id.header.hash.0)
-            .await?
-            .ok_or(BridgeRuntimeError::Unavailable)?;
-        if by_hash != by_id {
-            return Err(BridgeRuntimeError::InvalidObservation);
-        }
-        Ok(by_id)
     }
 
     fn matches_discovery_terms(

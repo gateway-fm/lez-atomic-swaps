@@ -282,6 +282,20 @@ impl PublicEffectSnapshot {
 pub enum PublicEffectObservation {
     /// Chain evidence contains these complete exact transaction bytes.
     PresentExact(Vec<u8>),
+    /// Current sidecar admission proved that one node call can submit only this
+    /// retained LEZ claim identity and exact byte sequence and that replaying
+    /// it is economically idempotent.
+    ///
+    /// This does not claim chain absence. It grants the same one durable send
+    /// attempt only for [`PublicEffectChain::Lez`] +
+    /// [`PublicEffectOperation::Claim`]. Funding and refunds must use their
+    /// existing chain-specific eligibility evidence.
+    ExactIdempotentLezClaimSubmissionSafe {
+        /// Chain-native identity independently bound to the sidecar call.
+        expected_effect_id: Box<str>,
+        /// Complete exact public wire bytes independently bound to the sidecar call.
+        exact_public_bytes: Vec<u8>,
+    },
     /// Stable finalized chain state proves a refund is funded and its deadline reached.
     ///
     /// Unlike absence, this is affirmative pre-effect eligibility and is valid only
@@ -447,10 +461,12 @@ impl SqlitePublicEffectJournal {
 
     /// Reconciles durable authority with one prior exact chain observation.
     ///
-    /// `Absent + Prepared` authorizes only non-refund effects. For refunds, only
-    /// `EligibleToAttempt + Prepared` atomically commits `Started` before returning
-    /// the sole `SubmitOnce` authorization. `Started` and `Unknown` are never rearmed.
-    /// `Uncertain` is retryable and always observe-only. `ConflictingPresence`
+    /// `Absent + Prepared` authorizes only non-refund effects. Exact idempotent
+    /// admission may authorize only a payload-identical LEZ claim without
+    /// claiming absence. For refunds, only `EligibleToAttempt + Prepared`
+    /// atomically commits `Started` before returning the sole `SubmitOnce`
+    /// authorization. `Started` and `Unknown` are never rearmed. `Uncertain` is
+    /// retryable and always observe-only. `ConflictingPresence`
     /// atomically consumes still-fresh authority without returning
     /// `SubmitOnce`; later absence can therefore never rearm it. Exact presence
     /// monotonically accepts Prepared, Started, or Unknown state.
@@ -485,6 +501,27 @@ impl SqlitePublicEffectJournal {
                     }
                 }
                 false
+            }
+            PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe {
+                expected_effect_id,
+                exact_public_bytes,
+            } => {
+                if key.chain != PublicEffectChain::Lez
+                    || key.operation != PublicEffectOperation::Claim
+                {
+                    return Err(StoreError::InvalidPublicEffect);
+                }
+                if expected_effect_id.as_ref() != snapshot.effect.expected_effect_id()
+                    || exact_public_bytes.as_slice() != snapshot.effect.exact_public_bytes()
+                {
+                    return Err(StoreError::PublicEffectConflict);
+                }
+                if snapshot.state == PublicEffectState::Prepared {
+                    begin_once(&transaction, &mut snapshot)?;
+                    true
+                } else {
+                    false
+                }
             }
             PublicEffectObservation::EligibleToAttempt => {
                 if key.operation != PublicEffectOperation::Refund {

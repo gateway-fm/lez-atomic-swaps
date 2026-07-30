@@ -5397,6 +5397,29 @@ fn not_found_lez_claim_presence(
     }
 }
 
+fn prefix_uncertain_lez_claim_presence(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    effect: Option<&PreparedLezClaimEffect>,
+) -> lez_bridge_client::FinalizedWitnessedClaimPresence {
+    let request = finalized_lez_claim_request(
+        config,
+        agreement,
+        transition,
+        &prepared_lez_claim(config, agreement),
+        effect,
+    )
+    .expect("finalized LEZ claim request");
+    let prefix =
+        DiscoveryWindow::new(request.window.start_height(), 2).expect("strict finalized prefix");
+    lez_bridge_client::FinalizedWitnessedClaimPresence::PrefixUncertain {
+        context: request.context,
+        finalized_tip: finalized_lez_tip(prefix),
+        scanned_window: prefix,
+    }
+}
+
 fn exact_lez_claim_presence(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
@@ -6459,6 +6482,81 @@ async fn lez_claim_unavailable_and_uncertain_are_retryable_observe_only() {
     .await
     .expect("later stable absence authorizes one send");
     assert_eq!(stable_absence_port.submit_calls(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn lez_claim_prefix_uncertainty_authorizes_only_the_owned_exact_effect_once() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_both_locks(&fixture).await;
+    let transition = ClaimTransition::RevealingClaim;
+    let effect = prepare_lez_claim_effect(
+        &fixture.config,
+        &fixture.agreement,
+        transition,
+        &durable_status(&fixture),
+        &placeholder_lez_port(),
+    )
+    .await
+    .expect("prepare LEZ claim")
+    .expect("taker owns LEZ claim");
+    let port = FixedLezClaimPort::with_presence(
+        effect.transaction.clone(),
+        prefix_uncertain_lez_claim_presence(
+            &fixture.config,
+            &fixture.agreement,
+            transition,
+            Some(&effect),
+        ),
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let observer = LezClaimObserver {
+        config: &fixture.config,
+        chain: port.clone(),
+        effect: Some(effect.clone()),
+        prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+        state_db: fixture.config.state_db.clone(),
+    };
+
+    for expected_calls in [1, 1] {
+        let awaiting = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("prefix uncertainty remains pending"),
+        );
+        assert_eq!(awaiting["outcome"], "awaiting_observation");
+        assert_eq!(awaiting["revision"], transition.predecessor_revision());
+        assert_eq!(port.submit_calls(), expected_calls);
+    }
+
+    let submitted_transaction = {
+        let requests = port.submit_requests.lock().expect("submit request lock");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].transaction, effect.transaction);
+        requests[0].transaction.clone()
+    };
+
+    let peerless = FixedLezClaimPort::with_presence(
+        submitted_transaction,
+        prefix_uncertain_lez_claim_presence(&fixture.config, &fixture.agreement, transition, None),
+        Ok(SubmissionOutcome::Accepted),
+    );
+    let peerless_observer = LezClaimObserver {
+        config: &fixture.config,
+        chain: peerless.clone(),
+        effect: None,
+        prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+        state_db: fixture.config.state_db.clone(),
+    };
+    let _ = peerless_observer
+        .observe(&fixture.agreement, transition)
+        .await
+        .expect("peerless prefix uncertainty remains pending");
+    assert_eq!(peerless.submit_calls(), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]

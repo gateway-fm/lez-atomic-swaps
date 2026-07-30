@@ -2651,10 +2651,10 @@ impl ObserveFinalizedWitnessedClaimResult {
 
 /// Exact outcome of one completely validated finalized witnessed-claim scan.
 ///
-/// `NotFound` is a positive result only because its enclosing result also
-/// carries the exact fully scanned window and the stable finalized tip that
-/// covered it. Node, history, finality, or tip-stability failures are protocol
-/// errors and can never be represented by this variant.
+/// `NotFound` is affirmative only when the enclosing result carries the complete
+/// authorized window and stable finalized tip. A strict-prefix miss is
+/// `Uncertain`; node, history, finality, or tip-stability failures remain protocol
+/// errors and cannot inhabit this enum.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 #[must_use]
@@ -2666,6 +2666,8 @@ pub enum FinalizedWitnessedClaimScanOutcome {
     },
     /// The complete stable finalized scan contained no matching claim.
     NotFound,
+    /// The available stable finalized prefix contained no exact claim.
+    Uncertain {},
 }
 
 #[derive(Deserialize)]
@@ -2678,6 +2680,12 @@ enum PresentExactStatus {
 #[serde(rename_all = "snake_case")]
 enum NotFoundStatus {
     NotFound,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum UncertainStatus {
+    Uncertain,
 }
 
 #[derive(Deserialize)]
@@ -2694,10 +2702,17 @@ struct NotFoundWitnessedClaimScanOutcomeWire {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UncertainWitnessedClaimScanOutcomeWire {
+    status: UncertainStatus,
+}
+
+#[derive(Deserialize)]
 #[serde(untagged)]
 enum FinalizedWitnessedClaimScanOutcomeWire {
     PresentExact(PresentExactWitnessedClaimScanOutcomeWire),
     NotFound(NotFoundWitnessedClaimScanOutcomeWire),
+    Uncertain(UncertainWitnessedClaimScanOutcomeWire),
 }
 
 impl<'de> Deserialize<'de> for FinalizedWitnessedClaimScanOutcome {
@@ -2713,6 +2728,10 @@ impl<'de> Deserialize<'de> for FinalizedWitnessedClaimScanOutcome {
             FinalizedWitnessedClaimScanOutcomeWire::NotFound(wire) => {
                 let NotFoundStatus::NotFound = wire.status;
                 Ok(Self::NotFound)
+            }
+            FinalizedWitnessedClaimScanOutcomeWire::Uncertain(wire) => {
+                let UncertainStatus::Uncertain = wire.status;
+                Ok(Self::Uncertain {})
             }
         }
     }
@@ -2733,7 +2752,7 @@ pub struct ClassifyFinalizedWitnessedClaimResult {
     pub finalized_tip: ChainTip,
     /// Exact inclusive bounded range that was completely scanned.
     pub scanned_window: DiscoveryWindow,
-    /// Exact presence or definitive absence within that range.
+    /// Exact presence, full-window absence, or strict-prefix uncertainty.
     pub outcome: FinalizedWitnessedClaimScanOutcome,
 }
 
@@ -2766,6 +2785,20 @@ impl ClassifyFinalizedWitnessedClaimResult {
             finalized_tip,
             scanned_window,
             outcome: FinalizedWitnessedClaimScanOutcome::NotFound,
+        }
+    }
+
+    /// Creates conservative uncertainty for a completely scanned strict prefix.
+    pub const fn uncertain(
+        context: MessageContext,
+        finalized_tip: ChainTip,
+        scanned_window: DiscoveryWindow,
+    ) -> Self {
+        Self {
+            context,
+            finalized_tip,
+            scanned_window,
+            outcome: FinalizedWitnessedClaimScanOutcome::Uncertain {},
         }
     }
 }
