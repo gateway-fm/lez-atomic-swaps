@@ -7,6 +7,7 @@ mod local_rpc;
 mod logos_price_source;
 mod price_source;
 mod run_local_delivery;
+mod service_control;
 mod xmr_chat;
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
@@ -26,6 +27,9 @@ pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceE
 pub use run_local_delivery::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery,
     RunLocalDeliveryError,
+};
+pub use service_control::{
+    MakerServiceAction, MakerServiceControlError, MakerServiceControlV1, control_maker_service,
 };
 use xmr_chat::register_xmr_chat_methods;
 pub use xmr_chat::{

@@ -87,8 +87,10 @@ flowchart LR
 
 The dotted Core edge is a tested local contract, not evidence of a published
 Logos integration. systemd and Core are mutually exclusive lifecycle owners for
-one daemon generation. The maker CLI uses only the owner socket and must run as
-the service user unless an audited access policy is added later.
+one daemon generation. Ordinary Maker commands use only the owner socket and
+must run as the service user unless an audited access policy is added later.
+ADR 0117 supersedes the lifecycle-control part: `lez-maker start` and `stop`
+invoke only the fixed packaged system unit and never use the owner socket.
 
 ## Start, crash recovery, and stop flow
 

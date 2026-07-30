@@ -250,10 +250,10 @@ of 7. Explicit selected-route disable is now process-GREEN: disabled Zcash quote
 and publication fail before price or Delivery I/O, an enabled Bitcoin quote is
 unaffected across restart, and revisioned Zcash re-enable restores quotes. Full
 R3 still requires automatic unavailable-node behavior and an actual unaffected-
-pair application. Maker CLI start/stop, receipt-bound Taker XMR lifecycle,
+pair application. Fixed packaged-system-service start/stop is now GREEN. Receipt-bound Taker XMR lifecycle,
 and actual-application concurrency also remain. Updated estimate after the
-route-control and multi-worker checkpoints: 14 to 27 focused hours to M5 PoC
-and 24 to 43 focused hours to the reviewed milestone tag.
+lifecycle-control checkpoint: 12 to 23 focused hours to M5 PoC
+and 22 to 39 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now runs 1 to 32 independent actor workers with one
 SQLite connection each, one shared daemon lease identity, per-row CAS and

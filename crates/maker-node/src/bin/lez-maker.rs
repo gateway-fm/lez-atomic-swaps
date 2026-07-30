@@ -5,9 +5,10 @@ use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AlertAcknowledgeRequest, AlertListRequest, CreateSwapRequest, ListRequest,
     LocalPriceSetRequest, MakerActorActionCommitV1, MakerActorActionRequestV1,
-    MakerActorMonitorRequestV1, MakerActorMonitorV1, MakerHealthV1, OfferPublishRequest,
-    OfferWithdrawRequest, OperatorAlertView, PairConfigureRequest, PriceQuoteRequest, PriceQuoteV1,
-    RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
+    MakerActorMonitorRequestV1, MakerActorMonitorV1, MakerHealthV1, MakerServiceAction,
+    OfferPublishRequest, OfferWithdrawRequest, OperatorAlertView, PairConfigureRequest,
+    PriceQuoteRequest, PriceQuoteV1, RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
+    control_maker_service,
 };
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 use lez_swap_store::{
@@ -37,6 +38,10 @@ enum Command {
         #[arg(long, value_name = "PRIVATE_KEY")]
         signing_key_file: PathBuf,
     },
+    /// Starts only the packaged lez-maker-daemon.service through systemd.
+    Start,
+    /// Stops only the packaged lez-maker-daemon.service through systemd.
+    Stop,
     ConfigurePair {
         #[arg(long)]
         request_id: String,
@@ -259,6 +264,7 @@ async fn main() -> anyhow::Result<()> {
 async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::Value> {
     match command {
         Command::DeliveryIdentity { signing_key_file } => delivery_identity(&signing_key_file),
+        command @ (Command::Start | Command::Stop) => control_service(&command),
         command @ Command::ConfigurePair { .. } => configure_pair(socket, command).await,
         command @ Command::SetLocalPrice { .. } => set_local_price(socket, command).await,
         command @ Command::CreateSwap { .. } => create_swap(socket, command).await,
@@ -381,6 +387,15 @@ async fn maker_actor_action(
     };
     let commit: MakerActorActionCommitV1 = call_local_rpc(socket, method, &request).await?;
     serde_json::to_value(commit).map_err(Into::into)
+}
+
+fn control_service(command: &Command) -> anyhow::Result<serde_json::Value> {
+    let action = match command {
+        Command::Start => MakerServiceAction::Start,
+        Command::Stop => MakerServiceAction::Stop,
+        _ => unreachable!("service helper receives only lifecycle commands"),
+    };
+    serde_json::to_value(control_maker_service(action)?).map_err(Into::into)
 }
 
 async fn configure_pair(socket: &Path, command: Command) -> anyhow::Result<serde_json::Value> {

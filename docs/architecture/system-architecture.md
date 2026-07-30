@@ -2224,7 +2224,10 @@ The store component uses no chain RPC or node. The real Chat process checkpoint 
 ```mermaid
 flowchart LR
     MakerOperator["Maker operator"] --> MakerCli["lez-maker CLI"]
-    MakerCli -->|"owner Unix RPC"| Daemon["lez-maker-daemon"]
+    MakerCli -->|"fixed start or stop"| Systemctl["/usr/bin/systemctl"]
+    Systemctl --> Systemd["system systemd manager"]
+    Systemd --> Daemon["lez-maker-daemon"]
+    MakerCli -->|"owner Unix RPC"| Daemon
     MakerKey[("Maker agreement public key")] --> Daemon
     ViewKey[("Shared private view key")] --> Daemon
     Registry[("Maker-only actor registry")] --> Daemon

@@ -4382,8 +4382,8 @@ account, and stage the package:
 
 ```sh
 cargo build --locked --release -p lez-maker-node --bins
-sudo useradd --system --home-dir /var/lib/lez-atomic-swaps \
 cargo build --locked --release -p zec-reference-actor --bin zec-reference-actor
+sudo useradd --system --home-dir /var/lib/lez-atomic-swaps \
   --shell /usr/sbin/nologin lez-swap
 sudo env SOURCE_BIN_DIR=target/release ./scripts/install-m5-maker-service.sh
 ```
@@ -4428,22 +4428,34 @@ destruction procedure. Then verify, start, and inspect the service:
 ```sh
 sudo systemd-analyze verify /usr/lib/systemd/system/lez-maker-daemon.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now lez-maker-daemon.service
-sudo systemctl status --no-pager lez-maker-daemon.service
+sudo systemctl enable lez-maker-daemon.service
+sudo /usr/bin/lez-maker start
 sudo -u lez-swap /usr/bin/lez-maker \
   --socket /run/lez-atomic-swaps/maker.sock health
 ```
 
-The health JSON must report schema version 1 and `ready: true`. The control
+The start command must return `{"schema_version":1,"action":"start",
+"unit":"lez-maker-daemon.service","active_state":"active"}` on one line. The
+health JSON must report schema version 1 and `ready: true`. The control
 socket is deliberately mode 0600, so ordinary users cannot issue maker RPCs;
 run operational CLI commands as `lez-swap` through the host's audited privilege
 boundary. Do not widen the socket mode to make a command convenient.
 
-Stop and disable only this service with:
+Stop only this service through the same bounded CLI, then disable future boot
+activation separately if intended:
 
 ```sh
-sudo systemctl disable --now lez-maker-daemon.service
+sudo /usr/bin/lez-maker stop
+sudo systemctl disable lez-maker-daemon.service
 ```
+
+Stop must return schema 1, action `stop`, the fixed unit, and exact state
+`inactive`. The CLI embeds no `sudo` or interactive elevation; these examples
+use the host administrator boundary explicitly. It passes `--no-ask-password`
+to fixed `/usr/bin/systemctl`. If either the action or the state query reaches
+its 30-second deadline, the exact child is killed and reaped and the CLI reports
+uncertain state. Safely repeat the same idempotent action or inspect only the
+fixed unit through the host audit boundary; do not infer the opposite state.
 
 The persistent database and its `.lock` file remain in
 `/var/lib/lez-atomic-swaps`. A lock file's presence does not mean the daemon is
@@ -5991,11 +6003,11 @@ LEZ sequencer/indexer/sidecar, Docker service, faucet, DNS lookup, network, or
 funds. This absence removes node/finality flakiness but also means the checkpoint
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor under this
-accepted authority is clean-certified in Flow 1R. Remaining PoC work is literal Maker service control, Taker XMR lifecycle,
+accepted authority is clean-certified in Flow 1R. Fixed packaged-system-service control is GREEN in Flow 1D. Remaining PoC work is Taker XMR lifecycle,
 accepted-application/actual-chain concurrency, and automatic unavailable-node
 behavior. Explicit route control is GREEN in Flow 1S; bounded simultaneous
-workers are GREEN in Flow 1H. The updated ETA is 14 to 27 focused hours for the
-M5 PoC and 24 to 43 focused hours for the milestone tag.
+workers are GREEN in Flow 1H. The updated ETA is 12 to 23 focused hours for the
+M5 PoC and 22 to 39 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 

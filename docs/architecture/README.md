@@ -184,6 +184,7 @@ flowchart TB
     M5Corridor --> M5Projection["0095 Terminal operator projection"]
     M5Entry --> M5Fuzz["0096 Coordinator fuzz harness"]
     M5Entry --> M5Lifecycle["0097 Maker lifecycle supervision"]
+    M5Lifecycle --> M5ServiceControl["0117 Fixed Maker service control"]
     M5Entry --> M5Outage["0098 Transport outage recovery"]
     M5Entry --> M5Crash["0099 Actor submission fault seam"]
     M5Crash --> M5ProcessLease["0100 Fenced actor-process leases"]
@@ -319,3 +320,4 @@ flowchart TB
 | [0114](0114-compose-xmr-application-before-chain-effects.md) | Bind one Delivery-derived XMR swap through application activation and a zero-effect supervisor cutoff before the existing actual-chain claim path owns liveness | Accepted for the clean local application corridor: run H proves cutoff, finalized claim, extraction, sweep, binding, and exact cleanup |
 | [0115](0115-disable-only-the-selected-maker-route.md) | Reject quote and publication before price or Delivery I/O when the selected route is disabled, without changing another pair | Accepted for explicit route control; restart and re-enable journey GREEN, while automatic unavailable-node composition remains |
 | [0116](0116-run-bounded-independent-maker-workers.md) | Run bounded independent actor workers under one daemon identity while preserving per-swap fences, locks, cancellation, and restart replay | Accepted for daemon concurrency; 10 of 10 simultaneous process journeys GREEN, while accepted-application and actual-chain overlap remain |
+| [0117](0117-control-the-fixed-maker-system-service.md) | Expose bounded Maker start and stop only for the fixed packaged system unit and verify exact post-action state | Accepted for lifecycle control; exact argv, JSON, timeout, redaction, and fail-closed state tests GREEN |

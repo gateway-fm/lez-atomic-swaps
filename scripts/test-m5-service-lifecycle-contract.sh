@@ -8,12 +8,16 @@ readonly installer="scripts/install-m5-maker-service.sh"
 readonly staged_rehearsal="scripts/rehearse-m5-maker-service-install.sh"
 readonly transient_rehearsal="scripts/run-m5-maker-systemd-transient.sh"
 readonly lifecycle="crates/maker-node/src/daemon_lifecycle.rs"
+readonly service_control="crates/maker-node/src/service_control.rs"
+readonly operator_cli="crates/maker-node/src/bin/lez-maker.rs"
+readonly service_cli_test="crates/maker-node/tests/maker_service_cli.rs"
 readonly process_test="crates/maker-node/tests/daemon_lifecycle.rs"
 readonly daemon="crates/maker-node/src/bin/lez-maker-daemon.rs"
 readonly secure_file="crates/maker-node/src/bin/support/secure_file.rs"
 readonly manifest="crates/maker-node/Cargo.toml"
 readonly manual="docs/manual-user-flows.md"
 readonly decision="docs/architecture/0097-supervise-one-maker-daemon-lifecycle.md"
+readonly service_control_decision="docs/architecture/0117-control-the-fixed-maker-system-service.md"
 
 fail() {
   echo "M5 service lifecycle contract failed: $*" >&2
@@ -22,7 +26,8 @@ fail() {
 
 for path in \
   "$unit" "$installer" "$staged_rehearsal" "$transient_rehearsal" \
-  "$lifecycle" "$process_test" "$decision"; do
+  "$lifecycle" "$service_control" "$operator_cli" "$service_cli_test" \
+  "$process_test" "$decision" "$service_control_decision"; do
   test -f "$path" || fail "missing $path"
 done
 for script in "$installer" "$staged_rehearsal" "$transient_rehearsal"; do
@@ -91,6 +96,34 @@ for token in \
   'tokio::time::timeout'; do
   rg -Fq -- "$token" "$lifecycle" || fail "lifecycle adapter is missing $token"
 done
+
+for token in \
+  'const SYSTEMCTL_PROGRAM: &str = "/usr/bin/systemctl"' \
+  'const MAKER_UNIT: &str = "lez-maker-daemon.service"' \
+  'const SYSTEMCTL_TIMEOUT: Duration = Duration::from_secs(30)' \
+  'Command::new(SYSTEMCTL_PROGRAM)' \
+  '.wait_timeout(SYSTEMCTL_TIMEOUT)' \
+  'kill_and_reap(&mut child)' \
+  '.take((MAXIMUM_STATE_BYTES + 1) as u64)' \
+  'SystemctlTimeout' \
+  '--no-ask-password' \
+  '--property=ActiveState'; do
+  rg -Fq -- "$token" "$service_control" ||
+    fail "fixed service control is missing $token"
+done
+for token in 'Command::Start' 'Command::Stop' 'control_service(&command)'; do
+  rg -Fq -- "$token" "$operator_cli" || fail "operator CLI is missing $token"
+done
+for token in \
+  'maker_cli_exposes_fixed_service_start_and_stop_without_daemon_rpc' \
+  'fixed_system_commands_reach_exact_postconditions' \
+  'action_and_state_query_timeouts_report_uncertain_state'; do
+  rg -Fq -- "$token" "$service_control" "$service_cli_test" ||
+    fail "service-control test is missing $token"
+done
+if rg -Fq 'MakerServiceScope' "$service_control" "$operator_cli"; then
+  fail "operator lifecycle control admits an unpackaged service scope"
+fi
 
 rg -Fq 'SignalKind::terminate()' "$daemon" || fail "daemon does not handle SIGTERM"
 rg -Fq 'NonBlockingLockExclusive' "$daemon" ||

@@ -4136,12 +4136,13 @@ foreign or broad cleanup occurred; and `failure_reasons` was empty. The binder
 claims conditional successful-claim atomicity, not a distributed transaction or
 future-reorg immunity. ADR 0114 is accepted at this local PoC boundary.
 
-The current RFP/issue audit keeps literal M5 completion at 3 of 7. Remaining
-implementation is Maker CLI start/stop, Taker XMR monitor/claim/refund, honest
+The current RFP/issue audit keeps literal M5 completion at 3 of 7. Fixed
+packaged-system-service start/stop is GREEN. Remaining implementation is Taker
+XMR monitor/claim/refund, honest
 accepted-application concurrency under one daemon/database, and route
 disable/unavailable behavior including quote/publication rejection and
-unaffected-pair progress. After the route-control and multi-worker checkpoints, M5 PoC ETA is 14 to 27
-focused hours and milestone-tag ETA is 24 to 43 focused hours.
+unaffected-pair progress. After the lifecycle-control checkpoint, M5 PoC ETA is 12 to 23 focused hours
+and milestone-tag ETA is 22 to 39 focused hours.
 
 ### M5 explicit route-control checkpoint (2026-07-30)
 
@@ -4200,6 +4201,40 @@ Docker service, faucet, DNS, network, or funds. This proves persistent daemon
 worker concurrency, not yet two accepted application agreements with distinct
 escrows/deadlines and actual chain effects. Literal M5 remains 3 of 7; updated
 ETA is 14 to 27 focused hours to PoC and 24 to 43 hours to reviewed tag closure.
+
+### M5 fixed Maker service-control checkpoint (2026-07-30)
+
+RED ran the compiled `lez-maker --help` and proved that literal `start` and
+`stop` were absent. The initial GREEN exposed a system-or-user scope, but the
+architecture audit found that only the system unit is packaged: the existing
+user-systemd fixture owns a uniquely named transient rehearsal unit. REFACTOR
+therefore removed the unsupported scope and made both commands target only
+`lez-maker-daemon.service` through fixed `/usr/bin/systemctl`.
+
+Both the lifecycle action and exact `ActiveState` query now have a 30-second
+deadline. The adapter discards action stdout and all stderr, caps state output at
+33 bytes, kills and reaps the exact timed-out child, and reports uncertain state
+instead of inferring success or failure. Start requires `active`; stop requires
+`inactive`. Unit tests prove exact argument vectors, output modes, JSON,
+nonzero-action/query behavior, malformed and oversized states, opposite states,
+timeout mapping, and secret-output redaction. The black-box CLI test proves both
+subcommands and rejection of caller-selected scope, unit, or socket flags.
+
+ADR 0117 supplies component, sequence, failure, and atomicity diagrams. Flow 1D
+now uses the real commands, distinguishes host administration from service-user
+RPC, gives exact JSON and timeout/retry behavior, and fixes its pre-existing
+broken `useradd` recipe. The focused slice uses no chain node, RPC, Docker,
+faucet, funds, DNS, public network, Delivery, Chat, or finality service and does
+not touch the host unit during CI. The daemon database lease and existing
+per-swap transactions/fences remain the authority, so repeated systemd actions
+cannot create a second writer or bypass swap atomicity.
+
+This closes the literal service-control sub-gap but not the full F9/U3 output;
+M5 remains 3 of 7. Remaining order is receipt-bound Taker XMR monitor and claim,
+the missing tag-16 refund execution path, accepted-application plus actual-chain
+overlap, automatic unavailable-node composition, and composite evidence,
+security, documentation, and tag review. Updated ETA is 12 to 23 focused hours
+to the M5 PoC and 22 to 39 focused hours to reviewed tag closure.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
