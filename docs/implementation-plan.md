@@ -3884,6 +3884,24 @@ transactions, and role remain unchanged. The next clean pushed isolated-node
 replay must prove both ordered LEZ effects and the downstream claim before this
 BTC application chain gate can close.
 
+Exact pushed replay `m5-btc-app-20260730-fe0600c-b` then confirmed the Bitcoin
+first lock and produced exactly two durable Maker-owned LEZ submissions. Both
+the initialization and funding transactions finalized inside the immutable
+window, proving that progressive per-step observation works. The replay stopped
+before revision 2 because its final complete-lifecycle read still used the
+legacy found-only client, which requires the entire 4,096-block range. Fresh
+authenticated read-only calls to both additive classifiers returned exact
+`Found` evidence from the same-start prefix; no transaction or reveal was
+performed by the diagnostics.
+
+The GREEN routes that final read through the additive funding classifier and
+persists evidence schema 2 with the exact `scanned_window` and
+`finalized_clock`. Only `Found` can project the Maker-lock lifecycle; `Absent`,
+`Uncertain`, transport failure, malformed evidence, and shifted/out-of-envelope
+prefixes cannot. The focused evidence test, all 90 actor unit tests, all 11 actor
+CLI tests, and actor all-target/all-feature Clippy are GREEN. A new exact pushed
+replay remains the runtime gate.
+
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4
 security contracts. Its extracted legacy timing fixture now declares non-M5

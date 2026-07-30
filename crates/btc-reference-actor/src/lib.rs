@@ -7621,11 +7621,12 @@ async fn observe_peerless_finalized_lez_asset_funding(
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct FinalizedLezFundingEvidenceV1 {
+struct FinalizedLezFundingEvidenceV2 {
     schema_version: u16,
     agreement_commitment: String,
     request: ObserveFinalizedWitnessedFundingRequest,
-    finalized_tip: ChainTip,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
     funding: lez_bridge_protocol::FinalizedWitnessedFundingFacts,
 }
 
@@ -7636,13 +7637,22 @@ async fn observe_finalized_lez_funding(
 ) -> Result<ActorFundingObservation, ActorCommandError> {
     let request = finalized_lez_funding_request(config, agreement)?;
     let durable_request = request.clone();
-    let result = client
-        .observe_finalized_witnessed_funding(request)
+    let presence = client
+        .classify_finalized_witnessed_funding(request)
         .await
         .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let FinalizedWitnessedFundingPresence::Found {
+        finalized_clock,
+        scanned_window,
+        funding,
+        ..
+    } = presence
+    else {
+        return Ok(ActorFundingObservation::Pending { chain: Chain::Lez });
+    };
     let signed = agreement.lez_terms();
-    if result.funding.metadata.account_id.as_bytes() != signed.metadata_account()
-        || result.funding.custody.account_id.as_bytes() != signed.custody_account()
+    if funding.metadata.account_id.as_bytes() != signed.metadata_account()
+        || funding.custody.account_id.as_bytes() != signed.custody_account()
     {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }
@@ -7650,16 +7660,16 @@ async fn observe_finalized_lez_funding(
         config,
         agreement,
         &durable_request,
-        result.finalized_tip,
-        &result.funding,
+        finalized_clock,
+        scanned_window,
+        funding.as_ref(),
     )?;
     Ok(ActorFundingObservation::Ready {
         chain: Chain::Lez,
-        transaction_id: hex::encode(result.funding.transaction.transaction_id.as_bytes())
-            .into_boxed_str(),
+        transaction_id: hex::encode(funding.transaction.transaction_id.as_bytes()).into_boxed_str(),
         confirmations: FINALIZED_LEZ_CONFIRMATION_UNITS,
         canonical_inclusion_time: CanonicalInclusionTimeV1::Lez {
-            timestamp_ms: result.funding.containing_block.timestamp_ms,
+            timestamp_ms: funding.containing_block.timestamp_ms,
         },
         chain_evidence,
     })
@@ -7680,14 +7690,16 @@ fn encode_finalized_lez_funding_evidence(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
     request: &ObserveFinalizedWitnessedFundingRequest,
-    finalized_tip: ChainTip,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
     funding: &lez_bridge_protocol::FinalizedWitnessedFundingFacts,
 ) -> Result<Vec<u8>, ActorCommandError> {
-    let encoded = serde_json::to_vec(&FinalizedLezFundingEvidenceV1 {
-        schema_version: 1,
+    let encoded = serde_json::to_vec(&FinalizedLezFundingEvidenceV2 {
+        schema_version: 2,
         agreement_commitment: hex::encode(agreement.agreement_commitment()),
         request: request.clone(),
-        finalized_tip,
+        finalized_clock,
+        scanned_window,
         funding: funding.clone(),
     })
     .map_err(|_| ActorCommandError::ObservationUnavailable)?;
@@ -7699,9 +7711,9 @@ fn decode_finalized_lez_funding_evidence(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
     bytes: &[u8],
-) -> Result<FinalizedLezFundingEvidenceV1, ActorCommandError> {
+) -> Result<FinalizedLezFundingEvidenceV2, ActorCommandError> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let evidence = FinalizedLezFundingEvidenceV1::deserialize(&mut deserializer)
+    let evidence = FinalizedLezFundingEvidenceV2::deserialize(&mut deserializer)
         .map_err(|_| ActorCommandError::ObservationUnavailable)?;
     deserializer
         .end()
@@ -7709,7 +7721,7 @@ fn decode_finalized_lez_funding_evidence(
     let canonical =
         serde_json::to_vec(&evidence).map_err(|_| ActorCommandError::ObservationUnavailable)?;
     if canonical != bytes
-        || evidence.schema_version != 1
+        || evidence.schema_version != 2
         || evidence.agreement_commitment != hex::encode(agreement.agreement_commitment())
     {
         return Err(ActorCommandError::AgreementBindingInvalid);
@@ -7718,7 +7730,8 @@ fn decode_finalized_lez_funding_evidence(
         config,
         agreement,
         &evidence.request,
-        evidence.finalized_tip,
+        evidence.finalized_clock,
+        evidence.scanned_window,
         &evidence.funding,
     )?;
     Ok(evidence)
@@ -7728,7 +7741,8 @@ fn validate_finalized_lez_funding_binding(
     config: &ActorConfig,
     agreement: &BtcAgreementV1,
     request: &ObserveFinalizedWitnessedFundingRequest,
-    finalized_tip: ChainTip,
+    finalized_clock: ChainClock,
+    scanned_window: DiscoveryWindow,
     funding: &lez_bridge_protocol::FinalizedWitnessedFundingFacts,
 ) -> Result<(), ActorCommandError> {
     if request != &finalized_lez_funding_request(config, agreement)? {
@@ -7740,9 +7754,13 @@ fn validate_finalized_lez_funding_binding(
     let metadata = &funding.metadata;
     let custody = &funding.custody;
     let terms = &request.terms;
-    let window_start = request.window.start_height();
-    let window_end = window_start
+    let authorized_start = request.window.start_height();
+    let authorized_end = authorized_start
         .checked_add(u64::from(request.window.max_blocks() - 1))
+        .ok_or(ActorCommandError::ObservationUnavailable)?;
+    let window_start = scanned_window.start_height();
+    let window_end = window_start
+        .checked_add(u64::from(scanned_window.max_blocks() - 1))
         .ok_or(ActorCommandError::ObservationUnavailable)?;
     let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
         metadata.account_id,
@@ -7769,11 +7787,15 @@ fn validate_finalized_lez_funding_binding(
         || metadata != &expected_metadata
         || custody.owner_program_id != terms.authenticated_transfer_program_id()
         || custody.balance != terms.amount()
+        || window_start != authorized_start
+        || window_end > authorized_end
         || block.block_id < window_start
         || block.block_id > window_end
-        || block.block_id > finalized_tip.height
-        || (block.block_id == finalized_tip.height && block.block_hash != finalized_tip.block_hash)
-        || window_end > finalized_tip.height
+        || block.block_id > finalized_clock.height
+        || (block.block_id == finalized_clock.height
+            && block.block_hash != finalized_clock.block_hash)
+        || window_end > finalized_clock.height
+        || finalized_clock.timestamp_ms == 0
     {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }

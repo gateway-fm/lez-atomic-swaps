@@ -94,6 +94,10 @@ sequenceDiagram
     I-->>S: Later prefix contains finalized initialization
     S-->>A: Found with canonical facts
     A->>J: Accept initialization then repeat for funding
+    I-->>S: Later prefix contains finalized funding
+    S-->>A: Found with canonical facts
+    A->>J: Accept complete ordered pair
+    A->>J: Persist prefix clock and project revision 2
 ```
 
 ## Atomicity argument
@@ -127,6 +131,9 @@ moving or malformed scanned endpoint yields no progress and no absence.
 - Tests cover prefix `Found`, prefix initialization `Uncertain`, prefix funding
   `Uncertain`, forbidden prefix `Absent`, forward finality, and scanned-end
   drift. The exact isolated BTC application replay remains the runtime gate.
+- Final Maker-lock evidence stores the authenticated same-start scanned prefix
+  and finalized clock. It no longer calls the legacy full-window observer after
+  both steps are canonical; `Absent` and `Uncertain` still remain pending.
 - Prefix results are an additive protocol capability that requires coordinated
   sidecar/client rollout. An older client rejects the changed response shape,
   which is a safe availability failure rather than an atomicity failure.

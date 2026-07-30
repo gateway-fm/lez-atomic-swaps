@@ -3550,18 +3550,21 @@ fn finalized_funding_facts(
 }
 
 #[test]
-fn finalized_lez_evidence_retains_the_ancestry_tip() {
-    let fixture = ActorFixture::new();
+fn finalized_lez_evidence_retains_the_authenticated_prefix() {
+    let mut fixture = ActorFixture::new();
+    fixture.config.lez_bridge.discovery_max_blocks = 20;
     let request = finalized_lez_funding_request(&fixture.config, &fixture.agreement)
         .expect("signed witnessed terms");
     let funding = finalized_funding_facts(&request, &fixture.agreement);
-    let finalized_tip = ChainTip::new(Hex32::from_bytes([95; 32]), 11);
+    let finalized_clock = ChainClock::new(Hex32::from_bytes([95; 32]), 11, 1_850_000_000_110);
+    let scanned_window = DiscoveryWindow::new(1, 11).expect("same-start finalized prefix");
 
     let encoded = encode_finalized_lez_funding_evidence(
         &fixture.config,
         &fixture.agreement,
         &request,
-        finalized_tip,
+        finalized_clock,
+        scanned_window,
         &funding,
     )
     .expect("durable LEZ evidence");
@@ -3580,9 +3583,10 @@ fn finalized_lez_evidence_retains_the_ancestry_tip() {
         keys,
         std::collections::BTreeSet::from([
             "agreement_commitment",
-            "finalized_tip",
+            "finalized_clock",
             "funding",
             "request",
+            "scanned_window",
             "schema_version",
         ])
     );
@@ -3596,15 +3600,20 @@ fn finalized_lez_evidence_retains_the_ancestry_tip() {
         value["request"]["terms"]["terms_hash"],
         hex::encode(fixture.agreement.agreement_commitment())
     );
-    assert_eq!(value["finalized_tip"]["height"], 11);
-    assert_eq!(value["finalized_tip"]["block_hash"], hex::encode([95; 32]));
+    assert_eq!(value["schema_version"], 2);
+    assert_eq!(value["finalized_clock"]["height"], 11);
+    assert_eq!(
+        value["finalized_clock"]["block_hash"],
+        hex::encode([95; 32])
+    );
+    assert_eq!(value["scanned_window"]["max_blocks"], 11);
     assert_eq!(
         value["agreement_commitment"],
         hex::encode(fixture.agreement.agreement_commitment())
     );
     assert_eq!(value["funding"]["containing_block"]["block_id"], 4);
 
-    for mutation in ["unknown", "missing", "changed_terms"] {
+    for mutation in ["unknown", "missing", "changed_terms", "shifted_prefix"] {
         let mut changed = value.clone();
         match mutation {
             "unknown" => {
@@ -3621,6 +3630,9 @@ fn finalized_lez_evidence_retains_the_ancestry_tip() {
             }
             "changed_terms" => {
                 changed["request"]["terms"]["terms_hash"] = Value::String("00".repeat(32));
+            }
+            "shifted_prefix" => {
+                changed["scanned_window"]["start_height"] = Value::from(2);
             }
             _ => unreachable!("fixed mutation"),
         }
