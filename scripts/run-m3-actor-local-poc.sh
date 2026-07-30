@@ -2378,8 +2378,14 @@ core_admin() {
 
 provision_bitcoin_funding_sources() {
   local address before_height after_height mined block_hash block txid vout utxo
-  local direction height source_file mempool
+  local direction height source_file mempool allocation
+  local source_count="${#directions[@]}"
   local -a source_files=()
+  if [[ "$source_count" == 1 ]]; then
+    allocation="one_mature_coinbase_outpoint"
+  else
+    allocation="two_distinct_mature_coinbase_outpoints"
+  fi
   address="$(manifest_value \
     "$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_FUNDING_CREDENTIALS)" \
     BITCOIN_CORE_FUNDING_ADDRESS)"
@@ -2440,18 +2446,19 @@ provision_bitcoin_funding_sources() {
     source_files+=("$source_file")
   done
 
-  jq -s --argjson base_height "$after_height" \
-    '{schema_version:1,network:"regtest",allocation:"two_distinct_mature_coinbase_outpoints",
+  jq -s --arg allocation "$allocation" --argjson base_height "$after_height" \
+    '{schema_version:1,network:"regtest",allocation:$allocation,
       shared_fixture_custody_key:true,base_height:$base_height,sources:.}' \
     "${source_files[@]}" >"${bitcoin_funding_sources}.partial"
   chmod 0600 "${bitcoin_funding_sources}.partial"
   mv "${bitcoin_funding_sources}.partial" "$bitcoin_funding_sources"
-  jq -e '
+  jq -e --arg allocation "$allocation" --argjson source_count "$source_count" '
     .schema_version == 1 and .network == "regtest" and .base_height == 102
-    and (.sources | length) == 2
-    and ([.sources[].direction] | unique | length) == 2
-    and ([.sources[].source.transaction_id] | unique | length) == 2
-    and ([.sources[] | [.source.transaction_id,.source.output_index]] | unique | length) == 2
+    and .allocation == $allocation
+    and (.sources | length) == $source_count
+    and ([.sources[].direction] | unique | length) == $source_count
+    and ([.sources[].source.transaction_id] | unique | length) == $source_count
+    and ([.sources[] | [.source.transaction_id,.source.output_index]] | unique | length) == $source_count
     and all(.sources[]; .planned_bitcoin_funding_anchor_height == null)
     and all(.sources[]; .source.confirmations >= 101)
   ' "$bitcoin_funding_sources" >/dev/null ||
