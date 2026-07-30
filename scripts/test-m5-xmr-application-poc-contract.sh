@@ -135,6 +135,7 @@ require_runner_source() {
 unique_line() {
   local pattern="$1" label="$2" matches
   matches="$(rg -n -- "$pattern" "$runner")"
+  [[ -n "$matches" ]] || fail "delegated runner omits ${label}"
   [[ "$(wc -l <<<"$matches" | tr -d ' ')" == 1 ]] ||
     fail "delegated runner repeats or omits ${label}"
   printf '%s\n' "${matches%%:*}"
@@ -143,6 +144,7 @@ unique_line() {
 for required in \
   'readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"' \
   'M5_XMR_APPLICATION_MODE must be unset, 0, or 1' \
+  'RUN_ID="$artifact_run_id" "$artifact_runner" verify-source' \
   'cargo +1.96.0 build --locked --offline -p lez-maker-node' \
   '--bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor' \
   'stage_executable "${workspace_target}/debug/lez-maker" "$m5_lez_maker_binary"' \
@@ -184,13 +186,16 @@ if rg -Fq '# Cleanup is judged by the final resource state' "$runner"; then
   fail 'legacy cleanup-error reset comment survived the fail-closed fix'
 fi
 
-plan_line="$(unique_line '^prepare_m5_xmr_delivery_plan$' 'M5 plan invocation')"
+artifact_preflight_line="$(unique_line '^  RUN_ID="\$artifact_run_id" "\$artifact_runner" verify-source$' 'artifact fast-preflight invocation')"
+build_line="$(unique_line '^  build_identity_and_artifact$' 'heavy build invocation')"
+plan_line="$(unique_line '^    prepare_m5_xmr_delivery_plan$' 'M5 plan invocation')"
 compose_line="$(unique_line '^  compose_xmr_agreement$' 'agreement invocation')"
 handoff_line="$(unique_line '^    complete_m5_xmr_application_handoff$' 'M5 handoff invocation')"
 cutoff_line="$(unique_line '^    verify_m5_xmr_application_cutoff$' 'M5 cutoff invocation')"
 tag13_line="$(unique_line '^  submit_tag13$' 'Tag13 invocation')"
-readonly plan_line compose_line handoff_line cutoff_line tag13_line
-(( plan_line < compose_line && compose_line < handoff_line &&
+readonly artifact_preflight_line build_line plan_line compose_line handoff_line cutoff_line tag13_line
+(( artifact_preflight_line < build_line && build_line < plan_line &&
+   plan_line < compose_line && compose_line < handoff_line &&
    handoff_line < cutoff_line && cutoff_line < tag13_line )) ||
   fail 'M5 application plan/handoff/cutoff does not precede legacy Tag13 exactly'
 

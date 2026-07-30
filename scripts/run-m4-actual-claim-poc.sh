@@ -251,6 +251,7 @@ environment_preflight() {
   verify_native_library libgmp.a "$expected_gmp_sha256"
   verify_native_library libfq.a "$expected_fq_sha256"
   verify_native_library libfr.a "$expected_fr_sha256"
+  RUN_ID="$artifact_run_id" "$artifact_runner" verify-source
 }
 
 run_preflight() {

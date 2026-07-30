@@ -73,7 +73,7 @@ verify_source_boundary() {
     "compat/lez-v0.2-provisional/escrow/methods/tests/recursive_witnessed_claim.rs"
   require_sha256 "effccab44b7c5fe9a3e393478622bcdb48c934ae784d7c4d6c1364c1718a9cd0" \
     "compat/lez-v0.2-provisional/escrow/methods/guest/deployment-manifest.toml"
-  require_sha256 "3023045ccd61c9e7a788a6c69e365b6158e7425a6c152ccc9a7aa01a2090f59c" \
+  require_sha256 "cc5fea3c9c1c1f7b5e176bb13974c59c38120facfb3a9f01eb650b453c3c5986" \
     "scripts/run-m3-lez-bootstrap.sh"
 
   require_manifest_line 'artifact_status = "local-checked-artifact"'
@@ -91,7 +91,7 @@ verify_source_boundary() {
   require_manifest_line 'deployment_manifest = "compat/lez-v0.2-provisional/escrow/methods/guest/deployment-manifest.toml"'
   require_manifest_line 'deployment_manifest_sha256 = "effccab44b7c5fe9a3e393478622bcdb48c934ae784d7c4d6c1364c1718a9cd0"'
   require_manifest_line 'm3_bootstrap = "scripts/run-m3-lez-bootstrap.sh"'
-  require_manifest_line 'm3_bootstrap_sha256 = "3023045ccd61c9e7a788a6c69e365b6158e7425a6c152ccc9a7aa01a2090f59c"'
+  require_manifest_line 'm3_bootstrap_sha256 = "cc5fea3c9c1c1f7b5e176bb13974c59c38120facfb3a9f01eb650b453c3c5986"'
   require_manifest_line 'runtime_external_resources = []'
   require_manifest_line "elf_sha256 = \"${expected_elf_sha256}\""
   require_manifest_line "image_id = \"${expected_image_id}\""

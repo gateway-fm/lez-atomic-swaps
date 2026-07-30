@@ -3793,7 +3793,7 @@ exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
 actual-runner splice described below, remaining M5 PoC ETA is 3 to 6 focused
 implementation hours; the milestone-tag ETA is 6 to 11 focused hours from
-pushed base `edd5217`. Update both ranges on every push. The PoC range
+pushed base `7b8ec43`. Update both ranges on every push. The PoC range
 covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
 and the remaining concurrent/unavailable-route closure. The tag range additionally
 includes evidence synchronization, manual-flow/README closure, the final CI and
@@ -4053,17 +4053,21 @@ absence check. The runner uses official Monero 0.18.5.1 Regtest and LEZ v0.2
 local nodes, ephemeral loopback RPCs, and deterministic local genesis/Regtest
 funds only. No public RPC, faucet, peer, or public funds participate.
 
-Two exact-commit attempts stopped during offline builds before any node, RPC,
-Docker chain resource, or tag-13 latch existed. Run
-`m5-xmr-app-20260730-a5a5d0e-a` exposed missing XMR SDK `hex` and
-`lez-swap-core` edges in the sidecar lock. Run
-`m5-xmr-app-20260730-edd5217-b` then exposed the same SDK edges plus
-`command-fds`, `rustix`, BTC SDK, and XMR SDK edges in the release-service
-lock. Both minimal repairs resolve fully offline; the focused M5 contract pins
-the two graphs, the exact command-fds checksum, and all reachable store edges.
-Both cleanups passed and no chain execution or swap is claimed. A fresh exact isolated replay is the next gate,
+Three exact-commit attempts stopped before any node, RPC, Docker chain resource,
+or tag-13 latch existed. Run `m5-xmr-app-20260730-a5a5d0e-a` exposed missing
+XMR SDK edges in the sidecar lock. Run `m5-xmr-app-20260730-edd5217-b` exposed
+the same edges plus the newly reachable swap-store graph in the release-service
+lock. Both minimal repairs resolve fully offline, and the focused contract pins
+both graphs, the exact command-fds checksum, and all store edges. Run
+`m5-xmr-app-20260730-7b8ec43-c` then built every repaired graph and stopped
+before nodes because the artifact verifier still pinned the pre-M5 bootstrap
+SHA-256. The bootstrap change is the default-preserving M5 BTC mode from
+`eea4905`; its exact hash chain is refreshed. Artifact `verify-source` now runs
+before all heavy builds, turning future source drift from a roughly 14-minute
+discovery into a sub-second preflight. All three cleanups passed and no chain
+execution or swap is claimed. A fresh exact isolated replay is the next gate,
 followed by concurrent/all-pair and unavailable-route closure. From pushed base
-`a5a5d0e`, remaining M5 PoC ETA is 3 to 6 focused hours and milestone-tag ETA
+`7b8ec43`, remaining M5 PoC ETA is 3 to 6 focused hours and milestone-tag ETA
 is 6 to 11 focused hours; neither range hides the still-open runtime evidence.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
