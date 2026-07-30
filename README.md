@@ -200,9 +200,9 @@ effect. The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 application
 corridor remains open.
 
 The follow-on opt-in actual runner is now **SOURCE/CONTRACT-GREEN only** on the
-work based on pushed commits through `7b8ec43`; three pre-runtime attempts
-stopped before nodes on two stale lock graphs and one stale artifact-source
-hash, and it is not
+work based on pushed commits through `5f9cb12`; four pre-runtime attempts
+stopped before nodes on two stale lock graphs, one stale artifact-source hash,
+and one missing explicit handoff of the already verified Risc0 runtime; it is not
 runtime/PoC GREEN. `scripts/run-m5-xmr-application-poc.sh execute` delegates to
 the existing M4 actual-claim runner with `M5_XMR_APPLICATION_MODE=1`. Before
 legacy tag 13, it runs exact Delivery planning, canonical Stage A/B, Maker and
@@ -216,9 +216,11 @@ final absence probe. The runtime topology is entirely local: official Monero
 ephemeral loopback RPCs; no public RPC, faucet, peer, or public funds are used.
 [Flow 1R](docs/manual-user-flows.md#flow-1r-run-the-xmr-application-to-chain-corridor)
 documents the exact operator command, resources, evidence, cleanup, and
-non-retry boundary without claiming a run. From pushed base `7b8ec43`, the
-remaining estimate is 3 to 6 focused hours to M5 PoC and 6 to 11 focused hours
-to the reviewed milestone tag.
+non-retry boundary without claiming a run. A read-only acceptance audit also
+confirmed that concurrent multi-user and unavailable-route closure require new
+executable gates rather than parallel wrapper invocations. From pushed base
+`5f9cb12`, the remaining estimate is 8 to 16 focused hours to M5 PoC and 12 to
+22 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now also has a real-daemon two-swap
 failure-isolation journey. One sealed actor exceeds a finite status deadline,

@@ -914,6 +914,7 @@ start_lez_stack() {
   taker_account="$(jq -er '.account_id' "${evidence_root}/taker-lez-identity.json")"
   taker_vault="$(jq -er '.vault_account_id' "${evidence_root}/taker-lez-identity.json")"
   RUN_ID="$run_id" LEZ_V02_KEEP_RUNNING=1 LEZ_V02_SLOT_DURATION_SECONDS=1.0 \
+    LEZ_V02_R0VM="$RISC0_SERVER_PATH" \
     LEZ_V02_MAKER_ACCOUNT_ID="$maker_account" LEZ_V02_MAKER_VAULT_ACCOUNT_ID="$maker_vault" \
     LEZ_V02_TAKER_ACCOUNT_ID="$taker_account" LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$taker_vault" \
     "$lez_stack_runner"

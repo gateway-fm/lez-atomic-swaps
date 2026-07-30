@@ -160,6 +160,7 @@ for required in \
   'readonly m5_xmr_lez_units=700' \
   'm5_swap_id_argument=(--swap-id "$m5_xmr_planned_swap_id")' \
   "'.swap_id==\$swap' \"\$agreement_receipt\"" \
+  'LEZ_V02_R0VM="$RISC0_SERVER_PATH"' \
   'complete_m5_xmr_application_handoff() {' \
   'provision-application maker' \
   '--xmr-actor-manifest-registry-file "$m5_xmr_actor_registry"' \

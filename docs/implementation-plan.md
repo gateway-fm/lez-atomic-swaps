@@ -3791,9 +3791,9 @@ separately from runtime dependencies.
 The progressive local ZEC application PoC gate closed on 2026-07-24, and the
 exact pushed BTC application corridor is also GREEN. After the verified XMR
 schema-v2 semantic-supervisor checkpoint and the source/contract-complete
-actual-runner splice described below, remaining M5 PoC ETA is 3 to 6 focused
-implementation hours; the milestone-tag ETA is 6 to 11 focused hours from
-pushed base `7b8ec43`. Update both ranges on every push. The PoC range
+actual-runner splice described below, remaining M5 PoC ETA is 8 to 16 focused
+implementation hours; the milestone-tag ETA is 12 to 22 focused hours from
+pushed base `5f9cb12`. Update both ranges on every push. The PoC range
 covers the isolated Monero 0.18.5.1 Regtest plus LEZ v0.2 application corridor
 and the remaining concurrent/unavailable-route closure. The tag range additionally
 includes evidence synchronization, manual-flow/README closure, the final CI and
@@ -4053,7 +4053,7 @@ absence check. The runner uses official Monero 0.18.5.1 Regtest and LEZ v0.2
 local nodes, ephemeral loopback RPCs, and deterministic local genesis/Regtest
 funds only. No public RPC, faucet, peer, or public funds participate.
 
-Three exact-commit attempts stopped before any node, RPC, Docker chain resource,
+Four exact-commit attempts stopped before any node, RPC, Docker chain resource,
 or tag-13 latch existed. Run `m5-xmr-app-20260730-a5a5d0e-a` exposed missing
 XMR SDK edges in the sidecar lock. Run `m5-xmr-app-20260730-edd5217-b` exposed
 the same edges plus the newly reachable swap-store graph in the release-service
@@ -4064,11 +4064,19 @@ before nodes because the artifact verifier still pinned the pre-M5 bootstrap
 SHA-256. The bootstrap change is the default-preserving M5 BTC mode from
 `eea4905`; its exact hash chain is refreshed. Artifact `verify-source` now runs
 before all heavy builds, turning future source drift from a roughly 14-minute
-discovery into a sub-second preflight. All three cleanups passed and no chain
-execution or swap is claimed. A fresh exact isolated replay is the next gate,
-followed by concurrent/all-pair and unavailable-route closure. From pushed base
-`7b8ec43`, remaining M5 PoC ETA is 3 to 6 focused hours and milestone-tag ETA
-is 6 to 11 focused hours; neither range hides the still-open runtime evidence.
+discovery into a sub-second preflight. Run
+`m5-xmr-app-20260730-5f9cb12-d` passed all repaired build graphs and the exact
+LEZ artifact proof, then stopped at LEZ stack startup because the outer runner's
+pinned `RISC0_SERVER_PATH` was not handed to the nested stack's
+`LEZ_V02_R0VM` input. The existing binary has the required
+`36c016a5...15b` SHA-256 and reports version 3.0.5; the handoff is now explicit
+and regression-pinned. All four cleanups passed and no chain execution or swap
+is claimed. A fresh exact isolated replay is the next gate, followed by new
+executable concurrent/all-pair and unavailable-route gates. A read-only audit
+confirmed those gates cannot honestly be closed by launching the existing
+single-worker wrappers in parallel. From pushed base `5f9cb12`, remaining M5
+PoC ETA is 8 to 16 focused hours and milestone-tag ETA is 12 to 22 focused
+hours; neither range hides the still-open runtime evidence or code.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

@@ -5990,17 +5990,22 @@ funds. This absence removes node/finality flakiness but also means the checkpoin
 cannot prove chain behavior, cross-chain atomicity, or an XMR application swap.
 The remaining PoC gate is the isolated official Monero 0.18.5.1 Regtest plus LEZ
 v0.2 corridor under this accepted authority, followed by concurrent/all-pair
-closure. From pushed base `7b8ec43`, current ETA is 3 to 6 focused hours for the
-M5 PoC and 6 to 11 focused hours for the milestone tag.
+closure. From pushed base `5f9cb12`, current ETA is 8 to 16 focused hours for the
+M5 PoC and 12 to 22 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
-Status: **SOURCE/CONTRACT-GREEN; 0 node or chain executions.** Three
+Status: **SOURCE/CONTRACT-GREEN; 0 node or chain executions.** Four
 exact-commit attempts failed safely before nodes. The first two exposed stale
 sidecar and release-service locks. `m5-xmr-app-20260730-7b8ec43-c` built both
 repaired graphs, then exposed a stale artifact-verifier hash for the intentional
-M5 bootstrap mode. All three created no node or chain resource or tag-13 latch
-and passed scoped cleanup. The exact hash chain is refreshed, and artifact
+M5 bootstrap mode. The first three created no node or chain resource or tag-13 latch
+and passed scoped cleanup. The fourth also started no node or chain resource and
+passed scoped cleanup after it passed all builds and the exact LEZ
+artifact proof, then exposed a missing environment handoff from the pinned
+`RISC0_SERVER_PATH` to the nested stack's `LEZ_V02_R0VM` input. The already
+provisioned binary matches the required SHA-256 and version; the handoff is now
+explicit and regression-pinned. The exact hash chain is refreshed, and artifact
 source verification now precedes every heavy build. Use a fresh run ID. This is
 not evidence that the M5 XMR PoC has passed. It composes the accepted application
 authority ahead of the existing M4 claim tail against official isolated local
