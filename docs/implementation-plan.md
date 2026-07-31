@@ -4432,3 +4432,42 @@ surfaces, unavailable-route composition, and the final evidence/security/tag
 review. Tag 17 stays recorded as protocol punishment-path work rather than a
 separate literal issue-#112 M5 output. Updated estimate is 3 to 8 focused hours
 to the progressive PoC and 14 to 24 focused hours to the reviewed closure tag.
+
+## M5 local finalized-clock liveness RED and component repair (2026-07-31)
+
+Clean attempt `m5xmrrefund8c10cd7a` reached application acceptance, finalized
+tag 13, and verified Maker-funded Monero output. It then returned the same
+authenticated finalized identity at height 120 for more than two minutes. The
+local sequencer did not finalize empty blocks, so read-only classifier polling
+could not advance the finalized timestamp into the signed refund interval. Host
+time eventually passed `punish_at`, but it was never used as refund authority.
+The run was stopped and scoped cleanup completed. It is diagnostic RED evidence,
+not an actual refund replay or milestone result.
+
+The implemented correction is one local-profile-only liveness effect after two
+identical finalized samples. Activated terms seal a one-native-unit
+authenticated transfer from the Taker depositor to the Maker claimant. The
+Taker sidecar, not the runner, holds the signer. One create-once durable
+reservation binds run, runtime, terms, recipient, cutoff, nonce, exact bytes,
+and transaction ID. The transaction then crosses canonical
+`SubmitTransaction` once under its transaction-derived request identity; an
+ambiguous result is sticky and never retried. Read-only post-state must prove
+canonical inclusion, Taker balance minus one and nonce plus one, Maker balance
+plus one with unchanged nonce, and byte-identical escrow metadata and custody.
+The runner then returns to read-only Maker classification. Only a new finalized
+classifier result inside `[refund_at, punish_at)` can authorize tag 16.
+
+ADR 0123 records the component/RPC, sequence, liveness, and conditional-atomicity
+diagrams. Flow 1W records how the future operator replay will expose and verify
+the tick. Runtime remains isolated LEZ v0.2 plus official Monero 0.18.5.1
+Regtest on ephemeral loopback endpoints and deterministic local funds; no public
+RPC, faucet, peer, DNS, or public funds participate. Cold artifact availability,
+host pressure, local finality cadence, the bounded tick-finality wait, and the
+signed punishment margin remain explicit flake or failure sources.
+
+Status is **contract-GREEN; focused live-runtime test and actual replay
+pending**. The eight-thread reservation
+RED exposed a partial-publication race fixed by a narrow planner mutex. All 324
+Rust tests, strict Clippy/Rustdoc, compatibility contracts, and the complete
+quality/security/vulnerability gate pass. Fresh two-devnet replay remains open;
+no actual-node GREEN claim, output-count change, or tag is created here.

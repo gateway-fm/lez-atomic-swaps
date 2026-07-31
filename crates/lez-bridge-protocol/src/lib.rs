@@ -13,6 +13,11 @@ mod xmr_v3;
 pub const METHOD_DESCRIBE_RUNTIME: &str = "lez_bridge.v1.describe_runtime";
 /// Stable JSON-RPC method for one stable current canonical chain clock.
 pub const METHOD_OBSERVE_CURRENT_CLOCK: &str = "lez_bridge.v1.observe_current_clock";
+/// Prepares and durably reserves one bounded local-profile clock transaction.
+pub const METHOD_PREPARE_CURRENT_PROFILE_CLOCK: &str =
+    "lez_bridge.v1.prepare_current_profile_clock";
+/// Verifies one exact submitted local-profile clock transaction without resubmission.
+pub const METHOD_VERIFY_CURRENT_PROFILE_CLOCK: &str = "lez_bridge.v1.verify_current_profile_clock";
 /// Stable JSON-RPC method for preparing native initialization and funding.
 pub const METHOD_PREPARE_NATIVE_ESCROW: &str = "lez_bridge.v1.prepare_native_escrow";
 /// Stable JSON-RPC method for preparing aggregate-witness initialization and funding.
@@ -186,14 +191,17 @@ pub use xmr_v3::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result,
     CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result,
-    FinalizedNativeXmrEffectFactsV3, FinalizedNativeXmrScanOutcomeV3,
-    FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3,
-    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
-    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
-    PrepareNativeXmrRefundV3Result, SubmitNativeXmrClaimAuthorizationV3Request,
-    SubmitNativeXmrClaimAuthorizationV3Result, XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3,
-    XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
+    CurrentProfileClockAccountSnapshot, FinalizedNativeXmrEffectFactsV3,
+    FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
+    FinalizedNativeXmrUnavailableReasonV3, PrepareCurrentProfileClockRequest,
+    PrepareCurrentProfileClockResult, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
+    PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,
+    PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
+    PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result,
+    SubmitNativeXmrClaimAuthorizationV3Request, SubmitNativeXmrClaimAuthorizationV3Result,
+    VerifyCurrentProfileClockRequest, VerifyCurrentProfileClockResult,
+    XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3, XmrNativeEffectV3,
+    XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3, XmrNativeEscrowTermsV3,
+    XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
 };

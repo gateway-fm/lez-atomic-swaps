@@ -12,7 +12,9 @@ use std::{
 
 use anyhow::{Context as _, Result, bail, ensure};
 use clap::{Parser, ValueEnum};
-use lez_bridge_protocol::{Hex32, RunId, RuntimeDescriptor};
+use lez_bridge_protocol::{
+    Hex32, MessageContext, RequestId, RunId, RuntimeDescriptor, XmrNativeEscrowTermsV3,
+};
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeServerCapability, BridgeServerConfig, NativeEscrowPlanner,
     OfficialIndexerRpc, OfficialNodeRpc, StateDirectoryLease, m4_tag13_state_present,
@@ -92,6 +94,9 @@ struct Arguments {
     /// Public JSON file containing the exact immutable runtime descriptor.
     #[arg(long)]
     runtime_file: PathBuf,
+    /// Owner-private JSON file containing exact activated XMR terms.
+    #[arg(long)]
+    terms_file: Option<PathBuf>,
     /// Owner-only file containing the bridge bearer capability.
     #[arg(long)]
     capability_file: PathBuf,
@@ -133,6 +138,10 @@ async fn main() {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "ordered startup keeps state lease, public config, secrets, health, and bind checks auditable"
+)]
 async fn execute(arguments: Arguments) -> Result<()> {
     validate_arguments(&arguments)?;
     let state_lease = acquire_state_directory_lease(&arguments.state_directory)?;
@@ -147,6 +156,8 @@ async fn execute(arguments: Arguments) -> Result<()> {
         &run_id,
         authenticated_transfer_program,
     )?;
+    let activated_xmr_terms =
+        load_activated_xmr_terms(arguments.terms_file.as_deref(), &run_id, &runtime)?;
     let mut capability = read_secret_text(&arguments.capability_file)?;
     let capability = BridgeServerCapability::new(std::mem::take(&mut *capability))
         .context("invalid bridge capability")?;
@@ -189,7 +200,10 @@ async fn execute(arguments: Arguments) -> Result<()> {
         Arc::clone(&node),
         &arguments.state_directory,
     )?);
-    let bridge_runtime = Arc::new(BridgeRuntime::new(runtime.clone(), planner, node, indexer));
+    let bridge_runtime = Arc::new(bind_activated_xmr_terms(
+        BridgeRuntime::new(runtime.clone(), planner, node, indexer),
+        activated_xmr_terms.as_ref(),
+    ));
     let server = start_bridge_server(
         BridgeServerConfig::new(
             run_id.clone(),
@@ -234,6 +248,39 @@ async fn execute(arguments: Arguments) -> Result<()> {
     Ok(())
 }
 
+fn bind_activated_xmr_terms(
+    runtime: BridgeRuntime,
+    terms: Option<&XmrNativeEscrowTermsV3>,
+) -> BridgeRuntime {
+    match terms {
+        Some(terms) => runtime.with_activated_xmr_terms(*terms),
+        None => runtime,
+    }
+}
+
+fn load_activated_xmr_terms(
+    path: Option<&Path>,
+    run_id: &RunId,
+    runtime: &RuntimeDescriptor,
+) -> Result<Option<XmrNativeEscrowTermsV3>> {
+    path.map(|path| -> Result<XmrNativeEscrowTermsV3> {
+        let terms: XmrNativeEscrowTermsV3 =
+            serde_json::from_slice(&read_public_file(path, MAX_PUBLIC_CONFIG_BYTES)?)
+                .context("invalid activated XMR terms")?;
+        terms
+            .validate_runtime_binding(
+                &MessageContext::new(
+                    run_id.clone(),
+                    RequestId::new("startup-activated-terms-0001")?,
+                    runtime.sidecar_role,
+                ),
+                runtime,
+            )
+            .context("activated XMR terms do not match runtime")?;
+        Ok(terms)
+    })
+    .transpose()
+}
 fn load_runtime_before_secrets(
     arguments: &Arguments,
     state_lease: &StateDirectoryLease,
@@ -280,6 +327,11 @@ fn validate_arguments(arguments: &Arguments) -> Result<()> {
     )?;
     ensure!(
         arguments.capability_file != arguments.private_key_file
+            && arguments.terms_file.as_ref().is_none_or(|terms| {
+                terms != &arguments.runtime_file
+                    && terms != &arguments.capability_file
+                    && terms != &arguments.private_key_file
+            })
             && arguments.runtime_file != arguments.capability_file
             && arguments.runtime_file != arguments.private_key_file
             && arguments
@@ -456,6 +508,7 @@ mod tests {
             node_profile: NodeRouteProfile::Local,
             run_id: "m4-tag13-direct-cli-test".to_owned(),
             runtime_file: directory.path().join("does-not-exist-runtime.json"),
+            terms_file: None,
             capability_file: directory.path().join("does-not-exist-capability"),
             private_key_file: directory.path().join("does-not-exist-key"),
             state_directory: directory.path().to_path_buf(),

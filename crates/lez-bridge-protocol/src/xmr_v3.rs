@@ -15,6 +15,153 @@ use crate::{
     SubmissionOutcome, TransactionId,
 };
 
+/// Exact public-account facts bracketing one harmless local-profile clock driver.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct CurrentProfileClockAccountSnapshot {
+    /// Official account identity.
+    pub account_id: Hex32,
+    /// Native balance.
+    pub balance: u128,
+    /// Public transaction nonce.
+    pub nonce: u128,
+    /// Owning program identity.
+    pub program_owner: Hex32,
+    /// SHA-256 of the canonical official account encoding.
+    pub account_sha256: Hex32,
+}
+
+impl CurrentProfileClockAccountSnapshot {
+    /// Creates one exact account snapshot.
+    pub const fn new(
+        account_id: Hex32,
+        balance: u128,
+        nonce: u128,
+        program_owner: Hex32,
+        account_sha256: Hex32,
+    ) -> Self {
+        Self {
+            account_id,
+            balance,
+            nonce,
+            program_owner,
+            account_sha256,
+        }
+    }
+}
+
+/// Requests preparation of one bounded local-profile clock transaction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PrepareCurrentProfileClockRequest {
+    /// Version, run isolation, correlation, and Taker role.
+    pub context: MessageContext,
+    /// Exact run-owned local sidecar runtime.
+    pub runtime: RuntimeDescriptor,
+    /// Activated XMR-native escrow terms proved from live metadata and custody.
+    pub terms: XmrNativeEscrowTermsV3,
+    /// Exact Maker owner receiving one native unit.
+    pub recipient_account_id: Hex32,
+    /// Exclusive consensus-clock upper bound for the refund path.
+    pub exclusive_punish_at_ms: u64,
+}
+
+impl PrepareCurrentProfileClockRequest {
+    /// Creates one narrow clock preparation request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        terms: XmrNativeEscrowTermsV3,
+        recipient_account_id: Hex32,
+        exclusive_punish_at_ms: u64,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            terms,
+            recipient_account_id,
+            exclusive_punish_at_ms,
+        }
+    }
+}
+
+/// Exact durable clock transaction reservation returned before submission.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct PrepareCurrentProfileClockResult {
+    /// Echoed preparation context.
+    pub context: MessageContext,
+    /// Exact run-owned local sidecar runtime.
+    pub runtime: RuntimeDescriptor,
+    /// Activated terms proved from live funded escrow state.
+    pub terms: XmrNativeEscrowTermsV3,
+    /// Exact Maker recipient.
+    pub recipient_account_id: Hex32,
+    /// Exclusive consensus-clock upper bound.
+    pub exclusive_punish_at_ms: u64,
+    /// Exact signed official transaction reserved by the Taker sidecar.
+    pub transaction: PreparedTransaction,
+    /// Stable sequencer clock before preparation.
+    pub clock_before: ChainClock,
+    /// Exact Taker owner snapshot before preparation.
+    pub sender_before: CurrentProfileClockAccountSnapshot,
+    /// Exact Maker owner snapshot before preparation.
+    pub recipient_before: CurrentProfileClockAccountSnapshot,
+    /// Metadata account hash before preparation.
+    pub metadata_account_sha256_before: Hex32,
+    /// Custody account hash before preparation.
+    pub custody_account_sha256_before: Hex32,
+}
+
+/// Requests read-only verification of one exact submitted clock transaction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct VerifyCurrentProfileClockRequest {
+    /// Read-only verification context.
+    pub context: MessageContext,
+    /// Exact run-owned local sidecar runtime.
+    pub runtime: RuntimeDescriptor,
+    /// Complete exact durable preparation.
+    pub preparation: PrepareCurrentProfileClockResult,
+    /// Exact canonical submission acknowledgement.
+    pub submission: crate::SubmitTransactionResult,
+}
+
+/// Auditable result of one local-profile clock-driving transaction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct VerifyCurrentProfileClockResult {
+    pub context: MessageContext,
+    pub runtime: RuntimeDescriptor,
+    pub terms: XmrNativeEscrowTermsV3,
+    pub recipient_account_id: Hex32,
+    pub exclusive_punish_at_ms: u64,
+    pub transaction_id: TransactionId,
+    pub submission_request_id: crate::RequestId,
+    pub submission_outcome: SubmissionOutcome,
+    pub node_submission_attempts: u8,
+    pub transfer_amount: u128,
+    pub clock_before: ChainClock,
+    pub clock_after: ChainClock,
+    pub sender_before: CurrentProfileClockAccountSnapshot,
+    pub sender_after: CurrentProfileClockAccountSnapshot,
+    pub recipient_before: CurrentProfileClockAccountSnapshot,
+    pub recipient_after: CurrentProfileClockAccountSnapshot,
+    pub metadata_account_sha256_before: Hex32,
+    pub metadata_account_sha256_after: Hex32,
+    pub custody_account_sha256_before: Hex32,
+    pub custody_account_sha256_after: Hex32,
+    pub escrow_accounts_byte_identical: bool,
+    pub accounting_verified: bool,
+    pub local_only: bool,
+    pub retry_policy: String,
+}
+
 /// Exact standalone wire version for XMR-native escrow terms.
 pub const XMR_NATIVE_ESCROW_TERMS_VERSION: u16 = 3;
 

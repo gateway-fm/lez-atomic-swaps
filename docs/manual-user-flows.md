@@ -6424,10 +6424,10 @@ conditional-atomicity diagrams.
 
 ## Flow 1W: run the role-correct XMR application refund locally
 
-Status: **RUNNER-GREEN; CLEAN ACTUAL REPLAY PENDING.** This is the exact operator
-path for the next evidence run. Do not treat this section as a successful swap
-record until the retained evidence identifier and hashes are added after a
-clean pushed-commit replay.
+Status: **CLOCK-LIVENESS REPAIR COMPONENT-GREEN; ACTUAL REPLAY PENDING.**
+This is the intended operator path for the next evidence run. Do not treat this
+section as a successful swap record until retained evidence and hashes are added
+after a clean pushed-commit replay.
 
 Use a private Docker daemon and a new lowercase run ID. From the repository
 root:
@@ -6454,18 +6454,46 @@ agreement composition and `punish_at` another 600000 milliseconds later.
 below ten minutes is intentionally rejected because application activation,
 tag 13, Maker funding, and finality must finish before the fixed five-minute
 funding cutoff margin. Waiting uses the authenticated finalized-chain
-classifier rather than wall-clock sleep or a raw indexer query.
+classifier rather than wall-clock sleep or a raw indexer query. Diagnostic run
+`m5xmrrefund8c10cd7a` reached finalized tag 13 and verified Maker-funded Monero
+output, then sampled the identical authenticated finalized height 120, block
+hash, and timestamp for more than two minutes. The local sequencer did not
+finalize empty blocks, so the consensus clock never entered the signed interval.
+Host time passed `punish_at` without authorizing a refund. The run was stopped
+and cleaned; it is RED evidence, not a completed swap.
+
+The contract-GREEN local-only repair waits for two identical authenticated finalized
+samples, then calls authenticated `prepare_current_profile_clock`, the existing
+canonical `submit_transaction` with its transaction-derived request ID, and
+read-only `verify_current_profile_clock`. The activated server-owned terms seal
+one native unit from the Taker depositor to the Maker claimant, and the signer
+stays inside the Taker sidecar. One durable reservation fixes the terms, cutoff,
+nonce, bytes, and transaction ID. Server-owned terms remain optional for legacy
+M2/M3 sidecars, but the local clock prepare and verify facility is unavailable
+unless the server owns the activated terms; the existing canonical submit
+method remains unchanged. After one canonical submission attempt, the
+read-only verification must prove exact balance and nonce deltas plus
+byte-identical metadata and custody. The runner then resumes read-only Maker
+classification; only a new finalized classifier identity inside
+`[refund_at, punish_at)` permits tag 16. Any ambiguous outcome, drift, late
+guard, unchanged finality after the bounded wait, or accounting failure stops
+without retry. The protocol, planner, client, runner-contract, lint, documentation,
+compatibility, and complete repository quality/security gates pass. Focused
+live-runtime behavior and the fresh replay remain the actual-node proof.
 
 Expected order:
 
 1. real Delivery plan, Stage A/B activation, role-only handoff, and synchronous
    application cutoff;
 2. finalized tag 13 followed by confirmed Maker-funded Monero output;
-3. finalized refund-window observation, Taker tag-16 adaptation and one-attempt
-   submission, then Maker terms-discovery finality;
-4. Maker ingestion and Taker-scalar extraction, Maker-directed reconstructed
+3. finalized refund-window observation; if the local finalized identity stalls,
+   one sealed Taker-to-Maker one-unit clock transaction followed only by
+   read-only finalized reclassification;
+4. Taker tag-16 adaptation and one-attempt submission, then Maker
+   terms-discovery finality;
+5. Maker ingestion and Taker-scalar extraction, Maker-directed reconstructed
    Monero sweep, and independent Maker-target/Taker-foreign receipt; and
-5. owner-private cross-chain binding plus exact run-owned cleanup.
+6. owner-private cross-chain binding plus exact run-owned cleanup.
 
 The binding must report schema
 `lez_v02_m5_refund_cross_chain_binding_v1`, LEZ effect `refund`, Maker
@@ -6489,10 +6517,12 @@ reconstruction, fee accounting, confirmations, RPC authentication, and
 cleanup. They do not prove public-runtime parity, Internet transport,
 third-party availability, public finality/reorg behavior, fee-market behavior,
 different-host custody, or production isolation. Main flake risks are cold
-build time, host CPU/disk pressure, local block/finality cadence, and a missed
-signed window; always use a fresh run ID and never reuse partial evidence.
-ADR 0122 contains the complete component/RPC, sequence, and conditional-
-atomicity diagrams.
+build time, host CPU/disk pressure, local block/finality cadence, failure of the
+one tick to become finalized within its bounded wait, and a missed signed
+window; always use a fresh run ID and never reuse partial evidence. ADR 0122
+contains the refund topology and atomicity argument; ADR 0123 adds the accepted
+prepare, canonical submit, and read-only verify RPC sequence plus liveness and
+escrow-preservation diagrams.
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

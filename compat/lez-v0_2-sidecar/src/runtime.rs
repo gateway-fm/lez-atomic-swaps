@@ -13,6 +13,7 @@ const MAX_EXACT_TRANSACTION_BYTES: usize = 2_000_000;
 const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
 const NODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const TRANSACTION_INCLUSION_TIMEOUT: Duration = Duration::from_secs(30);
 const OFFICIAL_PUBLIC_NODE_ENDPOINT: &str = "https://testnet.lez.logos.co/";
 
 /// Fail-closed errors at the official LEZ v0.2 runtime boundary.
@@ -167,6 +168,7 @@ impl RuntimeBoundary {
 #[derive(Clone)]
 pub struct OfficialNodeRpc {
     client: SequencerClient,
+    local_profile: bool,
 }
 
 /// Live, same-tip sequencer facts needed to prepare one Vault Claim.
@@ -337,7 +339,7 @@ impl OfficialNodeRpc {
     /// Rejects any non-HTTP, non-loopback, credentialed, ambiguous, or portless URL.
     pub fn connect_local(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
         validate_local_node_endpoint(endpoint)?;
-        Self::connect_validated(endpoint)
+        Self::connect_validated(endpoint, true)
     }
 
     /// Connects to the one allowlisted official public node origin.
@@ -348,7 +350,7 @@ impl OfficialNodeRpc {
     /// `https://testnet.lez.logos.co/`.
     pub fn connect_official_public(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
         Self::validate_official_public_endpoint(endpoint)?;
-        Self::connect_validated(endpoint)
+        Self::connect_validated(endpoint, false)
     }
 
     /// Validates the one outbound official-public node origin without I/O.
@@ -374,7 +376,10 @@ impl OfficialNodeRpc {
         Ok(())
     }
 
-    fn connect_validated(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
+    fn connect_validated(
+        endpoint: &str,
+        local_profile: bool,
+    ) -> Result<Self, RuntimeBoundaryError> {
         let client = SequencerClientBuilder::default()
             .max_request_size(MAX_NODE_REQUEST_BYTES)
             .max_response_size(MAX_NODE_RESPONSE_BYTES)
@@ -382,7 +387,16 @@ impl OfficialNodeRpc {
             .max_concurrent_requests(1)
             .build(endpoint)
             .map_err(|_| RuntimeBoundaryError::InvalidNodeEndpoint)?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            local_profile,
+        })
+    }
+
+    /// Returns true only for the validated literal-loopback node profile.
+    #[must_use]
+    pub const fn is_local_profile(&self) -> bool {
+        self.local_profile
     }
 
     /// Reads the live channel, genesis hash, and owner/Vault accounts at one
@@ -696,6 +710,28 @@ impl OfficialNodeRpc {
             Some(observed) if observed == expected => Ok(true),
             Some(_) => Err(RuntimeBoundaryError::WrongIncludedTransaction),
         }
+    }
+
+    /// Polls canonical storage for inclusion without resubmitting.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable error if the bounded poll expires or any exact
+    /// transaction invariant fails.
+    pub async fn wait_prepared_transaction_inclusion(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<(), RuntimeBoundaryError> {
+        tokio::time::timeout(TRANSACTION_INCLUSION_TIMEOUT, async {
+            loop {
+                if self.prepared_transaction_is_included(prepared).await? {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
     }
 }
 

@@ -16,6 +16,7 @@ spel-client-gen = { version = "=0.5.0", git = "https://github.com/logos-co/spel.
 [dependencies]
 anyhow = "=1.0.103"
 ata_core = { package = "associated_token_account_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+authenticated_transfer_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 async-trait = "=0.1.89"
 borsh = "=1.7.0"
 clap = { version = "=4.6.1", features = ["derive"] }
@@ -27,6 +28,7 @@ lez-xmr-monero-adapter = { version = "=0.1.0", path = "../../crates/xmr-monero-a
 lez-xmr-swap-sdk = { version = "=0.1.0", path = "../../crates/xmr-swap-sdk" }
 jsonrpsee = { version = "=0.26.0", features = ["client-core", "server"] }
 nssa = { package = "lee", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+lez-bridge-client = { version = "=0.1.0", path = "../../crates/lez-bridge-client" }
 lez-bridge-protocol = { version = "=0.1.0", path = "../../crates/lez-bridge-protocol" }
 lez-zec-escrow-v02 = { version = "=0.0.0", path = "../lez-v0.2-provisional/escrow" }
 programs = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["artifacts"] }
@@ -53,7 +55,6 @@ zeroize = "=1.9.0"
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
 
 [dev-dependencies]
-lez-bridge-client = { version = "=0.1.0", path = "../../crates/lez-bridge-client" }
 tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread"] }
 
 [lints.rust]

@@ -20,6 +20,10 @@ readonly expected_rapidsnark_sha256="d4133227f845ff5bfa3672eb5b9c018a6a086bfa164
 readonly expected_gmp_sha256="0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b"
 readonly expected_fq_sha256="797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0"
 readonly expected_fr_sha256="40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82"
+readonly m5_xmr_refund_clock_stall_samples=2
+readonly m5_xmr_refund_clock_max_ticks=1
+readonly m5_xmr_refund_clock_punish_guard_ms=60000
+readonly m5_xmr_refund_clock_progress_timeout_seconds=30
 readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"
 readonly m5_xmr_journey="${M5_XMR_JOURNEY:-claim}"
 readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"
@@ -769,6 +773,11 @@ build_identity_and_artifact() {
       --bin lez-v02-vault-claim-poc --bin lez-v02-xmr-stage-a-compose \
       --bin lez-v02-xmr-stage-a-poc --bin lez-v02-bridge-poc --bin lez-v02-xmr-tag13-export \
       --bin lez-v02-xmr-regtest-fund --bin lez-v02-xmr-regtest-verify --bin lez-v02-xmr-regtest-sweep --example lez-v02-local-actor-identity
+  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+    CARGO_TARGET_DIR="$sidecar_target" CARGO_NET_OFFLINE=true \
+      cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
+        --bin lez-v02-local-clock-driver
+  fi
   readonly identity_binary="${sidecar_target}/debug/examples/lez-v02-local-actor-identity"
   [[ -x "$identity_binary" && ! -L "$identity_binary" ]] || fail "identity binary build is unavailable"
   readonly vault_claim_binary="${sidecar_target}/debug/lez-v02-vault-claim-poc"
@@ -806,6 +815,7 @@ build_identity_and_artifact() {
   readonly tag15_binary="${staged_binary_root}/xmr-reference-tag15"
   if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
     readonly tag16_binary="${staged_binary_root}/xmr-reference-tag16"
+    readonly local_clock_driver_binary="${staged_binary_root}/lez-v02-local-clock-driver"
   fi
   readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
   readonly agreement_composer_binary="${staged_binary_root}/lez-v02-xmr-stage-a-compose"
@@ -840,6 +850,8 @@ build_identity_and_artifact() {
   if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-tag16" \
       "$tag16_binary" "Tag16 refund driver"
+    stage_executable "${sidecar_target}/debug/lez-v02-local-clock-driver" \
+      "$local_clock_driver_binary" "local finalized-clock driver"
   fi
   stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
     "$agreement_role_runner_binary" "agreement role runner"
@@ -1998,25 +2010,130 @@ fund_and_verify_monero() {
   record_phase monero_verification completed
 }
 
+drive_m5_xmr_local_finality_clock() {
+  [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]] ||
+    fail "local finalized-clock driving is restricted to the M5 refund journey"
+  local tick_number="$1" taker_endpoint maker_owner taker_owner tick_evidence
+  [[ "$tick_number" == 1 ]] ||
+    fail "local finalized-clock tick exceeded its fixed bound"
+  taker_endpoint="$(jq -er '.endpoint' "$taker_sidecar_root/pid-manifest.json")"
+  maker_owner="$(jq -er '.account_id_hex' "${evidence_root}/maker-lez-identity.json")"
+  taker_owner="$(jq -er '.account_id_hex' "${evidence_root}/taker-lez-identity.json")"
+  tick_evidence="${tag16_refund_clock_tick_root}/tick-${tick_number}.json"
+  [[ ! -e "$tick_evidence" && ! -L "$tick_evidence" ]] ||
+    fail "local finalized-clock tick evidence already exists"
+  "$local_clock_driver_binary" \
+    --sidecar-endpoint "$taker_endpoint" \
+    --capability-file "$taker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/taker-runtime.json" \
+    --terms-file "$tag13_handoff_root/terms.json" \
+    --run-id "$run_id" \
+    --recipient-account-id "$maker_owner" \
+    --exclusive-punish-at-ms "$punish_at_ms" \
+    --output-evidence "$tick_evidence"
+  require_owner_file "$tick_evidence" "local finalized-clock tick evidence"
+  jq -e --arg run "$run_id" --arg sender "$taker_owner" --arg recipient "$maker_owner" --argjson punish "$punish_at_ms" '
+    .schema=="lez_v02_m5_local_clock_driver_v1"
+    and .context.run_id==$run
+    and .runtime.sidecar_role=="taker"
+    and .recipient_account_id==$recipient
+    and .exclusive_punish_at_ms==$punish
+    and (.transaction_id|test("^[0-9a-f]{64}$"))
+    and .submission_request_id==.transaction_id
+    and .submission_outcome != null
+    and .node_submission_attempts==1
+    and .transfer_amount==1
+    and .sender_before.account_id==$sender and .sender_after.account_id==$sender
+    and .recipient_before.account_id==$recipient and .recipient_after.account_id==$recipient
+    and .sender_before.program_owner==.terms.authenticated_transfer_program_id
+    and .sender_after.program_owner==.terms.authenticated_transfer_program_id
+    and .recipient_before.program_owner==.terms.authenticated_transfer_program_id
+    and .recipient_after.program_owner==.terms.authenticated_transfer_program_id
+    and .clock_before.timestamp_ms < $punish
+    and .clock_after.timestamp_ms < $punish
+    and .sender_after.balance == (.sender_before.balance - 1)
+    and .sender_after.nonce == (.sender_before.nonce + 1)
+    and .recipient_after.balance == (.recipient_before.balance + 1)
+    and .recipient_after.nonce == .recipient_before.nonce
+    and .metadata_account_sha256_after==.metadata_account_sha256_before
+    and .custody_account_sha256_after==.custody_account_sha256_before
+    and .escrow_accounts_byte_identical==true
+    and .accounting_verified==true
+    and .local_only==true
+    and .retry_policy=="one_node_submission_attempt_no_retry_poll_only"
+  ' "$tick_evidence" >/dev/null ||
+    fail "local finalized-clock tick violated its one-shot accounting boundary"
+}
+
 wait_for_m5_xmr_refund_window() {
   record_phase tag16_refund_window started
   readonly tag16_refund_window_result="${evidence_root}/tag16-refund-window.json"
+  readonly tag16_refund_clock_tick_root="${evidence_root}/tag16-refund-clock-ticks"
+  mkdir -m 0700 "$tag16_refund_clock_tick_root"
   local maker_endpoint probe_height attempt result_tmp finalized_timestamp_ms finalized_height
+  local finalized_hash finalized_identity="" previous_finalized_identity=""
+  local identical_clock_samples=0 clock_tick_count=0 host_timestamp_ms
+  local awaiting_tick_finality=0 tick_finality_identity=""
+  local tick_finality_deadline_seconds=0
   maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
   probe_height="$(jq -er '.funding.containing_block_id' "$tag13_internal")"
   result_tmp="${tag16_refund_window_result}.attempt"
   for attempt in {1..18000}; do
     rm -f -- "$result_tmp"
     "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag16-clock-${attempt}" --role maker --effect refund --start-height "$probe_height" --max-blocks 1 --output-result "$result_tmp" >/dev/null 2>&1 || true
-    if jq -e '(.outcome.status=="absent" or .outcome.status=="uncertain") and (.outcome.finalized_clock.height|type)=="number" and (.outcome.finalized_clock.timestamp_ms|type)=="number"' "$result_tmp" >/dev/null 2>&1; then
+    if (( awaiting_tick_finality == 1 && SECONDS >= tick_finality_deadline_seconds )); then
+      fail "local finalized-clock tick did not produce bounded finalized progress"
+    fi
+    if jq -e '(.outcome.status=="absent" or .outcome.status=="uncertain")
+      and (.outcome.finalized_clock.block_hash|test("^[0-9a-f]{64}$"))
+      and (.outcome.finalized_clock.height|type)=="number"
+      and (.outcome.finalized_clock.timestamp_ms|type)=="number"' "$result_tmp" >/dev/null 2>&1; then
       require_owner_file "$result_tmp" "Tag16 finalized-clock observation"
       finalized_timestamp_ms="$(jq -er '.outcome.finalized_clock.timestamp_ms' "$result_tmp")"
       finalized_height="$(jq -er '.outcome.finalized_clock.height' "$result_tmp")"
+      finalized_hash="$(jq -er '.outcome.finalized_clock.block_hash' "$result_tmp")"
+      finalized_identity="${finalized_height}:${finalized_hash}:${finalized_timestamp_ms}"
+      if (( awaiting_tick_finality == 1 )); then
+        if [[ "$finalized_identity" == "$tick_finality_identity" ]]; then
+          host_timestamp_ms="$(date -u +%s%3N)"
+          (( host_timestamp_ms < punish_at_ms - m5_xmr_refund_clock_punish_guard_ms )) ||
+            fail "local finalized-clock progress wait reached its punish_at safety guard"
+          sleep .25
+          continue
+        fi
+        awaiting_tick_finality=0
+        tick_finality_identity=""
+        tick_finality_deadline_seconds=0
+        previous_finalized_identity="$finalized_identity"
+        identical_clock_samples=1
+      else
+        if [[ "$finalized_identity" == "$previous_finalized_identity" ]]; then
+          ((identical_clock_samples += 1))
+        else
+          previous_finalized_identity="$finalized_identity"
+          identical_clock_samples=1
+        fi
+      fi
       (( finalized_timestamp_ms < punish_at_ms )) || fail "finalized LEZ clock reached punish_at before Tag16 submission"
       if (( finalized_timestamp_ms >= refund_at_ms && finalized_timestamp_ms < punish_at_ms )); then
         tag16_scan_start_height="$((finalized_height + 1))"
         mv "$result_tmp" "$tag16_refund_window_result"
         break
+      fi
+      host_timestamp_ms="$(date -u +%s%3N)"
+      if (( host_timestamp_ms >= refund_at_ms &&
+            identical_clock_samples >= m5_xmr_refund_clock_stall_samples )); then
+        (( host_timestamp_ms < punish_at_ms - m5_xmr_refund_clock_punish_guard_ms )) ||
+          fail "local finalized-clock drive reached its punish_at safety guard"
+        (( clock_tick_count < m5_xmr_refund_clock_max_ticks )) ||
+          fail "local finalized-clock drive exhausted its fixed tick bound"
+        ((clock_tick_count += 1))
+        drive_m5_xmr_local_finality_clock "$clock_tick_count"
+        awaiting_tick_finality=1
+        tick_finality_identity="$finalized_identity"
+        tick_finality_deadline_seconds="$((SECONDS + m5_xmr_refund_clock_progress_timeout_seconds))"
+        previous_finalized_identity="$finalized_identity"
+        identical_clock_samples=0
       fi
     fi
     sleep .25

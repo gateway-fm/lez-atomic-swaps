@@ -318,12 +318,14 @@ fn local_node_route_accepts_only_explicit_loopback_http_endpoints() {
             RuntimeBoundaryError::InvalidNodeEndpoint
         );
     }
-    assert!(OfficialNodeRpc::connect_local("http://127.0.0.1:1/").is_ok());
+    let node = OfficialNodeRpc::connect_local("http://127.0.0.1:1/").unwrap();
+    assert!(node.is_local_profile());
 }
 
 #[test]
 fn official_public_node_route_accepts_only_the_exact_testnet_origin() {
-    assert!(OfficialNodeRpc::connect_official_public("https://testnet.lez.logos.co/").is_ok());
+    let node = OfficialNodeRpc::connect_official_public("https://testnet.lez.logos.co/").unwrap();
+    assert!(!node.is_local_profile());
     for endpoint in [
         "https://testnet.lez.logos.co",
         "http://testnet.lez.logos.co/",

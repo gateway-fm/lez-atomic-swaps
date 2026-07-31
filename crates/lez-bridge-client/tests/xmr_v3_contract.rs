@@ -8,28 +8,31 @@ use jsonrpsee::RpcModule;
 use lez_bridge_client::{
     BridgeClient, BridgeClientConfig, BridgeClientError, BridgeOperation, ConfigurationError,
     METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
-    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
-    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
-    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
-    SidecarCapability, XmrReleaseClient,
+    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_CURRENT_PROFILE_CLOCK,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
+    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_VERIFY_CURRENT_PROFILE_CLOCK, RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
+    XmrReleaseClient,
 };
 use lez_bridge_protocol::{
-    AggregateBip340Signature, ClassifyFinalizedNativeXmrEffectV3Request,
+    AggregateBip340Signature, ChainClock, ClassifyFinalizedNativeXmrEffectV3Request,
     ClassifyFinalizedNativeXmrEffectV3Result, CompleteNativeXmrClaimV3Request,
     CompleteNativeXmrClaimV3Result, CompleteNativeXmrRefundV3Request,
-    CompleteNativeXmrRefundV3Result, DiscoveryWindow, ExactMessageBytes, ExactTransactionBytes,
-    FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant,
-    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
-    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
-    PrepareNativeXmrRefundV3Result, PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
-    SubmitNativeXmrClaimAuthorizationV3Request, SubmitNativeXmrClaimAuthorizationV3Result,
-    TransactionId, XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
-    XmrNativeEscrowTermsV3Input,
+    CompleteNativeXmrRefundV3Result, CurrentProfileClockAccountSnapshot, DiscoveryWindow,
+    ExactMessageBytes, ExactTransactionBytes, FinalizedNativeXmrScanOutcomeV3,
+    FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3, Hex32,
+    MessageContext, Participant, PrepareCurrentProfileClockRequest,
+    PrepareCurrentProfileClockResult, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
+    PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,
+    PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
+    PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result, PreparedTransaction,
+    PreparedWitnessedClaim, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
+    SubmitNativeXmrClaimAuthorizationV3Result, SubmitTransactionResult, TransactionId,
+    VerifyCurrentProfileClockRequest, VerifyCurrentProfileClockResult, XmrClaimPartialV3,
+    XmrNativeEffectV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -63,6 +66,7 @@ enum Behavior {
     WrongTerms,
     WrongTarget,
     WrongEffect,
+    TamperedClock,
 }
 
 #[derive(Clone, Debug)]
@@ -305,8 +309,86 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
             },
         )
         .expect("register finalized classifier");
+    module
+        .register_async_method(
+            METHOD_PREPARE_CURRENT_PROFILE_CLOCK,
+            |params, fixture, _| async move {
+                let request: PrepareCurrentProfileClockRequest = params.one()?;
+                fixture.record(METHOD_PREPARE_CURRENT_PROFILE_CLOCK);
+                json_value(PrepareCurrentProfileClockResult {
+                    context: request.context,
+                    runtime: request.runtime,
+                    terms: request.terms,
+                    recipient_account_id: request.recipient_account_id,
+                    exclusive_punish_at_ms: request.exclusive_punish_at_ms,
+                    transaction: tx(44),
+                    clock_before: ChainClock::new(h(45), 10, 1_000),
+                    sender_before: clock_account(h(7), 10, 2, h(46)),
+                    recipient_before: clock_account(h(8), 5, 1, h(47)),
+                    metadata_account_sha256_before: h(48),
+                    custody_account_sha256_before: h(49),
+                })
+            },
+        )
+        .expect("register clock preparation");
+    module
+        .register_async_method(
+            METHOD_VERIFY_CURRENT_PROFILE_CLOCK,
+            |params, fixture, _| async move {
+                let request: VerifyCurrentProfileClockRequest = params.one()?;
+                fixture.record(METHOD_VERIFY_CURRENT_PROFILE_CLOCK);
+                let preparation = request.preparation;
+                let recipient_balance = if matches!(fixture.behavior, Behavior::TamperedClock) {
+                    preparation.recipient_before.balance
+                } else {
+                    preparation.recipient_before.balance + 1
+                };
+                let sender_after = CurrentProfileClockAccountSnapshot::new(
+                    preparation.sender_before.account_id,
+                    preparation.sender_before.balance - 1,
+                    preparation.sender_before.nonce + 1,
+                    preparation.sender_before.program_owner,
+                    h(50),
+                );
+                let recipient_after = CurrentProfileClockAccountSnapshot::new(
+                    preparation.recipient_before.account_id,
+                    recipient_balance,
+                    preparation.recipient_before.nonce,
+                    preparation.recipient_before.program_owner,
+                    h(51),
+                );
+                json_value(VerifyCurrentProfileClockResult {
+                    context: request.context,
+                    runtime: request.runtime,
+                    terms: preparation.terms,
+                    recipient_account_id: preparation.recipient_account_id,
+                    exclusive_punish_at_ms: preparation.exclusive_punish_at_ms,
+                    transaction_id: preparation.transaction.transaction_id,
+                    submission_request_id: request.submission.context.request_id,
+                    submission_outcome: request.submission.outcome,
+                    node_submission_attempts: u8::from(
+                        request.submission.outcome == SubmissionOutcome::Accepted,
+                    ),
+                    transfer_amount: 1,
+                    clock_before: preparation.clock_before,
+                    clock_after: ChainClock::new(h(52), 11, 2_000),
+                    sender_before: preparation.sender_before,
+                    sender_after,
+                    recipient_before: preparation.recipient_before,
+                    recipient_after,
+                    metadata_account_sha256_before: preparation.metadata_account_sha256_before,
+                    metadata_account_sha256_after: preparation.metadata_account_sha256_before,
+                    custody_account_sha256_before: preparation.custody_account_sha256_before,
+                    custody_account_sha256_after: preparation.custody_account_sha256_before,
+                    escrow_accounts_byte_identical: true,
+                    accounting_verified: true,
+                    local_only: true,
+                    retry_policy: "one_node_submission_attempt_no_retry_poll_only".to_owned(),
+                })
+            },
+        )
+        .expect("register clock verification");
 }
-
 fn json_value(value: impl Serialize) -> Result<Value, jsonrpsee::types::ErrorObjectOwned> {
     serde_json::to_value(value).map_err(|error| {
         jsonrpsee::types::ErrorObjectOwned::owned(-32_000, error.to_string(), None::<Value>)
@@ -314,6 +396,89 @@ fn json_value(value: impl Serialize) -> Result<Value, jsonrpsee::types::ErrorObj
 }
 
 #[allow(clippy::too_many_lines)]
+#[tokio::test]
+async fn clock_preparation_rejects_wrong_role_before_transport() {
+    let sidecar = spawn_sidecar(Participant::Maker, Behavior::Happy).await;
+    let runtime = runtime(Participant::Maker);
+    let client = client(&sidecar.endpoint, runtime.clone(), Duration::from_secs(1));
+    let terms = terms(40);
+    let input = terms.to_input();
+    let error = client
+        .prepare_current_profile_clock(PrepareCurrentProfileClockRequest::new(
+            context(&run_id(), Participant::Maker, "clock-wrong-role"),
+            runtime,
+            terms,
+            input.claimant_account_id,
+            input.punish_at_ms,
+        ))
+        .await
+        .expect_err("Maker clock preparation must fail before transport");
+
+    assert!(matches!(
+        error,
+        BridgeClientError::MalformedObservation {
+            operation: BridgeOperation::PrepareCurrentProfileClock
+        }
+    ));
+    assert_eq!(
+        sidecar.fixture.calls(METHOD_PREPARE_CURRENT_PROFILE_CLOCK),
+        0
+    );
+}
+
+#[tokio::test]
+async fn clock_verification_rejects_tampered_delta_after_one_call() {
+    let sidecar = spawn_sidecar(Participant::Taker, Behavior::TamperedClock).await;
+    let runtime = runtime(Participant::Taker);
+    let client = client(&sidecar.endpoint, runtime.clone(), Duration::from_secs(1));
+    let terms = terms(40);
+    let input = terms.to_input();
+    let preparation = client
+        .prepare_current_profile_clock(PrepareCurrentProfileClockRequest::new(
+            context(&run_id(), Participant::Taker, "clock-prepare"),
+            runtime.clone(),
+            terms,
+            input.claimant_account_id,
+            input.punish_at_ms,
+        ))
+        .await
+        .expect("valid clock preparation");
+    let transaction_id = preparation.transaction.transaction_id;
+    let submission = SubmitTransactionResult::new(
+        MessageContext::new(
+            run_id(),
+            transaction_id.submission_request_id(),
+            Participant::Taker,
+        ),
+        transaction_id,
+        SubmissionOutcome::Accepted,
+    );
+    let error = client
+        .verify_current_profile_clock(VerifyCurrentProfileClockRequest {
+            context: context(&run_id(), Participant::Taker, "clock-verify"),
+            runtime,
+            preparation,
+            submission,
+        })
+        .await
+        .expect_err("tampered recipient delta must fail closed");
+
+    assert!(matches!(
+        error,
+        BridgeClientError::MalformedObservation {
+            operation: BridgeOperation::VerifyCurrentProfileClock
+        }
+    ));
+    assert_eq!(
+        sidecar.fixture.calls(METHOD_PREPARE_CURRENT_PROFILE_CLOCK),
+        1
+    );
+    assert_eq!(
+        sidecar.fixture.calls(METHOD_VERIFY_CURRENT_PROFILE_CLOCK),
+        1
+    );
+}
+
 #[tokio::test]
 async fn xmr_v3_methods_route_once_with_exact_run_and_role_headers() {
     let maker = spawn_sidecar(Participant::Maker, Behavior::Happy).await;
@@ -925,4 +1090,13 @@ fn window() -> DiscoveryWindow {
 
 const fn h(byte: u8) -> Hex32 {
     Hex32::from_bytes([byte; 32])
+}
+
+fn clock_account(
+    account_id: Hex32,
+    balance: u128,
+    nonce: u128,
+    account_sha256: Hex32,
+) -> CurrentProfileClockAccountSnapshot {
+    CurrentProfileClockAccountSnapshot::new(account_id, balance, nonce, h(4), account_sha256)
 }

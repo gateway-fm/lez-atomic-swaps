@@ -285,6 +285,24 @@ owner-private binder that cross-checks finalized tag 16, Maker extraction, the
 Maker-directed Monero receipt, honest refund roles, and exact fee accounting.
 This runner and binder are component-GREEN but have not yet been executed
 together from a clean pushed commit, so no new actual refund swap is claimed.
+The first clean attempt, `m5xmrrefund8c10cd7a`, reached finalized tag 13 and
+verified Maker-funded Monero output, then exposed a local-profile liveness RED:
+the authenticated finalized classifier returned the same LEZ height, hash, and
+timestamp for more than two minutes because the local sequencer did not
+finalize empty blocks. Read-only polling could therefore never enter the signed
+refund window. The contract-GREEN correction in
+[ADR 0123](docs/architecture/0123-drive-the-local-finalized-clock-with-one-sealed-effect.md)
+permits exactly one local-only, activated-terms-sealed Taker-to-Maker transfer
+of one native unit through the authenticated Taker sidecar. It uses one durable
+reservation, canonical transaction-derived one-attempt submission, and
+read-only before/after verification; escrow metadata and custody must remain
+byte-identical. The Maker finalized classifier remains the only refund-window
+authority. The repair passes 324 Rust tests, strict Clippy and Rustdoc, preserved
+M3/M4/M5 contracts, and the complete repository quality/security gate. The
+live runtime/server path still awaits its focused behavioral and actual-node
+integration proof. A fresh
+two-devnet replay remains pending, so this is not yet actual-node GREEN and
+changes neither the M5 score nor tag status.
 [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint)
 and [Flow 1V](docs/manual-user-flows.md#flow-1v-repeat-the-role-correct-xmr-refund-continuation-checkpoint)
 reproduce the lower component boundaries; Flow 1W gives the exact clean replay

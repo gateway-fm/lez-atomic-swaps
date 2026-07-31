@@ -11,7 +11,8 @@ use std::{
 
 use async_trait::async_trait;
 use lez_bridge_protocol::{
-    Hex32, MessageContext, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
+    ChainClock, CurrentProfileClockAccountSnapshot, Hex32, MessageContext, Participant,
+    PrepareCurrentProfileClockRequest, PrepareNativeXmrClaimAuthorizationV3Request,
     PrepareNativeXmrEscrowV3Request, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
     XmrClaimPartialV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
@@ -564,5 +565,117 @@ async fn authorization_requires_durable_escrow_and_reserves_nothing_on_nonce_ove
             .path()
             .join("xmr-native-claim-authorization-reservation.v3.json")
             .exists()
+    );
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one concurrent create/replay/reject journey shares exact durable fixtures"
+)]
+fn current_profile_clock_reservation_is_create_once_under_concurrency() {
+    let (depositor, depositor_key, _) = account(21);
+    let (claimant, _, _) = account(22);
+    let (claim_authority, _, claim_key) = account(23);
+    let (refund_authority, _, refund_key) = account(24);
+    let descriptor = runtime(depositor);
+    let xmr_terms = terms(
+        depositor,
+        claimant,
+        claim_authority,
+        &claim_key,
+        refund_authority,
+        &refund_key,
+        75,
+    );
+    let input = xmr_terms.to_input();
+    let request = PrepareCurrentProfileClockRequest::new(
+        MessageContext::new(
+            RunId::new("xmr-native-escrow-run").expect("run id"),
+            RequestId::new("xmr-current-clock-prepare").expect("request id"),
+            Participant::Taker,
+        ),
+        descriptor.clone(),
+        xmr_terms,
+        input.claimant_account_id,
+        input.punish_at_ms,
+    );
+    let directory = private_directory();
+    let planner = Arc::new(
+        NativeEscrowPlanner::new_durable(
+            Participant::Taker,
+            depositor_key,
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            descriptor,
+            Arc::new(CountingNonce {
+                value: 17,
+                calls: AtomicUsize::new(0),
+            }),
+            directory.path(),
+        )
+        .expect("planner"),
+    );
+    let clock = ChainClock::new(h(30), 5, 1_000);
+    let sender = CurrentProfileClockAccountSnapshot::new(
+        input.depositor_account_id,
+        100,
+        17,
+        input.authenticated_transfer_program_id,
+        h(31),
+    );
+    let recipient = CurrentProfileClockAccountSnapshot::new(
+        input.claimant_account_id,
+        25,
+        3,
+        input.authenticated_transfer_program_id,
+        h(32),
+    );
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let planner = Arc::clone(&planner);
+                let request = request.clone();
+                scope.spawn(move || {
+                    planner.prepare_current_profile_clock(
+                        &request,
+                        sender.nonce,
+                        clock,
+                        sender,
+                        recipient,
+                        h(33),
+                        h(34),
+                    )
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread").expect("same reservation"))
+            .collect::<Vec<_>>()
+    });
+    assert!(results.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(
+        directory
+            .path()
+            .join("xmr-current-profile-clock.v1.json")
+            .is_file()
+    );
+
+    let mut distinct = request;
+    distinct.context.request_id = RequestId::new("xmr-current-clock-second").expect("request id");
+    assert_eq!(
+        planner
+            .prepare_current_profile_clock(
+                &distinct,
+                sender.nonce,
+                clock,
+                sender,
+                recipient,
+                h(33),
+                h(34),
+            )
+            .expect_err("a second reservation must fail closed"),
+        NativePrepareError::ActivePrepare
     );
 }

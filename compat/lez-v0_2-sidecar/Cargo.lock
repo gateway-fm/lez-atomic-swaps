@@ -3658,6 +3658,7 @@ dependencies = [
  "anyhow",
  "associated_token_account_core",
  "async-trait",
+ "authenticated_transfer_core",
  "borsh",
  "clap",
  "common",

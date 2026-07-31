@@ -2,25 +2,28 @@ use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition,
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result,
-    CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result, DiscoveryWindow,
-    ExactMessageBytes, ExactTransactionBytes, FinalizedBlockIdentity,
-    FinalizedNativeXmrEffectFactsV3, FinalizedNativeXmrScanOutcomeV3,
+    CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result,
+    CurrentProfileClockAccountSnapshot, DiscoveryWindow, ExactMessageBytes, ExactTransactionBytes,
+    FinalizedBlockIdentity, FinalizedNativeXmrEffectFactsV3, FinalizedNativeXmrScanOutcomeV3,
     FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3, Hex32,
     METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
     METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
     METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
     METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
     METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, MessageContext, NativeCustodyFacts,
-    ObservedTransactionFacts, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
+    ObservedTransactionFacts, Participant, PrepareCurrentProfileClockRequest,
+    PrepareCurrentProfileClockResult, PrepareNativeXmrClaimAuthorizationV3Request,
     PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
     PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,
     PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
     PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result, PreparedTransaction,
     PreparedWitnessedClaim, ProtocolValueError, RequestId, RunId, RuntimeCompatibility,
     RuntimeDescriptor, SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
-    SubmitNativeXmrClaimAuthorizationV3Result, TransactionId, XMR_NATIVE_ESCROW_TERMS_VERSION,
-    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
+    SubmitNativeXmrClaimAuthorizationV3Result, SubmitTransactionResult, TransactionId,
+    VerifyCurrentProfileClockRequest, VerifyCurrentProfileClockResult,
+    XMR_NATIVE_ESCROW_TERMS_VERSION, XmrClaimPartialV3, XmrNativeEffectV3,
+    XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3, XmrNativeEscrowTermsV3,
+    XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -108,6 +111,19 @@ where
     let encoded = serde_json::to_vec(value).expect("serialize");
     let decoded: T = serde_json::from_slice(&encoded).expect("deserialize");
     assert_eq!(&decoded, value);
+}
+
+fn roundtrip_and_reject_unknown<T>(value: &T)
+where
+    T: Serialize + DeserializeOwned + std::fmt::Debug + Eq,
+{
+    roundtrip(value);
+    let mut encoded = serde_json::to_value(value).expect("serialize");
+    encoded
+        .as_object_mut()
+        .expect("object")
+        .insert("unexpected".to_owned(), Value::Bool(true));
+    assert!(serde_json::from_value::<T>(encoded).is_err());
 }
 
 #[test]
@@ -385,6 +401,118 @@ fn all_nine_xmr_v3_method_families_roundtrip_strict_json() {
         FinalizedNativeXmrTransactionTargetV3::exact(prepared(56, 0xc7)),
         DiscoveryWindow::new(90, 21).expect("window"),
     ));
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "all four nested clock wire envelopes share one exact fixture"
+)]
+fn current_profile_clock_wires_roundtrip_and_reject_unknown_fields() {
+    let activated_terms = terms();
+    let input = activated_terms.to_input();
+    let preparation_context = context();
+    let preparation_request = PrepareCurrentProfileClockRequest::new(
+        preparation_context.clone(),
+        runtime(),
+        activated_terms,
+        input.claimant_account_id,
+        input.punish_at_ms,
+    );
+    roundtrip_and_reject_unknown(&preparation_request);
+
+    let transaction = prepared(71, 0xd1);
+    let sender_before = CurrentProfileClockAccountSnapshot::new(
+        input.depositor_account_id,
+        50,
+        4,
+        input.authenticated_transfer_program_id,
+        h(72),
+    );
+    let recipient_before = CurrentProfileClockAccountSnapshot::new(
+        input.claimant_account_id,
+        10,
+        2,
+        input.authenticated_transfer_program_id,
+        h(73),
+    );
+    let preparation = PrepareCurrentProfileClockResult {
+        context: preparation_context,
+        runtime: runtime(),
+        terms: activated_terms,
+        recipient_account_id: input.claimant_account_id,
+        exclusive_punish_at_ms: input.punish_at_ms,
+        transaction: transaction.clone(),
+        clock_before: ChainClock::new(h(74), 12, 1_000),
+        sender_before,
+        recipient_before,
+        metadata_account_sha256_before: h(75),
+        custody_account_sha256_before: h(76),
+    };
+    roundtrip_and_reject_unknown(&preparation);
+
+    let submission_context = MessageContext::new(
+        RunId::new("xmr-v3-run").expect("run id"),
+        transaction.transaction_id.submission_request_id(),
+        Participant::Taker,
+    );
+    let submission = SubmitTransactionResult::new(
+        submission_context.clone(),
+        transaction.transaction_id,
+        SubmissionOutcome::Accepted,
+    );
+    let verification_context = MessageContext::new(
+        RunId::new("xmr-v3-run").expect("run id"),
+        RequestId::new("xmr-v3-clock-verify").expect("request id"),
+        Participant::Taker,
+    );
+    let verification_request = VerifyCurrentProfileClockRequest {
+        context: verification_context.clone(),
+        runtime: runtime(),
+        preparation: preparation.clone(),
+        submission: submission.clone(),
+    };
+    roundtrip_and_reject_unknown(&verification_request);
+
+    let verification = VerifyCurrentProfileClockResult {
+        context: verification_context,
+        runtime: runtime(),
+        terms: activated_terms,
+        recipient_account_id: input.claimant_account_id,
+        exclusive_punish_at_ms: input.punish_at_ms,
+        transaction_id: transaction.transaction_id,
+        submission_request_id: submission_context.request_id,
+        submission_outcome: submission.outcome,
+        node_submission_attempts: 1,
+        transfer_amount: 1,
+        clock_before: preparation.clock_before,
+        clock_after: ChainClock::new(h(77), 13, 2_000),
+        sender_before,
+        sender_after: CurrentProfileClockAccountSnapshot::new(
+            sender_before.account_id,
+            sender_before.balance - 1,
+            sender_before.nonce + 1,
+            sender_before.program_owner,
+            h(78),
+        ),
+        recipient_before,
+        recipient_after: CurrentProfileClockAccountSnapshot::new(
+            recipient_before.account_id,
+            recipient_before.balance + 1,
+            recipient_before.nonce,
+            recipient_before.program_owner,
+            h(79),
+        ),
+        metadata_account_sha256_before: preparation.metadata_account_sha256_before,
+        metadata_account_sha256_after: preparation.metadata_account_sha256_before,
+        custody_account_sha256_before: preparation.custody_account_sha256_before,
+        custody_account_sha256_after: preparation.custody_account_sha256_before,
+        escrow_accounts_byte_identical: true,
+        accounting_verified: true,
+        local_only: true,
+        retry_policy: "one_node_submission_attempt_no_retry_poll_only".to_owned(),
+    };
+    roundtrip_and_reject_unknown(&verification);
 }
 
 #[test]

@@ -615,7 +615,7 @@ start_sidecar() {
   spawn_pending=true
   "$sidecar_bin" --listen-address "127.0.0.1:$port" --node-profile local \
     --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$run_id" \
-    --runtime-file "$sidecar_runtime_file" --capability-file "$root/capability" \
+    --runtime-file "$sidecar_runtime_file" --terms-file "$root/terms.json" --capability-file "$root/capability" \
     --private-key-file "$private_key_file" --state-directory "$state_directory" \
     --authenticated-transfer-program-id "$transfer_program" "${tag13_handoff_arguments[@]}" >"$root/sidecar.log" 2>&1 &
   pid=$!

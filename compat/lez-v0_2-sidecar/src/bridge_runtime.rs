@@ -1,30 +1,35 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use borsh::BorshDeserialize as _;
 use common::{block::Block, transaction::LeeTransaction};
 use lez_bridge_protocol::{
-    AccountIds, ChainPosition, ChainTip, ClassifyFinalizedWitnessedClaimResult,
+    AccountIds, ChainClock, ChainPosition, ChainTip, ClassifyFinalizedWitnessedClaimResult,
     ClassifyFinalizedWitnessedFundingResult, ClassifyFinalizedWitnessedInitializationRequest,
     ClassifyFinalizedWitnessedInitializationResult, CompleteWitnessedClaimRequest,
-    CompleteWitnessedClaimResult, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget,
-    EscrowState, FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts,
-    FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation,
-    MAX_DISCOVERY_BLOCKS, NativeClaimInstructionFacts, NativeCustodyFacts,
-    NativeFundInstructionFacts, NativeInitializeInstructionFacts, ObserveCurrentClockRequest,
-    ObserveCurrentClockResult, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
-    ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
-    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
-    ObserveWitnessedEscrowResult, ObservedTransactionFacts, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PreparedTransaction, RevealingClaimFoundFacts,
-    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
-    RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TransactionId, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,
+    CompleteWitnessedClaimResult, CurrentProfileClockAccountSnapshot, DiscoveryWindow,
+    EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
+    FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts, FundingObservation, Hex32,
+    InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS,
+    NativeClaimInstructionFacts, NativeCustodyFacts, NativeFundInstructionFacts,
+    NativeInitializeInstructionFacts, ObserveCurrentClockRequest, ObserveCurrentClockResult,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
+    ObserveFinalizedWitnessedFundingResult, ObserveRevealingClaimRequest,
+    ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
+    ObservedTransactionFacts, PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult,
+    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PreparedTransaction,
+    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
+    RevealingPreimage, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
+    SubmitTransactionResult, TransactionId, VerifyCurrentProfileClockRequest,
+    VerifyCurrentProfileClockResult, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,
     WitnessedFundingObservation, WitnessedInitializationFoundFacts,
     WitnessedInitializationObservation, WitnessedNativeInitializeInstructionFacts,
 };
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
-use nssa::{AccountId, PublicKey, PublicTransaction};
+use nssa::{Account, AccountId, PublicKey, PublicTransaction};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
@@ -111,12 +116,14 @@ pub struct BridgeRuntime {
     runtime: RuntimeDescriptor,
     planner: Arc<NativeEscrowPlanner>,
     node: Arc<OfficialNodeRpc>,
+    activated_xmr_terms: Option<lez_bridge_protocol::XmrNativeEscrowTermsV3>,
     finalized_asset_observer: FinalizedAssetObserver,
     finalized_xmr_observer: FinalizedNativeXmrEffectObserver,
     finalized_claim_observer: FinalizedWitnessedClaimObserver,
     finalized_funding_observer: FinalizedWitnessedFundingObserver,
     finalized_initialization_observer: FinalizedWitnessedInitializationObserver,
     finalized_refund_observer: FinalizedWitnessedRefundObserver,
+    clock_driver_lock: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for BridgeRuntime {
@@ -156,13 +163,25 @@ impl BridgeRuntime {
             runtime,
             planner,
             node,
+            activated_xmr_terms: None,
             finalized_asset_observer,
             finalized_xmr_observer,
             finalized_claim_observer,
             finalized_funding_observer,
             finalized_initialization_observer,
             finalized_refund_observer,
+            clock_driver_lock: tokio::sync::Mutex::new(()),
         }
+    }
+
+    /// Binds exact immutable activated XMR terms during runtime construction.
+    #[must_use]
+    pub fn with_activated_xmr_terms(
+        mut self,
+        terms: lez_bridge_protocol::XmrNativeEscrowTermsV3,
+    ) -> Self {
+        self.activated_xmr_terms = Some(terms);
+        self
     }
 
     /// Returns the immutable descriptor used by every request.
@@ -213,6 +232,196 @@ impl BridgeRuntime {
             self.runtime.clone(),
             facts.clock(),
         ))
+    }
+
+    /// Durably prepares one harmless local-profile clock transaction.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed unless live funded escrow state exactly matches the
+    /// launcher-sealed activated terms and run-owned local node identity.
+    pub async fn prepare_current_profile_clock(
+        &self,
+        request: &PrepareCurrentProfileClockRequest,
+    ) -> Result<PrepareCurrentProfileClockResult, BridgeRuntimeError> {
+        let _guard = self.clock_driver_lock.lock().await;
+        let terms = request.terms.to_input();
+        request
+            .terms
+            .validate_runtime_binding(&request.context, &request.runtime)
+            .map_err(|_| BridgeRuntimeError::Planner)?;
+        if !self.node.is_local_profile()
+            || request.runtime != self.runtime
+            || request.context.sidecar_role != lez_bridge_protocol::Participant::Taker
+            || self.activated_xmr_terms != Some(request.terms)
+            || request.recipient_account_id != terms.claimant_account_id
+            || request.exclusive_punish_at_ms != terms.punish_at_ms
+        {
+            return Err(BridgeRuntimeError::Planner);
+        }
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| BridgeRuntimeError::Unavailable)?
+            .as_millis();
+        let cutoff_guard = u128::from(request.exclusive_punish_at_ms)
+            .checked_sub(Duration::from_secs(30).as_millis())
+            .ok_or(BridgeRuntimeError::Planner)?;
+        if now_ms >= cutoff_guard {
+            return Err(BridgeRuntimeError::Planner);
+        }
+
+        let metadata = AccountId::new(*terms.metadata_account_id.as_bytes());
+        let custody = AccountId::new(*terms.custody_account_id.as_bytes());
+        let sender = AccountId::new(*terms.depositor_account_id.as_bytes());
+        let recipient = AccountId::new(*terms.claimant_account_id.as_bytes());
+        let before = self
+            .node
+            .native_escrow_facts(metadata, custody, sender, recipient)
+            .await?;
+        validate_clock_driver_identity(&self.runtime, &before)?;
+        validate_funded_xmr_clock_state(&request.terms, &before)?;
+        let clock_before = ChainClock::new(
+            Hex32::from_bytes(before.tip_block_hash()),
+            before.sequencer_tip(),
+            before.tip_timestamp_ms(),
+        );
+        if clock_before.timestamp_ms >= request.exclusive_punish_at_ms {
+            return Err(BridgeRuntimeError::Planner);
+        }
+        self.planner
+            .prepare_current_profile_clock(
+                request,
+                u128::from(before.depositor_account().nonce),
+                clock_before,
+                account_snapshot(sender, before.depositor_account())?,
+                account_snapshot(recipient, before.claimant_account())?,
+                account_sha256(before.metadata_account())?,
+                account_sha256(before.custody_account())?,
+            )
+            .map_err(Into::into)
+    }
+
+    /// Verifies one canonical clock submission without resubmitting it.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on non-local routing, reservation or acknowledgement drift,
+    /// missing inclusion, or any balance, nonce, escrow, clock, or cutoff mismatch.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one exact before/after verification keeps every safety invariant co-located"
+    )]
+    pub async fn verify_current_profile_clock(
+        &self,
+        request: &VerifyCurrentProfileClockRequest,
+    ) -> Result<VerifyCurrentProfileClockResult, BridgeRuntimeError> {
+        let _guard = self.clock_driver_lock.lock().await;
+        let preparation = &request.preparation;
+        let terms = preparation.terms.to_input();
+        if !self.node.is_local_profile()
+            || self.activated_xmr_terms != Some(preparation.terms)
+            || request.runtime != self.runtime
+            || request.context.run_id != preparation.context.run_id
+            || request.context.sidecar_role != lez_bridge_protocol::Participant::Taker
+            || preparation.runtime != self.runtime
+            || preparation.recipient_account_id != terms.claimant_account_id
+            || preparation.exclusive_punish_at_ms != terms.punish_at_ms
+            || request.submission.context.run_id != request.context.run_id
+            || request.submission.context.sidecar_role != lez_bridge_protocol::Participant::Taker
+            || request.submission.context.request_id
+                != preparation
+                    .transaction
+                    .transaction_id
+                    .submission_request_id()
+            || request.submission.transaction_id != preparation.transaction.transaction_id
+            || !matches!(
+                request.submission.outcome,
+                SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown
+            )
+        {
+            return Err(BridgeRuntimeError::Planner);
+        }
+        preparation
+            .terms
+            .validate_runtime_binding(&preparation.context, &preparation.runtime)
+            .map_err(|_| BridgeRuntimeError::Planner)?;
+        self.planner
+            .validate_durable_current_profile_clock(preparation)?;
+        self.node
+            .wait_prepared_transaction_inclusion(&preparation.transaction)
+            .await?;
+
+        let metadata = AccountId::new(*terms.metadata_account_id.as_bytes());
+        let custody = AccountId::new(*terms.custody_account_id.as_bytes());
+        let sender = AccountId::new(*terms.depositor_account_id.as_bytes());
+        let recipient = AccountId::new(*terms.claimant_account_id.as_bytes());
+        let after = self
+            .node
+            .native_escrow_facts(metadata, custody, sender, recipient)
+            .await?;
+        validate_clock_driver_identity(&self.runtime, &after)?;
+        validate_funded_xmr_clock_state(&preparation.terms, &after)?;
+        let clock_after = ChainClock::new(
+            Hex32::from_bytes(after.tip_block_hash()),
+            after.sequencer_tip(),
+            after.tip_timestamp_ms(),
+        );
+        let expected_sender_balance = preparation
+            .sender_before
+            .balance
+            .checked_sub(1)
+            .ok_or(BridgeRuntimeError::InvalidObservation)?;
+        let expected_recipient_balance = preparation
+            .recipient_before
+            .balance
+            .checked_add(1)
+            .ok_or(BridgeRuntimeError::InvalidObservation)?;
+        let expected_sender_nonce = preparation
+            .sender_before
+            .nonce
+            .checked_add(1)
+            .ok_or(BridgeRuntimeError::InvalidObservation)?;
+        let metadata_hash_after = account_sha256(after.metadata_account())?;
+        let custody_hash_after = account_sha256(after.custody_account())?;
+        if after.depositor_account().balance != expected_sender_balance
+            || u128::from(after.depositor_account().nonce) != expected_sender_nonce
+            || after.claimant_account().balance != expected_recipient_balance
+            || u128::from(after.claimant_account().nonce) != preparation.recipient_before.nonce
+            || metadata_hash_after != preparation.metadata_account_sha256_before
+            || custody_hash_after != preparation.custody_account_sha256_before
+            || clock_after.height <= preparation.clock_before.height
+            || clock_after.timestamp_ms >= preparation.exclusive_punish_at_ms
+        {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+        Ok(VerifyCurrentProfileClockResult {
+            context: request.context.clone(),
+            runtime: self.runtime.clone(),
+            terms: preparation.terms,
+            recipient_account_id: preparation.recipient_account_id,
+            exclusive_punish_at_ms: preparation.exclusive_punish_at_ms,
+            transaction_id: preparation.transaction.transaction_id,
+            submission_request_id: request.submission.context.request_id.clone(),
+            submission_outcome: request.submission.outcome,
+            node_submission_attempts: u8::from(
+                request.submission.outcome == SubmissionOutcome::Accepted,
+            ),
+            transfer_amount: 1,
+            clock_before: preparation.clock_before,
+            clock_after,
+            sender_before: preparation.sender_before,
+            sender_after: account_snapshot(sender, after.depositor_account())?,
+            recipient_before: preparation.recipient_before,
+            recipient_after: account_snapshot(recipient, after.claimant_account())?,
+            metadata_account_sha256_before: preparation.metadata_account_sha256_before,
+            metadata_account_sha256_after: metadata_hash_after,
+            custody_account_sha256_before: preparation.custody_account_sha256_before,
+            custody_account_sha256_after: custody_hash_after,
+            escrow_accounts_byte_identical: true,
+            accounting_verified: true,
+            local_only: true,
+            retry_policy: "one_node_submission_attempt_no_retry_poll_only".to_owned(),
+        })
     }
 
     /// Prepares one exact native initialization/funding pair.
@@ -2178,4 +2387,102 @@ fn validate_block_range(
         }
     }
     Ok(())
+}
+
+fn validate_funded_xmr_clock_state(
+    terms: &lez_bridge_protocol::XmrNativeEscrowTermsV3,
+    facts: &OfficialNativeEscrowFacts,
+) -> Result<(), BridgeRuntimeError> {
+    let input = terms.to_input();
+    let escrow_program = program_id_from_hex(input.escrow_program_id);
+    let transfer_program = program_id_from_hex(input.authenticated_transfer_program_id);
+    if compute_metadata_pda(&escrow_program, input.swap_id.as_bytes()).into_value()
+        != *input.metadata_account_id.as_bytes()
+        || compute_custody_pda(&escrow_program, input.swap_id.as_bytes()).into_value()
+            != *input.custody_account_id.as_bytes()
+        || facts.metadata_account().program_owner != escrow_program
+        || facts.custody_account().program_owner != transfer_program
+        || facts.custody_account().balance != input.amount
+        || facts.depositor_account().program_owner != transfer_program
+        || facts.claimant_account().program_owner != transfer_program
+        || facts.depositor_account().balance == 0
+    {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+    let metadata = EscrowMetadata::try_from_slice(facts.metadata_account().data.as_ref())
+        .map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+    let ClaimAuthority::XmrDualAdaptor {
+        claim_aggregate_x_only_public_key,
+        claim_aggregate_account_id,
+        refund_aggregate_x_only_public_key,
+        refund_aggregate_account_id,
+        maker_dleq_transcript_commitment,
+        taker_dleq_transcript_commitment,
+        claim_partial_context_binding,
+        claim_partial_commitment,
+        punish_at,
+    } = metadata.claim_authority
+    else {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    };
+    if metadata.version != 3
+        || metadata.swap_id != *input.swap_id.as_bytes()
+        || metadata.terms_hash != *input.activation_commitment.as_bytes()
+        || metadata.status != EscrowStatus::Funded
+        || metadata.depositor.into_value() != *input.depositor_account_id.as_bytes()
+        || metadata.depositor_asset != metadata.depositor
+        || metadata.claimant.into_value() != *input.claimant_account_id.as_bytes()
+        || metadata.claimant_asset != metadata.claimant
+        || metadata.custody.into_value() != *input.custody_account_id.as_bytes()
+        || metadata.asset_program != transfer_program
+        || metadata.custody_program != transfer_program
+        || metadata.asset_definition != [0; 32]
+        || metadata.amount != input.amount
+        || metadata.refund_at != input.refund_at_ms
+        || punish_at != input.punish_at_ms
+        || claim_aggregate_x_only_public_key != *input.claim_aggregate_x_only_public_key.as_bytes()
+        || claim_aggregate_account_id.into_value() != *input.claim_authority_account_id.as_bytes()
+        || refund_aggregate_x_only_public_key
+            != *input.refund_aggregate_x_only_public_key.as_bytes()
+        || refund_aggregate_account_id.into_value() != *input.refund_authority_account_id.as_bytes()
+        || maker_dleq_transcript_commitment != *input.maker_dleq_transcript_commitment.as_bytes()
+        || taker_dleq_transcript_commitment != *input.taker_dleq_transcript_commitment.as_bytes()
+        || claim_partial_context_binding != *input.claim_partial_context_binding.as_bytes()
+        || claim_partial_commitment != *input.claim_partial_commitment.as_bytes()
+    {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+    Ok(())
+}
+
+fn validate_clock_driver_identity(
+    runtime: &RuntimeDescriptor,
+    facts: &OfficialNativeEscrowFacts,
+) -> Result<(), BridgeRuntimeError> {
+    if facts.channel_id() != *runtime.channel_id.as_bytes()
+        || facts.genesis_block_hash() != *runtime.genesis_block_hash.as_bytes()
+        || facts.tip_block_hash() == [0; 32]
+        || facts.tip_timestamp_ms() == 0
+    {
+        return Err(BridgeRuntimeError::InvalidObservation);
+    }
+    Ok(())
+}
+
+fn account_sha256(account: &Account) -> Result<Hex32, BridgeRuntimeError> {
+    let bytes = borsh::to_vec(account).map_err(|_| BridgeRuntimeError::InvalidObservation)?;
+    Ok(Hex32::from_bytes(Sha256::digest(bytes).into()))
+}
+
+fn account_snapshot(
+    account_id: AccountId,
+    account: &Account,
+) -> Result<CurrentProfileClockAccountSnapshot, BridgeRuntimeError> {
+    Ok(CurrentProfileClockAccountSnapshot::new(
+        Hex32::from_bytes(account_id.into_value()),
+        account.balance,
+        u128::from(account.nonce),
+        program_id_to_hex(account.program_owner),
+        account_sha256(account)?,
+    ))
 }

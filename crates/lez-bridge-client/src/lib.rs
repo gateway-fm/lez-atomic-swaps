@@ -52,8 +52,9 @@ use lez_bridge_protocol::{
     ObserveRevealingClaimResult, ObserveWitnessedAssetEscrowV2Request,
     ObserveWitnessedAssetEscrowV2Result, ObserveWitnessedAssetRefundV2Request,
     ObserveWitnessedAssetRefundV2Result, ObserveWitnessedEscrowRequest,
-    ObserveWitnessedEscrowResult, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    ObserveWitnessedEscrowResult, Participant, PrepareCurrentProfileClockRequest,
+    PrepareCurrentProfileClockResult, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
     PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
     PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
@@ -64,11 +65,12 @@ use lez_bridge_protocol::{
     PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result,
     PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
     PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
-    RequestId, RunId, RuntimeDescriptor, SubmitNativeXmrClaimAuthorizationV3Request,
-    SubmitNativeXmrClaimAuthorizationV3Result, SubmitTransactionRequest, SubmitTransactionResult,
-    WitnessedAssetPreparedEffectV2, WitnessedAssetRefundObservationV2,
-    WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2, WitnessedLezAssetV2,
-    WitnessedNativeEscrowTerms, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    RequestId, RunId, RuntimeDescriptor, SubmissionOutcome,
+    SubmitNativeXmrClaimAuthorizationV3Request, SubmitNativeXmrClaimAuthorizationV3Result,
+    SubmitTransactionRequest, SubmitTransactionResult, VerifyCurrentProfileClockRequest,
+    VerifyCurrentProfileClockResult, WitnessedAssetPreparedEffectV2,
+    WitnessedAssetRefundObservationV2, WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2,
+    WitnessedLezAssetV2, WitnessedNativeEscrowTerms, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
 };
 pub use lez_bridge_protocol::{
     MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
@@ -84,14 +86,16 @@ pub use lez_bridge_protocol::{
     METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
     METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM,
     METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2, METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
-    METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
+    METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_CURRENT_PROFILE_CLOCK,
+    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
     METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
     METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
     METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_REVEALING_CLAIM,
     METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2, METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
     METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2, METHOD_PREPARE_WITNESSED_CLAIM,
     METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-    METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    METHOD_SUBMIT_TRANSACTION, METHOD_VERIFY_CURRENT_PROFILE_CLOCK, RUN_ID_HEADER,
+    SIDECAR_ROLE_HEADER,
 };
 use secp256k1::{
     Message as SecpMessage, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
@@ -216,6 +220,10 @@ pub enum BridgeOperation {
     DescribeRuntime,
     /// Stable current canonical clock observation.
     ObserveCurrentClock,
+    /// Durable preparation of one local-profile clock transaction.
+    PrepareCurrentProfileClock,
+    /// Read-only verification of one submitted clock transaction.
+    VerifyCurrentProfileClock,
     /// Randomized native initialization and funding preparation.
     PrepareNativeEscrow,
     /// Aggregate-witness initialization and funding preparation.
@@ -707,6 +715,157 @@ impl BridgeClient {
         if result.runtime != self.expected_runtime
             || result.clock.block_hash.as_bytes() == &[0; 32]
             || result.clock.timestamp_ms == 0
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        Ok(result)
+    }
+
+    /// Durably prepares one bounded local-profile clock transaction.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime/terms drift, request-ID reuse, timeout,
+    /// strict decoding, or malformed transaction and account evidence.
+    pub async fn prepare_current_profile_clock(
+        &self,
+        request: PrepareCurrentProfileClockRequest,
+    ) -> Result<PrepareCurrentProfileClockResult, BridgeClientError> {
+        let operation = BridgeOperation::PrepareCurrentProfileClock;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        validate_xmr_request_binding(
+            operation,
+            &context,
+            &request.runtime,
+            &request.terms,
+            XmrOperationRole::Taker,
+        )?;
+        self.reserve_context(operation, &context)?;
+        let result: PrepareCurrentProfileClockResult = self
+            .request(
+                operation,
+                METHOD_PREPARE_CURRENT_PROFILE_CLOCK,
+                request.clone(),
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        let terms = request.terms.to_input();
+        if result.runtime != self.expected_runtime
+            || result.terms != request.terms
+            || result.recipient_account_id != request.recipient_account_id
+            || result.exclusive_punish_at_ms != request.exclusive_punish_at_ms
+            || result.transaction.transaction_id.as_bytes() == &[0; 32]
+            || result.clock_before.block_hash.as_bytes() == &[0; 32]
+            || result.clock_before.timestamp_ms == 0
+            || result.clock_before.timestamp_ms >= request.exclusive_punish_at_ms
+            || result.sender_before.account_id != self.expected_runtime.signer_account_id
+            || result.sender_before.program_owner != terms.authenticated_transfer_program_id
+            || result.sender_before.balance == 0
+            || result.sender_before.account_sha256.as_bytes() == &[0; 32]
+            || result.recipient_before.account_id != request.recipient_account_id
+            || result.recipient_before.program_owner != terms.authenticated_transfer_program_id
+            || result.recipient_before.account_sha256.as_bytes() == &[0; 32]
+            || result.metadata_account_sha256_before.as_bytes() == &[0; 32]
+            || result.custody_account_sha256_before.as_bytes() == &[0; 32]
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        Ok(result)
+    }
+
+    /// Drives one local-profile block through the sidecar-owned Taker signer.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime drift, request-ID reuse, timeout,
+    /// transport uncertainty, strict decoding, or malformed invariant evidence.
+    pub async fn verify_current_profile_clock(
+        &self,
+        request: VerifyCurrentProfileClockRequest,
+    ) -> Result<VerifyCurrentProfileClockResult, BridgeClientError> {
+        let operation = BridgeOperation::VerifyCurrentProfileClock;
+        let context = request.context.clone();
+        if request.preparation.context.run_id != context.run_id
+            || request.preparation.context.sidecar_role != Participant::Taker
+            || request.preparation.runtime != request.runtime
+            || request
+                .preparation
+                .terms
+                .validate_runtime_binding(
+                    &request.preparation.context,
+                    &request.preparation.runtime,
+                )
+                .is_err()
+            || request.submission.context.run_id != context.run_id
+            || request.submission.context.sidecar_role != Participant::Taker
+            || request.submission.context.request_id
+                != request
+                    .preparation
+                    .transaction
+                    .transaction_id
+                    .submission_request_id()
+            || request.submission.transaction_id != request.preparation.transaction.transaction_id
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let result: VerifyCurrentProfileClockResult = self
+            .request(
+                operation,
+                METHOD_VERIFY_CURRENT_PROFILE_CLOCK,
+                request.clone(),
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        let preparation = &request.preparation;
+        let terms = preparation.terms.to_input();
+        let expected_attempts = match request.submission.outcome {
+            SubmissionOutcome::Accepted => 1,
+            SubmissionOutcome::AlreadyKnown => 0,
+        };
+        if result.runtime != request.runtime
+            || result.terms != preparation.terms
+            || result.recipient_account_id != preparation.recipient_account_id
+            || result.exclusive_punish_at_ms != preparation.exclusive_punish_at_ms
+            || result.transaction_id != preparation.transaction.transaction_id
+            || result.submission_request_id != request.submission.context.request_id
+            || result.submission_request_id != result.transaction_id.submission_request_id()
+            || result.submission_outcome != request.submission.outcome
+            || result.node_submission_attempts != expected_attempts
+            || result.transfer_amount != 1
+            || result.clock_before != preparation.clock_before
+            || result.clock_after.block_hash.as_bytes() == &[0; 32]
+            || result.clock_after.height <= result.clock_before.height
+            || result.clock_after.timestamp_ms >= result.exclusive_punish_at_ms
+            || result.sender_before != preparation.sender_before
+            || result.recipient_before != preparation.recipient_before
+            || result.sender_before.account_id != self.expected_runtime.signer_account_id
+            || result.sender_before.program_owner != terms.authenticated_transfer_program_id
+            || result.sender_after.account_id != result.sender_before.account_id
+            || result.sender_after.program_owner != result.sender_before.program_owner
+            || result.sender_after.balance.checked_add(1) != Some(result.sender_before.balance)
+            || result.sender_before.nonce.checked_add(1) != Some(result.sender_after.nonce)
+            || result.sender_after.account_sha256.as_bytes() == &[0; 32]
+            || result.recipient_before.account_id != result.recipient_account_id
+            || result.recipient_before.program_owner != terms.authenticated_transfer_program_id
+            || result.recipient_after.account_id != result.recipient_before.account_id
+            || result.recipient_after.program_owner != result.recipient_before.program_owner
+            || result.recipient_before.balance.checked_add(1)
+                != Some(result.recipient_after.balance)
+            || result.recipient_after.nonce != result.recipient_before.nonce
+            || result.recipient_after.account_sha256.as_bytes() == &[0; 32]
+            || result.metadata_account_sha256_before != preparation.metadata_account_sha256_before
+            || result.metadata_account_sha256_after != preparation.metadata_account_sha256_before
+            || result.custody_account_sha256_before != preparation.custody_account_sha256_before
+            || result.custody_account_sha256_after != preparation.custody_account_sha256_before
+            || !result.escrow_accounts_byte_identical
+            || !result.accounting_verified
+            || !result.local_only
+            || result.retry_policy != "one_node_submission_attempt_no_retry_poll_only"
         {
             return Err(BridgeClientError::MalformedObservation { operation });
         }

@@ -1,18 +1,24 @@
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    sync::{Arc, Mutex as SyncMutex},
+};
 
 #[cfg(target_os = "linux")]
 use std::path::Path;
 
 use async_trait::async_trait;
+use authenticated_transfer_core::Instruction as AuthenticatedTransferInstruction;
 use borsh::BorshDeserialize as _;
 use common::transaction::LeeTransaction;
 use lez_bridge_protocol::{
-    CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result,
+    ChainClock, CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result,
     CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result,
     CompleteWitnessedAssetClaimV2Request, CompleteWitnessedAssetClaimV2Result,
-    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
-    ExactTransactionBytes, Hex32, MessageContext, Participant, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult,
+    CurrentProfileClockAccountSnapshot, ExactMessageBytes, ExactTransactionBytes, Hex32,
+    MessageContext, Participant, PrepareCurrentProfileClockRequest,
+    PrepareCurrentProfileClockResult, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
     PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
     PrepareNativeXmrEscrowV3Result, PrepareNativeXmrRefundV3Request,
@@ -334,6 +340,8 @@ pub(crate) enum OwnedSubmission {
     XmrFunding { initialization: PreparedTransaction },
     /// The exact completed durable native-XMR tag-16 refund.
     XmrRefund,
+    /// The exact durable local-profile clock transaction.
+    CurrentProfileClock,
 }
 
 /// One-role, one-signer official v0.2 native escrow planner.
@@ -353,6 +361,7 @@ pub struct NativeEscrowPlanner {
     nonce_source: Arc<dyn NonceSource>,
     #[cfg(target_os = "linux")]
     durable_store: Option<DurableReservationStore>,
+    clock_reservation_lock: SyncMutex<()>,
     state: Mutex<PlannerState>,
 }
 
@@ -439,6 +448,7 @@ impl NativeEscrowPlanner {
             #[cfg(target_os = "linux")]
             durable_store: None,
             state: Mutex::new(PlannerState::default()),
+            clock_reservation_lock: SyncMutex::new(()),
         })
     }
 
@@ -476,6 +486,208 @@ impl NativeEscrowPlanner {
         )?;
         planner.durable_store = Some(DurableReservationStore::open(state_directory.as_ref())?);
         Ok(planner)
+    }
+
+    /// Durably reserves one signed, balance-conserving local-profile clock transaction.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime/terms/recipient/cutoff drift, any second per-swap
+    /// reservation, or nonce, encoding, signature, and durable-state failures.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "all exact live snapshots are independently bound into one durable reservation"
+    )]
+    pub fn prepare_current_profile_clock(
+        &self,
+        request: &PrepareCurrentProfileClockRequest,
+        nonce: u128,
+        clock_before: ChainClock,
+        sender_before: CurrentProfileClockAccountSnapshot,
+        recipient_before: CurrentProfileClockAccountSnapshot,
+        metadata_account_sha256_before: Hex32,
+        custody_account_sha256_before: Hex32,
+    ) -> Result<PrepareCurrentProfileClockResult, NativePrepareError> {
+        self.validate_current_profile_clock_request(request)?;
+        #[cfg(target_os = "linux")]
+        {
+            let _reservation_guard = self
+                .clock_reservation_lock
+                .lock()
+                .map_err(|_| NativePrepareError::InvalidTransactionBytes)?;
+            let store = self
+                .durable_store
+                .as_ref()
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            if let Some((stored_request, stored_result)) = store
+                .load::<PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult>(
+                    ReservationKind::XmrCurrentProfileClockV1,
+                )?
+            {
+                self.validate_prepared_current_profile_clock(&stored_request, &stored_result)?;
+                if &stored_request != request {
+                    return Err(NativePrepareError::ActivePrepare);
+                }
+                return Ok(stored_result);
+            }
+            let transaction =
+                self.prepare_message(self.current_profile_clock_message(request, nonce)?)?;
+            let result = PrepareCurrentProfileClockResult {
+                context: request.context.clone(),
+                runtime: request.runtime.clone(),
+                terms: request.terms,
+                recipient_account_id: request.recipient_account_id,
+                exclusive_punish_at_ms: request.exclusive_punish_at_ms,
+                transaction,
+                clock_before,
+                sender_before,
+                recipient_before,
+                metadata_account_sha256_before,
+                custody_account_sha256_before,
+            };
+            self.validate_prepared_current_profile_clock(request, &result)?;
+            match store.create(ReservationKind::XmrCurrentProfileClockV1, request, &result) {
+                Ok(()) => Ok(result),
+                Err(DurableReservationError::AlreadyReserved) => {
+                    let (stored_request, stored_result) = store
+                        .load::<PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult>(
+                            ReservationKind::XmrCurrentProfileClockV1,
+                        )?
+                        .ok_or(DurableReservationError::Filesystem)?;
+                    self.validate_prepared_current_profile_clock(&stored_request, &stored_result)?;
+                    if stored_request != *request {
+                        return Err(NativePrepareError::ActivePrepare);
+                    }
+                    Ok(stored_result)
+                }
+                Err(error) => Err(error.into()),
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = nonce;
+            Err(NativePrepareError::InvalidTransactionBytes)
+        }
+    }
+
+    fn validate_current_profile_clock_request(
+        &self,
+        request: &PrepareCurrentProfileClockRequest,
+    ) -> Result<(), NativePrepareError> {
+        let terms = request.terms.to_input();
+        request
+            .terms
+            .validate_runtime_binding(&request.context, &request.runtime)?;
+        if self.role != Participant::Taker
+            || request.context.sidecar_role != Participant::Taker
+            || request.runtime != self.expected_runtime
+            || request.runtime.signer_account_id != terms.depositor_account_id
+            || request.recipient_account_id != terms.claimant_account_id
+            || request.exclusive_punish_at_ms != terms.punish_at_ms
+            || terms.authenticated_transfer_program_id
+                != program_id_to_hex(self.authenticated_transfer_program_id)
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        Ok(())
+    }
+
+    fn current_profile_clock_message(
+        &self,
+        request: &PrepareCurrentProfileClockRequest,
+        nonce: u128,
+    ) -> Result<Message, NativePrepareError> {
+        Message::try_new(
+            self.authenticated_transfer_program_id,
+            vec![
+                self.signer_account_id,
+                AccountId::new(*request.recipient_account_id.as_bytes()),
+            ],
+            vec![nonce.into()],
+            AuthenticatedTransferInstruction::Transfer { amount: 1 },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)
+    }
+
+    /// Revalidates one exact durable local clock preparation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any request, snapshot, transaction, nonce, signer, or runtime drift.
+    pub fn validate_prepared_current_profile_clock(
+        &self,
+        request: &PrepareCurrentProfileClockRequest,
+        result: &PrepareCurrentProfileClockResult,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_current_profile_clock_request(request)?;
+        if result.context != request.context
+            || result.runtime != request.runtime
+            || result.terms != request.terms
+            || result.recipient_account_id != request.recipient_account_id
+            || result.exclusive_punish_at_ms != request.exclusive_punish_at_ms
+            || result.clock_before.block_hash.as_bytes() == &[0; 32]
+            || result.clock_before.timestamp_ms == 0
+            || result.clock_before.timestamp_ms >= result.exclusive_punish_at_ms
+            || result.sender_before.account_id != result.runtime.signer_account_id
+            || result.sender_before.program_owner
+                != program_id_to_hex(self.authenticated_transfer_program_id)
+            || result.sender_before.balance == 0
+            || result.sender_before.account_sha256.as_bytes() == &[0; 32]
+            || result.recipient_before.account_id != result.recipient_account_id
+            || result.recipient_before.program_owner
+                != program_id_to_hex(self.authenticated_transfer_program_id)
+            || result.recipient_before.account_sha256.as_bytes() == &[0; 32]
+            || result.metadata_account_sha256_before.as_bytes() == &[0; 32]
+            || result.custody_account_sha256_before.as_bytes() == &[0; 32]
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let transaction = decode_prepared_for_signer(&result.transaction, self.signer_account_id)?;
+        let [nonce] = transaction.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        if u128::from(*nonce) != result.sender_before.nonce
+            || transaction.message()
+                != &self.current_profile_clock_message(request, u128::from(*nonce))?
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    /// Proves a supplied clock preparation is the exact create-once durable reservation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing, changed, malformed, or cross-run durable state.
+    #[cfg(target_os = "linux")]
+    pub fn validate_durable_current_profile_clock(
+        &self,
+        result: &PrepareCurrentProfileClockResult,
+    ) -> Result<(), NativePrepareError> {
+        let store = self
+            .durable_store
+            .as_ref()
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let (stored_request, stored_result) = store
+            .load::<PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult>(
+                ReservationKind::XmrCurrentProfileClockV1,
+            )?
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        self.validate_prepared_current_profile_clock(&stored_request, &stored_result)?;
+        if &stored_result != result
+            || result.sender_before.account_id != result.runtime.signer_account_id
+            || result.recipient_before.account_id != result.recipient_account_id
+            || result.sender_before.program_owner
+                != program_id_to_hex(self.authenticated_transfer_program_id)
+            || result.recipient_before.program_owner
+                != program_id_to_hex(self.authenticated_transfer_program_id)
+            || result.metadata_account_sha256_before == Hex32::from_bytes([0; 32])
+            || result.custody_account_sha256_before == Hex32::from_bytes([0; 32])
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
     }
 
     /// Prepares and caches one signed initialization/funding nonce pair.
@@ -2047,6 +2259,10 @@ impl NativeEscrowPlanner {
     ///
     /// Rejects arbitrary request IDs for native-XMR effects, missing or changed
     /// owner-only durable state, and every unowned or invalid transaction.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "all durable owned effect variants share one fail-closed submission classifier"
+    )]
     pub(crate) async fn validate_submission_request(
         &self,
         request: &SubmitTransactionRequest,
@@ -2135,6 +2351,32 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
         drop(state);
+
+        #[cfg(target_os = "linux")]
+        {
+            let store = self
+                .durable_store
+                .as_ref()
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            if let Some((prepared_request, prepared_result)) = store
+                .load::<PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult>(
+                ReservationKind::XmrCurrentProfileClockV1,
+            )? && prepared_result.transaction == request.transaction
+            {
+                self.validate_prepared_current_profile_clock(&prepared_request, &prepared_result)?;
+                if request.context.request_id
+                    != request.transaction.transaction_id.submission_request_id()
+                    || request.context.run_id != prepared_request.context.run_id
+                    || request.context.sidecar_role != Participant::Taker
+                    || prepared_request.context.sidecar_role != Participant::Taker
+                    || request.runtime != self.expected_runtime
+                    || prepared_request.runtime != request.runtime
+                {
+                    return Err(NativePrepareError::InvalidTransactionBytes);
+                }
+                return Ok(OwnedSubmission::CurrentProfileClock);
+            }
+        }
 
         self.validate_owned_submission(&request.transaction).await?;
         Ok(OwnedSubmission::Legacy)
