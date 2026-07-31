@@ -32,6 +32,8 @@ readonly MAX_ACTOR_CALL_SECONDS=20
 readonly MAX_DRIVE_RETRIES=8
 readonly DRIVE_RETRY_DELAY_SECONDS=0.15
 readonly RAPIDSNARK_LIB_DIR="${RAPIDSNARK_LIB_DIR:-/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227}"
+readonly MAX_SUPERVISED_STATUS_RETRIES=8
+readonly SUPERVISED_STATUS_RETRY_DELAY_SECONDS=0.05
 readonly BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--I/usr/lib/gcc/x86_64-linux-gnu/13/include}"
 export RAPIDSNARK_LIB_DIR BINDGEN_EXTRA_CLANG_ARGS
 export CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
@@ -271,6 +273,47 @@ wait_for_m5_daemon_ready() {
   return 1
 }
 
+capture_m5_supervised_maker_status() {
+  local output_file="$1"
+  local stderr_file="$2"
+  local label="$3"
+  local attempt=1 actor_status=0
+  while true; do
+    actor_status=0
+    if "$actor_bin" --config "$maker_config" status >"$output_file" 2>"$stderr_file"; then
+      [[ ! -s "$stderr_file" ]] || {
+        echo 'M5 supervised Maker status emitted unexpected diagnostics' >&2
+        return 1
+      }
+      return 0
+    else
+      actor_status=$?
+    fi
+    process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+      echo 'M5 Maker supervisor daemon exited during status observation' >&2
+      return 1
+    }
+    if (( actor_status != 2 || attempt > MAX_SUPERVISED_STATUS_RETRIES )) \
+      || [[ -s "$output_file" || ! -f "$stderr_file" || -L "$stderr_file" ]] \
+      || [[ "$(stat -c %s -- "$stderr_file")" != 35 ]] \
+      || [[ "$(<"$stderr_file")" != 'actor configuration is unavailable' ]]; then
+      echo 'M5 supervised Maker status failed outside the exact retriable class' >&2
+      return 1
+    fi
+    jq -nc --arg label "$label" --argjson attempt "$attempt" '
+      {
+        schema_version: 1,
+        event: "supervised_maker_status_retry",
+        label: $label,
+        attempt: $attempt,
+        error_class: "actor_configuration_unavailable"
+      }' >>"${evidence_dir}/m5-maker-status-retries.ndjson"
+    remaining_budget_milliseconds "${label}-config-retry-${attempt}" >/dev/null || return
+    sleep "$SUPERVISED_STATUS_RETRY_DELAY_SECONDS"
+    attempt=$((attempt + 1))
+  done
+}
+
 start_m5_full_supervised_daemon() {
   local ready_file="${application_root}/runtime/ready-supervised"
   local log="${evidence_dir}/m5-maker-daemon-supervised.log"
@@ -294,6 +337,7 @@ start_m5_full_supervised_daemon() {
     --zec-actor-program-sha256 "$m5_actor_program_sha256" \
     --actor-supervisor \
     --actor-attempt-timeout-milliseconds 20000 \
+    --actor-effect-cutoff-boottime-milliseconds "$corridor_deadline_monotonic_ms" \
     --actor-poll-milliseconds 10 \
     --actor-requeue-delay-seconds 1 \
     --actor-failure-backoff-seconds 1 \
@@ -327,6 +371,7 @@ start_m5_supervisor_only_daemon() {
     --ready-file "$ready_file" \
     --actor-supervisor \
     --actor-attempt-timeout-milliseconds 20000 \
+    --actor-effect-cutoff-boottime-milliseconds "$corridor_deadline_monotonic_ms" \
     --actor-poll-milliseconds 10 \
     --actor-requeue-delay-seconds 1 \
     --actor-failure-backoff-seconds 1 \
@@ -451,12 +496,12 @@ prove_m5_terminal_operator_projection() {
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [[ -n "$m5_daemon_bin" ]]; then
+    stop_owned_m5_daemon
+  fi
   if [[ -n "${sidecar_bin:-}" ]]; then
     stop_owned_process "$maker_pid" "$maker_start_ticks" "$sidecar_bin"
     stop_owned_process "$taker_pid" "$taker_start_ticks" "$sidecar_bin"
-  fi
-  if [[ -n "$m5_daemon_bin" ]]; then
-    stop_owned_m5_daemon
   fi
   if (( status != 0 )); then
     if [[ -d "$private_base" ]]; then
@@ -576,31 +621,44 @@ verify_native_library libfq.a 797b5d24bb8e8b088f811bddfff35f33973af9c797fb381248
 verify_native_library libfr.a 40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82
 
 echo 'Prebuilding the provisioner, actor, and exact v0.2 bridge before provisioning'
-cargo +1.96.0 build --locked --offline -p zec-reference-actor --bins
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
-  cargo +1.96.0 build --locked --offline -p lez-maker-node --bins
-  cargo +1.96.0 build --locked --offline -p lez-maker-node --example maker-actor-inspect
-  cargo +1.96.0 build --locked --offline -p lez-maker-node --example maker-zec-lock-intent-inspect
+  cargo +1.96.0 build --locked --offline --release -p zec-reference-actor --bins
+else
+  cargo +1.96.0 build --locked --offline -p zec-reference-actor --bins
 fi
-cargo +1.96.0 build \
-  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-  --locked --offline --bin lez-v02-bridge-poc
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  cargo +1.96.0 build --locked --offline --release -p lez-maker-node --bins
+  cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-actor-inspect
+  cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-zec-lock-intent-inspect
+  cargo +1.96.0 build \
+    --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+    --locked --offline --release --bin lez-v02-bridge-poc
+else
+  cargo +1.96.0 build \
+    --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+    --locked --offline --bin lez-v02-bridge-poc
+fi
 
-actor_bin="$(readlink -f target/debug/zec-reference-actor)"
-provisioner_bin="$(readlink -f target/debug/zec-local-poc-provision)"
-readonly actor_bin provisioner_bin
-sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc)"
-readonly sidecar_bin
+if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  actor_bin="$(readlink -f target/release/zec-reference-actor)"
+  provisioner_bin="$(readlink -f target/release/zec-local-poc-provision)"
+  sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/release/lez-v02-bridge-poc)"
+else
+  actor_bin="$(readlink -f target/debug/zec-reference-actor)"
+  provisioner_bin="$(readlink -f target/debug/zec-local-poc-provision)"
+  sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc)"
+fi
+readonly actor_bin provisioner_bin sidecar_bin
 required_binaries=("$actor_bin" "$provisioner_bin" "$sidecar_bin")
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
-  maker_daemon_bin="$(readlink -f target/debug/lez-maker-daemon)"
-  maker_cli_bin="$(readlink -f target/debug/lez-maker)"
-  taker_bin="$(readlink -f target/debug/lez-taker)"
-  chat_draft_bin="$(readlink -f target/debug/zec-local-poc-chat-draft)"
-  chat_finalize_bin="$(readlink -f target/debug/zec-local-poc-chat-finalize)"
-  actor_inspector_bin="$(readlink -f target/debug/examples/maker-actor-inspect)"
-  m5_pair_inspector_bin="$(readlink -f target/debug/zec-actor-pair-inspect)"
-  m5_intent_inspector_bin="$(readlink -f target/debug/examples/maker-zec-lock-intent-inspect)"
+  maker_daemon_bin="$(readlink -f target/release/lez-maker-daemon)"
+  maker_cli_bin="$(readlink -f target/release/lez-maker)"
+  taker_bin="$(readlink -f target/release/lez-taker)"
+  chat_draft_bin="$(readlink -f target/release/zec-local-poc-chat-draft)"
+  chat_finalize_bin="$(readlink -f target/release/zec-local-poc-chat-finalize)"
+  actor_inspector_bin="$(readlink -f target/release/examples/maker-actor-inspect)"
+  m5_pair_inspector_bin="$(readlink -f target/release/zec-actor-pair-inspect)"
+  m5_intent_inspector_bin="$(readlink -f target/release/examples/maker-zec-lock-intent-inspect)"
   readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin
   readonly actor_inspector_bin m5_pair_inspector_bin m5_intent_inspector_bin
   required_binaries+=("$maker_daemon_bin" "$maker_cli_bin" "$taker_bin")
@@ -784,7 +842,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   mkdir -m 0700 "$m5_actor_deployment_root"
   m5_actor_program="$m5_actor_deployment_root/zec-reference-actor"
   install -m 0700 "$actor_bin" "$m5_actor_program"
-  strip --strip-debug "$m5_actor_program"
+  strip --strip-all "$m5_actor_program"
   chmod 0500 "$m5_actor_program"
   [[ -f "$m5_actor_program" && ! -L "$m5_actor_program" \
     && "$(stat -c %a -- "$m5_actor_program")" == 500 \
@@ -1358,13 +1416,20 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   maker_supervised_active=0
   for _ in {1..200}; do
     remaining_budget_milliseconds 'm5-maker-supervised-activation' >/dev/null
-    "$actor_bin" --config "$maker_config" status \
-      >"${evidence_dir}/m5-maker-supervised-activation-status.json"
+    activation_status="${evidence_dir}/m5-maker-supervised-activation-status.json"
+    activation_stderr="${evidence_dir}/m5-maker-supervised-activation-status.stderr"
+    capture_m5_supervised_maker_status "$activation_status" "$activation_stderr" \
+      m5-maker-supervised-activation
     if jq -e '.role == "maker" and .state == "active" and (.revision | numbers) >= 0' \
-      "${evidence_dir}/m5-maker-supervised-activation-status.json" >/dev/null; then
+      "$activation_status" >/dev/null; then
       maker_supervised_active=1
       break
     fi
+    jq -e '.schema_version == 1 and .role == "maker" and .state == "not_activated"' \
+      "$activation_status" >/dev/null || {
+      echo 'M5 supervised Maker returned an unexpected startup status' >&2
+      exit 1
+    }
     process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
       echo 'M5 full daemon exited during supervised Maker activation' >&2
       exit 1
@@ -1635,7 +1700,9 @@ observe_m5_supervised_maker() {
     echo 'M5 Maker supervisor daemon exited before terminal state' >&2
     return 1
   }
-  "$actor_bin" --config "$maker_config" status >"$status_file"
+  capture_m5_supervised_maker_status "$status_file" \
+    "${evidence_dir}/m5-maker-supervisor-status-current.stderr" \
+    "m5-maker-supervisor-round-${round}"
   "$actor_inspector_bin" --database "$m5_application_database" >"$scheduler_file"
   jq -e --arg swap "$(jq -er '.swap_id' "$maker_config")" '
     length == 1 and .[0].swap_id == $swap

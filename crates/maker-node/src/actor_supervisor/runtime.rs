@@ -22,6 +22,7 @@ use lez_swap_store::{
     MakerActorProgressObservationV1, SqliteSwapStore,
 };
 use rustix::process::{Pid, Signal, kill_process_group};
+use rustix::time::{ClockId, clock_gettime};
 use serde_json::Value;
 use thiserror::Error;
 use wait_timeout::ChildExt as _;
@@ -44,6 +45,7 @@ pub struct MakerActorSupervisorConfig {
     requeue_delay_seconds: u64,
     failure_backoff_seconds: u64,
     max_output_bytes: usize,
+    effect_cutoff_boottime_milliseconds: Option<u64>,
     #[cfg(feature = "test-crash-hooks")]
     test_pause: Option<MakerActorTestPause>,
 }
@@ -78,6 +80,7 @@ impl MakerActorSupervisorConfig {
             return Err(MakerActorSupervisorError::InvalidConfig);
         }
         Ok(Self {
+            effect_cutoff_boottime_milliseconds: None,
             attempt_timeout,
             requeue_delay_seconds,
             failure_backoff_seconds,
@@ -85,6 +88,27 @@ impl MakerActorSupervisorConfig {
             #[cfg(feature = "test-crash-hooks")]
             test_pause: None,
         })
+    }
+
+    /// Applies one absolute Linux boot-time cutoff to effect-capable children.
+    ///
+    /// # Errors
+    ///
+    /// Rejects zero, which cannot identify a valid post-boot deadline.
+    pub fn with_effect_cutoff_boottime_milliseconds(
+        mut self,
+        cutoff_boottime_milliseconds: u64,
+    ) -> Result<Self, MakerActorSupervisorError> {
+        if cutoff_boottime_milliseconds == 0 {
+            return Err(MakerActorSupervisorError::InvalidConfig);
+        }
+        self.effect_cutoff_boottime_milliseconds = Some(cutoff_boottime_milliseconds);
+        Ok(self)
+    }
+
+    fn effect_cutoff_reached(&self) -> bool {
+        self.effect_cutoff_boottime_milliseconds
+            .is_some_and(|cutoff| boottime_milliseconds() >= cutoff)
     }
 
     /// Arms one exact submitted-effect pause in feature-gated fault tests.
@@ -121,6 +145,15 @@ impl MakerActorSupervisorConfig {
         });
         Ok(self)
     }
+}
+
+fn boottime_milliseconds() -> u64 {
+    let now = clock_gettime(ClockId::Boottime);
+    let seconds = u64::try_from(now.tv_sec).unwrap_or(u64::MAX);
+    let nanoseconds = u64::try_from(now.tv_nsec).unwrap_or(u64::MAX);
+    seconds
+        .saturating_mul(1_000)
+        .saturating_add(nanoseconds / 1_000_000)
 }
 
 /// Cloneable one-way stop signal for an in-flight bounded actor cycle.
@@ -247,7 +280,7 @@ pub fn supervise_one_due_maker_actor_until(
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
-    if cancellation.is_cancelled() {
+    if cancellation.is_cancelled() || config.effect_cutoff_reached() {
         return Ok(None);
     }
     let Some(swap_id) = store.list_due_maker_actor_ids(now, 1)?.into_iter().next() else {
@@ -307,11 +340,11 @@ pub fn supervise_one_abandoned_maker_actor_until(
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<Option<MakerActorSupervisorOutcome>, MakerActorSupervisorError> {
-    if cancellation.is_cancelled() {
+    if cancellation.is_cancelled() || config.effect_cutoff_reached() {
         return Ok(None);
     }
     for lease in store.list_leased_maker_actors()? {
-        if cancellation.is_cancelled() {
+        if cancellation.is_cancelled() || config.effect_cutoff_reached() {
             return Ok(None);
         }
         let held_lock = match MakerActorHeldLock::acquire(lease.record()) {
@@ -319,7 +352,7 @@ pub fn supervise_one_abandoned_maker_actor_until(
             Err(MakerActorProcessError::LockUnavailable) => continue,
             Err(error) => return Err(error.into()),
         };
-        if cancellation.is_cancelled() {
+        if cancellation.is_cancelled() || config.effect_cutoff_reached() {
             return Ok(None);
         }
         let recovered = match store.recover_abandoned_maker_actor(&lease, &held_lock, owner, now) {
@@ -440,6 +473,25 @@ impl ActorEffectCommand {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ActorInvocation {
+    Status,
+    Effect(ActorEffectCommand),
+}
+
+impl ActorInvocation {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Effect(command) => command.name(),
+        }
+    }
+
+    const fn is_effect(self) -> bool {
+        matches!(self, Self::Effect(_))
+    }
+}
+
 fn run_claimed_attempt(
     store: &mut SqliteSwapStore,
     lease: &MakerActorLeaseV1,
@@ -480,13 +532,27 @@ fn run_claimed_attempt_with_lock(
             held_lock: Some(held_lock),
         });
     }
+    if config.effect_cutoff_reached() {
+        return Ok(ClaimedAttemptResult {
+            attempt: ClaimedAttempt::Backoff("actor_effect_cutoff"),
+            progress: None,
+            held_lock: Some(held_lock),
+        });
+    }
     let manual_action = store
         .claim_maker_actor_manual_action(lease)
         .map_err(ClaimedAttemptError::Scheduling)?
         .map(|action| action.action());
     let mut progress = None;
     let attempt = (|| {
-        let status = match run_child(store, lease, &held_lock, "status", config, cancellation) {
+        let status = match run_child(
+            store,
+            lease,
+            &held_lock,
+            ActorInvocation::Status,
+            config,
+            cancellation,
+        ) {
             Ok(output) => output,
             Err(ChildRunError::Retry(class)) => return Ok(ClaimedAttempt::Backoff(class)),
             Err(ChildRunError::Fail(class)) => return Ok(ClaimedAttempt::Failed(class)),
@@ -515,11 +581,14 @@ fn run_claimed_attempt_with_lock(
                 StatusDecision::Run(command) => command,
             },
         };
+        if config.effect_cutoff_reached() {
+            return Ok(ClaimedAttempt::Backoff("actor_effect_cutoff"));
+        }
         let effect = match run_child(
             store,
             lease,
             &held_lock,
-            command.name(),
+            ActorInvocation::Effect(command),
             config,
             cancellation,
         ) {
@@ -557,22 +626,36 @@ enum ChildRunError {
     Scheduling(MakerActorProcessError),
 }
 
+fn ensure_invocation_admitted(
+    invocation: ActorInvocation,
+    config: &MakerActorSupervisorConfig,
+    cancellation: &MakerActorSupervisorCancellation,
+) -> Result<(), ChildRunError> {
+    if cancellation.is_cancelled() {
+        return Err(ChildRunError::Retry("actor_cancelled"));
+    }
+    if invocation.is_effect() && config.effect_cutoff_reached() {
+        return Err(ChildRunError::Retry("actor_effect_cutoff"));
+    }
+    Ok(())
+}
+
 fn run_child(
     store: &mut SqliteSwapStore,
     lease: &MakerActorLeaseV1,
     held_lock: &MakerActorHeldLock,
-    actor_command: &'static str,
+    invocation: ActorInvocation,
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<Vec<u8>, ChildRunError> {
-    if cancellation.is_cancelled() {
-        return Err(ChildRunError::Retry("actor_cancelled"));
-    }
+    ensure_invocation_admitted(invocation, config, cancellation)?;
+    let actor_command = invocation.name();
     let artifacts =
         prepare_maker_actor(lease.record()).map_err(|error| classify_deployment(&error))?;
     let mut command = artifacts
         .into_command(held_lock)
         .map_err(|error| classify_deployment(&error))?;
+    ensure_invocation_admitted(invocation, config, cancellation)?;
     command
         .args(["--config-fd", "196", actor_command])
         .env_clear()
@@ -596,6 +679,7 @@ fn run_child(
             )
             .env("LEZ_ACTOR_TEST_PAUSE_MARKER", &pause.marker);
     }
+    ensure_invocation_admitted(invocation, config, cancellation)?;
     let mut child = command
         .spawn()
         .map_err(|_| ChildRunError::Retry("actor_spawn_failed"))?;
@@ -623,7 +707,7 @@ fn run_child(
             .map_err(ChildRunError::Scheduling)?;
         return Err(ChildRunError::Retry("actor_output_unavailable"));
     };
-    let status = wait_for_child(&mut child, config.attempt_timeout, cancellation);
+    let status = wait_for_child(&mut child, invocation, config, cancellation);
     let output = match reader.join() {
         Ok(result) => result.map_err(|_| ChildRunError::Fail("actor_output_invalid")),
         Err(_) => Err(ChildRunError::Fail("actor_output_invalid")),
@@ -657,20 +741,29 @@ fn classify_exit(_status: ExitStatus) -> ChildRunError {
 
 fn wait_for_child(
     child: &mut Child,
-    timeout: Duration,
+    invocation: ActorInvocation,
+    config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<ExitStatus, ChildRunError> {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + config.attempt_timeout;
     loop {
-        if cancellation.is_cancelled() {
+        if let Err(error) = ensure_invocation_admitted(invocation, config, cancellation) {
             kill_and_reap(child);
-            return Err(ChildRunError::Retry("actor_cancelled"));
+            return Err(error);
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             kill_and_reap(child);
             return Err(ChildRunError::Retry("actor_timeout"));
         }
+        let remaining = if invocation.is_effect() {
+            config
+                .effect_cutoff_boottime_milliseconds
+                .map(|cutoff| Duration::from_millis(cutoff.saturating_sub(boottime_milliseconds())))
+                .map_or(remaining, |budget| remaining.min(budget))
+        } else {
+            remaining
+        };
         match child.wait_timeout(remaining.min(CHILD_WAIT_POLL)) {
             Ok(Some(status)) => {
                 terminate_process_group(child.id());
@@ -841,8 +934,16 @@ fn parse_effect(
         return Err(());
     }
     let terminal = terminal_phase(phase);
-    let exact_absorbing = exact_absorbing_effect(kind, command, outcome, phase);
-    let terminal_outcome = matches!(outcome, "completed" | "refunded");
+    let zec_projected_terminal = kind == MakerActorKindV1::Zcash
+        && matches!(command, ActorEffectCommand::Claim)
+        && outcome == "projected"
+        && matches!(
+            value.get("operation").and_then(Value::as_str),
+            Some("lez_revealing_claim" | "zcash_followup_claim")
+        );
+    let exact_absorbing = exact_absorbing_effect(kind, command, outcome, phase)
+        || (zec_projected_terminal && phase == "completed");
+    let terminal_outcome = matches!(outcome, "completed" | "refunded") || zec_projected_terminal;
     if terminal != exact_absorbing
         || (kind == MakerActorKindV1::Zcash && terminal_outcome != exact_absorbing)
     {
@@ -1025,6 +1126,20 @@ mod tests {
         .unwrap()
     }
 
+    fn zec_projected_claim_terminal_effect(operation: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "role": "maker",
+            "command": "claim",
+            "outcome": "projected",
+            "operation": operation,
+            "phase": "completed",
+            "revision": 4,
+            "next_action": "complete"
+        }))
+        .unwrap()
+    }
+
     fn status(phase: &str, revision: u64, next_action: &str) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "schema_version": 1,
@@ -1161,6 +1276,12 @@ mod tests {
             ),
             (
                 MakerActorKindV1::Zcash,
+                ActorEffectCommand::Claim,
+                zec_projected_claim_terminal_effect("lez_revealing_claim"),
+                "completed",
+            ),
+            (
+                MakerActorKindV1::Zcash,
                 ActorEffectCommand::Recover,
                 effect("recover", "refunded", "refunded", 4, "complete"),
                 "refunded",
@@ -1256,6 +1377,15 @@ mod tests {
                     MakerActorKindV1::Zcash,
                 )
                 .is_err()
+            );
+        }
+
+        for bytes in [
+            effect("claim", "projected", "completed", 4, "complete"),
+            zec_projected_claim_terminal_effect("lez_refund"),
+        ] {
+            assert!(
+                parse_effect(&bytes, ActorEffectCommand::Claim, MakerActorKindV1::Zcash,).is_err()
             );
         }
     }

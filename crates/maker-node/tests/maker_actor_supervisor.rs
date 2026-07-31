@@ -25,6 +25,7 @@ use lez_swap_store::{
     MakerActorManualAction, MakerActorManualActionState, MakerActorProgressObservationV1,
     MakerActorScheduleState, SqliteSwapStore, validate_maker_actor_program,
 };
+use rustix::time::{ClockId, clock_gettime};
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 use zec_reference_actor::ActorConfig;
@@ -32,6 +33,13 @@ use zec_reference_actor::ActorConfig;
 use support::actor_deployment;
 use xmr_chat_fixture::XmrChatFixture;
 
+fn boottime_milliseconds() -> u64 {
+    let now = clock_gettime(ClockId::Boottime);
+    u64::try_from(now.tv_sec)
+        .unwrap()
+        .saturating_mul(1_000)
+        .saturating_add(u64::try_from(now.tv_nsec).unwrap() / 1_000_000)
+}
 #[test]
 fn xmr_pre_effect_cycle_validates_real_authority_and_never_invokes_an_effect() {
     let root = tempdir().unwrap();
@@ -463,6 +471,85 @@ fn live_old_lock_is_not_stolen_and_does_not_block_a_due_peer() {
     assert_eq!(locked.lease_generation(), 1);
     assert_eq!(locked.attempt_count(), 1);
     drop(old_process_lock);
+}
+
+#[test]
+fn expired_effect_cutoff_leaves_due_actor_untouched_and_spawns_nothing() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-expired-cutoff";
+    let invocation_marker = root.path().join("invoked");
+    let program = format!(
+        "#!/bin/sh\nprintf invoked > '{}'\n",
+        invocation_marker.display()
+    );
+    let mut store = registered_store(root.path(), swap_id, program.as_bytes());
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
+        .unwrap()
+        .with_effect_cutoff_boottime_milliseconds(boottime_milliseconds().saturating_add(50))
+        .expect("bounded effect cutoff");
+    std::thread::sleep(Duration::from_millis(80));
+
+    let outcome = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x59; 16]).unwrap(),
+        10,
+        &config,
+    )
+    .expect("expired cutoff cycle");
+
+    assert!(outcome.is_none());
+    assert!(!invocation_marker.exists());
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Queued);
+    assert_eq!(record.attempt_count(), 0);
+}
+
+#[test]
+fn effect_cutoff_kills_inflight_actor_and_clears_child_identity() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-inflight-cutoff";
+    let started_marker = root.path().join("effect-started");
+    let completed_marker = root.path().join("effect-completed");
+    let program = format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"claim_lez\"}}' ;;\n\
+           claim) printf started > '{}'; sleep 5; printf completed > '{}'; printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}' ;;\n\
+           *) exit 93 ;;\n\
+         esac\n",
+        started_marker.display(),
+        completed_marker.display()
+    );
+    let mut store = registered_store(root.path(), swap_id, program.as_bytes());
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(5), 5, 30, 8_192)
+        .unwrap()
+        .with_effect_cutoff_boottime_milliseconds(boottime_milliseconds().saturating_add(1_000))
+        .expect("bounded in-flight effect cutoff");
+    let started = Instant::now();
+
+    let outcome = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x5a; 16]).unwrap(),
+        10,
+        &config,
+    )
+    .expect("in-flight cutoff cycle")
+    .expect("one due actor");
+
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(
+        outcome.resolution(),
+        MakerActorSupervisorResolution::Backoff
+    );
+    assert!(started_marker.exists());
+    assert!(!completed_marker.exists());
+    let record = store.list_maker_actor_processes().unwrap().remove(0);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Backoff);
+    assert_eq!(record.child_identity(), None);
 }
 
 #[test]

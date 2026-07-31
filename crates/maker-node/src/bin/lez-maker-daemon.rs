@@ -245,6 +245,9 @@ struct Arguments {
     /// Finite deadline for one actor status/effect cycle (1..=300000 milliseconds).
     #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..=300_000))]
     actor_attempt_timeout_milliseconds: Option<u64>,
+    /// Absolute Linux boot-time cutoff after which actor effects are forbidden.
+    #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..))]
+    actor_effect_cutoff_boottime_milliseconds: Option<u64>,
     /// Idle scheduling poll interval (1..=1000 milliseconds).
     #[arg(long, requires = "actor_supervisor", value_parser = clap::value_parser!(u64).range(1..=1_000))]
     actor_poll_milliseconds: Option<u64>,
@@ -296,6 +299,7 @@ fn configured_actor_supervisor(
     let tuning = (
         arguments.actor_worker_count,
         arguments.actor_attempt_timeout_milliseconds,
+        arguments.actor_effect_cutoff_boottime_milliseconds,
         arguments.actor_poll_milliseconds,
         arguments.actor_requeue_delay_seconds,
         arguments.actor_failure_backoff_seconds,
@@ -303,7 +307,7 @@ fn configured_actor_supervisor(
     );
     if !arguments.actor_supervisor {
         ensure!(
-            tuning == (None, None, None, None, None, None),
+            tuning == (None, None, None, None, None, None, None),
             "actor supervisor tuning requires explicit opt-in"
         );
         return Ok(Vec::new());
@@ -321,6 +325,13 @@ fn configured_actor_supervisor(
         max_output_bytes,
     )
     .context("validate actor supervisor bounds")?;
+    let config = match arguments.actor_effect_cutoff_boottime_milliseconds {
+        Some(cutoff) => config
+            .with_effect_cutoff_boottime_milliseconds(cutoff)
+            .context("validate actor effect cutoff")?,
+        None => config,
+    };
+
     #[cfg(feature = "test-crash-hooks")]
     let config = {
         let hook = (
@@ -1296,6 +1307,8 @@ mod tests {
             "2",
             "--actor-attempt-timeout-milliseconds",
             "30000",
+            "--actor-effect-cutoff-boottime-milliseconds",
+            "1",
             "--actor-poll-milliseconds",
             "50",
             "--actor-requeue-delay-seconds",
@@ -1314,6 +1327,7 @@ mod tests {
         for (flag, value) in [
             ("--actor-worker-count", "2"),
             ("--actor-attempt-timeout-milliseconds", "30000"),
+            ("--actor-effect-cutoff-boottime-milliseconds", "1"),
             ("--actor-poll-milliseconds", "50"),
             ("--actor-requeue-delay-seconds", "5"),
             ("--actor-failure-backoff-seconds", "30"),
@@ -1331,6 +1345,7 @@ mod tests {
             ("--actor-worker-count", "0"),
             ("--actor-worker-count", "33"),
             ("--actor-attempt-timeout-milliseconds", "0"),
+            ("--actor-effect-cutoff-boottime-milliseconds", "0"),
             ("--actor-attempt-timeout-milliseconds", "300001"),
             ("--actor-poll-milliseconds", "0"),
             ("--actor-poll-milliseconds", "1001"),

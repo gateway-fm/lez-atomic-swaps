@@ -30,7 +30,7 @@ done
 
 for required in \
   'install -m 0700 "$actor_bin" "$m5_actor_program"' \
-  'strip --strip-debug "$m5_actor_program"' \
+  'strip --strip-all "$m5_actor_program"' \
   'chmod 0500 "$m5_actor_program"' \
   'require_command strip' \
   'stat -c %h -- "$m5_actor_program"' \
@@ -40,6 +40,59 @@ for required in \
   rg -Fq -- "$required" "$runner" ||
     fail "M5 runner is missing private actor deployment contract: ${required}"
 done
+if rg -Fq 'strip --strip-debug "$m5_actor_program"' "$runner"; then
+  fail "M5 runner must not retain debug symbols in the staged actor"
+fi
+
+for required in \
+  'cargo +1.96.0 build --locked --offline --release -p zec-reference-actor --bins' \
+  'cargo +1.96.0 build --locked --offline --release -p lez-maker-node --bins' \
+  'cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-actor-inspect' \
+  'cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-zec-lock-intent-inspect' \
+  '--locked --offline --release --bin lez-v02-bridge-poc' \
+  'target/release/zec-reference-actor' \
+  'target/release/zec-local-poc-provision' \
+  'compat/lez-v0_2-sidecar/target/release/lez-v02-bridge-poc' \
+  'target/release/lez-maker-daemon' \
+  'target/release/lez-maker' \
+  'target/release/lez-taker' \
+  'target/release/zec-local-poc-chat-draft' \
+  'target/release/zec-local-poc-chat-finalize' \
+  'target/release/examples/maker-actor-inspect' \
+  'target/release/zec-actor-pair-inspect' \
+  'target/release/examples/maker-zec-lock-intent-inspect'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M5 runner is missing release build/path contract: ${required}"
+done
+
+for required in \
+  'target/debug/zec-reference-actor' \
+  'target/debug/zec-local-poc-provision' \
+  'compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "M2 runner must retain its debug build path: ${required}"
+done
+
+[[ "$(rg -Fc 'target/debug' "$runner")" == 3 ]] ||
+  fail "M5 runner must not select target/debug binaries"
+
+
+cleanup_function="$(sed -n '/^cleanup() {$/,/^}$/p' "$runner")"
+[[ -n "$cleanup_function" ]] || fail "M5 runner cleanup function is missing"
+daemon_stop_line="$(rg -n -F 'stop_owned_m5_daemon' <<<"$cleanup_function" | cut -d: -f1)"
+maker_stop_line="$(rg -n -F 'stop_owned_process "$maker_pid"' <<<"$cleanup_function" | cut -d: -f1)"
+taker_stop_line="$(rg -n -F 'stop_owned_process "$taker_pid"' <<<"$cleanup_function" | cut -d: -f1)"
+for line in "$daemon_stop_line" "$maker_stop_line" "$taker_stop_line"; do
+  [[ "$line" =~ ^[0-9]+$ ]] ||
+    fail "M5 cleanup is missing an owned-process stop anchor"
+done
+(( daemon_stop_line < maker_stop_line && daemon_stop_line < taker_stop_line )) ||
+  fail "M5 cleanup must stop the effect-bearing Maker daemon before sidecars"
+
+[[ "$(rg -Fc -- '--actor-effect-cutoff-boottime-milliseconds "$corridor_deadline_monotonic_ms"' "$runner")" == 2 ]] ||
+  fail "both M5 daemon incarnations must share the absolute corridor effect cutoff"
+
+
 
 for required in \
   '--zec-source-maker-config "$source_actors_root/maker/actor-config.json"' \
@@ -187,6 +240,9 @@ for required in \
   '--actor-supervisor' \
   '--actor-requeue-delay-seconds' \
   '--actor-failure-backoff-seconds' \
+  'capture_m5_supervised_maker_status' \
+  'm5-maker-status-retries.ndjson' \
+  'actor_configuration_unavailable' \
   'observe_m5_supervised_maker' \
   'm5-maker-supervisor-status.ndjson' \
   'm5-maker-supervisor-final.json' \
@@ -205,6 +261,94 @@ for required in \
   rg -Fq -- "$required" "$runner" ||
     fail "M5 runner does not prove supervisor-owned Maker effects: ${required}"
 done
+status_capture_function="$(sed -n \
+  '/^capture_m5_supervised_maker_status() {$/,/^}$/p' "$runner")"
+[[ -n "$status_capture_function" ]] ||
+  fail "supervised Maker status helper is missing"
+[[ "$(rg -Fc 'capture_m5_supervised_maker_status' "$runner")" == 3 ]] ||
+  fail "supervised Maker status helper must have exactly two call sites"
+[[ "$(rg -Fc '"$actor_bin" --config "$maker_config" status' "$runner")" == 3 ]] ||
+  fail "only pre/final status and the supervised helper may invoke direct Maker status"
+
+status_retry_test_root="$(mktemp -d "${TMPDIR:-/tmp}/lez-m5-status-contract.XXXXXX")" ||
+  fail "could not create supervised status contract root"
+chmod 0700 "$status_retry_test_root"
+trap 'rm -rf -- "$status_retry_test_root"' EXIT
+(
+  eval "$status_capture_function"
+  actor_bin=fake_actor
+  maker_config=/tmp/m5-contract-maker-config
+  m5_daemon_pid=91
+  m5_daemon_start_ticks=92
+  m5_daemon_bin=/tmp/m5-contract-daemon
+  evidence_dir="$status_retry_test_root"
+  MAX_SUPERVISED_STATUS_RETRIES=8
+  SUPERVISED_STATUS_RETRY_DELAY_SECONDS=0
+  process_is_owned() { return 0; }
+  remaining_budget_milliseconds() { return 0; }
+  sleep() { :; }
+
+  fake_actor_calls=0
+  fake_actor() {
+    fake_actor_calls=$((fake_actor_calls + 1))
+    if (( fake_actor_calls == 1 )); then
+      printf '%s\n' 'actor configuration is unavailable' >&2
+      return 2
+    fi
+    printf '%s\n' \
+      '{"schema_version":1,"role":"maker","state":"active","phase":"offered","revision":0}'
+  }
+  capture_m5_supervised_maker_status \
+    "$status_retry_test_root/status.json" "$status_retry_test_root/status.stderr" activation
+  [[ "$fake_actor_calls" == 2 && ! -s "$status_retry_test_root/status.stderr" ]] ||
+    exit 1
+  jq -e '.role == "maker" and .state == "active" and .revision == 0' \
+    "$status_retry_test_root/status.json" >/dev/null
+  jq -s -e '
+    length == 1 and .[0].event == "supervised_maker_status_retry"
+    and .[0].label == "activation" and .[0].attempt == 1
+    and .[0].error_class == "actor_configuration_unavailable"
+  ' "$status_retry_test_root/m5-maker-status-retries.ndjson" >/dev/null
+
+  fake_actor_calls=0
+  fake_actor() {
+    fake_actor_calls=$((fake_actor_calls + 1))
+    printf '%s\n' 'actor status is unavailable' >&2
+    return 2
+  }
+  if capture_m5_supervised_maker_status \
+    "$status_retry_test_root/wrong.json" "$status_retry_test_root/wrong.stderr" wrong \
+    2>"$status_retry_test_root/wrong-helper.stderr"; then
+    exit 1
+  fi
+  [[ "$fake_actor_calls" == 1 ]] || exit 1
+
+  fake_actor_calls=0
+  fake_actor() {
+    fake_actor_calls=$((fake_actor_calls + 1))
+    printf '%s\n' 'actor configuration is unavailable' >&2
+    return 2
+  }
+  process_is_owned() { return 1; }
+  if capture_m5_supervised_maker_status \
+    "$status_retry_test_root/dead.json" "$status_retry_test_root/dead.stderr" dead \
+    2>"$status_retry_test_root/dead-helper.stderr"; then
+    exit 1
+  fi
+  [[ "$fake_actor_calls" == 1 ]] || exit 1
+
+  process_is_owned() { return 0; }
+  MAX_SUPERVISED_STATUS_RETRIES=1
+  fake_actor_calls=0
+  if capture_m5_supervised_maker_status \
+    "$status_retry_test_root/bounded.json" "$status_retry_test_root/bounded.stderr" bounded \
+    2>"$status_retry_test_root/bounded-helper.stderr"; then
+    exit 1
+  fi
+  [[ "$fake_actor_calls" == 2 ]] || exit 1
+) || fail "supervised Maker status retry behavior is unsafe"
+rm -rf -- "$status_retry_test_root"
+trap - EXIT
 
 
 projection_function="$(sed -n \

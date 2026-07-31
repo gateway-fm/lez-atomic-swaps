@@ -4647,4 +4647,52 @@ atomicity argument.
 A second isolated LEZ chain with a second fresh Maker/Taker identity pair is
 running effect-free for the clean deployment replay. No fresh deployment of
 the corrected artifact is claimed by this checkpoint. Literal M5 acceptance
-remains 3 of 7. The corrected estimate is 1 to 3 focused hours for the ZEC
+remains 3 of 7. The corrected estimate at that checkpoint was 1 to 3 focused
+hours for the ZEC daemon replay; the subsequent live result and hardening work
+supersede it below.
+
+## M5 daemon-driven ZEC live replay and deadline TDD checkpoint
+
+Clean isolated LEZ run `m5zecb416lezc` deployed the current 18-instruction
+guest and onboarded fresh, separate Maker and Taker identities. The first
+application launch used the runner's historical default genesis variable name;
+the live identity guard rejected it before provisioning or any chain effect.
+The corrected replay invocation uses the exact `LEZ_GENESIS_HASH` input.
+
+Exact application run `m5zecb416appf` then completed both role actors at
+revision 4. Zebra advanced from deterministic mature height 104 to 107, the
+Maker funding transaction was exact, the transport cutover passed, and Maker
+effects were owned only by the daemon supervisor. The runner still rejected
+the run because the scheduler persisted `failed/actor_output_invalid`: the real
+claim returned `outcome: projected` while its durable phase was already
+`completed`. The run is retained as diagnostic evidence only. Its exact LEZ
+and Zebra containers, networks, images, and run directories were quarantined.
+
+The focused RED reproduced that live response. The GREEN supervisor accepts a
+projected terminal ZEC claim only for the exact `lez_revealing_claim` or
+`zcash_followup_claim` operations; missing and unrelated operation identities
+remain rejected. Cleanup also progressed RED then GREEN so the effect-bearing
+daemon is always cancelled before either sidecar shutdown can consume time.
+
+A second RED proved that a fixed 20-second attempt timeout cannot prevent an
+effect attempt beginning near the 49-second corridor cutoff. The GREEN adds one
+absolute Linux boot-time cutoff, inherited unchanged by both the full and
+supervisor-only daemon incarnations. Effects are rejected before preparation,
+after sealed-command construction, immediately before spawn, and during every
+child wait. An in-flight process group is killed and reaped at the earlier
+cutoff, its fenced child identity is cleared, and the durable actor backs off.
+An already-expired supervisor does not claim or mutate a queued actor.
+
+Focused GREEN evidence is 15 of 15 Maker supervisor integration tests, 4 of 4
+parser tests, 3 of 3 daemon supervisor CLI tests, and the M5 application shell
+contract. Cold optimized builds measured about 6 minutes for the root process
+set and 14 minutes 38 seconds for the full LEZ sidecar graph; warm rebuild
+checks complete in about 2 seconds and remain outside the protocol clock.
+
+Literal M5 remains 3 of 7 until a fresh-chain replay publishes a terminal
+scheduler row, restart projection, duplicate-submission proof, and scoped
+cleanup as one accepted evidence packet. That fresh proof is next. Only after
+it passes does the score become 4 of 7; Maker CLI, Taker CLI, and coordinator
+concurrency/restart isolation then remain. The corrected checkpoint estimate is
+7 to 14 focused implementation hours to the M5 tag, subject to measured local
+LEZ finality and the required new-chain provisioning cycles.
