@@ -354,6 +354,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy, rustfmt
+      - run: ./scripts/test-m4-lez-local-deployment-contract.sh
       - run: ./scripts/verify-lez-v02-provisional.sh
 
   lez-standalone:

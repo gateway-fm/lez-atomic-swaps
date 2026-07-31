@@ -8,7 +8,7 @@ umask 077
 readonly pinned_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
 readonly pinned_guest_sha256="ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
 readonly pinned_program_id="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
-readonly pinned_program_words='[865101133,1014253609,411744301,1400984887,1452470100,550326277,3715875434,2183963118]'
+readonly pinned_program_words='[2020800695,692721555,2892920765,1939332543,3171832288,739263404,2755389879,855903226]'
 readonly pinned_auth_program='[3170810844,2526647253,999807262,1205602179,3401962591,3484055895,2106546407,1900691388]'
 readonly pinned_token_program='[2282739141,348907455,1046946228,3735699860,585462133,3426087150,772528164,2090518099]'
 readonly pinned_ata_program='[3357312149,3615960253,3351583505,2234166003,4153433811,2743238177,2886052503,4160755157]'
@@ -36,9 +36,10 @@ self_test_finality_selector() {
 }
 
 emit_contract() {
-  jq -n --arg source "$pinned_source_commit" --arg guest "$pinned_guest_sha256" --arg program "$pinned_program_id" '
+  jq -n --arg source "$pinned_source_commit" --arg guest "$pinned_guest_sha256" --arg program "$pinned_program_id" \
+    --argjson words "$pinned_program_words" '
     {schema_version:1,kind:"m4_lez_local_deployment_contract",lez_source_commit:$source,
-     embedded_guest_sha256:$guest,escrow_program_id:$program,exact_fresh_artifact_proof_required:true,
+     embedded_guest_sha256:$guest,escrow_program_id:$program,escrow_program_id_words:$words,exact_fresh_artifact_proof_required:true,
      exact_deployer_hash_required:true,deployer_hash_checked_before_and_after_point_of_use:true,
      local_loopback_only:true,single_send_code_path:true,deployment_retry_allowed:false,
      durable_cross_process_submission_counter:false,finality_membership_variant:"ProgramDeployment",

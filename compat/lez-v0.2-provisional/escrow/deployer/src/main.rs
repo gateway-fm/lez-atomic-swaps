@@ -574,6 +574,11 @@ fn generated_public_interface(manifest: &DeploymentManifest) -> Result<PublicInt
         "refund_token",
         "initialize_token_witnessed",
         "claim_token_witnessed",
+        "initialize_native_xmr",
+        "authorize_native_xmr_claim",
+        "claim_native_xmr",
+        "refund_native_xmr",
+        "punish_native_xmr",
     ];
     ensure!(
         instructions.len() == expected_names.len()

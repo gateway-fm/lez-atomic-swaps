@@ -16,7 +16,7 @@ methods_manifest_sha256 = "b837b231477f79d3a765d95d8760dc3466726183d2a8bd63e889f
 methods_lock_sha256 = "93596182ff1405f172bdd7064f0260f17a54c593766bc0b1d88489a69becce96"
 methods_build_sha256 = "ad63e5ee71b2173785a241e5f565313155b96c92e37e9d7ea6e42537f80e0ddc"
 recursive_test_sha256 = "0e127c21a387c17fa7f221cfbf4759c44d818786f5707c9051531ade1c515f27"
-artifact_runner_sha256 = "4bca285f4fb22e0036527fb9877afbd23e2582ddd458b125b5d5f63a8b58ef53"
+artifact_runner_sha256 = "0de096eace79427df35b15a759a7c2505cb4ac335d172fe14acf260d248ca933"
 
 [supply_chain]
 risc0_version = "3.0.5"
@@ -48,7 +48,7 @@ fresh_embedded_elf_required = true
 
 [historical_boundary]
 deployment_manifest = "compat/lez-v0.2-provisional/escrow/methods/guest/deployment-manifest.toml"
-deployment_manifest_sha256 = "effccab44b7c5fe9a3e393478622bcdb48c934ae784d7c4d6c1364c1718a9cd0"
+deployment_manifest_sha256 = "6e2e7bcc8c4e94c7869dbf1619dcea53fda1532d2bc391cc4680874ae61f1cc3"
 m3_bootstrap = "scripts/run-m3-lez-bootstrap.sh"
 m3_bootstrap_sha256 = "5410fcb0db405d46bd9e0885370738d0cf506581aeeb663737fe19bc591dcf22"
 certified_artifacts_are_not_reused = true

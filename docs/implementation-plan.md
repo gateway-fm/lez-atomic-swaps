@@ -4616,3 +4616,35 @@ not a durable repository fix: the pinned Risc0-generated
 retained `.e2e` tree can enlarge the context again. A durable optimization must
 change that generated build-context boundary without weakening artifact
 attestation or deleting another run's data.
+
+## M5 fresh ZEC deployment bootstrap TDD checkpoint
+
+The first fresh replay from pushed commit
+`f0dc6297ce4dc1aa8590eb4fab1c7de105d7529f` started isolated local Zebra and
+LEZ nodes with fresh Maker and Taker identities. The retained deployer binary
+was stale: it submitted the historical `dc370…` / `4d659…` guest once, in
+finalized block 83, before the exact deployment-evidence validator rejected
+the mismatch. That LEZ chain was quarantined and its exact containers, network,
+and image were removed. The still-unspent Zebra run was preserved because it
+had no causal relationship to the invalid LEZ submission.
+
+The resulting RED exposed a current-source inconsistency as well as the stale
+binary. The generic buildable deployment manifest and public-interface
+validator still described the 13-instruction F7 guest, while the embedded
+current guest is the 18-instruction M5 artifact with ELF `ade4…`, ImageID
+`b7f…`, and the native-XMR instructions. The current manifests, integrity
+pins, validators, tests, deployment wrapper, and CI guards now describe that
+exact embedded guest. Historical manifests and evidence retain their
+historical identities.
+
+Two mock happy paths also used a 100 ms response budget and could fail under
+ordinary host scheduling load. Their budgets are now 2 seconds; deliberate
+timeout and ambiguous-submission tests remain at 100 ms. The deployer suite
+progressed RED 12/20, then 19/20, then GREEN 20/20 in 38.44 seconds. ADR 0124
+records the component boundary, replay flow, chain quarantine, and conditional
+atomicity argument.
+
+A second isolated LEZ chain with a second fresh Maker/Taker identity pair is
+running effect-free for the clean deployment replay. No fresh deployment of
+the corrected artifact is claimed by this checkpoint. Literal M5 acceptance
+remains 3 of 7. The corrected estimate is 1 to 3 focused hours for the ZEC

@@ -10,6 +10,7 @@ readonly runner="scripts/run-m4-lez-local-deployment.sh"
 readonly expected_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
 readonly expected_elf="ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
 readonly expected_program="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+readonly expected_program_words='[2020800695,692721555,2892920765,1939332543,3171832288,739263404,2755389879,855903226]'
 channel="$(printf '6%.0s' {1..64})"
 transaction="$(printf 'd%.0s' {1..64})"
 genesis_hash="$(printf 'e%.0s' {1..64})"
@@ -31,12 +32,13 @@ done
 
 contract="$($runner contract)"
 jq -e --arg source "$expected_source_commit" --arg elf "$expected_elf" \
-  --arg program "$expected_program" '
+  --arg program "$expected_program" --argjson words "$expected_program_words" '
   .schema_version == 1
   and .kind == "m4_lez_local_deployment_contract"
   and .lez_source_commit == $source
   and .embedded_guest_sha256 == $elf
   and .escrow_program_id == $program
+  and .escrow_program_id_words == $words
   and .local_loopback_only == true
   and .single_send_code_path == true
   and .durable_cross_process_submission_counter == false
@@ -115,7 +117,7 @@ jq -n --arg rpc "$rpc" --arg channel "$channel" --arg elf "$FIXTURE_ELF" \
   {schema_version:1,
    preflight:{rpc_url:$rpc,channel_id:$channel,genesis_block_id:1,
      genesis_block_hash:$genesis,elf_sha256:$elf,image_id:$image,
-     program_id_words:[865101133,1014253609,411744301,1400984887,1452470100,550326277,3715875434,2183963118],
+     program_id_words:[2020800695,692721555,2892920765,1939332543,3171832288,739263404,2755389879,855903226],
      authenticated_transfer_program_id:[3170810844,2526647253,999807262,1205602179,3401962591,3484055895,2106546407,1900691388],
      token_program_id:[2282739141,348907455,1046946228,3735699860,585462133,3426087150,772528164,2090518099],
      associated_token_account_program_id:[3357312149,3615960253,3351583505,2234166003,4153433811,2743238177,2886052503,4160755157],

@@ -195,11 +195,11 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
     );
     assert_eq!(
         manifest["artifact"]["elf_sha256"].as_str(),
-        Some("bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7")
+        Some("ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee")
     );
     assert_eq!(
         manifest["artifact"]["image_id"].as_str(),
-        Some("f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e")
+        Some("b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433")
     );
     assert_eq!(
         manifest["artifact"]["program_id_words"]
@@ -209,23 +209,23 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
             .map(|word| word.as_integer().expect("ProgramId word"))
             .collect::<Vec<_>>(),
         vec![
-            1_272_113_907,
-            3_457_602_453,
-            3_003_947_153,
-            3_094_354_515,
-            385_689_402,
-            461_173_824,
-            2_924_967_813,
-            1_311_010_034,
+            2_020_800_695,
+            692_721_555,
+            2_892_920_765,
+            1_939_332_543,
+            3_171_832_288,
+            739_263_404,
+            2_755_389_879,
+            855_903_226,
         ]
     );
     assert_eq!(
         manifest["interface"]["idl_sha256"].as_str(),
-        Some("994afe1a2fccf285a56070edd520a482d528ef7a85772e12dd7222cf5c80d53f")
+        Some("04895050affb173d3e87329994ecbbed54781a38d5454ce5b36e155916e4134f")
     );
     assert_eq!(
         manifest["interface"]["instruction_count"].as_integer(),
-        Some(13)
+        Some(18)
     );
     assert_eq!(
         manifest["interface"]["initialize_token_witnessed_variant"].as_integer(),
