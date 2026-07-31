@@ -15,7 +15,8 @@ use lez_bridge_protocol::{
     InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS,
     NativeClaimInstructionFacts, NativeCustodyFacts, NativeFundInstructionFacts,
     NativeInitializeInstructionFacts, ObserveCurrentClockRequest, ObserveCurrentClockResult,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedClockRequest,
+    ObserveFinalizedClockResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
     ObserveFinalizedWitnessedFundingResult, ObserveRevealingClaimRequest,
     ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest, ObserveWitnessedEscrowResult,
@@ -40,6 +41,7 @@ use crate::{
     decode_prepared_for_signer, finalized_asset_observation::FinalizedAssetObserver,
     finalized_xmr_observation::FinalizedNativeXmrEffectObserver, native_prepare::OwnedSubmission,
     prepared_from_transaction, program_id_from_hex, program_id_to_hex,
+    read_genesis_bound_finalized_clock,
 };
 
 /// Fail-closed failures at the `PoC` bridge observation and submission boundary.
@@ -123,6 +125,7 @@ pub struct BridgeRuntime {
     finalized_funding_observer: FinalizedWitnessedFundingObserver,
     finalized_initialization_observer: FinalizedWitnessedInitializationObserver,
     finalized_refund_observer: FinalizedWitnessedRefundObserver,
+    indexer: Arc<dyn FinalizedIndexerApi>,
     clock_driver_lock: tokio::sync::Mutex<()>,
 }
 
@@ -158,7 +161,7 @@ impl BridgeRuntime {
         let finalized_funding_observer =
             FinalizedWitnessedFundingObserver::new(runtime.clone(), Arc::clone(&indexer));
         let finalized_initialization_observer =
-            FinalizedWitnessedInitializationObserver::new(runtime.clone(), indexer);
+            FinalizedWitnessedInitializationObserver::new(runtime.clone(), Arc::clone(&indexer));
         Self {
             runtime,
             planner,
@@ -170,6 +173,7 @@ impl BridgeRuntime {
             finalized_funding_observer,
             finalized_initialization_observer,
             finalized_refund_observer,
+            indexer,
             clock_driver_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -231,6 +235,33 @@ impl BridgeRuntime {
             request.context.clone(),
             self.runtime.clone(),
             facts.clock(),
+        ))
+    }
+
+    /// Observes one stable genesis-bound finalized consensus clock.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime identity drift, moving finalized facts, zero block
+    /// identities or timestamps, and unavailable or contradictory indexer facts.
+    pub async fn observe_finalized_clock(
+        &self,
+        request: &ObserveFinalizedClockRequest,
+    ) -> Result<ObserveFinalizedClockResult, BridgeRuntimeError> {
+        if request.runtime != self.runtime
+            || request.context.sidecar_role != self.runtime.sidecar_role
+        {
+            return Err(BridgeRuntimeError::Planner);
+        }
+        let clock = read_genesis_bound_finalized_clock(
+            self.indexer.as_ref(),
+            self.runtime.genesis_block_hash,
+        )
+        .await?;
+        Ok(ObserveFinalizedClockResult::new(
+            request.context.clone(),
+            self.runtime.clone(),
+            clock,
         ))
     }
 

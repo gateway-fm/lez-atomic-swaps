@@ -1,7 +1,6 @@
 # ADR 0123: Drive the local finalized clock with one sealed effect
 
-- Status: Accepted as a contract checkpoint; focused live-runtime test and
-  actual replay pending
+- Status: Accepted and focused runtime GREEN; corrected actual replay pending
 - Date: 2026-07-31
 - Milestone: M5 progressive local-functional PoC
 
@@ -20,12 +19,13 @@ finalized LEZ identity for more than two minutes:
 - timestamp `1785471692986` milliseconds.
 
 The signed terms used `refund_at = 1785472429000` and
-`punish_at = 1785473029000`. The local sequencer and Bedrock topology did not
-finalize empty blocks, so read-only polling could not make the consensus clock
-enter the interval. Host time eventually passed the interval while the
-classifier honestly remained behind it. The run was stopped and scoped cleanup
-completed; it is retained diagnostic RED evidence, not a successful refund or
-M5 evidence run.
+`punish_at = 1785473029000`. Later evidence corrected the initial diagnosis:
+Bedrock did advance and finalize descendants, but the runner repeatedly asked
+the effect classifier for the immutable one-block window ending at height 120.
+That classifier reports the requested window end, not the current finalized
+head, so it could never become a live clock. Host time eventually passed the
+interval without becoming authority. The stopped and cleaned run is retained
+diagnostic RED evidence, not a successful refund or M5 evidence run.
 
 A second clean replay, `m5xmrrefund827a5d4a`, ran from pushed commit
 `827a5d4`, passed both local-devnet setup, exact LEZ deployment, role-correct
@@ -37,6 +37,17 @@ file existed, and scoped cleanup removed every run-owned Docker resource. The
 TDD repair derives distinct prepare and verify IDs as 64-character SHA-256
 digests over a fixed version domain, operation domain, and full 32-byte
 identity. This is bounded integration RED evidence, not a completed swap.
+
+A third clean replay, `m5xmrrefund842610ca`, admitted exactly one terms-sealed
+Taker-to-Maker native-unit transfer. The sequencer advanced from height 193 to
+194 with exact balance and nonce deltas, byte-identical escrow state, and one
+submission. Bedrock produced the configured ten finalized descendants in about
+16 seconds. The runner nevertheless kept classifying fixed block 120 and hit
+its progress bound. This proved that the real liveness effect works and that
+the remaining defect was observation semantics, not finality. The focused RED
+then required an authenticated current-finalized-tip method; the GREEN uses the
+existing genesis-bound official indexer reader and performs no sequencer read
+or submission. This run remains diagnostic because it stopped before tag 16.
 
 Increasing a sleep or trusting host time would weaken the protocol boundary.
 The local profile instead needs one narrow, auditable chain effect that can
@@ -77,19 +88,23 @@ arbitrary recipient, or become a public-route behavior.
    balance plus one, unchanged Maker nonce, and byte-identical escrow metadata
    and custody accounts. The observed chain identity must advance and remain
    before `punish_at`.
-7. The live post-state is liveness evidence only. The runner returns to the
-   authenticated Maker classifier and waits for a new finalized identity. Tag
-   16 is permitted only when that classifier reports
-   `refund_at <= finalized_timestamp < punish_at`.
-8. At most one clock transaction is allowed for a swap. A bounded
+7. The driver polls authenticated read-only
+   `lez_bridge.v1.observe_finalized_clock` until the genesis-bound official
+   indexer head covers the transaction block, with a 60-second early-exit
+   bound. Every request has a fresh bounded identity; polling never submits.
+8. The runner gives the Maker classifier the exact newly finalized height as a
+   one-block effect-discovery window. Tag 16 is permitted only when that fixed
+   window reports `refund_at <= finalized_timestamp < punish_at`.
+9. At most one clock transaction is allowed for a swap. A bounded
    post-submission wait, unchanged finality, a late guard, invalid accounting,
    escrow drift, or any uncertain result fails the journey closed.
 
-The protocol, planner-reservation, client, runner-contract, lint, documentation,
-and complete repository quality gates are GREEN. The live runtime/server
-prepare-and-verify path does not yet have a focused behavioral test; the fresh
-actual-node replay is its open integration gate. It must not be described as a
-working PoC until a fresh pushed-commit
+The protocol, client, live runtime/server, finalized-indexer read, clock driver,
+and runner contracts are focused GREEN. Tests prove strict wire decoding,
+runtime/capability binding, moving finalized observations independent of fixed
+effect windows, zero observer submissions, and bounded request IDs. The fresh
+corrected actual-node replay remains the integration gate. This must not be
+described as a working PoC until a fresh pushed-commit
 two-devnet replay retains the exact clock effect, finalized tag 16, Monero
 recovery, binding, and scoped cleanup evidence.
 
@@ -106,6 +121,7 @@ flowchart LR
     Reservation["One durable reservation"]
     Submit["Canonical SubmitTransaction"]
     Verify["Read only inclusion and account verifier"]
+    FinalizedTip["Authenticated current finalized tip"]
 
     subgraph Lez["Isolated LEZ v0.2 local profile"]
         Sequencer["Sequencer JSON RPC"]
@@ -120,6 +136,7 @@ flowchart LR
     Driver -->|"prepare_current_profile_clock"| TakerSidecar
     Driver -->|"submit_transaction"| TakerSidecar
     Driver -->|"verify_current_profile_clock"| TakerSidecar
+    Driver -->|"observe_finalized_clock"| TakerSidecar
     TakerSidecar --> Prepare
     Prepare --> Reservation
     Reservation --> Submit
@@ -127,6 +144,7 @@ flowchart LR
     Sequencer --> Bedrock
     TakerSidecar --> Verify
     Verify --> Sequencer
+    TakerSidecar --> FinalizedTip --> Indexer
     Bedrock --> Indexer
 ```
 
@@ -172,14 +190,21 @@ sequenceDiagram
     S-->>T: Exact inclusion and before after facts
     T-->>D: Accounting and escrow identity evidence
     D-->>R: One attempt local only result
-    R->>C: Reclassify without submitting
-    C->>I: Read finalized prefix
-    I-->>R: New finalized identity
+    loop Bounded read only finality wait
+        D->>T: observe_finalized_clock with fresh request ID
+        T->>I: Read stable genesis bound finalized head
+        I-->>T: Current finalized identity
+    end
+    D-->>R: Finalized height covering the effect
+    R->>C: Classify that exact one block window
+    C->>I: Read fixed finalized effect window
+    I-->>R: Exact effect window clock
     R->>R: Require signed half open refund interval
 ```
 
-The runner never loops through another effect while waiting for the first
-transaction to finalize. Subsequent samples are classifier reads only.
+The runner never loops through another effect. After the single submission it
+polls only the current finalized tip, then uses the classifier once for fixed
+effect discovery at the returned finalized height.
 
 ## Liveness and conditional atomicity
 
@@ -191,8 +216,8 @@ flowchart TD
     Effect["One canonical submission attempt"]
     Account["Exact balance nonce and inclusion proof"]
     Escrow["Metadata and custody remain byte identical"]
-    Finality["Maker classifier observes a new finalized identity"]
-    Window["Classifier clock is inside refund_at to punish_at"]
+    Finality["Read only observer reaches the effect block"]
+    Window["Fixed effect window is inside refund_at to punish_at"]
     Refund["Tag 16 may execute once"]
     Recovery["Finalized tag 16 reveals the Taker scalar for Maker XMR recovery"]
     Stop["Any ambiguity drift lateness or no progress fails closed"]
@@ -239,14 +264,15 @@ can still require the repository's pinned Cargo, Git, Risc0, circuits,
 rapidsnark, image, and Monero archive inputs, but those are setup dependencies
 and do not participate in runtime consensus or finality.
 
-The RED demonstrates a fidelity property, not a mock limitation: the actual
-local sequencer does not necessarily finalize empty blocks. The bounded effect
-executes the real authenticated-transfer program, canonical transaction
-submission, block inclusion, account transition, and finalized-indexer path.
-It therefore exposes transaction, nonce, balance, consensus, timestamp,
-finality, and RPC integration failures. It does not model public validator
-topology, adversarial peers, congestion, fee markets, public economic finality,
-or production credentials.
+The RED demonstrates an integration-boundary defect, not a mock limitation:
+the fixed-window classifier was incorrectly reused as a current-tip clock.
+Actual Bedrock descendants finalized the admitted transaction under the
+configured security parameter. The bounded effect executes the real
+authenticated-transfer program, canonical submission, inclusion, account
+transition, and finalized-indexer path. It exposes transaction, nonce, balance,
+consensus, timestamp, finality, and RPC integration failures. It does not model
+public validator topology, adversarial peers, congestion, fee markets, public
+economic finality, or production credentials.
 
 Remaining flake and failure sources include host CPU or disk pressure, cold
 build latency, local block and finality cadence, failure to finalize the one
@@ -260,8 +286,12 @@ Every attempt needs a fresh run ID. Partial evidence must never be reused.
   signing key or altering escrow state.
 - The one-unit balance change and consumed Taker nonce are intentional,
   auditable protocol-test costs.
-- Protocol, planner, client, and contract tests plus complete quality gates are
-  GREEN: 325 Rust tests, strict Clippy, warning-fatal Rustdoc, M3/M4/M5 compatibility contracts, and the
-  repository-wide lint/security/vulnerability gate pass. A fresh pushed-commit
-  replay, retained evidence, and exact cleanup are still open. M5 remains
-  untagged and its literal score is unchanged.
+- Focused GREEN evidence is protocol 46 of 46, client 38 of 38, live current-
+  clock runtime 3 of 3, and clock-driver 1 of 1, plus the full root and sidecar
+  test suites. Strict Clippy, warning-fatal Rustdoc, compatibility, repository-
+  wide lint/security, Docker-isolation, and dependency-policy gates pass. The
+  dependency audit found `RUSTSEC-2026-0220` in transitive `ruint 1.19.0`; the
+  sidecar lockfile now uses fixed `1.20.0`, and its complete suite and strict
+  gates pass on that graph. A fresh pushed-commit replay, retained evidence,
+  and exact cleanup are still open. M5 remains untagged and its literal score
+  is unchanged.

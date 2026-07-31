@@ -286,32 +286,36 @@ Maker-directed Monero receipt, honest refund roles, and exact fee accounting.
 This runner and binder are component-GREEN but have not yet been executed
 together from a clean pushed commit, so no new actual refund swap is claimed.
 The first clean attempt, `m5xmrrefund8c10cd7a`, reached finalized tag 13 and
-verified Maker-funded Monero output, then exposed a local-profile liveness RED:
-the authenticated finalized classifier returned the same LEZ height, hash, and
-timestamp for more than two minutes because the local sequencer did not
-finalize empty blocks. Read-only polling could therefore never enter the signed
-refund window. The contract-GREEN correction in
+verified Maker-funded Monero output, then repeatedly classified one fixed LEZ
+block. Later evidence proved Bedrock finality was progressing: the classifier
+was correctly reporting its requested discovery window, not the current tip.
+The correction in
 [ADR 0123](docs/architecture/0123-drive-the-local-finalized-clock-with-one-sealed-effect.md)
 permits exactly one local-only, activated-terms-sealed Taker-to-Maker transfer
 of one native unit through the authenticated Taker sidecar. It uses one durable
 reservation, canonical transaction-derived one-attempt submission, and
 read-only before/after verification; escrow metadata and custody must remain
-byte-identical. The Maker finalized classifier remains the only refund-window
-authority. The repair passes 325 Rust tests, strict Clippy and Rustdoc, preserved
-M3/M4/M5 contracts, and the complete repository quality/security gate. The
-live runtime/server path still awaits its focused behavioral and actual-node
-integration proof. A fresh two-devnet replay remains pending, so this is not yet actual-node GREEN and
-changes neither the M5 score nor tag status. Pushed replay
-`m5xmrrefund827a5d4a` subsequently passed both devnets through finalized tag 13
-and Maker-funded Monero verification, then failed before any clock transaction
-because a prefixed request ID exceeded the protocol maximum. The TDD fix uses
-domain-separated 64-character SHA-256 IDs and passes all 215 sidecar tests plus
-strict gates; a fresh replay is still required.
+byte-identical. Authenticated `observe_finalized_clock` then polls the official
+genesis-bound finalized tip without submission, and the Maker classifier scans
+exactly that returned block to decide the signed refund window. Fresh request
+IDs are bounded SHA-256 derivations and the driver waits at most 60 seconds.
+This path is GREEN across strict protocol, client, live-runtime, driver, and
+runner contracts plus the complete root and sidecar test suites, warning-fatal
+Clippy and Rustdoc, repository CI/security policy, Docker isolation, and
+dependency policy. The sidecar lockfile also replaces vulnerable `ruint 1.19.0`
+(`RUSTSEC-2026-0220`) with fixed `1.20.0`. A fresh two-devnet replay remains
+pending, so the M5 score and tag status are unchanged.
+Pushed replay `m5xmrrefund827a5d4a` retained the request-ID RED before any clock
+effect. Run `m5xmrrefund842610ca` then admitted exactly one clock effect, proved
+accounting and unchanged escrow state, and obtained ten Bedrock descendants
+within about 16 seconds before exposing the fixed-window observation bug. The
+current-finalized-tip TDD correction supersedes that diagnosis; neither partial
+run is completion evidence. A fresh replay is still required.
 [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint)
 and [Flow 1V](docs/manual-user-flows.md#flow-1v-repeat-the-role-correct-xmr-refund-continuation-checkpoint)
 reproduce the lower component boundaries; Flow 1W gives the exact clean replay
-command and resource/flakiness boundary. Updated estimate: 3 to 8 focused hours
-to the M5 progressive PoC and 14 to 24 focused hours to the reviewed milestone tag.
+command and resource/flakiness boundary. Updated estimate: 35 to 55 minutes for
+the corrected refund replay and 10 to 20 focused hours to the M5 closure tag.
 
 The persistent coordinator now runs 1 to 32 independent actor workers with one
 SQLite connection each, one shared daemon lease identity, per-row CAS and

@@ -12,12 +12,15 @@ use common::{
     HashType,
     block::{BedrockStatus, Block, BlockBody, BlockHeader},
 };
-use indexer_service_protocol::Block as IndexedBlock;
+use indexer_service_protocol::{
+    BedrockStatus as IndexedBedrockStatus, Block as IndexedBlock, BlockBody as IndexedBlockBody,
+    BlockHeader as IndexedBlockHeader, HashType as IndexedHashType, Signature as IndexedSignature,
+};
 use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
-    ChainClock, Hex32, MessageContext, ObserveCurrentClockRequest, Participant, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor,
+    ChainClock, Hex32, MessageContext, ObserveCurrentClockRequest, ObserveFinalizedClockRequest,
+    Participant, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -205,11 +208,11 @@ async fn node(
     (state, node, handle)
 }
 
-fn bridge_runtime(
+fn bridge_runtime<I: FinalizedIndexerApi + 'static>(
     descriptor: RuntimeDescriptor,
     private_key: PrivateKey,
     node: OfficialNodeRpc,
-    indexer: Arc<NeverIndexer>,
+    indexer: Arc<I>,
 ) -> BridgeRuntime {
     let planner = NativeEscrowPlanner::new(
         Participant::Maker,
@@ -335,4 +338,152 @@ async fn current_clock_rejects_movement_replacement_zero_time_and_identity_drift
         node_handle.stop().unwrap();
         node_handle.stopped().await;
     }
+}
+
+#[derive(Debug)]
+struct AdvancingFinalizedIndexer {
+    last_finalized_reads: AtomicUsize,
+    block_reads: AtomicUsize,
+}
+
+impl AdvancingFinalizedIndexer {
+    fn tip_for_read(read: usize) -> u64 {
+        if read < 2 { 70 } else { 71 }
+    }
+
+    fn indexed_block(block_id: u64) -> IndexedBlock {
+        let hash_byte = if block_id == nssa::GENESIS_BLOCK_ID {
+            3_u8
+        } else {
+            u8::try_from(block_id).unwrap()
+        };
+        IndexedBlock {
+            header: IndexedBlockHeader {
+                block_id,
+                prev_block_hash: IndexedHashType([hash_byte.saturating_sub(1); 32]),
+                hash: IndexedHashType([hash_byte; 32]),
+                timestamp: 1_850_000_000_000 + block_id,
+                signature: IndexedSignature([hash_byte; 64]),
+            },
+            body: IndexedBlockBody {
+                transactions: Vec::new(),
+            },
+            bedrock_status: IndexedBedrockStatus::Finalized,
+        }
+    }
+}
+
+#[async_trait]
+impl FinalizedIndexerApi for AdvancingFinalizedIndexer {
+    async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+        let read = self.last_finalized_reads.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(Self::tip_for_read(read)))
+    }
+
+    async fn block_by_id(&self, block_id: u64) -> Result<Option<IndexedBlock>, BridgeRuntimeError> {
+        self.block_reads.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(Self::indexed_block(block_id)))
+    }
+
+    async fn block_by_hash(
+        &self,
+        block_hash: [u8; 32],
+    ) -> Result<Option<IndexedBlock>, BridgeRuntimeError> {
+        self.block_reads.fetch_add(1, Ordering::SeqCst);
+        let block_id = if block_hash == [3; 32] {
+            nssa::GENESIS_BLOCK_ID
+        } else {
+            u64::from(block_hash[0])
+        };
+        Ok(Some(Self::indexed_block(block_id)))
+    }
+
+    async fn account_at_block(
+        &self,
+        _account_id: [u8; 32],
+        _block_id: u64,
+    ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+        Err(BridgeRuntimeError::InvalidObservation)
+    }
+}
+
+fn finalized_request(
+    run_id: &RunId,
+    descriptor: &RuntimeDescriptor,
+    request_id: &str,
+) -> ObserveFinalizedClockRequest {
+    ObserveFinalizedClockRequest::new(
+        MessageContext::new(
+            run_id.clone(),
+            RequestId::new(request_id).unwrap(),
+            Participant::Maker,
+        ),
+        descriptor.clone(),
+    )
+}
+
+#[tokio::test]
+async fn authenticated_finalized_clock_advances_independently_of_fixed_effect_windows() {
+    let private_key = PrivateKey::try_new([6; 32]).unwrap();
+    let descriptor = runtime(&private_key);
+    let run_id = RunId::new("finalized-clock-run-00000000000000000000000001").unwrap();
+    let (node_state, node, node_handle) = node(NodeBehavior::Stable).await;
+    let indexer = Arc::new(AdvancingFinalizedIndexer {
+        last_finalized_reads: AtomicUsize::new(0),
+        block_reads: AtomicUsize::new(0),
+    });
+    let runtime = Arc::new(bridge_runtime(
+        descriptor.clone(),
+        private_key,
+        node,
+        Arc::clone(&indexer),
+    ));
+    let state_directory = tempfile::tempdir().unwrap();
+    let bridge = start_bridge_server(
+        BridgeServerConfig::new(
+            run_id.clone(),
+            BridgeServerCapability::new(CAPABILITY).unwrap(),
+            state_directory.path().join("idempotency.json"),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        ),
+        runtime,
+    )
+    .await
+    .unwrap();
+    let client = BridgeClient::connect(BridgeClientConfig::new(
+        bridge.endpoint(),
+        SidecarCapability::new(CAPABILITY).unwrap(),
+        run_id.clone(),
+        descriptor.clone(),
+        Duration::from_secs(2),
+    ))
+    .unwrap();
+
+    let first = client
+        .observe_finalized_clock(finalized_request(
+            &run_id,
+            &descriptor,
+            "finalized-clock-0001",
+        ))
+        .await
+        .unwrap();
+    let second = client
+        .observe_finalized_clock(finalized_request(
+            &run_id,
+            &descriptor,
+            "finalized-clock-0002",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(first.clock.height, 70);
+    assert_eq!(second.clock.height, 71);
+    assert_eq!(node_state.submission_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(node_state.last_block_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.last_finalized_reads.load(Ordering::SeqCst), 4);
+    assert_eq!(indexer.block_reads.load(Ordering::SeqCst), 16);
+
+    bridge.stop().await.unwrap();
+    node_handle.stop().unwrap();
+    node_handle.stopped().await;
 }

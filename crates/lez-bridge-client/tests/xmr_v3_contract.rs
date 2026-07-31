@@ -480,6 +480,7 @@ async fn clock_verification_rejects_tampered_delta_after_one_call() {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn xmr_v3_methods_route_once_with_exact_run_and_role_headers() {
     let maker = spawn_sidecar(Participant::Maker, Behavior::Happy).await;
     let taker = spawn_sidecar(Participant::Taker, Behavior::Happy).await;

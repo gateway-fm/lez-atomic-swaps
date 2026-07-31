@@ -4430,8 +4430,9 @@ closures are complete. Remaining order is the clean refund replay,
 accepted-application actual-chain overlap, complete Maker and Taker lifecycle
 surfaces, unavailable-route composition, and the final evidence/security/tag
 review. Tag 17 stays recorded as protocol punishment-path work rather than a
-separate literal issue-#112 M5 output. Updated estimate is 3 to 8 focused hours
-to the progressive PoC and 14 to 24 focused hours to the reviewed closure tag.
+separate literal issue-#112 M5 output. This estimate is superseded by the
+finalized-tip correction checkpoint below; the current closure estimate is 10
+to 20 focused implementation hours.
 
 ## M5 local finalized-clock liveness RED and component repair (2026-07-31)
 
@@ -4465,8 +4466,7 @@ RPC, faucet, peer, DNS, or public funds participate. Cold artifact availability,
 host pressure, local finality cadence, the bounded tick-finality wait, and the
 signed punishment margin remain explicit flake or failure sources.
 
-Status is **contract-GREEN; focused live-runtime test and actual replay
-pending**. The eight-thread reservation
+Status is **component-GREEN; corrected actual replay pending**. The eight-thread reservation
 RED exposed a partial-publication race fixed by a narrow planner mutex. All 325
 Rust tests, strict Clippy/Rustdoc, compatibility contracts, and the complete
 quality/security/vulnerability gate pass. Fresh two-devnet replay remains open;
@@ -4481,3 +4481,50 @@ now proves versioned, operation-domain-separated SHA-256 prepare/verify IDs are
 deterministic, distinct, safe-grammar, and exactly 64 characters. The sidecar
 suite is 215 GREEN and strict Clippy, Rustdoc, runner-contract, formatting, and
 diff gates pass. Fresh actual-node replay remains open.
+
+## M5 finalized-tip observation correction (2026-07-31)
+
+Clean run `m5xmrrefund842610ca` admitted exactly one terms-sealed clock effect,
+advanced the sequencer from height 193 to 194, and proved one submission, exact
+accounting, unchanged escrow state, and ten Bedrock descendants under the
+configured security parameter in about 16 seconds. It then failed because the
+runner repeatedly classified immutable block 120. The classifier was correct:
+its clock describes the requested effect window, not the current finalized tip.
+Longer sleeps, more transactions, or lower security parameters cannot fix that.
+
+The focused RED required a distinct authenticated read-only current-finalized-
+tip boundary. `lez_bridge.v1.observe_finalized_clock` now returns the stable,
+genesis-bound official-indexer head through the existing production reader. The
+client enforces exact context/runtime echo and nonzero identity/time, the driver
+uses fresh SHA-256 request identities while polling for at most 60 seconds, and
+the runner scans exactly the returned finalized height for the effect. The one
+terms-sealed transaction and one-attempt submission invariant are unchanged.
+
+Focused GREEN evidence is protocol 46 of 46, client 38 of 38, sidecar current-
+clock 3 of 3, clock-driver 1 of 1, and the M5 runner contract. The complete
+sidecar and root test suites are GREEN. The default root suite also exposed and
+fixed a repository-hygiene defect: Cargo now skips the feature-gated systemd
+crash example by default while still compiling it under `test-crash-hooks`.
+Strict Clippy and warning-fatal Rustdoc pass across every root and sidecar
+target/feature, as do the repository CI/security policy, Docker-isolation,
+compatibility, and dependency-policy gates. The refreshed advisory database
+found `RUSTSEC-2026-0220` in sidecar-transitive `ruint 1.19.0`, introduced
+through the Logos v0.2 RISC Zero graph. A surgical lockfile update to fixed
+`ruint 1.20.0` passes the complete sidecar suite, strict Clippy/Rustdoc, and
+`cargo deny`; no advisory waiver was added.
+
+Literal M5 remains 3 of 7. Four outputs remain: daemon-owned effect-bearing
+accepted applications; complete supported-pair Maker CLI lifecycle; complete
+supported-pair Taker CLI lifecycle; and accepted-application actual-chain
+concurrency with restart isolation. The concurrency run should also compose an
+unavailable XMR route while unaffected BTC/ZEC work. Final evidence, security,
+manual-flow, diagram, cleanup, push, and annotated-tag review follow those four.
+Logos-owned production blockers stay disclosed but do not block local M5.
+
+Next gate: push this corrective checkpoint, then run one fresh private-engine
+isolated LEZ v0.2 plus Monero 0.18.5.1 Regtest refund replay. It must retain the
+single clock effect, finalized before/after identities and attempts, exact
+one-block classifier window, finalized tag 16, Maker recovery sweep, binding,
+and scoped cleanup. ETA from this checkpoint is 35 to 55 minutes for that replay
+and 10 to 20 focused implementation hours for the remaining literal outputs
+until evidence narrows the estimate.

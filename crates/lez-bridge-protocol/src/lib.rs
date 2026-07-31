@@ -13,6 +13,8 @@ mod xmr_v3;
 pub const METHOD_DESCRIBE_RUNTIME: &str = "lez_bridge.v1.describe_runtime";
 /// Stable JSON-RPC method for one stable current canonical chain clock.
 pub const METHOD_OBSERVE_CURRENT_CLOCK: &str = "lez_bridge.v1.observe_current_clock";
+/// Stable JSON-RPC method for one stable genesis-bound finalized chain clock.
+pub const METHOD_OBSERVE_FINALIZED_CLOCK: &str = "lez_bridge.v1.observe_finalized_clock";
 /// Prepares and durably reserves one bounded local-profile clock transaction.
 pub const METHOD_PREPARE_CURRENT_PROFILE_CLOCK: &str =
     "lez_bridge.v1.prepare_current_profile_clock";
@@ -152,6 +154,7 @@ pub use messages::{
     NativeRefundInstructionFacts, NativeRefundMetadataFacts, NativeRefundObservation,
     NativeRefundObservationTarget, NativeRefundTerms, ObserveCurrentClockRequest,
     ObserveCurrentClockResult, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedClockRequest, ObserveFinalizedClockResult,
     ObserveFinalizedWitnessedAssetClaimV2Request, ObserveFinalizedWitnessedAssetClaimV2Result,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
     ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,

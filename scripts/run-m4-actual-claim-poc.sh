@@ -23,7 +23,7 @@ readonly expected_fr_sha256="40f809394904682cb5517845cd3c2f936a5eb4609712534b573
 readonly m5_xmr_refund_clock_stall_samples=2
 readonly m5_xmr_refund_clock_max_ticks=1
 readonly m5_xmr_refund_clock_punish_guard_ms=60000
-readonly m5_xmr_refund_clock_progress_timeout_seconds=30
+readonly m5_xmr_refund_clock_progress_timeout_seconds=60
 readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"
 readonly m5_xmr_journey="${M5_XMR_JOURNEY:-claim}"
 readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"
@@ -2030,9 +2030,11 @@ drive_m5_xmr_local_finality_clock() {
     --run-id "$run_id" \
     --recipient-account-id "$maker_owner" \
     --exclusive-punish-at-ms "$punish_at_ms" \
+    --finality-timeout-seconds "$m5_xmr_refund_clock_progress_timeout_seconds" \
     --output-evidence "$tick_evidence"
   require_owner_file "$tick_evidence" "local finalized-clock tick evidence"
-  jq -e --arg run "$run_id" --arg sender "$taker_owner" --arg recipient "$maker_owner" --argjson punish "$punish_at_ms" '
+  jq -e --arg run "$run_id" --arg sender "$taker_owner" --arg recipient "$maker_owner" \
+    --argjson refund "$refund_at_ms" --argjson punish "$punish_at_ms" '
     .schema=="lez_v02_m5_local_clock_driver_v1"
     and .context.run_id==$run
     and .runtime.sidecar_role=="taker"
@@ -2051,6 +2053,14 @@ drive_m5_xmr_local_finality_clock() {
     and .recipient_after.program_owner==.terms.authenticated_transfer_program_id
     and .clock_before.timestamp_ms < $punish
     and .clock_after.timestamp_ms < $punish
+    and .finalized_clock_before.height < .finalized_clock_after.height
+    and .finalized_clock_after.height >= .clock_after.height
+    and .finalized_clock_after.timestamp_ms >= $refund
+    and .finalized_clock_after.timestamp_ms < $punish
+    and .finalized_observation_attempts_before >= 1
+    and .finalized_observation_attempts_after >= 1
+    and .finality_wait_timeout_seconds==60
+    and .finality_source=="authenticated_genesis_bound_official_indexer"
     and .sender_after.balance == (.sender_before.balance - 1)
     and .sender_after.nonce == (.sender_before.nonce + 1)
     and .recipient_after.balance == (.recipient_before.balance + 1)
@@ -2063,6 +2073,7 @@ drive_m5_xmr_local_finality_clock() {
     and .retry_policy=="one_node_submission_attempt_no_retry_poll_only"
   ' "$tick_evidence" >/dev/null ||
     fail "local finalized-clock tick violated its one-shot accounting boundary"
+  jq -er '.finalized_clock_after.height' "$tick_evidence"
 }
 
 wait_for_m5_xmr_refund_window() {
@@ -2073,17 +2084,12 @@ wait_for_m5_xmr_refund_window() {
   local maker_endpoint probe_height attempt result_tmp finalized_timestamp_ms finalized_height
   local finalized_hash finalized_identity="" previous_finalized_identity=""
   local identical_clock_samples=0 clock_tick_count=0 host_timestamp_ms
-  local awaiting_tick_finality=0 tick_finality_identity=""
-  local tick_finality_deadline_seconds=0
   maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
   probe_height="$(jq -er '.funding.containing_block_id' "$tag13_internal")"
   result_tmp="${tag16_refund_window_result}.attempt"
   for attempt in {1..18000}; do
     rm -f -- "$result_tmp"
     "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag16-clock-${attempt}" --role maker --effect refund --start-height "$probe_height" --max-blocks 1 --output-result "$result_tmp" >/dev/null 2>&1 || true
-    if (( awaiting_tick_finality == 1 && SECONDS >= tick_finality_deadline_seconds )); then
-      fail "local finalized-clock tick did not produce bounded finalized progress"
-    fi
     if jq -e '(.outcome.status=="absent" or .outcome.status=="uncertain")
       and (.outcome.finalized_clock.block_hash|test("^[0-9a-f]{64}$"))
       and (.outcome.finalized_clock.height|type)=="number"
@@ -2093,26 +2099,11 @@ wait_for_m5_xmr_refund_window() {
       finalized_height="$(jq -er '.outcome.finalized_clock.height' "$result_tmp")"
       finalized_hash="$(jq -er '.outcome.finalized_clock.block_hash' "$result_tmp")"
       finalized_identity="${finalized_height}:${finalized_hash}:${finalized_timestamp_ms}"
-      if (( awaiting_tick_finality == 1 )); then
-        if [[ "$finalized_identity" == "$tick_finality_identity" ]]; then
-          host_timestamp_ms="$(date -u +%s%3N)"
-          (( host_timestamp_ms < punish_at_ms - m5_xmr_refund_clock_punish_guard_ms )) ||
-            fail "local finalized-clock progress wait reached its punish_at safety guard"
-          sleep .25
-          continue
-        fi
-        awaiting_tick_finality=0
-        tick_finality_identity=""
-        tick_finality_deadline_seconds=0
+      if [[ "$finalized_identity" == "$previous_finalized_identity" ]]; then
+        ((identical_clock_samples += 1))
+      else
         previous_finalized_identity="$finalized_identity"
         identical_clock_samples=1
-      else
-        if [[ "$finalized_identity" == "$previous_finalized_identity" ]]; then
-          ((identical_clock_samples += 1))
-        else
-          previous_finalized_identity="$finalized_identity"
-          identical_clock_samples=1
-        fi
       fi
       (( finalized_timestamp_ms < punish_at_ms )) || fail "finalized LEZ clock reached punish_at before Tag16 submission"
       if (( finalized_timestamp_ms >= refund_at_ms && finalized_timestamp_ms < punish_at_ms )); then
@@ -2128,11 +2119,10 @@ wait_for_m5_xmr_refund_window() {
         (( clock_tick_count < m5_xmr_refund_clock_max_ticks )) ||
           fail "local finalized-clock drive exhausted its fixed tick bound"
         ((clock_tick_count += 1))
-        drive_m5_xmr_local_finality_clock "$clock_tick_count"
-        awaiting_tick_finality=1
-        tick_finality_identity="$finalized_identity"
-        tick_finality_deadline_seconds="$((SECONDS + m5_xmr_refund_clock_progress_timeout_seconds))"
-        previous_finalized_identity="$finalized_identity"
+        probe_height="$(drive_m5_xmr_local_finality_clock "$clock_tick_count")"
+        [[ "$probe_height" =~ ^[1-9][0-9]*$ ]] ||
+          fail "local clock driver returned an invalid finalized height"
+        previous_finalized_identity=""
         identical_clock_samples=0
       fi
     fi

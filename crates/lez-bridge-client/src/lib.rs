@@ -45,6 +45,7 @@ use lez_bridge_protocol::{
     FinalizedWitnessedInitializationFacts, FinalizedWitnessedInitializationScanOutcome,
     MessageContext, NativeRefundObservationTarget, ObserveCurrentClockRequest,
     ObserveCurrentClockResult, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedClockRequest, ObserveFinalizedClockResult,
     ObserveFinalizedWitnessedAssetClaimV2Request, ObserveFinalizedWitnessedAssetClaimV2Result,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
     ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
@@ -82,20 +83,20 @@ pub use lez_bridge_protocol::{
     METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3,
     METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2,
     METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK,
-    METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM,
-    METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2, METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
-    METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_CURRENT_PROFILE_CLOCK,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND,
-    METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
-    METHOD_PREPARE_NATIVE_XMR_ESCROW_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
-    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2, METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
-    METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
-    METHOD_SUBMIT_TRANSACTION, METHOD_VERIFY_CURRENT_PROFILE_CLOCK, RUN_ID_HEADER,
-    SIDECAR_ROLE_HEADER,
+    METHOD_OBSERVE_ESCROW, METHOD_OBSERVE_FINALIZED_CLOCK,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2,
+    METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_PREPARE_CURRENT_PROFILE_CLOCK, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+    METHOD_PREPARE_NATIVE_XMR_CLAIM_V3, METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
+    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+    METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW,
+    METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_SUBMIT_TRANSACTION,
+    METHOD_VERIFY_CURRENT_PROFILE_CLOCK, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use secp256k1::{
     Message as SecpMessage, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
@@ -220,6 +221,8 @@ pub enum BridgeOperation {
     DescribeRuntime,
     /// Stable current canonical clock observation.
     ObserveCurrentClock,
+    /// Stable genesis-bound finalized clock observation.
+    ObserveFinalizedClock,
     /// Durable preparation of one local-profile clock transaction.
     PrepareCurrentProfileClock,
     /// Read-only verification of one submitted clock transaction.
@@ -710,6 +713,34 @@ impl BridgeClient {
         self.reserve_context(operation, &context)?;
         let result: ObserveCurrentClockResult = self
             .request(operation, METHOD_OBSERVE_CURRENT_CLOCK, request, &context)
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        if result.runtime != self.expected_runtime
+            || result.clock.block_hash.as_bytes() == &[0; 32]
+            || result.clock.timestamp_ms == 0
+        {
+            return Err(BridgeClientError::MalformedObservation { operation });
+        }
+        Ok(result)
+    }
+
+    /// Reads one stable genesis-bound finalized clock from the official LEZ indexer.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime drift, request-ID reuse, a zero block
+    /// identity or consensus timestamp, moving finalized facts, timeout, transport
+    /// uncertainty, strict decoding, or typed remote error.
+    pub async fn observe_finalized_clock(
+        &self,
+        request: ObserveFinalizedClockRequest,
+    ) -> Result<ObserveFinalizedClockResult, BridgeClientError> {
+        let operation = BridgeOperation::ObserveFinalizedClock;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let result: ObserveFinalizedClockResult = self
+            .request(operation, METHOD_OBSERVE_FINALIZED_CLOCK, request, &context)
             .await?;
         Self::validate_response_context(operation, &context, &result.context)?;
         if result.runtime != self.expected_runtime

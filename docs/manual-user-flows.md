@@ -6453,14 +6453,15 @@ agreement composition and `punish_at` another 600000 milliseconds later.
 `M5_XMR_REFUND_DELAY_MS` may be set only to 600000 through 3600000. Shortening
 below ten minutes is intentionally rejected because application activation,
 tag 13, Maker funding, and finality must finish before the fixed five-minute
-funding cutoff margin. Waiting uses the authenticated finalized-chain
-classifier rather than wall-clock sleep or a raw indexer query. Diagnostic run
+funding cutoff margin. Funding-effect discovery uses the authenticated fixed-
+window classifier; current finality uses authenticated
+`observe_finalized_clock`, never wall time. Diagnostic run
 `m5xmrrefund8c10cd7a` reached finalized tag 13 and verified Maker-funded Monero
-output, then sampled the identical authenticated finalized height 120, block
-hash, and timestamp for more than two minutes. The local sequencer did not
-finalize empty blocks, so the consensus clock never entered the signed interval.
-Host time passed `punish_at` without authorizing a refund. The run was stopped
-and cleaned; it is RED evidence, not a completed swap.
+output, then repeatedly classified the same fixed block 120. That classifier
+correctly reports its requested window end rather than the current finalized
+head. Later proof showed Bedrock was finalizing descendants, so the initial
+empty-block diagnosis was wrong. Host time passed `punish_at` without becoming
+authority. The stopped and cleaned run is RED evidence, not a completed swap.
 
 The contract-GREEN local-only repair waits for two identical authenticated finalized
 samples, then calls authenticated `prepare_current_profile_clock`, the existing
@@ -6471,15 +6472,16 @@ stays inside the Taker sidecar. One durable reservation fixes the terms, cutoff,
 nonce, bytes, and transaction ID. Server-owned terms remain optional for legacy
 M2/M3 sidecars, but the local clock prepare and verify facility is unavailable
 unless the server owns the activated terms; the existing canonical submit
-method remains unchanged. After one canonical submission attempt, the
-read-only verification must prove exact balance and nonce deltas plus
-byte-identical metadata and custody. The runner then resumes read-only Maker
-classification; only a new finalized classifier identity inside
-`[refund_at, punish_at)` permits tag 16. Any ambiguous outcome, drift, late
-guard, unchanged finality after the bounded wait, or accounting failure stops
-without retry. The protocol, planner, client, runner-contract, lint, documentation,
-compatibility, and complete repository quality/security gates pass. Focused
-live-runtime behavior and the fresh replay remain the actual-node proof.
+method remains unchanged. After one canonical submission attempt, read-only
+verification proves exact balance and nonce deltas plus byte-identical metadata
+and custody. The driver then polls authenticated `observe_finalized_clock` with
+fresh request IDs for at most 60 seconds until the official genesis-bound
+finalized head covers the effect block. The runner classifies exactly that
+one-block finalized window; only its timestamp inside
+`[refund_at, punish_at)` permits tag 16. Any ambiguity, drift, lateness,
+unchanged finality, or accounting failure stops without retry. Focused protocol,
+client, live-runtime, driver, and runner tests are GREEN. The fresh corrected
+actual-node replay remains the proof gate.
 
 Pushed run `m5xmrrefund827a5d4a` is the next bounded RED: it passed both
 devnets through finalized tag 13 and Maker-funded Monero verification, then
@@ -6490,14 +6492,23 @@ versioned SHA-256 derivations exactly 64 safe-grammar characters long; the new
 regression, 215 sidecar tests, strict Clippy/Rustdoc, and runner contract pass.
 Repeat with a fresh run ID; do not reuse this partial evidence.
 
+Clean run `m5xmrrefund842610ca` admitted exactly one clock transaction, advanced
+the sequencer from height 193 to 194, proved exact account deltas and unchanged
+escrow state, and observed the configured ten Bedrock descendants within about
+16 seconds. It then failed because the runner still classified block 120. The
+current-finalized-tip API and runner fix are the TDD GREEN for that RED. Do not
+reuse its partial evidence: repeat from a clean pushed commit and require the
+new evidence fields `finalized_clock_before`, `finalized_clock_after`, bounded
+observation attempts, and source `authenticated_genesis_bound_official_indexer`.
+
 Expected order:
 
 1. real Delivery plan, Stage A/B activation, role-only handoff, and synchronous
    application cutoff;
 2. finalized tag 13 followed by confirmed Maker-funded Monero output;
-3. finalized refund-window observation; if the local finalized identity stalls,
-   one sealed Taker-to-Maker one-unit clock transaction followed only by
-   read-only finalized reclassification;
+3. one sealed Taker-to-Maker one-unit clock transaction, authenticated current-
+   finalized-tip polling until its block is covered, then exact one-block
+   classifier discovery inside the signed refund window;
 4. Taker tag-16 adaptation and one-attempt submission, then Maker
    terms-discovery finality;
 5. Maker ingestion and Taker-scalar extraction, Maker-directed reconstructed

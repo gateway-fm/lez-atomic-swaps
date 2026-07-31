@@ -25,14 +25,15 @@ use lez_bridge_protocol::{
     METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_CLAIM,
     METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
+    METHOD_OBSERVE_FINALIZED_CLOCK, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
     METHOD_PREPARE_CURRENT_PROFILE_CLOCK, METHOD_PREPARE_NATIVE_ESCROW,
     METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
     METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_CLAIM,
     METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
     METHOD_VERIFY_CURRENT_PROFILE_CLOCK, MessageContext, ObserveCurrentClockRequest,
-    ObserveEscrowRequest, ObserveFinalizedWitnessedClaimRequest,
+    ObserveEscrowRequest, ObserveFinalizedClockRequest, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest,
     ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest, Participant,
     PrepareCurrentProfileClockRequest, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
@@ -1067,6 +1068,29 @@ fn register_methods(
         },
     )?;
     module.register_async_method(
+        METHOD_OBSERVE_FINALIZED_CLOCK,
+        |params, state, _| async move {
+            let request: ObserveFinalizedClockRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_OBSERVE_FINALIZED_CLOCK,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .observe_finalized_clock(&operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
         METHOD_PREPARE_CURRENT_PROFILE_CLOCK,
         |params, state, _| async move {
             let request: PrepareCurrentProfileClockRequest = params.one()?;
@@ -2078,6 +2102,7 @@ fn valid_method(method: &str) -> bool {
         method,
         METHOD_DESCRIBE_RUNTIME
             | METHOD_OBSERVE_CURRENT_CLOCK
+            | METHOD_OBSERVE_FINALIZED_CLOCK
             | METHOD_VERIFY_CURRENT_PROFILE_CLOCK
             | METHOD_PREPARE_CURRENT_PROFILE_CLOCK
             | METHOD_PREPARE_NATIVE_ESCROW

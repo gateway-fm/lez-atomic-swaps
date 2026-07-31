@@ -24,6 +24,7 @@ use lez_bridge_protocol::{
     NativeInitializeInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
     NativeRefundObservation, NativeRefundObservationTarget, ObserveCurrentClockRequest,
     ObserveCurrentClockResult, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedClockRequest, ObserveFinalizedClockResult,
     ObserveFinalizedWitnessedAssetClaimV2Request, ObserveFinalizedWitnessedAssetClaimV2Result,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
     ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
@@ -69,8 +70,8 @@ use lez_bridge_protocol::{
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_INITIALIZATION_V2,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
-    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, WitnessedAssetEffectInstructionFactsV2,
-    WitnessedAssetInitializationCustodyFactsV2,
+    METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_OBSERVE_FINALIZED_CLOCK,
+    WitnessedAssetEffectInstructionFactsV2, WitnessedAssetInitializationCustodyFactsV2,
 };
 
 #[test]
@@ -101,6 +102,33 @@ fn current_clock_wire_is_strict_and_runtime_bound() {
     let mut invalid_result = serde_json::to_value(result).unwrap();
     invalid_result["clock"]["unexpected"] = serde_json::json!(true);
     assert!(serde_json::from_value::<ObserveCurrentClockResult>(invalid_result).is_err());
+}
+
+#[test]
+fn finalized_clock_wire_is_strict_and_runtime_bound() {
+    assert_eq!(
+        METHOD_OBSERVE_FINALIZED_CLOCK,
+        "lez_bridge.v1.observe_finalized_clock"
+    );
+    let request = ObserveFinalizedClockRequest::new(context(), runtime());
+    let result = ObserveFinalizedClockResult::new(
+        request.context.clone(),
+        request.runtime.clone(),
+        ChainClock::new(h(96), 97, 1_850_000_001_600),
+    );
+    assert_eq!(
+        serde_json::from_value::<ObserveFinalizedClockResult>(
+            serde_json::to_value(&result).unwrap()
+        )
+        .unwrap(),
+        result
+    );
+    let mut invalid_request = serde_json::to_value(request).unwrap();
+    invalid_request["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<ObserveFinalizedClockRequest>(invalid_request).is_err());
+    let mut invalid_result = serde_json::to_value(result).unwrap();
+    invalid_result["clock"]["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<ObserveFinalizedClockResult>(invalid_result).is_err());
 }
 
 #[test]

@@ -13,11 +13,12 @@ use lez_bridge_client::{
     METHOD_CLASSIFY_FINALIZED_WITNESSED_CLAIM, METHOD_CLASSIFY_FINALIZED_WITNESSED_FUNDING,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_INITIALIZATION, METHOD_COMPLETE_WITNESSED_CLAIM,
     METHOD_DESCRIBE_RUNTIME, METHOD_OBSERVE_CURRENT_CLOCK, METHOD_OBSERVE_ESCROW,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING,
-    METHOD_OBSERVE_NATIVE_REFUND, METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_NATIVE_ESCROW, METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
-    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
+    METHOD_OBSERVE_FINALIZED_CLOCK, METHOD_OBSERVE_FINALIZED_WITNESSED_CLAIM,
+    METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
+    METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
+    METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    SidecarCapability,
 };
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
@@ -32,7 +33,8 @@ use lez_bridge_protocol::{
     MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation, NativeEscrowTerms,
     NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
     NativeRefundObservationTarget, ObserveCurrentClockRequest, ObserveCurrentClockResult,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
+    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedClockRequest,
+    ObserveFinalizedClockResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedClaimResult, ObserveFinalizedWitnessedFundingRequest,
     ObserveFinalizedWitnessedFundingResult, ObserveNativeRefundRequest, ObserveNativeRefundResult,
     ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObserveWitnessedEscrowRequest,
@@ -282,6 +284,32 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
             ))
         })
         .expect("observe current clock method");
+    module
+        .register_method(METHOD_OBSERVE_FINALIZED_CLOCK, |params, fixture, _| {
+            let request: ObserveFinalizedClockRequest = params.one()?;
+            fixture.record(METHOD_OBSERVE_FINALIZED_CLOCK);
+            let runtime = if matches!(fixture.behavior, Behavior::CurrentClockWrongRuntime) {
+                runtime(Participant::Taker, 99)
+            } else {
+                request.runtime
+            };
+            let timestamp_ms = if matches!(fixture.behavior, Behavior::CurrentClockZeroTimestamp) {
+                0
+            } else {
+                1_850_000_000_070
+            };
+            let block_hash = if matches!(fixture.behavior, Behavior::CurrentClockZeroHash) {
+                [0; 32]
+            } else {
+                [70; 32]
+            };
+            Ok::<_, ErrorObjectOwned>(ObserveFinalizedClockResult::new(
+                response_context(&request.context, fixture.behavior),
+                runtime,
+                ChainClock::new(Hex32::from_bytes(block_hash), 70, timestamp_ms),
+            ))
+        })
+        .expect("observe finalized clock method");
     register_existing_transaction_methods(module);
     register_refund_methods(module);
     register_submit_method(module);
@@ -340,6 +368,44 @@ async fn current_clock_is_runtime_bound_nonzero_and_single_attempt() {
     }
 }
 
+#[tokio::test]
+async fn finalized_clock_is_read_only_single_attempt_and_validated() {
+    let expected_runtime = runtime(Participant::Maker, 55);
+    let run = RunId::new(TEST_RUN).unwrap();
+    for behavior in [Behavior::Happy, Behavior::CurrentClockZeroHash] {
+        let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, behavior).await;
+        let observed = client(
+            &sidecar.endpoint,
+            MAKER_CAPABILITY,
+            &run,
+            expected_runtime.clone(),
+            Duration::from_secs(1),
+        )
+        .observe_finalized_clock(ObserveFinalizedClockRequest::new(
+            context(&run, Participant::Maker, "observe-finalized-clock"),
+            expected_runtime.clone(),
+        ))
+        .await;
+        match behavior {
+            Behavior::Happy => assert!(matches!(
+                observed,
+                Ok(ObserveFinalizedClockResult {
+                    clock: ChainClock { height: 70, .. },
+                    ..
+                })
+            )),
+            Behavior::CurrentClockZeroHash => assert!(matches!(
+                observed,
+                Err(BridgeClientError::MalformedObservation {
+                    operation: BridgeOperation::ObserveFinalizedClock
+                })
+            )),
+            _ => unreachable!(),
+        }
+        assert_eq!(sidecar.fixture.calls(METHOD_OBSERVE_FINALIZED_CLOCK), 1);
+        assert_eq!(sidecar.fixture.calls(METHOD_SUBMIT_TRANSACTION), 0);
+    }
+}
 fn register_existing_transaction_methods(module: &mut RpcModule<Fixture>) {
     register_witnessed_escrow_method(module);
     register_finalized_witnessed_funding_method(module);

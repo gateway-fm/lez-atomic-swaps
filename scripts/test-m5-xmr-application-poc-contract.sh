@@ -397,7 +397,7 @@ for required in \
   'readonly m5_xmr_refund_clock_stall_samples=2' \
   'readonly m5_xmr_refund_clock_max_ticks=1' \
   'readonly m5_xmr_refund_clock_punish_guard_ms=60000' \
-  'readonly m5_xmr_refund_clock_progress_timeout_seconds=30' \
+  'readonly m5_xmr_refund_clock_progress_timeout_seconds=60' \
   '--bin lez-v02-local-clock-driver' \
   'readonly local_clock_driver_binary="${staged_binary_root}/lez-v02-local-clock-driver"' \
   'stage_executable "${sidecar_target}/debug/lez-v02-local-clock-driver"' \
@@ -412,14 +412,9 @@ for required in \
   'host_timestamp_ms >= refund_at_ms' \
   'host_timestamp_ms < punish_at_ms - m5_xmr_refund_clock_punish_guard_ms' \
   'clock_tick_count < m5_xmr_refund_clock_max_ticks' \
-  'drive_m5_xmr_local_finality_clock "$clock_tick_count"' \
-  'if (( awaiting_tick_finality == 1 && SECONDS >= tick_finality_deadline_seconds )); then' \
-  'if (( awaiting_tick_finality == 1 )); then' \
-  'if [[ "$finalized_identity" == "$tick_finality_identity" ]]; then' \
-  'local finalized-clock tick did not produce bounded finalized progress' \
-  'awaiting_tick_finality=1' \
-  'tick_finality_identity="$finalized_identity"' \
-  'tick_finality_deadline_seconds="$((SECONDS + m5_xmr_refund_clock_progress_timeout_seconds))"' \
+  'probe_height="$(drive_m5_xmr_local_finality_clock "$clock_tick_count")"' \
+  '--finality-timeout-seconds "$m5_xmr_refund_clock_progress_timeout_seconds"' \
+  'jq -er '\''.finalized_clock_after.height'\'' "$tick_evidence"' \
   '"$local_clock_driver_binary" \' \
   '--sidecar-endpoint "$taker_endpoint"' \
   '--capability-file "$taker_sidecar_root/capability"' \
@@ -428,6 +423,13 @@ for required in \
   '--recipient-account-id "$maker_owner"' \
   '--exclusive-punish-at-ms "$punish_at_ms"' \
   '.schema=="lez_v02_m5_local_clock_driver_v1"' \
+  '.finalized_clock_before.height < .finalized_clock_after.height' \
+  '.finalized_clock_after.height >= .clock_after.height' \
+  '.finalized_clock_after.timestamp_ms >= $refund' \
+  '.finalized_clock_after.timestamp_ms < $punish' \
+  '.finalized_observation_attempts_before >= 1' \
+  '.finalized_observation_attempts_after >= 1' \
+  '.finality_source=="authenticated_genesis_bound_official_indexer"' \
   '.submission_request_id==.transaction_id' \
   '.node_submission_attempts==1' \
   '.transfer_amount==1' \
@@ -459,29 +461,20 @@ fi
 stall_trigger_line="$(unique_line '^            identical_clock_samples >= m5_xmr_refund_clock_stall_samples \)\); then$' 'repeated-clock stall trigger')"
 punish_guard_line="$(unique_line '^        \(\( host_timestamp_ms < punish_at_ms - m5_xmr_refund_clock_punish_guard_ms \)\) \|\|$' 'clock-driver punish guard')"
 clock_tick_bound_line="$(unique_line '^        \(\( clock_tick_count < m5_xmr_refund_clock_max_ticks \)\) \|\|$' 'clock-driver fixed tick bound')"
-clock_driver_call_line="$(unique_line '^        drive_m5_xmr_local_finality_clock "\$clock_tick_count"$' 'clock-driver invocation')"
+clock_driver_call_line="$(unique_line '^        probe_height=.*drive_m5_xmr_local_finality_clock "\$clock_tick_count".*$' 'clock-driver invocation')"
 readonly stall_trigger_line punish_guard_line clock_tick_bound_line clock_driver_call_line
 (( stall_trigger_line < punish_guard_line && punish_guard_line < clock_tick_bound_line &&
    clock_tick_bound_line < clock_driver_call_line )) ||
   fail 'M5 local clock drive is not gated by repeated identity, punish guard, and tick bound'
 
-progress_deadline_gate_line="$(unique_line '^    if [(][(] awaiting_tick_finality == 1 && SECONDS >= tick_finality_deadline_seconds [)][)]; then$' 'post-tick finality deadline gate')"
-progress_wait_gate_line="$(unique_line '^      if [(][(] awaiting_tick_finality == 1 [)][)]; then$' 'post-tick finalized-progress gate')"
-unchanged_tick_identity_line="$(unique_line '^        if \[\[ "\$finalized_identity" == "\$tick_finality_identity" \]\]; then$' 'unchanged post-tick identity gate')"
-progress_wait_continue_line="$(unique_line '^          continue$' 'post-tick no-hammer continuation')"
-awaiting_tick_set_line="$(unique_line '^        awaiting_tick_finality=1$' 'post-tick wait activation')"
-tick_identity_set_line="$(unique_line '^        tick_finality_identity="\$finalized_identity"$' 'post-tick identity anchor')"
-progress_deadline_set_line="$(unique_line '^        tick_finality_deadline_seconds="\$[(][(]SECONDS [+] m5_xmr_refund_clock_progress_timeout_seconds[)][)]"$' 'post-tick finality deadline')"
-readonly progress_deadline_gate_line progress_wait_gate_line unchanged_tick_identity_line
-readonly progress_wait_continue_line awaiting_tick_set_line tick_identity_set_line progress_deadline_set_line
-(( progress_deadline_gate_line < progress_wait_gate_line &&
-   progress_wait_gate_line < unchanged_tick_identity_line &&
-   unchanged_tick_identity_line < progress_wait_continue_line &&
-   progress_wait_continue_line < stall_trigger_line &&
-   clock_driver_call_line < awaiting_tick_set_line &&
-   awaiting_tick_set_line < tick_identity_set_line &&
-   tick_identity_set_line < progress_deadline_set_line )) ||
-  fail 'M5 local clock driver can hammer before bounded authenticated finalized progress'
+if rg -n 'awaiting_tick_finality|tick_finality_identity|tick_finality_deadline_seconds' \
+    <<<"$clock_driver_source" >/dev/null; then
+  fail 'M5 runner still conflates fixed-window classification with current finalized progress'
+fi
+finalized_height_output_line="$(unique_line '^  jq -er '\''.finalized_clock_after.height'\'' "\$tick_evidence"$' 'driver finalized-height output')"
+readonly finalized_height_output_line
+(( finalized_height_output_line < clock_driver_call_line )) ||
+  fail 'M5 runner invokes the clock driver before its finalized-height contract exists'
 
 refund_wait_line="$(unique_line '^    wait_for_m5_xmr_refund_window$' 'refund-window wait invocation')"
 refund_prepare_line="$(unique_line '^    prepare_tag16_refund_signature$' 'tag16 signature invocation')"

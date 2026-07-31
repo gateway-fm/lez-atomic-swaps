@@ -13,6 +13,11 @@ workspace = true
 [features]
 test-crash-hooks = ["zec-reference-actor/test-crash-hooks"]
 
+[[example]]
+name = "m5-systemd-fault-actor"
+path = "examples/m5-systemd-fault-actor.rs"
+required-features = ["test-crash-hooks"]
+
 [dependencies]
 anyhow = "1.0.102"
 base64 = "0.22.1"
