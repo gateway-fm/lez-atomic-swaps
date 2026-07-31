@@ -274,8 +274,17 @@ unknown across restart without resend; and Taker-exact plus Maker-discovery
 classification require canonical finalized refund facts in
 `[refund_at, punish_at)`. This uses controlled local fixtures, not the actual
 LEZ and Monero devnets, so Maker extraction, reconstructed-key sweep, binding,
-and tag 17 remain open. [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint) reproduces the exact component tests and external-resource boundary. Updated estimate: 8 to 18 focused hours to M5 PoC and
-18 to 32 focused hours to the reviewed milestone tag.
+and tag 17 remain open. The next role-correct component is now GREEN: the real
+Taker process cryptographically verifies and publishes tag 16 through the
+transaction-derived one-attempt identity; the Maker accepts only canonical
+finalized discovery into the precommitted refund session; and one sweep engine
+selects the opposite reconstruction, destination, and confirmation roles for
+claim versus refund. This still uses process/RPC doubles and no chain nodes, so
+actual runner composition, the refund binder, exact local-devnet replay, and
+tag 17 remain open. [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint)
+and [Flow 1V](docs/manual-user-flows.md#flow-1v-repeat-the-role-correct-xmr-refund-continuation-checkpoint)
+reproduce both component boundaries and list every external resource. Updated
+estimate: 6 to 14 focused hours to M5 PoC and 16 to 28 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now runs 1 to 32 independent actor workers with one
 SQLite connection each, one shared daemon lease identity, per-row CAS and

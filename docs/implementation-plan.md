@@ -4361,3 +4361,30 @@ CI and local scripts fail if the project name is empty or does not start with
 | Trade direction was unstated in both contractual sources | ADR 0008 now separates taker-first funding from construction-specific claimant order; ZEC's chain order comes directly from RFP F4 | Keep direction immutable; BTC/ZEC allow both only through their reviewed actor/chain flows, while XMR remains LEZ-first only |
 | Primary COMIT implementation does not support XMR-first | Pinned commit `dc6ba84…` explicitly ships scriptable-chain-first only | Reject `TakerSellsForeign` for XMR in core and actual CLI; require a new reviewed construction to supersede ADR 0008 |
 | Dependency advisories can appear without a source change | The required `cargo-deny` job runs on every push and pull request and explicitly includes `advisories` | Keep advisories hard-failing; investigate and remediate rather than adding broad ignores |
+
+## M5 role-correct tag-16 refund continuation checkpoint
+
+The component boundary after ADR 0120 is GREEN. A real Taker process now loads
+the role-fixed Stage A/B material, validates the refund session and aggregate
+signature cryptographically, calls authenticated prepare and complete with
+distinct request IDs, and submits only under the transaction-derived canonical
+identity. Its process proof observes one submission and no retry; crossed role,
+session, signature, and request identities fail before sidecar I/O.
+
+The Maker reference actor now ingests only canonical finalized tag-16
+`DiscoverByTerms` evidence, re-derives its exact durable refund session, and
+writes the observed signature into the existing role-local journal-linked
+packet format. The existing Monero sweep engine is now symmetric without
+duplicating wallet logic: claim retains Taker share plus Maker scalar and pays
+Taker, while explicit refund uses Maker share plus Taker scalar and pays Maker;
+the opposite role wallet mines confirmations and the shared-wallet process
+remains neutral. Legacy claim evidence stays v2-compatible and refund emits an
+honest journey-bound v3 schema. ADR 0121 records current components, RPCs,
+sequence, and the conditional atomicity argument; Flow 1V reproduces the tests.
+
+Literal M5 remains 3 of 7. Remaining order: wire a bounded fast-refund journey
+into the isolated application runner; add the finalized-refund/Monero receipt
+binder; execute and retain a fresh role-correct LEZ plus Monero Regtest replay
+and exact cleanup; then close the still-open actual-chain concurrency and
+unavailable-route/operator surfaces required by the seven accepted outputs.
+Tag 17 remains a separate punishment-path requirement. Current estimate is 6 to 14 focused hours to M5 PoC and 16 to 28 focused hours to the reviewed closure tag.

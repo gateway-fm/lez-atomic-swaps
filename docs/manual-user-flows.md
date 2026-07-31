@@ -6378,6 +6378,49 @@ bind both chains. Tag 17 and final M5 certification also remain open.
 
 See ADR 0120 for the component, sequence, and conditional-atomicity diagrams.
 
+## Flow 1V: repeat the role-correct XMR refund continuation checkpoint
+
+Status: **COMPONENT-GREEN; NOT AN ACTUAL REFUND SWAP.** This flow exercises the
+real Taker tag-16 process, Maker finalized-signature ingestion, and the
+role-neutral claim/refund sweep selector. It intentionally stops before node
+startup and therefore does not certify a Monero recovery transaction.
+
+From the repository root:
+
+```bash
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+
+cargo +1.96.0 test --locked --offline \
+  -p xmr-reference-actor --all-features --all-targets
+
+cargo +1.96.0 test --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --all-features --bin lez-v02-xmr-regtest-sweep
+```
+
+Expected focused results include 2 of 2 authenticated tag-16 process cases, the
+Maker refund-ingestion command and finalized-role gate, and 4 of 4 sweep
+selector cases. The process proof verifies the canonical Stage-A refund hash,
+cryptographic final signature, distinct prepare/complete identities, one
+transaction-derived submission, and no retry. Negative paths reject crossed
+role/session/signature/request inputs before wire access. The sweep proof keeps
+legacy claim evidence unchanged and requires refund to use the Maker share plus
+extracted Taker scalar, Maker destination, Taker confirmation wallet, and v3
+refund evidence.
+
+External runtime resources: none. The process test uses an authenticated
+in-process sidecar and deterministic role material; the ingestion and sweep
+tests use temporary files and local value selection. They start no Docker
+service, LEZ node, Monero daemon, wallet RPC, DNS lookup, public RPC, faucet,
+peer, or funds. This makes the component gate fast and deterministic but cannot
+show finality, reconstructed-wallet acceptance, fees, confirmations, or
+cross-chain binding. The actual runner must use a fresh isolated private Docker
+engine, ephemeral loopback sequencer/indexer/monerod/wallet endpoints,
+deterministic local genesis/Regtest funds, a neutral shared-wallet process, and
+role-correct Maker/Taker wallets. See ADR 0121 for its component, sequence, and
+conditional-atomicity diagrams.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

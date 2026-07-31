@@ -403,6 +403,38 @@ pub enum Action {
         #[arg(long, value_name = "NEW_PUBLIC_JSON")]
         output_final_signature: PathBuf,
     },
+    /// Convert role-local finalized tag-16 discovery into the Maker's extraction packet after
+    /// proving it opens the existing durable refund presignature.
+    #[cfg(feature = "sessions")]
+    IngestFinalizedRefundSignature {
+        /// Existing owner-only Maker role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// Maker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// Taker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// Canonical countersigned Stage-B activation wire.
+        #[arg(long, value_name = "STAGE_B")]
+        activation_stage_b: PathBuf,
+        /// Existing owner-private Maker journal containing the refund presignature.
+        #[arg(long, value_name = "PRIVATE_SQLITE")]
+        journal: PathBuf,
+        /// Run identity echoed by the role-local finalized classifier.
+        #[arg(long)]
+        run_id: String,
+        /// Canonical Maker-sidecar `DiscoverByTerms` result for tag 16.
+        #[arg(long, value_name = "FINALIZED_JSON")]
+        finalized_refund: PathBuf,
+        /// New owner-private canonical final-signature packet for extraction/reconstruction.
+        #[arg(long, value_name = "NEW_PRIVATE_JSON")]
+        output_final_signature: PathBuf,
+    },
     /// Bind finalized LEZ Claim evidence and its verified adaptor extraction to one
     /// independently verified actual-local Monero sweep.
     #[cfg(feature = "sessions")]
@@ -913,6 +945,28 @@ pub fn execute(cli: Cli) -> Result<()> {
             &output_final_signature,
         ),
         #[cfg(feature = "sessions")]
+        Action::IngestFinalizedRefundSignature {
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            activation_stage_b,
+            journal,
+            run_id,
+            finalized_refund,
+            output_final_signature,
+        } => ingest_finalized_refund_signature(
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &activation_stage_b,
+            &journal,
+            &run_id,
+            &finalized_refund,
+            &output_final_signature,
+        ),
+        #[cfg(feature = "sessions")]
         Action::BindFinalizedClaimSweep {
             private_root,
             own_public_packet,
@@ -1055,6 +1109,91 @@ fn ingest_finalized_claim_signature(
     )
     .context("ingest finalized tag-15 signature into the Taker claim session")?;
     destination.revalidate()
+}
+
+#[cfg(feature = "sessions")]
+#[allow(clippy::too_many_arguments)]
+fn ingest_finalized_refund_signature(
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    activation_stage_b: &Path,
+    journal: &Path,
+    run_id: &str,
+    finalized_refund: &Path,
+    output_final_signature: &Path,
+) -> Result<()> {
+    let destination = SecureDestination::new(
+        output_final_signature,
+        "observed refund final-signature packet",
+    )?;
+    destination.ensure_absent("observed refund final-signature packet")?;
+    let lifecycle = load_refund_lifecycle(
+        ActorRole::Maker,
+        private_root,
+        own_public_packet,
+        peer_public_packet,
+        agreement_stage_a,
+        activation_stage_b,
+    )?;
+    let result = read_finalized_xmr_effect(finalized_refund)?;
+    let facts = discovered_finalized_xmr_facts(
+        &result,
+        run_id,
+        &lifecycle.binding.terms(),
+        XmrNativeEffectV3::Refund,
+        BridgeParticipant::Maker,
+    )?;
+    let signature = facts
+        .aggregate_signature
+        .ok_or_else(|| anyhow!("finalized tag-16 facts omit the aggregate signature"))?;
+    write_observed_final_signature_packet(
+        journal,
+        &lifecycle.session,
+        RunnerRole::Maker,
+        *signature.as_bytes(),
+        output_final_signature,
+    )
+    .context("ingest finalized tag-16 signature into the Maker refund session")?;
+    destination.revalidate()
+}
+
+#[cfg(feature = "sessions")]
+fn load_refund_lifecycle(
+    role: ActorRole,
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    activation_stage_b: &Path,
+) -> Result<ValidatedClaimLifecycle> {
+    let packets = StageRolePackets::read(role, own_public_packet, peer_public_packet)?;
+    let material = validate_private_role(private_root, role, &packets)?;
+    let agreement = read_validated_stage_a(agreement_stage_a, &packets)?;
+    let wire = read_public_input(
+        activation_stage_b,
+        u64::try_from(MAX_XMR_ACTIVATION_WIRE_BYTES).unwrap_or(u64::MAX),
+        "signed Stage-B activation wire",
+    )?;
+    let activation = XmrActivatedAgreementV1::from_wire(&agreement, &wire, &material.view)
+        .context("signed Stage-B activation wire is invalid")?;
+    let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
+        .context("Stage-B LEZ binding is invalid")?;
+    let session = ValidatedSession::from_untweaked_context(
+        agreement
+            .refund_session_descriptor()
+            .context()
+            .context("refund session descriptor is invalid")?,
+    )
+    .context("refund runner session is invalid")?;
+    Ok(ValidatedClaimLifecycle {
+        agreement,
+        activation,
+        binding,
+        session,
+        material,
+    })
 }
 
 #[cfg(feature = "sessions")]
@@ -2665,8 +2804,11 @@ fn decode_vec(encoded: &str) -> Result<Vec<u8>> {
 mod finalized_effect_gate_tests {
     use super::*;
     use lez_bridge_protocol::{
-        ExactTransactionBytes, FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext,
-        PreparedTransaction, RequestId, TransactionId, XmrNativeEscrowTermsV3Input,
+        AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, DiscoveryWindow,
+        ExactTransactionBytes, FinalizedBlockIdentity, FinalizedNativeXmrUnavailableReasonV3,
+        Hex32, MessageContext, NativeCustodyFacts, ObservedTransactionFacts, PreparedTransaction,
+        RequestId, TransactionId, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
+        XmrNativeEscrowTermsV3Input, XmrNativeInstructionFactsV3,
     };
 
     fn h(byte: u8) -> Hex32 {
@@ -2774,6 +2916,78 @@ mod finalized_effect_gate_tests {
         )
         .expect_err("non-affirmative discovery must remain pending");
         assert!(format!("{error:#}").contains("not affirmative Found"));
+    }
+
+    #[test]
+    fn maker_accepts_only_canonical_discovered_finalized_refund_signature() {
+        let terms = terms();
+        let signature = AggregateBip340Signature::from_bytes([0x65; 64]);
+        let facts = FinalizedNativeXmrEffectFactsV3::new(
+            ObservedTransactionFacts::new(
+                TransactionId::from_bytes([0x66; 32]),
+                ExactTransactionBytes::new(vec![0x10, 0x65])
+                    .expect("exact refund transaction bytes"),
+                ChainPosition::new(h(70), 100, 2),
+                AccountIds::new(vec![h(12)]).expect("refund signer"),
+                true,
+            ),
+            XmrNativeInstructionFactsV3::new(
+                XmrNativeEffectV3::Refund,
+                h(3),
+                AccountIds::new(vec![h(5), h(6), h(7), h(12)]).expect("refund account order"),
+                h(1),
+                h(18),
+                None,
+            )
+            .expect("canonical refund instruction"),
+            Some(signature),
+            FinalizedBlockIdentity::new(100, h(70), 15_000),
+            XmrNativeEscrowMetadataFactsV3::from_terms(terms, XmrNativeEscrowStateV3::Refunded),
+            NativeCustodyFacts::new(h(6), h(4), 0),
+        );
+        let result = ClassifyFinalizedNativeXmrEffectV3Result::new(
+            MessageContext::new(
+                RunId::new("actor-finalized-refund").expect("run ID"),
+                RequestId::new("actor-finalized-refund-request").expect("request ID"),
+                BridgeParticipant::Maker,
+            ),
+            terms,
+            XmrNativeEffectV3::Refund,
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+            FinalizedNativeXmrScanOutcomeV3::found(
+                ChainClock::new(h(71), 110, 30_000),
+                DiscoveryWindow::new(90, 21).expect("discovery window"),
+                facts,
+            ),
+        )
+        .expect("canonical finalized refund result");
+
+        let accepted = discovered_finalized_xmr_facts(
+            &result,
+            "actor-finalized-refund",
+            &terms,
+            XmrNativeEffectV3::Refund,
+            BridgeParticipant::Maker,
+        )
+        .expect("Maker accepts role-local finalized refund discovery");
+        assert_eq!(accepted.aggregate_signature, Some(signature));
+
+        for (effect, role) in [
+            (XmrNativeEffectV3::Claim, BridgeParticipant::Maker),
+            (XmrNativeEffectV3::Refund, BridgeParticipant::Taker),
+        ] {
+            assert!(
+                discovered_finalized_xmr_facts(
+                    &result,
+                    "actor-finalized-refund",
+                    &terms,
+                    effect,
+                    role,
+                )
+                .is_err(),
+                "crossed effect or role must fail closed"
+            );
+        }
     }
 }
 
