@@ -4768,3 +4768,46 @@ three accepted outputs still open are:
 No M5 tag is justified until those outputs and the final composite gates pass.
 Updated ETA is 8 to 16 focused implementation hours to the M5 tag, subject to
 measured fresh-node cycles and final review.
+
+## M5 separate XMR effect-workflow authority checkpoint (2026-07-31)
+
+The next Maker/Taker CLI slice began with a real restart-safety RED rather than
+relaxing the existing schema-v2 monitor boundary. The new dedicated
+SqliteXmrWorkflowJournal binds one exact swap, role, run, agreement,
+activation, and future effect-authority digest. It uses exclusive 0600 creation,
+an owner-private parent, a dedicated application ID and exact STRICT schema,
+one irreversible claim/refund branch CAS, and fixed role-legal steps.
+
+The first RED could not import the journal API. GREEN proves that the only
+Prepared-to-Started transaction returns InvokeOnce, while both Started and
+Unknown reopen as ObserveOnly and cannot be rearmed. A second RED constructed a
+foreign SQLite database with copied application headers and table names; exact
+canonical schema comparison now rejects it. Eight concurrent creators produce
+exactly one new journal, and eight concurrent authorizers produce one
+InvokeOnce plus seven ObserveOnly decisions. The full lez-swap-store
+all-target/all-feature suite is GREEN at 156 tests; strict Clippy,
+warning-fatal Rustdoc, rustfmt, and diff checks pass.
+
+ADR 0126 records the authority split. The workflow journal coordinates local
+branch and process recovery only. Immutable adaptor journals still authorize
+Stage A/B, and the existing tag-15/tag-16 sidecar journals remain the actual
+one-attempt LEZ send authorities. No chain endpoint, credential, tool, manifest
+v3, receipt v2, CLI effect, or actual-node swap is added by this checkpoint.
+The manual reproduction guide therefore remains unchanged until a real user
+command exists.
+
+Literal M5 remains 4 of 7. The next implementation order is:
+
+1. publish and validate a canonical role-fixed XMR effect-authority v1 through
+   a new application manifest v3, while legacy schema v2 remains monitor-only;
+2. add acceptance receipt v2 and route Maker/Taker lifecycle commands through
+   the separate workflow journal and exact external classifiers;
+3. prove claim and refund through fresh isolated LEZ and official Monero local
+   nodes, then update the manual flow and evidence packet; and
+4. close the complete all-pair Maker CLI, Taker CLI, and accepted-application
+   coordinator concurrency/restart outputs.
+
+There is no external blocker to this local-functional work. Logos-owned public
+readiness caveats remain tracked separately and do not block milestone
+certification. Updated estimate is 7 to 14 focused implementation hours to the
+M5 tag, dominated by v3/receipt composition and fresh two-devnet proofs.

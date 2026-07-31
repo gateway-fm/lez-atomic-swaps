@@ -17,6 +17,7 @@ mod maker_actor_process;
 mod maker_application;
 mod maker_offer;
 mod public_effect_journal;
+mod xmr_effect_workflow_journal;
 mod zec_recovery;
 
 pub use adaptor_session_journal::{
@@ -64,6 +65,10 @@ pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
     PublicEffectKey, PublicEffectObservation, PublicEffectOperation, PublicEffectSnapshot,
     PublicEffectState, PublicEffectSubmissionResult, SqlitePublicEffectJournal,
+};
+pub use xmr_effect_workflow_journal::{
+    SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowDecision, XmrWorkflowIdentityV1,
+    XmrWorkflowStep,
 };
 pub use zec_recovery::{
     MakerZecAcceptanceCommit, MakerZecAcceptanceReplay, SqliteZecRecoveryStore,
@@ -441,6 +446,30 @@ pub enum StoreError {
     /// Public effect bytes, digest, counters, or transition state are malformed.
     #[error("public effect journal state is corrupt")]
     CorruptPublicEffectState,
+    /// Exclusive XMR workflow journal creation found an existing safe database.
+    #[error("XMR effect workflow database already exists")]
+    XmrWorkflowDatabaseAlreadyExists,
+    /// An XMR workflow identity is empty, malformed, or unsafe.
+    #[error("XMR effect workflow identity is invalid")]
+    InvalidXmrWorkflowIdentity,
+    /// Immutable XMR workflow identity, branch, step, or transition state conflicts.
+    #[error("XMR effect workflow conflicts with durable authority")]
+    XmrWorkflowConflict,
+    /// The dedicated XMR workflow has no initialized identity.
+    #[error("XMR effect workflow identity is missing")]
+    MissingXmrWorkflowIdentity,
+    /// The requested XMR workflow step has not been prepared.
+    #[error("XMR effect workflow step is missing")]
+    MissingXmrWorkflowStep,
+    /// The XMR workflow schema belongs to another application.
+    #[error("XMR effect workflow database schema is foreign")]
+    ForeignXmrWorkflowSchema,
+    /// A newer XMR workflow schema must not be reinterpreted.
+    #[error("XMR effect workflow database uses a future schema")]
+    FutureXmrWorkflowSchema,
+    /// Persisted XMR workflow rows or schema invariants are corrupt.
+    #[error("XMR effect workflow state is corrupt")]
+    CorruptXmrWorkflowState,
     /// A BTC maker second-lock intent has a wrong role, revision, agreement, or plan.
     #[error("Bitcoin maker-lock intent is invalid")]
     InvalidBtcMakerLockIntent,
