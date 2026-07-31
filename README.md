@@ -267,9 +267,15 @@ unaffected across restart, and revisioned Zcash re-enable restores quotes. Full
 R3 still requires automatic unavailable-node behavior and an actual unaffected-
 pair application. Fixed packaged-system-service start/stop and receipt-bound
 XMR Taker monitoring are now GREEN. XMR Taker claim/refund effect composition
-and actual-application concurrency remain. Updated estimate after the
-lifecycle-control checkpoint: 10 to 20 focused hours to M5 PoC
-and 20 to 36 focused hours to the reviewed milestone tag.
+and actual-application concurrency remain. The tag-16 sidecar checkpoint is now
+component-GREEN: authenticated Taker preparation and completion feed only the
+transaction-derived one-attempt submission identity; an ambiguous send remains
+unknown across restart without resend; and Taker-exact plus Maker-discovery
+classification require canonical finalized refund facts in
+`[refund_at, punish_at)`. This uses controlled local fixtures, not the actual
+LEZ and Monero devnets, so Maker extraction, reconstructed-key sweep, binding,
+and tag 17 remain open. [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint) reproduces the exact component tests and external-resource boundary. Updated estimate: 8 to 18 focused hours to M5 PoC and
+18 to 32 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now runs 1 to 32 independent actor workers with one
 SQLite connection each, one shared daemon lease identity, per-row CAS and

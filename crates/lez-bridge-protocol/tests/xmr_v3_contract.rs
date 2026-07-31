@@ -542,7 +542,15 @@ fn effect_fixture(
         transaction,
         instruction,
         signature,
-        FinalizedBlockIdentity::new(100, h(70), 25_000),
+        FinalizedBlockIdentity::new(
+            100,
+            h(70),
+            if effect == XmrNativeEffectV3::Refund {
+                15_000
+            } else {
+                25_000
+            },
+        ),
         XmrNativeEscrowMetadataFactsV3::from_terms(terms, state),
         NativeCustodyFacts::new(h(6), h(4), balance),
     );
@@ -574,6 +582,37 @@ fn all_six_xmr_effects_validate_exact_finalized_facts() {
         )
         .expect("valid finalized effect");
         roundtrip(&result);
+    }
+}
+
+#[test]
+fn refund_finalized_facts_enforce_half_open_refund_window() {
+    let clock = ChainClock::new(h(71), 110, 30_000);
+    let window = DiscoveryWindow::new(90, 21).expect("window");
+    for (timestamp_ms, accepted) in [
+        (9_999, false),
+        (10_000, true),
+        (19_999, true),
+        (20_000, false),
+    ] {
+        let (target, mut facts) = effect_fixture(XmrNativeEffectV3::Refund);
+        facts.containing_block.timestamp_ms = timestamp_ms;
+        let result = ClassifyFinalizedNativeXmrEffectV3Result::new(
+            context(),
+            terms(),
+            XmrNativeEffectV3::Refund,
+            target,
+            FinalizedNativeXmrScanOutcomeV3::found(clock, window, facts),
+        );
+        if accepted {
+            let _ = result.expect("refund timestamp inside [refund_at, punish_at)");
+        } else {
+            assert_eq!(
+                result,
+                Err(ProtocolValueError::XmrFactsMismatch("refund timestamp")),
+                "timestamp {timestamp_ms} must be rejected",
+            );
+        }
     }
 }
 

@@ -204,11 +204,10 @@ fn xmr_effect_owner(effect: XmrNativeEffectV3) -> Result<Participant, NativePrep
     match effect {
         XmrNativeEffectV3::Initialize
         | XmrNativeEffectV3::Fund
-        | XmrNativeEffectV3::AuthorizeClaim => Ok(Participant::Taker),
+        | XmrNativeEffectV3::AuthorizeClaim
+        | XmrNativeEffectV3::Refund => Ok(Participant::Taker),
         XmrNativeEffectV3::Claim => Ok(Participant::Maker),
-        XmrNativeEffectV3::Refund | XmrNativeEffectV3::Punish => {
-            Err(NativePrepareError::InvalidTransactionBytes)
-        }
+        XmrNativeEffectV3::Punish => Err(NativePrepareError::InvalidTransactionBytes),
     }
 }
 
@@ -333,6 +332,8 @@ pub(crate) enum OwnedSubmission {
     XmrInitialization,
     /// The exact durable native-XMR funding effect and its required predecessor.
     XmrFunding { initialization: PreparedTransaction },
+    /// The exact completed durable native-XMR tag-16 refund.
+    XmrRefund,
 }
 
 /// One-role, one-signer official v0.2 native escrow planner.
@@ -340,8 +341,8 @@ pub(crate) enum OwnedSubmission {
 /// Signed operations and permissionless refunds are prepared as exact official
 /// bytes. On Linux, an owner-only durable store can reserve those bytes before
 /// exposure. The generic submission validator admits only active, revalidated
-/// preparations. Native-XMR init/fund submissions additionally use their
-/// transaction IDs as canonical one-attempt request identities.
+/// preparations. Native-XMR init, fund, and tag-16 refund submissions additionally
+/// use their transaction IDs as canonical one-attempt request identities.
 pub struct NativeEscrowPlanner {
     role: Participant,
     signer_key_bytes: Zeroizing<[u8; 32]>,
@@ -2101,6 +2102,38 @@ impl NativeEscrowPlanner {
             #[cfg(not(target_os = "linux"))]
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
+        if let (Some(active), Some(completed)) = (
+            state.active_xmr_refund_v3.as_ref(),
+            state.completed_xmr_refund_v3.as_ref(),
+        ) && completed.result.refund == request.transaction
+        {
+            self.validate_completed_native_xmr_refund_v3(
+                active,
+                &completed.request,
+                &completed.result,
+            )?;
+            if request.context.request_id
+                != request.transaction.transaction_id.submission_request_id()
+                || request.context.run_id != active.request.context.run_id
+                || request.context.sidecar_role != Participant::Taker
+                || active.request.context.sidecar_role != request.context.sidecar_role
+                || request.runtime != self.expected_runtime
+                || active.request.runtime != request.runtime
+            {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                self.validate_durable_owned_completed_native_xmr_refund_v3(
+                    active,
+                    completed,
+                    &request.transaction,
+                )?;
+                return Ok(OwnedSubmission::XmrRefund);
+            }
+            #[cfg(not(target_os = "linux"))]
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
         drop(state);
 
         self.validate_owned_submission(&request.transaction).await?;
@@ -2115,8 +2148,9 @@ impl NativeEscrowPlanner {
     /// Rejects every byte sequence not owned by an active native or witnessed
     /// escrow, claim, or refund reservation and revalidates official canonical
     /// bytes and signatures. The exact completed durable native-XMR tag-15
-    /// claim is admitted; tag 14 remains exclusive to its dedicated release
-    /// route. Native-XMR tag-13 effects use the request-aware validator above.
+    /// claim and request-bound tag-16 refund are admitted; tag 14 remains
+    /// exclusive to its dedicated release route. Native-XMR tag-13 effects use
+    /// the request-aware validator above.
     pub async fn validate_owned_submission(
         &self,
         prepared: &PreparedTransaction,
@@ -2169,25 +2203,8 @@ impl NativeEscrowPlanner {
             self.validate_prepared_claim(&source, &active.result)?;
             return Ok(());
         }
-        if let (Some(active), Some(completed)) = (
-            state.active_xmr_claim_v3.as_ref(),
-            state.completed_xmr_claim_v3.as_ref(),
-        ) && &completed.result.claim == prepared
-        {
-            self.validate_completed_native_xmr_claim_v3(
-                active,
-                &completed.request,
-                &completed.result,
-            )?;
-            #[cfg(target_os = "linux")]
-            {
-                self.validate_durable_owned_completed_native_xmr_claim_v3(
-                    active, completed, prepared,
-                )?;
-                return Ok(());
-            }
-            #[cfg(not(target_os = "linux"))]
-            return Err(NativePrepareError::InvalidTransactionBytes);
+        if self.validate_completed_xmr_submission(&state, prepared)? {
+            return Ok(());
         }
         if let (Some(active), Some(completed)) = (
             state.active_witnessed_claim.as_ref(),
@@ -2210,6 +2227,48 @@ impl NativeEscrowPlanner {
             return Ok(());
         }
         Err(NativePrepareError::InvalidTransactionBytes)
+    }
+
+    fn validate_completed_xmr_submission(
+        &self,
+        state: &PlannerState,
+        prepared: &PreparedTransaction,
+    ) -> Result<bool, NativePrepareError> {
+        if let (Some(active), Some(completed)) = (
+            state.active_xmr_claim_v3.as_ref(),
+            state.completed_xmr_claim_v3.as_ref(),
+        ) && &completed.result.claim == prepared
+        {
+            self.validate_completed_native_xmr_claim_v3(
+                active,
+                &completed.request,
+                &completed.result,
+            )?;
+            #[cfg(target_os = "linux")]
+            self.validate_durable_owned_completed_native_xmr_claim_v3(active, completed, prepared)?;
+            #[cfg(not(target_os = "linux"))]
+            return Err(NativePrepareError::InvalidTransactionBytes);
+            return Ok(true);
+        }
+        if let (Some(active), Some(completed)) = (
+            state.active_xmr_refund_v3.as_ref(),
+            state.completed_xmr_refund_v3.as_ref(),
+        ) && &completed.result.refund == prepared
+        {
+            self.validate_completed_native_xmr_refund_v3(
+                active,
+                &completed.request,
+                &completed.result,
+            )?;
+            #[cfg(target_os = "linux")]
+            self.validate_durable_owned_completed_native_xmr_refund_v3(
+                active, completed, prepared,
+            )?;
+            #[cfg(not(target_os = "linux"))]
+            return Err(NativePrepareError::InvalidTransactionBytes);
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     #[cfg(target_os = "linux")]
@@ -3031,6 +3090,46 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    fn validate_durable_owned_completed_native_xmr_refund_v3(
+        &self,
+        active: &ActiveXmrRefundPrepareV3,
+        completed: &ActiveXmrRefundCompletionV3,
+        prepared: &PreparedTransaction,
+    ) -> Result<(), NativePrepareError> {
+        let store = self
+            .durable_store
+            .as_ref()
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let (stored_prepare_request, stored_prepare_result) = store
+            .load::<PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result>(
+                ReservationKind::XmrNativeRefundV3,
+            )?
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let (stored_completion_request, stored_completion_result) = store
+            .load::<CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result>(
+                ReservationKind::XmrNativeRefundCompletionV3,
+            )?
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        if active.request != stored_prepare_request
+            || active.result != stored_prepare_result
+            || completed.request != stored_completion_request
+            || completed.result != stored_completion_result
+            || &stored_completion_result.refund != prepared
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let stored_active = ActiveXmrRefundPrepareV3 {
+            request: stored_prepare_request,
+            result: stored_prepare_result,
+        };
+        self.validate_completed_native_xmr_refund_v3(
+            &stored_active,
+            &stored_completion_request,
+            &stored_completion_result,
+        )
+    }
+
     fn validate_xmr_refund_v3_request(
         &self,
         request: &PrepareNativeXmrRefundV3Request,
@@ -3672,40 +3771,95 @@ impl NativeEscrowPlanner {
                     }
                 }
                 XmrNativeEffectV3::Claim => {
-                    let (prepare_request, prepare_result) = store
-                        .load::<PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result>(
-                            ReservationKind::XmrNativeClaimV3,
-                        )?
-                        .ok_or(NativePrepareError::InvalidTransactionBytes)?;
-                    let (completion_request, completion_result) = store
-                        .load::<CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result>(
-                            ReservationKind::XmrNativeClaimCompletionV3,
-                        )?
-                        .ok_or(NativePrepareError::InvalidTransactionBytes)?;
-                    let active = ActiveXmrClaimPrepareV3 {
-                        request: prepare_request,
-                        result: prepare_result,
-                    };
-                    self.validate_completed_native_xmr_claim_v3(
-                        &active,
-                        &completion_request,
-                        &completion_result,
-                    )?;
-                    if active.request.context.run_id != context.run_id
-                        || active.request.context.sidecar_role != context.sidecar_role
-                        || &active.request.runtime != runtime
-                        || &active.request.terms != terms
-                        || &completion_result.claim != target
-                    {
-                        return Err(NativePrepareError::InvalidTransactionBytes);
-                    }
+                    self.validate_owned_xmr_claim_v3(store, context, runtime, terms, target)?;
                 }
-                XmrNativeEffectV3::Refund | XmrNativeEffectV3::Punish => {
+                XmrNativeEffectV3::Refund => {
+                    self.validate_owned_xmr_refund_v3(store, context, runtime, terms, target)?;
+                }
+                XmrNativeEffectV3::Punish => {
                     return Err(NativePrepareError::InvalidTransactionBytes);
                 }
             }
             Ok(())
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn validate_owned_xmr_claim_v3(
+        &self,
+        store: &DurableReservationStore,
+        context: &MessageContext,
+        runtime: &RuntimeDescriptor,
+        terms: &XmrNativeEscrowTermsV3,
+        target: &PreparedTransaction,
+    ) -> Result<(), NativePrepareError> {
+        let (prepare_request, prepare_result) = store
+            .load::<PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result>(
+                ReservationKind::XmrNativeClaimV3,
+            )?
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let (completion_request, completion_result) = store
+            .load::<CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result>(
+                ReservationKind::XmrNativeClaimCompletionV3,
+            )?
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let active = ActiveXmrClaimPrepareV3 {
+            request: prepare_request,
+            result: prepare_result,
+        };
+        self.validate_completed_native_xmr_claim_v3(
+            &active,
+            &completion_request,
+            &completion_result,
+        )?;
+        if active.request.context.run_id != context.run_id
+            || active.request.context.sidecar_role != context.sidecar_role
+            || &active.request.runtime != runtime
+            || &active.request.terms != terms
+            || &completion_result.claim != target
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn validate_owned_xmr_refund_v3(
+        &self,
+        store: &DurableReservationStore,
+        context: &MessageContext,
+        runtime: &RuntimeDescriptor,
+        terms: &XmrNativeEscrowTermsV3,
+        target: &PreparedTransaction,
+    ) -> Result<(), NativePrepareError> {
+        let (prepare_request, prepare_result) = store
+            .load::<PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result>(
+                ReservationKind::XmrNativeRefundV3,
+            )?
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let (completion_request, completion_result) = store
+            .load::<CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result>(
+                ReservationKind::XmrNativeRefundCompletionV3,
+            )?
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let active = ActiveXmrRefundPrepareV3 {
+            request: prepare_request,
+            result: prepare_result,
+        };
+        self.validate_completed_native_xmr_refund_v3(
+            &active,
+            &completion_request,
+            &completion_result,
+        )?;
+        if active.request.context.run_id != context.run_id
+            || active.request.context.sidecar_role != context.sidecar_role
+            || &active.request.runtime != runtime
+            || &active.request.terms != terms
+            || &completion_result.refund != target
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
     }
 
     /// Proves that this actor may discover the counterparty-owned effect by
@@ -3714,7 +3868,7 @@ impl NativeEscrowPlanner {
     /// # Errors
     ///
     /// Rejects invalid bindings and all role/effect pairs except Maker reading
-    /// tag 14 and Taker reading tag 15.
+    /// tag 14 or tag 16 and Taker reading tag 15.
     pub(crate) fn validate_xmr_effect_discovery_v3(
         &self,
         context: &MessageContext,
@@ -3725,8 +3879,10 @@ impl NativeEscrowPlanner {
         self.validate_xmr_terms_v3_binding(context, runtime, terms)?;
         if !matches!(
             (self.role, effect),
-            (Participant::Maker, XmrNativeEffectV3::AuthorizeClaim)
-                | (Participant::Taker, XmrNativeEffectV3::Claim)
+            (
+                Participant::Maker,
+                XmrNativeEffectV3::AuthorizeClaim | XmrNativeEffectV3::Refund
+            ) | (Participant::Taker, XmrNativeEffectV3::Claim)
         ) {
             return Err(NativePrepareError::WrongRole);
         }

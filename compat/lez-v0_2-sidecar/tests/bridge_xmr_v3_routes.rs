@@ -802,7 +802,7 @@ async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
     clippy::too_many_lines,
     reason = "one tag-16 journey keeps exact composition, adversarial bindings, restart recovery, and no-submission proof joined"
 )]
-async fn taker_prepares_and_completes_exact_tag_16_without_submission() {
+async fn taker_prepares_completes_and_submits_exact_tag_16_once() {
     let (depositor, depositor_key) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1000,18 +1000,41 @@ async fn taker_prepares_and_completes_exact_tag_16_without_submission() {
             .expect("exact refund completion replay"),
         completed
     );
+    let submission_request = SubmitTransactionRequest::new(
+        MessageContext::new(
+            RunId::new(RUN_ID).expect("run id"),
+            completed.refund.transaction_id.submission_request_id(),
+            Participant::Taker,
+        ),
+        taker_runtime.clone(),
+        completed.refund.clone(),
+    );
+    let submitted = taker
+        .fresh_client()
+        .submit_transaction(submission_request.clone())
+        .await
+        .expect("Taker submits the exact completed durable tag-16 once");
+    assert_eq!(submitted.transaction_id, completed.refund.transaction_id);
+    assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
+    let replayed_submission = taker
+        .fresh_client()
+        .submit_transaction(submission_request)
+        .await
+        .expect("successful tag-16 submission replays without node I/O");
+    assert_eq!(replayed_submission, submitted);
     assert_remote_code(
         taker
             .fresh_client()
             .submit_transaction(SubmitTransactionRequest::new(
-                context(Participant::Taker, "tag16-generic-submit-refund"),
+                context(Participant::Taker, "tag16-submit-fresh-id"),
                 taker_runtime,
                 completed.refund.clone(),
             ))
             .await,
         ErrorCode::InvalidTransaction,
     );
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
 
     let taker_directory = taker.directory.path().to_path_buf();
     taker
@@ -1052,7 +1075,7 @@ async fn taker_prepares_and_completes_exact_tag_16_without_submission() {
         0,
         "startup recovery must not regenerate the refund-authority nonce"
     );
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
     restarted_server
         .stop()
         .await
@@ -1081,7 +1104,7 @@ async fn taker_prepares_and_completes_exact_tag_16_without_submission() {
         Err(BridgeServerError::InvalidDurableState)
     ));
     assert_eq!(corrupt_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
     fs::write(&completion_path, completion_bytes).expect("restore refund completion");
 
     fs::remove_file(
@@ -1108,9 +1131,106 @@ async fn taker_prepares_and_completes_exact_tag_16_without_submission() {
         Err(BridgeServerError::InvalidDurableState)
     ));
     assert_eq!(missing_nonces.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 1);
 
     maker.server.stop().await.expect("maker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+#[tokio::test]
+async fn tag16_unknown_submission_is_never_resent_after_restart() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, _) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::WrongTransactionId).await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key.clone(),
+        &sequencer_endpoint,
+    )
+    .await;
+    let prepare_request = PrepareNativeXmrRefundV3Request::new(
+        context(Participant::Taker, "tag16-unknown-prepare"),
+        taker_runtime.clone(),
+        xmr_terms,
+    );
+    let prepared = taker
+        .fresh_client()
+        .prepare_native_xmr_refund_v3(prepare_request)
+        .await
+        .expect("prepare exact refund before unknown submission");
+    let message = Message::try_from_slice(prepared.refund.exact_message_bytes.as_slice())
+        .expect("canonical refund message");
+    let (_, refund_authority_key) = account(34);
+    let signature = Signature::new(&refund_authority_key, &message.hash());
+    let completed = taker
+        .fresh_client()
+        .complete_native_xmr_refund_v3(
+            CompleteNativeXmrRefundV3Request::new(
+                context(Participant::Taker, "tag16-unknown-complete"),
+                taker_runtime.clone(),
+                xmr_terms,
+                prepared.refund,
+                AggregateBip340Signature::from_bytes(signature.value),
+            )
+            .expect("exact refund completion request"),
+        )
+        .await
+        .expect("complete exact refund before unknown submission");
+    let submission = SubmitTransactionRequest::new(
+        MessageContext::new(
+            RunId::new(RUN_ID).expect("run id"),
+            completed.refund.transaction_id.submission_request_id(),
+            Participant::Taker,
+        ),
+        taker_runtime,
+        completed.refund,
+    );
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(submission.clone())
+            .await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(fixture.lookup_count(), 1);
+
+    let taker_directory = taker.directory.path().to_path_buf();
+    taker
+        .server
+        .stop()
+        .await
+        .expect("Taker stop after unknown send");
+    let restart_nonces = Arc::new(CountingNonce {
+        value: 999,
+        calls: AtomicUsize::new(0),
+    });
+    let (restarted_client, restarted_server) = try_start_sidecar_at(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+        &taker_directory,
+        Arc::clone(&restart_nonces),
+    )
+    .await
+    .expect("Taker restarts after unknown tag-16 submission");
+    assert_remote_code(
+        restarted_client.submit_transaction(submission).await,
+        ErrorCode::UnknownSubmissionOutcome,
+    );
+    assert_eq!(restart_nonces.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(fixture.lookup_count(), 1);
+    restarted_server
+        .stop()
+        .await
+        .expect("restarted Taker stops");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
 }

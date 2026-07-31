@@ -6006,8 +6006,8 @@ The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor under this
 accepted authority is clean-certified in Flow 1R. Fixed packaged-system-service control is GREEN in Flow 1D. Remaining PoC work is Taker XMR lifecycle,
 accepted-application/actual-chain concurrency, and automatic unavailable-node
 behavior. Explicit route control is GREEN in Flow 1S; bounded simultaneous
-workers are GREEN in Flow 1H. The updated ETA is 10 to 20 focused hours for the
-M5 PoC and 20 to 36 focused hours for the milestone tag.
+workers are GREEN in Flow 1H. The updated ETA is 8 to 18 focused hours for the
+M5 PoC and 18 to 32 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
@@ -6327,6 +6327,56 @@ That test must also preserve the captured acceptance artifacts across monitor,
 reject claim/refund without output, reject a receipt with an unknown field or
 wrong manifest digest, and keep failures secret-free. This closes a Taker
 monitor sub-gap only; literal M5 remains 3 of 7.
+
+## Flow 1U: repeat the tag-16 one-attempt component checkpoint
+
+Status: **COMPONENT-GREEN; NOT AN ACTUAL REFUND SWAP.** This developer-facing
+reproduction exercises the same authenticated sidecar routes used by the future
+Taker effect driver. It does not start LEZ or Monero nodes and must not be used
+as evidence that the Maker recovered Monero.
+
+From the repository root, use the pinned toolchain, offline Cargo cache, and the
+verified RapidSnark libraries already required by Flow 0:
+
+```bash
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+
+cargo +1.96.0 test --locked --offline \
+  -p lez-bridge-protocol --test xmr_v3_contract
+
+cargo +1.96.0 test --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --test bridge_xmr_v3_routes
+
+cargo +1.96.0 test --locked --offline \
+  --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+  --test bridge_xmr_fund_classification
+```
+
+Expected results are 9 of 9 protocol cases, 9 of 9 authenticated route cases,
+and 2 of 2 finalized-classifier cases. The route suite proves that only the
+completed Taker tag-16 bytes under the transaction-derived request ID can be
+submitted; exact accepted replay sends nothing; a deliberately ambiguous first
+send remains unknown after sidecar restart with no second lookup or send; and
+arbitrary request IDs fail before node access. The classifier suite proves the
+Taker exact-owner view and Maker terms-discovery view agree on canonical bytes,
+message hash, ordered accounts, refund signer and aggregate signature,
+`Refunded` metadata, zero custody, and the half-open refund window: one
+millisecond before `refund_at` and exactly at `punish_at` are rejected.
+
+External runtime resources: none. These tests use authenticated in-process
+sidecars, a controlled sequencer double, finalized-indexer fixtures, temporary
+owner-only durable files, and deterministic keys. They open no Docker service,
+chain RPC, faucet, DNS lookup, public network, peer, or funds. This removes node
+and finality flakiness from the component checkpoint, but also means it cannot
+prove the actual local-devnet refund tail. That next flow must ingest the
+finalized signature as Maker, extract the Taker adaptor scalar, reconstruct the
+exact Stage-A shared Monero spend key, sweep through the neutral shared-wallet
+RPC to the Maker destination, mine confirmations through the Taker wallet, and
+bind both chains. Tag 17 and final M5 certification also remain open.
+
+See ADR 0120 for the component, sequence, and conditional-atomicity diagrams.
 
 ## Troubleshooting
 

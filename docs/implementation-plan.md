@@ -4131,7 +4131,8 @@ Current corrective slice:
 - [x] Add a fail-closed source contract preventing either economic actor RPC from hosting the shared wallet.
 - [ ] Run and retain one fresh exact-commit role-correct claim replay.
 - [x] Enable authenticated Taker tag-16 preparation and aggregate completion with independent durable replay and zero submission.
-- [ ] Add one-attempt tag-16 submission, finalized classification, Maker recovery sweep, and exact evidence.
+- [x] Add transaction-derived one-attempt tag-16 submission and finalized Taker-exact plus Maker-discovery classification.
+- [ ] Add Maker finalized-signature ingestion, extraction, role-correct reconstructed-key sweep, binding, and exact actual-node evidence.
 - [ ] Close tag 17, final application-owned effects, accepted-application concurrency, unavailable-route composition, and milestone gates.
 
 Exact pushed-tree run `m5-xmr-app-20260730-2c6aec1-h` then repeated the full
@@ -4148,12 +4149,33 @@ claims conditional successful-claim atomicity, not a distributed transaction or
 future-reorg immunity. ADR 0114 is accepted at this local PoC boundary.
 
 The current RFP/issue audit keeps literal M5 completion at 3 of 7. Fixed
-packaged-system-service start/stop is GREEN. Remaining implementation is Taker
-XMR monitor/claim/refund, honest
-accepted-application concurrency under one daemon/database, and route
-disable/unavailable behavior including quote/publication rejection and
-unaffected-pair progress. After the lifecycle-control checkpoint, M5 PoC ETA is 10 to 20 focused hours
-and milestone-tag ETA is 20 to 36 focused hours.
+packaged-system-service start/stop is GREEN. Remaining implementation is the fresh role-correct actual claim replay, Maker
+tag-16 recovery and Taker XMR claim/refund controls, honest accepted-application
+concurrency under one daemon/database, and automatic unavailable-node behavior
+including unaffected-pair progress. After the lifecycle-control checkpoint, M5 PoC ETA is 8 to 18 focused hours
+and milestone-tag ETA is 18 to 32 focused hours.
+
+### M5 tag-16 one-attempt submission and classification checkpoint (2026-07-30)
+
+RED proved that the generic submission route rejected the completed native-XMR
+tag-16 refund and that the protocol accepted a finalized refund one millisecond
+before its signed deadline. GREEN admits only the exact durable completed
+transaction under its transaction-derived request ID, persists a one-attempt
+outcome before restart, and validates Taker-owned or Maker-discovered finalized
+refund facts only in `[refund_at, punish_at)`. A deliberately ambiguous
+sequencer response performs one lookup and one send; exact replay after sidecar
+restart returns the same unknown result with zero additional node calls.
+
+REFACTOR extracts the durable tag-15/tag-16 submission and effect validators,
+keeps tag 17 unavailable, and passes 9 protocol cases, 9 authenticated XMR route
+cases, 2 finalized-classifier cases, 30 sidecar library cases, and strict
+all-target/all-feature Clippy. ADR 0120 records component, sequence, and
+conditional-atomicity diagrams. This is a controlled component checkpoint, not
+an actual local-devnet refund: Maker ingestion, adaptor extraction, exact
+Stage-A key reconstruction, neutral shared-wallet sweep to Maker, Taker-mined
+confirmations, cross-chain binding, and fresh role-correct replay remain.
+Literal M5 therefore stays 3 of 7. Updated remaining ETA is 8 to 18 focused
+hours for M5 PoC and 18 to 32 focused hours for reviewed tag closure.
 
 ### M5 explicit route-control checkpoint (2026-07-30)
 
@@ -4244,8 +4266,8 @@ This closes the literal service-control sub-gap but not the full F9/U3 output;
 M5 remains 3 of 7. Remaining order is receipt-bound Taker XMR monitor and claim,
 the missing tag-16 refund execution path, accepted-application plus actual-chain
 overlap, automatic unavailable-node composition, and composite evidence,
-security, documentation, and tag review. Updated ETA is 10 to 20 focused hours
-to the M5 PoC and 20 to 36 focused hours to reviewed tag closure.
+security, documentation, and tag review. Updated ETA is 8 to 18 focused hours
+to the M5 PoC and 18 to 32 focused hours to reviewed tag closure.
 
 ### M5 XMR Taker receipt-only monitor checkpoint (2026-07-30)
 
@@ -4284,7 +4306,7 @@ This closes only the receipt-bound XMR Taker monitor sub-gap. Literal M5 remains
 3 of 7. XMR Taker claim/refund effect composition, tag-16 refund execution,
 accepted-application plus actual-chain overlap, automatic unavailable-node
 composition, and composite evidence/security/tag review remain. The existing
-updated estimate is 10 to 20 focused hours to the PoC and 20 to 36 focused
+updated estimate is 8 to 18 focused hours to the PoC and 20 to 36 focused
 hours to the reviewed tag.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck

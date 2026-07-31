@@ -201,6 +201,8 @@ flowchart TB
     M5XmrStageA --> M5XmrStageB["0112 Atomic XMR Stage B activation"]
     M5XmrStageB --> M5XmrHandoff["0113 Sealed XMR pre-effect handoff"]
     M5XmrHandoff --> M5XmrTakerMonitor["0118 Receipt-only XMR Taker monitor"]
+    M5XmrStageB --> M5XmrTag16Prepare["0119 Prepare tag 16"]
+    M5XmrTag16Prepare --> M5XmrTag16Checkpoint["0120 Submit and classify tag 16"]
 ```
 
 | ADR | Decision | Status |
@@ -324,3 +326,4 @@ flowchart TB
 | [0117](0117-control-the-fixed-maker-system-service.md) | Expose bounded Maker start and stop only for the fixed packaged system unit and verify exact post-action state | Accepted for lifecycle control; exact argv, JSON, timeout, redaction, and fail-closed state tests GREEN |
 | [0118](0118-monitor-xmr-taker-application-without-chain-authority.md) | Validate one private XMR Taker acceptance receipt under its per-swap lock and report application activation without chain authority | Accepted and receipt-only monitor GREEN; claim, refund, chain progress, and inherited path-ABA hardening remain outside this slice |
 | [0119](0119-prepare-tag16-without-submission.md) | Prepare and durably complete the exact generated native-XMR tag 16 transaction under authenticated Taker authority without submission | Accepted and component GREEN; submission, finalized classification, Maker recovery sweep, and tag 17 remain |
+| [0120](0120-submit-and-classify-tag16-once.md) | Admit only the exact completed tag 16 through one-attempt Taker submission and classify the finalized refund from exact-owner and Maker-discovery views | Accepted for the component checkpoint; actual local-devnet Maker extraction, reconstructed Monero sweep, cross-chain binding, tag 17, and M5 certification remain open |

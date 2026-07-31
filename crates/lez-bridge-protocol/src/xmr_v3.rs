@@ -1359,6 +1359,13 @@ fn validate_finalized_facts(
     facts: &FinalizedNativeXmrEffectFactsV3,
 ) -> Result<(), ProtocolValueError> {
     validate_finalized_placement(target, finalized_clock, scanned_window, facts)?;
+    if effect == XmrNativeEffectV3::Refund {
+        ensure_fact(
+            (terms.0.refund_at_ms..terms.0.punish_at_ms)
+                .contains(&facts.containing_block.timestamp_ms),
+            "refund timestamp",
+        )?;
+    }
 
     ensure_fact(facts.instruction.effect == effect, "instruction effect")?;
     validate_nonzero(&[
