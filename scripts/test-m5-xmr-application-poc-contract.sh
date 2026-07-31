@@ -8,6 +8,9 @@ readonly wrapper="scripts/run-m5-xmr-application-poc.sh"
 readonly runner="scripts/run-m4-actual-claim-poc.sh"
 readonly sidecar_lock="compat/lez-v0_2-sidecar/Cargo.lock"
 readonly release_lock="compat/lez-v0_2-xmr-release-service/Cargo.lock"
+readonly taker_cli="crates/maker-node/src/bin/lez-taker.rs"
+readonly xmr_receipt_loader="crates/maker-node/src/bin/support/taker_accept_xmr.rs"
+readonly xmr_process_test="crates/maker-node/tests/xmr_chat_process.rs"
 
 fail() {
   echo "M5 XMR application-to-chain contract failed: $*" >&2
@@ -274,6 +277,51 @@ readonly release_store_block
 for required_edge in command-fds lez-btc-swap-sdk lez-xmr-swap-sdk rustix; do
   rg -Fqx -- " \"${required_edge}\"," <<<"$release_store_block" ||
     fail "release lock omits swap-store runtime edge: ${required_edge}"
+done
+
+for source in "$taker_cli" "$xmr_receipt_loader" "$xmr_process_test"; do
+  [[ -f "$source" && ! -L "$source" ]] ||
+    fail "receipt-only XMR Taker monitor source is absent or unsafe: ${source}"
+done
+
+for required in \
+  'Xmr(Box<XmrTakerReceiptSelector>)' \
+  'load_xmr_taker_receipt_selector(path).ok(),' \
+  'MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())' \
+  'load_validated_xmr_taker_authority_bytes(selector.manifest_bytes())' \
+  'selector.receipt_matches(&authority)' \
+  'XMR Taker claim and refund are not yet composed' \
+  'phase: "application_activated"' \
+  'claim_session: "presignature_verified"' \
+  'refund_session: "presignature_verified"'; do
+  rg -Fq -- "$required" "$taker_cli" ||
+    fail "Taker CLI omits receipt-only XMR monitor boundary: ${required}"
+done
+
+for required in \
+  'MAX_TAKER_RECEIPT_BYTES' \
+  'serde_json::to_vec(&receipt)? == bytes.as_slice()' \
+  'normalized_absolute(path)' \
+  'Sha256::digest(&manifest_bytes).as_slice() == expected_manifest.as_slice()' \
+  'validate_taker_manifest_config_bytes(' \
+  'pub(crate) fn receipt_matches('; do
+  rg -Fq -- "$required" "$xmr_receipt_loader" ||
+    fail "XMR receipt selector omits strict binding: ${required}"
+done
+
+for required in \
+  'let monitor = run_taker_monitor(&fixture.receipt);' \
+  '"phase": "application_activated"' \
+  'before_monitor.assert_unchanged(&fixture);' \
+  'for action in ["claim", "refund"]' \
+  'write_receipt_with_unknown_field(&fixture.receipt, &unknown_receipt);' \
+  '"actor_manifest_sha256",' \
+  '"agreement_commitment",' \
+  'assert!(!lock_path(&unbound_state).exists());' \
+  'receipt-bound XMR Taker actor semantics changed' \
+  'XMR Taker actor is already running or unsafe'; do
+  rg -Fq -- "$required" "$xmr_process_test" ||
+    fail "real XMR process test omits monitor proof: ${required}"
 done
 
 echo 'M5 XMR application-to-chain contract passed'

@@ -227,6 +227,98 @@ impl ValidatedXmrMakerAuthorityV2 {
     }
 }
 
+/// Execution-time Taker authority derived from canonical schema-v2 manifest bytes.
+///
+/// The caller must securely read and digest-pin the canonical manifest before
+/// calling the byte boundary. Construction then fully validates every source
+/// named by that manifest and privately retains the exact adaptor-journal
+/// snapshot used for the semantic checks.
+#[must_use]
+pub struct ValidatedXmrTakerAuthorityV2 {
+    swap_id: [u8; 32],
+    state_database: PathBuf,
+    agreement_commitment: [u8; 32],
+    activation_commitment: [u8; 32],
+    published_stage_a: PathBuf,
+    stage_a_sha256: [u8; 32],
+    published_stage_b: PathBuf,
+    stage_b_sha256: [u8; 32],
+    _role_journal_snapshot: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for ValidatedXmrTakerAuthorityV2 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValidatedXmrTakerAuthorityV2")
+            .field("swap_id", &hex::encode(self.swap_id))
+            .field("state_database", &self.state_database)
+            .field(
+                "agreement_commitment",
+                &hex::encode(self.agreement_commitment),
+            )
+            .field(
+                "activation_commitment",
+                &hex::encode(self.activation_commitment),
+            )
+            .field("published_stage_a", &self.published_stage_a)
+            .field("stage_a_sha256", &hex::encode(self.stage_a_sha256))
+            .field("published_stage_b", &self.published_stage_b)
+            .field("stage_b_sha256", &hex::encode(self.stage_b_sha256))
+            .field("_role_journal_snapshot", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl ValidatedXmrTakerAuthorityV2 {
+    /// Exact signed Stage-A swap identity.
+    #[must_use]
+    pub const fn swap_id(&self) -> [u8; 32] {
+        self.swap_id
+    }
+
+    /// Exact role-local state database named by scheduler authority.
+    #[must_use]
+    pub fn state_database(&self) -> &Path {
+        &self.state_database
+    }
+
+    /// Exact countersigned Stage-A agreement commitment.
+    #[must_use]
+    pub const fn agreement_commitment(&self) -> [u8; 32] {
+        self.agreement_commitment
+    }
+
+    /// Exact countersigned Stage-B activation commitment.
+    #[must_use]
+    pub const fn activation_commitment(&self) -> [u8; 32] {
+        self.activation_commitment
+    }
+
+    /// Canonical published Stage-A path validated from the manifest.
+    #[must_use]
+    pub fn published_stage_a(&self) -> &Path {
+        &self.published_stage_a
+    }
+
+    /// SHA-256 of the exact validated Stage-A wire.
+    #[must_use]
+    pub const fn stage_a_sha256(&self) -> [u8; 32] {
+        self.stage_a_sha256
+    }
+
+    /// Canonical published Stage-B path validated from the manifest.
+    #[must_use]
+    pub fn published_stage_b(&self) -> &Path {
+        &self.published_stage_b
+    }
+
+    /// SHA-256 of the exact validated Stage-B wire.
+    #[must_use]
+    pub const fn stage_b_sha256(&self) -> [u8; 32] {
+        self.stage_b_sha256
+    }
+}
+
 /// Publishes one Maker-only application bundle without copying private authority.
 ///
 /// # Errors
@@ -808,6 +900,33 @@ pub fn validate_maker_manifest_config_bytes(
     Ok(())
 }
 
+/// Validates one canonical Taker provision manifest against receipt authority.
+///
+/// This bounded byte-only check binds the receipt-selected swap and database
+/// before the caller creates or acquires the role-state lock.
+///
+/// # Errors
+///
+/// Rejects an oversized, malformed, noncanonical, unsupported, non-Taker,
+/// path-unsafe, wrong-swap, wrong-state-database, or malformed-digest manifest.
+pub fn validate_taker_manifest_config_bytes(
+    bytes: &[u8],
+    expected_swap_id: [u8; 32],
+    expected_state_database: &Path,
+) -> Result<()> {
+    ensure!(
+        normalized_absolute(expected_state_database),
+        "expected XMR actor state database path is invalid"
+    );
+    let manifest = parse_manifest_config_bytes(bytes, ActorRole::Taker)?;
+    ensure!(
+        decode_canonical_exact_32(&manifest.swap_id)? == expected_swap_id
+            && manifest.role_journal == expected_state_database,
+        "XMR Taker actor manifest differs from receipt authority"
+    );
+    Ok(())
+}
+
 /// Loads and fully validates Maker authority from fixed sealed descriptor 196.
 ///
 /// Every authority file is securely reread, digest-pinned, and semantically
@@ -823,18 +942,92 @@ pub fn validate_maker_manifest_config_bytes(
 // The complete immutable-authority validation is one deliberate audit surface.
 pub fn load_validated_xmr_maker_authority_fd(fd: i32) -> Result<ValidatedXmrMakerAuthorityV2> {
     let config = read_sealed_config_fd(fd)?;
-    let manifest = parse_maker_manifest_config_bytes(config.as_slice())?;
+    let authority = load_validated_xmr_role_authority_bytes(config.as_slice(), ActorRole::Maker)?;
+
+    Ok(ValidatedXmrMakerAuthorityV2 {
+        swap_id: authority.swap_id,
+        state_database: authority.state_database,
+        agreement_commitment: authority.agreement_commitment,
+        activation_commitment: authority.activation_commitment,
+        _role_journal_snapshot: authority.role_journal_snapshot,
+    })
+}
+
+/// Loads and fully validates Taker authority from canonical manifest bytes.
+///
+/// The caller owns the path boundary: these bytes must already have been read
+/// securely and digest-pinned to scheduler authority. This function validates
+/// canonical schema-v2 Taker authority, every pinned source, Stage A/B, private
+/// role material, and both Taker adaptor sessions, then revalidates all sources.
+///
+/// # Errors
+///
+/// Rejects oversized, malformed, noncanonical, non-Taker, unsafe, changed, or
+/// digest-drifted authority and any Stage A/B/private-role/journal mismatch.
+#[allow(clippy::similar_names, clippy::too_many_lines)]
+// The complete immutable-authority validation is one deliberate audit surface.
+pub fn load_validated_xmr_taker_authority_bytes(
+    bytes: &[u8],
+) -> Result<ValidatedXmrTakerAuthorityV2> {
+    let authority = load_validated_xmr_role_authority_bytes(bytes, ActorRole::Taker)?;
+
+    Ok(ValidatedXmrTakerAuthorityV2 {
+        swap_id: authority.swap_id,
+        state_database: authority.state_database,
+        agreement_commitment: authority.agreement_commitment,
+        activation_commitment: authority.activation_commitment,
+        published_stage_a: authority.published_stage_a,
+        stage_a_sha256: authority.stage_a_sha256,
+        published_stage_b: authority.published_stage_b,
+        stage_b_sha256: authority.stage_b_sha256,
+        _role_journal_snapshot: authority.role_journal_snapshot,
+    })
+}
+
+struct ValidatedXmrRoleAuthorityV2 {
+    swap_id: [u8; 32],
+    state_database: PathBuf,
+    agreement_commitment: [u8; 32],
+    activation_commitment: [u8; 32],
+    published_stage_a: PathBuf,
+    stage_a_sha256: [u8; 32],
+    published_stage_b: PathBuf,
+    stage_b_sha256: [u8; 32],
+    role_journal_snapshot: Zeroizing<Vec<u8>>,
+}
+
+#[allow(clippy::similar_names, clippy::too_many_lines)]
+fn load_validated_xmr_role_authority_bytes(
+    bytes: &[u8],
+    role: ActorRole,
+) -> Result<ValidatedXmrRoleAuthorityV2> {
+    let manifest = parse_manifest_config_bytes(bytes, role)?;
+    let (own_packet_label, peer_packet_label, private_manifest_label, private_view_key_label) =
+        match role {
+            ActorRole::Maker => (
+                "Maker public role packet",
+                "Taker public role packet",
+                "Maker private role manifest",
+                "Maker private Monero view key",
+            ),
+            ActorRole::Taker => (
+                "Taker public role packet",
+                "Maker public role packet",
+                "Taker private role manifest",
+                "Taker private Monero view key",
+            ),
+        };
 
     let own_packet = read_pinned_private_source(
         &manifest.own_public_packet,
         super::ROLE_PACKET_MAX_BYTES,
-        "Maker public role packet",
+        own_packet_label,
         &manifest.own_public_packet_sha256,
     )?;
     let peer_packet = read_pinned_private_source(
         &manifest.peer_public_packet,
         super::ROLE_PACKET_MAX_BYTES,
-        "Taker public role packet",
+        peer_packet_label,
         &manifest.peer_public_packet_sha256,
     )?;
     let source_manifest_path = manifest.source_private_root.join(PRIVATE_MANIFEST_FILE);
@@ -842,13 +1035,13 @@ pub fn load_validated_xmr_maker_authority_fd(fd: i32) -> Result<ValidatedXmrMake
     let source_manifest = read_pinned_private_source(
         &source_manifest_path,
         super::PRIVATE_MANIFEST_MAX_BYTES,
-        "Maker private role manifest",
+        private_manifest_label,
         &manifest.source_private_manifest_sha256,
     )?;
     let source_view_key = Zeroizing::new(read_pinned_private_source(
         &source_view_key_path,
         PRIVATE_KEY_MAX_BYTES,
-        "Maker private Monero view key",
+        private_view_key_label,
         &manifest.source_view_key_sha256,
     )?);
     let stage_a_wire = read_pinned_private_source(
@@ -865,12 +1058,11 @@ pub fn load_validated_xmr_maker_authority_fd(fd: i32) -> Result<ValidatedXmrMake
     )?;
 
     let packets = StageRolePackets::read(
-        ActorRole::Maker,
+        role,
         &manifest.own_public_packet,
         &manifest.peer_public_packet,
     )?;
-    let material =
-        validate_private_role(&manifest.source_private_root, ActorRole::Maker, &packets)?;
+    let material = validate_private_role(&manifest.source_private_root, role, &packets)?;
     let agreement = read_validated_stage_a(&manifest.published_stage_a, &packets)
         .context("validate published Stage A")?;
     ensure!(
@@ -884,45 +1076,41 @@ pub fn load_validated_xmr_maker_authority_fd(fd: i32) -> Result<ValidatedXmrMake
         .context("published Stage-B wire is invalid")?;
     let _coordinator = activation
         .initial_coordinator(&agreement)
-        .context("derive XMR Maker actor swap identity")?;
+        .context("derive XMR actor swap identity")?;
     ensure!(
         agreement.body().swap_id() == super::decode_exact::<32>(&manifest.swap_id)?,
-        "published Stage A differs from XMR Maker actor manifest"
+        "published Stage A differs from XMR actor manifest"
     );
 
-    let journal_snapshot = validate_role_journal_snapshot(
-        ActorRole::Maker,
-        &manifest.role_journal,
-        &agreement,
-        &activation,
-    )?;
+    let journal_snapshot =
+        validate_role_journal_snapshot(role, &manifest.role_journal, &agreement, &activation)?;
     ensure!(
         sha256(&journal_snapshot) == super::decode_exact::<32>(&manifest.role_journal_sha256)?,
-        "Maker role journal digest differs from provision manifest"
+        "role journal digest differs from provision manifest"
     );
 
     revalidate_exact_private_source(
         &manifest.own_public_packet,
         super::ROLE_PACKET_MAX_BYTES,
-        "Maker public role packet",
+        own_packet_label,
         &own_packet,
     )?;
     revalidate_exact_private_source(
         &manifest.peer_public_packet,
         super::ROLE_PACKET_MAX_BYTES,
-        "Taker public role packet",
+        peer_packet_label,
         &peer_packet,
     )?;
     revalidate_exact_private_source(
         &source_manifest_path,
         super::PRIVATE_MANIFEST_MAX_BYTES,
-        "Maker private role manifest",
+        private_manifest_label,
         &source_manifest,
     )?;
     revalidate_exact_private_source(
         &source_view_key_path,
         PRIVATE_KEY_MAX_BYTES,
-        "Maker private Monero view key",
+        private_view_key_label,
         &source_view_key,
     )?;
     revalidate_exact_private_source(
@@ -938,16 +1126,27 @@ pub fn load_validated_xmr_maker_authority_fd(fd: i32) -> Result<ValidatedXmrMake
         &stage_b_wire,
     )?;
 
-    Ok(ValidatedXmrMakerAuthorityV2 {
+    Ok(ValidatedXmrRoleAuthorityV2 {
         swap_id: agreement.body().swap_id(),
         state_database: manifest.role_journal,
         agreement_commitment: agreement.agreement_commitment(),
         activation_commitment: activation.activation_commitment(),
-        _role_journal_snapshot: Zeroizing::new(journal_snapshot),
+        published_stage_a: manifest.published_stage_a,
+        stage_a_sha256: sha256(&stage_a_wire),
+        published_stage_b: manifest.published_stage_b,
+        stage_b_sha256: sha256(&stage_b_wire),
+        role_journal_snapshot: Zeroizing::new(journal_snapshot),
     })
 }
 
 fn parse_maker_manifest_config_bytes(bytes: &[u8]) -> Result<XmrActorProvisionManifestV2> {
+    parse_manifest_config_bytes(bytes, ActorRole::Maker)
+}
+
+fn parse_manifest_config_bytes(
+    bytes: &[u8],
+    expected_role: ActorRole,
+) -> Result<XmrActorProvisionManifestV2> {
     ensure!(
         !bytes.is_empty()
             && u64::try_from(bytes.len()).unwrap_or(u64::MAX)
@@ -962,8 +1161,8 @@ fn parse_maker_manifest_config_bytes(bytes: &[u8]) -> Result<XmrActorProvisionMa
     );
     ensure!(
         manifest.schema_version == APPLICATION_PROVISION_SCHEMA_V2
-            && manifest.role == ActorRole::Maker,
-        "XMR Maker actor manifest role or schema is invalid"
+            && manifest.role == expected_role,
+        "XMR actor manifest role or schema is invalid"
     );
     for path in [
         &manifest.published_stage_a,
@@ -975,7 +1174,7 @@ fn parse_maker_manifest_config_bytes(bytes: &[u8]) -> Result<XmrActorProvisionMa
     ] {
         ensure!(
             normalized_absolute(path),
-            "XMR Maker actor manifest path is invalid"
+            "XMR actor manifest path is invalid"
         );
     }
     let shared = manifest
@@ -1010,10 +1209,19 @@ fn parse_maker_manifest_config_bytes(bytes: &[u8]) -> Result<XmrActorProvisionMa
         &manifest.peer_public_packet_sha256,
         &manifest.role_journal_sha256,
     ] {
-        let _ = super::decode_exact::<32>(digest)?;
+        let _ = decode_canonical_exact_32(digest)?;
     }
-    let _ = super::decode_exact::<32>(&manifest.swap_id)?;
+    let _ = decode_canonical_exact_32(&manifest.swap_id)?;
     Ok(manifest)
+}
+
+fn decode_canonical_exact_32(value: &str) -> Result<[u8; 32]> {
+    let decoded = super::decode_exact::<32>(value)?;
+    ensure!(
+        hex::encode(decoded) == value,
+        "XMR actor manifest hex is noncanonical"
+    );
+    Ok(decoded)
 }
 
 fn read_pinned_private_source(
@@ -1038,7 +1246,7 @@ fn revalidate_exact_private_source(
 ) -> Result<()> {
     ensure!(
         read_private_source(path, maximum, label)? == expected,
-        "{label} changed during XMR Maker authority validation"
+        "{label} changed during XMR actor authority validation"
     );
     Ok(())
 }
@@ -1267,6 +1475,52 @@ mod tests {
             .is_err()
         );
     }
+
+    #[test]
+    fn taker_manifest_validator_binds_receipt_before_state_lock() {
+        let expected_swap = [0x11; 32];
+        let state = Path::new("/private/journals/taker.sqlite");
+        let mut taker = manifest();
+        taker.role = ActorRole::Taker;
+        taker.source_private_root = PathBuf::from("/private/taker");
+        taker.own_public_packet = PathBuf::from("/exchange/taker.json");
+        taker.peer_public_packet = PathBuf::from("/exchange/maker.json");
+        taker.role_journal = state.to_path_buf();
+        let valid = canonical_manifest_bytes(&taker).unwrap();
+        validate_taker_manifest_config_bytes(&valid, expected_swap, state)
+            .expect("valid Taker receipt binding");
+
+        assert!(
+            validate_taker_manifest_config_bytes(
+                &valid,
+                expected_swap,
+                Path::new("/private/journals/unbound.sqlite"),
+            )
+            .is_err()
+        );
+        assert!(validate_taker_manifest_config_bytes(&valid, [0x12; 32], state).is_err());
+
+        let mut wrong_role = taker.clone();
+        wrong_role.role = ActorRole::Maker;
+        assert!(
+            validate_taker_manifest_config_bytes(
+                &canonical_manifest_bytes(&wrong_role).unwrap(),
+                expected_swap,
+                state,
+            )
+            .is_err()
+        );
+        taker.stage_a_sha256 = "AB".repeat(32);
+        assert!(
+            validate_taker_manifest_config_bytes(
+                &canonical_manifest_bytes(&taker).unwrap(),
+                expected_swap,
+                state,
+            )
+            .is_err()
+        );
+    }
+
     fn config_memfd(bytes: &[u8], seals: SealFlags) -> File {
         let name = CString::new("lez-xmr-actor-test-config").expect("memfd name");
         let descriptor = memfd_create(

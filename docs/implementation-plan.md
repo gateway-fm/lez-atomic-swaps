@@ -4141,8 +4141,8 @@ packaged-system-service start/stop is GREEN. Remaining implementation is Taker
 XMR monitor/claim/refund, honest
 accepted-application concurrency under one daemon/database, and route
 disable/unavailable behavior including quote/publication rejection and
-unaffected-pair progress. After the lifecycle-control checkpoint, M5 PoC ETA is 12 to 23 focused hours
-and milestone-tag ETA is 22 to 39 focused hours.
+unaffected-pair progress. After the lifecycle-control checkpoint, M5 PoC ETA is 10 to 20 focused hours
+and milestone-tag ETA is 20 to 36 focused hours.
 
 ### M5 explicit route-control checkpoint (2026-07-30)
 
@@ -4233,8 +4233,48 @@ This closes the literal service-control sub-gap but not the full F9/U3 output;
 M5 remains 3 of 7. Remaining order is receipt-bound Taker XMR monitor and claim,
 the missing tag-16 refund execution path, accepted-application plus actual-chain
 overlap, automatic unavailable-node composition, and composite evidence,
-security, documentation, and tag review. Updated ETA is 12 to 23 focused hours
-to the M5 PoC and 22 to 39 focused hours to reviewed tag closure.
+security, documentation, and tag review. Updated ETA is 10 to 20 focused hours
+to the M5 PoC and 20 to 36 focused hours to reviewed tag closure.
+
+### M5 XMR Taker receipt-only monitor checkpoint (2026-07-30)
+
+RED extended the real Maker/daemon/Taker XMR process journey after accepted
+Delivery withdrawal and daemon shutdown. The previously ZEC/BTC-only lifecycle
+loader rejected the genuine XMR acceptance receipt, proving the missing U4
+monitor route without introducing a fixture-only command.
+
+GREEN adds XMR receipt selection to the real `lez-taker monitor --receipt`
+path. The selector bounds and strictly decodes the owner-private receipt, pins
+the referenced manifest bytes to its SHA-256, and derives the exact swap and
+state-database lock identity. The CLI then acquires the shared per-swap kernel
+lock before full semantic validation of Stage A, Stage B, Taker manifest,
+packets, private authority, and both presignature-verified role sessions. It
+compares the resulting authority back to every receipt-bound path, digest,
+commitment, swap, and state field before emitting one fixed secret-free object.
+This ordering avoids a validate-then-lock TOCTOU gap and serializes the read with
+the actor worker. Monitoring writes no actor or application state.
+
+REFACTOR keeps XMR claim and refund fail-closed with the stable public error
+`XMR Taker claim and refund are not yet composed`. Ambiguous or invalid
+receipts, held locks, unsafe authority, and changed receipt semantics also map
+to bounded stable errors without authority paths or bytes. The real-process
+journey proves monitor output after Delivery and Chat disappear, unchanged
+accepted artifacts, unsupported-effect rejection, unknown receipt-field and
+manifest-digest rejection, and secret-free stderr.
+
+Flow 1T records the reproducible command and exact JSON. Runtime external
+resources are none: no Monero or LEZ node, chain RPC, Docker service, faucet,
+funds, DNS, public network, Delivery, or Chat participates. The output is
+pre-effect application-authority status only; it does not observe or infer
+current or enduring chain progress. Inherited ABA hardening for authority paths
+that must be reopened during semantic validation remains production work.
+
+This closes only the receipt-bound XMR Taker monitor sub-gap. Literal M5 remains
+3 of 7. XMR Taker claim/refund effect composition, tag-16 refund execution,
+accepted-application plus actual-chain overlap, automatic unavailable-node
+composition, and composite evidence/security/tag review remain. The existing
+updated estimate is 10 to 20 focused hours to the PoC and 20 to 36 focused
+hours to the reviewed tag.
 
 The complete hash-pinned CI quality gate is also GREEN, including ShellCheck
 0.11.0, workflow/Docker/Compose lint, every M3/M5 shell contract, and Testnet4

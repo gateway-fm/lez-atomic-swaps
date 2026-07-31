@@ -13,7 +13,7 @@ use std::{
         DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
     },
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::{Child, Command, Output},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -28,12 +28,12 @@ use lez_maker_node::{
     RunLocalDelivery, XmrChatStageARequestV1, XmrChatStageAResponseV1, call_local_chat_rpc,
     call_local_rpc,
 };
-use lez_swap_core::{Pair, SwapDirection};
+use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    LocalPriceV1, MakerActorKindV1, MakerActorScheduleState, MakerOfferId, MakerOfferStatus,
-    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerXmrNegotiationStatus,
-    SqliteSwapStore, maker_xmr_chat_swap_id,
+    LocalPriceV1, MakerActorHeldLock, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
+    MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
+    MakerXmrNegotiationStatus, SqliteSwapStore, maker_xmr_chat_swap_id,
 };
 use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
@@ -178,6 +178,112 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
         .withdraw(&offer_id)
         .unwrap();
     stop_daemon(&mut maker, &daemon, true);
+
+    // The actual Taker must retain a receipt-only, transport-free view after
+    // Delivery and Chat disappear. Monitoring validates application authority only;
+    // it neither infers enduring chain progress nor rewrites accepted artifacts.
+    let before_monitor = ArtifactSnapshot::capture(&fixture);
+    let monitor = run_taker_monitor(&fixture.receipt);
+    assert_eq!(
+        monitor,
+        serde_json::json!({
+            "schema_version": 1,
+            "pair": "monero",
+            "role": "taker",
+            "state": "active",
+            "phase": "application_activated",
+            "claim_session": "presignature_verified",
+            "refund_session": "presignature_verified"
+        })
+    );
+    before_monitor.assert_unchanged(&fixture);
+
+    // Unsupported effects fail closed after authority validation; they never
+    // silently fall through to the legacy chain-effect path.
+    for action in ["claim", "refund"] {
+        let rejected = run_taker_lifecycle(action, &fixture.receipt);
+        assert!(!rejected.status.success());
+        assert!(rejected.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(rejected.stderr).unwrap(),
+            "XMR Taker claim and refund are not yet composed\n"
+        );
+    }
+
+    // Strict/canonical receipts and the manifest digest are fail-closed. The
+    // CLI's stable outer error does not disclose any authority path or bytes.
+    let unknown_receipt = run.path().join("unknown-xmr-receipt.json");
+    write_receipt_with_unknown_field(&fixture.receipt, &unknown_receipt);
+    assert_rejected_taker_monitor(&unknown_receipt);
+
+    let drifted_receipt = run.path().join("drifted-xmr-receipt.json");
+    write_mutated_receipt(
+        &fixture.receipt,
+        &drifted_receipt,
+        "actor_manifest_sha256",
+        &Value::String("00".repeat(32)),
+    );
+    assert_rejected_taker_monitor(&drifted_receipt);
+
+    // A canonical receipt that selects the genuine manifest still cannot alter
+    // any authority duplicate after the full under-lock semantic validation.
+    let crossed_receipt = run.path().join("crossed-xmr-receipt.json");
+    write_mutated_receipt(
+        &fixture.receipt,
+        &crossed_receipt,
+        "agreement_commitment",
+        &Value::String("00".repeat(32)),
+    );
+    let crossed = run_taker_lifecycle("monitor", &crossed_receipt);
+    assert!(!crossed.status.success());
+    assert!(crossed.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(crossed.stderr).unwrap(),
+        "receipt-bound XMR Taker actor semantics changed\n"
+    );
+
+    let uppercase_receipt = run.path().join("uppercase-xmr-receipt.json");
+    let receipt_value: Value =
+        serde_json::from_slice(&fs::read(&fixture.receipt).unwrap()).unwrap();
+    write_mutated_receipt(
+        &fixture.receipt,
+        &uppercase_receipt,
+        "stage_a_sha256",
+        &Value::String(
+            receipt_value["stage_a_sha256"]
+                .as_str()
+                .unwrap()
+                .to_uppercase(),
+        ),
+    );
+    assert_rejected_taker_monitor(&uppercase_receipt);
+
+    // A receipt cannot select an arbitrary lock-file location: its state path
+    // must match the canonical manifest before lock acquisition.
+    let unbound_state = run.path().join("unbound-state.sqlite3");
+    let unbound_receipt = run.path().join("unbound-state-xmr-receipt.json");
+    write_mutated_receipt(
+        &fixture.receipt,
+        &unbound_receipt,
+        "actor_state_database",
+        &Value::String(unbound_state.to_string_lossy().into_owned()),
+    );
+    assert_rejected_taker_monitor(&unbound_receipt);
+    assert!(!lock_path(&unbound_state).exists());
+
+    // A live owner of the exact role-state lock excludes the monitor before
+    // any semantic read/output, matching the scheduler's concurrency boundary.
+    let swap_id = SwapId::new(hex::encode(binary_swap_id)).unwrap();
+    let held = MakerActorHeldLock::acquire_for(&swap_id, &fixture.taker_journal).unwrap();
+    let locked = run_taker_lifecycle("monitor", &fixture.receipt);
+    assert!(!locked.status.success());
+    assert!(locked.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(locked.stderr).unwrap(),
+        "XMR Taker actor is already running or unsafe\n"
+    );
+    drop(held);
+    before_monitor.assert_unchanged(&fixture);
 
     // Reopen the daemon against the same durable database with Delivery absent.
     // The real Taker detects its durable actor, bypasses discovery, and exact
@@ -353,6 +459,74 @@ fn run_taker(
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("real Taker returns bounded XMR JSON")
+}
+
+fn run_taker_monitor(receipt: &Path) -> Value {
+    let output = run_taker_lifecycle("monitor", receipt);
+    assert!(
+        output.status.success(),
+        "XMR Taker monitor failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    serde_json::from_slice(&output.stdout).expect("XMR Taker monitor returns one bounded JSON")
+}
+
+fn run_taker_lifecycle(action: &str, receipt: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg(action)
+        .arg("--receipt")
+        .arg(receipt)
+        .output()
+        .expect("run receipt-only real XMR Taker lifecycle command")
+}
+
+fn assert_rejected_taker_monitor(receipt: &Path) {
+    let output = run_taker_lifecycle("monitor", receipt);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "Taker acceptance receipt is unavailable or ambiguous\n"
+    );
+}
+
+fn write_mutated_receipt(source: &Path, destination: &Path, field: &str, replacement: &Value) {
+    let original = fs::read_to_string(source).unwrap();
+    let parsed: Value = serde_json::from_str(&original).unwrap();
+    let old = parsed.get(field).expect("receipt mutation field exists");
+    let key = serde_json::to_string(field).unwrap();
+    let needle = format!("{key}:{}", serde_json::to_string(old).unwrap());
+    assert_eq!(original.matches(&needle).count(), 1);
+    let replacement = format!("{key}:{}", serde_json::to_string(&replacement).unwrap());
+    let mutated = original.replacen(&needle, &replacement, 1);
+    assert_ne!(mutated, original);
+    write_private_bytes(destination, mutated.as_bytes());
+}
+
+fn write_receipt_with_unknown_field(source: &Path, destination: &Path) {
+    let mut bytes = fs::read(source).unwrap();
+    assert_eq!(bytes.pop(), Some(b'}'));
+    bytes.extend_from_slice(br#","unexpected":true}"#);
+    write_private_bytes(destination, &bytes);
+}
+
+fn write_private_bytes(path: &Path, bytes: &[u8]) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    file.write_all(bytes).unwrap();
+    file.sync_all().unwrap();
+}
+
+fn lock_path(state_database: &Path) -> PathBuf {
+    let mut value = state_database.as_os_str().to_os_string();
+    value.push(".maker-actor.lock");
+    PathBuf::from(value)
 }
 
 fn assert_initial_acceptance(accepted: &Value) {

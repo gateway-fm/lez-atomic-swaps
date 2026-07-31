@@ -173,6 +173,19 @@ composition through the existing one-shot chain-effect owner.
 
 The M5 XMR application path now has a process-GREEN real-process pre-effect checkpoint. It runs the actual Maker CLI, `lez-maker-daemon`, and Taker CLI around role-generated canonical Stage A/B material. Stage A advances only to reserved revision 2; Stage B is the sole transaction that creates the coordinator, consumes the offer, registers one Maker-only Monero actor, and records revision 3 replay. The Taker publishes only its own no-clobber actor bundle and acceptance receipt. A crossed reservation must leave the active offer at revision 1 with no negotiation, coordinator, actor, or public effect. After the exact Delivery advertisement is removed and the daemon is restarted, the durable Taker actor bypasses discovery and exact replay must preserve every captured actor/receipt byte and inode.
 
+That XMR acceptance receipt now also drives a real, receipt-only
+`lez-taker monitor` after Delivery and Chat are gone. The command pins the
+receipt and manifest, takes the same per-swap kernel lock as the actor worker,
+and validates the complete Taker application authority under that lock before
+emitting a fixed, secret-free application status. It starts no node, opens no
+RPC, performs no chain effect, and does not infer current or enduring chain
+progress. XMR Taker `claim` and `refund` remain explicitly unsupported. The
+manual command, exact JSON, stable failures, atomicity boundary, and external-
+resource declaration are in
+[Flow 1T](docs/manual-user-flows.md#flow-1t-monitor-an-accepted-xmr-application-as-the-taker).
+Inherited ABA hardening for paths reopened while validating the authority
+remains production work.
+
 That first checkpoint is deliberately zero-effect: it starts no Monero or LEZ
 node, opens no chain RPC, and uses no Docker service, faucet, DNS, network, or
 funds. [Flow 1P](docs/manual-user-flows.md#flow-1p-repeat-the-xmr-role-process-pre-effect-checkpoint)
@@ -250,10 +263,11 @@ of 7. Explicit selected-route disable is now process-GREEN: disabled Zcash quote
 and publication fail before price or Delivery I/O, an enabled Bitcoin quote is
 unaffected across restart, and revisioned Zcash re-enable restores quotes. Full
 R3 still requires automatic unavailable-node behavior and an actual unaffected-
-pair application. Fixed packaged-system-service start/stop is now GREEN. Receipt-bound Taker XMR lifecycle,
-and actual-application concurrency also remain. Updated estimate after the
-lifecycle-control checkpoint: 12 to 23 focused hours to M5 PoC
-and 22 to 39 focused hours to the reviewed milestone tag.
+pair application. Fixed packaged-system-service start/stop and receipt-bound
+XMR Taker monitoring are now GREEN. XMR Taker claim/refund effect composition
+and actual-application concurrency remain. Updated estimate after the
+lifecycle-control checkpoint: 10 to 20 focused hours to M5 PoC
+and 20 to 36 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now runs 1 to 32 independent actor workers with one
 SQLite connection each, one shared daemon lease identity, per-row CAS and

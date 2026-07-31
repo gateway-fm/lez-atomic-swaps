@@ -635,6 +635,10 @@ flowchart TB
         TMO["Taker-only maker-lock observation"]
         TDB[("Taker SQLite schema v16<br/>role-local recovery")]
         TLB["Context-owning LEZ SDK ports + adapter"]
+        XTR[("Private canonical XMR acceptance receipt")]
+        XTM["Receipt-only XMR Taker monitor<br/>application authority GREEN<br/>no chain progress"]
+        XTL["Per-swap kernel lock"]
+        XTA[("Canonical Taker manifest<br/>Stage A and B, packets, private role, journals")]
     end
 
     subgraph SharedSecurity["Shared SDK security boundary"]
@@ -823,6 +827,11 @@ flowchart TB
     T --> TC
     T --> TM
     TC --> TS
+    TC --> XTM
+    XTR -->|"canonical receipt"| XTM
+    XTM -->|"digest-pinned prelock binding"| XTA
+    XTM --> XTL
+    XTL -->|"pinned manifest and full source validation"| XTA
     TS --> TA
     TS --> TMO
     TS --> TDB
@@ -966,7 +975,7 @@ flowchart TB
     classDef implemented fill:#ddf4ff,stroke:#0969da;
     classDef running fill:#e6ffec,stroke:#1a7f37;
     class MM,LC,CA,TM,LRR,PublicLezRisk planned;
-    class TC,BTP,M3AS,M3RK,M3PE,M3RF,M3BR,M3BC,M3SDK,M3ML,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
+    class TC,XTR,XTM,XTL,XTA,BTP,M3AS,M3RK,M3PE,M3RF,M3BR,M3BC,M3SDK,M3ML,MBRJ,TBRJ,V02Partial,RouteGate,LezProfile,PublicLez,ZebraProfile,SelfHostedZebra,TatumZebra,V02Deploy,V02AuthKey,V02Evidence,V02Target,V02Provision,V02Runtime implemented;
     class BR,IX,SQ,V02R,V02Net,V02Ready,V02Native,V02Fixture,V02Full,V02State,MSL2,TLS2,V02J,MBR2,TBR2,M3FF,M3FO,M3CF,M3ID,M3LI,M3LC,M3RA,M3RUN running;
 ```
 
@@ -977,6 +986,14 @@ Delivery / Chat is not trusted with secrets or chain truth and may disappear
 after the first lock. Chain adapters accept consensus evidence from the selected
 LEZ sequencer, Bitcoin Core, `monerod`, or Zebra; peer messages never advance an
 on-chain state by themselves.
+
+The XMR Taker monitor is deliberately outside those transport and chain edges.
+It binds a private canonical acceptance receipt to canonical Taker manifest
+bytes before selecting the per-swap lock, then performs the complete semantic
+reread under that lock and returns only `application_activated`. It does not
+contact Delivery, Chat, a daemon, a node, or an RPC; it does not support claim
+or refund and does not infer chain progress. ADR 0118 records the validation and
+remaining production path-ABA hardening boundary.
 
 For a lost completion response, the taker persists its countersigned agreement
 before the RPC. A rerun validates that private wire against its executable

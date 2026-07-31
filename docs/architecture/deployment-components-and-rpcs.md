@@ -737,7 +737,7 @@ revalidation, propagation, and finality evidence before release.
 
 ### M5 XMR role-process pre-effect deployment
 
-Status: process-GREEN; the exact locked/offline black-box passed 1 of 1 in 307.71 seconds. Solid edges below were exercised in that run. Dashed edges are the open semantic supervisor and actual isolated chain corridor.
+Status: process-GREEN, including the receipt-only Taker application monitor. The earlier exact locked/offline black-box passed 1 of 1 in 307.71 seconds. Solid edges below have executable process evidence. Dashed edges are the open semantic supervisor and actual isolated chain corridor.
 
 ```mermaid
 flowchart TB
@@ -761,7 +761,12 @@ flowchart TB
         TakerRoot[("Taker private role root")]
         TakerJournal[("Taker role journal")]
         TakerActor[("Taker-only no-clobber actor bundle")]
-        Receipt[("Mode 0600 acceptance receipt")]
+        Receipt[("Mode 0600 canonical acceptance receipt")]
+        TakerManifest[("Canonical Taker manifest")]
+        TakerAuthority[("Stage A and B, packets, private role, claim and refund journals")]
+        MonitorLock["Per-swap kernel lock"]
+        Monitor["Receipt-only Taker monitor<br/>application authority only"]
+        MonitorStatus["Secret-free application_activated status"]
     end
 
     MakerCli --> OwnerSocket
@@ -781,6 +786,14 @@ flowchart TB
     TakerJournal --> TakerCli
     TakerCli --> TakerActor
     TakerCli --> Receipt
+    TakerActor --> TakerManifest
+    TakerJournal --> TakerAuthority
+    Receipt --> Monitor
+    Monitor -->|"digest-pinned bytes bind swap and state"| TakerManifest
+    Monitor --> MonitorLock
+    TakerManifest --> TakerAuthority
+    MonitorLock -->|"pinned manifest and full source validation"| TakerAuthority
+    TakerAuthority --> MonitorStatus
     MakerActor -.-> SemanticSupervisor["Semantic XMR supervisor adapter open"]
     SemanticSupervisor -.-> LezNodes["Isolated LEZ v0.2 sequencer indexer and sidecars"]
     SemanticSupervisor -.-> MoneroNodes["Official monerod 0.18.5.1 Regtest and wallets"]
@@ -795,6 +808,7 @@ flowchart TB
 | XMR actor registry | `--xmr-actor-manifest-registry-file` | Bounded schema-1 JSON. Every entry pins lowercase swap ID, config path/SHA-256, installed owner-owned single-link program path/SHA-256, and state database path |
 | Maker role manifest | `actor-provision.json` from `xmr-reference-actor provision-application maker` | Daemon requires canonical schema 1, Maker role, exact swap, exact role-journal state path, normalized authority paths, and lowercase digests before readiness |
 | Taker acceptance | `lez-taker --accept-xmr-offer` plus Stage A/B, role root, public packets, role journal, actor root, and receipt flags | Taker authenticates Delivery only on first acceptance, provisions only Taker authority, activates over Chat, and publishes its receipt after Maker commit |
+| Taker receipt-only monitor | `lez-taker monitor --receipt` with the private canonical XMR receipt | Digest-pinned canonical Taker-manifest bytes bind the swap and state before the per-swap lock; full Stage A/B, packet, private-role, and claim/refund-journal semantics are reread under the lock; returns only secret-free `application_activated` and never contacts Delivery, Chat, a daemon, a node, or an RPC |
 | Durable replay | Same database, registry, actor root, receipt, reservation, and command after Delivery removal | Durable actor bypasses discovery; exact Stage A/B replay returns revision 3 without replacing role artifacts |
 | Public effects | Maker application database and immutable role journals | The application database has no public-effect table; any participating effect journal must be absent or contain zero rows, and both input role journals remain byte-identical |
 
@@ -828,6 +842,13 @@ sequenceDiagram
 ```
 
 Stage A is non-executable by construction. Stage B is locally atomic because one immediate SQLite transaction activates the negotiation, derives and persists the coordinator, consumes the exact offer, registers one immutable Maker actor, and records global replay. Any failed write restores the revision-2 reservation. The Taker actor bundle is written before activation as a crash latch; its receipt appears only after the Maker commit. This does not create a distributed cross-chain transaction.
+
+The receipt-only monitor performs no writes, preserves every receipt, manifest,
+role artifact, journal, and state byte, and returns no chain-progress inference.
+XMR Taker claim and refund remain explicitly unsupported. The inherited
+reopen/final-equality path-ABA concern remains production hardening rather than a
+PoC blocker; full semantic validation still occurs under the exact per-swap
+kernel lock and grants no effect authority.
 
 Runtime external resources are empty: no chain RPC, local node, Docker project, faucet, DNS, network, or funds. The process proof uses only temporary Unix sockets, SQLite, and owner-private files. This isolates application semantics from chain/finality flakiness. It does not validate Monero or LEZ behavior. Keep the opt-in actor supervisor disabled until the semantic XMR adapter is wired; then compose these exact role bundles with isolated dynamic-loopback Monero and LEZ nodes rather than replacing them.
 

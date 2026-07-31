@@ -15,6 +15,7 @@ use lez_swap_store::{
 };
 use secp256k1::PublicKey;
 use serde::Serialize;
+use xmr_reference_actor::load_validated_xmr_taker_authority_bytes;
 use zec_reference_actor::{
     ActorCommand as ZecActorCommand, ActorConfig, ActorRole, execute_actor_command,
 };
@@ -28,7 +29,9 @@ mod taker_accept_btc;
 #[path = "support/taker_accept_xmr.rs"]
 mod taker_accept_xmr;
 use taker_accept_btc::{BtcTakeInput, load_btc_taker_actor_from_receipt, take_btc};
-use taker_accept_xmr::{XmrTakeInput, take_xmr};
+use taker_accept_xmr::{
+    XmrTakeInput, XmrTakerReceiptSelector, load_xmr_taker_receipt_selector, take_xmr,
+};
 
 use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
 
@@ -714,6 +717,7 @@ async fn execute_xmr_plan(
 enum LoadedTakerActor {
     Zec(Box<ActorConfig>),
     Btc(Box<BtcActorConfig>),
+    Xmr(Box<XmrTakerReceiptSelector>),
 }
 
 #[derive(Serialize)]
@@ -721,6 +725,17 @@ struct BtcLifecycleOutput {
     pair: &'static str,
     #[serde(flatten)]
     output: btc_reference_actor::ActorCommandOutputV1,
+}
+
+#[derive(Serialize)]
+struct XmrTakerMonitorOutput {
+    schema_version: u16,
+    pair: &'static str,
+    role: &'static str,
+    state: &'static str,
+    phase: &'static str,
+    claim_session: &'static str,
+    refund_session: &'static str,
 }
 
 async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
@@ -743,11 +758,13 @@ async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
             }
         },
         (None, Some(path)) => match (
-            load_taker_actor_from_receipt(path),
-            load_btc_taker_actor_from_receipt(path),
+            load_taker_actor_from_receipt(path).ok(),
+            load_btc_taker_actor_from_receipt(path).ok(),
+            load_xmr_taker_receipt_selector(path).ok(),
         ) {
-            (Ok(config), Err(_)) => LoadedTakerActor::Zec(Box::new(config)),
-            (Err(_), Ok(config)) => LoadedTakerActor::Btc(Box::new(config)),
+            (Some(config), None, None) => LoadedTakerActor::Zec(Box::new(config)),
+            (None, Some(config), None) => LoadedTakerActor::Btc(Box::new(config)),
+            (None, None, Some(selector)) => LoadedTakerActor::Xmr(Box::new(selector)),
             _ => {
                 return Err(anyhow::anyhow!(
                     "Taker acceptance receipt is unavailable or ambiguous"
@@ -805,7 +822,39 @@ async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
                 })?
             );
         }
+        LoadedTakerActor::Xmr(selector) => execute_xmr_lifecycle(&selector, action)?,
     }
+    Ok(())
+}
+
+fn execute_xmr_lifecycle(
+    selector: &XmrTakerReceiptSelector,
+    action: LifecycleAction,
+) -> anyhow::Result<()> {
+    let _held_lock = MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())
+        .map_err(|_| anyhow::anyhow!("XMR Taker actor is already running or unsafe"))?;
+    let authority = load_validated_xmr_taker_authority_bytes(selector.manifest_bytes())
+        .map_err(|_| anyhow::anyhow!("XMR Taker actor authority is unavailable or unsafe"))?;
+    ensure!(
+        selector.receipt_matches(&authority),
+        "receipt-bound XMR Taker actor semantics changed"
+    );
+    ensure!(
+        matches!(action, LifecycleAction::Monitor),
+        "XMR Taker claim and refund are not yet composed"
+    );
+    println!(
+        "{}",
+        serde_json::to_string(&XmrTakerMonitorOutput {
+            schema_version: 1,
+            pair: "monero",
+            role: "taker",
+            state: "active",
+            phase: "application_activated",
+            claim_session: "presignature_verified",
+            refund_session: "presignature_verified",
+        })?
+    );
     Ok(())
 }
 

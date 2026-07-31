@@ -200,6 +200,7 @@ flowchart TB
     XmrRoleJournals --> M5XmrStageA
     M5XmrStageA --> M5XmrStageB["0112 Atomic XMR Stage B activation"]
     M5XmrStageB --> M5XmrHandoff["0113 Sealed XMR pre-effect handoff"]
+    M5XmrHandoff --> M5XmrTakerMonitor["0118 Receipt-only XMR Taker monitor"]
 ```
 
 | ADR | Decision | Status |
@@ -321,3 +322,4 @@ flowchart TB
 | [0115](0115-disable-only-the-selected-maker-route.md) | Reject quote and publication before price or Delivery I/O when the selected route is disabled, without changing another pair | Accepted for explicit route control; restart and re-enable journey GREEN, while automatic unavailable-node composition remains |
 | [0116](0116-run-bounded-independent-maker-workers.md) | Run bounded independent actor workers under one daemon identity while preserving per-swap fences, locks, cancellation, and restart replay | Accepted for daemon concurrency; 10 of 10 simultaneous process journeys GREEN, while accepted-application and actual-chain overlap remain |
 | [0117](0117-control-the-fixed-maker-system-service.md) | Expose bounded Maker start and stop only for the fixed packaged system unit and verify exact post-action state | Accepted for lifecycle control; exact argv, JSON, timeout, redaction, and fail-closed state tests GREEN |
+| [0118](0118-monitor-xmr-taker-application-without-chain-authority.md) | Validate one private XMR Taker acceptance receipt under its per-swap lock and report application activation without chain authority | Accepted and receipt-only monitor GREEN; claim, refund, chain progress, and inherited path-ABA hardening remain outside this slice |

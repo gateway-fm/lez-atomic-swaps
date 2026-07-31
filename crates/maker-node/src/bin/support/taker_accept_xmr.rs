@@ -6,7 +6,7 @@ use lez_maker_node::{
     DeliveryOfferQueryV1, RunLocalDelivery, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
     XmrChatStageARequestV1, XmrChatStageAResponseV1, call_local_chat_rpc,
 };
-use lez_swap_core::{Pair, SwapDirection};
+use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_xmr_chat_swap_id};
 use lez_xmr_swap_sdk::{
@@ -15,12 +15,17 @@ use lez_xmr_swap_sdk::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
-    ActorRole, XmrActorProvisionV1, provision_xmr_taker_actor_from_material,
+    ActorRole, XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XmrActorProvisionV1,
+    provision_xmr_taker_actor_from_material, validate_taker_manifest_config_bytes,
 };
+use zeroize::Zeroizing;
 
 use super::{
     secure_file::read_private_file,
-    taker_accept::{MAX_TAKER_RECEIPT_BYTES, publish_exact_new, resolved_new_path},
+    taker_accept::{
+        MAX_TAKER_RECEIPT_BYTES, decode_sha256, normalized_absolute, publish_exact_new,
+        resolved_new_path,
+    },
 };
 
 pub(crate) struct XmrTakeInput<'a> {
@@ -87,6 +92,127 @@ struct XmrAcceptanceReceiptV1 {
     actor_manifest_file: PathBuf,
     actor_manifest_sha256: String,
     actor_state_database: PathBuf,
+}
+
+/// Structurally validated receipt selector whose manifest bytes are digest-pinned.
+///
+/// The CLI must acquire the role-state kernel lock before semantically validating
+/// `manifest_bytes`; this split prevents a validate-then-lock TOCTOU window.
+pub(crate) struct XmrTakerReceiptSelector {
+    swap_id: SwapId,
+    swap_id_bytes: [u8; 32],
+    state_database: PathBuf,
+    stage_a_file: PathBuf,
+    stage_a_sha256: [u8; 32],
+    stage_b_file: PathBuf,
+    stage_b_sha256: [u8; 32],
+    agreement_commitment: [u8; 32],
+    activation_commitment: [u8; 32],
+    manifest_bytes: Zeroizing<Vec<u8>>,
+}
+
+impl XmrTakerReceiptSelector {
+    pub(crate) fn swap_id(&self) -> &SwapId {
+        &self.swap_id
+    }
+
+    pub(crate) fn state_database(&self) -> &Path {
+        &self.state_database
+    }
+
+    pub(crate) fn manifest_bytes(&self) -> &[u8] {
+        &self.manifest_bytes
+    }
+
+    pub(crate) fn receipt_matches(
+        &self,
+        authority: &xmr_reference_actor::ValidatedXmrTakerAuthorityV2,
+    ) -> bool {
+        authority.swap_id() == self.swap_id_bytes
+            && authority.state_database() == self.state_database
+            && authority.published_stage_a() == self.stage_a_file
+            && authority.stage_a_sha256() == self.stage_a_sha256
+            && authority.published_stage_b() == self.stage_b_file
+            && authority.stage_b_sha256() == self.stage_b_sha256
+            && authority.agreement_commitment() == self.agreement_commitment
+            && authority.activation_commitment() == self.activation_commitment
+    }
+}
+
+pub(crate) fn load_xmr_taker_receipt_selector(
+    path: &Path,
+) -> anyhow::Result<XmrTakerReceiptSelector> {
+    let bytes = read_private_file(
+        path,
+        MAX_TAKER_RECEIPT_BYTES,
+        "XMR Taker acceptance receipt",
+    )?;
+    let receipt: XmrAcceptanceReceiptV1 =
+        serde_json::from_slice(&bytes).context("decode XMR Taker acceptance receipt")?;
+    ensure!(
+        serde_json::to_vec(&receipt)? == bytes.as_slice()
+            && receipt.schema_version == 1
+            && receipt.pair.as_ref() == "monero"
+            && receipt.role == ActorRole::Taker,
+        "XMR Taker acceptance receipt is noncanonical or unsupported"
+    );
+    ensure!(
+        normalized_absolute(path)
+            && normalized_absolute(&receipt.stage_a_file)
+            && normalized_absolute(&receipt.stage_b_file)
+            && normalized_absolute(&receipt.actor_manifest_file)
+            && normalized_absolute(&receipt.actor_state_database),
+        "XMR Taker acceptance receipt paths must be normalized and absolute"
+    );
+    let expected_manifest =
+        decode_canonical_sha256(&receipt.actor_manifest_sha256, "XMR actor manifest")?;
+    let manifest_bytes = read_private_file(
+        &receipt.actor_manifest_file,
+        XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+        "receipt-bound XMR Taker actor manifest",
+    )?;
+    ensure!(
+        Sha256::digest(&manifest_bytes).as_slice() == expected_manifest.as_slice(),
+        "receipt-bound XMR Taker actor manifest digest changed"
+    );
+    let swap_id_bytes = decode_swap_id(&receipt.swap_id)?;
+    validate_taker_manifest_config_bytes(
+        &manifest_bytes,
+        swap_id_bytes,
+        &receipt.actor_state_database,
+    )
+    .context("bind receipt to XMR Taker actor manifest")?;
+    Ok(XmrTakerReceiptSelector {
+        swap_id: SwapId::new(receipt.swap_id.clone())?,
+        swap_id_bytes,
+        state_database: receipt.actor_state_database,
+        stage_a_file: receipt.stage_a_file,
+        stage_a_sha256: decode_canonical_sha256(&receipt.stage_a_sha256, "XMR Stage A")?,
+        stage_b_file: receipt.stage_b_file,
+        stage_b_sha256: decode_canonical_sha256(&receipt.stage_b_sha256, "XMR Stage B")?,
+        agreement_commitment: decode_canonical_sha256(
+            &receipt.agreement_commitment,
+            "XMR agreement commitment",
+        )?,
+        activation_commitment: decode_canonical_sha256(
+            &receipt.activation_commitment,
+            "XMR activation commitment",
+        )?,
+        manifest_bytes,
+    })
+}
+
+fn decode_swap_id(value: &str) -> anyhow::Result<[u8; 32]> {
+    decode_canonical_sha256(value, "XMR swap ID")
+}
+
+fn decode_canonical_sha256(value: &str, label: &str) -> anyhow::Result<[u8; 32]> {
+    let decoded = decode_sha256(value, label)?;
+    ensure!(
+        hex::encode(decoded) == value,
+        "receipt {label} digest is noncanonical"
+    );
+    Ok(decoded)
 }
 
 #[allow(clippy::too_many_lines)] // Keeps the two RPC commits and receipt ordering visible together.

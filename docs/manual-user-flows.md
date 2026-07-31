@@ -6006,8 +6006,8 @@ The isolated official Monero 0.18.5.1 Regtest plus LEZ v0.2 corridor under this
 accepted authority is clean-certified in Flow 1R. Fixed packaged-system-service control is GREEN in Flow 1D. Remaining PoC work is Taker XMR lifecycle,
 accepted-application/actual-chain concurrency, and automatic unavailable-node
 behavior. Explicit route control is GREEN in Flow 1S; bounded simultaneous
-workers are GREEN in Flow 1H. The updated ETA is 12 to 23 focused hours for the
-M5 PoC and 22 to 39 focused hours for the milestone tag.
+workers are GREEN in Flow 1H. The updated ETA is 10 to 20 focused hours for the
+M5 PoC and 20 to 36 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
@@ -6242,6 +6242,86 @@ External resources: none. This flow opens no chain RPC, starts no local node or
 Docker service, uses no faucet or funds, and performs no DNS or public-network
 request. It proves explicit route isolation, not automatic health detection or
 an actual swap on the unaffected pair.
+
+## Flow 1T: monitor an accepted XMR application as the Taker
+
+Status: process-GREEN, receipt-only, and deliberately pre-effect. This flow uses
+the real Taker CLI after the XMR acceptance in Flow 1P or Flow 1R. It validates
+the accepted Taker application authority; it does not query either chain and
+does not report current or enduring chain progress.
+
+Build the CLI from the repository root, then point it at the owner-private
+acceptance receipt emitted by the accepted XMR application. The receipt and all
+referenced authority paths must remain normalized absolute paths beneath their
+original owner-private roots.
+
+```bash
+cargo +1.96.0 build --locked --offline \
+  -p lez-maker-node --bin lez-taker
+
+export XMR_TAKER_RECEIPT=/absolute/path/to/taker-receipt.json
+target/debug/lez-taker monitor --receipt "$XMR_TAKER_RECEIPT"
+```
+
+The exact one-line JSON is:
+
+```json
+{"schema_version":1,"pair":"monero","role":"taker","state":"active","phase":"application_activated","claim_session":"presignature_verified","refund_session":"presignature_verified"}
+```
+
+This output means only that the receipt still binds a semantically valid Taker
+Stage-A/Stage-B application authority whose claim and refund sessions both
+reached `presignature_verified`. It does not mean that LEZ was funded or
+claimed, that Monero was funded or swept, that either chain is live, or that a
+previously observed chain effect remains canonical. Use Flow 1R evidence and
+the chain-specific operators for chain progress.
+
+Delivery, Chat, and the Maker daemon may all be stopped before this command.
+The CLI strictly and boundedly decodes the receipt, pins the manifest bytes to
+the receipt SHA-256, derives the swap/state lock identity, and then takes the
+same per-swap kernel lock used by the actor worker. Only while holding that lock
+does it fully validate the Taker manifest, Stage A/B, public packets, private
+authority, and role journals, then compare the validated authority with every
+receipt-bound field. The monitor is read-only. This prevents a live worker from
+mutating the role state across semantic validation and output, so it cannot
+create a second effect owner or partially commit monitor state. It is process
+atomicity over one accepted authority, not cross-chain atomicity. Inherited ABA
+hardening for paths reopened during semantic validation remains production
+hardening; do not treat this checkpoint as a hostile same-UID filesystem proof.
+
+`claim` and `refund` are intentionally unavailable in this slice:
+
+```bash
+target/debug/lez-taker claim --receipt "$XMR_TAKER_RECEIPT"
+target/debug/lez-taker refund --receipt "$XMR_TAKER_RECEIPT"
+```
+
+Both fail with empty stdout and the stable error
+`XMR Taker claim and refund are not yet composed`. Other stable public failures
+are `Taker acceptance receipt is unavailable or ambiguous`, `XMR Taker actor
+is already running or unsafe`, `XMR Taker actor authority is unavailable or
+unsafe`, and `receipt-bound XMR Taker actor semantics changed`. They disclose no
+authority path, digest, key, journal bytes, or child identity. Do not weaken a
+failure by passing an actor config instead of the acceptance receipt.
+
+External runtime resources: none. This monitor starts no LEZ or Monero node,
+opens no chain RPC, uses no Docker service, faucet, funds, DNS, public network,
+peer, or finality service, and does not need Delivery or Chat. Consequently it
+has no node/readiness/finality flakiness and cannot validate chain behavior. To
+repeat the process proof that creates the genuine receipt and then monitors it
+after transport removal, run:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p lez-maker-node --test xmr_chat_process \
+  real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically \
+  -- --exact --nocapture
+```
+
+That test must also preserve the captured acceptance artifacts across monitor,
+reject claim/refund without output, reject a receipt with an unknown field or
+wrong manifest digest, and keep failures secret-free. This closes a Taker
+monitor sub-gap only; literal M5 remains 3 of 7.
 
 ## Troubleshooting
 
