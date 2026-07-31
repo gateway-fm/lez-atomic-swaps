@@ -4388,3 +4388,47 @@ binder; execute and retain a fresh role-correct LEZ plus Monero Regtest replay
 and exact cleanup; then close the still-open actual-chain concurrency and
 unavailable-route/operator surfaces required by the seven accepted outputs.
 Tag 17 remains a separate punishment-path requirement. Current estimate is 6 to 14 focused hours to M5 PoC and 16 to 28 focused hours to the reviewed closure tag.
+
+## M5 reproducible application-refund runner checkpoint
+
+The bounded role-correct refund tail is now working-tree GREEN. It is opt-in
+through `M5_XMR_JOURNEY=refund`, requires application mode, keeps the historical
+claim path as the unchanged default, and rejects refund deadlines outside the
+600000 through 3600000 millisecond local profile. The default schedules refund
+900000 milliseconds after agreement composition and leaves a 600000
+millisecond punishment window.
+
+The runner obtains time only through the authenticated Maker classifier. It
+waits for a finalized clock in `[refund_at, punish_at)`, fixes discovery at the
+next height, adapts the Taker refund presignature, submits tag 16 once through
+the real Taker process, and requires canonical Maker `DiscoverByTerms`
+finality. The Maker then ingests that exact aggregate signature into its
+durable refund session, extracts the Taker scalar, reconstructs with its own
+Monero share, and sweeps the neutral shared wallet to the Maker wallet while
+the Taker wallet remains the independent foreign observer and confirmation
+miner.
+
+The new owner-private binder revalidates the Maker Stage A/B material, durable
+refund session, finalized tag-16 facts, observed aggregate signature,
+extraction proof, refund-v3 sweep, and independent receipt. It requires honest
+`taker_refund_signature` and `maker` roles, exact
+`funded = received + fee` accounting, isolated Regtest topology, no public RPC,
+no faucet, and no automatic retry. Its scope is explicitly successful-refund
+conditional atomicity; it claims neither a distributed cross-chain transaction
+nor future-reorg immunity.
+
+Focused actor tests, all actor targets, strict Clippy, warning-fatal Rustdoc,
+Bash syntax, the preserved M4 claim contract, the M5 application contract, and
+diff hygiene are GREEN. ADR 0122 records components/RPCs, sequence, and the
+atomicity argument; Flow 1W is the manual clean-replay procedure. This is not
+yet actual-node evidence: the next gate is a fresh exact pushed-commit run on
+isolated LEZ v0.2 plus official Monero 0.18.5.1 Regtest, followed by retained
+binding and exact cleanup evidence.
+
+Literal M5 remains 3 of 7 until that replay and the accepted application-output
+closures are complete. Remaining order is the clean refund replay,
+accepted-application actual-chain overlap, complete Maker and Taker lifecycle
+surfaces, unavailable-route composition, and the final evidence/security/tag
+review. Tag 17 stays recorded as protocol punishment-path work rather than a
+separate literal issue-#112 M5 output. Updated estimate is 3 to 8 focused hours
+to the progressive PoC and 14 to 24 focused hours to the reviewed closure tag.

@@ -203,6 +203,8 @@ flowchart TB
     M5XmrHandoff --> M5XmrTakerMonitor["0118 Receipt-only XMR Taker monitor"]
     M5XmrStageB --> M5XmrTag16Prepare["0119 Prepare tag 16"]
     M5XmrTag16Prepare --> M5XmrTag16Checkpoint["0120 Submit and classify tag 16"]
+    M5XmrTag16Checkpoint --> M5XmrRefundRoles["0121 Ingest and reconstruct refund"]
+    M5XmrRefundRoles --> M5XmrRefundRunner["0122 Compose refund runner tail"]
 ```
 
 | ADR | Decision | Status |
@@ -328,3 +330,4 @@ flowchart TB
 | [0119](0119-prepare-tag16-without-submission.md) | Prepare and durably complete the exact generated native-XMR tag 16 transaction under authenticated Taker authority without submission | Accepted and component GREEN; submission, finalized classification, Maker recovery sweep, and tag 17 remain |
 | [0120](0120-submit-and-classify-tag16-once.md) | Admit only the exact completed tag 16 through one-attempt Taker submission and classify the finalized refund from exact-owner and Maker-discovery views | Accepted for the component checkpoint; actual local-devnet Maker extraction, reconstructed Monero sweep, cross-chain binding, tag 17, and M5 certification remain open |
 | [0121](0121-ingest-and-reconstruct-the-xmr-refund-by-role.md) | Continue finalized tag 16 through role-fixed Maker ingestion, adaptor extraction, and one symmetric claim/refund Monero sweep engine | Accepted for the component checkpoint; runner wiring, actual local-devnet refund replay, cross-chain binding, tag 17, and M5 certification remain open |
+| [0122](0122-compose-the-xmr-refund-runner-tail.md) | Compose the finalized-clock-gated tag-16 refund through Maker reconstruction, exact Monero receipt verification, and conservative cross-chain binding | Accepted for the runner-wiring checkpoint; fresh isolated two-devnet refund replay, retained evidence, tag 17, and M5 certification remain open |

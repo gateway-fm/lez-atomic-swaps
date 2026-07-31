@@ -112,6 +112,10 @@ const M4_MONERO_WALLET_VERSION: u32 = 65_567;
 #[cfg(feature = "sessions")]
 const M4_CLAIM_SWEEP_BINDING_SCHEMA: &str = "lez_v02_m4_claim_cross_chain_binding_v1";
 #[cfg(feature = "sessions")]
+const M5_MONERO_REFUND_SWEEP_SCHEMA: &str = "lez_v02_m5_actual_local_monero_refund_sweep_v3";
+#[cfg(feature = "sessions")]
+const M5_REFUND_SWEEP_BINDING_SCHEMA: &str = "lez_v02_m5_refund_cross_chain_binding_v1";
+#[cfg(feature = "sessions")]
 const CLAIM_SESSION_FILE: &str = "claim.json";
 #[cfg(feature = "sessions")]
 const REFUND_SESSION_FILE: &str = "refund.json";
@@ -482,6 +486,53 @@ pub enum Action {
         #[arg(long, value_name = "NEW_PRIVATE_JSON")]
         output_binding_evidence: PathBuf,
     },
+    /// Bind finalized LEZ Refund evidence and its verified adaptor extraction to one
+    /// independently verified actual-local Monero refund sweep.
+    #[cfg(feature = "sessions")]
+    BindFinalizedRefundSweep {
+        /// Existing owner-only Maker role root.
+        #[arg(long, value_name = "PRIVATE_ROOT")]
+        private_root: PathBuf,
+        /// Maker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        own_public_packet: PathBuf,
+        /// Taker canonical public packet.
+        #[arg(long, value_name = "PUBLIC_JSON")]
+        peer_public_packet: PathBuf,
+        /// Canonical countersigned Stage-A wire.
+        #[arg(long, value_name = "STAGE_A")]
+        agreement_stage_a: PathBuf,
+        /// Canonical countersigned Stage-B activation wire.
+        #[arg(long, value_name = "STAGE_B")]
+        activation_stage_b: PathBuf,
+        /// Existing owner-private Maker journal containing the refund presignature.
+        #[arg(long, value_name = "PRIVATE_SQLITE")]
+        journal: PathBuf,
+        /// Monero child-run identity echoed by the refund sweep and receipt evidence.
+        #[arg(long)]
+        run_id: String,
+        /// Parent-run identity echoed by the finalized LEZ refund classifier.
+        #[arg(long)]
+        refund_run_id: String,
+        /// Canonical Maker-sidecar `DiscoverByTerms` result for finalized tag 16.
+        #[arg(long, value_name = "FINALIZED_JSON")]
+        finalized_refund: PathBuf,
+        /// Owner-private observed final-signature packet previously ingested from tag 16.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        observed_final_signature: PathBuf,
+        /// Owner-private Taker scalar extracted from that observed signature.
+        #[arg(long, value_name = "PRIVATE_SCALAR")]
+        extracted_taker_adaptor_scalar: PathBuf,
+        /// Canonical actual-local Monero refund sweep-effect evidence v3.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        monero_sweep_evidence: PathBuf,
+        /// Independent canonical Monero receipt/topology verification evidence v2.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        monero_receipt_evidence: PathBuf,
+        /// New owner-private conditional cross-chain refund binding evidence.
+        #[arg(long, value_name = "NEW_PRIVATE_JSON")]
+        output_binding_evidence: PathBuf,
+    },
 }
 
 /// CLI for one role-fixed material invocation.
@@ -618,6 +669,68 @@ struct ClaimSweepBindingEvidenceV1 {
     received_amount_piconero: u64,
     fee_piconero: Option<u64>,
     unreceived_remainder_piconero: u64,
+    peer_count: u64,
+    network_scope: &'static str,
+    public_rpc_used: bool,
+    faucet_used: bool,
+    automatic_submission_retry: bool,
+}
+
+#[cfg(feature = "sessions")]
+// These booleans are independent evidence/resource claims. Keeping them explicit makes the
+// deliberately conditional scope impossible to confuse with distributed transaction finality.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RefundSweepBindingEvidenceV1 {
+    schema: &'static str,
+    run_id: String,
+    agreement_commitment: String,
+    activation_commitment: String,
+    refund_context_binding: String,
+    atomicity_scope: &'static str,
+    distributed_cross_chain_transaction_claimed: bool,
+    future_reorg_immunity_claimed: bool,
+    lez_effect: &'static str,
+    lez_sidecar_role: &'static str,
+    classifier_target: &'static str,
+    classifier_outcome: &'static str,
+    classifier_request_id: String,
+    classifier_result_sha256: String,
+    classifier_scan_start_height: u64,
+    classifier_scan_max_blocks: u32,
+    lez_refund_transaction_id: String,
+    lez_refund_block_hash: String,
+    lez_refund_block_height: u64,
+    lez_refund_transaction_index: u32,
+    lez_refund_block_timestamp_ms: u64,
+    lez_finalized_tip_hash: String,
+    lez_finalized_tip_height: u64,
+    lez_finalized_tip_timestamp_ms: u64,
+    aggregate_signature_sha256: String,
+    observed_final_signature_packet_sha256: String,
+    extraction_binding: &'static str,
+    reconstructed_public_spend_key: String,
+    monero_sweep_evidence_provenance: &'static str,
+    monero_sweep_evidence_schema: &'static str,
+    monero_sweep_evidence_sha256: String,
+    monero_receipt_evidence_schema: &'static str,
+    monero_receipt_evidence_sha256: String,
+    monero_genesis_hash: String,
+    monero_sweep_transaction_id: String,
+    monero_evidenced_destination_address: String,
+    destination_ownership_binding: &'static str,
+    monero_daemon_version: String,
+    monero_target_wallet_version: u32,
+    monero_foreign_wallet_version: u32,
+    monero_sweep_block_hash: String,
+    monero_sweep_block_height: u64,
+    monero_sweep_confirmations: u64,
+    monero_stable_tip_hash: String,
+    monero_stable_tip_height: u64,
+    funded_amount_piconero: u64,
+    received_amount_piconero: u64,
+    fee_piconero: u64,
     peer_count: u64,
     network_scope: &'static str,
     public_rpc_used: bool,
@@ -994,6 +1107,38 @@ pub fn execute(cli: Cli) -> Result<()> {
             &finalized_claim,
             &observed_final_signature,
             &extracted_maker_adaptor_scalar,
+            &monero_sweep_evidence,
+            &monero_receipt_evidence,
+            &output_binding_evidence,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::BindFinalizedRefundSweep {
+            private_root,
+            own_public_packet,
+            peer_public_packet,
+            agreement_stage_a,
+            activation_stage_b,
+            journal,
+            run_id,
+            refund_run_id,
+            finalized_refund,
+            observed_final_signature,
+            extracted_taker_adaptor_scalar,
+            monero_sweep_evidence,
+            monero_receipt_evidence,
+            output_binding_evidence,
+        } => bind_finalized_refund_sweep(
+            &private_root,
+            &own_public_packet,
+            &peer_public_packet,
+            &agreement_stage_a,
+            &activation_stage_b,
+            &journal,
+            &run_id,
+            &refund_run_id,
+            &finalized_refund,
+            &observed_final_signature,
+            &extracted_taker_adaptor_scalar,
             &monero_sweep_evidence,
             &monero_receipt_evidence,
             &output_binding_evidence,
@@ -3219,6 +3364,279 @@ fn write_claim_sweep_binding_evidence(
         "claim sweep binding evidence",
     )
 }
+
+#[cfg(feature = "sessions")]
+// Keep the extraction-to-finality-to-receipt chain linear and auditable. No input in this
+// sequence grants authority until all role, session, signature, and accounting checks pass.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn bind_finalized_refund_sweep(
+    private_root: &Path,
+    own_public_packet: &Path,
+    peer_public_packet: &Path,
+    agreement_stage_a: &Path,
+    activation_stage_b: &Path,
+    journal: &Path,
+    run_id: &str,
+    refund_run_id: &str,
+    finalized_refund: &Path,
+    observed_final_signature: &Path,
+    extracted_taker_adaptor_scalar: &Path,
+    monero_sweep_evidence: &Path,
+    monero_receipt_evidence: &Path,
+    output_binding_evidence: &Path,
+) -> Result<()> {
+    let destination =
+        SecureDestination::new(output_binding_evidence, "refund sweep binding evidence")?;
+    destination.ensure_absent("refund sweep binding evidence")?;
+    let lifecycle = load_refund_lifecycle(
+        ActorRole::Maker,
+        private_root,
+        own_public_packet,
+        peer_public_packet,
+        agreement_stage_a,
+        activation_stage_b,
+    )?;
+    ensure!(
+        lifecycle.agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
+        "Stage A is not bound to Monero Regtest"
+    );
+
+    let result = read_finalized_xmr_effect(finalized_refund)?;
+    let facts = discovered_finalized_xmr_facts(
+        &result,
+        refund_run_id,
+        &lifecycle.binding.terms(),
+        XmrNativeEffectV3::Refund,
+        BridgeParticipant::Maker,
+    )?;
+    let aggregate_signature = facts
+        .aggregate_signature
+        .ok_or_else(|| anyhow!("finalized tag-16 facts omit the aggregate signature"))?;
+    let observed_bytes_before = read_private_input(
+        observed_final_signature,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
+        "observed refund final-signature packet",
+    )?;
+    let observed_signature =
+        read_final_signature_packet(observed_final_signature, &lifecycle.session)
+            .context("read observed Maker refund signature packet")?;
+    let observed_bytes_after = read_private_input(
+        observed_final_signature,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
+        "observed refund final-signature packet",
+    )?;
+    ensure!(
+        observed_bytes_before == observed_bytes_after,
+        "observed refund final-signature packet changed while it was verified"
+    );
+    ensure!(
+        aggregate_signature.as_bytes() == &observed_signature,
+        "refund classifier aggregate signature differs from the observed packet"
+    );
+
+    let verified_secret = verify_extracted_adaptor_secret(
+        journal,
+        &lifecycle.session,
+        RunnerRole::Maker,
+        observed_signature,
+        extracted_taker_adaptor_scalar,
+    )
+    .context("verify extracted Taker adaptor secret against the durable Maker refund session")?;
+    let reconstructed = ReconstructedMoneroSpendKey::reconstruct(
+        lifecycle.agreement.shared_address(),
+        lifecycle.agreement.taker_proof(),
+        lifecycle.material.share,
+        verified_secret.into_big_endian_bytes(),
+    )
+    .context("reconstruct exact Stage-A Monero refund spend authority")?;
+    let reconstructed_public_spend_key = reconstructed.public_key();
+
+    let (sweep, sweep_bytes) = read_canonical_private_json::<MoneroSweepEvidence>(
+        monero_sweep_evidence,
+        "Monero refund sweep evidence v3",
+    )?;
+    let (receipt, receipt_bytes) = read_canonical_private_json::<MoneroReceiptEvidenceV2>(
+        monero_receipt_evidence,
+        "Monero refund receipt evidence v2",
+    )?;
+    let agreement_commitment = hex::encode(lifecycle.agreement.agreement_commitment());
+    let shared_address = lifecycle.agreement.shared_address().address_string();
+    let expected = ExpectedMoneroSweep {
+        run_id,
+        agreement_commitment: &agreement_commitment,
+        shared_address: &shared_address,
+        reconstructed_public_spend_key,
+        monero_genesis_hash: lifecycle.agreement.body().monero().genesis_hash(),
+        funded_amount_piconero: lifecycle.agreement.body().monero().amount_piconero(),
+        required_confirmations: u64::from(
+            lifecycle.agreement.body().monero().required_confirmations(),
+        ),
+    };
+    let accounting = validate_monero_refund_evidence_pair(&sweep, &receipt, &expected)?;
+
+    write_refund_sweep_binding_evidence(
+        &destination,
+        run_id,
+        &lifecycle.agreement,
+        &lifecycle.activation,
+        &result,
+        facts,
+        aggregate_signature.as_bytes(),
+        &observed_bytes_after,
+        reconstructed_public_spend_key,
+        &sweep_bytes,
+        &receipt_bytes,
+        &receipt,
+        &accounting,
+    )
+}
+
+#[cfg(feature = "sessions")]
+#[allow(clippy::too_many_arguments)]
+fn write_refund_sweep_binding_evidence(
+    destination: &SecureDestination,
+    run_id: &str,
+    agreement: &XmrAgreementV1,
+    activation: &XmrActivatedAgreementV1,
+    result: &ClassifyFinalizedNativeXmrEffectV3Result,
+    facts: &FinalizedNativeXmrEffectFactsV3,
+    aggregate_signature: &[u8; 64],
+    observed_packet: &[u8],
+    reconstructed_public_spend_key: [u8; 32],
+    sweep_bytes: &[u8],
+    receipt_bytes: &[u8],
+    receipt: &MoneroReceiptEvidenceV2,
+    accounting: &ValidatedMoneroAccounting,
+) -> Result<()> {
+    let (finalized_clock, scanned_window) = match &result.outcome {
+        FinalizedNativeXmrScanOutcomeV3::Found {
+            finalized_clock,
+            scanned_window,
+            ..
+        } => (*finalized_clock, *scanned_window),
+        _ => return Err(anyhow!("finalized XMR refund is not affirmative Found")),
+    };
+    let fee = accounting
+        .fee_piconero
+        .ok_or_else(|| anyhow!("refund sweep evidence does not prove an exact fee"))?;
+    ensure!(
+        accounting.unreceived_remainder_piconero == fee,
+        "refund sweep remainder differs from its exact fee"
+    );
+    let classifier_bytes = canonical_json_bytes(result, "encode finalized XMR refund")?;
+    let evidence = RefundSweepBindingEvidenceV1 {
+        schema: M5_REFUND_SWEEP_BINDING_SCHEMA,
+        run_id: run_id.to_owned(),
+        agreement_commitment: hex::encode(agreement.agreement_commitment()),
+        activation_commitment: hex::encode(activation.activation_commitment()),
+        refund_context_binding: hex::encode(agreement.refund_context_binding()),
+        atomicity_scope: "successful_refund_path_conditional_atomicity",
+        distributed_cross_chain_transaction_claimed: false,
+        future_reorg_immunity_claimed: false,
+        lez_effect: "refund",
+        lez_sidecar_role: "maker",
+        classifier_target: "discover_by_terms",
+        classifier_outcome: "found",
+        classifier_request_id: result.context.request_id.as_str().to_owned(),
+        classifier_result_sha256: sha256_hex(&classifier_bytes),
+        classifier_scan_start_height: scanned_window.start_height(),
+        classifier_scan_max_blocks: scanned_window.max_blocks(),
+        lez_refund_transaction_id: hex::encode(facts.transaction.transaction_id.as_bytes()),
+        lez_refund_block_hash: hex::encode(facts.containing_block.block_hash.as_bytes()),
+        lez_refund_block_height: facts.containing_block.block_id,
+        lez_refund_transaction_index: facts.transaction.position.transaction_index,
+        lez_refund_block_timestamp_ms: facts.containing_block.timestamp_ms,
+        lez_finalized_tip_hash: hex::encode(finalized_clock.block_hash.as_bytes()),
+        lez_finalized_tip_height: finalized_clock.height,
+        lez_finalized_tip_timestamp_ms: finalized_clock.timestamp_ms,
+        aggregate_signature_sha256: sha256_hex(aggregate_signature),
+        observed_final_signature_packet_sha256: sha256_hex(observed_packet),
+        extraction_binding: "durable_maker_refund_presignature_v1",
+        reconstructed_public_spend_key: hex::encode(reconstructed_public_spend_key),
+        monero_sweep_evidence_provenance: accounting.provenance,
+        monero_sweep_evidence_schema: accounting.sweep_schema,
+        monero_sweep_evidence_sha256: sha256_hex(sweep_bytes),
+        monero_receipt_evidence_schema: M4_MONERO_RECEIPT_SCHEMA,
+        monero_receipt_evidence_sha256: sha256_hex(receipt_bytes),
+        monero_genesis_hash: receipt.monero_genesis_hash.clone(),
+        monero_sweep_transaction_id: receipt.transaction_id.clone(),
+        monero_evidenced_destination_address: receipt.destination_address.clone(),
+        destination_ownership_binding: "owner_private_maker_wallet_boundary_not_stage_a_committed",
+        monero_daemon_version: receipt.daemon_version.clone(),
+        monero_target_wallet_version: receipt.target_wallet_version,
+        monero_foreign_wallet_version: receipt.foreign_wallet_version,
+        monero_sweep_block_hash: receipt.containing_block_hash.clone(),
+        monero_sweep_block_height: receipt.containing_block_height,
+        monero_sweep_confirmations: receipt.confirmations,
+        monero_stable_tip_hash: receipt.stable_tip_hash.clone(),
+        monero_stable_tip_height: receipt.stable_tip_height,
+        funded_amount_piconero: accounting.funded_amount_piconero,
+        received_amount_piconero: accounting.received_amount_piconero,
+        fee_piconero: fee,
+        peer_count: receipt.peer_count,
+        network_scope: M4_MONERO_NETWORK_SCOPE,
+        public_rpc_used: false,
+        faucet_used: false,
+        automatic_submission_retry: false,
+    };
+    write_refund_binding_output(destination, &evidence)
+}
+
+#[cfg(feature = "sessions")]
+fn write_refund_binding_output(
+    destination: &SecureDestination,
+    evidence: &RefundSweepBindingEvidenceV1,
+) -> Result<()> {
+    ensure!(
+        evidence.schema == M5_REFUND_SWEEP_BINDING_SCHEMA
+            && evidence.atomicity_scope == "successful_refund_path_conditional_atomicity"
+            && !evidence.distributed_cross_chain_transaction_claimed
+            && !evidence.future_reorg_immunity_claimed,
+        "refund binding overstates its conditional atomicity scope"
+    );
+    ensure!(
+        evidence.lez_effect == "refund"
+            && evidence.lez_sidecar_role == "maker"
+            && evidence.classifier_target == "discover_by_terms"
+            && evidence.classifier_outcome == "found",
+        "refund binding has crossed LEZ evidence"
+    );
+    ensure!(
+        evidence.extraction_binding == "durable_maker_refund_presignature_v1"
+            && evidence.monero_sweep_evidence_provenance == "refund_v3"
+            && evidence.monero_sweep_evidence_schema == M5_MONERO_REFUND_SWEEP_SCHEMA
+            && evidence.monero_receipt_evidence_schema == M4_MONERO_RECEIPT_SCHEMA,
+        "refund binding has crossed extraction or Monero evidence"
+    );
+    ensure!(
+        evidence.destination_ownership_binding
+            == "owner_private_maker_wallet_boundary_not_stage_a_committed"
+            && evidence.network_scope == M4_MONERO_NETWORK_SCOPE
+            && evidence.peer_count == 0
+            && !evidence.public_rpc_used
+            && !evidence.faucet_used
+            && !evidence.automatic_submission_retry,
+        "refund binding used an invalid destination or external resource"
+    );
+    let accounted = evidence
+        .received_amount_piconero
+        .checked_add(evidence.fee_piconero)
+        .ok_or_else(|| anyhow!("refund binding accounting overflows"))?;
+    ensure!(
+        evidence.received_amount_piconero > 0
+            && evidence.fee_piconero > 0
+            && evidence.funded_amount_piconero == accounted,
+        "refund binding accounting is not exact"
+    );
+    let bytes = canonical_json_bytes(&evidence, "encode refund sweep binding evidence")?;
+    write_bounded_public_new(
+        destination,
+        &bytes,
+        M4_BINDING_EVIDENCE_MAX_BYTES,
+        "refund sweep binding evidence",
+    )
+}
+
 #[cfg(feature = "sessions")]
 // Keep the legacy compatibility validator as one exhaustive field checklist. Its result is
 // explicitly only an unreceived remainder, never an exact fee claim.
@@ -3227,6 +3645,8 @@ fn validate_legacy_monero_evidence_pair(
     sweep: &MoneroSweepEvidenceV1,
     receipt: &MoneroReceiptEvidenceV2,
     expected: &ExpectedMoneroSweep<'_>,
+    expected_revealed_role: &str,
+    expected_sweeping_role: &str,
 ) -> Result<u64> {
     ensure!(
         sweep.schema == M4_MONERO_LEGACY_SWEEP_SCHEMA,
@@ -3333,7 +3753,8 @@ fn validate_legacy_monero_evidence_pair(
         "Monero restore height is after the sweep"
     );
     ensure!(
-        sweep.revealed_role == "maker_claim_signature" && sweep.sweeping_role == "taker",
+        sweep.revealed_role == expected_revealed_role
+            && sweep.sweeping_role == expected_sweeping_role,
         "Monero sweep roles are invalid"
     );
     ensure!(
@@ -3440,8 +3861,42 @@ struct MoneroSweepEvidenceV2 {
 
 #[cfg(feature = "sessions")]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MoneroRefundSweepEvidenceV3 {
+    schema: String,
+    journey: String,
+    run_id: String,
+    agreement_commitment: String,
+    monero_genesis_hash: String,
+    shared_address: String,
+    reconstructed_public_spend_key: String,
+    destination_address: String,
+    funded_amount_piconero: u64,
+    received_amount_piconero: u64,
+    fee_piconero: u64,
+    transaction_id: String,
+    containing_block_hash: String,
+    containing_block_height: u64,
+    confirmations: u64,
+    stable_tip_hash: String,
+    stable_tip_height: u64,
+    generated_confirmation_tip_height: u64,
+    required_confirmations: u64,
+    peer_count: u64,
+    restore_height: u64,
+    revealed_role: String,
+    sweeping_role: String,
+    network_scope: String,
+    public_rpc_used: bool,
+    faucet_used: bool,
+    automatic_submission_retry: bool,
+}
+
+#[cfg(feature = "sessions")]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
 enum MoneroSweepEvidence {
+    RefundV3(MoneroRefundSweepEvidenceV3),
     CurrentV2(MoneroSweepEvidenceV2),
     LegacyV1(MoneroSweepEvidenceV1),
 }
@@ -3463,8 +3918,17 @@ fn validate_monero_evidence_pair(
     expected: &ExpectedMoneroSweep<'_>,
 ) -> Result<ValidatedMoneroAccounting> {
     match sweep {
+        MoneroSweepEvidence::RefundV3(_) => {
+            Err(anyhow!("refund sweep evidence cannot certify a claim"))
+        }
         MoneroSweepEvidence::LegacyV1(sweep) => {
-            let remainder = validate_legacy_monero_evidence_pair(sweep, receipt, expected)?;
+            let remainder = validate_legacy_monero_evidence_pair(
+                sweep,
+                receipt,
+                expected,
+                "maker_claim_signature",
+                "taker",
+            )?;
             Ok(ValidatedMoneroAccounting {
                 provenance: "legacy_v1_plus_receipt_v2",
                 sweep_schema: M4_MONERO_LEGACY_SWEEP_SCHEMA,
@@ -3474,92 +3938,181 @@ fn validate_monero_evidence_pair(
                 unreceived_remainder_piconero: remainder,
             })
         }
-        MoneroSweepEvidence::CurrentV2(sweep) => {
-            ensure!(
-                sweep.schema == M4_MONERO_CURRENT_SWEEP_SCHEMA,
-                "unsupported current Monero sweep evidence schema"
-            );
-            ensure!(
-                sweep.run_id == expected.run_id && sweep.run_id == receipt.run_id,
-                "current Monero sweep run differs from its receipt"
-            );
-            ensure!(
-                sweep.monero_genesis_hash == receipt.monero_genesis_hash,
-                "current Monero sweep genesis differs from its receipt"
-            );
-            ensure!(
-                sweep.received_amount_piconero == receipt.amount_piconero,
-                "current Monero sweep amount differs from its receipt"
-            );
-            ensure!(
-                sweep.containing_block_hash == receipt.containing_block_hash
-                    && sweep.containing_block_height == receipt.containing_block_height,
-                "current Monero sweep block differs from its receipt"
-            );
-            ensure!(
-                sweep.confirmations == receipt.confirmations,
-                "current Monero sweep confirmations differ from its receipt"
-            );
-            ensure!(
-                sweep.stable_tip_hash == receipt.stable_tip_hash
-                    && sweep.stable_tip_height == receipt.stable_tip_height,
-                "current Monero sweep stable tip differs from its receipt"
-            );
-            ensure!(
-                sweep.peer_count == receipt.peer_count,
-                "current Monero sweep peer count differs from its receipt"
-            );
-            ensure!(
-                sweep.network_scope == receipt.network_scope,
-                "current Monero sweep scope differs from its receipt"
-            );
-            ensure!(
-                sweep.public_rpc_used == receipt.public_rpc_used
-                    && sweep.faucet_used == receipt.faucet_used,
-                "current Monero sweep resource flags differ from its receipt"
-            );
-            let accounted_total = sweep
-                .received_amount_piconero
-                .checked_add(sweep.fee_piconero)
-                .ok_or_else(|| anyhow!("current Monero sweep accounting overflows"))?;
-            ensure!(
-                sweep.funded_amount_piconero == accounted_total,
-                "current Monero sweep funded amount is not received plus fee"
-            );
-
-            let common = MoneroSweepEvidenceV1 {
-                schema: M4_MONERO_LEGACY_SWEEP_SCHEMA.to_owned(),
-                agreement_commitment: sweep.agreement_commitment.clone(),
-                shared_address: sweep.shared_address.clone(),
-                reconstructed_public_spend_key: sweep.reconstructed_public_spend_key.clone(),
-                destination_address: sweep.destination_address.clone(),
-                funded_amount_piconero: sweep.funded_amount_piconero,
-                transaction_id: sweep.transaction_id.clone(),
-                confirmation_tip_height: sweep.generated_confirmation_tip_height,
-                required_confirmations: sweep.required_confirmations,
-                restore_height: sweep.restore_height,
-                revealed_role: sweep.revealed_role.clone(),
-                sweeping_role: sweep.sweeping_role.clone(),
-                network_scope: sweep.network_scope.clone(),
-                public_rpc_used: sweep.public_rpc_used,
-                faucet_used: sweep.faucet_used,
-                automatic_submission_retry: sweep.automatic_submission_retry,
-            };
-            let remainder = validate_legacy_monero_evidence_pair(&common, receipt, expected)?;
-            ensure!(
-                remainder == sweep.fee_piconero,
-                "current Monero sweep fee differs from the independently derived remainder"
-            );
-            Ok(ValidatedMoneroAccounting {
-                provenance: "current_v2",
-                sweep_schema: M4_MONERO_CURRENT_SWEEP_SCHEMA,
-                funded_amount_piconero: sweep.funded_amount_piconero,
-                received_amount_piconero: sweep.received_amount_piconero,
-                fee_piconero: Some(sweep.fee_piconero),
-                unreceived_remainder_piconero: remainder,
-            })
-        }
+        MoneroSweepEvidence::CurrentV2(sweep) => validate_exact_monero_evidence_pair(
+            sweep,
+            receipt,
+            expected,
+            M4_MONERO_CURRENT_SWEEP_SCHEMA,
+            "maker_claim_signature",
+            "taker",
+            "current_v2",
+        ),
     }
+}
+
+#[cfg(feature = "sessions")]
+#[allow(clippy::too_many_arguments)]
+fn validate_exact_monero_evidence_pair(
+    sweep: &MoneroSweepEvidenceV2,
+    receipt: &MoneroReceiptEvidenceV2,
+    expected: &ExpectedMoneroSweep<'_>,
+    expected_schema: &'static str,
+    expected_revealed_role: &'static str,
+    expected_sweeping_role: &'static str,
+    provenance: &'static str,
+) -> Result<ValidatedMoneroAccounting> {
+    ensure!(
+        sweep.schema == expected_schema,
+        "unsupported exact Monero sweep evidence schema"
+    );
+    ensure!(
+        sweep.run_id == expected.run_id && sweep.run_id == receipt.run_id,
+        "exact Monero sweep run differs from its receipt"
+    );
+    ensure!(
+        sweep.monero_genesis_hash == receipt.monero_genesis_hash,
+        "exact Monero sweep genesis differs from its receipt"
+    );
+    ensure!(
+        sweep.received_amount_piconero == receipt.amount_piconero,
+        "exact Monero sweep amount differs from its receipt"
+    );
+    ensure!(
+        sweep.containing_block_hash == receipt.containing_block_hash
+            && sweep.containing_block_height == receipt.containing_block_height,
+        "exact Monero sweep block differs from its receipt"
+    );
+    ensure!(
+        sweep.confirmations == receipt.confirmations,
+        "exact Monero sweep confirmations differ from its receipt"
+    );
+    ensure!(
+        sweep.stable_tip_hash == receipt.stable_tip_hash
+            && sweep.stable_tip_height == receipt.stable_tip_height,
+        "exact Monero sweep stable tip differs from its receipt"
+    );
+    ensure!(
+        sweep.peer_count == receipt.peer_count,
+        "exact Monero sweep peer count differs from its receipt"
+    );
+    ensure!(
+        sweep.network_scope == receipt.network_scope,
+        "exact Monero sweep scope differs from its receipt"
+    );
+    ensure!(
+        sweep.public_rpc_used == receipt.public_rpc_used
+            && sweep.faucet_used == receipt.faucet_used,
+        "exact Monero sweep resource flags differ from its receipt"
+    );
+    let accounted_total = sweep
+        .received_amount_piconero
+        .checked_add(sweep.fee_piconero)
+        .ok_or_else(|| anyhow!("exact Monero sweep accounting overflows"))?;
+    ensure!(
+        sweep.funded_amount_piconero == accounted_total,
+        "exact Monero sweep funded amount is not received plus fee"
+    );
+
+    let common = MoneroSweepEvidenceV1 {
+        schema: M4_MONERO_LEGACY_SWEEP_SCHEMA.to_owned(),
+        agreement_commitment: sweep.agreement_commitment.clone(),
+        shared_address: sweep.shared_address.clone(),
+        reconstructed_public_spend_key: sweep.reconstructed_public_spend_key.clone(),
+        destination_address: sweep.destination_address.clone(),
+        funded_amount_piconero: sweep.funded_amount_piconero,
+        transaction_id: sweep.transaction_id.clone(),
+        confirmation_tip_height: sweep.generated_confirmation_tip_height,
+        required_confirmations: sweep.required_confirmations,
+        restore_height: sweep.restore_height,
+        revealed_role: sweep.revealed_role.clone(),
+        sweeping_role: sweep.sweeping_role.clone(),
+        network_scope: sweep.network_scope.clone(),
+        public_rpc_used: sweep.public_rpc_used,
+        faucet_used: sweep.faucet_used,
+        automatic_submission_retry: sweep.automatic_submission_retry,
+    };
+    let remainder = validate_legacy_monero_evidence_pair(
+        &common,
+        receipt,
+        expected,
+        expected_revealed_role,
+        expected_sweeping_role,
+    )?;
+    ensure!(
+        remainder == sweep.fee_piconero,
+        "exact Monero sweep fee differs from the independently derived remainder"
+    );
+    Ok(ValidatedMoneroAccounting {
+        provenance,
+        sweep_schema: expected_schema,
+        funded_amount_piconero: sweep.funded_amount_piconero,
+        received_amount_piconero: sweep.received_amount_piconero,
+        fee_piconero: Some(sweep.fee_piconero),
+        unreceived_remainder_piconero: remainder,
+    })
+}
+
+#[cfg(feature = "sessions")]
+fn validate_monero_refund_evidence_pair(
+    sweep: &MoneroSweepEvidence,
+    receipt: &MoneroReceiptEvidenceV2,
+    expected: &ExpectedMoneroSweep<'_>,
+) -> Result<ValidatedMoneroAccounting> {
+    let MoneroSweepEvidence::RefundV3(sweep) = sweep else {
+        return Err(anyhow!(
+            "refund binding requires Monero refund sweep v3 evidence"
+        ));
+    };
+    ensure!(
+        sweep.schema == M5_MONERO_REFUND_SWEEP_SCHEMA,
+        "unsupported Monero refund sweep evidence schema"
+    );
+    ensure!(
+        sweep.journey == "refund",
+        "Monero refund sweep evidence has the wrong journey"
+    );
+    ensure!(
+        sweep.revealed_role == "taker_refund_signature" && sweep.sweeping_role == "maker",
+        "Monero refund sweep roles are invalid"
+    );
+
+    let exact_accounting_fields = MoneroSweepEvidenceV2 {
+        schema: sweep.schema.clone(),
+        run_id: sweep.run_id.clone(),
+        agreement_commitment: sweep.agreement_commitment.clone(),
+        monero_genesis_hash: sweep.monero_genesis_hash.clone(),
+        shared_address: sweep.shared_address.clone(),
+        reconstructed_public_spend_key: sweep.reconstructed_public_spend_key.clone(),
+        destination_address: sweep.destination_address.clone(),
+        funded_amount_piconero: sweep.funded_amount_piconero,
+        received_amount_piconero: sweep.received_amount_piconero,
+        fee_piconero: sweep.fee_piconero,
+        transaction_id: sweep.transaction_id.clone(),
+        containing_block_hash: sweep.containing_block_hash.clone(),
+        containing_block_height: sweep.containing_block_height,
+        confirmations: sweep.confirmations,
+        stable_tip_hash: sweep.stable_tip_hash.clone(),
+        stable_tip_height: sweep.stable_tip_height,
+        generated_confirmation_tip_height: sweep.generated_confirmation_tip_height,
+        required_confirmations: sweep.required_confirmations,
+        peer_count: sweep.peer_count,
+        restore_height: sweep.restore_height,
+        revealed_role: sweep.revealed_role.clone(),
+        sweeping_role: sweep.sweeping_role.clone(),
+        network_scope: sweep.network_scope.clone(),
+        public_rpc_used: sweep.public_rpc_used,
+        faucet_used: sweep.faucet_used,
+        automatic_submission_retry: sweep.automatic_submission_retry,
+    };
+    validate_exact_monero_evidence_pair(
+        &exact_accounting_fields,
+        receipt,
+        expected,
+        M5_MONERO_REFUND_SWEEP_SCHEMA,
+        "taker_refund_signature",
+        "maker",
+        "refund_v3",
+    )
 }
 
 #[cfg(all(test, feature = "sessions"))]
@@ -3667,6 +4220,97 @@ mod claim_sweep_binding_tests {
         }
     }
 
+    fn refund_current() -> MoneroRefundSweepEvidenceV3 {
+        let current = current();
+        MoneroRefundSweepEvidenceV3 {
+            schema: M5_MONERO_REFUND_SWEEP_SCHEMA.to_owned(),
+            journey: "refund".to_owned(),
+            run_id: current.run_id,
+            agreement_commitment: current.agreement_commitment,
+            monero_genesis_hash: current.monero_genesis_hash,
+            shared_address: current.shared_address,
+            reconstructed_public_spend_key: current.reconstructed_public_spend_key,
+            destination_address: current.destination_address,
+            funded_amount_piconero: current.funded_amount_piconero,
+            received_amount_piconero: current.received_amount_piconero,
+            fee_piconero: current.fee_piconero,
+            transaction_id: current.transaction_id,
+            containing_block_hash: current.containing_block_hash,
+            containing_block_height: current.containing_block_height,
+            confirmations: current.confirmations,
+            stable_tip_hash: current.stable_tip_hash,
+            stable_tip_height: current.stable_tip_height,
+            generated_confirmation_tip_height: current.generated_confirmation_tip_height,
+            required_confirmations: current.required_confirmations,
+            peer_count: current.peer_count,
+            restore_height: current.restore_height,
+            revealed_role: "taker_refund_signature".to_owned(),
+            sweeping_role: "maker".to_owned(),
+            network_scope: current.network_scope,
+            public_rpc_used: current.public_rpc_used,
+            faucet_used: current.faucet_used,
+            automatic_submission_retry: current.automatic_submission_retry,
+        }
+    }
+
+    fn refund_binding() -> RefundSweepBindingEvidenceV1 {
+        RefundSweepBindingEvidenceV1 {
+            schema: M5_REFUND_SWEEP_BINDING_SCHEMA,
+            run_id: RUN_ID.to_owned(),
+            agreement_commitment: AGREEMENT.to_owned(),
+            activation_commitment: "10".repeat(32),
+            refund_context_binding: "11".repeat(32),
+            atomicity_scope: "successful_refund_path_conditional_atomicity",
+            distributed_cross_chain_transaction_claimed: false,
+            future_reorg_immunity_claimed: false,
+            lez_effect: "refund",
+            lez_sidecar_role: "maker",
+            classifier_target: "discover_by_terms",
+            classifier_outcome: "found",
+            classifier_request_id: "refund-classifier-request".to_owned(),
+            classifier_result_sha256: "12".repeat(32),
+            classifier_scan_start_height: 90,
+            classifier_scan_max_blocks: 21,
+            lez_refund_transaction_id: "13".repeat(32),
+            lez_refund_block_hash: "14".repeat(32),
+            lez_refund_block_height: 100,
+            lez_refund_transaction_index: 2,
+            lez_refund_block_timestamp_ms: 15_000,
+            lez_finalized_tip_hash: "15".repeat(32),
+            lez_finalized_tip_height: 110,
+            lez_finalized_tip_timestamp_ms: 30_000,
+            aggregate_signature_sha256: "16".repeat(32),
+            observed_final_signature_packet_sha256: "17".repeat(32),
+            extraction_binding: "durable_maker_refund_presignature_v1",
+            reconstructed_public_spend_key: PUBLIC_SPEND.to_owned(),
+            monero_sweep_evidence_provenance: "refund_v3",
+            monero_sweep_evidence_schema: M5_MONERO_REFUND_SWEEP_SCHEMA,
+            monero_sweep_evidence_sha256: "18".repeat(32),
+            monero_receipt_evidence_schema: M4_MONERO_RECEIPT_SCHEMA,
+            monero_receipt_evidence_sha256: "19".repeat(32),
+            monero_genesis_hash: GENESIS.to_owned(),
+            monero_sweep_transaction_id: TRANSACTION.to_owned(),
+            monero_evidenced_destination_address: DESTINATION.to_owned(),
+            destination_ownership_binding: "owner_private_maker_wallet_boundary_not_stage_a_committed",
+            monero_daemon_version: M4_MONERO_DAEMON_VERSION.to_owned(),
+            monero_target_wallet_version: M4_MONERO_WALLET_VERSION,
+            monero_foreign_wallet_version: M4_MONERO_WALLET_VERSION,
+            monero_sweep_block_hash: BLOCK.to_owned(),
+            monero_sweep_block_height: 121,
+            monero_sweep_confirmations: 10,
+            monero_stable_tip_hash: TIP.to_owned(),
+            monero_stable_tip_height: 130,
+            funded_amount_piconero: FUNDED,
+            received_amount_piconero: RECEIVED,
+            fee_piconero: REMAINDER,
+            peer_count: 0,
+            network_scope: M4_MONERO_NETWORK_SCOPE,
+            public_rpc_used: false,
+            faucet_used: false,
+            automatic_submission_retry: false,
+        }
+    }
+
     #[test]
     fn legacy_v1_plus_receipt_exposes_remainder_but_never_claims_an_exact_fee() {
         let accounting = validate_monero_evidence_pair(
@@ -3735,6 +4379,119 @@ mod claim_sweep_binding_tests {
         );
         reject_mismatch!(|sweep: &mut MoneroSweepEvidenceV2| sweep.public_rpc_used = true);
         reject_mismatch!(|sweep: &mut MoneroSweepEvidenceV2| sweep.faucet_used = true);
+    }
+
+    #[test]
+    fn refund_v3_preserves_honest_roles_and_proves_exact_receipt_accounting() {
+        let sweep = MoneroSweepEvidence::RefundV3(refund_current());
+        let accounting = validate_monero_refund_evidence_pair(&sweep, &receipt(), &expected())
+            .expect("valid honest refund sweep and independent receipt");
+        assert_eq!(accounting.provenance, "refund_v3");
+        assert_eq!(accounting.sweep_schema, M5_MONERO_REFUND_SWEEP_SCHEMA);
+        assert_eq!(accounting.funded_amount_piconero, FUNDED);
+        assert_eq!(accounting.received_amount_piconero, RECEIVED);
+        assert_eq!(accounting.fee_piconero, Some(REMAINDER));
+        assert_eq!(accounting.unreceived_remainder_piconero, REMAINDER);
+        assert!(
+            validate_monero_evidence_pair(&sweep, &receipt(), &expected()).is_err(),
+            "refund evidence must not certify the retained claim path"
+        );
+        assert!(
+            validate_monero_refund_evidence_pair(
+                &MoneroSweepEvidence::CurrentV2(current()),
+                &receipt(),
+                &expected(),
+            )
+            .is_err(),
+            "claim-v2 evidence must not certify the refund path"
+        );
+    }
+
+    #[test]
+    fn refund_v3_rejects_crossed_journey_roles_schema_accounting_and_receipt() {
+        macro_rules! reject_refund {
+            ($mutation:expr) => {{
+                let mut sweep = refund_current();
+                $mutation(&mut sweep);
+                assert!(
+                    validate_monero_refund_evidence_pair(
+                        &MoneroSweepEvidence::RefundV3(sweep),
+                        &receipt(),
+                        &expected(),
+                    )
+                    .is_err()
+                );
+            }};
+        }
+        reject_refund!(|sweep: &mut MoneroRefundSweepEvidenceV3| sweep.journey = "claim".to_owned());
+        reject_refund!(
+            |sweep: &mut MoneroRefundSweepEvidenceV3| sweep.revealed_role =
+                "maker_claim_signature".to_owned()
+        );
+        reject_refund!(
+            |sweep: &mut MoneroRefundSweepEvidenceV3| sweep.sweeping_role = "taker".to_owned()
+        );
+        reject_refund!(|sweep: &mut MoneroRefundSweepEvidenceV3| sweep.schema =
+            M4_MONERO_CURRENT_SWEEP_SCHEMA.to_owned());
+        reject_refund!(|sweep: &mut MoneroRefundSweepEvidenceV3| sweep.fee_piconero -= 1);
+
+        let sweep = MoneroSweepEvidence::RefundV3(refund_current());
+        let mut crossed_receipt = receipt();
+        crossed_receipt.transaction_id = "99".repeat(32);
+        assert!(
+            validate_monero_refund_evidence_pair(&sweep, &crossed_receipt, &expected()).is_err(),
+            "crossed independent receipt must fail closed"
+        );
+    }
+
+    #[test]
+    fn refund_binding_output_is_owner_private_canonical_and_conditionally_scoped() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::TempDir::new().expect("temporary binding root");
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("owner-private binding root");
+        let output = directory.path().join("refund-binding.json");
+        let destination =
+            SecureDestination::new(&output, "refund binding test output").expect("destination");
+        let evidence = refund_binding();
+        let expected_bytes = canonical_json_bytes(&evidence, "encode expected refund binding")
+            .expect("canonical expected binding");
+        write_refund_binding_output(&destination, &evidence)
+            .expect("write conditional refund binding");
+
+        let metadata = std::fs::metadata(&output).expect("binding metadata");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        let bytes = std::fs::read(&output).expect("binding bytes");
+        assert_eq!(bytes, expected_bytes);
+        assert_eq!(bytes.last(), Some(&b'\n'));
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("canonical binding JSON");
+        assert_eq!(value["schema"], M5_REFUND_SWEEP_BINDING_SCHEMA);
+        assert_eq!(
+            value["atomicity_scope"],
+            "successful_refund_path_conditional_atomicity"
+        );
+        assert_eq!(value["distributed_cross_chain_transaction_claimed"], false);
+        assert_eq!(value["future_reorg_immunity_claimed"], false);
+        assert_eq!(value["lez_effect"], "refund");
+        assert_eq!(value["lez_sidecar_role"], "maker");
+        assert_eq!(
+            value["extraction_binding"],
+            "durable_maker_refund_presignature_v1"
+        );
+        assert_eq!(value["monero_sweep_evidence_provenance"], "refund_v3");
+        assert_eq!(value["funded_amount_piconero"], FUNDED);
+        assert_eq!(value["received_amount_piconero"], RECEIVED);
+        assert_eq!(value["fee_piconero"], REMAINDER);
+
+        let mut overstated = refund_binding();
+        overstated.distributed_cross_chain_transaction_claimed = true;
+        let rejected_path = directory.path().join("overstated-refund-binding.json");
+        let rejected = SecureDestination::new(&rejected_path, "rejected refund binding")
+            .expect("rejected destination");
+        assert!(write_refund_binding_output(&rejected, &overstated).is_err());
+        assert!(!rejected_path.exists());
     }
 
     #[test]

@@ -6421,6 +6421,78 @@ deterministic local genesis/Regtest funds, a neutral shared-wallet process, and
 role-correct Maker/Taker wallets. See ADR 0121 for its component, sequence, and
 conditional-atomicity diagrams.
 
+
+## Flow 1W: run the role-correct XMR application refund locally
+
+Status: **RUNNER-GREEN; CLEAN ACTUAL REPLAY PENDING.** This is the exact operator
+path for the next evidence run. Do not treat this section as a successful swap
+record until the retained evidence identifier and hashes are added after a
+clean pushed-commit replay.
+
+Use a private Docker daemon and a new lowercase run ID. From the repository
+root:
+
+```bash
+export DOCKER_HOST=unix:///tmp/lez-m5-engine-d9c9c1e/docker.sock
+export RUN_ID=m5-xmr-refund-$(date -u +%Y%m%d%H%M%S)
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RAPIDSNARK_LIB_DIR=/tmp/lez-tag16-rapidsnark/rapidsnark-linux-x86_64-pic-v0.0.8/lib
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/tmp/lez-v02-provisional-tools-m5btc-f9d0349-artifact
+export LOGOS_BLOCKCHAIN_CIRCUITS=/tmp/lez-v02-provisional-tools-m5btc-f9d0349-artifact/logos-blockchain-circuits-v0.4.2
+export M5_XMR_JOURNEY=refund
+
+test -z "$(git status --porcelain)"
+git fetch origin main
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+scripts/run-m5-xmr-application-poc.sh execute
+```
+
+The default signed timing profile places `refund_at` 900000 milliseconds after
+agreement composition and `punish_at` another 600000 milliseconds later.
+`M5_XMR_REFUND_DELAY_MS` may be set only to 600000 through 3600000. Shortening
+below ten minutes is intentionally rejected because application activation,
+tag 13, Maker funding, and finality must finish before the fixed five-minute
+funding cutoff margin. Waiting uses the authenticated finalized-chain
+classifier rather than wall-clock sleep or a raw indexer query.
+
+Expected order:
+
+1. real Delivery plan, Stage A/B activation, role-only handoff, and synchronous
+   application cutoff;
+2. finalized tag 13 followed by confirmed Maker-funded Monero output;
+3. finalized refund-window observation, Taker tag-16 adaptation and one-attempt
+   submission, then Maker terms-discovery finality;
+4. Maker ingestion and Taker-scalar extraction, Maker-directed reconstructed
+   Monero sweep, and independent Maker-target/Taker-foreign receipt; and
+5. owner-private cross-chain binding plus exact run-owned cleanup.
+
+The binding must report schema
+`lez_v02_m5_refund_cross_chain_binding_v1`, LEZ effect `refund`, Maker
+sidecar/discovery, conditional refund atomicity, and false distributed-
+transaction/future-reorg claims. The Monero sweep must report journey `refund`,
+revealed role `taker_refund_signature`, sweeping role `maker`, confirmations at
+least the agreement minimum, peer count zero, and no public RPC, faucet, or
+automatic submission retry.
+
+Runtime resources are actual local protocol services, not behavioral stubs:
+the pinned LEZ v0.2 sequencer/indexer execute and finalize the generated
+on-chain refund transaction, and official Monero 0.18.5.1 Regtest daemon plus
+wallet RPC processes construct, admit, mine, and independently verify the
+reconstructed-key sweep. Their endpoints are ephemeral loopback addresses;
+funds come only from deterministic local genesis/Regtest outputs. No public
+RPC, faucet, DNS lookup, peer, testnet, or public funds participate.
+
+Local nodes can still expose real implementation and integration defects in
+transaction construction, consensus admission, finality scanning, wallet-key
+reconstruction, fee accounting, confirmations, RPC authentication, and
+cleanup. They do not prove public-runtime parity, Internet transport,
+third-party availability, public finality/reorg behavior, fee-market behavior,
+different-host custody, or production isolation. Main flake risks are cold
+build time, host CPU/disk pressure, local block/finality cadence, and a missed
+signed window; always use a fresh run ID and never reuse partial evidence.
+ADR 0122 contains the complete component/RPC, sequence, and conditional-
+atomicity diagrams.
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

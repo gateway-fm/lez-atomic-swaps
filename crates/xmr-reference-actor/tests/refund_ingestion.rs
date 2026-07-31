@@ -63,3 +63,51 @@ fn finalized_refund_ingestion_is_a_role_fixed_maker_command() {
         Some("/private/observed-refund-signature.json")
     );
 }
+
+#[test]
+fn finalized_refund_sweep_binding_is_a_role_fixed_maker_command() {
+    let cli = Cli::try_parse_from([
+        "xmr-reference-actor",
+        "bind-finalized-refund-sweep",
+        "--private-root",
+        "/private/maker",
+        "--own-public-packet",
+        "/exchange/maker.json",
+        "--peer-public-packet",
+        "/exchange/taker.json",
+        "--agreement-stage-a",
+        "/exchange/agreement.bin",
+        "--activation-stage-b",
+        "/exchange/activation.bin",
+        "--journal",
+        "/private/maker.sqlite",
+        "--run-id",
+        "m5-refund-monero",
+        "--refund-run-id",
+        "m5-refund-lez",
+        "--finalized-refund",
+        "/exchange/finalized-refund.json",
+        "--observed-final-signature",
+        "/private/observed-refund-signature.json",
+        "--extracted-taker-adaptor-scalar",
+        "/private/extracted-taker-scalar.key",
+        "--monero-sweep-evidence",
+        "/private/refund-sweep-v3.json",
+        "--monero-receipt-evidence",
+        "/private/refund-receipt-v2.json",
+        "--output-binding-evidence",
+        "/private/refund-binding.json",
+    ])
+    .expect("parse role-fixed Maker refund-sweep binder");
+
+    let Action::BindFinalizedRefundSweep {
+        run_id,
+        refund_run_id,
+        ..
+    } = cli.action
+    else {
+        panic!("wrong action");
+    };
+    assert_eq!(run_id, "m5-refund-monero");
+    assert_eq!(refund_run_id, "m5-refund-lez");
+}

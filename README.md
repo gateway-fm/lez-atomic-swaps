@@ -279,12 +279,17 @@ Taker process cryptographically verifies and publishes tag 16 through the
 transaction-derived one-attempt identity; the Maker accepts only canonical
 finalized discovery into the precommitted refund session; and one sweep engine
 selects the opposite reconstruction, destination, and confirmation roles for
-claim versus refund. This still uses process/RPC doubles and no chain nodes, so
-actual runner composition, the refund binder, exact local-devnet replay, and
-tag 17 remain open. [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint)
+claim versus refund. The opt-in application runner now composes that same
+refund path through isolated local LEZ v0.2 and Monero Regtest services and an
+owner-private binder that cross-checks finalized tag 16, Maker extraction, the
+Maker-directed Monero receipt, honest refund roles, and exact fee accounting.
+This runner and binder are component-GREEN but have not yet been executed
+together from a clean pushed commit, so no new actual refund swap is claimed.
+[Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint)
 and [Flow 1V](docs/manual-user-flows.md#flow-1v-repeat-the-role-correct-xmr-refund-continuation-checkpoint)
-reproduce both component boundaries and list every external resource. Updated
-estimate: 6 to 14 focused hours to M5 PoC and 16 to 28 focused hours to the reviewed milestone tag.
+reproduce the lower component boundaries; Flow 1W gives the exact clean replay
+command and resource/flakiness boundary. Updated estimate: 3 to 8 focused hours
+to the M5 progressive PoC and 14 to 24 focused hours to the reviewed milestone tag.
 
 The persistent coordinator now runs 1 to 32 independent actor workers with one
 SQLite connection each, one shared daemon lease identity, per-row CAS and

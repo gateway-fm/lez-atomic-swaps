@@ -279,8 +279,8 @@ for required_edge in command-fds lez-btc-swap-sdk lez-xmr-swap-sdk rustix; do
     fail "release lock omits swap-store runtime edge: ${required_edge}"
 done
 
-[[ "$(rg -Fo -- '--shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' "$runner" | wc -l)" == 2 ]] ||
-  fail 'runner must restore the shared XMR wallet only on the neutral provisioner RPC for funding and sweep'
+[[ "$(rg -Fo -- '--shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' "$runner" | wc -l)" == 3 ]] ||
+  fail 'runner must restore the shared XMR wallet only on the neutral provisioner RPC for funding and both role-correct sweeps'
 require_runner_source '--funding-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' 'Maker funding and claim-mining wallet role'
 rg -Fq -- '--taker-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"' "$runner" ||
   fail 'runner must sweep reconstructed XMR only to the Taker wallet RPC'
@@ -343,5 +343,70 @@ for required in \
   rg -Fq -- "$required" "$xmr_process_test" ||
     fail "real XMR process test omits monitor proof: ${required}"
 done
+
+for required in \
+  'readonly m5_xmr_journey="${M5_XMR_JOURNEY:-claim}"' \
+  'readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"' \
+  'M5_XMR_JOURNEY=refund requires M5_XMR_APPLICATION_MODE=1' \
+  'M5_XMR_REFUND_DELAY_MS must be 600000..3600000 milliseconds' \
+  'readonly m5_xmr_refund_window_ms=600000' \
+  '--bin xmr-reference-tag16' \
+  'readonly tag16_binary="${staged_binary_root}/xmr-reference-tag16"' \
+  'wait_for_m5_xmr_refund_window() {' \
+  '--max-blocks 1' \
+  '.outcome.status=="absent" or .outcome.status=="uncertain"' \
+  '.outcome.finalized_clock.timestamp_ms' \
+  'tag16_scan_start_height="$((finalized_height + 1))"' \
+  '(( finalized_timestamp_ms >= refund_at_ms && finalized_timestamp_ms < punish_at_ms ))' \
+  'prepare_tag16_refund_signature() {' \
+  '"${agreement_root}/stage-b/exchange/refund/taker-presignature.json"' \
+  'publish_tag16_refund() {' \
+  '"$tag16_binary" --sidecar-endpoint "$taker_endpoint"' \
+  '--runtime-file "$tag13_handoff_root/taker-runtime.json"' \
+  '--prepare-request-id "${run_id}-tag16-prepare-001"' \
+  'classify_tag16_refund_finality() {' \
+  '--role maker --effect refund' \
+  'ingest-finalized-refund-signature' \
+  '--private-root "${agreement_root}/material/maker"' \
+  '--journal "${agreement_root}/stage-b/private/maker.sqlite"' \
+  'extract_refund_adaptor_scalar() {' \
+  '"$agreement_role_runner_binary" maker' \
+  '--session "${agreement_root}/material/maker-sessions/refund.json"' \
+  '--presignature "${agreement_root}/stage-b/exchange/refund/maker-presignature.json"' \
+  'sweep_monero_refund() {' \
+  '"$monero_sweep_binary" --journey refund' \
+  '--maker-share-file "${agreement_root}/material/maker/xmr-share.key"' \
+  '--extracted-taker-adaptor-scalar-file "$extracted_taker_scalar"' \
+  '--shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' \
+  '--taker-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"' \
+  '--funding-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' \
+  '.schema=="lez_v02_m5_actual_local_monero_refund_sweep_v3"' \
+  '.journey=="refund" and .revealed_role=="taker_refund_signature" and .sweeping_role=="maker"' \
+  '--target-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' \
+  '--foreign-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"' \
+  'bind_refund_sweep() {' \
+  'bind-finalized-refund-sweep' \
+  '--refund-run-id "$run_id"' \
+  '--monero-sweep-evidence "$monero_refund_sweep_evidence"' \
+  '.schema=="lez_v02_m5_refund_cross_chain_binding_v1"' \
+  '.atomicity_scope=="successful_refund_path_conditional_atomicity"'; do
+  require_runner_source "$required" "M5 refund journey boundary: ${required}"
+done
+
+refund_wait_line="$(unique_line '^    wait_for_m5_xmr_refund_window$' 'refund-window wait invocation')"
+refund_prepare_line="$(unique_line '^    prepare_tag16_refund_signature$' 'tag16 signature invocation')"
+refund_publish_line="$(unique_line '^    publish_tag16_refund$' 'tag16 publication invocation')"
+refund_classify_line="$(unique_line '^    classify_tag16_refund_finality$' 'tag16 classification invocation')"
+refund_ingest_line="$(unique_line '^    ingest_refund_signature$' 'refund ingestion invocation')"
+refund_extract_line="$(unique_line '^    extract_refund_adaptor_scalar$' 'refund extraction invocation')"
+refund_sweep_line="$(unique_line '^    sweep_monero_refund$' 'refund sweep invocation')"
+refund_bind_line="$(unique_line '^    bind_refund_sweep$' 'refund binding invocation')"
+readonly refund_wait_line refund_prepare_line refund_publish_line refund_classify_line
+readonly refund_ingest_line refund_extract_line refund_sweep_line refund_bind_line
+(( refund_wait_line < refund_prepare_line && refund_prepare_line < refund_publish_line &&
+   refund_publish_line < refund_classify_line && refund_classify_line < refund_ingest_line &&
+   refund_ingest_line < refund_extract_line && refund_extract_line < refund_sweep_line &&
+   refund_sweep_line < refund_bind_line )) ||
+  fail 'M5 refund journey order is not wait/adapt/tag16/classify/ingest/extract/sweep/bind'
 
 echo 'M5 XMR application-to-chain contract passed'

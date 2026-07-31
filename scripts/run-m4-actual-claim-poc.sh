@@ -21,6 +21,9 @@ readonly expected_gmp_sha256="0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b
 readonly expected_fq_sha256="797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0"
 readonly expected_fr_sha256="40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82"
 readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"
+readonly m5_xmr_journey="${M5_XMR_JOURNEY:-claim}"
+readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"
+readonly m5_xmr_refund_window_ms=600000
 
 fail() {
   echo "M4 actual-claim runner failed: $*" >&2
@@ -235,6 +238,20 @@ environment_preflight() {
   elif [[ "$m5_xmr_application_mode" != 0 ]]; then
     fail "M5_XMR_APPLICATION_MODE must be unset, 0, or 1"
   fi
+  case "$m5_xmr_journey" in
+    claim)
+      [[ -z "${M5_XMR_REFUND_DELAY_MS:-}" ]] ||
+        fail "M5_XMR_REFUND_DELAY_MS requires M5_XMR_JOURNEY=refund"
+      ;;
+    refund)
+      [[ "$m5_xmr_application_mode" == 1 ]] ||
+        fail "M5_XMR_JOURNEY=refund requires M5_XMR_APPLICATION_MODE=1"
+      [[ "$m5_xmr_refund_delay_ms" =~ ^[0-9]+$ ]] &&
+        (( m5_xmr_refund_delay_ms >= 600000 && m5_xmr_refund_delay_ms <= 3600000 )) ||
+        fail "M5_XMR_REFUND_DELAY_MS must be 600000..3600000 milliseconds"
+      ;;
+    *) fail "M5_XMR_JOURNEY must be claim or refund" ;;
+  esac
   [[ "${RAPIDSNARK_LIB_DIR:-}" == /* && -d "$RAPIDSNARK_LIB_DIR" ]] ||
     fail "RAPIDSNARK_LIB_DIR must be an absolute verified library directory"
   [[ "${BINDGEN_EXTRA_CLANG_ARGS:-}" == '-I/usr/lib/gcc/x86_64-linux-gnu/13/include' ]] ||
@@ -762,6 +779,11 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
       --bin xmr-reference-actor --bin xmr-reference-tag15
+  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+    CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+      cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
+        --bin xmr-reference-tag16
+  fi
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline -p lez-maker-node \
@@ -782,6 +804,9 @@ build_identity_and_artifact() {
   mkdir -m 0700 "$staged_binary_root"
   readonly agreement_actor_binary="${staged_binary_root}/xmr-reference-actor"
   readonly tag15_binary="${staged_binary_root}/xmr-reference-tag15"
+  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+    readonly tag16_binary="${staged_binary_root}/xmr-reference-tag16"
+  fi
   readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
   readonly agreement_composer_binary="${staged_binary_root}/lez-v02-xmr-stage-a-compose"
   readonly tag13_binary="${staged_binary_root}/lez-v02-xmr-stage-a-poc"
@@ -812,6 +837,10 @@ build_identity_and_artifact() {
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/xmr-reference-tag15" "$tag15_binary" "Tag15 driver"
+  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+    stage_executable "${workspace_target}/debug/xmr-reference-tag16" \
+      "$tag16_binary" "Tag16 refund driver"
+  fi
   stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
     "$agreement_role_runner_binary" "agreement role runner"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-stage-a-compose" \
@@ -1397,9 +1426,16 @@ compose_xmr_agreement() {
   now_seconds="$(date -u +%s)"
   readonly agreement_monero_amount_piconero=1000000000000
   readonly agreement_lez_amount=700
-  readonly maker_xmr_funding_cutoff_ms="$(((now_seconds + 14400) * 1000))"
-  readonly refund_at_ms="$((maker_xmr_funding_cutoff_ms + 10000))"
-  readonly punish_at_ms="$((refund_at_ms + 10000))"
+  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+    readonly refund_at_ms="$((now_seconds * 1000 + m5_xmr_refund_delay_ms))"
+    readonly maker_xmr_funding_cutoff_ms="$((refund_at_ms - 300000))"
+    readonly punish_at_ms="$((refund_at_ms + m5_xmr_refund_window_ms))"
+  else
+    # Keep the original actual-claim timing byte-for-byte equivalent by default.
+    readonly maker_xmr_funding_cutoff_ms="$(((now_seconds + 14400) * 1000))"
+    readonly refund_at_ms="$((maker_xmr_funding_cutoff_ms + 10000))"
+    readonly punish_at_ms="$((refund_at_ms + 10000))"
+  fi
   local -a m5_swap_id_argument=()
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
     [[ "$agreement_monero_amount_piconero" == "$m5_xmr_foreign_units" && \
@@ -1961,6 +1997,139 @@ fund_and_verify_monero() {
   jq -e --arg run_id "$MONERO_RUN_ID" --arg tx "$tx_id" --argjson required "$required_confirmations" '.schema=="lez_v02_m4_actual_local_monero_verification_v2" and .run_id==$run_id and .transaction_id==$tx and .confirmations >= $required and .public_rpc_used==false and .faucet_used==false and .network_scope=="isolated_official_monero_regtest"' "$monero_verification_evidence" >/dev/null || fail "Monero verification evidence is incomplete"
   record_phase monero_verification completed
 }
+
+wait_for_m5_xmr_refund_window() {
+  record_phase tag16_refund_window started
+  readonly tag16_refund_window_result="${evidence_root}/tag16-refund-window.json"
+  local maker_endpoint probe_height attempt result_tmp finalized_timestamp_ms finalized_height
+  maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
+  probe_height="$(jq -er '.funding.containing_block_id' "$tag13_internal")"
+  result_tmp="${tag16_refund_window_result}.attempt"
+  for attempt in {1..18000}; do
+    rm -f -- "$result_tmp"
+    "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag16-clock-${attempt}" --role maker --effect refund --start-height "$probe_height" --max-blocks 1 --output-result "$result_tmp" >/dev/null 2>&1 || true
+    if jq -e '(.outcome.status=="absent" or .outcome.status=="uncertain") and (.outcome.finalized_clock.height|type)=="number" and (.outcome.finalized_clock.timestamp_ms|type)=="number"' "$result_tmp" >/dev/null 2>&1; then
+      require_owner_file "$result_tmp" "Tag16 finalized-clock observation"
+      finalized_timestamp_ms="$(jq -er '.outcome.finalized_clock.timestamp_ms' "$result_tmp")"
+      finalized_height="$(jq -er '.outcome.finalized_clock.height' "$result_tmp")"
+      (( finalized_timestamp_ms < punish_at_ms )) || fail "finalized LEZ clock reached punish_at before Tag16 submission"
+      if (( finalized_timestamp_ms >= refund_at_ms && finalized_timestamp_ms < punish_at_ms )); then
+        tag16_scan_start_height="$((finalized_height + 1))"
+        mv "$result_tmp" "$tag16_refund_window_result"
+        break
+      fi
+    fi
+    sleep .25
+  done
+  require_owner_file "$tag16_refund_window_result" "Tag16 refund-window evidence"
+  jq -e --argjson refund_at "$refund_at_ms" --argjson punish_at "$punish_at_ms" '(.outcome.status=="absent" or .outcome.status=="uncertain") and .outcome.finalized_clock.timestamp_ms >= $refund_at and .outcome.finalized_clock.timestamp_ms < $punish_at' "$tag16_refund_window_result" >/dev/null || fail "Tag16 refund-window evidence is outside the signed interval"
+  [[ "$tag16_scan_start_height" =~ ^[1-9][0-9]*$ ]] || fail "Tag16 scan start height is invalid"
+  record_phase tag16_refund_window completed
+}
+
+prepare_tag16_refund_signature() {
+  record_phase tag16_prepare started
+  readonly tag16_refund_root="${private_root}/tag16-refund"
+  readonly taker_refund_adaptor_scalar="${tag16_refund_root}/taker-refund-adaptor.key"
+  readonly taker_refund_final_signature="${tag16_refund_root}/taker-final-signature.json"
+  mkdir -m 0700 "$tag16_refund_root"
+  record_resource ephemeral_path "$tag16_refund_root" "$tag16_refund_root"
+  require_owner_file "${agreement_root}/material/taker/xmr-share.key" "Taker Monero spend-key share"
+  require_owner_file "${agreement_root}/stage-b/exchange/refund/taker-presignature.json" "Taker refund presignature"
+  [[ "$(wc -c <"${agreement_root}/material/taker/xmr-share.key")" == 65 ]] &&
+    rg -q '^[0-9a-f]{64}$' "${agreement_root}/material/taker/xmr-share.key" ||
+    fail "Taker Monero spend-key share is not canonical little-endian hex"
+  xxd -r -p "${agreement_root}/material/taker/xmr-share.key" | xxd -p -c1 | tac | tr -d '\n' >"$taker_refund_adaptor_scalar"
+  printf '\n' >>"$taker_refund_adaptor_scalar"
+  chmod 600 "$taker_refund_adaptor_scalar"
+  sync "$taker_refund_adaptor_scalar"
+  require_owner_file "$taker_refund_adaptor_scalar" "temporary Taker refund adaptor scalar"
+  [[ "$(wc -c <"$taker_refund_adaptor_scalar")" == 65 ]] &&
+    rg -q '^[0-9a-f]{64}$' "$taker_refund_adaptor_scalar" ||
+    fail "temporary Taker refund adaptor scalar is invalid"
+  if ! "$agreement_role_runner_binary" taker --journal "${agreement_root}/stage-b/private/taker.sqlite" --session "${agreement_root}/material/taker-sessions/refund.json" adapt-presignature --input "${agreement_root}/stage-b/exchange/refund/taker-presignature.json" --adaptor-secret-file "$taker_refund_adaptor_scalar" --output "$taker_refund_final_signature"; then
+    unlink -- "$taker_refund_adaptor_scalar"
+    fail "Taker refund presignature adaptation failed"
+  fi
+  unlink -- "$taker_refund_adaptor_scalar"
+  require_owner_file "$taker_refund_final_signature" "Taker refund final-signature packet"
+  record_phase tag16_prepare completed
+}
+
+publish_tag16_refund() {
+  record_phase tag16 started
+  readonly tag16_submission="${evidence_root}/tag16-refund-submission.json"
+  local taker_endpoint
+  taker_endpoint="$(jq -er '.endpoint' "$taker_sidecar_root/pid-manifest.json")"
+  "$tag16_binary" --sidecar-endpoint "$taker_endpoint" --capability-file "$taker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/taker-runtime.json" --agreement-wire-file "$agreement_stage_a" --activation-wire-file "$agreement_stage_b" --monero-view-key-file "${agreement_root}/material/taker/monero-view.key" --final-signature-file "$taker_refund_final_signature" --run-id "$run_id" --prepare-request-id "${run_id}-tag16-prepare-001" --complete-request-id "${run_id}-tag16-complete-001" --output-evidence "$tag16_submission"
+  require_owner_file "$tag16_submission" "Tag16 submission evidence"
+  jq -e '.schema=="lez_v02_m5_actual_local_tag16_v1" and .role=="taker" and .submission_outcome != null and .automatic_submission_retry==false and .public_rpc_used==false' "$tag16_submission" >/dev/null || fail "Tag16 submission evidence is incomplete"
+  record_phase tag16 completed
+}
+
+classify_tag16_refund_finality() {
+  record_phase tag16_finality started
+  readonly tag16_refund_finality_result="${evidence_root}/tag16-refund-finalized.json"
+  local maker_endpoint attempt result_tmp finalized_timestamp_ms
+  maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
+  result_tmp="${tag16_refund_finality_result}.attempt"
+  for attempt in {1..600}; do
+    rm -f -- "$result_tmp"
+    "$classifier_binary" --sidecar-endpoint "$maker_endpoint" --capability-file "$maker_sidecar_root/capability" --runtime-file "$tag13_handoff_root/maker-runtime.json" --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" --request-id "${run_id}-tag16-finality-${attempt}" --role maker --effect refund --start-height "$tag16_scan_start_height" --max-blocks 16 --output-result "$result_tmp" >/dev/null 2>&1 || true
+    if jq -e --argjson refund_at "$refund_at_ms" --argjson punish_at "$punish_at_ms" '.outcome.status=="found" and .outcome.facts.instruction.effect=="refund" and .outcome.facts.metadata.state=="refunded" and .outcome.facts.custody.balance=="0" and .outcome.facts.containing_block.timestamp_ms >= $refund_at and .outcome.facts.containing_block.timestamp_ms < $punish_at' "$result_tmp" >/dev/null 2>&1; then
+      require_owner_file "$result_tmp" "Tag16 finalized refund observation"
+      mv "$result_tmp" "$tag16_refund_finality_result"
+      break
+    fi
+    if jq -e '(.outcome.status=="absent" or .outcome.status=="uncertain") and (.outcome.finalized_clock.timestamp_ms|type)=="number"' "$result_tmp" >/dev/null 2>&1; then
+      finalized_timestamp_ms="$(jq -er '.outcome.finalized_clock.timestamp_ms' "$result_tmp")"
+      (( finalized_timestamp_ms < punish_at_ms )) || fail "finalized LEZ clock reached punish_at before Tag16 finalized"
+    fi
+    sleep .25
+  done
+  require_owner_file "$tag16_refund_finality_result" "Tag16 finalized refund evidence"
+  jq -e --argjson refund_at "$refund_at_ms" --argjson punish_at "$punish_at_ms" '.outcome.status=="found" and .outcome.facts.instruction.effect=="refund" and .outcome.facts.metadata.state=="refunded" and .outcome.facts.custody.balance=="0" and .outcome.facts.containing_block.timestamp_ms >= $refund_at and .outcome.facts.containing_block.timestamp_ms < $punish_at' "$tag16_refund_finality_result" >/dev/null || fail "Tag16 finalized refund evidence is incomplete"
+  record_phase tag16_finality completed
+}
+
+ingest_refund_signature() {
+  record_phase refund_ingestion started
+  readonly maker_observed_refund_signature="${tag16_refund_root}/maker-observed-final-signature.json"
+  "$agreement_actor_binary" ingest-finalized-refund-signature --private-root "${agreement_root}/material/maker" --own-public-packet "${agreement_root}/exchange/maker.json" --peer-public-packet "${agreement_root}/exchange/taker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/maker.sqlite" --run-id "$run_id" --finalized-refund "$tag16_refund_finality_result" --output-final-signature "$maker_observed_refund_signature"
+  require_owner_file "$maker_observed_refund_signature" "Maker observed refund final-signature packet"
+  record_phase refund_ingestion completed
+}
+
+extract_refund_adaptor_scalar() {
+  record_phase refund_extraction started
+  readonly extracted_taker_scalar="${tag16_refund_root}/extracted-taker-adaptor.key"
+  "$agreement_role_runner_binary" maker --journal "${agreement_root}/stage-b/private/maker.sqlite" --session "${agreement_root}/material/maker-sessions/refund.json" extract-adaptor-secret --presignature "${agreement_root}/stage-b/exchange/refund/maker-presignature.json" --final-signature "$maker_observed_refund_signature" --output "$extracted_taker_scalar"
+  require_owner_file "$extracted_taker_scalar" "extracted Taker adaptor scalar"
+  record_phase refund_extraction completed
+}
+
+sweep_monero_refund() {
+  record_phase monero_refund_sweep started
+  readonly monero_refund_sweep_evidence="${evidence_root}/monero-refund-sweep.json"
+  "$monero_sweep_binary" --journey refund --run-id "$MONERO_RUN_ID" --agreement-wire-file "$agreement_stage_a" --maker-share-file "${agreement_root}/material/maker/xmr-share.key" --extracted-taker-adaptor-scalar-file "$extracted_taker_scalar" --monero-view-key-file "${agreement_root}/material/maker/monero-view.key" --daemon-url "${monero_env[MONERO_DAEMON_ENDPOINT]}" --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" --shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" --shared-wallet-username-file "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" --shared-wallet-password-file "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" --shared-wallet-file-password-file "${monero_env[MONERO_FUNDING_WALLET_PASSWORD_FILE]}" --taker-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" --taker-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" --taker-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" --funding-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" --funding-wallet-username-file "${monero_env[MONERO_MAKER_RPC_USERNAME_FILE]}" --funding-wallet-password-file "${monero_env[MONERO_MAKER_RPC_PASSWORD_FILE]}" --reconstructed-wallet-filename "m5-${MONERO_RUN_ID}-refund-reconstructed" --restore-height 0 --output-evidence "$monero_refund_sweep_evidence"
+  require_owner_file "$monero_refund_sweep_evidence" "Monero refund sweep evidence"
+  jq -e '.schema=="lez_v02_m5_actual_local_monero_refund_sweep_v3" and .journey=="refund" and .revealed_role=="taker_refund_signature" and .sweeping_role=="maker" and .public_rpc_used==false and .faucet_used==false and .automatic_submission_retry==false and .confirmations >= .required_confirmations and .peer_count==0' "$monero_refund_sweep_evidence" >/dev/null || fail "Monero refund sweep evidence is incomplete"
+  rm -f -- "$monero_verification_evidence"
+  "$monero_verify_binary" --agreement-wire-file "$agreement_stage_a" --monero-transaction-id "$(jq -er .transaction_id "$monero_refund_sweep_evidence")" --destination-address "$(jq -er .destination_address "$monero_refund_sweep_evidence")" --amount-piconero "$(jq -er .received_amount_piconero "$monero_refund_sweep_evidence")" --run-id "$MONERO_RUN_ID" --daemon-url "${monero_env[MONERO_DAEMON_ENDPOINT]}" --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" --target-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" --target-wallet-username-file "${monero_env[MONERO_MAKER_RPC_USERNAME_FILE]}" --target-wallet-password-file "${monero_env[MONERO_MAKER_RPC_PASSWORD_FILE]}" --foreign-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" --foreign-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" --foreign-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" --output-evidence "$monero_verification_evidence" >/dev/null
+  require_owner_file "$monero_verification_evidence" "post-refund Monero verification evidence"
+  jq -e --arg tx "$(jq -er .transaction_id "$monero_refund_sweep_evidence")" --argjson amount "$(jq -er .received_amount_piconero "$monero_refund_sweep_evidence")" '.schema=="lez_v02_m4_actual_local_monero_verification_v2" and .transaction_id==$tx and .amount_piconero==$amount and .public_rpc_used==false and .faucet_used==false' "$monero_verification_evidence" >/dev/null || fail "post-refund Monero receipt is incomplete"
+  record_phase monero_refund_sweep completed
+}
+
+bind_refund_sweep() {
+  record_phase refund_evidence started
+  readonly refund_sweep_binding="${evidence_root}/refund-sweep-binding.json"
+  "$agreement_actor_binary" bind-finalized-refund-sweep --private-root "${agreement_root}/material/maker" --own-public-packet "${agreement_root}/exchange/maker.json" --peer-public-packet "${agreement_root}/exchange/taker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/maker.sqlite" --run-id "$MONERO_RUN_ID" --refund-run-id "$run_id" --finalized-refund "$tag16_refund_finality_result" --observed-final-signature "$maker_observed_refund_signature" --extracted-taker-adaptor-scalar "$extracted_taker_scalar" --monero-sweep-evidence "$monero_refund_sweep_evidence" --monero-receipt-evidence "$monero_verification_evidence" --output-binding-evidence "$refund_sweep_binding"
+  require_owner_file "$refund_sweep_binding" "refund/sweep binding evidence"
+  jq -e '.schema=="lez_v02_m5_refund_cross_chain_binding_v1" and .atomicity_scope=="successful_refund_path_conditional_atomicity" and .distributed_cross_chain_transaction_claimed==false and .lez_effect=="refund" and .lez_sidecar_role=="maker" and .classifier_target=="discover_by_terms" and .classifier_outcome=="found" and .destination_ownership_binding=="owner_private_maker_wallet_boundary_not_stage_a_committed"' "$refund_sweep_binding" >/dev/null || fail "refund/sweep binding evidence is incomplete"
+  record_phase refund_evidence completed
+}
+
 prepare_tag14_release() {
   record_phase release started
   readonly release_root="${private_root}/tag14-release"
@@ -2123,16 +2292,27 @@ execute_run() {
   export_tag13_handoff
   start_role_sidecars
   fund_and_verify_monero
-  prepare_tag14_release
-  publish_tag14_release
-  classify_tag14_finality
-  prepare_tag15_signature
-  publish_tag15
-  classify_tag15_finality
-  extract_claim_signature
-  extract_adaptor_scalar
-  sweep_monero_claim
-  bind_claim_sweep
+  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+    wait_for_m5_xmr_refund_window
+    prepare_tag16_refund_signature
+    publish_tag16_refund
+    classify_tag16_refund_finality
+    ingest_refund_signature
+    extract_refund_adaptor_scalar
+    sweep_monero_refund
+    bind_refund_sweep
+  else
+    prepare_tag14_release
+    publish_tag14_release
+    classify_tag14_finality
+    prepare_tag15_signature
+    publish_tag15
+    classify_tag15_finality
+    extract_claim_signature
+    extract_adaptor_scalar
+    sweep_monero_claim
+    bind_claim_sweep
+  fi
   return 0
 }
 
