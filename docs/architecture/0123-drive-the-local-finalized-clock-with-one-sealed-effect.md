@@ -1,6 +1,6 @@
 # ADR 0123: Drive the local finalized clock with one sealed effect
 
-- Status: Accepted and focused runtime GREEN; corrected actual replay pending
+- Status: Accepted and exact clean actual refund replay GREEN
 - Date: 2026-07-31
 - Milestone: M5 progressive local-functional PoC
 
@@ -48,6 +48,22 @@ the remaining defect was observation semantics, not finality. The focused RED
 then required an authenticated current-finalized-tip method; the GREEN uses the
 existing genesis-bound official indexer reader and performs no sequencer read
 or submission. This run remains diagnostic because it stopped before tag 16.
+
+The corrected clean replay `m5xmrrefund45924caa` completed from pushed commit
+`45924ca8ed2f76cdcb5befad25b54c5ccf37dbea`. The worktree was clean before the
+run, and the retained checkpoint is
+`docs/evidence/m5-xmr-application-refund-corridor-20260731.json`. The real local
+LEZ v0.2 and Monero Regtest journey completed role-correct Delivery and Chat
+activation, then admitted exactly one terms-sealed liveness transfer. Canonical
+LEZ height advanced from 191 to 192 and finalized height from 188 to 192; the
+authenticated finalized timestamp `1785496338079` fell inside the signed
+half-open refund window. Finalized tag 16 then refunded escrow at height 198,
+the Maker recovered the Taker refund share, and the reconstructed wallet swept
+`998191600000` piconero after the exact `1808400000` piconero fee. The Monero
+transaction reached ten confirmations at stable tip 130. Exact cleanup passed,
+all run-owned resources were absent, the foreign sentinel survived, and no
+broad or foreign cleanup occurred. This is the successful XMR refund corridor,
+not full M5 milestone completion; the literal M5 score remains `3/7`.
 
 Increasing a sleep or trusting host time would weaken the protocol boundary.
 The local profile instead needs one narrow, auditable chain effect that can
@@ -100,13 +116,12 @@ arbitrary recipient, or become a public-route behavior.
    escrow drift, or any uncertain result fails the journey closed.
 
 The protocol, client, live runtime/server, finalized-indexer read, clock driver,
-and runner contracts are focused GREEN. Tests prove strict wire decoding,
+and runner contracts are GREEN. Tests prove strict wire decoding,
 runtime/capability binding, moving finalized observations independent of fixed
-effect windows, zero observer submissions, and bounded request IDs. The fresh
-corrected actual-node replay remains the integration gate. This must not be
-described as a working PoC until a fresh pushed-commit
-two-devnet replay retains the exact clock effect, finalized tag 16, Monero
-recovery, binding, and scoped cleanup evidence.
+effect windows, zero observer submissions, and bounded request IDs. The exact
+clean two-devnet replay above closes this integration gate with the retained
+clock effect, finalized tag 16, Monero recovery, conditional binding, and scoped
+cleanup evidence. It does not close the four remaining literal M5 criteria.
 
 ## Components and RPCs
 
@@ -248,6 +263,12 @@ does not reveal a share or grant tag-16 authority. The finalized classifier,
 signed half-open window, tag-16 one-attempt journal, and later cross-chain
 binder remain independent gates.
 
+The retained successful replay binds the finalized LEZ refund to Maker-side
+adaptor extraction and the confirmed Monero sweep. It therefore demonstrates
+successful-refund-path conditional atomicity under the pinned local finality,
+one-attempt, key-custody, and no-reorganization assumptions. It does not prove
+an all-outcome atomic protocol or create a transaction spanning both chains.
+
 This is not a distributed transaction, future-reorganization guarantee, public
 network finality claim, or general block-production API. A crash after an
 accepted but not yet observed clock transaction is intentionally sticky: the
@@ -263,6 +284,10 @@ peer, DNS dependency, public fund, or outbound chain route. Cold provisioning
 can still require the repository's pinned Cargo, Git, Risc0, circuits,
 rapidsnark, image, and Monero archive inputs, but those are setup dependencies
 and do not participate in runtime consensus or finality.
+
+Bedrock attempted its configured `pool.ntp.org:123/udp` NTP route during the
+retained replay, but certification did not require that request to succeed and
+did not depend on any external network response.
 
 The RED demonstrates an integration-boundary defect, not a mock limitation:
 the fixed-window classifier was incorrectly reused as a current-tip clock.
@@ -291,7 +316,8 @@ Every attempt needs a fresh run ID. Partial evidence must never be reused.
   test suites. Strict Clippy, warning-fatal Rustdoc, compatibility, repository-
   wide lint/security, Docker-isolation, and dependency-policy gates pass. The
   dependency audit found `RUSTSEC-2026-0220` in transitive `ruint 1.19.0`; the
-  sidecar lockfile now uses fixed `1.20.0`, and its complete suite and strict
-  gates pass on that graph. A fresh pushed-commit replay, retained evidence,
-  and exact cleanup are still open. M5 remains untagged and its literal score
-  is unchanged.
+  sidecar lockfile at the replay commit uses fixed `1.20.0`, and its complete
+  suite and strict gates pass on that graph. The pushed-commit replay, retained
+  evidence, and exact cleanup are GREEN. This proves the exact XMR refund
+  corridor only: M5 remains untagged and its literal score is unchanged at
+  `3/7`.

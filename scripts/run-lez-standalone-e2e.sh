@@ -6,10 +6,11 @@ repo_root="$PWD"
 
 risc0_version="3.0.5"
 rzup_version="0.5.1"
+risc0_guest_builder_tag="r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"
 circuits_version="v0.4.2"
 circuits_sha256="e9131ffac8b08a80e1a7152b34fdd5d5c52674d4cb396e8162131ca5dd7c858d"
-expected_elf_sha256="a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006"
-expected_image_id="c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483"
+expected_elf_sha256="fe8ec1166ec886693d1fcd1d1ddc80090f81f6fab941851cce43b5bfb0c739f7"
+expected_image_id="5421868ee00d213bf083c09f14ed09f303e8581b95b3a17bb9b79f6cb44add62"
 run_id="${RUN_ID:-local-$$}"
 tool_dir="${LEZ_E2E_TOOL_DIR:-${TMPDIR:-/tmp}/lez-atomic-swaps-tools/risc0-${risc0_version}}"
 risc0_home="${tool_dir}/home"
@@ -55,6 +56,7 @@ if [[ "$($r0vm_bin --version)" != "risc0-r0vm ${risc0_version}" ]]; then
   exit 1
 fi
 
+export RISC0_DOCKER_CONTAINER_TAG="$risc0_guest_builder_tag"
 if [[ ! -f "${circuits_dir}/VERSION" ]] || [[ "$(<"${circuits_dir}/VERSION")" != "$circuits_version" ]]; then
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/lez-circuits-${run_id}.XXXXXX")"
   trap 'rm -rf "$scratch"' EXIT
@@ -134,7 +136,7 @@ RISC0_DEV_MODE=1 RISC0_INFO=1 \
   cargo test --locked --manifest-path "$standalone_manifest" --test costs \
     -- --ignored --nocapture --test-threads=1 2>&1 | tee "$cost_log"
 awk -f scripts/parse-lez-costs.awk "$cost_log" > "$cost_json"
-diff -u "$cost_evidence" "$cost_json"
+./scripts/check-lez-cost-evidence.sh "$cost_evidence" "$cost_json"
 
 printf 'LEZ standalone guest native/token lifecycle proof passed: elf_sha256=%s image_id=%s\n' \
   "$actual_elf_sha256" "$actual_image_id"

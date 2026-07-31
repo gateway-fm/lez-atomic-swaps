@@ -8,8 +8,8 @@ umask 077
 
 readonly runner="scripts/run-m4-lez-local-deployment.sh"
 readonly expected_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
-readonly expected_elf="dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292"
-readonly expected_program="4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82"
+readonly expected_elf="ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
+readonly expected_program="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
 channel="$(printf '6%.0s' {1..64})"
 transaction="$(printf 'd%.0s' {1..64})"
 genesis_hash="$(printf 'e%.0s' {1..64})"

@@ -6,7 +6,7 @@ export LC_ALL=C
 umask 077
 
 readonly pinned_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
-readonly pinned_program_id="4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82"
+readonly pinned_program_id="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
 readonly max_finality_blocks=4096
 
 fail() { echo "M4 LEZ actor onboarding failed: $*" >&2; exit 2; }

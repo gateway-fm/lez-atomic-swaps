@@ -64,8 +64,8 @@ for required in \
 done
 
 for required in \
-  'dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292' \
-  '4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82' \
+  'ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee' \
+  'b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433' \
   'deployment_profile="m4_checked_local"' \
   'deployment_command="deploy-m4-local"' \
   'selected_deployer_sha256="${M5_LEZ_DEPLOYER_SHA256:-}"'; do
@@ -76,9 +76,9 @@ m5_bootstrap_contract="$(M5_BTC_APPLICATION_MODE=1 "$bootstrap_driver" contract)
   fail "LEZ bootstrap rejected the M5 checked deployment profile"
 jq -e '
   .embedded_guest_sha256 ==
-    "dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292" and
+    "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee" and
   .escrow_program_id ==
-    "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82" and
+    "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433" and
   .deployment_profile == "m4_checked_local"
 ' <<<"$m5_bootstrap_contract" >/dev/null ||
   fail "LEZ bootstrap emitted the wrong M5 checked deployment profile"

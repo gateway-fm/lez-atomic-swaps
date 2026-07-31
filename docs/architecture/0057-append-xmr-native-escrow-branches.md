@@ -144,13 +144,13 @@ COMIT construction rather than literal RFP F5/F6 refund conformance.
 
 `scripts/run-m4-lez-artifact-tests.sh` binds the exact source, methods, recursive
 test, immutable historical M2/M3 boundary, Risc0 3.0.5/Rust 1.94.1 toolchain,
-and digest-pinned guest builder before building. Both fresh executions
-reproduced:
+and digest-pinned guest builder before building. One fresh 2026-07-31
+advisory-remediation execution reproduced:
 
 - ELF SHA-256
-  `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`;
+  `ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee`;
 - ImageID
-  `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`;
+  `b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433`;
   and
 - five of five serial recursive tests: one preserved native
   aggregate-witness compatibility case plus four XMR cases covering claim

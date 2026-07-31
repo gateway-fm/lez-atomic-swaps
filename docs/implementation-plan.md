@@ -416,9 +416,9 @@ outputs above.
   permissionless with immutable destinations.
 - [x] Add the canonical SPEL/Risc0 guest build and checked ELF/program-ID
   evidence. Exact Risc0 3.0.5 builds ELF SHA-256
-  `a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006`
+  `fe8ec1166ec886693d1fcd1d1ddc80090f81f6fab941851cce43b5bfb0c739f7`
   with ImageID
-  `c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483`.
+  `5421868ee00d213bf083c09f14ed09f303e8581b95b3a17bb9b79f6cb44add62`.
 - [x] Run standalone-sequencer native actor tests against exact v0.1.2 using an
   in-process ephemeral-port/temp-state service. The harness proves the mandatory
   clock, deploys the checked guest through public RPC, uses the two genuinely
@@ -438,14 +438,16 @@ outputs above.
   channel accepted by the signed SDK agreement validator. Its
   successful and rejection paths keep signing keys out of bounded diagnostics
   and shut down on stdin or Ctrl-C. This is reusable local-node infrastructure,
-  not composed actor-corridor or public-v0.2 evidence. The initial exact run
-  retained the false custom-`getProgramIds` assumption as RED. The corrected
-  earlier full runner passed the process suite, strict Clippy, actual native and
-  two-definition actor lifecycles, and byte-identical recursive-cost evidence
-  with the schema-v2 transaction/block proof. A focused actor-contract RED then
-  exposed the prior empty channel; the corrected three-test locked-graph
-  readiness suite is GREEN and the exact full runner is repeated before
-  corridor evidence.
+  not composed actor-corridor or public-v0.2 evidence. Earlier runs retained the
+  false custom-`getProgramIds` assumption and empty-channel contract as RED.
+  Exact remediation run `m5-ruint-v012-final-20260731`, using builder
+  `r0.1.94.1`, then passed six ordinary tests, two actual deployment/native-plus-
+  two-token lifecycle tests, and one recursive cost case with the schema-v2
+  transaction/block proof. It reproduced ELF `fe8ec116...c739f7` and ImageID
+  `5421868e...add62`. The final stable-cost policy passed the exact generated
+  output while preserving immutable identity, topology, totals, budgets, and
+  classification arithmetic; the former byte-identical volatile snapshot is
+  superseded.
 - [x] Record native recursive Risc0 costs with the exact guest and production
   v0.1.2 state transition. A single-threaded direct-state replay excludes
   mandatory-clock noise, attributes the escrow root plus authenticated-transfer
@@ -4382,12 +4384,12 @@ remains neutral. Legacy claim evidence stays v2-compatible and refund emits an
 honest journey-bound v3 schema. ADR 0121 records current components, RPCs,
 sequence, and the conditional atomicity argument; Flow 1V reproduces the tests.
 
-Literal M5 remains 3 of 7. Remaining order: wire a bounded fast-refund journey
-into the isolated application runner; add the finalized-refund/Monero receipt
-binder; execute and retain a fresh role-correct LEZ plus Monero Regtest replay
-and exact cleanup; then close the still-open actual-chain concurrency and
-unavailable-route/operator surfaces required by the seven accepted outputs.
-Tag 17 remains a separate punishment-path requirement. Current estimate is 6 to 14 focused hours to M5 PoC and 16 to 28 focused hours to the reviewed closure tag.
+At this historical checkpoint literal M5 remained 3 of 7 and the next order was
+runner wiring, the refund/receipt binder, and a fresh role-correct two-devnet
+replay before actual-chain concurrency and unavailable-route/operator surfaces.
+Those refund steps are superseded by exact run `m5xmrrefund45924caa` below.
+Tag 17 remains a separate punishment-path requirement; the historical 6-to-14/
+16-to-28-hour estimates are superseded by the current 10-to-20-hour tag ETA.
 
 ## M5 reproducible application-refund runner checkpoint
 
@@ -4420,19 +4422,20 @@ nor future-reorg immunity.
 Focused actor tests, all actor targets, strict Clippy, warning-fatal Rustdoc,
 Bash syntax, the preserved M4 claim contract, the M5 application contract, and
 diff hygiene are GREEN. ADR 0122 records components/RPCs, sequence, and the
-atomicity argument; Flow 1W is the manual clean-replay procedure. This is not
-yet actual-node evidence: the next gate is a fresh exact pushed-commit run on
-isolated LEZ v0.2 plus official Monero 0.18.5.1 Regtest, followed by retained
-binding and exact cleanup evidence.
+atomicity argument; Flow 1W is the manual clean-replay procedure. At this
+historical checkpoint it was not yet actual-node evidence: the next gate was a
+fresh exact pushed-commit run on isolated LEZ v0.2 plus official Monero
+0.18.5.1 Regtest. Exact run `m5xmrrefund45924caa` below supersedes that open
+gate with retained binding and cleanup evidence.
 
-Literal M5 remains 3 of 7 until that replay and the accepted application-output
-closures are complete. Remaining order is the clean refund replay,
+That checkpoint kept literal M5 at 3 of 7 pending the refund replay and accepted
+application-output closures. The refund replay is now GREEN; remaining work is
 accepted-application actual-chain overlap, complete Maker and Taker lifecycle
 surfaces, unavailable-route composition, and the final evidence/security/tag
 review. Tag 17 stays recorded as protocol punishment-path work rather than a
-separate literal issue-#112 M5 output. This estimate is superseded by the
-finalized-tip correction checkpoint below; the current closure estimate is 10
-to 20 focused implementation hours.
+separate literal issue-#112 M5 output. Literal M5 still remains 3 of 7, and the
+current closure estimate remains 10 to 20 focused implementation hours as
+recorded by the final correction below.
 
 ## M5 local finalized-clock liveness RED and component repair (2026-07-31)
 
@@ -4466,11 +4469,12 @@ RPC, faucet, peer, DNS, or public funds participate. Cold artifact availability,
 host pressure, local finality cadence, the bounded tick-finality wait, and the
 signed punishment margin remain explicit flake or failure sources.
 
-Status is **component-GREEN; corrected actual replay pending**. The eight-thread reservation
-RED exposed a partial-publication race fixed by a narrow planner mutex. All 325
-Rust tests, strict Clippy/Rustdoc, compatibility contracts, and the complete
-quality/security/vulnerability gate pass. Fresh two-devnet replay remains open;
-no actual-node GREEN claim, output-count change, or tag is created here.
+Historical checkpoint status was **component-GREEN; corrected actual replay
+pending**. The eight-thread reservation RED exposed a partial-publication race
+fixed by a narrow planner mutex. All 325 Rust tests, strict Clippy/Rustdoc,
+compatibility contracts, and the complete quality/security/vulnerability gate
+passed. Exact run `m5xmrrefund45924caa` below supersedes the replay-open status;
+this historical checkpoint itself created no output-count change or tag.
 
 Replay `m5xmrrefund827a5d4a` then passed both devnets, checked deployment,
 role-correct application handoff, finalized tag 13, and Maker-funded Monero
@@ -4480,7 +4484,8 @@ clock effects were emitted and scoped cleanup passed. A new TDD regression test
 now proves versioned, operation-domain-separated SHA-256 prepare/verify IDs are
 deterministic, distinct, safe-grammar, and exactly 64 characters. The sidecar
 suite is 215 GREEN and strict Clippy, Rustdoc, runner-contract, formatting, and
-diff gates pass. Fresh actual-node replay remains open.
+diff gates passed. That replay-open status was historical and is superseded by
+exact run `m5xmrrefund45924caa` below.
 
 ## M5 finalized-tip observation correction (2026-07-31)
 
@@ -4521,10 +4526,93 @@ unavailable XMR route while unaffected BTC/ZEC work. Final evidence, security,
 manual-flow, diagram, cleanup, push, and annotated-tag review follow those four.
 Logos-owned production blockers stay disclosed but do not block local M5.
 
-Next gate: push this corrective checkpoint, then run one fresh private-engine
-isolated LEZ v0.2 plus Monero 0.18.5.1 Regtest refund replay. It must retain the
-single clock effect, finalized before/after identities and attempts, exact
-one-block classifier window, finalized tag 16, Maker recovery sweep, binding,
-and scoped cleanup. ETA from this checkpoint is 35 to 55 minutes for that replay
-and 10 to 20 focused implementation hours for the remaining literal outputs
-until evidence narrows the estimate.
+Exact pushed-commit run `m5xmrrefund45924caa` closes that gate. It completed
+application acceptance, tag 13, Maker-funded Monero verification, exactly one
+sealed clock transaction, authenticated finality advance from height 188 to
+192, finalized tag 16 in block 198, Maker refund ingestion/extraction, the
+Maker-directed Monero sweep `252b922e...d4caf` with ten confirmations, the
+conditional cross-chain binding, and cleanup schema v2 with source exit zero.
+The clock transaction used one submission attempt, exact `-1/+1` balance and
+`+1/0` nonce deltas, and byte-identical escrow metadata/custody. The retained
+packet is `docs/evidence/m5-xmr-application-refund-corridor-20260731.json`.
+
+The cold replay took about 61 minutes end to end; approximately 24 minutes 35
+seconds were repeated run-private Cargo builds. A read-only audit found a safe
+future optimization: content-addressed, hash-verified, read-only artifact
+bundles can preserve exact source/lock/toolchain/features/native-input/ELF/
+ImageID provenance while avoiding shared writable target directories. Do not
+weaken final certification by blindly sharing `CARGO_TARGET_DIR`.
+
+Literal M5 remains 3 of 7 because this refund corridor is a prerequisite, not a
+separate issue-#112 output. The next gate is the already-wired daemon-supervisor
+ZEC application happy path from a fresh pushed commit. It must prove the daemon
+alone owns Maker effects, restart after lock without Delivery/Chat, exact
+terminal fenced state, zero duplicate submission, fresh owner history, and
+scoped cleanup. Current closure ETA remains 10 to 20 focused implementation
+hours.
+
+## M5 repository-wide ruint remediation and artifact re-attestation
+
+The 2026-07-31 advisory refresh found `RUSTSEC-2026-0220` in multiple nested
+repository-controlled Cargo graphs, not only the v0.2 sidecar. The RED gate was
+reproduced directly in the deployable SPEL guest at `ruint 1.17.1`. Every one
+of the ten repository lockfiles that contains `ruint` now resolves `1.20.0`,
+the final direct guest pin is exact `=1.20.0`, and all 13 CI dependency graphs
+pass advisories, bans, licenses, and sources without a waiver.
+
+Because the lock repair changes guest code, the checked v0.2 artifact identity
+also changed. A clean private-Docker build reproduced ELF
+`ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee`
+and ImageID
+`b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433`.
+All five recursive native/XMR cases passed. The current deployer source,
+sidecar, runners, contracts, source-boundary hashes, manual flow, and
+architecture references now bind that identity; it has not been freshly
+deployed, and historical evidence packets retain the superseded identity.
+The secret-safe remediation receipt is
+`docs/evidence/m5-ruint-remediation-20260731.json`.
+
+The first exact sidecar-tree replay then found a second RED: the canonical hex
+identity had changed while its separately encoded little-endian `[u32; 8]`
+constant still represented the superseded guest. Twenty-five tests passed and
+five tag-13 handoff tests failed closed with `BindingMismatch`. Updating all
+eight words from the same checked ImageID made the seven focused handoff and
+identity tests GREEN; the complete sidecar verifier then passed all targets and
+features, warning-fatal Clippy, warning-fatal Rustdoc, and dependency policy
+offline. Keeping both encodings is an upstream API compatibility constraint,
+so the regression test remains the drift guard.
+
+The immutable official external LEZ investigation source still resolves
+`ruint 1.17.2`. `LOGOS-023` records that Logos-owned production-release blocker;
+under ADR 0018 it does not block private local M5 certification. Next remains
+the already-wired daemon-supervisor ZEC accepted-application proof. Literal M5
+stays 3 of 7 and the closure ETA remains 10 to 20 focused implementation hours.
+
+The same remediation changed the v0.1.2 compatibility artifact. Its superseded
+`r0.1.88.0` builder failed closed because `ruint 1.20.0` requires Rust 1.90 or
+newer; the already supply-chain-tracked digest-pinned `r0.1.94.1` builder uses
+Rust 1.94.1. Exact run `m5-ruint-v012-final-20260731` reproduced ELF
+`fe8ec1166ec886693d1fcd1d1ddc80090f81f6fab941851cce43b5bfb0c739f7`
+and ImageID
+`5421868ee00d213bf083c09f14ed09f303e8581b95b3a17bb9b79f6cb44add62`.
+It passed six ordinary tests, two actual deployment/native-plus-two-token
+lifecycle tests, and one recursive cost case.
+
+The first top-level runner exit was `1` only at the final comparison: all build,
+identity, deployment, actor-lifecycle, topology, accounting, and budget gates
+had passed, but the old byte-identical snapshot policy compared volatile cycle
+classification values. The replacement `scripts/check-lez-cost-evidence.sh`
+policy is CI-required and passed against the exact generated output. It keeps
+artifact identity, operation order, session topology, segment counts, total
+cycles, and budgets immutable; it also independently requires every session's
+user/paging/reserved classifications to sum to its total and every recursive
+user total to stay within budget. Only the internally consistent volatile
+classification split and measurement date may vary.
+
+Approved deletion of the local `.e2e` run cache reduced the Risc0 Docker build
+context from 6.37 GB to approximately 64 KB. This is measured iteration relief,
+not a durable repository fix: the pinned Risc0-generated
+`Dockerfile.dockerignore` overrides the root `.dockerignore`, and a future
+retained `.e2e` tree can enlarge the context again. A durable optimization must
+change that generated build-context boundary without weakening artifact
+attestation or deleting another run's data.

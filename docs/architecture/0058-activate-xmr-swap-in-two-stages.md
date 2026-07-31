@@ -148,9 +148,9 @@ lifecycle authority.
   two-chain order or ten-confirmation XMR policy. Stagenet uses the reviewed
   public-testnet profile.
 - M4's fresh local checked guest is ELF
-  `dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`
+  `ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee`
   with ImageID
-  `4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`.
+  `b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433`.
   Certified M2/M3 artifacts and hashes remain immutable; M4 deployment evidence
   still requires a fresh on-chain deployment of this distinct identity.
 - Native LEZ is the progressive happy-path corridor. RFP F7 custom-token XMR

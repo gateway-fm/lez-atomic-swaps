@@ -1,6 +1,6 @@
 # Upstream blockers to production
 
-Last upstream recheck: 2026-07-24; milestone disposition updated: 2026-07-30
+Last upstream recheck: 2026-07-31; milestone disposition updated: 2026-07-31
 
 This register contains live-release blockers owned by upstream projects or
 services. Logos-owned items follow ADR 0018; other third-party items remain
@@ -31,6 +31,7 @@ milestone must close or explicitly accept every open item.
 | LOGOS-020 | RFP-003 at pinned master commit `b59c620d6ee8b8281657cbb6eca0381172a8e16d` requires Delivery/Chat behavior, but no immutable supported Logos Delivery/Chat application API or local runtime target is supplied by issue #112 | The local signed adapters prove replaceability and post-lock independence, not production Logos wire/runtime compatibility, availability, authentication, buffering, or expiry semantics | Retain authenticated bounded local adapters and complete repository-owned loss/recovery, retry, bounded-queue, expiry, degraded-state, and post-lock removal evidence for every pair; never label the fixture as Logos runtime parity | Logos publishes immutable supported Delivery and Chat APIs/runtime artifacts and the adapters pass compatibility, outage, restart, and security rehearsals, or production review explicitly accepts the documented replacement transport |
 | LOGOS-021 | RFP-003 and issue #112 require a Logos C-API price source, but neither authority identifies an immutable module, ABI version, ownership contract, error model, or release artifact | A fixture can validate memory and failure safety, but cannot prove compatibility with the eventual production price module or its availability/staleness semantics | GREEN local sub-slice: a fixed-width provisional v1 ABI, actual-C worker, and bounded parent fail closed on invalid/stale/unavailable data, aborts, hangs, output overflow, and artifact drift. Bind accepted quotes into durable signed offers; selecting and live-testing the upstream module remains a production gate | Logos names and releases an immutable supported C-API module/ABI and the adapter passes authorized live compatibility and outage tests, or production review explicitly accepts a different audited source |
 | LOGOS-022 | Official LEZ v0.2 indexer finalized-history surface at commit `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a` | The progressive bounded reader can verify by-ID/by-hash linkage and pin the endpoint inside the requested finalized prefix, but the indexer supplies no snapshot token or proof tying an older completed prefix endpoint to the current finalized head. A consistently faulty authoritative indexer could therefore present a self-consistent historical fork. | Treat the indexer as an authoritative local PoC dependency, never describe its facts as consensus proofs, validate every returned block/transaction/account fact and exact request envelope, require only exact positive evidence for lifecycle projection, and keep prefix misses non-absent. Exact-byte one-attempt journals bound duplicate effects. This Logos limitation is nonblocking for private local milestone certification under ADR 0018. | Logos provides proof-bearing finalized ancestry or an authenticated snapshot token/checkpoint with a reviewed verification recipe; otherwise release review explicitly accepts the authoritative-indexer trust model and its monitoring/operational controls. |
+| LOGOS-023 | Official external LEZ v0.2/RISC Zero source lock at commit `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a`, retained locally at `/tmp/lez-v020-native-investigation/Cargo.lock`, resolves `ruint 1.17.2` | `RUSTSEC-2026-0220` affects `ruint` before 1.20.0. The exact upstream source graph behind the pinned LEZ service provenance therefore remains advisory-positive even when repository-owned compatibility locks are remediated. Reachability of the affected shift and formatting paths in the hash-pinned prebuilt services has not been proven, so an advisory-clean production claim is blocked. | Keep the official runtime confined to the isolated private local profile, pin and hash-check its source commit and service artifacts, and disclose the advisory without using it to waive repository-controlled findings. Under ADR 0018 this Logos-owned graph is nonblocking for the exact local M5 PoC, but it remains release-blocking. | Logos publishes a compatible immutable LEZ/RISC Zero graph resolving `ruint >=1.20.0` and the exact production artifacts pass a current advisory audit, or release review explicitly accepts a documented reachability and residual-risk analysis. |
 The 2026-07-21 actual local claim did not close any upstream production
 
 blocker. The omitted-empty Monero `connections` response was handled by a
@@ -58,9 +59,9 @@ cannot confuse the corrected finding with a live upstream blocker.
 ## Milestone use
 
 An M2, M3, or M5 evidence packet may list these items as open while certifying the
-exact repository-controlled implementation. In particular, LOGOS-017 does not
-block deterministic or local milestone certification under the owner policy;
-it remains a production-release caveat. The required M3 actual-node refund
+exact repository-controlled implementation. In particular, LOGOS-017 and
+LOGOS-023 do not block deterministic or local milestone certification under the
+owner policy; they remain production-release caveats. The required M3 actual-node refund
 evidence is independently GREEN and is not waived by that exception. These upstream items
 may not be used to waive canonical adapter validation, reorg/restart safety, complete role effects, independent
 actor tests, or the composed corridor. M7 production readiness revisits the

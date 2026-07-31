@@ -832,7 +832,7 @@ local runner now reproduces either direction through `POC_DIRECTION`.
 | Maker operator configuration/create/history/restart | Actual `lez-maker` process, owner-local Unix RPC, actual `lez-maker-daemon`, schema-v14 pair/price/offer/request state, and persisted swaps | This configures, publishes/withdraws offers, and creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v14 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
-| LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. The last corrected full runner exited `0` after the reusable external process published a private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `a324355c...7006` and ImageID `c14c978a...4483`. A later actor-contract RED replaced the agreement-invalid zero channel with one nonempty deterministic identity; its focused suite passes and the exact full runner must be repeated before using the handoff as current corridor evidence. No reference SDK actor consumes that handoff in a composed LEZ/Zebra flow yet, and this local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
+| LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. Exact remediation run `m5-ruint-v012-final-20260731` rebuilt with Risc0 3.0.5 and digest-pinned Rust builder `r0.1.94.1`, then published the private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The current native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `fe8ec116...c739f7` and ImageID `5421868e...add62`: six ordinary tests, two actual deployment/native-plus-two-token lifecycle tests, and one recursive cost case passed. The prior repeat-pending claim and superseded identity are historical only. No reference SDK actor consumes this handoff in a composed LEZ/Zebra flow yet, and local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
 | LEZ recursive execution costs | Exact checked guest replayed through production `V03State` transitions with nested authenticated-transfer and ATA/Token sessions | This measures deterministic local execution, not public-testnet fees or latency |
 | Provisional LEZ v0.2 executable lane | Exact SPEL PR #238 and LEZ v0.2.0 build a checked Risc0 escrow ELF in the digest-pinned Risc0 guest-builder, compile the generated typed client, and execute recursive native plus two-definition token claim/refund tests, including child-failure rollback. The fail-closed deployer submitted that exact artifact to the retained local v0.2 node | Canonical Docker ELF SHA-256 `c85055f6...c9d2e` and ImageID/ProgramId `5cf8c5a4...329c1` are GREEN and deployed in finalized local block 2582. Both independent corridor directions subsequently used only that ProgramId. No v0.2 public deployment, deployed-runtime CU evidence, cold clean-host replay, or maintainer approval is proved |
 | Full local LEZ v0.2 vertical slice | Clean exact source and artifacts run as digest-pinned Bedrock, non-standalone sequencer, and indexer on one unique no-masquerade bridge with dynamic loopback RPCs. Both actors claimed deterministic Vault allocations, the exact checked escrow deployed, maker initialized then funded 700 only after observing `Empty`, and taker claimed only after observing `Funded` | GREEN in retained run `m2poc-vertical-20260714a`: finalized Vault blocks 29/30, deployment block 51, native blocks 219/220/223, and terminal custody/maker/taker balances are recorded in `docs/evidence/m2-local-onboarding-20260714.json`. These PoC CLIs are not reference actors; no Zebra HTLC, cross-chain direction, restart proof, refund, or composed cleanup is claimed |
@@ -2522,7 +2522,7 @@ CARGO_NET_OFFLINE=true cargo +1.96.0 build --locked --offline \
 VAULT_CLI="$PWD/compat/lez-v0_2-sidecar/target/debug/lez-v02-vault-claim-poc"
 CHAIN_ID="$(sed -n 's/^LEZ_V02_CHANNEL_PUBLIC_KEY=//p' "$M4_LEZ_STACK_MANIFEST")"
 SEQUENCER_URL="$(sed -n 's/^LEZ_SEQUENCER_RPC_URL=//p' "$M4_LEZ_STACK_MANIFEST")"
-ESCROW_PROGRAM_ID=4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82
+ESCROW_PROGRAM_ID=b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433
 ACTOR_ROOT="/tmp/${M4_LEZ_RUN_ID}-actors"
 umask 077
 install -d -m 0700 "$ACTOR_ROOT" "$ACTOR_ROOT/maker" "$ACTOR_ROOT/taker" \
@@ -3507,9 +3507,9 @@ fixtures and owner-only temporary directories after dependencies are cached.
 Neither result is an actual local-devnet classifier run or a claim PoC.
 
 The artifact run must report ELF SHA-256
-`dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`,
+`ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee`,
 ImageID
-`4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`,
+`b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433`,
 and five recursive runtime tests. Two independent clean builds produced the
 same identities. Its runtime external-resource list is empty. A cold run can
 need the pinned circuits release, crates.io and locked Git sources, the
@@ -5433,20 +5433,40 @@ Success ends with all of the following evidence:
 
 ```text
 proved LEZ cf3639d8252040d13b3d4e933feb19b42c76e14a deployment plus native and two-definition token actor lifecycles
-LEZ standalone guest native/token lifecycle proof passed: elf_sha256=a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006 image_id=c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483
+LEZ standalone guest native/token lifecycle proof passed: elf_sha256=fe8ec1166ec886693d1fcd1d1ddc80090f81f6fab941851cce43b5bfb0c739f7 image_id=5421868ee00d213bf083c09f14ed09f303e8581b95b3a17bb9b79f6cb44add62
 LEZ native/token recursive cost evidence passed: /tmp/lez-costs-manual-lez-20260711-a/generated.json
 ```
 
-The corrected complete runner also exits `0` after exercising the reusable
-external-node process. Its private schema-v2 readiness binds the same checked
-ELF/ImageID to the exact deployment transaction and containing canonical block,
-treats `getProgramIds` as a built-in-only map, and verifies two funded
-deterministic actors through official account RPC.
+Reference run `m5-ruint-v012-final-20260731` passed six ordinary tests, two
+actual deployment/native-plus-two-token lifecycle tests, and one recursive cost
+case after exercising the reusable external-node process. Its private schema-v2
+readiness binds the same checked ELF/ImageID to the exact deployment transaction
+and containing canonical block, treats `getProgramIds` as a built-in-only map,
+and verifies two funded deterministic actors through official account RPC.
 
-The generated JSON must be byte-identical to
-[`docs/evidence/lez-v0.1.2-escrow-costs.json`](evidence/lez-v0.1.2-escrow-costs.json).
-That comparison checks operation order, recursive session topology, segments,
-cycle accounting, allocated totals, and per-operation user-cycle budgets.
+Validate the generated JSON with the same stable policy required by CI:
+
+```sh
+./scripts/check-lez-cost-evidence.sh \
+  docs/evidence/lez-v0.1.2-escrow-costs.json \
+  /tmp/lez-costs-manual-lez-20260711-a/generated.json
+```
+
+The policy requires the exact artifact identity, operation order, recursive
+session topology, segments, allocated totals, and per-operation user-cycle
+budgets. It also proves each session's user, paging, and reserved cycles sum to
+its total and each recursive user total remains within budget. Measurement date
+and the internally consistent classification split may vary, so the complete
+JSON is intentionally not required to be byte-identical. The historical
+byte-diff made the otherwise successful reference run exit `1` at the final
+comparison; it did not invalidate any functional, identity, topology, total, or
+budget result.
+
+The reference cleanup removed the approved `.e2e` run cache and reduced Docker
+context transfer from 6.37 GB to about 64 KB. Do not treat that as durable: the
+pinned Risc0 Dockerfile-specific ignore overrides the root `.dockerignore`, so
+retaining new `.e2e` runs can grow the context again. Delete only run-owned data
+after confirming no process uses it.
 
 The sequencer uses an ephemeral port and temporary state and stops when the test
 ends. The unique tool, build, and cost directories remain as reproducibility
@@ -6543,6 +6563,18 @@ window; always use a fresh run ID and never reuse partial evidence. ADR 0122
 contains the refund topology and atomicity argument; ADR 0123 adds the accepted
 prepare, canonical submit, and read-only verify RPC sequence plus liveness and
 escrow-preservation diagrams.
+
+Clean reference result: exact pushed-commit run `m5xmrrefund45924caa` completed
+this sequence on 2026-07-31. The single clock transaction
+`647e3fb6...cf1d9` advanced canonical height 191 to 192 and finalized height
+188 to 192; tag 16 `e5f4f77c...e14a03` finalized in block 198; Maker recovery
+sweep `252b922e...d4caf` reached ten Monero Regtest confirmations at height 130.
+The cross-chain binder reported conditional refund atomicity without claiming a
+distributed transaction or future-reorg immunity, and cleanup schema v2 passed.
+Compare a manual replay against
+`docs/evidence/m5-xmr-application-refund-corridor-20260731.json`; never reuse the
+reference run ID or any partial run state.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

@@ -27,9 +27,9 @@ use zeroize::Zeroizing;
 const MANIFEST: &str = include_str!("../../methods/guest/deployment-manifest.toml");
 const M4_MANIFEST: &str = include_str!("../../methods/guest/m4-deployment-manifest.toml");
 const M4_CHECKED_ELF_SHA256: &str =
-    "dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292";
+    "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee";
 const M4_CHECKED_PROGRAM_ID: &str =
-    "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82";
+    "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433";
 const OFFICIAL_RPC_URL: &str = "https://testnet.lez.logos.co";
 const OFFICIAL_CHANNEL_ID: &str =
     "0101010101010101010101010101010101010101010101010101010101010101";

@@ -20,8 +20,8 @@ fail() {
 [[ "$m5_btc_application_mode" == 0 || "$m5_btc_application_mode" == 1 ]] ||
   fail 'M5_BTC_APPLICATION_MODE must be 0 or 1'
 if [[ "$m5_btc_application_mode" == 1 ]]; then
-  selected_guest_sha256="dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292"
-  selected_program_id="4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82"
+  selected_guest_sha256="ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
+  selected_program_id="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
   selected_deployer_sha256="${M5_LEZ_DEPLOYER_SHA256:-}"
   deployment_profile="m4_checked_local"
   deployment_command="deploy-m4-local"

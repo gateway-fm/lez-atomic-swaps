@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "kind": "m5_xmr_application_refund_corridor_exact_tree_checkpoint",
+  "result": "completed",
+  "certification_scope": "Role-correct XMR accepted-application refund corridor and finalized-clock repair; not full M5 milestone completion",
+  "run": {
+    "id": "m5xmrrefund45924caa",
+    "monero_run_id": "m5xmrrefund45924caa-xmr",
+    "completed_at": "2026-07-31T11:16:19Z",
+    "git_commit": "45924ca8ed2f76cdcb5befad25b54c5ccf37dbea",
+    "git_commit_pushed_to_origin_main_before_run": true,
+    "working_tree_clean_before_run": true,
+    "journey": "refund"
+  },
+  "application": {
+    "pair": "monero",
+    "delivery_and_chat_negotiation": true,
+    "role_only_provisioning": true,
+    "delivery_removed_before_effect_continuation": true,
+    "agreement_commitment": "1c9e5dc9d74f248137af2dd0838be3e1c5849ff582d6abb9e0c8e5b098635ef5",
+    "activation_commitment": "ac1f29d95a7f4b2bf4d9c86d56b2eac7f08d06e4a3a31e018c0b8182a756fc8b"
+  },
+  "services": {
+    "monero": {
+      "version": "0.18.5.1-release",
+      "network": "regtest",
+      "peer_count": 0
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "network": "private_local",
+      "slot_duration_seconds": "1.0",
+      "deployment_profile": "m4_checked_local",
+      "guest_sha256": "dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292",
+      "program_id": "4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82"
+    }
+  },
+  "finalized_clock_liveness": {
+    "transaction_id": "647e3fb6dbb6e0914b107783974e56634867b1da9b247b078bbcfcc07b3cf1d9",
+    "node_submission_attempts": 1,
+    "automatic_submission_retry": false,
+    "transfer_amount": 1,
+    "canonical_height_before": 191,
+    "canonical_height_after": 192,
+    "finalized_height_before": 188,
+    "finalized_height_after": 192,
+    "finalized_timestamp_after_ms": 1785496338079,
+    "finalized_observation_attempts_before": 1,
+    "finalized_observation_attempts_after": 107,
+    "finality_wait_timeout_seconds": 60,
+    "finality_source": "authenticated_genesis_bound_official_indexer",
+    "sender_balance_delta": -1,
+    "sender_nonce_delta": 1,
+    "recipient_balance_delta": 1,
+    "recipient_nonce_delta": 0,
+    "escrow_metadata_unchanged": true,
+    "escrow_custody_unchanged": true,
+    "submission_request_matches_transaction": true
+  },
+  "lez_refund": {
+    "refund_at_ms": 1785496334000,
+    "punish_at_ms": 1785496934000,
+    "transaction_id": "e5f4f77c6b7de00808d8159b3310f4ee5f79b968e26b6db184485821d9e14a03",
+    "containing_block_height": 198,
+    "containing_block_hash": "f642349f3e0822ffb21ca9700ff08204c9a6a31ea15f35a4d22e1a2bffa14ea5",
+    "containing_block_timestamp_ms": 1785496398869,
+    "finalized_tip_height": 208,
+    "finalized_tip_hash": "2c94b54c5a89f1bea322e28c528453c54b35b975d6167ad8cd83039b28c53d2e",
+    "finalized_tip_timestamp_ms": 1785496500466,
+    "metadata_state": "refunded",
+    "custody_balance": "0",
+    "submission_attempts": 1,
+    "automatic_submission_retry": false
+  },
+  "monero_recovery": {
+    "revealed_role": "taker_refund_signature",
+    "sweeping_role": "maker",
+    "transaction_id": "252b922ef0ad6187760713f5daec35f4fbe40bfc33d6ff4ae93b404d6c7d4caf",
+    "containing_block_height": 121,
+    "stable_tip_height": 130,
+    "confirmations": 10,
+    "funded_amount_piconero": 1000000000000,
+    "received_amount_piconero": 998191600000,
+    "fee_piconero": 1808400000
+  },
+  "atomicity": {
+    "scope": "successful_refund_path_conditional_atomicity",
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorg_immunity_claimed": false,
+    "finalized_lez_refund_bound_to_maker_extraction_and_monero_sweep": true
+  },
+  "external_resources": {
+    "public_rpc": false,
+    "faucet": false,
+    "public_peer": false,
+    "public_funds": false,
+    "test_funds": "deterministic_local_genesis_and_regtest_outputs",
+    "bedrock_ntp_attempted": "pool.ntp.org:123/udp",
+    "bedrock_ntp_required_for_certification": false,
+    "certification_success_depends_on_external_network": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "all_exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived": true,
+    "no_retry_latch_preserved": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "source_evidence": {
+    "clock_tick_sha256": "ca7d1357f19f044e311a9a92034e099eb4345bd350de4a76792d4f2022d9f0f2",
+    "tag16_submission_sha256": "03c459a274b7b95ca08ed74f17c39dd539df60788a2fcc8ae72159118eeb925f",
+    "tag16_finalized_sha256": "08442e0e62c8904fb35d52b6221cab2554d333a0f793ef0f7d0b360505e0ed8e",
+    "monero_verification_sha256": "b452e959b181da0de0715c8f7acab96cf06555ec4a3415b3e826040a478091d3",
+    "monero_refund_sweep_sha256": "9124b2fb355b9cae7cd9e418c25122b5feeb99394fd644e119913e3f7fdbdb1f",
+    "refund_binding_sha256": "cebf5823368aeb861e2f9bd3d37efd5b946b8f9c483bbbcb742e8ea3d65191a8",
+    "cleanup_sha256": "61c8ff16057d36ee675941715e9c34ceca182faf50d8079f586bf4e12a8a9581",
+    "phase_ledger_sha256": "f50fe85b9973026e2eace0b65f77dd8770bd5d55e7c26f3220952fa59c27e5b0",
+    "agreement_receipt_sha256": "bce3f972ba862c3f0e336ea437fdb32eeba232a10b56471247457bfd72fd22c2",
+    "lez_deployment_bundle_sha256": "b7fc128c5f71a338bd7bd38668002df93b432530efc4b234bcb22d4e693f75f0",
+    "lez_actor_onboarding_sha256": "8ab28b985821418930fd7f0d0552a72a734efcae9445db3d927401076313a18d"
+  }
+}

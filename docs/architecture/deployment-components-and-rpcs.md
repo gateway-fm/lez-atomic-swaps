@@ -190,9 +190,10 @@ service, opens no RPC connection, and proves neither `LezClaimPort` nor
 
 ## M4 checked guest artifact lane
 
-This build/test component is complete, and its exact checked ELF now has a
-separate actual local deployment proof. Bridge swap effects and lifecycle actors
-remain pending. Solid edges below are locally executed;
+The historical M4 checked ELF has a separate actual local deployment proof. The
+current advisory-clean rebuild is checked but has not been freshly deployed.
+Bridge swap effects and lifecycle actors remain pending. Solid edges below are
+locally executed;
 the dotted cold-cache edge is a setup availability dependency, not a runtime
 RPC.
 
@@ -202,28 +203,30 @@ flowchart LR
     Manifest["M4 immutable artifact manifest"] --> Runner
     Cold["Cold-cache setup only<br/>circuits, Cargo and Git, Docker registry, Risc0 releases"] -.-> Runner
     Runner --> Builder["Digest-pinned Risc0 guest builder<br/>Rust 1.94.1"]
-    Builder --> Elf["Checked ELF<br/>dc370bc...b7292"]
-    Elf --> Identity["r0vm 3.0.5 identity check<br/>ImageID 4d6590...2c82"]
+    Builder --> Elf["Current advisory-clean checked ELF<br/>ade4af...bbcee"]
+    Elf --> Identity["r0vm 3.0.5 identity check<br/>ImageID b7f872...b0433"]
     Identity --> Recursive["Five serial recursive guest tests<br/>one native compatibility plus four XMR"]
-    Identity --> Deployer["Exact deploy-m4-local validator and one-send path<br/>component green"]
-    Deployer --> DeploymentEvidence[("Exact ELF finalized once<br/>transaction 8bb883...63f9 in block 86")]
+    Identity --> PendingDeployment["Fresh deployment of current identity<br/>pending"]
+    Historical["Historical checked ELF dc370bc...b7292<br/>ImageID 4d6590...2c82"] --> Deployer["Exact deploy-m4-local validator and one-send path<br/>component green"]
+    Deployer --> DeploymentEvidence[("Historical exact ELF finalized once<br/>transaction 8bb883...63f9 in block 86")]
     DeploymentEvidence --> LocalStack["Actual isolated LEZ v0.2 sequencer and indexer<br/>deployment green; swap effects pending"]
     Recursive --> Evidence["Small retained local evidence ELF"]
     Recursive --> RuntimeBoundary["Runtime RPCs, faucets, peers, public chains<br/>none"]
     Runner --> Cleanup["Exact run-owned target and tool cleanup<br/>about 3.49 GiB removed"]
 ```
 
-Two fresh executions each reproduced ELF SHA-256
-`dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292`
+One fresh advisory-remediation execution reproduced ELF SHA-256
+`ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee`
 and ImageID
-`4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82`,
+`b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433`,
 then passed all five recursive cases. No sequencer, indexer, Monero daemon,
 wallet RPC, faucet, peer, or public endpoint participates after setup. Cold
 caches may fetch the pinned circuits archive, Cargo/Git sources, digest-pinned
 builder image, and Risc0 tools; network availability and rate limits can make
-that setup flaky. The checked-artifact run itself is not a chain effect. A separate isolated-stack
-run now proves that same exact ELF deployed once; neither result is a swap or a
-public deployment.
+that setup flaky. The checked-artifact run itself is not a chain effect. A
+historical isolated-stack run proves the superseded `dc370bc...b7292` ELF
+deployed once; there is no fresh deployment claim for the current
+`ade4af...bbcee` ELF. Neither result is a swap or a public deployment.
 
 ## M4 integration component and RPC status
 

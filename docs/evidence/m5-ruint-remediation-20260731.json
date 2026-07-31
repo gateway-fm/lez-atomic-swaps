@@ -1,0 +1,99 @@
+{
+  "schema": "lez_m5_repository_ruint_remediation_v1",
+  "recorded_at_utc": "2026-07-31",
+  "source_base_commit": "45924ca8ed2f76cdcb5befad25b54c5ccf37dbea",
+  "advisory": {
+    "id": "RUSTSEC-2026-0220",
+    "affected": "ruint < 1.20.0",
+    "repository_policy": "no waiver",
+    "red_test": "compat/spel-zec-escrow/methods/guest/Cargo.toml failed cargo-deny on ruint 1.17.1",
+    "green_test": "all 13 CI cargo-deny graphs passed advisories, bans, licenses, and sources",
+    "repository_lock_scan": "all 10 repository lockfiles containing ruint resolve 1.20.0"
+  },
+  "direct_fix": {
+    "manifest": "compat/spel-zec-escrow/methods/guest/Cargo.toml",
+    "pin": "ruint = \"=1.20.0\"",
+    "manifest_sha256": "df41d1c50795f34e97833aeb02b7277989ab23c54aa1b88225a135863c2b2794",
+    "lock_sha256": "46e23ca9e0f4c5b4ffe709323350cf461f82ff6fce748aa97b8d1d03455bcba2"
+  },
+  "provisional_artifact": {
+    "run_id": "m5-ruint-final-artifact-20260731",
+    "result": "passed",
+    "recursive_tests": {
+      "passed": 5,
+      "failed": 0
+    },
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433",
+    "artifact_receipt_sha256": "915f48d2e3cd99f2db0f33df1f0c49bf4ff849c1b276470ee8ff0e736806c809",
+    "artifact_receipt_retention": "run-log artifact digest; payload is not retained in the repository",
+    "runner_sha256": "4bca285f4fb22e0036527fb9877afbd23e2582ddd458b125b5d5f63a8b58ef53",
+    "deployment_manifest_sha256": "218b0f82b9f8caa4c02e10e4cac1b92eaade1479316f89d695fa06c25fac8767",
+    "guest_lock_sha256": "bfe0509a33cfefd748c2b90fdb0fc2e1dfc187999b51a0f71658ac2bf6ad0b05",
+    "methods_lock_sha256": "93596182ff1405f172bdd7064f0260f17a54c593766bc0b1d88489a69becce96",
+    "runtime_external_resources": [],
+    "cold_setup_external_resources": [
+      "pinned Logos circuits release when absent from cache",
+      "crates.io and pinned Git sources when absent from cache",
+      "digest-pinned Risc0 guest-builder image when absent from cache",
+      "pinned Risc0 release tools when absent from cache"
+    ]
+  },
+  "v0_2_sidecar_identity_regression": {
+    "red": "the hexadecimal checked program identity was updated while its little-endian [u32; 8] representation remained superseded; the full suite passed 25 tests and failed 5 tag-13 handoff tests with BindingMismatch",
+    "fix": "updated all eight little-endian words from the same checked ImageID",
+    "focused_green": "7 tag-13 handoff and identity tests passed",
+    "full_green": "all targets and features, warning-fatal Clippy, warning-fatal Rustdoc, and dependency policy passed offline"
+  },
+  "v0_1_2_compatibility_artifact": {
+    "risc0_version": "3.0.5",
+    "rust_builder": "risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be",
+    "builder_reason": "ruint 1.20.0 requires Rust >= 1.90; superseded r0.1.88.0 builder failed closed",
+    "elf_sha256": "fe8ec1166ec886693d1fcd1d1ddc80090f81f6fab941851cce43b5bfb0c739f7",
+    "image_id": "5421868ee00d213bf083c09f14ed09f303e8581b95b3a17bb9b79f6cb44add62",
+    "artifact_manifest_sha256": "d3cebf43f591c4a04e0f693925dfd35b9f1504f7e8b46970b1399059aec94525",
+    "run_id": "m5-ruint-v012-final-20260731",
+    "runner_sha256": "6012160c9dd64d3fcd75f03d71ef5aedf07d1a0168300302d28d2d8a584756fe",
+    "cost_evidence_sha256": "d0c52cd256d2ef9d5635adabd8273cd36f0bd45883ebe906e7d2cac6bac03f32",
+    "cost_parser_sha256": "d8e8730beb096e3f82d3688a0c2c9e2f8a9b1647a9a141efe4ccac5556fcfae0",
+    "cost_policy_sha256": "f99ca1e5dfcc8892f2edb30e856b3497d6b967c34e1b89b84cd03a9736dff508",
+    "cost_policy_test_sha256": "8752f59886a338fc9e6c8a3d103d45fa457dcfa98e0c2cbe1014efbd22952d9a",
+    "lifecycle_tests": {
+      "all_target_passed": 6,
+      "all_target_failed": 0,
+      "actual_deploy_and_actor_lifecycle_passed": 2,
+      "actual_deploy_and_actor_lifecycle_failed": 0,
+      "recursive_cost_cases_passed": 1,
+      "recursive_cost_cases_failed": 0
+    },
+    "initial_top_level_exit": 1,
+    "initial_top_level_failure": "obsolete byte-identical volatile cost snapshot diff after every build, test, deployment, actor lifecycle, and budget gate passed",
+    "stable_cost_policy_result": "passed against the exact generated output; immutable identity, topology, totals, and budgets match while each volatile classification remains internally exact and bounded",
+    "redundant_full_rerun": "cancelled after identity reproduction when repository COPY invalidated another RocksDB build; no additional correctness claim",
+    "context_red_bytes": 6370000000,
+    "context_green_bytes": 63910,
+    "context_fix": "removed approved .e2e run cache; pinned Risc0 Dockerfile-specific ignore overrides repository .dockerignore",
+    "context_fix_durable": false,
+    "result": "identity reproduced; actual native and two-token lifecycles passed; stable recursive cost policy passed"
+  },
+  "isolation": {
+    "docker_host": "unix:///tmp/lez-m5-engine-d9c9c1e/docker.sock",
+    "docker_root": "/tmp/lez-m5-engine-d9c9c1e/docker-root",
+    "global_docker_used": false,
+    "public_rpc_used": false,
+    "faucet_used": false
+  },
+  "upstream_boundary": {
+    "id": "LOGOS-023",
+    "source": "/tmp/lez-v020-native-investigation/Cargo.lock",
+    "observed_ruint": "1.17.2",
+    "local_m5_blocker": false,
+    "production_release_blocker": true,
+    "exit": "immutable upstream graph and artifacts use ruint >= 1.20.0 and pass advisories, or release risk is explicitly accepted"
+  },
+  "claims": {
+    "m5_literal_score": "3/7",
+    "m5_tagged": false,
+    "milestone_completion_claimed": false
+  }
+}

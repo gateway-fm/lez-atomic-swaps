@@ -1,0 +1,13 @@
+# Docker-based Risc0 builders need repository sources, never local VCS state or
+# run/build outputs. Keep this list narrow so required path dependencies remain.
+.git/
+.e2e/
+target/
+**/target/
+compat/spel-zec-escrow/methods/guest/target/
+compat/lez-v0_2-sidecar/target/
+fuzz/target/
+
+# Local editor/agent state is not a build input.
+.agents/
+.codex/

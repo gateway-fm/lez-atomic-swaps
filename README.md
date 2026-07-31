@@ -272,9 +272,7 @@ component-GREEN: authenticated Taker preparation and completion feed only the
 transaction-derived one-attempt submission identity; an ambiguous send remains
 unknown across restart without resend; and Taker-exact plus Maker-discovery
 classification require canonical finalized refund facts in
-`[refund_at, punish_at)`. This uses controlled local fixtures, not the actual
-LEZ and Monero devnets, so Maker extraction, reconstructed-key sweep, binding,
-and tag 17 remain open. The next role-correct component is now GREEN: the real
+`[refund_at, punish_at)`. That lower component checkpoint used controlled local fixtures; the exact actual-node replay below closes Maker extraction, reconstructed-key sweep, and binding. Tag 17 remains open. The next role-correct component is now GREEN: the real
 Taker process cryptographically verifies and publishes tag 16 through the
 transaction-derived one-attempt identity; the Maker accepts only canonical
 finalized discovery into the precommitted refund session; and one sweep engine
@@ -283,8 +281,10 @@ claim versus refund. The opt-in application runner now composes that same
 refund path through isolated local LEZ v0.2 and Monero Regtest services and an
 owner-private binder that cross-checks finalized tag 16, Maker extraction, the
 Maker-directed Monero receipt, honest refund roles, and exact fee accounting.
-This runner and binder are component-GREEN but have not yet been executed
-together from a clean pushed commit, so no new actual refund swap is claimed.
+This runner and binder are now actual-node GREEN on exact pushed commit
+`45924ca8ed2f76cdcb5befad25b54c5ccf37dbea`. Clean run
+`m5xmrrefund45924caa` completed the role-correct refund branch through both
+local devnets and exact cleanup.
 The first clean attempt, `m5xmrrefund8c10cd7a`, reached finalized tag 13 and
 verified Maker-funded Monero output, then repeatedly classified one fixed LEZ
 block. Later evidence proved Bedrock finality was progressing: the classifier
@@ -302,20 +302,44 @@ IDs are bounded SHA-256 derivations and the driver waits at most 60 seconds.
 This path is GREEN across strict protocol, client, live-runtime, driver, and
 runner contracts plus the complete root and sidecar test suites, warning-fatal
 Clippy and Rustdoc, repository CI/security policy, Docker isolation, and
-dependency policy. The sidecar lockfile also replaces vulnerable `ruint 1.19.0`
-(`RUSTSEC-2026-0220`) with fixed `1.20.0`. A fresh two-devnet replay remains
-pending, so the M5 score and tag status are unchanged.
+dependency policy. All ten repository lockfiles containing `ruint` now resolve fixed `1.20.0` for `RUSTSEC-2026-0220`, with no waiver. The remediated Risc0 rebuild passes all five recursive cases at ELF `ade4af84...bbcee` and ImageID `b7f87278...b0433`; [`docs/evidence/m5-ruint-remediation-20260731.json`](docs/evidence/m5-ruint-remediation-20260731.json) records the 13-graph audit and isolated artifact proof. Official upstream LEZ remains separately tracked as `LOGOS-023`.
+The v0.1.2 compatibility artifact was also rebuilt with Risc0 3.0.5 and the
+digest-pinned Rust builder `r0.1.94.1` because fixed `ruint 1.20.0` requires
+Rust 1.90 or newer. Exact run `m5-ruint-v012-final-20260731` reproduced ELF
+`fe8ec116...c739f7` and ImageID `5421868e...add62`, passed six ordinary tests,
+two actual deployment/native-plus-two-token lifecycle tests, and one recursive
+cost case. Its initial top-level exit was `1` only because the former
+byte-identical cost comparison included volatile cycle classifications after
+every functional and budget gate had passed. The CI-required stable policy now
+accepts the exact generated output only when immutable artifact identity,
+operation order/session topology, total cycles, and budgets match and every
+classification sum and budget check remains valid.
+
+Removing the approved local `.e2e` run cache reduced this build's Docker context
+from 6.37 GB to about 64 KB. That is a temporary, non-durable iteration saving:
+the pinned Risc0 Dockerfile-specific ignore file overrides the repository root
+`.dockerignore`, so future retained `.e2e` data can enlarge the context again.
 Pushed replay `m5xmrrefund827a5d4a` retained the request-ID RED before any clock
 effect. Run `m5xmrrefund842610ca` then admitted exactly one clock effect, proved
 accounting and unchanged escrow state, and obtained ten Bedrock descendants
 within about 16 seconds before exposing the fixed-window observation bug. The
 current-finalized-tip TDD correction supersedes that diagnosis; neither partial
-run is completion evidence. A fresh replay is still required.
+run is completion evidence. Clean run `m5xmrrefund45924caa` then submitted one
+sealed clock transaction at height 192, observed finalized height 188 advance
+to 192 in 107 read-only attempts, preserved escrow metadata and custody,
+finalized tag 16 in block 198, and bound Maker extraction to the confirmed
+Maker-directed Monero sweep `252b922e...d4caf`. Cleanup schema v2 passed with
+source exit zero, all exact resources absent, and no broad or foreign cleanup.
+The retained secret-safe packet is
+[`docs/evidence/m5-xmr-application-refund-corridor-20260731.json`](docs/evidence/m5-xmr-application-refund-corridor-20260731.json).
 [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint)
 and [Flow 1V](docs/manual-user-flows.md#flow-1v-repeat-the-role-correct-xmr-refund-continuation-checkpoint)
 reproduce the lower component boundaries; Flow 1W gives the exact clean replay
-command and resource/flakiness boundary. Updated estimate: 35 to 55 minutes for
-the corrected refund replay and 10 to 20 focused hours to the M5 closure tag.
+command and resource/flakiness boundary. The literal M5 score remains 3 of 7:
+the refund proof closes a prerequisite, while daemon-owned accepted-application
+effects, complete Maker/Taker lifecycle surfaces, and concurrent
+accepted-application isolation remain. Updated M5 closure estimate: 10 to 20
+focused implementation hours.
 
 The persistent coordinator now runs 1 to 32 independent actor workers with one
 SQLite connection each, one shared daemon lease identity, per-row CAS and

@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "measured_on": "2026-07-11",
+  "measured_on": "2026-07-31",
   "execution": {
     "lez": "v0.1.2/cf3639d8252040d13b3d4e933feb19b42c76e14a",
     "risc0": "3.0.5",
-    "elf_sha256": "a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006",
-    "image_id": "c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483",
+    "elf_sha256": "fe8ec1166ec886693d1fcd1d1ddc80090f81f6fab941851cce43b5bfb0c739f7",
+    "image_id": "5421868ee00d213bf083c09f14ed09f303e8581b95b3a17bb9b79f6cb44add62",
     "model": "production V03State transition; mandatory Clock excluded; authenticated-transfer and ATA/Token recursion included"
   },
   "operations": [
@@ -17,22 +17,22 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 312844,
-          "paging_cycles": 63092,
-          "reserved_cycles": 148352
+          "user_cycles": 313520,
+          "paging_cycles": 61134,
+          "reserved_cycles": 149634
         },
         {
           "position": 2,
           "role": "authenticated_transfer_child",
           "segments": 1,
           "total_cycles": 131072,
-          "user_cycles": 46790,
-          "paging_cycles": 30942,
-          "reserved_cycles": 53340
+          "user_cycles": 46365,
+          "paging_cycles": 31612,
+          "reserved_cycles": 53095
         }
       ],
       "recursive_total_cycles": 655360,
-      "recursive_user_cycles": 359634,
+      "recursive_user_cycles": 359885,
       "recursive_user_cycle_budget": 375000
     },
     {
@@ -43,22 +43,22 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 361385,
-          "paging_cycles": 67486,
-          "reserved_cycles": 95417
+          "user_cycles": 361144,
+          "paging_cycles": 66224,
+          "reserved_cycles": 96920
         },
         {
           "position": 2,
           "role": "authenticated_transfer_child",
           "segments": 1,
           "total_cycles": 131072,
-          "user_cycles": 80019,
-          "paging_cycles": 31586,
-          "reserved_cycles": 19467
+          "user_cycles": 79594,
+          "paging_cycles": 32256,
+          "reserved_cycles": 19222
         }
       ],
       "recursive_total_cycles": 655360,
-      "recursive_user_cycles": 441404,
+      "recursive_user_cycles": 440738,
       "recursive_user_cycle_budget": 460000
     },
     {
@@ -69,22 +69,22 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 394240,
-          "paging_cycles": 69444,
-          "reserved_cycles": 60604
+          "user_cycles": 393861,
+          "paging_cycles": 68117,
+          "reserved_cycles": 62310
         },
         {
           "position": 2,
           "role": "authenticated_transfer_child",
           "segments": 1,
           "total_cycles": 131072,
-          "user_cycles": 80037,
-          "paging_cycles": 31586,
-          "reserved_cycles": 19449
+          "user_cycles": 79612,
+          "paging_cycles": 32256,
+          "reserved_cycles": 19204
         }
       ],
       "recursive_total_cycles": 655360,
-      "recursive_user_cycles": 474277,
+      "recursive_user_cycles": 473473,
       "recursive_user_cycle_budget": 490000
     },
     {
@@ -95,22 +95,22 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 312799,
-          "paging_cycles": 63092,
-          "reserved_cycles": 148397
+          "user_cycles": 314387,
+          "paging_cycles": 60142,
+          "reserved_cycles": 149759
         },
         {
           "position": 2,
           "role": "authenticated_transfer_child",
           "segments": 1,
           "total_cycles": 131072,
-          "user_cycles": 46715,
+          "user_cycles": 46760,
           "paging_cycles": 30942,
-          "reserved_cycles": 53415
+          "reserved_cycles": 53370
         }
       ],
       "recursive_total_cycles": 655360,
-      "recursive_user_cycles": 359514,
+      "recursive_user_cycles": 361147,
       "recursive_user_cycle_budget": 375000
     },
     {
@@ -121,22 +121,22 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 361340,
-          "paging_cycles": 67486,
-          "reserved_cycles": 95462
+          "user_cycles": 362011,
+          "paging_cycles": 65554,
+          "reserved_cycles": 96723
         },
         {
           "position": 2,
           "role": "authenticated_transfer_child",
           "segments": 1,
           "total_cycles": 131072,
-          "user_cycles": 79944,
+          "user_cycles": 79989,
           "paging_cycles": 31586,
-          "reserved_cycles": 19542
+          "reserved_cycles": 19497
         }
       ],
       "recursive_total_cycles": 655360,
-      "recursive_user_cycles": 441284,
+      "recursive_user_cycles": 442000,
       "recursive_user_cycle_budget": 460000
     },
     {
@@ -147,22 +147,22 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 376055,
-          "paging_cycles": 69122,
-          "reserved_cycles": 79111
+          "user_cycles": 376651,
+          "paging_cycles": 65850,
+          "reserved_cycles": 81787
         },
         {
           "position": 2,
           "role": "authenticated_transfer_child",
           "segments": 1,
           "total_cycles": 131072,
-          "user_cycles": 79944,
+          "user_cycles": 79989,
           "paging_cycles": 31586,
-          "reserved_cycles": 19542
+          "reserved_cycles": 19497
         }
       ],
       "recursive_total_cycles": 655360,
-      "recursive_user_cycles": 455999,
+      "recursive_user_cycles": 456640,
       "recursive_user_cycle_budget": 475000
     },
     {
@@ -173,13 +173,13 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 290798,
-          "paging_cycles": 59846,
-          "reserved_cycles": 173644
+          "user_cycles": 291827,
+          "paging_cycles": 55247,
+          "reserved_cycles": 177214
         }
       ],
       "recursive_total_cycles": 524288,
-      "recursive_user_cycles": 290798,
+      "recursive_user_cycles": 291827,
       "recursive_user_cycle_budget": 305000
     },
     {
@@ -190,31 +190,31 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 449249,
-          "paging_cycles": 65759,
-          "reserved_cycles": 9280
+          "user_cycles": 449097,
+          "paging_cycles": 62308,
+          "reserved_cycles": 12883
         },
         {
           "position": 2,
           "role": "ata_child",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 355546,
+          "user_cycles": 355726,
           "paging_cycles": 44072,
-          "reserved_cycles": 124670
+          "reserved_cycles": 124490
         },
         {
           "position": 3,
           "role": "token_grandchild",
           "segments": 1,
           "total_cycles": 262144,
-          "user_cycles": 106547,
+          "user_cycles": 106637,
           "paging_cycles": 40774,
-          "reserved_cycles": 114823
+          "reserved_cycles": 114733
         }
       ],
       "recursive_total_cycles": 1310720,
-      "recursive_user_cycles": 911342,
+      "recursive_user_cycles": 911460,
       "recursive_user_cycle_budget": 950000
     },
     {
@@ -225,31 +225,31 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 1048576,
-          "user_cycles": 467645,
-          "paging_cycles": 66172,
-          "reserved_cycles": 514759
+          "user_cycles": 468645,
+          "paging_cycles": 62578,
+          "reserved_cycles": 517353
         },
         {
           "position": 2,
           "role": "ata_child",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 223355,
+          "user_cycles": 223535,
           "paging_cycles": 42719,
-          "reserved_cycles": 258214
+          "reserved_cycles": 258034
         },
         {
           "position": 3,
           "role": "token_grandchild",
           "segments": 1,
           "total_cycles": 262144,
-          "user_cycles": 130562,
+          "user_cycles": 130652,
           "paging_cycles": 40787,
-          "reserved_cycles": 90795
+          "reserved_cycles": 90705
         }
       ],
       "recursive_total_cycles": 1835008,
-      "recursive_user_cycles": 821562,
+      "recursive_user_cycles": 822832,
       "recursive_user_cycle_budget": 860000
     },
     {
@@ -260,31 +260,31 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 1048576,
-          "user_cycles": 549162,
-          "paging_cycles": 74056,
-          "reserved_cycles": 425358
+          "user_cycles": 549642,
+          "paging_cycles": 71262,
+          "reserved_cycles": 427672
         },
         {
           "position": 2,
           "role": "ata_child",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 395771,
+          "user_cycles": 395951,
           "paging_cycles": 45399,
-          "reserved_cycles": 83118
+          "reserved_cycles": 82938
         },
         {
           "position": 3,
           "role": "token_grandchild",
           "segments": 1,
           "total_cycles": 262144,
-          "user_cycles": 130382,
+          "user_cycles": 130472,
           "paging_cycles": 40787,
-          "reserved_cycles": 90975
+          "reserved_cycles": 90885
         }
       ],
       "recursive_total_cycles": 1835008,
-      "recursive_user_cycles": 1075315,
+      "recursive_user_cycles": 1076065,
       "recursive_user_cycle_budget": 1120000
     },
     {
@@ -295,13 +295,13 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 290678,
-          "paging_cycles": 59846,
-          "reserved_cycles": 173764
+          "user_cycles": 291722,
+          "paging_cycles": 55247,
+          "reserved_cycles": 177319
         }
       ],
       "recursive_total_cycles": 524288,
-      "recursive_user_cycles": 290678,
+      "recursive_user_cycles": 291722,
       "recursive_user_cycle_budget": 305000
     },
     {
@@ -312,31 +312,31 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 448744,
-          "paging_cycles": 66429,
-          "reserved_cycles": 9115
+          "user_cycles": 448485,
+          "paging_cycles": 62978,
+          "reserved_cycles": 12825
         },
         {
           "position": 2,
           "role": "ata_child",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 355067,
+          "user_cycles": 355142,
           "paging_cycles": 44742,
-          "reserved_cycles": 124479
+          "reserved_cycles": 124404
         },
         {
           "position": 3,
           "role": "token_grandchild",
           "segments": 1,
           "total_cycles": 262144,
-          "user_cycles": 106287,
+          "user_cycles": 106317,
           "paging_cycles": 41444,
-          "reserved_cycles": 114413
+          "reserved_cycles": 114383
         }
       ],
       "recursive_total_cycles": 1310720,
-      "recursive_user_cycles": 910098,
+      "recursive_user_cycles": 909944,
       "recursive_user_cycle_budget": 950000
     },
     {
@@ -347,31 +347,31 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 1048576,
-          "user_cycles": 467556,
-          "paging_cycles": 66842,
-          "reserved_cycles": 514178
+          "user_cycles": 468434,
+          "paging_cycles": 63248,
+          "reserved_cycles": 516894
         },
         {
           "position": 2,
           "role": "ata_child",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 223296,
+          "user_cycles": 223356,
           "paging_cycles": 43389,
-          "reserved_cycles": 257603
+          "reserved_cycles": 257543
         },
         {
           "position": 3,
           "role": "token_grandchild",
           "segments": 1,
           "total_cycles": 262144,
-          "user_cycles": 130501,
+          "user_cycles": 130531,
           "paging_cycles": 41457,
-          "reserved_cycles": 90186
+          "reserved_cycles": 90156
         }
       ],
       "recursive_total_cycles": 1835008,
-      "recursive_user_cycles": 821353,
+      "recursive_user_cycles": 822321,
       "recursive_user_cycle_budget": 860000
     },
     {
@@ -382,31 +382,31 @@
           "role": "escrow_root",
           "segments": 1,
           "total_cycles": 1048576,
-          "user_cycles": 494694,
-          "paging_cycles": 66803,
-          "reserved_cycles": 487079
+          "user_cycles": 494486,
+          "paging_cycles": 63648,
+          "reserved_cycles": 490442
         },
         {
           "position": 2,
           "role": "ata_child",
           "segments": 1,
           "total_cycles": 524288,
-          "user_cycles": 396046,
+          "user_cycles": 396121,
           "paging_cycles": 46069,
-          "reserved_cycles": 82173
+          "reserved_cycles": 82098
         },
         {
           "position": 3,
           "role": "token_grandchild",
           "segments": 1,
           "total_cycles": 262144,
-          "user_cycles": 130497,
+          "user_cycles": 130527,
           "paging_cycles": 41457,
-          "reserved_cycles": 90190
+          "reserved_cycles": 90160
         }
       ],
       "recursive_total_cycles": 1835008,
-      "recursive_user_cycles": 1021237,
+      "recursive_user_cycles": 1021134,
       "recursive_user_cycle_budget": 1065000
     }
   ]

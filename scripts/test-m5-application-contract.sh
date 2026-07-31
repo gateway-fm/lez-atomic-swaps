@@ -138,8 +138,8 @@ rg -Fq -- "$required" "$handoff" ||
   fail "M5 handoff must return a queued actor before supervision: ${required}"
 
 for required in \
-  'ESCROW_PROGRAM_ID:-4d6590332948743c2db88a183755815354ef92560550cd206ac27bddeea12c82' \
-  'M5_LEZ_GUEST_SHA256:-dc370bc34b432317730c51b49342760dbc675fca700e300b30b5fadefe5b7292' \
+  'ESCROW_PROGRAM_ID:-b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433' \
+  'M5_LEZ_GUEST_SHA256:-ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee' \
   'M5_LEZ_DEPLOYMENT_EVIDENCE_FILE' \
   'M5_LEZ_FINALITY_EVIDENCE_FILE' \
   'M5_LEZ_ONBOARDING_EVIDENCE_FILE' \
