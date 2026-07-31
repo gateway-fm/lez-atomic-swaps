@@ -335,11 +335,12 @@ The retained secret-safe packet is
 [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint)
 and [Flow 1V](docs/manual-user-flows.md#flow-1v-repeat-the-role-correct-xmr-refund-continuation-checkpoint)
 reproduce the lower component boundaries; Flow 1W gives the exact clean replay
-command and resource/flakiness boundary. The literal M5 score remains 3 of 7:
-the refund proof closes a prerequisite, while daemon-owned accepted-application
-effects, complete Maker/Taker lifecycle surfaces, and concurrent
-accepted-application isolation remain. Updated M5 closure estimate: 10 to 20
-focused implementation hours.
+command and resource/flakiness boundary. At that checkpoint, literal M5 was 3
+of 7: the refund proof closed a prerequisite, while daemon-owned accepted-
+application effects, complete Maker/Taker lifecycle surfaces, and concurrent
+accepted-application isolation remained. The current score and ETA are updated
+by the ZEC evidence below.
+
 
 The persistent coordinator now runs 1 to 32 independent actor workers with one
 SQLite connection each, one shared daemon lease identity, per-row CAS and
@@ -367,6 +368,26 @@ and the preceding
 [corridor checkpoint](docs/evidence/m5-zec-application-corridor-20260724.json).
 The progressive local ZEC application PoC gate is certified for that earlier
 corridor.
+
+Current daemon-supervised run `m5zec432dapp1` replayed exact pushed commit
+`432d1f7dabbb573b9642794155066e37ee95e75d` against a fresh LEZ v0.2
+deployment, fresh Zebra 5.2.0 Regtest state, and fresh Maker/Taker identities.
+Both role actors reached revision 4 `completed` in 25.030 protocol seconds; the
+Maker scheduler ended `terminal` with no child, the daemon supervisor was the
+only Maker effect authority, and the Taker claim was acceptance-receipt bound.
+Delivery, Chat, and the owner socket remained absent after the first confirmed
+lock. A fresh owner daemon projected the terminal state without either chain
+RPC. Exact cleanup removed the four containers, two networks, two tagged
+images, private run roots, ports, and processes without a global prune. No
+public RPC, faucet, peer, or public funds participated.
+
+This closes the daemon-owned accepted-application output and raises literal M5
+to 4 of 7. Remaining are complete Maker lifecycle control for every supported
+pair, complete Taker lifecycle control for every supported pair, and accepted-
+application actual-chain coordinator concurrency/restart isolation including
+proof that unavailable XMR does not stall BTC/ZEC. See the
+[daemon-supervisor certification packet](docs/evidence/m5-zec-daemon-supervisor-certification-20260731.json).
+
 Those historical runs are not evidence of the current receipt-bound claim route.
 The current M5 working tree also contains an intervention-assisted actual-node
 one-leg recovery checkpoint. In isolated run
@@ -383,10 +404,11 @@ a restart-safe SQLite cursor advances only validated fully covered pages, keeps
 partial/ambiguous/typed-error polls on the exact page, and restores the active
 page despite unchanged actor config. Both owner and counterparty paths pass a
 RED-GREEN reopen test, but the retained actual-node evidence remains
-intervention-assisted until a fresh daemon/CLI replay. M5 is not complete;
-actual-node receipt-bound Taker lifecycle effects, concurrent supervision, BTC
-actual-chain application execution, and XMR application lifecycle composition
-remain. Clean sidecar builds
+intervention-assisted until a fresh recovery replay. Literal M5 is now 4 of 7,
+but it is not complete. The remaining accepted outputs are complete supported-
+pair Maker lifecycle, complete supported-pair Taker lifecycle, and actual-chain
+accepted-application coordinator concurrency/restart/unavailable-XMR
+isolation. Clean sidecar builds
 should set the documented
 absolute `RAPIDSNARK_LIB_DIR` only after verifying the four pinned v0.0.8
 library hashes and should use Cargo offline rather than the upstream download

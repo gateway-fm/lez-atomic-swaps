@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "kind": "m5_zec_daemon_supervisor_actual_chain_certification",
+  "result": "completed",
+  "certification_scope": "daemon-owned accepted-application ZEC actual-chain output; advances literal M5 evidence to 4/7, not full M5 or production-readiness certification",
+  "run": {
+    "id": "m5zec432dapp1",
+    "date_utc": "2026-07-31",
+    "git_commit": "432d1f7dabbb573b9642794155066e37ee95e75d",
+    "git_commit_pushed_to_origin_main_before_run": true,
+    "working_tree_clean_before_run": true,
+    "lez_run_id": "m5zec432dlez1",
+    "zebra_run_id": "m5zec432dzebra1",
+    "protocol_elapsed_milliseconds_from_provisioning": 25030,
+    "drive_rounds": 59,
+    "same_run_drive_retries": 0
+  },
+  "application": {
+    "pair": "zcash",
+    "journey": "claim",
+    "result": "completed",
+    "maker": {
+      "phase": "completed",
+      "revision": 4,
+      "effect_authority": "maker_daemon_only"
+    },
+    "taker": {
+      "phase": "completed",
+      "revision": 4,
+      "zcash_claim_bound_to_acceptance_receipt": true
+    },
+    "terminal_projection": {
+      "outcome": "projected",
+      "operation": "zcash_followup_claim",
+      "phase": "completed",
+      "revision": 4,
+      "next_action": "complete",
+      "accepted_as_exact_terminal_projection": true
+    },
+    "scheduler_terminal": {
+      "generation": 24,
+      "attempt_count": 24,
+      "child_present": false,
+      "terminal": true
+    }
+  },
+  "transport_and_restart": {
+    "cutover_after_confirmed_first_lock": true,
+    "post_lock_delivery_present": false,
+    "post_lock_chat_present": false,
+    "post_lock_owner_socket_present": false,
+    "offline_restart_result": "completed",
+    "offline_restart_used_chain_rpc": false,
+    "offline_restart_resubmitted_chain_effects": false
+  },
+  "chains": {
+    "lez": {
+      "network": "isolated_private_local",
+      "guest_elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+      "program_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433",
+      "deployment": {
+        "transaction_id": "f5f4e7a15c1c87333cc69be9392e0fa576bdb25ca0fad45c127fa16e51cd0b5c",
+        "finalized_block_id": 84,
+        "finalized_block_hash": "122ea72365bda67c07aa595cebf79f2297b44d402dd5008c35e395df299568a7"
+      },
+      "actor_vault_onboarding": {
+        "maker": {
+          "transaction_id": "d49c64b0c365dada16442895c260a8c85a922211efda4b8073df855bdd600eaf",
+          "finalized_block_id": 95
+        },
+        "taker": {
+          "transaction_id": "721dab39ba99cc3b97e7563ee0f70f86147eb14b8dd354fd4f94aa776119f214",
+          "finalized_block_id": 100
+        }
+      }
+    },
+    "zcash": {
+      "implementation": "Zebra Regtest",
+      "initial_tip": 104,
+      "final_tip": 107,
+      "blocks_mined_during_swap": 3
+    }
+  },
+  "atomicity": {
+    "observed_order": [
+      "zcash_maker_vault_funded_and_confirmed",
+      "delivery_chat_and_owner_socket_removed",
+      "lez_revealing_claim_finalized",
+      "zcash_taker_followup_claim_finalized",
+      "both_roles_projected_terminal_revision_4"
+    ],
+    "argument": "The maker's confirmed Zcash vault output existed before the LEZ revealing claim exposed the shared claim material. The taker's Zcash follow-up claim was bound to the finalized LEZ receipt and spent only after that reveal. Before reveal, agreement-defined timeout/refund paths preserve recovery; after reveal, the taker has the information required to claim the funded Zcash output. Daemon-only maker authority, exact terminal projection, and offline terminal replay without chain RPC show that restart did not duplicate an effect. This demonstrates protocol ordering and recoverability across two chains, not a single cross-chain database transaction."
+  },
+  "raw_evidence_sha256": {
+    "result": "dd26097f5eea5e7dd224eb2f81e4a0d460edd5a6501dc2852f8ab3e26656988b",
+    "supervisor_final": "5c5f55196b0058e29550dd1659b9263d1c24f0d0c58b2c3471b2963644d567fe",
+    "terminal_projection": "cfbd05c8fb7515ba3552f34841b03d6982afb6805146cbfce2f11d408b941e9b",
+    "post_lock_cutover": "2a24c17cf99575bc655368e678b5fcb41dde0336e1ff1f14a69705e4abfa63c7",
+    "supervisor_trace": "a82d307f9e6ac74e26e936aa576e74b35af10af1bd008f049cd678d753b030ad",
+    "taker_claim": "225f9aefefc0d1aae0ec6b5d7f6ddb0856783d23052ebdbec06981c63eb37034",
+    "lez_run_manifest": "1dbd30ad4ac8283dfada53b72e23bd0d1409f9cb5cda4ecc12897da8386d431a",
+    "zebra_run_manifest": "fcb703e920cdb3ff3bf28a4c8621a7c9b976e9c6713e13eca03ba5c7a60f6e9d",
+    "lez_deployment_receipt": "15ded440b2e0ce8a648ba5a5e191e281984d3a077133ab889a6d7ee1ab5b0073",
+    "lez_deployment_finality": "1f9b10c1c1fcc0c4f1be5c79c7f74db927f157cfd0ec39950f792be03e9b6838",
+    "actor_onboarding": "611482488524fd260a35e78c04b85a36bd973cd8cdfd9c75a0b66de31d50572c"
+  },
+  "external_resources": {
+    "public_rpc": false,
+    "faucet": false,
+    "public_peer": false,
+    "public_funds": false,
+    "runtime": "isolated loopback LEZ and Zebra Regtest services with deterministic local funds"
+  },
+  "cleanup": {
+    "exact_run_containers_absent": true,
+    "exact_run_networks_absent": true,
+    "exact_run_images_absent": true,
+    "exact_run_state_roots_absent": true,
+    "foreign_resources_targeted": false,
+    "broad_prune_used": false
+  },
+  "limitations": [
+    "This packet closes only the daemon-owned accepted-application ZEC actual-chain output criterion and makes literal M5 4/7.",
+    "It does not certify full M5, public deployment, public-chain operation, chaos hardening, or production readiness.",
+    "Local isolated chain behavior is evidence for the pinned implementations and configuration used here; public endpoints and operational conditions remain outside this run."
+  ],
+  "private_material_disclosed": false
+}

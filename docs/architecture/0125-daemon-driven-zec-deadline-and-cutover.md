@@ -1,6 +1,7 @@
 # ADR 0125: Bound daemon-driven ZEC effects across transport cutover
 
-Status: Proposed on 2026-07-31; implementation and fresh-chain proof in progress
+Status: Accepted on 2026-07-31 by exact pushed-commit run `m5zec432dapp1`
+at `432d1f7dabbb573b9642794155066e37ee95e75d`
 
 ## Context
 
@@ -23,9 +24,10 @@ not treated as correctness evidence.
 
 Diagnostic run `m5zecb416appf` reached both chain-leg completion, but the
 scheduler ended in `failed` rather than the required fenced `terminal` state.
-The run is therefore rejected: it has no certification result, is not GREEN,
-and cannot raise the literal M5 score. M5 remains `3/7` pending a successful
-fresh-chain replay of the complete decision below.
+That historical run remains rejected: it has no certification result, is not
+GREEN, and did not raise the literal M5 score. Exact pushed-commit run
+`m5zec432dapp1` subsequently completed the fresh-chain replay of the complete
+decision below in 25,030 milliseconds and raised the literal score to `4/7`.
 
 ## Decision
 
@@ -172,6 +174,14 @@ application fence, not from treating the two chains as one transaction:
 - Any failed scheduler state, missing fenced terminal state, post-cutoff new
   effect, surviving negotiation transport, duplicate transaction, or failed
   terminal restart rejects the run and quarantines its disposable chain.
-- This ADR remains Proposed. Acceptance requires one clean fresh LEZ and Zebra
-  replay whose retained evidence proves all assertions above. Until that proof
-  exists, no M5 output is added, no tag is justified, and M5 remains `3/7`.
+- Exact pushed-commit run `m5zec432dapp1` accepts this ADR. Its fresh isolated
+  LEZ and Zebra replay completed Maker and Taker at revision 4, resolved the
+  scheduler as `terminal` at generation 24 after 24 attempts with no child,
+  and retained daemon-only Maker effect authority through the post-lock
+  transport cutover. The Taker claim remained bound to the pinned acceptance
+  receipt. The terminal owner restart made no chain RPC, cleanup removed every
+  exact owned resource, and no public RPC, faucet, testnet, or external funds
+  participated. The retained packet is
+  `docs/evidence/m5-zec-daemon-supervisor-certification-20260731.json`.
+- This acceptance certifies one additional literal M5 output and moves the
+  score from `3/7` to `4/7`. It does not claim an M5 completion tag.

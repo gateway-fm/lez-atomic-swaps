@@ -4139,6 +4139,22 @@ Its `certification_replay` record closes the progressive local-functional gate.
 The earlier corridor-only packet remains a historical checkpoint; neither
 packet claims literal M5 or production completion.
 
+Current exact clean pushed replay `m5zec432dapp1` from commit
+`432d1f7dabbb573b9642794155066e37ee95e75d` completed the daemon-supervised
+path in 25.030 protocol seconds. Both actors reached revision 4 `completed`;
+the Maker scheduler resolved `terminal` with no child; the only Maker effect
+authority was the daemon supervisor; and the Taker claim remained bound to its
+acceptance receipt. Delivery, Chat, and the owner socket stayed absent after
+the first lock, and a fresh owner daemon projected `completed` without a chain
+RPC. Cleanup removed every exact run resource, and no public RPC or faucet was
+used. This closes the accepted-application daemon output and raises literal M5
+to 4 of 7. Complete supported-pair Maker lifecycle, complete supported-pair
+Taker lifecycle, and actual-chain coordinator concurrency/restart/unavailable-
+XMR isolation remain; this is not full M5 or production certification. The
+secret-safe packet is
+[`m5-zec-daemon-supervisor-certification-20260731.json`](evidence/m5-zec-daemon-supervisor-certification-20260731.json).
+
+
 This flow emulates the actual users: a maker operator configures and publishes
 through `lez-maker`, a separate taker identity discovers and accepts through
 `lez-taker`, and independent maker/taker actors execute the final agreement.
@@ -4182,6 +4198,34 @@ RUN_ID="$LEZ_RUN" LEZ_V02_KEEP_RUNNING=1 \
 RUN_ID="$ZEC_RUN" ZEBRA_E2E_PRIMARY_ONLY=1 ZEBRA_E2E_SKIP_TESTS=1 \
   ZEBRA_E2E_KEEP_RUNNING=1 ./scripts/run-zebra-e2e.sh
 ```
+
+A fresh primary-only Zebra starts at height 0. Before application provisioning,
+generate the deterministic local maturity prefix and verify height 104. This
+creates only Regtest fixture funds; it is not a faucet or a swap effect.
+
+```sh
+export ZEBRA_RPC_URL="$(sed -n 's/^ZEBRA_RPC_URL=//p' ".e2e/$ZEC_RUN/run.env")"
+ZEBRA_BLOCKS="$(
+  curl --fail --silent --show-error --noproxy '*' --connect-timeout 2 \
+    --max-time 90 -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"generate","params":[104]}' \
+    "$ZEBRA_RPC_URL"
+)"
+test "$(jq -er '.result | length' <<<"$ZEBRA_BLOCKS")" = 104
+ZEBRA_TIP="$(
+  curl --fail --silent --show-error --noproxy '*' --connect-timeout 2 \
+    --max-time 5 -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' \
+    "$ZEBRA_RPC_URL"
+)"
+test "$(jq -er '.result' <<<"$ZEBRA_TIP")" = 104
+```
+
+The 104-block call can take more than 30 seconds on a cold local node; keep the
+90-second client bound. If it fails or yields a partial height, discard that
+new Zebra run and restart this fixture step. Do not begin or retry the
+application on a partially initialized node.
+
 
 Follow [Flow 0B2](#flow-0b2-run-the-isolated-lez-v02-service-stack) and
 [Flow 0G](#flow-0g-run-either-development-m2-corridor-direction) to deploy the

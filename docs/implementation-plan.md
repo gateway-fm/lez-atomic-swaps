@@ -4722,3 +4722,49 @@ it passes does the score become 4 of 7; Maker CLI, Taker CLI, and coordinator
 concurrency/restart isolation then remain. The corrected checkpoint estimate is
 7 to 14 focused implementation hours to the M5 tag, subject to measured local
 LEZ finality and the required new-chain provisioning cycles.
+
+## M5 daemon-owned accepted ZEC application certification (2026-07-31)
+
+Exact clean pushed commit
+`432d1f7dabbb573b9642794155066e37ee95e75d` was replayed against a newly
+deployed LEZ v0.2 chain, a new Zebra 5.2.0 Regtest node, and newly generated
+Maker and Taker identities. The initial application preflight found Zebra at
+height 0 before it created an evidence root, provisioned actors, or attempted a
+swap effect. After the documented deterministic local maturity prefix reached
+height 104, the same untouched application inputs were admitted; this is
+fixture setup rather than a protocol-effect retry.
+
+The completed run `m5zec432dapp1` reached both role actors at revision 4
+`completed` in 25,030 milliseconds from provisioning. Zebra advanced exactly
+104 to 107 through two funding-confirmation blocks and one follow-up-claim
+block. The Maker scheduler resolved as `terminal` at lease generation 24 and
+attempt count 24 with no child identity, while `same_run_drive_retries` stayed
+zero.
+
+The fresh packet proves Delivery, Chat, and the owner socket remained absent
+after the first confirmed lock; the supervisor-only daemon retained the one
+absolute effect cutoff and was the only Maker effect authority; the Taker CLI
+remained bound to its immutable acceptance receipt. A new owner daemon then
+projected revision-4 `completed` history and status from stopped actor state
+without either chain RPC. No public RPC, faucet, peer, or public funds were
+used.
+
+After preserving the allowlisted manifest hashes, scoped cleanup removed only
+the exact four run containers, two networks, two tagged images, private node
+and identity roots, application root, and run-owned build target. All four RPC
+ports and all run processes were absent afterward; no global prune or foreign
+resource selector was used. The secret-safe committed packet is
+[`m5-zec-daemon-supervisor-certification-20260731.json`](evidence/m5-zec-daemon-supervisor-certification-20260731.json).
+
+This closes the daemon-owned effect-bearing accepted-application output and
+accepts ADR 0125 for the local-functional scope. Literal M5 is now 4 of 7. The
+three accepted outputs still open are:
+
+1. complete Maker CLI lifecycle control across every supported pair;
+2. complete Taker CLI lifecycle control across every supported pair; and
+3. accepted-application actual-chain coordinator concurrency, restart
+   isolation, and proof that an unavailable XMR route cannot stall BTC/ZEC.
+
+No M5 tag is justified until those outputs and the final composite gates pass.
+Updated ETA is 8 to 16 focused implementation hours to the M5 tag, subject to
+measured fresh-node cycles and final review.
