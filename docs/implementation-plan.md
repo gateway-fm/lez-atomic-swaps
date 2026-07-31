@@ -4663,15 +4663,29 @@ Exact application run `m5zecb416appf` then completed both role actors at
 revision 4. Zebra advanced from deterministic mature height 104 to 107, the
 Maker funding transaction was exact, the transport cutover passed, and Maker
 effects were owned only by the daemon supervisor. The runner still rejected
-the run because the scheduler persisted `failed/actor_output_invalid`: the real
-claim returned `outcome: projected` while its durable phase was already
-`completed`. The run is retained as diagnostic evidence only. Its exact LEZ
-and Zebra containers, networks, images, and run directories were quarantined.
+the run because the scheduler persisted `failed/actor_output_invalid`. An
+earlier checkpoint inferred that the rejected output was a valid terminal
+projection, but the retained packet has no raw child stdout. A later source and
+fresh-evidence audit corrected that inference: `lez_revealing_claim` is a valid
+nonterminal projection into `claim_evidence_available` at revision 3. Run
+`appf` remains diagnostic-only; its exact LEZ and Zebra resources were
+quarantined.
 
-The focused RED reproduced that live response. The GREEN supervisor accepts a
-projected terminal ZEC claim only for the exact `lez_revealing_claim` or
-`zcash_followup_claim` operations; missing and unrelated operation identities
-remain rejected. Cleanup also progressed RED then GREEN so the effect-bearing
+Fresh chain `m5zecb626lez1` then deployed the same current guest, finalized two
+fresh actor Vault Claims, and paired with a fresh Zebra Regtest at height 104.
+Application run `m5zecb626app1` passed post-lock transport cutover and daemon-
+only Maker authority. The Maker supervisor advanced the durable actor to
+`claim_evidence_available` revision 3, then failed it after 24 attempts with
+`actor_output_invalid`; the Taker reached the corresponding claim admission.
+The run is retained as a second rejected RED packet; its disposable nodes,
+networks, run-tagged images, and node directories were quarantined exactly.
+
+The focused RED now reproduces that exact nonterminal projection. The GREEN
+accepts `outcome: projected` only as `lez_revealing_claim` paired with the
+Maker's `claim_evidence_available` phase and `wait` action, for both supervised
+`drive` and explicit `claim`. Claim projections with missing, unrelated, or
+crossed operation/phase/action fields remain rejected, as do projected
+terminal claims. Cleanup also progressed RED then GREEN so the effect-bearing
 daemon is always cancelled before either sidecar shutdown can consume time.
 
 A second RED proved that a fixed 20-second attempt timeout cannot prevent an
@@ -4683,7 +4697,7 @@ child wait. An in-flight process group is killed and reaped at the earlier
 cutoff, its fenced child identity is cleared, and the durable actor backs off.
 An already-expired supervisor does not claim or mutate a queued actor.
 
-Focused GREEN evidence is 15 of 15 Maker supervisor integration tests, 4 of 4
+Focused GREEN evidence is 15 of 15 Maker supervisor integration tests, 5 of 5
 parser tests, 3 of 3 daemon supervisor CLI tests, and the M5 application shell
 contract. Cold optimized builds measured about 6 minutes for the root process
 set and 14 minutes 38 seconds for the full LEZ sidecar graph; warm rebuild

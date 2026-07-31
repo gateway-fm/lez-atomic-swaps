@@ -934,16 +934,25 @@ fn parse_effect(
         return Err(());
     }
     let terminal = terminal_phase(phase);
-    let zec_projected_terminal = kind == MakerActorKindV1::Zcash
-        && matches!(command, ActorEffectCommand::Claim)
-        && outcome == "projected"
+    let projected_zec_claim = kind == MakerActorKindV1::Zcash
         && matches!(
-            value.get("operation").and_then(Value::as_str),
-            Some("lez_revealing_claim" | "zcash_followup_claim")
-        );
-    let exact_absorbing = exact_absorbing_effect(kind, command, outcome, phase)
-        || (zec_projected_terminal && phase == "completed");
-    let terminal_outcome = matches!(outcome, "completed" | "refunded") || zec_projected_terminal;
+            command,
+            ActorEffectCommand::Drive | ActorEffectCommand::Claim
+        )
+        && outcome == "projected";
+    if projected_zec_claim {
+        match value.get("operation").and_then(Value::as_str) {
+            Some("lez_revealing_claim") => {
+                if phase != "claim_evidence_available" || next_action != "wait" {
+                    return Err(());
+                }
+            }
+            _ if matches!(command, ActorEffectCommand::Claim) => return Err(()),
+            _ => {}
+        }
+    }
+    let exact_absorbing = exact_absorbing_effect(kind, command, outcome, phase);
+    let terminal_outcome = matches!(outcome, "completed" | "refunded");
     if terminal != exact_absorbing
         || (kind == MakerActorKindV1::Zcash && terminal_outcome != exact_absorbing)
     {
@@ -1276,12 +1285,6 @@ mod tests {
             ),
             (
                 MakerActorKindV1::Zcash,
-                ActorEffectCommand::Claim,
-                zec_projected_claim_terminal_effect("lez_revealing_claim"),
-                "completed",
-            ),
-            (
-                MakerActorKindV1::Zcash,
                 ActorEffectCommand::Recover,
                 effect("recover", "refunded", "refunded", 4, "complete"),
                 "refunded",
@@ -1316,6 +1319,80 @@ mod tests {
             assert_eq!(
                 parsed.progress,
                 MakerActorProgressObservationV1::active(phase, 4, "complete").unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn parser_accepts_exact_nonterminal_zec_claim_projection_only() {
+        let exact = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "role": "maker",
+            "command": "claim",
+            "outcome": "projected",
+            "operation": "lez_revealing_claim",
+            "phase": "claim_evidence_available",
+            "revision": 3,
+            "next_action": "wait"
+        }))
+        .unwrap();
+        let parsed =
+            parse_effect(&exact, ActorEffectCommand::Claim, MakerActorKindV1::Zcash).unwrap();
+        assert!(!parsed.terminal);
+
+        let mut drive: Value = serde_json::from_slice(&exact).unwrap();
+        drive["command"] = Value::from("drive");
+        let parsed_drive = parse_effect(
+            &serde_json::to_vec(&drive).unwrap(),
+            ActorEffectCommand::Drive,
+            MakerActorKindV1::Zcash,
+        )
+        .unwrap();
+        assert!(!parsed_drive.terminal);
+
+        for operation in [None, Some("lez_refund")] {
+            let mut output: Value = serde_json::from_slice(&exact).unwrap();
+            match operation {
+                Some(operation) => output["operation"] = Value::from(operation),
+                None => {
+                    output.as_object_mut().unwrap().remove("operation");
+                }
+            }
+            assert!(
+                parse_effect(
+                    &serde_json::to_vec(&output).unwrap(),
+                    ActorEffectCommand::Claim,
+                    MakerActorKindV1::Zcash,
+                )
+                .is_err()
+            );
+        }
+
+        for (command, phase, next_action) in [
+            (ActorEffectCommand::Claim, "completed", "complete"),
+            (
+                ActorEffectCommand::Claim,
+                "claim_evidence_available",
+                "claim_zcash",
+            ),
+            (ActorEffectCommand::Drive, "completed", "complete"),
+            (
+                ActorEffectCommand::Drive,
+                "claim_evidence_available",
+                "claim_zcash",
+            ),
+        ] {
+            let mut output: Value = serde_json::from_slice(&exact).unwrap();
+            output["command"] = Value::from(command.name());
+            output["phase"] = Value::from(phase);
+            output["next_action"] = Value::from(next_action);
+            assert!(
+                parse_effect(
+                    &serde_json::to_vec(&output).unwrap(),
+                    command,
+                    MakerActorKindV1::Zcash,
+                )
+                .is_err()
             );
         }
     }
@@ -1382,7 +1459,7 @@ mod tests {
 
         for bytes in [
             effect("claim", "projected", "completed", 4, "complete"),
-            zec_projected_claim_terminal_effect("lez_refund"),
+            zec_projected_claim_terminal_effect("lez_revealing_claim"),
         ] {
             assert!(
                 parse_effect(&bytes, ActorEffectCommand::Claim, MakerActorKindV1::Zcash,).is_err()
