@@ -15,6 +15,7 @@ use lez_bridge_protocol::{
     XmrNativeEscrowTermsV3,
 };
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 
 #[derive(Debug, Parser)]
 struct Arguments {
@@ -72,11 +73,7 @@ async fn main() -> Result<()> {
         Duration::from_secs(90),
     ))
     .context("connect authenticated Taker sidecar")?;
-    let preparation_request_id = RequestId::new(format!(
-        "clock-prepare-{}",
-        hex::encode(terms_input.swap_id.as_bytes())
-    ))
-    .context("clock preparation request ID")?;
+    let preparation_request_id = clock_request_id(b"prepare", terms_input.swap_id.as_bytes())?;
     let preparation = client
         .prepare_current_profile_clock(PrepareCurrentProfileClockRequest::new(
             MessageContext::new(run_id.clone(), preparation_request_id, Participant::Taker),
@@ -99,11 +96,8 @@ async fn main() -> Result<()> {
         ))
         .await
         .context("submit exact local current-profile clock transaction")?;
-    let verification_request_id = RequestId::new(format!(
-        "clock-verify-{}",
-        hex::encode(preparation.transaction.transaction_id.as_bytes())
-    ))
-    .context("clock verification request ID")?;
+    let verification_request_id =
+        clock_request_id(b"verify", preparation.transaction.transaction_id.as_bytes())?;
     let result = client
         .verify_current_profile_clock(VerifyCurrentProfileClockRequest {
             context: MessageContext::new(run_id, verification_request_id, Participant::Taker),
@@ -135,7 +129,49 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn clock_request_id(domain: &[u8], identity: &[u8; 32]) -> Result<RequestId> {
+    ensure!(
+        matches!(domain, b"prepare" | b"verify"),
+        "unsupported clock request domain"
+    );
+    let mut hasher = Sha256::new();
+    hasher.update(b"lez-m5-local-clock-request-v1");
+    hasher.update([0]);
+    hasher.update(domain);
+    hasher.update([0]);
+    hasher.update(identity);
+    RequestId::new(hex::encode(hasher.finalize())).context("derive bounded clock request ID")
+}
+
 fn read_json<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clock_request_ids_fit_protocol_and_are_domain_separated() {
+        let identity = Hex32::from_bytes([0xabu8; 32]);
+        let prepare =
+            clock_request_id(b"prepare", identity.as_bytes()).expect("prepare request ID");
+        let verify = clock_request_id(b"verify", identity.as_bytes()).expect("verify request ID");
+
+        assert_eq!(prepare.as_str().len(), 64);
+        assert_eq!(verify.as_str().len(), 64);
+        assert_ne!(prepare, verify);
+        assert_eq!(
+            prepare,
+            clock_request_id(b"prepare", identity.as_bytes()).expect("stable prepare request ID")
+        );
+        assert!(
+            prepare
+                .as_str()
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
+        assert!(verify.as_str().bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
 }

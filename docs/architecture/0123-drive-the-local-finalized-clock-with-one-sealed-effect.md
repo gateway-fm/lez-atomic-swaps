@@ -27,6 +27,17 @@ classifier honestly remained behind it. The run was stopped and scoped cleanup
 completed; it is retained diagnostic RED evidence, not a successful refund or
 M5 evidence run.
 
+A second clean replay, `m5xmrrefund827a5d4a`, ran from pushed commit
+`827a5d4`, passed both local-devnet setup, exact LEZ deployment, role-correct
+application composition, finalized tag 13, and Maker-funded Monero verification.
+At the signed refund threshold it failed before preparation because the thin
+client encoded `clock-prepare-` plus a 64-character swap ID into a request ID
+whose protocol maximum is 64 characters. No clock transaction or tick-evidence
+file existed, and scoped cleanup removed every run-owned Docker resource. The
+TDD repair derives distinct prepare and verify IDs as 64-character SHA-256
+digests over a fixed version domain, operation domain, and full 32-byte
+identity. This is bounded integration RED evidence, not a completed swap.
+
 Increasing a sleep or trusting host time would weaken the protocol boundary.
 The local profile instead needs one narrow, auditable chain effect that can
 cause block production while leaving escrow custody and metadata unchanged.
@@ -250,7 +261,7 @@ Every attempt needs a fresh run ID. Partial evidence must never be reused.
 - The one-unit balance change and consumed Taker nonce are intentional,
   auditable protocol-test costs.
 - Protocol, planner, client, and contract tests plus complete quality gates are
-  GREEN: 324 Rust tests, strict Clippy, warning-fatal Rustdoc, M3/M4/M5 compatibility contracts, and the
+  GREEN: 325 Rust tests, strict Clippy, warning-fatal Rustdoc, M3/M4/M5 compatibility contracts, and the
   repository-wide lint/security/vulnerability gate pass. A fresh pushed-commit
   replay, retained evidence, and exact cleanup are still open. M5 remains
   untagged and its literal score is unchanged.

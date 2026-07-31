@@ -297,12 +297,16 @@ of one native unit through the authenticated Taker sidecar. It uses one durable
 reservation, canonical transaction-derived one-attempt submission, and
 read-only before/after verification; escrow metadata and custody must remain
 byte-identical. The Maker finalized classifier remains the only refund-window
-authority. The repair passes 324 Rust tests, strict Clippy and Rustdoc, preserved
+authority. The repair passes 325 Rust tests, strict Clippy and Rustdoc, preserved
 M3/M4/M5 contracts, and the complete repository quality/security gate. The
 live runtime/server path still awaits its focused behavioral and actual-node
-integration proof. A fresh
-two-devnet replay remains pending, so this is not yet actual-node GREEN and
-changes neither the M5 score nor tag status.
+integration proof. A fresh two-devnet replay remains pending, so this is not yet actual-node GREEN and
+changes neither the M5 score nor tag status. Pushed replay
+`m5xmrrefund827a5d4a` subsequently passed both devnets through finalized tag 13
+and Maker-funded Monero verification, then failed before any clock transaction
+because a prefixed request ID exceeded the protocol maximum. The TDD fix uses
+domain-separated 64-character SHA-256 IDs and passes all 215 sidecar tests plus
+strict gates; a fresh replay is still required.
 [Flow 1U](docs/manual-user-flows.md#flow-1u-repeat-the-tag-16-one-attempt-component-checkpoint)
 and [Flow 1V](docs/manual-user-flows.md#flow-1v-repeat-the-role-correct-xmr-refund-continuation-checkpoint)
 reproduce the lower component boundaries; Flow 1W gives the exact clean replay

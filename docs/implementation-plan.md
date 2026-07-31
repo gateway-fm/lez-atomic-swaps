@@ -4467,7 +4467,17 @@ signed punishment margin remain explicit flake or failure sources.
 
 Status is **contract-GREEN; focused live-runtime test and actual replay
 pending**. The eight-thread reservation
-RED exposed a partial-publication race fixed by a narrow planner mutex. All 324
+RED exposed a partial-publication race fixed by a narrow planner mutex. All 325
 Rust tests, strict Clippy/Rustdoc, compatibility contracts, and the complete
 quality/security/vulnerability gate pass. Fresh two-devnet replay remains open;
 no actual-node GREEN claim, output-count change, or tag is created here.
+
+Replay `m5xmrrefund827a5d4a` then passed both devnets, checked deployment,
+role-correct application handoff, finalized tag 13, and Maker-funded Monero
+verification before exposing a pre-effect integration RED at the signed refund
+threshold: the clock preparation request ID exceeded the protocol maximum. Zero
+clock effects were emitted and scoped cleanup passed. A new TDD regression test
+now proves versioned, operation-domain-separated SHA-256 prepare/verify IDs are
+deterministic, distinct, safe-grammar, and exactly 64 characters. The sidecar
+suite is 215 GREEN and strict Clippy, Rustdoc, runner-contract, formatting, and
+diff gates pass. Fresh actual-node replay remains open.

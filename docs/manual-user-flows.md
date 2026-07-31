@@ -6481,6 +6481,15 @@ without retry. The protocol, planner, client, runner-contract, lint, documentati
 compatibility, and complete repository quality/security gates pass. Focused
 live-runtime behavior and the fresh replay remain the actual-node proof.
 
+Pushed run `m5xmrrefund827a5d4a` is the next bounded RED: it passed both
+devnets through finalized tag 13 and Maker-funded Monero verification, then
+failed before clock preparation because `clock-prepare-` plus the full swap ID
+exceeded the protocol request-ID bound. Zero clock effects were emitted and
+scoped cleanup passed. The replacement prepare/verify IDs are distinct,
+versioned SHA-256 derivations exactly 64 safe-grammar characters long; the new
+regression, 215 sidecar tests, strict Clippy/Rustdoc, and runner contract pass.
+Repeat with a fresh run ID; do not reuse this partial evidence.
+
 Expected order:
 
 1. real Delivery plan, Stage A/B activation, role-only handoff, and synchronous
