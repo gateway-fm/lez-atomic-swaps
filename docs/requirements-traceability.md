@@ -3,7 +3,7 @@
 Last reconciled: 2026-07-30 against live RFP-003 master
 `b59c620...16d` and Gateway's accepted replacement proposal #112. Issue #61 is
 superseded. No authority or seven-output M5 scope drift was found. Exact pushed
-run `m5-xmr-app-20260730-2c6aec1-h` clean-certified the XMR application
+run `m5-xmr-app-20260730-2c6aec1-h` recorded a clean cryptographic, finalized-chain, binding, and cleanup replay of the XMR application
 corridor through isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest: one
 authenticated application identity crossed the synchronous cutoff, finalized
 tag 13/14/15, adaptor extraction, a ten-confirmation sweep, cross-chain binding,
@@ -12,7 +12,7 @@ atomicity, not a distributed transaction or future-reorg immunity. M5 remains 3
 of 7 literal outputs because Maker service control, Taker XMR lifecycle,
 actual-application concurrency and automatic unavailable-chain
 application behavior remain. Explicit selected-route disable/restart/re-enable
-is GREEN under ADR 0115.
+is GREEN under ADR 0115. A 2026-07-30 audit withdrew role-correct user-flow certification from H because the runner used provisioner funding, a Taker-hosted shared-wallet RPC, and a Maker destination. Corrected code requires Maker funding, a neutral shared-wallet RPC, and Taker receipt; fresh replay is pending and the historical evidence remains immutable.
 
 IDs below follow the RFP's Functionality, Usability, Reliability, Performance,
 Supportability, and Demo ordering. A row is not acceptance: `Passing` requires

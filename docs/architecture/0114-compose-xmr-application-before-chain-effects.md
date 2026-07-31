@@ -1,6 +1,6 @@
 # ADR 0114: Compose the XMR application before chain effects
 
-- Status: Accepted for the M5 local-functional PoC boundary
+- Status: Accepted for application cutoff; role-correct chain replay pending
 - Date: 2026-07-30
 - Milestone: M5 progressive local-functional PoC
 
@@ -19,7 +19,7 @@ Tag15, extraction, and sweep. Schema-v2 application authority pins their raw
 pre-effect bytes, so the application supervisor must finish and stop before
 legacy journal progression begins.
 
-This record defines the composition and evidence boundary. Exact isolated run
+This record defines the composition and evidence boundary. A 2026-07-30 role audit found that the historical chain runner used the provisioner as funder, the Taker RPC as shared-wallet host, and the Maker as claim-sweep destination. The retained run remains valid cryptographic, chain, binder, and cleanup evidence, but no longer certifies the user-economic role topology. The corrected decision requires Maker funding, a distinct neutral provisioner shared-wallet process, Maker-mined claim confirmations, and Taker receipt; fresh exact-commit replay evidence is pending. Exact isolated run
 `m5-xmr-app-20260730-2c6aec1-h` completed every functional step from the exact
 pushed tree and passed fail-closed cleanup schema v2. This decision is accepted
 only for the private local-functional PoC boundary described here.
@@ -112,9 +112,9 @@ flowchart LR
 
     subgraph MoneroLocal["Official Monero regtest stack"]
         MoneroDaemon["Daemon JSON-RPC"]
-        FundingWallet["Funding wallet RPC"]
-        SharedWallet["Shared-output wallet RPC"]
-        DestinationWallet["Destination wallet RPC"]
+        MakerWallet["Maker economic wallet RPC: fund source and claim miner"]
+        SharedWallet["Neutral provisioner RPC: shared wallet only"]
+        TakerWallet["Taker economic wallet RPC: claim destination"]
     end
 
     Planner --> Delivery
@@ -147,9 +147,9 @@ flowchart LR
     Sequencer --> Escrow
     Indexer --> Escrow
     Runner --> MoneroDaemon
-    Runner --> FundingWallet
+    Runner --> MakerWallet
     Runner --> SharedWallet
-    Runner --> DestinationWallet
+    Runner --> TakerWallet
 ```
 
 Delivery and Chat are filesystem and Unix-socket transports. LEZ uses isolated
@@ -242,11 +242,11 @@ flowchart TD
     Absent -->|"no"| Abort["Abort before chain effects"]
     Absent -->|"yes"| Handoff["Legacy runner owns liveness"]
     Handoff --> LezLock["Finalized LEZ locks"]
-    LezLock --> XmrLock["Confirmed Monero lock"]
+    LezLock --> XmrLock["Maker funds confirmed shared output in neutral RPC"]
     XmrLock --> Auth["Finalized Tag14"]
     Auth --> Claim["Finalized Tag15"]
     Claim --> Reveal["Bound scalar extraction"]
-    Reveal --> Sweep["Exact Monero sweep"]
+    Reveal --> Sweep["Taker receives exact Monero sweep"]
     Sweep --> Binding["Claim and sweep binding"]
     Binding --> Conditional["Conditional cross-chain atomicity"]
     Conditional -.-> NoDtx["No distributed transaction"]

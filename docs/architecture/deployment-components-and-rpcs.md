@@ -256,8 +256,8 @@ flowchart LR
     Indexer["LEZ indexer example 127.0.0.1:33147"]
     Bedrock["LEZ Bedrock example 127.0.0.1:33145"]
     Monerod["monerod 0.18.5.1 example 127.0.0.1:39185"]
-    FundingWallet["Funding wallet RPC example 127.0.0.1:41189"]
-    SharedWallet["Shared or Maker wallet RPC example 127.0.0.1:46769"]
+    MakerWallet["Maker wallet RPC example 127.0.0.1:46769: fund source and claim miner"]
+    SharedWallet["Neutral provisioner and shared-wallet RPC example 127.0.0.1:41189"]
     TakerWallet["Taker wallet RPC example 127.0.0.1:58393"]
     ReleaseDb[("Sealed release SQLite")]
     MakerJournal[("Maker role journal")]
@@ -275,7 +275,7 @@ flowchart LR
     OnboardingHelper -.-> Indexer
     ReplayRunner -.-> MoneroChild
     MoneroChild -.-> Monerod
-    MoneroChild -.-> FundingWallet
+    MoneroChild -.-> MakerWallet
     MoneroChild -.-> SharedWallet
     MoneroChild -.-> TakerWallet
     ReplayRunner -.-> AgreementHelper
@@ -306,7 +306,7 @@ flowchart LR
     Classifier --> Indexer
     TakerSidecar --> Indexer
     MakerSidecar --> Indexer
-    FundingWallet --> Monerod
+    MakerWallet --> Monerod
     SharedWallet --> Monerod
     TakerWallet --> Monerod
     Preparer --> TakerSidecar
@@ -318,6 +318,7 @@ flowchart LR
     Preparer --> ReleaseDb
     Worker --> ReleaseDb
     Worker --> TakerSidecar
+    Maker --> MakerWallet
     Maker --> Classifier
     Taker --> Classifier
     Taker --> TakerWallet
@@ -335,7 +336,7 @@ sequenceDiagram
     participant T as Taker actor
     participant TS as Taker sidecar
     participant L as LEZ sequencer and indexer
-    participant MW as Official Monero wallets and daemon
+    participant MW as Official Monero daemon and role-separated wallets
     participant P as Exclusive preparer
     participant W as Release worker
     participant M as Maker actor and sidecar
@@ -347,7 +348,7 @@ sequenceDiagram
     T->>TS: Submit FundNative after Initialize evidence
     TS->>L: Exact signed tag 13 Fund
     L-->>T: Finalized at height 3960
-    MW->>MW: Fund exact Stage A shared address
+    MW->>MW: Maker wallet funds exact Stage A address in neutral shared RPC
     MW-->>P: Exact output and 10 confirmations at tip 120
     P->>P: Revalidate Stage A and B, Fund, topology, output, Taker journal
     P->>W: Create sealed Prepared release state
@@ -357,7 +358,7 @@ sequenceDiagram
     M->>L: Submit exact tag 15 ClaimNativeXmr
     L-->>T: Taker discovers finalized tag 15 at height 4208 and custody zero
     T->>T: Extract Maker share from canonical final signature
-    T->>MW: Reconstruct Stage A wallet and sweep
+    T->>MW: Reconstruct Stage A wallet and sweep to Taker wallet
     MW-->>T: Sweep confirmed at tip 130
     T->>B: Bind Stage A and B, journal, finalized tag 15, packet, and extraction
     MW-->>B: Independent receipt at block 121 under stable tip 130
@@ -1662,14 +1663,12 @@ Core inputs are never reused.
 
 ## M4 exact replay checkpoint
 
-The component/RPC graph was exercised by clean replay `m4cert20260722an` on
+The component/RPC graph was exercised cryptographically by clean replay `m4cert20260722an` on
 `5ec6521`: isolated LEZ Bedrock/sequencer/indexer, authenticated Maker/Taker
-role sidecars, and official Monero 0.18.5.1 daemon/funding/shared/Maker/Taker
-wallet RPCs. All endpoints were fresh loopback bindings from the run manifest;
+role sidecars, and official Monero 0.18.5.1 daemon plus provisioner, Maker, and Taker wallet RPCs. All endpoints were fresh loopback bindings from the run manifest;
 no public RPC, P2P peer, faucet, or public funds participated. The replay passed
-finalized deployment, actor onboarding, tag 13/14/15 discovery, post-fee
-Maker-destination receipt verification, canonical cross-chain binding, and
-state-based exact cleanup. This diagram remains the local PoC architecture;
+finalized deployment, actor onboarding, tag 13/14/15 discovery, post-fee sweep and receipt verification, canonical cross-chain binding, and
+state-based exact cleanup. A 2026-07-30 audit proved that historical replay used provisioner funding, Taker shared-wallet hosting, and a Maker destination. It therefore retains chain, cryptographic, binder, and cleanup evidence but not role-correct user certification. The corrected graph requires Maker funding and claim mining, neutral provisioner shared-wallet hosting, and Taker receipt; fresh replay is pending. This diagram remains the local PoC architecture;
 production deployment, distributed atomicity, and recovery branches are not
 claimed by this checkpoint.
 
@@ -1679,8 +1678,8 @@ graph LR
   M[Maker actor] -->|authenticated RPC| MS[Maker sidecar]
   TS -->|tag 13/14/15 effects| L[LEZ v0.2\nBedrock + sequencer + indexer]
   MS -->|finalized claim| L
-  TS -->|wallet RPC| X[Monero regtest daemon]
-  MS -->|funding and destination wallet RPC| X
+  T -->|Taker destination wallet RPC| X[Monero regtest daemon]
+  M -->|Maker funding and claim-mining wallet RPC| X
   X -->|receipt and sweep evidence| B[Cross-chain binder]
   L -->|finalized claim evidence| B
 ```

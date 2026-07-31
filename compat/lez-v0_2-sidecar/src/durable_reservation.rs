@@ -70,6 +70,8 @@ pub(crate) enum ReservationKind {
     XmrNativeClaimAuthorizationV3,
     XmrNativeClaimV3,
     XmrNativeClaimCompletionV3,
+    XmrNativeRefundV3,
+    XmrNativeRefundCompletionV3,
     WitnessedEscrow,
     NativeClaim,
     WitnessedClaim,
@@ -92,6 +94,8 @@ impl ReservationKind {
             }
             Self::XmrNativeClaimV3 => "xmr-native-claim-reservation.v3.json",
             Self::XmrNativeClaimCompletionV3 => "xmr-native-claim-completion.v3.json",
+            Self::XmrNativeRefundV3 => "xmr-native-refund-reservation.v3.json",
+            Self::XmrNativeRefundCompletionV3 => "xmr-native-refund-completion.v3.json",
             Self::WitnessedEscrow => "witnessed-escrow-reservation.v1.json",
             Self::NativeClaim => "native-claim-reservation.v1.json",
             Self::WitnessedClaim => "witnessed-claim-reservation.v1.json",

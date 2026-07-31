@@ -4123,6 +4123,17 @@ descendants of the run-owned private root while regression tests continue to
 reject traversal, symlinks, and foreign paths. The cleanup result correctly
 remains failed for run G.
 
+Evidence correction 2026-07-30: audit of run H proved a runner-owned role inversion. The provisioner funded, the Taker RPC hosted the shared wallet, and the Maker received the sweep. Preserve H as historical cryptographic, finalized-chain, sweep, binding, and cleanup evidence only; do not count it as role-correct user-flow certification. The runner and focused source contract now require Maker funding and claim mining, a distinct neutral provisioner shared-wallet process, and Taker receipt. A fresh clean exact-commit replay remains required.
+
+Current corrective slice:
+
+- [x] Correct the claim runner to the three-origin Maker to neutral shared wallet to Taker topology.
+- [x] Add a fail-closed source contract preventing either economic actor RPC from hosting the shared wallet.
+- [ ] Run and retain one fresh exact-commit role-correct claim replay.
+- [x] Enable authenticated Taker tag-16 preparation and aggregate completion with independent durable replay and zero submission.
+- [ ] Add one-attempt tag-16 submission, finalized classification, Maker recovery sweep, and exact evidence.
+- [ ] Close tag 17, final application-owned effects, accepted-application concurrency, unavailable-route composition, and milestone gates.
+
 Exact pushed-tree run `m5-xmr-app-20260730-2c6aec1-h` then repeated the full
 corridor from commit `2c6aec1` and passed cleanup schema v2. Swap
 `9d627d18...abfeb7c` retained one identity through application cutoff, tag

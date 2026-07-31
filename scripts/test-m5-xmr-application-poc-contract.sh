@@ -279,6 +279,26 @@ for required_edge in command-fds lez-btc-swap-sdk lez-xmr-swap-sdk rustix; do
     fail "release lock omits swap-store runtime edge: ${required_edge}"
 done
 
+[[ "$(rg -Fo -- '--shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' "$runner" | wc -l)" == 2 ]] ||
+  fail 'runner must restore the shared XMR wallet only on the neutral provisioner RPC for funding and sweep'
+require_runner_source '--funding-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' 'Maker funding and claim-mining wallet role'
+rg -Fq -- '--taker-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"' "$runner" ||
+  fail 'runner must sweep reconstructed XMR only to the Taker wallet RPC'
+rg -Fq -- '--target-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"' "$runner" ||
+  fail 'post-sweep verification must target the Taker wallet RPC'
+rg -Fq -- '--foreign-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' "$runner" ||
+  fail 'post-sweep verification must reject the Maker wallet as destination'
+require_runner_source '--target-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' 'neutral shared-wallet pre-sweep verification target'
+if rg -Fq -- '--taker-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' "$runner"; then
+  fail 'runner retains the role-inverted Maker destination for the Taker sweep'
+fi
+if rg -Fq -- '--shared-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"' "$runner"; then
+  fail 'runner reuses the Taker RPC as the reconstructed shared-wallet process'
+fi
+if rg -Fq -- '--shared-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' "$runner"; then
+  fail 'runner reuses the Maker RPC as the reconstructed shared-wallet process'
+fi
+
 for source in "$taker_cli" "$xmr_receipt_loader" "$xmr_process_test"; do
   [[ -f "$source" && ! -L "$source" ]] ||
     fail "receipt-only XMR Taker monitor source is absent or unsafe: ${source}"

@@ -27,6 +27,8 @@ Status vocabulary:
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
+Evidence correction recorded 2026-07-30: retained M4 run `m4cert20260722an` and M5 run `m5-xmr-app-20260730-2c6aec1-h` prove finalized LEZ effects, adaptor extraction, shared-key reconstruction, a confirmed Monero sweep, binding, and exact cleanup. A role audit proved their runner used provisioner funding, a Taker-hosted shared wallet, and a Maker sweep destination. Those runs no longer certify role-correct user economics. The code now enforces Maker funding and claim mining, a neutral provisioner shared-wallet RPC, and a Taker claim destination; fresh exact-commit replay remains an open gate and the historical evidence is unchanged. Authenticated tag-16 Taker prepare and aggregate completion are now component-GREEN with independent durable replay and zero submission; effect submission, finalized classification, Maker recovery, and tag 17 remain open.
+
 ## M5 PoC scorecard
 
 Status: active progressive local-PoC; scope frozen, implementation not yet

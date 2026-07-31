@@ -178,6 +178,8 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             NativePrepareError::WrongSigner => Self::WrongSigner,
             NativePrepareError::ActivePrepare
             | NativePrepareError::ActiveXmrClaimAuthorizationPrepare
+            | NativePrepareError::ActiveXmrRefundPrepare
+            | NativePrepareError::ActiveXmrRefundCompletion
             | NativePrepareError::ActiveWitnessedEscrowPrepare
             | NativePrepareError::ActiveClaimPrepare
             | NativePrepareError::ActiveWitnessedClaimPrepare

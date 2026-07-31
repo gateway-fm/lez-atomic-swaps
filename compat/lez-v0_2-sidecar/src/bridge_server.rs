@@ -295,6 +295,18 @@ type RestoredRequests = (
             lez_bridge_protocol::CompleteNativeXmrClaimV3Result,
         )>,
     >,
+    Option<
+        Box<(
+            lez_bridge_protocol::PrepareNativeXmrRefundV3Request,
+            lez_bridge_protocol::PrepareNativeXmrRefundV3Result,
+        )>,
+    >,
+    Option<
+        Box<(
+            lez_bridge_protocol::CompleteNativeXmrRefundV3Request,
+            lez_bridge_protocol::CompleteNativeXmrRefundV3Result,
+        )>,
+    >,
 );
 
 impl DurableStore {
@@ -358,6 +370,8 @@ impl DurableStore {
                                 | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
                                 | METHOD_PREPARE_NATIVE_XMR_CLAIM_V3
                                 | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
+                                | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
+                                | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
                         )
                     })
             })
@@ -507,6 +521,8 @@ impl DurableStore {
         let mut xmr_claim_authorization_v3 = None;
         let mut xmr_claim_v3 = None;
         let mut completed_xmr_claim_v3 = None;
+        let mut xmr_refund_v3 = None;
+        let mut completed_xmr_refund_v3 = None;
         for entry in self.persisted.entries.values() {
             let PersistedOutcome::Success(value) = &entry.outcome else {
                 continue;
@@ -635,6 +651,22 @@ impl DurableStore {
                             .map_err(|_| BridgeServerError::InvalidDurableState)?,
                     )));
                 }
+                METHOD_PREPARE_NATIVE_XMR_REFUND_V3 if xmr_refund_v3.is_none() => {
+                    xmr_refund_v3 = Some(Box::new((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    )));
+                }
+                METHOD_COMPLETE_NATIVE_XMR_REFUND_V3 if completed_xmr_refund_v3.is_none() => {
+                    completed_xmr_refund_v3 = Some(Box::new((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    )));
+                }
                 METHOD_PREPARE_NATIVE_ESCROW
                 | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
@@ -648,7 +680,9 @@ impl DurableStore {
                 | METHOD_PREPARE_NATIVE_XMR_ESCROW_V3
                 | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
                 | METHOD_PREPARE_NATIVE_XMR_CLAIM_V3
-                | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3 => {
+                | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
+                | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
+                | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3 => {
                     return Err(BridgeServerError::InvalidDurableState);
                 }
                 _ => {}
@@ -669,6 +703,8 @@ impl DurableStore {
             xmr_claim_authorization_v3,
             xmr_claim_v3,
             completed_xmr_claim_v3,
+            xmr_refund_v3,
+            completed_xmr_refund_v3,
         ))
     }
 }
@@ -842,6 +878,8 @@ async fn restore_runtime_requests(
         restored_xmr_claim_authorization_v3,
         restored_xmr_claim_v3,
         restored_xmr_claim_completion_v3,
+        restored_xmr_refund_v3,
+        restored_xmr_refund_completion_v3,
     ) = restored;
     if let Some((request, expected)) = restored_prepare {
         let observed = runtime
@@ -962,6 +1000,20 @@ async fn restore_runtime_requests(
         let (request, expected) = *restored;
         runtime
             .restore_completed_native_xmr_claim_v3(&request, &expected)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+    }
+    if let Some(restored) = restored_xmr_refund_v3 {
+        let (request, expected) = *restored;
+        runtime
+            .restore_native_xmr_refund_v3(&request, &expected)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+    }
+    if let Some(restored) = restored_xmr_refund_completion_v3 {
+        let (request, expected) = *restored;
+        runtime
+            .restore_completed_native_xmr_refund_v3(&request, &expected)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
     }
@@ -1565,16 +1617,62 @@ fn register_xmr_v3_methods(
                 .await
         },
     )?;
-    register_unavailable!(
+    module.register_async_method(
         METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
-        lez_bridge_protocol::PrepareNativeXmrRefundV3Request,
-        Participant::Taker
-    );
-    register_unavailable!(
+        |params, state, _| async move {
+            let request: lez_bridge_protocol::PrepareNativeXmrRefundV3Request = params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                Participant::Taker,
+            )?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_PREPARE_NATIVE_XMR_REFUND_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .prepare_native_xmr_refund_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
         METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
-        lez_bridge_protocol::CompleteNativeXmrRefundV3Request,
-        Participant::Taker
-    );
+        |params, state, _| async move {
+            let request: lez_bridge_protocol::CompleteNativeXmrRefundV3Request = params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                Participant::Taker,
+            )?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .complete_native_xmr_refund_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
     register_unavailable!(
         METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
         lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
@@ -1814,6 +1912,8 @@ impl ServerState {
                 | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
                 | METHOD_PREPARE_NATIVE_XMR_CLAIM_V3
                 | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
+                | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
+                | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
         );
         let repeatable = !is_submission_method(method)
             && (!prepare || matches!(&outcome, PersistedOutcome::Error(_)));
@@ -1895,6 +1995,8 @@ fn encode_request<Request: Serialize>(
             | METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
             | METHOD_PREPARE_NATIVE_XMR_CLAIM_V3
             | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
+            | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
+            | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
     )
     .then_some(request_value);
     Ok((request_sha256, replay_request))

@@ -8,13 +8,15 @@ use borsh::BorshDeserialize as _;
 use common::transaction::LeeTransaction;
 use lez_bridge_protocol::{
     CompleteNativeXmrClaimV3Request, CompleteNativeXmrClaimV3Result,
+    CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result,
     CompleteWitnessedAssetClaimV2Request, CompleteWitnessedAssetClaimV2Result,
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult, ExactMessageBytes,
     ExactTransactionBytes, Hex32, MessageContext, Participant, PrepareNativeEscrowRequest,
     PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
     PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrEscrowV3Result, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
+    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrRefundV3Request,
+    PrepareNativeXmrRefundV3Result, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
     PrepareWitnessedAssetClaimV2Request, PrepareWitnessedAssetClaimV2Result,
     PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
     PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result,
@@ -94,6 +96,12 @@ pub enum NativePrepareError {
     /// Another XMR claim authorization already owns this signer's nonce.
     #[error("a distinct XMR claim authorization already owns the nonce reservation")]
     ActiveXmrClaimAuthorizationPrepare,
+    /// Another XMR refund owns the aggregate-authority nonce.
+    #[error("a distinct XMR refund already owns the reservation")]
+    ActiveXmrRefundPrepare,
+    /// An XMR refund was already completed with different bytes.
+    #[error("the XMR refund reservation was already completed differently")]
+    ActiveXmrRefundCompletion,
     /// Another request already owns this signer's witnessed escrow nonce pair.
     #[error("a distinct witnessed escrow preparation already owns the nonce reservation")]
     ActiveWitnessedEscrowPrepare,
@@ -211,6 +219,8 @@ struct PlannerState {
     active_xmr_claim_authorization_v3: Option<ActiveXmrClaimAuthorizationPrepareV3>,
     active_xmr_claim_v3: Option<ActiveXmrClaimPrepareV3>,
     completed_xmr_claim_v3: Option<ActiveXmrClaimCompletionV3>,
+    active_xmr_refund_v3: Option<ActiveXmrRefundPrepareV3>,
+    completed_xmr_refund_v3: Option<ActiveXmrRefundCompletionV3>,
     active_witnessed_escrow: Option<ActiveWitnessedEscrowPrepare>,
     active_claim: Option<ActiveClaimPrepare>,
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
@@ -250,6 +260,18 @@ struct ActiveXmrClaimPrepareV3 {
 struct ActiveXmrClaimCompletionV3 {
     request: CompleteNativeXmrClaimV3Request,
     result: CompleteNativeXmrClaimV3Result,
+}
+
+#[derive(Clone)]
+struct ActiveXmrRefundPrepareV3 {
+    request: PrepareNativeXmrRefundV3Request,
+    result: PrepareNativeXmrRefundV3Result,
+}
+
+#[derive(Clone)]
+struct ActiveXmrRefundCompletionV3 {
+    request: CompleteNativeXmrRefundV3Request,
+    result: CompleteNativeXmrRefundV3Result,
 }
 
 #[derive(Clone)]
@@ -916,6 +938,259 @@ impl NativeEscrowPlanner {
                 return Err(NativePrepareError::InvalidTransactionBytes);
             }
             state.completed_xmr_claim_v3 = Some(ActiveXmrClaimCompletionV3 {
+                request: request.clone(),
+                result: recovered,
+            });
+            Ok(())
+        }
+    }
+
+    /// Durably reserves the exact unsigned generated tag-16 XMR refund message.
+    ///
+    /// The Taker process binds the complete v3 terms while the aggregate refund
+    /// authority supplies the nonce and later signature. Preparation performs no
+    /// signing and no submission.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, terms, aggregate authority, nonce, ABI, exact
+    /// transcript, or conflicting durable reservation drift.
+    pub async fn prepare_native_xmr_refund_v3(
+        &self,
+        request: &PrepareNativeXmrRefundV3Request,
+    ) -> Result<PrepareNativeXmrRefundV3Result, NativePrepareError> {
+        let authority = self.validate_xmr_refund_v3_request(request)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_xmr_refund_v3.as_ref() {
+            return if &active.request == request {
+                self.validate_prepared_native_xmr_refund_v3(&active.request, &active.result)?;
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveXmrRefundPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_xmr_refund_v3(request)? {
+            state.active_xmr_refund_v3 = Some(ActiveXmrRefundPrepareV3 {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let nonce = self.nonce_source.account_nonce(authority).await?;
+        let message = self.xmr_refund_v3_message(request, nonce)?;
+        let result = PrepareNativeXmrRefundV3Result::new(
+            request.context.clone(),
+            request.terms,
+            prepared_witnessed_from_message(request.context.request_id.clone(), &message)?,
+        )?;
+        self.validate_prepared_native_xmr_refund_v3(request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(ReservationKind::XmrNativeRefundV3, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_xmr_refund_v3(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_xmr_refund_v3 = Some(ActiveXmrRefundPrepareV3 {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_xmr_refund_v3 = Some(ActiveXmrRefundPrepareV3 {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Completes one exact durable tag-16 reservation with the aggregate witness.
+    ///
+    /// The pinned official verifier checks the BIP340 signature before one
+    /// canonical public transaction is retained. Completion never submits it.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing or mutated preparation state, role/runtime/terms drift,
+    /// invalid aggregate signatures, noncanonical bytes, or conflicting durable
+    /// completion state.
+    pub async fn complete_native_xmr_refund_v3(
+        &self,
+        request: &CompleteNativeXmrRefundV3Request,
+    ) -> Result<CompleteNativeXmrRefundV3Result, NativePrepareError> {
+        let mut state = self.state.lock().await;
+        #[cfg(target_os = "linux")]
+        if state.active_xmr_refund_v3.is_none()
+            && let Some(recovered) = self.load_durable_xmr_refund_v3_for_completion(request)?
+        {
+            state.active_xmr_refund_v3 = Some(recovered);
+        }
+        let active = state
+            .active_xmr_refund_v3
+            .clone()
+            .ok_or(NativePrepareError::ActiveXmrRefundPrepare)?;
+        self.validate_xmr_refund_v3_completion_request(&active, request)?;
+        if let Some(completed) = state.completed_xmr_refund_v3.as_ref() {
+            return if &completed.request == request {
+                self.validate_completed_native_xmr_refund_v3(&active, request, &completed.result)?;
+                Ok(completed.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveXmrRefundCompletion)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_xmr_refund_v3_completion(&active, request)? {
+            state.completed_xmr_refund_v3 = Some(ActiveXmrRefundCompletionV3 {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let message = decode_witnessed_message(&active.result.refund)?;
+        let public_key = PublicKey::try_new(
+            *active
+                .request
+                .terms
+                .to_input()
+                .refund_aggregate_x_only_public_key
+                .as_bytes(),
+        )
+        .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let signature = Signature {
+            value: *request.aggregate_signature.as_bytes(),
+        };
+        if !signature.is_valid_for(&message.hash(), &public_key) {
+            return Err(NativePrepareError::InvalidSignature);
+        }
+        let witness = WitnessSet::from_raw_parts(vec![(signature, public_key)]);
+        let prepared = prepared_from_transaction(&PublicTransaction::new(message, witness))?;
+        let result =
+            CompleteNativeXmrRefundV3Result::new(request.context.clone(), request.terms, prepared);
+        self.validate_completed_native_xmr_refund_v3(&active, request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(
+                ReservationKind::XmrNativeRefundCompletionV3,
+                request,
+                &result,
+            )
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_xmr_refund_v3_completion(&active, request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.completed_xmr_refund_v3 = Some(ActiveXmrRefundCompletionV3 {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.completed_xmr_refund_v3 = Some(ActiveXmrRefundCompletionV3 {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Restores one exact tag-16 preparation from existing durable state only.
+    ///
+    /// This startup path never consults the nonce source or regenerates missing
+    /// state.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing, corrupt, mutated, conflicting, or noncanonical durable
+    /// preparation state.
+    pub async fn restore_native_xmr_refund_v3(
+        &self,
+        request: &PrepareNativeXmrRefundV3Request,
+        expected: &PrepareNativeXmrRefundV3Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_prepared_native_xmr_refund_v3(request, expected)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_xmr_refund_v3.as_ref() {
+            self.validate_prepared_native_xmr_refund_v3(&active.request, &active.result)?;
+            return if &active.request == request && &active.result == expected {
+                Ok(())
+            } else {
+                Err(NativePrepareError::ActiveXmrRefundPrepare)
+            };
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        return Err(NativePrepareError::InvalidTransactionBytes);
+
+        #[cfg(target_os = "linux")]
+        {
+            let recovered = self
+                .recover_durable_xmr_refund_v3(request)?
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            if &recovered != expected {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+            state.active_xmr_refund_v3 = Some(ActiveXmrRefundPrepareV3 {
+                request: request.clone(),
+                result: recovered,
+            });
+            Ok(())
+        }
+    }
+
+    /// Restores one exact tag-16 completion from existing durable state only.
+    ///
+    /// The corresponding preparation must already have been restored. This
+    /// startup path never recreates a missing completion from its signature.
+    ///
+    /// # Errors
+    ///
+    /// Rejects absent preparation/completion state, request or result drift,
+    /// invalid witnesses, and noncanonical durable transaction bytes.
+    pub async fn restore_completed_native_xmr_refund_v3(
+        &self,
+        request: &CompleteNativeXmrRefundV3Request,
+        expected: &CompleteNativeXmrRefundV3Result,
+    ) -> Result<(), NativePrepareError> {
+        let mut state = self.state.lock().await;
+        let active = state
+            .active_xmr_refund_v3
+            .clone()
+            .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        self.validate_completed_native_xmr_refund_v3(&active, request, expected)?;
+        if let Some(completed) = state.completed_xmr_refund_v3.as_ref() {
+            self.validate_completed_native_xmr_refund_v3(
+                &active,
+                &completed.request,
+                &completed.result,
+            )?;
+            return if &completed.request == request && &completed.result == expected {
+                Ok(())
+            } else {
+                Err(NativePrepareError::ActiveXmrRefundCompletion)
+            };
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        return Err(NativePrepareError::InvalidTransactionBytes);
+
+        #[cfg(target_os = "linux")]
+        {
+            let recovered = self
+                .recover_durable_xmr_refund_v3_completion(&active, request)?
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            if &recovered != expected {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+            state.completed_xmr_refund_v3 = Some(ActiveXmrRefundCompletionV3 {
                 request: request.clone(),
                 result: recovered,
             });
@@ -2111,6 +2386,83 @@ impl NativeEscrowPlanner {
     }
 
     #[cfg(target_os = "linux")]
+    fn recover_durable_xmr_refund_v3(
+        &self,
+        request: &PrepareNativeXmrRefundV3Request,
+    ) -> Result<Option<PrepareNativeXmrRefundV3Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result>(
+                ReservationKind::XmrNativeRefundV3,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_native_xmr_refund_v3(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveXmrRefundPrepare);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn load_durable_xmr_refund_v3_for_completion(
+        &self,
+        completion: &CompleteNativeXmrRefundV3Request,
+    ) -> Result<Option<ActiveXmrRefundPrepareV3>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result>(
+                ReservationKind::XmrNativeRefundV3,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_native_xmr_refund_v3(&stored_request, &stored_result)?;
+        if stored_request.context.request_id != completion.refund.preparation_request_id
+            || stored_request.context.run_id != completion.context.run_id
+            || stored_request.context.sidecar_role != completion.context.sidecar_role
+            || stored_request.runtime != completion.runtime
+            || stored_request.terms != completion.terms
+            || stored_result.refund != completion.refund
+        {
+            return Err(NativePrepareError::ActiveXmrRefundPrepare);
+        }
+        Ok(Some(ActiveXmrRefundPrepareV3 {
+            request: stored_request,
+            result: stored_result,
+        }))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_xmr_refund_v3_completion(
+        &self,
+        active: &ActiveXmrRefundPrepareV3,
+        request: &CompleteNativeXmrRefundV3Request,
+    ) -> Result<Option<CompleteNativeXmrRefundV3Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result>(
+                ReservationKind::XmrNativeRefundCompletionV3,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_xmr_refund_v3_completion_request(active, &stored_request)?;
+        self.validate_completed_native_xmr_refund_v3(active, &stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveXmrRefundCompletion);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
     fn recover_durable_witnessed_escrow(
         &self,
         request: &PrepareWitnessedEscrowRequest,
@@ -2601,6 +2953,108 @@ impl NativeEscrowPlanner {
         )
     }
 
+    /// Revalidates one durable unsigned tag-16 reservation against its request.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime/terms, preparation identity, message hash, nonce,
+    /// account order, generated instruction, or canonical-byte drift.
+    pub fn validate_prepared_native_xmr_refund_v3(
+        &self,
+        request: &PrepareNativeXmrRefundV3Request,
+        result: &PrepareNativeXmrRefundV3Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_xmr_refund_v3_request(request)?;
+        if result.context != request.context
+            || result.terms != request.terms
+            || result.refund.preparation_request_id != request.context.request_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let message = decode_witnessed_message(&result.refund)?;
+        let [nonce] = message.nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        if message != self.xmr_refund_v3_message(request, u128::from(*nonce))? {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    fn validate_xmr_refund_v3_completion_request(
+        &self,
+        active: &ActiveXmrRefundPrepareV3,
+        request: &CompleteNativeXmrRefundV3Request,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_prepared_native_xmr_refund_v3(&active.request, &active.result)?;
+        if request.context.run_id != active.request.context.run_id
+            || request.context.sidecar_role != Participant::Taker
+            || request.context.sidecar_role != self.role
+            || request.context.request_id == active.request.context.request_id
+            || request.runtime != active.request.runtime
+            || request.runtime != self.expected_runtime
+            || request.terms != active.request.terms
+            || request.refund != active.result.refund
+            || request.refund.preparation_request_id != active.request.context.request_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    fn validate_completed_native_xmr_refund_v3(
+        &self,
+        active: &ActiveXmrRefundPrepareV3,
+        request: &CompleteNativeXmrRefundV3Request,
+        result: &CompleteNativeXmrRefundV3Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_xmr_refund_v3_completion_request(active, request)?;
+        if result.context != request.context || result.terms != request.terms {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let terms = active.request.terms.to_input();
+        let expected_authority = AccountId::new(*terms.refund_authority_account_id.as_bytes());
+        let transaction = decode_prepared_for_signer(&result.refund, expected_authority)?;
+        let expected_message = decode_witnessed_message(&active.result.refund)?;
+        if transaction.message() != &expected_message {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let [(signature, public_key)] = transaction.witness_set().signatures_and_public_keys()
+        else {
+            return Err(NativePrepareError::InvalidSignature);
+        };
+        if signature.value != *request.aggregate_signature.as_bytes()
+            || public_key.value() != terms.refund_aggregate_x_only_public_key.as_bytes()
+        {
+            return Err(NativePrepareError::InvalidSignature);
+        }
+        Ok(())
+    }
+
+    fn validate_xmr_refund_v3_request(
+        &self,
+        request: &PrepareNativeXmrRefundV3Request,
+    ) -> Result<AccountId, NativePrepareError> {
+        if self.role != Participant::Taker
+            || request.context.sidecar_role != Participant::Taker
+            || request.runtime.sidecar_role != Participant::Taker
+        {
+            return Err(NativePrepareError::WrongRole);
+        }
+        let terms = request.terms.to_input();
+        if terms.depositor != Participant::Taker {
+            return Err(NativePrepareError::WrongDepositorRole);
+        }
+        self.validate_xmr_terms_v3_binding(&request.context, &request.runtime, &request.terms)?;
+        let public_key = PublicKey::try_new(*terms.refund_aggregate_x_only_public_key.as_bytes())
+            .map_err(|_| NativePrepareError::WrongAggregateAuthority)?;
+        let authority = AccountId::from(&public_key);
+        if authority.into_value() != *terms.refund_authority_account_id.as_bytes() {
+            return Err(NativePrepareError::WrongAggregateAuthority);
+        }
+        Ok(authority)
+    }
+
     ///
     /// # Errors
     ///
@@ -2988,6 +3442,27 @@ impl NativeEscrowPlanner {
             vec![metadata, custody, claimant, authority],
             vec![nonce.into()],
             ZecEscrowInstruction::ClaimNativeXmr { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)
+    }
+
+    fn xmr_refund_v3_message(
+        &self,
+        request: &PrepareNativeXmrRefundV3Request,
+        nonce: u128,
+    ) -> Result<Message, NativePrepareError> {
+        self.validate_xmr_refund_v3_request(request)?;
+        let terms = request.terms.to_input();
+        let swap_id = *terms.swap_id.as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let custody = compute_custody_pda(&self.escrow_program_id, &swap_id);
+        let depositor = AccountId::new(*terms.depositor_account_id.as_bytes());
+        let authority = AccountId::new(*terms.refund_authority_account_id.as_bytes());
+        Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, depositor, authority],
+            vec![nonce.into()],
+            ZecEscrowInstruction::RefundNativeXmr { swap_id },
         )
         .map_err(|_| NativePrepareError::InstructionEncoding)
     }

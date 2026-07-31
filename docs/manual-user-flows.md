@@ -3012,13 +3012,13 @@ compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-fund \
   --daemon-url "$MONERO_DAEMON_ENDPOINT" \
   --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
   --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
-  --funding-wallet-url "$MONERO_FUNDING_WALLET_ENDPOINT" \
-  --funding-wallet-username-file "$MONERO_FUNDING_RPC_USERNAME_FILE" \
-  --funding-wallet-password-file "$MONERO_FUNDING_RPC_PASSWORD_FILE" \
-  --shared-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
-  --shared-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
-  --shared-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
-  --shared-wallet-file-password-file "$MONERO_MAKER_WALLET_PASSWORD_FILE" \
+  --funding-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
+  --funding-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
+  --funding-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
+  --shared-wallet-url "$MONERO_FUNDING_WALLET_ENDPOINT" \
+  --shared-wallet-username-file "$MONERO_FUNDING_RPC_USERNAME_FILE" \
+  --shared-wallet-password-file "$MONERO_FUNDING_RPC_PASSWORD_FILE" \
+  --shared-wallet-file-password-file "$MONERO_FUNDING_WALLET_PASSWORD_FILE" \
   --shared-wallet-filename "${M4_RUN_ID}_shared_view" \
   --restore-height 0 \
   --output-evidence "$MONERO_FUNDING_EVIDENCE"
@@ -3034,9 +3034,9 @@ compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-verify \
   --daemon-url "$MONERO_DAEMON_ENDPOINT" \
   --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
   --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
-  --target-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
-  --target-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
-  --target-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
+  --target-wallet-url "$MONERO_FUNDING_WALLET_ENDPOINT" \
+  --target-wallet-username-file "$MONERO_FUNDING_RPC_USERNAME_FILE" \
+  --target-wallet-password-file "$MONERO_FUNDING_RPC_PASSWORD_FILE" \
   --foreign-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
   --foreign-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
   --foreign-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
@@ -3336,16 +3336,16 @@ compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-sweep \
   --daemon-url "$MONERO_DAEMON_ENDPOINT" \
   --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
   --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
-  --shared-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
-  --shared-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
-  --shared-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
-  --shared-wallet-file-password-file "$MONERO_MAKER_WALLET_PASSWORD_FILE" \
+  --shared-wallet-url "$MONERO_FUNDING_WALLET_ENDPOINT" \
+  --shared-wallet-username-file "$MONERO_FUNDING_RPC_USERNAME_FILE" \
+  --shared-wallet-password-file "$MONERO_FUNDING_RPC_PASSWORD_FILE" \
+  --shared-wallet-file-password-file "$MONERO_FUNDING_WALLET_PASSWORD_FILE" \
   --taker-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
   --taker-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
   --taker-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
-  --funding-wallet-url "$MONERO_FUNDING_WALLET_ENDPOINT" \
-  --funding-wallet-username-file "$MONERO_FUNDING_RPC_USERNAME_FILE" \
-  --funding-wallet-password-file "$MONERO_FUNDING_RPC_PASSWORD_FILE" \
+  --funding-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
+  --funding-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
+  --funding-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
   --reconstructed-wallet-filename "${M4_RUN_ID}_reconstructed_claim" \
   --restore-height 0 \
   --output-evidence "$MONERO_SWEEP_EVIDENCE"
@@ -3380,12 +3380,12 @@ compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-regtest-verify \
   --daemon-url "$MONERO_DAEMON_ENDPOINT" \
   --daemon-username-file "$MONERO_DAEMON_USERNAME_FILE" \
   --daemon-password-file "$MONERO_DAEMON_PASSWORD_FILE" \
-  --target-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
-  --target-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
-  --target-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
-  --foreign-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
-  --foreign-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
-  --foreign-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
+  --target-wallet-url "$MONERO_TAKER_WALLET_ENDPOINT" \
+  --target-wallet-username-file "$MONERO_TAKER_RPC_USERNAME_FILE" \
+  --target-wallet-password-file "$MONERO_TAKER_RPC_PASSWORD_FILE" \
+  --foreign-wallet-url "$MONERO_MAKER_WALLET_ENDPOINT" \
+  --foreign-wallet-username-file "$MONERO_MAKER_RPC_USERNAME_FILE" \
+  --foreign-wallet-password-file "$MONERO_MAKER_RPC_PASSWORD_FILE" \
   --output-evidence "$MONERO_CLAIM_RECEIPT"
 
 "$REFERENCE_ACTOR" bind-finalized-claim-sweep \
@@ -6011,8 +6011,11 @@ M5 PoC and 20 to 36 focused hours for the milestone tag.
 
 ## Flow 1R: run the XMR application-to-chain corridor
 
-Status: **CLEAN LOCAL HAPPY-PATH GREEN.** Four
-exact-commit attempts failed safely before
+Status: **CRYPTOGRAPHIC, CHAIN, BINDING, AND CLEANUP GREEN; ROLE-CORRECT REPLAY PENDING.**
+
+Evidence correction 2026-07-30: historical run H used the provisioner as funder, the Taker RPC as shared-wallet host, and the Maker as sweep destination. Keep its finalized effects, adaptor extraction, reconstructed spend, binding, and cleanup as evidence, but do not treat it as a role-correct user flow. The commands below are corrected to Maker funding and claim mining, neutral provisioner shared-wallet hosting, and Taker receipt. Use a fresh run ID and retain new exact-commit evidence before certification.
+
+Four exact-commit attempts failed safely before
 nodes. The first two exposed stale
 sidecar and release-service locks. `m5-xmr-app-20260730-7b8ec43-c` built both
 repaired graphs, then exposed a stale artifact-verifier hash for the intentional
@@ -6105,6 +6108,8 @@ The expected Docker topology is:
 - The Maker daemon, Maker/Taker CLIs, `xmr-maker-actor`, and later LEZ role
   sidecars are run-scoped host processes or Unix-socket services; they do not
   add public listeners.
+
+Economic-role invariant: the Maker wallet sends the exact Stage-A amount and supplies the local claim-confirmation mining address; the separate provisioner wallet RPC is only the view-only then reconstructed shared-wallet process; the Taker wallet is the sole successful-claim destination. All daemon and wallet RPC origins and credentials remain distinct. The refund branch reverses only the economic destination and miner: it sweeps to Maker and mines confirmations to the Taker address.
 
 There are no public runtime resources: no public RPC, faucet, peer, public
 funds, DNS dependency, or external finality service. LEZ funds come from the

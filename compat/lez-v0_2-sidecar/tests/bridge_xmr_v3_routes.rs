@@ -23,20 +23,21 @@ use lez_bridge_client::{
 use lez_bridge_protocol::{
     AggregateBip340Signature, ClassifyFinalizedNativeXmrEffectV3Request,
     CompleteNativeXmrClaimV3Request, CompleteNativeXmrRefundV3Request, DiscoveryWindow, ErrorCode,
-    ExactMessageBytes, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
+    FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
     FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimV3Request,
     PrepareNativeXmrEscrowV3Request, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrRefundV3Request, PreparedTransaction, PreparedWitnessedClaim, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
-    SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest, TransactionId,
-    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    PrepareNativeXmrRefundV3Request, PreparedTransaction, RequestId, RunId, RuntimeCompatibility,
+    RuntimeDescriptor, SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
+    SubmitTransactionRequest, TransactionId, XmrClaimPartialV3, XmrNativeEffectV3,
+    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
-    BridgeServerError, FinalizedIndexerApi, HistoricalAccount, NativeEscrowPlanner,
-    NativePrepareError, NonceSource, OfficialNodeRpc, ZecEscrowInstruction,
-    decode_official_public_transaction, program_id_to_hex, start_bridge_server,
+    BridgeServerError, FinalizedIndexerApi, HistoricalAccount, M4StageAFinalizedNonces,
+    M4StageAFutureMessageInput, NativeEscrowPlanner, NativePrepareError, NonceSource,
+    OfficialNodeRpc, ZecEscrowInstruction, decode_official_public_transaction,
+    plan_m4_stage_a_future_messages, program_id_to_hex, start_bridge_server,
 };
 use nssa::{AccountId, PrivateKey, PublicKey, Signature, public_transaction::Message};
 use sha2::{Digest as _, Sha256};
@@ -165,6 +166,13 @@ fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEs
         ZecEscrowInstruction::ClaimNativeXmr { swap_id },
     )
     .expect("canonical tag-15 claim message");
+    let refund_message = Message::try_new(
+        ESCROW_PROGRAM,
+        vec![metadata, custody, depositor, refund_authority],
+        vec![41_u128.into()],
+        ZecEscrowInstruction::RefundNativeXmr { swap_id },
+    )
+    .expect("canonical tag-16 refund message");
     XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
         swap_id: Hex32::from_bytes(swap_id),
         activation_commitment: h(2),
@@ -188,7 +196,7 @@ fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEs
         refund_at_ms: 10_000,
         punish_at_ms: 20_000,
         claim_message_hash: Hex32::from_bytes(claim_message.hash()),
-        refund_message_hash: official_message_hash(&[0xd1; 128]),
+        refund_message_hash: Hex32::from_bytes(refund_message.hash()),
         punish_message_hash: h(19),
     })
     .expect("valid XMR v3 terms")
@@ -220,21 +228,6 @@ fn submission_context(role: Participant, transaction_id: TransactionId) -> Messa
         transaction_id.submission_request_id(),
         role,
     )
-}
-
-fn transcript(bytes: Vec<u8>, request_id: &str) -> PreparedWitnessedClaim {
-    PreparedWitnessedClaim::new(
-        RequestId::new(request_id).expect("reservation id"),
-        official_message_hash(&bytes),
-        ExactMessageBytes::new(bytes).expect("message bytes"),
-    )
-}
-
-fn official_message_hash(bytes: &[u8]) -> Hex32 {
-    let mut hasher = Sha256::new();
-    hasher.update(b"/LEE/v0.3/Message/Public/\x00\x00\x00\x00\x00\x00\x00");
-    hasher.update(bytes);
-    Hex32::from_bytes(hasher.finalize().into())
 }
 
 #[derive(Clone, Copy)]
@@ -807,9 +800,327 @@ async fn maker_prepares_and_completes_exact_tag_15_after_taker_authorization() {
 #[tokio::test]
 #[allow(
     clippy::too_many_lines,
+    reason = "one tag-16 journey keeps exact composition, adversarial bindings, restart recovery, and no-submission proof joined"
+)]
+async fn taker_prepares_and_completes_exact_tag_16_without_submission() {
+    let (depositor, depositor_key) = account(31);
+    let (claimant, claimant_key) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let taker_runtime = runtime(Participant::Taker, depositor);
+    let maker_runtime = runtime(Participant::Maker, claimant);
+    let (sequencer_endpoint, sequencer, sequencer_sends) = start_sequencer().await;
+    let taker = start_sidecar(
+        Participant::Taker,
+        depositor,
+        depositor_key.clone(),
+        &sequencer_endpoint,
+    )
+    .await;
+    let maker = start_sidecar(
+        Participant::Maker,
+        claimant,
+        claimant_key,
+        &sequencer_endpoint,
+    )
+    .await;
+
+    let prepare_request = PrepareNativeXmrRefundV3Request::new(
+        context(Participant::Taker, "tag16-prepare-refund"),
+        taker_runtime.clone(),
+        xmr_terms,
+    );
+    let prepared = taker
+        .fresh_client()
+        .prepare_native_xmr_refund_v3(prepare_request.clone())
+        .await
+        .expect("Taker reserves the exact unsigned tag-16 refund message");
+    assert_eq!(prepared.context, prepare_request.context);
+    assert_eq!(prepared.terms, xmr_terms);
+    assert_eq!(
+        prepared.refund.preparation_request_id,
+        prepare_request.context.request_id
+    );
+    let message = Message::try_from_slice(prepared.refund.exact_message_bytes.as_slice())
+        .expect("canonical unsigned refund message");
+    let terms_input = xmr_terms.to_input();
+    let (refund_authority, refund_authority_key) = account(34);
+    assert_eq!(message.hash(), *terms_input.refund_message_hash.as_bytes());
+    assert_eq!(message.program_id, ESCROW_PROGRAM);
+    assert_eq!(
+        message.account_ids,
+        vec![
+            AccountId::new(*terms_input.metadata_account_id.as_bytes()),
+            AccountId::new(*terms_input.custody_account_id.as_bytes()),
+            depositor,
+            refund_authority,
+        ]
+    );
+    assert_eq!(message.nonces, vec![41_u128.into()]);
+    let stage_a_plan = plan_m4_stage_a_future_messages(M4StageAFutureMessageInput::new(
+        ESCROW_PROGRAM,
+        [1; 32],
+        claimant,
+        depositor,
+        *terms_input.claim_aggregate_x_only_public_key.as_bytes(),
+        *terms_input.refund_aggregate_x_only_public_key.as_bytes(),
+        M4StageAFinalizedNonces::new(41, 41, 41, 41),
+    ))
+    .expect("checked Stage-A future-message oracle");
+    assert_eq!(message, *stage_a_plan.refund_message());
+    assert!(matches!(
+        risc0_zkvm::serde::from_slice::<ZecEscrowInstruction, u32>(&message.instruction_data)
+            .expect("generated tag-16 instruction"),
+        ZecEscrowInstruction::RefundNativeXmr { swap_id } if swap_id == [1; 32]
+    ));
+
+    let signature = Signature::new(&refund_authority_key, &message.hash());
+    let aggregate_signature = AggregateBip340Signature::from_bytes(signature.value);
+    let mut wrong_reservation = prepared.refund.clone();
+    wrong_reservation.preparation_request_id =
+        RequestId::new("tag16-wrong-reservation").expect("request id");
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .complete_native_xmr_refund_v3(
+                CompleteNativeXmrRefundV3Request::new(
+                    context(Participant::Taker, "tag16-complete-wrong-reservation"),
+                    taker_runtime.clone(),
+                    xmr_terms,
+                    wrong_reservation,
+                    aggregate_signature,
+                )
+                .expect("well-formed wrong refund reservation"),
+            )
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    let wrong_terms = terms(depositor, claimant, 43);
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .complete_native_xmr_refund_v3(
+                CompleteNativeXmrRefundV3Request::new(
+                    context(Participant::Taker, "tag16-complete-wrong-terms"),
+                    taker_runtime.clone(),
+                    wrong_terms,
+                    prepared.refund.clone(),
+                    aggregate_signature,
+                )
+                .expect("refund hash is unchanged by amount drift"),
+            )
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .complete_native_xmr_refund_v3(
+                CompleteNativeXmrRefundV3Request::new(
+                    context(Participant::Taker, "tag16-complete-bad-signature"),
+                    taker_runtime.clone(),
+                    xmr_terms,
+                    prepared.refund.clone(),
+                    AggregateBip340Signature::from_bytes([42; 64]),
+                )
+                .expect("well-formed invalid refund signature"),
+            )
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    let mut wrong_runtime = taker_runtime.clone();
+    wrong_runtime.signer_account_id = h(99);
+    assert!(matches!(
+        taker
+            .fresh_client()
+            .prepare_native_xmr_refund_v3(PrepareNativeXmrRefundV3Request::new(
+                context(Participant::Taker, "tag16-prepare-wrong-runtime"),
+                wrong_runtime,
+                xmr_terms,
+            ))
+            .await,
+        Err(BridgeClientError::RequestContextMismatch { .. })
+    ));
+    assert!(
+        maker
+            .fresh_client()
+            .prepare_native_xmr_refund_v3(PrepareNativeXmrRefundV3Request::new(
+                context(Participant::Maker, "tag16-prepare-wrong-role"),
+                maker_runtime,
+                xmr_terms,
+            ))
+            .await
+            .is_err(),
+        "the Maker sidecar must fail closed before preparing the Taker refund"
+    );
+
+    let complete_request = CompleteNativeXmrRefundV3Request::new(
+        context(Participant::Taker, "tag16-complete-refund"),
+        taker_runtime.clone(),
+        xmr_terms,
+        prepared.refund.clone(),
+        aggregate_signature,
+    )
+    .expect("exact refund completion request");
+    let completed = taker
+        .fresh_client()
+        .complete_native_xmr_refund_v3(complete_request.clone())
+        .await
+        .expect("aggregate signature completes one exact tag-16 transaction");
+    assert_eq!(completed.context, complete_request.context);
+    assert_eq!(completed.terms, xmr_terms);
+    let transaction = decode_official_public_transaction(completed.refund.exact_bytes.as_slice())
+        .expect("canonical completed refund transaction");
+    assert_eq!(transaction.message(), &message);
+    let [(observed_signature, observed_key)] =
+        transaction.witness_set().signatures_and_public_keys()
+    else {
+        panic!("one aggregate refund witness")
+    };
+    assert_eq!(
+        observed_signature.value,
+        *complete_request.aggregate_signature.as_bytes()
+    );
+    assert_eq!(
+        observed_key.value(),
+        terms_input.refund_aggregate_x_only_public_key.as_bytes()
+    );
+    assert_eq!(
+        taker
+            .fresh_client()
+            .prepare_native_xmr_refund_v3(prepare_request.clone())
+            .await
+            .expect("exact refund preparation replay"),
+        prepared
+    );
+    assert_eq!(
+        taker
+            .fresh_client()
+            .complete_native_xmr_refund_v3(complete_request.clone())
+            .await
+            .expect("exact refund completion replay"),
+        completed
+    );
+    assert_remote_code(
+        taker
+            .fresh_client()
+            .submit_transaction(SubmitTransactionRequest::new(
+                context(Participant::Taker, "tag16-generic-submit-refund"),
+                taker_runtime,
+                completed.refund.clone(),
+            ))
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+
+    let taker_directory = taker.directory.path().to_path_buf();
+    taker
+        .server
+        .stop()
+        .await
+        .expect("Taker stop before restart");
+    let restart_nonces = Arc::new(CountingNonce {
+        value: 999,
+        calls: AtomicUsize::new(0),
+    });
+    let (restarted_client, restarted_server) = try_start_sidecar_at(
+        Participant::Taker,
+        depositor,
+        depositor_key.clone(),
+        &sequencer_endpoint,
+        &taker_directory,
+        Arc::clone(&restart_nonces),
+    )
+    .await
+    .expect("Taker server and planner restore exact tag-16 durable state");
+    assert_eq!(
+        restarted_client
+            .prepare_native_xmr_refund_v3(prepare_request.clone())
+            .await
+            .expect("restarted server replays exact refund preparation"),
+        prepared
+    );
+    assert_eq!(
+        restarted_client
+            .complete_native_xmr_refund_v3(complete_request.clone())
+            .await
+            .expect("restarted server replays exact refund completion"),
+        completed
+    );
+    assert_eq!(
+        restart_nonces.calls.load(Ordering::SeqCst),
+        0,
+        "startup recovery must not regenerate the refund-authority nonce"
+    );
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    restarted_server
+        .stop()
+        .await
+        .expect("restarted Taker stops");
+
+    let completion_path = taker_directory
+        .join("planner")
+        .join("xmr-native-refund-completion.v3.json");
+    let completion_bytes = fs::read(&completion_path).expect("saved refund completion");
+    fs::write(&completion_path, b"{").expect("corrupt refund completion");
+    let corrupt_nonces = Arc::new(CountingNonce {
+        value: 999,
+        calls: AtomicUsize::new(0),
+    });
+    let corrupt_restart = try_start_sidecar_at(
+        Participant::Taker,
+        depositor,
+        depositor_key.clone(),
+        &sequencer_endpoint,
+        &taker_directory,
+        Arc::clone(&corrupt_nonces),
+    )
+    .await;
+    assert!(matches!(
+        corrupt_restart,
+        Err(BridgeServerError::InvalidDurableState)
+    ));
+    assert_eq!(corrupt_nonces.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+    fs::write(&completion_path, completion_bytes).expect("restore refund completion");
+
+    fs::remove_file(
+        taker_directory
+            .join("planner")
+            .join("xmr-native-refund-reservation.v3.json"),
+    )
+    .expect("remove refund preparation");
+    let missing_nonces = Arc::new(CountingNonce {
+        value: 41,
+        calls: AtomicUsize::new(0),
+    });
+    let missing_restart = try_start_sidecar_at(
+        Participant::Taker,
+        depositor,
+        depositor_key,
+        &sequencer_endpoint,
+        &taker_directory,
+        Arc::clone(&missing_nonces),
+    )
+    .await;
+    assert!(matches!(
+        missing_restart,
+        Err(BridgeServerError::InvalidDurableState)
+    ));
+    assert_eq!(missing_nonces.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(sequencer_sends.load(Ordering::SeqCst), 0);
+
+    maker.server.stop().await.expect("maker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
     reason = "one route contract covers all nine additive methods and replay semantics"
 )]
-async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enabled() {
+async fn xmr_v3_routes_are_authenticated_bound_with_three_official_builders_enabled() {
     let (depositor, depositor_key) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -831,17 +1142,16 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
     )
     .await;
 
-    assert_remote_code(
-        taker
-            .client
-            .prepare_native_xmr_refund_v3(PrepareNativeXmrRefundV3Request::new(
-                context(Participant::Taker, "prepare-refund"),
-                taker_runtime.clone(),
-                xmr_terms,
-            ))
-            .await,
-        ErrorCode::Unavailable,
-    );
+    let prepared_refund = taker
+        .client
+        .prepare_native_xmr_refund_v3(PrepareNativeXmrRefundV3Request::new(
+            context(Participant::Taker, "prepare-refund"),
+            taker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("tag-16 refund preparation is enabled for the authenticated Taker");
+    assert_eq!(prepared_refund.terms, xmr_terms);
     assert_remote_code(
         taker
             .client
@@ -850,13 +1160,13 @@ async fn xmr_v3_routes_are_authenticated_bound_with_two_official_builders_enable
                     context(Participant::Taker, "complete-refund"),
                     taker_runtime.clone(),
                     xmr_terms,
-                    transcript(vec![0xd1; 128], "refund-transcript"),
+                    prepared_refund.refund,
                     AggregateBip340Signature::from_bytes([42; 64]),
                 )
                 .expect("refund completion request"),
             )
             .await,
-        ErrorCode::Unavailable,
+        ErrorCode::InvalidTransaction,
     );
     assert_remote_code(
         maker

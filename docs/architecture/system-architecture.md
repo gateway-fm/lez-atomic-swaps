@@ -2321,8 +2321,8 @@ flowchart TB
     Indexer["LEZ v0.2 indexer"]
     Bedrock["LEZ v0.2 Bedrock"]
     Monerod["Official monerod 0.18.5.1 Regtest"]
-    FundingWallet["Official funding wallet RPC"]
-    SharedWallet["Official shared or Maker wallet RPC"]
+    MakerWallet["Official Maker wallet RPC: fund source and claim miner"]
+    SharedWallet["Neutral provisioner RPC: shared wallet only"]
     TakerWallet["Official Taker wallet RPC"]
     Binder["Taker cross-chain binder"]
     Binding[("Owner-private binding record")]
@@ -2336,7 +2336,7 @@ flowchart TB
     Sequencer --> Bedrock
     MakerSidecar --> Indexer
     TakerSidecar --> Indexer
-    FundingWallet --> Monerod
+    MakerWallet --> Monerod
     SharedWallet --> Monerod
     TakerWallet --> Monerod
     Preparer --> TakerJournal
@@ -2348,7 +2348,7 @@ flowchart TB
     Preparer --> ReleaseDb
     Worker --> ReleaseDb
     Worker --> TakerSidecar
-    Maker --> SharedWallet
+    Maker --> MakerWallet
     Taker --> TakerWallet
     Taker --> Binder
     TakerJournal --> Binder
@@ -2357,7 +2357,7 @@ flowchart TB
     Binder --> Binding
 ```
 
-The retained run used dynamic literal-loopback RPCs. Its example ports were LEZ Bedrock 33145, sequencer 33146, indexer 33147, Maker sidecar 36967, Taker sidecar 58993, Monero daemon 39185, funding wallet 41189, shared or Maker wallet 46769, and Taker wallet 58393. These numbers document that run; fresh operators must source fresh manifests. No public RPC, P2P peer, faucet, public funds, Stagenet, or external finality service participated.
+The retained run used dynamic literal-loopback RPCs. Its example ports were LEZ Bedrock 33145, sequencer 33146, indexer 33147, Maker sidecar 36967, Taker sidecar 58993, Monero daemon 39185, provisioner wallet 41189, Maker wallet 46769, and Taker wallet 58393. A later audit proved the historical runner made the provisioner fund, hosted the shared wallet on the Taker RPC, and swept to Maker. The corrected graph above is the required fresh topology: Maker funds and supplies the claim mining address, the neutral provisioner hosts the shared wallet, and Taker receives the claim sweep. These numbers document that run; fresh operators must source fresh manifests. No public RPC, P2P peer, faucet, public funds, Stagenet, or external finality service participated.
 
 #### Successful claim sequence
 
@@ -2384,7 +2384,7 @@ sequenceDiagram
     T->>TS: Submit exact FundNative
     TS->>L: Tag 13 Fund
     L-->>T: Finalized at height 3960
-    M->>X: Fund exact Stage A shared address with 1 XMR
+    M->>X: Maker wallet funds exact Stage A address hosted by neutral shared RPC
     X-->>P: Transaction at height 111 and 10 confirmations at tip 120
     Note over T,M: Both locks are proven before tag 14
     P->>P: Revalidate Stage A and B, Fund, topology, output, and Taker journal
@@ -2397,7 +2397,7 @@ sequenceDiagram
     Note over T,M: Revealer may disappear and follower uses canonical chain disclosure
     Note over T,M: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
     T->>T: Extract Maker adaptor share from final signature
-    T->>X: Reconstruct Stage A wallet and sweep
+    T->>X: Reconstruct Stage A wallet and sweep to Taker wallet
     X-->>T: Sweep confirmed at tip 130
     T->>B: Bind Stage A and B, journal, finalized tag 15, packet, and extraction
     X-->>B: Independent receipt at block 121 under stable tip 130
@@ -2431,6 +2431,8 @@ This second diagram is the intended atomic recovery branch, not executed evidenc
 <!-- atomicity-argument: lez-xmr/taker-sells-lez -->
 
 #### Why the successful branch is conditionally atomic
+
+Evidence correction: the retained run proves the disclosure and reconstruction mechanism, but its role-inverted wallet topology does not prove the intended user-economic transfer. Apply the argument below to certification only after a fresh Maker-funded, neutral-shared, Taker-destination replay.
 
 The XMR construction does not create a single distributed transaction. Its safety comes from linked cryptographic revelations and role-correct finality gates:
 

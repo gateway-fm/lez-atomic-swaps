@@ -241,6 +241,8 @@ under the exact run-owned private namespace: the guard admitted the namespace
 itself but not its children. Commit `fb4e279` fixes that boundary by
 canonicalizing and admitting only descendants of the run-owned private root;
 focused tests retain rejection of traversal, symlinks, and foreign paths.
+Correction recorded 2026-07-30: a post-run role audit proved that historical run H used the provisioner as funder, the Taker RPC as the shared-wallet process, and the Maker address as sweep destination. H remains genuine finalized-chain, key-reconstruction, sweep, binding, and cleanup evidence, but it does not certify the intended user-economic roles. The runner now enforces Maker funding, a neutral provisioner shared-wallet process, Maker-mined claim confirmations, and a Taker destination; fresh exact-commit replay evidence is pending.
+
 Exact pushed-tree run `m5-xmr-app-20260730-2c6aec1-h` then repeated the entire
 corridor from commit `2c6aec1` and passed cleanup schema v2. Its application
 cutoff, finalized tag 13/14/15, extraction, sweep, and binding all completed for
@@ -500,6 +502,8 @@ No public RPC or faucet participates; cold pinned dependency or image acquisitio
 can fail independently and is not runtime swap evidence.
 
 ### M4 progressive local PoC
+
+Correction recorded 2026-07-30: the retained M4 replay used the same role-inverted runner topology. Its cryptographic reconstruction, finalized chain effects, sweep, binder, and cleanup remain evidence, but the role-correct Taker receipt claim is withdrawn pending a fresh replay with Maker funding, neutral shared-wallet hosting, and Taker receipt. The historical evidence files remain immutable.
 
 The exact clean replay `m4cert20260722an` on commit `5ec6521` certifies the
 local native-XMR successful-claim path: LEZ v0.2 deployment/readiness, fresh
