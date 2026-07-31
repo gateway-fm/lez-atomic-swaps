@@ -4703,6 +4703,18 @@ contract. Cold optimized builds measured about 6 minutes for the root process
 set and 14 minutes 38 seconds for the full LEZ sidecar graph; warm rebuild
 checks complete in about 2 seconds and remain outside the protocol clock.
 
+The next replay used pushed source
+`7d402dcf7a7fd436621fd1c922babcb0d3ae8a1e`, a wholly fresh local LEZ
+deployment, fresh Zebra Regtest, and a fresh Maker/Taker identity pair.
+Application run `m5zec7d402app1` passed the revision-3 nonterminal projection
+that rejected the preceding replay, and both role actors reached revision 4
+`Completed`. The scheduler nevertheless failed closed with
+`actor_output_invalid`: the parser rejected the exact terminal projection
+`zcash_followup_claim` / `completed` / `complete`. This packet is diagnostic
+only, is not milestone certification, and does not change the 3-of-7 score.
+The narrow operation/phase/action mapping is being corrected, and the next
+certification attempt must again use a wholly fresh chain and fresh keys.
+
 Literal M5 remains 3 of 7 until a fresh-chain replay publishes a terminal
 scheduler row, restart projection, duplicate-submission proof, and scoped
 cleanup as one accepted evidence packet. That fresh proof is next. Only after

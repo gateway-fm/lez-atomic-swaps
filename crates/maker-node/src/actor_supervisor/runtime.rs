@@ -940,19 +940,25 @@ fn parse_effect(
             ActorEffectCommand::Drive | ActorEffectCommand::Claim
         )
         && outcome == "projected";
-    if projected_zec_claim {
-        match value.get("operation").and_then(Value::as_str) {
-            Some("lez_revealing_claim") => {
-                if phase != "claim_evidence_available" || next_action != "wait" {
-                    return Err(());
-                }
-            }
+    let projected_zec_claim_terminal = if projected_zec_claim {
+        match (
+            value.get("operation").and_then(Value::as_str),
+            phase,
+            next_action,
+        ) {
+            (Some("lez_revealing_claim"), "claim_evidence_available", "wait") => false,
+            (Some("zcash_followup_claim"), "completed", "complete") => true,
+            (Some("lez_revealing_claim" | "zcash_followup_claim"), _, _) => return Err(()),
             _ if matches!(command, ActorEffectCommand::Claim) => return Err(()),
-            _ => {}
+            _ => false,
         }
-    }
-    let exact_absorbing = exact_absorbing_effect(kind, command, outcome, phase);
-    let terminal_outcome = matches!(outcome, "completed" | "refunded");
+    } else {
+        false
+    };
+    let exact_absorbing =
+        exact_absorbing_effect(kind, command, outcome, phase) || projected_zec_claim_terminal;
+    let terminal_outcome =
+        matches!(outcome, "completed" | "refunded") || projected_zec_claim_terminal;
     if terminal != exact_absorbing
         || (kind == MakerActorKindV1::Zcash && terminal_outcome != exact_absorbing)
     {
@@ -1386,6 +1392,67 @@ mod tests {
             output["command"] = Value::from(command.name());
             output["phase"] = Value::from(phase);
             output["next_action"] = Value::from(next_action);
+            assert!(
+                parse_effect(
+                    &serde_json::to_vec(&output).unwrap(),
+                    command,
+                    MakerActorKindV1::Zcash,
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn parser_accepts_exact_terminal_zec_followup_projection_only() {
+        let exact = serde_json::json!({
+            "schema_version": 1,
+            "role": "maker",
+            "outcome": "projected",
+            "operation": "zcash_followup_claim",
+            "phase": "completed",
+            "revision": 4,
+            "next_action": "complete"
+        });
+
+        for command in [ActorEffectCommand::Claim, ActorEffectCommand::Drive] {
+            let mut output = exact.clone();
+            output["command"] = Value::from(command.name());
+            let parsed = parse_effect(
+                &serde_json::to_vec(&output).unwrap(),
+                command,
+                MakerActorKindV1::Zcash,
+            )
+            .unwrap();
+            assert!(parsed.terminal);
+        }
+
+        for (operation, phase, next_action) in [
+            ("lez_revealing_claim", "completed", "complete"),
+            ("zcash_followup_claim", "claim_evidence_available", "wait"),
+            ("unknown_claim", "completed", "complete"),
+        ] {
+            for command in [ActorEffectCommand::Claim, ActorEffectCommand::Drive] {
+                let mut output = exact.clone();
+                output["command"] = Value::from(command.name());
+                output["operation"] = Value::from(operation);
+                output["phase"] = Value::from(phase);
+                output["next_action"] = Value::from(next_action);
+                assert!(
+                    parse_effect(
+                        &serde_json::to_vec(&output).unwrap(),
+                        command,
+                        MakerActorKindV1::Zcash,
+                    )
+                    .is_err()
+                );
+            }
+        }
+
+        for command in [ActorEffectCommand::Claim, ActorEffectCommand::Drive] {
+            let mut output = exact.clone();
+            output["command"] = Value::from(command.name());
+            output.as_object_mut().unwrap().remove("operation");
             assert!(
                 parse_effect(
                     &serde_json::to_vec(&output).unwrap(),
