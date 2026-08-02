@@ -15,17 +15,20 @@ mod application_provision;
 mod effect_authority;
 #[cfg(feature = "sessions")]
 mod effect_input_custody;
+#[cfg(feature = "sessions")]
+mod effect_route;
 
 #[cfg(feature = "sessions")]
 pub use application_provision::{
-    ValidatedXmrMakerAuthorityV2, ValidatedXmrTakerAuthorityV2,
+    ValidatedXmrEffectExecutionV3, ValidatedXmrMakerAuthorityV2, ValidatedXmrTakerAuthorityV2,
     XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XMR_MAKER_ACTOR_ABI_V1, XMR_MAKER_ACTOR_NEXT_ACTION,
     XMR_MAKER_ACTOR_PROGRAM_ID, XmrActorProvisionV1, XmrEffectProvisionV3,
-    load_validated_xmr_effect_manifest_v3_bytes, load_validated_xmr_maker_authority_fd,
-    load_validated_xmr_taker_authority_bytes, provision_xmr_effect_manifest_v3,
-    provision_xmr_maker_actor_from_material, provision_xmr_taker_actor_from_material,
-    publish_xmr_effect_manifest_v3, validate_maker_manifest_config_bytes,
-    validate_taker_manifest_config_bytes, validate_xmr_effect_manifest_v3_projection_bytes,
+    load_validated_xmr_effect_execution_v3_bytes, load_validated_xmr_effect_manifest_v3_bytes,
+    load_validated_xmr_maker_authority_fd, load_validated_xmr_taker_authority_bytes,
+    provision_xmr_effect_manifest_v3, provision_xmr_maker_actor_from_material,
+    provision_xmr_taker_actor_from_material, publish_xmr_effect_manifest_v3,
+    validate_maker_manifest_config_bytes, validate_taker_manifest_config_bytes,
+    validate_xmr_effect_manifest_v3_projection_bytes,
 };
 #[cfg(feature = "sessions")]
 pub use effect_authority::{
@@ -38,6 +41,8 @@ pub use effect_input_custody::{
     PinnedXmrEffectInputsV1, PinnedXmrEffectMoneroCredentialsV1, PinnedXmrEffectRpcCredentialsV1,
     PinnedXmrEffectSecretV1,
 };
+#[cfg(feature = "sessions")]
+pub use effect_route::XmrPreparedEffectInvocationV1;
 
 use std::{
     ffi::OsString,

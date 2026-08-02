@@ -420,6 +420,24 @@ impl MakerActorHeldLock {
         })
     }
 
+    /// Revalidates that this live lock guards one exact swap/state path.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a changed lock identity or a lock acquired for another swap or
+    /// state path.
+    pub fn validate_for_state(
+        &self,
+        swap_id: &SwapId,
+        state_database_path: &Path,
+    ) -> Result<(), MakerActorProcessError> {
+        self.validate_identity()?;
+        if &self.swap_id != swap_id || self.state_database_path != state_database_path {
+            return Err(MakerActorProcessError::LockMismatch);
+        }
+        Ok(())
+    }
+
     /// Makes this lock survive `exec` in only the child spawned by `command`.
     ///
     /// The parent descriptor remains close-on-exec. The child clears that flag

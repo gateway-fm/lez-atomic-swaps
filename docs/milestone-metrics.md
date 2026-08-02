@@ -112,6 +112,18 @@ child-map gaps are closed; lifecycle route, RPC, node, classifier/reconciliation
 and chain-effect composition remain open. Literal M5 stays 4/7; ETA remains 2.5
 to 5.5 focused implementation hours.
 
+M5 XMR role-fixed invocation checkpoint (2026-08-02): schema-v3 execution load
+retains exact effect-authority digest and workflow identity. The six sending
+role/step slots pin the selected tool, runtime, ten secrets, exact actor/workflow
+locks, and complete FD 197..210 command before workflow-v2 authorization.
+InvokeOnce alone returns a Command plus stable domain-separated plan digest;
+ObserveOnly and Complete return that digest without a Command. The real
+schema-v3 Taker Tag14 fixture proves corrupt program and wrong-role failure
+without burning Prepared, exact child FDs, one InvokeOnce, and restart
+ObserveOnly with identical digest. No RPC, node, semantic tag-14 publication,
+classifier, or funds participate. Literal M5 remains 4/7; current ETA is 2 to 5
+focused implementation hours.
+
 Evidence correction recorded 2026-07-30: retained M4 run `m4cert20260722an` and M5 run `m5-xmr-app-20260730-2c6aec1-h` prove finalized LEZ effects, adaptor extraction, shared-key reconstruction, a confirmed Monero sweep, binding, and exact cleanup. A role audit proved their runner used provisioner funding, a Taker-hosted shared wallet, and a Maker sweep destination. Those runs no longer certify role-correct user economics. The code now enforces Maker funding and claim mining, a neutral provisioner shared-wallet RPC, and a Taker claim destination; a fresh role-correct claim replay remains separate and the historical evidence is unchanged. Authenticated tag-16 Taker prepare, aggregate completion, transaction-derived one-attempt submission, finalized Maker discovery, Maker ingestion/extraction, role-correct Maker recovery sweep, and the conditional refund binder became component-GREEN. Ambiguous submission is sticky across restart without resend and refund classification enforces `[refund_at, punish_at)`. Diagnostic run `m5xmrrefund8c10cd7a` proved read-only polling could not advance an idle local finalized clock; the later exact run below supersedes this historical refund-replay-open status.
 
 Finality correction recorded 2026-07-31: run `m5xmrrefund842610ca` admitted one
@@ -183,7 +195,7 @@ component-certified.
 The progressive local ZEC and exact pushed BTC application PoC gates are closed,
 the exact pushed XMR claim and refund corridors are clean-certified, and exact
 pushed run `m5zec432dapp1` certifies the daemon-driven ZEC deadline/cutover
-output. Literal M5 completion is 4 of 7. The milestone-tag ETA is 2.5 to 5.5
+output. Literal M5 completion is 4 of 7. The milestone-tag ETA is 2 to 5
 focused implementation hours and is updated after every push. The remaining
 outputs are Maker full supported-pair lifecycle, Taker full supported-pair
 lifecycle, and coordinator accepted-application actual-chain

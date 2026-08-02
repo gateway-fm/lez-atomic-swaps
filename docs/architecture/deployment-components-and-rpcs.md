@@ -741,7 +741,7 @@ revalidation, propagation, and finality evidence before release.
 
 ### M5 XMR role-process pre-effect deployment
 
-Status: process-GREEN, including the receipt-only Taker application monitor. The earlier exact locked/offline black-box passed 1 of 1 in 307.71 seconds. Solid edges below have executable process evidence. Dashed edges are the open semantic supervisor and actual isolated chain corridor.
+Status: process-GREEN, including the receipt-only Taker application monitor. The earlier exact locked/offline black-box passed 1 of 1 in 307.71 seconds. Solid edges below cover application activation and monitoring. The separate schema-v3 role-fixed invocation-preparation component is GREEN and shown after this pre-effect deployment; lifecycle routing and actual isolated-chain RPC execution remain dashed and open.
 
 ```mermaid
 flowchart TB
@@ -798,7 +798,7 @@ flowchart TB
     TakerManifest --> TakerAuthority
     MonitorLock -->|"pinned manifest and full source validation"| TakerAuthority
     TakerAuthority --> MonitorStatus
-    MakerActor -.-> SemanticSupervisor["Semantic XMR supervisor adapter open"]
+    MakerActor -.-> SemanticSupervisor["Lifecycle XMR effect route open"]
     SemanticSupervisor -.-> LezNodes["Isolated LEZ v0.2 sequencer indexer and sidecars"]
     SemanticSupervisor -.-> MoneroNodes["Official monerod 0.18.5.1 Regtest and wallets"]
 ```
@@ -854,7 +854,32 @@ reopen/final-equality path-ABA concern remains production hardening rather than 
 PoC blocker; full semantic validation still occurs under the exact per-swap
 kernel lock and grants no effect authority.
 
-Runtime external resources are empty: no chain RPC, local node, Docker project, faucet, DNS, network, or funds. The process proof uses only temporary Unix sockets, SQLite, and owner-private files. This isolates application semantics from chain/finality flakiness. It does not validate Monero or LEZ behavior. Keep the opt-in actor supervisor disabled until the semantic XMR adapter is wired; then compose these exact role bundles with isolated dynamic-loopback Monero and LEZ nodes rather than replacing them.
+Runtime external resources are empty: no chain RPC, local node, Docker project, faucet, DNS, network, or funds. The process proof uses only temporary Unix sockets, SQLite, and owner-private files. This isolates application semantics from chain/finality flakiness. It does not validate Monero or LEZ behavior. The role-fixed preparation boundary may run only in its node-free process fixture. Keep lifecycle effect actions disabled until the selected worker has a bounded semantic result and the route composes the exact isolated dynamic-loopback Monero and LEZ adapters.
+
+#### Schema-v3 XMR invocation component
+
+```mermaid
+flowchart LR
+    Receipt["Receipt v2 and schema v3 authority"] --> Loader["Execution loader"]
+    Loader --> Select["Six slot role and step selector"]
+    Select --> Pin["Pin tool inputs and dual locks"]
+    Pin --> Command["Compose FDs 197 through 210"]
+    Command --> Journal["Workflow v2 authorize once"]
+    Journal --> Winner["InvokeOnce child"]
+    Journal --> Replay["ObserveOnly or Complete no child"]
+    Winner -.-> Nodes["Future LEZ and Monero RPCs"]
+```
+
+| Boundary | Implemented behavior | Still absent |
+|---|---|---|
+| Schema-v3 loader | Retains exact effect-authority digest and workflow identity | No node or RPC opening |
+| Role-fixed selector | Admits only three Maker and three Taker sending slots | No classifier/verifier send authority |
+| Pre-authorization custody | Pins tool, runtime, ten secrets, both locks, and one FD map before workflow CAS | No semantic transaction construction |
+| Workflow result | InvokeOnce returns Command plus stable digest; ObserveOnly/Complete return digest with no Command | No lifecycle CLI/daemon route or chain publication |
+
+The Taker Tag14 fixture proves corrupt-program and wrong-role failure leave
+Prepared unconsumed, then proves one exact child and restart ObserveOnly with a
+stable digest. It does not contact the dashed node boundary or publish tag 14.
 
 ### M5 maker service supervision and RPC inventory
 

@@ -243,6 +243,49 @@ runtime and secret hashes after exec, proves FD 211 absent, then drops the
 parent Command and lock handles. The live child alone retains both locks until
 it exits and is reaped; only then can the parent reacquire them.
 
+The schema-v3 execution loader now retains both the exact effect-authority
+SHA-256 and the fully reconstructed workflow identity beside the validated
+effect authority. `prepare_effect_invocation` accepts only the six role-fixed
+external-effect slots that have one sending tool: Maker Monero fund, Maker LEZ
+tag-15 claim, Maker Monero refund sweep, Taker LEZ tag-14 authorization, Taker
+Monero claim sweep, and Taker LEZ tag-16 refund. Wrong-role steps and observation
+helpers cannot acquire invocation authority through this API.
+
+Preparation deliberately orders every fallible local custody gate before the
+workflow CAS: select the exact role/step tool, compute its plan identity, hash-pin
+the executable, pin runtime and all ten secrets, validate the exact actor-state
+and workflow locks against the loaded swap/state paths, and compose the complete
+FD 197 through 210 command. Only then does it open and validate workflow v2 and
+call `authorize_once`. Therefore corrupt program/input/lock/plan state cannot
+burn a Prepared row.
+
+```mermaid
+sequenceDiagram
+    participant R as Future lifecycle route
+    participant E as Schema v3 execution authority
+    participant P as Program inputs and locks
+    participant W as Workflow v2 journal
+    R->>E: Prepare one role fixed effect step
+    E->>P: Pin tool inputs and compose FDs 197 through 210
+    E->>W: Authorize once only after complete plan exists
+    alt Prepared winner
+        W-->>E: InvokeOnce
+        E-->>R: Command and stable plan digest
+    else Started or Unknown
+        W-->>E: ObserveOnly
+        E-->>R: Digest only and no command
+    else Succeeded
+        W-->>E: Complete
+        E-->>R: Digest only and no command
+    end
+```
+
+The plan SHA-256 uses the stable `lez-xmr-effect-tool-plan-v1\0` domain and binds
+role, fixed step name, ABI, pinned program SHA-256, and exact effect-authority
+SHA-256. It is stable across restart. InvokeOnce alone owns the prepared
+Command; ObserveOnly and Complete drop the locally composed command and return
+only the same digest.
+
 This component performs no chain or network I/O. It uses the already locked
 rusqlite dependency and SQLite WAL, FULL synchronous writes, foreign keys, and
 secure deletion. Creation is exclusive and mode 0600; an existing safe file
@@ -370,8 +413,17 @@ unsafe, and aliased file-password rejection. Maker authority coverage proves
 the validated Stage-A/B public paths and exact wire SHA-256 values survive the
 execution-authority handoff.
 
+The real schema-v3 Taker Tag14 process fixture proves a corrupted pinned program
+fails while the journal remains Prepared, a Maker-only step fails under Taker
+authority, the valid child sees exact FDs 197 through 210, and precisely one
+caller receives InvokeOnce with a Command. Reload then returns ObserveOnly with
+no Command and the identical nonzero domain-separated plan digest. This worker
+is only the descriptor/process fixture: it makes no RPC and does not publish a
+semantic tag 14.
+
 The typed authority, sealed program/input snapshots, workflow-v2 journal, and
-one-map executable/lock/input command boundary are component-GREEN. The
+one-map executable/lock/input command boundary and role-fixed invocation
+preparation are component-GREEN. The
 current effect-input validation, custody, and child-map gaps are closed, but no
 Maker or Taker lifecycle route calls it. Actual classifier-to-evidence
 composition, Maker effects, receipt-v2 claim/refund routing, and fresh isolated

@@ -2304,6 +2304,37 @@ sequenceDiagram
 
 The atomicity claim is deliberately local. Stage A cannot create a coordinator, actor, or effect. Stage B performs every executable application transition in one SQLite transaction, so any failed member restores the Stage-A-only state. The Taker bundle is a pre-activation crash latch and the receipt is post-commit evidence. After commit, canonical-manifest preflight, complete memfd seals, child role/digest/transcript validation, and immutable journal-snapshot validation each fail closed before any chain effect. A successful pre-effect run also makes zero chain requests and truthfully remains queued. No cross-chain transaction or chain safety is inferred; actual isolated Monero plus LEZ effects remain the next corridor gate.
 
+#### M5 schema-v3 invocation preparation boundary
+
+The schema-v2 scheduled actor above remains the honest zero-effect application
+cutoff. Separately, schema-v3 receipt/effect authority now has a node-free
+role-fixed invocation-preparation boundary. The loader retains the immutable
+effect-authority digest and exact initialized workflow identity. Only six
+sending slots are admitted: Maker Monero fund, tag 15, and Monero refund sweep;
+and Taker tag 14, Monero claim sweep, and tag 16.
+
+```mermaid
+flowchart TB
+    Loader["Schema v3 execution loader"] --> Selector["Six slot role and step selector"]
+    Selector --> Pin["Hash pin tool runtime and ten secrets"]
+    Pin --> Locks["Validate exact actor and workflow locks"]
+    Locks --> Map["Compose one FD map 197 through 210"]
+    Map --> Authorize["Workflow v2 authorize once"]
+    Authorize --> Invoke["InvokeOnce with Command and plan digest"]
+    Authorize --> Observe["ObserveOnly or Complete with digest only"]
+    Invoke --> Child["Prepared child process"]
+    Observe --> NoChild["No child command"]
+    Child -.-> Rpc["Future LEZ or Monero RPC"]
+```
+
+Program, inputs, both locks, and the complete descriptor command are validated
+before `authorize_once`, so a corrupt path, wrong role, or crossed lock cannot
+burn Prepared. InvokeOnce alone returns a Command. Started/Unknown and Succeeded
+return ObserveOnly or Complete with the stable domain-separated plan digest and
+no Command. The process fixture proves descriptor and restart behavior only;
+the dashed RPC edge is not invoked, and no semantic tag-14 construction, chain
+submission, node interaction, or lifecycle CLI route exists at this checkpoint.
+
 #### Actual local components and RPCs
 
 ```mermaid

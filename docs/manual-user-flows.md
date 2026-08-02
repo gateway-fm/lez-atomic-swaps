@@ -6658,6 +6658,46 @@ local processes only; no Docker service, faucet, DNS, public network, peer, or
 funds can make them flaky. Literal M5 remains 4 of 7; current ETA is 2.5 to 5.5
 focused implementation hours.
 
+Repeat the role-fixed invocation boundary with the genuine schema-v3 Taker
+fixture:
+
+```bash
+cargo +1.96.0 test --locked -p xmr-reference-actor \
+  --test effect_route \
+  taker_tag14_effect_route_pins_before_authorizing_and_never_rearms \
+  -- --exact
+```
+
+The execution loader retains the exact effect-authority digest and initialized
+workflow identity. The preparation API admits only Maker Monero fund/tag
+15/refund sweep and Taker tag 14/claim sweep/tag 16. Wrong-role and
+classifier/verifier steps fail before workflow mutation.
+
+For an admitted step, preparation performs this order:
+
+1. select the fixed role/step tool and compute its stable plan digest;
+2. hash-pin the program and pin runtime plus ten secrets;
+3. validate the exact actor-state and workflow locks;
+4. compose the complete FD 197 through 210 command; and only then
+5. call workflow-v2 `authorize_once`.
+
+A corrupt program therefore leaves Tag14 Prepared. The repaired first call
+returns InvokeOnce with the Command and a nonzero domain-separated digest; the
+child sees exact FDs 197 through 210. Reload returns ObserveOnly with the same
+digest and no Command. A reconciled Succeeded step would similarly return
+Complete without a Command.
+
+The stable plan hash binds the v1 tool-plan domain, role, step, ABI, pinned
+program SHA-256, and exact effect-authority SHA-256. It does not expose or
+pretend to immutably bind rotating credential contents.
+
+This fixture runs a descriptor-checking worker only. It does not open an RPC or
+node, construct or submit semantic tag 14, classify finality, or move funds.
+The real lifecycle route must still spawn/reap InvokeOnce, handle a bounded
+typed worker result, classify ObserveOnly from external evidence, and reconcile
+workflow success. Literal M5 remains 4 of 7; the current milestone-tag ETA is
+2 to 5 focused implementation hours.
+
 The monitor starts no LEZ or Monero node, opens no chain RPC, uses no Docker
 service, faucet, funds, DNS, public network, peer, or finality service, and
 does not need Delivery or Chat. The fixed endpoint strings require no listener,

@@ -5178,3 +5178,57 @@ all-pair/concurrency/composite/tag gates remain open.
 No lifecycle route, RPC, node, or effect is added by this checkpoint. Literal
 M5 remains 4 of 7. ETA remains 2.5 to 5.5 focused implementation hours to the
 M5 tag, subject to fresh-node runtime and final composite review.
+
+### XMR role-fixed invocation preparation checkpoint (2026-08-02)
+
+The schema-v3 execution loader now retains the immutable effect-authority
+SHA-256 and exact initialized workflow identity with the fully validated
+authority. This removes path/digest reconstruction from the future route.
+
+`prepare_effect_invocation` has a closed six-slot sending allowlist:
+
+- Maker: Monero fund, LEZ tag-15 claim, and Monero refund sweep;
+- Taker: LEZ tag-14 authorize, Monero claim sweep, and LEZ tag-16 refund.
+
+Classifier, verifier, wrong-role, and other catalog steps cannot consume
+invocation authority through this boundary. The method selects the exact tool,
+computes a domain-separated plan digest, hash-pins the program, pins the runtime
+and ten secrets, validates the actor/adaptor and workflow locks against the
+loaded swap and exact state paths, and composes the complete FD 197..210 command
+before opening workflow v2 and calling `authorize_once`.
+
+This ordering protects Prepared: any corrupt program/input, wrong role, crossed
+lock, or command-composition failure occurs before the only CAS. A Prepared
+winner returns `InvokeOnce` with the owned Command and plan digest. Started or
+Unknown returns `ObserveOnly`; Succeeded returns `Complete`. Those latter
+results drop the already validated local command and expose only the same
+digest, so neither can send.
+
+The plan SHA-256 is domain-separated by
+`lez-xmr-effect-tool-plan-v1\0` and binds role, stable step name, fixed ABI,
+pinned program SHA-256, and exact effect-authority SHA-256. It is intentionally
+stable across restart and is suitable for workflow-v2 reconciliation identity;
+rotating credential contents are not misrepresented as part of that immutable
+tool-plan digest.
+
+The real schema-v3 Taker Tag14 process fixture proves:
+
+- corrupt named program bytes fail without moving Prepared;
+- the Maker tag-15 step fails under Taker authority;
+- the valid process receives exact FDs 197 through 210;
+- exactly one preparation returns InvokeOnce with a Command; and
+- reload returns ObserveOnly with no Command and the identical nonzero digest.
+
+This is process and authority evidence only. The fixture worker does not contact
+the LEZ sidecar and does not construct, sign, submit, or semantically classify a
+real tag-14 transaction.
+
+Remaining work is lifecycle composition around this boundary: spawn/reap the
+InvokeOnce command, interpret its bounded typed result, classify finalized LEZ
+or confirmed Monero evidence for ObserveOnly, reconcile success, and expose the
+Maker/Taker commands. Fresh two-devnet claim/refund plus final all-pair,
+concurrency, composite, review, and tag gates remain.
+
+No lifecycle route, RPC, node, or semantic chain effect is added. Literal M5
+remains 4 of 7. The current 2 to 5 focused-hour ETA remains subject to
+fresh-node runtime and final composite review.

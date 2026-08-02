@@ -417,6 +417,19 @@ application actual-chain coordinator concurrency/restart isolation including
 proof that unavailable XMR does not stall BTC/ZEC. See the
 [daemon-supervisor certification packet](docs/evidence/m5-zec-daemon-supervisor-certification-20260731.json).
 
+The current XMR schema-v3 execution boundary now selects only the six
+role-fixed sending slots and pins the exact executable, runtime, ten secrets,
+actor lock, workflow lock, and FD 197..210 child map before consuming the
+workflow-v2 one-attempt CAS. Only the Prepared winner receives a Command;
+Started/Unknown and Succeeded replay return a stable plan digest without any
+send-capable process. A genuine signed Stage-A/B Taker fixture proves corrupt
+program and wrong-role failures do not burn Prepared, the Tag14 child receives
+the exact descriptor ABI once, and restart is ObserveOnly. This checkpoint
+uses temporary local files/processes only: no RPC listener, node, Docker
+service, faucet, DNS, public network, funds, or finality wait participates, so
+it proves process authority rather than semantic Tag14 chain behavior. M5
+remains 4 of 7; the current tag ETA is 2 to 5 focused implementation hours.
+
 Those historical runs are not evidence of the current receipt-bound claim route.
 The current M5 working tree also contains an intervention-assisted actual-node
 one-leg recovery checkpoint. In isolated run

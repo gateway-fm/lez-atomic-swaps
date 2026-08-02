@@ -170,6 +170,46 @@ pub struct XmrEffectProvisionV3 {
     workflow_journal: PathBuf,
 }
 
+/// Semantically validated schema-v3 authority ready for one workflow route.
+#[must_use]
+pub struct ValidatedXmrEffectExecutionV3 {
+    pub(crate) effect: ValidatedXmrEffectAuthorityV1,
+    pub(crate) workflow_identity: XmrWorkflowIdentityV1,
+    pub(crate) effect_authority_sha256: [u8; 32],
+}
+
+impl fmt::Debug for ValidatedXmrEffectExecutionV3 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValidatedXmrEffectExecutionV3")
+            .field("effect", &self.effect)
+            .field("workflow_identity", &self.workflow_identity)
+            .field(
+                "effect_authority_sha256",
+                &hex::encode(self.effect_authority_sha256),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl ValidatedXmrEffectExecutionV3 {
+    /// Fully validated role-fixed effect authority.
+    pub const fn effect_authority(&self) -> &ValidatedXmrEffectAuthorityV1 {
+        &self.effect
+    }
+
+    /// Exact durable workflow identity reconstructed from schema v3.
+    pub const fn workflow_identity(&self) -> &XmrWorkflowIdentityV1 {
+        &self.workflow_identity
+    }
+
+    /// SHA-256 of the exact immutable effect-authority bytes.
+    #[must_use]
+    pub const fn effect_authority_sha256(&self) -> [u8; 32] {
+        self.effect_authority_sha256
+    }
+}
+
 impl XmrEffectProvisionV3 {
     /// Whether an existing byte-identical schema-v3 manifest was reused.
     #[must_use]
@@ -1490,6 +1530,27 @@ pub fn load_validated_xmr_effect_manifest_v3_bytes(
     expected_role: ActorRole,
     expected_run_id: &str,
 ) -> Result<ValidatedXmrEffectAuthorityV1> {
+    Ok(load_validated_xmr_effect_execution_v3_bytes(
+        manifest_bytes,
+        effect_authority_bytes,
+        expected_role,
+        expected_run_id,
+    )?
+    .effect)
+}
+
+/// Fully validates schema-v3 authority and retains its workflow identity.
+///
+/// # Errors
+///
+/// Rejects every condition rejected by
+/// `load_validated_xmr_effect_manifest_v3_bytes`.
+pub fn load_validated_xmr_effect_execution_v3_bytes(
+    manifest_bytes: &[u8],
+    effect_authority_bytes: &[u8],
+    expected_role: ActorRole,
+    expected_run_id: &str,
+) -> Result<ValidatedXmrEffectExecutionV3> {
     let manifest = parse_effect_manifest_config_bytes(manifest_bytes, expected_role)?;
     ensure!(
         manifest.run_id == expected_run_id,
@@ -1527,7 +1588,11 @@ pub fn load_validated_xmr_effect_manifest_v3_bytes(
     workflow
         .validate_initialized(&identity)
         .context("bind schema-v3 XMR workflow identity")?;
-    Ok(effect)
+    Ok(ValidatedXmrEffectExecutionV3 {
+        effect,
+        workflow_identity: identity,
+        effect_authority_sha256,
+    })
 }
 
 /// Publishes one canonical owner-private schema-v3 manifest without clobbering.
