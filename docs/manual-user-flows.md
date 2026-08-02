@@ -6505,10 +6505,66 @@ writable executable fails closed.
 
 This is a library-level execution primitive, not a user-flow effect. Neither
 `lez-taker monitor` nor its rejected `claim`/`refund` routes invoke it.
-Before enabling effects, the lifecycle implementation must bind the remaining
-runtime, capability, and credential inputs; map both application locks into the
-child alongside FD 197; add complete workflow reconciliation; and compose the
-actual Maker/Taker routes.
+
+The follow-on workflow-v2 developer checkpoint defines all eight external
+effects without enabling those routes:
+
+| Scope | Fixed role and effect |
+|---|---|
+| Common | Taker Initialize LEZ tag 13 |
+| Common | Taker Fund LEZ tag 13 |
+| Common | Maker Fund Monero |
+| Claim | Taker Authorize LEZ tag 14 |
+| Claim | Maker Claim LEZ tag 15 |
+| Claim | Taker Sweep Monero Claim |
+| Refund | Taker Refund LEZ tag 16 |
+| Refund | Maker Sweep Monero Refund |
+
+Schema v2 rejects a schema-v1 journal. Role-local predecessor success gates
+preparation, and all Common rows for the local role must exist before the
+Claim/Refund branch CAS. Exactly one Prepared-to-Started winner receives
+`InvokeOnce`; reopened Started or Unknown rows return `ObserveOnly`.
+These gates are role-local and do not prove global or cross-role ordering; the
+future route must bind finalized external evidence before satisfying a
+counterparty-dependent transition. Success can be recorded only with nonzero
+canonical effect-evidence and exact
+tool-plan SHA-256 values plus a LEZ-finalized or Monero-wallet source. Exact
+replay is accepted and any digest/source drift or legacy evidence-free
+`mark_succeeded` is rejected.
+
+The dual-lock command maps the already sealed program to FD 197, the exact
+actor/adaptor-state lock to FD 198, and a distinct workflow lock to FD 199 in
+one operation. It rejects descriptor collisions, aliased or crossed-swap lock
+files, named/inode drift, and unsafe lock-root changes before spawn. The child
+keeps both locks until it exits and is reaped.
+
+Repeat this node-free checkpoint from the repository root:
+
+```bash
+cargo +1.96.0 test --locked -p lez-swap-store \
+  --test maker_actor_process \
+  --test xmr_effect_workflow_concurrency \
+  --test xmr_effect_workflow_hardening \
+  --test xmr_effect_workflow_journal \
+  --test xmr_effect_workflow_v2
+```
+
+Expected results are maker process 17/17, concurrency 2/2, hardening 1/1,
+restart/no-rearm regression 1/1, and workflow v2 3/3. The complete package check is:
+
+```bash
+cargo +1.96.0 test --locked -p lez-swap-store --all-targets
+```
+
+No LEZ or Monero node, chain RPC, Docker service, faucet, DNS, public network,
+peer, or funds participates in these tests. They use private temporary files
+and local child processes; contention or heavy host scheduling can extend them.
+
+Before enabling effects, the lifecycle implementation must still bind runtime,
+capability, and credential inputs at use; derive exact classifier/wallet
+reconciliation evidence; and compose the actual Maker/Taker routes through
+workflow v2, cancellation, and child reap. This manual checkpoint is not an
+actual claim or refund.
 
 The monitor starts no LEZ or Monero node, opens no chain RPC, uses no Docker
 service, faucet, funds, DNS, public network, peer, or finality service, and

@@ -39,7 +39,7 @@ identity, run, and role. Locked monitor is implemented and performs no RPC or
 chain effect; receipt v1 remains monitor-only, while claim/refund still reject.
 Typed tool/RPC execution, at-use hashes, full workflow reconciliation, child
 lock custody, Maker effects, and actual-runner proof remain open. Literal M5
-stays 4/7; ETA remains 4 to 8 focused implementation hours.
+stays 4/7; ETA remains 3 to 7 focused implementation hours.
 
 M5 typed-plan/sealed-executable checkpoint (2026-08-02): both role-fixed
 authorities now expose typed LEZ runtime/capability identity, four typed Monero
@@ -54,7 +54,25 @@ are GREEN. No lifecycle route invokes the primitive. Credential and
 runtime/capability use-time custody, complete workflow/reconciliation, dual-lock
 child inheritance, Maker/Taker effect composition, and fresh two-devnet proof
 remain open. No RPC or external runtime resource participated. Literal M5
-stays 4/7; ETA remains 4 to 8 focused implementation hours.
+stays 4/7; ETA remains 3 to 7 focused implementation hours.
+
+M5 workflow-v2/dual-lock checkpoint (2026-08-02): schema v2 rejects v1 and
+validates every durable row against an eight-step role/scope catalog. Role-local
+predecessors and Common-before-branch gates pass, but do not prove cross-role
+or global ordering; routes must bind finalized external evidence. One
+Prepared-to-Started winner
+gets InvokeOnce while Started/Unknown replay is ObserveOnly. Succeeded requires
+nonzero canonical effect-evidence and exact tool-plan SHA-256 values plus a
+LEZ-finalized or Monero-wallet source; exact replay passes and drift or legacy
+evidence-free success fails closed. One command mapping now carries sealed
+program FD 197, actor/state lock FD 198, and distinct workflow lock FD 199;
+alias, collision, cross-swap, root, and identity drift fail before spawn, and the child holds
+both locks through reap. Focused suites are GREEN at maker process 17/17, workflow
+concurrency 2/2, hardening 1/1, restart/no-rearm regression 1/1, and workflow v2 3/3. The full
+`lez-swap-store --all-targets` suite, strict Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN. No
+lifecycle route executes this boundary and no RPC, node, or external runtime
+resource participated. Literal M5 stays 4/7; ETA remains 3 to 7 focused
+implementation hours.
 
 Evidence correction recorded 2026-07-30: retained M4 run `m4cert20260722an` and M5 run `m5-xmr-app-20260730-2c6aec1-h` prove finalized LEZ effects, adaptor extraction, shared-key reconstruction, a confirmed Monero sweep, binding, and exact cleanup. A role audit proved their runner used provisioner funding, a Taker-hosted shared wallet, and a Maker sweep destination. Those runs no longer certify role-correct user economics. The code now enforces Maker funding and claim mining, a neutral provisioner shared-wallet RPC, and a Taker claim destination; a fresh role-correct claim replay remains separate and the historical evidence is unchanged. Authenticated tag-16 Taker prepare, aggregate completion, transaction-derived one-attempt submission, finalized Maker discovery, Maker ingestion/extraction, role-correct Maker recovery sweep, and the conditional refund binder became component-GREEN. Ambiguous submission is sticky across restart without resend and refund classification enforces `[refund_at, punish_at)`. Diagnostic run `m5xmrrefund8c10cd7a` proved read-only polling could not advance an idle local finalized clock; the later exact run below supersedes this historical refund-replay-open status.
 
@@ -127,7 +145,7 @@ component-certified.
 The progressive local ZEC and exact pushed BTC application PoC gates are closed,
 the exact pushed XMR claim and refund corridors are clean-certified, and exact
 pushed run `m5zec432dapp1` certifies the daemon-driven ZEC deadline/cutover
-output. Literal M5 completion is 4 of 7. The milestone-tag ETA is 4 to 8
+output. Literal M5 completion is 4 of 7. The milestone-tag ETA is 3 to 7
 focused implementation hours and is updated after every push. The remaining
 outputs are Maker full supported-pair lifecycle, Taker full supported-pair
 lifecycle, and coordinator accepted-application actual-chain

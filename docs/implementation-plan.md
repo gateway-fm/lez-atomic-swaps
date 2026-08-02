@@ -4874,7 +4874,7 @@ Maker/Taker lifecycle. The next implementation order is:
 4. close the all-pair lifecycle and accepted-application concurrency outputs,
    run the composite gates, tag, and push.
 
-Updated estimate is 4 to 8 focused implementation hours to the M5 tag, subject
+Updated estimate is 3 to 7 focused implementation hours to the M5 tag, subject
 to the measured fresh-node cycles and final composite review.
 
 ### XMR receipt-v2 and locked-monitor checkpoint (2026-08-02)
@@ -4900,7 +4900,7 @@ plus official Monero Regtest runner proof. The complete all-pair Maker CLI,
 Taker CLI, and accepted-application concurrency/restart outputs then require
 their composite proof and review.
 
-Literal M5 remains 4 of 7. ETA remains 4 to 8 focused implementation hours to
+Literal M5 remains 4 of 7. ETA remains 3 to 7 focused implementation hours to
 the M5 tag, subject to fresh-node runtime and the final composite gates.
 
 ### XMR typed effect plan and sealed-executable checkpoint (2026-08-02)
@@ -4967,3 +4967,69 @@ No route executes a typed tool at this checkpoint, and claim/refund retain
 their existing fail-closed behavior. Literal M5 remains 4 of 7. ETA remains 4
 to 8 focused implementation hours to the M5 tag, subject to fresh-node runtime
 and the final composite gates.
+
+### XMR workflow-v2 and dual-lock checkpoint (2026-08-02)
+
+The next RED replaces the two-step schema-v1 prototype with a closed schema-v2
+external-effect catalog. Existing-open requires version 2 and rejects version 1
+rather than migrating or reinterpreting it. The eight fixed entries are Taker
+Initialize LEZ tag 13, Taker Fund LEZ tag 13, Maker Fund Monero, Taker
+Authorize LEZ tag 14, Maker Claim LEZ tag 15, Taker Sweep Monero Claim, Taker
+Refund LEZ tag 16, and Maker Sweep Monero Refund. The first three have Common
+scope, the next three Claim scope, and the last two Refund scope. Every stored
+row is re-parsed and checked against the fixed role and scope whenever storage
+is opened or revalidated.
+
+Preparation enforces role-local succeeded predecessors. Taker LEZ funding
+follows initialization; tag 14 and tag 16 follow LEZ funding; Maker tag 15 and
+the Maker refund sweep follow Monero funding; and the Taker claim sweep follows
+tag 14. Every local Common row must be Prepared or later before the irreversible
+Claim/Refund branch CAS. Branch-specific preparation then requires the selected
+branch and its predecessor. These are role-local gates, not proof of global or
+cross-role order; the route must bind finalized LEZ or confirmed Monero wallet
+evidence before satisfying a counterparty-dependent transition.
+
+The only `Prepared -> Started` CAS returns `InvokeOnce`.
+`Started` and `Unknown` return `ObserveOnly` after restart or contention
+and can never be rearmed. The old evidence-free `mark_succeeded` API now
+always rejects. Only `reconcile_succeeded` can move Started or Unknown to
+Succeeded, and it atomically binds nonzero canonical effect-evidence SHA-256,
+nonzero exact tool-plan SHA-256, and either `lez_finalized_event` or
+`monero_wallet_transaction`. Exact replay succeeds without mutation; any
+evidence, plan, or source drift fails closed.
+
+The sealed-command boundary now accepts two distinct already-held locks. It
+revalidates both named/device/inode identities, rejects lock aliases and
+descriptor collisions, and installs the sealed executable as FD 197, the
+actor/adaptor-state lock as FD 198, and the workflow lock as FD 199 in one
+descriptor mapping. The spawned child retains both kernel locks until it exits
+and is reaped, so neither can be acquired through a competing process during
+the effect lifetime. Changed, crossed-swap, aliased, or unsafe-root locks fail before spawn.
+
+Focused evidence is GREEN:
+
+- maker-process command and custody suite: 17 of 17;
+- concurrent workflow authority: 2 of 2;
+- workflow storage hardening: 1 of 1;
+- restart/no-rearm regression: 1 of 1; and
+- workflow-v2 catalog and reconciliation: 3 of 3.
+
+The full `lez-swap-store --all-targets` suite, strict all-target/all-feature
+Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN.
+
+This checkpoint performs no node or RPC operation and does not compose a chain
+effect. No Maker or Taker lifecycle route invokes the workflow-v2 executor or
+dual-lock command yet. Remaining work is:
+
+1. securely bind the LEZ runtime/capability and RPC credential bytes at use;
+2. derive canonical effect evidence and the exact tool-plan digest from the
+   role-fixed classifier/wallet observation;
+3. compose the Maker and receipt-v2 Taker routes through workflow v2, sealed
+   execution, dual-lock child custody, cancellation, and reap;
+4. run role-correct claim and refund through fresh isolated LEZ v0.2 and
+   official Monero Regtest nodes; and
+5. close the all-pair lifecycle and accepted-application concurrency outputs,
+   composite gates, review, tag, and push.
+
+Literal M5 remains 4 of 7. ETA remains 3 to 7 focused implementation hours to
+the M5 tag, subject to fresh-node runtime and final composite review.

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    os::unix::fs::{PermissionsExt as _, symlink},
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Barrier},
@@ -11,10 +11,11 @@ use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, RecoverySchedule, SwapCoordinator,
     SwapDirection, SwapId, TimelockSafety,
 };
+use lez_swap_store::MAKER_ACTOR_LOCK_FD;
 use lez_swap_store::{
     MakerActorArtifacts, MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1,
     MakerActorLeaseOwner, MakerActorManifestV1, MakerActorProcessError, MakerActorScheduleState,
-    SqliteSwapStore,
+    PINNED_EXECUTABLE_FD, PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, PinnedExecutable, SqliteSwapStore,
 };
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -709,6 +710,124 @@ fn unexpected_state_creation_after_binding_fails_closed() {
         artifacts.into_command(&held),
         Err(MakerActorProcessError::UnsafeArtifact)
     ));
+}
+
+#[test]
+fn pinned_executable_child_holds_distinct_actor_and_workflow_locks() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let program_path = root.path().join("dual-lock-probe");
+    let program = b"#!/bin/sh\nread inherited_lock_probe\n";
+    write_mode(&program_path, program, 0o700);
+    let swap_id = SwapId::new("xmr-dual-lock").unwrap();
+    let actor_state = root.path().join("actor-state.sqlite3");
+    let workflow_state = root.path().join("workflow.sqlite3");
+    let actor_lock = MakerActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap();
+    let workflow_lock = MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap();
+    let actor_lock_path = lock_path(&actor_state);
+    let workflow_lock_path = lock_path(&workflow_state);
+    let actor_identity = identity(&fs::metadata(&actor_lock_path).unwrap());
+    let workflow_identity = identity(&fs::metadata(&workflow_lock_path).unwrap());
+    assert_ne!(actor_identity, workflow_identity);
+
+    let executable = PinnedExecutable::open(&program_path, digest(program)).unwrap();
+    let mut command = executable
+        .into_command_with_locks(&actor_lock, &workflow_lock)
+        .unwrap();
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().unwrap();
+    let child_pid = child.id();
+    drop(command);
+    drop(actor_lock);
+    drop(workflow_lock);
+
+    assert_eq!(PINNED_EXECUTABLE_FD, 197);
+    assert_eq!(MAKER_ACTOR_LOCK_FD, 198);
+    assert_eq!(PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, 199);
+    let executable_identity =
+        identity(&fs::metadata(format!("/proc/{child_pid}/fd/{PINNED_EXECUTABLE_FD}")).unwrap());
+    let child_actor_identity =
+        identity(&fs::metadata(format!("/proc/{child_pid}/fd/{MAKER_ACTOR_LOCK_FD}")).unwrap());
+    let child_workflow_identity = identity(
+        &fs::metadata(format!(
+            "/proc/{child_pid}/fd/{PINNED_EXECUTABLE_WORKFLOW_LOCK_FD}"
+        ))
+        .unwrap(),
+    );
+    assert_eq!(child_actor_identity, actor_identity);
+    assert_eq!(child_workflow_identity, workflow_identity);
+    assert_ne!(executable_identity, child_actor_identity);
+    assert_ne!(executable_identity, child_workflow_identity);
+    assert_ne!(child_actor_identity, child_workflow_identity);
+    assert!(matches!(
+        MakerActorHeldLock::acquire_for(&swap_id, &actor_state),
+        Err(MakerActorProcessError::LockUnavailable)
+    ));
+    assert!(matches!(
+        MakerActorHeldLock::acquire_for(&swap_id, &workflow_state),
+        Err(MakerActorProcessError::LockUnavailable)
+    ));
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    drop(MakerActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
+    drop(MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
+}
+
+#[test]
+fn pinned_executable_rejects_one_lock_for_both_descriptor_roles() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let program_path = root.path().join("invalid-dual-lock-probe");
+    let program = b"#!/bin/sh\nexit 0\n";
+    write_mode(&program_path, program, 0o700);
+    let swap_id = SwapId::new("xmr-aliased-lock").unwrap();
+    let lock = MakerActorHeldLock::acquire_for(&swap_id, &root.path().join("actor-state.sqlite3"))
+        .unwrap();
+    let executable = PinnedExecutable::open(&program_path, digest(program)).unwrap();
+
+    assert!(matches!(
+        executable.into_command_with_locks(&lock, &lock),
+        Err(MakerActorProcessError::InvalidDescriptorMapping)
+    ));
+}
+
+#[test]
+fn pinned_executable_rejects_cross_swap_lock_composition() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let program_path = root.path().join("cross-swap-lock-probe");
+    let program = b"#!/bin/sh\nexit 0\n";
+    write_mode(&program_path, program, 0o700);
+    let actor_lock = MakerActorHeldLock::acquire_for(
+        &SwapId::new("xmr-swap-a").unwrap(),
+        &root.path().join("actor-a.sqlite3"),
+    )
+    .unwrap();
+    let workflow_lock = MakerActorHeldLock::acquire_for(
+        &SwapId::new("xmr-swap-b").unwrap(),
+        &root.path().join("workflow-b.sqlite3"),
+    )
+    .unwrap();
+    let executable = PinnedExecutable::open(&program_path, digest(program)).unwrap();
+
+    assert!(matches!(
+        executable.into_command_with_locks(&actor_lock, &workflow_lock),
+        Err(MakerActorProcessError::InvalidDescriptorMapping)
+    ));
+}
+
+fn lock_path(state_path: &Path) -> PathBuf {
+    let mut value = state_path.as_os_str().to_os_string();
+    value.push(".maker-actor.lock");
+    PathBuf::from(value)
+}
+
+fn identity(metadata: &fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
 }
 
 fn write_mode(path: &Path, bytes: &[u8], mode: u32) {

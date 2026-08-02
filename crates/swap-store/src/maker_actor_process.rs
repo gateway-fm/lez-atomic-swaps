@@ -40,6 +40,8 @@ pub const MAKER_ACTOR_PROGRAM_FD: i32 = 197;
 pub const MAKER_ACTOR_LOCK_FD: i32 = 198;
 /// Fixed child descriptor for one generic hash-pinned sealed executable.
 pub const PINNED_EXECUTABLE_FD: i32 = MAKER_ACTOR_PROGRAM_FD;
+/// Fixed child descriptor retaining a pinned executable workflow lock.
+pub const PINNED_EXECUTABLE_WORKFLOW_LOCK_FD: i32 = 199;
 
 /// Pair adapter executable used by one maker process record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -428,14 +430,46 @@ impl MakerActorHeldLock {
     }
 
     fn fd_mapping(&self) -> Result<FdMapping, MakerActorProcessError> {
+        self.fd_mapping_to(MAKER_ACTOR_LOCK_FD)
+    }
+
+    fn fd_mapping_to(&self, child_fd: i32) -> Result<FdMapping, MakerActorProcessError> {
+        if !matches!(
+            child_fd,
+            MAKER_ACTOR_LOCK_FD | PINNED_EXECUTABLE_WORKFLOW_LOCK_FD
+        ) {
+            return Err(MakerActorProcessError::InvalidDescriptorMapping);
+        }
         let descriptor = self
             .file
             .try_clone()
             .map_err(|_| MakerActorProcessError::LockInheritance)?;
         Ok(FdMapping {
             parent_fd: descriptor.into(),
-            child_fd: MAKER_ACTOR_LOCK_FD,
+            child_fd,
         })
+    }
+
+    fn validate_identity(&self) -> Result<(), MakerActorProcessError> {
+        let parent = self
+            .lock_path
+            .parent()
+            .ok_or(MakerActorProcessError::UnsafeLock)?;
+        validate_lock_root(parent)?;
+        validate_lock_file(&self.file, &self.lock_path)?;
+        let metadata = self
+            .file
+            .metadata()
+            .map_err(|_| MakerActorProcessError::UnsafeLock)?;
+        if metadata.dev() != self.device || metadata.ino() != self.inode {
+            return Err(MakerActorProcessError::LockMismatch);
+        }
+        validate_lock_root(parent)?;
+        validate_lock_file(&self.file, &self.lock_path)
+    }
+
+    fn aliases(&self, other: &Self) -> bool {
+        self.device == other.device && self.inode == other.inode
     }
 
     fn validate_for(
@@ -525,6 +559,48 @@ impl PinnedExecutable {
                 parent_fd: self.program.into(),
                 child_fd: PINNED_EXECUTABLE_FD,
             }])
+            .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+        Ok(command)
+    }
+
+    /// Consumes the sealed executable into a command holding two exact locks.
+    ///
+    /// The actor/state lock is inherited as child FD 198 and the distinct
+    /// workflow lock as child FD 199. The executable and both locks are
+    /// installed together so no later descriptor-mapping call can replace an
+    /// earlier mapping.
+    ///
+    /// # Errors
+    ///
+    /// Rejects changed or aliased locks, descriptor collisions, and mapping
+    /// failures before a child can be spawned.
+    pub fn into_command_with_locks(
+        self,
+        actor_lock: &MakerActorHeldLock,
+        workflow_lock: &MakerActorHeldLock,
+    ) -> Result<Command, MakerActorProcessError> {
+        actor_lock.validate_identity()?;
+        workflow_lock.validate_identity()?;
+        if actor_lock.swap_id != workflow_lock.swap_id
+            || actor_lock.aliases(workflow_lock)
+            || PINNED_EXECUTABLE_FD == MAKER_ACTOR_LOCK_FD
+            || PINNED_EXECUTABLE_FD == PINNED_EXECUTABLE_WORKFLOW_LOCK_FD
+            || MAKER_ACTOR_LOCK_FD == PINNED_EXECUTABLE_WORKFLOW_LOCK_FD
+        {
+            return Err(MakerActorProcessError::InvalidDescriptorMapping);
+        }
+        let actor_mapping = actor_lock.fd_mapping_to(MAKER_ACTOR_LOCK_FD)?;
+        let workflow_mapping = workflow_lock.fd_mapping_to(PINNED_EXECUTABLE_WORKFLOW_LOCK_FD)?;
+        let mut command = Command::new(format!("/proc/self/fd/{PINNED_EXECUTABLE_FD}"));
+        command
+            .fd_mappings(vec![
+                FdMapping {
+                    parent_fd: self.program.into(),
+                    child_fd: PINNED_EXECUTABLE_FD,
+                },
+                actor_mapping,
+                workflow_mapping,
+            ])
             .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
         Ok(command)
     }
@@ -1009,6 +1085,9 @@ pub enum MakerActorProcessError {
     /// Verified artifacts could not be sealed or mapped into one child.
     #[error("maker actor deployment artifacts could not be prepared")]
     ArtifactPreparation,
+    /// Child descriptor roles collide or refer to the same kernel lock.
+    #[error("maker actor child descriptor mapping is invalid")]
+    InvalidDescriptorMapping,
     /// Timestamp, child identity, limit, or failure class is invalid.
     #[error("maker actor scheduling input is invalid")]
     InvalidSchedulingInput,

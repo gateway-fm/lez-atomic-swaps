@@ -3,7 +3,7 @@ use std::{fs, os::unix::fs::PermissionsExt as _};
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{
     SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowDecision, XmrWorkflowIdentityV1,
-    XmrWorkflowStep,
+    XmrWorkflowReconciliationSource, XmrWorkflowReconciliationV2, XmrWorkflowStep,
 };
 use tempfile::tempdir;
 
@@ -45,14 +45,35 @@ fn started_or_unknown_xmr_workflow_step_is_never_reauthorized_after_reopen() {
         "read-only validation must reject any durable identity drift"
     );
     journal
+        .prepare_step(&identity, XmrWorkflowStep::FundMonero)
+        .expect("prepare Maker common Monero funding");
+    assert_eq!(
+        journal
+            .authorize_once(&identity, XmrWorkflowStep::FundMonero)
+            .expect("authorize common funding"),
+        XmrWorkflowDecision::InvokeOnce
+    );
+    journal
+        .reconcile_succeeded(
+            &identity,
+            XmrWorkflowStep::FundMonero,
+            &XmrWorkflowReconciliationV2::new(
+                [0x55; 32],
+                [0x56; 32],
+                XmrWorkflowReconciliationSource::MoneroWalletTransaction,
+            )
+            .expect("exact common funding evidence"),
+        )
+        .expect("complete common funding");
+    journal
         .select_branch(&identity, XmrWorkflowBranch::Claim)
         .expect("claim wins the branch CAS");
     journal
-        .prepare_step(&identity, XmrWorkflowStep::SubmitLezClaimTag15)
+        .prepare_step(&identity, XmrWorkflowStep::ClaimLezTag15)
         .expect("prepare the role-correct claim step");
     assert_eq!(
         journal
-            .authorize_once(&identity, XmrWorkflowStep::SubmitLezClaimTag15)
+            .authorize_once(&identity, XmrWorkflowStep::ClaimLezTag15)
             .expect("consume the only invocation authority"),
         XmrWorkflowDecision::InvokeOnce
     );
@@ -62,12 +83,12 @@ fn started_or_unknown_xmr_workflow_step_is_never_reauthorized_after_reopen() {
         SqliteXmrWorkflowJournal::open_existing(&database).expect("reopen started workflow");
     assert_eq!(
         journal
-            .authorize_once(&identity, XmrWorkflowStep::SubmitLezClaimTag15)
+            .authorize_once(&identity, XmrWorkflowStep::ClaimLezTag15)
             .expect("started step becomes observation-only"),
         XmrWorkflowDecision::ObserveOnly
     );
     journal
-        .mark_unknown(&identity, XmrWorkflowStep::SubmitLezClaimTag15)
+        .mark_unknown(&identity, XmrWorkflowStep::ClaimLezTag15)
         .expect("record ambiguous process or transport outcome");
     drop(journal);
 
@@ -75,7 +96,7 @@ fn started_or_unknown_xmr_workflow_step_is_never_reauthorized_after_reopen() {
         SqliteXmrWorkflowJournal::open_existing(&database).expect("reopen unknown workflow");
     assert_eq!(
         journal
-            .authorize_once(&identity, XmrWorkflowStep::SubmitLezClaimTag15)
+            .authorize_once(&identity, XmrWorkflowStep::ClaimLezTag15)
             .expect("unknown step remains observation-only"),
         XmrWorkflowDecision::ObserveOnly
     );
@@ -87,7 +108,7 @@ fn started_or_unknown_xmr_workflow_step_is_never_reauthorized_after_reopen() {
     );
     assert!(
         journal
-            .prepare_step(&identity, XmrWorkflowStep::SubmitLezRefundTag16)
+            .prepare_step(&identity, XmrWorkflowStep::RefundLezTag16)
             .is_err(),
         "Maker authority must not prepare the Taker-only tag-16 refund step"
     );

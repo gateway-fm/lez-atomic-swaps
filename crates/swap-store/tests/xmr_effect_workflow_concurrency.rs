@@ -8,7 +8,8 @@ use std::{
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{
     SqliteXmrWorkflowJournal, StoreError, XmrWorkflowBranch, XmrWorkflowDecision,
-    XmrWorkflowIdentityV1, XmrWorkflowStep,
+    XmrWorkflowIdentityV1, XmrWorkflowReconciliationSource, XmrWorkflowReconciliationV2,
+    XmrWorkflowStep,
 };
 use tempfile::tempdir;
 
@@ -72,10 +73,31 @@ fn concurrent_authorization_returns_exactly_one_invoke_once() {
     let mut setup = SqliteXmrWorkflowJournal::create_new(&path).expect("create workflow authority");
     setup.initialize(&identity).expect("bind identity");
     setup
+        .prepare_step(&identity, XmrWorkflowStep::FundMonero)
+        .expect("prepare common funding");
+    assert_eq!(
+        setup
+            .authorize_once(&identity, XmrWorkflowStep::FundMonero)
+            .expect("authorize common funding"),
+        XmrWorkflowDecision::InvokeOnce
+    );
+    setup
+        .reconcile_succeeded(
+            &identity,
+            XmrWorkflowStep::FundMonero,
+            &XmrWorkflowReconciliationV2::new(
+                [0x91; 32],
+                [0x92; 32],
+                XmrWorkflowReconciliationSource::MoneroWalletTransaction,
+            )
+            .expect("exact common evidence"),
+        )
+        .expect("complete common funding");
+    setup
         .select_branch(&identity, XmrWorkflowBranch::Claim)
         .expect("select claim");
     setup
-        .prepare_step(&identity, XmrWorkflowStep::SubmitLezClaimTag15)
+        .prepare_step(&identity, XmrWorkflowStep::ClaimLezTag15)
         .expect("prepare exact step");
     drop(setup);
 
@@ -90,7 +112,7 @@ fn concurrent_authorization_returns_exactly_one_invoke_once() {
                     SqliteXmrWorkflowJournal::open_existing(path).expect("open contender");
                 barrier.wait();
                 journal
-                    .authorize_once(&identity, XmrWorkflowStep::SubmitLezClaimTag15)
+                    .authorize_once(&identity, XmrWorkflowStep::ClaimLezTag15)
                     .expect("reconcile contender")
             })
         })

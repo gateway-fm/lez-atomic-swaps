@@ -42,12 +42,13 @@ pub use btc_recovery::{
     BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome, SqliteBtcRecoveryStore,
 };
 pub use maker_actor_process::{
-    MAKER_ACTOR_CONFIG_FD, MakerActorArtifacts, MakerActorAttemptResolution, MakerActorHeldLock,
-    MakerActorKindV1, MakerActorLeaseOwner, MakerActorLeaseV1, MakerActorManifestV1,
-    MakerActorManualAction, MakerActorManualActionCommit, MakerActorManualActionSnapshot,
-    MakerActorManualActionState, MakerActorMonitorSnapshotV1, MakerActorProcessError,
-    MakerActorProcessRecordV1, MakerActorProgressObservationV1, MakerActorProgressSnapshotV1,
-    MakerActorRegistrationCommit, MakerActorScheduleState, PINNED_EXECUTABLE_FD, PinnedExecutable,
+    MAKER_ACTOR_CONFIG_FD, MAKER_ACTOR_LOCK_FD, MakerActorArtifacts, MakerActorAttemptResolution,
+    MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner, MakerActorLeaseV1,
+    MakerActorManifestV1, MakerActorManualAction, MakerActorManualActionCommit,
+    MakerActorManualActionSnapshot, MakerActorManualActionState, MakerActorMonitorSnapshotV1,
+    MakerActorProcessError, MakerActorProcessRecordV1, MakerActorProgressObservationV1,
+    MakerActorProgressSnapshotV1, MakerActorRegistrationCommit, MakerActorScheduleState,
+    PINNED_EXECUTABLE_FD, PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, PinnedExecutable,
     validate_maker_actor_program,
 };
 pub use maker_application::{
@@ -69,7 +70,8 @@ pub use public_effect_journal::{
 };
 pub use xmr_effect_workflow_journal::{
     SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowDecision, XmrWorkflowIdentityV1,
-    XmrWorkflowStep,
+    XmrWorkflowReconciliationSource, XmrWorkflowReconciliationV2, XmrWorkflowStep,
+    XmrWorkflowStepScope,
 };
 pub use zec_recovery::{
     MakerZecAcceptanceCommit, MakerZecAcceptanceReplay, SqliteZecRecoveryStore,
@@ -453,6 +455,9 @@ pub enum StoreError {
     /// An XMR workflow identity is empty, malformed, or unsafe.
     #[error("XMR effect workflow identity is invalid")]
     InvalidXmrWorkflowIdentity,
+    /// XMR external-effect evidence or tool-plan identity is invalid.
+    #[error("XMR effect workflow reconciliation is invalid")]
+    InvalidXmrWorkflowReconciliation,
     /// Immutable XMR workflow identity, branch, step, or transition state conflicts.
     #[error("XMR effect workflow conflicts with durable authority")]
     XmrWorkflowConflict,

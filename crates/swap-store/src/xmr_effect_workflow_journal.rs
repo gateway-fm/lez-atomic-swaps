@@ -17,7 +17,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension as _, TransactionBehavio
 use crate::{StoreError, participant_name};
 
 const APPLICATION_ID: i64 = 0x4c58_5752;
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const MAX_RUN_ID_BYTES: usize = 128;
 
 const CREATE_SCHEMA: &str = "
@@ -36,10 +36,14 @@ CREATE TABLE xmr_workflow_identity (
     )
 ) STRICT;
 CREATE TABLE xmr_workflow_steps (
-    step TEXT PRIMARY KEY,
+    step TEXT PRIMARY KEY CHECK (step IN (
+        'initialize_lez_tag13', 'fund_lez_tag13', 'fund_monero',
+        'authorize_lez_tag14', 'claim_lez_tag15', 'sweep_monero_claim',
+        'refund_lez_tag16', 'sweep_monero_refund'
+    )),
     singleton_id INTEGER NOT NULL CHECK (singleton_id = 1),
     local_role TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
-    branch TEXT NOT NULL CHECK (branch IN ('claim', 'refund')),
+    scope TEXT NOT NULL CHECK (scope IN ('common', 'claim', 'refund')),
     state TEXT NOT NULL CHECK (
         state IN ('prepared', 'started', 'succeeded', 'unknown')
     ),
@@ -47,7 +51,24 @@ CREATE TABLE xmr_workflow_steps (
     revision INTEGER NOT NULL CHECK (
         (state = 'prepared' AND attempt_count = 0 AND revision = 0)
         OR (state = 'started' AND attempt_count = 1 AND revision = 1)
-        OR (state IN ('succeeded', 'unknown') AND attempt_count = 1 AND revision = 2)
+        OR (state = 'unknown' AND attempt_count = 1 AND revision = 2)
+        OR (state = 'succeeded' AND attempt_count = 1 AND revision IN (2, 3))
+    ),
+    effect_evidence_sha256 BLOB,
+    tool_plan_identity_sha256 BLOB,
+    reconciliation_source TEXT CHECK (reconciliation_source IN (
+        'lez_finalized_event', 'monero_wallet_transaction'
+    )),
+    CHECK (
+        (state != 'succeeded'
+         AND effect_evidence_sha256 IS NULL
+         AND tool_plan_identity_sha256 IS NULL
+         AND reconciliation_source IS NULL)
+        OR
+        (state = 'succeeded'
+         AND length(effect_evidence_sha256) = 32
+         AND length(tool_plan_identity_sha256) = 32
+         AND reconciliation_source IS NOT NULL)
     ),
     FOREIGN KEY (singleton_id) REFERENCES xmr_workflow_identity(singleton_id)
 ) STRICT, WITHOUT ROWID;
@@ -131,42 +152,216 @@ impl XmrWorkflowBranch {
     }
 }
 
-/// Fixed role-specific application step.
+/// Branch-neutral or terminal-branch scope of one effect.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
-pub enum XmrWorkflowStep {
-    /// Maker invokes sealed tag-15 LEZ claim authority.
-    SubmitLezClaimTag15,
-    /// Taker invokes sealed tag-16 LEZ refund authority.
-    SubmitLezRefundTag16,
+pub enum XmrWorkflowStepScope {
+    /// Effect required before either terminal branch.
+    Common,
+    /// Successful dual-reveal path.
+    Claim,
+    /// Deadline recovery path.
+    Refund,
 }
 
-impl XmrWorkflowStep {
+impl XmrWorkflowStepScope {
     const fn name(self) -> &'static str {
         match self {
-            Self::SubmitLezClaimTag15 => "submit_lez_claim_tag15",
-            Self::SubmitLezRefundTag16 => "submit_lez_refund_tag16",
-        }
-    }
-
-    const fn role(self) -> Participant {
-        match self {
-            Self::SubmitLezClaimTag15 => Participant::Maker,
-            Self::SubmitLezRefundTag16 => Participant::Taker,
-        }
-    }
-
-    const fn branch(self) -> XmrWorkflowBranch {
-        match self {
-            Self::SubmitLezClaimTag15 => XmrWorkflowBranch::Claim,
-            Self::SubmitLezRefundTag16 => XmrWorkflowBranch::Refund,
+            Self::Common => "common",
+            Self::Claim => "claim",
+            Self::Refund => "refund",
         }
     }
 
     fn parse(value: &str) -> Result<Self, StoreError> {
         match value {
-            "submit_lez_claim_tag15" => Ok(Self::SubmitLezClaimTag15),
-            "submit_lez_refund_tag16" => Ok(Self::SubmitLezRefundTag16),
+            "common" => Ok(Self::Common),
+            "claim" => Ok(Self::Claim),
+            "refund" => Ok(Self::Refund),
+            _ => Err(StoreError::CorruptXmrWorkflowState),
+        }
+    }
+
+    const fn branch(self) -> Option<XmrWorkflowBranch> {
+        match self {
+            Self::Common => None,
+            Self::Claim => Some(XmrWorkflowBranch::Claim),
+            Self::Refund => Some(XmrWorkflowBranch::Refund),
+        }
+    }
+}
+
+/// Durable source that proved an external XMR workflow effect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum XmrWorkflowReconciliationSource {
+    /// Finalized LEZ event with the exact expected transaction/effect identity.
+    LezFinalizedEvent,
+    /// Confirmed Monero wallet transaction recovered from exact wallet history.
+    MoneroWalletTransaction,
+}
+
+impl XmrWorkflowReconciliationSource {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::LezFinalizedEvent => "lez_finalized_event",
+            Self::MoneroWalletTransaction => "monero_wallet_transaction",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, StoreError> {
+        match value {
+            "lez_finalized_event" => Ok(Self::LezFinalizedEvent),
+            "monero_wallet_transaction" => Ok(Self::MoneroWalletTransaction),
+            _ => Err(StoreError::CorruptXmrWorkflowState),
+        }
+    }
+}
+
+/// Exact persisted proof that one externally visible effect succeeded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrWorkflowReconciliationV2 {
+    effect_evidence_sha256: [u8; 32],
+    tool_plan_identity_sha256: [u8; 32],
+    source: XmrWorkflowReconciliationSource,
+}
+
+impl XmrWorkflowReconciliationV2 {
+    /// Constructs nonzero effect and tool-plan evidence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an all-zero evidence or tool-plan identity digest.
+    pub fn new(
+        effect_evidence_sha256: [u8; 32],
+        tool_plan_identity_sha256: [u8; 32],
+        source: XmrWorkflowReconciliationSource,
+    ) -> Result<Self, StoreError> {
+        if effect_evidence_sha256.iter().all(|byte| *byte == 0)
+            || tool_plan_identity_sha256.iter().all(|byte| *byte == 0)
+        {
+            return Err(StoreError::InvalidXmrWorkflowReconciliation);
+        }
+        Ok(Self {
+            effect_evidence_sha256,
+            tool_plan_identity_sha256,
+            source,
+        })
+    }
+
+    /// Digest of canonical external-effect evidence.
+    #[must_use]
+    pub const fn effect_evidence_sha256(&self) -> [u8; 32] {
+        self.effect_evidence_sha256
+    }
+
+    /// Digest of the exact role-fixed tool plan used for the effect.
+    #[must_use]
+    pub const fn tool_plan_identity_sha256(&self) -> [u8; 32] {
+        self.tool_plan_identity_sha256
+    }
+
+    /// External authority used to reconcile the effect.
+    pub const fn source(&self) -> XmrWorkflowReconciliationSource {
+        self.source
+    }
+}
+
+/// Fixed role-specific application step.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum XmrWorkflowStep {
+    /// Taker initializes the LEZ tag-13 escrow.
+    InitializeLezTag13,
+    /// Taker funds the initialized LEZ tag-13 escrow.
+    FundLezTag13,
+    /// Maker funds the exact shared Monero output.
+    FundMonero,
+    /// Taker publishes the LEZ tag-14 claim authorization.
+    AuthorizeLezTag14,
+    /// Maker publishes the LEZ tag-15 claim.
+    ClaimLezTag15,
+    /// Taker sweeps the claim-path shared Monero output.
+    SweepMoneroClaim,
+    /// Taker publishes the LEZ tag-16 refund.
+    RefundLezTag16,
+    /// Maker sweeps the refund-path shared Monero output.
+    SweepMoneroRefund,
+}
+
+impl XmrWorkflowStep {
+    /// Complete stable effect-step catalog in protocol order.
+    pub const ALL: [Self; 8] = [
+        Self::InitializeLezTag13,
+        Self::FundLezTag13,
+        Self::FundMonero,
+        Self::AuthorizeLezTag14,
+        Self::ClaimLezTag15,
+        Self::SweepMoneroClaim,
+        Self::RefundLezTag16,
+        Self::SweepMoneroRefund,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::InitializeLezTag13 => "initialize_lez_tag13",
+            Self::FundLezTag13 => "fund_lez_tag13",
+            Self::FundMonero => "fund_monero",
+            Self::AuthorizeLezTag14 => "authorize_lez_tag14",
+            Self::ClaimLezTag15 => "claim_lez_tag15",
+            Self::SweepMoneroClaim => "sweep_monero_claim",
+            Self::RefundLezTag16 => "refund_lez_tag16",
+            Self::SweepMoneroRefund => "sweep_monero_refund",
+        }
+    }
+
+    /// Exact role allowed to invoke this effect.
+    #[must_use]
+    pub const fn role(self) -> Participant {
+        match self {
+            Self::FundMonero | Self::ClaimLezTag15 | Self::SweepMoneroRefund => Participant::Maker,
+            Self::InitializeLezTag13
+            | Self::FundLezTag13
+            | Self::AuthorizeLezTag14
+            | Self::SweepMoneroClaim
+            | Self::RefundLezTag16 => Participant::Taker,
+        }
+    }
+
+    /// Branch-neutral or terminal-branch scope.
+    pub const fn scope(self) -> XmrWorkflowStepScope {
+        match self {
+            Self::InitializeLezTag13 | Self::FundLezTag13 | Self::FundMonero => {
+                XmrWorkflowStepScope::Common
+            }
+            Self::AuthorizeLezTag14 | Self::ClaimLezTag15 | Self::SweepMoneroClaim => {
+                XmrWorkflowStepScope::Claim
+            }
+            Self::RefundLezTag16 | Self::SweepMoneroRefund => XmrWorkflowStepScope::Refund,
+        }
+    }
+
+    const fn predecessor(self) -> Option<Self> {
+        match self {
+            Self::InitializeLezTag13 | Self::FundMonero => None,
+            Self::FundLezTag13 => Some(Self::InitializeLezTag13),
+            Self::AuthorizeLezTag14 | Self::RefundLezTag16 => Some(Self::FundLezTag13),
+            Self::ClaimLezTag15 | Self::SweepMoneroRefund => Some(Self::FundMonero),
+            Self::SweepMoneroClaim => Some(Self::AuthorizeLezTag14),
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, StoreError> {
+        match value {
+            "initialize_lez_tag13" => Ok(Self::InitializeLezTag13),
+            "fund_lez_tag13" => Ok(Self::FundLezTag13),
+            "fund_monero" => Ok(Self::FundMonero),
+            "authorize_lez_tag14" => Ok(Self::AuthorizeLezTag14),
+            "claim_lez_tag15" => Ok(Self::ClaimLezTag15),
+            "sweep_monero_claim" => Ok(Self::SweepMoneroClaim),
+            "refund_lez_tag16" => Ok(Self::RefundLezTag16),
+            "sweep_monero_refund" => Ok(Self::SweepMoneroRefund),
             _ => Err(StoreError::CorruptXmrWorkflowState),
         }
     }
@@ -203,11 +398,12 @@ impl StepState {
         }
     }
 
-    const fn terminal_name(self) -> Option<&'static str> {
+    const fn name(self) -> &'static str {
         match self {
-            Self::Succeeded => Some("succeeded"),
-            Self::Unknown => Some("unknown"),
-            Self::Prepared | Self::Started => None,
+            Self::Prepared => "prepared",
+            Self::Started => "started",
+            Self::Succeeded => "succeeded",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -215,10 +411,11 @@ impl StepState {
 struct StepSnapshot {
     step: XmrWorkflowStep,
     role: Participant,
-    branch: XmrWorkflowBranch,
+    scope: XmrWorkflowStepScope,
     state: StepState,
     attempts: u32,
     revision: u64,
+    reconciliation: Option<XmrWorkflowReconciliationV2>,
 }
 
 /// SQLite-backed role-local XMR workflow journal.
@@ -349,7 +546,8 @@ impl SqliteXmrWorkflowJournal {
     ///
     /// # Errors
     ///
-    /// The losing branch or identity drift fails closed.
+    /// The losing branch, identity drift, or an incomplete common-step plan
+    /// fails closed.
     pub fn select_branch(
         &mut self,
         identity: &XmrWorkflowIdentityV1,
@@ -364,6 +562,7 @@ impl SqliteXmrWorkflowJournal {
         ensure_identity(identity, &durable)?;
         match (selected, revision) {
             (None, 0) => {
+                ensure_common_prepared(&transaction, identity.local_role)?;
                 let changed = transaction.execute(
                     "UPDATE xmr_workflow_identity
                      SET selected_branch = ?1, revision = 1
@@ -383,11 +582,11 @@ impl SqliteXmrWorkflowJournal {
         self.revalidate_storage()
     }
 
-    /// Prepares a fixed role/branch step without invoking it.
+    /// Prepares a fixed role/scope step without invoking it.
     ///
     /// # Errors
     ///
-    /// Wrong role, branch, identity, or durable state fails closed.
+    /// Wrong role, scope, predecessor, identity, or durable state fails closed.
     pub fn prepare_step(
         &mut self,
         identity: &XmrWorkflowIdentityV1,
@@ -398,19 +597,22 @@ impl SqliteXmrWorkflowJournal {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_branch(&transaction, identity, step.branch())?;
         if let Some(snapshot) = load_step(&transaction, step)? {
             validate_step(identity, step, &snapshot)?;
         } else {
+            ensure_scope(&transaction, identity, step.scope())?;
+            ensure_predecessor(&transaction, step)?;
             transaction.execute(
                 "INSERT INTO xmr_workflow_steps (
-                     step, singleton_id, local_role, branch,
-                     state, attempt_count, revision
-                 ) VALUES (?1, 1, ?2, ?3, 'prepared', 0, 0)",
+                     step, singleton_id, local_role, scope,
+                     state, attempt_count, revision,
+                     effect_evidence_sha256, tool_plan_identity_sha256,
+                     reconciliation_source
+                 ) VALUES (?1, 1, ?2, ?3, 'prepared', 0, 0, NULL, NULL, NULL)",
                 params![
                     step.name(),
                     participant_name(identity.local_role),
-                    step.branch().name(),
+                    step.scope().name(),
                 ],
             )?;
         }
@@ -433,7 +635,7 @@ impl SqliteXmrWorkflowJournal {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_branch(&transaction, identity, step.branch())?;
+        ensure_scope(&transaction, identity, step.scope())?;
         let snapshot = load_step(&transaction, step)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
         validate_step(identity, step, &snapshot)?;
         let decision = match snapshot.state {
@@ -468,55 +670,131 @@ impl SqliteXmrWorkflowJournal {
         identity: &XmrWorkflowIdentityV1,
         step: XmrWorkflowStep,
     ) -> Result<(), StoreError> {
-        self.finish(identity, step, StepState::Unknown)
-    }
-
-    /// Marks exact external reconciliation complete.
-    ///
-    /// # Errors
-    ///
-    /// Only Started may advance; exact Succeeded replay is idempotent.
-    pub fn mark_succeeded(
-        &mut self,
-        identity: &XmrWorkflowIdentityV1,
-        step: XmrWorkflowStep,
-    ) -> Result<(), StoreError> {
-        self.finish(identity, step, StepState::Succeeded)
-    }
-
-    fn finish(
-        &mut self,
-        identity: &XmrWorkflowIdentityV1,
-        step: XmrWorkflowStep,
-        target: StepState,
-    ) -> Result<(), StoreError> {
         ensure_step_role(identity, step)?;
         self.revalidate_storage()?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_branch(&transaction, identity, step.branch())?;
+        ensure_scope(&transaction, identity, step.scope())?;
         let snapshot = load_step(&transaction, step)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
         validate_step(identity, step, &snapshot)?;
-        if snapshot.state == StepState::Started {
-            let target_name = target
-                .terminal_name()
-                .ok_or(StoreError::XmrWorkflowConflict)?;
-            let changed = transaction.execute(
-                "UPDATE xmr_workflow_steps
-                 SET state = ?1, revision = 2
-                 WHERE step = ?2 AND state = 'started'
-                   AND attempt_count = 1 AND revision = 1",
-                params![target_name, step.name()],
-            )?;
-            if changed != 1 {
+        match snapshot.state {
+            StepState::Started => {
+                let changed = transaction.execute(
+                    "UPDATE xmr_workflow_steps
+                     SET state = 'unknown', revision = 2
+                     WHERE step = ?1 AND state = 'started'
+                       AND attempt_count = 1 AND revision = 1",
+                    [step.name()],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::XmrWorkflowConflict);
+                }
+            }
+            StepState::Unknown => {}
+            StepState::Prepared | StepState::Succeeded => {
                 return Err(StoreError::XmrWorkflowConflict);
             }
-        } else if snapshot.state != target {
-            return Err(StoreError::XmrWorkflowConflict);
         }
         transaction.commit()?;
         self.revalidate_storage()
+    }
+
+    /// Rejects the legacy evidence-free success transition.
+    ///
+    /// # Errors
+    ///
+    /// Schema v2 requires `reconcile_succeeded` with exact evidence.
+    pub fn mark_succeeded(
+        &mut self,
+        identity: &XmrWorkflowIdentityV1,
+        step: XmrWorkflowStep,
+    ) -> Result<(), StoreError> {
+        ensure_step_role(identity, step)?;
+        Err(StoreError::XmrWorkflowConflict)
+    }
+
+    /// Reconciles Started or Unknown to Succeeded with exact durable evidence.
+    ///
+    /// # Errors
+    ///
+    /// Missing, invalid, or drifted evidence and any crossed state fail closed.
+    pub fn reconcile_succeeded(
+        &mut self,
+        identity: &XmrWorkflowIdentityV1,
+        step: XmrWorkflowStep,
+        reconciliation: &XmrWorkflowReconciliationV2,
+    ) -> Result<(), StoreError> {
+        ensure_step_role(identity, step)?;
+        validate_reconciliation(reconciliation)?;
+        self.revalidate_storage()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_scope(&transaction, identity, step.scope())?;
+        let snapshot = load_step(&transaction, step)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
+        validate_step(identity, step, &snapshot)?;
+        match snapshot.state {
+            StepState::Started | StepState::Unknown => {
+                let expected_revision = i64::try_from(snapshot.revision)
+                    .map_err(|_| StoreError::CorruptXmrWorkflowState)?;
+                let next_revision: i64 = if snapshot.state == StepState::Started {
+                    2
+                } else {
+                    3
+                };
+                let changed = transaction.execute(
+                    "UPDATE xmr_workflow_steps
+                     SET state = 'succeeded', revision = ?1,
+                         effect_evidence_sha256 = ?2,
+                         tool_plan_identity_sha256 = ?3,
+                         reconciliation_source = ?4
+                     WHERE step = ?5 AND state = ?6
+                       AND attempt_count = 1 AND revision = ?7
+                       AND effect_evidence_sha256 IS NULL
+                       AND tool_plan_identity_sha256 IS NULL
+                       AND reconciliation_source IS NULL",
+                    params![
+                        next_revision,
+                        reconciliation.effect_evidence_sha256.as_slice(),
+                        reconciliation.tool_plan_identity_sha256.as_slice(),
+                        reconciliation.source.name(),
+                        step.name(),
+                        snapshot.state.name(),
+                        expected_revision,
+                    ],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::XmrWorkflowConflict);
+                }
+            }
+            StepState::Succeeded if snapshot.reconciliation.as_ref() == Some(reconciliation) => {}
+            StepState::Prepared | StepState::Succeeded => {
+                return Err(StoreError::XmrWorkflowConflict);
+            }
+        }
+        transaction.commit()?;
+        self.revalidate_storage()
+    }
+
+    /// Loads exact persisted reconciliation evidence for one step.
+    ///
+    /// # Errors
+    ///
+    /// Missing, crossed, or corrupt durable state fails closed.
+    pub fn load_reconciliation(
+        &self,
+        identity: &XmrWorkflowIdentityV1,
+        step: XmrWorkflowStep,
+    ) -> Result<Option<XmrWorkflowReconciliationV2>, StoreError> {
+        ensure_step_role(identity, step)?;
+        self.revalidate_storage()?;
+        ensure_scope(&self.connection, identity, step.scope())?;
+        let snapshot =
+            load_step(&self.connection, step)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
+        validate_step(identity, step, &snapshot)?;
+        self.revalidate_storage()?;
+        Ok(snapshot.reconciliation)
     }
 
     fn revalidate_storage(&self) -> Result<(), StoreError> {
@@ -601,7 +879,8 @@ fn validate_connection(connection: &Connection) -> Result<(), StoreError> {
     {
         return Err(StoreError::CorruptXmrWorkflowState);
     }
-    validate_identity_count(connection)
+    validate_identity_count(connection)?;
+    validate_all_steps(connection)
 }
 
 fn normalized_schema_sql(value: &str) -> String {
@@ -676,7 +955,9 @@ fn load_step(
 ) -> Result<Option<StepSnapshot>, StoreError> {
     let raw = connection
         .query_row(
-            "SELECT step, local_role, branch, state, attempt_count, revision
+            "SELECT step, local_role, scope, state, attempt_count, revision,
+                    effect_evidence_sha256, tool_plan_identity_sha256,
+                    reconciliation_source
              FROM xmr_workflow_steps WHERE step = ?1",
             [expected.name()],
             |row| {
@@ -687,26 +968,51 @@ fn load_step(
                     row.get::<_, String>(3)?,
                     row.get::<_, i64>(4)?,
                     row.get::<_, i64>(5)?,
+                    row.get::<_, Option<Vec<u8>>>(6)?,
+                    row.get::<_, Option<Vec<u8>>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
                 ))
             },
         )
         .optional()?;
-    let Some((step, role, branch, state, attempts, revision)) = raw else {
+    let Some((step, role, scope, state, attempts, revision, effect, tool, source)) = raw else {
         return Ok(None);
+    };
+    let reconciliation = match (effect, tool, source) {
+        (None, None, None) => None,
+        (Some(effect), Some(tool), Some(source)) => Some(
+            XmrWorkflowReconciliationV2::new(
+                digest(effect)?,
+                digest(tool)?,
+                XmrWorkflowReconciliationSource::parse(&source)?,
+            )
+            .map_err(|_| StoreError::CorruptXmrWorkflowState)?,
+        ),
+        _ => return Err(StoreError::CorruptXmrWorkflowState),
     };
     let snapshot = StepSnapshot {
         step: XmrWorkflowStep::parse(&step)?,
         role: parse_role(&role)?,
-        branch: XmrWorkflowBranch::parse(&branch)?,
+        scope: XmrWorkflowStepScope::parse(&scope)?,
         state: StepState::parse(&state)?,
         attempts: u32::try_from(attempts).map_err(|_| StoreError::CorruptXmrWorkflowState)?,
         revision: u64::try_from(revision).map_err(|_| StoreError::CorruptXmrWorkflowState)?,
+        reconciliation,
     };
     let shape = match snapshot.state {
-        StepState::Prepared => snapshot.attempts == 0 && snapshot.revision == 0,
-        StepState::Started => snapshot.attempts == 1 && snapshot.revision == 1,
-        StepState::Succeeded | StepState::Unknown => {
-            snapshot.attempts == 1 && snapshot.revision == 2
+        StepState::Prepared => {
+            snapshot.attempts == 0 && snapshot.revision == 0 && snapshot.reconciliation.is_none()
+        }
+        StepState::Started => {
+            snapshot.attempts == 1 && snapshot.revision == 1 && snapshot.reconciliation.is_none()
+        }
+        StepState::Unknown => {
+            snapshot.attempts == 1 && snapshot.revision == 2 && snapshot.reconciliation.is_none()
+        }
+        StepState::Succeeded => {
+            snapshot.attempts == 1
+                && matches!(snapshot.revision, 2 | 3)
+                && snapshot.reconciliation.is_some()
         }
     };
     if !shape {
@@ -715,18 +1021,68 @@ fn load_step(
     Ok(Some(snapshot))
 }
 
-fn ensure_branch(
+fn ensure_scope(
     connection: &Connection,
     identity: &XmrWorkflowIdentityV1,
-    expected: XmrWorkflowBranch,
+    expected: XmrWorkflowStepScope,
 ) -> Result<(), StoreError> {
     let (durable, branch, revision) =
         load_identity(connection)?.ok_or(StoreError::MissingXmrWorkflowIdentity)?;
     ensure_identity(identity, &durable)?;
-    if branch != Some(expected) || revision != 1 {
-        return Err(StoreError::XmrWorkflowConflict);
+    let valid = match expected.branch() {
+        None => matches!((branch, revision), (None, 0) | (Some(_), 1)),
+        Some(expected_branch) => branch == Some(expected_branch) && revision == 1,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(StoreError::XmrWorkflowConflict)
+    }
+}
+
+fn ensure_common_prepared(connection: &Connection, role: Participant) -> Result<(), StoreError> {
+    let expected: &[XmrWorkflowStep] = match role {
+        Participant::Maker => &[XmrWorkflowStep::FundMonero],
+        Participant::Taker => &[
+            XmrWorkflowStep::InitializeLezTag13,
+            XmrWorkflowStep::FundLezTag13,
+        ],
+    };
+    for step in expected {
+        let snapshot = load_step(connection, *step)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
+        if snapshot.role != role || snapshot.scope != XmrWorkflowStepScope::Common {
+            return Err(StoreError::CorruptXmrWorkflowState);
+        }
     }
     Ok(())
+}
+
+fn ensure_predecessor(connection: &Connection, step: XmrWorkflowStep) -> Result<(), StoreError> {
+    let Some(predecessor) = step.predecessor() else {
+        return Ok(());
+    };
+    let snapshot = load_step(connection, predecessor)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
+    if snapshot.state == StepState::Succeeded {
+        Ok(())
+    } else {
+        Err(StoreError::XmrWorkflowConflict)
+    }
+}
+
+fn validate_reconciliation(reconciliation: &XmrWorkflowReconciliationV2) -> Result<(), StoreError> {
+    if reconciliation
+        .effect_evidence_sha256
+        .iter()
+        .all(|byte| *byte == 0)
+        || reconciliation
+            .tool_plan_identity_sha256
+            .iter()
+            .all(|byte| *byte == 0)
+    {
+        Err(StoreError::InvalidXmrWorkflowReconciliation)
+    } else {
+        Ok(())
+    }
 }
 
 fn ensure_identity(
@@ -761,7 +1117,7 @@ fn validate_step(
     if snapshot.step == expected
         && snapshot.role == identity.local_role
         && snapshot.role == expected.role()
-        && snapshot.branch == expected.branch()
+        && snapshot.scope == expected.scope()
     {
         Ok(())
     } else {
@@ -797,6 +1153,29 @@ fn validate_identity_count(connection: &Connection) -> Result<(), StoreError> {
     } else {
         Err(StoreError::CorruptXmrWorkflowState)
     }
+}
+
+fn validate_all_steps(connection: &Connection) -> Result<(), StoreError> {
+    let durable = load_identity(connection)?.map(|(identity, _, _)| identity);
+    let mut statement = connection.prepare("SELECT step FROM xmr_workflow_steps ORDER BY step")?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !names.is_empty() && durable.is_none() {
+        return Err(StoreError::CorruptXmrWorkflowState);
+    }
+    for name in names {
+        let step = XmrWorkflowStep::parse(&name)?;
+        let snapshot = load_step(connection, step)?.ok_or(StoreError::CorruptXmrWorkflowState)?;
+        validate_step(
+            durable
+                .as_ref()
+                .ok_or(StoreError::CorruptXmrWorkflowState)?,
+            step,
+            &snapshot,
+        )?;
+    }
+    Ok(())
 }
 
 fn parse_role(value: &str) -> Result<Participant, StoreError> {
