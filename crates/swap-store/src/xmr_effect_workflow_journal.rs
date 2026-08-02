@@ -303,7 +303,9 @@ impl XmrWorkflowStep {
         Self::SweepMoneroRefund,
     ];
 
-    const fn name(self) -> &'static str {
+    /// Stable lowercase name used by durable state and effect-worker ABIs.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
         match self {
             Self::InitializeLezTag13 => "initialize_lez_tag13",
             Self::FundLezTag13 => "fund_lez_tag13",
@@ -712,6 +714,33 @@ impl SqliteXmrWorkflowJournal {
     ) -> Result<(), StoreError> {
         ensure_step_role(identity, step)?;
         Err(StoreError::XmrWorkflowConflict)
+    }
+
+    /// Validates that one exact effect may be observed without resubmission.
+    ///
+    /// This read-only boundary accepts only `Started` or `Unknown`. A
+    /// `Prepared` step has not consumed invocation authority, while a
+    /// `Succeeded` step is already reconciled; neither may start an observer.
+    ///
+    /// # Errors
+    ///
+    /// Wrong role, branch scope, identity, step state, or corrupt storage
+    /// fails closed. This method never changes durable workflow state.
+    pub fn validate_observation_eligible(
+        &self,
+        identity: &XmrWorkflowIdentityV1,
+        step: XmrWorkflowStep,
+    ) -> Result<(), StoreError> {
+        ensure_step_role(identity, step)?;
+        self.revalidate_storage()?;
+        ensure_scope(&self.connection, identity, step.scope())?;
+        let snapshot =
+            load_step(&self.connection, step)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
+        validate_step(identity, step, &snapshot)?;
+        if !matches!(snapshot.state, StepState::Started | StepState::Unknown) {
+            return Err(StoreError::XmrWorkflowConflict);
+        }
+        self.revalidate_storage()
     }
 
     /// Reconciles Started or Unknown to Succeeded with exact durable evidence.

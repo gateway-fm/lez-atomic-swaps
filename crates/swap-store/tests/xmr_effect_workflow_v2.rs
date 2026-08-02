@@ -374,6 +374,72 @@ fn started_and_unknown_reconcile_once_with_exact_persisted_v2_evidence() {
 }
 
 #[test]
+fn observation_eligibility_is_read_only_and_accepts_only_started_or_unknown() {
+    let root = private_root();
+    let byte = 0x65;
+    let path = root.path().join(format!("workflow-{byte:02x}.sqlite3"));
+    let (mut journal, workflow_identity) = create(root.path(), Participant::Taker, byte);
+    let step = XmrWorkflowStep::InitializeLezTag13;
+    journal.prepare_step(&workflow_identity, step).unwrap();
+
+    let prepared = fs::read(&path).unwrap();
+    assert!(
+        journal
+            .validate_observation_eligible(&workflow_identity, step)
+            .is_err(),
+        "Prepared has not consumed invocation authority"
+    );
+    assert_eq!(fs::read(&path).unwrap(), prepared);
+
+    assert_eq!(
+        journal.authorize_once(&workflow_identity, step).unwrap(),
+        XmrWorkflowDecision::InvokeOnce
+    );
+    let started = fs::read(&path).unwrap();
+    journal
+        .validate_observation_eligible(&workflow_identity, step)
+        .expect("Started may be observed without resubmission");
+    assert_eq!(fs::read(&path).unwrap(), started);
+
+    journal.mark_unknown(&workflow_identity, step).unwrap();
+    let unknown = fs::read(&path).unwrap();
+    journal
+        .validate_observation_eligible(&workflow_identity, step)
+        .expect("Unknown may be observed without resubmission");
+    assert_eq!(fs::read(&path).unwrap(), unknown);
+
+    let crossed = identity(Participant::Taker, byte.wrapping_add(1));
+    assert!(
+        journal
+            .validate_observation_eligible(&crossed, step)
+            .is_err()
+    );
+    assert!(
+        journal
+            .validate_observation_eligible(&workflow_identity, XmrWorkflowStep::FundMonero)
+            .is_err(),
+        "wrong-role observer selection fails closed"
+    );
+    assert_eq!(fs::read(&path).unwrap(), unknown);
+
+    journal
+        .reconcile_succeeded(
+            &workflow_identity,
+            step,
+            &evidence(0x75, XmrWorkflowReconciliationSource::LezFinalizedEvent),
+        )
+        .unwrap();
+    let succeeded = fs::read(&path).unwrap();
+    assert!(
+        journal
+            .validate_observation_eligible(&workflow_identity, step)
+            .is_err(),
+        "Succeeded is already reconciled"
+    );
+    assert_eq!(fs::read(&path).unwrap(), succeeded);
+}
+
+#[test]
 fn schema_v2_rejects_legacy_headers_and_any_exact_schema_tampering() {
     let root = private_root();
     let legacy = root.path().join("legacy-v1.sqlite3");

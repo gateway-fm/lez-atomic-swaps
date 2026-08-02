@@ -5243,23 +5243,39 @@ under separate actor/adaptor-state and workflow locks. It selects only Taker
 The first valid call wins the durable Prepared-to-Started CAS, spawns exactly
 one hash-pinned child, waits at most 30 seconds, and reaps it. Successful marker
 output is schema 3 `invoked_unreconciled`, with the stable nonzero plan digest
-and `chain_effect_finalized:false`. Restart/replay returns `observe_only` with
-the identical digest and no second child. Spawn, wait, timeout, or nonzero-exit
-ambiguity records sticky `Unknown`, so replay cannot rearm. Once Claim wins,
-the losing Refund branch fails closed before tool invocation.
+and `chain_effect_finalized:false`; the workflow remains Started.
+
+The second claim starts no sender. It pins the role-fixed finalized classifier,
+pins the same runtime, secrets, and locks, derives the original sending-plan
+identity rather than an observer-plan identity, and exact-compares it before
+execution. Only Started or Unknown is observation-eligible; Prepared and
+Succeeded reject this boundary. The strict parser bounds output, requires the
+parent-selected exact step, accepts only pending without evidence or finalized
+with a nonzero canonical evidence digest, and has no source field. Role and
+step locally select `lez_finalized_event` or
+`monero_wallet_transaction`.
+
+The fixture classifier returns finalized Tag14 marker evidence. The CLI
+atomically reconciles the exact evidence digest, original sending-plan digest,
+and locally derived source to Succeeded, then emits `complete` with
+`chain_effect_finalized:true`. A third claim returns the same Complete state
+without sender or observer. Observer spawn, wait, timeout, exit, bounded-read,
+parse, plan, evidence, or reconciliation failure makes no journal mutation.
+Sending ambiguity remains sticky Unknown and never rearms. Once Claim wins, the
+losing Refund branch fails closed before tool invocation.
 
 The exact real Maker-daemon/Delivery/Chat black-box case is GREEN 1 of 1 in
-124.23 seconds. It withdraws Delivery and stops Chat with the daemon before the
-lifecycle action, then proves first claim, restart/replay, losing refund,
-digest stability, marker stability, and unchanged accepted artifacts. No LEZ
-or Monero node, RPC listener, Docker service, faucet, DNS, peer, public network,
-or funds participated.
+133.16 seconds. It withdraws Delivery and stops Chat with the daemon before the
+lifecycle actions, then proves first invocation, second-call observation and
+reconciliation, third-call Complete replay, losing refund, digest stability,
+marker stability, and unchanged accepted artifacts. The focused effect-route
+suite is GREEN 5 of 5; strict Clippy and warning-fatal Rustdoc are GREEN.
 
-This checkpoint is deliberately unreconciled. Its child is a descriptor marker,
-not the semantic Tag14 transaction worker; no transaction is constructed or
-submitted, no chain evidence is classified, and no workflow success is
-reconciled. Remaining M5 work is the semantic worker and finalized
-evidence/reconciliation, the other role-fixed Maker/Taker actions, fresh
-isolated two-devnet composition where required, accepted-application
-concurrency/restart/unavailable-node isolation, and final review/tag gates.
-Literal M5 remains 4 of 7.
+This is a process-component checkpoint. Its sender and classifier are fixed
+local markers, not semantic Tag14 or finalized-chain workers; no transaction is
+constructed or submitted, no RPC or node is opened, and the stored evidence is
+not on-chain proof. Remaining M5 work is semantic workers and real finalized
+evidence, the other role-fixed Maker/Taker actions, and literal outputs 5/7
+Maker lifecycle, 6/7 Taker lifecycle, and 7/7 accepted-application
+concurrency/restart/unavailable-XMR isolation, followed by final review/tag
+gates. Literal M5 remains 4 of 7.

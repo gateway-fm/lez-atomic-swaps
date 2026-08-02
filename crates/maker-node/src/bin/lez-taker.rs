@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::Stdio, str::FromStr as _, time::Duration};
+use std::{io::Read as _, path::PathBuf, process::Stdio, str::FromStr as _, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use btc_reference_actor::{
@@ -11,15 +11,16 @@ use lez_maker_node::{DeliveryOfferQueryV1, RunLocalDelivery};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    MakerActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, XmrWorkflowStep,
-    maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
+    MakerActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, XmrWorkflowReconciliationV2,
+    XmrWorkflowStep, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
 };
 use secp256k1::PublicKey;
 use serde::Serialize;
 use wait_timeout::ChildExt as _;
 use xmr_reference_actor::{
-    ValidatedXmrEffectExecutionV3, XmrPreparedEffectInvocationV1,
-    load_validated_xmr_taker_authority_bytes,
+    ValidatedXmrEffectExecutionV3, XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverStateV1,
+    XmrPreparedEffectInvocationV1, load_validated_xmr_taker_authority_bytes,
+    parse_xmr_effect_observer_result_v1,
 };
 use zec_reference_actor::{
     ActorCommand as ZecActorCommand, ActorConfig, ActorRole, execute_actor_command,
@@ -992,7 +993,10 @@ fn execute_xmr_taker_effect(
             mut command,
             tool_plan_identity_sha256,
         } => {
-            command.stdout(Stdio::null()).stderr(Stdio::null());
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
             let Ok(mut child) = command.spawn() else {
                 mark_xmr_effect_unknown(execution, step)?;
                 return Err(anyhow::anyhow!("XMR Taker effect invocation is ambiguous"));
@@ -1020,7 +1024,13 @@ fn execute_xmr_taker_effect(
         }
         XmrPreparedEffectInvocationV1::ObserveOnly {
             tool_plan_identity_sha256,
-        } => ("observe_only", tool_plan_identity_sha256, false),
+        } => observe_xmr_taker_effect(
+            execution,
+            step,
+            tool_plan_identity_sha256,
+            state_lock,
+            workflow_lock,
+        )?,
         XmrPreparedEffectInvocationV1::Complete {
             tool_plan_identity_sha256,
         } => ("complete", tool_plan_identity_sha256, true),
@@ -1040,6 +1050,89 @@ fn execute_xmr_taker_effect(
         })?
     );
     Ok(())
+}
+
+fn observe_xmr_taker_effect(
+    execution: &ValidatedXmrEffectExecutionV3,
+    step: XmrWorkflowStep,
+    expected_plan: [u8; 32],
+    state_lock: &MakerActorHeldLock,
+    workflow_lock: &MakerActorHeldLock,
+) -> anyhow::Result<(&'static str, [u8; 32], bool)> {
+    let prepared = execution
+        .prepare_effect_observation(step, state_lock, workflow_lock)
+        .map_err(|_| anyhow::anyhow!("XMR Taker effect observation is unavailable or unsafe"))?;
+    let (mut command, plan, source) = prepared.into_parts();
+    ensure!(
+        plan == expected_plan,
+        "XMR Taker effect observation plan changed"
+    );
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|_| anyhow::anyhow!("XMR Taker effect observation is unavailable"))?;
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(anyhow::anyhow!(
+            "XMR Taker effect observer output is unavailable"
+        ));
+    };
+    let status = match child.wait_timeout(Duration::from_secs(30)) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow::anyhow!("XMR Taker effect observation timed out"));
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow::anyhow!(
+                "XMR Taker effect observation is unavailable"
+            ));
+        }
+    };
+    ensure!(
+        status.success(),
+        "XMR Taker effect observation is unavailable"
+    );
+    let mut bytes = Vec::new();
+    stdout
+        .by_ref()
+        .take((XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .context("read XMR Taker effect observation")?;
+    ensure!(
+        bytes.len() <= XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES,
+        "XMR Taker effect observation is oversized"
+    );
+    let result = parse_xmr_effect_observer_result_v1(&bytes, step)
+        .map_err(|_| anyhow::anyhow!("XMR Taker effect observation is invalid"))?;
+    match result.state() {
+        XmrEffectObserverStateV1::Pending => Ok(("observe_only", plan, false)),
+        XmrEffectObserverStateV1::Finalized => {
+            let evidence = result
+                .effect_evidence_sha256()
+                .context("finalized XMR Taker effect lacks evidence")?;
+            let reconciliation = XmrWorkflowReconciliationV2::new(evidence, plan, source)
+                .map_err(|_| anyhow::anyhow!("XMR Taker effect evidence is invalid"))?;
+            let mut workflow = SqliteXmrWorkflowJournal::open_existing(
+                execution.effect_authority().workflow_journal(),
+            )
+            .map_err(|_| anyhow::anyhow!("XMR Taker workflow recovery is unavailable"))?;
+            workflow
+                .validate_initialized(execution.workflow_identity())
+                .map_err(|_| anyhow::anyhow!("XMR Taker workflow recovery identity changed"))?;
+            workflow
+                .reconcile_succeeded(execution.workflow_identity(), step, &reconciliation)
+                .map_err(|_| anyhow::anyhow!("XMR Taker effect reconciliation failed"))?;
+            Ok(("complete", plan, true))
+        }
+    }
 }
 
 fn mark_xmr_effect_unknown(

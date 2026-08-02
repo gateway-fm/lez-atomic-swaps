@@ -2318,29 +2318,32 @@ flowchart TB
     Receipt["Receipt v2"] --> Claim["lez-taker claim"]
     Claim --> Loader["Schema v3 execution loader"]
     Loader --> Selector["Taker Tag14 selector"]
-    Selector --> Pin["Hash pin tool runtime and ten secrets"]
-    Pin --> Locks["Validate actor and workflow locks"]
-    Locks --> Map["Compose FD map 197 through 210"]
-    Map --> Authorize["Workflow v2 durable CAS"]
-    Authorize --> Invoke["InvokeOnce"]
-    Authorize --> Observe["ObserveOnly or Complete"]
-    Invoke --> Child["Spawn wait and reap marker child"]
-    Child --> Unreconciled["invoked_unreconciled and finalized false"]
-    Observe --> NoChild["Stable digest and no child"]
-    Child -.-> Rpc["Future semantic LEZ or Monero RPC"]
+    Selector --> Pin["Hash pin runtime secrets and dual locks"]
+    Pin --> Authorize["Workflow v2 durable CAS"]
+    Authorize -->|Prepared| Invoke["InvokeOnce"]
+    Invoke --> Sender["Tag14 sender marker"]
+    Sender --> Started["Started and invoked unreconciled"]
+    Authorize -->|Started or Unknown| Observe["ObserveOnly"]
+    Observe --> Observer["Role fixed finalized observer"]
+    Observer --> Parser["Bounded exact Tag14 parser"]
+    Parser --> Reconcile["Exact plan and evidence reconciliation"]
+    Reconcile --> Succeeded["Succeeded and complete"]
+    Authorize -->|Succeeded| Complete["Complete with no process"]
+    Sender -.-> Rpc["Future semantic LEZ RPC"]
+    Observer -.-> Rpc
 ```
 
 Program, inputs, both locks, and the complete descriptor command are validated
 before `authorize_once`, so a corrupt path, wrong role, or crossed lock cannot
-burn Prepared. InvokeOnce alone returns a Command. Started/Unknown and Succeeded
-return ObserveOnly or Complete with the stable domain-separated plan digest and
-no Command. The real receipt-v2 CLI route invokes and reaps the marker child. Successful
-output remains `invoked_unreconciled` with false chain finality; replay is
-ObserveOnly with the same digest and no second child. Spawn, wait, 30-second
-timeout, and nonzero ambiguity become sticky Unknown and never rearm. The
-dashed RPC edge is not invoked: no semantic tag-14 construction, chain
-submission, node interaction, classifier, or reconciliation exists at this
-checkpoint.
+burn Prepared. InvokeOnce alone starts the sender and leaves Started. On the
+second claim, ObserveOnly starts only the role-fixed observer from Started or
+Unknown, exact-compares the original sending-plan identity, parses bounded
+step-exact output, locally derives the evidence source, and reconciles
+Succeeded. Prepared and Succeeded cannot start the observer; observer failure
+changes no journal state. The third claim reads Complete and starts no process.
+The solid route is fixed-local process evidence only. The dashed RPC edge is not
+invoked: no semantic tag-14 construction, chain submission, node interaction,
+or actual-chain finality proof exists at this checkpoint.
 
 #### Actual local components and RPCs
 

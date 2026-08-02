@@ -26,8 +26,9 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use xmr_reference_actor::{
-    ActorRole, ValidatedRolePacket, XmrPreparedEffectInvocationV1,
-    load_validated_xmr_effect_execution_v3_bytes, provision_xmr_taker_actor_from_material,
+    ActorRole, ValidatedRolePacket, XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverStateV1,
+    XmrPreparedEffectInvocationV1, load_validated_xmr_effect_execution_v3_bytes,
+    parse_xmr_effect_observer_result_v1, provision_xmr_taker_actor_from_material,
     publish_xmr_effect_manifest_v3,
 };
 
@@ -40,6 +41,16 @@ for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210; do
     test -e "/proc/self/fd/$fd"
 done
 test ! -e /proc/self/fd/211
+"#;
+const OBSERVER: &[u8] = br#"#!/bin/sh
+set -eu
+test "$#" -eq 2
+test "$1" = "--xmr-workflow-step"
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210; do
+    test -e "/proc/self/fd/$fd"
+done
+test ! -e /proc/self/fd/211
+printf '{"schema_version":1,"step":"%s","state":"pending"}\n' "$2"
 "#;
 
 #[derive(Serialize)]
@@ -645,6 +656,14 @@ fn effect_authority(
     activation: [u8; 32],
 ) -> Vec<u8> {
     let (runtime, capability, secrets) = write_effect_inputs(root);
+    let classifier = root.join("classifier");
+    let claim_sweep = root.join("claim-sweep");
+    let monero_verify = root.join("monero-verify");
+    let tag16_refund = root.join("tag16-refund");
+    write_private(&classifier, OBSERVER, 0o700);
+    write_private(&claim_sweep, WORKER, 0o700);
+    write_private(&monero_verify, OBSERVER, 0o700);
+    write_private(&tag16_refund, WORKER, 0o700);
     let rpc_at = |_name: &str, port: u16, index: usize| RpcFixture {
         url: format!("http://127.0.0.1:{port}/"),
         username_file: secrets[index].clone(),
@@ -687,22 +706,27 @@ fn effect_authority(
             finalized_classifier: tool(
                 root,
                 "classifier",
-                [0x86; 32],
+                Sha256::digest(OBSERVER).into(),
                 "lez_xmr_finalized_classifier_v1",
             ),
             monero_claim: tool(
                 root,
                 "claim-sweep",
-                [0x87; 32],
+                Sha256::digest(WORKER).into(),
                 "lez_xmr_monero_claim_sweep_v2",
             ),
             monero_verify: tool(
                 root,
                 "monero-verify",
-                [0x88; 32],
+                Sha256::digest(OBSERVER).into(),
                 "lez_xmr_monero_verify_v2",
             ),
-            tag16_refund: tool(root, "tag16-refund", [0x89; 32], "lez_xmr_tag16_refund_v1"),
+            tag16_refund: tool(
+                root,
+                "tag16-refund",
+                Sha256::digest(WORKER).into(),
+                "lez_xmr_tag16_refund_v1",
+            ),
         },
     };
     let mut bytes = serde_json::to_vec(&fixture).expect("serialize effect authority");
@@ -901,4 +925,257 @@ fn taker_tag14_effect_route_pins_before_authorizing_and_never_rearms() {
             panic!("started Tag14 must be observe-only and expose no command")
         }
     }
+}
+
+#[test]
+fn taker_observer_route_is_read_only_role_fixed_and_uses_sending_plan_identity() {
+    let fixture = route_fixture();
+    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+        .expect("acquire Taker state lock");
+    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+        .expect("acquire Taker workflow lock");
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Taker,
+        RUN_ID,
+    )
+    .expect("load executable schema-v3 authority");
+    let identity = execution.workflow_identity();
+    let tag14 = XmrWorkflowStep::AuthorizeLezTag14;
+
+    let prepared = fs::read(&fixture.workflow).unwrap();
+    assert!(
+        execution
+            .prepare_effect_observation(tag14, &actor_lock, &workflow_lock)
+            .is_err(),
+        "Prepared cannot start an observer"
+    );
+    assert_eq!(fs::read(&fixture.workflow).unwrap(), prepared);
+    let (mut sender, sending_plan) = match execution
+        .prepare_effect_invocation(tag14, &actor_lock, &workflow_lock)
+        .unwrap()
+    {
+        XmrPreparedEffectInvocationV1::InvokeOnce {
+            command,
+            tool_plan_identity_sha256,
+        } => (command, tool_plan_identity_sha256),
+        XmrPreparedEffectInvocationV1::ObserveOnly { .. }
+        | XmrPreparedEffectInvocationV1::Complete { .. } => {
+            panic!("Prepared Tag14 must grant invocation")
+        }
+    };
+    assert!(sender.status().unwrap().success());
+    let started = fs::read(&fixture.workflow).unwrap();
+    let preparation = execution
+        .prepare_effect_observation(tag14, &actor_lock, &workflow_lock)
+        .expect("Started Tag14 admits its classifier");
+    let (mut classifier_command, observed_plan, source) = preparation.into_parts();
+    assert_eq!(observed_plan, sending_plan);
+    assert_eq!(source, XmrWorkflowReconciliationSource::LezFinalizedEvent);
+    assert_observer_pending(&mut classifier_command, tag14);
+    assert_eq!(fs::read(&fixture.workflow).unwrap(), started);
+
+    let mut journal = SqliteXmrWorkflowJournal::open_existing(&fixture.workflow).unwrap();
+    journal.mark_unknown(identity, tag14).unwrap();
+    drop(journal);
+    let unknown = fs::read(&fixture.workflow).unwrap();
+    let (mut replay_command, replay_plan, replay_source) = execution
+        .prepare_effect_observation(tag14, &actor_lock, &workflow_lock)
+        .expect("Unknown Tag14 remains observation-only")
+        .into_parts();
+    assert_eq!(replay_plan, sending_plan);
+    assert_eq!(replay_source, source);
+    assert_observer_pending(&mut replay_command, tag14);
+    assert_eq!(fs::read(&fixture.workflow).unwrap(), unknown);
+
+    let classifier = fixture
+        .worker
+        .parent()
+        .expect("effect input root")
+        .join("classifier");
+    fs::write(&classifier, b"#!/bin/sh\nexit 99\n").unwrap();
+    assert!(
+        execution
+            .prepare_effect_observation(tag14, &actor_lock, &workflow_lock)
+            .is_err(),
+        "observer digest drift fails before journal eligibility"
+    );
+    assert_eq!(fs::read(&fixture.workflow).unwrap(), unknown);
+    fs::write(&classifier, OBSERVER).unwrap();
+
+    let exact = XmrWorkflowReconciliationV2::new(
+        [0xa4; 32],
+        sending_plan,
+        XmrWorkflowReconciliationSource::LezFinalizedEvent,
+    )
+    .unwrap();
+    let mut journal = SqliteXmrWorkflowJournal::open_existing(&fixture.workflow).unwrap();
+    journal
+        .reconcile_succeeded(identity, tag14, &exact)
+        .unwrap();
+    drop(journal);
+    let succeeded = fs::read(&fixture.workflow).unwrap();
+    assert!(
+        execution
+            .prepare_effect_observation(tag14, &actor_lock, &workflow_lock)
+            .is_err(),
+        "Succeeded cannot start another observer"
+    );
+    assert_eq!(fs::read(&fixture.workflow).unwrap(), succeeded);
+}
+
+#[test]
+fn taker_observer_rejects_maker_step_without_workflow_mutation() {
+    let fixture = route_fixture();
+    let actor_lock =
+        MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state).unwrap();
+    let workflow_lock =
+        MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow).unwrap();
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Taker,
+        RUN_ID,
+    )
+    .unwrap();
+    let before = fs::read(&fixture.workflow).unwrap();
+
+    assert!(
+        execution
+            .prepare_effect_observation(
+                XmrWorkflowStep::ClaimLezTag15,
+                &actor_lock,
+                &workflow_lock,
+            )
+            .is_err(),
+        "Taker authority cannot select a Maker observer route"
+    );
+    assert_eq!(fs::read(&fixture.workflow).unwrap(), before);
+}
+
+#[test]
+fn taker_monero_observer_uses_wallet_evidence_and_the_sending_plan() {
+    let fixture = route_fixture();
+    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+        .expect("acquire Taker state lock");
+    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+        .expect("acquire Taker workflow lock");
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Taker,
+        RUN_ID,
+    )
+    .expect("load executable schema-v3 authority");
+    let identity = execution.workflow_identity();
+    let tag14 = XmrWorkflowStep::AuthorizeLezTag14;
+    let tag14_plan = match execution
+        .prepare_effect_invocation(tag14, &actor_lock, &workflow_lock)
+        .unwrap()
+    {
+        XmrPreparedEffectInvocationV1::InvokeOnce {
+            mut command,
+            tool_plan_identity_sha256,
+        } => {
+            assert!(command.status().unwrap().success());
+            tool_plan_identity_sha256
+        }
+        XmrPreparedEffectInvocationV1::ObserveOnly { .. }
+        | XmrPreparedEffectInvocationV1::Complete { .. } => {
+            panic!("Prepared Tag14 must grant invocation")
+        }
+    };
+    let mut journal = SqliteXmrWorkflowJournal::open_existing(&fixture.workflow).unwrap();
+    journal
+        .reconcile_succeeded(
+            identity,
+            tag14,
+            &XmrWorkflowReconciliationV2::new(
+                [0xa4; 32],
+                tag14_plan,
+                XmrWorkflowReconciliationSource::LezFinalizedEvent,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let monero_step = XmrWorkflowStep::SweepMoneroClaim;
+    journal.prepare_step(identity, monero_step).unwrap();
+    drop(journal);
+    let (mut sender, monero_plan) = match execution
+        .prepare_effect_invocation(monero_step, &actor_lock, &workflow_lock)
+        .unwrap()
+    {
+        XmrPreparedEffectInvocationV1::InvokeOnce {
+            command,
+            tool_plan_identity_sha256,
+        } => (command, tool_plan_identity_sha256),
+        XmrPreparedEffectInvocationV1::ObserveOnly { .. }
+        | XmrPreparedEffectInvocationV1::Complete { .. } => {
+            panic!("Prepared Monero sweep must grant invocation")
+        }
+    };
+    assert!(sender.status().unwrap().success());
+    let (mut verifier, observed_monero_plan, monero_source) = execution
+        .prepare_effect_observation(monero_step, &actor_lock, &workflow_lock)
+        .expect("Started Monero sweep admits its verifier")
+        .into_parts();
+    assert_eq!(observed_monero_plan, monero_plan);
+    assert_eq!(
+        monero_source,
+        XmrWorkflowReconciliationSource::MoneroWalletTransaction
+    );
+    assert_observer_pending(&mut verifier, monero_step);
+}
+
+fn assert_observer_pending(command: &mut Command, step: XmrWorkflowStep) {
+    let output = command.output().expect("run sealed observer");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let result = parse_xmr_effect_observer_result_v1(&output.stdout, step).unwrap();
+    assert_eq!(result.step(), step);
+    assert_eq!(result.state(), XmrEffectObserverStateV1::Pending);
+    assert_eq!(result.effect_evidence_sha256(), None);
+}
+
+#[test]
+fn observer_result_parser_is_bounded_step_exact_and_source_free() {
+    let step = XmrWorkflowStep::AuthorizeLezTag14;
+    let pending = parse_xmr_effect_observer_result_v1(
+        br#"{"schema_version":1,"step":"authorize_lez_tag14","state":"pending"}"#,
+        step,
+    )
+    .unwrap();
+    assert_eq!(pending.state(), XmrEffectObserverStateV1::Pending);
+    assert_eq!(pending.effect_evidence_sha256(), None);
+
+    let finalized_bytes = format!(
+        r#"{{"schema_version":1,"step":"authorize_lez_tag14","state":"finalized","effect_evidence_sha256":"{}"}}"#,
+        "a5".repeat(32)
+    );
+    let finalized = parse_xmr_effect_observer_result_v1(finalized_bytes.as_bytes(), step).unwrap();
+    assert_eq!(finalized.state(), XmrEffectObserverStateV1::Finalized);
+    assert_eq!(finalized.effect_evidence_sha256(), Some([0xa5; 32]));
+
+    let invalid = [
+        br#"{"schema_version":2,"step":"authorize_lez_tag14","state":"pending"}"#.as_slice(),
+        br#"{"schema_version":1,"step":"refund_lez_tag16","state":"pending"}"#,
+        br#"{"schema_version":1,"step":"authorize_lez_tag14","state":"pending","effect_evidence_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#,
+        br#"{"schema_version":1,"step":"authorize_lez_tag14","state":"finalized"}"#,
+        br#"{"schema_version":1,"step":"authorize_lez_tag14","state":"finalized","effect_evidence_sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}"#,
+        br#"{"schema_version":1,"step":"authorize_lez_tag14","state":"finalized","effect_evidence_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#,
+        br#"{"schema_version":1,"step":"authorize_lez_tag14","state":"pending","source":"lez_finalized_event"}"#,
+        br#"{"schema_version":1,"step":"authorize_lez_tag14","state":"pending","unknown":true}"#,
+    ];
+    for bytes in invalid {
+        assert!(parse_xmr_effect_observer_result_v1(bytes, step).is_err());
+    }
+    assert!(parse_xmr_effect_observer_result_v1(&[], step).is_err());
+    assert!(
+        parse_xmr_effect_observer_result_v1(
+            &vec![b' '; XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES + 1],
+            step,
+        )
+        .is_err()
+    );
 }

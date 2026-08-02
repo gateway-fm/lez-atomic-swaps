@@ -50,6 +50,7 @@ const RESERVATION_ID: &str = "m5-xmr-chat-reservation-001";
 const CROSSED_RESERVATION_ID: &str = "m5-xmr-chat-crossed-001";
 const FOREIGN_UNITS_PICONERO: u64 = 1_000_000_000_000;
 const LEZ_UNITS: u128 = 1_000;
+const FINALIZED_TAG14_EVIDENCE_SHA256: [u8; 32] = [0xc3; 32];
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // The full user-visible ordering is intentionally one audit surface.
@@ -297,6 +298,7 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
     );
     assert_ne!(plan_identity, "0".repeat(64));
     assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert!(fs::read(&effect.observer_marker).unwrap().is_empty());
 
     let replayed_claim = run_taker_lifecycle("claim", &effect.receipt);
     assert!(
@@ -307,10 +309,30 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
     );
     assert!(replayed_claim.stderr.is_empty());
     let replayed_claim: Value = serde_json::from_slice(&replayed_claim.stdout).unwrap();
-    assert_eq!(replayed_claim["state"], "observe_only");
+    assert_eq!(replayed_claim["state"], "complete");
     assert_eq!(replayed_claim["step"], "authorize_lez_tag14");
     assert_eq!(replayed_claim["tool_plan_identity_sha256"], plan_identity);
+    assert_eq!(replayed_claim["chain_effect_finalized"], true);
     assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert_eq!(fs::read(&effect.observer_marker).unwrap(), b"observed\n");
+    assert_taker_tag14_reconciliation(&effect, &plan_identity);
+
+    let completed_claim = run_taker_lifecycle("claim", &effect.receipt);
+    assert!(
+        completed_claim.status.success(),
+        "completed receipt-v2 claim failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&completed_claim.stdout),
+        String::from_utf8_lossy(&completed_claim.stderr)
+    );
+    assert!(completed_claim.stderr.is_empty());
+    let completed_claim: Value = serde_json::from_slice(&completed_claim.stdout).unwrap();
+    assert_eq!(completed_claim["state"], "complete");
+    assert_eq!(completed_claim["step"], "authorize_lez_tag14");
+    assert_eq!(completed_claim["tool_plan_identity_sha256"], plan_identity);
+    assert_eq!(completed_claim["chain_effect_finalized"], true);
+    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert_eq!(fs::read(&effect.observer_marker).unwrap(), b"observed\n");
+    assert_taker_tag14_reconciliation(&effect, &plan_identity);
 
     // The claim branch is now durable, so the losing refund branch fails
     // before it can invoke its tool or change accepted effect authority.
@@ -751,6 +773,39 @@ fn prepare_taker_claim_workflow(effect: &XmrTakerEffectFixture) {
         .unwrap();
 }
 
+fn assert_taker_tag14_reconciliation(effect: &XmrTakerEffectFixture, plan_identity: &str) {
+    let manifest_bytes = fs::read(&effect.manifest).unwrap();
+    let authority_bytes = fs::read(&effect.authority).unwrap();
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &manifest_bytes,
+        &authority_bytes,
+        ActorRole::Taker,
+        &effect.run_id,
+    )
+    .expect("reload the exact provisioned Taker effect execution");
+    let workflow = SqliteXmrWorkflowJournal::open_existing(&effect.workflow_journal)
+        .expect("reopen the provisioned Taker workflow");
+    let reconciliation = workflow
+        .load_reconciliation(
+            execution.workflow_identity(),
+            XmrWorkflowStep::AuthorizeLezTag14,
+        )
+        .expect("load durable tag-14 reconciliation")
+        .expect("tag-14 reconciliation is durable");
+    assert_eq!(
+        reconciliation.effect_evidence_sha256(),
+        FINALIZED_TAG14_EVIDENCE_SHA256
+    );
+    assert_eq!(
+        hex::encode(reconciliation.tool_plan_identity_sha256()),
+        plan_identity
+    );
+    assert_eq!(
+        reconciliation.source(),
+        XmrWorkflowReconciliationSource::LezFinalizedEvent
+    );
+}
+
 fn assert_rejected_taker_monitor(receipt: &Path) {
     let output = run_taker_lifecycle("monitor", receipt);
     assert!(!output.status.success());
@@ -1012,6 +1067,7 @@ impl EffectArtifactSnapshot {
                 "tag14-invocation-marker",
                 effect.invocation_marker.as_path(),
             ),
+            ("tag14-observer-marker", effect.observer_marker.as_path()),
         ]
         .into_iter()
         .map(|(label, path)| {
@@ -1210,6 +1266,7 @@ struct XmrTakerEffectFixture {
     manifest: PathBuf,
     workflow_journal: PathBuf,
     invocation_marker: PathBuf,
+    observer_marker: PathBuf,
     run_id: String,
 }
 
@@ -1223,13 +1280,16 @@ impl XmrTakerEffectFixture {
         let manifest_file = effect_root.join("actor-effect-provision-v3.json");
         let workflow_journal = effect_root.join("workflow.sqlite3");
         let invocation_marker = effect_root.join("tag14-invocations.log");
+        let observer_marker = effect_root.join("tag14-observations.log");
         write_private_bytes(&invocation_marker, b"");
+        write_private_bytes(&observer_marker, b"");
         let run_id = "m5-xmr-taker-effect-run-1".to_owned();
         let authority = taker_effect_authority(
             &receipt,
             &effect_root,
             &workflow_journal,
             &invocation_marker,
+            &observer_marker,
             &run_id,
         );
         let mut bytes = serde_json::to_vec(&authority).unwrap();
@@ -1242,6 +1302,7 @@ impl XmrTakerEffectFixture {
             workflow_journal,
             run_id,
             invocation_marker,
+            observer_marker,
         }
     }
 }
@@ -1251,6 +1312,7 @@ fn taker_effect_authority(
     effect_root: &Path,
     workflow_journal: &Path,
     invocation_marker: &Path,
+    observer_marker: &Path,
     run_id: &str,
 ) -> TakerEffectAuthority {
     let runtime_file = effect_root.join("lez-runtime.json");
@@ -1277,6 +1339,21 @@ fn taker_effect_authority(
     let marker_text = invocation_marker.to_str().expect("UTF-8 marker path");
     assert!(!marker_text.contains('\''));
     let tag14_worker = format!("#!/bin/sh\nset -eu\nprintf 'invoked\\n' >> '{marker_text}'\n");
+    let observer_marker_text = observer_marker
+        .to_str()
+        .expect("UTF-8 observer marker path");
+    assert!(!observer_marker_text.contains('\''));
+    let finalized_result = serde_json::json!({
+        "schema_version": 1,
+        "step": "authorize_lez_tag14",
+        "state": "finalized",
+        "effect_evidence_sha256": hex::encode(FINALIZED_TAG14_EVIDENCE_SHA256),
+    })
+    .to_string();
+    assert!(!finalized_result.contains('\''));
+    let finalized_worker = format!(
+        "#!/bin/sh\nset -eu\n[ \"$#\" -eq 2 ]\n[ \"$1\" = '--xmr-workflow-step' ]\n[ \"$2\" = 'authorize_lez_tag14' ]\nprintf 'observed\\n' >> '{observer_marker_text}'\nprintf '%s\\n' '{finalized_result}'\n"
+    );
     TakerEffectAuthority {
         schema_version: 1,
         pair: "monero",
@@ -1314,7 +1391,7 @@ fn taker_effect_authority(
             finalized_classifier: effect_tool(
                 effect_root,
                 "finalized-classifier",
-                b"#!/bin/sh\nexit 0\n",
+                finalized_worker.as_bytes(),
                 "lez_xmr_finalized_classifier_v1",
             ),
             monero_claim: effect_tool(

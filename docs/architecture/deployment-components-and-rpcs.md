@@ -741,7 +741,7 @@ revalidation, propagation, and finality evidence before release.
 
 ### M5 XMR role-process pre-effect deployment
 
-Status: process-GREEN through the receipt-v2 Taker Tag14 marker invocation. The current exact locked/offline black-box passed 1 of 1 in 124.23 seconds. Solid edges below cover application activation, monitoring, one durable claim-process invocation, and observe-only replay. Semantic transaction construction, reconciliation, and actual isolated-chain RPC execution remain dashed and open.
+Status: process-GREEN through the receipt-v2 Taker Tag14 sender, local finalized-observer, durable reconciliation, and process-free Complete replay. The current exact locked/offline black-box passed 1 of 1 in 133.16 seconds; the focused effect-route suite passed 5 of 5, and strict Clippy plus warning-fatal Rustdoc are GREEN. Solid edges below are fixed-local process-component evidence. Semantic transaction construction, actual-chain observation, and isolated-chain RPC execution remain dashed and open.
 
 ```mermaid
 flowchart TB
@@ -774,7 +774,10 @@ flowchart TB
         EffectReceipt[("Receipt v2 and schema v3 authority")]
         Claim["lez-taker claim"]
         Workflow[("Workflow v2 journal")]
-        Marker["Hash-pinned Tag14 marker child"]
+        Marker["Hash-pinned Tag14 sender marker"]
+        Observer["Role-fixed finalized observer marker"]
+        Parser["Bounded exact Tag14 result parser"]
+        Reconciled["Durable Succeeded then Complete"]
     end
 
     MakerCli --> OwnerSocket
@@ -805,8 +808,13 @@ flowchart TB
     Receipt --> EffectReceipt
     EffectReceipt --> Claim
     Claim --> Workflow
-    Workflow --> Marker
-    Marker -.-> SemanticSupervisor["Future semantic Tag14 worker"]
+    Workflow -->|"Prepared"| Marker
+    Workflow -->|"Started or Unknown"| Observer
+    Observer --> Parser
+    Parser --> Reconciled
+    Workflow -->|"Succeeded"| Reconciled
+    Marker -.-> SemanticSupervisor
+    Observer -.-> SemanticSupervisor["Future semantic Tag14 worker"]
     MakerActor -.-> SemanticSupervisor
     SemanticSupervisor -.-> LezNodes["Isolated LEZ v0.2 sequencer indexer and sidecars"]
     SemanticSupervisor -.-> MoneroNodes["Official monerod 0.18.5.1 Regtest and wallets"]
@@ -822,7 +830,7 @@ flowchart TB
 | Maker role manifest | `actor-provision.json` from `xmr-reference-actor provision-application maker` | Daemon requires canonical schema 1, Maker role, exact swap, exact role-journal state path, normalized authority paths, and lowercase digests before readiness |
 | Taker acceptance | `lez-taker --accept-xmr-offer` plus Stage A/B, role root, public packets, role journal, actor root, and receipt flags | Taker authenticates Delivery only on first acceptance, provisions only Taker authority, activates over Chat, and publishes its receipt after Maker commit |
 | Taker receipt-only monitor | `lez-taker monitor --receipt` with the private canonical XMR receipt | Digest-pinned canonical Taker-manifest bytes bind the swap and state before the per-swap lock; full Stage A/B, packet, private-role, and claim/refund-journal semantics are reread under the lock; returns only secret-free `application_activated` and never contacts Delivery, Chat, a daemon, a node, or an RPC |
-| Receipt-v2 Taker Tag14 process | `lez-taker claim --receipt` under separate actor/workflow locks | Prepares exact `AuthorizeLezTag14`, wins one durable CAS, invokes/reaps one FD-197..210 marker child, returns `invoked_unreconciled`, and replays `observe_only` without a second child; no RPC or semantic transaction |
+| Receipt-v2 Taker Tag14 process | `lez-taker claim --receipt` under separate actor/workflow locks | First call invokes/reaps one FD-197..210 sender marker and leaves Started; second call runs the role-fixed observer, exact-compares the sending-plan identity, strictly parses finalized evidence, and reconciles Succeeded; third call is process-free Complete. No RPC or semantic transaction |
 | Durable replay | Same database, registry, actor root, receipt, reservation, and command after Delivery removal | Durable actor bypasses discovery; exact Stage A/B replay returns revision 3 without replacing role artifacts |
 | Public effects | Maker application database and immutable role journals | The application database has no public-effect table; any participating effect journal must be absent or contain zero rows, and both input role journals remain byte-identical |
 
@@ -859,7 +867,7 @@ Stage A is non-executable by construction. Stage B is locally atomic because one
 
 The receipt-only monitor performs no writes, preserves every receipt, manifest,
 role artifact, journal, and state byte, and returns no chain-progress inference.
-Legacy receipt-v1 claim/refund remain unsupported. Receipt-v2 claim now runs the Tag14 marker process; the losing refund branch fails closed. The claim remains unreconciled and proves no chain effect. The inherited
+Legacy receipt-v1 claim/refund remain unsupported. Receipt-v2 claim now runs the Tag14 sender exactly once; the losing refund branch fails closed. Its second call observes a fixed local finalized marker and reconciles evidence-shaped Succeeded, while its third call starts no process. This proves the process contract only, not a semantic transaction or actual-chain effect. The inherited
 reopen/final-equality path-ABA concern remains production hardening rather than a
 PoC blocker; full semantic validation still occurs under the exact per-swap
 kernel lock and grants no effect authority.
@@ -874,12 +882,17 @@ flowchart LR
     Cli --> Loader["Execution loader"]
     Loader --> Select["Taker Tag14 selector"]
     Select --> Pin["Pin inputs and dual locks"]
-    Pin --> Command["Compose FDs 197 through 210"]
-    Command --> Journal["Workflow v2 durable CAS"]
-    Journal --> Winner["InvokeOnce spawn wait reap"]
-    Journal --> Replay["ObserveOnly no child"]
-    Winner --> Marker["Marker output invoked_unreconciled"]
+    Pin --> Journal["Workflow v2 durable CAS"]
+    Journal -->|"Prepared"| Winner["InvokeOnce sender"]
+    Winner --> Marker["Started and invoked unreconciled"]
+    Journal -->|"Started or Unknown"| Replay["ObserveOnly"]
+    Replay --> Observer["Pinned finalized observer"]
+    Observer --> Parse["Bounded step-exact parser"]
+    Parse --> Reconcile["Exact plan and evidence reconciliation"]
+    Reconcile --> Done["Succeeded and complete"]
+    Journal -->|"Succeeded"| Complete["Complete no process"]
     Marker -.-> Nodes["Future semantic LEZ and Monero RPCs"]
+    Observer -.-> Nodes
 ```
 
 | Boundary | Implemented behavior | Still absent |
@@ -887,14 +900,18 @@ flowchart LR
 | Schema-v3 loader | Retains exact effect-authority digest and workflow identity | No node or RPC opening |
 | Role-fixed selector | Admits only three Maker and three Taker sending slots | No classifier/verifier send authority |
 | Pre-authorization custody | Pins tool, runtime, ten secrets, both locks, and one FD map before workflow CAS | No semantic transaction construction |
-| Workflow result | Receipt-v2 claim consumes InvokeOnce, reaps one child, and returns the stable digest; replay is ObserveOnly with no child | No semantic transaction, classifier, reconciliation, or chain publication |
+| Workflow result | First call consumes InvokeOnce and leaves Started; second runs only the role-fixed observer and reconciles exact local evidence as Succeeded; third returns Complete without a process | No semantic transaction, actual-chain classifier, or chain publication |
 
 The real receipt-v2 Taker route proves corrupt-program and wrong-role failure
-leave Prepared unconsumed, then invokes and reaps one exact marker child.
-Restart is ObserveOnly with the same digest and no second child. Any spawn,
-wait, 30-second timeout, or nonzero ambiguity is sticky Unknown. It does not
-contact the dashed node boundary, publish semantic tag 14, classify finality,
-or reconcile success.
+leave Prepared unconsumed, then invokes and reaps one exact sender marker. The
+second call starts no sender: only Started or Unknown may run the hash-pinned
+role-fixed observer, whose bounded parser requires the exact Tag14 result and
+whose source is derived locally. Exact plan and finalized marker evidence
+reconcile Succeeded. Prepared and Succeeded reject observer preparation; every
+observer failure leaves the journal unchanged. The third call is Complete with
+no process. Sending ambiguity remains sticky Unknown. Neither fixed marker
+contacts the dashed node boundary, publishes semantic tag 14, or proves actual
+chain finality.
 
 ### M5 maker service supervision and RPC inventory
 

@@ -42,7 +42,11 @@ pub use effect_input_custody::{
     PinnedXmrEffectSecretV1,
 };
 #[cfg(feature = "sessions")]
-pub use effect_route::XmrPreparedEffectInvocationV1;
+pub use effect_route::{
+    XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverResultV1, XmrEffectObserverStateV1,
+    XmrPreparedEffectInvocationV1, XmrPreparedEffectObservationV1,
+    parse_xmr_effect_observer_result_v1,
+};
 
 use std::{
     ffi::OsString,

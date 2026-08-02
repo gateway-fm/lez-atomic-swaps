@@ -3,8 +3,8 @@
 Status: Accepted for the durable journal, schema-v3 authority, receipt-v2
 locked-monitor boundary, typed effect-plan view, sealed-executable primitive,
 workflow-v2 catalog, dual-lock command boundary, and schema-v3 effect-input
-custody on 2026-08-02; lifecycle-route effect execution and actual-node application
-replay remain in progress
+custody, and the receipt-v2 Tag14 sender/observer/reconciliation process
+checkpoint on 2026-08-02; semantic effect workers and actual-node application replay remain in progress
 
 ## Context
 
@@ -261,22 +261,30 @@ burn a Prepared row.
 
 ```mermaid
 sequenceDiagram
-    participant R as Future lifecycle route
+    participant R as Receipt v2 lifecycle
     participant E as Schema v3 execution authority
     participant P as Program inputs and locks
     participant W as Workflow v2 journal
-    R->>E: Prepare one role fixed effect step
-    E->>P: Pin tool inputs and compose FDs 197 through 210
-    E->>W: Authorize once only after complete plan exists
+    participant S as Tag14 sender marker
+    participant O as Finalized observer marker
+    R->>E: Prepare Taker Tag14
+    E->>P: Pin tool inputs and FDs 197 through 210
+    E->>W: Authorize after the complete plan exists
     alt Prepared winner
         W-->>E: InvokeOnce
-        E-->>R: Command and stable plan digest
+        E->>S: Spawn wait and reap once
+        S-->>E: Successful process exit
+        E-->>R: invoked_unreconciled and Started
     else Started or Unknown
         W-->>E: ObserveOnly
-        E-->>R: Digest only and no command
+        E->>O: Run role fixed observer
+        O-->>E: Bounded exact Tag14 finalized result
+        E->>W: Reconcile exact plan and evidence
+        W-->>E: Succeeded
+        E-->>R: complete and finalized true
     else Succeeded
         W-->>E: Complete
-        E-->>R: Digest only and no command
+        E-->>R: complete with no process
     end
 ```
 
@@ -376,9 +384,10 @@ v2 execution, workflow drift, and output collision fail closed.
 Receipt v2 now digest-pins schema v3, the effect authority, workflow identity,
 and run. The selector semantically revalidates those bytes under the per-swap
 and workflow locks, and locked monitor is implemented without chain I/O.
-Receipt v1 remains monitor-only. Claim and refund still reject before effect
-execution. Focused Taker authority tests are GREEN at 3 of 3 and the combined
-Maker/Taker authority pair is GREEN at 4 of 4. Both full package suites,
+Receipt v1 remains monitor-only. Receipt-v2 refund still rejects before effect
+execution, while receipt-v2 claim admits only the role-correct Tag14 process
+route described below. Focused Taker authority tests are GREEN at 3 of 3 and the
+combined Maker/Taker authority pair is GREEN at 4 of 4. Both full package suites,
 `lez-swap-store --all-targets` and
 `xmr-reference-actor --all-targets --all-features`, strict all-target/all-
 feature Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN.
@@ -413,20 +422,24 @@ unsafe, and aliased file-password rejection. Maker authority coverage proves
 the validated Stage-A/B public paths and exact wire SHA-256 values survive the
 execution-authority handoff.
 
-The real schema-v3 Taker Tag14 process fixture proves a corrupted pinned program
-fails while the journal remains Prepared, a Maker-only step fails under Taker
-authority, the valid child sees exact FDs 197 through 210, and precisely one
-caller receives InvokeOnce with a Command. Reload then returns ObserveOnly with
-no Command and the identical nonzero domain-separated plan digest. This worker
-is only the descriptor/process fixture: it makes no RPC and does not publish a
-semantic tag 14.
+The real schema-v3 receipt-v2 Taker Tag14 process fixture proves a corrupted
+pinned program fails while the journal remains Prepared, a Maker-only step fails
+under Taker authority, the valid sender child sees exact FDs 197 through 210, and
+precisely one caller receives InvokeOnce. The first claim leaves Started. The
+second claim runs the hash-pinned role-fixed finalized observer, exact-compares
+the original sending-plan identity, parses a bounded step-exact result, derives
+`lez_finalized_event` locally, and reconciles Succeeded. The third claim returns
+Complete without sender or observer. Only Started and Unknown admit observation;
+Prepared and Succeeded reject it, and every observer failure leaves the journal
+unchanged. Sending ambiguity remains sticky Unknown and never rearms.
 
-The typed authority, sealed program/input snapshots, workflow-v2 journal, and
-one-map executable/lock/input command boundary and role-fixed invocation
-preparation are component-GREEN. The
-current effect-input validation, custody, and child-map gaps are closed, but no
-Maker or Taker lifecycle route calls it. Actual classifier-to-evidence
-composition, Maker effects, receipt-v2 claim/refund routing, and fresh isolated
-LEZ plus official Monero Regtest proof remain open. This checkpoint opens no
-RPC or node and does not authorize a chain send. Literal M5 therefore remains 4
-of 7.
+The typed authority, sealed program/input snapshots, workflow-v2 journal,
+one-map executable/lock/input command boundary, sender invocation, and
+observer reconciliation are process-component GREEN. The exact black-box route
+is GREEN 1 of 1 in 133.16 seconds, the focused effect-route suite is GREEN 5 of
+5, and strict Clippy plus warning-fatal Rustdoc are GREEN. The sender and
+observer are fixed local classifier markers. They open no RPC or node, submit no
+semantic Tag14 transaction, and prove no actual-chain finality. Semantic workers,
+Maker effects, complete receipt-v2 claim/refund routing, and fresh isolated LEZ
+plus official Monero Regtest proof remain open. Literal M5 therefore remains 4
+of 7; outputs 5 of 7, 6 of 7, and 7 of 7 remain.

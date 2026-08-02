@@ -6689,41 +6689,57 @@ For an admitted step, preparation performs this order:
 
 A corrupt program therefore leaves Tag14 Prepared. The repaired first call
 returns InvokeOnce with the Command and a nonzero domain-separated digest; the
-child sees exact FDs 197 through 210. Reload returns ObserveOnly with the same
-digest and no Command. A reconciled Succeeded step would similarly return
-Complete without a Command.
+child sees exact FDs 197 through 210 and the workflow remains Started. Reload
+returns ObserveOnly with the same sending-plan digest and no sending Command.
+The lifecycle route now pins and runs its role-fixed non-sending observer from
+Started or Unknown. Finalized evidence reconciles Succeeded; the next
+preparation returns Complete without sender or observer.
 
 The stable plan hash binds the v1 tool-plan domain, role, step, ABI, pinned
 program SHA-256, and exact effect-authority SHA-256. It does not expose or
 pretend to immutably bind rotating credential contents.
 
-This fixture runs a descriptor-checking worker only. It does not open an RPC or
-node, construct or submit semantic tag 14, classify finality, or move funds.
-The real receipt-v2 lifecycle route now performs the process invocation, while
-semantic Tag14 construction, finalized classification, and reconciliation
-remain open. Literal M5 remains 4 of 7.
+These fixtures run a descriptor-checking sender and fixed finalized-classifier
+marker only. They do not open an RPC or node, construct or submit semantic tag
+14, classify real chain finality, or move funds. The real receipt-v2 lifecycle
+route now performs process invocation plus evidence-shaped durable
+reconciliation, while semantic Tag14 and actual-chain observation remain open.
+Literal M5 remains 4 of 7.
 
 ### Invoke the receipt-v2 Taker Tag14 process checkpoint
 
 After producing receipt v2 and stopping Delivery, Chat, and the Maker daemon,
-run the user-facing command twice:
+run the user-facing command three times:
 
 ```bash
+target/debug/lez-taker claim --receipt /absolute/private/acceptance-receipt-v2.json
 target/debug/lez-taker claim --receipt /absolute/private/acceptance-receipt-v2.json
 target/debug/lez-taker claim --receipt /absolute/private/acceptance-receipt-v2.json
 ```
 
 The first marker invocation emits schema 3 `invoked_unreconciled`, a nonzero
-plan digest, and `chain_effect_finalized:false`. Restart/replay emits
-`observe_only` with the identical digest and no second child. The first call
-pins FDs 197 through 210, wins one durable CAS, and waits/reaps one child.
-Spawn, wait, 30-second timeout, or nonzero ambiguity marks sticky `Unknown`
-and never rearms. Losing receipt-v2 refund fails closed.
+plan digest, and `chain_effect_finalized:false`; the journal is Started. The
+second claim invokes no sender. It pins the finalized classifier and all inputs,
+requires the identical original sending-plan digest, and parses a bounded
+step-exact result. The fixed classifier marker returns finalized evidence, so
+the CLI reconciles Succeeded and emits `complete` with
+`chain_effect_finalized:true`. The third claim emits the same Complete result
+without invoking sender or observer. The send marker remains `invoked\n`
+and the observer marker remains `observed\n`.
 
-This worker receives the sealed descriptor map and writes a marker. The
-separate lower-level process proof validates the exact FD contents. The marker
-opens no RPC, constructs or submits no semantic Tag14 transaction, classifies
-no chain evidence, reconciles no success, and moves no funds.
+Observer eligibility is exactly Started or Unknown. Prepared and Succeeded
+reject observer preparation. The result contains no source field; the selected
+role and step derive `lez_finalized_event` locally. Observer spawn, wait,
+30-second timeout, nonzero exit, oversized/malformed/wrong-step output, sending
+plan drift, or invalid evidence returns an error without changing the journal.
+Sending ambiguity still marks sticky Unknown and never rearms. Losing
+receipt-v2 refund fails closed.
+
+The sender and classifier receive sealed descriptor maps and write local
+markers. The lower-level process proof validates exact FD contents. Neither
+opens an RPC, constructs or submits a semantic Tag14 transaction, observes a
+chain, or moves funds. Succeeded therefore proves the process reconciliation
+contract only, not actual LEZ finality.
 
 The monitor and marker route start no LEZ or Monero node, open no chain RPC,
 and use no Docker service, faucet, funds, DNS, public network, peer, or
@@ -6740,7 +6756,7 @@ cargo +1.96.0 test --locked --offline \
   -- --exact --nocapture
 ```
 
-That exact Maker-daemon/Delivery/Chat black-box test is GREEN 1 of 1 in 124.23
+That exact Maker-daemon/Delivery/Chat black-box test is GREEN 1 of 1 in 133.16
 seconds. It withdraws Delivery, stops Chat with the daemon, then drives the
 first claim, restart/replay, and losing refund through the real `lez-taker`.
 After the first expected journal and marker mutation, replay and losing-refund
@@ -6750,17 +6766,24 @@ A/B digest drift, actor-state and workflow lock contention, a receipt with an
 unknown field, and
 wrong manifest or effect-authority binding while keeping failures secret-free.
 
+The focused `xmr-reference-actor --test effect_route` suite is GREEN 5 of 5
+and covers observer eligibility, role selection, sending-plan identity, wallet
+versus LEZ source derivation, strict parser behavior, and no-mutation failures.
+Strict Clippy and warning-fatal Rustdoc are GREEN.
+
 Flakiness is local-process only: a cold Cargo build or uncached dependencies,
 large debug-actor hashing, cryptographic validation, filesystem latency, lock
 contention from another invocation using the same private paths, and heavy host
-scheduling can extend the run. The current exact process fixture took 124.23
+scheduling can extend the run. The current exact process fixture took 133.16
 seconds and gives Maker-daemon readiness 30 seconds. It uses an isolated
 temporary root and run-local Unix sockets; rerun only after the previous test
 process exits, and never share the example authority paths across concurrent
 runs. No public resource can make it flaky.
 
-This closes the receipt-v2 Tag14 process-invocation sub-gap only; literal M5
-remains 4 of 7.
+This closes the receipt-v2 Tag14 process observation/reconciliation sub-gap
+only. Literal M5 remains 4 of 7; outputs 5/7 Maker lifecycle, 6/7 Taker
+lifecycle, and 7/7 coordinator concurrency/restart/unavailable-XMR isolation
+remain.
 
 ## Flow 1U: repeat the tag-16 one-attempt component checkpoint
 

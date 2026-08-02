@@ -211,16 +211,28 @@ validates the schema-v3 execution under separate actor and workflow locks,
 prepares the exact Taker `AuthorizeLezTag14` plan, wins one durable workflow
 CAS, and invokes and reaps one hash-pinned child with FDs 197 through 210. A
 successful marker child returns schema 3 state `invoked_unreconciled` with
-`chain_effect_finalized:false`; restart/replay returns `observe_only` with the
-same nonzero plan digest and starts no second child. Spawn, wait, 30-second
-timeout, and nonzero-exit ambiguity make the workflow sticky `Unknown`, so it
-never rearms. The losing receipt-v2 `refund` branch fails closed.
+`chain_effect_finalized:false` and leaves the workflow `Started`.
 
-This is process-GREEN only: the child is a marker, not a
-semantic Tag14 worker. It opens no RPC, constructs or submits no LEZ
-transaction, classifies no finality, and performs no reconciliation. The exact
-Maker-daemon/Delivery/Chat black-box test is GREEN 1 of 1 in 124.23 seconds;
-both transports are removed and the daemon is stopped before the lifecycle
+The second claim starts no sending child. It hash-pins the role-fixed finalized
+observer, rederives and exact-compares the original nonzero sending-plan
+identity, accepts observation only from `Started` or `Unknown`, and parses one
+bounded step-exact result. Finalized marker evidence is reconciled atomically as
+`lez_finalized_event`, so the command returns `complete` with
+`chain_effect_finalized:true`. The third claim reads durable `Succeeded` and
+returns `complete` without starting either sender or observer. Observer spawn,
+timeout, exit, output, parse, digest, or evidence failure leaves the journal
+unchanged. The result cannot choose its source: role plus step derive it
+locally. `Prepared` and `Succeeded` cannot start an observer. Sending
+ambiguity still makes `Unknown` sticky and never rearms; the losing receipt-v2
+`refund` branch fails closed.
+
+This is process-component evidence only. The sender and finalized classifier
+are fixed local marker programs, not semantic Tag14 or chain-observer workers.
+They open no RPC, construct or submit no LEZ transaction, and prove no on-chain
+finality. The exact Maker-daemon/Delivery/Chat black-box test is GREEN 1 of 1
+in 133.16 seconds; the focused effect-route suite is GREEN 5 of 5, and strict
+Clippy plus warning-fatal Rustdoc are GREEN.
+Both transports are removed and the daemon is stopped before the lifecycle
 action. It uses deterministic private files and no node, Docker service,
 faucet, DNS, public RPC, peer, or funds. Exact flags, outputs, private-file
 inventory, and cold-build, hashing, lock-contention, and host-scheduling
@@ -433,13 +445,15 @@ The current XMR schema-v3 execution boundary now selects only the six
 role-fixed sending slots and pins the exact executable, runtime, ten secrets,
 actor lock, workflow lock, and FD 197..210 child map before consuming the
 workflow-v2 one-attempt CAS. Only the Prepared winner receives a Command;
-Started/Unknown and Succeeded replay return a stable plan digest without any
-send-capable process. A genuine signed Stage-A/B Taker fixture proves corrupt
-program and wrong-role failures do not burn Prepared, the Tag14 child receives
-the exact descriptor ABI once, and restart is ObserveOnly. This checkpoint
-uses temporary local files/processes only: no RPC listener, node, Docker
-service, faucet, DNS, public network, funds, or finality wait participates, so
-it proves process authority rather than semantic Tag14 chain behavior. M5
+Started/Unknown prepare only a role-fixed observer; Succeeded returns Complete
+without either process. A genuine signed Stage-A/B Taker fixture proves one
+Tag14 marker invocation, restart-only finalized-marker observation with the
+same sending-plan digest, durable evidence-bound reconciliation, and a
+process-free third call. Strict bounded output parsing rejects source injection
+and step/digest drift without journal mutation. This checkpoint uses temporary
+local files/processes only: no RPC listener, node, Docker service, faucet, DNS,
+public network, funds, or finality wait participates, so it proves process
+orchestration rather than semantic Tag14 chain behavior. M5
 remains 4 of 7; the current tag ETA is 2 to 5 focused implementation hours.
 
 Those historical runs are not evidence of the current receipt-bound claim route.
