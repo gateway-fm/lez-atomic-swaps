@@ -27,6 +27,12 @@ Status vocabulary:
 | M6 | Not active | Awaiting owner transition | None | Not requested |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
+M5 schema-v3 checkpoint (2026-08-02): canonical role-fixed effect authority,
+direct run binding, exact initialized workflow identity, full legacy Stage A/B
+semantic revalidation, and atomic no-clobber publication are component-GREEN.
+This prerequisite performs no RPC or chain effect and does not change the
+literal M5 score of 4/7.
+
 Evidence correction recorded 2026-07-30: retained M4 run `m4cert20260722an` and M5 run `m5-xmr-app-20260730-2c6aec1-h` prove finalized LEZ effects, adaptor extraction, shared-key reconstruction, a confirmed Monero sweep, binding, and exact cleanup. A role audit proved their runner used provisioner funding, a Taker-hosted shared wallet, and a Maker sweep destination. Those runs no longer certify role-correct user economics. The code now enforces Maker funding and claim mining, a neutral provisioner shared-wallet RPC, and a Taker claim destination; a fresh role-correct claim replay remains separate and the historical evidence is unchanged. Authenticated tag-16 Taker prepare, aggregate completion, transaction-derived one-attempt submission, finalized Maker discovery, Maker ingestion/extraction, role-correct Maker recovery sweep, and the conditional refund binder became component-GREEN. Ambiguous submission is sticky across restart without resend and refund classification enforces `[refund_at, punish_at)`. Diagnostic run `m5xmrrefund8c10cd7a` proved read-only polling could not advance an idle local finalized clock; the later exact run below supersedes this historical refund-replay-open status.
 
 Finality correction recorded 2026-07-31: run `m5xmrrefund842610ca` admitted one

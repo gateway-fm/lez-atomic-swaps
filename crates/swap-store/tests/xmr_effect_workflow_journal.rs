@@ -29,6 +29,22 @@ fn started_or_unknown_xmr_workflow_step_is_never_reauthorized_after_reopen() {
         .initialize(&identity)
         .expect("initialize exact workflow identity");
     journal
+        .validate_initialized(&identity)
+        .expect("read-only validation accepts exact durable identity");
+    let crossed = XmrWorkflowIdentityV1::new(
+        SwapId::new("11".repeat(32)).expect("valid swap ID"),
+        Participant::Maker,
+        "m5-xmr-workflow-run-crossed".into(),
+        [0x22; 32],
+        [0x33; 32],
+        [0x44; 32],
+    )
+    .expect("valid crossed identity");
+    assert!(
+        journal.validate_initialized(&crossed).is_err(),
+        "read-only validation must reject any durable identity drift"
+    );
+    journal
         .select_branch(&identity, XmrWorkflowBranch::Claim)
         .expect("claim wins the branch CAS");
     journal

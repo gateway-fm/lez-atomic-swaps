@@ -4836,3 +4836,43 @@ coexist in one authority. Representative ABI and canonical-hash drift fail
 closed. Focused Maker/Taker tests, strict Clippy, warning-fatal Rustdoc, rustfmt,
 and diff checks pass. Manifest-v3 publication remains next, so literal M5 stays
 4 of 7. Updated estimate is 5 to 10 focused implementation hours to the M5 tag.
+### XMR schema-v3 effect-authority publication checkpoint (2026-08-02)
+
+The manifest-v3 cycle is GREEN without reinterpreting or overwriting the
+schema-v2 monitor authority. Schema v3 directly adds the run ID, immutable
+effect-authority file and SHA-256, and separate workflow-journal path. Its
+semantic loader reconstructs v2 only through the original canonical parser,
+fully revalidates every pinned Stage A/B, role-material, packet, and adaptor
+journal source, validates the exact effect bytes against the fixed role profile,
+and then proves the existing workflow database contains the same
+swap/role/run/agreement/activation/effect-digest identity.
+
+The workflow journal gained a read-only validate_initialized boundary. It
+fails on missing or crossed identity without initializing or mutating an empty
+database. The first focused compile RED could not call that API; GREEN accepts
+the exact durable row and rejects a crossed run. The schema-v3 publication RED
+could not call the create-new publisher; GREEN atomically publishes one 0600
+owner-private file and preserves the first bytes on collision.
+
+The existing full role-separated Stage A/B process integration now provisions a
+real Maker schema-v2 application, creates and initializes its independent
+workflow journal, publishes canonical effect authority and schema v3, and loads
+the complete semantic authority. Digest tamper, crossed run, legacy-v2
+execution, and output collision fail closed. Focused tests, strict
+all-target/all-feature Clippy, and warning-fatal Rustdoc pass. No RPC, node,
+faucet, public network, or chain effect participates in this checkpoint.
+
+Literal M5 remains 4 of 7 because this is a prerequisite rather than a complete
+Maker/Taker lifecycle. The next implementation order is:
+
+1. publish receipt v2 binding schema v3, effect digest, workflow identity, and
+   run for the Taker lifecycle;
+2. route the role-legal XMR Maker and Taker CLI actions through the workflow CAS
+   and exact external classifiers;
+3. repeat claim and refund through fresh isolated LEZ v0.2 and official Monero
+   Regtest nodes using the real user commands; and
+4. close the all-pair lifecycle and accepted-application concurrency outputs,
+   run the composite gates, tag, and push.
+
+Updated estimate is 4 to 8 focused implementation hours to the M5 tag, subject
+to the measured fresh-node cycles and final composite review.

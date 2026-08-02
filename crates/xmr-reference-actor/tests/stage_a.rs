@@ -11,6 +11,8 @@ use std::{
 
 use clap::Parser as _;
 use lez_adaptor_role_runner::{Cli as RunnerCli, execute as execute_runner};
+use lez_swap_core::{Participant, SwapId};
+use lez_swap_store::{SqliteXmrWorkflowJournal, XmrWorkflowIdentityV1};
 use lez_xmr_swap_sdk::{
     MoneroAddressNetworkV1, MoneroPrivateViewKey, MoneroSharedAddressV1,
     ValidatedXmrAgreementBodyV1, XmrActivatedAgreementV1, XmrAgreementBodyV1, XmrAgreementV1,
@@ -18,13 +20,141 @@ use lez_xmr_swap_sdk::{
     XmrSwapDirectionV1, XmrWindowsV1,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use xmr_reference_actor::{
-    ActorRole, ValidatedRolePacket, provision_xmr_maker_actor_from_material,
-    provision_xmr_taker_actor_from_material,
+    ActorRole, ValidatedRolePacket, load_validated_xmr_effect_manifest_v3_bytes,
+    provision_xmr_maker_actor_from_material, provision_xmr_taker_actor_from_material,
+    publish_xmr_effect_manifest_v3,
 };
+#[derive(Serialize)]
+struct EffectToolFixture {
+    program: PathBuf,
+    program_sha256: String,
+    abi: &'static str,
+}
+
+#[derive(Serialize)]
+struct MakerEffectToolsFixture {
+    monero_fund: EffectToolFixture,
+    lez_claim: EffectToolFixture,
+    finalized_classifier: EffectToolFixture,
+    monero_refund: EffectToolFixture,
+    monero_verify: EffectToolFixture,
+}
+
+#[derive(Serialize)]
+struct LezEffectRpcFixture {
+    sidecar_url: String,
+    runtime_file: PathBuf,
+    runtime_sha256: String,
+    capability_file: PathBuf,
+}
+
+#[derive(Serialize)]
+struct AuthenticatedRpcFixture {
+    url: String,
+    username_file: PathBuf,
+    password_file: PathBuf,
+}
+
+#[derive(Serialize)]
+struct MoneroEffectRpcFixture {
+    daemon: AuthenticatedRpcFixture,
+    funding_wallet: AuthenticatedRpcFixture,
+    shared_wallet: AuthenticatedRpcFixture,
+    role_wallet: AuthenticatedRpcFixture,
+}
+
+#[derive(Serialize)]
+struct MakerEffectAuthorityFixture {
+    schema_version: u16,
+    pair: &'static str,
+    role: ActorRole,
+    swap_id: String,
+    agreement_commitment: String,
+    activation_commitment: String,
+    run_id: String,
+    workflow_journal: PathBuf,
+    adaptor_journal: PathBuf,
+    evidence_root: PathBuf,
+    lez: LezEffectRpcFixture,
+    monero: MoneroEffectRpcFixture,
+    maker_tools: MakerEffectToolsFixture,
+}
+
+fn effect_tool(root: &Path, name: &str, digest_byte: u8, abi: &'static str) -> EffectToolFixture {
+    EffectToolFixture {
+        program: root.join(name),
+        program_sha256: format!("{digest_byte:02x}").repeat(32),
+        abi,
+    }
+}
+
+fn effect_rpc(root: &Path, name: &str, port: u16) -> AuthenticatedRpcFixture {
+    AuthenticatedRpcFixture {
+        url: format!("http://127.0.0.1:{port}/"),
+        username_file: root.join(format!("{name}.username")),
+        password_file: root.join(format!("{name}.password")),
+    }
+}
+
+fn maker_effect_authority_bytes(
+    root: &Path,
+    swap_id: [u8; 32],
+    agreement_commitment: [u8; 32],
+    activation_commitment: [u8; 32],
+    run_id: &str,
+    workflow_journal: &Path,
+    adaptor_journal: &Path,
+) -> Vec<u8> {
+    let value = MakerEffectAuthorityFixture {
+        schema_version: 1,
+        pair: "monero",
+        role: ActorRole::Maker,
+        swap_id: hex::encode(swap_id),
+        agreement_commitment: hex::encode(agreement_commitment),
+        activation_commitment: hex::encode(activation_commitment),
+        run_id: run_id.to_owned(),
+        workflow_journal: workflow_journal.to_path_buf(),
+        adaptor_journal: adaptor_journal.to_path_buf(),
+        evidence_root: root.join("evidence"),
+        lez: LezEffectRpcFixture {
+            sidecar_url: "http://127.0.0.1:32872/".to_owned(),
+            runtime_file: root.join("lez-runtime.json"),
+            runtime_sha256: "44".repeat(32),
+            capability_file: root.join("lez.capability"),
+        },
+        monero: MoneroEffectRpcFixture {
+            daemon: effect_rpc(root, "daemon", 32874),
+            funding_wallet: effect_rpc(root, "funding", 32875),
+            shared_wallet: effect_rpc(root, "shared", 32876),
+            role_wallet: effect_rpc(root, "maker", 32877),
+        },
+        maker_tools: MakerEffectToolsFixture {
+            monero_fund: effect_tool(root, "monero-fund", 0x50, "lez_xmr_monero_fund_v2"),
+            lez_claim: effect_tool(root, "tag15-claim", 0x55, "lez_xmr_tag15_claim_v1"),
+            finalized_classifier: effect_tool(
+                root,
+                "finalized-classifier",
+                0x60,
+                "lez_xmr_finalized_classifier_v1",
+            ),
+            monero_refund: effect_tool(
+                root,
+                "monero-refund",
+                0x66,
+                "lez_xmr_monero_refund_sweep_v3",
+            ),
+            monero_verify: effect_tool(root, "monero-verify", 0x70, "lez_xmr_monero_verify_v2"),
+        },
+    };
+    let mut bytes = serde_json::to_vec(&value).expect("serialize Maker effect authority");
+    bytes.push(b'\n');
+    bytes
+}
 
 const TAKER_OWNER: &str = "1515151515151515151515151515151515151515151515151515151515151515";
 const MAKER_OWNER: &str = "2424242424242424242424242424242424242424242424242424242424242424";
@@ -1052,6 +1182,115 @@ fn completed_role_journals_activate_without_disclosing_taker_claim_partial() {
     assert!(maker.state_directory().is_dir());
     assert!(taker.state_directory().is_dir());
 
+    let effect_run = "m5-xmr-schema-v3-integration";
+    let effect_file = maker_actor.join("xmr-effect-authority-v1.json");
+    let workflow_file = maker.state_directory().join("xmr-effect-workflow.sqlite3");
+    let effect_bytes = maker_effect_authority_bytes(
+        &maker_actor,
+        maker.swap_id(),
+        maker.agreement_commitment(),
+        maker.activation_commitment(),
+        effect_run,
+        &workflow_file,
+        &maker_journal,
+    );
+    write_new_private(&effect_file, &effect_bytes);
+    let effect_sha256 = <[u8; 32]>::from(Sha256::digest(&effect_bytes));
+    let workflow_identity = XmrWorkflowIdentityV1::new(
+        SwapId::new(hex::encode(maker.swap_id())).expect("valid application swap ID"),
+        Participant::Maker,
+        effect_run.into(),
+        maker.agreement_commitment(),
+        maker.activation_commitment(),
+        effect_sha256,
+    )
+    .expect("valid effect workflow identity");
+    let mut workflow =
+        SqliteXmrWorkflowJournal::create_new(&workflow_file).expect("create effect workflow");
+    workflow
+        .initialize(&workflow_identity)
+        .expect("initialize effect workflow");
+    workflow
+        .validate_initialized(&workflow_identity)
+        .expect("validate exact effect workflow");
+    drop(workflow);
+
+    let effect_manifest_file = maker_actor.join("actor-effect-provision-v3.json");
+    let effect_manifest_sha256 = publish_xmr_effect_manifest_v3(
+        maker.manifest_file(),
+        ActorRole::Maker,
+        &effect_file,
+        &workflow_file,
+        effect_run,
+        &effect_manifest_file,
+    )
+    .expect("publish semantically bound schema-v3 authority");
+    let effect_manifest_bytes = fs::read(&effect_manifest_file).expect("read schema-v3 authority");
+    assert_eq!(
+        effect_manifest_sha256,
+        <[u8; 32]>::from(Sha256::digest(&effect_manifest_bytes))
+    );
+    let effect_authority = load_validated_xmr_effect_manifest_v3_bytes(
+        &effect_manifest_bytes,
+        &effect_bytes,
+        ActorRole::Maker,
+        effect_run,
+    )
+    .expect("load exact schema-v3 authority");
+    assert_eq!(effect_authority.role(), ActorRole::Maker);
+    assert_eq!(effect_authority.swap_id(), maker.swap_id());
+    assert_eq!(effect_authority.run_id(), effect_run);
+    assert_eq!(effect_authority.workflow_journal(), workflow_file);
+    assert_eq!(effect_authority.adaptor_journal(), maker_journal);
+
+    assert!(
+        load_validated_xmr_effect_manifest_v3_bytes(
+            &fs::read(maker.manifest_file()).unwrap(),
+            &effect_bytes,
+            ActorRole::Maker,
+            effect_run,
+        )
+        .is_err(),
+        "legacy schema v2 must remain monitor-only"
+    );
+    let mut crossed_effect = effect_bytes.clone();
+    crossed_effect[1] ^= 1;
+    assert!(
+        load_validated_xmr_effect_manifest_v3_bytes(
+            &effect_manifest_bytes,
+            &crossed_effect,
+            ActorRole::Maker,
+            effect_run,
+        )
+        .is_err(),
+        "effect bytes must remain digest-pinned"
+    );
+    assert!(
+        load_validated_xmr_effect_manifest_v3_bytes(
+            &effect_manifest_bytes,
+            &effect_bytes,
+            ActorRole::Maker,
+            "m5-xmr-schema-v3-crossed-run",
+        )
+        .is_err(),
+        "receipt/scheduler run identity cannot cross"
+    );
+    assert!(
+        publish_xmr_effect_manifest_v3(
+            maker.manifest_file(),
+            ActorRole::Maker,
+            &effect_file,
+            &workflow_file,
+            effect_run,
+            &effect_manifest_file,
+        )
+        .is_err(),
+        "schema-v3 authority publication must not clobber"
+    );
+    assert_eq!(
+        fs::read(&effect_manifest_file).unwrap(),
+        effect_manifest_bytes
+    );
     let maker_manifest = fs::read_to_string(maker.manifest_file()).unwrap();
     let taker_manifest = fs::read_to_string(taker.manifest_file()).unwrap();
     assert!(!maker_manifest.contains(fs::read_to_string(&maker_view).unwrap().trim()));

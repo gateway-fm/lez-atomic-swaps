@@ -17,6 +17,7 @@ sessions = [
     "dep:lez-adaptor-signature",
     "dep:lez-bridge-adapter",
     "dep:lez-bridge-protocol",
+    "dep:lez-swap-core",
     "dep:lez-swap-store",
     "dep:monero",
 ]
@@ -29,6 +30,7 @@ lez-adaptor-role-runner = { version = "=0.1.0", path = "../adaptor-role-runner",
 lez-adaptor-signature = { version = "=0.1.0", path = "../adaptor-signature", optional = true }
 lez-bridge-adapter = { version = "=0.1.0", path = "../lez-bridge-adapter", optional = true }
 lez-bridge-protocol = { version = "=0.1.0", path = "../lez-bridge-protocol", optional = true }
+lez-swap-core = { version = "=0.1.0", path = "../swap-core", optional = true }
 lez-swap-store = { version = "=0.1.0", path = "../swap-store", optional = true }
 lez-xmr-swap-sdk = { version = "=0.1.0", path = "../xmr-swap-sdk" }
 monero = { version = "=0.22.0", default-features = false, optional = true }

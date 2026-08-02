@@ -331,6 +331,20 @@ impl SqliteXmrWorkflowJournal {
         self.revalidate_storage()
     }
 
+    /// Validates the exact initialized identity without creating or changing it.
+    ///
+    /// # Errors
+    ///
+    /// Missing, malformed, crossed, or changed durable identity fails closed.
+    pub fn validate_initialized(&self, identity: &XmrWorkflowIdentityV1) -> Result<(), StoreError> {
+        validate_identity(identity)?;
+        self.revalidate_storage()?;
+        let (durable, _, _) =
+            load_identity(&self.connection)?.ok_or(StoreError::MissingXmrWorkflowIdentity)?;
+        ensure_identity(identity, &durable)?;
+        self.revalidate_storage()
+    }
+
     /// Selects one branch with a durable compare-and-set.
     ///
     /// # Errors

@@ -6,7 +6,7 @@ use url::{Host, Url};
 
 use crate::ActorRole;
 
-const MAX_AUTHORITY_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_AUTHORITY_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -310,7 +310,7 @@ fn decode_digest(value: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow::anyhow!("XMR effect authority digest is invalid"))
 }
 
-fn valid_label(value: &str) -> bool {
+pub(crate) fn valid_label(value: &str) -> bool {
     !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
 

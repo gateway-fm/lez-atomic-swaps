@@ -1,7 +1,7 @@
 # ADR 0126: Separate XMR workflow authority from adaptor and sidecar journals
 
-Status: Accepted for the durable journal component on 2026-07-31; schema-v3
-provisioning, receipt-v2 lifecycle commands, and actual-node application replay
+Status: Accepted for the durable journal and schema-v3 authority boundary on
+2026-08-02; receipt-v2 lifecycle commands and actual-node application replay
 remain in progress
 
 ## Context
@@ -22,8 +22,8 @@ ambiguous.
 
 ## Decision
 
-Introduce a separate owner-private schema-v1 SQLite workflow journal. A future
-schema-v3 actor manifest and receipt-v2 handoff will bind its normalized
+Introduce a separate owner-private schema-v1 SQLite workflow journal. The
+schema-v3 actor manifest now binds its normalized
 absolute path and the SHA-256 of a separate immutable effect-authority manifest.
 Schema-v2 manifests and receipt-v1 handoffs remain monitor-only.
 
@@ -35,7 +35,7 @@ tag-15 LEZ claim and Taker tag-16 LEZ refund.
 
 ```mermaid
 flowchart LR
-    CLI["Future Maker or Taker lifecycle command"] --> V3["Future schema v3 actor manifest and receipt v2"]
+    CLI["Maker or Taker lifecycle command"] --> V3["Schema v3 actor manifest; receipt v2 pending"]
     V3 --> W["Owner private XMR workflow journal"]
     V3 --> A["Immutable XMR effect authority v1"]
     W --> C{"Claim or refund branch CAS"}
@@ -121,6 +121,14 @@ The journal trusts its owner and the owner-private filesystem hierarchy; it is
 not an authenticated rollback anchor against a hostile same-UID writer or
 backup restore. The current path check enforces a normalized absolute path,
 owner-private immediate parent, and a single-link owner-only terminal file;
-deployment must also keep every ancestor private. No Monero or LEZ endpoint,
-credential, tool hash, effect-authority manifest, CLI command, or actual-chain
-effect is composed by this checkpoint. Literal M5 therefore remains 4 of 7.
+deployment must also keep every ancestor private. Schema-v3 now directly binds
+the run ID, immutable effect-authority path and
+digest, and separate workflow path while reconstructing schema-v2 only through
+its original parser. The semantic loader rereads and validates the complete
+Stage A/B role authority, exact effect bytes, role/swap/agreement/activation/run,
+and the already initialized workflow identity. Publication is owner-private,
+atomic create-new, and never overwrites schema v2 or an existing schema-v3 file.
+The full role-process integration test proves digest tamper, run crossing, legacy
+v2 execution, workflow drift, and output collision fail closed. No CLI command
+or actual-chain effect is composed by this checkpoint, so literal M5 remains
+4 of 7.
