@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
-    ActorRole, ValidatedXmrEffectAuthorityV1, XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+    ActorRole, ValidatedXmrEffectExecutionV3, XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
     XMR_EFFECT_AUTHORITY_MAX_BYTES, XmrActorProvisionV1, XmrEffectProvisionV3,
-    load_validated_xmr_effect_manifest_v3_bytes, load_validated_xmr_taker_authority_bytes,
+    load_validated_xmr_effect_execution_v3_bytes, load_validated_xmr_taker_authority_bytes,
     provision_xmr_effect_manifest_v3, provision_xmr_taker_actor_from_material,
     validate_taker_manifest_config_bytes, validate_xmr_effect_manifest_v3_projection_bytes,
 };
@@ -267,7 +267,7 @@ impl XmrTakerEffectReceiptSelector {
         &self.binding.run_id
     }
 
-    pub(crate) fn validate_authority(&self) -> anyhow::Result<ValidatedXmrEffectAuthorityV1> {
+    pub(crate) fn validate_execution(&self) -> anyhow::Result<ValidatedXmrEffectExecutionV3> {
         validate_xmr_effect_manifest_v3_projection_bytes(
             &self.effect_manifest_bytes,
             &self.actor_manifest_bytes,
@@ -286,13 +286,14 @@ impl XmrTakerEffectReceiptSelector {
                 && legacy.activation_commitment() == self.binding.activation_commitment,
             "XMR receipt v2 duplicates differ from validated application authority"
         );
-        let authority = load_validated_xmr_effect_manifest_v3_bytes(
+        let execution = load_validated_xmr_effect_execution_v3_bytes(
             &self.effect_manifest_bytes,
             &self.effect_authority_bytes,
             ActorRole::Taker,
             &self.binding.run_id,
         )
         .context("semantically validate receipt-v2 XMR effect authority")?;
+        let authority = execution.effect_authority();
         ensure!(
             authority.role() == ActorRole::Taker
                 && authority.swap_id() == self.binding.swap_id_bytes
@@ -303,7 +304,7 @@ impl XmrTakerEffectReceiptSelector {
                 && authority.workflow_journal() == self.binding.workflow_journal,
             "XMR receipt v2 differs from validated effect authority"
         );
-        Ok(authority)
+        Ok(execution)
     }
 }
 

@@ -6314,8 +6314,9 @@ an actual swap on the unaffected pair.
 
 ## Flow 1T: monitor an accepted XMR application as the Taker
 
-Status: process-GREEN, receipt-only, and deliberately pre-effect. This flow uses
-the real Taker CLI after the XMR acceptance in Flow 1P or Flow 1R. Receipt v1
+Status: monitor plus receipt-v2 Tag14 process invocation are GREEN and
+deliberately pre-effect. This flow uses the real Taker CLI after the XMR
+acceptance in Flow 1P or Flow 1R. Receipt v1
 validates only the accepted application authority. Receipt v2 additionally
 binds the schema-v3 projection, immutable effect-authority plan, initialized
 workflow identity, and run under both owner locks. Neither variant queries a
@@ -6416,8 +6417,9 @@ The exact deterministic reproduction is the process test below. The manual
 shell shape assumes the effect-authority JSON was produced for the same private
 deployment and contains its real future tool/RPC commitments. Do not copy the
 fixture's deterministic digest, path, credential, or endpoint placeholders
-into an effect-capable deployment; they are accepted here only because monitor
-never contacts or invokes them.
+into an effect-capable deployment. Monitor does not read those inputs or invoke
+a tool; the process proof instead supplies real private inputs and a
+hash-pinned marker executable while leaving every endpoint listener-free.
 Delivery, Chat, and the Maker daemon may all be stopped before this command.
 The CLI strictly and boundedly decodes the receipt, pins the manifest bytes to
 the receipt SHA-256, derives the swap/state lock identity, and then takes the
@@ -6431,7 +6433,7 @@ atomicity over one accepted authority, not cross-chain atomicity. Inherited ABA
 hardening for paths reopened during semantic validation remains production
 hardening; do not treat this checkpoint as a hostile same-UID filesystem proof.
 
-`claim` and `refund` are intentionally unavailable in both receipt versions:
+Legacy receipt-v1 `claim` and `refund` remain intentionally unavailable:
 
 ```bash
 target/debug/lez-taker claim --receipt "$XMR_TAKER_RECEIPT"
@@ -6439,10 +6441,9 @@ target/debug/lez-taker refund --receipt "$XMR_TAKER_RECEIPT"
 ```
 
 Receipt v1 fails with empty stdout and
-`XMR Taker claim and refund are not yet composed`. Receipt v2 fails with
-empty stdout and
-`XMR Taker claim and refund effect execution is not yet composed`. Other
-stable public failures are `Taker acceptance receipt is unavailable or
+`XMR Taker claim and refund are not yet composed`. Before the process route
+was composed, receipt v2 also failed closed; that is a historical checkpoint,
+not the current behavior. Current stable public failures include `Taker acceptance receipt is unavailable or
 ambiguous`, `XMR Taker actor is already running or unsafe`, `XMR Taker
 workflow is already running or unsafe`, `XMR Taker effect authority is
 unavailable or unsafe`, and `receipt-bound XMR Taker actor semantics changed`.
@@ -6465,8 +6466,10 @@ Under the fixture's private `xmr-taker-effect` root, the LEZ files are
 `funding.username`/`funding.password`,
 `shared.username`/`shared.password`, and
 `taker.username`/`taker.password`. The authority loader exposes these as
-typed endpoint and credential-path roles; the files need not exist for this
-node-free monitor and are not read or passed to a child.
+typed endpoint and credential-path roles. They need not exist for the
+node-free monitor. Receipt-v2 claim requires them, pins their exact safe
+contents, and passes sealed snapshots to the selected child without opening
+any endpoint.
 
 The typed Taker plan contains exactly these five program/hash/ABI slots:
 
@@ -6503,11 +6506,13 @@ immutable mode-0700 memfd. The command executes only that snapshot through FD
 command; a fresh verification of changed bytes, a symlink replacement, or a
 writable executable fails closed.
 
-This is a library-level execution primitive, not a user-flow effect. Neither
-`lez-taker monitor` nor its rejected `claim`/`refund` routes invoke it.
+This began as a library-level execution primitive. The current receipt-v2
+`lez-taker claim` route invokes it for Tag14; monitor and legacy receipt-v1
+claim/refund still do not.
 
-The follow-on workflow-v2 developer checkpoint defines all eight external
-effects without enabling those routes:
+The workflow-v2 developer checkpoint defined all eight external effects before
+any route was enabled. The current receipt-v2 route enables only the Tag14
+process invocation:
 
 | Scope | Fixed role and effect |
 |---|---|
@@ -6649,9 +6654,10 @@ canonical Stage-A and Stage-B public paths and each exact wire SHA-256. These
 public identities are available to the future route without re-deriving them
 from unbound paths.
 
-The current authority, at-use custody, and child input-map gaps are closed. This
-is still a developer boundary, not a lifecycle route. It opens no RPC or
-node and executes no claim or refund. The remaining route must select the tool,
+At this historical checkpoint the authority, at-use custody, and child
+input-map gaps were closed, but it was still a developer boundary rather than
+a lifecycle route. It opened no RPC or node and executed no claim or refund.
+The then-remaining route had to select the tool,
 enter workflow-v2 authority, spawn/reap this command, classify finalized
 external evidence, and reconcile it. The tests use private temporary files and
 local processes only; no Docker service, faucet, DNS, public network, peer, or
@@ -6693,14 +6699,35 @@ pretend to immutably bind rotating credential contents.
 
 This fixture runs a descriptor-checking worker only. It does not open an RPC or
 node, construct or submit semantic tag 14, classify finality, or move funds.
-The real lifecycle route must still spawn/reap InvokeOnce, handle a bounded
-typed worker result, classify ObserveOnly from external evidence, and reconcile
-workflow success. Literal M5 remains 4 of 7; the current milestone-tag ETA is
-2 to 5 focused implementation hours.
+The real receipt-v2 lifecycle route now performs the process invocation, while
+semantic Tag14 construction, finalized classification, and reconciliation
+remain open. Literal M5 remains 4 of 7.
 
-The monitor starts no LEZ or Monero node, opens no chain RPC, uses no Docker
-service, faucet, funds, DNS, public network, peer, or finality service, and
-does not need Delivery or Chat. The fixed endpoint strings require no listener,
+### Invoke the receipt-v2 Taker Tag14 process checkpoint
+
+After producing receipt v2 and stopping Delivery, Chat, and the Maker daemon,
+run the user-facing command twice:
+
+```bash
+target/debug/lez-taker claim --receipt /absolute/private/acceptance-receipt-v2.json
+target/debug/lez-taker claim --receipt /absolute/private/acceptance-receipt-v2.json
+```
+
+The first marker invocation emits schema 3 `invoked_unreconciled`, a nonzero
+plan digest, and `chain_effect_finalized:false`. Restart/replay emits
+`observe_only` with the identical digest and no second child. The first call
+pins FDs 197 through 210, wins one durable CAS, and waits/reaps one child.
+Spawn, wait, 30-second timeout, or nonzero ambiguity marks sticky `Unknown`
+and never rearms. Losing receipt-v2 refund fails closed.
+
+This worker receives the sealed descriptor map and writes a marker. The
+separate lower-level process proof validates the exact FD contents. The marker
+opens no RPC, constructs or submits no semantic Tag14 transaction, classifies
+no chain evidence, reconciles no success, and moves no funds.
+
+The monitor and marker route start no LEZ or Monero node, open no chain RPC,
+and use no Docker service, faucet, funds, DNS, public network, peer, or
+finality service, and do not need Delivery or Chat. The fixed endpoint strings require no listener,
 so they do not contend for ports. Consequently this command has no
 node/readiness/finality flakiness and cannot validate chain behavior. To repeat
 the process proof that creates both genuine receipt versions and monitors them
@@ -6713,22 +6740,27 @@ cargo +1.96.0 test --locked --offline \
   -- --exact --nocapture
 ```
 
-That test must also preserve the captured application and effect artifacts,
-including bytes and inodes, across both monitors and all rejected effects. It
-must reject receipt-v2 Stage A/B digest drift, actor-state and workflow lock
-contention, claim/refund without output, a receipt with an unknown field, and
+That exact Maker-daemon/Delivery/Chat black-box test is GREEN 1 of 1 in 124.23
+seconds. It withdraws Delivery, stops Chat with the daemon, then drives the
+first claim, restart/replay, and losing refund through the real `lez-taker`.
+After the first expected journal and marker mutation, replay and losing-refund
+attempts preserve the captured application and effect artifacts, including
+bytes and inodes. It must reject receipt-v2 Stage
+A/B digest drift, actor-state and workflow lock contention, a receipt with an
+unknown field, and
 wrong manifest or effect-authority binding while keeping failures secret-free.
 
 Flakiness is local-process only: a cold Cargo build or uncached dependencies,
 large debug-actor hashing, cryptographic validation, filesystem latency, lock
 contention from another invocation using the same private paths, and heavy host
-scheduling can extend the run. The process fixture historically took about
-307.71 seconds and gives Maker-daemon readiness 30 seconds. It uses an isolated
+scheduling can extend the run. The current exact process fixture took 124.23
+seconds and gives Maker-daemon readiness 30 seconds. It uses an isolated
 temporary root and run-local Unix sockets; rerun only after the previous test
 process exits, and never share the example authority paths across concurrent
 runs. No public resource can make it flaky.
 
-This closes a Taker monitor sub-gap only; literal M5 remains 4 of 7.
+This closes the receipt-v2 Tag14 process-invocation sub-gap only; literal M5
+remains 4 of 7.
 
 ## Flow 1U: repeat the tag-16 one-attempt component checkpoint
 

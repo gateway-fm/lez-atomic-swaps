@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr as _};
+use std::{path::PathBuf, process::Stdio, str::FromStr as _, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use btc_reference_actor::{
@@ -11,11 +11,16 @@ use lez_maker_node::{DeliveryOfferQueryV1, RunLocalDelivery};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    MakerActorHeldLock, MakerRouteV1, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
+    MakerActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, XmrWorkflowStep,
+    maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
 };
 use secp256k1::PublicKey;
 use serde::Serialize;
-use xmr_reference_actor::load_validated_xmr_taker_authority_bytes;
+use wait_timeout::ChildExt as _;
+use xmr_reference_actor::{
+    ValidatedXmrEffectExecutionV3, XmrPreparedEffectInvocationV1,
+    load_validated_xmr_taker_authority_bytes,
+};
 use zec_reference_actor::{
     ActorCommand as ZecActorCommand, ActorConfig, ActorRole, execute_actor_command,
 };
@@ -786,6 +791,19 @@ struct XmrTakerEffectMonitorOutput<'a> {
     effect_authority: &'static str,
 }
 
+#[derive(Serialize)]
+struct XmrTakerEffectActionOutput<'a> {
+    schema_version: u16,
+    pair: &'static str,
+    role: &'static str,
+    action: &'static str,
+    step: &'static str,
+    state: &'static str,
+    run_id: &'a str,
+    tool_plan_identity_sha256: String,
+    chain_effect_finalized: bool,
+}
+
 async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
     let (arguments, action) = match command {
         LifecycleCommand::Monitor(arguments) => (arguments, LifecycleAction::Monitor),
@@ -915,32 +933,128 @@ fn execute_xmr_effect_lifecycle(
     selector: &XmrTakerEffectReceiptSelector,
     action: LifecycleAction,
 ) -> anyhow::Result<()> {
-    let _state_lock =
-        MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())
-            .map_err(|_| anyhow::anyhow!("XMR Taker actor is already running or unsafe"))?;
-    let _workflow_lock =
+    let state_lock = MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())
+        .map_err(|_| anyhow::anyhow!("XMR Taker actor is already running or unsafe"))?;
+    let workflow_lock =
         MakerActorHeldLock::acquire_for(selector.swap_id(), selector.workflow_journal())
             .map_err(|_| anyhow::anyhow!("XMR Taker workflow is already running or unsafe"))?;
-    let _authority = selector
-        .validate_authority()
+    let execution = selector
+        .validate_execution()
         .map_err(|_| anyhow::anyhow!("XMR Taker effect authority is unavailable or unsafe"))?;
-    ensure!(
-        matches!(action, LifecycleAction::Monitor),
-        "XMR Taker claim and refund effect execution is not yet composed"
-    );
+    match action {
+        LifecycleAction::Monitor => println!(
+            "{}",
+            serde_json::to_string(&XmrTakerEffectMonitorOutput {
+                schema_version: 2,
+                pair: "monero",
+                role: "taker",
+                state: "active",
+                phase: "application_activated",
+                run_id: selector.run_id(),
+                effect_authority: "validated",
+            })?
+        ),
+        LifecycleAction::Claim => execute_xmr_taker_effect(
+            selector.run_id(),
+            &execution,
+            XmrWorkflowStep::AuthorizeLezTag14,
+            &state_lock,
+            &workflow_lock,
+        )?,
+        LifecycleAction::Refund => execute_xmr_taker_effect(
+            selector.run_id(),
+            &execution,
+            XmrWorkflowStep::RefundLezTag16,
+            &state_lock,
+            &workflow_lock,
+        )?,
+    }
+    Ok(())
+}
+
+fn execute_xmr_taker_effect(
+    run_id: &str,
+    execution: &ValidatedXmrEffectExecutionV3,
+    step: XmrWorkflowStep,
+    state_lock: &MakerActorHeldLock,
+    workflow_lock: &MakerActorHeldLock,
+) -> anyhow::Result<()> {
+    let (action, step_name) = match step {
+        XmrWorkflowStep::AuthorizeLezTag14 => ("claim", "authorize_lez_tag14"),
+        XmrWorkflowStep::RefundLezTag16 => ("refund", "refund_lez_tag16"),
+        _ => return Err(anyhow::anyhow!("XMR Taker effect step is unsupported")),
+    };
+    let prepared = execution
+        .prepare_effect_invocation(step, state_lock, workflow_lock)
+        .map_err(|_| anyhow::anyhow!("XMR Taker effect route is unavailable or unsafe"))?;
+    let (state, plan, finalized) = match prepared {
+        XmrPreparedEffectInvocationV1::InvokeOnce {
+            mut command,
+            tool_plan_identity_sha256,
+        } => {
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            let Ok(mut child) = command.spawn() else {
+                mark_xmr_effect_unknown(execution, step)?;
+                return Err(anyhow::anyhow!("XMR Taker effect invocation is ambiguous"));
+            };
+            let status = match child.wait_timeout(Duration::from_secs(30)) {
+                Ok(Some(status)) => status,
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    mark_xmr_effect_unknown(execution, step)?;
+                    return Err(anyhow::anyhow!("XMR Taker effect invocation timed out"));
+                }
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    mark_xmr_effect_unknown(execution, step)?;
+                    return Err(anyhow::anyhow!("XMR Taker effect invocation is ambiguous"));
+                }
+            };
+            if !status.success() {
+                mark_xmr_effect_unknown(execution, step)?;
+                return Err(anyhow::anyhow!("XMR Taker effect invocation is ambiguous"));
+            }
+            ("invoked_unreconciled", tool_plan_identity_sha256, false)
+        }
+        XmrPreparedEffectInvocationV1::ObserveOnly {
+            tool_plan_identity_sha256,
+        } => ("observe_only", tool_plan_identity_sha256, false),
+        XmrPreparedEffectInvocationV1::Complete {
+            tool_plan_identity_sha256,
+        } => ("complete", tool_plan_identity_sha256, true),
+    };
     println!(
         "{}",
-        serde_json::to_string(&XmrTakerEffectMonitorOutput {
-            schema_version: 2,
+        serde_json::to_string(&XmrTakerEffectActionOutput {
+            schema_version: 3,
             pair: "monero",
             role: "taker",
-            state: "active",
-            phase: "application_activated",
-            run_id: selector.run_id(),
-            effect_authority: "validated",
+            action,
+            step: step_name,
+            state,
+            run_id,
+            tool_plan_identity_sha256: hex::encode(plan),
+            chain_effect_finalized: finalized,
         })?
     );
     Ok(())
+}
+
+fn mark_xmr_effect_unknown(
+    execution: &ValidatedXmrEffectExecutionV3,
+    step: XmrWorkflowStep,
+) -> anyhow::Result<()> {
+    let mut workflow =
+        SqliteXmrWorkflowJournal::open_existing(execution.effect_authority().workflow_journal())
+            .map_err(|_| anyhow::anyhow!("XMR Taker workflow recovery is unavailable"))?;
+    workflow
+        .validate_initialized(execution.workflow_identity())
+        .map_err(|_| anyhow::anyhow!("XMR Taker workflow recovery identity changed"))?;
+    workflow
+        .mark_unknown(execution.workflow_identity(), step)
+        .map_err(|_| anyhow::anyhow!("XMR Taker workflow ambiguity is unavailable"))
 }
 
 fn btc_take_was_requested(arguments: &Arguments) -> bool {

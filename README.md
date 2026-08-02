@@ -173,13 +173,13 @@ composition through the existing one-shot chain-effect owner.
 
 The M5 XMR application path now has a process-GREEN real-process pre-effect checkpoint. It runs the actual Maker CLI, `lez-maker-daemon`, and Taker CLI around role-generated canonical Stage A/B material. Stage A advances only to reserved revision 2; Stage B is the sole transaction that creates the coordinator, consumes the offer, registers one Maker-only Monero actor, and records revision 3 replay. The Taker publishes only its own no-clobber actor bundle and acceptance receipt. A crossed reservation must leave the active offer at revision 1 with no negotiation, coordinator, actor, or public effect. After the exact Delivery advertisement is removed and the daemon is restarted, the durable Taker actor bypasses discovery and exact replay must preserve every captured actor/receipt byte and inode.
 
-That XMR acceptance receipt now also drives a real, receipt-only
+The legacy XMR acceptance receipt also drives a real, receipt-only
 `lez-taker monitor` after Delivery and Chat are gone. The command pins the
 receipt and manifest, takes the same per-swap kernel lock as the actor worker,
 and validates the complete Taker application authority under that lock before
 emitting a fixed, secret-free application status. It starts no node, opens no
 RPC, performs no chain effect, and does not infer current or enduring chain
-progress. XMR Taker `claim` and `refund` remain explicitly unsupported. The
+progress. Legacy receipt-v1 `claim` and `refund` remain explicitly unsupported. The
 manual command, exact JSON, stable failures, atomicity boundary, and external-
 resource declaration are in
 [Flow 1T](docs/manual-user-flows.md#flow-1t-monitor-an-accepted-xmr-application-as-the-taker).
@@ -187,7 +187,7 @@ Inherited ABA hardening for paths reopened while validating the authority
 remains production work.
 
 The follow-on XMR receipt-v2 checkpoint adds a replay-safe, effect-shaped
-authority handoff without enabling effects. During an otherwise identical
+authority handoff and one process-level Taker Tag14 invocation. During an otherwise identical
 accepted-XMR Taker replay, these four flags are all-or-none:
 `--xmr-effect-authority-file`, `--xmr-effect-manifest-file`,
 `--xmr-workflow-journal`, and `--xmr-run-id`; the existing
@@ -206,13 +206,25 @@ checkpoint those values are canonical syntax and identity commitments only.
 The monitor does not open the URLs, read RPC credentials, invoke tools, or
 check the at-use executable/capability hashes.
 
-XMR Taker `claim` and `refund` still fail closed before any effect with
-`XMR Taker claim and refund effect execution is not yet composed`. The
-process fixture uses deterministic private files and no node, Docker service,
-faucet, DNS, public RPC, peer, or funds. Its only live transports are isolated
-run-local Maker Unix sockets; chain endpoint strings need no listener and
-cannot collide. Exact flags, outputs, private-file inventory, and cold-build,
-hashing, lock-contention, and host-scheduling flakiness notes are maintained in
+`lez-taker claim --receipt /absolute/private/acceptance-receipt-v2.json` now
+validates the schema-v3 execution under separate actor and workflow locks,
+prepares the exact Taker `AuthorizeLezTag14` plan, wins one durable workflow
+CAS, and invokes and reaps one hash-pinned child with FDs 197 through 210. A
+successful marker child returns schema 3 state `invoked_unreconciled` with
+`chain_effect_finalized:false`; restart/replay returns `observe_only` with the
+same nonzero plan digest and starts no second child. Spawn, wait, 30-second
+timeout, and nonzero-exit ambiguity make the workflow sticky `Unknown`, so it
+never rearms. The losing receipt-v2 `refund` branch fails closed.
+
+This is process-GREEN only: the child is a marker, not a
+semantic Tag14 worker. It opens no RPC, constructs or submits no LEZ
+transaction, classifies no finality, and performs no reconciliation. The exact
+Maker-daemon/Delivery/Chat black-box test is GREEN 1 of 1 in 124.23 seconds;
+both transports are removed and the daemon is stopped before the lifecycle
+action. It uses deterministic private files and no node, Docker service,
+faucet, DNS, public RPC, peer, or funds. Exact flags, outputs, private-file
+inventory, and cold-build, hashing, lock-contention, and host-scheduling
+flakiness notes are maintained in
 [Flow 1T](docs/manual-user-flows.md#flow-1t-monitor-an-accepted-xmr-application-as-the-taker).
 
 That first checkpoint is deliberately zero-effect: it starts no Monero or LEZ

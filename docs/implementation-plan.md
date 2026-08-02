@@ -5232,3 +5232,34 @@ concurrency, composite, review, and tag gates remain.
 No lifecycle route, RPC, node, or semantic chain effect is added. Literal M5
 remains 4 of 7. The current 2 to 5 focused-hour ETA remains subject to
 fresh-node runtime and final composite review.
+
+### XMR receipt-v2 Taker Tag14 process-invocation checkpoint (2026-08-02)
+
+The real `lez-taker claim --receipt` path now consumes the schema-v3 boundary
+under separate actor/adaptor-state and workflow locks. It selects only Taker
+`AuthorizeLezTag14`, pins the program, runtime, and ten secrets, composes FDs
+197 through 210, and then enters workflow-v2 authorization.
+
+The first valid call wins the durable Prepared-to-Started CAS, spawns exactly
+one hash-pinned child, waits at most 30 seconds, and reaps it. Successful marker
+output is schema 3 `invoked_unreconciled`, with the stable nonzero plan digest
+and `chain_effect_finalized:false`. Restart/replay returns `observe_only` with
+the identical digest and no second child. Spawn, wait, timeout, or nonzero-exit
+ambiguity records sticky `Unknown`, so replay cannot rearm. Once Claim wins,
+the losing Refund branch fails closed before tool invocation.
+
+The exact real Maker-daemon/Delivery/Chat black-box case is GREEN 1 of 1 in
+124.23 seconds. It withdraws Delivery and stops Chat with the daemon before the
+lifecycle action, then proves first claim, restart/replay, losing refund,
+digest stability, marker stability, and unchanged accepted artifacts. No LEZ
+or Monero node, RPC listener, Docker service, faucet, DNS, peer, public network,
+or funds participated.
+
+This checkpoint is deliberately unreconciled. Its child is a descriptor marker,
+not the semantic Tag14 transaction worker; no transaction is constructed or
+submitted, no chain evidence is classified, and no workflow success is
+reconciled. Remaining M5 work is the semantic worker and finalized
+evidence/reconciliation, the other role-fixed Maker/Taker actions, fresh
+isolated two-devnet composition where required, accepted-application
+concurrency/restart/unavailable-node isolation, and final review/tag gates.
+Literal M5 remains 4 of 7.

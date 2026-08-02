@@ -33,7 +33,9 @@ use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
     LocalPriceV1, MakerActorHeldLock, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
     MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
-    MakerXmrNegotiationStatus, SqliteSwapStore, maker_xmr_chat_swap_id,
+    MakerXmrNegotiationStatus, SqliteSwapStore, SqliteXmrWorkflowJournal, XmrWorkflowBranch,
+    XmrWorkflowDecision, XmrWorkflowReconciliationSource, XmrWorkflowReconciliationV2,
+    XmrWorkflowStep, maker_xmr_chat_swap_id,
 };
 use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
@@ -41,6 +43,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
+use xmr_reference_actor::{ActorRole, load_validated_xmr_effect_execution_v3_bytes};
 
 const OFFER_ID: &str = "m5-xmr-chat-offer-001";
 const RESERVATION_ID: &str = "m5-xmr-chat-reservation-001";
@@ -216,7 +219,7 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
         receipt_v2["effect_manifest_sha256"],
         hex::encode(Sha256::digest(fs::read(&effect.manifest).unwrap()))
     );
-    let effect_snapshot = EffectArtifactSnapshot::capture(&effect);
+    prepare_taker_claim_workflow(&effect);
 
     let snapshot = ArtifactSnapshot::capture(&fixture);
     RunLocalDelivery::publisher(&delivery, key(8))
@@ -271,15 +274,54 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
             "effect_authority": "validated"
         })
     );
-    for action in ["claim", "refund"] {
-        let rejected = run_taker_lifecycle(action, &effect.receipt);
-        assert!(!rejected.status.success());
-        assert!(rejected.stdout.is_empty());
-        assert_eq!(
-            String::from_utf8(rejected.stderr).unwrap(),
-            "XMR Taker claim and refund effect execution is not yet composed\n"
-        );
-    }
+    let first_claim = run_taker_lifecycle("claim", &effect.receipt);
+    assert!(
+        first_claim.status.success(),
+        "first receipt-v2 claim failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&first_claim.stdout),
+        String::from_utf8_lossy(&first_claim.stderr)
+    );
+    assert!(first_claim.stderr.is_empty());
+    let first_claim: Value = serde_json::from_slice(&first_claim.stdout).unwrap();
+    assert_eq!(first_claim["state"], "invoked_unreconciled");
+    assert_eq!(first_claim["step"], "authorize_lez_tag14");
+    let plan_identity = first_claim["tool_plan_identity_sha256"]
+        .as_str()
+        .expect("claim output includes its tool-plan identity")
+        .to_owned();
+    assert_eq!(plan_identity.len(), 64);
+    assert!(
+        plan_identity
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+    assert_ne!(plan_identity, "0".repeat(64));
+    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+
+    let replayed_claim = run_taker_lifecycle("claim", &effect.receipt);
+    assert!(
+        replayed_claim.status.success(),
+        "replayed receipt-v2 claim failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&replayed_claim.stdout),
+        String::from_utf8_lossy(&replayed_claim.stderr)
+    );
+    assert!(replayed_claim.stderr.is_empty());
+    let replayed_claim: Value = serde_json::from_slice(&replayed_claim.stdout).unwrap();
+    assert_eq!(replayed_claim["state"], "observe_only");
+    assert_eq!(replayed_claim["step"], "authorize_lez_tag14");
+    assert_eq!(replayed_claim["tool_plan_identity_sha256"], plan_identity);
+    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+
+    // The claim branch is now durable, so the losing refund branch fails
+    // before it can invoke its tool or change accepted effect authority.
+    let rejected_refund = run_taker_lifecycle("refund", &effect.receipt);
+    assert!(!rejected_refund.status.success());
+    assert!(rejected_refund.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(rejected_refund.stderr).unwrap(),
+        "XMR Taker effect route is unavailable or unsafe\n"
+    );
+    let effect_snapshot = EffectArtifactSnapshot::capture(&effect);
 
     // Stage A/B are duplicate receipt fields, never independent authority.
     // Canonical nonzero digest substitutions reach the under-lock semantic
@@ -666,6 +708,49 @@ fn run_taker_lifecycle(action: &str, receipt: &Path) -> Output {
         .expect("run receipt-only real XMR Taker lifecycle command")
 }
 
+fn prepare_taker_claim_workflow(effect: &XmrTakerEffectFixture) {
+    let manifest_bytes = fs::read(&effect.manifest).unwrap();
+    let authority_bytes = fs::read(&effect.authority).unwrap();
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &manifest_bytes,
+        &authority_bytes,
+        ActorRole::Taker,
+        &effect.run_id,
+    )
+    .expect("load the exact provisioned Taker effect execution");
+    let identity = execution.workflow_identity();
+    let mut workflow = SqliteXmrWorkflowJournal::open_existing(&effect.workflow_journal)
+        .expect("open the provisioned Taker workflow");
+    workflow
+        .validate_initialized(identity)
+        .expect("workflow retains the execution identity");
+    for (step, evidence_byte, plan_byte) in [
+        (XmrWorkflowStep::InitializeLezTag13, 0xa1, 0xb1),
+        (XmrWorkflowStep::FundLezTag13, 0xa2, 0xb2),
+    ] {
+        workflow.prepare_step(identity, step).unwrap();
+        assert_eq!(
+            workflow.authorize_once(identity, step).unwrap(),
+            XmrWorkflowDecision::InvokeOnce
+        );
+        let reconciliation = XmrWorkflowReconciliationV2::new(
+            [evidence_byte; 32],
+            [plan_byte; 32],
+            XmrWorkflowReconciliationSource::LezFinalizedEvent,
+        )
+        .unwrap();
+        workflow
+            .reconcile_succeeded(identity, step, &reconciliation)
+            .unwrap();
+    }
+    workflow
+        .select_branch(identity, XmrWorkflowBranch::Claim)
+        .unwrap();
+    workflow
+        .prepare_step(identity, XmrWorkflowStep::AuthorizeLezTag14)
+        .unwrap();
+}
+
 fn assert_rejected_taker_monitor(receipt: &Path) {
     let output = run_taker_lifecycle("monitor", receipt);
     assert!(!output.status.success());
@@ -701,6 +786,17 @@ fn write_private_bytes(path: &Path, bytes: &[u8]) {
         .write(true)
         .create_new(true)
         .mode(0o600)
+        .open(path)
+        .unwrap();
+    file.write_all(bytes).unwrap();
+    file.sync_all().unwrap();
+}
+
+fn write_private_executable(path: &Path, bytes: &[u8]) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o700)
         .open(path)
         .unwrap();
     file.write_all(bytes).unwrap();
@@ -912,6 +1008,10 @@ impl EffectArtifactSnapshot {
             ("effect-manifest-v3", effect.manifest.as_path()),
             ("workflow-journal", effect.workflow_journal.as_path()),
             ("acceptance-receipt-v2", effect.receipt.as_path()),
+            (
+                "tag14-invocation-marker",
+                effect.invocation_marker.as_path(),
+            ),
         ]
         .into_iter()
         .map(|(label, path)| {
@@ -1109,6 +1209,7 @@ struct XmrTakerEffectFixture {
     authority: PathBuf,
     manifest: PathBuf,
     workflow_journal: PathBuf,
+    invocation_marker: PathBuf,
     run_id: String,
 }
 
@@ -1121,67 +1222,16 @@ impl XmrTakerEffectFixture {
         let authority_file = effect_root.join("effect-authority-v1.json");
         let manifest_file = effect_root.join("actor-effect-provision-v3.json");
         let workflow_journal = effect_root.join("workflow.sqlite3");
+        let invocation_marker = effect_root.join("tag14-invocations.log");
+        write_private_bytes(&invocation_marker, b"");
         let run_id = "m5-xmr-taker-effect-run-1".to_owned();
-        let authority = TakerEffectAuthority {
-            schema_version: 1,
-            pair: "monero",
-            role: "taker",
-            swap_id: receipt["swap_id"].as_str().unwrap().to_owned(),
-            agreement_commitment: receipt["agreement_commitment"].as_str().unwrap().to_owned(),
-            activation_commitment: receipt["activation_commitment"]
-                .as_str()
-                .unwrap()
-                .to_owned(),
-            run_id: run_id.clone(),
-            workflow_journal: workflow_journal.clone(),
-            adaptor_journal: PathBuf::from(receipt["actor_state_database"].as_str().unwrap()),
-            evidence_root: effect_root.join("evidence"),
-            lez: EffectLezRpc {
-                sidecar_url: "http://127.0.0.1:36972/".to_owned(),
-                runtime_file: effect_root.join("lez-runtime.json"),
-                runtime_sha256: "93".repeat(32),
-                capability_file: effect_root.join("lez.capability"),
-            },
-            monero: EffectMoneroRpc {
-                daemon: effect_rpc(&effect_root, "daemon", 36974),
-                funding_wallet: effect_rpc(&effect_root, "funding", 36975),
-                shared_wallet: effect_rpc(&effect_root, "shared", 36976),
-                role_wallet: effect_rpc(&effect_root, "taker", 36977),
-                shared_wallet_file_password_file: effect_root.join("shared-wallet-file.password"),
-            },
-            taker_tools: TakerEffectTools {
-                tag14_authorize: effect_tool(
-                    &effect_root,
-                    "tag14-authorize",
-                    "94",
-                    "lez_xmr_tag14_authorize_v1",
-                ),
-                finalized_classifier: effect_tool(
-                    &effect_root,
-                    "finalized-classifier",
-                    "95",
-                    "lez_xmr_finalized_classifier_v1",
-                ),
-                monero_claim: effect_tool(
-                    &effect_root,
-                    "monero-claim",
-                    "96",
-                    "lez_xmr_monero_claim_sweep_v2",
-                ),
-                monero_verify: effect_tool(
-                    &effect_root,
-                    "monero-verify",
-                    "97",
-                    "lez_xmr_monero_verify_v2",
-                ),
-                tag16_refund: effect_tool(
-                    &effect_root,
-                    "tag16-refund",
-                    "98",
-                    "lez_xmr_tag16_refund_v1",
-                ),
-            },
-        };
+        let authority = taker_effect_authority(
+            &receipt,
+            &effect_root,
+            &workflow_journal,
+            &invocation_marker,
+            &run_id,
+        );
         let mut bytes = serde_json::to_vec(&authority).unwrap();
         bytes.push(b'\n');
         write_private_bytes(&authority_file, &bytes);
@@ -1191,7 +1241,101 @@ impl XmrTakerEffectFixture {
             manifest: manifest_file,
             workflow_journal,
             run_id,
+            invocation_marker,
         }
+    }
+}
+
+fn taker_effect_authority(
+    receipt: &Value,
+    effect_root: &Path,
+    workflow_journal: &Path,
+    invocation_marker: &Path,
+    run_id: &str,
+) -> TakerEffectAuthority {
+    let runtime_file = effect_root.join("lez-runtime.json");
+    let runtime_bytes = b"{\"role\":\"taker\",\"schema_version\":1}\n";
+    write_private_bytes(&runtime_file, runtime_bytes);
+    let capability_file = effect_root.join("lez.capability");
+    write_private_bytes(&capability_file, b"fixture-capability\n");
+    for name in [
+        "daemon.username",
+        "daemon.password",
+        "funding.username",
+        "funding.password",
+        "shared.username",
+        "shared.password",
+        "taker.username",
+        "taker.password",
+        "shared-wallet-file.password",
+    ] {
+        write_private_bytes(
+            &effect_root.join(name),
+            format!("fixture-{name}\n").as_bytes(),
+        );
+    }
+    let marker_text = invocation_marker.to_str().expect("UTF-8 marker path");
+    assert!(!marker_text.contains('\''));
+    let tag14_worker = format!("#!/bin/sh\nset -eu\nprintf 'invoked\\n' >> '{marker_text}'\n");
+    TakerEffectAuthority {
+        schema_version: 1,
+        pair: "monero",
+        role: "taker",
+        swap_id: receipt["swap_id"].as_str().unwrap().to_owned(),
+        agreement_commitment: receipt["agreement_commitment"].as_str().unwrap().to_owned(),
+        activation_commitment: receipt["activation_commitment"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        run_id: run_id.to_owned(),
+        workflow_journal: workflow_journal.to_owned(),
+        adaptor_journal: PathBuf::from(receipt["actor_state_database"].as_str().unwrap()),
+        evidence_root: effect_root.join("evidence"),
+        lez: EffectLezRpc {
+            sidecar_url: "http://127.0.0.1:36972/".to_owned(),
+            runtime_file,
+            runtime_sha256: hex::encode(Sha256::digest(runtime_bytes)),
+            capability_file,
+        },
+        monero: EffectMoneroRpc {
+            daemon: effect_rpc(effect_root, "daemon", 36974),
+            funding_wallet: effect_rpc(effect_root, "funding", 36975),
+            shared_wallet: effect_rpc(effect_root, "shared", 36976),
+            role_wallet: effect_rpc(effect_root, "taker", 36977),
+            shared_wallet_file_password_file: effect_root.join("shared-wallet-file.password"),
+        },
+        taker_tools: TakerEffectTools {
+            tag14_authorize: effect_tool(
+                effect_root,
+                "tag14-authorize",
+                tag14_worker.as_bytes(),
+                "lez_xmr_tag14_authorize_v1",
+            ),
+            finalized_classifier: effect_tool(
+                effect_root,
+                "finalized-classifier",
+                b"#!/bin/sh\nexit 0\n",
+                "lez_xmr_finalized_classifier_v1",
+            ),
+            monero_claim: effect_tool(
+                effect_root,
+                "monero-claim",
+                b"#!/bin/sh\nexit 0\n",
+                "lez_xmr_monero_claim_sweep_v2",
+            ),
+            monero_verify: effect_tool(
+                effect_root,
+                "monero-verify",
+                b"#!/bin/sh\nexit 0\n",
+                "lez_xmr_monero_verify_v2",
+            ),
+            tag16_refund: effect_tool(
+                effect_root,
+                "tag16-refund",
+                b"#!/bin/sh\nexit 0\n",
+                "lez_xmr_tag16_refund_v1",
+            ),
+        },
     }
 }
 
@@ -1252,10 +1396,12 @@ struct TakerEffectAuthority {
     taker_tools: TakerEffectTools,
 }
 
-fn effect_tool(root: &Path, name: &str, digest_byte: &str, abi: &'static str) -> EffectTool {
+fn effect_tool(root: &Path, name: &str, program: &[u8], abi: &'static str) -> EffectTool {
+    let path = root.join(name);
+    write_private_executable(&path, program);
     EffectTool {
-        program: root.join(name),
-        program_sha256: digest_byte.repeat(32),
+        program: path,
+        program_sha256: hex::encode(Sha256::digest(program)),
         abi,
     }
 }
