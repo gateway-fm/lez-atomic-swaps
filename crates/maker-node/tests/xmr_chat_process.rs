@@ -1147,6 +1147,7 @@ impl XmrTakerEffectFixture {
                 funding_wallet: effect_rpc(&effect_root, "funding", 36975),
                 shared_wallet: effect_rpc(&effect_root, "shared", 36976),
                 role_wallet: effect_rpc(&effect_root, "taker", 36977),
+                shared_wallet_file_password_file: effect_root.join("shared-wallet-file.password"),
             },
             taker_tools: TakerEffectTools {
                 tag14_authorize: effect_tool(
@@ -1231,6 +1232,7 @@ struct EffectMoneroRpc {
     funding_wallet: EffectAuthenticatedRpc,
     shared_wallet: EffectAuthenticatedRpc,
     role_wallet: EffectAuthenticatedRpc,
+    shared_wallet_file_password_file: PathBuf,
 }
 
 #[derive(Serialize)]

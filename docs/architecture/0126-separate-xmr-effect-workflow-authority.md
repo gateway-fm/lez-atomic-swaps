@@ -98,10 +98,19 @@ absolute runtime-identity path plus pinned SHA-256, and an absolute capability
 file path. Its Monero authority contains four distinct typed endpoint roles:
 daemon, Maker funding wallet, neutral shared wallet, and local-role destination
 wallet. Every endpoint is an HTTP literal-loopback root with an explicit
-nonzero port and separate absolute username/password file paths. URL userinfo,
+nonzero port and separate absolute username/password file paths. Monero
+authority additionally requires one normalized absolute shared-wallet
+file-password path, distinct from all eight RPC credential paths. URL userinfo,
 queries, fragments, non-root paths, DNS names, and non-loopback addresses fail
 closed. This checkpoint validates endpoint and credential-path structure; it
 does not open a socket or read, snapshot, or authenticate a credential file.
+
+The validated Maker execution authority now also retains the canonical
+published Stage-A and Stage-B public paths and the SHA-256 of each exact wire
+that the semantic loader already validated. This prevents the later route from
+losing or re-deriving the public agreement/activation identity during the
+application-to-effect handoff; it does not itself open an RPC or execute an
+effect.
 
 Each role has exactly five tool slots. Every slot carries one normalized
 absolute program path, a nonzero lowercase SHA-256, and the fixed ABI below;
@@ -184,14 +193,15 @@ and change time must remain stable across the bounded read and named-file
 recheck. Cross-source device/inode aliases fail closed.
 
 The LEZ runtime is bounded to 16 KiB and must match the authority-pinned
-SHA-256. The LEZ capability and all eight Monero username/password sources are
-bounded to 256 bytes apiece. To match the actual runner, a secret may be one
+SHA-256. The LEZ capability, all eight Monero RPC username/password sources, and the
+shared-wallet file-password source are bounded to 256 bytes apiece. To match
+the actual runner, a secret may be one
 nonempty ASCII-graphic value stored raw, with one trailing LF, or with one
 trailing CRLF; the snapshot preserves those exact source bytes. Empty values,
 embedded or repeated newlines, stray carriage returns, NULs, non-graphic bytes,
 and oversized values fail closed.
 
-Each of the nine secrets is copied into its own mode-0400 memfd carrying write,
+Each of the ten secrets is copied into its own mode-0400 memfd carrying write,
 grow, shrink, and seal seals, then duplicated with close-on-exec to a distinct
 collision-free parent descriptor. The runtime now receives the same immutable
 mode-0400 execution snapshot in addition to its bounded hash-checked in-memory
@@ -205,10 +215,10 @@ flowchart LR
     AUTH["Validated schema v3 authority"] --> PIN["Pin inputs at use"]
     RUN["LEZ runtime source"] --> PIN
     CAP["LEZ capability source"] --> PIN
-    RPC["Eight Monero credential sources"] --> PIN
+    RPC["Nine Monero secret sources"] --> PIN
     PIN --> RB["Hash checked runtime snapshot"]
-    PIN --> SF["Runtime plus nine sealed input memfds"]
-    SF --> PLAN["Fixed input FDs 200 through 209"]
+    PIN --> SF["Runtime plus ten sealed secret memfds"]
+    SF --> PLAN["Fixed input FDs 200 through 210"]
     PROG["Sealed program FD 197"] --> MAP["One descriptor mapping"]
     LOCKS["Actor and workflow locks FDs 198 and 199"] --> MAP
     PLAN --> MAP
@@ -221,15 +231,15 @@ targets in 200 through 1023; empty, reserved/out-of-range, duplicate-target, and
 aliased-source plans fail closed. Its redacted Debug reports only the descriptor
 count. XMR specializes that plan to runtime FD 200, capability FD 201, daemon
 username/password FDs 202/203, funding-wallet FDs 204/205, shared-wallet FDs
-206/207, and role-wallet FDs 208/209.
+206/207, role-wallet FDs 208/209, and shared-wallet file-password FD 210.
 
-The XMR command consumes the runtime and all nine secret snapshots alongside
+The XMR command consumes the runtime and all ten secret snapshots alongside
 the program and both held locks. Program FD 197, actor/state lock FD 198,
-workflow lock FD 199, and input FDs 200 through 209 are installed by exactly one
+workflow lock FD 199, and input FDs 200 through 210 are installed by exactly one
 `fd_mappings` call. No capability, username, password, or runtime bytes enter
 argv or the environment. The process RED/GREEN executes the already pinned
 program after every named program/input is replaced, observes the exact original
-runtime and secret hashes after exec, proves FD 210 absent, then drops the
+runtime and secret hashes after exec, proves FD 211 absent, then drops the
 parent Command and lock handles. The live child alone retains both locks until
 it exits and is reaped; only then can the parent reacquire them.
 
@@ -337,8 +347,8 @@ invocation, exact evidence replay, drift rejection, descriptor separation,
 lock-alias, cross-swap, root, and identity rejection, and child custody through
 reap.
 
-The expanded Taker authority suite is GREEN at 5 of 5. It proves exact runtime
-hashing, raw/LF/CRLF secret preservation, nine distinct sealed descriptors,
+The expanded Taker authority suite is GREEN at 7 of 7. It proves exact runtime
+hashing, raw/LF/CRLF secret preservation, ten distinct sealed descriptors,
 redacted metadata-only views, named replacement isolation, fresh drift failure,
 and rejection of invalid content, unsafe storage, symlinks, hard links,
 oversize inputs, unsafe parents, and cross-source aliases. Strict all-target
@@ -347,13 +357,22 @@ Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN.
 The generic negative-plan test proves empty, reserved/out-of-range, duplicate
 target, and aliased-source rejection plus redacted Debug. The XMR process test
 proves exact pre-replacement program, runtime, and secrets after exec; exact FDs
-197 through 209; absent FD 210; and both locks held by the child after parent
+197 through 210; absent FD 211; and both locks held by the child after parent
 Command and lock handles are dropped until child exit/reap. Full
 `lez-swap-store` and `xmr-reference-actor` all-target/all-feature regressions,
 strict Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN.
 
+The current checkpoint makes the normalized shared-wallet file-password path
+mandatory and disjoint from every other credential path, pins it as the tenth
+sealed secret, maps it to FD 210, and moves the absence sentinel to FD 211.
+Focused authority/custody/process coverage also proves missing, relative,
+unsafe, and aliased file-password rejection. Maker authority coverage proves
+the validated Stage-A/B public paths and exact wire SHA-256 values survive the
+execution-authority handoff.
+
 The typed authority, sealed program/input snapshots, workflow-v2 journal, and
-one-map executable/lock/input command boundary are component-GREEN, but no
+one-map executable/lock/input command boundary are component-GREEN. The
+current effect-input validation, custody, and child-map gaps are closed, but no
 Maker or Taker lifecycle route calls it. Actual classifier-to-evidence
 composition, Maker effects, receipt-v2 claim/refund routing, and fresh isolated
 LEZ plus official Monero Regtest proof remain open. This checkpoint opens no

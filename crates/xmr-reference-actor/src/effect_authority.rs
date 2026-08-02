@@ -62,6 +62,7 @@ struct MoneroRpc {
     funding_wallet: AuthenticatedRpc,
     shared_wallet: AuthenticatedRpc,
     role_wallet: AuthenticatedRpc,
+    shared_wallet_file_password_file: PathBuf,
 }
 
 /// One validated executable slot in an XMR effect plan.
@@ -174,6 +175,7 @@ pub struct XmrEffectMoneroRpcV1 {
     funding_wallet: XmrEffectAuthenticatedRpcV1,
     shared_wallet: XmrEffectAuthenticatedRpcV1,
     role_wallet: XmrEffectAuthenticatedRpcV1,
+    shared_wallet_file_password_file: PathBuf,
 }
 
 impl XmrEffectMoneroRpcV1 {
@@ -192,6 +194,11 @@ impl XmrEffectMoneroRpcV1 {
     /// Role destination wallet RPC.
     pub const fn role_wallet(&self) -> &XmrEffectAuthenticatedRpcV1 {
         &self.role_wallet
+    }
+    /// Password for the reconstructed shared-wallet file.
+    #[must_use]
+    pub fn shared_wallet_file_password_file(&self) -> &Path {
+        &self.shared_wallet_file_password_file
     }
 }
 
@@ -422,6 +429,7 @@ pub fn load_validated_xmr_effect_authority_bytes(
         &authority.monero.shared_wallet.password_file,
         &authority.monero.role_wallet.username_file,
         &authority.monero.role_wallet.password_file,
+        &authority.monero.shared_wallet_file_password_file,
     ];
     ensure!(
         paths.iter().all(|path| normalized_absolute(path)),
@@ -496,6 +504,7 @@ fn validated_monero(monero: MoneroRpc) -> Result<XmrEffectMoneroRpcV1> {
         funding_wallet: validated_authenticated_rpc(monero.funding_wallet)?,
         shared_wallet: validated_authenticated_rpc(monero.shared_wallet)?,
         role_wallet: validated_authenticated_rpc(monero.role_wallet)?,
+        shared_wallet_file_password_file: monero.shared_wallet_file_password_file,
     })
 }
 
@@ -532,6 +541,26 @@ fn validate_rpc_set(rpc: &MoneroRpc) -> Result<()> {
             "XMR RPC credential paths overlap"
         );
     }
+    let credential_paths = [
+        &rpc.daemon.username_file,
+        &rpc.daemon.password_file,
+        &rpc.funding_wallet.username_file,
+        &rpc.funding_wallet.password_file,
+        &rpc.shared_wallet.username_file,
+        &rpc.shared_wallet.password_file,
+        &rpc.role_wallet.username_file,
+        &rpc.role_wallet.password_file,
+        &rpc.shared_wallet_file_password_file,
+    ];
+    ensure!(
+        credential_paths
+            .iter()
+            .enumerate()
+            .all(|(index, path)| credential_paths[index + 1..]
+                .iter()
+                .all(|other| path != other)),
+        "XMR credential paths overlap"
+    );
     Ok(())
 }
 

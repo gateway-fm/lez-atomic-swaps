@@ -45,6 +45,7 @@ struct MoneroRpc {
     funding_wallet: AuthenticatedRpc,
     shared_wallet: AuthenticatedRpc,
     role_wallet: AuthenticatedRpc,
+    shared_wallet_file_password_file: PathBuf,
 }
 
 #[derive(Clone, Serialize)]
@@ -103,6 +104,9 @@ fn manifest() -> MakerEffectAuthority {
             funding_wallet: rpc(32875, "funding"),
             shared_wallet: rpc(32876, "shared"),
             role_wallet: rpc(32877, "maker"),
+            shared_wallet_file_password_file: PathBuf::from(
+                "/run/monero/shared-wallet-file.password",
+            ),
         },
         maker_tools: MakerTools {
             monero_fund: tool("xmr-monero-fund", 0x50, "lez_xmr_monero_fund_v2"),

@@ -56,6 +56,7 @@ struct MoneroRpc {
     funding_wallet: AuthenticatedRpc,
     shared_wallet: AuthenticatedRpc,
     role_wallet: AuthenticatedRpc,
+    shared_wallet_file_password_file: PathBuf,
 }
 
 #[derive(Clone, Serialize)]
@@ -114,6 +115,9 @@ fn manifest() -> TakerEffectAuthority {
             funding_wallet: rpc(32975, "funding"),
             shared_wallet: rpc(32976, "shared"),
             role_wallet: rpc(32977, "taker"),
+            shared_wallet_file_password_file: PathBuf::from(
+                "/run/monero/shared-wallet-file.password",
+            ),
         },
         taker_tools: TakerTools {
             tag14_authorize: tool("xmr-tag14-authorize", 0x85, "lez_xmr_tag14_authorize_v1"),
@@ -220,6 +224,10 @@ fn validated_taker_authority_exposes_only_typed_role_fixed_execution_inputs() {
     );
 
     let monero = authority.monero();
+    assert_eq!(
+        monero.shared_wallet_file_password_file(),
+        Path::new("/run/monero/shared-wallet-file.password")
+    );
     for (rpc, url, username, password) in [
         (
             monero.daemon(),
@@ -360,14 +368,14 @@ fn write_executable(path: &Path, bytes: &[u8], mode: u32) {
 fn composed_effect_command_hands_off_exact_fds_and_locks() {
     const PROGRAM: &[u8] = br#"#!/bin/sh
 set -eu
-for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209; do
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210; do
     test -e "/proc/self/fd/$fd"
 done
-test ! -e /proc/self/fd/210
-for fd in 200 201 202 203 204 205 206 207 208 209; do
+test ! -e /proc/self/fd/211
+for fd in 200 201 202 203 204 205 206 207 208 209 210; do
     sha256sum "/proc/self/fd/$fd"
 done
-printf '%s\n' fd210=absent
+printf '%s\n' fd211=absent
 printf ready > "$READY_FILE"
 while [ ! -e "$GATE_FILE" ]; do
     sleep 0.02
@@ -473,8 +481,8 @@ fn assert_effect_child_output(output: std::process::Output, secret_values: Vec<V
         .collect::<Vec<_>>();
     let stdout = String::from_utf8(output.stdout).expect("ASCII digest output");
     let lines = stdout.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 11);
-    let actual_hashes = lines[..10]
+    assert_eq!(lines.len(), 12);
+    let actual_hashes = lines[..11]
         .iter()
         .map(|line| {
             line.split_whitespace()
@@ -484,7 +492,7 @@ fn assert_effect_child_output(output: std::process::Output, secret_values: Vec<V
         })
         .collect::<Vec<_>>();
     assert_eq!(actual_hashes, expected_hashes);
-    assert_eq!(lines[10], "fd210=absent");
+    assert_eq!(lines[11], "fd211=absent");
 }
 
 #[test]
@@ -509,6 +517,7 @@ fn effect_inputs_pin_runtime_and_all_trailing_newline_secrets_before_name_replac
         monero.shared_wallet().password(),
         monero.role_wallet().username(),
         monero.role_wallet().password(),
+        monero.shared_wallet_file_password(),
     ];
     let child_paths = secrets
         .iter()
@@ -516,7 +525,7 @@ fn effect_inputs_pin_runtime_and_all_trailing_newline_secrets_before_name_replac
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         child_paths.len(),
-        9,
+        10,
         "every secret has one distinct descriptor"
     );
     for (secret, expected) in secrets.iter().zip(&secret_values) {
@@ -608,7 +617,7 @@ fn effect_input_custody_rejects_invalid_content_storage_and_aliases() {
     let (mut spec, _, _, _) = custody_manifest(root.path());
     spec.monero.role_wallet.username_file = spec.monero.daemon.username_file.clone();
     assert!(
-        validated(&spec).pin_effect_inputs_at_use().is_err(),
+        authority_or_input_pin_rejects(&spec),
         "cross-RPC path aliases fail before any secret is exposed"
     );
     spec.monero.daemon.password_file = spec.monero.daemon.username_file.clone();
@@ -624,6 +633,83 @@ fn effect_input_custody_rejects_invalid_content_storage_and_aliases() {
         .is_err(),
         "username/password overlap is invalid authority"
     );
+
+    let root = tempfile::tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let (base, runtime, secrets, _) = custody_manifest(root.path());
+    let aliases = std::iter::once(runtime)
+        .chain(secrets.into_iter().take(9))
+        .collect::<Vec<_>>();
+    for alias in aliases {
+        let mut spec = base.clone();
+        spec.monero.shared_wallet_file_password_file = alias;
+        assert!(
+            authority_or_input_pin_rejects(&spec),
+            "shared-wallet file password must not alias any other effect input"
+        );
+    }
+
+    let unsafe_spec = base;
+    fs::set_permissions(
+        &unsafe_spec.monero.shared_wallet_file_password_file,
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    assert!(validated(&unsafe_spec).pin_effect_inputs_at_use().is_err());
+}
+
+#[test]
+fn shared_wallet_file_password_is_required_and_normalized() {
+    let canonical_bytes = canonical(&manifest());
+    let mut missing_bytes =
+        String::from_utf8(canonical_bytes).expect("canonical authority is UTF-8");
+    let encoded_path =
+        serde_json::to_string(&PathBuf::from("/run/monero/shared-wallet-file.password"))
+            .expect("serialize wallet-file password path");
+    let field = format!(",\"shared_wallet_file_password_file\":{encoded_path}");
+    assert_eq!(missing_bytes.matches(&field).count(), 1);
+    missing_bytes = missing_bytes.replacen(&field, "", 1);
+    assert!(
+        load_validated_xmr_effect_authority_bytes(
+            missing_bytes.as_bytes(),
+            ActorRole::Taker,
+            SWAP,
+            AGREEMENT,
+            ACTIVATION,
+            RUN,
+        )
+        .is_err(),
+        "shared-wallet file password authority is mandatory"
+    );
+
+    let mut relative = manifest();
+    relative.monero.shared_wallet_file_password_file = PathBuf::from("shared-wallet-file.password");
+    assert!(
+        load_validated_xmr_effect_authority_bytes(
+            &canonical(&relative),
+            ActorRole::Taker,
+            SWAP,
+            AGREEMENT,
+            ACTIVATION,
+            RUN,
+        )
+        .is_err(),
+        "shared-wallet file password authority must be normalized and absolute"
+    );
+}
+
+fn authority_or_input_pin_rejects(spec: &TakerEffectAuthority) -> bool {
+    match load_validated_xmr_effect_authority_bytes(
+        &canonical(spec),
+        ActorRole::Taker,
+        SWAP,
+        AGREEMENT,
+        ACTIVATION,
+        RUN,
+    ) {
+        Ok(authority) => authority.pin_effect_inputs_at_use().is_err(),
+        Err(_) => true,
+    }
 }
 
 fn validated(spec: &TakerEffectAuthority) -> xmr_reference_actor::ValidatedXmrEffectAuthorityV1 {
@@ -651,6 +737,7 @@ fn custody_manifest(root: &Path) -> (TakerEffectAuthority, PathBuf, Vec<PathBuf>
         "shared.password",
         "taker.username",
         "taker.password",
+        "shared-wallet-file.password",
     ]
     .map(|name| root.join(name))
     .to_vec();
@@ -664,6 +751,7 @@ fn custody_manifest(root: &Path) -> (TakerEffectAuthority, PathBuf, Vec<PathBuf>
         b"shared-password\n".to_vec(),
         b"taker-user\r\n".to_vec(),
         b"taker-password\n".to_vec(),
+        b"shared-wallet-file-password\n".to_vec(),
     ]
     .to_vec();
     for (path, bytes) in secret_paths.iter().zip(&secret_values) {
@@ -687,6 +775,9 @@ fn custody_manifest(root: &Path) -> (TakerEffectAuthority, PathBuf, Vec<PathBuf>
         rpc.username_file.clone_from(&secret_paths[1 + index * 2]);
         rpc.password_file.clone_from(&secret_paths[2 + index * 2]);
     }
+    spec.monero
+        .shared_wallet_file_password_file
+        .clone_from(&secret_paths[9]);
     (spec, runtime, secret_paths, secret_values)
 }
 

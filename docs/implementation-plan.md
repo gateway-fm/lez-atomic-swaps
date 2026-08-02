@@ -5138,3 +5138,43 @@ No lifecycle route calls this boundary, and this checkpoint opens no RPC or
 node and executes no chain effect. Literal M5 remains 4 of 7. ETA is now 2.5
 to 5.5 focused implementation hours to the M5 tag, subject to fresh-node
 runtime and final composite review.
+
+### XMR shared-wallet file-password and complete input-map checkpoint (2026-08-02)
+
+The current focused checkpoint closes the last known effect-input schema and
+descriptor gap. Canonical effect authority now requires one normalized absolute
+`shared_wallet_file_password_file`, distinct from all eight Monero RPC
+credential paths. At use it receives the same bounded content, exact
+mode-0600/single-link/owner, stable-read, no-symlink, and cross-source alias
+checks as the capability and RPC credentials.
+
+The password is the tenth sealed secret and maps to fixed child FD 210. The
+complete single-call child map is now program FD 197, actor-state lock FD 198,
+workflow lock FD 199, runtime FD 200, capability FD 201, four RPC
+username/password pairs on FDs 202 through 209, and shared-wallet file password
+FD 210. The process proof consumes all 14 descriptors, verifies exact
+pre-replacement runtime plus ten secret snapshots, and requires FD 211 absent.
+No secret enters argv or env.
+
+Maker execution authority now retains the semantically validated canonical
+published Stage-A and Stage-B paths plus each exact wire SHA-256. The future
+route can therefore bind its effect preparation to the already validated public
+agreement and activation identities without re-deriving them from unbound
+paths.
+
+Focused tests require the file-password field, reject missing, relative,
+unsafe, overlapping, and cross-source-aliased paths/files, expose its pinned
+redacted snapshot, and include it in the replacement-proof exec hash matrix.
+Maker tests retain the validated Stage-A/B paths and digests. This closes the
+current authority/input validation, sealed custody, and child descriptor-map
+gaps.
+
+Route composition remains: choose the role-fixed tool and branch, acquire both
+locks, authorize through workflow v2, execute/reap the prepared command, bind
+finalized LEZ or confirmed Monero evidence, and reconcile the exact result.
+Maker/Taker lifecycle commands, fresh two-devnet claim/refund, and final
+all-pair/concurrency/composite/tag gates remain open.
+
+No lifecycle route, RPC, node, or effect is added by this checkpoint. Literal
+M5 remains 4 of 7. ETA remains 2.5 to 5.5 focused implementation hours to the
+M5 tag, subject to fresh-node runtime and final composite review.

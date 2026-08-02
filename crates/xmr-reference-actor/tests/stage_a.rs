@@ -66,6 +66,7 @@ struct MoneroEffectRpcFixture {
     funding_wallet: AuthenticatedRpcFixture,
     shared_wallet: AuthenticatedRpcFixture,
     role_wallet: AuthenticatedRpcFixture,
+    shared_wallet_file_password_file: PathBuf,
 }
 
 #[derive(Serialize)]
@@ -132,6 +133,7 @@ fn maker_effect_authority_bytes(
             funding_wallet: effect_rpc(root, "funding", 32875),
             shared_wallet: effect_rpc(root, "shared", 32876),
             role_wallet: effect_rpc(root, "maker", 32877),
+            shared_wallet_file_password_file: root.join("shared-wallet-file.password"),
         },
         maker_tools: MakerEffectToolsFixture {
             monero_fund: effect_tool(root, "monero-fund", 0x50, "lez_xmr_monero_fund_v2"),

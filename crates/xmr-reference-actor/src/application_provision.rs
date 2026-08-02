@@ -318,6 +318,10 @@ pub struct ValidatedXmrMakerAuthorityV2 {
     state_database: PathBuf,
     agreement_commitment: [u8; 32],
     activation_commitment: [u8; 32],
+    published_stage_a: PathBuf,
+    stage_a_sha256: [u8; 32],
+    published_stage_b: PathBuf,
+    stage_b_sha256: [u8; 32],
     _role_journal_snapshot: Zeroizing<Vec<u8>>,
 }
 
@@ -335,6 +339,10 @@ impl fmt::Debug for ValidatedXmrMakerAuthorityV2 {
                 "activation_commitment",
                 &hex::encode(self.activation_commitment),
             )
+            .field("published_stage_a", &self.published_stage_a)
+            .field("stage_a_sha256", &hex::encode(self.stage_a_sha256))
+            .field("published_stage_b", &self.published_stage_b)
+            .field("stage_b_sha256", &hex::encode(self.stage_b_sha256))
             .field("_role_journal_snapshot", &"[REDACTED]")
             .finish()
     }
@@ -363,6 +371,30 @@ impl ValidatedXmrMakerAuthorityV2 {
     #[must_use]
     pub const fn activation_commitment(&self) -> [u8; 32] {
         self.activation_commitment
+    }
+
+    /// Canonical published Stage-A path validated from the manifest.
+    #[must_use]
+    pub fn published_stage_a(&self) -> &Path {
+        &self.published_stage_a
+    }
+
+    /// SHA-256 of the exact validated Stage-A wire.
+    #[must_use]
+    pub const fn stage_a_sha256(&self) -> [u8; 32] {
+        self.stage_a_sha256
+    }
+
+    /// Canonical published Stage-B path validated from the manifest.
+    #[must_use]
+    pub fn published_stage_b(&self) -> &Path {
+        &self.published_stage_b
+    }
+
+    /// SHA-256 of the exact validated Stage-B wire.
+    #[must_use]
+    pub const fn stage_b_sha256(&self) -> [u8; 32] {
+        self.stage_b_sha256
     }
 }
 
@@ -1088,6 +1120,10 @@ pub fn load_validated_xmr_maker_authority_fd(fd: i32) -> Result<ValidatedXmrMake
         state_database: authority.state_database,
         agreement_commitment: authority.agreement_commitment,
         activation_commitment: authority.activation_commitment,
+        published_stage_a: authority.published_stage_a,
+        stage_a_sha256: authority.stage_a_sha256,
+        published_stage_b: authority.published_stage_b,
+        stage_b_sha256: authority.stage_b_sha256,
         _role_journal_snapshot: authority.role_journal_snapshot,
     })
 }
@@ -2081,6 +2117,36 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn maker_execution_authority_retains_validated_stage_wire_identity() {
+        let authority = ValidatedXmrMakerAuthorityV2 {
+            swap_id: [0x11; 32],
+            state_database: PathBuf::from("/private/journals/maker.sqlite"),
+            agreement_commitment: [0x21; 32],
+            activation_commitment: [0x22; 32],
+            published_stage_a: PathBuf::from("/application/shared/stage-a-v1.borsh"),
+            stage_a_sha256: [0x31; 32],
+            published_stage_b: PathBuf::from("/application/shared/stage-b-v1.borsh"),
+            stage_b_sha256: [0x32; 32],
+            _role_journal_snapshot: Zeroizing::new(b"private-journal-snapshot".to_vec()),
+        };
+
+        assert_eq!(
+            authority.published_stage_a(),
+            Path::new("/application/shared/stage-a-v1.borsh")
+        );
+        assert_eq!(authority.stage_a_sha256(), [0x31; 32]);
+        assert_eq!(
+            authority.published_stage_b(),
+            Path::new("/application/shared/stage-b-v1.borsh")
+        );
+        assert_eq!(authority.stage_b_sha256(), [0x32; 32]);
+        let debug = format!("{authority:?}");
+        assert!(debug.contains("/application/shared/stage-a-v1.borsh"));
+        assert!(debug.contains("/application/shared/stage-b-v1.borsh"));
+        assert!(!debug.contains("private-journal-snapshot"));
     }
 
     #[test]

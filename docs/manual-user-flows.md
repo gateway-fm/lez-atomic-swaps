@@ -6568,32 +6568,38 @@ cargo +1.96.0 test --locked -p xmr-reference-actor \
   --test effect_authority_taker
 ```
 
-Expected result: 5 of 5 tests GREEN.
+Expected result: the complete focused target is GREEN, including mandatory
+shared-wallet file-password validation and custody.
 
 `pin_effect_inputs_at_use` requires every source below its exact mode-0700
 owner-only parent to be a mode-0600 owner regular single-link file and opens it
 with no symlink traversal. Parent identity and source inode/metadata must remain
 stable across the bounded read; no two sources may alias the same inode. The
 LEZ runtime is at most 16 KiB and must match its authority SHA-256. The LEZ
-capability and these eight Monero files are at most 256 bytes each:
+capability and these nine Monero secret files are at most 256 bytes each:
 
 - daemon username/password;
 - funding-wallet username/password;
-- shared-wallet username/password; and
-- role-wallet username/password.
+- shared-wallet username/password;
+- role-wallet username/password; and
+- shared-wallet file password.
 
 Each secret may contain one nonempty ASCII-graphic value raw, with one trailing
 LF, or with one trailing CRLF, matching the actual runner. Empty, embedded or
 multiple newline, stray CR, NUL, non-graphic, oversized, symlinked, hard-linked,
 cross-aliased, or permission-unsafe sources fail closed.
 
-The capability and eight credentials become nine distinct mode-0400 fully
-sealed memfds, duplicated to collision-free descriptors at or above 200.
+The capability, eight RPC credentials, and shared-wallet file password become
+ten distinct mode-0400 fully sealed memfds, duplicated to collision-free descriptors at or above 200.
 Callers can see only each descriptor path, redacted length, and SHA-256; the
 custody objects are non-Clone and Debug redacts values. Named replacement
 cannot alter an existing snapshot, while a fresh pin rejects runtime digest or
 storage drift. Runtime bytes are retained only as a bounded hash-checked
 in-memory snapshot.
+
+Effect authority must include a normalized absolute shared-wallet
+file-password path distinct from every RPC credential path. Missing, relative,
+unsafe, overlapping, and cross-source-aliased inputs fail closed.
 
 The atomic exec-boundary checkpoint now adds a sealed runtime snapshot and
 maps it with every secret, both locks, and the executable. Repeat its two exact
@@ -6629,15 +6635,22 @@ The XMR child ABI is fixed:
 | 204/205 | funding-wallet username/password |
 | 206/207 | shared-wallet username/password |
 | 208/209 | role-wallet username/password |
+| 210 | shared-wallet file password |
 
-All 13 descriptors are installed by one mapping call. No runtime, capability,
+All 14 descriptors are installed by one mapping call. No runtime, capability,
 username, or password bytes enter argv or env. The process test replaces the
 named program, runtime, and every secret before exec; the child still hashes
-the original snapshots, observes FD 210 absent, and stays alive after the
-parent Command and lock objects are dropped. Both competing lock acquisitions
+the original runtime and ten secret snapshots, observes FD 211 absent, and stays
+alive after the parent Command and lock objects are dropped. Both competing lock acquisitions
 remain blocked until child exit/reap, then succeed.
 
-This is still a developer boundary, not a lifecycle route. It opens no RPC or
+The validated Maker execution authority also retains the already validated
+canonical Stage-A and Stage-B public paths and each exact wire SHA-256. These
+public identities are available to the future route without re-deriving them
+from unbound paths.
+
+The current authority, at-use custody, and child input-map gaps are closed. This
+is still a developer boundary, not a lifecycle route. It opens no RPC or
 node and executes no claim or refund. The remaining route must select the tool,
 enter workflow-v2 authority, spawn/reap this command, classify finalized
 external evidence, and reconcile it. The tests use private temporary files and
