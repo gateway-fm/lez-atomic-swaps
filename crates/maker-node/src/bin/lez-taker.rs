@@ -30,7 +30,8 @@ mod taker_accept_btc;
 mod taker_accept_xmr;
 use taker_accept_btc::{BtcTakeInput, load_btc_taker_actor_from_receipt, take_btc};
 use taker_accept_xmr::{
-    XmrTakeInput, XmrTakerReceiptSelector, load_xmr_taker_receipt_selector, take_xmr,
+    XmrEffectTakeInput, XmrTakeInput, XmrTakerEffectReceiptSelector, XmrTakerReceiptSelector,
+    load_xmr_taker_effect_receipt_selector, load_xmr_taker_receipt_selector, take_xmr,
 };
 
 use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
@@ -131,6 +132,18 @@ struct Arguments {
     /// New owner-private XMR acceptance receipt written after Maker completion.
     #[arg(long)]
     xmr_acceptance_receipt: Option<PathBuf>,
+    /// Immutable owner-private role-fixed XMR chain-effect authority.
+    #[arg(long)]
+    xmr_effect_authority_file: Option<PathBuf>,
+    /// New owner-private schema-v3 XMR effect manifest.
+    #[arg(long)]
+    xmr_effect_manifest_file: Option<PathBuf>,
+    /// New or exactly replayed owner-private XMR workflow journal.
+    #[arg(long)]
+    xmr_workflow_journal: Option<PathBuf>,
+    /// Run identity bound into XMR effect authority and workflow state.
+    #[arg(long)]
+    xmr_run_id: Option<String>,
 }
 #[derive(Subcommand)]
 enum LifecycleCommand {
@@ -524,6 +537,28 @@ async fn execute_xmr_take(
             expected_maker.to_owned(),
         )?)
     };
+    let effect = match (
+        arguments.xmr_effect_authority_file.as_deref(),
+        arguments.xmr_effect_manifest_file.as_deref(),
+        arguments.xmr_workflow_journal.as_deref(),
+        arguments.xmr_run_id.as_deref(),
+    ) {
+        (None, None, None, None) => None,
+        (
+            Some(effect_authority_file),
+            Some(effect_manifest_file),
+            Some(workflow_journal),
+            Some(run_id),
+        ) => Some(XmrEffectTakeInput {
+            effect_authority_file,
+            effect_manifest_file,
+            workflow_journal,
+            run_id,
+        }),
+        _ => anyhow::bail!(
+            "effect-capable XMR acceptance requires --xmr-effect-authority-file, --xmr-effect-manifest-file, --xmr-workflow-journal, and --xmr-run-id together"
+        ),
+    };
     let output = take_xmr(XmrTakeInput {
         delivery: delivery.as_ref(),
         now_unix_seconds,
@@ -568,6 +603,7 @@ async fn execute_xmr_take(
             arguments.xmr_acceptance_receipt.as_deref(),
             "--xmr-acceptance-receipt",
         )?,
+        effect,
     })
     .await?;
     println!("{}", serde_json::to_string(&output)?);
@@ -717,7 +753,8 @@ async fn execute_xmr_plan(
 enum LoadedTakerActor {
     Zec(Box<ActorConfig>),
     Btc(Box<BtcActorConfig>),
-    Xmr(Box<XmrTakerReceiptSelector>),
+    XmrMonitor(Box<XmrTakerReceiptSelector>),
+    XmrEffect(Box<XmrTakerEffectReceiptSelector>),
 }
 
 #[derive(Serialize)]
@@ -736,6 +773,17 @@ struct XmrTakerMonitorOutput {
     phase: &'static str,
     claim_session: &'static str,
     refund_session: &'static str,
+}
+
+#[derive(Serialize)]
+struct XmrTakerEffectMonitorOutput<'a> {
+    schema_version: u16,
+    pair: &'static str,
+    role: &'static str,
+    state: &'static str,
+    phase: &'static str,
+    run_id: &'a str,
+    effect_authority: &'static str,
 }
 
 async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
@@ -761,10 +809,12 @@ async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
             load_taker_actor_from_receipt(path).ok(),
             load_btc_taker_actor_from_receipt(path).ok(),
             load_xmr_taker_receipt_selector(path).ok(),
+            load_xmr_taker_effect_receipt_selector(path).ok(),
         ) {
-            (Some(config), None, None) => LoadedTakerActor::Zec(Box::new(config)),
-            (None, Some(config), None) => LoadedTakerActor::Btc(Box::new(config)),
-            (None, None, Some(selector)) => LoadedTakerActor::Xmr(Box::new(selector)),
+            (Some(config), None, None, None) => LoadedTakerActor::Zec(Box::new(config)),
+            (None, Some(config), None, None) => LoadedTakerActor::Btc(Box::new(config)),
+            (None, None, Some(selector), None) => LoadedTakerActor::XmrMonitor(Box::new(selector)),
+            (None, None, None, Some(selector)) => LoadedTakerActor::XmrEffect(Box::new(selector)),
             _ => {
                 return Err(anyhow::anyhow!(
                     "Taker acceptance receipt is unavailable or ambiguous"
@@ -822,7 +872,10 @@ async fn execute_lifecycle(command: LifecycleCommand) -> anyhow::Result<()> {
                 })?
             );
         }
-        LoadedTakerActor::Xmr(selector) => execute_xmr_lifecycle(&selector, action)?,
+        LoadedTakerActor::XmrMonitor(selector) => execute_xmr_lifecycle(&selector, action)?,
+        LoadedTakerActor::XmrEffect(selector) => {
+            execute_xmr_effect_lifecycle(&selector, action)?;
+        }
     }
     Ok(())
 }
@@ -858,6 +911,38 @@ fn execute_xmr_lifecycle(
     Ok(())
 }
 
+fn execute_xmr_effect_lifecycle(
+    selector: &XmrTakerEffectReceiptSelector,
+    action: LifecycleAction,
+) -> anyhow::Result<()> {
+    let _state_lock =
+        MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())
+            .map_err(|_| anyhow::anyhow!("XMR Taker actor is already running or unsafe"))?;
+    let _workflow_lock =
+        MakerActorHeldLock::acquire_for(selector.swap_id(), selector.workflow_journal())
+            .map_err(|_| anyhow::anyhow!("XMR Taker workflow is already running or unsafe"))?;
+    let _authority = selector
+        .validate_authority()
+        .map_err(|_| anyhow::anyhow!("XMR Taker effect authority is unavailable or unsafe"))?;
+    ensure!(
+        matches!(action, LifecycleAction::Monitor),
+        "XMR Taker claim and refund effect execution is not yet composed"
+    );
+    println!(
+        "{}",
+        serde_json::to_string(&XmrTakerEffectMonitorOutput {
+            schema_version: 2,
+            pair: "monero",
+            role: "taker",
+            state: "active",
+            phase: "application_activated",
+            run_id: selector.run_id(),
+            effect_authority: "validated",
+        })?
+    );
+    Ok(())
+}
+
 fn btc_take_was_requested(arguments: &Arguments) -> bool {
     arguments.accept_btc_offer.is_some()
         || arguments.btc_source_taker_config.is_some()
@@ -883,6 +968,10 @@ fn xmr_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.xmr_taker_role_journal.is_some()
         || arguments.xmr_taker_actor_root.is_some()
         || arguments.xmr_acceptance_receipt.is_some()
+        || arguments.xmr_effect_authority_file.is_some()
+        || arguments.xmr_effect_manifest_file.is_some()
+        || arguments.xmr_workflow_journal.is_some()
+        || arguments.xmr_run_id.is_some()
 }
 
 fn zec_take_was_requested(arguments: &Arguments) -> bool {

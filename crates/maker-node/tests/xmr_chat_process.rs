@@ -37,6 +37,7 @@ use lez_swap_store::{
 };
 use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -172,6 +173,51 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
     );
     role_journals.assert_unchanged(&fixture);
 
+    // Upgrade the exact accepted application without replacing its v1 receipt:
+    // role-fixed effect authority and schema-v3 projection are new owner-private
+    // artifacts, while Stage A/B and the actor journal are exact replays.
+    let effect = XmrTakerEffectFixture::from_v1_receipt(run.path(), &fixture.receipt);
+    let accepted_v2 = run_taker_with_effect(
+        &fixture,
+        &delivery,
+        &chat_socket,
+        &offer_id,
+        &reservation_id,
+        &delivery_maker,
+        accepted_at,
+        &effect,
+    );
+    assert_eq!(accepted_v2["offer_revision"], 3);
+    assert_eq!(accepted_v2["replay"]["stage_a"], true);
+    assert_eq!(accepted_v2["replay"]["activation"], true);
+    assert_eq!(accepted_v2["actor"]["provisioning_replay"], true);
+    assert_eq!(accepted_v2["actor"]["effect_provisioning_replay"], false);
+    assert_eq!(accepted_v2["actor"]["receipt_replay"], false);
+    let receipt_v2: Value = serde_json::from_slice(&fs::read(&effect.receipt).unwrap()).unwrap();
+    assert_eq!(receipt_v2["schema_version"], 2);
+    assert_eq!(receipt_v2["run_id"], effect.run_id);
+    assert_eq!(
+        receipt_v2["effect_authority_file"].as_str(),
+        effect.authority.to_str()
+    );
+    assert_eq!(
+        receipt_v2["effect_manifest_file"].as_str(),
+        effect.manifest.to_str()
+    );
+    assert_eq!(
+        receipt_v2["workflow_journal"].as_str(),
+        effect.workflow_journal.to_str()
+    );
+    assert_eq!(
+        receipt_v2["effect_authority_sha256"],
+        hex::encode(Sha256::digest(fs::read(&effect.authority).unwrap()))
+    );
+    assert_eq!(
+        receipt_v2["effect_manifest_sha256"],
+        hex::encode(Sha256::digest(fs::read(&effect.manifest).unwrap()))
+    );
+    let effect_snapshot = EffectArtifactSnapshot::capture(&effect);
+
     let snapshot = ArtifactSnapshot::capture(&fixture);
     RunLocalDelivery::publisher(&delivery, key(8))
         .unwrap()
@@ -209,6 +255,78 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
             "XMR Taker claim and refund are not yet composed\n"
         );
     }
+
+    // Receipt v2 remains transport-free but validates both the immutable
+    // application authority and its effect authority under both owner locks.
+    let effect_monitor = run_taker_monitor(&effect.receipt);
+    assert_eq!(
+        effect_monitor,
+        serde_json::json!({
+            "schema_version": 2,
+            "pair": "monero",
+            "role": "taker",
+            "state": "active",
+            "phase": "application_activated",
+            "run_id": effect.run_id,
+            "effect_authority": "validated"
+        })
+    );
+    for action in ["claim", "refund"] {
+        let rejected = run_taker_lifecycle(action, &effect.receipt);
+        assert!(!rejected.status.success());
+        assert!(rejected.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(rejected.stderr).unwrap(),
+            "XMR Taker claim and refund effect execution is not yet composed\n"
+        );
+    }
+
+    // Stage A/B are duplicate receipt fields, never independent authority.
+    // Canonical nonzero digest substitutions reach the under-lock semantic
+    // comparison and fail before any effect can be armed.
+    for (field, byte) in [("stage_a_sha256", "91"), ("stage_b_sha256", "92")] {
+        let drifted = run.path().join(format!("drifted-v2-{field}.json"));
+        write_mutated_receipt(
+            &effect.receipt,
+            &drifted,
+            field,
+            &Value::String(byte.repeat(32)),
+        );
+        let rejected = run_taker_lifecycle("monitor", &drifted);
+        assert!(!rejected.status.success());
+        assert!(rejected.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(rejected.stderr).unwrap(),
+            "XMR Taker effect authority is unavailable or unsafe\n"
+        );
+    }
+
+    let held_state = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.taker_journal)
+        .expect("hold exact adaptor-state lock");
+    let state_locked = run_taker_lifecycle("monitor", &effect.receipt);
+    assert!(!state_locked.status.success());
+    assert!(state_locked.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(state_locked.stderr).unwrap(),
+        "XMR Taker actor is already running or unsafe\n"
+    );
+    drop(held_state);
+
+    let held_workflow = MakerActorHeldLock::acquire_for(&fixture.swap_id, &effect.workflow_journal)
+        .expect("hold exact workflow lock");
+    let workflow_locked = run_taker_lifecycle("monitor", &effect.receipt);
+    assert!(!workflow_locked.status.success());
+    assert!(workflow_locked.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(workflow_locked.stderr).unwrap(),
+        "XMR Taker workflow is already running or unsafe\n"
+    );
+    drop(held_workflow);
+
+    // Monitoring and all failed effect attempts preserve both accepted
+    // application and effect authority, including all inode identities.
+    before_monitor.assert_unchanged(&fixture);
+    effect_snapshot.assert_unchanged(&effect);
 
     // Strict/canonical receipts and the manifest digest are fail-closed. The
     // CLI's stable outer error does not disclose any authority path or bytes.
@@ -461,6 +579,72 @@ fn run_taker(
     serde_json::from_slice(&output.stdout).expect("real Taker returns bounded XMR JSON")
 }
 
+#[allow(clippy::too_many_arguments)]
+fn run_taker_with_effect(
+    fixture: &XmrChatFixture,
+    delivery: &Path,
+    chat_socket: &Path,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    maker_key: &PublicKey,
+    accepted_at: u64,
+    effect: &XmrTakerEffectFixture,
+) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg("--delivery-directory")
+        .arg(delivery)
+        .arg("--maker-public-key")
+        .arg(hex::encode(maker_key.serialize()))
+        .arg("--now-unix-seconds")
+        .arg(accepted_at.to_string())
+        .arg("--pair")
+        .arg("monero")
+        .arg("--direction")
+        .arg("taker-sells-lez")
+        .arg("--accept-xmr-offer")
+        .arg(offer_id.as_str())
+        .arg("--chat-socket")
+        .arg(chat_socket)
+        .arg("--reservation-id")
+        .arg(reservation_id.as_str())
+        .arg("--foreign-units")
+        .arg(FOREIGN_UNITS_PICONERO.to_string())
+        .arg("--xmr-stage-a-file")
+        .arg(&fixture.stage_a)
+        .arg("--xmr-activation-file")
+        .arg(&fixture.stage_b)
+        .arg("--xmr-source-taker-root")
+        .arg(&fixture.taker_private_root)
+        .arg("--xmr-taker-public-packet")
+        .arg(&fixture.taker_public_packet)
+        .arg("--xmr-maker-public-packet")
+        .arg(&fixture.maker_public_packet)
+        .arg("--xmr-taker-role-journal")
+        .arg(&fixture.taker_journal)
+        .arg("--xmr-taker-actor-root")
+        .arg(&fixture.taker_actor_root)
+        .arg("--xmr-acceptance-receipt")
+        .arg(&effect.receipt)
+        .arg("--xmr-effect-authority-file")
+        .arg(&effect.authority)
+        .arg("--xmr-effect-manifest-file")
+        .arg(&effect.manifest)
+        .arg("--xmr-workflow-journal")
+        .arg(&effect.workflow_journal)
+        .arg("--xmr-run-id")
+        .arg(&effect.run_id)
+        .output()
+        .expect("run effect-capable real XMR Taker process");
+    assert!(
+        output.status.success(),
+        "effect-capable real XMR Taker failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .expect("effect-capable real Taker returns bounded XMR JSON")
+}
+
 fn run_taker_monitor(receipt: &Path) -> Value {
     let output = run_taker_lifecycle("monitor", receipt);
     assert!(
@@ -708,6 +892,52 @@ impl ArtifactSnapshot {
     }
 }
 
+struct EffectArtifactSnapshot(BTreeMap<PathBuf, (u64, Vec<u8>)>);
+
+impl EffectArtifactSnapshot {
+    fn capture(effect: &XmrTakerEffectFixture) -> Self {
+        let artifacts = Self::artifacts(effect);
+        Self::assert_no_sqlite_sidecars(&effect.workflow_journal);
+        Self(artifacts)
+    }
+
+    fn assert_unchanged(&self, effect: &XmrTakerEffectFixture) {
+        assert_eq!(Self::artifacts(effect), self.0);
+        Self::assert_no_sqlite_sidecars(&effect.workflow_journal);
+    }
+
+    fn artifacts(effect: &XmrTakerEffectFixture) -> BTreeMap<PathBuf, (u64, Vec<u8>)> {
+        [
+            ("effect-authority", effect.authority.as_path()),
+            ("effect-manifest-v3", effect.manifest.as_path()),
+            ("workflow-journal", effect.workflow_journal.as_path()),
+            ("acceptance-receipt-v2", effect.receipt.as_path()),
+        ]
+        .into_iter()
+        .map(|(label, path)| {
+            let metadata = fs::symlink_metadata(path).expect("effect artifact exists");
+            assert!(metadata.is_file());
+            assert!(!metadata.file_type().is_symlink());
+            (
+                PathBuf::from(label),
+                (metadata.ino(), fs::read(path).unwrap()),
+            )
+        })
+        .collect()
+    }
+
+    fn assert_no_sqlite_sidecars(journal: &Path) {
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let mut sidecar = journal.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            assert!(
+                !PathBuf::from(sidecar).exists(),
+                "closed workflow journal retained SQLite sidecar {suffix}"
+            );
+        }
+    }
+}
+
 fn capture_tree(root: &Path, path: &Path, output: &mut BTreeMap<PathBuf, (u64, Vec<u8>)>) {
     let mut entries = fs::read_dir(path)
         .unwrap()
@@ -872,4 +1102,166 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+struct XmrTakerEffectFixture {
+    receipt: PathBuf,
+    authority: PathBuf,
+    manifest: PathBuf,
+    workflow_journal: PathBuf,
+    run_id: String,
+}
+
+impl XmrTakerEffectFixture {
+    fn from_v1_receipt(root: &Path, receipt_file: &Path) -> Self {
+        let receipt: Value = serde_json::from_slice(&fs::read(receipt_file).unwrap()).unwrap();
+        assert_eq!(receipt["schema_version"], 1);
+        let effect_root = root.join("xmr-taker-effect");
+        make_private_directory(&effect_root);
+        let authority_file = effect_root.join("effect-authority-v1.json");
+        let manifest_file = effect_root.join("actor-effect-provision-v3.json");
+        let workflow_journal = effect_root.join("workflow.sqlite3");
+        let run_id = "m5-xmr-taker-effect-run-1".to_owned();
+        let authority = TakerEffectAuthority {
+            schema_version: 1,
+            pair: "monero",
+            role: "taker",
+            swap_id: receipt["swap_id"].as_str().unwrap().to_owned(),
+            agreement_commitment: receipt["agreement_commitment"].as_str().unwrap().to_owned(),
+            activation_commitment: receipt["activation_commitment"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            run_id: run_id.clone(),
+            workflow_journal: workflow_journal.clone(),
+            adaptor_journal: PathBuf::from(receipt["actor_state_database"].as_str().unwrap()),
+            evidence_root: effect_root.join("evidence"),
+            lez: EffectLezRpc {
+                sidecar_url: "http://127.0.0.1:36972/".to_owned(),
+                runtime_file: effect_root.join("lez-runtime.json"),
+                runtime_sha256: "93".repeat(32),
+                capability_file: effect_root.join("lez.capability"),
+            },
+            monero: EffectMoneroRpc {
+                daemon: effect_rpc(&effect_root, "daemon", 36974),
+                funding_wallet: effect_rpc(&effect_root, "funding", 36975),
+                shared_wallet: effect_rpc(&effect_root, "shared", 36976),
+                role_wallet: effect_rpc(&effect_root, "taker", 36977),
+            },
+            taker_tools: TakerEffectTools {
+                tag14_authorize: effect_tool(
+                    &effect_root,
+                    "tag14-authorize",
+                    "94",
+                    "lez_xmr_tag14_authorize_v1",
+                ),
+                finalized_classifier: effect_tool(
+                    &effect_root,
+                    "finalized-classifier",
+                    "95",
+                    "lez_xmr_finalized_classifier_v1",
+                ),
+                monero_claim: effect_tool(
+                    &effect_root,
+                    "monero-claim",
+                    "96",
+                    "lez_xmr_monero_claim_sweep_v2",
+                ),
+                monero_verify: effect_tool(
+                    &effect_root,
+                    "monero-verify",
+                    "97",
+                    "lez_xmr_monero_verify_v2",
+                ),
+                tag16_refund: effect_tool(
+                    &effect_root,
+                    "tag16-refund",
+                    "98",
+                    "lez_xmr_tag16_refund_v1",
+                ),
+            },
+        };
+        let mut bytes = serde_json::to_vec(&authority).unwrap();
+        bytes.push(b'\n');
+        write_private_bytes(&authority_file, &bytes);
+        Self {
+            receipt: effect_root.join("acceptance-receipt-v2.json"),
+            authority: authority_file,
+            manifest: manifest_file,
+            workflow_journal,
+            run_id,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct EffectTool {
+    program: PathBuf,
+    program_sha256: String,
+    abi: &'static str,
+}
+
+#[derive(Serialize)]
+struct TakerEffectTools {
+    tag14_authorize: EffectTool,
+    finalized_classifier: EffectTool,
+    monero_claim: EffectTool,
+    monero_verify: EffectTool,
+    tag16_refund: EffectTool,
+}
+
+#[derive(Serialize)]
+struct EffectLezRpc {
+    sidecar_url: String,
+    runtime_file: PathBuf,
+    runtime_sha256: String,
+    capability_file: PathBuf,
+}
+
+#[derive(Serialize)]
+struct EffectAuthenticatedRpc {
+    url: String,
+    username_file: PathBuf,
+    password_file: PathBuf,
+}
+
+#[derive(Serialize)]
+struct EffectMoneroRpc {
+    daemon: EffectAuthenticatedRpc,
+    funding_wallet: EffectAuthenticatedRpc,
+    shared_wallet: EffectAuthenticatedRpc,
+    role_wallet: EffectAuthenticatedRpc,
+}
+
+#[derive(Serialize)]
+struct TakerEffectAuthority {
+    schema_version: u16,
+    pair: &'static str,
+    role: &'static str,
+    swap_id: String,
+    agreement_commitment: String,
+    activation_commitment: String,
+    run_id: String,
+    workflow_journal: PathBuf,
+    adaptor_journal: PathBuf,
+    evidence_root: PathBuf,
+    lez: EffectLezRpc,
+    monero: EffectMoneroRpc,
+    taker_tools: TakerEffectTools,
+}
+
+fn effect_tool(root: &Path, name: &str, digest_byte: &str, abi: &'static str) -> EffectTool {
+    EffectTool {
+        program: root.join(name),
+        program_sha256: digest_byte.repeat(32),
+        abi,
+    }
+}
+
+fn effect_rpc(root: &Path, name: &str, port: u16) -> EffectAuthenticatedRpc {
+    EffectAuthenticatedRpc {
+        url: format!("http://127.0.0.1:{port}/"),
+        username_file: root.join(format!("{name}.username")),
+        password_file: root.join(format!("{name}.password")),
+    }
 }

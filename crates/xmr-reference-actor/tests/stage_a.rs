@@ -26,8 +26,8 @@ use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use xmr_reference_actor::{
     ActorRole, ValidatedRolePacket, load_validated_xmr_effect_manifest_v3_bytes,
-    provision_xmr_maker_actor_from_material, provision_xmr_taker_actor_from_material,
-    publish_xmr_effect_manifest_v3,
+    provision_xmr_effect_manifest_v3, provision_xmr_maker_actor_from_material,
+    provision_xmr_taker_actor_from_material, publish_xmr_effect_manifest_v3,
 };
 #[derive(Serialize)]
 struct EffectToolFixture {
@@ -1291,6 +1291,17 @@ fn completed_role_journals_activate_without_disclosing_taker_claim_partial() {
         fs::read(&effect_manifest_file).unwrap(),
         effect_manifest_bytes
     );
+    let effect_replay = provision_xmr_effect_manifest_v3(
+        maker.manifest_file(),
+        ActorRole::Maker,
+        &effect_file,
+        &workflow_file,
+        effect_run,
+        &effect_manifest_file,
+    )
+    .expect("replay exact schema-v3 authority");
+    assert!(effect_replay.was_replay());
+    assert_eq!(effect_replay.manifest_sha256(), effect_manifest_sha256);
     let maker_manifest = fs::read_to_string(maker.manifest_file()).unwrap();
     let taker_manifest = fs::read_to_string(taker.manifest_file()).unwrap();
     assert!(!maker_manifest.contains(fs::read_to_string(&maker_view).unwrap().trim()));

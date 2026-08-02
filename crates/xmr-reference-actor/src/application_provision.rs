@@ -13,7 +13,7 @@ use lez_adaptor_role_runner::{Role as RunnerRole, ValidatedSession};
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{
     AdaptorSessionPhase, AdaptorSessionSnapshot, MAKER_ACTOR_CONFIG_FD,
-    SqliteAdaptorSessionJournal, SqliteXmrWorkflowJournal, XmrWorkflowIdentityV1,
+    SqliteAdaptorSessionJournal, SqliteXmrWorkflowJournal, StoreError, XmrWorkflowIdentityV1,
 };
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrActivatedAgreementV1,
@@ -151,6 +151,90 @@ impl XmrActorProvisionV1 {
     #[must_use]
     pub fn state_directory(&self) -> &Path {
         &self.state_directory
+    }
+}
+/// Secret-free summary of one replay-safe schema-v3 effect provisioning.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[must_use]
+pub struct XmrEffectProvisionV3 {
+    was_replay: bool,
+    role: ActorRole,
+    swap_id: [u8; 32],
+    run_id: Box<str>,
+    agreement_commitment: [u8; 32],
+    activation_commitment: [u8; 32],
+    manifest_file: PathBuf,
+    manifest_sha256: [u8; 32],
+    effect_authority_file: PathBuf,
+    effect_authority_sha256: [u8; 32],
+    workflow_journal: PathBuf,
+}
+
+impl XmrEffectProvisionV3 {
+    /// Whether an existing byte-identical schema-v3 manifest was reused.
+    #[must_use]
+    pub const fn was_replay(&self) -> bool {
+        self.was_replay
+    }
+
+    /// Role permanently bound to the effect authority.
+    #[must_use]
+    pub const fn role(&self) -> ActorRole {
+        self.role
+    }
+
+    /// Exact accepted application swap.
+    #[must_use]
+    pub const fn swap_id(&self) -> [u8; 32] {
+        self.swap_id
+    }
+
+    /// Exact application run identity.
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    /// Exact countersigned agreement commitment.
+    #[must_use]
+    pub const fn agreement_commitment(&self) -> [u8; 32] {
+        self.agreement_commitment
+    }
+
+    /// Exact countersigned activation commitment.
+    #[must_use]
+    pub const fn activation_commitment(&self) -> [u8; 32] {
+        self.activation_commitment
+    }
+
+    /// Canonical schema-v3 manifest path.
+    #[must_use]
+    pub fn manifest_file(&self) -> &Path {
+        &self.manifest_file
+    }
+
+    /// SHA-256 of the exact schema-v3 manifest bytes.
+    #[must_use]
+    pub const fn manifest_sha256(&self) -> [u8; 32] {
+        self.manifest_sha256
+    }
+
+    /// Immutable effect-authority path.
+    #[must_use]
+    pub fn effect_authority_file(&self) -> &Path {
+        &self.effect_authority_file
+    }
+
+    /// SHA-256 of the exact effect-authority bytes.
+    #[must_use]
+    pub const fn effect_authority_sha256(&self) -> [u8; 32] {
+        self.effect_authority_sha256
+    }
+
+    /// Separate mutable workflow-journal path.
+    #[must_use]
+    pub fn workflow_journal(&self) -> &Path {
+        &self.workflow_journal
     }
 }
 
@@ -1329,6 +1413,29 @@ fn workflow_identity(
     .context("invalid XMR workflow identity")
 }
 
+/// Validates that schema v3 embeds one exact canonical schema-v2 projection.
+///
+/// This byte-only boundary performs no filesystem, journal, RPC, or chain I/O.
+///
+/// # Errors
+///
+/// Rejects noncanonical or crossed schemas, roles, runs, and any legacy byte
+/// difference.
+pub fn validate_xmr_effect_manifest_v3_projection_bytes(
+    effect_manifest_bytes: &[u8],
+    legacy_manifest_bytes: &[u8],
+    expected_role: ActorRole,
+    expected_run_id: &str,
+) -> Result<()> {
+    let manifest = parse_effect_manifest_config_bytes(effect_manifest_bytes, expected_role)?;
+    ensure!(
+        manifest.run_id == expected_run_id
+            && canonical_manifest_bytes(&manifest.legacy())? == legacy_manifest_bytes,
+        "XMR schema-v3 legacy projection differs from receipt authority"
+    );
+    Ok(())
+}
+
 /// Fully validates canonical schema-v3 application and effect authority bytes.
 ///
 /// The schema-v2 projection is semantically revalidated from its pinned files,
@@ -1478,6 +1585,165 @@ pub fn publish_xmr_effect_manifest_v3(
         expected_run_id,
     )?;
     Ok(sha256(&published))
+}
+
+/// Provisions or exactly replays one complete schema-v3 effect authority.
+///
+/// A missing workflow journal is created and initialized before the immutable
+/// manifest is published. Existing journals and manifests are accepted only
+/// when their complete identities and bytes match exactly; neither is migrated
+/// or overwritten.
+///
+/// # Errors
+///
+/// Rejects unsafe or overlapping paths, legacy/effect identity drift, foreign
+/// workflow state, non-exact replay, and any source change during publication.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub fn provision_xmr_effect_manifest_v3(
+    legacy_manifest_file: &Path,
+    expected_role: ActorRole,
+    effect_authority_file: &Path,
+    workflow_journal: &Path,
+    expected_run_id: &str,
+    output_manifest_file: &Path,
+) -> Result<XmrEffectProvisionV3> {
+    ensure!(
+        [
+            legacy_manifest_file,
+            effect_authority_file,
+            workflow_journal,
+            output_manifest_file,
+        ]
+        .into_iter()
+        .all(normalized_absolute)
+            && legacy_manifest_file != effect_authority_file
+            && legacy_manifest_file != workflow_journal
+            && legacy_manifest_file != output_manifest_file
+            && effect_authority_file != workflow_journal
+            && effect_authority_file != output_manifest_file
+            && workflow_journal != output_manifest_file,
+        "XMR effect provisioning paths are invalid"
+    );
+    let legacy_bytes = read_private_source(
+        legacy_manifest_file,
+        XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+        "legacy XMR actor provision manifest",
+    )?;
+    let effect_authority_bytes = read_private_source(
+        effect_authority_file,
+        u64::try_from(MAX_AUTHORITY_BYTES).unwrap_or(u64::MAX),
+        "XMR effect authority",
+    )?;
+    let legacy_manifest = parse_manifest_config_bytes(&legacy_bytes, expected_role)?;
+    let legacy = load_validated_xmr_role_authority_bytes(&legacy_bytes, expected_role)?;
+    let effect_authority_sha256 = sha256(&effect_authority_bytes);
+    let effect = load_validated_xmr_effect_authority_bytes(
+        &effect_authority_bytes,
+        expected_role,
+        legacy.swap_id,
+        legacy.agreement_commitment,
+        legacy.activation_commitment,
+        expected_run_id,
+    )
+    .context("validate replay-safe XMR effect authority")?;
+    ensure!(
+        effect.workflow_journal() == workflow_journal
+            && effect.adaptor_journal() == legacy.state_database,
+        "XMR effect authority journal paths differ from application authority"
+    );
+    let identity = workflow_identity(
+        &legacy,
+        expected_role,
+        expected_run_id,
+        effect_authority_sha256,
+    )?;
+    match SqliteXmrWorkflowJournal::create_new(workflow_journal) {
+        Ok(mut journal) => journal
+            .initialize(&identity)
+            .context("initialize new XMR effect workflow")?,
+        Err(StoreError::XmrWorkflowDatabaseAlreadyExists) => {
+            let journal = SqliteXmrWorkflowJournal::open_existing(workflow_journal)
+                .context("open existing XMR effect workflow")?;
+            journal
+                .validate_initialized(&identity)
+                .context("validate replayed XMR effect workflow")?;
+        }
+        Err(error) => return Err(error).context("create XMR effect workflow"),
+    }
+
+    let promoted = promote_effect_manifest_v3(
+        legacy_manifest,
+        effect_authority_file.to_path_buf(),
+        hex::encode(effect_authority_sha256),
+        expected_run_id.to_owned(),
+        workflow_journal.to_path_buf(),
+    )?;
+    let manifest_bytes = canonical_effect_manifest_bytes(&promoted)?;
+    let was_replay = match publish_effect_manifest_bytes(output_manifest_file, &manifest_bytes) {
+        Ok(()) => false,
+        Err(error) => {
+            let existing = read_private_source(
+                output_manifest_file,
+                XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+                "existing XMR effect provision manifest",
+            )
+            .with_context(|| format!("publish XMR effect provision manifest: {error}"))?;
+            ensure!(
+                existing == manifest_bytes,
+                "existing XMR effect provision manifest conflicts"
+            );
+            true
+        }
+    };
+
+    let published = read_private_source(
+        output_manifest_file,
+        XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+        "published XMR effect provision manifest",
+    )?;
+    let legacy_after = read_private_source(
+        legacy_manifest_file,
+        XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+        "legacy XMR actor provision manifest",
+    )?;
+    let effect_after = read_private_source(
+        effect_authority_file,
+        u64::try_from(MAX_AUTHORITY_BYTES).unwrap_or(u64::MAX),
+        "XMR effect authority",
+    )?;
+    ensure!(
+        published == manifest_bytes
+            && legacy_after == legacy_bytes
+            && effect_after == effect_authority_bytes,
+        "XMR effect authority changed during replay-safe provisioning"
+    );
+    let validated = load_validated_xmr_effect_manifest_v3_bytes(
+        &published,
+        &effect_after,
+        expected_role,
+        expected_run_id,
+    )?;
+    ensure!(
+        validated.role() == expected_role
+            && validated.swap_id() == legacy.swap_id
+            && validated.run_id() == expected_run_id
+            && validated.workflow_journal() == workflow_journal
+            && validated.adaptor_journal() == legacy.state_database,
+        "validated XMR effect authority changed during provisioning"
+    );
+    Ok(XmrEffectProvisionV3 {
+        was_replay,
+        role: expected_role,
+        swap_id: legacy.swap_id,
+        run_id: expected_run_id.to_owned().into_boxed_str(),
+        agreement_commitment: legacy.agreement_commitment,
+        activation_commitment: legacy.activation_commitment,
+        manifest_file: output_manifest_file.to_path_buf(),
+        manifest_sha256: sha256(&published),
+        effect_authority_file: effect_authority_file.to_path_buf(),
+        effect_authority_sha256,
+        workflow_journal: workflow_journal.to_path_buf(),
+    })
 }
 
 fn parse_maker_manifest_config_bytes(bytes: &[u8]) -> Result<XmrActorProvisionManifestV2> {

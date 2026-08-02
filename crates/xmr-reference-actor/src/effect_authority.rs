@@ -6,6 +6,8 @@ use url::{Host, Url};
 
 use crate::ActorRole;
 
+/// Maximum accepted canonical effect-authority byte length.
+pub const XMR_EFFECT_AUTHORITY_MAX_BYTES: u64 = 64 * 1024;
 pub(crate) const MAX_AUTHORITY_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -88,6 +90,8 @@ struct EffectAuthorityV1 {
 pub struct ValidatedXmrEffectAuthorityV1 {
     role: ActorRole,
     swap_id: [u8; 32],
+    agreement_commitment: [u8; 32],
+    activation_commitment: [u8; 32],
     run_id: Box<str>,
     workflow_journal: PathBuf,
     adaptor_journal: PathBuf,
@@ -104,6 +108,18 @@ impl ValidatedXmrEffectAuthorityV1 {
     #[must_use]
     pub const fn swap_id(&self) -> [u8; 32] {
         self.swap_id
+    }
+
+    /// Exact countersigned agreement commitment.
+    #[must_use]
+    pub const fn agreement_commitment(&self) -> [u8; 32] {
+        self.agreement_commitment
+    }
+
+    /// Exact countersigned activation commitment.
+    #[must_use]
+    pub const fn activation_commitment(&self) -> [u8; 32] {
+        self.activation_commitment
     }
 
     /// Exact run identity.
@@ -191,6 +207,8 @@ pub fn load_validated_xmr_effect_authority_bytes(
     Ok(ValidatedXmrEffectAuthorityV1 {
         role: authority.role,
         swap_id: expected_swap,
+        agreement_commitment: expected_agreement,
+        activation_commitment: expected_activation,
         run_id: authority.run_id.into_boxed_str(),
         workflow_journal: authority.workflow_journal,
         adaptor_journal: authority.adaptor_journal,
