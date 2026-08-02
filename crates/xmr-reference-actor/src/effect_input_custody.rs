@@ -1,0 +1,425 @@
+use std::{
+    collections::BTreeSet,
+    fmt,
+    fs::{self, File},
+    io::{Read as _, Seek as _, Write as _},
+    os::{
+        fd::AsRawFd as _,
+        unix::fs::{MetadataExt as _, PermissionsExt as _},
+    },
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context as _, Result, ensure};
+use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, memfd_create};
+use rustix::io::fcntl_dupfd_cloexec;
+use sha2::{Digest as _, Sha256};
+use zeroize::{Zeroize as _, Zeroizing};
+
+use crate::{
+    ValidatedXmrEffectAuthorityV1, XmrEffectAuthenticatedRpcV1, open_path_no_symlinks,
+    open_private_directory,
+};
+
+const MAX_RUNTIME_BYTES: u64 = 16 * 1024;
+const MAX_SECRET_BYTES: u64 = 256;
+
+/// One immutable secret snapshot intended for descriptor-path child handoff.
+#[must_use]
+pub struct PinnedXmrEffectSecretV1 {
+    _snapshot: File,
+    child_path: PathBuf,
+    redacted_len: usize,
+    sha256: [u8; 32],
+}
+
+impl fmt::Debug for PinnedXmrEffectSecretV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PinnedXmrEffectSecretV1")
+            .field("child_path", &self.child_path)
+            .field("redacted_len", &self.redacted_len)
+            .field("sha256", &hex::encode(self.sha256))
+            .field("value", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PinnedXmrEffectSecretV1 {
+    /// Descriptor path that must be inherited at the same child descriptor.
+    #[must_use]
+    pub fn child_path(&self) -> &Path {
+        &self.child_path
+    }
+
+    /// Original byte length without exposing contents.
+    #[must_use]
+    pub const fn redacted_len(&self) -> usize {
+        self.redacted_len
+    }
+
+    /// SHA-256 of the exact immutable snapshot.
+    #[must_use]
+    pub const fn sha256(&self) -> [u8; 32] {
+        self.sha256
+    }
+}
+
+/// Pinned username/password pair for one authenticated RPC.
+#[derive(Debug)]
+#[must_use]
+pub struct PinnedXmrEffectRpcCredentialsV1 {
+    username: PinnedXmrEffectSecretV1,
+    password: PinnedXmrEffectSecretV1,
+}
+
+impl PinnedXmrEffectRpcCredentialsV1 {
+    /// Username snapshot.
+    pub const fn username(&self) -> &PinnedXmrEffectSecretV1 {
+        &self.username
+    }
+
+    /// Password snapshot.
+    pub const fn password(&self) -> &PinnedXmrEffectSecretV1 {
+        &self.password
+    }
+}
+
+/// Role-separated pinned Monero RPC credentials.
+#[derive(Debug)]
+#[must_use]
+pub struct PinnedXmrEffectMoneroCredentialsV1 {
+    daemon: PinnedXmrEffectRpcCredentialsV1,
+    funding_wallet: PinnedXmrEffectRpcCredentialsV1,
+    shared_wallet: PinnedXmrEffectRpcCredentialsV1,
+    role_wallet: PinnedXmrEffectRpcCredentialsV1,
+}
+
+impl PinnedXmrEffectMoneroCredentialsV1 {
+    /// Official daemon credentials.
+    pub const fn daemon(&self) -> &PinnedXmrEffectRpcCredentialsV1 {
+        &self.daemon
+    }
+
+    /// Maker funding/mining wallet credentials.
+    pub const fn funding_wallet(&self) -> &PinnedXmrEffectRpcCredentialsV1 {
+        &self.funding_wallet
+    }
+
+    /// Neutral shared-wallet credentials.
+    pub const fn shared_wallet(&self) -> &PinnedXmrEffectRpcCredentialsV1 {
+        &self.shared_wallet
+    }
+
+    /// Local-role destination wallet credentials.
+    pub const fn role_wallet(&self) -> &PinnedXmrEffectRpcCredentialsV1 {
+        &self.role_wallet
+    }
+}
+
+/// Immutable runtime and secret snapshots for one validated effect authority.
+#[must_use]
+pub struct PinnedXmrEffectInputsV1 {
+    runtime_bytes: Vec<u8>,
+    capability: PinnedXmrEffectSecretV1,
+    monero: PinnedXmrEffectMoneroCredentialsV1,
+}
+
+impl fmt::Debug for PinnedXmrEffectInputsV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PinnedXmrEffectInputsV1")
+            .field("runtime_len", &self.runtime_bytes.len())
+            .field(
+                "runtime_sha256",
+                &hex::encode(Sha256::digest(&self.runtime_bytes)),
+            )
+            .field("capability", &self.capability)
+            .field("monero", &self.monero)
+            .finish()
+    }
+}
+
+impl PinnedXmrEffectInputsV1 {
+    /// Exact hash-pinned LEZ runtime bytes.
+    #[must_use]
+    pub fn runtime_bytes(&self) -> &[u8] {
+        &self.runtime_bytes
+    }
+
+    /// Current sealed LEZ capability snapshot.
+    pub const fn capability(&self) -> &PinnedXmrEffectSecretV1 {
+        &self.capability
+    }
+
+    /// Current sealed role-separated Monero credential snapshots.
+    pub const fn monero(&self) -> &PinnedXmrEffectMoneroCredentialsV1 {
+        &self.monero
+    }
+}
+
+impl ValidatedXmrEffectAuthorityV1 {
+    /// Pins the runtime identity and every current private credential at use.
+    ///
+    /// Runtime bytes must match the authority SHA-256. Capability and RPC
+    /// credentials are deliberately current rotating secrets: their exact
+    /// bytes, lengths, and hashes are snapshotted into sealed read-only memfds
+    /// without becoming serializable, cloneable, or printable.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsafe parents, symlinks, aliases, hard links, modes, owners,
+    /// sizes, unstable identities, invalid secret text, or runtime digest drift.
+    pub fn pin_effect_inputs_at_use(&self) -> Result<PinnedXmrEffectInputsV1> {
+        let runtime = read_stable_private_source(
+            self.lez().runtime_file(),
+            MAX_RUNTIME_BYTES,
+            "XMR LEZ runtime",
+        )?;
+        ensure!(
+            Sha256::digest(&runtime.bytes).as_slice() == self.lez().runtime_sha256(),
+            "XMR LEZ runtime digest changed at use"
+        );
+
+        let mut identities = BTreeSet::from([(runtime.identity.device, runtime.identity.inode)]);
+        let capability = pin_secret(
+            self.lez().capability_file(),
+            "XMR LEZ capability",
+            &mut identities,
+        )?;
+        let daemon = pin_rpc(self.monero().daemon(), "daemon", &mut identities)?;
+        let funding_wallet = pin_rpc(
+            self.monero().funding_wallet(),
+            "funding wallet",
+            &mut identities,
+        )?;
+        let shared_wallet = pin_rpc(
+            self.monero().shared_wallet(),
+            "shared wallet",
+            &mut identities,
+        )?;
+        let role_wallet = pin_rpc(self.monero().role_wallet(), "role wallet", &mut identities)?;
+
+        Ok(PinnedXmrEffectInputsV1 {
+            runtime_bytes: runtime.bytes.to_vec(),
+            capability,
+            monero: PinnedXmrEffectMoneroCredentialsV1 {
+                daemon,
+                funding_wallet,
+                shared_wallet,
+                role_wallet,
+            },
+        })
+    }
+}
+
+fn pin_rpc(
+    rpc: &XmrEffectAuthenticatedRpcV1,
+    label: &'static str,
+    identities: &mut BTreeSet<(u64, u64)>,
+) -> Result<PinnedXmrEffectRpcCredentialsV1> {
+    Ok(PinnedXmrEffectRpcCredentialsV1 {
+        username: pin_secret(
+            rpc.username_file(),
+            match label {
+                "daemon" => "XMR daemon username",
+                "funding wallet" => "XMR funding-wallet username",
+                "shared wallet" => "XMR shared-wallet username",
+                "role wallet" => "XMR role-wallet username",
+                _ => "XMR RPC username",
+            },
+            identities,
+        )?,
+        password: pin_secret(
+            rpc.password_file(),
+            match label {
+                "daemon" => "XMR daemon password",
+                "funding wallet" => "XMR funding-wallet password",
+                "shared wallet" => "XMR shared-wallet password",
+                "role wallet" => "XMR role-wallet password",
+                _ => "XMR RPC password",
+            },
+            identities,
+        )?,
+    })
+}
+
+fn pin_secret(
+    path: &Path,
+    label: &'static str,
+    identities: &mut BTreeSet<(u64, u64)>,
+) -> Result<PinnedXmrEffectSecretV1> {
+    let mut source = read_stable_private_source(path, MAX_SECRET_BYTES, label)?;
+    validate_secret_text(&source.bytes, label)?;
+    ensure!(
+        identities.insert((source.identity.device, source.identity.inode)),
+        "XMR effect secret sources alias"
+    );
+    let sha256: [u8; 32] = Sha256::digest(&source.bytes).into();
+    let redacted_len = source.bytes.len();
+    let snapshot = seal_bytes(label, &source.bytes)?;
+    source.bytes.zeroize();
+    let child_path = PathBuf::from(format!("/proc/self/fd/{}", snapshot.as_raw_fd()));
+    Ok(PinnedXmrEffectSecretV1 {
+        _snapshot: snapshot,
+        child_path,
+        redacted_len,
+        sha256,
+    })
+}
+
+fn validate_secret_text(bytes: &[u8], label: &'static str) -> Result<()> {
+    let logical = if let Some(value) = bytes.strip_suffix(b"\r\n") {
+        value
+    } else if let Some(value) = bytes.strip_suffix(b"\n") {
+        value
+    } else {
+        bytes
+    };
+    ensure!(
+        !logical.is_empty()
+            && logical
+                .iter()
+                .all(|byte| byte.is_ascii_graphic() && *byte != b'\0')
+            && !logical.contains(&b'\n')
+            && !logical.contains(&b'\r'),
+        "{label} is not one bounded credential value"
+    );
+    Ok(())
+}
+
+struct PrivateSource {
+    bytes: Zeroizing<Vec<u8>>,
+    identity: SourceIdentity,
+}
+
+#[derive(Clone, Copy)]
+struct SourceIdentity {
+    device: u64,
+    inode: u64,
+}
+
+fn read_stable_private_source(
+    path: &Path,
+    maximum: u64,
+    label: &'static str,
+) -> Result<PrivateSource> {
+    let parent_path = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .context("XMR effect input has no parent")?;
+    let parent = open_private_directory(parent_path, label)?;
+    let parent_before = parent
+        .metadata()
+        .context("inspect XMR effect input parent")?;
+
+    let mut file = open_path_no_symlinks(path, label)?;
+    let before = validate_private_file(&file, maximum, label)?;
+    let mut bytes = Zeroizing::new(Vec::new());
+    std::io::Read::by_ref(&mut file)
+        .take(maximum + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {label}"))?;
+    ensure!(
+        u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= maximum,
+        "{label} is oversized"
+    );
+    let after = validate_private_file(&file, maximum, label)?;
+    let named = fs::symlink_metadata(path).with_context(|| format!("reinspect {label}"))?;
+    ensure!(
+        stable_file(&before, &after)
+            && stable_file(&before, &named)
+            && after.len() == u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        "{label} changed while it was pinned"
+    );
+
+    let reopened_parent = open_private_directory(parent_path, label)?;
+    let parent_after = reopened_parent
+        .metadata()
+        .context("reinspect XMR effect input parent")?;
+    ensure!(
+        parent_before.dev() == parent_after.dev()
+            && parent_before.ino() == parent_after.ino()
+            && parent_before.mode() == parent_after.mode()
+            && parent_before.uid() == parent_after.uid(),
+        "{label} parent changed while it was pinned"
+    );
+
+    Ok(PrivateSource {
+        bytes,
+        identity: SourceIdentity {
+            device: before.dev(),
+            inode: before.ino(),
+        },
+    })
+}
+
+fn validate_private_file(file: &File, maximum: u64, label: &'static str) -> Result<fs::Metadata> {
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect {label}"))?;
+    ensure!(
+        metadata.file_type().is_file()
+            && metadata.uid() == rustix::process::geteuid().as_raw()
+            && metadata.permissions().mode() & 0o7777 == 0o600
+            && metadata.nlink() == 1
+            && metadata.len() > 0
+            && metadata.len() <= maximum,
+        "{label} is unsafe or oversized"
+    );
+    Ok(metadata)
+}
+
+fn stable_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.file_type().is_file()
+        && right.file_type().is_file()
+        && left.dev() == right.dev()
+        && left.ino() == right.ino()
+        && left.len() == right.len()
+        && left.uid() == right.uid()
+        && left.mode() == right.mode()
+        && left.nlink() == right.nlink()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
+}
+
+fn seal_bytes(label: &str, bytes: &[u8]) -> Result<File> {
+    let descriptor = memfd_create(label, MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING)
+        .context("create sealed XMR effect input")?;
+    let mut writer = File::from(descriptor);
+    writer
+        .write_all(bytes)
+        .and_then(|()| writer.flush())
+        .context("write sealed XMR effect input")?;
+    writer
+        .set_permissions(fs::Permissions::from_mode(0o400))
+        .context("protect sealed XMR effect input")?;
+    let seals = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
+    fcntl_add_seals(&writer, seals).context("seal XMR effect input")?;
+    ensure!(
+        fcntl_get_seals(&writer)
+            .context("inspect XMR effect input seals")?
+            .contains(seals),
+        "XMR effect input seals are incomplete"
+    );
+    writer
+        .seek(std::io::SeekFrom::Start(0))
+        .context("rewind sealed XMR effect input")?;
+    let descriptor_path = format!("/proc/self/fd/{}", writer.as_raw_fd());
+    let snapshot = File::open(descriptor_path).context("open read-only XMR effect input")?;
+    let metadata = snapshot
+        .metadata()
+        .context("inspect sealed XMR effect input")?;
+    ensure!(
+        metadata.len() == u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+            && metadata.permissions().mode() & 0o7777 == 0o400,
+        "sealed XMR effect input has wrong metadata"
+    );
+    drop(writer);
+    let high_descriptor = fcntl_dupfd_cloexec(&snapshot, 200)
+        .context("allocate collision-free XMR effect input descriptor")?;
+    drop(snapshot);
+    Ok(File::from(high_descriptor))
+}

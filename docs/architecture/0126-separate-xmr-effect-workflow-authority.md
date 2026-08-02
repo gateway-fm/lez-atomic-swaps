@@ -2,7 +2,8 @@
 
 Status: Accepted for the durable journal, schema-v3 authority, receipt-v2
 locked-monitor boundary, typed effect-plan view, sealed-executable primitive,
-workflow-v2 catalog, and dual-lock command boundary on 2026-08-02; lifecycle-route effect execution and actual-node application
+workflow-v2 catalog, dual-lock command boundary, and schema-v3 effect-input
+custody on 2026-08-02; lifecycle-route effect execution and actual-node application
 replay remain in progress
 
 ## Context
@@ -174,6 +175,43 @@ flowchart LR
     CHILD --> REAP["Exit and reap release custody"]
 ```
 
+Schema-v3 effect authority now also has an explicit at-use input-custody
+boundary. `pin_effect_inputs_at_use` opens each source with `openat2` and no
+symlink traversal beneath its exact mode-0700 euid-owned parent. Every source
+must be a mode-0600 euid-owned regular single-link file. The parent identity and
+the source device, inode, length, owner, mode, link count, modification time,
+and change time must remain stable across the bounded read and named-file
+recheck. Cross-source device/inode aliases fail closed.
+
+The LEZ runtime is bounded to 16 KiB and must match the authority-pinned
+SHA-256. The LEZ capability and all eight Monero username/password sources are
+bounded to 256 bytes apiece. To match the actual runner, a secret may be one
+nonempty ASCII-graphic value stored raw, with one trailing LF, or with one
+trailing CRLF; the snapshot preserves those exact source bytes. Empty values,
+embedded or repeated newlines, stray carriage returns, NULs, non-graphic bytes,
+and oversized values fail closed.
+
+Each of the nine secrets is copied into its own mode-0400 memfd carrying write,
+grow, shrink, and seal seals, then duplicated with close-on-exec to a distinct
+collision-free descriptor numbered at least 200. The non-Clone custody types
+expose only a descriptor path, redacted length, and SHA-256, and their Debug
+output redacts the value. Named replacement after pinning cannot alter an
+existing snapshot; a fresh pin observes unsafe mode, alias, or runtime digest
+drift and fails. Runtime bytes remain a hash-checked bounded in-memory snapshot;
+only capability and credential secrets receive memfds.
+
+```mermaid
+flowchart LR
+    AUTH["Validated schema v3 authority"] --> PIN["Pin inputs at use"]
+    RUN["LEZ runtime source"] --> PIN
+    CAP["LEZ capability source"] --> PIN
+    RPC["Eight Monero credential sources"] --> PIN
+    PIN --> RB["Hash checked runtime snapshot"]
+    PIN --> SF["Nine sealed secret memfds"]
+    SF --> FD["Distinct descriptor paths at FD 200 or above"]
+    FD --> FUTURE["Future child mapping not implemented"]
+```
+
 This component performs no chain or network I/O. It uses the already locked
 rusqlite dependency and SQLite WAL, FULL synchronous writes, foreign keys, and
 secure deletion. Creation is exclusive and mode 0600; an existing safe file
@@ -278,12 +316,20 @@ invocation, exact evidence replay, drift rejection, descriptor separation,
 lock-alias, cross-swap, root, and identity rejection, and child custody through
 reap.
 
-The typed endpoint/tool views, use-time program pinning, workflow-v2 journal,
-and dual-lock command construction are component-GREEN, but no Maker or Taker
-lifecycle route calls the executor. Use-time runtime-file and capability
-verification, credential secure-open and custody, actual classifier-to-evidence
-composition, Maker effect composition, receipt-v2 claim/refund routing, and
-fresh isolated LEZ plus official Monero Regtest proof remain open. The route
-must also prove that its own supervision keeps the mapped child and both locks
-under custody through every exit and cancellation path. This checkpoint does
-not authorize a chain send. Literal M5 therefore remains 4 of 7.
+The expanded Taker authority suite is GREEN at 5 of 5. It proves exact runtime
+hashing, raw/LF/CRLF secret preservation, nine distinct sealed descriptors,
+redacted metadata-only views, named replacement isolation, fresh drift failure,
+and rejection of invalid content, unsafe storage, symlinks, hard links,
+oversize inputs, unsafe parents, and cross-source aliases. Strict all-target
+Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN.
+
+The typed endpoint/tool views, use-time program and input pinning, workflow-v2
+journal, and dual-lock command construction are component-GREEN, but no Maker
+or Taker lifecycle route calls the executor. Mapping the nine secret descriptors
+into an effect child, actual classifier-to-evidence composition, Maker effect
+composition, receipt-v2 claim/refund routing, and fresh isolated LEZ plus
+official Monero Regtest proof remain open. The route must prove that its
+supervision keeps the child, both locks, and exact secret descriptors under
+custody through every exit and cancellation path. This checkpoint opens no RPC
+or node and does not authorize a chain send. Literal M5 therefore remains 4 of
+7.

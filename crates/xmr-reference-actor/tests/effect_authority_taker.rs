@@ -350,3 +350,224 @@ fn write_executable(path: &Path, bytes: &[u8], mode: u32) {
     file.sync_all().expect("sync executable");
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("set executable mode");
 }
+#[test]
+fn effect_inputs_pin_runtime_and_all_trailing_newline_secrets_before_name_replacement() {
+    let root = tempfile::tempdir().expect("isolated effect-input root");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let (spec, runtime, secret_paths, secret_values) = custody_manifest(root.path());
+    let authority = validated(&spec);
+    let pinned = authority
+        .pin_effect_inputs_at_use()
+        .expect("securely pin schema-v3 effect inputs");
+
+    assert_eq!(pinned.runtime_bytes(), b"{\"generation\":1}\n");
+    let monero = pinned.monero();
+    let secrets = [
+        pinned.capability(),
+        monero.daemon().username(),
+        monero.daemon().password(),
+        monero.funding_wallet().username(),
+        monero.funding_wallet().password(),
+        monero.shared_wallet().username(),
+        monero.shared_wallet().password(),
+        monero.role_wallet().username(),
+        monero.role_wallet().password(),
+    ];
+    let child_paths = secrets
+        .iter()
+        .map(|secret| secret.child_path().to_path_buf())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        child_paths.len(),
+        9,
+        "every secret has one distinct descriptor"
+    );
+    for (secret, expected) in secrets.iter().zip(&secret_values) {
+        assert!(secret.child_path().starts_with("/proc/self/fd"));
+        assert_eq!(secret.redacted_len(), expected.len());
+        assert_eq!(secret.sha256(), <[u8; 32]>::from(Sha256::digest(expected)));
+        assert_eq!(
+            fs::read(secret.child_path()).expect("read descriptor snapshot"),
+            *expected
+        );
+    }
+
+    replace_named(&runtime, b"{\"generation\":2}\n");
+    for (index, path) in secret_paths.iter().enumerate() {
+        replace_named(path, format!("replacement-{index}\n").as_bytes());
+    }
+    assert_eq!(pinned.runtime_bytes(), b"{\"generation\":1}\n");
+    for (secret, expected) in secrets.iter().zip(&secret_values) {
+        assert_eq!(fs::read(secret.child_path()).unwrap(), *expected);
+    }
+    assert!(
+        authority.pin_effect_inputs_at_use().is_err(),
+        "fresh runtime pin must reject named digest drift"
+    );
+
+    fs::write(&runtime, b"{\"generation\":1}\n").unwrap();
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&secret_paths[0], fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(
+        authority.pin_effect_inputs_at_use().is_err(),
+        "fresh secret snapshot rejects unsafe named-file mode"
+    );
+}
+
+#[test]
+fn effect_input_custody_rejects_invalid_content_storage_and_aliases() {
+    let invalid: &[&[u8]] = &[
+        b"",
+        b"\n",
+        b"\r\n",
+        b"embedded\nnewline",
+        b"multiple\n\n",
+        b"nul\0secret",
+    ];
+    for bytes in invalid {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let (spec, _, secrets, _) = custody_manifest(root.path());
+        fs::write(&secrets[0], bytes).unwrap();
+        assert!(validated(&spec).pin_effect_inputs_at_use().is_err());
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let (spec, _, secrets, _) = custody_manifest(root.path());
+    fs::write(&secrets[0], vec![b'x'; 257]).unwrap();
+    assert!(validated(&spec).pin_effect_inputs_at_use().is_err());
+
+    let root = tempfile::tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let (spec, _, secrets, _) = custody_manifest(root.path());
+    fs::remove_file(&secrets[1]).unwrap();
+    symlink(&secrets[2], &secrets[1]).unwrap();
+    assert!(validated(&spec).pin_effect_inputs_at_use().is_err());
+
+    let root = tempfile::tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let (spec, _, secrets, _) = custody_manifest(root.path());
+    fs::remove_file(&secrets[4]).unwrap();
+    fs::hard_link(&secrets[5], &secrets[4]).unwrap();
+    assert!(validated(&spec).pin_effect_inputs_at_use().is_err());
+
+    let root = tempfile::tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let (mut spec, runtime, _, _) = custody_manifest(root.path());
+    let oversized = vec![b'r'; 16 * 1024 + 1];
+    fs::write(&runtime, &oversized).unwrap();
+    spec.lez.runtime_sha256 = hex::encode(Sha256::digest(&oversized));
+    assert!(validated(&spec).pin_effect_inputs_at_use().is_err());
+
+    let root = tempfile::tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let (spec, _, _, _) = custody_manifest(root.path());
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(validated(&spec).pin_effect_inputs_at_use().is_err());
+
+    let root = tempfile::tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let (mut spec, _, _, _) = custody_manifest(root.path());
+    spec.monero.role_wallet.username_file = spec.monero.daemon.username_file.clone();
+    assert!(
+        validated(&spec).pin_effect_inputs_at_use().is_err(),
+        "cross-RPC path aliases fail before any secret is exposed"
+    );
+    spec.monero.daemon.password_file = spec.monero.daemon.username_file.clone();
+    assert!(
+        load_validated_xmr_effect_authority_bytes(
+            &canonical(&spec),
+            ActorRole::Taker,
+            SWAP,
+            AGREEMENT,
+            ACTIVATION,
+            RUN,
+        )
+        .is_err(),
+        "username/password overlap is invalid authority"
+    );
+}
+
+fn validated(spec: &TakerEffectAuthority) -> xmr_reference_actor::ValidatedXmrEffectAuthorityV1 {
+    load_validated_xmr_effect_authority_bytes(
+        &canonical(spec),
+        ActorRole::Taker,
+        SWAP,
+        AGREEMENT,
+        ACTIVATION,
+        RUN,
+    )
+    .expect("canonical custody authority")
+}
+
+fn custody_manifest(root: &Path) -> (TakerEffectAuthority, PathBuf, Vec<PathBuf>, Vec<Vec<u8>>) {
+    let runtime = root.join("lez-runtime.json");
+    write_private_source(&runtime, b"{\"generation\":1}\n");
+    let secret_paths = [
+        "lez.capability",
+        "daemon.username",
+        "daemon.password",
+        "funding.username",
+        "funding.password",
+        "shared.username",
+        "shared.password",
+        "taker.username",
+        "taker.password",
+    ]
+    .map(|name| root.join(name))
+    .to_vec();
+    let secret_values = [
+        b"lez-capability\n".to_vec(),
+        b"daemon-user\r\n".to_vec(),
+        b"daemon-password\n".to_vec(),
+        b"funding-user\n".to_vec(),
+        b"funding-password\r\n".to_vec(),
+        b"shared-user".to_vec(),
+        b"shared-password\n".to_vec(),
+        b"taker-user\r\n".to_vec(),
+        b"taker-password\n".to_vec(),
+    ]
+    .to_vec();
+    for (path, bytes) in secret_paths.iter().zip(&secret_values) {
+        write_private_source(path, bytes);
+    }
+
+    let mut spec = manifest();
+    spec.workflow_journal = root.join("workflow.sqlite3");
+    spec.adaptor_journal = root.join("adaptor.sqlite3");
+    spec.evidence_root = root.join("evidence");
+    spec.lez.runtime_file.clone_from(&runtime);
+    spec.lez.runtime_sha256 = hex::encode(Sha256::digest(b"{\"generation\":1}\n"));
+    spec.lez.capability_file.clone_from(&secret_paths[0]);
+    let rpcs = [
+        &mut spec.monero.daemon,
+        &mut spec.monero.funding_wallet,
+        &mut spec.monero.shared_wallet,
+        &mut spec.monero.role_wallet,
+    ];
+    for (index, rpc) in rpcs.into_iter().enumerate() {
+        rpc.username_file.clone_from(&secret_paths[1 + index * 2]);
+        rpc.password_file.clone_from(&secret_paths[2 + index * 2]);
+    }
+    (spec, runtime, secret_paths, secret_values)
+}
+
+fn write_private_source(path: &Path, bytes: &[u8]) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    file.write_all(bytes).unwrap();
+    file.sync_all().unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+fn replace_named(path: &Path, bytes: &[u8]) {
+    let mut old = path.as_os_str().to_os_string();
+    old.push(".old");
+    fs::rename(path, PathBuf::from(old)).unwrap();
+    write_private_source(path, bytes);
+}

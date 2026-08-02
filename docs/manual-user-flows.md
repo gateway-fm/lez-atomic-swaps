@@ -6560,11 +6560,48 @@ No LEZ or Monero node, chain RPC, Docker service, faucet, DNS, public network,
 peer, or funds participates in these tests. They use private temporary files
 and local child processes; contention or heavy host scheduling can extend them.
 
-Before enabling effects, the lifecycle implementation must still bind runtime,
-capability, and credential inputs at use; derive exact classifier/wallet
-reconciliation evidence; and compose the actual Maker/Taker routes through
-workflow v2, cancellation, and child reap. This manual checkpoint is not an
-actual claim or refund.
+The follow-on schema-v3 input-custody checkpoint securely pins the previously
+named-only runtime and credential inputs. Repeat it without nodes:
+
+```bash
+cargo +1.96.0 test --locked -p xmr-reference-actor \
+  --test effect_authority_taker
+```
+
+Expected result: 5 of 5 tests GREEN.
+
+`pin_effect_inputs_at_use` requires every source below its exact mode-0700
+owner-only parent to be a mode-0600 owner regular single-link file and opens it
+with no symlink traversal. Parent identity and source inode/metadata must remain
+stable across the bounded read; no two sources may alias the same inode. The
+LEZ runtime is at most 16 KiB and must match its authority SHA-256. The LEZ
+capability and these eight Monero files are at most 256 bytes each:
+
+- daemon username/password;
+- funding-wallet username/password;
+- shared-wallet username/password; and
+- role-wallet username/password.
+
+Each secret may contain one nonempty ASCII-graphic value raw, with one trailing
+LF, or with one trailing CRLF, matching the actual runner. Empty, embedded or
+multiple newline, stray CR, NUL, non-graphic, oversized, symlinked, hard-linked,
+cross-aliased, or permission-unsafe sources fail closed.
+
+The capability and eight credentials become nine distinct mode-0400 fully
+sealed memfds, duplicated to collision-free descriptors at or above 200.
+Callers can see only each descriptor path, redacted length, and SHA-256; the
+custody objects are non-Clone and Debug redacts values. Named replacement
+cannot alter an existing snapshot, while a fresh pin rejects runtime digest or
+storage drift. Runtime bytes are retained only as a bounded hash-checked
+in-memory snapshot.
+
+This remains a library-level developer checkpoint. No Maker/Taker route maps
+these descriptors into a child, opens an RPC or node, or executes a claim or
+refund. Before enabling effects, the route must combine exact child mappings
+with program FD 197, actor/state lock FD 198, workflow lock FD 199, workflow-v2
+reconciliation, cancellation, and reap. The test uses only private temporary
+files and local descriptors; no Docker service, faucet, DNS, public network,
+peer, or funds can make it flaky.
 
 The monitor starts no LEZ or Monero node, opens no chain RPC, uses no Docker
 service, faucet, funds, DNS, public network, peer, or finality service, and

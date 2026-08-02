@@ -13,6 +13,8 @@ compile_error!("xmr-reference-actor requires Unix file-permission semantics");
 mod application_provision;
 #[cfg(feature = "sessions")]
 mod effect_authority;
+#[cfg(feature = "sessions")]
+mod effect_input_custody;
 
 #[cfg(feature = "sessions")]
 pub use application_provision::{
@@ -30,6 +32,11 @@ pub use effect_authority::{
     ValidatedXmrEffectAuthorityV1, XMR_EFFECT_AUTHORITY_MAX_BYTES, XmrEffectAuthenticatedRpcV1,
     XmrEffectLezRpcV1, XmrEffectMoneroRpcV1, XmrEffectToolV1, XmrMakerEffectToolsV1,
     XmrTakerEffectToolsV1, load_validated_xmr_effect_authority_bytes,
+};
+#[cfg(feature = "sessions")]
+pub use effect_input_custody::{
+    PinnedXmrEffectInputsV1, PinnedXmrEffectMoneroCredentialsV1, PinnedXmrEffectRpcCredentialsV1,
+    PinnedXmrEffectSecretV1,
 };
 
 use std::{

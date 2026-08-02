@@ -74,6 +74,20 @@ lifecycle route executes this boundary and no RPC, node, or external runtime
 resource participated. Literal M5 stays 4/7; ETA remains 3 to 7 focused
 implementation hours.
 
+M5 schema-v3 effect-input custody checkpoint (2026-08-02): at-use no-symlink
+secure-open now requires one stable mode-0700 owner parent and mode-0600
+owner-only regular single-link sources. The runtime is bounded to 16 KiB and
+authority-hash pinned; capability plus eight Monero RPC credential files are
+bounded to 256 bytes and accept one raw/LF/CRLF runner-compatible graphic value.
+Aliases and unstable or invalid content/storage fail closed. All nine secrets
+become separate mode-0400 fully sealed memfds on unique descriptors at or above
+200, exposed only by descriptor path, redacted length, and SHA-256 through
+non-Clone redacted types. Existing snapshots survive named replacement; fresh
+drift fails. Focused Taker authority tests are GREEN at 5/5, with strict
+Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene GREEN. No route maps
+these descriptors, opens an RPC or node, or executes an effect yet. Literal M5
+stays 4/7; ETA remains 3 to 7 focused implementation hours.
+
 Evidence correction recorded 2026-07-30: retained M4 run `m4cert20260722an` and M5 run `m5-xmr-app-20260730-2c6aec1-h` prove finalized LEZ effects, adaptor extraction, shared-key reconstruction, a confirmed Monero sweep, binding, and exact cleanup. A role audit proved their runner used provisioner funding, a Taker-hosted shared wallet, and a Maker sweep destination. Those runs no longer certify role-correct user economics. The code now enforces Maker funding and claim mining, a neutral provisioner shared-wallet RPC, and a Taker claim destination; a fresh role-correct claim replay remains separate and the historical evidence is unchanged. Authenticated tag-16 Taker prepare, aggregate completion, transaction-derived one-attempt submission, finalized Maker discovery, Maker ingestion/extraction, role-correct Maker recovery sweep, and the conditional refund binder became component-GREEN. Ambiguous submission is sticky across restart without resend and refund classification enforces `[refund_at, punish_at)`. Diagnostic run `m5xmrrefund8c10cd7a` proved read-only polling could not advance an idle local finalized clock; the later exact run below supersedes this historical refund-replay-open status.
 
 Finality correction recorded 2026-07-31: run `m5xmrrefund842610ca` admitted one

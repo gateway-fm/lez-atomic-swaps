@@ -5033,3 +5033,54 @@ dual-lock command yet. Remaining work is:
 
 Literal M5 remains 4 of 7. ETA remains 3 to 7 focused implementation hours to
 the M5 tag, subject to fresh-node runtime and final composite review.
+
+### XMR schema-v3 effect-input custody checkpoint (2026-08-02)
+
+The next focused RED/GREEN closes secure at-use custody for the inputs named by
+the schema-v3 effect authority without enabling a lifecycle route.
+`pin_effect_inputs_at_use` uses `openat2` with no symlink traversal under
+the exact mode-0700 euid-owned parent. Each runtime, capability, username, and
+password source must be a mode-0600 euid-owned regular single-link file. Parent
+identity plus source device, inode, length, owner, mode, link count, mtime, and
+ctime are stable across a bounded read and named-file recheck; cross-source
+inode aliases fail closed.
+
+The LEZ runtime is limited to 16 KiB and must match the authority SHA-256. The
+LEZ capability and all eight Monero RPC credential files are limited to 256
+bytes each. They accept the actual runner's one ASCII-graphic value stored raw,
+with one LF, or with one CRLF, preserving the exact original bytes. Empty,
+embedded/multiple-newline, stray-CR, NUL, non-graphic, and oversized inputs
+fail closed.
+
+Each of the nine secrets is copied into a separate mode-0400 memfd with write,
+grow, shrink, and seal seals, then duplicated close-on-exec to a unique
+collision-free descriptor at or above 200. The non-Clone custody types expose
+only the descriptor path, redacted byte length, and SHA-256; Debug output
+redacts values. Named path replacement cannot alter an existing snapshot, while
+a fresh pin rejects digest or storage drift. Runtime bytes remain a bounded
+hash-checked in-memory snapshot rather than a secret memfd.
+
+The focused Taker effect-authority suite is GREEN at 5 of 5. It covers exact
+runtime and nine-secret snapshots, raw/LF/CRLF inputs, descriptor uniqueness,
+redaction, replacement isolation, fresh drift, invalid content, size, mode,
+parent, symlink, hard-link, and cross-source alias rejection. Strict all-target
+Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN. No RPC,
+node, Docker service, faucet, peer, public network, or funds participated.
+
+Remaining work is:
+
+1. map the nine secret snapshots to their exact child descriptor numbers
+   together with program FD 197 and lock FDs 198/199;
+2. compose Maker and receipt-v2 Taker lifecycle routes through the sealed
+   program, pinned inputs, workflow-v2 CAS, dual locks, cancellation, and reap;
+3. derive evidence-bound reconciliation from finalized LEZ events and confirmed
+   Monero wallet history;
+4. prove both role-correct branches with fresh isolated LEZ v0.2 and official
+   Monero Regtest nodes; and
+5. close all-pair lifecycle, concurrency, composite, review, tag, and push
+   gates.
+
+No route or child mapping consumes the snapshots yet, and this checkpoint
+opens no RPC or node and executes no chain effect. Literal M5 remains 4 of 7.
+ETA remains 3 to 7 focused implementation hours to the M5 tag, subject to
+fresh-node runtime and final composite review.
