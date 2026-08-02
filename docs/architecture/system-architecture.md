@@ -2872,3 +2872,35 @@ evidence, not present claims.
 No milestone is complete merely because an internal API test passes. Its tag
 must point to the commit whose role-real evidence crosses every applicable
 boundary above.
+
+
+## M5 closure-candidate evidence layers
+
+```mermaid
+flowchart LR
+    User["Maker and Taker users"] --> CLI["Real Maker and Taker CLIs"]
+    CLI --> Daemon["Maker daemon and owner RPC"]
+    Daemon --> Store[("One durable SQLite authority")]
+    Store --> Pool["Bounded independent worker pool"]
+    Pool --> BTC["Bitcoin marker Terminal"]
+    Pool --> XMR["XMR marker live then Backoff"]
+    Pool --> ZEC["Zcash marker Terminal"]
+    XMR --> Reap["Child reaped"]
+    Reap --> Restart["Daemon restart exact rows no replay"]
+    BTC -.-> BTCNodes["Retained M3 and M5 BTC chain evidence"]
+    ZEC -.-> ZECNodes["Retained M2 and M5 ZEC chain evidence"]
+    XMR -.-> XMRNodes["Retained M4 and M5 XMR chain evidence"]
+```
+
+Solid edges are the current control-plane closure evidence. The marker actors
+open no RPC and create no chain effect. Dashed edges denote separately retained
+local-devnet evidence, not calls made by this overlap test. Together with the
+daemon, price-source, Delivery/Chat, and fuzz outputs, this supports literal M5
+verified 7/7, bound by `m5-poc-complete`. Production and public deployment are
+not claimed.
+
+Bitcoin manual Claim is preserved in the durable user action and translated
+only at execution to the actor's semantic Drive command. XMR/ZEC Claim remain
+Claim; all pair refunds execute Recover. This pair-aware translation prevents a
+valid user intent from being rejected as JSON-RPC `-32602` without inventing a
+new Bitcoin actor verb.

@@ -136,8 +136,8 @@ its exact run-scoped resources. The checked
 [BTC application evidence packet](docs/evidence/m5-btc-application-corridor-20260730.json)
 records the pushed-clean provenance, exact effect IDs, local-node versions,
 runtime external-resource boundary, timings, and cleanup. The XMR application
-corridor is also clean-certified below. Literal CLI lifecycle, concurrent
-all-pair, unavailable-route, and final M5 gates remain open; M5 is not tagged.
+corridor is also clean-certified below. At that checkpoint, the all-pair and
+unavailable-route control-plane closures were still open; M5 was not tagged.
 
 The XMR application path has now entered its first schema-v20 store slice. An
 exact canonical dual-signed Stage-A agreement can reserve one authenticated
@@ -434,9 +434,9 @@ RPC. Exact cleanup removed the four containers, two networks, two tagged
 images, private run roots, ports, and processes without a global prune. No
 public RPC, faucet, peer, or public funds participated.
 
-This closes the daemon-owned accepted-application output and raises literal M5
-to 4 of 7. Remaining are complete Maker lifecycle control for every supported
-pair, complete Taker lifecycle control for every supported pair, and accepted-
+That checkpoint closed the daemon-owned accepted-application output and
+raised literal M5 to 4 of 7. The remaining outputs at that point were complete
+Maker lifecycle control for every supported pair, complete Taker lifecycle control for every supported pair, and accepted-
 application actual-chain coordinator concurrency/restart isolation including
 proof that unavailable XMR does not stall BTC/ZEC. See the
 [daemon-supervisor certification packet](docs/evidence/m5-zec-daemon-supervisor-certification-20260731.json).
@@ -453,8 +453,7 @@ process-free third call. Strict bounded output parsing rejects source injection
 and step/digest drift without journal mutation. This checkpoint uses temporary
 local files/processes only: no RPC listener, node, Docker service, faucet, DNS,
 public network, funds, or finality wait participates, so it proves process
-orchestration rather than semantic Tag14 chain behavior. M5
-remains 4 of 7; the current tag ETA is 2 to 5 focused implementation hours.
+orchestration rather than semantic Tag14 chain behavior. At that process checkpoint M5 remained 4 of 7.
 
 Those historical runs are not evidence of the current receipt-bound claim route.
 The current M5 working tree also contains an intervention-assisted actual-node
@@ -472,9 +471,9 @@ a restart-safe SQLite cursor advances only validated fully covered pages, keeps
 partial/ambiguous/typed-error polls on the exact page, and restores the active
 page despite unchanged actor config. Both owner and counterparty paths pass a
 RED-GREEN reopen test, but the retained actual-node evidence remains
-intervention-assisted until a fresh recovery replay. Literal M5 is now 4 of 7,
-but it is not complete. The remaining accepted outputs are complete supported-
-pair Maker lifecycle, complete supported-pair Taker lifecycle, and actual-chain
+intervention-assisted until a fresh recovery replay. At that recovery
+checkpoint literal M5 was 4 of 7 and incomplete. The remaining accepted outputs
+at that point were complete supported-pair Maker lifecycle, complete supported-pair Taker lifecycle, and actual-chain
 accepted-application coordinator concurrency/restart/unavailable-XMR
 isolation. Clean sidecar builds
 should set the documented
@@ -2598,6 +2597,45 @@ first proves real canonical funding, close/reopen/requery, deeper-fork removal,
 second restart, and exact replay through the maker runtime; it then runs the
 actor fund/claim/refund/concurrent-fork consensus fixture. Cleanup addresses that
 exact project and never prunes or stops resources it did not create.
+
+## M5 local-functional PoC closure candidate
+
+Current status on 2026-08-02: **verified 7 of 7 under the progressive-JPEG
+local-functional PoC policy; tag `m5-poc-complete` binds this
+closure.** This supersedes
+the earlier 4-of-7 current-status statements above without rewriting their
+historical evidence. It does not claim production readiness or public
+deployment.
+
+The literal accepted RFP-003 issue #112 deliverables are now composed as follows:
+
+| Deliverable | PoC evidence |
+|---|---|
+| Long-running Maker daemon | Retained hardened service and daemon-supervised ZEC actual-chain corridor |
+| Maker CLI | Real CLI/daemon all-pair claim/refund admission matrix, GREEN 1 of 1 in 0.64 seconds |
+| Taker CLI | Retained BTC/ZEC lifecycle corridors plus receipt-v2 XMR Tag14 claim and Tag16 refund process routes |
+| Coordinator persistence, crash, and concurrency | One daemon/database/worker pool runs three pair-correct rows; unavailable then failing XMR does not prevent BTC and ZEC Terminal, GREEN 1 of 1 in 16.31 seconds |
+| Price sources | Retained local and Logos-module C-API pricing evidence |
+| Delivery and Chat degradation | Retained post-lock transport removal, replay, and degraded-state evidence |
+| Coordinator fuzzing | Retained literal fuzz target, seeds, and smoke evidence |
+
+The XMR receipt-v2 Tag16 user path is GREEN 1 of 1 in 84.21 seconds: the first
+refund sends once and leaves Started, the second runs the role-fixed observer
+and reconciles Succeeded, the third is Complete without a process, and the
+losing claim fails closed. The all-pair Maker matrix exposed a real Bitcoin
+manual-claim RED at JSON-RPC code `-32602`; production now preserves the user
+claim intent while mapping it to Bitcoin's semantic `drive` command. The
+focused mapping unit is GREEN 1 of 1.
+
+Evidence remains layered. M2/M3/M4 retain real local-devnet chain effects, and
+M5 retains clean accepted-application BTC, ZEC, and XMR local-chain corridors.
+The new all-pair lifecycle and three-pair overlap tests use fixed marker actors:
+they prove real CLI, daemon, SQLite, scheduling, fencing, child custody,
+failure isolation, and restart/no-replay composition, but no new chain effect.
+Semantic receipt-v2 XMR worker adapters and a fresh simultaneous
+accepted-application actual-chain composite are post-PoC QA and production
+hardening. See [the manual closure-candidate flow](docs/manual-user-flows.md#m5-poc-closure-candidate-reproduction).
+
 
 ## Licensing
 

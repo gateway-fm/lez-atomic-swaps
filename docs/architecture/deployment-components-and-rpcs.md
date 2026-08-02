@@ -1743,3 +1743,46 @@ graph LR
   X -->|receipt and sweep evidence| B[Cross-chain binder]
   L -->|finalized claim evidence| B
 ```
+
+
+## M5 closure-candidate local process deployment
+
+```mermaid
+flowchart TB
+    subgraph Owner["Owner local boundary"]
+        MakerCLI["lez-maker CLI"]
+        TakerCLI["lez-taker CLI"]
+        Socket["Mode 0600 owner Unix RPC"]
+        Daemon["lez-maker-daemon"]
+        DB[("SQLite application and actor rows")]
+        Workers["Three actor workers"]
+    end
+    MakerCLI --> Socket --> Daemon --> DB --> Workers
+    TakerCLI --> Receipt["Private receipt v2"]
+    Receipt --> Tag16["Tag16 sender once"]
+    Receipt --> Observer["Role fixed observer"]
+    Observer --> Reconcile["Evidence shaped reconciliation"]
+    Workers --> BTC["Bitcoin marker Terminal"]
+    Workers --> XMR["XMR marker live then failure"]
+    Workers --> ZEC["Zcash marker Terminal"]
+    XMR --> Reap["Reap then Backoff"]
+    DB --> Restart["Restart exact rows no replay"]
+    Tag16 -.-> LEZ["Retained isolated LEZ evidence"]
+    BTC -.-> Core["Retained Bitcoin Core evidence"]
+    ZEC -.-> Zebra["Retained Zebra evidence"]
+    XMR -.-> Monero["Retained Monero evidence"]
+```
+
+| Boundary | Current closure evidence | External resources in the new test |
+|---|---|---|
+| Maker all-pair lifecycle | Real CLI/daemon 1/1 in 0.64s | None; marker configs/programs only |
+| Taker Tag16 refund | Real CLI 1/1 in 84.21s; send, observe/reconcile, Complete, losing claim | None; signed local acceptance plus fixed sender/observer |
+| Three-pair coordinator | Real daemon/database 1/1 in 16.31s; XMR failure isolated, BTC/ZEC Terminal, reap/restart/no replay | None; local processes, SQLite, Unix socket |
+| Chain-effect layer | Retained M2/M3/M4 devnets and clean M5 BTC/ZEC/XMR corridors | Isolated loopback nodes only in their separate documented runs |
+
+The solid topology requires no Docker, node RPC, faucet, DNS, peer, network, or
+funds. Dashed nodes are not contacted by the new matrix/overlap tests. Switching
+the application deployments from local nodes to a public environment remains a
+configuration plus deployment operation, but no public deployment is claimed.
+Semantic receipt-v2 XMR worker adapters and simultaneous accepted-application
+actual-chain overlap remain post-PoC hardening.

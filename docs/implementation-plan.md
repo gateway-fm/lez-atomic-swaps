@@ -5279,3 +5279,48 @@ evidence, the other role-fixed Maker/Taker actions, and literal outputs 5/7
 Maker lifecycle, 6/7 Taker lifecycle, and 7/7 accepted-application
 concurrency/restart/unavailable-XMR isolation, followed by final review/tag
 gates. Literal M5 remains 4 of 7.
+
+
+## M5 progressive-PoC closure candidate checkpoint (2026-08-02)
+
+This checkpoint reconciles the literal current RFP and accepted issue #112,
+rather than treating three QA composites as additional deliverables. The seven
+outputs are: daemon, Maker CLI, Taker CLI, coordinator
+persistence/crash/concurrency, price sources, Delivery/Chat degradation, and
+fuzzing. All seven now have reproducible local-functional PoC evidence, so the
+milestone state moves from 4/7 to **verified local-functional PoC 7/7**.
+
+New closure evidence:
+
+1. `maker_actor_lifecycle_control_plane_is_pair_safe_replay_safe_and_restart_durable`
+   is GREEN 1/1 in 0.64 seconds through the real Maker CLI and daemon. It covers
+   claim/refund admission, generation fencing, replay, restart, pair identity,
+   and durable manual-action rows for BTC, XMR, and ZEC.
+2. The matrix first exposed a Bitcoin claim RED through JSON-RPC `-32602`.
+   The production supervisor now maps user-level Bitcoin Claim to its semantic
+   Drive command; ZEC/XMR Claim remain Claim, and all Refund intents map to
+   Recover. `manual_actions_map_to_pair_semantic_commands` is GREEN 1/1.
+3. `receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once` is
+   GREEN 1/1 in 84.21 seconds. It proves Tag16 sender once, restart-only
+   observer, exact-plan/evidence reconciliation, third-call Complete, and
+   losing-claim exclusion through the real Taker CLI after Delivery/Chat and
+   the Maker daemon are removed.
+4. `daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart`
+   is GREEN 1/1 in 16.31 seconds. One daemon, database, and three-worker pool
+   retain pair-correct BTC/XMR/ZEC coordinators and disjoint manifests/state.
+   XMR remains live while BTC and ZEC become Terminal, then fails alone to
+   Backoff; health stays responsive, the child is reaped, restart preserves
+   exact rows, and no actor replays.
+
+The first and fourth cases use marker actor programs. Together with the Tag16
+fixture classifier, they are control-plane/process evidence, not fresh on-chain
+evidence. The PoC chain-effect layer remains the retained M2 ZEC, M3 BTC, M4 XMR
+local-devnet certifications plus the clean M5 BTC/ZEC/XMR accepted-application
+corridors. The evidence layers compose but are not interchangeable.
+
+The exact repository format/test/Clippy/Rustdoc/security/traceability gates,
+single final 362-diagram Mermaid render, and candidate diff/evidence review are
+GREEN. Tag `m5-poc-complete` binds this verified closure. Semantic receipt-v2 XMR transaction/observer adapters and a fresh
+simultaneous accepted-application actual-chain composite move to
+post-PoC QA/chaos/infosec/production hardening under the progressive-JPEG
+policy. Public deployment remains deferred. No production-ready claim is made.

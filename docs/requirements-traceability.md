@@ -327,3 +327,28 @@ post-fee receipt, and canonical cross-chain binding; its evidence and cleanup
 ledgers are green with exact resources absent. This checkpoint deliberately does
 not claim the deferred signed-recovery branches, F7/U9/D1 outputs, or production
 hardening gates.
+
+
+## M5 closure-candidate traceability reconciliation (2026-08-02)
+
+This mapping uses the seven literal deliverables in the current accepted issue
+#112. It supersedes earlier 3/7 and 4/7 current-score snapshots while preserving
+their historical evidence.
+
+| Deliverable | Requirements advanced | Closure-candidate evidence and limit |
+|---|---|---|
+| Daemon | F9, U2, R2, R4 | Retained service/actual-corridor evidence plus responsive three-pair supervision |
+| Maker CLI | F9, U3 | Real all-pair CLI/daemon claim/refund matrix 1/1 in 0.64s; Bitcoin Claim-to-Drive unit 1/1 after `-32602` RED |
+| Taker CLI | F3, U4 | Retained pair corridors plus receipt-v2 Tag16 refund 1/1 in 84.21s with send-once, observe/reconcile, Complete, and losing-claim exclusion |
+| Coordinator persistence/crash/concurrency | R3, R4, R5 | Three pair-correct rows under one daemon/database 1/1 in 16.31s; XMR live/failure isolation, BTC/ZEC Terminal, reap, restart equality, no replay |
+| Price sources | F8 | Retained local and Logos-module C-API paths |
+| Delivery/Chat degradation | F1, R2, R8 | Retained post-lock removal, degraded state, and durable replay |
+| Fuzz | S4 | Retained coordinator target, seeds, and smoke counters |
+
+Literal M5 PoC status is verified 7/7, bound by `m5-poc-complete`. The all-pair
+matrix and overlap use marker actors and prove control-plane behavior only.
+Actual-chain claims remain grounded in the retained M2/M3/M4 local-devnet
+evidence and clean M5 accepted-application BTC, ZEC, and XMR corridors. Semantic
+receipt-v2 XMR worker adapters, a fresh simultaneous accepted-application
+actual-chain composite, public deployment, and production hardening are not
+claimed by this candidate.

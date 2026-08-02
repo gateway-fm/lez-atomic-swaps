@@ -439,3 +439,31 @@ absent, sidecar ports closed, and foreign-sentinel survival; it used no public
 RPC, faucet, peer, or public funds. This is the progressive local-functional PoC
 checkpoint, not a production-readiness claim; refund/punishment, F7 parity,
 U9/D1, independent review, chaos, and QA/security hardening remain deferred.
+
+
+## M5 PoC closure-candidate scorecard (2026-08-02)
+
+This current scorecard supersedes the earlier progressive snapshots above.
+Status is **verified local-functional PoC 7/7**, bound by `m5-poc-complete`; it is
+neither a production-readiness nor public-deployment certification.
+
+| Literal issue #112 output | Current measurement | Evidence boundary |
+|---|---|---|
+| Daemon | PoC complete | Retained system-service, supervision, restart, and daemon-owned ZEC local-chain evidence |
+| Maker CLI | PoC complete; all-pair matrix 1/1 in 0.64s | Real CLI/daemon and durable rows; marker actors add no chain effect |
+| Taker CLI | PoC complete; receipt-v2 Tag16 refund 1/1 in 84.21s | Send once, observe/reconcile, Complete, losing claim; fixed process observer is not actual-chain proof |
+| Coordinator persistence/crash/concurrency | PoC complete; three-pair overlap 1/1 in 16.31s | One daemon/database; XMR failure isolated from BTC/ZEC Terminal; child reap and restart exact/no replay; markers only |
+| Price sources | PoC complete | Retained local and Logos-module C-API evidence |
+| Delivery/Chat degradation | PoC complete | Retained durable replay and post-lock transport-removal evidence |
+| Fuzz | PoC complete | Retained literal target, seven seeds, and 512-run smoke |
+
+Bitcoin manual claim first returned `-32602`, producing useful RED evidence.
+The supervisor now maps the user intent Claim to Bitcoin Drive; the focused
+mapping unit is GREEN 1/1. This is a semantic command correction, not a new
+Bitcoin transaction result.
+
+Evidence composition is explicit: M2/M3/M4 real local-devnet runs and clean M5
+BTC/ZEC/XMR accepted-application corridors retain chain-effect evidence. The new
+Maker matrix and three-pair overlap certify control-plane composition only.
+Semantic receipt-v2 XMR workers and fresh simultaneous accepted-application
+actual-chain overlap remain QA/production-hardening measurements after PoC.

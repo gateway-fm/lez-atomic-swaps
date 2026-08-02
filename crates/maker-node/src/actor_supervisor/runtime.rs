@@ -454,7 +454,7 @@ enum ClaimedAttemptError {
     Scheduling(MakerActorProcessError),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ActorEffectCommand {
     Activate,
     Drive,
@@ -573,8 +573,7 @@ fn run_claimed_attempt_with_lock(
             return Ok(ClaimedAttempt::Blocked);
         }
         let command = match manual_action {
-            Some(MakerActorManualAction::Claim) => ActorEffectCommand::Claim,
-            Some(MakerActorManualAction::Refund) => ActorEffectCommand::Recover,
+            Some(action) => manual_effect_command(lease.record().manifest().kind(), action),
             None => match status_decision {
                 StatusDecision::Blocked => return Ok(ClaimedAttempt::Blocked),
                 StatusDecision::Terminal => return Ok(ClaimedAttempt::Terminal),
@@ -618,6 +617,19 @@ fn run_claimed_attempt_with_lock(
         progress,
         held_lock: Some(held_lock),
     })
+}
+
+const fn manual_effect_command(
+    kind: MakerActorKindV1,
+    action: MakerActorManualAction,
+) -> ActorEffectCommand {
+    match (kind, action) {
+        (MakerActorKindV1::Bitcoin, MakerActorManualAction::Claim) => ActorEffectCommand::Drive,
+        (MakerActorKindV1::Monero | MakerActorKindV1::Zcash, MakerActorManualAction::Claim) => {
+            ActorEffectCommand::Claim
+        }
+        (_, MakerActorManualAction::Refund) => ActorEffectCommand::Recover,
+    }
 }
 
 enum ChildRunError {
@@ -1139,6 +1151,32 @@ mod tests {
             "next_action": next_action
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn manual_actions_map_to_pair_semantic_commands() {
+        assert_eq!(
+            manual_effect_command(MakerActorKindV1::Bitcoin, MakerActorManualAction::Claim),
+            ActorEffectCommand::Drive
+        );
+        assert_eq!(
+            manual_effect_command(MakerActorKindV1::Zcash, MakerActorManualAction::Claim),
+            ActorEffectCommand::Claim
+        );
+        assert_eq!(
+            manual_effect_command(MakerActorKindV1::Monero, MakerActorManualAction::Claim),
+            ActorEffectCommand::Claim
+        );
+        for kind in [
+            MakerActorKindV1::Bitcoin,
+            MakerActorKindV1::Monero,
+            MakerActorKindV1::Zcash,
+        ] {
+            assert_eq!(
+                manual_effect_command(kind, MakerActorManualAction::Refund),
+                ActorEffectCommand::Recover
+            );
+        }
     }
 
     fn zec_projected_claim_terminal_effect(operation: &str) -> Vec<u8> {

@@ -1,4 +1,10 @@
+#[allow(dead_code)]
+#[path = "support/btc_fixture.rs"]
+mod btc_fixture;
 mod support;
+#[allow(dead_code)]
+#[path = "support/xmr_chat_fixture.rs"]
+mod xmr_chat_fixture;
 
 use std::{
     fs::{self, OpenOptions},
@@ -10,6 +16,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use btc_fixture::BtcAuthorityFixture;
+use btc_reference_actor::ActorConfig as BtcActorConfig;
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, RecoverySchedule, SwapCoordinator,
     SwapDirection, SwapId, TimelockSafety,
@@ -24,6 +32,7 @@ use tempfile::tempdir;
 use zec_reference_actor::ActorConfig;
 
 use support::actor_deployment;
+use xmr_chat_fixture::XmrChatFixture;
 
 #[test]
 #[allow(clippy::too_many_lines)] // One process journey keeps readiness, RPC, and reap ordering visible.
@@ -54,7 +63,7 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
 
     let database = root.path().join("maker.sqlite3");
     let mut store = SqliteSwapStore::open(&database).expect("open isolated coordinator database");
-    store.save(&swap(swap_id)).expect("save ZEC swap");
+    store.save(&zec_swap(swap_id)).expect("save ZEC swap");
     store
         .register_maker_actor(
             &MakerActorManifestV1::new(
@@ -156,32 +165,32 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
 }
 
 #[test]
-#[allow(clippy::too_many_lines)] // One process journey keeps both durable actor rows visible.
+#[allow(clippy::too_many_lines)] // One process journey keeps all three durable actor rows visible.
 fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
-    let root = tempdir().expect("isolated two-swap daemon root");
+    let root = tempdir().expect("isolated three-pair daemon root");
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
         .expect("owner-only test root");
-    let timed_out_id = "m5-daemon-a-timeout";
-    let terminal_id = "m5-daemon-b-terminal";
-    let timed_out_root = root.path().join("timed-out");
-    let terminal_root = root.path().join("terminal");
-    for directory in [&timed_out_root, &terminal_root] {
+    let xmr_bytes = [0x58; 32];
+    let xmr_id = hex::encode(xmr_bytes);
+    let btc_bytes = [0x42; 32];
+    let btc_id = hex::encode(btc_bytes);
+    let zec_id = "m5-daemon-zec-terminal";
+    let xmr_root = root.path().join("xmr-unavailable");
+    let btc_root = root.path().join("btc-terminal");
+    let zec_root = root.path().join("zec-terminal");
+    for directory in [&xmr_root, &btc_root, &zec_root] {
         fs::create_dir(directory).expect("create disjoint actor fixture root");
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
             .expect("owner-only actor fixture root");
     }
-    let timed_out_deployment = actor_deployment(&timed_out_root, timed_out_id);
-    let terminal_deployment = actor_deployment(&terminal_root, terminal_id);
-    let timed_out_config =
-        ActorConfig::load_private(&timed_out_deployment.source_config).expect("timeout config");
-    let terminal_config =
-        ActorConfig::load_private(&terminal_deployment.source_config).expect("terminal config");
+    let zec_deployment = actor_deployment(&zec_root, zec_id);
+    let zec_config = ActorConfig::load_private(&zec_deployment.source_config).expect("ZEC config");
 
-    let timed_out_pid_file = root.path().join("timed-out.pid");
-    let timed_out_release = root.path().join("timed-out.release");
-    let timed_out_invocations = root.path().join("timed-out.invocations");
-    let timed_out_program_path = root.path().join("timed-out-zec-maker-actor");
-    let timed_out_program = format!(
+    let xmr_pid_file = root.path().join("xmr-unavailable.pid");
+    let xmr_release = root.path().join("xmr-unavailable.release");
+    let xmr_invocations = root.path().join("xmr-unavailable.invocations");
+    let xmr_program_path = root.path().join("xmr-unavailable-maker-actor");
+    let xmr_program = format!(
         "#!/bin/sh\n\
          test \"$1\" = \"--config-fd\" || exit 91\n\
          test \"$2\" = \"196\" || exit 92\n\
@@ -192,15 +201,17 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
          printf '%s\\n' \"$$\" > \"{}\"\n\
          while test ! -f \"{}\"; do /usr/bin/sleep 0.01; done\n\
          exit 73\n",
-        timed_out_invocations.display(),
-        timed_out_pid_file.display(),
-        timed_out_release.display()
+        xmr_invocations.display(),
+        xmr_pid_file.display(),
+        xmr_release.display()
     );
-    write_private(&timed_out_program_path, timed_out_program.as_bytes(), 0o700);
+    write_private(&xmr_program_path, xmr_program.as_bytes(), 0o700);
+    let xmr_fixture =
+        XmrChatFixture::new(&xmr_root, xmr_bytes, 1_000_000, 25_000, &xmr_program_path);
 
-    let terminal_invocations = root.path().join("terminal.invocations");
-    let terminal_program_path = root.path().join("terminal-zec-maker-actor");
-    let terminal_program = format!(
+    let zec_invocations = root.path().join("terminal.invocations");
+    let zec_program_path = root.path().join("terminal-zec-maker-actor");
+    let zec_program = format!(
         "#!/bin/sh\n\
          test \"$1\" = \"--config-fd\" || exit 91\n\
          test \"$2\" = \"196\" || exit 92\n\
@@ -209,45 +220,73 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
          test \"$3\" = \"status\" || exit 95\n\
          printf '%s\\n' \"$3\" >> \"{}\"\n\
          printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}'\n",
-        terminal_invocations.display()
+        zec_invocations.display()
     );
-    write_private(&terminal_program_path, terminal_program.as_bytes(), 0o700);
+    write_private(&zec_program_path, zec_program.as_bytes(), 0o700);
 
-    let timed_out_manifest = MakerActorManifestV1::new(
-        SwapId::new(timed_out_id).unwrap(),
-        MakerActorKindV1::Zcash,
-        timed_out_deployment.source_config.clone(),
-        Sha256::digest(fs::read(&timed_out_deployment.source_config).expect("read timeout config"))
-            .into(),
-        timed_out_program_path,
-        Sha256::digest(timed_out_program.as_bytes()).into(),
-        timed_out_config.role_state_db().to_path_buf(),
-    )
-    .expect("valid timeout manifest");
-    let terminal_manifest = MakerActorManifestV1::new(
-        SwapId::new(terminal_id).unwrap(),
-        MakerActorKindV1::Zcash,
-        terminal_deployment.source_config.clone(),
-        Sha256::digest(fs::read(&terminal_deployment.source_config).expect("read terminal config"))
-            .into(),
-        terminal_program_path,
-        Sha256::digest(terminal_program.as_bytes()).into(),
-        terminal_config.role_state_db().to_path_buf(),
-    )
-    .expect("valid terminal manifest");
-    assert_ne!(timed_out_manifest, terminal_manifest);
-    assert_ne!(
-        timed_out_manifest.state_database_path(),
-        terminal_manifest.state_database_path()
+    let btc_fixture = BtcAuthorityFixture::new(&btc_root, "daemon-concurrency", btc_bytes);
+    let btc_config =
+        BtcActorConfig::load_private(&btc_fixture.maker_source_config).expect("BTC Maker config");
+    let btc_invocations = root.path().join("btc-terminal.invocations");
+    let btc_program_path = root.path().join("terminal-btc-maker-actor");
+    let btc_program = format!(
+        "#!/bin/sh\ntest \"$1\" = \"--config-fd\" || exit 91\ntest \"$2\" = \"196\" || exit 92\ntest -r /proc/self/fd/196 || exit 93\ntest -r /proc/self/fd/198 || exit 94\ntest \"$3\" = \"status\" || exit 95\nprintf '%s\\n' \"$3\" >> \"{}\"\nprintf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}'\n",
+        btc_invocations.display()
     );
+    write_private(&btc_program_path, btc_program.as_bytes(), 0o700);
+
+    // These marker programs prove process and control-plane isolation only. They do not
+    // contact chain nodes, classify finality, or provide cross-chain execution evidence.
+    let xmr_manifest = MakerActorManifestV1::new(
+        SwapId::new(xmr_id.clone()).unwrap(),
+        MakerActorKindV1::Monero,
+        xmr_fixture.maker_actor_config.clone(),
+        Sha256::digest(fs::read(&xmr_fixture.maker_actor_config).expect("read XMR config")).into(),
+        xmr_program_path,
+        Sha256::digest(xmr_program.as_bytes()).into(),
+        xmr_fixture.maker_actor_state,
+    )
+    .expect("valid XMR unavailable manifest");
+    let btc_manifest = MakerActorManifestV1::new(
+        SwapId::new(btc_id.clone()).unwrap(),
+        MakerActorKindV1::Bitcoin,
+        btc_fixture.maker_source_config.clone(),
+        Sha256::digest(fs::read(&btc_fixture.maker_source_config).expect("read BTC config")).into(),
+        btc_program_path,
+        Sha256::digest(btc_program.as_bytes()).into(),
+        btc_config.state_db().to_path_buf(),
+    )
+    .expect("valid BTC terminal manifest");
+    let zec_manifest = MakerActorManifestV1::new(
+        SwapId::new(zec_id).unwrap(),
+        MakerActorKindV1::Zcash,
+        zec_deployment.source_config.clone(),
+        Sha256::digest(fs::read(&zec_deployment.source_config).expect("read ZEC config")).into(),
+        zec_program_path,
+        Sha256::digest(zec_program.as_bytes()).into(),
+        zec_config.role_state_db().to_path_buf(),
+    )
+    .expect("valid ZEC terminal manifest");
+    assert_ne!(xmr_manifest, btc_manifest);
+    assert_ne!(xmr_manifest, zec_manifest);
+    assert_ne!(btc_manifest, zec_manifest);
+    let state_paths = [
+        xmr_manifest.state_database_path(),
+        btc_manifest.state_database_path(),
+        zec_manifest.state_database_path(),
+    ];
+    assert!(state_paths[0] != state_paths[1]);
+    assert!(state_paths[0] != state_paths[2]);
+    assert!(state_paths[1] != state_paths[2]);
 
     let database = root.path().join("maker.sqlite3");
     let mut store = SqliteSwapStore::open(&database).expect("open isolated coordinator database");
-    for (id, manifest) in [
-        (timed_out_id, &timed_out_manifest),
-        (terminal_id, &terminal_manifest),
+    for (coordinator, manifest) in [
+        (xmr_swap(&xmr_id), &xmr_manifest),
+        (btc_swap(&btc_id), &btc_manifest),
+        (zec_swap(zec_id), &zec_manifest),
     ] {
-        store.save(&swap(id)).expect("save disjoint ZEC swap");
+        store.save(&coordinator).expect("save pair-correct swap");
         store
             .register_maker_actor(manifest, 0)
             .expect("register disjoint actor row");
@@ -259,33 +298,33 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
     fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("owner-only runtime");
     let socket = runtime.join("maker.sock");
     let ready = runtime.join("ready");
-    let mut daemon = TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 600, 2);
+    let mut daemon = TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 600, 3);
     wait_for_file(
         &mut daemon,
         &ready,
         Duration::from_secs(10),
-        "two-swap daemon readiness",
+        "three-pair daemon readiness",
     );
     wait_for_file(
         &mut daemon,
-        &timed_out_pid_file,
+        &xmr_pid_file,
         Duration::from_secs(5),
-        "timed-out actor identity",
+        "xmr-unavailable actor identity",
     );
-    let child_pid: u32 = fs::read_to_string(&timed_out_pid_file)
-        .expect("read timed-out actor PID")
+    let child_pid: u32 = fs::read_to_string(&xmr_pid_file)
+        .expect("read xmr-unavailable actor PID")
         .trim()
         .parse()
-        .expect("numeric timed-out actor PID");
+        .expect("numeric xmr-unavailable actor PID");
 
     let leased = SqliteSwapStore::open(&database)
-        .expect("open observer while timed-out actor is running")
+        .expect("open observer while xmr-unavailable actor is running")
         .list_maker_actor_processes()
-        .expect("inspect leased timed-out actor");
+        .expect("inspect leased xmr-unavailable actor");
     let leased = leased
         .iter()
-        .find(|record| record.swap_id().as_str() == timed_out_id)
-        .expect("leased timed-out row");
+        .find(|record| record.swap_id().as_str() == xmr_id.as_str())
+        .expect("leased xmr-unavailable row");
     assert_eq!(leased.schedule_state(), MakerActorScheduleState::Leased);
     assert_eq!(
         leased.child_identity().map(|identity| identity.0),
@@ -297,7 +336,7 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
             .arg(&socket)
             .arg("health"),
         Duration::from_secs(1),
-        "owner health while timed-out peer is leased",
+        "owner health while xmr-unavailable peer is leased",
     );
     assert!(
         health.status.success(),
@@ -314,17 +353,22 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
             .expect("open independent overlap observer")
             .list_maker_actor_processes()
             .expect("inspect overlapping actor rows");
-        let timed_out = records
+        let xmr = records
             .iter()
-            .find(|record| record.swap_id().as_str() == timed_out_id)
-            .expect("timed-out overlap row");
-        let terminal = records
+            .find(|record| record.swap_id().as_str() == xmr_id.as_str())
+            .expect("XMR unavailable overlap row");
+        let btc = records
             .iter()
-            .find(|record| record.swap_id().as_str() == terminal_id)
-            .expect("terminal overlap row");
-        if timed_out.schedule_state() == MakerActorScheduleState::Leased
-            && timed_out.child_identity().is_some()
-            && terminal.schedule_state() == MakerActorScheduleState::Terminal
+            .find(|record| record.swap_id().as_str() == btc_id.as_str())
+            .expect("BTC terminal overlap row");
+        let zec = records
+            .iter()
+            .find(|record| record.swap_id().as_str() == zec_id)
+            .expect("ZEC terminal overlap row");
+        if xmr.schedule_state() == MakerActorScheduleState::Leased
+            && xmr.child_identity().is_some()
+            && btc.schedule_state() == MakerActorScheduleState::Terminal
+            && zec.schedule_state() == MakerActorScheduleState::Terminal
         {
             break;
         }
@@ -333,57 +377,67 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
         }
         assert!(
             Instant::now() < overlap_deadline,
-            "terminal peer did not finish while timed-out peer remained live: {records:?}"
+            "terminal peer did not finish while xmr-unavailable peer remained live: {records:?}"
         );
         thread::sleep(Duration::from_millis(10));
     }
 
-    write_private(&timed_out_release, b"release\n", 0o600);
+    write_private(&xmr_release, b"release\n", 0o600);
     let deadline = Instant::now() + Duration::from_secs(10);
     let durable = loop {
         let records = SqliteSwapStore::open(&database)
-            .expect("open independent two-swap observer")
+            .expect("open independent three-pair observer")
             .list_maker_actor_processes()
-            .expect("inspect two actor rows");
-        let timed_out = records
+            .expect("inspect three actor rows");
+        let xmr = records
             .iter()
-            .find(|record| record.swap_id().as_str() == timed_out_id)
-            .expect("timed-out row");
-        let terminal = records
+            .find(|record| record.swap_id().as_str() == xmr_id.as_str())
+            .expect("XMR unavailable row");
+        let btc = records
             .iter()
-            .find(|record| record.swap_id().as_str() == terminal_id)
-            .expect("terminal row");
-        if timed_out.schedule_state() == MakerActorScheduleState::Backoff
-            && terminal.schedule_state() == MakerActorScheduleState::Terminal
+            .find(|record| record.swap_id().as_str() == btc_id.as_str())
+            .expect("BTC terminal row");
+        let zec = records
+            .iter()
+            .find(|record| record.swap_id().as_str() == zec_id)
+            .expect("ZEC terminal row");
+        if xmr.schedule_state() == MakerActorScheduleState::Backoff
+            && btc.schedule_state() == MakerActorScheduleState::Terminal
+            && zec.schedule_state() == MakerActorScheduleState::Terminal
         {
             break records;
         }
         if let Some(status) = daemon.child_mut().try_wait().expect("poll maker daemon") {
-            panic!("maker daemon exited during two-swap journey: {status}");
+            panic!("maker daemon exited during three-pair journey: {status}");
         }
         assert!(
             Instant::now() < deadline,
-            "timed-out and terminal peers did not resolve independently: {records:?}"
+            "three pair rows did not resolve independently: {records:?}"
         );
         thread::sleep(Duration::from_millis(10));
     };
-    let timed_out = durable
+    let xmr = durable
         .iter()
-        .find(|record| record.swap_id().as_str() == timed_out_id)
+        .find(|record| record.swap_id().as_str() == xmr_id.as_str())
         .unwrap();
-    let terminal = durable
+    let btc = durable
         .iter()
-        .find(|record| record.swap_id().as_str() == terminal_id)
+        .find(|record| record.swap_id().as_str() == btc_id.as_str())
         .unwrap();
-    assert_eq!(timed_out.attempt_count(), 1);
-    assert_eq!(terminal.attempt_count(), 1);
-    assert_eq!(timed_out.child_identity(), None);
-    assert_eq!(terminal.child_identity(), None);
-    assert_eq!(timed_out.manifest(), &timed_out_manifest);
-    assert_eq!(terminal.manifest(), &terminal_manifest);
+    let zec = durable
+        .iter()
+        .find(|record| record.swap_id().as_str() == zec_id)
+        .unwrap();
+    for record in [xmr, btc, zec] {
+        assert_eq!(record.attempt_count(), 1);
+        assert_eq!(record.child_identity(), None);
+    }
+    assert_eq!(xmr.manifest(), &xmr_manifest);
+    assert_eq!(btc.manifest(), &btc_manifest);
+    assert_eq!(zec.manifest(), &zec_manifest);
     assert!(
         !Path::new("/proc").join(child_pid.to_string()).exists(),
-        "timed-out child must be killed and reaped after its peer completes"
+        "xmr-unavailable child must be killed and reaped after its peer completes"
     );
 
     assert!(daemon.terminate(Duration::from_secs(2)).success());
@@ -396,31 +450,64 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
         "first daemon must remove its readiness file"
     );
 
-    let mut restarted = TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 600, 2);
+    let mut restarted = TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 600, 3);
     wait_for_file(
         &mut restarted,
         &ready,
         Duration::from_secs(10),
-        "restarted two-swap daemon readiness",
+        "restarted three-pair daemon readiness",
     );
     thread::sleep(Duration::from_millis(300));
     let reopened = SqliteSwapStore::open(&database)
-        .expect("reopen durable two-swap coordinator")
+        .expect("reopen durable three-pair coordinator")
         .list_maker_actor_processes()
         .expect("inspect durable rows after restart");
     assert_eq!(reopened, durable);
     assert_eq!(
-        fs::read_to_string(&timed_out_invocations).expect("timeout invocation log"),
+        fs::read_to_string(&xmr_invocations).expect("timeout invocation log"),
         "status\n"
     );
     assert_eq!(
-        fs::read_to_string(&terminal_invocations).expect("terminal invocation log"),
+        fs::read_to_string(&zec_invocations).expect("terminal invocation log"),
+        "status\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&btc_invocations).expect("BTC terminal invocation log"),
         "status\n"
     );
     assert!(restarted.terminate(Duration::from_secs(2)).success());
 }
 
-fn swap(id: &str) -> SwapCoordinator {
+fn xmr_swap(id: &str) -> SwapCoordinator {
+    SwapCoordinator::new_with_confirmation_policies(
+        SwapId::new(id).unwrap(),
+        Pair::Monero,
+        SwapDirection::TakerSellsLez,
+        ConfirmationPolicy::new(2).unwrap(),
+        ConfirmationPolicy::new(10).unwrap(),
+        RecoverySchedule::xmr_lez_first(ChainPosition::timestamp(Chain::Lez, 20), 2).unwrap(),
+    )
+}
+
+fn btc_swap(id: &str) -> SwapCoordinator {
+    let direction = SwapDirection::TakerSellsForeign;
+    SwapCoordinator::new_with_direction(
+        SwapId::new(id).unwrap(),
+        Pair::Bitcoin,
+        direction,
+        ConfirmationPolicy::new(2).unwrap(),
+        RecoverySchedule::new(
+            Pair::Bitcoin,
+            direction,
+            ChainPosition::block_height(Chain::Lez, 100),
+            ChainPosition::block_height(Chain::Bitcoin, 120),
+            TimelockSafety::between(Chain::Lez, Chain::Bitcoin, 1_000, 1_200, 100).unwrap(),
+        )
+        .unwrap(),
+    )
+}
+
+fn zec_swap(id: &str) -> SwapCoordinator {
     let direction = SwapDirection::TakerSellsForeign;
     SwapCoordinator::new_with_direction(
         SwapId::new(id).unwrap(),

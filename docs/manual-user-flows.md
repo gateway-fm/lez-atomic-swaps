@@ -7050,3 +7050,102 @@ passing run, and keep pending actor/public-testnet qualifications explicit.
 Milestone evidence and tags remain governed by the
 [living implementation plan](implementation-plan.md); this guide never turns a
 partial fixture into a completed milestone by itself.
+
+
+## M5 PoC closure-candidate reproduction
+
+Status: **verified local-functional PoC 7/7, bound by `m5-poc-complete`.** These
+commands reproduce the three newest control-plane checkpoints. They do not
+start chain nodes and do not replace the retained M2/M3/M4 and M5 corridor
+instructions that provide actual local-chain evidence.
+
+Build the exact user binaries first:
+
+```bash
+cargo +1.96.0 build --locked --offline -p lez-maker-node --bins
+```
+
+Repeat the real Maker CLI/daemon all-pair lifecycle matrix:
+
+```bash
+cargo +1.96.0 test --locked --offline -p lez-maker-node --test maker_actor_lifecycle_matrix maker_actor_lifecycle_control_plane_is_pair_safe_replay_safe_and_restart_durable -- --exact --nocapture
+```
+
+Expected: GREEN 1/1; the measured closure run took 0.64 seconds. The test
+creates one private temporary database, starts a real daemon twice, and invokes
+the real user surface equivalent to:
+
+```bash
+target/debug/lez-maker --socket /run-local/maker.sock claim --id SWAP_ID --request-id REQUEST_ID --expected-generation 0
+target/debug/lez-maker --socket /run-local/maker.sock refund --id SWAP_ID --request-id REQUEST_ID --expected-generation 0
+target/debug/lez-maker --socket /run-local/maker.sock monitor --id SWAP_ID
+```
+
+Use the test-generated absolute socket, swap, and request IDs; the placeholders
+above are explanatory and must not be pasted literally. The original Bitcoin
+claim case failed RED with JSON-RPC `-32602`. The user command remains
+`claim`; production translates that intent to the Bitcoin actor's semantic
+`drive` command. Repeat the exact mapping unit with:
+
+```bash
+cargo +1.96.0 test --locked --offline -p lez-maker-node --lib actor_supervisor::runtime::tests::manual_actions_map_to_pair_semantic_commands -- --exact --nocapture
+```
+
+Repeat the receipt-v2 XMR Tag16 Taker refund journey:
+
+```bash
+cargo +1.96.0 test --locked --offline -p lez-maker-node --test xmr_chat_process receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once -- --exact --nocapture
+```
+
+Expected: GREEN 1/1; the measured closure run took 84.21 seconds. The test
+creates a real signed Delivery/Chat acceptance and receipt v2, prepares the
+refund workflow, removes Delivery and stops Chat plus the Maker daemon, then
+runs the user command three times and the losing command once:
+
+```bash
+target/debug/lez-taker refund --receipt /absolute/private/acceptance-receipt-v2.json
+target/debug/lez-taker refund --receipt /absolute/private/acceptance-receipt-v2.json
+target/debug/lez-taker refund --receipt /absolute/private/acceptance-receipt-v2.json
+target/debug/lez-taker claim --receipt /absolute/private/acceptance-receipt-v2.json
+```
+
+The first refund invokes Tag16 once and leaves Started. The second invokes only
+the role-fixed observer, verifies the exact sending-plan identity, and
+reconciles Succeeded. The third returns Complete with neither process. The
+losing claim fails closed and does not alter any captured artifact.
+
+Repeat coordinator concurrency and failure isolation:
+
+```bash
+cargo +1.96.0 test --locked --offline -p lez-maker-node --test daemon_actor_supervisor_process daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart -- --exact --nocapture
+```
+
+Expected: GREEN 1/1; the measured closure run took 16.31 seconds. One real
+daemon/database and a three-worker pool run pair-correct BTC, XMR, and ZEC rows.
+The XMR marker remains live while BTC and ZEC become Terminal, then fails alone
+to Backoff. Health remains responsive, the XMR child is reaped, all manifests
+and state paths are disjoint, restart reproduces the exact three rows, and each
+invocation log remains one line.
+
+### Resources, isolation, and flakiness
+
+These three commands use temporary owner-private directories, SQLite, Unix
+sockets, local child processes, and already-built test binaries only. They use
+no Docker project, LEZ/Bitcoin/Zebra/Monero node, RPC listener, faucet, DNS,
+peer, public network, or funds. Run them serially in one checkout; each test
+uses a fresh temporary root and dynamic Unix paths, but concurrent Cargo builds
+still contend for the shared target directory.
+
+Cold compilation, uncached dependencies, cryptographic XMR fixture generation,
+filesystem sync latency, process scheduling, and host load can extend the
+recorded 0.64, 84.21, and 16.31 second measurements. There is no public-service
+flakiness. A timeout or failure is not chain evidence and must not be waived.
+
+The Maker matrix and overlap actors are fixed marker programs; the Tag16 sender
+and observer are also process fixtures. These runs certify CLI/daemon/store/
+scheduler authority, replay, and isolation, not a new chain transaction. To
+repeat actual chain behavior, follow the retained M2 ZEC, M3 BTC, M4 XMR, and
+M5 accepted-application corridor sections of this guide with their isolated
+local nodes. A fresh simultaneous accepted-application actual-chain composite
+and semantic receipt-v2 XMR workers are post-PoC hardening, not part of this
+candidate claim.

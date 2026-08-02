@@ -1390,17 +1390,10 @@ fn register_maker_actor_action_method(
                 .store
                 .lock()
                 .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            let record = store
+            let _record = store
                 .maker_actor_process(&id)
                 .map_err(maker_actor_process_error)?
                 .ok_or_else(|| rpc_error(NOT_FOUND, "maker actor not found"))?;
-            if action == MakerActorManualAction::Claim
-                && record.manifest().kind() == MakerActorKindV1::Bitcoin
-            {
-                return Err(invalid_request(
-                    "Bitcoin Maker actors do not expose a manual claim action",
-                ));
-            }
             let commit = store
                 .queue_maker_actor_manual_action(
                     &request.request_id,
