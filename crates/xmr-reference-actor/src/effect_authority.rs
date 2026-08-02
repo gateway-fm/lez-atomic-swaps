@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result, ensure};
+use lez_swap_store::PinnedExecutable;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
@@ -63,6 +64,205 @@ struct MoneroRpc {
     role_wallet: AuthenticatedRpc,
 }
 
+/// One validated executable slot in an XMR effect plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrEffectToolV1 {
+    program: PathBuf,
+    program_sha256: [u8; 32],
+    abi: Box<str>,
+}
+
+impl XmrEffectToolV1 {
+    /// Exact normalized executable path.
+    #[must_use]
+    pub fn program(&self) -> &Path {
+        &self.program
+    }
+
+    /// Pinned SHA-256 of the executable bytes.
+    #[must_use]
+    pub const fn program_sha256(&self) -> [u8; 32] {
+        self.program_sha256
+    }
+
+    /// Fixed role-slot ABI.
+    #[must_use]
+    pub fn abi(&self) -> &str {
+        &self.abi
+    }
+
+    /// Secure-opens, hash-checks, and seals the exact executable bytes.
+    ///
+    /// The returned value must be consumed through `PinnedExecutable::into_command`;
+    /// it never reopens the named path and therefore cannot execute replacement bytes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsafe ownership, modes, links, path identity, size, or digest drift.
+    pub fn verify_program_at_use(&self) -> Result<PinnedExecutable> {
+        PinnedExecutable::open(&self.program, self.program_sha256)
+            .context("pin XMR effect executable at use")
+    }
+}
+
+/// Validated local LEZ sidecar authority for one XMR effect plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrEffectLezRpcV1 {
+    sidecar_url: Url,
+    runtime_file: PathBuf,
+    runtime_sha256: [u8; 32],
+    capability_file: PathBuf,
+}
+
+impl XmrEffectLezRpcV1 {
+    /// Literal-loopback sidecar root URL.
+    #[must_use]
+    pub const fn sidecar_url(&self) -> &Url {
+        &self.sidecar_url
+    }
+    /// Exact runtime identity file.
+    #[must_use]
+    pub fn runtime_file(&self) -> &Path {
+        &self.runtime_file
+    }
+    /// Pinned runtime-file SHA-256.
+    #[must_use]
+    pub const fn runtime_sha256(&self) -> [u8; 32] {
+        self.runtime_sha256
+    }
+    /// Exact sidecar capability file.
+    #[must_use]
+    pub fn capability_file(&self) -> &Path {
+        &self.capability_file
+    }
+}
+
+/// One validated authenticated literal-loopback Monero RPC authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrEffectAuthenticatedRpcV1 {
+    url: Url,
+    username_file: PathBuf,
+    password_file: PathBuf,
+}
+
+impl XmrEffectAuthenticatedRpcV1 {
+    /// Literal-loopback RPC root URL.
+    #[must_use]
+    pub const fn url(&self) -> &Url {
+        &self.url
+    }
+    /// Exact username file.
+    #[must_use]
+    pub fn username_file(&self) -> &Path {
+        &self.username_file
+    }
+    /// Exact password file.
+    #[must_use]
+    pub fn password_file(&self) -> &Path {
+        &self.password_file
+    }
+}
+
+/// Role-separated Monero daemon and wallet RPC authorities.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrEffectMoneroRpcV1 {
+    daemon: XmrEffectAuthenticatedRpcV1,
+    funding_wallet: XmrEffectAuthenticatedRpcV1,
+    shared_wallet: XmrEffectAuthenticatedRpcV1,
+    role_wallet: XmrEffectAuthenticatedRpcV1,
+}
+
+impl XmrEffectMoneroRpcV1 {
+    /// Official Monero daemon RPC.
+    pub const fn daemon(&self) -> &XmrEffectAuthenticatedRpcV1 {
+        &self.daemon
+    }
+    /// Maker funding/mining wallet RPC.
+    pub const fn funding_wallet(&self) -> &XmrEffectAuthenticatedRpcV1 {
+        &self.funding_wallet
+    }
+    /// Neutral reconstructed shared-wallet RPC.
+    pub const fn shared_wallet(&self) -> &XmrEffectAuthenticatedRpcV1 {
+        &self.shared_wallet
+    }
+    /// Role destination wallet RPC.
+    pub const fn role_wallet(&self) -> &XmrEffectAuthenticatedRpcV1 {
+        &self.role_wallet
+    }
+}
+
+/// Fixed Maker effect tool profile.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrMakerEffectToolsV1 {
+    monero_fund: XmrEffectToolV1,
+    lez_claim: XmrEffectToolV1,
+    finalized_classifier: XmrEffectToolV1,
+    monero_refund: XmrEffectToolV1,
+    monero_verify: XmrEffectToolV1,
+}
+
+impl XmrMakerEffectToolsV1 {
+    /// Monero funding tool.
+    pub const fn monero_fund(&self) -> &XmrEffectToolV1 {
+        &self.monero_fund
+    }
+    /// LEZ tag-15 claim tool.
+    pub const fn lez_claim(&self) -> &XmrEffectToolV1 {
+        &self.lez_claim
+    }
+    /// Finalized native-effect classifier.
+    pub const fn finalized_classifier(&self) -> &XmrEffectToolV1 {
+        &self.finalized_classifier
+    }
+    /// Maker Monero refund-sweep tool.
+    pub const fn monero_refund(&self) -> &XmrEffectToolV1 {
+        &self.monero_refund
+    }
+    /// Monero receipt verifier.
+    pub const fn monero_verify(&self) -> &XmrEffectToolV1 {
+        &self.monero_verify
+    }
+}
+
+/// Fixed Taker effect tool profile.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrTakerEffectToolsV1 {
+    tag14_authorize: XmrEffectToolV1,
+    finalized_classifier: XmrEffectToolV1,
+    monero_claim: XmrEffectToolV1,
+    monero_verify: XmrEffectToolV1,
+    tag16_refund: XmrEffectToolV1,
+}
+
+impl XmrTakerEffectToolsV1 {
+    /// LEZ tag-14 authorization tool.
+    pub const fn tag14_authorize(&self) -> &XmrEffectToolV1 {
+        &self.tag14_authorize
+    }
+    /// Finalized native-effect classifier.
+    pub const fn finalized_classifier(&self) -> &XmrEffectToolV1 {
+        &self.finalized_classifier
+    }
+    /// Taker Monero claim-sweep tool.
+    pub const fn monero_claim(&self) -> &XmrEffectToolV1 {
+        &self.monero_claim
+    }
+    /// Monero receipt verifier.
+    pub const fn monero_verify(&self) -> &XmrEffectToolV1 {
+        &self.monero_verify
+    }
+    /// LEZ tag-16 refund tool.
+    pub const fn tag16_refund(&self) -> &XmrEffectToolV1 {
+        &self.tag16_refund
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct EffectAuthorityV1 {
@@ -95,6 +295,11 @@ pub struct ValidatedXmrEffectAuthorityV1 {
     run_id: Box<str>,
     workflow_journal: PathBuf,
     adaptor_journal: PathBuf,
+    evidence_root: PathBuf,
+    lez: XmrEffectLezRpcV1,
+    monero: XmrEffectMoneroRpcV1,
+    maker_tools: Option<XmrMakerEffectToolsV1>,
+    taker_tools: Option<XmrTakerEffectToolsV1>,
 }
 
 impl ValidatedXmrEffectAuthorityV1 {
@@ -138,6 +343,34 @@ impl ValidatedXmrEffectAuthorityV1 {
     #[must_use]
     pub fn adaptor_journal(&self) -> &Path {
         &self.adaptor_journal
+    }
+
+    /// Owner-private root for effect evidence.
+    #[must_use]
+    pub fn evidence_root(&self) -> &Path {
+        &self.evidence_root
+    }
+
+    /// Typed local LEZ sidecar authority.
+    pub const fn lez(&self) -> &XmrEffectLezRpcV1 {
+        &self.lez
+    }
+
+    /// Typed role-separated Monero RPC authority.
+    pub const fn monero(&self) -> &XmrEffectMoneroRpcV1 {
+        &self.monero
+    }
+
+    /// Fixed Maker tool profile, present only for Maker authority.
+    #[must_use]
+    pub const fn maker_tools(&self) -> Option<&XmrMakerEffectToolsV1> {
+        self.maker_tools.as_ref()
+    }
+
+    /// Fixed Taker tool profile, present only for Taker authority.
+    #[must_use]
+    pub const fn taker_tools(&self) -> Option<&XmrTakerEffectToolsV1> {
+        self.taker_tools.as_ref()
     }
 }
 
@@ -204,14 +437,85 @@ pub fn load_validated_xmr_effect_authority_bytes(
     validate_rpc_set(&authority.monero)?;
     validate_digest(&authority.lez.runtime_sha256)?;
     validate_profile(&authority)?;
+    let EffectAuthorityV1 {
+        role,
+        run_id,
+        workflow_journal,
+        adaptor_journal,
+        evidence_root,
+        lez,
+        monero,
+        maker_tools,
+        taker_tools,
+        ..
+    } = authority;
     Ok(ValidatedXmrEffectAuthorityV1 {
-        role: authority.role,
+        role,
         swap_id: expected_swap,
         agreement_commitment: expected_agreement,
         activation_commitment: expected_activation,
-        run_id: authority.run_id.into_boxed_str(),
-        workflow_journal: authority.workflow_journal,
-        adaptor_journal: authority.adaptor_journal,
+        run_id: run_id.into_boxed_str(),
+        workflow_journal,
+        adaptor_journal,
+        evidence_root,
+        lez: validated_lez(lez)?,
+        monero: validated_monero(monero)?,
+        maker_tools: maker_tools.map(validated_maker_tools).transpose()?,
+        taker_tools: taker_tools.map(validated_taker_tools).transpose()?,
+    })
+}
+
+fn validated_tool(tool: Tool) -> Result<XmrEffectToolV1> {
+    Ok(XmrEffectToolV1 {
+        program: tool.program,
+        program_sha256: decode_digest(&tool.program_sha256)?,
+        abi: tool.abi.into_boxed_str(),
+    })
+}
+
+fn validated_lez(lez: LezRpc) -> Result<XmrEffectLezRpcV1> {
+    Ok(XmrEffectLezRpcV1 {
+        sidecar_url: Url::parse(&lez.sidecar_url).context("parse validated LEZ sidecar URL")?,
+        runtime_file: lez.runtime_file,
+        runtime_sha256: decode_digest(&lez.runtime_sha256)?,
+        capability_file: lez.capability_file,
+    })
+}
+
+fn validated_authenticated_rpc(rpc: AuthenticatedRpc) -> Result<XmrEffectAuthenticatedRpcV1> {
+    Ok(XmrEffectAuthenticatedRpcV1 {
+        url: Url::parse(&rpc.url).context("parse validated Monero RPC URL")?,
+        username_file: rpc.username_file,
+        password_file: rpc.password_file,
+    })
+}
+
+fn validated_monero(monero: MoneroRpc) -> Result<XmrEffectMoneroRpcV1> {
+    Ok(XmrEffectMoneroRpcV1 {
+        daemon: validated_authenticated_rpc(monero.daemon)?,
+        funding_wallet: validated_authenticated_rpc(monero.funding_wallet)?,
+        shared_wallet: validated_authenticated_rpc(monero.shared_wallet)?,
+        role_wallet: validated_authenticated_rpc(monero.role_wallet)?,
+    })
+}
+
+fn validated_maker_tools(tools: MakerTools) -> Result<XmrMakerEffectToolsV1> {
+    Ok(XmrMakerEffectToolsV1 {
+        monero_fund: validated_tool(tools.monero_fund)?,
+        lez_claim: validated_tool(tools.lez_claim)?,
+        finalized_classifier: validated_tool(tools.finalized_classifier)?,
+        monero_refund: validated_tool(tools.monero_refund)?,
+        monero_verify: validated_tool(tools.monero_verify)?,
+    })
+}
+
+fn validated_taker_tools(tools: TakerTools) -> Result<XmrTakerEffectToolsV1> {
+    Ok(XmrTakerEffectToolsV1 {
+        tag14_authorize: validated_tool(tools.tag14_authorize)?,
+        finalized_classifier: validated_tool(tools.finalized_classifier)?,
+        monero_claim: validated_tool(tools.monero_claim)?,
+        monero_verify: validated_tool(tools.monero_verify)?,
+        tag16_refund: validated_tool(tools.tag16_refund)?,
     })
 }
 

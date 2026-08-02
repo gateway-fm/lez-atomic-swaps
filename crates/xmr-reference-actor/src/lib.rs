@@ -27,8 +27,9 @@ pub use application_provision::{
 };
 #[cfg(feature = "sessions")]
 pub use effect_authority::{
-    ValidatedXmrEffectAuthorityV1, XMR_EFFECT_AUTHORITY_MAX_BYTES,
-    load_validated_xmr_effect_authority_bytes,
+    ValidatedXmrEffectAuthorityV1, XMR_EFFECT_AUTHORITY_MAX_BYTES, XmrEffectAuthenticatedRpcV1,
+    XmrEffectLezRpcV1, XmrEffectMoneroRpcV1, XmrEffectToolV1, XmrMakerEffectToolsV1,
+    XmrTakerEffectToolsV1, load_validated_xmr_effect_authority_bytes,
 };
 
 use std::{

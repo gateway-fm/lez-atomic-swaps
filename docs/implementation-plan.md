@@ -4902,3 +4902,68 @@ their composite proof and review.
 
 Literal M5 remains 4 of 7. ETA remains 4 to 8 focused implementation hours to
 the M5 tag, subject to fresh-node runtime and the final composite gates.
+
+### XMR typed effect plan and sealed-executable checkpoint (2026-08-02)
+
+The next narrow RED/GREEN checkpoint converts the already validated canonical
+authority into role-specific Rust views without enabling either lifecycle
+route. The typed LEZ view retains its literal-loopback sidecar URL, absolute
+runtime-identity path and SHA-256, and absolute capability path. The typed
+Monero view retains separate daemon, Maker funding-wallet, neutral
+shared-wallet, and local-role-wallet loopback roots; each RPC has separate
+absolute username and password file paths. These are endpoint and credential
+path authorities only: no socket is opened and no credential is read by this
+checkpoint.
+
+The Maker view exposes exactly Monero fund
+(`lez_xmr_monero_fund_v2`), LEZ tag-15 claim
+(`lez_xmr_tag15_claim_v1`), finalized classifier
+(`lez_xmr_finalized_classifier_v1`), Monero refund sweep
+(`lez_xmr_monero_refund_sweep_v3`), and Monero verify
+(`lez_xmr_monero_verify_v2`). The Taker view exposes exactly tag-14 authorize
+(`lez_xmr_tag14_authorize_v1`), finalized classifier
+(`lez_xmr_finalized_classifier_v1`), Monero claim sweep
+(`lez_xmr_monero_claim_sweep_v2`), Monero verify
+(`lez_xmr_monero_verify_v2`), and tag-16 refund
+(`lez_xmr_tag16_refund_v1`). Every typed slot retains its normalized absolute
+program path and decoded pinned SHA-256; a Maker authority has no Taker tool
+view and vice versa.
+
+The reusable `PinnedExecutable` boundary now makes program selection
+race-resistant when a future route elects to use it. At use, it securely opens
+without symlink traversal, validates the trusted parent and exact opened/named
+single-link executable identity, reads at most 512 MiB, revalidates, and checks
+the authority SHA-256. It copies those bytes into an immutable mode-0700 sealed
+memfd and constructs a command against child FD 197. Replacing or unlinking the
+named path afterward cannot change that command's bytes; a fresh verification
+of the changed path fails closed. This closes executable snapshot TOCTOU only.
+It neither authorizes replay nor calls a route.
+
+The focused Taker authority suite is GREEN at 3 of 3, including exact typed
+endpoint/credential/tool projection and replacement, symlink, and writable-mode
+failures. The focused Maker plus Taker authority pair is GREEN at 4 of 4. The
+full `lez-swap-store --all-targets` and
+`xmr-reference-actor --all-targets --all-features` test suites, strict
+all-target/all-feature Clippy for both packages, warning-fatal Rustdoc for both
+packages, and diff hygiene are GREEN. No node, RPC, Docker service, faucet,
+public network, peer, or funds participated.
+
+The remaining XMR order is:
+
+1. securely open and validate the pinned LEZ runtime and capability bytes and
+   the RPC credential files at use, with a secret-safe child descriptor plan;
+2. expand the fixed workflow to every role-legal LEZ and Monero external
+   effect, add evidence-bound exact reconciliation for Started/Unknown, and
+   enforce predecessor and branch semantics;
+3. transfer both the actor/adaptor-state lock and workflow lock into each
+   effect child for its complete lifetime, without colliding with program FD
+   197;
+4. compose the Maker route and receipt-v2 Taker claim/refund routes through
+   that authority; and
+5. prove role-correct claim and refund through fresh isolated LEZ v0.2 and
+   official Monero Regtest nodes before the all-pair/concurrency closure gates.
+
+No route executes a typed tool at this checkpoint, and claim/refund retain
+their existing fail-closed behavior. Literal M5 remains 4 of 7. ETA remains 4
+to 8 focused implementation hours to the M5 tag, subject to fresh-node runtime
+and the final composite gates.

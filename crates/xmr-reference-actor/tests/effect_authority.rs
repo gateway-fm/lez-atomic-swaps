@@ -140,6 +140,25 @@ fn load(bytes: &[u8]) -> anyhow::Result<()> {
         authority.adaptor_journal(),
         Path::new("/var/lib/lez/maker/adaptor.sqlite")
     );
+    assert_eq!(
+        authority.evidence_root(),
+        Path::new("/var/lib/lez/maker/evidence")
+    );
+    assert_eq!(
+        authority.lez().sidecar_url().as_str(),
+        "http://127.0.0.1:32872/"
+    );
+    assert_eq!(
+        authority.monero().role_wallet().url().as_str(),
+        "http://127.0.0.1:32877/"
+    );
+    assert!(authority.taker_tools().is_none());
+    let tools = authority.maker_tools().expect("Maker typed effect tools");
+    assert_eq!(tools.monero_fund().program_sha256(), [0x50; 32]);
+    assert_eq!(tools.lez_claim().abi(), "lez_xmr_tag15_claim_v1");
+    assert_eq!(tools.finalized_classifier().program_sha256(), [0x60; 32]);
+    assert_eq!(tools.monero_refund().program_sha256(), [0x66; 32]);
+    assert_eq!(tools.monero_verify().program_sha256(), [0x70; 32]);
     Ok(())
 }
 

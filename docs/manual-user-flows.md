@@ -6459,14 +6459,56 @@ contact, these literal-loopback endpoints:
 - neutral shared wallet: `http://127.0.0.1:36976/`; and
 - Taker role wallet: `http://127.0.0.1:36977/`.
 
-The authority also binds LEZ runtime/capability paths, per-RPC username and
-password file paths, and five Taker tool slots: tag-14 authorization, finalized
-classification, Monero claim sweep, Monero verification, and tag-16 refund.
-Each slot has a program path, SHA-256, and fixed ABI. The current provisioner
-and monitor validate their canonical shape and cross-file identity only. They
-do not connect to the URLs, read those credentials, invoke a program, or
-rehash the runtime, capability, or tools at use. Those are mandatory effect-
-execution gates, not evidence supplied by this monitor.
+Under the fixture's private `xmr-taker-effect` root, the LEZ files are
+`lez-runtime.json` and `lez.capability`. The four RPC credential pairs are
+`daemon.username`/`daemon.password`,
+`funding.username`/`funding.password`,
+`shared.username`/`shared.password`, and
+`taker.username`/`taker.password`. The authority loader exposes these as
+typed endpoint and credential-path roles; the files need not exist for this
+node-free monitor and are not read or passed to a child.
+
+The typed Taker plan contains exactly these five program/hash/ABI slots:
+
+| Fixture program | Fixed ABI |
+|---|---|
+| `tag14-authorize` | `lez_xmr_tag14_authorize_v1` |
+| `finalized-classifier` | `lez_xmr_finalized_classifier_v1` |
+| `monero-claim` | `lez_xmr_monero_claim_sweep_v2` |
+| `monero-verify` | `lez_xmr_monero_verify_v2` |
+| `tag16-refund` | `lez_xmr_tag16_refund_v1` |
+
+The symmetric Maker plan has Monero fund
+(`lez_xmr_monero_fund_v2`), LEZ tag-15 claim
+(`lez_xmr_tag15_claim_v1`), finalized classifier
+(`lez_xmr_finalized_classifier_v1`), Monero refund sweep
+(`lez_xmr_monero_refund_sweep_v3`), and Monero verification
+(`lez_xmr_monero_verify_v2`). Every slot retains its exact absolute program
+path and decoded pinned SHA-256. Role crossing fails closed.
+
+To repeat the typed-plan and sealed-executable developer checkpoint without
+starting nodes, run:
+
+```bash
+cargo +1.96.0 test --locked -p xmr-reference-actor \
+  --test effect_authority --test effect_authority_taker
+```
+
+The focused pair must pass 4 of 4 tests; the Taker binary alone passes 3 of 3.
+Its use-time test creates an owner-private executable, securely opens it without
+symlink traversal, revalidates its owner, mode, link, size, and named/opened
+identity, verifies the authority SHA-256, and snapshots the bytes into an
+immutable mode-0700 memfd. The command executes only that snapshot through FD
+197. Replacing the named file after pinning cannot change the already-created
+command; a fresh verification of changed bytes, a symlink replacement, or a
+writable executable fails closed.
+
+This is a library-level execution primitive, not a user-flow effect. Neither
+`lez-taker monitor` nor its rejected `claim`/`refund` routes invoke it.
+Before enabling effects, the lifecycle implementation must bind the remaining
+runtime, capability, and credential inputs; map both application locks into the
+child alongside FD 197; add complete workflow reconciliation; and compose the
+actual Maker/Taker routes.
 
 The monitor starts no LEZ or Monero node, opens no chain RPC, uses no Docker
 service, faucet, funds, DNS, public network, peer, or finality service, and

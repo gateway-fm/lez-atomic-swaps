@@ -38,6 +38,8 @@ pub const MAKER_ACTOR_CONFIG_FD: i32 = 196;
 pub const MAKER_ACTOR_PROGRAM_FD: i32 = 197;
 /// Fixed child descriptor retaining the per-swap kernel lock.
 pub const MAKER_ACTOR_LOCK_FD: i32 = 198;
+/// Fixed child descriptor for one generic hash-pinned sealed executable.
+pub const PINNED_EXECUTABLE_FD: i32 = MAKER_ACTOR_PROGRAM_FD;
 
 /// Pair adapter executable used by one maker process record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -475,6 +477,56 @@ impl std::fmt::Debug for MakerActorArtifacts {
             .debug_struct("MakerActorArtifacts")
             .field("swap_id", self.record.swap_id())
             .finish_non_exhaustive()
+    }
+}
+
+/// Immutable sealed snapshot of one securely opened hash-pinned executable.
+#[must_use]
+pub struct PinnedExecutable {
+    program: File,
+}
+
+impl std::fmt::Debug for PinnedExecutable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PinnedExecutable")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PinnedExecutable {
+    /// Secure-opens, hashes, and seals one executable for later exact execution.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsafe parent, type, owner, mode, link count, size, identity,
+    /// or SHA-256 mismatch. The returned command never reopens the named path.
+    pub fn open(path: &Path, expected_sha256: [u8; 32]) -> Result<Self, MakerActorProcessError> {
+        let bytes = read_verified_artifact(
+            path,
+            MakerActorArtifactKind::Program,
+            MAX_ACTOR_PROGRAM_BYTES,
+            expected_sha256,
+        )?;
+        Ok(Self {
+            program: sealed_artifact("lez-pinned-executable", &bytes, 0o700)?,
+        })
+    }
+
+    /// Consumes the sealed snapshot into an exact descriptor-addressed command.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the child descriptor mapping cannot be installed.
+    pub fn into_command(self) -> Result<Command, MakerActorProcessError> {
+        let mut command = Command::new(format!("/proc/self/fd/{PINNED_EXECUTABLE_FD}"));
+        command
+            .fd_mappings(vec![FdMapping {
+                parent_fd: self.program.into(),
+                child_fd: PINNED_EXECUTABLE_FD,
+            }])
+            .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+        Ok(command)
     }
 }
 

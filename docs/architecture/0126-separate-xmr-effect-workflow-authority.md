@@ -1,8 +1,9 @@
 # ADR 0126: Separate XMR workflow authority from adaptor and sidecar journals
 
-Status: Accepted for the durable journal, schema-v3 authority, and receipt-v2
-locked-monitor boundary on 2026-08-02; effect execution and actual-node
-application replay remain in progress
+Status: Accepted for the durable journal, schema-v3 authority, receipt-v2
+locked-monitor boundary, typed effect-plan view, and sealed-executable primitive
+on 2026-08-02; lifecycle-route effect execution and actual-node application
+replay remain in progress
 
 ## Context
 
@@ -52,6 +53,68 @@ flowchart LR
     A --> LR
     V2["Legacy schema v2 and receipt v1"] --> M["Monitor only"]
 ```
+
+The validated authority is now exposed as a typed execution plan rather than
+raw JSON. Its LEZ authority contains one literal-loopback sidecar root, an
+absolute runtime-identity path plus pinned SHA-256, and an absolute capability
+file path. Its Monero authority contains four distinct typed endpoint roles:
+daemon, Maker funding wallet, neutral shared wallet, and local-role destination
+wallet. Every endpoint is an HTTP literal-loopback root with an explicit
+nonzero port and separate absolute username/password file paths. URL userinfo,
+queries, fragments, non-root paths, DNS names, and non-loopback addresses fail
+closed. This checkpoint validates endpoint and credential-path structure; it
+does not open a socket or read, snapshot, or authenticate a credential file.
+
+Each role has exactly five tool slots. Every slot carries one normalized
+absolute program path, a nonzero lowercase SHA-256, and the fixed ABI below;
+Maker and Taker profiles cannot cross or coexist in one authority.
+
+| Role | Slot | Fixed ABI |
+|---|---|---|
+| Maker | Monero fund | `lez_xmr_monero_fund_v2` |
+| Maker | LEZ claim | `lez_xmr_tag15_claim_v1` |
+| Maker | finalized classifier | `lez_xmr_finalized_classifier_v1` |
+| Maker | Monero refund sweep | `lez_xmr_monero_refund_sweep_v3` |
+| Maker | Monero verify | `lez_xmr_monero_verify_v2` |
+| Taker | tag-14 authorize | `lez_xmr_tag14_authorize_v1` |
+| Taker | finalized classifier | `lez_xmr_finalized_classifier_v1` |
+| Taker | Monero claim sweep | `lez_xmr_monero_claim_sweep_v2` |
+| Taker | Monero verify | `lez_xmr_monero_verify_v2` |
+| Taker | tag-16 refund | `lez_xmr_tag16_refund_v1` |
+
+`XmrEffectToolV1::verify_program_at_use` supplies the first executable
+TOCTOU-resistant primitive. It securely opens with no symlink traversal,
+requires a canonical trusted non-writable parent and a single-link regular
+root-or-euid-owned executable, bounds the bytes to 512 MiB, revalidates the
+opened/named identity around the read, and checks the pinned SHA-256. It then
+copies the verified bytes into a mode-0700 anonymous memfd carrying write,
+grow, shrink, and seal seals. `PinnedExecutable::into_command` executes only
+that snapshot through child FD 197; it does not reopen the named program.
+
+```mermaid
+sequenceDiagram
+    participant R as Future lifecycle route
+    participant T as Typed tool slot
+    participant P as Named program
+    participant M as Sealed memfd
+    participant C as Child process
+    R->>T: Select one role-fixed slot
+    T->>P: Secure open and identity checks
+    T->>P: Read bytes and verify SHA-256
+    T->>M: Copy bytes and apply immutable seals
+    Note over P,M: Later path replacement cannot alter this snapshot
+    R->>C: Execute descriptor 197
+    C->>M: Read exact verified bytes
+```
+
+The replay and race guarantee is exact but deliberately narrow. Once a tool is
+pinned, replacement, unlink, or mutation of the named path cannot change the
+bytes executed by that `PinnedExecutable`. A later independent verification
+observes the then-current named path and fails on digest, symlink, mode, link,
+owner, parent, size, or identity drift. The primitive does not itself decide
+whether an effect may be retried, retain either application lock, validate the
+runtime/capability bytes, read credentials, or reconcile an ambiguous external
+effect. Those remain responsibilities of the workflow and lifecycle route.
 
 This component performs no chain or network I/O. It uses the already locked
 rusqlite dependency and SQLite WAL, FULL synchronous writes, foreign keys, and
@@ -138,7 +201,19 @@ Receipt v2 now digest-pins schema v3, the effect authority, workflow identity,
 and run. The selector semantically revalidates those bytes under the per-swap
 and workflow locks, and locked monitor is implemented without chain I/O.
 Receipt v1 remains monitor-only. Claim and refund still reject before effect
-execution. The complete typed tool/RPC execution plan, at-use executable and
-capability hashes, remaining workflow steps and exact reconciliation, child
-lock custody, Maker effect composition, and actual two-node runner proof remain
-open. Literal M5 therefore remains 4 of 7.
+execution. Focused Taker authority tests are GREEN at 3 of 3 and the combined
+Maker/Taker authority pair is GREEN at 4 of 4. Both full package suites,
+`lez-swap-store --all-targets` and
+`xmr-reference-actor --all-targets --all-features`, strict all-target/all-
+feature Clippy, warning-fatal Rustdoc, and diff hygiene are GREEN.
+
+The typed endpoint/tool views and use-time program pinning are component-GREEN,
+but no Maker or Taker lifecycle route calls the new executor. Use-time
+runtime-file and capability verification, credential secure-open and custody,
+the complete role-legal workflow steps and evidence-bound reconciliation,
+simultaneous transfer of both the actor-state and workflow locks to an effect
+child, Maker effect composition, receipt-v2 claim/refund routing, and fresh
+isolated LEZ plus official Monero Regtest proof remain open. In particular, FD
+197 currently carries only the program snapshot; this checkpoint does not
+solve the distinct dual-lock descriptor plan or authorize a chain send.
+Literal M5 therefore remains 4 of 7.
