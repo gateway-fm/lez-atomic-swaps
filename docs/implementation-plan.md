@@ -4828,3 +4828,11 @@ This does not yet publish application manifest v3, enable a CLI effect, or
 close a literal M5 output. Taker-profile RED/GREEN is next, followed by v3
 provisioning and receipt v2. Literal M5 remains 4 of 7. Updated estimate is 6
 to 12 focused implementation hours to the M5 tag.
+
+The symmetric Taker authority profile is now GREEN as well. It requires fixed
+tag-14 authorization, finalized classification, Monero claim sweep, Monero
+verification, and tag-16 refund slots; Maker and Taker profiles cannot cross or
+coexist in one authority. Representative ABI and canonical-hash drift fail
+closed. Focused Maker/Taker tests, strict Clippy, warning-fatal Rustdoc, rustfmt,
+and diff checks pass. Manifest-v3 publication remains next, so literal M5 stays
+4 of 7. Updated estimate is 5 to 10 focused implementation hours to the M5 tag.

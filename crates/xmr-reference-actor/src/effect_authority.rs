@@ -25,6 +25,15 @@ struct MakerTools {
     monero_refund: Tool,
     monero_verify: Tool,
 }
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct TakerTools {
+    tag14_authorize: Tool,
+    finalized_classifier: Tool,
+    monero_claim: Tool,
+    monero_verify: Tool,
+    tag16_refund: Tool,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -67,7 +76,10 @@ struct EffectAuthorityV1 {
     evidence_root: PathBuf,
     lez: LezRpc,
     monero: MoneroRpc,
-    maker_tools: MakerTools,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    maker_tools: Option<MakerTools>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    taker_tools: Option<TakerTools>,
 }
 
 /// Fully validated role-fixed XMR effect authority.
@@ -140,7 +152,6 @@ pub fn load_validated_xmr_effect_authority_bytes(
         authority.schema_version == 1
             && authority.pair == "monero"
             && authority.role == expected_role
-            && authority.role == ActorRole::Maker
             && decode_digest(&authority.swap_id)? == expected_swap
             && decode_digest(&authority.agreement_commitment)? == expected_agreement
             && decode_digest(&authority.activation_commitment)? == expected_activation
@@ -162,11 +173,6 @@ pub fn load_validated_xmr_effect_authority_bytes(
         &authority.monero.shared_wallet.password_file,
         &authority.monero.role_wallet.username_file,
         &authority.monero.role_wallet.password_file,
-        &authority.maker_tools.monero_fund.program,
-        &authority.maker_tools.lez_claim.program,
-        &authority.maker_tools.finalized_classifier.program,
-        &authority.maker_tools.monero_refund.program,
-        &authority.maker_tools.monero_verify.program,
     ];
     ensure!(
         paths.iter().all(|path| normalized_absolute(path)),
@@ -181,20 +187,7 @@ pub fn load_validated_xmr_effect_authority_bytes(
     validate_rpc(&authority.lez.sidecar_url)?;
     validate_rpc_set(&authority.monero)?;
     validate_digest(&authority.lez.runtime_sha256)?;
-    validate_tool(&authority.maker_tools.monero_fund, "lez_xmr_monero_fund_v2")?;
-    validate_tool(&authority.maker_tools.lez_claim, "lez_xmr_tag15_claim_v1")?;
-    validate_tool(
-        &authority.maker_tools.finalized_classifier,
-        "lez_xmr_finalized_classifier_v1",
-    )?;
-    validate_tool(
-        &authority.maker_tools.monero_refund,
-        "lez_xmr_monero_refund_sweep_v3",
-    )?;
-    validate_tool(
-        &authority.maker_tools.monero_verify,
-        "lez_xmr_monero_verify_v2",
-    )?;
+    validate_profile(&authority)?;
     Ok(ValidatedXmrEffectAuthorityV1 {
         role: authority.role,
         swap_id: expected_swap,
@@ -217,6 +210,58 @@ fn validate_rpc_set(rpc: &MoneroRpc) -> Result<()> {
             "XMR RPC credential paths overlap"
         );
     }
+    Ok(())
+}
+
+fn validate_profile(authority: &EffectAuthorityV1) -> Result<()> {
+    match (
+        authority.role,
+        authority.maker_tools.as_ref(),
+        authority.taker_tools.as_ref(),
+    ) {
+        (ActorRole::Maker, Some(tools), None) => {
+            validate_tool_paths([
+                &tools.monero_fund,
+                &tools.lez_claim,
+                &tools.finalized_classifier,
+                &tools.monero_refund,
+                &tools.monero_verify,
+            ])?;
+            validate_tool(&tools.monero_fund, "lez_xmr_monero_fund_v2")?;
+            validate_tool(&tools.lez_claim, "lez_xmr_tag15_claim_v1")?;
+            validate_tool(
+                &tools.finalized_classifier,
+                "lez_xmr_finalized_classifier_v1",
+            )?;
+            validate_tool(&tools.monero_refund, "lez_xmr_monero_refund_sweep_v3")?;
+            validate_tool(&tools.monero_verify, "lez_xmr_monero_verify_v2")
+        }
+        (ActorRole::Taker, None, Some(tools)) => {
+            validate_tool_paths([
+                &tools.tag14_authorize,
+                &tools.finalized_classifier,
+                &tools.monero_claim,
+                &tools.monero_verify,
+                &tools.tag16_refund,
+            ])?;
+            validate_tool(&tools.tag14_authorize, "lez_xmr_tag14_authorize_v1")?;
+            validate_tool(
+                &tools.finalized_classifier,
+                "lez_xmr_finalized_classifier_v1",
+            )?;
+            validate_tool(&tools.monero_claim, "lez_xmr_monero_claim_sweep_v2")?;
+            validate_tool(&tools.monero_verify, "lez_xmr_monero_verify_v2")?;
+            validate_tool(&tools.tag16_refund, "lez_xmr_tag16_refund_v1")
+        }
+        _ => anyhow::bail!("XMR effect authority role profile is invalid"),
+    }
+}
+
+fn validate_tool_paths<const N: usize>(tools: [&Tool; N]) -> Result<()> {
+    ensure!(
+        tools.iter().all(|tool| normalized_absolute(&tool.program)),
+        "XMR effect tool path is invalid"
+    );
     Ok(())
 }
 
