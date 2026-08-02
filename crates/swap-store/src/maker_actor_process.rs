@@ -1,6 +1,7 @@
 //! Durable scheduling metadata for opaque maker-owned actor processes.
 
 use std::{
+    collections::BTreeSet,
     ffi::OsString,
     fs::{self, File},
     io::{Read as _, Seek as _, Write as _},
@@ -42,6 +43,11 @@ pub const MAKER_ACTOR_LOCK_FD: i32 = 198;
 pub const PINNED_EXECUTABLE_FD: i32 = MAKER_ACTOR_PROGRAM_FD;
 /// Fixed child descriptor retaining a pinned executable workflow lock.
 pub const PINNED_EXECUTABLE_WORKFLOW_LOCK_FD: i32 = 199;
+/// Lowest child descriptor available to a pinned executable input plan.
+pub const PINNED_EXECUTABLE_INPUT_FD_MIN: i32 = 200;
+/// Highest child descriptor accepted from a bounded pinned input plan.
+pub const PINNED_EXECUTABLE_INPUT_FD_MAX: i32 = 1_023;
+const MAX_PINNED_EXECUTABLE_INPUTS: usize = 64;
 
 /// Pair adapter executable used by one maker process record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -520,6 +526,53 @@ pub struct PinnedExecutable {
     program: File,
 }
 
+/// Owned, non-cloneable descriptors to install beside one pinned executable.
+///
+/// The plan contains no argument or environment values. Each descriptor is
+/// moved into one complete child mapping and is dropped on any validation
+/// failure.
+#[must_use]
+pub struct PinnedChildFdPlan {
+    descriptors: Vec<(File, i32)>,
+}
+
+impl std::fmt::Debug for PinnedChildFdPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PinnedChildFdPlan")
+            .field("descriptor_count", &self.descriptors.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PinnedChildFdPlan {
+    /// Validates one bounded set of owned auxiliary child descriptors.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an empty or oversized plan, a descriptor outside 200..=1023,
+    /// duplicate child targets, or aliased source descriptors.
+    pub fn new(descriptors: Vec<(File, i32)>) -> Result<Self, MakerActorProcessError> {
+        if descriptors.is_empty() || descriptors.len() > MAX_PINNED_EXECUTABLE_INPUTS {
+            return Err(MakerActorProcessError::InvalidDescriptorMapping);
+        }
+        let mut child_fds = BTreeSet::new();
+        let mut identities = BTreeSet::new();
+        for (descriptor, child_fd) in &descriptors {
+            let metadata = descriptor
+                .metadata()
+                .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+            if !(PINNED_EXECUTABLE_INPUT_FD_MIN..=PINNED_EXECUTABLE_INPUT_FD_MAX).contains(child_fd)
+                || !child_fds.insert(*child_fd)
+                || !identities.insert((metadata.dev(), metadata.ino()))
+            {
+                return Err(MakerActorProcessError::InvalidDescriptorMapping);
+            }
+        }
+        Ok(Self { descriptors })
+    }
+}
+
 impl std::fmt::Debug for PinnedExecutable {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -601,6 +654,74 @@ impl PinnedExecutable {
                 actor_mapping,
                 workflow_mapping,
             ])
+            .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+        Ok(command)
+    }
+
+    /// Consumes one executable, two locks, and auxiliary inputs into one map.
+    ///
+    /// This is the only composition boundary for descriptor-addressed effect
+    /// children. Program FD 197, actor lock FD 198, workflow lock FD 199, and
+    /// every plan descriptor are installed by one `fd_mappings` call so a
+    /// later call cannot replace an earlier custody mapping.
+    ///
+    /// # Errors
+    ///
+    /// Rejects changed, crossed, or aliased locks; aliased program/input
+    /// descriptors; invalid child targets; and mapping failures before spawn.
+    pub fn into_command_with_locks_and_fd_plan(
+        self,
+        actor_lock: &MakerActorHeldLock,
+        workflow_lock: &MakerActorHeldLock,
+        plan: PinnedChildFdPlan,
+    ) -> Result<Command, MakerActorProcessError> {
+        actor_lock.validate_identity()?;
+        workflow_lock.validate_identity()?;
+        if actor_lock.swap_id != workflow_lock.swap_id || actor_lock.aliases(workflow_lock) {
+            return Err(MakerActorProcessError::InvalidDescriptorMapping);
+        }
+
+        let program_metadata = self
+            .program
+            .metadata()
+            .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+        let mut identities = BTreeSet::from([
+            (program_metadata.dev(), program_metadata.ino()),
+            (actor_lock.device, actor_lock.inode),
+            (workflow_lock.device, workflow_lock.inode),
+        ]);
+        if identities.len() != 3 {
+            return Err(MakerActorProcessError::InvalidDescriptorMapping);
+        }
+        for (descriptor, _) in &plan.descriptors {
+            let metadata = descriptor
+                .metadata()
+                .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+            if !identities.insert((metadata.dev(), metadata.ino())) {
+                return Err(MakerActorProcessError::InvalidDescriptorMapping);
+            }
+        }
+
+        let actor_mapping = actor_lock.fd_mapping_to(MAKER_ACTOR_LOCK_FD)?;
+        let workflow_mapping = workflow_lock.fd_mapping_to(PINNED_EXECUTABLE_WORKFLOW_LOCK_FD)?;
+        let mut mappings = Vec::with_capacity(3 + plan.descriptors.len());
+        mappings.push(FdMapping {
+            parent_fd: self.program.into(),
+            child_fd: PINNED_EXECUTABLE_FD,
+        });
+        mappings.push(actor_mapping);
+        mappings.push(workflow_mapping);
+        mappings.extend(
+            plan.descriptors
+                .into_iter()
+                .map(|(descriptor, child_fd)| FdMapping {
+                    parent_fd: descriptor.into(),
+                    child_fd,
+                }),
+        );
+        let mut command = Command::new(format!("/proc/self/fd/{PINNED_EXECUTABLE_FD}"));
+        command
+            .fd_mappings(mappings)
             .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
         Ok(command)
     }

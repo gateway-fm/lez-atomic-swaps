@@ -6595,13 +6595,55 @@ cannot alter an existing snapshot, while a fresh pin rejects runtime digest or
 storage drift. Runtime bytes are retained only as a bounded hash-checked
 in-memory snapshot.
 
-This remains a library-level developer checkpoint. No Maker/Taker route maps
-these descriptors into a child, opens an RPC or node, or executes a claim or
-refund. Before enabling effects, the route must combine exact child mappings
-with program FD 197, actor/state lock FD 198, workflow lock FD 199, workflow-v2
-reconciliation, cancellation, and reap. The test uses only private temporary
-files and local descriptors; no Docker service, faucet, DNS, public network,
-peer, or funds can make it flaky.
+The atomic exec-boundary checkpoint now adds a sealed runtime snapshot and
+maps it with every secret, both locks, and the executable. Repeat its two exact
+node-free tests:
+
+```bash
+cargo +1.96.0 test --locked -p lez-swap-store \
+  --test maker_actor_process \
+  pinned_child_fd_plan_rejects_reserved_duplicate_and_aliased_descriptors \
+  -- --exact
+
+cargo +1.96.0 test --locked -p xmr-reference-actor \
+  --test effect_authority_taker \
+  composed_effect_command_hands_off_exact_fds_and_locks \
+  -- --exact
+```
+
+The generic non-Clone plan accepts 1 through 64 owned source descriptors,
+rejects aliased sources, and requires unique child targets in 200 through 1023.
+The negative test rejects empty, reserved/out-of-range, duplicate-target, and
+aliased-source plans and proves Debug reveals only the descriptor count.
+
+The XMR child ABI is fixed:
+
+| FD | Child input |
+|---|---|
+| 197 | sealed executable |
+| 198 | actor/adaptor-state lock |
+| 199 | workflow lock |
+| 200 | LEZ runtime |
+| 201 | LEZ capability |
+| 202/203 | daemon username/password |
+| 204/205 | funding-wallet username/password |
+| 206/207 | shared-wallet username/password |
+| 208/209 | role-wallet username/password |
+
+All 13 descriptors are installed by one mapping call. No runtime, capability,
+username, or password bytes enter argv or env. The process test replaces the
+named program, runtime, and every secret before exec; the child still hashes
+the original snapshots, observes FD 210 absent, and stays alive after the
+parent Command and lock objects are dropped. Both competing lock acquisitions
+remain blocked until child exit/reap, then succeed.
+
+This is still a developer boundary, not a lifecycle route. It opens no RPC or
+node and executes no claim or refund. The remaining route must select the tool,
+enter workflow-v2 authority, spawn/reap this command, classify finalized
+external evidence, and reconcile it. The tests use private temporary files and
+local processes only; no Docker service, faucet, DNS, public network, peer, or
+funds can make them flaky. Literal M5 remains 4 of 7; current ETA is 2.5 to 5.5
+focused implementation hours.
 
 The monitor starts no LEZ or Monero node, opens no chain RPC, uses no Docker
 service, faucet, funds, DNS, public network, peer, or finality service, and

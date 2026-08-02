@@ -48,7 +48,8 @@ pub use maker_actor_process::{
     MakerActorManualActionSnapshot, MakerActorManualActionState, MakerActorMonitorSnapshotV1,
     MakerActorProcessError, MakerActorProcessRecordV1, MakerActorProgressObservationV1,
     MakerActorProgressSnapshotV1, MakerActorRegistrationCommit, MakerActorScheduleState,
-    PINNED_EXECUTABLE_FD, PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, PinnedExecutable,
+    PINNED_EXECUTABLE_FD, PINNED_EXECUTABLE_INPUT_FD_MAX, PINNED_EXECUTABLE_INPUT_FD_MIN,
+    PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, PinnedChildFdPlan, PinnedExecutable,
     validate_maker_actor_program,
 };
 pub use maker_application::{

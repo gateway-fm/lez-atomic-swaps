@@ -8,6 +8,7 @@ use std::{
         unix::fs::{MetadataExt as _, PermissionsExt as _},
     },
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context as _, Result, ensure};
@@ -15,6 +16,9 @@ use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, memfd_
 use rustix::io::fcntl_dupfd_cloexec;
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
+
+#[cfg(feature = "sessions")]
+use lez_swap_store::{MakerActorHeldLock, PinnedChildFdPlan, PinnedExecutable};
 
 use crate::{
     ValidatedXmrEffectAuthorityV1, XmrEffectAuthenticatedRpcV1, open_path_no_symlinks,
@@ -24,10 +28,31 @@ use crate::{
 const MAX_RUNTIME_BYTES: u64 = 16 * 1024;
 const MAX_SECRET_BYTES: u64 = 256;
 
+/// Fixed child descriptor containing exact LEZ runtime bytes.
+pub const XMR_EFFECT_RUNTIME_FD: i32 = 200;
+/// Fixed child descriptor containing the LEZ capability.
+pub const XMR_EFFECT_CAPABILITY_FD: i32 = 201;
+/// Fixed child descriptor containing the Monero daemon username.
+pub const XMR_EFFECT_DAEMON_USERNAME_FD: i32 = 202;
+/// Fixed child descriptor containing the Monero daemon password.
+pub const XMR_EFFECT_DAEMON_PASSWORD_FD: i32 = 203;
+/// Fixed child descriptor containing the funding-wallet username.
+pub const XMR_EFFECT_FUNDING_USERNAME_FD: i32 = 204;
+/// Fixed child descriptor containing the funding-wallet password.
+pub const XMR_EFFECT_FUNDING_PASSWORD_FD: i32 = 205;
+/// Fixed child descriptor containing the shared-wallet username.
+pub const XMR_EFFECT_SHARED_USERNAME_FD: i32 = 206;
+/// Fixed child descriptor containing the shared-wallet password.
+pub const XMR_EFFECT_SHARED_PASSWORD_FD: i32 = 207;
+/// Fixed child descriptor containing the role-wallet username.
+pub const XMR_EFFECT_ROLE_USERNAME_FD: i32 = 208;
+/// Fixed child descriptor containing the role-wallet password.
+pub const XMR_EFFECT_ROLE_PASSWORD_FD: i32 = 209;
+
 /// One immutable secret snapshot intended for descriptor-path child handoff.
 #[must_use]
 pub struct PinnedXmrEffectSecretV1 {
-    _snapshot: File,
+    snapshot: File,
     child_path: PathBuf,
     redacted_len: usize,
     sha256: [u8; 32],
@@ -46,7 +71,9 @@ impl fmt::Debug for PinnedXmrEffectSecretV1 {
 }
 
 impl PinnedXmrEffectSecretV1 {
-    /// Descriptor path that must be inherited at the same child descriptor.
+    /// Parent-process descriptor path for validating the retained snapshot.
+    ///
+    /// Child execution uses a fixed role-specific descriptor instead.
     #[must_use]
     pub fn child_path(&self) -> &Path {
         &self.child_path
@@ -62,6 +89,10 @@ impl PinnedXmrEffectSecretV1 {
     #[must_use]
     pub const fn sha256(&self) -> [u8; 32] {
         self.sha256
+    }
+
+    fn into_snapshot(self) -> File {
+        self.snapshot
     }
 }
 
@@ -121,6 +152,7 @@ impl PinnedXmrEffectMoneroCredentialsV1 {
 #[must_use]
 pub struct PinnedXmrEffectInputsV1 {
     runtime_bytes: Vec<u8>,
+    runtime_snapshot: File,
     capability: PinnedXmrEffectSecretV1,
     monero: PinnedXmrEffectMoneroCredentialsV1,
 }
@@ -136,7 +168,7 @@ impl fmt::Debug for PinnedXmrEffectInputsV1 {
             )
             .field("capability", &self.capability)
             .field("monero", &self.monero)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -155,6 +187,87 @@ impl PinnedXmrEffectInputsV1 {
     /// Current sealed role-separated Monero credential snapshots.
     pub const fn monero(&self) -> &PinnedXmrEffectMoneroCredentialsV1 {
         &self.monero
+    }
+
+    /// Consumes all pinned inputs into one executable-and-lock child mapping.
+    ///
+    /// Program FD 197, actor lock FD 198, workflow lock FD 199, runtime FD 200,
+    /// capability FD 201, and role-separated Monero credential FDs 202..=209
+    /// are installed by one command mapping. No secret enters argv or env.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid or aliased descriptor plans, changed/crossed locks, and
+    /// any child mapping failure before spawn.
+    #[cfg(feature = "sessions")]
+    pub fn into_command(
+        self,
+        executable: PinnedExecutable,
+        actor_lock: &MakerActorHeldLock,
+        workflow_lock: &MakerActorHeldLock,
+    ) -> Result<Command> {
+        let Self {
+            runtime_bytes: _,
+            runtime_snapshot,
+            capability,
+            monero,
+        } = self;
+        let PinnedXmrEffectMoneroCredentialsV1 {
+            daemon,
+            funding_wallet,
+            shared_wallet,
+            role_wallet,
+        } = monero;
+        let PinnedXmrEffectRpcCredentialsV1 {
+            username: daemon_username,
+            password: daemon_password,
+        } = daemon;
+        let PinnedXmrEffectRpcCredentialsV1 {
+            username: funding_username,
+            password: funding_password,
+        } = funding_wallet;
+        let PinnedXmrEffectRpcCredentialsV1 {
+            username: shared_username,
+            password: shared_password,
+        } = shared_wallet;
+        let PinnedXmrEffectRpcCredentialsV1 {
+            username: role_username,
+            password: role_password,
+        } = role_wallet;
+        let plan = PinnedChildFdPlan::new(vec![
+            (runtime_snapshot, XMR_EFFECT_RUNTIME_FD),
+            (capability.into_snapshot(), XMR_EFFECT_CAPABILITY_FD),
+            (
+                daemon_username.into_snapshot(),
+                XMR_EFFECT_DAEMON_USERNAME_FD,
+            ),
+            (
+                daemon_password.into_snapshot(),
+                XMR_EFFECT_DAEMON_PASSWORD_FD,
+            ),
+            (
+                funding_username.into_snapshot(),
+                XMR_EFFECT_FUNDING_USERNAME_FD,
+            ),
+            (
+                funding_password.into_snapshot(),
+                XMR_EFFECT_FUNDING_PASSWORD_FD,
+            ),
+            (
+                shared_username.into_snapshot(),
+                XMR_EFFECT_SHARED_USERNAME_FD,
+            ),
+            (
+                shared_password.into_snapshot(),
+                XMR_EFFECT_SHARED_PASSWORD_FD,
+            ),
+            (role_username.into_snapshot(), XMR_EFFECT_ROLE_USERNAME_FD),
+            (role_password.into_snapshot(), XMR_EFFECT_ROLE_PASSWORD_FD),
+        ])
+        .context("validate XMR effect child descriptor plan")?;
+        executable
+            .into_command_with_locks_and_fd_plan(actor_lock, workflow_lock, plan)
+            .context("compose XMR effect command")
     }
 }
 
@@ -200,8 +313,10 @@ impl ValidatedXmrEffectAuthorityV1 {
         )?;
         let role_wallet = pin_rpc(self.monero().role_wallet(), "role wallet", &mut identities)?;
 
+        let runtime_snapshot = seal_bytes("XMR LEZ runtime", &runtime.bytes)?;
         Ok(PinnedXmrEffectInputsV1 {
             runtime_bytes: runtime.bytes.to_vec(),
+            runtime_snapshot,
             capability,
             monero: PinnedXmrEffectMoneroCredentialsV1 {
                 daemon,
@@ -261,7 +376,7 @@ fn pin_secret(
     source.bytes.zeroize();
     let child_path = PathBuf::from(format!("/proc/self/fd/{}", snapshot.as_raw_fd()));
     Ok(PinnedXmrEffectSecretV1 {
-        _snapshot: snapshot,
+        snapshot,
         child_path,
         redacted_len,
         sha256,

@@ -5084,3 +5084,57 @@ No route or child mapping consumes the snapshots yet, and this checkpoint
 opens no RPC or node and executes no chain effect. Literal M5 remains 4 of 7.
 ETA remains 3 to 7 focused implementation hours to the M5 tag, subject to
 fresh-node runtime and final composite review.
+
+### XMR atomic child-exec descriptor checkpoint (2026-08-02)
+
+The next process RED/GREEN consumes the sealed runtime and nine secret snapshots
+rather than leaving them as parent-only custody objects. The generic non-Clone
+`PinnedChildFdPlan` accepts 1 through 64 owned source descriptors and requires
+unique non-aliased sources plus unique child targets in 200 through 1023. Empty,
+reserved/out-of-range, duplicate-target, and aliased-source plans fail closed;
+redacted Debug exposes only the count.
+
+The XMR specialization fixes the complete child ABI:
+
+| FD | Input |
+|---|---|
+| 197 | sealed executable |
+| 198 | actor/adaptor-state lock |
+| 199 | workflow lock |
+| 200 | hash-pinned LEZ runtime |
+| 201 | LEZ capability |
+| 202/203 | Monero daemon username/password |
+| 204/205 | funding-wallet username/password |
+| 206/207 | shared-wallet username/password |
+| 208/209 | role-wallet username/password |
+
+`PinnedXmrEffectInputsV1::into_command` consumes runtime plus all nine secret
+snapshots, the pinned executable, and the two exact held locks. It installs all
+13 descriptors with one `fd_mappings` call, preventing later mapping calls
+from replacing earlier custody. No runtime, capability, username, or password
+bytes enter argv or env.
+
+The process proof pins every input and executable, replaces all named sources,
+then execs the original sealed program. The child reports the exact original
+runtime and nine secret hashes, sees FDs 197 through 209 and no FD 210, and
+remains alive after the parent Command and both parent lock handles are dropped.
+Competing lock acquisition fails until child exit/reap and succeeds afterward.
+The generic negative test covers empty/reserved/duplicate/aliased plans and
+redacted Debug.
+
+Full `lez-swap-store` and `xmr-reference-actor` all-target/all-feature
+regressions, strict Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are
+GREEN. No RPC, node, Docker service, faucet, peer, public network, or funds
+participated.
+
+Remaining work is route composition: select the role-fixed tool, pin exact
+inputs, acquire both locks, enter workflow-v2 InvokeOnce/ObserveOnly, spawn and
+reap the one-map command, classify finalized LEZ or confirmed Monero evidence,
+and reconcile success. Maker effects, receipt-v2 Taker claim/refund, fresh
+two-devnet claim/refund proofs, and all-pair/concurrency/composite/tag gates
+remain.
+
+No lifecycle route calls this boundary, and this checkpoint opens no RPC or
+node and executes no chain effect. Literal M5 remains 4 of 7. ETA is now 2.5
+to 5.5 focused implementation hours to the M5 tag, subject to fresh-node
+runtime and final composite review.

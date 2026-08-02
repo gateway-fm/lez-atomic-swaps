@@ -15,7 +15,8 @@ use lez_swap_store::MAKER_ACTOR_LOCK_FD;
 use lez_swap_store::{
     MakerActorArtifacts, MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1,
     MakerActorLeaseOwner, MakerActorManifestV1, MakerActorProcessError, MakerActorScheduleState,
-    PINNED_EXECUTABLE_FD, PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, PinnedExecutable, SqliteSwapStore,
+    PINNED_EXECUTABLE_FD, PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, PinnedChildFdPlan, PinnedExecutable,
+    SqliteSwapStore,
 };
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -818,6 +819,48 @@ fn pinned_executable_rejects_cross_swap_lock_composition() {
         executable.into_command_with_locks(&actor_lock, &workflow_lock),
         Err(MakerActorProcessError::InvalidDescriptorMapping)
     ));
+}
+
+#[test]
+fn pinned_child_fd_plan_rejects_reserved_duplicate_and_aliased_descriptors() {
+    let root = tempdir().unwrap();
+    let first_path = root.path().join("first-input");
+    let second_path = root.path().join("second-input");
+    write_mode(&first_path, b"first", 0o600);
+    write_mode(&second_path, b"second", 0o600);
+
+    assert!(matches!(
+        PinnedChildFdPlan::new(Vec::new()),
+        Err(MakerActorProcessError::InvalidDescriptorMapping)
+    ));
+    assert!(matches!(
+        PinnedChildFdPlan::new(vec![(fs::File::open(&first_path).unwrap(), 199)]),
+        Err(MakerActorProcessError::InvalidDescriptorMapping)
+    ));
+    assert!(matches!(
+        PinnedChildFdPlan::new(vec![
+            (fs::File::open(&first_path).unwrap(), 200),
+            (fs::File::open(&second_path).unwrap(), 200),
+        ]),
+        Err(MakerActorProcessError::InvalidDescriptorMapping)
+    ));
+
+    let descriptor = fs::File::open(&first_path).unwrap();
+    let alias = descriptor.try_clone().unwrap();
+    assert!(matches!(
+        PinnedChildFdPlan::new(vec![(descriptor, 200), (alias, 201)]),
+        Err(MakerActorProcessError::InvalidDescriptorMapping)
+    ));
+
+    let valid = PinnedChildFdPlan::new(vec![
+        (fs::File::open(first_path).unwrap(), 200),
+        (fs::File::open(second_path).unwrap(), 201),
+    ])
+    .unwrap();
+    let debug = format!("{valid:?}");
+    assert!(debug.contains("descriptor_count: 2"));
+    assert!(!debug.contains("first-input"));
+    assert!(!debug.contains("second-input"));
 }
 
 fn lock_path(state_path: &Path) -> PathBuf {

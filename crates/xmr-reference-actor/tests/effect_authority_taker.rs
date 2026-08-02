@@ -3,8 +3,13 @@ use std::{
     io::Write as _,
     os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _, symlink},
     path::{Path, PathBuf},
+    process::Stdio,
+    thread,
+    time::{Duration, Instant},
 };
 
+use lez_swap_core::SwapId;
+use lez_swap_store::MakerActorHeldLock;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{ActorRole, load_validated_xmr_effect_authority_bytes};
@@ -350,6 +355,138 @@ fn write_executable(path: &Path, bytes: &[u8], mode: u32) {
     file.sync_all().expect("sync executable");
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("set executable mode");
 }
+
+#[test]
+fn composed_effect_command_hands_off_exact_fds_and_locks() {
+    const PROGRAM: &[u8] = br#"#!/bin/sh
+set -eu
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209; do
+    test -e "/proc/self/fd/$fd"
+done
+test ! -e /proc/self/fd/210
+for fd in 200 201 202 203 204 205 206 207 208 209; do
+    sha256sum "/proc/self/fd/$fd"
+done
+printf '%s\n' fd210=absent
+printf ready > "$READY_FILE"
+while [ ! -e "$GATE_FILE" ]; do
+    sleep 0.02
+done
+"#;
+
+    let root = tempfile::tempdir().expect("isolated composed-command root");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let ready = root.path().join("child.ready");
+    let gate = root.path().join("child.gate");
+    let program = root.path().join("tag14-authorize");
+    write_executable(&program, PROGRAM, 0o700);
+
+    let (mut spec, runtime, secret_paths, secret_values) = custody_manifest(root.path());
+    spec.taker_tools
+        .tag14_authorize
+        .program
+        .clone_from(&program);
+    spec.taker_tools.tag14_authorize.program_sha256 = hex::encode(Sha256::digest(PROGRAM));
+    let authority = validated(&spec);
+    let inputs = authority
+        .pin_effect_inputs_at_use()
+        .expect("pin every effect input before source replacement");
+    let executable = authority
+        .taker_tools()
+        .expect("Taker tool plan")
+        .tag14_authorize()
+        .verify_program_at_use()
+        .expect("pin the exact effect program before source replacement");
+
+    let swap_id = SwapId::new(hex::encode(SWAP)).expect("canonical swap ID");
+    let actor_state = root.path().join("actor-state.sqlite3");
+    let workflow_state = root.path().join("workflow-state.sqlite3");
+    let actor_lock =
+        MakerActorHeldLock::acquire_for(&swap_id, &actor_state).expect("acquire actor lock");
+    let workflow_lock =
+        MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).expect("acquire workflow lock");
+
+    fs::write(&program, b"#!/bin/sh\nexit 99\n").expect("replace named program bytes");
+    fs::write(&runtime, b"{\"generation\":2}\n").expect("replace named runtime bytes");
+    for (index, path) in secret_paths.iter().enumerate() {
+        fs::write(path, format!("replacement-{index}\n")).expect("replace named secret bytes");
+    }
+
+    let mut command = inputs
+        .into_command(executable, &actor_lock, &workflow_lock)
+        .expect("compose one collision-free executable, lock, runtime, and secret FD plan");
+    command
+        .env("READY_FILE", &ready)
+        .env("GATE_FILE", &gate)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("spawn composed effect command");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() {
+        assert!(
+            child.try_wait().expect("poll child before ready").is_none(),
+            "composed child exited before proving its inherited descriptors"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "composed child did not report ready before deadline"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    drop(command);
+    drop(actor_lock);
+    drop(workflow_lock);
+    assert!(
+        MakerActorHeldLock::acquire_for(&swap_id, &actor_state).is_err(),
+        "the live child alone retains the actor lock"
+    );
+    assert!(
+        MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).is_err(),
+        "the live child alone retains the workflow lock"
+    );
+
+    write_private_source(&gate, b"continue\n");
+    let output = child
+        .wait_with_output()
+        .expect("collect composed child output");
+    assert_effect_child_output(output, secret_values);
+
+    drop(MakerActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
+    drop(MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
+}
+
+fn assert_effect_child_output(output: std::process::Output, secret_values: Vec<Vec<u8>>) {
+    assert!(
+        output.status.success(),
+        "composed effect command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+
+    let mut expected_bytes = vec![b"{\"generation\":1}\n".to_vec()];
+    expected_bytes.extend(secret_values);
+    let expected_hashes = expected_bytes
+        .iter()
+        .map(|bytes| hex::encode(Sha256::digest(bytes)))
+        .collect::<Vec<_>>();
+    let stdout = String::from_utf8(output.stdout).expect("ASCII digest output");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 11);
+    let actual_hashes = lines[..10]
+        .iter()
+        .map(|line| {
+            line.split_whitespace()
+                .next()
+                .expect("sha256sum digest")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual_hashes, expected_hashes);
+    assert_eq!(lines[10], "fd210=absent");
+}
+
 #[test]
 fn effect_inputs_pin_runtime_and_all_trailing_newline_secrets_before_name_replacement() {
     let root = tempfile::tempdir().expect("isolated effect-input root");

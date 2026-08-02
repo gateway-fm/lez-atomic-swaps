@@ -193,12 +193,12 @@ and oversized values fail closed.
 
 Each of the nine secrets is copied into its own mode-0400 memfd carrying write,
 grow, shrink, and seal seals, then duplicated with close-on-exec to a distinct
-collision-free descriptor numbered at least 200. The non-Clone custody types
-expose only a descriptor path, redacted length, and SHA-256, and their Debug
-output redacts the value. Named replacement after pinning cannot alter an
-existing snapshot; a fresh pin observes unsafe mode, alias, or runtime digest
-drift and fails. Runtime bytes remain a hash-checked bounded in-memory snapshot;
-only capability and credential secrets receive memfds.
+collision-free parent descriptor. The runtime now receives the same immutable
+mode-0400 execution snapshot in addition to its bounded hash-checked in-memory
+view. The non-Clone custody types expose only a descriptor path, redacted
+length, and SHA-256, and their Debug output redacts values. Named replacement
+after pinning cannot alter an existing snapshot; a fresh pin observes unsafe
+mode, alias, or runtime digest drift and fails.
 
 ```mermaid
 flowchart LR
@@ -207,10 +207,31 @@ flowchart LR
     CAP["LEZ capability source"] --> PIN
     RPC["Eight Monero credential sources"] --> PIN
     PIN --> RB["Hash checked runtime snapshot"]
-    PIN --> SF["Nine sealed secret memfds"]
-    SF --> FD["Distinct descriptor paths at FD 200 or above"]
-    FD --> FUTURE["Future child mapping not implemented"]
+    PIN --> SF["Runtime plus nine sealed input memfds"]
+    SF --> PLAN["Fixed input FDs 200 through 209"]
+    PROG["Sealed program FD 197"] --> MAP["One descriptor mapping"]
+    LOCKS["Actor and workflow locks FDs 198 and 199"] --> MAP
+    PLAN --> MAP
+    MAP --> CHILD["Future role fixed effect child"]
 ```
+
+The generic non-Clone `PinnedChildFdPlan` consumes between 1 and 64 owned
+source descriptors. It accepts only unique, non-aliased sources and unique child
+targets in 200 through 1023; empty, reserved/out-of-range, duplicate-target, and
+aliased-source plans fail closed. Its redacted Debug reports only the descriptor
+count. XMR specializes that plan to runtime FD 200, capability FD 201, daemon
+username/password FDs 202/203, funding-wallet FDs 204/205, shared-wallet FDs
+206/207, and role-wallet FDs 208/209.
+
+The XMR command consumes the runtime and all nine secret snapshots alongside
+the program and both held locks. Program FD 197, actor/state lock FD 198,
+workflow lock FD 199, and input FDs 200 through 209 are installed by exactly one
+`fd_mappings` call. No capability, username, password, or runtime bytes enter
+argv or the environment. The process RED/GREEN executes the already pinned
+program after every named program/input is replaced, observes the exact original
+runtime and secret hashes after exec, proves FD 210 absent, then drops the
+parent Command and lock handles. The live child alone retains both locks until
+it exits and is reaped; only then can the parent reacquire them.
 
 This component performs no chain or network I/O. It uses the already locked
 rusqlite dependency and SQLite WAL, FULL synchronous writes, foreign keys, and
@@ -323,13 +344,18 @@ and rejection of invalid content, unsafe storage, symlinks, hard links,
 oversize inputs, unsafe parents, and cross-source aliases. Strict all-target
 Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN.
 
-The typed endpoint/tool views, use-time program and input pinning, workflow-v2
-journal, and dual-lock command construction are component-GREEN, but no Maker
-or Taker lifecycle route calls the executor. Mapping the nine secret descriptors
-into an effect child, actual classifier-to-evidence composition, Maker effect
-composition, receipt-v2 claim/refund routing, and fresh isolated LEZ plus
-official Monero Regtest proof remain open. The route must prove that its
-supervision keeps the child, both locks, and exact secret descriptors under
-custody through every exit and cancellation path. This checkpoint opens no RPC
-or node and does not authorize a chain send. Literal M5 therefore remains 4 of
-7.
+The generic negative-plan test proves empty, reserved/out-of-range, duplicate
+target, and aliased-source rejection plus redacted Debug. The XMR process test
+proves exact pre-replacement program, runtime, and secrets after exec; exact FDs
+197 through 209; absent FD 210; and both locks held by the child after parent
+Command and lock handles are dropped until child exit/reap. Full
+`lez-swap-store` and `xmr-reference-actor` all-target/all-feature regressions,
+strict Clippy, warning-fatal Rustdoc, rustfmt, and diff hygiene are GREEN.
+
+The typed authority, sealed program/input snapshots, workflow-v2 journal, and
+one-map executable/lock/input command boundary are component-GREEN, but no
+Maker or Taker lifecycle route calls it. Actual classifier-to-evidence
+composition, Maker effects, receipt-v2 claim/refund routing, and fresh isolated
+LEZ plus official Monero Regtest proof remain open. This checkpoint opens no
+RPC or node and does not authorize a chain send. Literal M5 therefore remains 4
+of 7.
