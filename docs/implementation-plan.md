@@ -4811,3 +4811,20 @@ There is no external blocker to this local-functional work. Logos-owned public
 readiness caveats remain tracked separately and do not block milestone
 certification. Updated estimate is 7 to 14 focused implementation hours to the
 M5 tag, dominated by v3/receipt composition and fresh two-devnet proofs.
+
+### XMR Maker effect-authority loader checkpoint (2026-08-02)
+
+The canonical effect-authority RED is GREEN for the Maker profile. Schema v1
+binds the exact role, swap, agreement, activation, run, separate workflow and
+adaptor journals, evidence root, LEZ sidecar runtime/capability, four
+credential-file-backed literal-loopback Monero RPC classes, and five fixed
+program/hash/ABI tool slots. Unknown fields and embedded secrets, legacy
+schema-v2 bytes, noncanonical JSON, identity drift, overlapping journal roles,
+unsafe paths, non-loopback or missing-port RPCs, and tool digest/ABI drift fail
+closed. The implementation reuses the locked url 2.5.8 parser; the lockfile
+edge was regenerated offline.
+
+This does not yet publish application manifest v3, enable a CLI effect, or
+close a literal M5 output. Taker-profile RED/GREEN is next, followed by v3
+provisioning and receipt v2. Literal M5 remains 4 of 7. Updated estimate is 6
+to 12 focused implementation hours to the M5 tag.

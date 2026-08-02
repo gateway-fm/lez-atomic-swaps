@@ -11,6 +11,8 @@ compile_error!("xmr-reference-actor requires Unix file-permission semantics");
 
 #[cfg(feature = "sessions")]
 mod application_provision;
+#[cfg(feature = "sessions")]
+mod effect_authority;
 
 #[cfg(feature = "sessions")]
 pub use application_provision::{
@@ -20,6 +22,10 @@ pub use application_provision::{
     load_validated_xmr_taker_authority_bytes, provision_xmr_maker_actor_from_material,
     provision_xmr_taker_actor_from_material, validate_maker_manifest_config_bytes,
     validate_taker_manifest_config_bytes,
+};
+#[cfg(feature = "sessions")]
+pub use effect_authority::{
+    ValidatedXmrEffectAuthorityV1, load_validated_xmr_effect_authority_bytes,
 };
 
 use std::{
