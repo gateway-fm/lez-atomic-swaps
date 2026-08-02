@@ -1,8 +1,8 @@
 # ADR 0126: Separate XMR workflow authority from adaptor and sidecar journals
 
-Status: Accepted for the durable journal and schema-v3 authority boundary on
-2026-08-02; receipt-v2 lifecycle commands and actual-node application replay
-remain in progress
+Status: Accepted for the durable journal, schema-v3 authority, and receipt-v2
+locked-monitor boundary on 2026-08-02; effect execution and actual-node
+application replay remain in progress
 
 ## Context
 
@@ -35,7 +35,10 @@ tag-15 LEZ claim and Taker tag-16 LEZ refund.
 
 ```mermaid
 flowchart LR
-    CLI["Maker or Taker lifecycle command"] --> V3["Schema v3 actor manifest; receipt v2 pending"]
+    CLI["Maker or Taker lifecycle command"] --> R2["Receipt v2 selector"]
+    R2 --> V3["Schema v3 actor manifest"]
+    R2 --> W
+    R2 --> A
     V3 --> W["Owner private XMR workflow journal"]
     V3 --> A["Immutable XMR effect authority v1"]
     W --> C{"Claim or refund branch CAS"}
@@ -129,6 +132,13 @@ Stage A/B role authority, exact effect bytes, role/swap/agreement/activation/run
 and the already initialized workflow identity. Publication is owner-private,
 atomic create-new, and never overwrites schema v2 or an existing schema-v3 file.
 The full role-process integration test proves digest tamper, run crossing, legacy
-v2 execution, workflow drift, and output collision fail closed. No CLI command
-or actual-chain effect is composed by this checkpoint, so literal M5 remains
-4 of 7.
+v2 execution, workflow drift, and output collision fail closed.
+
+Receipt v2 now digest-pins schema v3, the effect authority, workflow identity,
+and run. The selector semantically revalidates those bytes under the per-swap
+and workflow locks, and locked monitor is implemented without chain I/O.
+Receipt v1 remains monitor-only. Claim and refund still reject before effect
+execution. The complete typed tool/RPC execution plan, at-use executable and
+capability hashes, remaining workflow steps and exact reconciliation, child
+lock custody, Maker effect composition, and actual two-node runner proof remain
+open. Literal M5 therefore remains 4 of 7.

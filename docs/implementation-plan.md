@@ -4876,3 +4876,29 @@ Maker/Taker lifecycle. The next implementation order is:
 
 Updated estimate is 4 to 8 focused implementation hours to the M5 tag, subject
 to the measured fresh-node cycles and final composite review.
+
+### XMR receipt-v2 and locked-monitor checkpoint (2026-08-02)
+
+The current working tree adds the replay-safe Taker handoff without relaxing
+the legacy boundary. Acceptance receipt v2 binds the exact schema-v3 manifest,
+effect-authority bytes and digest, workflow journal, run, swap, role,
+agreement, and activation. Its writer publishes only after schema-v3
+provisioning succeeds; its selector rereads and digest-pins every authority
+file, then performs full semantic validation while the per-swap and workflow
+locks are held. Receipt v1 remains monitor-only.
+
+The effect-capable argument group is all-or-nothing, and locked receipt-v2
+monitor is implemented without RPC or chain effects. Claim and refund still
+reject. This checkpoint remains under focused verification and does not close
+a literal output or add an actual-node execution.
+
+Remaining work is the complete typed tool/RPC execution plan, at-use hashes for
+executables and capabilities, all role-legal workflow steps with exact
+reconciliation, transfer of lock custody to any effect child, Maker effect
+composition, receipt-v2 claim/refund execution, and fresh isolated LEZ v0.2
+plus official Monero Regtest runner proof. The complete all-pair Maker CLI,
+Taker CLI, and accepted-application concurrency/restart outputs then require
+their composite proof and review.
+
+Literal M5 remains 4 of 7. ETA remains 4 to 8 focused implementation hours to
+the M5 tag, subject to fresh-node runtime and the final composite gates.

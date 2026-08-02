@@ -6315,9 +6315,11 @@ an actual swap on the unaffected pair.
 ## Flow 1T: monitor an accepted XMR application as the Taker
 
 Status: process-GREEN, receipt-only, and deliberately pre-effect. This flow uses
-the real Taker CLI after the XMR acceptance in Flow 1P or Flow 1R. It validates
-the accepted Taker application authority; it does not query either chain and
-does not report current or enduring chain progress.
+the real Taker CLI after the XMR acceptance in Flow 1P or Flow 1R. Receipt v1
+validates only the accepted application authority. Receipt v2 additionally
+binds the schema-v3 projection, immutable effect-authority plan, initialized
+workflow identity, and run under both owner locks. Neither variant queries a
+chain or reports current or enduring chain progress.
 
 Build the CLI from the repository root, then point it at the owner-private
 acceptance receipt emitted by the accepted XMR application. The receipt and all
@@ -6338,13 +6340,84 @@ The exact one-line JSON is:
 {"schema_version":1,"pair":"monero","role":"taker","state":"active","phase":"application_activated","claim_session":"presignature_verified","refund_session":"presignature_verified"}
 ```
 
-This output means only that the receipt still binds a semantically valid Taker
-Stage-A/Stage-B application authority whose claim and refund sessions both
-reached `presignature_verified`. It does not mean that LEZ was funded or
+This v1 output means only that the receipt still binds a semantically valid
+Taker Stage-A/Stage-B application authority whose claim and refund sessions
+both reached `presignature_verified`. It does not mean that LEZ was funded or
 claimed, that Monero was funded or swept, that either chain is live, or that a
 previously observed chain effect remains canonical. Use Flow 1R evidence and
 the chain-specific operators for chain progress.
 
+### Provision and monitor receipt v2
+
+Use the same successful XMR acceptance/replay command from Flow 1P, but select
+fresh, distinct absolute paths under one mode-0700 Taker effect root. The
+effect-authority v1 JSON must already exist; the schema-v3 manifest, workflow
+journal, and receipt-v2 destinations must not be occupied by different bytes.
+Append exactly these arguments:
+
+```bash
+export XMR_EFFECT_ROOT=/absolute/owner-private/m5-xmr-taker-effect
+export XMR_EFFECT_RUN=m5-xmr-taker-effect-run-1
+install -d -m 0700 "$XMR_EFFECT_ROOT"
+
+# The identical Flow 1P lez-taker acceptance arguments precede these flags.
+target/debug/lez-taker \
+  --delivery-directory "$DELIVERY_ROOT" \
+  --maker-public-key "$DELIVERY_MAKER_PUBLIC_KEY" \
+  --now-unix-seconds "$ACCEPTED_AT" \
+  --pair monero \
+  --direction taker-sells-lez \
+  --accept-xmr-offer "$OFFER_ID" \
+  --chat-socket "$CHAT_SOCKET" \
+  --reservation-id "$RESERVATION_ID" \
+  --foreign-units 1000000000000 \
+  --xmr-stage-a-file "$XMR_STAGE_A" \
+  --xmr-activation-file "$XMR_STAGE_B" \
+  --xmr-source-taker-root "$XMR_TAKER_SOURCE_ROOT" \
+  --xmr-taker-public-packet "$XMR_TAKER_PUBLIC_PACKET" \
+  --xmr-maker-public-packet "$XMR_MAKER_PUBLIC_PACKET" \
+  --xmr-taker-role-journal "$XMR_TAKER_ADAPTOR_JOURNAL" \
+  --xmr-taker-actor-root "$XMR_TAKER_ACTOR_ROOT" \
+  --xmr-acceptance-receipt "$XMR_EFFECT_ROOT/acceptance-receipt-v2.json" \
+  --xmr-effect-authority-file "$XMR_EFFECT_ROOT/effect-authority-v1.json" \
+  --xmr-effect-manifest-file "$XMR_EFFECT_ROOT/actor-effect-provision-v3.json" \
+  --xmr-workflow-journal "$XMR_EFFECT_ROOT/workflow.sqlite3" \
+  --xmr-run-id "$XMR_EFFECT_RUN"
+
+target/debug/lez-taker monitor \
+  --receipt "$XMR_EFFECT_ROOT/acceptance-receipt-v2.json"
+```
+
+The four new effect arguments are one all-or-none group. Do not mix a run ID,
+authority, schema-v3 manifest, or workflow journal from another role or swap,
+and do not overlap any of those paths with the actor state, adaptor journal, or
+receipt. Exact replay may reuse the same bytes; publication never overwrites a
+different existing artifact.
+
+The private input/output set is the legacy actor manifest and state database,
+canonical Stage A/B, Maker and Taker public packets, Taker private role
+material and adaptor journal, plus effect-authority v1 JSON, schema-v3
+manifest, workflow SQLite, and receipt v2. Keep the directory mode 0700 and
+regular authority artifacts mode 0600. The receipt digest-pins the schema-v3
+manifest and effect-authority bytes; schema v3 binds the workflow path and
+initialized identity.
+
+The exact receipt-v2 monitor output is:
+
+```json
+{"schema_version":2,"pair":"monero","role":"taker","state":"active","phase":"application_activated","run_id":"m5-xmr-taker-effect-run-1","effect_authority":"validated"}
+```
+
+This means only that the effect-shaped authority plan is canonical and bound
+to the accepted application. It does not authorize or prove a chain effect.
+
+
+The exact deterministic reproduction is the process test below. The manual
+shell shape assumes the effect-authority JSON was produced for the same private
+deployment and contains its real future tool/RPC commitments. Do not copy the
+fixture's deterministic digest, path, credential, or endpoint placeholders
+into an effect-capable deployment; they are accepted here only because monitor
+never contacts or invokes them.
 Delivery, Chat, and the Maker daemon may all be stopped before this command.
 The CLI strictly and boundedly decodes the receipt, pins the manifest bytes to
 the receipt SHA-256, derives the swap/state lock identity, and then takes the
@@ -6358,26 +6431,49 @@ atomicity over one accepted authority, not cross-chain atomicity. Inherited ABA
 hardening for paths reopened during semantic validation remains production
 hardening; do not treat this checkpoint as a hostile same-UID filesystem proof.
 
-`claim` and `refund` are intentionally unavailable in this slice:
+`claim` and `refund` are intentionally unavailable in both receipt versions:
 
 ```bash
 target/debug/lez-taker claim --receipt "$XMR_TAKER_RECEIPT"
 target/debug/lez-taker refund --receipt "$XMR_TAKER_RECEIPT"
 ```
 
-Both fail with empty stdout and the stable error
-`XMR Taker claim and refund are not yet composed`. Other stable public failures
-are `Taker acceptance receipt is unavailable or ambiguous`, `XMR Taker actor
-is already running or unsafe`, `XMR Taker actor authority is unavailable or
-unsafe`, and `receipt-bound XMR Taker actor semantics changed`. They disclose no
-authority path, digest, key, journal bytes, or child identity. Do not weaken a
-failure by passing an actor config instead of the acceptance receipt.
+Receipt v1 fails with empty stdout and
+`XMR Taker claim and refund are not yet composed`. Receipt v2 fails with
+empty stdout and
+`XMR Taker claim and refund effect execution is not yet composed`. Other
+stable public failures are `Taker acceptance receipt is unavailable or
+ambiguous`, `XMR Taker actor is already running or unsafe`, `XMR Taker
+workflow is already running or unsafe`, `XMR Taker effect authority is
+unavailable or unsafe`, and `receipt-bound XMR Taker actor semantics changed`.
+They disclose no authority path, digest, key, journal bytes, or child identity.
+Do not weaken a failure by passing an actor config instead of the acceptance
+receipt.
 
-External runtime resources: none. This monitor starts no LEZ or Monero node,
-opens no chain RPC, uses no Docker service, faucet, funds, DNS, public network,
-peer, or finality service, and does not need Delivery or Chat. Consequently it
-has no node/readiness/finality flakiness and cannot validate chain behavior. To
-repeat the process proof that creates the genuine receipt and then monitors it
+External runtime resources: none. The receipt-v2 fixture binds, but does not
+contact, these literal-loopback endpoints:
+
+- LEZ sidecar: `http://127.0.0.1:36972/`;
+- Monero daemon: `http://127.0.0.1:36974/`;
+- funding wallet: `http://127.0.0.1:36975/`;
+- neutral shared wallet: `http://127.0.0.1:36976/`; and
+- Taker role wallet: `http://127.0.0.1:36977/`.
+
+The authority also binds LEZ runtime/capability paths, per-RPC username and
+password file paths, and five Taker tool slots: tag-14 authorization, finalized
+classification, Monero claim sweep, Monero verification, and tag-16 refund.
+Each slot has a program path, SHA-256, and fixed ABI. The current provisioner
+and monitor validate their canonical shape and cross-file identity only. They
+do not connect to the URLs, read those credentials, invoke a program, or
+rehash the runtime, capability, or tools at use. Those are mandatory effect-
+execution gates, not evidence supplied by this monitor.
+
+The monitor starts no LEZ or Monero node, opens no chain RPC, uses no Docker
+service, faucet, funds, DNS, public network, peer, or finality service, and
+does not need Delivery or Chat. The fixed endpoint strings require no listener,
+so they do not contend for ports. Consequently this command has no
+node/readiness/finality flakiness and cannot validate chain behavior. To repeat
+the process proof that creates both genuine receipt versions and monitors them
 after transport removal, run:
 
 ```bash
@@ -6387,10 +6483,22 @@ cargo +1.96.0 test --locked --offline \
   -- --exact --nocapture
 ```
 
-That test must also preserve the captured acceptance artifacts across monitor,
-reject claim/refund without output, reject a receipt with an unknown field or
-wrong manifest digest, and keep failures secret-free. This closes a Taker
-monitor sub-gap only; literal M5 remains 3 of 7.
+That test must also preserve the captured application and effect artifacts,
+including bytes and inodes, across both monitors and all rejected effects. It
+must reject receipt-v2 Stage A/B digest drift, actor-state and workflow lock
+contention, claim/refund without output, a receipt with an unknown field, and
+wrong manifest or effect-authority binding while keeping failures secret-free.
+
+Flakiness is local-process only: a cold Cargo build or uncached dependencies,
+large debug-actor hashing, cryptographic validation, filesystem latency, lock
+contention from another invocation using the same private paths, and heavy host
+scheduling can extend the run. The process fixture historically took about
+307.71 seconds and gives Maker-daemon readiness 30 seconds. It uses an isolated
+temporary root and run-local Unix sockets; rerun only after the previous test
+process exits, and never share the example authority paths across concurrent
+runs. No public resource can make it flaky.
+
+This closes a Taker monitor sub-gap only; literal M5 remains 4 of 7.
 
 ## Flow 1U: repeat the tag-16 one-attempt component checkpoint
 

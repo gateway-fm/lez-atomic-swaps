@@ -305,10 +305,14 @@ for source in "$taker_cli" "$xmr_receipt_loader" "$xmr_process_test"; do
 done
 
 for required in \
-  'Xmr(Box<XmrTakerReceiptSelector>)' \
+  'XmrMonitor(Box<XmrTakerReceiptSelector>)' \
+  'XmrEffect(Box<XmrTakerEffectReceiptSelector>)' \
   'load_xmr_taker_receipt_selector(path).ok(),' \
+  'load_xmr_taker_effect_receipt_selector(path).ok(),' \
   'MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())' \
+  'MakerActorHeldLock::acquire_for(selector.swap_id(), selector.workflow_journal())' \
   'load_validated_xmr_taker_authority_bytes(selector.manifest_bytes())' \
+  '.validate_authority()' \
   'selector.receipt_matches(&authority)' \
   'XMR Taker claim and refund are not yet composed' \
   'phase: "application_activated"' \

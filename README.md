@@ -186,6 +186,35 @@ resource declaration are in
 Inherited ABA hardening for paths reopened while validating the authority
 remains production work.
 
+The follow-on XMR receipt-v2 checkpoint adds a replay-safe, effect-shaped
+authority handoff without enabling effects. During an otherwise identical
+accepted-XMR Taker replay, these four flags are all-or-none:
+`--xmr-effect-authority-file`, `--xmr-effect-manifest-file`,
+`--xmr-workflow-journal`, and `--xmr-run-id`; the existing
+`--xmr-acceptance-receipt` output becomes a new schema-v2 receipt. The writer
+publishes a no-clobber schema-v3 manifest and initialized role-local workflow
+journal, and the selector later revalidates the receipt, schema-v3 manifest,
+immutable effect authority, workflow identity, and legacy application
+authority under both owner locks. Legacy receipt v1 remains monitor-only.
+
+`lez-taker monitor --receipt /absolute/private/acceptance-receipt-v2.json`
+returns schema 2 with the bound run ID and `effect_authority:"validated"`.
+It reads private authority files but contacts neither chain. The authority
+contains literal-loopback LEZ and Monero URLs, credential-file paths,
+runtime/capability paths, and role-fixed program/hash/ABI slots; at this
+checkpoint those values are canonical syntax and identity commitments only.
+The monitor does not open the URLs, read RPC credentials, invoke tools, or
+check the at-use executable/capability hashes.
+
+XMR Taker `claim` and `refund` still fail closed before any effect with
+`XMR Taker claim and refund effect execution is not yet composed`. The
+process fixture uses deterministic private files and no node, Docker service,
+faucet, DNS, public RPC, peer, or funds. Its only live transports are isolated
+run-local Maker Unix sockets; chain endpoint strings need no listener and
+cannot collide. Exact flags, outputs, private-file inventory, and cold-build,
+hashing, lock-contention, and host-scheduling flakiness notes are maintained in
+[Flow 1T](docs/manual-user-flows.md#flow-1t-monitor-an-accepted-xmr-application-as-the-taker).
+
 That first checkpoint is deliberately zero-effect: it starts no Monero or LEZ
 node, opens no chain RPC, and uses no Docker service, faucet, DNS, network, or
 funds. [Flow 1P](docs/manual-user-flows.md#flow-1p-repeat-the-xmr-role-process-pre-effect-checkpoint)
