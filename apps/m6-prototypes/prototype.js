@@ -3,7 +3,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let toastTimer;
 function toast(message) { const node = $("#toast"); if (!node) return; node.textContent = message; node.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.classList.remove("show"), 2400); }
-function showView(id) { $$(".app-view").forEach((view) => view.classList.toggle("active", view.id === id)); $$("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === id)); const view = document.getElementById(id); const heading = view?.querySelector("h1"); if (heading) heading.focus?.({ preventScroll: true }); window.scrollTo({ top: 0, behavior: "smooth" }); }
+function showView(id) { $$(".app-view").forEach((view) => view.classList.toggle("active", view.id === id)); $$("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === id)); const view = document.getElementById(id); const heading = view?.querySelector("h1"); if (heading) heading.focus?.({ preventScroll: true }); window.scrollTo({ top: 0, behavior: "auto" }); }
 $$('[data-view], [data-view-jump]').forEach((button) => button.addEventListener("click", () => showView(button.dataset.view || button.dataset.viewJump)));
 const makerSwaps = [
   { id:"ZEC-7F2A", pair:"LEZ / ZEC", state:"Awaiting confirmation", status:"wait", progress:"1 / 2 confirmations", amount:"1,820 LEZ → 2.00 ZEC", action:"Claim" },

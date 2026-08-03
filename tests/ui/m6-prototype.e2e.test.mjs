@@ -208,7 +208,10 @@ async function text(page, selector) {
 }
 
 async function replaceInput(page, selector, value) {
-  await page.click(selector, { clickCount: 3 });
+  await page.click(selector);
+  await page.keyboard.down("Control");
+  await page.keyboard.press("A");
+  await page.keyboard.up("Control");
   await page.keyboard.type(value);
 }
 
