@@ -221,6 +221,14 @@ fn action_admission_is_generation_fenced_and_exactly_replays_after_restart() {
     drop(registry);
 
     let mut reopened = SqliteTakerFacadeStore::open_existing(&database).unwrap();
+    let overlay = reopened
+        .lookup_action_for_swap(facts.swap_id())
+        .unwrap()
+        .expect("the swap retains its one terminal authorization");
+    assert_eq!(overlay.swap_id(), facts.swap_id());
+    assert_eq!(overlay.action(), TakerFacadeActionV1::Claim);
+    assert_eq!(overlay.requested_after_generation(), 4);
+    assert!(overlay.was_replay());
     let lookup = reopened
         .lookup_exact_action(
             &action_request,
@@ -263,17 +271,16 @@ fn action_admission_is_generation_fenced_and_exactly_replays_after_restart() {
         Err(TakerFacadeStoreError::ActionGenerationConflict)
     );
 
-    let next = reopened
-        .admit_action(
+    assert_eq!(
+        reopened.admit_action(
             &request("m6-action-next-generation"),
             facts.swap_id(),
             TakerFacadeActionV1::Refund,
             5,
             1_003,
-        )
-        .unwrap();
-    assert_eq!(next.requested_after_generation(), 5);
-    assert!(!next.was_replay());
+        ),
+        Err(TakerFacadeStoreError::ActionGenerationConflict)
+    );
 }
 
 #[test]
@@ -283,6 +290,7 @@ fn action_admission_requires_a_parent_swap_and_does_not_consume_failed_request_i
     let mut registry = SqliteTakerFacadeStore::create_new(&database).unwrap();
     let action_request = request("m6-action-reusable");
     let missing = SwapId::new("m6-action-missing").unwrap();
+    assert_eq!(registry.lookup_action_for_swap(&missing).unwrap(), None);
     assert_eq!(
         registry.admit_action(
             &action_request,
@@ -303,6 +311,10 @@ fn action_admission_requires_a_parent_swap_and_does_not_consume_failed_request_i
             1_001,
         )
         .unwrap();
+    assert_eq!(
+        registry.lookup_action_for_swap(facts.swap_id()).unwrap(),
+        None
+    );
     assert!(
         !registry
             .admit_action(
@@ -318,20 +330,20 @@ fn action_admission_requires_a_parent_swap_and_does_not_consume_failed_request_i
 }
 
 #[test]
-fn concurrent_exact_action_converges_and_competing_generation_has_one_winner() {
+fn concurrent_exact_action_converges_to_one_admission_and_one_replay() {
     let root = private_root();
     let database = root.path().join("action-concurrency.sqlite3");
-    let facts = make_facts(
-        "m6-action-concurrent-swap",
-        "m6-action-concurrent-offer",
+    let exact_facts = make_facts(
+        "m6-action-concurrent-exact-swap",
+        "m6-action-concurrent-exact-offer",
         79,
     );
     let mut first = SqliteTakerFacadeStore::create_new(&database).unwrap();
     first
         .admit_initiation(
-            &request("m6-action-concurrent-initiation"),
-            &facts,
-            &make_authority(root.path(), "action-concurrent", 79),
+            &request("m6-action-concurrent-exact-initiation"),
+            &exact_facts,
+            &make_authority(root.path(), "action-concurrent-exact", 79),
             1_000,
         )
         .unwrap();
@@ -341,7 +353,7 @@ fn concurrent_exact_action_converges_and_competing_generation_has_one_winner() {
     let handles = [first, second].map(|mut registry| {
         let barrier = Arc::clone(&barrier);
         let request = exact_request.clone();
-        let swap_id = facts.swap_id().clone();
+        let swap_id = exact_facts.swap_id().clone();
         thread::spawn(move || {
             barrier.wait();
             registry.admit_action(&request, &swap_id, TakerFacadeActionV1::Claim, 3, 1_001)
@@ -351,26 +363,48 @@ fn concurrent_exact_action_converges_and_competing_generation_has_one_winner() {
     exact.sort_unstable_by_key(TakerActionAdmissionV1::was_replay);
     assert!(!exact[0].was_replay());
     assert!(exact[1].was_replay());
+}
 
+#[test]
+fn concurrent_fresh_swap_has_one_irreversible_terminal_winner() {
+    let root = private_root();
+    let database = root.path().join("action-terminal-concurrency.sqlite3");
+    let fresh_facts = make_facts(
+        "m6-action-concurrent-fresh-swap",
+        "m6-action-concurrent-fresh-offer",
+        80,
+    );
+    let mut setup = SqliteTakerFacadeStore::create_new(&database).unwrap();
+    setup
+        .admit_initiation(
+            &request("m6-action-concurrent-fresh-initiation"),
+            &fresh_facts,
+            &make_authority(root.path(), "action-concurrent-fresh", 80),
+            1_002,
+        )
+        .unwrap();
+    drop(setup);
     let contenders = [
         (
             SqliteTakerFacadeStore::open_existing(&database).unwrap(),
             request("m6-action-concurrent-claim"),
             TakerFacadeActionV1::Claim,
+            4,
         ),
         (
             SqliteTakerFacadeStore::open_existing(&database).unwrap(),
             request("m6-action-concurrent-refund"),
             TakerFacadeActionV1::Refund,
+            5,
         ),
     ];
     let barrier = Arc::new(Barrier::new(2));
-    let handles = contenders.map(|(mut registry, request, action)| {
+    let handles = contenders.map(|(mut registry, request, action, generation)| {
         let barrier = Arc::clone(&barrier);
-        let swap_id = facts.swap_id().clone();
+        let swap_id = fresh_facts.swap_id().clone();
         thread::spawn(move || {
             barrier.wait();
-            let result = registry.admit_action(&request, &swap_id, action, 4, 1_002);
+            let result = registry.admit_action(&request, &swap_id, action, generation, 1_003);
             (request, action, result)
         })
     });
@@ -396,9 +430,39 @@ fn concurrent_exact_action_converges_and_competing_generation_has_one_winner() {
         .find(|(_, _, result)| result.is_err())
         .unwrap();
     let mut reopened = SqliteTakerFacadeStore::open_existing(&database).unwrap();
+    assert_eq!(
+        reopened.admit_action(
+            &loser_request,
+            fresh_facts.swap_id(),
+            loser_action,
+            99,
+            1_004,
+        ),
+        Err(TakerFacadeStoreError::ActionGenerationConflict)
+    );
+
+    let reusable_facts = make_facts(
+        "m6-action-concurrent-reusable-swap",
+        "m6-action-concurrent-reusable-offer",
+        81,
+    );
+    reopened
+        .admit_initiation(
+            &request("m6-action-concurrent-reusable-initiation"),
+            &reusable_facts,
+            &make_authority(root.path(), "action-concurrent-reusable", 81),
+            1_005,
+        )
+        .unwrap();
     assert!(
         !reopened
-            .admit_action(&loser_request, facts.swap_id(), loser_action, 5, 1_003,)
+            .admit_action(
+                &loser_request,
+                reusable_facts.swap_id(),
+                loser_action,
+                1,
+                1_006,
+            )
             .unwrap()
             .was_replay()
     );
@@ -463,7 +527,7 @@ fn action_request_ids_share_the_global_namespace_and_monitor_ignores_action_rows
 }
 
 #[test]
-fn duplicate_action_generation_and_drifted_payloads_fail_closed() {
+fn multiple_terminal_authorizations_at_distinct_generations_fail_closed() {
     let root = private_root();
     let database = root.path().join("action-corrupt.sqlite3");
     let facts = make_facts("m6-action-corrupt-swap", "m6-action-corrupt-offer", 82);
@@ -488,11 +552,11 @@ fn duplicate_action_generation_and_drifted_payloads_fail_closed() {
         .unwrap();
 
     let request_json = format!(
-        "{{\"schema_version\":1,\"swap_id\":\"{}\",\"expected_generation\":6}}",
+        "{{\"schema_version\":1,\"swap_id\":\"{}\",\"expected_generation\":7}}",
         facts.swap_id().as_str()
     );
     let result_json = format!(
-        "{{\"schema_version\":1,\"swap_id\":\"{}\",\"action\":\"refund\",\"requested_after_generation\":6}}",
+        "{{\"schema_version\":1,\"swap_id\":\"{}\",\"action\":\"refund\",\"requested_after_generation\":7}}",
         facts.swap_id().as_str()
     );
     let connection = Connection::open(&database).unwrap();

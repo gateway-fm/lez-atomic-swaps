@@ -89,8 +89,8 @@ pub enum TakerFacadeStoreError {
     /// The requested action has no durable parent swap.
     #[error("Taker registry swap is unavailable")]
     SwapUnavailable,
-    /// Another action is already bound to this swap generation.
-    #[error("Taker registry action generation conflicts with durable state")]
+    /// Another irreversible terminal action is already bound to this swap.
+    #[error("Taker registry terminal action conflicts with durable state")]
     ActionGenerationConflict,
     /// A bounded `SQLite` or serialization operation failed.
     #[error("Taker registry operation is unavailable")]
@@ -836,6 +836,51 @@ impl SqliteTakerFacadeStore {
         Ok(result)
     }
 
+    /// Returns the sole durable terminal authorization for one swap.
+    ///
+    /// This read is suitable for overlaying an in-progress authorization onto a
+    /// receipt-bound monitor projection. It returns no row for an unknown swap or
+    /// for an admitted swap that has no terminal authorization.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed parent state, multiple terminal authorizations, changed
+    /// storage identity, or unavailable storage.
+    pub fn lookup_action_for_swap(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Option<TakerActionAdmissionV1>, TakerFacadeStoreError> {
+        self.revalidate_storage()?;
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        match validate_action_parent(&transaction, swap_id) {
+            Err(TakerFacadeStoreError::SwapUnavailable) => {
+                transaction
+                    .commit()
+                    .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+                self.revalidate_storage()?;
+                return Ok(None);
+            }
+            result => result?,
+        }
+        let result = load_valid_action_rows(&transaction, swap_id)?
+            .into_iter()
+            .next()
+            .map(|stored| TakerActionAdmissionV1 {
+                swap_id: stored.swap_id,
+                action: stored.action,
+                requested_after_generation: stored.expected_generation,
+                was_replay: true,
+            });
+        transaction
+            .commit()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        self.revalidate_storage()?;
+        Ok(result)
+    }
+
     /// Atomically admits one generation-fenced action or exactly replays it.
     ///
     /// The transaction commits before any caller performs an effect. A caller
@@ -844,7 +889,7 @@ impl SqliteTakerFacadeStore {
     ///
     /// # Errors
     ///
-    /// Rejects request reuse, an unknown parent swap, an occupied generation,
+    /// Rejects request reuse, an unknown parent swap, an existing authorization,
     /// corrupt durable state, an invalid timestamp, or unavailable storage.
     pub fn admit_action(
         &mut self,
@@ -885,10 +930,7 @@ impl SqliteTakerFacadeStore {
         }
         validate_action_parent(&transaction, swap_id)?;
         let actions = load_valid_action_rows(&transaction, swap_id)?;
-        if actions
-            .iter()
-            .any(|row| row.expected_generation == expected_generation)
-        {
+        if !actions.is_empty() {
             return Err(TakerFacadeStoreError::ActionGenerationConflict);
         }
         let now = i64::try_from(now).map_err(|_| TakerFacadeStoreError::InvalidInput)?;
@@ -1201,15 +1243,12 @@ fn load_valid_action_rows(
     connection: &Connection,
     swap_id: &SwapId,
 ) -> Result<Vec<ValidatedTakerActionRow>, TakerFacadeStoreError> {
-    let mut generations = BTreeSet::new();
     let rows = query_action_rows(connection, swap_id)?
         .into_iter()
         .map(validate_action_row)
         .collect::<Result<Vec<_>, _>>()?;
-    for row in &rows {
-        if row.swap_id != *swap_id || !generations.insert(row.expected_generation) {
-            return Err(TakerFacadeStoreError::CorruptState);
-        }
+    if rows.len() > 1 || rows.iter().any(|row| row.swap_id != *swap_id) {
+        return Err(TakerFacadeStoreError::CorruptState);
     }
     Ok(rows)
 }
@@ -1649,7 +1688,7 @@ fn validate_request_records(
     drop(statement);
 
     let mut initiated_swaps = BTreeSet::new();
-    let mut action_generations = BTreeSet::new();
+    let mut action_swaps = BTreeSet::new();
     for row in requests {
         let public_json = public_by_swap
             .get(&row.swap_id)
@@ -1670,10 +1709,7 @@ fn validate_request_records(
             }
         } else {
             let action = validate_action_row(row)?;
-            if !action_generations.insert((
-                action.swap_id.as_str().to_owned(),
-                action.expected_generation,
-            )) {
+            if !action_swaps.insert(action.swap_id.as_str().to_owned()) {
                 return Err(TakerFacadeStoreError::CorruptState);
             }
         }
