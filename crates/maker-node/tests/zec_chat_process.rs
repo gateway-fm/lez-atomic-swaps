@@ -26,21 +26,23 @@ use lez_maker_node::{
     TakerSwapViewV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
     load_taker_service_context, taker_service_rpc_module,
 };
-use lez_swap_core::{Pair, SwapDirection, SwapId};
+use lez_swap_core::{Pair, Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
     LocalPriceV1, MakerActorHeldLock, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
     MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
-    MakerZecNegotiationStatus, SqliteSwapStore, SqliteTakerFacadeStore, maker_zec_chat_session_id,
+    MakerZecNegotiationStatus, SqliteSwapStore, SqliteTakerFacadeStore, SqliteZecRecoveryStore,
+    maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
-    Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
-    NegotiationTranscriptV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementDraftV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-    ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_swap_id_v1,
+    AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
+    LezEnvironmentV1, NegotiationTranscriptV1, ProtectedClaimKey, ZcashTransparentDestinationV1,
+    ZecAgreementBodyV1, ZecAgreementDraftV1, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
+use rusqlite::{Connection, params};
 use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
@@ -512,8 +514,146 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     .await;
     let final_recovered_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files)
         .expect("final recovered monitor artifacts");
-    let monitor_effects_absent =
+    let pre_activation_effects_absent =
         !monitor_config.role_state_db().exists() && !monitor_config.bridge_journal_db().exists();
+
+    activate_service_taker_without_chain(
+        &monitor_config,
+        &canonical_artifacts.agreement_bytes,
+        actor.agreement_basis_time,
+    )
+    .await;
+    let active_logical_before = active_taker_logical_state(monitor_config.role_state_db());
+    let active_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let active_list_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_list_v1",
+        json!([TakerSwapListRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    assert_eq!(
+        active_taker_logical_state(monitor_config.role_state_db()),
+        active_logical_before,
+        "active monitoring must not advance durable lifecycle state"
+    );
+
+    {
+        let connection = Connection::open(monitor_config.role_state_db()).unwrap();
+        connection
+            .execute(
+                "UPDATE zec_sdk_agreements SET payload_version = 99
+                 WHERE local_role = 'taker' AND swap_id = ?1",
+                params![monitor_config.swap_id().as_str()],
+            )
+            .unwrap();
+    }
+    let future_logical_before = active_taker_logical_state(monitor_config.role_state_db());
+    let future_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let future_list_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_list_v1",
+        json!([TakerSwapListRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    assert_eq!(
+        active_taker_logical_state(monitor_config.role_state_db()),
+        future_logical_before,
+        "future durable payload rejection must not rewrite actor state"
+    );
+    {
+        let connection = Connection::open(monitor_config.role_state_db()).unwrap();
+        connection
+            .execute(
+                "UPDATE zec_sdk_agreements SET payload_version = ?1
+                 WHERE local_role = 'taker' AND swap_id = ?2",
+                params![
+                    active_logical_before.payload_version,
+                    monitor_config.swap_id().as_str()
+                ],
+            )
+            .unwrap();
+    }
+    let future_recovered_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+
+    {
+        let connection = Connection::open(monitor_config.role_state_db()).unwrap();
+        connection
+            .execute(
+                "UPDATE zec_sdk_agreements SET agreement_wire = X'00'
+                 WHERE local_role = 'taker' AND swap_id = ?1",
+                params![monitor_config.swap_id().as_str()],
+            )
+            .unwrap();
+    }
+    let malformed_logical_before = active_taker_logical_state(monitor_config.role_state_db());
+    let malformed_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let malformed_list_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_list_v1",
+        json!([TakerSwapListRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    assert_eq!(
+        active_taker_logical_state(monitor_config.role_state_db()),
+        malformed_logical_before,
+        "malformed durable wire rejection must not rewrite actor state"
+    );
+    {
+        let connection = Connection::open(monitor_config.role_state_db()).unwrap();
+        connection
+            .execute(
+                "UPDATE zec_sdk_agreements SET agreement_wire = ?1
+                 WHERE local_role = 'taker' AND swap_id = ?2",
+                params![
+                    &active_logical_before.agreement_wire,
+                    monitor_config.swap_id().as_str()
+                ],
+            )
+            .unwrap();
+    }
+    let active_recovered_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let active_logical_after = active_taker_logical_state(monitor_config.role_state_db());
+    let active_bridge_absent = !monitor_config.bridge_journal_db().exists();
     let post_read_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files);
     drop(replay_module);
     fs::rename(&offline_chat, &chat_socket).unwrap();
@@ -573,6 +713,10 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         &corrupt_state_list_response,
         &missing_receipt_monitor_response,
         &missing_receipt_list_response,
+        &future_monitor_response,
+        &future_list_response,
+        &malformed_monitor_response,
+        &malformed_list_response,
     ] {
         assert_service_rpc_error(
             response,
@@ -594,6 +738,33 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     let final_recovered_list: TakerSwapListV1 =
         serde_json::from_value(final_recovered_list_response["result"].clone()).unwrap();
     assert_eq!(final_recovered_list.swaps, vec![first.swap.clone()]);
+
+    let mut expected_active = first.swap.clone();
+    expected_active.state = TakerSwapStateV1::AwaitingFirstLock;
+    expected_active.progress_generation = 0;
+    expected_active.available_action = None;
+    expected_active.privacy_guidance = None;
+    let active_monitor: TakerSwapViewV1 =
+        serde_json::from_value(active_monitor_response["result"].clone()).unwrap();
+    assert_eq!(active_monitor, expected_active);
+    let active_list: TakerSwapListV1 =
+        serde_json::from_value(active_list_response["result"].clone()).unwrap();
+    assert_eq!(active_list.swaps, vec![expected_active.clone()]);
+    let future_recovered: TakerSwapViewV1 =
+        serde_json::from_value(future_recovered_response["result"].clone()).unwrap();
+    assert_eq!(future_recovered, expected_active);
+    let active_recovered: TakerSwapViewV1 =
+        serde_json::from_value(active_recovered_response["result"].clone()).unwrap();
+    assert_eq!(active_recovered, expected_active);
+    assert_eq!(
+        active_logical_after, active_logical_before,
+        "restoring exact durable fields must recover the original active state"
+    );
+    assert!(
+        active_bridge_absent,
+        "offline active monitoring must not create an LEZ bridge journal"
+    );
+
     assert_service_responses_redacted(
         [
             &health_response,
@@ -626,6 +797,14 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
             &corrupt_state_list_response,
             &final_recovered_monitor_response,
             &final_recovered_list_response,
+            &active_monitor_response,
+            &active_list_response,
+            &future_monitor_response,
+            &future_list_response,
+            &future_recovered_response,
+            &malformed_monitor_response,
+            &malformed_list_response,
+            &active_recovered_response,
         ],
         run.path(),
         &reservation_id,
@@ -672,16 +851,16 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     );
     assert_private_receipt(&taker_files.receipt);
     assert!(
-        monitor_effects_absent,
-        "failed and recovered monitors must not create Taker chain effects"
+        pre_activation_effects_absent,
+        "admission and pre-activation monitoring must not create Taker chain effects"
     );
 
     let taker_config = ActorConfig::load_private(&first_artifacts.config_path).unwrap();
     assert_eq!(taker_config.role(), ActorRole::Taker);
     assert_eq!(taker_config.swap_id().as_str(), "m5-chat-swap-001");
     assert!(
-        !taker_config.role_state_db().exists(),
-        "admission must not start the Taker actor or create chain state"
+        taker_config.role_state_db().is_file(),
+        "the explicit no-RPC active-state fixture must retain its role database"
     );
     assert!(
         !taker_config.bridge_journal_db().exists(),
@@ -748,6 +927,71 @@ impl ServiceAcceptanceArtifacts {
             agreement_path,
         })
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ActiveTakerLogicalState {
+    payload_version: i64,
+    agreement_wire: Vec<u8>,
+    accepted_at: i64,
+    accepted_revision: i64,
+    active_revision: i64,
+    taker_agreement_rows: i64,
+}
+
+async fn activate_service_taker_without_chain(
+    config: &ActorConfig,
+    agreement_wire: &[u8],
+    accepted_at_unix_seconds: u64,
+) {
+    let accepted = AcceptedZecAgreementV1::accept_wire_at(
+        agreement_wire,
+        UnixSeconds::new(accepted_at_unix_seconds),
+        Participant::Taker,
+        0,
+    )
+    .expect("service agreement is valid at its deterministic fixture time");
+    let claim_key =
+        ProtectedClaimKey::new("m5-chat-taker-claim-v1", [0x7b; 32]).expect("fixture claim key");
+    let store = SqliteZecRecoveryStore::open_claim_capable(
+        config.role_state_db(),
+        Participant::Taker,
+        claim_key,
+    )
+    .expect("create exact Taker role-state store");
+    let sdk = ZecPairSdk::new(Participant::Taker, (), (), (), (), store);
+    let active = sdk
+        .activate(accepted)
+        .await
+        .expect("activate Taker using unit ports only");
+    assert_eq!(active.status(), Phase::Offered);
+    assert_eq!(active.revision(), 0);
+    assert_eq!(active.next_action(), ZecLifecycleAction::CreateAndFundLez);
+}
+
+fn active_taker_logical_state(path: &Path) -> ActiveTakerLogicalState {
+    let connection = Connection::open(path).expect("inspect active Taker state");
+    connection
+        .query_row(
+            "SELECT payload_version, agreement_wire, accepted_at,
+                    accepted_revision, active_revision,
+                    (SELECT COUNT(*) FROM zec_sdk_agreements
+                     WHERE local_role = 'taker')
+             FROM zec_sdk_agreements
+             WHERE local_role = 'taker' AND swap_id = 'm5-chat-swap-001'",
+            [],
+            |row| {
+                Ok(ActiveTakerLogicalState {
+                    payload_version: row.get(0)?,
+                    agreement_wire: row.get(1)?,
+                    accepted_at: row.get(2)?,
+                    accepted_revision: row.get(3)?,
+                    active_revision: row.get(4)?,
+                    taker_agreement_rows: row.get(5)?,
+                })
+            },
+        )
+        .expect("one exact active Taker agreement")
 }
 
 fn service_digest_binding(path: &Path) -> Value {
