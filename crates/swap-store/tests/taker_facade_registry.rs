@@ -163,6 +163,10 @@ fn initiation_is_atomic_and_exactly_replays_after_restart() {
         Some(facts.clone())
     );
     assert_eq!(
+        reopened.lookup_initiation_admitted_at(&request).unwrap(),
+        Some(1_000)
+    );
+    assert_eq!(
         reopened
             .lookup_initiation(&RequestId::new("m6-initiation-unknown").unwrap())
             .unwrap(),

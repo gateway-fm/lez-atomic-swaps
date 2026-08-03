@@ -625,6 +625,36 @@ impl SqliteTakerFacadeStore {
         Ok(Some(facts))
     }
 
+    /// Returns the original trusted admission timestamp for one initiation request.
+    ///
+    /// This timestamp is immutable and lets a restart revalidate already-accepted
+    /// agreement bytes at their original acceptance time rather than at the
+    /// current wall clock. Call this only after `lookup_initiation` returned facts.
+    ///
+    /// # Errors
+    ///
+    /// Rejects changed storage identity, malformed time, or unavailable storage.
+    pub fn lookup_initiation_admitted_at(
+        &self,
+        request_id: &RequestId,
+    ) -> Result<Option<u64>, TakerFacadeStoreError> {
+        self.revalidate_storage()?;
+        let admitted_at = self
+            .connection
+            .query_row(
+                "SELECT created_at FROM taker_facade_requests
+                 WHERE request_id = ?1 AND operation = 'initiate' AND state = 'admitted'",
+                [request_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?
+            .map(|value| u64::try_from(value).map_err(|_| TakerFacadeStoreError::CorruptState))
+            .transpose()?;
+        self.revalidate_storage()?;
+        Ok(admitted_at)
+    }
+
     fn open_connection(path: &Path, identity: FileIdentity) -> Result<Self, TakerFacadeStoreError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
