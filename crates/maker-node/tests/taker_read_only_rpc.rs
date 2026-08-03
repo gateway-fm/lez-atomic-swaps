@@ -78,6 +78,14 @@ async fn health_and_offer_list_use_the_real_authenticated_delivery_backend() {
     assert!(health.is_ready());
     assert_eq!(health.delivery(), TakerDependencyStateV1::Available);
     assert_eq!(health.chat(), TakerDependencyStateV1::Available);
+    let methods = health.registered_methods();
+    assert!(methods.health());
+    assert!(methods.offer_list());
+    assert!(!methods.swap_list());
+    assert!(!methods.initiate());
+    assert!(!methods.monitor());
+    assert!(!methods.claim());
+    assert!(!methods.refund());
 
     let listed: TakerOfferListV1 = module
         .call(

@@ -404,6 +404,78 @@ pub enum TakerTerminalActionCapabilityV1 {
     EffectCheckpointOnly,
 }
 
+/// Exact JSON-RPC methods registered by the current Taker service.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct TakerRegisteredMethodsV1 {
+    health: bool,
+    offer_list: bool,
+    swap_list: bool,
+    initiate: bool,
+    monitor: bool,
+    claim: bool,
+    refund: bool,
+}
+
+impl TakerRegisteredMethodsV1 {
+    /// Returns the honest method set of the current read-only service.
+    #[must_use]
+    pub const fn read_only() -> Self {
+        Self {
+            health: true,
+            offer_list: true,
+            swap_list: false,
+            initiate: false,
+            monitor: false,
+            claim: false,
+            refund: false,
+        }
+    }
+
+    /// Reports whether health is registered.
+    #[must_use]
+    pub const fn health(self) -> bool {
+        self.health
+    }
+
+    /// Reports whether authenticated offer listing is registered.
+    #[must_use]
+    pub const fn offer_list(self) -> bool {
+        self.offer_list
+    }
+
+    /// Reports whether swap listing is registered.
+    #[must_use]
+    pub const fn swap_list(self) -> bool {
+        self.swap_list
+    }
+
+    /// Reports whether initiation is registered.
+    #[must_use]
+    pub const fn initiate(self) -> bool {
+        self.initiate
+    }
+
+    /// Reports whether monitoring is registered.
+    #[must_use]
+    pub const fn monitor(self) -> bool {
+        self.monitor
+    }
+
+    /// Reports whether claim is registered.
+    #[must_use]
+    pub const fn claim(self) -> bool {
+        self.claim
+    }
+
+    /// Reports whether refund is registered.
+    #[must_use]
+    pub const fn refund(self) -> bool {
+        self.refund
+    }
+}
+
 /// Current role-fixed capability of one supported pair.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -509,6 +581,7 @@ pub struct TakerHealthV1 {
     delivery: TakerDependencyStateV1,
     chat: TakerDependencyStateV1,
     pair_capabilities: [TakerPairCapabilityV1; 3],
+    registered_methods: TakerRegisteredMethodsV1,
 }
 
 impl TakerHealthV1 {
@@ -527,6 +600,7 @@ impl TakerHealthV1 {
             delivery,
             chat,
             pair_capabilities: taker_pair_capabilities_v1(),
+            registered_methods: TakerRegisteredMethodsV1::read_only(),
         }
     }
 
@@ -558,6 +632,12 @@ impl TakerHealthV1 {
     #[must_use]
     pub const fn chat(&self) -> TakerDependencyStateV1 {
         self.chat
+    }
+
+    /// Returns the exact JSON-RPC methods registered by this service.
+    #[must_use]
+    pub const fn registered_methods(&self) -> TakerRegisteredMethodsV1 {
+        self.registered_methods
     }
 
     /// Returns all current pair capabilities in stable order.

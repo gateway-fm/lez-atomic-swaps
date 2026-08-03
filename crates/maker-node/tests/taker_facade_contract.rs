@@ -133,6 +133,14 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
         TakerDependencyStateV1::Available,
         TakerDependencyStateV1::Unavailable,
     );
+    let methods = health.registered_methods();
+    assert!(methods.health());
+    assert!(methods.offer_list());
+    assert!(!methods.swap_list());
+    assert!(!methods.initiate());
+    assert!(!methods.monitor());
+    assert!(!methods.claim());
+    assert!(!methods.refund());
     let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
     let swap = TakerSwapViewV1 {
         schema_version: 1,

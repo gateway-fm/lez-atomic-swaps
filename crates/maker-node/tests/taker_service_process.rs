@@ -44,6 +44,14 @@ async fn owner_service_serves_only_read_methods_and_cleans_exact_socket_on_sigte
     assert!(health.is_ready());
     assert_eq!(health.delivery(), TakerDependencyStateV1::Disabled);
     assert_eq!(health.chat(), TakerDependencyStateV1::Disabled);
+    let methods = health.registered_methods();
+    assert!(methods.health());
+    assert!(methods.offer_list());
+    assert!(!methods.swap_list());
+    assert!(!methods.initiate());
+    assert!(!methods.monitor());
+    assert!(!methods.claim());
+    assert!(!methods.refund());
 
     let offers: TakerOfferListV1 = call_local_rpc(
         &socket,
