@@ -167,13 +167,13 @@ fn register_terminal_methods(
             request
                 .validate_schema_version()
                 .map_err(|_| map_action_error(ActionError::UnsupportedSchemaVersion))?;
-            terminal_action(
+            Box::pin(terminal_action(
                 state,
                 request.request_id,
                 request.swap_id,
                 request.expected_generation,
                 TakerTerminalActionV1::Claim,
-            )
+            ))
             .await
             .map_err(map_action_error)
         }
@@ -189,13 +189,13 @@ fn register_terminal_methods(
             request
                 .validate_schema_version()
                 .map_err(|_| map_action_error(ActionError::UnsupportedSchemaVersion))?;
-            terminal_action(
+            Box::pin(terminal_action(
                 state,
                 request.request_id,
                 request.swap_id,
                 request.expected_generation,
                 TakerTerminalActionV1::Refund,
-            )
+            ))
             .await
             .map_err(map_action_error)
         }
@@ -243,9 +243,15 @@ async fn terminal_action(
     if let Some(admission) = replay {
         if replay_actor_effect_is_required(&config, &held_lock, action, expected_generation).await?
         {
-            execute_terminal_actor_command(&config, &held_lock, action).await?;
+            let effect_config =
+                reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock)
+                    .await?;
+            execute_terminal_actor_command(&effect_config, &held_lock, action).await?;
+            revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock)
+                .await?;
+        } else {
+            revalidate_action_custody(&prepared, receipt_binding, &config, &held_lock).await?;
         }
-        revalidate_action_custody(&prepared, receipt_binding, &config, &held_lock).await?;
         return Ok(action_commit(&admission));
     }
 
@@ -287,8 +293,12 @@ async fn terminal_action(
         admitted_at,
     )
     .await?;
-    execute_terminal_actor_command(&config, &held_lock, action).await?;
-    revalidate_action_custody(&prepared, receipt_binding, &config, &held_lock).await?;
+    // Actor status replay can legitimately update SQLite metadata. Refresh the
+    // receipt-bound file identities under the still-held swap lock before secrets.
+    let effect_config =
+        reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock).await?;
+    execute_terminal_actor_command(&effect_config, &held_lock, action).await?;
+    revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock).await?;
     Ok(action_commit(&admission))
 }
 
@@ -373,12 +383,12 @@ async fn load_bound_action_actor(
     .map_err(|_| ActionError::DependencyUnavailable)?
 }
 
-async fn revalidate_action_custody(
+async fn reload_action_actor_custody(
     prepared: &PreparedZecTakerInitiationV1,
     receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
     config: &ActorConfig,
     held_lock: &MakerActorHeldLock,
-) -> Result<(), ActionError> {
+) -> Result<ActorConfig, ActionError> {
     let receipt = prepared.execution().receipt_output().to_path_buf();
     let actor_root = prepared.execution().actor_root().to_path_buf();
     let swap_id = prepared.swap_id().clone();
@@ -406,7 +416,19 @@ async fn revalidate_action_custody(
     }
     held_lock
         .validate_for_state(config.swap_id(), config.role_state_db())
-        .map_err(|_| ActionError::DependencyUnavailable)
+        .map_err(|_| ActionError::DependencyUnavailable)?;
+    Ok(after)
+}
+
+async fn revalidate_action_custody(
+    prepared: &PreparedZecTakerInitiationV1,
+    receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
+    config: &ActorConfig,
+    held_lock: &MakerActorHeldLock,
+) -> Result<(), ActionError> {
+    reload_action_actor_custody(prepared, receipt_binding, config, held_lock)
+        .await
+        .map(|_| ())
 }
 
 async fn replay_actor_effect_is_required(
