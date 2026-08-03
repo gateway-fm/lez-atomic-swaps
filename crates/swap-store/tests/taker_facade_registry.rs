@@ -2,6 +2,8 @@ use std::{
     fs,
     os::unix::fs::{PermissionsExt as _, symlink},
     path::Path,
+    sync::{Arc, Barrier},
+    thread,
 };
 
 use lez_bridge_protocol::RequestId;
@@ -274,6 +276,128 @@ fn same_swap_conflict_rolls_back_the_losing_request() {
         .unwrap();
     assert!(!admitted.was_replay());
     assert_eq!(registry.list_initiations().unwrap().len(), 2);
+}
+
+#[test]
+fn concurrent_exact_initiation_converges_to_one_admission_and_one_replay() {
+    let root = private_root();
+    let database = root.path().join("concurrent-replay.sqlite3");
+    let first = SqliteTakerFacadeStore::create_new(&database).unwrap();
+    let second = SqliteTakerFacadeStore::open_existing(&database).unwrap();
+    let request = request("m6-concurrent-replay-request");
+    let facts = make_facts(
+        "m6-concurrent-replay-swap",
+        "m6-concurrent-replay-offer",
+        23,
+    );
+    let authority = make_authority(root.path(), "concurrent-replay", 23);
+    let barrier = Arc::new(Barrier::new(2));
+
+    let handles = [first, second].map(|mut registry| {
+        let barrier = Arc::clone(&barrier);
+        let request = request.clone();
+        let facts = facts.clone();
+        let authority = authority.clone();
+        thread::spawn(move || {
+            barrier.wait();
+            registry.admit_initiation(&request, &facts, &authority, 1_000)
+        })
+    });
+    let mut outcomes = handles.map(|handle| handle.join().unwrap().unwrap());
+    outcomes.sort_unstable_by_key(lez_swap_store::TakerInitiationAdmissionV1::was_replay);
+
+    assert!(!outcomes[0].was_replay());
+    assert!(outcomes[1].was_replay());
+    assert_eq!(outcomes[0].facts(), &facts);
+    assert_eq!(outcomes[1].facts(), &facts);
+    let reopened = SqliteTakerFacadeStore::open_existing(&database).unwrap();
+    assert_eq!(reopened.list_initiations().unwrap(), vec![facts]);
+}
+
+#[test]
+fn concurrent_same_swap_has_one_winner_and_restart_reusable_loser_request() {
+    let root = private_root();
+    let database = root.path().join("concurrent-conflict.sqlite3");
+    let first = SqliteTakerFacadeStore::create_new(&database).unwrap();
+    let second = SqliteTakerFacadeStore::open_existing(&database).unwrap();
+    let facts = make_facts(
+        "m6-concurrent-conflict-swap",
+        "m6-concurrent-conflict-offer",
+        24,
+    );
+    let contenders = [
+        (
+            first,
+            request("m6-concurrent-conflict-request-a"),
+            make_authority(root.path(), "concurrent-conflict-a", 24),
+        ),
+        (
+            second,
+            request("m6-concurrent-conflict-request-b"),
+            make_authority(root.path(), "concurrent-conflict-b", 34),
+        ),
+    ];
+    let barrier = Arc::new(Barrier::new(2));
+    let handles = contenders.map(|(mut registry, request, authority)| {
+        let barrier = Arc::clone(&barrier);
+        let facts = facts.clone();
+        thread::spawn(move || {
+            barrier.wait();
+            let outcome = registry.admit_initiation(&request, &facts, &authority, 1_000);
+            (request, authority, outcome)
+        })
+    });
+    let outcomes = handles.map(|handle| handle.join().unwrap());
+
+    let winner = outcomes
+        .iter()
+        .find(|(_, _, outcome)| outcome.is_ok())
+        .expect("one concurrent contender must win");
+    assert!(!winner.2.as_ref().unwrap().was_replay());
+    let loser = outcomes
+        .iter()
+        .find(|(_, _, outcome)| matches!(outcome, Err(TakerFacadeStoreError::SwapConflict)))
+        .expect("one concurrent contender must lose with a swap conflict");
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|(_, _, outcome)| outcome.is_ok())
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|(_, _, outcome)| {
+                matches!(outcome, Err(TakerFacadeStoreError::SwapConflict))
+            })
+            .count(),
+        1
+    );
+
+    let mut reopened = SqliteTakerFacadeStore::open_existing(&database).unwrap();
+    assert_eq!(reopened.list_initiations().unwrap(), vec![facts]);
+    assert!(reopened.lookup_initiation(&winner.0).unwrap().is_some());
+    assert_eq!(reopened.lookup_initiation(&loser.0).unwrap(), None);
+    let replacement = make_facts(
+        "m6-concurrent-reused-swap",
+        "m6-concurrent-reused-offer",
+        25,
+    );
+    assert!(
+        !reopened
+            .admit_initiation(&loser.0, &replacement, &loser.1, 2_000)
+            .unwrap()
+            .was_replay()
+    );
+    drop(reopened);
+
+    let reopened = SqliteTakerFacadeStore::open_existing(&database).unwrap();
+    assert_eq!(reopened.list_initiations().unwrap().len(), 2);
+    assert_eq!(
+        reopened.lookup_initiation(&loser.0).unwrap(),
+        Some(replacement)
+    );
 }
 
 #[test]
