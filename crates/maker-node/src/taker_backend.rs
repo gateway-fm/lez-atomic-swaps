@@ -174,17 +174,47 @@ where
         &self,
         request: &TakerOfferListRequestV1,
     ) -> Result<TakerOfferListV1, TakerBackendError> {
-        validate_schema(request.validate_schema_version())?;
-        if request.route.is_some_and(|route| !supported_route(route)) {
-            return Err(TakerBackendError::UnsupportedRoute);
-        }
-        let now = self
-            .clock
+        let now = self.trusted_now_for_offer_list(request)?;
+        self.offer_list_at(request, now).await
+    }
+
+    /// Captures one trusted-time snapshot for a valid offer-list request.
+    ///
+    /// This lets an owner service reuse the exact discovery time for a subsequent
+    /// admission decision instead of sampling time twice. Schema and route are
+    /// checked before the injected clock is accessed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsupported schema or route, or unavailable trusted time.
+    pub fn trusted_now_for_offer_list(
+        &self,
+        request: &TakerOfferListRequestV1,
+    ) -> Result<u64, TakerBackendError> {
+        validate_offer_list_request(*request)?;
+        self.clock
             .now_unix_seconds()
-            .ok_or(TakerBackendError::TrustedTimeUnavailable)?;
+            .ok_or(TakerBackendError::TrustedTimeUnavailable)
+    }
+
+    /// Lists bounded, authenticated public offers at one trusted-time snapshot.
+    ///
+    /// The caller is responsible for obtaining `now_unix_seconds` from a trusted
+    /// owner-controlled source. This method does not access the backend clock.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsupported schema or route, unavailable Delivery, conflicting
+    /// immutable offers, or a unique-result overflow.
+    pub async fn offer_list_at(
+        &self,
+        request: &TakerOfferListRequestV1,
+        now_unix_seconds: u64,
+    ) -> Result<TakerOfferListV1, TakerBackendError> {
+        validate_offer_list_request(*request)?;
         let query = request.route.map_or_else(
-            || DeliveryOfferQueryV1::all(now),
-            |route| DeliveryOfferQueryV1::for_route(route, now),
+            || DeliveryOfferQueryV1::all(now_unix_seconds),
+            |route| DeliveryOfferQueryV1::for_route(route, now_unix_seconds),
         );
         let mut unique = BTreeMap::<([u8; 33], Box<str>), TakerOfferViewV1>::new();
         for source in &self.delivery_sources {
@@ -227,6 +257,14 @@ fn supported_route(route: MakerRouteV1) -> bool {
             && capability.supported_direction() == route.direction()
             && capability.authenticated_offer_browsing()
     })
+}
+
+fn validate_offer_list_request(request: TakerOfferListRequestV1) -> Result<(), TakerBackendError> {
+    validate_schema(request.validate_schema_version())?;
+    if request.route.is_some_and(|route| !supported_route(route)) {
+        return Err(TakerBackendError::UnsupportedRoute);
+    }
+    Ok(())
 }
 
 fn validate_schema<T>(result: Result<(), T>) -> Result<(), TakerBackendError> {

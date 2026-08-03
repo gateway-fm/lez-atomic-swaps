@@ -1,6 +1,12 @@
 //! Direct tests for the transport-free, read-only Taker facade backend.
 
-use std::fs;
+use std::{
+    fs,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use lez_bridge_protocol::RequestId;
 pub use lez_maker_node::{
@@ -26,6 +32,18 @@ struct FixedClock(Option<u64>);
 impl TakerTrustedTimeSource for FixedClock {
     fn now_unix_seconds(&self) -> Option<u64> {
         self.0
+    }
+}
+
+struct CountingClock {
+    now: Option<u64>,
+    calls: Arc<AtomicUsize>,
+}
+
+impl TakerTrustedTimeSource for CountingClock {
+    fn now_unix_seconds(&self) -> Option<u64> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.now
     }
 }
 
@@ -131,6 +149,96 @@ async fn schema_and_route_validation_fail_before_dependency_access() {
             .await,
         Err(TakerBackendError::TrustedTimeUnavailable)
     );
+}
+
+#[tokio::test]
+async fn offer_list_samples_trusted_time_exactly_once() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let backend = TakerFacadeBackend::new(
+        Vec::new(),
+        CountingClock {
+            now: Some(NOW),
+            calls: Arc::clone(&calls),
+        },
+        None::<FixedProbe>,
+        16,
+    )
+    .unwrap();
+
+    assert_eq!(
+        backend.trusted_now_for_offer_list(&TakerOfferListRequestV1 {
+            schema_version: 2,
+            route: None,
+        }),
+        Err(TakerBackendError::UnsupportedSchemaVersion)
+    );
+    assert_eq!(
+        backend.trusted_now_for_offer_list(&TakerOfferListRequestV1 {
+            schema_version: 1,
+            route: Some(MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsLez,).unwrap()),
+        }),
+        Err(TakerBackendError::UnsupportedRoute)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    backend
+        .offer_list(&TakerOfferListRequestV1 {
+            schema_version: 1,
+            route: Some(zec_route()),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn offer_list_at_uses_the_explicit_expiry_boundary_without_reading_clock() {
+    let run = tempdir().unwrap();
+    let delivery_root = run.path().join("delivery");
+    let key = signing_key(12);
+    let maker = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key);
+    let publisher = RunLocalDelivery::publisher(&delivery_root, key).unwrap();
+    let expected = offer("m6-expiry-boundary-001", zec_route(), 5);
+    let expires_at = expected.expires_at_unix_seconds();
+    publisher
+        .publish(lez_maker_node::DeliveryPublicationV1::new(expected, 1_000))
+        .await
+        .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let backend = TakerFacadeBackend::new(
+        vec![RunLocalDelivery::subscriber(&delivery_root, maker).unwrap()],
+        CountingClock {
+            now: None,
+            calls: Arc::clone(&calls),
+        },
+        None::<FixedProbe>,
+        16,
+    )
+    .unwrap();
+    let request = TakerOfferListRequestV1 {
+        schema_version: 1,
+        route: Some(zec_route()),
+    };
+
+    assert_eq!(
+        backend
+            .offer_list_at(&request, expires_at - 1)
+            .await
+            .unwrap()
+            .offers
+            .len(),
+        1
+    );
+    assert!(
+        backend
+            .offer_list_at(&request, expires_at)
+            .await
+            .unwrap()
+            .offers
+            .is_empty()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
