@@ -5734,6 +5734,25 @@ The focused runner contract progressed RED before the two budgets and GREEN
 after explicit Refund and Claim action wiring. Fresh actual-node Refund proof
 is next, followed by post-terminal no-effect replay and a Claim regression run.
 
+## M6 durable terminal-conflict checkpoint (2026-08-03)
+
+Fresh run `m6refund538c629a` returned the first durable Refund service commit
+after the timeout correction, proving that the 40-second outer budget worked,
+but its deliberate opposite Claim check returned action-unavailable. The actor
+was correctly advertising only Refund; the service had consulted that transient
+availability before the registry's already durable Refund winner. The run is
+quarantined and its swap and funds will not be reused.
+
+ADR 0140 now gives exact replay first precedence, followed by any sole durable
+terminal winner, then actor generation/action availability, and finally atomic
+new admission. A competing winner between the read and atomic admission maps to
+the same fixed action-conflict result. New actions are still never admitted
+before actor validation.
+
+The process regression progressed RED at `-32016` to GREEN at `-32017`, proves
+the losing request creates no second action row, and retains the original Claim
+row byte-for-byte. The atomic race mapping unit regression and the broader 25
+library plus two ZEC Chat process tests are GREEN. Fresh Refund replay is next.
 Next in order:
 
 1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund

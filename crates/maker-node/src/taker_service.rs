@@ -254,6 +254,12 @@ async fn terminal_action(
         }
         return Ok(action_commit(&admission));
     }
+    if lookup_admitted_action_for_swap(&initiation, &swap_id)
+        .await?
+        .is_some()
+    {
+        return Err(ActionError::Conflict);
+    }
 
     let output = execute_actor_command(&config, ActorCommand::Status)
         .await
@@ -504,6 +510,25 @@ async fn lookup_action_replay(
     .map_err(|_| ActionError::RegistryUnavailable)?
 }
 
+async fn lookup_admitted_action_for_swap(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    swap_id: &SwapId,
+) -> Result<Option<TakerActionAdmissionV1>, ActionError> {
+    let context = Arc::clone(initiation);
+    let swap_id = swap_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = context
+            .lock()
+            .map_err(|_| ActionError::RegistryUnavailable)?;
+        context
+            .registry_mut()
+            .lookup_action_for_swap(&swap_id)
+            .map_err(map_action_store_error)
+    })
+    .await
+    .map_err(|_| ActionError::RegistryUnavailable)?
+}
+
 async fn admit_terminal_action(
     initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     request_id: &RequestId,
@@ -576,8 +601,8 @@ fn action_commit(admission: &TakerActionAdmissionV1) -> TakerActionCommitV1 {
 
 fn map_action_store_error(error: TakerFacadeStoreError) -> ActionError {
     match error {
-        TakerFacadeStoreError::RequestConflict => ActionError::Conflict,
-        TakerFacadeStoreError::ActionGenerationConflict => ActionError::Unavailable,
+        TakerFacadeStoreError::RequestConflict
+        | TakerFacadeStoreError::ActionGenerationConflict => ActionError::Conflict,
         TakerFacadeStoreError::SwapUnavailable => ActionError::NotFound,
         TakerFacadeStoreError::SwapConflict
         | TakerFacadeStoreError::DatabaseUnavailable
@@ -1028,6 +1053,14 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn concurrent_terminal_winner_maps_to_action_conflict() {
+        assert!(matches!(
+            map_action_store_error(TakerFacadeStoreError::ActionGenerationConflict),
+            ActionError::Conflict
+        ));
     }
 }
 

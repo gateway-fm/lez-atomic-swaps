@@ -145,6 +145,15 @@ capped by the unchanged monotonic corridor deadline. That effect-bearing run is
 quarantined; a new fresh-chain Refund replay remains required before the happy
 path is certified.
 
+A following fresh run returned the durable Refund commit within that budget,
+but its deliberate opposite Claim check exposed transient actor availability
+before the already durable terminal winner. ADR
+[0140](docs/architecture/0140-prefer-durable-terminal-conflicts.md) now resolves
+exact replay and any existing Claim/Refund winner before actor availability,
+while SQLite admission remains the final one-winner authority. Process and race
+regressions are GREEN; the effect-bearing discovery run is quarantined and a
+fresh Refund certificate is still pending.
+
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ
 artifacts, and export their exact dynamic loopback endpoints, chain identities,

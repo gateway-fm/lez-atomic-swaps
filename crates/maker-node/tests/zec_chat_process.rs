@@ -60,6 +60,7 @@ const CLAIM_PREIMAGE: [u8; 32] = [0x44; 32];
 const TAKER_DEPENDENCY_UNAVAILABLE: i64 = -32_010;
 const TAKER_SWAP_NOT_FOUND: i64 = -32_014;
 const TAKER_ACTION_UNAVAILABLE: i64 = -32_016;
+const TAKER_ACTION_CONFLICT: i64 = -32_017;
 
 #[tokio::test]
 async fn separate_taker_countersigns_and_maker_atomically_accepts_before_response() {
@@ -707,6 +708,41 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         .unwrap();
     assert!(!admitted_claim.was_replay());
     drop(action_registry);
+    let conflicting_refund_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_refund_v1",
+        json!([TakerRefundRequestV1 {
+            schema_version: 1,
+            request_id: RequestId::new("m6-monitor-conflicting-refund").unwrap(),
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+            expected_generation: 0,
+        }]),
+    )
+    .await;
+    assert_service_rpc_error(
+        &conflicting_refund_response,
+        TAKER_ACTION_CONFLICT,
+        "Taker action conflict",
+        "taker_action_conflict",
+    );
+    let retained_action_rows: Vec<(String, String)> = Connection::open(&registry)
+        .unwrap()
+        .prepare(
+            "SELECT request_id, operation FROM taker_facade_requests
+             WHERE operation IN ('claim', 'refund') ORDER BY request_id",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        retained_action_rows,
+        vec![(
+            admitted_claim_request.as_str().to_owned(),
+            "claim".to_owned()
+        )]
+    );
     let in_progress_monitor_response = service_rpc_response(
         &replay_module,
         "taker_swap_monitor_v1",
