@@ -927,7 +927,7 @@ fn parse_transaction_state(
         value.confirmations,
         value.in_active_chain,
     ) {
-        (None, None, None, None) | (None, None, Some(0), None | Some(false)) => {
+        (None, None, None | Some(0), None | Some(false)) => {
             Ok(ZebraTransactionState::Mempool { raw_transaction })
         }
         (Some(height), Some(block_hash), Some(confirmations), Some(in_active_chain))
@@ -1426,7 +1426,7 @@ mod tests {
     }
 
     #[test]
-    fn verbose_state_rejects_every_partial_confirmation_shape() {
+    fn verbose_state_rejects_partial_and_accepts_mempool_shapes() {
         let partial = [
             (Some(90), None, Some(11), Some(true)),
             (None, Some(HASH.to_owned()), Some(11), Some(true)),
@@ -1455,6 +1455,13 @@ mod tests {
                 blockhash: None,
                 confirmations: None,
                 in_active_chain: None,
+            },
+            VerboseRawTransactionDto {
+                hex: "0500".to_owned(),
+                height: None,
+                blockhash: None,
+                confirmations: None,
+                in_active_chain: Some(false),
             },
             VerboseRawTransactionDto {
                 hex: "0500".to_owned(),
