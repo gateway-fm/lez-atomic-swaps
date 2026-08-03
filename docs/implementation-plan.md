@@ -5324,3 +5324,37 @@ GREEN. Tag `m5-poc-complete` binds this verified closure. Semantic receipt-v2 XM
 simultaneous accepted-application actual-chain composite move to
 post-PoC QA/chaos/infosec/production hardening under the progressive-JPEG
 policy. Public deployment remains deferred. No production-ready claim is made.
+
+## M6 active work package: Maker and Taker Basecamp mini-apps
+
+Entered: 2026-08-03 after verified tag `m5-poc-complete`. Authority is the
+current RFP-003 plus accepted replacement proposal issue #112. The literal M6
+outputs are:
+
+1. signed-off clickable HTML prototypes for both role journeys;
+2. a Maker mini-app for pair and price configuration, active monitoring, and
+   history;
+3. a Taker mini-app for offer browsing, initiation, progress, terminal action,
+   and ZEC shield-after-swap guidance; and
+4. a Basecamp-loadable repository with assets and reproducible local-build
+   instructions.
+
+ADR 0128 governs the implementation. The accepted proposal TypeScript UI
+assumption has been superseded by the current official Basecamp 0.2.0
+`ui_qml` package shape. The implementation will pin the official tutorial
+contract verified at commit `bfc34c451c08da9f78072dd825756a1e071a051d` and
+will keep role authority outside the view layer.
+
+Progressive order:
+
+- build deterministic local HTML prototypes with no external runtime calls;
+- rehearse both user journeys and record owner sign-off;
+- build two current-QML packages with pinned, reproducible definitions;
+- bind Maker UI actions to the owner Unix RPC and Taker actions to a typed,
+  role-fixed lifecycle facade;
+- add actor-real UI E2E, builds, CI gates, manual-flow documentation, assets,
+  external-resource/flakiness notes, and final milestone evidence.
+
+The first M6 slice is the visibly clickable happy path. Red-green-refactor,
+chaos, infosec, and production hardening follow the reproducible PoC rather
+than delaying it.

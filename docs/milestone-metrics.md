@@ -1,6 +1,6 @@
 # Milestone delivery metrics
 
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 This is the live evidence scorecard for ADR 0027's progressive milestone
 delivery. It tracks measurements and explicit unknowns; it does not infer a
@@ -23,8 +23,8 @@ Status vocabulary:
 | M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
 | M3 | Certified local-functional PoC | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | `m3-complete` at `f7fb250` | Owner entered M3 on 2026-07-14 and directed completion. The exact commit and tag are pushed; the private Actions API was unavailable and no remote-green claim is made. Cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
 | M4 | Certified progressive local-functional PoC | Exact clean replay `m4cert20260722an` completed the LEZ-first claim through isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest, retained canonical cross-chain binding and exact cleanup, and was documented on the pushed tree | `m4-poc-complete.2` | Owner entered M5 on 2026-07-23; deferred M4 hardening and production scope remain explicit |
-| M5 | Progressive local-functional PoC | Exact packet-bearing replay `m5app6c3bbbe20260724a` completed the ZEC application happy path. Exact pushed run `m5-btc-app-20260730-992b6d4-e` completed the BTC application corridor through Bitcoin Core 31.1 Regtest and LEZ v0.2 with both actors terminal, zero replay effects, and scoped cleanup. Exact pushed run `m5-xmr-app-20260730-2c6aec1-h` clean-certified the full XMR application claim corridor through official Monero 0.18.5.1 Regtest and LEZ v0.2. Exact pushed-commit run `m5xmrrefund45924caa` then completed the role-correct refund corridor through finalized tag 16, Maker extraction, confirmed Maker Monero sweep, conditional binding, and scoped cleanup. Exact pushed-commit run `m5zec432dapp1` at `432d1f7dabbb573b9642794155066e37ee95e75d` clean-certified the daemon-driven ZEC deadline/cutover output in 25,030 milliseconds. Literal output count is 4 of 7. The remaining outputs are Maker full supported-pair lifecycle, Taker full supported-pair lifecycle, and coordinator accepted-application actual-chain concurrency/restart/unavailable-XMR isolation | None | Owner entered M5 on 2026-07-23 |
-| M6 | Not active | Awaiting owner transition | None | Not requested |
+| M5 | Verified local-functional PoC | All seven literal outputs are reproducibly GREEN. Retained actual-node BTC, XMR, and ZEC application corridors are deliberately layered with the final role-lifecycle and coordinator control-plane matrices; marker evidence is never presented as fresh chain evidence | `m5-poc-complete` at `8586cce` | Owner entered M6 on 2026-08-03; public deployment, semantic receipt-v2 XMR workers, simultaneous actual-chain composition, and production hardening remain explicit later work |
+| M6 | Active progressive local-functional PoC | Current-authority audit complete; clickable role prototypes and current Basecamp 0.2.0 QML packaging are the active implementation slice under ADR 0128 | None | Owner directed M6 entry on 2026-08-03 |
 | M7 | Not active | Awaiting owner transition | None | Not requested |
 
 M5 schema-v3 checkpoint (2026-08-02): canonical role-fixed effect authority,
@@ -185,10 +185,11 @@ superseded byte-identical volatile cost diff. This remains historical context;
 the later ZEC daemon certification moves M5 to 4 of 7 with an 8 to 16
 focused-implementation-hour closure ETA.
 
-## M5 PoC scorecard
+## Historical M5 in-progress scorecard
 
-Status: active progressive local-PoC; scope frozen, 4 of 7 literal outputs
-component-certified.
+Status: superseded by the verified 7/7 closure checkpoint at the end of this
+document and tag `m5-poc-complete`. The measurements below preserve the
+historical path to closure and are not the current milestone state.
 
 | Metric | Current measurement | Evidence or next measurement point |
 |---|---|---|
