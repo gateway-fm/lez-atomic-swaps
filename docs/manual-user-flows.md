@@ -7149,3 +7149,156 @@ M5 accepted-application corridor sections of this guide with their isolated
 local nodes. A fresh simultaneous accepted-application actual-chain composite
 and semantic receipt-v2 XMR workers are post-PoC hardening, not part of this
 candidate claim.
+
+## Flow 1X: review the M6 clickable Maker and Taker prototypes
+
+Status: reproducible prototype review flow; **owner sign-off is not claimed**.
+Every displayed offer, balance, status, receipt, confirmation, request, and
+outcome is deterministic sample state. No control in these pages can contact a
+daemon, wallet, Delivery, Chat, or chain node.
+
+### Prerequisite and launch
+
+Use Node.js 24. No dependency install, package build, Docker image, chain data,
+wallet, credential, or environment file is required. From the repository root:
+
+```bash
+node apps/m6-prototypes/server.mjs
+```
+
+The server asks the kernel for an ephemeral loopback port and prints a unique
+URL in this form:
+
+```text
+M6 prototypes: http://127.0.0.1:EPHEMERAL_PORT/
+Sample state only; no runtime network or chain effects.
+```
+
+Open the exact printed URL in a browser. Do not substitute the literal
+`EPHEMERAL_PORT` placeholder. The landing page must show both **Maker operator**
+and **Taker user** cards plus the always-visible sample-state boundary.
+
+```mermaid
+sequenceDiagram
+    actor R as Reviewer
+    participant S as Ephemeral loopback server
+    participant M as Maker prototype
+    participant T as Taker prototype
+    R->>S: Open printed loopback URL
+    S-->>R: Static local HTML CSS JavaScript and SVG
+    R->>M: Configure sample route and inspect sample swaps
+    M-->>R: In-memory revision monitor history and intent feedback
+    R->>T: Browse initiate advance and choose terminal action
+    T-->>R: In-memory receipt progress terminal state and ZEC guidance
+    Note over M,T: No RPC node wallet Delivery Chat or chain effect
+```
+
+### Maker review
+
+1. Choose **Open Maker prototype**, then verify the amber
+   **Interactive prototype** banner says the data is sample-only and has no
+   daemon, wallet, or chain effects.
+2. Choose **Pair & price**. Select **LEZ / Zcash**, choose either explicit
+   direction, retain **Local price**, and set foreign units to `2` and LEZ units
+   to `1820`. Confirm the preview reads `2 ZEC = 1,820 LEZ`.
+3. Select **Review configuration**. The dialog must repeat the selected pair,
+   direction, and price and must say no daemon request is made. Select
+   **Confirm sample**. Expect the toast
+   `Sample route revision 9 confirmed in browser memory only.`
+4. Repeat step 2 with **Logos module** selected. It remains a sample C-API
+   projection; confirmation must have the same no-effect boundary.
+5. Choose **Active swaps**. Select both `ZEC-7F2A` and `BTC-3BD1` and verify the
+   detail projection changes pair, state, progress, amount, and next semantic
+   action without exposing a path, key, or evidence payload.
+6. Select **Advance sample state** once. The ZEC row deterministically changes
+   from `1 / 2 confirmations` to `2 / 2 confirmations` and `Claim available`.
+   Expect a toast that explicitly says no RPC was opened.
+7. In either active-swap detail, select **Request sample claim** and then
+   **Request sample refund**. Each must report an in-memory sample intent and no
+   daemon call. These mutually illustrative buttons do not authorize or execute
+   real competing actions.
+8. Choose **History**. Search for `XMR`, clear the search, filter
+   **Completed**, then filter **Refunded**. Verify the deterministic rows change
+   accordingly. Select **Preview sample export** and require the message that no
+   file was written.
+
+### Taker claim and ZEC shield-after-swap review
+
+1. Use **Switch to Taker prototype**, or return to the landing page and choose
+   **Open Taker prototype**. Verify the banner says the offers are samples and
+   that Delivery, Chat, wallet, and chain effects are absent.
+2. In **Browse offers**, retain **Receive BTC / XMR / ZEC** and select
+   **Review exact terms** on the ZEC offer showing `1,820 LEZ` sent and
+   `2.00 ZEC` received.
+3. Verify the review repeats the pair, direction, exact sample price, Maker
+   identity, recovery window, and offer ID. Check
+   **I reviewed this sample pair, direction, amount, and recovery window**;
+   **Initiate sample swap** must become enabled.
+4. Select **Initiate sample swap**, read the no-effect explanation, then select
+   **Create sample progress**. Expect a browser-memory sample-receipt message;
+   no negotiation or receipt file is created.
+5. On **Swap progress**, select **Advance deterministic sample** twice. The
+   timeline reaches **Terminal action available**, the confirmation display
+   reaches `2 / 2 sample`, and each toast states that no chain or wallet was
+   accessed.
+6. Select **Claim sample funds**, read the mutually exclusive sample-action
+   dialog, and select **Confirm sample claim**. Expect **Swap completed** and the
+   explicit statement `No funds moved.`
+7. In **Shield after the swap**, verify the warning says transparent-pool
+   amounts, scripts, addresses, and linkage are public. The three steps must say
+   to wait for wallet recognition, choose a controlled shielded address, and
+   review fees and confirmations before a separate shielding transaction.
+   Select **Mark guidance reviewed**. This records only in-page review state;
+   shielding is separate guidance, not a privacy property or effect of the
+   atomic swap.
+
+### Refund and pair-selection checks
+
+1. Select **Browse another sample offer**, repeat ZEC review and initiation,
+   advance the sample twice, select **Refund sample**, and confirm
+   **Confirm sample refund**. Expect **Swap refunded**, `No funds moved.`, and no
+   shield-after-swap card because no ZEC was received through the claim path.
+2. Return to **Browse offers**, enter `BTC` in **Filter sample offers**, open
+   its terms, and verify `LEZ / BTC`, `0.005 BTC`, the sample Maker identity,
+   and the exact BTC rate remain consistent.
+3. Return and filter `XMR`; verify `LEZ / XMR`, `1.00 XMR`, its distinct
+   Maker identity, and its exact XMR rate. No BTC or XMR selection may reuse the
+   ZEC icon, pair, identity, amount, or shield-after-swap guidance.
+4. Toggle **Receive LEZ** and verify the deterministic reverse ZEC offer appears
+   with `10.00 ZEC` sent and `9,100 LEZ` received. This is a display-direction
+   check only.
+
+### Expected outcome and sign-off checklist
+
+All state resets on page reload because the prototypes use no persistent browser
+storage. A successful review has no new file, socket beyond the HTTP listener,
+daemon request, offer, receipt, transaction, balance change, or chain evidence.
+
+- [ ] Both role cards and every required screen are reachable by mouse and
+  keyboard.
+- [ ] The prototype/sample boundary remains visible throughout both roles.
+- [ ] Maker pair/price, monitoring, history, and manual-intent journeys match
+  the wording and deterministic outcomes above.
+- [ ] Taker browse, initiation, progress, claim, refund, BTC/XMR selection, and
+  ZEC shield-after-swap guidance match the wording above.
+- [ ] Dialogs close with **Escape**, disabled initiation cannot be bypassed
+  before the review checkbox, and focus indicators remain visible.
+- [ ] Narrow and wide browser layouts remain readable without hiding an action
+  or changing sample semantics.
+- [ ] Reviewer comments and requested changes are recorded separately before
+  anyone claims owner sign-off.
+
+### External resources, isolation, and flakiness
+
+Runtime external resources are `[]`. The only listener is the run-unique
+ephemeral `127.0.0.1` HTTP server used to deliver checked-in static files to the
+local browser. The pages make no fetch, WebSocket, RPC, DNS, peer, analytics,
+font, CDN, faucet, node, wallet, public-network, or public-funds request. They
+use no Bitcoin, Monero, Zcash, or LEZ service and create no protocol evidence.
+
+There is no external-service flakiness. Possible local review failures are a
+missing Node.js 24 runtime, browser JavaScript disabled, local CPU pressure, or
+the browser being unable to connect to the printed ephemeral port. Restart the
+server to obtain a new URL; never replace the ephemeral bind with a shared fixed
+port during parallel work. Closing the server or browser discards all sample
+state and cannot affect a swap.

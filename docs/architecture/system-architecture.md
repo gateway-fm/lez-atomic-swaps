@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-07-30
+Status: Living target architecture — 2026-08-03
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -10,6 +10,119 @@ boundaries that may have partial live exercise but have not completed the shown
 end-to-end boundary. A test
 is called end to end only when it crosses the same process, RPC, persistence,
 role, and chain boundaries shown here.
+
+## M6 application surfaces and authority boundary
+
+The current M6 HTML surface is an executable review prototype, not an adapter
+to the swap system. Solid arrows in the first diagram are implemented today.
+Both role pages use deterministic browser-memory state and the loopback server
+serves only repository assets with a restrictive content-security policy. No
+solid arrow crosses from either page to a daemon, role store, transport, wallet,
+chain node, or public endpoint.
+
+```mermaid
+flowchart LR
+    Reviewer["Maker operator or Taker reviewer"]
+    Server["Run-local loopback HTTP server<br/>allowlisted static files and CSP"]
+    Landing["Role chooser"]
+    MakerHtml["Maker HTML prototype<br/>config monitor history intent"]
+    TakerHtml["Taker HTML prototype<br/>browse initiate progress terminal guidance"]
+    Sample["Deterministic in-memory sample state"]
+    Boundary["No RPC, Delivery, Chat, wallet,<br/>chain, storage, or fund effect"]
+
+    Reviewer --> Server
+    Server --> Landing
+    Landing --> MakerHtml
+    Landing --> TakerHtml
+    MakerHtml --> Sample
+    TakerHtml --> Sample
+    Sample --> Boundary
+```
+
+The production surface is planned as two independent Basecamp 0.2.0
+`ui_qml` packages. Dashed arrows below are M6 work that is not implemented.
+Basecamp loads each QML view in its own application surface and the generated
+Qt Remote Objects replica reaches a backend in a separate `ui-host` process.
+The Maker backend will translate an allowlisted, secret-free GUI contract to
+the existing owner-restricted Unix JSON-RPC. The Taker equivalent remains an
+explicitly **unimplemented** role-fixed facade; it must bind private receipt and
+role state without exposing paths, keys, generic process arguments, or raw node
+authority to QML.
+
+```mermaid
+flowchart TB
+    MakerOperator["Maker operator"]
+    TakerUser["Taker user"]
+
+    subgraph BasecampTarget["Planned Basecamp 0.2.0 application surface"]
+        Basecamp["Basecamp host"]
+        MakerQml["Maker ui_qml package<br/>planned"]
+        TakerQml["Taker ui_qml package<br/>planned"]
+        MakerQtro["Maker QtRO replica<br/>planned"]
+        TakerQtro["Taker QtRO replica<br/>planned"]
+        MakerHost["Maker ui-host backend<br/>allowlisted and planned"]
+        TakerHost["Taker ui-host backend<br/>allowlisted and planned"]
+    end
+
+    subgraph ExistingApplication["Existing M2 to M5 application boundaries"]
+        MakerRpc["Owner Unix JSON-RPC<br/>mode 0600 and allowlisted"]
+        MakerDaemon["Maker daemon<br/>sole Maker database writer"]
+        MakerDb[("Maker SQLite and effect journals")]
+        Delivery["Run-local Delivery adapter<br/>discovery and offers"]
+        Chat["Run-local Chat adapter<br/>negotiation only"]
+        TakerFacade["Role-fixed Taker lifecycle facade<br/>UNIMPLEMENTED"]
+        TakerState[("Private Taker receipts and role state")]
+        MakerActors["Maker BTC, XMR, and ZEC actors"]
+        TakerActors["Taker BTC, XMR, and ZEC actors"]
+    end
+
+    subgraph LocalChains["Existing isolated local actor and node paths"]
+        Lez["LEZ v0.2 sequencer and indexer<br/>through role sidecars"]
+        Bitcoin["Bitcoin Core Regtest<br/>role-restricted RPC"]
+        Monero["Monero Regtest<br/>monerod and wallet RPC"]
+        Zcash["Zcash Regtest<br/>Zebra RPC and local signer"]
+    end
+
+    MakerOperator -.-> Basecamp
+    TakerUser -.-> Basecamp
+    Basecamp -.-> MakerQml
+    Basecamp -.-> TakerQml
+    MakerQml -.-> MakerQtro
+    TakerQml -.-> TakerQtro
+    MakerQtro -.-> MakerHost
+    TakerQtro -.-> TakerHost
+    MakerHost -.-> MakerRpc
+    TakerHost -.-> TakerFacade
+
+    MakerRpc --> MakerDaemon
+    MakerDaemon --> MakerDb
+    MakerDaemon --> Delivery
+    Chat --> MakerDaemon
+    MakerDaemon --> MakerActors
+    TakerFacade -.-> Delivery
+    TakerFacade -.-> Chat
+    TakerFacade -.-> TakerState
+    TakerState --> TakerActors
+
+    MakerActors --> Lez
+    MakerActors --> Bitcoin
+    MakerActors --> Monero
+    MakerActors --> Zcash
+    TakerActors --> Lez
+    TakerActors --> Bitcoin
+    TakerActors --> Monero
+    TakerActors --> Zcash
+```
+
+The process split is an authority boundary, not merely a UI implementation
+detail. A QML or `ui-host` crash cannot stop the autonomous Maker daemon or
+erase either role's durable recovery state. Delivery and Chat remain pre-lock
+discovery and negotiation transports only; after the first chain submission,
+the pair actors and their role-restricted node paths must retain enough local
+state to claim or refund without either transport. Existing solid runtime
+components retain their M2 to M5 evidence level: this diagram does not claim
+that a Basecamp-driven all-pair swap exists until the dashed edges are built
+and exercised through the corresponding independent role and node boundaries.
 
 ## Canonical M2 build, deployment, and actor boundary
 

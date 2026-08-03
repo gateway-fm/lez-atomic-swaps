@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-07-30
+Status: Living executable inventory — 2026-08-03
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -11,6 +11,119 @@ have not completed this topology.
 No port is invented for an unimplemented integration. Exact current artifact,
 deployment, transaction, balance, and run facts are retained in the
 [canonical M2 certification packet](../evidence/m2-canonical-local-certification-20260714.json).
+
+## M6 current and planned UI deployment topology
+
+M6 currently has a dependency-free clickable prototype, not a daemon client.
+The three HTML entry points, one stylesheet, one script, and four local SVGs
+are ordinary static files. The optional manual server uses only Node's built-in
+HTTP and filesystem modules, binds `127.0.0.1`, and asks the kernel for a port
+by default. The browser keeps deterministic sample state in memory. It opens no
+Delivery, Chat, daemon, chain-node, wallet, Docker, faucet, or public-network
+connection and stores no credential or persistent browser state.
+
+```mermaid
+flowchart LR
+    Reviewer["Reviewer"] --> Browser["Browser with CSP"]
+    Browser -->|"GET from exact local origin"| Server["Node built-in static server<br/>127.0.0.1 and kernel-selected port"]
+    Server --> Files["Allowlisted HTML, CSS, JS, and SVG files"]
+    Browser --> Memory["Deterministic in-memory sample state"]
+    CI["CI node:test and Puppeteer"] --> TestServer["Run-local ephemeral test server<br/>127.0.0.1 and kernel-selected port"]
+    TestServer --> Chrome["System Google Chrome<br/>sandbox enabled"]
+    Chrome --> Profile["Run-unique temporary browser profile"]
+    Boundary["No daemon, node, wallet, Delivery, Chat, or chain effects"]
+```
+
+The manual server sends a restrictive response CSP: static images, styles,
+and scripts may come only from the same local origin; `connect-src`,
+`object-src`, `base-uri`, and `form-action` are `none`. CI uses a stricter
+test-only CSP that also denies fonts, media, frames, workers, and framing. The
+browser test rejects every request outside its exact ephemeral local origin,
+keeps the Chromium sandbox enabled, and fails on browser console, page, request,
+or HTTP errors. These controls support the no-effects claim; they do not turn
+the prototype into an actor or chain integration.
+
+After prototype sign-off, the planned Basecamp deployment has separate Maker
+and Taker `ui_qml` packages and separate process-isolated `ui-host` Qt Remote
+Objects packages. Those packages and their QtRO endpoints are not implemented,
+so no QtRO socket name, TCP port, or credential scheme is assigned here. The
+Maker host is planned to translate only an allowlisted typed UI contract to the
+existing owner Unix RPC. The Taker host depends on a role-fixed lifecycle
+facade that is still unimplemented. Neither QML view receives node endpoints,
+wallet credentials, signing keys, Delivery keys, Chat credentials, SQLite
+paths, or effect authority.
+
+```mermaid
+flowchart TB
+    Maker["Maker operator"] -.-> MakerQml["Planned Maker ui_qml package"]
+    MakerQml -.-> MakerHost["Planned Maker ui-host QtRO package"]
+    MakerHost -.-> OwnerRpc["Existing owner Unix RPC<br/>mode 0600 maker.sock"]
+    OwnerRpc --> MakerDaemon["Existing Maker daemon and role actors"]
+
+    Taker["Taker user"] -.-> TakerQml["Planned Taker ui_qml package"]
+    TakerQml -.-> TakerHost["Planned Taker ui-host QtRO package"]
+    TakerHost -.-> TakerFacade["Unimplemented role-fixed Taker facade<br/>endpoint unassigned"]
+    TakerFacade -.-> TakerActors["Existing Taker role actors and receipt state"]
+
+    MakerDaemon --> DeliveryChat["Existing actor-owned Delivery and Chat boundaries"]
+    TakerActors --> DeliveryChat
+    MakerDaemon --> NodeAdapters["Existing role-fixed node adapters and sidecars"]
+    TakerActors --> NodeAdapters
+    NodeAdapters --> Lez["Local LEZ RPCs"]
+    NodeAdapters --> Bitcoin["Local Bitcoin Core RPC"]
+    NodeAdapters --> Monero["Local Monero daemon and wallet RPCs"]
+    NodeAdapters --> Zcash["Local Zebra RPC"]
+```
+
+Dashed edges in this M6 diagram are planned and carry no current deployment
+claim. Solid edges identify boundaries that already exist elsewhere in the
+repository; M6 has not yet composed all of them into one UI-driven run. Node
+access remains behind the role actors and their existing durable effect
+journals. A `ui_qml` view or `ui-host` must never call a node, sidecar, Delivery,
+or Chat endpoint directly.
+
+### M6 ports, credentials, and resources
+
+| Surface | Port or endpoint | Credentials visible to the surface | Owned resources and current status |
+|---|---|---|---|
+| Manual static prototype | Default `127.0.0.1:0`; the printed kernel-selected port is authoritative. `M6_PROTOTYPE_PORT` may select one explicit loopback port and fails if it is busy | None | One Node process and the allowlisted static files; current, no Docker and no runtime effects |
+| Manual browser | Exact origin printed by the server; no listener of its own | None; no cookie, token, key, seed, wallet file, `localStorage`, `sessionStorage`, or IndexedDB | Browser memory only; current and disposable |
+| CI prototype server | `127.0.0.1:0`; the test reads the kernel-selected port from the listener | None | In-process `node:test` server; current and closed by the owning test run |
+| CI browser | No application listener; connects only to the exact CI test-server origin | None | `/usr/bin/google-chrome`, with Puppeteer download disabled, plus a profile below `${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}`; current, run-unique, sandboxed, and removed by that run |
+| Maker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
+| Maker `ui-host` QtRO | QtRO transport and endpoint are unassigned | A future process-local admission mechanism must not expose daemon or chain credentials to QML | Separate process/package planned; allowlisted translation only |
+| Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC; the planned host may call it, the QML view may not |
+| Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
+| Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
+| Taker lifecycle facade | No endpoint or port exists | No credential scheme exists yet | Unimplemented; must preserve the existing private receipt, actor lock, generation, and effect-journal authority |
+| Delivery | No M6 TCP port. Existing local discovery uses an owner-private signed directory | Maker signing material remains actor-owned and is never passed to either UI package | Existing local boundary; future UI reaches it only through role actors |
+| Chat | No fixed M6 port. Existing daemon integration uses a separately configured absolute mode-0600 Unix socket | Socket ownership plus protocol identity and signatures remain actor-owned | Existing local negotiation boundary; no direct UI access |
+| LEZ node RPCs | No new M6 port. Existing runs publish run-scoped dynamic loopback endpoints or actor-sidecar endpoints in owner-private manifests | Run, role, capability, signer, and key files remain outside the UI | Existing sequencer, indexer, Bedrock, and role sidecars are actor-only resources; not started by the current prototype |
+| Bitcoin Core RPC | No new M6 port. Existing Regtest runs allocate a dynamic literal-loopback RPC port | Provisioner cookie authority and distinct restricted mode-0600 role Basic credentials remain outside the UI | Existing isolated Core and role actors; not started by the current prototype |
+| Monero RPCs | No new M6 ports. Existing Regtest runs allocate distinct dynamic literal-loopback daemon and wallet ports | Distinct Digest RPC credentials and wallet-password files remain owner-private and outside the UI | Existing peerless daemon plus provisioner, Maker, and Taker wallets; not started by the current prototype |
+| Zcash RPC | No new M6 port. Existing Regtest runs publish each Zebra RPC on a dynamic literal-loopback port | The Regtest transport is unauthenticated; role signing keys and effect authority remain in actors, never the UI | Existing isolated Zebra projects and typed adapters; not started by the current prototype |
+| Public services | None in the current M6 prototype or planned local-functional composition | None | No public RPC, faucet, peer, public funds, analytics, CDN, font host, or external finality service |
+
+### M6 external-resource and flakiness boundary
+
+The current runtime prototype is independent of external services. Default
+port-zero binding avoids collisions; an explicitly selected busy port fails
+instead of taking over another listener. CI also isolates each browser profile
+under the workflow run ID and attempt, uses no Docker, and performs exact
+test-owned cleanup. Its remaining environment sensitivities are Node/npm setup,
+availability and sandbox support of the runner's system Chrome, kernel port and
+process limits, and CPU scheduling against bounded browser-test timeouts.
+System Chrome image drift can change browser behavior, although pass/fail uses
+DOM and state assertions rather than pixel screenshots. Cold `npm ci` still
+depends on registry or cache availability; runtime page loading does not.
+
+The planned actor-real UI inherits startup, finality, reorg, and bounded-RPC
+timing from the existing local LEZ, Bitcoin, Monero, and Zcash lanes, plus
+Basecamp, Qt, QtRO, and reproducible-package toolchain drift. Delivery or Chat
+availability can affect discovery and negotiation, while receipt-bound replay
+must remain independent where the existing role contract says it is. Those are
+future M6 composition risks, not current prototype flakiness, and they do not
+authorize public endpoint fallback or direct UI-to-node access.
 
 ## Current executable local topology
 

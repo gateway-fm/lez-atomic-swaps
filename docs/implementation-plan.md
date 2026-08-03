@@ -5358,3 +5358,29 @@ Progressive order:
 The first M6 slice is the visibly clickable happy path. Red-green-refactor,
 chaos, infosec, and production hardening follow the reproducible PoC rather
 than delaying it.
+
+## M6 clickable-prototype checkpoint (2026-08-03)
+
+Pushed commit `0abdbc2` implements deterministic, dependency-free Maker and
+Taker HTML prototypes with original SVG assets and a built-in Node server that
+selects an ephemeral literal-loopback port. Maker covers configuration,
+monitoring, history, and sample manual intents. Taker covers browsing, exact
+review, initiation, receipt-shaped progress, mutually exclusive claim/refund,
+and ZEC shield-after-swap guidance. Every screen continuously labels its state
+as simulated and opens no daemon, Delivery, Chat, chain, wallet, faucet, DNS,
+or public-network boundary.
+
+Post-PoC red-green-refactor added a recursive static resource/effect/CSP
+contract and a six-case Puppeteer actor E2E. The static contract, Node syntax,
+zero-moderate npm advisory audit, license allowlist, CI hardening contract, and
+action pin policy are GREEN. The local browser run is honestly RED before
+navigation because host AppArmor denies Chromium a usable sandbox; the test
+refuses `--no-sandbox`. Commit `a6e288e` runs the same suite with exact Node
+24.18.0 and system Chrome on the isolated CI runner with a run-unique profile.
+Remote status is not observable without repository Actions credentials, so no
+remote-green claim is made yet.
+
+The review record is `docs/m6-prototype-review.md`. Explicit owner sign-off is
+the gate before production Basecamp QML work under ADR 0128. This checkpoint
+implements the first of four literal M6 outputs but does not claim Basecamp
+loadability, backend authority, chain effects, or M6 completion.
