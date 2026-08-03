@@ -49,6 +49,9 @@ required_markers=(
   'm6-zebra-mempool-after-claim-replay.json'
   'm6_claim_generation="$(jq -er'
   '.m6_claim_generation | numbers'
+  '--argjson m6_taker_service_mode "$M6_TAKER_SERVICE_MODE"'
+  'm6_taker_service_mode: ($m6_taker_service_mode == 1)'
+  '"owner_taker_service"'
 )
 for required in "${required_markers[@]}"; do
   rg -Fq -- "$required" "$runner" || fail "runner is missing replay evidence propagation: ${required}"

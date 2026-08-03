@@ -2468,6 +2468,7 @@ jq -n \
   --argjson drive_rounds "$round" \
   --argjson drive_retry_count "$(jq -s 'length' "${evidence_dir}/drive-retries.ndjson")" \
   --argjson m5_application_mode "$M5_APPLICATION_MODE" \
+  --argjson m6_taker_service_mode "$M6_TAKER_SERVICE_MODE" \
   --arg application_handoff_sha256 "$application_handoff_sha256" \
   --arg application_cutover_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-post-lock-cutover.json" | cut -d ' ' -f1; fi)" \
@@ -2506,6 +2507,7 @@ jq -n \
     run_id: $run_id,
     direction: $direction,
     result: "completed",
+    m6_taker_service_mode: ($m6_taker_service_mode == 1),
     maker_status: "completed",
     taker_status: "completed",
     zebra_generate_calls: {
@@ -2555,7 +2557,11 @@ jq -n \
       taker_monitor_trace_sha256:
         (if $m5_application_mode == 1 then $taker_monitor_trace_sha256 else null end),
       taker_claim_authority:
-        (if $m5_application_mode == 1 then "receipt_bound_cli" else null end),
+        (if $m6_taker_service_mode == 1 then
+           "owner_taker_service"
+         elif $m5_application_mode == 1 then
+           "receipt_bound_cli"
+         else null end),
       direct_taker_claim_effects:
         (if $m5_application_mode == 1 then false else null end),
       expected_zebra_funding_txid:
