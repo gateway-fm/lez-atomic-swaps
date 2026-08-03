@@ -2006,7 +2006,7 @@ drive_m6_taker_refund() {
     printf '%s\n' "$claim_response"       >"${evidence_dir}/m6-taker-service-refund-claim-exclusion.json"
     jq -e '
       .error.code == -32017 and .error.message == "Taker action conflict"
-      and .error.data == "taker_action_conflict"
+      and .error.data.category == "taker_action_conflict"
     ' <<<"$claim_response" >/dev/null || return 1
     m6_refund_admitted=1
   fi
@@ -2796,7 +2796,7 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
     ' "${evidence_dir}/m6-taker-service-refund-replay.json" >/dev/null
     jq -e '
       .error.code == -32017 and .error.message == "Taker action conflict"
-      and .error.data == "taker_action_conflict"
+      and .error.data.category == "taker_action_conflict"
     ' "${evidence_dir}/m6-taker-service-refund-claim-exclusion.json" >/dev/null
     jq -e --arg tx "$m6_lez_refund_txid" '
       .schema_version == 1 and .transaction_id == $tx and .occurrences == 1

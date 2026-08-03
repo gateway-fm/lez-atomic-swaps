@@ -154,6 +154,14 @@ while SQLite admission remains the final one-winner authority. Process and race
 regressions are GREEN; the effect-bearing discovery run is quarantined and a
 fresh Refund certificate is still pending.
 
+The next fresh run proved the corrected conflict response on actual local nodes:
+Refund committed and the opposite Claim returned `-32017`. The runner then
+stopped on its own stale assertion because it expected a scalar
+`error.data`, while every service error uses the documented
+`error.data.category` envelope. The runner contract now locks that envelope;
+the effect-bearing run is quarantined and a new fresh certificate remains
+required.
+
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ
 artifacts, and export their exact dynamic loopback endpoints, chain identities,

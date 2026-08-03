@@ -1,6 +1,6 @@
 # ADR 0140: Prefer durable terminal conflicts
 
-- Status: Accepted; process and race regressions GREEN
+- Status: Accepted; process, race, and runner-envelope regressions GREEN
 - Date: 2026-08-03
 - Scope: M6 Taker Claim-versus-Refund decision precedence
 - Extends: ADRs 0137 and 0139
@@ -77,3 +77,34 @@ sequenceDiagram
 ## Atomicity and consequences
 
 The precheck is read-only and improves error truthfulness; it does not replace
+the registry's unique terminal-action constraint or atomic admission. A stale
+read therefore cannot authorize both Claim and Refund: one insert wins, and the
+loser observes the same fixed conflict. Exact replay remains idempotent and
+reconciles only the already admitted action.
+
+The public JSON-RPC error envelope is also fixed:
+`error.data.category == "taker_action_conflict"`. Evidence consumers must
+inspect the category field rather than treating `error.data` as a scalar.
+
+```mermaid
+flowchart LR
+    Winner["Durable terminal winner"] --> Service["Taker service"]
+    Service --> Envelope["JSON RPC error data category"]
+    Envelope --> Runner["E2E evidence assertion"]
+```
+
+Fresh actual-node run `m6refund9e84d76a` proved that flow through the Refund
+commit and opposite-Claim conflict. The protocol result was correct, but the
+runner used the obsolete scalar assertion and stopped before exact replay. The
+effect-bearing run is quarantined. The focused runner contract now locks the
+object-shaped envelope; a fully fresh run remains required for the Refund
+certificate.
+
+## Rejected alternatives
+
+- Consulting actor availability before the durable winner would return a weaker
+  and transient result for a settled terminal decision.
+- Moving admission before actor validation would persist requests that were
+  never actionable at the requested generation.
+- Treating `error.data` as an unstructured scalar would diverge from every
+  service error emitted by the shared RPC helper.

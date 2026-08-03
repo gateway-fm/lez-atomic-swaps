@@ -5752,7 +5752,16 @@ before actor validation.
 The process regression progressed RED at `-32016` to GREEN at `-32017`, proves
 the losing request creates no second action row, and retains the original Claim
 row byte-for-byte. The atomic race mapping unit regression and the broader 25
-library plus two ZEC Chat process tests are GREEN. Fresh Refund replay is next.
+library plus two ZEC Chat process tests are GREEN.
+
+Fresh run `m6refund9e84d76a` then returned the durable Refund commit and the
+correct opposite-Claim `-32017` envelope on actual isolated nodes. Its runner
+stopped before replay because two assertions still compared `error.data` to a
+scalar instead of the stable `error.data.category` field. This was an evidence
+consumer defect, not a protocol failure. The run is quarantined; the focused
+runner contract now locks the object-shaped envelope and is GREEN.
+
+Fresh Refund replay is next.
 Next in order:
 
 1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund

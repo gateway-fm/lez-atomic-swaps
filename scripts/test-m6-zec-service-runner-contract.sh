@@ -71,6 +71,7 @@ required_markers=(
   'taker_swap_refund_v1'
   'action:"refund"'
   'taker_action_conflict'
+  '.error.data.category == "taker_action_conflict"'
   'm6-taker-service-refund-first.json'
   'm6-taker-service-refund-transients.ndjson'
   'm6-taker-service-refund-commit.json'
