@@ -463,7 +463,8 @@ fn replay_actor_effect_required(
         return Err(ActionError::DependencyUnavailable);
     };
     if revision > expected_generation {
-        return Ok(false);
+        return Ok(action == TakerTerminalActionV1::Refund
+            && matches!(phase, Phase::MakerLegRefunded | Phase::TakerLegRefunded));
     }
     if revision < expected_generation {
         return Err(ActionError::ProgressChanged);
@@ -964,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_action_replay_only_reenters_an_unadvanced_matching_effect() {
+    fn exact_action_replay_reenters_only_unadvanced_or_intermediate_refund() {
         let claim_available = ActorStatusProjectionV1::Active {
             phase: Phase::ClaimEvidenceAvailable,
             revision: 3,
@@ -982,6 +983,41 @@ mod tests {
         };
         assert!(
             !replay_actor_effect_required(completed, 3, TakerTerminalActionV1::Claim,).unwrap()
+        );
+
+        for phase in [Phase::MakerLegRefunded, Phase::TakerLegRefunded] {
+            let intermediate_refund = ActorStatusProjectionV1::Active {
+                phase,
+                revision: 4,
+                next_action: ZecLifecycleAction::Wait,
+            };
+            assert!(
+                replay_actor_effect_required(
+                    intermediate_refund,
+                    3,
+                    TakerTerminalActionV1::Refund,
+                )
+                .unwrap(),
+                "an admitted refund must continue through {phase:?}"
+            );
+            assert!(
+                !replay_actor_effect_required(
+                    intermediate_refund,
+                    3,
+                    TakerTerminalActionV1::Claim,
+                )
+                .unwrap(),
+                "an advanced claim must not re-enter through {phase:?}"
+            );
+        }
+
+        let refunded = ActorStatusProjectionV1::Active {
+            phase: Phase::Refunded,
+            revision: 5,
+            next_action: ZecLifecycleAction::Complete,
+        };
+        assert!(
+            !replay_actor_effect_required(refunded, 3, TakerTerminalActionV1::Refund,).unwrap()
         );
 
         assert!(
