@@ -49,6 +49,12 @@ explicitly **unimplemented** role-fixed facade; it must bind private receipt and
 role state without exposing paths, keys, generic process arguments, or raw node
 authority to QML.
 
+The first backend prerequisite is solid and does not cross the visual sign-off
+gate: the owner RPC now exposes strict `maker_local_route_save_v1`. It commits
+the Maker policy, same-route exact local price, and combined replay result in
+one schema-v22 transaction. The QML/QtRO host remains planned, and neither
+prototype calls this method.
+
 ```mermaid
 flowchart TB
     MakerOperator["Maker operator"]
@@ -64,8 +70,8 @@ flowchart TB
         TakerHost["Taker ui-host backend<br/>allowlisted and planned"]
     end
 
-    subgraph ExistingApplication["Existing M2 to M5 application boundaries"]
-        MakerRpc["Owner Unix JSON-RPC<br/>mode 0600 and allowlisted"]
+    subgraph ExistingApplication["Existing application boundaries including M6 route save"]
+        MakerRpc["Owner Unix JSON-RPC<br/>mode 0600, allowlisted, atomic route save"]
         MakerDaemon["Maker daemon<br/>sole Maker database writer"]
         MakerDb[("Maker SQLite and effect journals")]
         Delivery["Run-local Delivery adapter<br/>discovery and offers"]
@@ -717,7 +723,7 @@ flowchart TB
         OF["Durable expiring offers<br/>global replay + one-winner reserve GREEN"]
         BTN[("Schema-v19 BTC negotiation<br/>signed staging + atomic actor activation GREEN")]
         CO["Durable swap coordinator"]
-        DB[("Maker SQLite schema v21<br/>application + actor scheduler journals")]
+        DB[("Maker SQLite schema v22<br/>application + actor scheduler journals")]
         PR["Durable route price selector"]
         MPV["Daemon Maker-only provisioner<br/>startup-pinned authority + durable no-clobber publish"]
         SCH[("Schema-v18 actor scheduler<br/>atomic registration + fenced leases")]
@@ -2367,7 +2373,7 @@ flowchart LR
     TakerJournal[("Taker role journal")] --> TakerCli
     PublicPackets["Maker and Taker public packets"] --> TakerCli
     TakerCli -->|"Stage A and Stage B over Chat Unix RPC"| Daemon
-    Daemon --> Store[("SQLite schema v21")]
+    Daemon --> Store[("SQLite schema v22")]
     TakerCli --> TakerBundle[("Taker-only no-clobber actor bundle")]
     TakerCli --> Receipt[("Taker acceptance receipt")]
     Store --> MakerActor["Queued Maker-only Monero actor"]

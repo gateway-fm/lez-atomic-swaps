@@ -5384,3 +5384,27 @@ The review record is `docs/m6-prototype-review.md`. Explicit owner sign-off is
 the gate before production Basecamp QML work under ADR 0128. This checkpoint
 implements the first of four literal M6 outputs but does not claim Basecamp
 loadability, backend authority, chain effects, or M6 completion.
+
+## M6 atomic Maker route backend checkpoint (2026-08-03)
+
+Pushed commit `8c6a7db` removes the non-atomic three-request sequence behind
+the prototype's one-click route save. Strict owner RPC
+`maker_local_route_save_v1` accepts one request ID, both expected revisions,
+one validated local-source policy, and the exact same-route reduced integer
+price. Schema v22 commits the policy row, price row, and combined replay result
+inside one immediate transaction. Exact replay returns both original revisions;
+changed payload reuse conflicts.
+
+Red first established the missing method. GREEN proves fresh enabled-route
+creation, restart replay, global request conflict, and rollback of the earlier
+pair write when the later price CAS is stale. The owner-RPC integration also
+rejects an unknown path-shaped field before dispatch. The complete
+`lez-swap-store --all-targets` regression, focused Maker RPC test, strict
+two-package Clippy, warning-fatal Rustdoc, formatting, and diff hygiene are
+GREEN.
+
+ADR 0129 records the atomicity argument and both success/failure flows. This is
+an implemented nonvisual prerequisite and does not cross the prototype
+sign-off gate: production QML and its QtRO host remain pending approval. Next
+nonvisual work is the typed role-fixed Taker facade foundation; visual work
+resumes only after explicit sign-off.

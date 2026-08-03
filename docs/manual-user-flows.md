@@ -7302,3 +7302,28 @@ the browser being unable to connect to the printed ephemeral port. Restart the
 server to obtain a new URL; never replace the ephemeral bind with a shared fixed
 port during parallel work. Closing the server or browser discards all sample
 state and cannot affect a swap.
+
+### Reproduce the atomic Maker backend prerequisite
+
+This is a developer proof behind the future Maker UI, not prototype sign-off
+and not an actor-real user flow. From the repository root with the locked Rust
+toolchain and dependency cache available:
+
+```sh
+cargo test --locked -p lez-swap-store --test maker_application local_route
+cargo test --locked -p lez-maker-node --test maker_local_route_rpc
+```
+
+The first command proves combined save, exact replay, restart durability, and
+rollback when the price CAS is stale after the pair update was attempted. The
+second calls `maker_local_route_save_v1` through the real typed RPC module,
+then lists both durable rows and rejects an unknown path-shaped request field.
+
+```mermaid
+flowchart LR
+    Test["Focused local test"] --> RPC["Typed Maker RPC module"]
+    RPC --> Tx["One schema-v22 SQLite transaction"]
+    Tx --> Pair["Pair policy revision"]
+    Tx --> Price["Exact local price revision"]
+    Tx --> Replay["Global replay result"]
+```

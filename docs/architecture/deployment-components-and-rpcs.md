@@ -53,11 +53,19 @@ facade that is still unimplemented. Neither QML view receives node endpoints,
 wallet credentials, signing keys, Delivery keys, Chat credentials, SQLite
 paths, or effect authority.
 
+The nonvisual Maker prerequisite is now implemented at `8c6a7db`.
+`maker_local_route_save_v1` is a strict, secret-free owner RPC that stores a
+same-route local policy and exact price plus one replay result in a single
+schema-v22 transaction. No QML or QtRO host calls it yet. Existing separate
+pair/price RPCs remain for the CLI and compatibility, but a future one-click UI
+save must use the combined operation and retry only its exact persisted
+request envelope.
+
 ```mermaid
 flowchart TB
     Maker["Maker operator"] -.-> MakerQml["Planned Maker ui_qml package"]
     MakerQml -.-> MakerHost["Planned Maker ui-host QtRO package"]
-    MakerHost -.-> OwnerRpc["Existing owner Unix RPC<br/>mode 0600 maker.sock"]
+    MakerHost -.-> OwnerRpc["Existing owner Unix RPC<br/>mode 0600 and atomic route save"]
     OwnerRpc --> MakerDaemon["Existing Maker daemon and role actors"]
 
     Taker["Taker user"] -.-> TakerQml["Planned Taker ui_qml package"]
@@ -92,7 +100,7 @@ or Chat endpoint directly.
 | CI browser | No application listener; connects only to the exact CI test-server origin | None | `/usr/bin/google-chrome`, with Puppeteer download disabled, plus a profile below `${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}`; current, run-unique, sandboxed, and removed by that run |
 | Maker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Maker `ui-host` QtRO | QtRO transport and endpoint are unassigned | A future process-local admission mechanism must not expose daemon or chain credentials to QML | Separate process/package planned; allowlisted translation only |
-| Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC; the planned host may call it, the QML view may not |
+| Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the planned host may call it, the QML view may not |
 | Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
 | Taker lifecycle facade | No endpoint or port exists | No credential scheme exists yet | Unimplemented; must preserve the existing private receipt, actor lock, generation, and effect-journal authority |
@@ -137,7 +145,7 @@ flowchart TB
         Systemctl["/usr/bin/systemctl"]
         Systemd["systemd system manager"]
         Daemon["lez-maker-daemon"]
-        Store[("SQLite schema v21")]
+        Store[("SQLite schema v22")]
         Offers["Durable offer lifecycle<br/>snapshot + expiry + one-winner CAS"]
         RuntimeDir["Effective-UID-owned mode-0700 runtime"]
         Socket["Owner mode-0600 Unix socket"]
@@ -255,7 +263,7 @@ worker/module/SHA configuration plus bounded timeout and quote age. Quote and
 offer RPCs read the route's durable source kind; there is no local or zero-price
 fallback. The bounded worker runs with an empty environment, root working
 directory, null input and diagnostics, bounded output, timeout kill/reap, and
-pre/post module validation. SQLite schema v21 is the offer linearization point;
+pre/post module validation. SQLite schema v22 is the offer linearization point;
 Delivery signs only the committed snapshot and restart reconciliation repairs a
 missing advertisement. This component path uses no chain RPC or public feed.
 
@@ -863,7 +871,7 @@ flowchart TB
         OwnerSocket["Mode 0600 owner Unix socket"]
         Daemon["lez-maker-daemon"]
         ChatSocket["Mode 0600 Chat Unix socket"]
-        Store[("SQLite schema v21")]
+        Store[("SQLite schema v22")]
         Delivery["Owner-private signed Delivery directory"]
         AgreementKey[("Compressed Maker agreement public key")]
         ViewKey[("Raw shared private view key")]
@@ -1137,7 +1145,7 @@ flowchart TB
     subgraph App[Owner-local application plane]
         MakerCli[Maker CLI]
         Daemon[Maker daemon]
-        Store[SQLite schema v21]
+        Store[SQLite schema v22]
         TerminalView[Display-only terminal projection]
         TerminalDaemon[Fresh owner-only daemon]
         PriceWorker[Bounded price worker]

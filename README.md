@@ -23,12 +23,18 @@ guidance. Prototype state is explicitly simulated and makes no RPC, chain,
 faucet, DNS, or public-network request. The current implementation order and
 limitations are tracked in the
 [implementation plan](docs/implementation-plan.md#m6-active-work-package-maker-and-taker-basecamp-mini-apps).
+The first nonvisual backend prerequisite is GREEN at `8c6a7db`: strict
+`maker_local_route_save_v1` atomically stores one same-route pair policy,
+exact local price, and replay result in schema v22. It opens no external
+resource and does not bypass the explicit sign-off gate before production QML.
+ADR [0129](docs/architecture/0129-save-maker-local-route-atomically.md) records
+the component, success/failure flows, and atomicity scope.
 
 ### M5 verified progressive application PoC — historical implementation record
 
 This section preserves the implementation path to the verified M5 PoC. The
 owner-local maker application currently provides a mode-0600
-Unix-socket daemon, maker CLI, durable schema-v21
+Unix-socket daemon, maker CLI, durable schema-v22
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
 global request replay, and restart reconciliation. Final ZEC acceptance atomically
