@@ -5,6 +5,7 @@ mod btc_chat;
 mod daemon_lifecycle;
 mod local_rpc;
 mod logos_price_source;
+pub mod owner_rpc_server;
 mod price_source;
 mod run_local_delivery;
 pub mod secure_file;

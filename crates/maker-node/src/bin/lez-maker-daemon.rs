@@ -2,7 +2,7 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io::{self, Write as _},
-    os::unix::fs::{FileTypeExt as _, MetadataExt as _, PermissionsExt as _},
+    os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -10,13 +10,13 @@ use std::{
 
 use anyhow::{Context as _, bail, ensure};
 use clap::{ArgGroup, Parser};
-use jsonrpsee::server::{
-    BatchRequestConfig, ServerBuilder, ServerConfig, serve_with_graceful_shutdown, stop_channel,
-};
+use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
 use lez_maker_node::{
     BtcMakerActorProvisioner, MakerActorSupervisorCancellation, MakerActorSupervisorConfig,
     MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, XmrMakerChatAuthority,
-    ZecMakerActorProvisioner, chat_rpc_module, import_terminal_zec_maker_projection, rpc_module,
+    ZecMakerActorProvisioner, chat_rpc_module, import_terminal_zec_maker_projection,
+    owner_rpc_server::{OwnedPath, bind_owner_socket, server_config, validate_runtime_directory},
+    rpc_module,
     secure_file::{load_raw_secret, load_secp256k1_secret, read_private_file},
     supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
     supervise_one_due_maker_actor_until,
@@ -39,7 +39,6 @@ use xmr_reference_actor::{
 };
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: u32 = 1024 * 1024;
-const MAXIMUM_CONNECTIONS: u32 = 16;
 
 type BtcChatAuthority = (SecretKey, BtcMakerActorProvisioner);
 
@@ -1073,16 +1072,6 @@ fn maker_context(
     })
 }
 
-fn server_config(maximum_body_bytes: u32) -> ServerConfig {
-    ServerConfig::builder()
-        .max_request_body_size(maximum_body_bytes)
-        .max_response_body_size(maximum_body_bytes)
-        .max_connections(MAXIMUM_CONNECTIONS)
-        .set_batch_request_config(BatchRequestConfig::Disabled)
-        .http_only()
-        .build()
-}
-
 fn load_delivery_key(path: &Path) -> anyhow::Result<SecretKey> {
     load_secp256k1_secret(path, "Delivery signing key")
 }
@@ -1092,50 +1081,6 @@ fn trusted_now_unix_seconds() -> anyhow::Result<u64> {
         .duration_since(UNIX_EPOCH)
         .context("system clock is before Unix epoch")
         .map(|duration| duration.as_secs())
-}
-
-fn bind_owner_socket(path: &Path) -> anyhow::Result<(UnixListener, OwnedPath)> {
-    ensure!(path.is_absolute(), "maker RPC socket path must be absolute");
-    let runtime = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .context("maker RPC socket needs a runtime directory")?;
-    validate_runtime_directory(runtime)?;
-    match fs::symlink_metadata(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).context("inspect maker RPC socket path"),
-        Ok(_) => bail!("refusing to replace existing maker RPC socket path"),
-    }
-
-    let listener = UnixListener::bind(path).context("bind maker RPC Unix socket")?;
-    let guard = OwnedPath::capture(path).context("capture maker RPC socket identity")?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .context("set maker RPC socket mode")?;
-    let metadata = fs::symlink_metadata(path).context("verify maker RPC socket")?;
-    ensure!(
-        metadata.file_type().is_socket()
-            && metadata.uid() == rustix::process::geteuid().as_raw()
-            && metadata.mode() & 0o7777 == 0o600,
-        "maker RPC socket is not an owner-only socket"
-    );
-    Ok((listener, guard))
-}
-
-fn validate_runtime_directory(path: &Path) -> anyhow::Result<()> {
-    let metadata = fs::symlink_metadata(path).context("inspect maker RPC runtime directory")?;
-    ensure!(
-        metadata.file_type().is_dir(),
-        "maker RPC runtime path must be a real directory"
-    );
-    ensure!(
-        metadata.uid() == rustix::process::geteuid().as_raw(),
-        "maker RPC runtime directory must be owned by the daemon user"
-    );
-    ensure!(
-        metadata.mode() & 0o7777 == 0o700,
-        "maker RPC runtime directory must have mode 0700"
-    );
-    Ok(())
 }
 
 fn create_ready_file(path: &Path, socket: &Path) -> anyhow::Result<OwnedPath> {
@@ -1163,35 +1108,6 @@ fn create_ready_file(path: &Path, socket: &Path) -> anyhow::Result<OwnedPath> {
     File::open(parent)?.sync_all()?;
     let guard = OwnedPath::capture(path).context("capture maker readiness file identity")?;
     Ok(guard)
-}
-
-#[derive(Debug)]
-struct OwnedPath {
-    path: PathBuf,
-    device: u64,
-    inode: u64,
-}
-
-impl OwnedPath {
-    fn capture(path: &Path) -> io::Result<Self> {
-        let metadata = fs::symlink_metadata(path)?;
-        Ok(Self {
-            path: path.to_path_buf(),
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-}
-
-impl Drop for OwnedPath {
-    fn drop(&mut self) {
-        let Ok(metadata) = fs::symlink_metadata(&self.path) else {
-            return;
-        };
-        if metadata.dev() == self.device && metadata.ino() == self.inode {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
 }
 
 #[cfg(test)]
