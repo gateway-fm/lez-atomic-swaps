@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-07-30
+Last updated: 2026-08-03
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -5458,6 +5458,12 @@ length around the read, reopens the path to reject replacement, zeroizes bytes,
 and accepts only an owner-owned single-link regular exact mode 0400 or 0600
 file.
 
+Pushed commit `ad088f8` makes that narrow deployment observable rather than
+requiring a caller to infer it from pair-level capabilities. Every health
+response reports health and offer-list as registered and reports swap-list,
+initiate, monitor, claim, and refund as unregistered. Process tests prove the
+reported booleans match the actual method-not-found boundary.
+
 The process test proves empty health and offer listing, mode-0700 runtime and
 mode-0600 socket custody, Maker and all five unimplemented Taker methods as
 method-not-found, SIGTERM cleanup, restart, preservation of a replacement
@@ -5478,7 +5484,12 @@ payloads conflict; a same-swap loser rolls back without consuming its request
 ID; schema, row, symlink, curve-point, and file-identity drift fail closed. Ten
 focused tests plus the new lookup assertions, strict Clippy, Rustdoc,
 formatting, diff hygiene, and the swap-store library regression were GREEN
-before push.
+before push. Pushed commit `9820400` adds two independent SQLite-connection
+concurrency proofs: identical contenders converge to one new admission and one
+exact replay, while different requests for the same swap produce one winner
+and one `SwapConflict` without consuming the losing request ID. The full
+registry is GREEN 12/12; the two concurrent cases also passed 40 repeated
+invocations, for 80 concurrent-test executions.
 
 ADR 0132 records the components, success, conflict, restart, atomicity, and
 limitations. The registry is a standalone library and is not configured by or
@@ -5486,8 +5497,21 @@ connected to `lez-taker-service`; `taker_swap_initiate_v1` remains
 method-not-found and no worker, actor, Chat, chain, wallet, claim, or refund
 effect exists.
 
-Next nonvisual work is service-owned authority resolution, registry wiring, and
-one complete bounded ZEC mutation vertical before expanding lifecycle reads and
+Pushed commit `28006dc` makes that strict optional prepared-ZEC context
+component-GREEN. It opens only an existing registry; caps the static catalog at
+256; requires unique named sources and fixed swap, offer, reservation, and
+output identities; authenticates the retained same-descriptor signed envelope;
+cross-binds Maker, ZEC `TakerSellsLez`, offer, exact amount/quote, and SHA-256;
+validates immutable-file digests and a real 32-byte secp256k1 signing key; and
+keeps paths and private authority out of Debug and fixed errors. Dynamic client
+request IDs and caller-supplied route or Maker identity are rejected from the
+catalog. The legacy backend loader rejects this optional context rather than
+silently discarding it, so the deployed service remains honestly read-only.
+Focused context 4/4, read/config/backend/RPC/process 18/18, same-FD race 2/2,
+strict Clippy, Rustdoc, formatting, and diff hygiene are GREEN.
+
+Remaining nonvisual work is service-owned registry wiring and one
+complete bounded ZEC mutation vertical before expanding lifecycle reads and
 terminal admission. Production QML and QtRO host work remain gated on explicit
 owner prototype sign-off. Actor-real UI composition, Basecamp packages, final
 quality/evidence gates, and the M6 tag remain pending.

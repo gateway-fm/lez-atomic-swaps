@@ -50,15 +50,25 @@ existing owner-restricted Unix JSON-RPC. The atomic route-save prerequisite is
 implemented. The Taker side now has an exact seven-method DTO contract, an
 authenticated read backend, a strict owner-private startup loader, and a real
 two-method `lez-taker-service` on its own mode-0600 Unix socket. Only health
-and authenticated offer listing are registered.
+and authenticated offer listing are registered. Health reports those two as
+registered and reports swap list, initiate, monitor, claim, and refund as
+unregistered, matching the process method-not-found boundary.
 
-A standalone Taker schema-v1 registry exists through `5c6500d`. It atomically
+A standalone Taker schema-v1 registry exists through `9820400`. It atomically
 stores current ZEC initiation facts, private service-derived authority, and
 exact request replay. Its durable request lookup can return revalidated public
 facts without live Delivery or trusted time, preserving replay-before-live
-dependency order for future wiring. No edge connects it to the service. Swap
+dependency order for future wiring. Two independently opened connections now
+prove exact concurrent convergence and same-swap conflict without consuming
+the losing request ID. No edge connects it to the service. Swap
 list, initiate, monitor, claim, and refund remain method-not-found. No mutation
 worker exists. XMR capability remains effect-checkpoint-only.
+
+A strict prepared-ZEC startup context is component-GREEN at `28006dc`. It
+opens only an existing registry and authenticates same-descriptor retained
+Delivery bytes before binding fixed ZEC facts to redacted private authority.
+Its edge to the executable remains dashed: the running service deliberately
+rejects this context and still does not register initiation.
 
 ```mermaid
 flowchart TB
@@ -80,6 +90,7 @@ flowchart TB
         TakerSocket["Taker owner Unix RPC<br/>health and offer list only"]
         TakerService["lez-taker-service<br/>read-only"]
         TakerConfig["Private read config<br/>Delivery keys and optional Chat probe"]
+        PreparedConfig["Prepared-ZEC startup context library<br/>component-GREEN"]
         Registry[("Standalone Taker registry schema v1<br/>not service-wired")]
         Worker["Taker mutation worker<br/>planned"]
         Delivery["Authenticated run-local Delivery"]
@@ -111,6 +122,8 @@ flowchart TB
 
     TakerSocket --> TakerService
     TakerConfig --> TakerService
+    PreparedConfig -.-> TakerService
+    PreparedConfig --> Registry
     TakerService --> Delivery
     TakerService --> ChatProbe
     TakerService -.-> Registry

@@ -1,6 +1,6 @@
 # ADR 0132: persist Taker initiation admission in a standalone registry
 
-- Status: Accepted and implemented as a standalone M6 foundation through `5c6500d`
+- Status: Accepted and implemented as a standalone M6 foundation through `9820400`
 - Date: 2026-08-03
 - Scope: M6 nonvisual Taker initiation persistence
 
@@ -74,8 +74,37 @@ flowchart LR
 ```
 
 Solid edges are implemented library boundaries. The service, worker, actor, and
-chain edges are dashed because `5c6500d` does not wire the registry into
+chain edges are dashed because `9820400` does not wire the registry into
 `lez-taker-service` and does not register `taker_swap_initiate_v1`.
+
+## Concurrent admission evidence
+
+Pushed commit `9820400` exercises two independently opened SQLite connections,
+not two calls serialized through one Rust owner. Identical requests converge to
+one fresh result plus one exact replay. Different request and authority values
+for the same swap converge to one winner plus one `SwapConflict`; after reopen,
+the loser has no request row and can be reused for a different swap.
+
+```mermaid
+sequenceDiagram
+    participant A as Registry connection A
+    participant B as Registry connection B
+    participant D as SQLite schema v1
+    par Concurrent contenders
+        A->>D: BEGIN IMMEDIATE and admit
+    and
+        B->>D: BEGIN IMMEDIATE and admit
+    end
+    D-->>A: Winner or exact replay
+    D-->>B: Exact replay or swap conflict
+    Note over A,B: Exactly one fresh swap admission becomes durable
+    A->>D: Reopen and inspect loser request
+    D-->>A: No row for a conflicting loser
+```
+
+The full registry suite is GREEN 12/12. The two concurrent cases passed 40
+repeated invocations, for 80 concurrent-test executions. This is local database
+concurrency evidence only; it neither wires the service nor starts a worker.
 
 ## Admission success
 

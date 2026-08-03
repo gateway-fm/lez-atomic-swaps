@@ -66,12 +66,22 @@ owner-only mode-0600 Unix socket. It registers only `taker_health` and
 `taker_offer_list_v1`. Its configuration accepts pinned local Delivery
 directories and Maker keys, optional Chat-socket metadata health, and an offer
 limit. It accepts no registry, receipt, actor, wallet, or node configuration.
+Commit `ad088f8` makes the exact method set explicit in health: those two read
+methods are true and swap-list, initiate, monitor, claim, and refund are false.
 
-The standalone registry through `5c6500d` atomically admits one current ZEC
+The standalone registry through `9820400` atomically admits one current ZEC
 `TakerSellsLez` initiation and can revalidate its public projection by request
 ID before live Delivery or trusted-time checks. It is not connected to the
-process. No initiate, swap-list, monitor, claim, or refund endpoint is
-registered.
+process. Commit `9820400` proves concurrent exact replay and same-swap conflict
+through two independent SQLite connections, including restart-safe reuse of a
+losing request ID. No initiate, swap-list, monitor, claim, or refund endpoint
+is registered.
+
+A strict prepared-ZEC startup context is component-GREEN at `28006dc`. The
+library safely opens an existing registry and a bounded, authenticated static
+authority catalog. It is shown with a dashed edge to the deployed process
+because `lez-taker-service` still uses the legacy read loader, rejects these
+fields, and does not register initiation.
 
 ```mermaid
 flowchart TB
@@ -85,6 +95,8 @@ flowchart TB
     TakerHost -.-> TakerSocket["Taker owner Unix RPC<br/>mode 0600"]
     TakerSocket --> TakerService["lez-taker-service<br/>health and offer list only"]
     TakerConfig["Private read config"] --> TakerService
+    PreparedConfig["Prepared-ZEC startup context library<br/>component-GREEN"] -.-> TakerService
+    PreparedConfig --> Registry
     TakerService --> Delivery["Pinned local Delivery directories"]
     TakerService --> ChatProbe["Optional Chat socket metadata probe"]
     TakerService -.-> Registry[("Standalone Taker registry<br/>not wired")]
@@ -120,8 +132,9 @@ sidecar, Delivery, or Chat endpoint directly.
 | Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
 | Taker read service | Default `/run/lez-atomic-swaps/taker.sock`, or a caller-selected absolute Unix path beneath an euid-owned mode-0700 directory; endpoint is mode 0600 | Unix ownership/mode are admission; response DTOs and fixed errors expose no paths, keys, receipts, commands, or raw evidence | Actual `lez-taker-service` through `8826836`; only `taker_health` and `taker_offer_list_v1`; HTTP-only, batches disabled, 16 connections, 64-KiB bodies, SIGTERM cleanup and replacement-inode preservation |
-| Taker read configuration | Absolute owner-owned single-link regular exact mode-0400 or mode-0600 file, maximum 64 KiB | Pinned Delivery directories and compressed Maker public keys; optional absolute Chat socket path; no wallet, signing key, registry, receipt, actor, or node field | Strict schema v1 with `delivery_sources`, optional `chat_socket`, and `maximum_offers` from 1 through 1024; `0ef38b0` binds zeroizing bytes to same-descriptor device, inode, and length and rejects path replacement |
-| Standalone Taker registry | Caller-selected normalized absolute mode-0600 SQLite file; no service endpoint | Stores private service-derived initiation bindings; public APIs and errors redact them | Schema v1 through `5c6500d`; ZEC `TakerSellsLez` admission, exact replay, and durable public lookup before live Delivery only; not configured or opened by the service; no initiate RPC or worker |
+| Taker read configuration | Absolute owner-owned single-link regular exact mode-0400 or mode-0600 file, maximum 512 KiB | Pinned Delivery directories and compressed Maker public keys; optional absolute Chat socket path; no wallet, signing key, registry, receipt, actor, or node field in the deployed read-only process | Strict schema v1 with `delivery_sources`, optional `chat_socket`, and `maximum_offers` from 1 through 1024; `0ef38b0` binds zeroizing bytes to same-descriptor device, inode, and length and rejects path replacement |
+| Prepared-ZEC startup context | Library-only; no deployed endpoint and rejected by the current executable | Existing registry plus at most 256 owner-prepared ZEC authorities; no UI visibility | Component-GREEN at `28006dc`; named-source Delivery authentication, exact offer/route/quote/commitment binding, same-FD private snapshots, fixed errors, and legacy-loader rejection; no initiate RPC or worker |
+| Standalone Taker registry | Caller-selected normalized absolute mode-0600 SQLite file; no service endpoint | Stores private service-derived initiation bindings; public APIs and errors redact them | Schema v1 through `9820400`; ZEC `TakerSellsLez` admission, exact replay, durable public lookup before live Delivery, and two-connection concurrency; not configured or opened by the service; no initiate RPC or worker |
 | Delivery | No M6 TCP port. Current Taker reads use zero to 32 owner-private signed directories pinned to Maker keys | Maker signing material remains actor-owned and is never passed to either UI package | Actual read-only dependency; unavailable sources, expired offers, result overflow, or conflicting immutable duplicates fail closed |
 | Chat | No fixed M6 port. The Taker read service may inspect one absolute mode-0600 owner socket's metadata only | No Chat credential or payload crosses the health probe | Current Taker service reports disabled, available, or unavailable; it performs no Chat negotiation |
 | LEZ node RPCs | No new M6 port. Existing runs publish run-scoped dynamic loopback endpoints or actor-sidecar endpoints in owner-private manifests | Run, role, capability, signer, and key files remain outside the UI | Existing sequencer, indexer, Bedrock, and role sidecars are actor-only resources; not started by the current prototype |

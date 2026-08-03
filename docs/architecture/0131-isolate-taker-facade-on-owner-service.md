@@ -1,6 +1,6 @@
 # ADR 0131: isolate the Taker facade on an owner-only service socket
 
-- Status: Accepted; read-only service process implemented through `8826836`
+- Status: Accepted; read-only process through `ad088f8`, prepared context library through `28006dc`
 - Date: 2026-08-03
 - Scope: M6 Taker application deployment
 
@@ -30,7 +30,12 @@ and `taker_offer_list_v1`. The target seven-method contract remains fixed by
 ADR 0130. Swap list, initiate, monitor, claim, and refund are method-not-found,
 not a dishonest success or placeholder.
 
-Startup configuration is an owner-private, maximum-64-KiB, strict schema-v1
+Health reports this exact deployment boundary: health and offer-list are
+registered; swap-list, initiate, monitor, claim, and refund are not. Pair-level
+capability metadata describes reusable actor support and is not presented as
+evidence that an RPC is registered.
+
+Startup configuration is an owner-private, maximum-512-KiB, strict schema-v1
 JSON file. The secure loader accepts exact mode 0400 or 0600 on an owner-owned
 single-link regular file. It binds zeroizing bytes to the same descriptor's
 device, inode, and length, revalidates length around the read, and reopens the
@@ -51,6 +56,7 @@ flowchart LR
     Service["Running lez-taker-service<br/>HTTP-only jsonrpsee"]
     Delivery["Pinned authenticated Delivery sources"]
     Chat["Optional Chat socket metadata probe"]
+    Prepared["Prepared-ZEC startup context library<br/>landed at 28006dc"]
     Registry[("Standalone initiation registry<br/>implemented but not wired")]
     Worker["Future bounded mutation worker"]
     Maker["Maker daemon and Maker owner socket"]
@@ -61,14 +67,18 @@ flowchart LR
     Socket --> Service
     Service --> Delivery
     Service --> Chat
+    Prepared -.-> Service
+    Prepared --> Registry
     Service -.-> Registry
     Registry -.-> Worker
 ```
 
 The absence of an edge between the Taker service and Maker denotes separation:
-the Taker service does not enter the Maker owner socket. Solid edges are the
-implemented read-only process. The QML, QtRO, registry wiring, mutation worker,
-and actor edges remain planned. Negotiation continues only through existing
+the Taker service does not enter the Maker owner socket. Solid edges are implemented components. The QML, QtRO, registry wiring, mutation worker,
+and actor edges remain planned. The prepared context is component-GREEN but
+remains dashed to the executable: the legacy backend loader rejects rather than
+silently discards initiation authority, so it does not alter the current method
+set. Negotiation continues only through existing
 authenticated Delivery and role-fixed Chat protocol boundaries.
 
 ## Read-only request flow

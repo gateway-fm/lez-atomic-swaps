@@ -126,8 +126,7 @@ reads admit one refund; then a fresh maker reconstructs first lock and refund
 from its own store plus chain RPCs. Both roles finish revision 2 `refunded`.
 
 Runtime chain endpoints are ephemeral literal-loopback Core, LEZ sequencer,
-and LEZ indexer RPCs. Funds are deterministic Regtest/genesis allocations. No
-public RPC, faucet, peer, deployment, or public funds participate. Bedrock may
+and LEZ indexer RPCs. Funds are deterministic Regtest/genesis allocations. public RPC, faucet, peer, deployment, or public funds participate. Bedrock may
 attempt `pool.ntp.org:123/udp`, but certification does not depend on success.
 Moving finalized tips can cause bounded read-only retries; timeout, transport,
 malformed evidence, and every non-`moving_tip` remote error fail immediately.
@@ -7392,6 +7391,13 @@ There is no registry, prepared-material, receipt, actor, executable, wallet,
 signing-key, or chain-node configuration field. Unknown fields fail before
 socket bind.
 
+A strict prepared-ZEC startup context is component-GREEN at `28006dc`, but is
+not part of this deployed manual flow. Do not add registry, prepared-source,
+signing-key, draft, actor, agreement, or receipt fields to this executable's
+configuration: its legacy backend loader deliberately rejects the optional
+context, and initiation remains absent until service admission is implemented
+and evidenced.
+
 ### Start and call the two implemented methods
 
 Start on the run-owned absolute socket instead of the shared default
@@ -7431,7 +7437,9 @@ curl --silent --show-error \
 ```
 
 For this empty configuration, health is ready with Delivery and Chat disabled,
-and the offer list is empty. Prove that initiation is honestly absent:
+and the offer list is empty. Its `registered_methods` object must report
+`health` and `offer_list` as `true`, with `swap_list`, `initiate`, `monitor`,
+`claim`, and `refund` all `false`. Prove that initiation is honestly absent:
 
 ```bash
 curl --silent --show-error \
@@ -7502,13 +7510,35 @@ RPC. Its exact local proof is:
 cargo test --locked -p lez-swap-store --test taker_facade_registry
 ```
 
-The ten cases cover private exclusive creation and reopen, symlinked ancestors,
+The 12 cases cover private exclusive creation and reopen, symlinked ancestors,
 database identity and schema drift, real curve-key validation, atomic
 initiation, exact replay and durable lookup after restart, changed public or
-private request conflict, same-swap rollback, row corruption, and public/error
-redaction. The durable lookup returns the original public admission without a
-live Delivery read; future service wiring must invoke it before current offer
-or trusted-time checks. No service currently invokes it.
+private request conflict, same-swap rollback, row corruption, public/error
+redaction, and two-connection concurrency. Identical concurrent requests yield
+one new admission and one exact replay. Different requests for the same swap
+yield one winner and one `SwapConflict`; after reopen the losing request ID is
+still unused and can admit a different swap. The two concurrency cases passed
+40 repeated invocations, for 80 concurrent-test executions. The durable lookup
+returns the original public admission without a live Delivery read; future
+service wiring must invoke it before current offer or trusted-time checks. No service currently invokes it.
+
+### Reproduce prepared-ZEC authority loading
+
+This is a component proof, not a service or swap flow:
+
+```bash
+cargo test --locked -p lez-maker-node --test taker_initiation_config
+```
+
+The four cases build a real signed local Delivery envelope and prove named
+Maker authentication, fixed ZEC `TakerSellsLez` route, offer, amount, exact
+integer quote and commitment; an existing registry; a maximum 256-entry static
+catalog; same-descriptor digest and file-identity binding; normalized globally
+distinct paths; exact 32-byte secp256k1 key validation; legacy read-config
+compatibility; fixed path-free errors; and redacted Debug. The catalog cannot
+contain a dynamic client request ID, caller-selected route, or caller-selected
+Maker identity. It starts no service, worker, actor, node, wallet, chain,
+Docker container, faucet, or network request.
 
 ### External resources, isolation, and flakiness
 

@@ -51,16 +51,25 @@ registers only health and authenticated offer listing. Commit `0ef38b0`
 binds zeroizing configuration bytes to the same descriptor's device, inode,
 and length, revalidates them around the read, and rejects path replacement; an
 exact owner-owned single-link regular mode-0400 or mode-0600 file is accepted.
-The standalone schema-v1
-Taker registry foundation is GREEN through `5c6500d`. One immediate SQLite
+Commit `ad088f8` makes health report the exact two registered methods. The
+standalone schema-v1 Taker registry foundation is GREEN through `9820400`. One immediate SQLite
 transaction admits the current ZEC `TakerSellsLez` public facts, private
 service-derived authority, and exact global replay result. A request-ID lookup
 revalidates the complete durable binding and returns its public facts without
 consulting live Delivery or trusted time, so future service replay can run
-before an offer expires or disappears. The registry is not connected to the
-service and grants no worker, actor, Chat, chain, claim, or refund authority.
+before an offer expires or disappears. Commit `28006dc` adds a separate strict
+prepared-ZEC context loader: it opens only an existing registry, bounds the
+catalog at 256 entries, authenticates each retained same-descriptor Delivery
+envelope under its named Maker source, cross-binds the fixed route, offer,
+amount, exact quote, and commitment, validates private-file identities and
+digests, and rejects client request IDs in configuration. The running service
+still rejects that optional mutation context and does not register initiation;
+the registry and prepared authority grant no worker, actor, Chat, chain, claim,
+or refund effect.
 ADR [0132](docs/architecture/0132-persist-taker-initiation-admission-separately.md)
-records its atomicity and limitations. The other five target Taker methods,
+records registry atomicity and limitations; ADR
+[0133](docs/architecture/0133-bind-prepared-zec-service-authority.md) records
+the prepared-authority boundary. The other five target Taker methods,
 mutation workers, Basecamp/QML and QtRO packages, actor-real UI composition,
 final gates, owner sign-off, and the M6 tag remain pending.
 
