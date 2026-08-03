@@ -5636,7 +5636,10 @@ state-incarnation fencing across a service restart remains production
 hardening. Pushed `9cf1a34` additionally proves that bound-receipt deletion,
 coherent receipt/config cross-tampering, and corrupt role-state storage make
 both monitor and the whole list fail closed, while a receipt that never existed
-continues to project honest `Initiating` state across process restart. Next nonvisual work is actor driving
+continues to project honest `Initiating` state across process restart. Pushed `c90b21d` seeds the accepted Taker agreement into the real role-state
+SQLite store with unit ports and proves `Offered` revision zero projects as
+`AwaitingFirstLock`; future payload and malformed agreement rows make monitor
+and the whole list fail closed, then exact restoration recovers. Next nonvisual work is actor driving
 and generation-fenced claim/refund. Owner prototype signoff still gates QML
 and QtRO; actor-real UI composition, Basecamp packages, final gates, milestone
 completion, and the M6 tag remain pending.

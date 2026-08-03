@@ -144,7 +144,9 @@ same-byte receipt inode replacement and actor-lock contention fail closed, then
 the exact monitor recovers after the canonical inode and lock are restored.
 Commit `9cf1a34` additionally proves bound deletion, coherent
 receipt/config cross-tamper, and corrupt role-state make monitor and the whole
-list unavailable, while never-published custody remains `Initiating`.
+list unavailable, while never-published custody remains `Initiating`. Commit `c90b21d` additionally proves the real activated Taker store projects
+`Offered` revision zero as `AwaitingFirstLock`, and fails closed on future or
+malformed agreement rows before exact recovery.
 
 Owner prototype sign-off still gates production QML and QtRO. Actor driving,
 generation-fenced claim/refund, actor-real UI composition, Basecamp packages,
