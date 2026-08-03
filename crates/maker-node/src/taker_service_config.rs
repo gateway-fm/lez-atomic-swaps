@@ -192,6 +192,7 @@ impl fmt::Debug for ConfiguredTakerInitiationContext {
 }
 
 /// Static service-owned authority selected after a client supplies public facts.
+#[derive(Clone)]
 pub struct PreparedZecTakerInitiationV1 {
     facts: TakerInitiationFactsV1,
     reservation_id: RequestId,

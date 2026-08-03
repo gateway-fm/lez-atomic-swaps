@@ -13,6 +13,7 @@ mod service_control;
 mod taker_backend;
 mod taker_facade;
 mod taker_rpc;
+mod taker_service;
 mod taker_service_config;
 mod xmr_chat;
 pub use actor_supervisor::{
@@ -52,6 +53,7 @@ pub use taker_facade::{
     TakerTerminalActionV1, taker_pair_capabilities_v1,
 };
 pub use taker_rpc::taker_read_only_rpc_module;
+pub use taker_service::taker_service_rpc_module;
 pub use taker_service_config::{
     ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
     OwnerChatSocketProbe, PreparedZecTakerInitiationV1, SystemTakerTrustedTime,

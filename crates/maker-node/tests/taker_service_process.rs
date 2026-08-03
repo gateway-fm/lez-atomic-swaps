@@ -18,6 +18,21 @@ use lez_maker_node::{
 use rustix::process::{Pid, Signal, kill_process};
 use serde_json::{Value, json};
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use lez_bridge_protocol::RequestId;
+use lez_maker_node::{
+    DeliveryPublicationV1, RunLocalDelivery, TakerInitiationCommitV1, TakerMakerIdentityV1,
+    TakerSwapInitiateRequestV1,
+};
+use lez_swap_core::{Pair, SwapDirection};
+use lez_swap_store::{
+    LocalPriceV1, MakerOfferId, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
+    SqliteSwapStore, SqliteTakerFacadeStore,
+};
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use sha2::{Digest as _, Sha256};
+
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -102,6 +117,67 @@ async fn owner_service_serves_only_read_methods_and_cleans_exact_socket_on_sigte
     fs::remove_file(&socket).unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn configured_initiation_survives_process_restart_without_live_delivery() {
+    let fixture = ProcessInitiationFixture::new();
+    let runtime = private_directory(fixture.root.join("runtime"));
+    let socket = runtime.join("taker.sock");
+    let mut service = TestService::spawn(&fixture.config, &socket);
+    wait_until_ready(&mut service, &socket).await;
+
+    let health: TakerHealthV1 = call_local_rpc(
+        &socket,
+        "taker_health",
+        &TakerHealthRequestV1 { schema_version: 1 },
+    )
+    .await
+    .unwrap();
+    let methods = health.registered_methods();
+    assert!(methods.health());
+    assert!(methods.offer_list());
+    assert!(methods.initiate());
+    assert!(!methods.swap_list());
+    assert!(!methods.monitor());
+    assert!(!methods.claim());
+    assert!(!methods.refund());
+
+    let request = fixture.request();
+    let first: TakerInitiationCommitV1 =
+        call_local_rpc(&socket, "taker_swap_initiate_v1", &request)
+            .await
+            .unwrap();
+    assert!(!first.was_replay);
+    assert_eq!(first.swap.swap_id.as_str(), "m6-process-zec-swap-001");
+    assert_eq!(first.swap.offer_id, request.offer_id);
+    assert_eq!(first.swap.foreign_units, 42);
+    assert_eq!(first.swap.lez_units, 84);
+    assert_eq!(
+        SqliteTakerFacadeStore::open_existing(&fixture.registry)
+            .unwrap()
+            .lookup_initiation(&request.request_id)
+            .unwrap()
+            .unwrap()
+            .swap_id()
+            .as_str(),
+        "m6-process-zec-swap-001"
+    );
+
+    assert!(service.terminate().await.success());
+    assert!(!socket.exists());
+    fs::remove_file(&fixture.delivery_offer).unwrap();
+
+    let mut restarted = TestService::spawn(&fixture.config, &socket);
+    wait_until_ready(&mut restarted, &socket).await;
+    let replay: TakerInitiationCommitV1 =
+        call_local_rpc(&socket, "taker_swap_initiate_v1", &request)
+            .await
+            .expect("exact replay must precede live Delivery after restart");
+    assert!(replay.was_replay);
+    assert_eq!(replay.swap, first.swap);
+    assert!(restarted.terminate().await.success());
+    assert!(!socket.exists());
+}
+
 #[test]
 fn startup_requires_private_config_and_rejects_invalid_or_relative_socket_before_bind() {
     let run = tempfile::tempdir().unwrap();
@@ -155,6 +231,163 @@ fn startup_requires_private_config_and_rejects_invalid_or_relative_socket_before
         .unwrap();
     assert!(!relative.status.success());
     assert!(!run.path().join("relative.sock").exists());
+}
+
+struct ProcessInitiationFixture {
+    _run: tempfile::TempDir,
+    root: PathBuf,
+    config: PathBuf,
+    registry: PathBuf,
+    delivery_offer: PathBuf,
+    route: MakerRouteV1,
+    maker: [u8; 33],
+    commitment: [u8; 32],
+}
+
+impl ProcessInitiationFixture {
+    fn new() -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let run = tempfile::tempdir().unwrap();
+        let root = private_directory(run.path().join("initiation-fixture"));
+        let delivery = private_directory(root.join("delivery"));
+        let registry = root.join("registry.sqlite3");
+        drop(SqliteTakerFacadeStore::create_new(&registry).unwrap());
+
+        let maker_secret = SecretKey::from_slice(&[17; 32]).unwrap();
+        let maker =
+            PublicKey::from_secret_key(&Secp256k1::signing_only(), &maker_secret).serialize();
+        let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+        let offer = process_prepared_offer(&root, route, now);
+        let publisher = RunLocalDelivery::publisher(delivery.clone(), maker_secret).unwrap();
+        let authenticated = publisher
+            .publish_or_verify(&DeliveryPublicationV1::new(offer, now))
+            .unwrap();
+        let commitment = authenticated.commitment();
+        let delivery_offer = delivery.join("m6-process-zec-offer-001.offer.json");
+
+        let signed =
+            process_private_file(root.join("signed.json"), authenticated.signed_envelope());
+        let draft =
+            process_private_file(root.join("draft.json"), br#"{"unsigned":"process-draft"}"#);
+        let key = process_private_file(root.join("key.bin"), &[42; 32]);
+        let actor = process_private_file(root.join("actor.json"), br#"{"role":"process-taker"}"#);
+        let config = private_config(
+            root.join("service.json"),
+            &json!({
+                "schema_version": 1,
+                "delivery_sources": [{
+                    "source_id": "process-maker",
+                    "directory": delivery,
+                    "maker_public_key": hex::encode(maker),
+                }],
+                "maximum_offers": 16,
+                "initiation": {
+                    "registry_database": registry,
+                    "prepared_zec": [{
+                        "source_id": "process-maker",
+                        "swap_id": "m6-process-zec-swap-001",
+                        "offer_id": "m6-process-zec-offer-001",
+                        "reservation_id": "m6-process-zec-reservation-001",
+                        "foreign_units": 42,
+                        "lez_units": 84,
+                        "signed_envelope": process_digest_binding(&signed),
+                        "unsigned_draft": process_digest_binding(&draft),
+                        "signing_key": {"path": key},
+                        "source_config": process_digest_binding(&actor),
+                        "agreement_output": root.join("agreement.json"),
+                        "actor_root": root.join("actor-root"),
+                        "receipt_output": root.join("receipt.json"),
+                    }]
+                }
+            }),
+        );
+
+        Self {
+            _run: run,
+            root,
+            config,
+            registry,
+            delivery_offer,
+            route,
+            maker,
+            commitment,
+        }
+    }
+
+    fn request(&self) -> TakerSwapInitiateRequestV1 {
+        TakerSwapInitiateRequestV1 {
+            schema_version: 1,
+            request_id: RequestId::new("m6-process-initiation-request-001").unwrap(),
+            offer_id: MakerOfferId::new("m6-process-zec-offer-001").unwrap(),
+            route: self.route,
+            maker_identity: TakerMakerIdentityV1::new(self.maker).unwrap(),
+            signed_envelope_sha256: self.commitment,
+            foreign_units: 42,
+            expected_lez_units: 84,
+        }
+    }
+}
+
+fn process_prepared_offer(
+    root: &Path,
+    route: MakerRouteV1,
+    now: u64,
+) -> lez_swap_store::MakerOfferV1 {
+    let mut store = SqliteSwapStore::open(root.join("offer.sqlite3")).unwrap();
+    let disabled =
+        MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 1, 10_000, 300)
+            .unwrap();
+    store
+        .configure_maker_pair(
+            &RequestId::new("m6-process-pair-create").unwrap(),
+            None,
+            &disabled,
+        )
+        .unwrap();
+    store
+        .set_local_price(
+            &RequestId::new("m6-process-price-create").unwrap(),
+            None,
+            &LocalPriceV1::new(route, 2, 1).unwrap(),
+        )
+        .unwrap();
+    let enabled =
+        MakerPairConfigurationV1::new(route, true, MakerPriceSourceKind::Local, 1, 10_000, 300)
+            .unwrap();
+    store
+        .configure_maker_pair(
+            &RequestId::new("m6-process-pair-enable").unwrap(),
+            Some(1),
+            &enabled,
+        )
+        .unwrap();
+    store
+        .publish_local_offer(
+            &RequestId::new("m6-process-offer-publish").unwrap(),
+            &MakerOfferId::new("m6-process-zec-offer-001").unwrap(),
+            route,
+            now,
+        )
+        .unwrap();
+    store.list_discoverable_maker_offers(now).unwrap()[0]
+        .offer()
+        .clone()
+}
+
+fn process_digest_binding(path: &Path) -> Value {
+    json!({
+        "path": path,
+        "sha256": hex::encode(Sha256::digest(fs::read(path).unwrap())),
+    })
+}
+
+fn process_private_file(path: PathBuf, bytes: &[u8]) -> PathBuf {
+    fs::write(&path, bytes).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    path
 }
 
 fn valid_config() -> Value {

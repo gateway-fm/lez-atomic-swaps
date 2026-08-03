@@ -4,9 +4,9 @@ use anyhow::{Context as _, ensure};
 use clap::Parser;
 use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
 use lez_maker_node::{
-    load_taker_service_backend,
+    load_taker_service_context,
     owner_rpc_server::{bind_owner_socket, server_config},
-    taker_read_only_rpc_module,
+    taker_service_rpc_module,
 };
 use tokio::task::JoinSet;
 
@@ -31,9 +31,9 @@ async fn main() -> anyhow::Result<()> {
         "Taker service socket path must be absolute"
     );
 
-    let backend = load_taker_service_backend(&arguments.config)
+    let context = load_taker_service_context(&arguments.config)
         .context("load Taker service startup configuration")?;
-    let module = taker_read_only_rpc_module(backend).context("build read-only Taker RPC module")?;
+    let module = taker_service_rpc_module(context).context("build Taker RPC module")?;
     let (listener, _socket_guard) =
         bind_owner_socket(&arguments.socket).context("bind Taker service socket")?;
 

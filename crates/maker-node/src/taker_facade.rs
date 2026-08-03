@@ -433,6 +433,20 @@ impl TakerRegisteredMethodsV1 {
         }
     }
 
+    /// Returns the honest method set of an admission-capable service.
+    #[must_use]
+    pub const fn read_with_initiation() -> Self {
+        Self {
+            health: true,
+            offer_list: true,
+            swap_list: false,
+            initiate: true,
+            monitor: false,
+            claim: false,
+            refund: false,
+        }
+    }
+
     /// Reports whether health is registered.
     #[must_use]
     pub const fn health(self) -> bool {
@@ -602,6 +616,13 @@ impl TakerHealthV1 {
             pair_capabilities: taker_pair_capabilities_v1(),
             registered_methods: TakerRegisteredMethodsV1::read_only(),
         }
+    }
+
+    /// Reports that the service registered its admission-only initiation method.
+    #[must_use]
+    pub const fn with_initiation_registered(mut self) -> Self {
+        self.registered_methods = TakerRegisteredMethodsV1::read_with_initiation();
+        self
     }
 
     /// Returns the health schema version.
