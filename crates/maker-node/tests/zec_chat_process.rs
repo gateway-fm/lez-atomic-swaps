@@ -32,7 +32,7 @@ use lez_swap_store::{
     LocalPriceV1, MakerActorHeldLock, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
     MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
     MakerZecNegotiationStatus, SqliteSwapStore, SqliteTakerFacadeStore, SqliteZecRecoveryStore,
-    maker_zec_chat_session_id,
+    TakerFacadeActionV1, maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
@@ -694,6 +694,29 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         }]),
     )
     .await;
+    let admitted_claim_request = RequestId::new("m6-monitor-admitted-claim").unwrap();
+    let mut action_registry = SqliteTakerFacadeStore::open_existing(&registry).unwrap();
+    let admitted_claim = action_registry
+        .admit_action(
+            &admitted_claim_request,
+            monitor_config.swap_id(),
+            TakerFacadeActionV1::Claim,
+            0,
+            actor.agreement_basis_time,
+        )
+        .unwrap();
+    assert!(!admitted_claim.was_replay());
+    drop(action_registry);
+    let in_progress_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+
     let active_logical_after = active_taker_logical_state(monitor_config.role_state_db());
     let active_bridge_absent = !monitor_config.bridge_journal_db().exists();
     let post_read_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files);
@@ -800,6 +823,20 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     let active_recovered: TakerSwapViewV1 =
         serde_json::from_value(active_recovered_response["result"].clone()).unwrap();
     assert_eq!(active_recovered, expected_active);
+    let in_progress: TakerSwapViewV1 =
+        serde_json::from_value(in_progress_monitor_response["result"].clone()).unwrap();
+    let mut expected_in_progress = expected_active.clone();
+    expected_in_progress.state = TakerSwapStateV1::ClaimInProgress;
+    assert_eq!(in_progress, expected_in_progress);
+    assert_eq!(in_progress.available_action, None);
+    let retained_action = SqliteTakerFacadeStore::open_existing(&registry)
+        .unwrap()
+        .lookup_action_for_swap(monitor_config.swap_id())
+        .unwrap()
+        .expect("failed actor replay must retain the sole authorization");
+    assert_eq!(retained_action.action(), TakerFacadeActionV1::Claim);
+    assert_eq!(retained_action.requested_after_generation(), 0);
+
     assert_eq!(
         active_logical_after, active_logical_before,
         "restoring exact durable fields must recover the original active state"
@@ -849,6 +886,7 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
             &malformed_monitor_response,
             &malformed_list_response,
             &active_recovered_response,
+            &in_progress_monitor_response,
         ],
         run.path(),
         &reservation_id,

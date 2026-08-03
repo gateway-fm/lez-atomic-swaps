@@ -662,12 +662,13 @@ async fn project_swap(
         Err(_) => Err(MonitoringError::DependencyUnavailable),
         Ok(_) => {
             let receipt_binding = receipt_binding.ok_or(MonitoringError::DependencyUnavailable)?;
-            project_receipt_bound_swap(&prepared, &facts, receipt_binding).await
+            project_receipt_bound_swap(initiation, &prepared, &facts, receipt_binding).await
         }
     }
 }
 
 async fn project_receipt_bound_swap(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     prepared: &PreparedZecTakerInitiationV1,
     facts: &TakerInitiationFactsV1,
     receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
@@ -713,6 +714,7 @@ async fn project_receipt_bound_swap(
     .await
     .map_err(|_| MonitoringError::DependencyUnavailable)??;
 
+    let admitted_action = lookup_monitored_action(initiation, config.swap_id()).await?;
     let output = execute_actor_command(&config, ActorCommand::Status)
         .await
         .map_err(|_| MonitoringError::DependencyUnavailable)?;
@@ -722,7 +724,54 @@ async fn project_receipt_bound_swap(
     let ActorCommandOutputV1::Status(status) = output else {
         return Err(MonitoringError::DependencyUnavailable);
     };
-    Ok(view_from_actor_status(facts, status.projection()))
+    overlay_admitted_action(
+        view_from_actor_status(facts, status.projection()),
+        admitted_action.as_ref(),
+    )
+}
+
+async fn lookup_monitored_action(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    swap_id: &SwapId,
+) -> Result<Option<TakerActionAdmissionV1>, MonitoringError> {
+    let context = Arc::clone(initiation);
+    let swap_id = swap_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = context
+            .lock()
+            .map_err(|_| MonitoringError::RegistryUnavailable)?;
+        context
+            .registry_mut()
+            .lookup_action_for_swap(&swap_id)
+            .map_err(|_| MonitoringError::RegistryUnavailable)
+    })
+    .await
+    .map_err(|_| MonitoringError::RegistryUnavailable)?
+}
+
+fn overlay_admitted_action(
+    mut view: TakerSwapViewV1,
+    admission: Option<&TakerActionAdmissionV1>,
+) -> Result<TakerSwapViewV1, MonitoringError> {
+    let Some(admission) = admission else {
+        return Ok(view);
+    };
+    if admission.requested_after_generation() > view.progress_generation {
+        return Err(MonitoringError::DependencyUnavailable);
+    }
+    if matches!(
+        view.state,
+        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
+    ) {
+        return Ok(view);
+    }
+    view.state = match admission.action() {
+        TakerFacadeActionV1::Claim => TakerSwapStateV1::ClaimInProgress,
+        TakerFacadeActionV1::Refund => TakerSwapStateV1::RefundInProgress,
+    };
+    view.available_action = None;
+    view.privacy_guidance = None;
+    Ok(view)
 }
 
 fn view_from_actor_status(
