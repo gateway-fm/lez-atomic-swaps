@@ -23,12 +23,10 @@ readonly M5_LEZ_TAKER_SIGNER_KEY_FILE="${M5_LEZ_TAKER_SIGNER_KEY_FILE:-}"
 readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
 readonly M5_APPLICATION_MODE="${M5_APPLICATION_MODE:-0}"
 readonly M6_TAKER_SERVICE_MODE="${M6_TAKER_SERVICE_MODE:-0}"
+readonly M6_ZEC_JOURNEY="${M6_ZEC_JOURNEY:-claim}"
 readonly DISCOVERY_BLOCKS=256
 readonly POLL_INTERVAL_SECONDS=0.10
-# Both ceilings start at provisioning. The 49-second completion cap retains at
-# least 10 seconds against the second-truncated 60-second LEZ delay.
 readonly MAX_PRE_EFFECT_SECONDS=25
-readonly MAX_CORRIDOR_SECONDS=49
 readonly MAX_ACTOR_CALL_SECONDS=20
 readonly MAX_DRIVE_RETRIES=8
 readonly DRIVE_RETRY_DELAY_SECONDS=0.15
@@ -36,6 +34,18 @@ readonly RAPIDSNARK_LIB_DIR="${RAPIDSNARK_LIB_DIR:-/tmp/lez-atomic-swaps-tools/r
 readonly MAX_SUPERVISED_STATUS_RETRIES=8
 readonly SUPERVISED_STATUS_RETRY_DELAY_SECONDS=0.05
 readonly BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--I/usr/lib/gcc/x86_64-linux-gnu/13/include}"
+case "$M6_ZEC_JOURNEY" in
+  claim)
+    # Retain at least ten seconds against the local 60-second LEZ refund.
+    MAX_CORRIDOR_SECONDS=49
+    ;;
+  refund)
+    # Covers the finalized LEZ deadline plus later Zcash CLTV recovery.
+    MAX_CORRIDOR_SECONDS=105
+    ;;
+  *) echo 'M6_ZEC_JOURNEY must be claim or refund' >&2; exit 2 ;;
+esac
+readonly MAX_CORRIDOR_SECONDS
 export RAPIDSNARK_LIB_DIR BINDGEN_EXTRA_CLANG_ARGS
 export CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 
@@ -59,6 +69,10 @@ if [[ "$M6_TAKER_SERVICE_MODE" != 0 && "$M6_TAKER_SERVICE_MODE" != 1 ]]; then
 fi
 if [[ "$M6_TAKER_SERVICE_MODE" == 1 && "$M5_APPLICATION_MODE" != 1 ]]; then
   echo 'M6 Taker service mode requires M5_APPLICATION_MODE=1' >&2
+  exit 2
+fi
+if [[ "$M6_ZEC_JOURNEY" == refund && "$M6_TAKER_SERVICE_MODE" != 1 ]]; then
+  echo 'M6 refund journey requires M6_TAKER_SERVICE_MODE=1' >&2
   exit 2
 fi
 if [[ "$M5_APPLICATION_MODE" == 1 && ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]]; then
@@ -221,6 +235,16 @@ m6_claim_request_id="m6-claim-${run_id}"
 m6_claim_admitted=0
 m6_claim_generation=''
 m6_zcash_claim_txid=''
+m6_refund_request_id="m6-refund-${run_id}"
+m6_refund_admitted=0
+m6_refund_generation=""
+m6_lez_refund_txid=""
+m6_lez_refund_finalized=0
+m6_zcash_refund_txid=""
+m6_zcash_refund_mined=0
+m6_maker_supervisor_suppressed=0
+m6_maker_supervisor_restarted=0
+m6_lez_refund_start_tip=""
 corridor_deadline_monotonic_ms=''
 
 process_start_ticks() {
@@ -415,7 +439,7 @@ start_m5_supervisor_only_daemon() {
 
 prove_m5_terminal_operator_projection() {
   local swap_id actor_state claim_key_id claim_key_file terminal_ready terminal_log
-  local history_file status_file terminal_receipt ready=0
+  local history_file status_file terminal_receipt ready=0 expected_phase expected_phase_lower
   swap_id="$(jq -er '.swap_id | strings' "$maker_config")"
   actor_state="$(jq -er '.role_state_db | strings' "$maker_config")"
   claim_key_id="$(jq -er '.claim_recovery.key_id | strings' "$maker_config")"
@@ -429,6 +453,13 @@ prove_m5_terminal_operator_projection() {
   history_file="${evidence_dir}/m5-history-after-terminal-restart.json"
   status_file="${evidence_dir}/m5-status-after-terminal-restart.json"
   terminal_receipt="${evidence_dir}/m5-terminal-operator-projection.json"
+  if [[ "$M6_ZEC_JOURNEY" == refund ]]; then
+    expected_phase=Refunded
+    expected_phase_lower=refunded
+  else
+    expected_phase=Completed
+    expected_phase_lower=completed
+  fi
   [[ ! -e "$terminal_ready" && ! -e "$m5_maker_socket" ]] || {
     echo 'terminal M5 owner endpoint already exists' >&2
     return 1
@@ -477,11 +508,11 @@ prove_m5_terminal_operator_projection() {
 
   "$maker_cli_bin" --socket "$m5_maker_socket" history >"$history_file"
   "$maker_cli_bin" --socket "$m5_maker_socket" status --id "$swap_id" >"$status_file"
-  jq -e --arg swap "$swap_id" '
-    length == 1 and .[0].id == $swap and .[0].phase == "Completed"
+  jq -e --arg swap "$swap_id" --arg phase "$expected_phase" '
+    length == 1 and .[0].id == $swap and .[0].phase == $phase
   ' "$history_file" >/dev/null
-  jq -e --arg swap "$swap_id" '
-    .id == $swap and .phase == "Completed"
+  jq -e --arg swap "$swap_id" --arg phase "$expected_phase" '
+    .id == $swap and .phase == $phase
   ' "$status_file" >/dev/null
 
   stop_owned_m5_daemon
@@ -494,6 +525,7 @@ prove_m5_terminal_operator_projection() {
     return 1
   }
   jq -n --arg swap_id "$swap_id" \
+    --arg phase "$expected_phase_lower" \
     --arg history_sha256 "$(sha256sum "$history_file" | cut -d ' ' -f1)" \
     --arg status_sha256 "$(sha256sum "$status_file" | cut -d ' ' -f1)" \
     --argjson source_revision "$(jq -er '.revision | numbers' "${evidence_dir}/maker-status-final.json")" '
@@ -502,8 +534,8 @@ prove_m5_terminal_operator_projection() {
       result: "passed",
       swap_id: $swap_id,
       source: {role:"maker",revision:$source_revision,offline_full_history_replay:true},
-      operator_history_phase: "completed",
-      operator_status_phase: "completed",
+      operator_history_phase: $phase,
+      operator_status_phase: $phase,
       history_sha256: $history_sha256,
       status_sha256: $status_sha256,
       owner_socket_removed_after_query: true,
@@ -1531,7 +1563,9 @@ jq -n \
   --argjson pre_effect_remaining_ms "$pre_effect_remaining_ms" \
   --argjson m5_application_mode "$M5_APPLICATION_MODE" \
   --arg application_handoff_sha256 "$application_handoff_sha256" \
-  --argjson zebra_tip "$zebra_tip" '
+  --argjson zebra_tip "$zebra_tip" \
+  --arg journey "$M6_ZEC_JOURNEY" \
+  --argjson max_corridor_seconds "$MAX_CORRIDOR_SECONDS" '
   {
     schema_version: 1,
     run_id: $run_id,
@@ -1557,8 +1591,9 @@ jq -n \
       provision_started_milliseconds: $provision_started_monotonic_ms,
       absolute_deadline_milliseconds: $corridor_deadline_monotonic_ms,
       pre_effect_remaining_milliseconds: $pre_effect_remaining_ms,
-      provision_to_completion_cap_seconds: 49,
-      lez_delay_margin_seconds: 10
+      provision_to_completion_cap_seconds: $max_corridor_seconds,
+      lez_delay_margin_seconds:
+        (if $journey == "claim" then 10 else 0 end)
     },
     initial_zebra_tip: $zebra_tip,
     application_plane: {
@@ -1722,6 +1757,256 @@ assert_m5_taker_receipt_unchanged() {
 }
 
 
+m6_taker_lez_submission_set() {
+  local journal="${taker_sidecar_state_dir}/bridge-requests.v1.json"
+  [[ -f "$journal" && ! -L "$journal" ]] || return 1
+  jq -c --arg run_id "$run_id" '
+    select(.schema_version == 1 and .run_id == $run_id)
+    | [.entries[] | select(.method == "lez_bridge.v1.submit_transaction"
+      and .outcome.kind == "success") | .outcome.value.transaction_id
+      | strings | select(test("^[0-9a-f]{64}$"))]
+    | unique
+  ' "$journal"
+}
+
+m6_finalized_tip() {
+  rpc "$LEZ_INDEXER_URL" '{"jsonrpc":"2.0","id":"m6-refund-tip","method":"getLastFinalizedBlockId","params":[]}' |
+    jq -er '.result | numbers'
+}
+
+m6_taker_lez_refund_deadline_ms() {
+  local journal="${taker_sidecar_state_dir}/bridge-requests.v1.json"
+  [[ -f "$journal" && ! -L "$journal" ]] || return 1
+  jq -er --arg run_id "$run_id" '
+    select(.schema_version == 1 and .run_id == $run_id)
+    | [.entries[] | select(.method == "lez_bridge.v1.prepare_native_escrow"
+        and .outcome.kind == "success")
+      | .replay_request.terms.refund_at_ms | numbers]
+    | unique
+    | if length == 1 then .[0] else error("ambiguous LEZ refund deadline") end
+  ' "$journal"
+}
+
+wait_for_m6_lez_refund_window() {
+  local deadline tip block timestamp hash
+  deadline="$(m6_taker_lez_refund_deadline_ms)" || return
+  while true; do
+    remaining_budget_milliseconds 'm6-lez-refund-window' >/dev/null || return
+    tip="$(m6_finalized_tip)" || return
+    block="$(rpc "$LEZ_INDEXER_URL" "$(jq -nc --argjson height "$tip" '
+      {jsonrpc:"2.0",id:"m6-refund-window",method:"getBlockById",params:[$height]}
+    ')")" || return
+    jq -e '
+      .error == null and .result.bedrock_status == "Finalized"
+      and (.result.header.timestamp | numbers)
+    ' <<<"$block" >/dev/null || return 1
+    timestamp="$(jq -er '.result.header.timestamp | numbers' <<<"$block")"
+    if (( timestamp >= deadline )); then
+      hash="$(jq -er '.result.header.hash | strings' <<<"$block")"
+      jq -n --argjson deadline "$deadline" --argjson tip "$tip" \
+        --argjson timestamp "$timestamp" --arg hash "$hash" '
+        {schema_version:1,refund_at_ms:$deadline,finalized_tip:$tip,
+          finalized_tip_hash:$hash,finalized_timestamp_ms:$timestamp,
+          deadline_reached:true}
+      ' >"${evidence_dir}/m6-taker-lez-refund-window.json"
+      chmod 0600 "${evidence_dir}/m6-taker-lez-refund-window.json"
+      return 0
+    fi
+    sleep 0.10
+  done
+}
+
+prove_m6_lez_refund_finality() {
+  local transaction_id="$1" start_height="$2"
+  local cursor=$((start_height + 1)) tip block height occurrences
+  local count=0 containing_height=0 containing_hash='' containing_timestamp=0 transaction
+  [[ "$transaction_id" =~ ^[0-9a-f]{64}$ ]] || return 1
+  while true; do
+    remaining_budget_milliseconds 'm6-lez-refund-finality' >/dev/null || return
+    tip="$(m6_finalized_tip)" || return
+    (( tip >= start_height && tip - start_height <= 4096 )) || return 1
+    while (( cursor <= tip )); do
+      height="$cursor"
+      block="$(rpc "$LEZ_INDEXER_URL" "$(jq -nc --argjson height "$height"         '{jsonrpc:"2.0",id:"m6-refund-block",method:"getBlockById",params:[$height]}')")" ||
+        return
+      jq -e '.error == null and .result.bedrock_status == "Finalized"' <<<"$block" >/dev/null ||
+        return 1
+      occurrences="$(jq -er --arg tx "$transaction_id"         '[.result.body.transactions[]? | select(.Public.hash == $tx)] | length' <<<"$block")"
+      if (( occurrences > 0 )); then
+        count=$((count + occurrences))
+        containing_height="$height"
+        containing_hash="$(jq -er '.result.header.hash | strings' <<<"$block")"
+        containing_timestamp="$(jq -er '.result.header.timestamp | numbers' <<<"$block")"
+      fi
+      cursor=$((cursor + 1))
+    done
+    (( count > 0 )) && break
+    sleep 0.10
+  done
+  (( count == 1 && containing_height > start_height )) || return 1
+  transaction="$(rpc "$LEZ_INDEXER_URL" "$(jq -nc --arg tx "$transaction_id"     '{jsonrpc:"2.0",id:"m6-refund-transaction",method:"getTransaction",params:[$tx]}')")"
+  jq -e --arg tx "$transaction_id"     '.error == null and .result.Public.hash == $tx' <<<"$transaction" >/dev/null || return 1
+  jq -n --arg tx "$transaction_id" --arg hash "$containing_hash"     --argjson start "$((start_height + 1))" --argjson tip "$tip"     --argjson block "$containing_height" --argjson timestamp "$containing_timestamp" '
+    {schema_version:1,transaction_id:$tx,
+      window:{start_height:$start,finalized_tip:$tip},occurrences:1,
+      containing_block_id:$block,containing_block_hash:$hash,
+      containing_timestamp_ms:$timestamp,bedrock_status:"Finalized",
+      transaction_hash_revalidated:true}
+  ' >"${evidence_dir}/m6-taker-lez-refund-finality.json"
+  chmod 0600 "${evidence_dir}/m6-taker-lez-refund-finality.json"
+}
+
+start_m6_refund_maker_supervisor() {
+  (( m6_maker_supervisor_suppressed == 1 && m6_lez_refund_finalized == 1 )) || return 1
+  local ready_file="${application_root}/runtime/ready-refund-control"
+  local log="${evidence_dir}/m6-refund-maker-control.log"
+  local monitor_file="${evidence_dir}/m6-refund-maker-monitor.json"
+  local first_file="${evidence_dir}/m6-refund-maker-manual-action-first.json"
+  local replay_file="${evidence_dir}/m6-refund-maker-manual-action-replay.json"
+  local generation refund_eligibility_tip
+  refund_eligibility_tip="$(jq -er '.result | numbers' <<<"$(rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m6-refund-eligibility-tip","method":"getblockcount","params":[]}')")"
+  (( refund_eligibility_tip == zebra_tip + 2 )) || {
+    echo 'M6 refund eligibility did not begin at the exact post-funding Zebra tip' >&2
+    return 1
+  }
+  mine_blocks refund-eligibility 3
+  [[ ! -e "$ready_file" && ! -e "$m5_supervisor_socket" ]] || return 1
+  "$m5_daemon_bin" --socket "$m5_supervisor_socket" --database "$m5_application_database"     --ready-file "$ready_file" >"$log" 2>&1 &
+  m5_daemon_pid=$!
+  m5_daemon_start_ticks="$(process_start_ticks "$m5_daemon_pid")"
+  [[ -n "$m5_daemon_start_ticks" ]] || return 1
+  wait_for_m5_daemon_ready "$m5_supervisor_socket" "$ready_file" "$log"
+  "$maker_cli_bin" --socket "$m5_supervisor_socket" monitor --id "$m5_swap_id" >"$monitor_file"
+  generation="$(jq -er '.lease_generation | numbers' "$monitor_file")"
+  "$maker_cli_bin" --socket "$m5_supervisor_socket" refund --id "$m5_swap_id"     --request-id "m6-maker-refund-${run_id}" --expected-generation "$generation" >"$first_file"
+  "$maker_cli_bin" --socket "$m5_supervisor_socket" refund --id "$m5_swap_id"     --request-id "m6-maker-refund-${run_id}" --expected-generation "$generation" >"$replay_file"
+  jq -e --arg swap "$m5_swap_id" --argjson generation "$generation" '
+    .schema_version == 1 and .swap_id == $swap and .action == "refund"
+    and .requested_after_generation == $generation and .was_replay == false
+  ' "$first_file" >/dev/null
+  jq -e --arg swap "$m5_swap_id" --argjson generation "$generation" '
+    .schema_version == 1 and .swap_id == $swap and .action == "refund"
+    and .requested_after_generation == $generation and .was_replay == true
+  ' "$replay_file" >/dev/null
+  jq -n --slurpfile first "$first_file" --slurpfile replay "$replay_file"     '{schema_version:1,first:$first[0],replay:$replay[0],
+      maker_effect_authority:"daemon_supervisor",queued_before_supervisor_restart:true}'     >"${evidence_dir}/m6-refund-maker-manual-action.json"
+  stop_owned_m5_daemon
+  m5_daemon_pid=''
+  m5_daemon_start_ticks=''
+  [[ ! -e "$m5_supervisor_socket" && ! -e "$ready_file" ]] || return 1
+  start_m5_supervisor_only_daemon
+  m6_maker_supervisor_suppressed=0
+  m6_maker_supervisor_restarted=1
+}
+
+drive_m6_taker_refund() {
+  local round="$1" monitor_response="$2" state="$3"
+  local status_file="${evidence_dir}/m6-taker-refund-actor-status-${round}.json"
+  local refund_request first_response replay_response claim_response
+  local before_set after_set new_set output
+
+  case "$state" in
+    refunded)
+      jq -c '.result' <<<"$monitor_response"
+      return 0
+      ;;
+    awaiting_first_lock|awaiting_second_lock|both_legs_locked|refund_available)
+      if (( m6_refund_admitted == 0 )); then
+        "$actor_bin" --config "$taker_config" status >"$status_file"
+        if ! jq -e '
+          .role == "taker" and .state == "active" and .phase == "both_legs_locked"
+        ' "$status_file" >/dev/null; then
+          output="$(drive_actor taker "$taker_config" "$round")" || return
+          if jq -e '
+            .operation == "zcash_followup_claim"
+            or .operation == "lez_refund" or .operation == "zcash_refund"
+          ' <<<"$output" >/dev/null; then
+            echo 'direct Taker drive crossed the M6 service terminal-action boundary' >&2
+            return 1
+          fi
+          printf '%s\n' "$output"
+          return 0
+        fi
+      fi
+      ;;
+    refund_in_progress|attention_required) ;;
+    *)
+      echo "M6 refund monitor returned inadmissible state: ${state}" >&2
+      return 1
+      ;;
+  esac
+  if (( m6_refund_admitted == 0 )) && [[ "$state" != refund_available ]]; then
+    jq -c '.result' <<<"$monitor_response"
+    return 0
+  fi
+
+  (( m5_transport_cutover_complete == 1 \
+    && (m6_maker_supervisor_suppressed == 1 || m6_maker_supervisor_restarted == 1) )) ||
+    { echo 'M6 refund requires isolated Maker authority after cutover' >&2; return 1; }
+  [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket"
+    && ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || return 1
+
+  if (( m6_refund_admitted == 0 )); then
+    [[ "$state" == refund_available
+      && "$(jq -er '.result.available_action' <<<"$monitor_response")" == refund ]] || return 1
+    m6_refund_generation="$(jq -er '.result.progress_generation | numbers' <<<"$monitor_response")"
+    wait_for_m6_lez_refund_window
+    m6_lez_refund_start_tip="$(m6_finalized_tip)"
+    before_set="$(m6_taker_lez_submission_set)"
+    printf '%s\n' "$before_set" >"${evidence_dir}/m6-taker-lez-submissions-before-refund.json"
+    refund_request="$(jq -nc --arg request_id "$m6_refund_request_id"       --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+      {jsonrpc:"2.0",id:"m6-refund",method:"taker_swap_refund_v1",params:[{
+        schema_version:1,request_id:$request_id,swap_id:$swap,
+        expected_generation:$generation}]}
+    ')"
+    first_response="$(m6_service_rpc 'm6-refund-first' "$refund_request")"
+    printf '%s\n' "$first_response" >"${evidence_dir}/m6-taker-service-refund-first.json"
+    jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+      .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
+        requested_after_generation:$generation,was_replay:false}
+    ' <<<"$first_response" >/dev/null || return 1
+
+    claim_response="$(m6_service_rpc 'm6-refund-claim-exclusion'       "$(jq -nc --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+        {jsonrpc:"2.0",id:"m6-refund-claim-exclusion",method:"taker_swap_claim_v1",
+          params:[{schema_version:1,request_id:"m6-claim-after-refund",
+            swap_id:$swap,expected_generation:$generation}]}
+      ')")"
+    printf '%s\n' "$claim_response"       >"${evidence_dir}/m6-taker-service-refund-claim-exclusion.json"
+    jq -e '
+      .error.code == -32017 and .error.message == "Taker action conflict"
+      and .error.data == "taker_action_conflict"
+    ' <<<"$claim_response" >/dev/null || return 1
+    m6_refund_admitted=1
+  fi
+
+  refund_request="$(jq -nc --arg request_id "$m6_refund_request_id"     --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+    {jsonrpc:"2.0",id:"m6-refund-replay",method:"taker_swap_refund_v1",params:[{
+      schema_version:1,request_id:$request_id,swap_id:$swap,
+      expected_generation:$generation}]}
+  ')"
+  replay_response="$(m6_service_rpc "m6-refund-replay-${round}" "$refund_request")"
+  printf '%s\n' "$replay_response" >"${evidence_dir}/m6-taker-service-refund-replay.json"
+  jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+    .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
+      requested_after_generation:$generation,was_replay:true}
+  ' <<<"$replay_response" >/dev/null || return 1
+  jq -nc --argjson round "$round" --argjson replay "$replay_response"     '{schema_version:1,round:$round,replay:$replay}'     >>"${evidence_dir}/m6-taker-service-refund.ndjson"
+
+  if (( m6_lez_refund_finalized == 0 )); then
+    before_set="$(jq -c . "${evidence_dir}/m6-taker-lez-submissions-before-refund.json")"
+    after_set="$(m6_taker_lez_submission_set)"
+    new_set="$(jq -nc --argjson before "$before_set" --argjson after "$after_set"       '$after - $before')"
+    if [[ "$(jq -er 'length' <<<"$new_set")" == 1 ]]; then
+      m6_lez_refund_txid="$(jq -er '.[0] | strings | select(test("^[0-9a-f]{64}$"))' <<<"$new_set")"
+      prove_m6_lez_refund_finality "$m6_lez_refund_txid" "$m6_lez_refund_start_tip"
+      m6_lez_refund_finalized=1
+      start_m6_refund_maker_supervisor
+    fi
+  fi
+  jq -c '.result' <<<"$replay_response"
+}
+
 drive_m6_taker() {
   local round="$1"
   local monitor_request monitor_response state generation claim_request
@@ -1745,6 +2030,10 @@ drive_m6_taker() {
     '{schema_version:1,round:$round,response:$response}' \
     >>"${evidence_dir}/m6-taker-service-monitor.ndjson"
   state="$(jq -er '.result.state' <<<"$monitor_response")"
+  if [[ "$M6_ZEC_JOURNEY" == refund ]]; then
+    drive_m6_taker_refund "$round" "$monitor_response" "$state"
+    return
+  fi
   if [[ "$state" == completed ]]; then
     jq -c '.result' <<<"$monitor_response"
     return 0
@@ -2002,15 +2291,19 @@ cut_over_m5_negotiation_transports() {
     echo 'M5 Delivery transport survived post-lock cutover' >&2
     return 1
   }
-  start_m5_supervisor_only_daemon
-  process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
-    echo 'M5 supervisor-only daemon is not live after transport cutover' >&2
-    return 1
-  }
+  if [[ "$M6_ZEC_JOURNEY" == refund ]]; then
+    m6_maker_supervisor_suppressed=1
+  else
+    start_m5_supervisor_only_daemon
+    process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
+      echo 'M5 supervisor-only daemon is not live after transport cutover' >&2
+      return 1
+    }
+  fi
   jq -n \
     --arg first_lock_role maker \
     --arg expected_zebra_txid "$m5_expected_funding_txid" \
-    --arg supervisor_socket "$m5_supervisor_socket" \
+    --arg supervisor_socket "$([[ "$M6_ZEC_JOURNEY" == claim ]] && printf '%s' "$m5_supervisor_socket")" \
     --argjson confirmations_mined \
       "$(jq -er '.result | length' "${evidence_dir}/zebra-generate-funding.json")" '
     {
@@ -2022,8 +2315,9 @@ cut_over_m5_negotiation_transports() {
       expected_zebra_txid: $expected_zebra_txid,
       confirmations_mined: $confirmations_mined,
       maker_effect_authority: "daemon_supervisor",
-      maker_daemon_alive: true,
-      supervisor_socket: $supervisor_socket,
+      maker_daemon_alive: ($supervisor_socket != ""),
+      supervisor_suppressed_for_refund: ($supervisor_socket == ""),
+      supervisor_socket: (if $supervisor_socket == "" then null else $supervisor_socket end),
       maker_socket_absent: true,
       chat_socket_absent: true,
       delivery_path_absent: true,
@@ -2128,8 +2422,36 @@ observe_m5_supervised_maker() {
       "${evidence_dir}/m5-zebra-mempool-exact-funding.json"
     zcash_fund_submitter='maker'
     zcash_fund_mined=2
+    if [[ "$M6_ZEC_JOURNEY" == refund ]]; then
+      stop_owned_m5_daemon
+      m5_daemon_pid=""
+      m5_daemon_start_ticks=""
+    fi
     mine_blocks funding 2
     cut_over_m5_negotiation_transports
+  fi
+
+  if [[ "$M6_ZEC_JOURNEY" == refund && "$m6_maker_supervisor_restarted" == 1
+    && "$zcash_fund_mined" == 2 && "$m6_zcash_refund_mined" == 0 ]]; then
+    rpc "$ZEBRA_RPC_URL" \
+      '{"jsonrpc":"2.0","id":"m6-zcash-refund","method":"getrawmempool","params":[]}' \
+      >"$mempool_file"
+    if jq -e '.error == null and .result == []' "$mempool_file" >/dev/null; then
+      return 0
+    fi
+    jq -e --arg funding "$m5_expected_funding_txid" '
+      .error == null and (.result | arrays) and (.result | length) == 1
+      and (.result[0] | strings | test("^[0-9a-f]{64}$"))
+      and .result[0] != $funding
+    ' "$mempool_file" >/dev/null || {
+      echo 'M6 isolated mempool does not contain the singleton Maker refund' >&2
+      return 1
+    }
+    install -m 0600 "$mempool_file" \
+      "${evidence_dir}/m6-zebra-mempool-zcash-refund.json"
+    m6_zcash_refund_txid="$(jq -er '.result[0]' "$mempool_file")"
+    mine_blocks zcash-refund 1
+    m6_zcash_refund_mined=1
   fi
 }
 
@@ -2295,8 +2617,13 @@ while true; do
   handle_zcash_submission taker "$taker_output"
 
   if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
-    observe_m5_supervised_maker "$round"
-    maker_phase="$m5_maker_phase"
+    if [[ "$M6_ZEC_JOURNEY" == refund && "$m6_maker_supervisor_suppressed" == 1 ]]; then
+      "$actor_bin" --config "$maker_config" status >"${evidence_dir}/m6-maker-suppressed-status.json"
+      maker_phase="$(jq -er '.phase | strings' "${evidence_dir}/m6-maker-suppressed-status.json")"
+    else
+      observe_m5_supervised_maker "$round"
+      maker_phase="$m5_maker_phase"
+    fi
   else
     maker_output="$(drive_actor maker "$maker_config" "$round")"
     handle_lez_revealing_claim maker "$maker_output"
@@ -2305,11 +2632,12 @@ while true; do
   fi
 
   if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
-    taker_phase="$(jq -r 'if .state == "completed" then "completed" else "active" end' <<<"$taker_output")"
+    taker_phase="$(jq -r 'if .state == "completed" then "completed" elif .state == "refunded" then "refunded" else "active" end' <<<"$taker_output")"
   else
     taker_phase="$(jq -r '.phase' <<<"$taker_output")"
   fi
-  if [[ "$maker_phase" == completed && "$taker_phase" == completed ]]; then
+  if [[ ("$M6_ZEC_JOURNEY" == claim && "$maker_phase" == completed && "$taker_phase" == completed)
+    || ("$M6_ZEC_JOURNEY" == refund && "$maker_phase" == refunded && "$taker_phase" == refunded) ]]; then
     completed=1
     break
   fi
@@ -2317,22 +2645,40 @@ while true; do
   sleep "$POLL_INTERVAL_SECONDS"
 done
 
-(( completed == 1 && zcash_fund_mined == 2 && lez_revealing_claim_seen == 1 \
-  && zcash_claim_mined == 1 )) || {
-  echo "corridor did not complete atomically: completed=${completed}, funding_blocks=${zcash_fund_mined}, lez_reveal=${lez_revealing_claim_seen}, claim_blocks=${zcash_claim_mined}" >&2
-  exit 1
-}
+if [[ "$M6_ZEC_JOURNEY" == claim ]]; then
+  (( completed == 1 && zcash_fund_mined == 2 && lez_revealing_claim_seen == 1 \
+    && zcash_claim_mined == 1 )) || {
+    echo "corridor did not complete atomically: completed=${completed}, funding_blocks=${zcash_fund_mined}, lez_reveal=${lez_revealing_claim_seen}, claim_blocks=${zcash_claim_mined}" >&2
+    exit 1
+  }
+else
+  (( completed == 1 && zcash_fund_mined == 2 && lez_revealing_claim_seen == 0 \
+    && zcash_claim_mined == 0 && m6_refund_admitted == 1 \
+    && m6_lez_refund_finalized == 1 && m6_zcash_refund_mined == 1 \
+    && m6_maker_supervisor_restarted == 1 )) || {
+    echo "refund corridor violated atomic order or authority invariants" >&2
+    exit 1
+  }
+  [[ "$m6_lez_refund_txid" =~ ^[0-9a-f]{64}$ \
+    && "$m6_zcash_refund_txid" =~ ^[0-9a-f]{64}$ ]] || exit 1
+fi
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   (( m5_transport_cutover_complete == 1 )) || {
     echo 'M5 corridor completed without the required post-first-lock cutover' >&2
     exit 1
   }
-  jq -e --arg expected "$m5_expected_funding_txid" '
+  jq -e --arg expected "$m5_expected_funding_txid" --arg journey "$M6_ZEC_JOURNEY" '
     .result == "passed" and .cutover_after_first_lock == true
     and .first_lock == "zcash_funding" and .confirmations_mined == 2
     and .expected_zebra_txid == $expected
     and .maker_effect_authority == "daemon_supervisor"
-    and .maker_daemon_alive == true and .concurrent_direct_maker_effects == false
+    and (if $journey == "claim" then
+      .maker_daemon_alive == true and .supervisor_suppressed_for_refund == false
+    else
+      .maker_daemon_alive == false and .supervisor_suppressed_for_refund == true
+      and .supervisor_socket == null
+    end)
+    and .concurrent_direct_maker_effects == false
     and .maker_socket_absent == true and .chat_socket_absent == true
     and .delivery_path_absent == true' \
     "${evidence_dir}/m5-post-lock-cutover.json" >/dev/null
@@ -2351,10 +2697,14 @@ fi
 
 "$actor_bin" --config "$maker_config" status >"${evidence_dir}/maker-status-final.json"
 "$actor_bin" --config "$taker_config" status >"${evidence_dir}/taker-status-final.json"
-jq -e '.role == "maker" and .state == "active" and .phase == "completed"' \
-  "${evidence_dir}/maker-status-final.json" >/dev/null
-jq -e '.role == "taker" and .state == "active" and .phase == "completed"' \
-  "${evidence_dir}/taker-status-final.json" >/dev/null
+expected_terminal_phase=completed
+[[ "$M6_ZEC_JOURNEY" == refund ]] && expected_terminal_phase=refunded
+jq -e --arg phase "$expected_terminal_phase" '
+  .role == "maker" and .state == "active" and .phase == $phase
+' "${evidence_dir}/maker-status-final.json" >/dev/null
+jq -e --arg phase "$expected_terminal_phase" '
+  .role == "taker" and .state == "active" and .phase == $phase
+' "${evidence_dir}/taker-status-final.json" >/dev/null
 if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
   m6_terminal_request="$(jq -nc --arg swap "$m5_swap_id" '
     {jsonrpc:"2.0",id:"m6-terminal",method:"taker_swap_monitor_v1",params:[{
@@ -2362,17 +2712,23 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
   ')"
   m6_terminal_response="$(m6_service_rpc 'm6-terminal-monitor' "$m6_terminal_request")"
   printf '%s\n' "$m6_terminal_response" >"${evidence_dir}/m6-taker-service-terminal.json"
-  jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_claim_generation" '
+  m6_terminal_generation="$m6_claim_generation"
+  [[ "$M6_ZEC_JOURNEY" == refund ]] && m6_terminal_generation="$m6_refund_generation"
+  jq -e --arg swap "$m5_swap_id" --arg journey "$M6_ZEC_JOURNEY" \
+    --argjson generation "$m6_terminal_generation" '
     .error == null and .result.schema_version == 1 and .result.swap_id == $swap
-    and .result.state == "completed" and .result.progress_generation > $generation
+    and .result.state == (if $journey == "claim" then "completed" else "refunded" end)
+    and .result.progress_generation > $generation
     and .result.available_action == null
-    and .result.privacy_guidance == "shield_received_transparent_zec_separately"
+    and .result.privacy_guidance ==
+      (if $journey == "claim" then "shield_received_transparent_zec_separately" else null end)
   ' <<<"$m6_terminal_response" >/dev/null
   jq -nc --argjson round "$round" --argjson response "$m6_terminal_response" \
     '{schema_version:1,round:$round,terminal:true,response:$response}' \
     >>"${evidence_dir}/m6-taker-service-monitor.ndjson"
-  (( m6_claim_admitted == 1 ))
-  jq -s -e --arg swap "$m5_swap_id" \
+  if [[ "$M6_ZEC_JOURNEY" == claim ]]; then
+    (( m6_claim_admitted == 1 ))
+    jq -s -e --arg swap "$m5_swap_id" \
     --arg txid "$m6_zcash_claim_txid" --argjson generation "$m6_claim_generation" '
     length >= 1 and .[0].first.error == null and .[0].replay.error == null
     and .[0].first.result == {schema_version:1,swap_id:$swap,action:"claim",
@@ -2383,6 +2739,36 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
     and .[0].mempool_after_first.result == [$txid]
     and .[0].mempool_after_replay.result == [$txid]
   ' "${evidence_dir}/m6-taker-service-claim.ndjson" >/dev/null
+  else
+    (( m6_refund_admitted == 1 && m6_lez_refund_finalized == 1 \
+      && m6_zcash_refund_mined == 1 && m6_maker_supervisor_restarted == 1 ))
+    jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+      .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
+        requested_after_generation:$generation,was_replay:false}
+    ' "${evidence_dir}/m6-taker-service-refund-first.json" >/dev/null
+    jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+      .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
+        requested_after_generation:$generation,was_replay:true}
+    ' "${evidence_dir}/m6-taker-service-refund-replay.json" >/dev/null
+    jq -e '
+      .error.code == -32017 and .error.message == "Taker action conflict"
+      and .error.data == "taker_action_conflict"
+    ' "${evidence_dir}/m6-taker-service-refund-claim-exclusion.json" >/dev/null
+    jq -e --arg tx "$m6_lez_refund_txid" '
+      .schema_version == 1 and .transaction_id == $tx and .occurrences == 1
+      and .bedrock_status == "Finalized" and .transaction_hash_revalidated == true
+    ' "${evidence_dir}/m6-taker-lez-refund-finality.json" >/dev/null
+    jq -e --arg swap "$m5_swap_id" '
+      .schema_version == 1 and .first.swap_id == $swap and .first.action == "refund"
+      and .first.was_replay == false and .replay.swap_id == $swap
+      and .replay.action == "refund" and .replay.was_replay == true
+      and .maker_effect_authority == "daemon_supervisor"
+      and .queued_before_supervisor_restart == true
+    ' "${evidence_dir}/m6-refund-maker-manual-action.json" >/dev/null
+    jq -e --arg tx "$m6_zcash_refund_txid" '
+      .error == null and .result == [$tx]
+    ' "${evidence_dir}/m6-zebra-mempool-zcash-refund.json" >/dev/null
+  fi
   stop_owned_process "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin"
   m6_service_pid=''
   m6_service_start_ticks=''
@@ -2437,11 +2823,11 @@ if [[ "$M5_APPLICATION_MODE" == 1 && "$M6_TAKER_SERVICE_MODE" == 0 ]]; then
 fi
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   prove_m5_terminal_operator_projection
-  jq -e '
+  jq -e --arg phase "$expected_terminal_phase" '
     .result == "passed" and .source.role == "maker"
     and .source.revision > 0 and .source.offline_full_history_replay == true
-    and .operator_history_phase == "completed"
-    and .operator_status_phase == "completed"
+    and .operator_history_phase == $phase
+    and .operator_status_phase == $phase
     and .owner_socket_removed_after_query == true
     and .chat_remained_absent == true and .delivery_remained_offline == true
     and .chain_rpc_used_during_import == false
@@ -2451,14 +2837,17 @@ fi
 
 final_zebra_tip_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}')"
 final_zebra_tip="$(jq -er '.result | numbers' <<<"$final_zebra_tip_response")"
-(( final_zebra_tip == zebra_tip + 3 )) || {
-  echo "Zebra advanced by an unexpected count: initial=${zebra_tip}, final=${final_zebra_tip}" >&2
+expected_zebra_advance=3
+[[ "$M6_ZEC_JOURNEY" == refund ]] && expected_zebra_advance=6
+(( final_zebra_tip == zebra_tip + expected_zebra_advance )) || {
+  echo "Zebra advanced by an unexpected count: initial=${zebra_tip}, final=${final_zebra_tip}, expected_advance=${expected_zebra_advance}" >&2
   exit 1
 }
 
 jq -n \
   --arg run_id "$run_id" \
   --arg direction "$POC_DIRECTION" \
+  --arg journey "$M6_ZEC_JOURNEY" \
   --arg output_root "$private_base" \
   --arg zcash_fund_submitter "$zcash_fund_submitter" \
   --arg lez_revealing_claim_submitter "$lez_revealing_claim_submitter" \
@@ -2485,9 +2874,9 @@ jq -n \
   --arg taker_acceptance_receipt_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then printf '%s' "$m5_taker_acceptance_receipt_sha256"; fi)" \
   --arg taker_claim_trace_sha256 \
-    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-taker-receipt-claim.ndjson" | cut -d ' ' -f1; fi)" \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 && "$M6_ZEC_JOURNEY" == claim ]]; then sha256sum "${evidence_dir}/m5-taker-receipt-claim.ndjson" | cut -d ' ' -f1; fi)" \
   --arg taker_monitor_trace_sha256 \
-    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-taker-receipt-monitor.ndjson" | cut -d ' ' -f1; fi)" \
+    "$(if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m6-taker-service-monitor.ndjson" | cut -d ' ' -f1; elif [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-taker-receipt-monitor.ndjson" | cut -d ' ' -f1; fi)" \
   --arg expected_zebra_funding_txid "$m5_expected_funding_txid" \
   --arg lez_escrow_program_id "$ESCROW_PROGRAM_ID" \
   --arg lez_escrow_guest_sha256 "$M5_LEZ_GUEST_SHA256" \
@@ -2501,36 +2890,82 @@ jq -n \
   --arg lez_deployment_transaction_hash "$m5_lez_deployment_transaction_hash" \
   --argjson lez_deployment_inclusion_block_id "$m5_lez_deployment_inclusion_block_id" \
   --arg lez_deployment_inclusion_block_hash "$m5_lez_deployment_inclusion_block_hash" \
+  --arg lez_refund_txid "$m6_lez_refund_txid" \
+  --arg zcash_refund_txid "$m6_zcash_refund_txid" \
+  --arg lez_refund_window_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-lez-refund-window.json" | cut -d ' ' -f1; fi)" \
+  --arg lez_refund_finality_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-lez-refund-finality.json" | cut -d ' ' -f1; fi)" \
+  --arg maker_refund_action_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-refund-maker-manual-action.json" | cut -d ' ' -f1; fi)" \
+  --arg zcash_refund_mempool_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-zebra-mempool-zcash-refund.json" | cut -d ' ' -f1; fi)" \
   --argjson elapsed_ms "$((MAX_CORRIDOR_SECONDS * 1000 - $(remaining_budget_milliseconds 'result-before')))" '
   {
     schema_version: 1,
     run_id: $run_id,
     direction: $direction,
+    journey: $journey,
     result: "completed",
     m6_taker_service_mode: ($m6_taker_service_mode == 1),
-    maker_status: "completed",
-    taker_status: "completed",
-    zebra_generate_calls: {
-      after_zcash_fund_submitted: 1,
-      after_zcash_followup_claim_submitted: 1,
-      total: 2
-    },
-    zebra_generate_blocks: {
-      after_zcash_fund_submitted: 2,
-      after_zcash_followup_claim_submitted: 1,
-      total: 3
-    },
+    maker_status: (if $journey == "claim" then "completed" else "refunded" end),
+    taker_status: (if $journey == "claim" then "completed" else "refunded" end),
+    zebra_generate_calls:
+      (if $journey == "claim" then {
+        after_zcash_fund_submitted: 1,
+        after_zcash_followup_claim_submitted: 1,
+        total: 2
+      } else {
+        after_zcash_fund_submitted: 1,
+        refund_eligibility: 1,
+        after_zcash_refund_submitted: 1,
+        total: 3
+      } end),
+    zebra_generate_blocks:
+      (if $journey == "claim" then {
+        after_zcash_fund_submitted: 2,
+        after_zcash_followup_claim_submitted: 1,
+        total: 3
+      } else {
+        after_zcash_fund_submitted: 2,
+        refund_eligibility: 3,
+        after_zcash_refund_submitted: 1,
+        total: 6
+      } end),
     zebra_tip: {initial: $initial_zebra_tip, final: $final_zebra_tip},
-    effect_owners: {
-      zcash_funder: $zcash_fund_submitter,
-      lez_claimant: $lez_revealing_claim_submitter,
-      zcash_claimant: $zcash_claim_submitter
-    },
-    atomic_order_observed: [
-      "zcash_funded_and_confirmed",
-      "lez_revealing_claim_submitted",
-      "zcash_followup_claim_submitted_and_confirmed"
-    ],
+    effect_owners:
+      (if $journey == "claim" then {
+        zcash_funder: $zcash_fund_submitter,
+        lez_claimant: $lez_revealing_claim_submitter,
+        zcash_claimant: $zcash_claim_submitter
+      } else {
+        zcash_funder: $zcash_fund_submitter,
+        lez_refunder: "taker",
+        zcash_refunder: "maker"
+      } end),
+    atomic_order_observed:
+      (if $journey == "claim" then [
+        "zcash_funded_and_confirmed",
+        "lez_revealing_claim_submitted",
+        "zcash_followup_claim_submitted_and_confirmed"
+      ] else [
+        "zcash_funded_and_confirmed",
+        "lez_refund_finalized",
+        "zcash_refund_submitted_and_confirmed"
+      ] end),
+    refund_path:
+      (if $journey == "refund" then {
+        lez_refund_transaction_id: $lez_refund_txid,
+        zcash_refund_transaction_id: $zcash_refund_txid,
+        lez_refund_window_sha256: $lez_refund_window_sha256,
+        lez_refund_finality_sha256: $lez_refund_finality_sha256,
+        maker_refund_action_sha256: $maker_refund_action_sha256,
+        zcash_refund_mempool_sha256: $zcash_refund_mempool_sha256,
+        opposite_claim_rejected_after_refund_admission: true,
+        maker_supervisor_suppressed_until_lez_refund_finality: true,
+        maker_supervisor_restarted_after_lez_refund_finality: true,
+        deterministic_local_chain_funds: true
+      } else null end),
     drive_rounds: $drive_rounds,
     same_run_drive_retries: $drive_retry_count,
     elapsed_milliseconds_from_provisioning: $elapsed_ms,
@@ -2553,17 +2988,23 @@ jq -n \
       taker_acceptance_receipt_sha256:
         (if $m5_application_mode == 1 then $taker_acceptance_receipt_sha256 else null end),
       taker_claim_trace_sha256:
-        (if $m5_application_mode == 1 then $taker_claim_trace_sha256 else null end),
+        (if $m5_application_mode == 1 and $journey == "claim" then $taker_claim_trace_sha256 else null end),
       taker_monitor_trace_sha256:
         (if $m5_application_mode == 1 then $taker_monitor_trace_sha256 else null end),
       taker_claim_authority:
-        (if $m6_taker_service_mode == 1 then
+        (if $journey != "claim" then
+           null
+         elif $m6_taker_service_mode == 1 then
            "owner_taker_service"
          elif $m5_application_mode == 1 then
            "receipt_bound_cli"
          else null end),
+      taker_terminal_action_authority:
+        (if $m6_taker_service_mode == 1 then "owner_taker_service" else null end),
       direct_taker_claim_effects:
-        (if $m5_application_mode == 1 then false else null end),
+        (if $m5_application_mode == 1 and $journey == "claim" then false else null end),
+      direct_taker_terminal_effects:
+        (if $m6_taker_service_mode == 1 then false else null end),
       expected_zebra_funding_txid:
         (if $m5_application_mode == 1 then $expected_zebra_funding_txid else null end),
       maker_effect_authority:
@@ -2571,7 +3012,9 @@ jq -n \
       maker_daemon_owned_at_terminal_observation: ($m5_application_mode == 1),
       concurrent_direct_maker_effects:
         (if $m5_application_mode == 1 then false else null end),
-      fresh_operator_restart_reports_completed: ($m5_application_mode == 1),
+      fresh_operator_restart_reports_completed:
+        ($m5_application_mode == 1 and $journey == "claim"),
+      fresh_operator_restart_reports_terminal: ($m5_application_mode == 1),
       transports_removed_after_first_lock: ($m5_application_mode == 1),
       transports_absent_through_terminal_state: ($m5_application_mode == 1)
     },
