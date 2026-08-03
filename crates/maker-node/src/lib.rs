@@ -9,6 +9,7 @@ mod price_source;
 mod run_local_delivery;
 pub mod secure_file;
 mod service_control;
+mod taker_facade;
 mod xmr_chat;
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
@@ -31,6 +32,16 @@ pub use run_local_delivery::{
 };
 pub use service_control::{
     MakerServiceAction, MakerServiceControlError, MakerServiceControlV1, control_maker_service,
+};
+pub use taker_facade::{
+    TAKER_FACADE_METHODS_V1, TAKER_FACADE_SCHEMA_VERSION_V1, TakerActionCommitV1,
+    TakerClaimRequestV1, TakerDependencyStateV1, TakerHealthRequestV1, TakerHealthV1,
+    TakerInitiationCapabilityV1, TakerInitiationCommitV1, TakerMakerIdentityV1,
+    TakerMonitoringCapabilityV1, TakerOfferListRequestV1, TakerOfferListV1, TakerOfferViewV1,
+    TakerPairCapabilityV1, TakerPrivacyGuidanceV1, TakerRefundRequestV1,
+    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+    TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
+    taker_pair_capabilities_v1,
 };
 use xmr_chat::register_xmr_chat_methods;
 pub use xmr_chat::{
