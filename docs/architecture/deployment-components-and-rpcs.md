@@ -60,28 +60,20 @@ The nonvisual Maker prerequisite is implemented at `8c6a7db`.
 `maker_local_route_save_v1` stores a same-route local policy, exact price, and
 replay result in one schema-v22 transaction. No QML or QtRO host calls it.
 
-The nonvisual Taker read process is implemented through `8826836`.
+The nonvisual Taker service is implemented through `1664c41`.
 `lez-taker-service` reads one owner-private schema-v1 file and binds a distinct
-owner-only mode-0600 Unix socket. It registers only `taker_health` and
-`taker_offer_list_v1`. Its configuration accepts pinned local Delivery
-directories and Maker keys, optional Chat-socket metadata health, and an offer
-limit. It accepts no registry, receipt, actor, wallet, or node configuration.
-Commit `ad088f8` makes the exact method set explicit in health: those two read
-methods are true and swap-list, initiate, monitor, claim, and refund are false.
+owner-only mode-0600 Unix socket. It always registers `taker_health` and
+`taker_offer_list_v1`. When the file includes a fully validated prepared-ZEC
+context, it also registers `taker_swap_initiate_v1`; health reports the exact
+two- or three-method set. Swap-list, monitor, claim, and refund remain absent.
 
-The standalone registry through `9820400` atomically admits one current ZEC
-`TakerSellsLez` initiation and can revalidate its public projection by request
-ID before live Delivery or trusted-time checks. It is not connected to the
-process. Commit `9820400` proves concurrent exact replay and same-swap conflict
-through two independent SQLite connections, including restart-safe reuse of a
-losing request ID. No initiate, swap-list, monitor, claim, or refund endpoint
-is registered.
-
-A strict prepared-ZEC startup context is component-GREEN at `28006dc`. The
-library safely opens an existing registry and a bounded, authenticated static
-authority catalog. It is shown with a dashed edge to the deployed process
-because `lez-taker-service` still uses the legacy read loader, rejects these
-fields, and does not register initiation.
+The registry through `9820400` and prepared authority through `28006dc` are
+service-wired at `1664c41`. Replay lookup runs before catalog, trusted time,
+and Delivery. A new request must match prepared public facts and a currently
+authenticated offer at one trusted timestamp before one immediate SQLite
+transaction commits the public projection, private authority, and replay row.
+The result is `Initiating` generation zero. The real ZEC Chat acceptance and actor-provisioning path is reusable at `0afb6da`, but no worker, Chat acceptance,
+agreement, actor, wallet, node RPC, claim, or refund effect is connected.
 
 ```mermaid
 flowchart TB
@@ -93,13 +85,13 @@ flowchart TB
     Taker["Taker user"] -.-> TakerQml["Planned Taker ui_qml package"]
     TakerQml -.-> TakerHost["Planned Taker ui-host QtRO package"]
     TakerHost -.-> TakerSocket["Taker owner Unix RPC<br/>mode 0600"]
-    TakerSocket --> TakerService["lez-taker-service<br/>health and offer list only"]
-    TakerConfig["Private read config"] --> TakerService
-    PreparedConfig["Prepared-ZEC startup context library<br/>component-GREEN"] -.-> TakerService
+    TakerSocket --> TakerService["lez-taker-service<br/>read plus conditional admission"]
+    TakerConfig["Private service config"] --> TakerService
+    PreparedConfig["Prepared-ZEC authority catalog<br/>service-wired"] --> TakerService
     PreparedConfig --> Registry
     TakerService --> Delivery["Pinned local Delivery directories"]
     TakerService --> ChatProbe["Optional Chat socket metadata probe"]
-    TakerService -.-> Registry[("Standalone Taker registry<br/>not wired")]
+    TakerService --> Registry[("Taker registry<br/>replay and atomic admission")]
     Registry -.-> Worker["Future mutation worker"]
     Worker -.-> TakerActors["Existing Taker role actors"]
 
@@ -112,10 +104,10 @@ flowchart TB
 ```
 
 Dashed edges are planned and carry no current deployment claim. Solid Taker
-edges stop at authenticated local reads. The standalone registry has no solid
-service edge and no worker. Node access remains behind role actors and durable
-effect journals. A `ui_qml` view or `ui-host` must never call a node,
-sidecar, Delivery, or Chat endpoint directly.
+edges stop at authenticated local reads plus durable admission. The registry
+has a solid service edge and a dashed worker edge. Node access remains behind
+role actors and durable effect journals. A `ui_qml` view or `ui-host` must
+never call a node, sidecar, Delivery, or Chat endpoint directly.
 
 ### M6 ports, credentials, and resources
 
@@ -131,10 +123,10 @@ sidecar, Delivery, or Chat endpoint directly.
 | Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the planned host may call it, the QML view may not |
 | Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
-| Taker read service | Default `/run/lez-atomic-swaps/taker.sock`, or a caller-selected absolute Unix path beneath an euid-owned mode-0700 directory; endpoint is mode 0600 | Unix ownership/mode are admission; response DTOs and fixed errors expose no paths, keys, receipts, commands, or raw evidence | Actual `lez-taker-service` through `8826836`; only `taker_health` and `taker_offer_list_v1`; HTTP-only, batches disabled, 16 connections, 64-KiB bodies, SIGTERM cleanup and replacement-inode preservation |
-| Taker read configuration | Absolute owner-owned single-link regular exact mode-0400 or mode-0600 file, maximum 512 KiB | Pinned Delivery directories and compressed Maker public keys; optional absolute Chat socket path; no wallet, signing key, registry, receipt, actor, or node field in the deployed read-only process | Strict schema v1 with `delivery_sources`, optional `chat_socket`, and `maximum_offers` from 1 through 1024; `0ef38b0` binds zeroizing bytes to same-descriptor device, inode, and length and rejects path replacement |
-| Prepared-ZEC startup context | Library-only; no deployed endpoint and rejected by the current executable | Existing registry plus at most 256 owner-prepared ZEC authorities; no UI visibility | Component-GREEN at `28006dc`; named-source Delivery authentication, exact offer/route/quote/commitment binding, same-FD private snapshots, fixed errors, and legacy-loader rejection; no initiate RPC or worker |
-| Standalone Taker registry | Caller-selected normalized absolute mode-0600 SQLite file; no service endpoint | Stores private service-derived initiation bindings; public APIs and errors redact them | Schema v1 through `9820400`; ZEC `TakerSellsLez` admission, exact replay, durable public lookup before live Delivery, and two-connection concurrency; not configured or opened by the service; no initiate RPC or worker |
+| Taker service | Default `/run/lez-atomic-swaps/taker.sock`, or a caller-selected absolute Unix path beneath an euid-owned mode-0700 directory; endpoint is mode 0600 | Unix ownership/mode are admission; response DTOs and fixed errors expose no paths, keys, receipts, commands, or raw evidence | Actual `lez-taker-service` through `1664c41`; health and offer list always, initiate only with validated prepared authority; HTTP-only, batches disabled, 16 connections, 64-KiB bodies, SIGTERM cleanup and replacement-inode preservation |
+| Taker service configuration | Absolute owner-owned single-link regular exact mode-0400 or mode-0600 file, maximum 512 KiB | Pinned Delivery sources; optional Chat probe; optional existing registry and prepared private ZEC authority remain owner-only | Strict schema v1 with reads plus optional `initiation`; `0ef38b0` binds config bytes to one descriptor and `28006dc` validates named sources, private files, keys, output paths, and envelope facts |
+| Prepared-ZEC startup context | No separate endpoint; loaded inside the owner service | Existing registry plus at most 256 owner-prepared ZEC authorities; no UI visibility | Service-wired at `1664c41`; exact public/live selection permits admission only; no worker, Chat, actor, or chain effect |
+| Taker registry | Configured normalized absolute mode-0600 SQLite file; accessed only inside the service | Stores private service-derived initiation bindings; public APIs and errors redact them | Service-wired at `1664c41`; replay lookup precedes live dependencies and one immediate transaction admits the exact selection; no worker or chain effect |
 | Delivery | No M6 TCP port. Current Taker reads use zero to 32 owner-private signed directories pinned to Maker keys | Maker signing material remains actor-owned and is never passed to either UI package | Actual read-only dependency; unavailable sources, expired offers, result overflow, or conflicting immutable duplicates fail closed |
 | Chat | No fixed M6 port. The Taker read service may inspect one absolute mode-0600 owner socket's metadata only | No Chat credential or payload crosses the health probe | Current Taker service reports disabled, available, or unavailable; it performs no Chat negotiation |
 | LEZ node RPCs | No new M6 port. Existing runs publish run-scoped dynamic loopback endpoints or actor-sidecar endpoints in owner-private manifests | Run, role, capability, signer, and key files remain outside the UI | Existing sequencer, indexer, Bedrock, and role sidecars are actor-only resources; not started by the current prototype |
@@ -159,18 +151,19 @@ the test. Remaining prototype sensitivities are Docker and kernel sandbox
 support, Node/npm or image setup, local process limits, and CPU scheduling
 against browser timeouts.
 
-The read-only Taker service uses only its owner-private configuration, local
-Unix socket, system wall clock, configured local Delivery directories, and an
-optional local Chat-socket metadata probe. With an empty source list and no
-Chat socket it opens no dependency beyond its own socket and files. With real
-sources, stale or missing directories, wrong Maker keys, expired offers, clock
-drift, permission or inode changes, result limits, and conflicting duplicate
-offers fail closed. There is no automatic public provider or node fallback.
+The Taker service uses only its owner-private configuration, local Unix socket,
+system wall clock, configured local Delivery directories, optional local
+Chat-socket metadata probe, and configured local SQLite registry. With no
+initiation object it opens no registry and registers only reads. With prepared
+initiation, stale or missing files, wrong Maker keys, expired offers, clock
+drift, permission or inode changes, result limits, conflicting duplicates, or
+registry errors fail closed. Exact durable replay does not require Delivery or
+a new clock sample. There is no automatic public provider or node fallback.
 
-The standalone registry test uses local SQLite and filesystem sync only.
-Filesystem latency, lock contention up to the bounded five-second busy timeout,
-or unsafe path and inode changes can fail an operation, but cannot trigger a
-chain or wallet call because no worker is connected.
+SQLite and filesystem sync latency or lock contention up to the bounded
+five-second busy timeout can slow or fail admission. Blocking work is isolated
+from the async runtime and no mutex spans Delivery await. These failures cannot
+trigger a chain or wallet call because no worker is connected.
 
 The planned actor-real UI additionally inherits startup, finality, reorg, and
 bounded-RPC timing from local LEZ, Bitcoin, Monero, and Zcash lanes, plus

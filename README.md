@@ -51,27 +51,40 @@ registers only health and authenticated offer listing. Commit `0ef38b0`
 binds zeroizing configuration bytes to the same descriptor's device, inode,
 and length, revalidates them around the read, and rejects path replacement; an
 exact owner-owned single-link regular mode-0400 or mode-0600 file is accepted.
-Commit `ad088f8` makes health report the exact two registered methods. The
-standalone schema-v1 Taker registry foundation is GREEN through `9820400`. One immediate SQLite
-transaction admits the current ZEC `TakerSellsLez` public facts, private
-service-derived authority, and exact global replay result. A request-ID lookup
-revalidates the complete durable binding and returns its public facts without
-consulting live Delivery or trusted time, so future service replay can run
-before an offer expires or disappears. Commit `28006dc` adds a separate strict
-prepared-ZEC context loader: it opens only an existing registry, bounds the
-catalog at 256 entries, authenticates each retained same-descriptor Delivery
-envelope under its named Maker source, cross-binds the fixed route, offer,
-amount, exact quote, and commitment, validates private-file identities and
-digests, and rejects client request IDs in configuration. The running service
-still rejects that optional mutation context and does not register initiation;
-the registry and prepared authority grant no worker, actor, Chat, chain, claim,
-or refund effect.
+Commit `ad088f8` makes health report the exact registered method set. The
+schema-v1 Taker registry foundation is GREEN through `9820400`, and
+`28006dc` adds the strict prepared-ZEC context loader. Commit `1664c41`
+wires both into the running service as admission only:
+`taker_swap_initiate_v1` is registered only when prepared authority is
+configured, and health then reports exactly three methods. Every request first
+checks durable replay on a blocking task. An exact retry returns its original
+public result without consulting the catalog, clock, or Delivery; changed
+reuse conflicts. A new request must match every prepared public fact and a
+currently authenticated Delivery offer at one trusted-time snapshot before one
+immediate SQLite transaction commits public facts, private authority, and the
+global replay result. The RPC returns only after commit as `Initiating`
+generation zero. Focused admission/read/config/process tests are GREEN 16/16,
+including process restart replay after the offer file is removed; all-target
+strict Clippy, warning-fatal Rustdoc, formatting, and diff hygiene are GREEN. Commit `e7a7e2b` also proves service-level concurrent exact replay
+and one-winner conflict. Commit `0afb6da` extracts the existing real ZEC Chat
+acceptance and actor-provisioning path into one reusable, redacted library
+module and uses the 1-MiB bounded Chat transport; it is not yet invoked by the
+service.
+
+This is local admission atomicity, not execution or cross-chain atomicity.
+There is still no worker, Chat acceptance, countersigned agreement, actor,
+Zebra or LEZ call, claim, or refund effect. Delivery authentication and the
+SQLite commit are separate, but the admission remains bound to the exact
+authenticated envelope commitment and creates no external effect.
 ADR [0132](docs/architecture/0132-persist-taker-initiation-admission-separately.md)
 records registry atomicity and limitations; ADR
 [0133](docs/architecture/0133-bind-prepared-zec-service-authority.md) records
-the prepared-authority boundary. The other five target Taker methods,
-mutation workers, Basecamp/QML and QtRO packages, actor-real UI composition,
-final gates, owner sign-off, and the M6 tag remain pending.
+the prepared-authority boundary; ADR
+[0134](docs/architecture/0134-admit-taker-initiation-before-effects.md) records
+the service ordering and admission-only atomicity argument. Swap list, monitor,
+claim, refund, the real ZEC execution worker, Basecamp/QML and QtRO packages,
+actor-real UI composition, final gates, owner sign-off, and the M6 tag remain
+pending.
 
 ### M5 verified progressive application PoC — historical implementation record
 

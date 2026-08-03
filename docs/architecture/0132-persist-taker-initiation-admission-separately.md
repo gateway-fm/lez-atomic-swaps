@@ -1,6 +1,6 @@
 # ADR 0132: persist Taker initiation admission in a standalone registry
 
-- Status: Accepted and implemented as a standalone M6 foundation through `9820400`
+- Status: Accepted; standalone foundation `9820400`, service-wired by ADR 0134 at `1664c41`
 - Date: 2026-08-03
 - Scope: M6 nonvisual Taker initiation persistence
 
@@ -9,9 +9,9 @@
 The target Taker facade needs exact initiation replay after an ambiguous response
 without giving the UI a receipt path, signing key, draft, actor directory, or
 generic command. The Maker database is the wrong owner because Maker and Taker
-authority must remain process-separated. The read-only `lez-taker-service`
-also cannot honestly register an initiation method until durable admission and
-a bounded worker are composed behind it.
+authority must remain process-separated. The original read-only
+`lez-taker-service` could not honestly register initiation until this durable
+admission existed; ADR 0134 later wires admission without claiming a worker.
 
 This first slice therefore owns only a separate Taker schema-v1 SQLite registry.
 It accepts public immutable facts for the current ZEC `TakerSellsLez` vertical
@@ -40,8 +40,8 @@ Only ZEC with direction `TakerSellsLez` is admitted in this schema. Public
 listing returns only validated public facts in stable swap-ID order. Durable
 `lookup_initiation` accepts a request ID, revalidates the request, public row,
 and private authority row, and returns only public facts. It performs no live
-Delivery or trusted-time check, so future service wiring can resolve durable
-replay before consulting an offer that may have expired or disappeared.
+Delivery or trusted-time check. The service now uses it before catalog, clock,
+or Delivery so replay survives offer expiry or removal.
 Private authority has no public getters, redacts `Debug`, and never appears in
 errors or replay results.
 
@@ -49,7 +49,7 @@ errors or replay results.
 
 ```mermaid
 flowchart LR
-    Caller["Future role-fixed Taker service"]
+    Caller["Role-fixed Taker service"]
     Facts["Reviewed public initiation facts"]
     Authority["Service-derived private authority"]
     Store["Standalone Taker registry schema v1"]
@@ -60,9 +60,9 @@ flowchart LR
     Worker["Future bounded worker"]
     Chain["Future role actor and chain adapters"]
 
-    Caller -.-> Lookup
-    Caller -.-> Facts
-    Caller -.-> Authority
+    Caller --> Lookup
+    Caller --> Facts
+    Caller --> Authority
     Facts --> Store
     Authority --> Store
     Store --> Lookup
@@ -73,9 +73,9 @@ flowchart LR
     Worker -.-> Chain
 ```
 
-Solid edges are implemented library boundaries. The service, worker, actor, and
-chain edges are dashed because `9820400` does not wire the registry into
-`lez-taker-service` and does not register `taker_swap_initiate_v1`.
+Solid edges include the service admission wired by ADR 0134. Worker, actor, and
+chain edges remain dashed because `taker_swap_initiate_v1` returns durable
+generation-zero admission without starting an effect.
 
 ## Concurrent admission evidence
 
@@ -104,13 +104,13 @@ sequenceDiagram
 
 The full registry suite is GREEN 12/12. The two concurrent cases passed 40
 repeated invocations, for 80 concurrent-test executions. This is local database
-concurrency evidence only; it neither wires the service nor starts a worker.
+concurrency evidence only; service wiring adds no worker or chain effect.
 
 ## Admission success
 
 ```mermaid
 sequenceDiagram
-    participant S as Future Taker service
+    participant S as Taker service
     participant R as Standalone registry
     participant D as SQLite schema v1
     S->>R: Admit request public facts private authority and trusted time
@@ -159,7 +159,7 @@ request rows.
 sequenceDiagram
     participant P1 as First process
     participant DB as Owner-private registry
-    participant P2 as Restarted future service
+    participant P2 as Restarted Taker service
     participant D as Live Delivery
     P1->>DB: Commit request facts authority and result
     P1--xP1: Exit after response loss
@@ -200,8 +200,8 @@ worker must reuse.
 
 ## Limitations and consequences
 
-- The registry is not connected to `lez-taker-service`; initiation RPC remains
-  method-not-found.
+- ADR 0134 connects the registry to `lez-taker-service`; configured initiation
+  returns only durable `Initiating` generation-zero admission.
 - Only ZEC `TakerSellsLez` initiation facts are accepted.
 - No worker consumes the stored authority and no chain or wallet call occurs.
 - Swap list, monitor, claim, and refund service methods remain absent.

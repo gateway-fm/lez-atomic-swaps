@@ -5492,12 +5492,11 @@ registry is GREEN 12/12; the two concurrent cases also passed 40 repeated
 invocations, for 80 concurrent-test executions.
 
 ADR 0132 records the components, success, conflict, restart, atomicity, and
-limitations. The registry is a standalone library and is not configured by or
-connected to `lez-taker-service`; `taker_swap_initiate_v1` remains
-method-not-found and no worker, actor, Chat, chain, wallet, claim, or refund
-effect exists.
+limitations. At this standalone checkpoint the registry was not yet connected
+to `lez-taker-service`, and no worker, actor, Chat, chain, wallet, claim, or
+refund effect existed.
 
-Pushed commit `28006dc` makes that strict optional prepared-ZEC context
+Pushed commit `28006dc` makes the strict optional prepared-ZEC context
 component-GREEN. It opens only an existing registry; caps the static catalog at
 256; requires unique named sources and fixed swap, offer, reservation, and
 output identities; authenticates the retained same-descriptor signed envelope;
@@ -5506,12 +5505,52 @@ validates immutable-file digests and a real 32-byte secp256k1 signing key; and
 keeps paths and private authority out of Debug and fixed errors. Dynamic client
 request IDs and caller-supplied route or Maker identity are rejected from the
 catalog. The legacy backend loader rejects this optional context rather than
-silently discarding it, so the deployed service remains honestly read-only.
-Focused context 4/4, read/config/backend/RPC/process 18/18, same-FD race 2/2,
-strict Clippy, Rustdoc, formatting, and diff hygiene are GREEN.
+silently discarding it. Focused context 4/4, read/config/backend/RPC/process
+18/18, same-FD race 2/2, strict Clippy, Rustdoc, formatting, and diff hygiene
+are GREEN.
 
-Remaining nonvisual work is service-owned registry wiring and one
-complete bounded ZEC mutation vertical before expanding lifecycle reads and
-terminal admission. Production QML and QtRO host work remain gated on explicit
-owner prototype sign-off. Actor-real UI composition, Basecamp packages, final
-quality/evidence gates, and the M6 tag remain pending.
+## M6 replay-first service admission checkpoint (2026-08-03)
+
+Pushed commit `1664c41` switches the executable to the complete validated
+service context. Empty configurations remain backward compatible with exactly
+health and offer-list. A configuration with prepared authority additionally
+registers `taker_swap_initiate_v1`, and health truthfully reports that third
+method while swap-list, monitor, claim, and refund remain absent.
+
+The handler validates schema, then performs durable request lookup inside
+`spawn_blocking` before it selects prepared authority, samples time, or reads
+Delivery. Exact replay returns the original public projection even after
+process restart and Delivery removal. Changed reuse is a fixed conflict. A new
+request must exactly match the prepared offer, route, Maker, signed-envelope
+SHA-256, foreign units, and LEZ units. The service then captures one trusted
+timestamp, authenticates Delivery at that timestamp, and rechecks the exact
+selection before an immediate SQLite transaction admits public facts, private
+authority, and replay. It returns `Initiating` generation zero only after the
+commit. The mutex-protected registry/catalog is never held across an async
+Delivery call.
+
+Focused admission, read RPC, configuration, and actual-process tests are GREEN
+16/16. The process proof starts the real owner-only Unix service, admits through
+JSON-RPC, restarts it, removes the live offer file, and receives the exact
+durable replay. All-target strict Clippy, warning-fatal Rustdoc, formatting,
+and diff hygiene are GREEN. ADR 0134 records the components, sequence, fixed
+errors, and atomicity argument. Commit `e7a7e2b` adds service-level concurrent exact-replay
+and one-winner conflict evidence.
+
+Commit `0afb6da` then moves the already process-proven real ZEC acceptance,
+countersigning, no-clobber agreement and receipt publication, and Taker actor
+provisioning into a single reusable library module. The legacy CLI and its
+BTC/XMR helper consumers retain behavior, while ZEC proposal and completion now
+use the intended 1-MiB bounded Chat transport. Its actual-process acceptance,
+response-loss retry, restart replay, and receipt integrity proof remains GREEN
+1/1. This is reuse only; the Taker service does not invoke it yet.
+
+This closes service-owned admission, not the ZEC execution vertical. Delivery
+authentication and SQLite commit are separate, but the admitted record is
+bound to the exact authenticated commitment and neither step creates an
+external effect. Remaining nonvisual work is a durable worker that revalidates
+private bindings, performs real ZEC Chat acceptance, provisions the Taker actor,
+and drives receipt-bound Zebra and LEZ lifecycle state before swap-list,
+monitor, claim, or refund can be registered. Production QML and QtRO host work
+remain gated on explicit owner prototype sign-off. Actor-real UI composition,
+Basecamp packages, final quality/evidence gates, and the M6 tag remain pending.

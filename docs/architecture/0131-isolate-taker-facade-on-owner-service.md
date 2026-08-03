@@ -1,6 +1,6 @@
 # ADR 0131: isolate the Taker facade on an owner-only service socket
 
-- Status: Accepted; read-only process through `ad088f8`, prepared context library through `28006dc`
+- Status: Accepted; read and conditional admission process through `1664c41`
 - Date: 2026-08-03
 - Scope: M6 Taker application deployment
 
@@ -25,39 +25,39 @@ The dedicated `lez-taker-service` now runs on a distinct owner-only Unix
 socket and reuses the library `owner_rpc_server` boundary. It never registers
 Maker, Chat, generic command, raw payload, or path-selected methods.
 
-The executable registers only methods backed by real logic: `taker_health`
-and `taker_offer_list_v1`. The target seven-method contract remains fixed by
-ADR 0130. Swap list, initiate, monitor, claim, and refund are method-not-found,
-not a dishonest success or placeholder.
+The executable registers only methods backed by real logic. Health and
+offer-list are always present. ADR 0134 conditionally registers initiation when
+the prepared-ZEC context loads; swap-list, monitor, claim, and refund remain
+method-not-found, not dishonest success or placeholders.
 
-Health reports this exact deployment boundary: health and offer-list are
-registered; swap-list, initiate, monitor, claim, and refund are not. Pair-level
-capability metadata describes reusable actor support and is not presented as
-evidence that an RPC is registered.
+Health reports this exact deployment boundary: two methods for an empty/read
+configuration and three for prepared admission. Pair-level capability metadata
+describes reusable actor support and is not presented as evidence that an RPC
+or effect worker exists.
 
 Startup configuration is an owner-private, maximum-512-KiB, strict schema-v1
 JSON file. The secure loader accepts exact mode 0400 or 0600 on an owner-owned
 single-link regular file. It binds zeroizing bytes to the same descriptor's
 device, inode, and length, revalidates length around the read, and reopens the
-path to reject replacement. The schema accepts only zero to 32 pinned Delivery
-source directories and compressed Maker public keys, an optional absolute Chat
-socket used for a metadata-only availability probe, and `maximum_offers` from
-1 through 1024. The service does not yet accept a registry path, prepared pair
-material, receipt selector, actor path, wallet credential, or node endpoint.
-None of its configured paths, identities, parser details, or adapter errors
+path to reject replacement. The schema accepts zero to 32 pinned Delivery
+sources, an optional Chat metadata probe, `maximum_offers` from 1 through
+1024, and an optional strict prepared-ZEC context with one existing registry.
+Prepared private files and output paths remain service-owned; no receipt
+selector, executable, wallet credential, or node endpoint becomes caller
+authority. None of the paths, identities, parser details, or adapter errors
 cross the RPC response.
 
 ```mermaid
 flowchart LR
     Qml["Taker QML<br/>planned secret-free replica"]
     Host["Taker UI host<br/>planned typed QtRO adapter"]
-    Config["Owner-private read configuration"]
+    Config["Owner-private service configuration"]
     Socket["Owner-only Taker Unix socket<br/>mode 0600"]
     Service["Running lez-taker-service<br/>HTTP-only jsonrpsee"]
     Delivery["Pinned authenticated Delivery sources"]
     Chat["Optional Chat socket metadata probe"]
-    Prepared["Prepared-ZEC startup context library<br/>landed at 28006dc"]
-    Registry[("Standalone initiation registry<br/>implemented but not wired")]
+    Prepared["Prepared-ZEC authority catalog<br/>service-wired at 1664c41"]
+    Registry[("Initiation registry<br/>replay and atomic admission")]
     Worker["Future bounded mutation worker"]
     Maker["Maker daemon and Maker owner socket"]
 
@@ -67,19 +67,18 @@ flowchart LR
     Socket --> Service
     Service --> Delivery
     Service --> Chat
-    Prepared -.-> Service
+    Prepared --> Service
     Prepared --> Registry
-    Service -.-> Registry
+    Service --> Registry
     Registry -.-> Worker
 ```
 
 The absence of an edge between the Taker service and Maker denotes separation:
-the Taker service does not enter the Maker owner socket. Solid edges are implemented components. The QML, QtRO, registry wiring, mutation worker,
-and actor edges remain planned. The prepared context is component-GREEN but
-remains dashed to the executable: the legacy backend loader rejects rather than
-silently discards initiation authority, so it does not alter the current method
-set. Negotiation continues only through existing
-authenticated Delivery and role-fixed Chat protocol boundaries.
+the Taker service does not enter the Maker owner socket. Solid edges are
+implemented components, including prepared authority and registry admission.
+The QML, QtRO, mutation worker, and actor edges remain planned. Negotiation
+continues only through existing authenticated Delivery and role-fixed Chat
+protocol boundaries; admission itself does not call Chat.
 
 ## Read-only request flow
 
@@ -131,21 +130,21 @@ They fail before returning a partial or unauthenticated offer set when a pinned
 source fails, a result cap is exceeded, or duplicate immutable facts conflict.
 This does not prove cross-chain atomicity.
 
-ADR 0132 implements a standalone SQLite initiation-admission foundation:
-one transaction commits exact public facts, private authority, and the request
-and result ledger. It is not wired to this process. A future initiation method
-must resolve and revalidate its authority, use that registry, and return only
-after the admission is durable. A later bounded worker must enter the existing
-receipt validator, per-swap lock, generation fence, and one-attempt pair effect
-journal. Until those connections exist, every mutation method remains absent.
+ADR 0134 wires ADR 0132 admission into this process. Durable lookup precedes
+catalog, clock, and Delivery. A new request must match prepared and
+live-authenticated facts before one transaction commits exact public facts,
+private authority, and replay; the RPC returns only after durability. This is
+local admission atomicity and creates no external effect. A later bounded
+worker must enter the existing receipt validator, per-swap lock, generation
+fence, and one-attempt pair effect journal. Swap-list, monitor, claim, and
+refund remain absent until their real paths exist.
 
 ## Consequences
 
 - Maker and Taker compromise domains stay process- and socket-separated.
-- The actual read-only service, private startup loader, health, offer list,
-  SIGTERM cleanup, restart, and replacement-inode preservation are process-GREEN.
+- The actual service, private startup loader, health, offer list, conditional
+  initiation, SIGTERM cleanup, restart replay, and inode-safe cleanup are GREEN.
 - The implementation reuses maintained dependencies and already tested custody.
-- The standalone registry is a separate library foundation, not a service
-  capability.
-- Initiation and terminal RPCs, workers, durable ZEC composition, Basecamp host,
-  QML, actor-real UI test, and owner prototype sign-off remain M6 work.
+- Initiation returns only durable `Initiating` generation-zero admission.
+- Effect workers, durable ZEC execution, terminal RPCs, Basecamp host, QML,
+  actor-real UI test, and owner prototype sign-off remain M6 work.

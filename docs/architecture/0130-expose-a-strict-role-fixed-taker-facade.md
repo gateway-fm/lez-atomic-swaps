@@ -1,6 +1,6 @@
 # ADR 0130: expose a strict role-fixed Taker facade
 
-- Status: Accepted; typed contract and authenticated read backend implemented through `1584b76`
+- Status: Accepted; contract, reads, and admission implemented through `1664c41`
 - Date: 2026-08-03
 - Scope: M6 nonvisual backend boundary
 
@@ -48,26 +48,31 @@ checkpoints only until semantic terminal workers exist.
 flowchart LR
     Qml["Taker QML replica<br/>no private authority"]
     Host["Process-isolated Taker UI host<br/>typed allowlist"]
-    Facade["Role-fixed Taker facade<br/>seven methods"]
+    Facade["Role-fixed Taker facade<br/>two baseline and one conditional method"]
     Offers["Authenticated Delivery offer projection"]
     Receipts[("Private receipt index")]
     Actors["Pair-specific Taker actors"]
     Journals[("Generation fences and effect journals")]
+    Catalog["Prepared ZEC authority"]
+    Registry[("Initiation replay registry")]
     Nodes["Role-fixed node adapters"]
 
     Qml -.-> Host
     Host -.-> Facade
-    Facade -.-> Offers
+    Facade --> Offers
+    Facade --> Catalog
+    Facade --> Registry
     Facade -.-> Receipts
     Facade -.-> Actors
     Actors --> Journals
     Actors --> Nodes
 ```
 
-Dashed edges remain planned service and host composition. The typed contract is
-implemented; it grants no transport or effect authority by itself.
+Reads and prepared admission are solid. QML, QtRO, receipt/lifecycle, and actor
+edges remain planned. The typed contract and admission grant no chain-effect
+authority by themselves.
 
-## Initiation and terminal flows
+## Target execution and terminal flows
 
 ```mermaid
 sequenceDiagram
@@ -80,6 +85,7 @@ sequenceDiagram
     U->>Q: Review exact offer and confirm
     Q->>F: initiate with request ID and public commitments
     F->>D: Resolve and revalidate exact signed offer
+    Note over F,A: Current service stops after durable generation-zero admission
     F->>R: Resolve prepared private material
     F->>A: Negotiate and provision role-fixed actor
     A->>R: Persist acceptance and replay result
@@ -113,10 +119,11 @@ sequenceDiagram
 
 The DTO layer is not itself an atomic-swap protocol and makes no chain-effect
 claim. It preserves conditional atomicity by refusing to create a second
-authority path. A future service must reuse the existing pair validation,
-persist-before-response acceptance, global replay ledger, per-swap kernel lock,
-generation fence, and one-attempt effect journal. Exact request replay returns
-the original commit; changed request reuse, stale generation, wrong pair,
+authority path. ADR 0134 now reuses pair validation, current authenticated
+Delivery, persist-before-response admission, and the global replay ledger.
+Future execution and terminal methods must additionally enter the per-swap
+kernel lock, generation fence, and one-attempt effect journal. Exact request
+replay returns the original commit; changed request reuse, stale generation, wrong pair,
 wrong direction, or unavailable terminal action fails before a new effect.
 
 For Monero, checkpoint-only capability prevents a tag marker from being shown as
@@ -129,5 +136,5 @@ readiness item, not a reason to overstate this M6 contract.
 - Pair and direction substitution cannot be hidden in a generic command.
 - QML cannot select filesystem, socket, executable, evidence, or key material.
 - Prepared private material is an explicit current initiation limitation.
-- Service transport, private resolution, Basecamp host wiring, and actor-real
-  E2E remain M6 work after prototype sign-off.
+- Execution workers, receipt/lifecycle resolution, Basecamp host wiring, and
+  actor-real E2E remain M6 work after prototype sign-off.

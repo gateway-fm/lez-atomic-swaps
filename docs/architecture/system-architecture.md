@@ -47,28 +47,25 @@ owner prototype sign-off.
 
 The Maker backend will translate an allowlisted secret-free GUI contract to the
 existing owner-restricted Unix JSON-RPC. The atomic route-save prerequisite is
-implemented. The Taker side now has an exact seven-method DTO contract, an
-authenticated read backend, a strict owner-private startup loader, and a real
-two-method `lez-taker-service` on its own mode-0600 Unix socket. Only health
-and authenticated offer listing are registered. Health reports those two as
-registered and reports swap list, initiate, monitor, claim, and refund as
-unregistered, matching the process method-not-found boundary.
+implemented. The Taker side has an exact seven-method DTO contract, an
+authenticated read backend, a strict owner-private startup loader, and
+`lez-taker-service` on its own mode-0600 Unix socket. Empty configurations
+register health and offer listing. A validated prepared-ZEC configuration also
+registers initiation, and health truthfully reports exactly those three
+methods. Swap list, monitor, claim, and refund remain unregistered.
 
-A standalone Taker schema-v1 registry exists through `9820400`. It atomically
-stores current ZEC initiation facts, private service-derived authority, and
-exact request replay. Its durable request lookup can return revalidated public
-facts without live Delivery or trusted time, preserving replay-before-live
-dependency order for future wiring. Two independently opened connections now
-prove exact concurrent convergence and same-swap conflict without consuming
-the losing request ID. No edge connects it to the service. Swap
-list, initiate, monitor, claim, and refund remain method-not-found. No mutation
-worker exists. XMR capability remains effect-checkpoint-only.
+The Taker schema-v1 registry and strict prepared-ZEC context are service-wired
+at `1664c41`. Durable request lookup runs before catalog, time, or Delivery,
+so an exact retry survives process restart, offer removal, and expiry. A new
+request must match the prepared route, Maker, offer, signed-envelope
+commitment, and amounts, then match a currently authenticated Delivery offer at
+one trusted timestamp. One immediate transaction commits public facts, private
+authority, and replay before the service returns `Initiating` generation
+zero. Blocking registry work does not hold its mutex across async Delivery.
 
-A strict prepared-ZEC startup context is component-GREEN at `28006dc`. It
-opens only an existing registry and authenticates same-descriptor retained
-Delivery bytes before binding fixed ZEC facts to redacted private authority.
-Its edge to the executable remains dashed: the running service deliberately
-rejects this context and still does not register initiation.
+Commit `0afb6da` makes the existing process-proven ZEC Chat acceptance and actor-provisioning path reusable with the bounded Chat transport, but no mutation worker invokes it. Admission performs no Chat negotiation, agreement
+countersigning, actor provisioning, wallet or signer action, Zebra or LEZ RPC,
+claim, or refund. XMR capability remains effect-checkpoint-only.
 
 ```mermaid
 flowchart TB
@@ -87,11 +84,11 @@ flowchart TB
         MakerRpc["Maker owner Unix RPC<br/>atomic route save"]
         MakerDaemon["Maker daemon"]
         MakerDb[("Maker SQLite schema v22")]
-        TakerSocket["Taker owner Unix RPC<br/>health and offer list only"]
-        TakerService["lez-taker-service<br/>read-only"]
-        TakerConfig["Private read config<br/>Delivery keys and optional Chat probe"]
-        PreparedConfig["Prepared-ZEC startup context library<br/>component-GREEN"]
-        Registry[("Standalone Taker registry schema v1<br/>not service-wired")]
+        TakerSocket["Taker owner Unix RPC<br/>health list and conditional initiate"]
+        TakerService["lez-taker-service<br/>authenticated read and admission"]
+        TakerConfig["Private service config<br/>reads plus optional prepared ZEC"]
+        PreparedConfig["Prepared-ZEC authority catalog<br/>service-wired"]
+        Registry[("Taker registry schema v1<br/>replay and atomic admission")]
         Worker["Taker mutation worker<br/>planned"]
         Delivery["Authenticated run-local Delivery"]
         ChatProbe["Optional Chat socket metadata probe"]
@@ -122,11 +119,11 @@ flowchart TB
 
     TakerSocket --> TakerService
     TakerConfig --> TakerService
-    PreparedConfig -.-> TakerService
+    PreparedConfig --> TakerService
     PreparedConfig --> Registry
     TakerService --> Delivery
     TakerService --> ChatProbe
-    TakerService -.-> Registry
+    TakerService --> Registry
     Registry -.-> Worker
     Worker -.-> TakerActors
 
@@ -142,9 +139,10 @@ flowchart TB
 
 The process split is an authority boundary, not merely a UI implementation
 detail. There is no Taker-service edge to the Maker RPC. The current Taker
-process can read only authenticated offers and dependency health. The
-standalone registry can admit one ZEC initiation in a library test, but the
-missing dashed service and worker edges mean it cannot create or drive a swap.
+process reads authenticated offers and can durably admit one prepared ZEC
+initiation. The dashed worker edge is the important remaining boundary:
+admission cannot negotiate, provision, drive, monitor, claim, refund, or create
+a chain effect.
 
 A future QML or `ui-host` crash must not stop the autonomous Maker daemon or
 erase either role's durable recovery state. Delivery and Chat remain pre-lock
