@@ -136,6 +136,15 @@ ID/hash, ancestry, and repeated-pin verification. The full 26-test refund
 observer suite is GREEN. A fresh actual-node service Refund certificate is
 still required before that happy path is claimed complete.
 
+A fresh clean-chain attempt then exposed a second bounded liveness mismatch:
+service terminal calls stopped at 15 seconds while the invoked actor may spend
+up to 30 seconds on its bridge request. ADR
+[0139](docs/architecture/0139-bound-service-actions-above-actor-bridges.md)
+keeps queries at 15 seconds and gives Claim/Refund calls 40 seconds, always
+capped by the unchanged monotonic corridor deadline. That effect-bearing run is
+quarantined; a new fresh-chain Refund replay remains required before the happy
+path is certified.
+
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ
 artifacts, and export their exact dynamic loopback endpoints, chain identities,

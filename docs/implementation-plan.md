@@ -5713,6 +5713,27 @@ The complete ZEC reference actor suite and all 26 finalized native refund
 observer tests are GREEN. The M6 service runner static contract remains GREEN.
 This is a component checkpoint, not an actual-node Refund certificate.
 
+## M6 terminal service timeout checkpoint (2026-08-03)
+
+A fresh isolated run `m6refund407dbb3a` reached both legs locked and
+`refund_available` after the signed finalized LEZ deadline. Its first service
+Refund call then timed out at 15 seconds because the outer Unix-socket client
+budget was shorter than the actor's 30-second bridge budget. The retained run
+had exactly the two expected Taker LEZ submissions, Initialize and Fund, before
+cleanup; it is quarantined and will not be retried or reused.
+
+ADR 0139 separates 15-second read/query calls from 40-second terminal Claim and
+Refund calls. The action budget remains capped by the 130-second monotonic
+Refund corridor and strictly dominates the inner bridge while preserving ten
+seconds of scheduling and durable-response headroom. Service admission remains
+generation-fenced before actor I/O, and actor/sidecar journals retain exact
+effect replay and uncertain-send authority; the timeout change cannot mint a
+second effect.
+
+The focused runner contract progressed RED before the two budgets and GREEN
+after explicit Refund and Claim action wiring. Fresh actual-node Refund proof
+is next, followed by post-terminal no-effect replay and a Claim regression run.
+
 Next in order:
 
 1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund

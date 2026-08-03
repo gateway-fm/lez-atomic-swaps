@@ -31,6 +31,8 @@ readonly MAX_ACTOR_CALL_SECONDS=20
 readonly MAX_DRIVE_RETRIES=8
 readonly DRIVE_RETRY_DELAY_SECONDS=0.15
 readonly RAPIDSNARK_LIB_DIR="${RAPIDSNARK_LIB_DIR:-/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227}"
+readonly M6_SERVICE_QUERY_TIMEOUT_MS=15000
+readonly M6_SERVICE_ACTION_TIMEOUT_MS=40000
 readonly MAX_SUPERVISED_STATUS_RETRIES=8
 readonly SUPERVISED_STATUS_RETRY_DELAY_SECONDS=0.05
 readonly BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--I/usr/lib/gcc/x86_64-linux-gnu/13/include}"
@@ -766,7 +768,7 @@ rpc() {
 m6_service_rpc() {
   local label="$1"
   local request="$2"
-  local request_timeout_ms=15000
+  local request_timeout_ms="${3:-$M6_SERVICE_QUERY_TIMEOUT_MS}"
   local remaining request_timeout response
   remaining="$(remaining_budget_milliseconds "${label}-before")" || return
   (( request_timeout_ms <= remaining )) || request_timeout_ms="$remaining"
@@ -1963,7 +1965,8 @@ drive_m6_taker_refund() {
     : >"${evidence_dir}/m6-taker-service-refund-transients.ndjson"
     admission_attempt=1
     while true; do
-      first_response="$(m6_service_rpc "m6-refund-admission-${admission_attempt}" "$refund_request")"
+      first_response="$(m6_service_rpc "m6-refund-admission-${admission_attempt}" \
+        "$refund_request" "$M6_SERVICE_ACTION_TIMEOUT_MS")"
       if (( admission_attempt == 1 )); then
         printf '%s\n' "$first_response" >"${evidence_dir}/m6-taker-service-refund-first.json"
       fi
@@ -2013,7 +2016,7 @@ drive_m6_taker_refund() {
       schema_version:1,request_id:$request_id,swap_id:$swap,
       expected_generation:$generation}]}
   ')"
-  replay_response="$(m6_service_rpc "m6-refund-replay-${round}" "$refund_request")"
+  replay_response="$(m6_service_rpc "m6-refund-replay-${round}" "$refund_request" "$M6_SERVICE_ACTION_TIMEOUT_MS")"
   printf '%s\n' "$replay_response" >"${evidence_dir}/m6-taker-service-refund-replay.json"
   jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
     .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
@@ -2099,14 +2102,14 @@ drive_m6_taker() {
         echo 'M6 claim requires an isolated empty Zebra mempool' >&2
         return 1
       }
-      first_response="$(m6_service_rpc 'm6-claim-first' "$claim_request")"
+      first_response="$(m6_service_rpc 'm6-claim-first' "$claim_request" "$M6_SERVICE_ACTION_TIMEOUT_MS")"
       mempool_after_first="$(rpc "$ZEBRA_RPC_URL" \
         '{"jsonrpc":"2.0","id":"m6-after-first","method":"getrawmempool","params":[]}')"
       printf '%s\n' "$first_response" \
         >"${evidence_dir}/m6-taker-service-claim-first.json"
       printf '%s\n' "$mempool_after_first" \
         >"${evidence_dir}/m6-zebra-mempool-after-first-claim.json"
-      replay_response="$(m6_service_rpc 'm6-claim-replay' "$claim_request")"
+      replay_response="$(m6_service_rpc 'm6-claim-replay' "$claim_request" "$M6_SERVICE_ACTION_TIMEOUT_MS")"
       mempool_after_replay="$(rpc "$ZEBRA_RPC_URL" \
         '{"jsonrpc":"2.0","id":"m6-after-replay","method":"getrawmempool","params":[]}')"
       printf '%s\n' "$replay_response" \
@@ -2155,7 +2158,7 @@ drive_m6_taker() {
       return 0
     fi
 
-    replay_response="$(m6_service_rpc "m6-claim-reconcile-${round}" "$claim_request")"
+    replay_response="$(m6_service_rpc "m6-claim-reconcile-${round}" "$claim_request" "$M6_SERVICE_ACTION_TIMEOUT_MS")"
     jq -e --arg swap "$m5_swap_id" --argjson generation "$generation" '
       .error == null and .result == {schema_version:1,swap_id:$swap,action:"claim",
         requested_after_generation:$generation,was_replay:true}
