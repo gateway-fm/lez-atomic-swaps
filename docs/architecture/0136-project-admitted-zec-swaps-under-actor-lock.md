@@ -142,6 +142,9 @@ return fixed redacted errors. Agreement, actor configuration, and receipt
 bytes and inodes remain unchanged. Hardening `3307dca` additionally proves that
 same-byte receipt inode replacement and actor-lock contention fail closed, then
 the exact monitor recovers after the canonical inode and lock are restored.
+Commit `9cf1a34` additionally proves bound deletion, coherent
+receipt/config cross-tamper, and corrupt role-state make monitor and the whole
+list unavailable, while never-published custody remains `Initiating`.
 
 Owner prototype sign-off still gates production QML and QtRO. Actor driving,
 generation-fenced claim/refund, actor-real UI composition, Basecamp packages,

@@ -85,7 +85,10 @@ configuration, or receipt. Unknown swap IDs and offer-ID substitution receive
 the same fixed redacted error. The read path starts no actor and contacts no
 chain, wallet, Delivery, or Chat endpoint. Pushed hardening `3307dca` captures
 the receipt digest and inode at startup or acceptance, rejects same-byte inode
-replacement and live actor-lock contention, and recovers after restoration.
+replacement and live actor-lock contention, and recovers after restoration. Pushed `9cf1a34` distinguishes a
+never-published
+receipt from disappeared accepted custody, fails the whole list on invalid local
+state, and proves exact process-restart `Initiating` reads before any receipt exists.
 
 This is negotiation and local handoff atomicity, not cross-chain completion.
 The service commits admission before any transport effect; deterministic Chat

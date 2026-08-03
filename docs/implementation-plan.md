@@ -5633,7 +5633,10 @@ contention now return one fixed redacted dependency error; restoring the exact
 receipt and releasing the lock restores the same `NotActivated` view without
 creating role state, a bridge journal, or chain effects. Durable rollback or
 state-incarnation fencing across a service restart remains production
-hardening. Next nonvisual work is actor driving
+hardening. Pushed `9cf1a34` additionally proves that bound-receipt deletion,
+coherent receipt/config cross-tampering, and corrupt role-state storage make
+both monitor and the whole list fail closed, while a receipt that never existed
+continues to project honest `Initiating` state across process restart. Next nonvisual work is actor driving
 and generation-fenced claim/refund. Owner prototype signoff still gates QML
 and QtRO; actor-real UI composition, Basecamp packages, final gates, milestone
 completion, and the M6 tag remain pending.

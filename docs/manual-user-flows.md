@@ -7515,7 +7515,10 @@ of the offer ID as a swap ID both return fixed code `-32014` with category
 receipt material. Agreement, actor config, and receipt bytes and inodes remain
 unchanged and no Maker actor is duplicated. The same exact test also replaces
 the receipt with identical bytes on a new inode and holds the actor lock; both
-monitor attempts fail with fixed redacted code `-32010`. Restoring the original
+monitor attempts fail with fixed redacted code `-32010`. Bound receipt
+deletion, coherent receipt/config cross-tamper, and corrupt role-state storage
+also make monitor and the whole list fail with `-32010`; restoring each exact
+artifact restores the same view. Restoring the original
 inode and releasing the lock restores the exact view without role-state,
 journal, or chain effects.
 
