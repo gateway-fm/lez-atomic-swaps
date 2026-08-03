@@ -537,6 +537,94 @@ impl SqliteTakerFacadeStore {
         Ok(store)
     }
 
+    /// Finds the exact public facts durably bound to one initiation request.
+    ///
+    /// This lookup is intended to run before live offer or trusted-time checks,
+    /// so an exact retry remains replayable after the original Delivery offer
+    /// expires or disappears. It never returns the stored private authority.
+    ///
+    /// # Errors
+    ///
+    /// Rejects changed storage identity or any malformed, incomplete, or
+    /// inconsistently bound request, public projection, or private authority.
+    pub fn lookup_initiation(
+        &self,
+        request_id: &RequestId,
+    ) -> Result<Option<TakerInitiationFactsV1>, TakerFacadeStoreError> {
+        self.revalidate_storage()?;
+        let row = self
+            .connection
+            .query_row(
+                "SELECT operation, swap_id, request_payload_version, request_json,
+                        result_payload_version, result_json, state
+                 FROM taker_facade_requests WHERE request_id = ?1",
+                [request_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        let Some((
+            operation,
+            swap_id,
+            request_version,
+            request_json,
+            result_version,
+            result_json,
+            state,
+        )) = row
+        else {
+            self.revalidate_storage()?;
+            return Ok(None);
+        };
+        let (public_version, public_json): (i64, String) = self
+            .connection
+            .query_row(
+                "SELECT payload_version, public_json FROM taker_facade_swaps WHERE swap_id = ?1",
+                [&swap_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+        let (authority_version, authority_json): (i64, String) = self
+            .connection
+            .query_row(
+                "SELECT payload_version, private_json FROM taker_facade_authorities
+                 WHERE swap_id = ?1",
+                [&swap_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+        let facts: TakerInitiationFactsV1 = decode(&public_json)?;
+        let authority: StoredTakerInitiationAuthorityV1 = decode(&authority_json)?;
+        if operation != "initiate"
+            || request_version != PAYLOAD_VERSION
+            || result_version != PAYLOAD_VERSION
+            || public_version != PAYLOAD_VERSION
+            || authority_version != PAYLOAD_VERSION
+            || state != "admitted"
+            || request_json != public_json
+            || result_json != public_json
+            || facts.swap_id.as_str() != swap_id
+        {
+            return Err(TakerFacadeStoreError::CorruptState);
+        }
+        facts
+            .validate()
+            .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+        authority.validate()?;
+        self.revalidate_storage()?;
+        Ok(Some(facts))
+    }
+
     fn open_connection(path: &Path, identity: FileIdentity) -> Result<Self, TakerFacadeStoreError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX

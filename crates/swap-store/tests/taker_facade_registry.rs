@@ -156,6 +156,16 @@ fn initiation_is_atomic_and_exactly_replays_after_restart() {
 
     let mut reopened = SqliteTakerFacadeStore::open_existing(&database).unwrap();
     assert_eq!(reopened.list_initiations().unwrap(), vec![facts.clone()]);
+    assert_eq!(
+        reopened.lookup_initiation(&request).unwrap(),
+        Some(facts.clone())
+    );
+    assert_eq!(
+        reopened
+            .lookup_initiation(&RequestId::new("m6-initiation-unknown").unwrap())
+            .unwrap(),
+        None
+    );
     assert!(
         reopened
             .admit_initiation(&request, &facts, &authority, 2_000)
@@ -220,6 +230,10 @@ fn exact_replay_rejects_runtime_projection_drift_as_corrupt() {
 
     assert_eq!(
         registry.admit_initiation(&request, &facts, &authority, 1_001),
+        Err(TakerFacadeStoreError::CorruptState)
+    );
+    assert_eq!(
+        registry.lookup_initiation(&request),
         Err(TakerFacadeStoreError::CorruptState)
     );
 }
