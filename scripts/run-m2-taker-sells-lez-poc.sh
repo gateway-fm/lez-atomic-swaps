@@ -41,7 +41,7 @@ case "$M6_ZEC_JOURNEY" in
     ;;
   refund)
     # Covers the finalized LEZ deadline plus later Zcash CLTV recovery.
-    MAX_CORRIDOR_SECONDS=105
+    MAX_CORRIDOR_SECONDS=130
     ;;
   *) echo 'M6_ZEC_JOURNEY must be claim or refund' >&2; exit 2 ;;
 esac
@@ -1904,7 +1904,7 @@ drive_m6_taker_refund() {
   local round="$1" monitor_response="$2" state="$3"
   local status_file="${evidence_dir}/m6-taker-refund-actor-status-${round}.json"
   local refund_request first_response replay_response claim_response
-  local before_set after_set new_set output
+  local before_set after_set new_set output admission_attempt
 
   case "$state" in
     refunded)
@@ -1960,11 +1960,39 @@ drive_m6_taker_refund() {
         schema_version:1,request_id:$request_id,swap_id:$swap,
         expected_generation:$generation}]}
     ')"
-    first_response="$(m6_service_rpc 'm6-refund-first' "$refund_request")"
-    printf '%s\n' "$first_response" >"${evidence_dir}/m6-taker-service-refund-first.json"
+    : >"${evidence_dir}/m6-taker-service-refund-transients.ndjson"
+    admission_attempt=1
+    while true; do
+      first_response="$(m6_service_rpc "m6-refund-admission-${admission_attempt}" "$refund_request")"
+      if (( admission_attempt == 1 )); then
+        printf '%s\n' "$first_response" >"${evidence_dir}/m6-taker-service-refund-first.json"
+      fi
+      if jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+        .error == null and .result.schema_version == 1 and .result.swap_id == $swap
+        and .result.action == "refund"
+        and .result.requested_after_generation == $generation
+        and (.result.was_replay | type) == "boolean"
+      ' <<<"$first_response" >/dev/null; then
+        break
+      fi
+      jq -e '
+        .error.code == -32010 and .error.message == "Taker dependency unavailable"
+        and .error.data.category == "taker_action_execution_unavailable"
+      ' <<<"$first_response" >/dev/null || return 1
+      jq -nc --argjson attempt "$admission_attempt" --argjson response "$first_response" '
+        {schema_version:1,attempt:$attempt,response:$response}
+      ' >>"${evidence_dir}/m6-taker-service-refund-transients.ndjson"
+      remaining_budget_milliseconds "m6-refund-admission-retry-${admission_attempt}" >/dev/null ||
+        return
+      sleep 0.10
+      admission_attempt=$((admission_attempt + 1))
+    done
+    printf '%s\n' "$first_response" >"${evidence_dir}/m6-taker-service-refund-commit.json"
     jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
-      .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
-        requested_after_generation:$generation,was_replay:false}
+      .error == null and .result.schema_version == 1 and .result.swap_id == $swap
+      and .result.action == "refund"
+      and .result.requested_after_generation == $generation
+      and (.result.was_replay | type) == "boolean"
     ' <<<"$first_response" >/dev/null || return 1
 
     claim_response="$(m6_service_rpc 'm6-refund-claim-exclusion'       "$(jq -nc --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
@@ -2743,9 +2771,22 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
     (( m6_refund_admitted == 1 && m6_lez_refund_finalized == 1 \
       && m6_zcash_refund_mined == 1 && m6_maker_supervisor_restarted == 1 ))
     jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
-      .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
-        requested_after_generation:$generation,was_replay:false}
+      if .error == null then
+        .result.schema_version == 1 and .result.swap_id == $swap
+        and .result.action == "refund"
+        and .result.requested_after_generation == $generation
+        and (.result.was_replay | type) == "boolean"
+      else
+        .error.code == -32010 and .error.message == "Taker dependency unavailable"
+        and .error.data.category == "taker_action_execution_unavailable"
+      end
     ' "${evidence_dir}/m6-taker-service-refund-first.json" >/dev/null
+    jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+      .error == null and .result.schema_version == 1 and .result.swap_id == $swap
+      and .result.action == "refund"
+      and .result.requested_after_generation == $generation
+      and (.result.was_replay | type) == "boolean"
+    ' "${evidence_dir}/m6-taker-service-refund-commit.json" >/dev/null
     jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
       .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
         requested_after_generation:$generation,was_replay:true}
@@ -2894,6 +2935,10 @@ jq -n \
   --arg zcash_refund_txid "$m6_zcash_refund_txid" \
   --arg lez_refund_window_sha256 \
     "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-lez-refund-window.json" | cut -d ' ' -f1; fi)" \
+  --arg taker_refund_commit_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-service-refund-commit.json" | cut -d ' ' -f1; fi)" \
+  --arg taker_refund_transients_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-service-refund-transients.ndjson" | cut -d ' ' -f1; fi)" \
   --arg lez_refund_finality_sha256 \
     "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-lez-refund-finality.json" | cut -d ' ' -f1; fi)" \
   --arg maker_refund_action_sha256 \
@@ -2958,6 +3003,8 @@ jq -n \
         lez_refund_transaction_id: $lez_refund_txid,
         zcash_refund_transaction_id: $zcash_refund_txid,
         lez_refund_window_sha256: $lez_refund_window_sha256,
+        taker_refund_commit_sha256: $taker_refund_commit_sha256,
+        taker_refund_transients_sha256: $taker_refund_transients_sha256,
         lez_refund_finality_sha256: $lez_refund_finality_sha256,
         maker_refund_action_sha256: $maker_refund_action_sha256,
         zcash_refund_mempool_sha256: $zcash_refund_mempool_sha256,

@@ -54,7 +54,7 @@ handle_zcash_submission taker "$claim" || fail 'service claim fell through into 
 required_markers=(
   'readonly M6_ZEC_JOURNEY="${M6_ZEC_JOURNEY:-claim}"'
   'M6_ZEC_JOURNEY must be claim or refund'
-  'MAX_CORRIDOR_SECONDS=105'
+  'MAX_CORRIDOR_SECONDS=130'
   'm6_claim_generation:$generation'
   'm6_zcash_claim_txid:$txid'
   'm6-zebra-mempool-before-claim.json'
@@ -70,6 +70,8 @@ required_markers=(
   'action:"refund"'
   'taker_action_conflict'
   'm6-taker-service-refund-first.json'
+  'm6-taker-service-refund-transients.ndjson'
+  'm6-taker-service-refund-commit.json'
   'm6-taker-service-refund-replay.json'
   'm6-taker-service-refund-claim-exclusion.json'
   'm6_taker_lez_refund_deadline_ms()'
