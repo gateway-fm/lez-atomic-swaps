@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Maker Console — M6 prototype</title>
+    <link rel="icon" href="assets/lez-orbit.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script src="prototype.js" defer></script>
+  </head>
+  <body data-prototype="maker">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="index.html">
+          <img src="assets/lez-orbit.svg" alt="" width="36" height="36">
+          <span><strong>LEZ Swap</strong><small>Maker console</small></span>
+        </a>
+        <div class="role-chip"><span class="role-glyph">M</span><span><small>Current role</small>Maker operator</span></div>
+        <nav class="side-nav" aria-label="Maker sections">
+          <button class="nav-item active" type="button" data-view="maker-overview"><span>⌁</span>Overview</button>
+          <button class="nav-item" type="button" data-view="maker-config"><span>⚙</span>Pair &amp; price</button>
+          <button class="nav-item" type="button" data-view="maker-active"><span>◉</span>Active swaps <em>2</em></button>
+          <button class="nav-item" type="button" data-view="maker-history"><span>≡</span>History</button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="daemon-card">
+            <span class="status-dot good"></span>
+            <div><strong>Sample daemon</strong><small>Ready · local projection</small></div>
+          </div>
+          <a class="role-switch" href="taker.html">Switch to Taker prototype →</a>
+        </div>
+      </aside>
+
+      <div class="app-stage">
+        <div class="prototype-banner" role="status">
+          <strong>Interactive prototype</strong>
+          <span>Sample data · no daemon, wallet, or chain effects</span>
+        </div>
+        <header class="topbar">
+          <div><div class="eyebrow">Maker workspace</div><h1 id="view-title">Good evening, operator</h1></div>
+          <div class="top-actions"><span class="network-chip"><span class="status-dot good"></span>Local sample network</span><button class="icon-button" type="button" aria-label="Prototype notifications">2</button></div>
+        </header>
+
+        <main id="main" class="view-stack">
+          <section id="maker-overview" class="app-view active" aria-labelledby="view-title">
+            <div class="metric-grid">
+              <article class="metric-card accent"><span>Active swaps</span><strong>2</strong><small>1 awaiting confirmation</small></article>
+              <article class="metric-card"><span>Published offers</span><strong>3</strong><small>Across BTC, XMR, ZEC</small></article>
+              <article class="metric-card"><span>Completed volume</span><strong>42,800 <em>LEZ</em></strong><small>Sample total · 30 days</small></article>
+              <article class="metric-card"><span>Service health</span><strong class="healthy">Ready</strong><small>All sample routes available</small></article>
+            </div>
+
+            <div class="content-grid wide-left">
+              <article class="panel">
+                <div class="panel-head"><div><div class="eyebrow">Live activity</div><h2>Active swaps</h2></div><button class="text-button" type="button" data-view-jump="maker-active">View all →</button></div>
+                <div class="swap-list compact-list" id="overview-swap-list"></div>
+              </article>
+              <article class="panel route-panel">
+                <div class="panel-head"><div><div class="eyebrow">Liquidity</div><h2>Enabled routes</h2></div></div>
+                <div class="route-summary"><span class="asset-icon btc">₿</span><div><strong>LEZ / BTC</strong><small>1 BTC = 1,540,000 LEZ</small></div><span class="tag good-tag">Live</span></div>
+                <div class="route-summary"><span class="asset-icon xmr">ɱ</span><div><strong>LEZ / XMR</strong><small>1 XMR = 4,240 LEZ</small></div><span class="tag good-tag">Live</span></div>
+                <div class="route-summary"><span class="asset-icon zec">Z</span><div><strong>LEZ / ZEC</strong><small>1 ZEC = 910 LEZ</small></div><span class="tag good-tag">Live</span></div>
+                <button class="button secondary full" type="button" data-view-jump="maker-config">Configure routes</button>
+              </article>
+            </div>
+          </section>
+
+          <section id="maker-config" class="app-view" aria-labelledby="config-heading">
+            <div class="section-intro"><div><div class="eyebrow">Route policy</div><h1 id="config-heading">Pair and price configuration</h1><p>Model an explicit revisioned configuration request. Nothing is sent from this prototype.</p></div><span class="sample-pill">Sample revision 8</span></div>
+            <div class="content-grid wide-left">
+              <form class="panel form-panel" id="maker-config-form">
+                <div class="form-section"><span class="step-badge">1</span><div><h2>Choose the market</h2><p>Each direction has independent limits and pricing.</p></div></div>
+                <div class="field-grid">
+                  <label class="field"><span>Pair</span><select id="maker-pair"><option value="bitcoin">LEZ / Bitcoin</option><option value="monero">LEZ / Monero</option><option value="zcash">LEZ / Zcash</option></select></label>
+                  <label class="field"><span>Direction</span><select id="maker-direction"><option value="sell-lez">Maker sells LEZ</option><option value="sell-foreign">Maker sells foreign asset</option></select></label>
+                </div>
+                <hr>
+                <div class="form-section"><span class="step-badge">2</span><div><h2>Set the price source</h2><p>The production app will preserve exact integer ratios.</p></div></div>
+                <div class="segmented" role="radiogroup" aria-label="Price source">
+                  <label><input type="radio" name="price-source" value="local" checked><span>Local price<small>Operator configured</small></span></label>
+                  <label><input type="radio" name="price-source" value="logos"><span>Logos module<small>Sample C-API projection</small></span></label>
+                </div>
+                <div class="field-grid">
+                  <label class="field"><span>Foreign asset units</span><input id="foreign-units" type="number" min="1" value="1"></label>
+                  <label class="field"><span>LEZ units</span><input id="lez-units" type="number" min="1" value="1540000"></label>
+                </div>
+                <div class="quote-preview"><span>Sample display price</span><strong id="maker-price-preview">1 BTC = 1,540,000 LEZ</strong><small>Preview only · canonical production values remain integer units</small></div>
+                <hr>
+                <div class="form-section"><span class="step-badge">3</span><div><h2>Offer limits</h2><p>Bound each published sample offer.</p></div></div>
+                <div class="field-grid three">
+                  <label class="field"><span>Minimum LEZ</span><input type="number" value="250"></label>
+                  <label class="field"><span>Maximum LEZ</span><input type="number" value="25000"></label>
+                  <label class="field"><span>Offer TTL</span><select><option>5 minutes</option><option selected>15 minutes</option><option>30 minutes</option></select></label>
+                </div>
+                <label class="toggle-row"><input type="checkbox" checked><span><strong>Enable route after confirmation</strong><small>Sample policy state only</small></span></label>
+                <div class="form-actions"><button class="button ghost" type="reset">Reset sample</button><button class="button primary" type="submit">Review configuration</button></div>
+              </form>
+
+              <aside class="panel context-panel">
+                <img src="assets/maker-console.svg" alt="Abstract maker console illustration" width="220" height="160">
+                <div class="eyebrow">Authority boundary</div><h2>The UI proposes. The daemon decides.</h2>
+                <p>A production request will carry a request ID and expected revision over the owner-local boundary.</p>
+                <ul class="check-list"><li>No private key fields</li><li>No direct SQLite access</li><li>No implicit pair fallback</li><li>No price change on replay</li></ul>
+              </aside>
+            </div>
+          </section>
+
+          <section id="maker-active" class="app-view" aria-labelledby="active-heading">
+            <div class="section-intro"><div><div class="eyebrow">Read-only monitoring</div><h1 id="active-heading">Active swaps</h1><p>Inspect secret-free sample projections without acquiring effect authority.</p></div><button id="maker-refresh" class="button secondary" type="button">Advance sample state</button></div>
+            <div class="content-grid split" id="maker-active-layout">
+              <div class="swap-list panel" id="active-swap-list"></div>
+              <article class="panel detail-panel" id="maker-swap-detail" aria-live="polite"></article>
+            </div>
+          </section>
+
+          <section id="maker-history" class="app-view" aria-labelledby="history-heading">
+            <div class="section-intro"><div><div class="eyebrow">Durable projection</div><h1 id="history-heading">Swap history</h1><p>Filter deterministic, secret-free sample outcomes.</p></div><button class="button secondary" id="export-sample" type="button">Preview sample export</button></div>
+            <article class="panel table-panel">
+              <div class="filter-row"><label class="search-field"><span aria-hidden="true">⌕</span><input id="history-search" type="search" placeholder="Search sample swap ID or pair" aria-label="Search history"></label><select id="history-filter" aria-label="Filter history status"><option value="all">All outcomes</option><option value="completed">Completed</option><option value="refunded">Refunded</option></select></div>
+              <div class="table-wrap"><table><thead><tr><th>Swap</th><th>Pair</th><th>Role route</th><th>Outcome</th><th>Amount</th><th>Sample time</th></tr></thead><tbody id="history-body"></tbody></table></div>
+            </article>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <dialog id="maker-review-dialog" class="prototype-dialog">
+      <form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><div class="eyebrow">Sample confirmation</div><h2>Review route configuration</h2><div id="maker-review-content"></div><div class="notice warning compact"><span class="notice-icon">P</span><div>This confirms browser sample state only. No daemon request is made.</div></div><div class="dialog-actions"><button class="button ghost" value="cancel">Back</button><button class="button primary" id="confirm-maker-config" value="confirm">Confirm sample</button></div></form>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

@@ -9,9 +9,25 @@ together with the live
 [RFP-003](https://github.com/logos-co/rfp/blob/master/RFPs/RFP-003-atomic-swaps.md).
 The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
-### M5 active progressive application PoC
+### M6 active progressive Basecamp mini-app PoC
 
-M5 is active. The owner-local maker application currently provides a mode-0600
+M5 is verified at the local-functional PoC boundary by tag
+`m5-poc-complete`. M6 is now active under
+[ADR 0128](docs/architecture/0128-enter-m6-through-current-basecamp-qml.md):
+first, deterministic local clickable Maker and Taker prototypes for journey
+sign-off; then two current Basecamp 0.2.0 `ui_qml` packages over typed,
+role-correct backend boundaries. The Maker journey covers pair and price
+configuration, active monitoring, and history. The Taker journey covers offer
+browsing, initiation, progress, terminal action, and ZEC shield-after-swap
+guidance. Prototype state is explicitly simulated and makes no RPC, chain,
+faucet, DNS, or public-network request. The current implementation order and
+limitations are tracked in the
+[implementation plan](docs/implementation-plan.md#m6-active-work-package-maker-and-taker-basecamp-mini-apps).
+
+### M5 verified progressive application PoC — historical implementation record
+
+This section preserves the implementation path to the verified M5 PoC. The
+owner-local maker application currently provides a mode-0600
 Unix-socket daemon, maker CLI, durable schema-v21
 pair/price/offer/negotiation/swap history, exact local pricing, expiring
 one-winner offers, daemon-owned signed bounded run-local Delivery publication,
