@@ -20,10 +20,10 @@ use jsonrpsee::RpcModule;
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, ListRequest, LocalPriceSetRequest,
-    PairConfigureRequest, RunLocalDelivery, TakerHealthRequestV1, TakerHealthV1,
-    TakerInitiationCommitV1, TakerMakerIdentityV1, TakerSwapInitiateRequestV1,
-    TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1, TakerSwapStateV1,
-    TakerSwapViewV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
+    PairConfigureRequest, RunLocalDelivery, TakerClaimRequestV1, TakerHealthRequestV1,
+    TakerHealthV1, TakerInitiationCommitV1, TakerMakerIdentityV1, TakerRefundRequestV1,
+    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+    TakerSwapStateV1, TakerSwapViewV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
     load_taker_service_context, taker_service_rpc_module,
 };
 use lez_swap_core::{Pair, Participant, Phase, SwapDirection, SwapId, UnixSeconds};
@@ -59,6 +59,7 @@ use zec_reference_actor::{ActorConfig, ActorRole};
 const CLAIM_PREIMAGE: [u8; 32] = [0x44; 32];
 const TAKER_DEPENDENCY_UNAVAILABLE: i64 = -32_010;
 const TAKER_SWAP_NOT_FOUND: i64 = -32_014;
+const TAKER_ACTION_UNAVAILABLE: i64 = -32_016;
 
 #[tokio::test]
 async fn separate_taker_countersigns_and_maker_atomically_accepts_before_response() {
@@ -539,6 +540,47 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         json!([TakerSwapListRequestV1 { schema_version: 1 }]),
     )
     .await;
+    let active_claim_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_claim_v1",
+        json!([TakerClaimRequestV1 {
+            schema_version: 1,
+            request_id: RequestId::new("m6-active-claim-unavailable").unwrap(),
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+            expected_generation: 0,
+        }]),
+    )
+    .await;
+    let active_refund_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_refund_v1",
+        json!([TakerRefundRequestV1 {
+            schema_version: 1,
+            request_id: RequestId::new("m6-active-refund-unavailable").unwrap(),
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+            expected_generation: 0,
+        }]),
+    )
+    .await;
+    for response in [&active_claim_response, &active_refund_response] {
+        assert_service_rpc_error(
+            response,
+            TAKER_ACTION_UNAVAILABLE,
+            "Taker action unavailable",
+            "taker_action_unavailable",
+        );
+    }
+    let action_rows: i64 = Connection::open(&registry)
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM taker_facade_requests
+             WHERE operation IN ('claim', 'refund')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(action_rows, 0, "rejected actions must not be admitted");
+
     assert_eq!(
         active_taker_logical_state(monitor_config.role_state_db()),
         active_logical_before,
@@ -666,13 +708,15 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     assert!(replay.was_replay);
     assert_eq!(replay.swap, first.swap);
 
-    assert_eq!(registered.len(), 5, "registered methods: {registered:?}");
+    assert_eq!(registered.len(), 7, "registered methods: {registered:?}");
     for method in [
         "taker_health",
         "taker_offer_list_v1",
         "taker_swap_list_v1",
         "taker_swap_initiate_v1",
         "taker_swap_monitor_v1",
+        "taker_swap_claim_v1",
+        "taker_swap_refund_v1",
     ] {
         assert!(
             registered.contains(method),
@@ -683,8 +727,8 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     let methods = health.registered_methods();
     assert!(methods.swap_list());
     assert!(methods.monitor());
-    assert!(!methods.claim());
-    assert!(!methods.refund());
+    assert!(methods.claim());
+    assert!(methods.refund());
 
     let listed: TakerSwapListV1 = serde_json::from_value(list_response["result"].clone()).unwrap();
     assert_eq!(listed.schema_version, 1);

@@ -141,6 +141,15 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
     assert!(!methods.monitor());
     assert!(!methods.claim());
     assert!(!methods.refund());
+    let lifecycle = health.clone().with_zec_lifecycle_registered();
+    let lifecycle_methods = lifecycle.registered_methods();
+    assert!(lifecycle_methods.health());
+    assert!(lifecycle_methods.offer_list());
+    assert!(lifecycle_methods.swap_list());
+    assert!(lifecycle_methods.initiate());
+    assert!(lifecycle_methods.monitor());
+    assert!(lifecycle_methods.claim());
+    assert!(lifecycle_methods.refund());
     let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
     let swap = TakerSwapViewV1 {
         schema_version: 1,
@@ -163,6 +172,7 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
     };
     let responses = [
         serde_json::to_value(health).unwrap(),
+        serde_json::to_value(lifecycle).unwrap(),
         serde_json::to_value(TakerOfferListV1 {
             schema_version: 1,
             offers: Vec::new(),

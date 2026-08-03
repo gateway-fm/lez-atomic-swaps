@@ -139,8 +139,8 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
     assert!(methods.initiate());
     assert!(methods.swap_list());
     assert!(methods.monitor());
-    assert!(!methods.claim());
-    assert!(!methods.refund());
+    assert!(methods.claim());
+    assert!(methods.refund());
 
     let request = fixture.request();
     let first: TakerInitiationCommitV1 =
@@ -187,8 +187,8 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
     assert!(restarted_methods.initiate());
     assert!(restarted_methods.swap_list());
     assert!(restarted_methods.monitor());
-    assert!(!restarted_methods.claim());
-    assert!(!restarted_methods.refund());
+    assert!(restarted_methods.claim());
+    assert!(restarted_methods.refund());
     assert_initiating_reads_are_public_and_effect_free(&socket, &first.swap, &fixture).await;
     let replay: TakerInitiationCommitV1 =
         call_local_rpc(&socket, "taker_swap_initiate_v1", &request)
@@ -231,6 +231,30 @@ async fn assert_initiating_reads_are_public_and_effect_free(
     assert_eq!(monitored.available_action, None);
     assert_eq!(monitored.privacy_guidance, None);
 
+    let mut terminal_errors = Vec::new();
+    for (method, request_id) in [
+        ("taker_swap_claim_v1", "m6-process-claim-without-receipt"),
+        ("taker_swap_refund_v1", "m6-process-refund-without-receipt"),
+    ] {
+        let error = call_local_rpc::<_, Value>(
+            socket,
+            method,
+            &json!({
+                "schema_version": 1,
+                "request_id": request_id,
+                "swap_id": expected.swap_id.clone(),
+                "expected_generation": expected.progress_generation,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "local RPC error -32010: Taker dependency unavailable"
+        );
+        terminal_errors.push(error);
+    }
+
     let unknown = call_local_rpc::<_, TakerSwapViewV1>(
         socket,
         "taker_swap_monitor_v1",
@@ -247,7 +271,7 @@ async fn assert_initiating_reads_are_public_and_effect_free(
     );
 
     let public_wire = format!(
-        "{} {} {}",
+        "{} {} {} {terminal_errors:?}",
         serde_json::to_string(&listed).unwrap(),
         serde_json::to_string(&monitored).unwrap(),
         unknown

@@ -3,13 +3,15 @@
 use std::{
     fs,
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Phase, SwapId};
 use lez_swap_store::{
-    MakerActorHeldLock, TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1,
+    MakerActorHeldLock, TakerActionAdmissionV1, TakerFacadeActionV1, TakerFacadeStoreError,
+    TakerInitiationAdmissionV1, TakerInitiationFactsV1,
 };
 use lez_zec_swap_sdk::ZecLifecycleAction;
 use secp256k1::PublicKey;
@@ -22,9 +24,10 @@ use zec_reference_actor::{
 
 use crate::{
     ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
-    PreparedZecTakerInitiationV1, TakerBackendError, TakerHealthRequestV1, TakerInitiationCommitV1,
-    TakerOfferListRequestV1, TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1,
-    TakerSwapMonitorRequestV1, TakerSwapStateV1, TakerSwapViewV1,
+    PreparedZecTakerInitiationV1, TakerActionCommitV1, TakerBackendError, TakerClaimRequestV1,
+    TakerHealthRequestV1, TakerInitiationCommitV1, TakerOfferListRequestV1, TakerRefundRequestV1,
+    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+    TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1,
     secure_file::read_private_file_snapshot,
     zec_taker_accept::{
         ZecTakeInput, load_taker_actor_from_receipt_for_monitor,
@@ -39,6 +42,9 @@ const RESULT_LIMIT_EXCEEDED_CODE: i32 = -32_011;
 const AUTHENTICATED_OFFER_CONFLICT_CODE: i32 = -32_012;
 const INITIATION_CONFLICT_CODE: i32 = -32_013;
 const SWAP_NOT_FOUND_CODE: i32 = -32_014;
+const PROGRESS_GENERATION_CONFLICT_CODE: i32 = -32_015;
+const ACTION_UNAVAILABLE_CODE: i32 = -32_016;
+const ACTION_CONFLICT_CODE: i32 = -32_017;
 const MAXIMUM_MONITORED_SWAPS: usize = 256;
 const MAXIMUM_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const SIGNING_KEY_BYTES: u64 = 32;
@@ -51,8 +57,8 @@ struct TakerServiceState {
 /// Builds the exact JSON-RPC module enabled by one validated service context.
 ///
 /// Health and authenticated offer listing are always registered. A validated
-/// prepared catalog plus existing registry also registers initiation and the
-/// receipt-bound list/monitor methods. Terminal-effect methods remain absent.
+/// prepared catalog plus existing registry registers initiation, receipt-bound reads,
+/// and generation-fenced claim/refund methods that invoke only the role actor.
 ///
 /// # Errors
 ///
@@ -81,7 +87,7 @@ pub fn taker_service_rpc_module(
                 .await
                 .map_err(map_backend_error)?;
             Ok::<_, ErrorObjectOwned>(if state.initiation.is_some() {
-                health.with_initiation_registered()
+                health.with_zec_lifecycle_registered()
             } else {
                 health
             })
@@ -140,9 +146,419 @@ pub fn taker_service_rpc_module(
                 initiate(state, request).await.map_err(map_initiation_error)
             }
         })?;
+
+        register_terminal_methods(&mut module, &state)?;
     }
 
     Ok(module)
+}
+
+fn register_terminal_methods(
+    module: &mut RpcModule<()>,
+    state: &Arc<TakerServiceState>,
+) -> Result<(), RegisterMethodError> {
+    let claim_state = Arc::clone(state);
+    module.register_async_method("taker_swap_claim_v1", move |params, _, _| {
+        let state = Arc::clone(&claim_state);
+        async move {
+            let request: TakerClaimRequestV1 = params
+                .one()
+                .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
+            request
+                .validate_schema_version()
+                .map_err(|_| map_action_error(ActionError::UnsupportedSchemaVersion))?;
+            terminal_action(
+                state,
+                request.request_id,
+                request.swap_id,
+                request.expected_generation,
+                TakerTerminalActionV1::Claim,
+            )
+            .await
+            .map_err(map_action_error)
+        }
+    })?;
+
+    let refund_state = Arc::clone(state);
+    module.register_async_method("taker_swap_refund_v1", move |params, _, _| {
+        let state = Arc::clone(&refund_state);
+        async move {
+            let request: TakerRefundRequestV1 = params
+                .one()
+                .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
+            request
+                .validate_schema_version()
+                .map_err(|_| map_action_error(ActionError::UnsupportedSchemaVersion))?;
+            terminal_action(
+                state,
+                request.request_id,
+                request.swap_id,
+                request.expected_generation,
+                TakerTerminalActionV1::Refund,
+            )
+            .await
+            .map_err(map_action_error)
+        }
+    })?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ActionError {
+    UnsupportedSchemaVersion,
+    NotFound,
+    ProgressChanged,
+    Unavailable,
+    Conflict,
+    DependencyUnavailable,
+    RegistryUnavailable,
+}
+
+async fn terminal_action(
+    state: Arc<TakerServiceState>,
+    request_id: RequestId,
+    swap_id: SwapId,
+    expected_generation: u64,
+    action: TakerTerminalActionV1,
+) -> Result<TakerActionCommitV1, ActionError> {
+    let initiation = state
+        .initiation
+        .clone()
+        .ok_or(ActionError::RegistryUnavailable)?;
+    let (prepared, receipt_binding) = resolve_action_authority(&initiation, &swap_id).await?;
+    let receipt_binding = receipt_binding.ok_or(ActionError::DependencyUnavailable)?;
+    let (config, held_lock) = load_bound_action_actor(&prepared, receipt_binding).await?;
+
+    // Exact durable replay deliberately precedes current actor progress. The
+    // original command can then reconcile its own persist-before-send journal
+    // after a response loss or process restart.
+    let replay = lookup_action_replay(
+        &initiation,
+        &request_id,
+        &swap_id,
+        action,
+        expected_generation,
+    )
+    .await?;
+    if let Some(admission) = replay {
+        execute_terminal_actor_command(&config, &held_lock, action).await?;
+        revalidate_action_custody(&prepared, receipt_binding, &config, &held_lock).await?;
+        return Ok(action_commit(&admission));
+    }
+
+    let output = execute_actor_command(&config, ActorCommand::Status)
+        .await
+        .map_err(|_| ActionError::DependencyUnavailable)?;
+    held_lock
+        .validate_for_state(config.swap_id(), config.role_state_db())
+        .map_err(|_| ActionError::DependencyUnavailable)?;
+    let ActorCommandOutputV1::Status(status) = output else {
+        return Err(ActionError::DependencyUnavailable);
+    };
+    let ActorStatusProjectionV1::Active {
+        phase,
+        revision,
+        next_action,
+    } = status.projection()
+    else {
+        return Err(ActionError::Unavailable);
+    };
+    if revision != expected_generation {
+        return Err(ActionError::ProgressChanged);
+    }
+    let (_, available_action, _) = normalized_actor_progress(phase, next_action);
+    if available_action != Some(action) {
+        return Err(ActionError::Unavailable);
+    }
+
+    let admitted_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ActionError::RegistryUnavailable)?
+        .as_secs();
+    let admission = admit_terminal_action(
+        &initiation,
+        &request_id,
+        &swap_id,
+        action,
+        expected_generation,
+        admitted_at,
+    )
+    .await?;
+    execute_terminal_actor_command(&config, &held_lock, action).await?;
+    revalidate_action_custody(&prepared, receipt_binding, &config, &held_lock).await?;
+    Ok(action_commit(&admission))
+}
+
+async fn resolve_action_authority(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    swap_id: &SwapId,
+) -> Result<
+    (
+        PreparedZecTakerInitiationV1,
+        Option<crate::taker_service_config::PreparedReceiptBindingV1>,
+    ),
+    ActionError,
+> {
+    let context = Arc::clone(initiation);
+    let swap_id = swap_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = context
+            .lock()
+            .map_err(|_| ActionError::RegistryUnavailable)?;
+        let prepared = context
+            .prepared_zec_for_swap(&swap_id)
+            .cloned()
+            .ok_or(ActionError::NotFound)?;
+        let facts = context
+            .registry_mut()
+            .lookup_initiation_for_monitor(&swap_id, prepared.authority())
+            .map_err(|_| ActionError::RegistryUnavailable)?
+            .ok_or(ActionError::NotFound)?;
+        if &facts != prepared.facts() {
+            return Err(ActionError::RegistryUnavailable);
+        }
+        let receipt_binding = prepared.execution().receipt_binding();
+        Ok((prepared, receipt_binding))
+    })
+    .await
+    .map_err(|_| ActionError::RegistryUnavailable)?
+}
+
+async fn load_bound_action_actor(
+    prepared: &PreparedZecTakerInitiationV1,
+    receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
+) -> Result<(ActorConfig, MakerActorHeldLock), ActionError> {
+    let receipt = prepared.execution().receipt_output().to_path_buf();
+    let actor_root = prepared.execution().actor_root().to_path_buf();
+    let swap_id = prepared.swap_id().clone();
+    let receipt_sha256 = receipt_binding.sha256();
+    let receipt_identity = receipt_binding.identity();
+    tokio::task::spawn_blocking(move || {
+        let before = load_taker_actor_from_receipt_for_monitor(
+            &receipt,
+            &actor_root,
+            &swap_id,
+            receipt_sha256,
+            receipt_identity.device(),
+            receipt_identity.inode(),
+        )
+        .map_err(|_| ActionError::DependencyUnavailable)?;
+        let held_lock = MakerActorHeldLock::acquire_for(before.swap_id(), before.role_state_db())
+            .map_err(|_| ActionError::DependencyUnavailable)?;
+        let config = load_taker_actor_from_receipt_for_monitor(
+            &receipt,
+            &actor_root,
+            &swap_id,
+            receipt_sha256,
+            receipt_identity.device(),
+            receipt_identity.inode(),
+        )
+        .map_err(|_| ActionError::DependencyUnavailable)?;
+        if before.swap_id() != config.swap_id()
+            || before.role_state_db() != config.role_state_db()
+            || before.bridge_journal_db() != config.bridge_journal_db()
+            || before.signed_agreement_sha256() != config.signed_agreement_sha256()
+        {
+            return Err(ActionError::DependencyUnavailable);
+        }
+        held_lock
+            .validate_for_state(config.swap_id(), config.role_state_db())
+            .map_err(|_| ActionError::DependencyUnavailable)?;
+        Ok((config, held_lock))
+    })
+    .await
+    .map_err(|_| ActionError::DependencyUnavailable)?
+}
+
+async fn revalidate_action_custody(
+    prepared: &PreparedZecTakerInitiationV1,
+    receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
+    config: &ActorConfig,
+    held_lock: &MakerActorHeldLock,
+) -> Result<(), ActionError> {
+    let receipt = prepared.execution().receipt_output().to_path_buf();
+    let actor_root = prepared.execution().actor_root().to_path_buf();
+    let swap_id = prepared.swap_id().clone();
+    let receipt_sha256 = receipt_binding.sha256();
+    let receipt_identity = receipt_binding.identity();
+    let after = tokio::task::spawn_blocking(move || {
+        load_taker_actor_from_receipt_for_monitor(
+            &receipt,
+            &actor_root,
+            &swap_id,
+            receipt_sha256,
+            receipt_identity.device(),
+            receipt_identity.inode(),
+        )
+        .map_err(|_| ActionError::DependencyUnavailable)
+    })
+    .await
+    .map_err(|_| ActionError::DependencyUnavailable)??;
+    if after.swap_id() != config.swap_id()
+        || after.role_state_db() != config.role_state_db()
+        || after.bridge_journal_db() != config.bridge_journal_db()
+        || after.signed_agreement_sha256() != config.signed_agreement_sha256()
+    {
+        return Err(ActionError::DependencyUnavailable);
+    }
+    held_lock
+        .validate_for_state(config.swap_id(), config.role_state_db())
+        .map_err(|_| ActionError::DependencyUnavailable)
+}
+
+async fn lookup_action_replay(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    request_id: &RequestId,
+    swap_id: &SwapId,
+    action: TakerTerminalActionV1,
+    expected_generation: u64,
+) -> Result<Option<TakerActionAdmissionV1>, ActionError> {
+    let context = Arc::clone(initiation);
+    let request_id = request_id.clone();
+    let swap_id = swap_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = context
+            .lock()
+            .map_err(|_| ActionError::RegistryUnavailable)?;
+        context
+            .registry_mut()
+            .lookup_exact_action(
+                &request_id,
+                &swap_id,
+                facade_action(action),
+                expected_generation,
+            )
+            .map_err(map_action_store_error)
+    })
+    .await
+    .map_err(|_| ActionError::RegistryUnavailable)?
+}
+
+async fn admit_terminal_action(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    request_id: &RequestId,
+    swap_id: &SwapId,
+    action: TakerTerminalActionV1,
+    expected_generation: u64,
+    admitted_at: u64,
+) -> Result<TakerActionAdmissionV1, ActionError> {
+    let context = Arc::clone(initiation);
+    let request_id = request_id.clone();
+    let swap_id = swap_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = context
+            .lock()
+            .map_err(|_| ActionError::RegistryUnavailable)?;
+        context
+            .registry_mut()
+            .admit_action(
+                &request_id,
+                &swap_id,
+                facade_action(action),
+                expected_generation,
+                admitted_at,
+            )
+            .map_err(map_action_store_error)
+    })
+    .await
+    .map_err(|_| ActionError::RegistryUnavailable)?
+}
+
+async fn execute_terminal_actor_command(
+    config: &ActorConfig,
+    held_lock: &MakerActorHeldLock,
+    action: TakerTerminalActionV1,
+) -> Result<(), ActionError> {
+    let command = match action {
+        TakerTerminalActionV1::Claim => ActorCommand::Claim,
+        TakerTerminalActionV1::Refund => ActorCommand::Recover,
+    };
+    let output = execute_actor_command(config, command)
+        .await
+        .map_err(|_| ActionError::DependencyUnavailable)?;
+    let ActorCommandOutputV1::Effect(_) = output else {
+        return Err(ActionError::DependencyUnavailable);
+    };
+    held_lock
+        .validate_for_state(config.swap_id(), config.role_state_db())
+        .map_err(|_| ActionError::DependencyUnavailable)
+}
+
+const fn facade_action(action: TakerTerminalActionV1) -> TakerFacadeActionV1 {
+    match action {
+        TakerTerminalActionV1::Claim => TakerFacadeActionV1::Claim,
+        TakerTerminalActionV1::Refund => TakerFacadeActionV1::Refund,
+    }
+}
+
+fn action_commit(admission: &TakerActionAdmissionV1) -> TakerActionCommitV1 {
+    TakerActionCommitV1 {
+        schema_version: 1,
+        swap_id: admission.swap_id().clone(),
+        action: match admission.action() {
+            TakerFacadeActionV1::Claim => TakerTerminalActionV1::Claim,
+            TakerFacadeActionV1::Refund => TakerTerminalActionV1::Refund,
+        },
+        requested_after_generation: admission.requested_after_generation(),
+        was_replay: admission.was_replay(),
+    }
+}
+
+fn map_action_store_error(error: TakerFacadeStoreError) -> ActionError {
+    match error {
+        TakerFacadeStoreError::RequestConflict => ActionError::Conflict,
+        TakerFacadeStoreError::ActionGenerationConflict => ActionError::Unavailable,
+        TakerFacadeStoreError::SwapUnavailable => ActionError::NotFound,
+        TakerFacadeStoreError::SwapConflict
+        | TakerFacadeStoreError::DatabaseUnavailable
+        | TakerFacadeStoreError::UnsafeDatabaseFile
+        | TakerFacadeStoreError::DatabaseAlreadyExists
+        | TakerFacadeStoreError::ForeignSchema
+        | TakerFacadeStoreError::FutureSchema
+        | TakerFacadeStoreError::CorruptState
+        | TakerFacadeStoreError::InvalidInput
+        | TakerFacadeStoreError::StorageUnavailable => ActionError::RegistryUnavailable,
+    }
+}
+
+fn map_action_error(error: ActionError) -> ErrorObjectOwned {
+    match error {
+        ActionError::UnsupportedSchemaVersion => rpc_error(
+            INVALID_PARAMS_CODE,
+            "Invalid params",
+            "unsupported_schema_version",
+        ),
+        ActionError::NotFound => rpc_error(
+            SWAP_NOT_FOUND_CODE,
+            "Taker swap not found",
+            "swap_not_found",
+        ),
+        ActionError::ProgressChanged => rpc_error(
+            PROGRESS_GENERATION_CONFLICT_CODE,
+            "Taker swap progress changed",
+            "progress_generation_conflict",
+        ),
+        ActionError::Unavailable => rpc_error(
+            ACTION_UNAVAILABLE_CODE,
+            "Taker action unavailable",
+            "taker_action_unavailable",
+        ),
+        ActionError::Conflict => rpc_error(
+            ACTION_CONFLICT_CODE,
+            "Taker action conflict",
+            "taker_action_conflict",
+        ),
+        ActionError::DependencyUnavailable => rpc_error(
+            DEPENDENCY_UNAVAILABLE_CODE,
+            "Taker dependency unavailable",
+            "taker_action_execution_unavailable",
+        ),
+        ActionError::RegistryUnavailable => rpc_error(
+            INTERNAL_ERROR_CODE,
+            "Internal error",
+            "action_registry_unavailable",
+        ),
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -348,27 +764,29 @@ fn normalized_actor_progress(
 ) {
     use crate::{TakerPrivacyGuidanceV1, TakerTerminalActionV1};
     match phase {
-        Phase::Offered | Phase::AwaitingTakerConfirmations => {
-            (TakerSwapStateV1::AwaitingFirstLock, None, None)
-        }
-        Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations => {
-            (TakerSwapStateV1::AwaitingSecondLock, None, None)
-        }
+        Phase::Offered => (TakerSwapStateV1::AwaitingFirstLock, None, None),
+        Phase::AwaitingTakerConfirmations
+        | Phase::TakerLockConfirmed
+        | Phase::AwaitingMakerConfirmations
+        | Phase::BothLegsLocked
+        | Phase::TakerLockReorged
+        | Phase::MakerLockReorged => (
+            TakerSwapStateV1::RefundAvailable,
+            Some(TakerTerminalActionV1::Refund),
+            None,
+        ),
         Phase::ClaimEvidenceAvailable if next_action == ZecLifecycleAction::ClaimZcash => (
             TakerSwapStateV1::ClaimAvailable,
             Some(TakerTerminalActionV1::Claim),
             None,
         ),
-        Phase::BothLegsLocked => (TakerSwapStateV1::BothLegsLocked, None, None),
         Phase::Completed => (
             TakerSwapStateV1::Completed,
             None,
             Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
         ),
         Phase::Refunded => (TakerSwapStateV1::Refunded, None, None),
-        Phase::TakerLockReorged
-        | Phase::MakerLockReorged
-        | Phase::ClaimEvidenceAvailable
+        Phase::ClaimEvidenceAvailable
         | Phase::MakerLegRefunded
         | Phase::TakerLegRefunded
         | Phase::MakerRecoveryAvailable => (TakerSwapStateV1::AttentionRequired, None, None),
@@ -381,14 +799,26 @@ mod tests {
     use crate::{TakerPrivacyGuidanceV1, TakerTerminalActionV1};
 
     #[test]
-    fn zec_taker_projection_advertises_only_the_role_valid_followup_claim() {
+    fn zec_taker_projection_advertises_only_role_valid_terminal_actions() {
         assert_eq!(
             normalized_actor_progress(Phase::Offered, ZecLifecycleAction::CreateAndFundLez),
             (TakerSwapStateV1::AwaitingFirstLock, None, None)
         );
         assert_eq!(
             normalized_actor_progress(Phase::BothLegsLocked, ZecLifecycleAction::Wait),
-            (TakerSwapStateV1::BothLegsLocked, None, None)
+            (
+                TakerSwapStateV1::RefundAvailable,
+                Some(TakerTerminalActionV1::Refund),
+                None,
+            )
+        );
+        assert_eq!(
+            normalized_actor_progress(Phase::AwaitingMakerConfirmations, ZecLifecycleAction::Wait,),
+            (
+                TakerSwapStateV1::RefundAvailable,
+                Some(TakerTerminalActionV1::Refund),
+                None,
+            )
         );
         assert_eq!(
             normalized_actor_progress(
@@ -767,7 +1197,9 @@ fn map_store_error(error: TakerFacadeStoreError) -> InitiationError {
         TakerFacadeStoreError::RequestConflict | TakerFacadeStoreError::SwapConflict => {
             InitiationError::Conflict
         }
-        TakerFacadeStoreError::DatabaseUnavailable
+        TakerFacadeStoreError::SwapUnavailable
+        | TakerFacadeStoreError::ActionGenerationConflict
+        | TakerFacadeStoreError::DatabaseUnavailable
         | TakerFacadeStoreError::UnsafeDatabaseFile
         | TakerFacadeStoreError::DatabaseAlreadyExists
         | TakerFacadeStoreError::ForeignSchema

@@ -447,6 +447,20 @@ impl TakerRegisteredMethodsV1 {
         }
     }
 
+    /// Returns the honest method set of a complete receipt-bound ZEC service.
+    #[must_use]
+    pub const fn full_zec_lifecycle() -> Self {
+        Self {
+            health: true,
+            offer_list: true,
+            swap_list: true,
+            initiate: true,
+            monitor: true,
+            claim: true,
+            refund: true,
+        }
+    }
+
     /// Reports whether health is registered.
     #[must_use]
     pub const fn health(self) -> bool {
@@ -622,6 +636,13 @@ impl TakerHealthV1 {
     #[must_use]
     pub const fn with_initiation_registered(mut self) -> Self {
         self.registered_methods = TakerRegisteredMethodsV1::read_with_initiation();
+        self
+    }
+
+    /// Reports that the service registered the complete receipt-bound ZEC lifecycle.
+    #[must_use]
+    pub const fn with_zec_lifecycle_registered(mut self) -> Self {
+        self.registered_methods = TakerRegisteredMethodsV1::full_zec_lifecycle();
         self
     }
 
