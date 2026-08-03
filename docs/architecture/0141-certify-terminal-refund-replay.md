@@ -92,10 +92,22 @@ available after the relevant deadlines. The terminal registry winner and
 chain-specific timelocks prevent a user-facing Claim and Refund authorization
 from both succeeding for one swap.
 
+## Bounded runner liveness
+
+Fresh run `m6refund8e0ed10a` reached finalized LEZ Refund and Maker recovery
+but consumed the old 130-second runner ceiling before Zcash recovery. The fixed
+60-second refund deadline, two measured service-to-actor reconciliations, and
+finalized LEZ observation accounted for the budget. The outer ceiling is now
+190 seconds so the Zcash refund and terminal replay retain bounded headroom.
+This does not alter a chain timelock, block cadence, finality rule, or the
+15-second query and 40-second action limits, and a successful run does not wait
+for the ceiling.
+
 ## Consequences
 
 - Mempool disappearance is no longer accepted as confirmation.
 - In-progress replay remains useful liveness evidence but is not the terminal
   idempotency certificate.
-- The proof adds bounded read-only RPC calls and no new chain mutation.
+- The proof adds bounded read-only RPC calls and no new chain mutation; its
+  complete Refund corridor has a 190-second fail-safe ceiling.
 - A fresh actual-node run is still required before the Refund path is GREEN.

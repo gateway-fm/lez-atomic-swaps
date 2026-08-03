@@ -42,8 +42,10 @@ case "$M6_ZEC_JOURNEY" in
     MAX_CORRIDOR_SECONDS=49
     ;;
   refund)
-    # Covers the finalized LEZ deadline plus later Zcash CLTV recovery.
-    MAX_CORRIDOR_SECONDS=130
+    # The ceiling covers the fixed 60-second LEZ deadline, two bounded
+    # service-to-actor reconciliations, LEZ finality, Zcash CLTV recovery, and
+    # the terminal no-effect replay. It does not change any protocol deadline.
+    MAX_CORRIDOR_SECONDS=190
     ;;
   *) echo 'M6_ZEC_JOURNEY must be claim or refund' >&2; exit 2 ;;
 esac

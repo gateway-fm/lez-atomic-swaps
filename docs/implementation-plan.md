@@ -5772,6 +5772,16 @@ The result binds all new receipts by SHA-256. The focused runner contract
 progressed RED on absent terminal-replay evidence and is GREEN after wiring.
 Fresh actual-node execution remains next.
 
+Fresh run `m6refund8e0ed10a` proved the durable Refund, fixed opposite-Claim
+conflict, in-progress replay, finalized LEZ refund, and isolated Maker recovery,
+then exhausted the old 130-second outer corridor before the Zcash refund.
+Measured time was consumed by the fixed 60-second refund deadline, two bounded
+roughly 15 to 17 second service-to-actor reconciliations, and finalized LEZ
+observation. The run is quarantined. The runner contract progressed RED to
+GREEN at a 190-second outer ceiling; protocol deadlines, block cadence,
+finality, and 15/40-second per-call limits are unchanged, so this is liveness
+headroom rather than a slower happy path.
+
 Next in order:
 
 1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund

@@ -56,7 +56,7 @@ required_markers=(
   'readonly M6_SERVICE_QUERY_TIMEOUT_MS=15000'
   'readonly M6_SERVICE_ACTION_TIMEOUT_MS=40000'
   'M6_ZEC_JOURNEY must be claim or refund'
-  'MAX_CORRIDOR_SECONDS=130'
+  'MAX_CORRIDOR_SECONDS=190'
   'm6_claim_generation:$generation'
   'm6_zcash_claim_txid:$txid'
   'm6-zebra-mempool-before-claim.json'

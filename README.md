@@ -170,6 +170,13 @@ trace, Zebra height, and empty mempool unchanged. Both finalized refund blocks
 are re-read after replay. The focused runner contract is GREEN; fresh
 actual-node evidence remains pending.
 
+A fresh run on `8e0ed10` reached finalized LEZ Refund and Maker recovery but
+exhausted the old 130-second outer runner ceiling before the Zcash refund. The
+fixed 60-second protocol deadline and all per-call/finality rules remain
+unchanged. Only the fail-safe test ceiling is now 190 seconds, covering the two
+measured service-to-actor reconciliations plus terminal no-effect replay; this
+adds no wait to a successful path. The effect-bearing run is quarantined.
+
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ
 artifacts, and export their exact dynamic loopback endpoints, chain identities,
