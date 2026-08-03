@@ -177,6 +177,19 @@ unchanged. Only the fail-safe test ceiling is now 190 seconds, covering the two
 measured service-to-actor reconciliations plus terminal no-effect replay; this
 adds no wait to a successful path. The effect-bearing run is quarantined.
 
+A second fresh run on the 190-second ceiling proved that time was not the
+remaining cause: the Maker reached durable Refund while the Taker service
+remained in progress. The runner invoked its Taker driver through Bash command
+substitution, so admitted generation, pinned LEZ start tip, finalized refund
+identity, and supervisor-restart state were changed only in the child shell.
+ADR [0142](docs/architecture/0142-handoff-refund-control-state-to-parent.md)
+now makes that boundary explicit. The child emits a strictly validated,
+monotonic control envelope; the parent restores it and alone starts Maker
+recovery once. Executable regressions cover pending, finalized, exact replay,
+replacement, and regression cases. The contract is GREEN. Run
+`m6refund734db82a` is quarantined, the ceiling was not raised again, and one
+new fresh-node Refund certificate remains required.
+
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ
 artifacts, and export their exact dynamic loopback endpoints, chain identities,

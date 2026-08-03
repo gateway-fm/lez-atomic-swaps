@@ -51,6 +51,82 @@ handle_zcash_submission taker "$claim" || fail 'service claim fell through into 
 [[ "$lez_revealing_claim_seen" == 1 && "$lez_revealing_claim_submitter" == maker ]] ||
   fail 'service claim mutated prior LEZ-reveal evidence'
 
+handoff_source="$(sed -n '/^apply_m6_refund_parent_handoff() {$/,/^}$/p' "$runner")"
+[[ -n "$handoff_source" ]] || fail 'Refund parent-handoff function is missing'
+eval "$handoff_source"
+m6_refund_admitted=0
+m6_refund_generation=''
+m6_lez_refund_txid=''
+m6_lez_refund_finalized=0
+m6_lez_refund_start_tip=''
+m6_maker_supervisor_suppressed=1
+m6_maker_supervisor_restarted=0
+m6_test_supervisor_starts=0
+start_m6_refund_maker_supervisor() {
+  m6_test_supervisor_starts=$((m6_test_supervisor_starts + 1))
+  m6_maker_supervisor_suppressed=0
+  m6_maker_supervisor_restarted=1
+}
+
+if apply_m6_refund_parent_handoff 'not-json' >/dev/null 2>&1; then
+  fail 'malformed child output was accepted'
+fi
+if apply_m6_refund_parent_handoff '{"m6_refund_parent_handoff":true,
+  "m6_refund_admitted":true,"m6_refund_generation":7.5,
+  "m6_lez_refund_txid":"","m6_lez_refund_finalized":false,
+  "m6_lez_refund_start_tip":88}' >/dev/null 2>&1; then
+  fail 'fractional Refund generation was accepted'
+fi
+if apply_m6_refund_parent_handoff '{"m6_refund_parent_handoff":true,
+  "m6_refund_admitted":true,"m6_refund_generation":7,
+  "m6_lez_refund_txid":"","m6_lez_refund_finalized":false,
+  "m6_lez_refund_start_tip":88.5}' >/dev/null 2>&1; then
+  fail 'fractional Refund start tip was accepted'
+fi
+apply_m6_refund_parent_handoff '{"state":"active"}'
+[[ "$m6_refund_admitted" == 0 && "$m6_test_supervisor_starts" == 0 ]] ||
+  fail 'non-Refund service output mutated parent state'
+
+pending_handoff='{"m6_refund_parent_handoff":true,"m6_refund_admitted":true,
+  "m6_refund_generation":7,"m6_lez_refund_txid":"",
+  "m6_lez_refund_finalized":false,"m6_lez_refund_start_tip":88}'
+apply_m6_refund_parent_handoff "$pending_handoff"
+[[ "$m6_refund_admitted" == 1 && "$m6_refund_generation" == 7
+  && "$m6_lez_refund_start_tip" == 88 && "$m6_lez_refund_finalized" == 0
+  && "$m6_test_supervisor_starts" == 0 ]] ||
+  fail 'pending Refund handoff was not restored in the parent'
+
+refund_txid="$(printf 'b%.0s' {1..64})"
+final_handoff="$(jq -nc --arg txid "$refund_txid" '
+  {m6_refund_parent_handoff:true,m6_refund_admitted:true,
+    m6_refund_generation:7,m6_lez_refund_txid:$txid,
+    m6_lez_refund_finalized:true,m6_lez_refund_start_tip:88}
+')"
+apply_m6_refund_parent_handoff "$final_handoff"
+[[ "$m6_lez_refund_txid" == "$refund_txid" && "$m6_lez_refund_finalized" == 1
+  && "$m6_maker_supervisor_restarted" == 1 && "$m6_test_supervisor_starts" == 1 ]] ||
+  fail 'finalized Refund handoff did not restart parent-owned Maker authority once'
+apply_m6_refund_parent_handoff "$final_handoff"
+[[ "$m6_test_supervisor_starts" == 1 ]] ||
+  fail 'exact finalized Refund handoff replay restarted Maker authority twice'
+
+regressive_handoff="$(jq -nc --argjson pending "$pending_handoff" '$pending')"
+if apply_m6_refund_parent_handoff "$regressive_handoff" >/dev/null 2>&1; then
+  fail 'finalized Refund parent state accepted a regression'
+fi
+replacement_handoff="$(jq -nc --argjson final "$final_handoff" '$final + {m6_refund_generation:8}')"
+if apply_m6_refund_parent_handoff "$replacement_handoff" >/dev/null 2>&1; then
+  fail 'admitted Refund parent state accepted a replacement generation'
+fi
+replacement_txid="$(printf 'c%.0s' {1..64})"
+replacement_handoff="$(jq -nc --argjson final "$final_handoff" \
+  --arg txid "$replacement_txid" '
+  $final + {m6_lez_refund_txid:$txid}
+')"
+if apply_m6_refund_parent_handoff "$replacement_handoff" >/dev/null 2>&1; then
+  fail 'finalized Refund parent state accepted a replacement transaction'
+fi
+
 required_markers=(
   'readonly M6_ZEC_JOURNEY="${M6_ZEC_JOURNEY:-claim}"'
   'readonly M6_SERVICE_QUERY_TIMEOUT_MS=15000'
@@ -68,6 +144,10 @@ required_markers=(
   'm6_taker_service_mode: ($m6_taker_service_mode == 1)'
   '"owner_taker_service"'
   'drive_m6_taker_refund()'
+  'apply_m6_refund_parent_handoff()'
+  'm6_refund_parent_handoff:true'
+  'm6_lez_refund_start_tip:$start_tip'
+  'apply_m6_refund_parent_handoff "$taker_output"'
   'taker_swap_refund_v1'
   'action:"refund"'
   'taker_action_conflict'

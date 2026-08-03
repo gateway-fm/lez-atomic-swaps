@@ -5782,6 +5782,27 @@ GREEN at a 190-second outer ceiling; protocol deadlines, block cadence,
 finality, and 15/40-second per-call limits are unchanged, so this is liveness
 headroom rather than a slower happy path.
 
+Fresh run `m6refund734db82a` repeated durable service Refund, opposite-Claim
+conflict, exact replay, finalized LEZ Refund, and Maker recovery under that
+ceiling, but the Taker's durable actor remained `both_legs_locked`. The
+service replay file also stopped changing after the first reconciliation.
+This proved that the ceiling was not the remaining fault. The main loop
+captures `drive_m5_taker` through command substitution; Bash therefore ran
+the entire Refund driver in a child shell and discarded its admitted
+generation, pinned start tip, finalized transaction, and supervisor process
+state on return. The Maker happened to complete work started in that child
+while later parent rounds continued to treat Refund as unadmitted.
+
+ADR 0142 moves supervisor startup out of the child and adds one explicit
+validated handoff envelope. The parent accepts only an admitted generation and
+start tip that cannot be replaced, permits finality only with one lowercase
+64-hex transaction ID, rejects finalized-state regression, and starts Maker
+recovery at most once. The executable contract progressed RED on the absent
+handoff and is GREEN for pending, finalized, exact replay, replaced-generation,
+and regressive-finality cases. No protocol timeout, chain cadence, or
+190-second fail-safe ceiling changed. Both effect-bearing discovery runs are
+quarantined; a completely fresh certificate remains required.
+
 Next in order:
 
 1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund

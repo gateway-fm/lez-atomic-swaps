@@ -1926,6 +1926,66 @@ start_m6_refund_maker_supervisor() {
   m6_maker_supervisor_restarted=1
 }
 
+apply_m6_refund_parent_handoff() {
+  local output="$1"
+  local generation finalized transaction_id start_tip
+  jq -e 'type == "object"' <<<"$output" >/dev/null || {
+    echo 'M6 Refund child returned malformed service output' >&2
+    return 1
+  }
+  if ! jq -e 'has("m6_refund_parent_handoff")' <<<"$output" >/dev/null; then
+    return 0
+  fi
+  jq -e '
+    .m6_refund_parent_handoff == true
+    and .m6_refund_admitted == true
+    and (.m6_refund_generation | type) == "number"
+    and .m6_refund_generation >= 0
+    and .m6_refund_generation <= 9007199254740991
+    and .m6_refund_generation == (.m6_refund_generation | floor)
+    and (.m6_lez_refund_finalized | type) == "boolean"
+    and (.m6_lez_refund_start_tip | type) == "number"
+    and .m6_lez_refund_start_tip >= 0
+    and .m6_lez_refund_start_tip <= 9007199254740991
+    and .m6_lez_refund_start_tip == (.m6_lez_refund_start_tip | floor)
+    and (
+      (.m6_lez_refund_finalized == false and .m6_lez_refund_txid == "")
+      or
+      (.m6_lez_refund_finalized == true
+        and (.m6_lez_refund_txid | strings | test("^[0-9a-f]{64}$")))
+    )
+  ' <<<"$output" >/dev/null || {
+    echo 'M6 Refund child returned an invalid parent handoff' >&2
+    return 1
+  }
+  generation="$(jq -er '.m6_refund_generation | numbers' <<<"$output")"
+  finalized="$(jq -r '.m6_lez_refund_finalized' <<<"$output")"
+  transaction_id="$(jq -er '.m6_lez_refund_txid | strings' <<<"$output")"
+  start_tip="$(jq -er '.m6_lez_refund_start_tip | numbers' <<<"$output")"
+  if (( m6_refund_admitted == 1 )); then
+    [[ "$m6_refund_generation" == "$generation"
+      && "$m6_lez_refund_start_tip" == "$start_tip" ]] || {
+      echo 'M6 Refund child attempted to replace admitted parent state' >&2
+      return 1
+    }
+  fi
+  if (( m6_lez_refund_finalized == 1 )); then
+    [[ "$finalized" == true && "$m6_lez_refund_txid" == "$transaction_id" ]] || {
+      echo 'M6 Refund child attempted to replace finalized parent state' >&2
+      return 1
+    }
+  fi
+  m6_refund_admitted=1
+  m6_refund_generation="$generation"
+  m6_lez_refund_txid="$transaction_id"
+  m6_lez_refund_start_tip="$start_tip"
+  [[ "$finalized" == true ]] && m6_lez_refund_finalized=1
+  if (( m6_lez_refund_finalized == 1 && m6_maker_supervisor_suppressed == 1
+    && m6_maker_supervisor_restarted == 0 )); then
+    start_m6_refund_maker_supervisor
+  fi
+}
+
 drive_m6_taker_refund() {
   local round="$1" monitor_response="$2" state="$3"
   local status_file="${evidence_dir}/m6-taker-refund-actor-status-${round}.json"
@@ -2056,10 +2116,17 @@ drive_m6_taker_refund() {
       m6_lez_refund_txid="$(jq -er '.[0] | strings | select(test("^[0-9a-f]{64}$"))' <<<"$new_set")"
       prove_m6_lez_refund_finality "$m6_lez_refund_txid" "$m6_lez_refund_start_tip"
       m6_lez_refund_finalized=1
-      start_m6_refund_maker_supervisor
     fi
   fi
-  jq -c '.result' <<<"$replay_response"
+  jq -c --argjson generation "$m6_refund_generation" \
+    --arg txid "$m6_lez_refund_txid" \
+    --argjson finalized "$m6_lez_refund_finalized" \
+    --argjson start_tip "$m6_lez_refund_start_tip" '
+    .result + {m6_refund_parent_handoff:true,m6_refund_admitted:true,
+      m6_refund_generation:$generation,m6_lez_refund_txid:$txid,
+      m6_lez_refund_finalized:($finalized == 1),
+      m6_lez_refund_start_tip:$start_tip}
+  ' <<<"$replay_response"
 }
 
 prove_m6_terminal_refund_replay() {
@@ -2798,6 +2865,9 @@ while true; do
   remaining_budget_milliseconds "round-${round}-before" >/dev/null
 
   taker_output="$(drive_m5_taker "$round")"
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 && "$M6_ZEC_JOURNEY" == refund ]]; then
+    apply_m6_refund_parent_handoff "$taker_output"
+  fi
   if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]] && \
     jq -e '.m6_first_claim == true' <<<"$taker_output" >/dev/null; then
     m6_claim_admitted=1
