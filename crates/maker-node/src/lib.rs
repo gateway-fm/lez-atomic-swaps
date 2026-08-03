@@ -53,8 +53,9 @@ pub use taker_facade::{
 };
 pub use taker_rpc::taker_read_only_rpc_module;
 pub use taker_service_config::{
-    ConfiguredTakerFacadeBackend, OwnerChatSocketProbe, SystemTakerTrustedTime,
-    TakerServiceStartupError, load_taker_service_backend,
+    ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
+    OwnerChatSocketProbe, PreparedZecTakerInitiationV1, SystemTakerTrustedTime,
+    TakerServiceStartupError, load_taker_service_backend, load_taker_service_context,
 };
 use xmr_chat::register_xmr_chat_methods;
 pub use xmr_chat::{
