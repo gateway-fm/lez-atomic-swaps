@@ -78,7 +78,7 @@ flowchart TB
         MakerDb[("Maker SQLite and effect journals")]
         Delivery["Run-local Delivery adapter<br/>discovery and offers"]
         Chat["Run-local Chat adapter<br/>negotiation only"]
-        TakerFacade["Typed Taker facade contract<br/>service and endpoint planned"]
+        TakerFacade["Typed Taker facade contract and authenticated read backend<br/>service and endpoint planned"]
         TakerState[("Private Taker receipts and role state")]
         MakerActors["Maker BTC, XMR, and ZEC actors"]
         TakerActors["Taker BTC, XMR, and ZEC actors"]
@@ -101,6 +101,7 @@ flowchart TB
     TakerQtro -.-> TakerHost
     MakerHost -.-> MakerRpc
     TakerHost -.-> TakerFacade
+    TakerFacade --> Delivery
 
     MakerRpc --> MakerDaemon
     MakerDaemon --> MakerDb

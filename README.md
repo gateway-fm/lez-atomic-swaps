@@ -34,12 +34,17 @@ The local actor-browser proof is GREEN 6/6 through the digest-pinned,
 networkless, read-only Docker runner at
 `scripts/run-m6-prototype-e2e-isolated.sh`; no chain, wallet, faucet, public
 RPC, or public network is involved. Owner-local RPC calls are now bounded end
-to end at `eb7e147`. The strict typed Taker facade contract foundation is
-GREEN at `6161e35`: it exposes seven versioned methods, no caller-selected
-paths, keys, commands, or raw evidence, and reports current Monero terminal
-routes honestly as effect checkpoints rather than completed swaps. ADR
+to end at `eb7e147`. The strict typed Taker facade contract is GREEN at
+`6161e35`: it exposes seven versioned methods, no caller-selected paths, keys,
+commands, or raw evidence, and reports current Monero terminal routes honestly
+as effect checkpoints rather than completed swaps. Reusable owner-only server
+custody is GREEN at `270c5ef`; real authenticated Delivery health and bounded
+offer listing are GREEN at `1584b76`. Mutation methods remain absent until
+their durable registry and replay/generation journal exist. ADR
 [0130](docs/architecture/0130-expose-a-strict-role-fixed-taker-facade.md)
-records its component and sequence flows plus its conditional-atomicity scope.
+records the typed boundary. ADR
+[0131](docs/architecture/0131-isolate-taker-facade-on-owner-service.md)
+records the separate process/socket decision and read-only flows.
 
 ### M5 verified progressive application PoC — historical implementation record
 

@@ -1,6 +1,6 @@
 # ADR 0130: expose a strict role-fixed Taker facade
 
-- Status: Accepted; typed contract foundation implemented at `6161e35`
+- Status: Accepted; typed contract and authenticated read backend implemented through `1584b76`
 - Date: 2026-08-03
 - Scope: M6 nonvisual backend boundary
 

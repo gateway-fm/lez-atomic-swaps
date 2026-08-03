@@ -5427,6 +5427,22 @@ cannot be presented as terminal completion from one marker. ADR 0130 records
 the component and sequence flows and why the boundary preserves conditional
 atomicity without claiming that DTOs themselves perform a swap.
 
-Next nonvisual work is the role-fixed service implementation behind this
-contract. Production QML and QtRO host work resume only after explicit owner
-prototype sign-off.
+## M6 owner-only read backend checkpoint (2026-08-03)
+
+Pushed commit `270c5ef` extracts the proven HTTP-only jsonrpsee limits,
+owner-owned mode-0700 runtime validation, no-replacement mode-0600 Unix bind,
+and inode-safe cleanup for reuse by a separate Taker service. Existing Maker
+process lifecycle and owner journey regressions remain GREEN.
+
+Pushed commit `1584b76` implements real key-pinned Delivery health and offer
+listing with injected trusted time, current-route validation, bounded sources
+and results, deterministic identity/offer ordering, exact duplicate collapse,
+conflicting immutable duplicate rejection, fixed path-free errors, optional
+payload-free Chat health, and redacted diagnostics. Focused tests are GREEN
+6/6 with strict Clippy. No mutation method or generic dispatcher is exposed.
+
+ADR 0131 requires a separate owner-only Taker process rather than adding this
+authority to the Maker daemon. Next nonvisual work is the two-method typed RPC
+adapter and process, then a durable request/result registry and complete ZEC
+mutation vertical. Production QML and QtRO host work resume only after explicit
+owner prototype sign-off.

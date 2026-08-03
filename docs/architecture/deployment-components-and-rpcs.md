@@ -74,10 +74,11 @@ flowchart TB
 
     Taker["Taker user"] -.-> TakerQml["Planned Taker ui_qml package"]
     TakerQml -.-> TakerHost["Planned Taker ui-host QtRO package"]
-    TakerHost -.-> TakerFacade["Typed Taker facade contract<br/>service endpoint unassigned"]
+    TakerHost -.-> TakerFacade["Typed contract and authenticated read backend<br/>service endpoint unassigned"]
     TakerFacade -.-> TakerActors["Existing Taker role actors and receipt state"]
 
     MakerDaemon --> DeliveryChat["Existing actor-owned Delivery and Chat boundaries"]
+    TakerFacade --> DeliveryChat
     TakerActors --> DeliveryChat
     MakerDaemon --> NodeAdapters["Existing role-fixed node adapters and sidecars"]
     TakerActors --> NodeAdapters
@@ -108,7 +109,7 @@ or Chat endpoint directly.
 | Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the planned host may call it, the QML view may not |
 | Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
-| Taker lifecycle facade | Contract has no endpoint or port; service transport is unassigned | No credential scheme exists yet; DTOs contain no paths, keys, receipts, commands, or raw evidence | Seven-method typed contract implemented at `6161e35`; private resolution, actor binding, and transport remain planned |
+| Taker lifecycle facade | Contract/read backend have no endpoint yet; separate owner-only service transport is planned | No credential scheme exists yet; DTOs and fixed errors contain no paths, keys, receipts, commands, or raw evidence | Seven-method typed contract plus real key-pinned Delivery health/list backend implemented through `1584b76`; mutation registry, actor binding, and process remain planned |
 | Delivery | No M6 TCP port. Existing local discovery uses an owner-private signed directory | Maker signing material remains actor-owned and is never passed to either UI package | Existing local boundary; future UI reaches it only through role actors |
 | Chat | No fixed M6 port. Existing daemon integration uses a separately configured absolute mode-0600 Unix socket | Socket ownership plus protocol identity and signatures remain actor-owned | Existing local negotiation boundary; no direct UI access |
 | LEZ node RPCs | No new M6 port. Existing runs publish run-scoped dynamic loopback endpoints or actor-sidecar endpoints in owner-private manifests | Run, role, capability, signer, and key files remain outside the UI | Existing sequencer, indexer, Bedrock, and role sidecars are actor-only resources; not started by the current prototype |
