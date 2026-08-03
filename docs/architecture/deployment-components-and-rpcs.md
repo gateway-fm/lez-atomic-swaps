@@ -31,6 +31,9 @@ flowchart LR
     CI["CI node:test and Puppeteer"] --> TestServer["Run-local ephemeral test server<br/>127.0.0.1 and kernel-selected port"]
     TestServer --> Chrome["System Google Chrome<br/>sandbox enabled"]
     Chrome --> Profile["Run-unique temporary browser profile"]
+    LocalRunner["Local isolated Docker proof"] --> Container["Digest-pinned Puppeteer image<br/>network none and read-only repository"]
+    Container --> LocalServer["In-process ephemeral loopback test server"]
+    LocalServer --> LocalChrome["Sandboxed Chromium<br/>disposable tmpfs profile"]
     Boundary["No daemon, node, wallet, Delivery, Chat, or chain effects"]
 ```
 
@@ -48,8 +51,9 @@ and Taker `ui_qml` packages and separate process-isolated `ui-host` Qt Remote
 Objects packages. Those packages and their QtRO endpoints are not implemented,
 so no QtRO socket name, TCP port, or credential scheme is assigned here. The
 Maker host is planned to translate only an allowlisted typed UI contract to the
-existing owner Unix RPC. The Taker host depends on a role-fixed lifecycle
-facade that is still unimplemented. Neither QML view receives node endpoints,
+existing owner Unix RPC. The Taker host now has an implemented strict typed
+contract, but its role-fixed service and endpoint remain unimplemented.
+Neither QML view receives node endpoints,
 wallet credentials, signing keys, Delivery keys, Chat credentials, SQLite
 paths, or effect authority.
 
@@ -70,7 +74,7 @@ flowchart TB
 
     Taker["Taker user"] -.-> TakerQml["Planned Taker ui_qml package"]
     TakerQml -.-> TakerHost["Planned Taker ui-host QtRO package"]
-    TakerHost -.-> TakerFacade["Unimplemented role-fixed Taker facade<br/>endpoint unassigned"]
+    TakerHost -.-> TakerFacade["Typed Taker facade contract<br/>service endpoint unassigned"]
     TakerFacade -.-> TakerActors["Existing Taker role actors and receipt state"]
 
     MakerDaemon --> DeliveryChat["Existing actor-owned Delivery and Chat boundaries"]
@@ -98,12 +102,13 @@ or Chat endpoint directly.
 | Manual browser | Exact origin printed by the server; no listener of its own | None; no cookie, token, key, seed, wallet file, `localStorage`, `sessionStorage`, or IndexedDB | Browser memory only; current and disposable |
 | CI prototype server | `127.0.0.1:0`; the test reads the kernel-selected port from the listener | None | In-process `node:test` server; current and closed by the owning test run |
 | CI browser | No application listener; connects only to the exact CI test-server origin | None | `/usr/bin/google-chrome`, with Puppeteer download disabled, plus a profile below `${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}`; current, run-unique, sandboxed, and removed by that run |
+| Local isolated browser proof | In-process test server on kernel-selected loopback; container has `--network none` | None | Digest-pinned Puppeteer 25.3.0 image; read-only repository, disposable tmpfs/profile, unique container name, bounded CPU/memory/PIDs, Chromium sandbox enabled; current and GREEN 6/6 |
 | Maker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Maker `ui-host` QtRO | QtRO transport and endpoint are unassigned | A future process-local admission mechanism must not expose daemon or chain credentials to QML | Separate process/package planned; allowlisted translation only |
 | Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the planned host may call it, the QML view may not |
 | Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
-| Taker lifecycle facade | No endpoint or port exists | No credential scheme exists yet | Unimplemented; must preserve the existing private receipt, actor lock, generation, and effect-journal authority |
+| Taker lifecycle facade | Contract has no endpoint or port; service transport is unassigned | No credential scheme exists yet; DTOs contain no paths, keys, receipts, commands, or raw evidence | Seven-method typed contract implemented at `6161e35`; private resolution, actor binding, and transport remain planned |
 | Delivery | No M6 TCP port. Existing local discovery uses an owner-private signed directory | Maker signing material remains actor-owned and is never passed to either UI package | Existing local boundary; future UI reaches it only through role actors |
 | Chat | No fixed M6 port. Existing daemon integration uses a separately configured absolute mode-0600 Unix socket | Socket ownership plus protocol identity and signatures remain actor-owned | Existing local negotiation boundary; no direct UI access |
 | LEZ node RPCs | No new M6 port. Existing runs publish run-scoped dynamic loopback endpoints or actor-sidecar endpoints in owner-private manifests | Run, role, capability, signer, and key files remain outside the UI | Existing sequencer, indexer, Bedrock, and role sidecars are actor-only resources; not started by the current prototype |
@@ -116,14 +121,20 @@ or Chat endpoint directly.
 
 The current runtime prototype is independent of external services. Default
 port-zero binding avoids collisions; an explicitly selected busy port fails
-instead of taking over another listener. CI also isolates each browser profile
-under the workflow run ID and attempt, uses no Docker, and performs exact
-test-owned cleanup. Its remaining environment sensitivities are Node/npm setup,
-availability and sandbox support of the runner's system Chrome, kernel port and
-process limits, and CPU scheduling against bounded browser-test timeouts.
-System Chrome image drift can change browser behavior, although pass/fail uses
-DOM and state assertions rather than pixel screenshots. Cold `npm ci` still
-depends on registry or cache availability; runtime page loading does not.
+instead of taking over another listener. CI isolates each browser profile under
+the workflow run ID and attempt and performs exact test-owned cleanup. The
+local Docker proof additionally uses a digest-pinned official Puppeteer image,
+a unique container name, no network namespace, a read-only repository mount,
+disposable tmpfs state, bounded resources, and a sandbox-enabled browser.
+
+Runtime external resources are empty. If the pinned image is absent, acquiring
+it from GHCR is a setup dependency that may fail independently of the test;
+after acquisition, the test opens no external network. Remaining sensitivities
+are Docker and kernel sandbox support, Node/npm or image setup, loopback port
+and process limits, and CPU scheduling against bounded browser timeouts.
+System Chrome in CI may drift, although pass/fail uses DOM and state assertions
+rather than screenshots. Cold `npm ci` depends on registry or cache
+availability; runtime page loading does not.
 
 The planned actor-real UI inherits startup, finality, reorg, and bounded-RPC
 timing from the existing local LEZ, Bitcoin, Monero, and Zcash lanes, plus

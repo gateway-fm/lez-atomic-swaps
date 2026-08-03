@@ -44,10 +44,12 @@ The production surface is planned as two independent Basecamp 0.2.0
 Basecamp loads each QML view in its own application surface and the generated
 Qt Remote Objects replica reaches a backend in a separate `ui-host` process.
 The Maker backend will translate an allowlisted, secret-free GUI contract to
-the existing owner-restricted Unix JSON-RPC. The Taker equivalent remains an
-explicitly **unimplemented** role-fixed facade; it must bind private receipt and
-role state without exposing paths, keys, generic process arguments, or raw node
-authority to QML.
+the existing owner-restricted Unix JSON-RPC. The Taker typed contract is now
+implemented as an exact seven-method, secret-free allowlist. Its role-fixed
+service, private receipt resolution, and transport remain planned; they must
+bind private role state without exposing paths, keys, generic process
+arguments, or raw node authority to QML. XMR capabilities remain explicitly
+effect-checkpoint-only.
 
 The first backend prerequisite is solid and does not cross the visual sign-off
 gate: the owner RPC now exposes strict `maker_local_route_save_v1`. It commits
@@ -70,13 +72,13 @@ flowchart TB
         TakerHost["Taker ui-host backend<br/>allowlisted and planned"]
     end
 
-    subgraph ExistingApplication["Existing application boundaries including M6 route save"]
+    subgraph ExistingApplication["Existing application boundaries including M6 route save and Taker contract"]
         MakerRpc["Owner Unix JSON-RPC<br/>mode 0600, allowlisted, atomic route save"]
         MakerDaemon["Maker daemon<br/>sole Maker database writer"]
         MakerDb[("Maker SQLite and effect journals")]
         Delivery["Run-local Delivery adapter<br/>discovery and offers"]
         Chat["Run-local Chat adapter<br/>negotiation only"]
-        TakerFacade["Role-fixed Taker lifecycle facade<br/>UNIMPLEMENTED"]
+        TakerFacade["Typed Taker facade contract<br/>service and endpoint planned"]
         TakerState[("Private Taker receipts and role state")]
         MakerActors["Maker BTC, XMR, and ZEC actors"]
         TakerActors["Taker BTC, XMR, and ZEC actors"]

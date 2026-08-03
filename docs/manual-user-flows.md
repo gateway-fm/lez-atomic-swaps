@@ -7178,6 +7178,20 @@ Open the exact printed URL in a browser. Do not substitute the literal
 `EPHEMERAL_PORT` placeholder. The landing page must show both **Maker operator**
 and **Taker user** cards plus the always-visible sample-state boundary.
 
+For an automated actor-level rehearsal, Docker users can instead run:
+
+```bash
+./scripts/run-m6-prototype-e2e-isolated.sh
+```
+
+The runner uses an exact official Puppeteer image digest, a unique container
+name, no network namespace, a read-only repository mount, disposable tmpfs
+state, bounded resources, and Chromium with its sandbox enabled. Expect six of
+six role, Maker, Taker claim, Taker refund, pair-isolation, and narrow-viewport
+tests to pass. If the image is not already local, Docker may contact GHCR once
+to acquire it; that setup dependency is not part of the networkless test run.
+No chain node, wallet, faucet, public RPC, Delivery, or Chat service is used.
+
 ```mermaid
 sequenceDiagram
     actor R as Reviewer

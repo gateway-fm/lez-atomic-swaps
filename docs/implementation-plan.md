@@ -5373,12 +5373,15 @@ or public-network boundary.
 Post-PoC red-green-refactor added a recursive static resource/effect/CSP
 contract and a six-case Puppeteer actor E2E. The static contract, Node syntax,
 zero-moderate npm advisory audit, license allowlist, CI hardening contract, and
-action pin policy are GREEN. The local browser run is honestly RED before
-navigation because host AppArmor denies Chromium a usable sandbox; the test
-refuses `--no-sandbox`. Commit `a6e288e` runs the same suite with exact Node
-24.18.0 and system Chrome on the isolated CI runner with a run-unique profile.
-Remote status is not observable without repository Actions credentials, so no
-remote-green claim is made yet.
+action pin policy are GREEN. A Docker-isolated RED run exposed unreliable
+number-input replacement and a smooth-scroll click race. Commit `53e6cd8`
+made those actor journeys deterministic without disabling the Chromium
+sandbox. The exact digest-pinned runner at `e48ad9c` is GREEN 6/6 in 16.13
+seconds with no network namespace, a read-only repository mount, run-unique
+profile and container names, bounded resources, and exact cleanup. Runtime
+external resources are empty. An absent image may require a one-time GHCR
+pull before the networkless run. Remote Actions status remains unobservable
+without credentials, so no remote-green claim is made.
 
 The review record is `docs/m6-prototype-review.md`. Explicit owner sign-off is
 the gate before production Basecamp QML work under ADR 0128. This checkpoint
@@ -5405,6 +5408,25 @@ GREEN.
 
 ADR 0129 records the atomicity argument and both success/failure flows. This is
 an implemented nonvisual prerequisite and does not cross the prototype
-sign-off gate: production QML and its QtRO host remain pending approval. Next
-nonvisual work is the typed role-fixed Taker facade foundation; visual work
-resumes only after explicit sign-off.
+sign-off gate: production QML and its QtRO host remain pending approval.
+
+## M6 typed Taker facade contract checkpoint (2026-08-03)
+
+Pushed commit `3547130` exposes the unchanged hardened secret-file readers as
+a reusable library boundary instead of compiling duplicate binary-private
+modules. Pushed commit `6161e35` defines the strict, versioned, secret-free
+Taker facade DTO contract and exact seven-method allowlist. The caller supplies
+reviewed public commitments and opaque IDs, never receipt paths, socket paths,
+keys, raw evidence, generic commands, or node endpoints. Claim and refund are
+different request types and carry an observed generation.
+
+Six focused contract tests, strict Clippy, formatting, and diff hygiene are
+GREEN. Capability reporting preserves pair truth: BTC and ZEC expose their
+current receipt-bound lifecycle, while XMR remains effect-checkpoint-only and
+cannot be presented as terminal completion from one marker. ADR 0130 records
+the component and sequence flows and why the boundary preserves conditional
+atomicity without claiming that DTOs themselves perform a swap.
+
+Next nonvisual work is the role-fixed service implementation behind this
+contract. Production QML and QtRO host work resume only after explicit owner
+prototype sign-off.

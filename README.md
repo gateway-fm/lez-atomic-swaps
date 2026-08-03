@@ -30,6 +30,17 @@ resource and does not bypass the explicit sign-off gate before production QML.
 ADR [0129](docs/architecture/0129-save-maker-local-route-atomically.md) records
 the component, success/failure flows, and atomicity scope.
 
+The local actor-browser proof is GREEN 6/6 through the digest-pinned,
+networkless, read-only Docker runner at
+`scripts/run-m6-prototype-e2e-isolated.sh`; no chain, wallet, faucet, public
+RPC, or public network is involved. Owner-local RPC calls are now bounded end
+to end at `eb7e147`. The strict typed Taker facade contract foundation is
+GREEN at `6161e35`: it exposes seven versioned methods, no caller-selected
+paths, keys, commands, or raw evidence, and reports current Monero terminal
+routes honestly as effect checkpoints rather than completed swaps. ADR
+[0130](docs/architecture/0130-expose-a-strict-role-fixed-taker-facade.md)
+records its component and sequence flows plus its conditional-atomicity scope.
+
 ### M5 verified progressive application PoC — historical implementation record
 
 This section preserves the implementation path to the verified M5 PoC. The

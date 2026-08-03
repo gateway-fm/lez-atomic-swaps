@@ -22,6 +22,18 @@ The server chooses an ephemeral loopback port and serves only allowlisted local
 files. No dependency installation, Docker service, RPC, node, faucet, DNS,
 wallet, public funds, or public network is used.
 
+The automated companion proof is:
+
+```bash
+./scripts/run-m6-prototype-e2e-isolated.sh
+```
+
+It is GREEN 6/6 at `53e6cd8` through the digest-pinned runner added at
+`e48ad9c`. The container has no network namespace, mounts the repository
+read-only, uses disposable state and a unique name, keeps Chromium sandboxing
+enabled, and performs exact cleanup. A missing local image may require a
+one-time GHCR pull; the test itself has no external runtime resource.
+
 ## Review checklist
 
 | Requirement | Review surface | Acceptance question |
