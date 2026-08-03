@@ -16,6 +16,8 @@ mod taker_rpc;
 mod taker_service;
 mod taker_service_config;
 mod xmr_chat;
+#[doc(hidden)]
+pub mod zec_taker_accept;
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
     MakerActorSupervisorOutcome, MakerActorSupervisorResolution, prepare_maker_actor,
