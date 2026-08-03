@@ -22,6 +22,7 @@ readonly M5_LEZ_MAKER_SIGNER_KEY_FILE="${M5_LEZ_MAKER_SIGNER_KEY_FILE:-}"
 readonly M5_LEZ_TAKER_SIGNER_KEY_FILE="${M5_LEZ_TAKER_SIGNER_KEY_FILE:-}"
 readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
 readonly M5_APPLICATION_MODE="${M5_APPLICATION_MODE:-0}"
+readonly M6_TAKER_SERVICE_MODE="${M6_TAKER_SERVICE_MODE:-0}"
 readonly DISCOVERY_BLOCKS=256
 readonly POLL_INTERVAL_SECONDS=0.10
 # Both ceilings start at provisioning. The 49-second completion cap retains at
@@ -50,6 +51,14 @@ fi
 readonly run_id
 if [[ "$M5_APPLICATION_MODE" != 0 && "$M5_APPLICATION_MODE" != 1 ]]; then
   echo 'M5_APPLICATION_MODE must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$M6_TAKER_SERVICE_MODE" != 0 && "$M6_TAKER_SERVICE_MODE" != 1 ]]; then
+  echo 'M6_TAKER_SERVICE_MODE must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$M6_TAKER_SERVICE_MODE" == 1 && "$M5_APPLICATION_MODE" != 1 ]]; then
+  echo 'M6 Taker service mode requires M5_APPLICATION_MODE=1' >&2
   exit 2
 fi
 if [[ "$M5_APPLICATION_MODE" == 1 && ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]]; then
@@ -199,6 +208,19 @@ m5_maker_state_dir=''
 m5_expected_funding_txid=''
 m5_maker_phase='not_activated'
 m5_transport_cutover_complete=0
+m6_service_pid=''
+m6_service_start_ticks=''
+m6_service_bin=''
+m6_registry_init_bin=''
+m6_service_socket=''
+m6_service_config=''
+m6_service_registry=''
+m6_service_log=''
+m6_initiate_request_id="m6-initiate-${run_id}"
+m6_claim_request_id="m6-claim-${run_id}"
+m6_claim_admitted=0
+m6_claim_generation=''
+m6_zcash_claim_txid=''
 corridor_deadline_monotonic_ms=''
 
 process_start_ticks() {
@@ -496,6 +518,9 @@ prove_m5_terminal_operator_projection() {
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [[ -n "$m6_service_bin" ]]; then
+    stop_owned_process "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin"
+  fi
   if [[ -n "$m5_daemon_bin" ]]; then
     stop_owned_m5_daemon
   fi
@@ -661,11 +686,19 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   m5_intent_inspector_bin="$(readlink -f target/release/examples/maker-zec-lock-intent-inspect)"
   readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin
   readonly actor_inspector_bin m5_pair_inspector_bin m5_intent_inspector_bin
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
+    m6_service_bin="$(readlink -f target/release/lez-taker-service)"
+    m6_registry_init_bin="$(readlink -f target/release/lez-taker-registry-init)"
+    readonly m6_service_bin m6_registry_init_bin
+  fi
   required_binaries+=("$maker_daemon_bin" "$maker_cli_bin" "$taker_bin")
   required_binaries+=("$chat_draft_bin" "$chat_finalize_bin" "$actor_inspector_bin")
   required_binaries+=("$m5_pair_inspector_bin")
   required_binaries+=("$m5_handoff_driver")
   required_binaries+=("$m5_intent_inspector_bin")
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
+    required_binaries+=("$m6_service_bin" "$m6_registry_init_bin")
+  fi
 fi
 for binary in "${required_binaries[@]}"; do
   [[ -x "$binary" ]] || {
@@ -695,6 +728,167 @@ rpc() {
   if [[ -n "$corridor_deadline_monotonic_ms" ]]; then
     remaining_budget_milliseconds 'rpc-after' >/dev/null || return
   fi
+}
+
+
+m6_service_rpc() {
+  local label="$1"
+  local request="$2"
+  local request_timeout_ms=15000
+  local remaining request_timeout response
+  remaining="$(remaining_budget_milliseconds "${label}-before")" || return
+  (( request_timeout_ms <= remaining )) || request_timeout_ms="$remaining"
+  request_timeout="$(format_milliseconds "$request_timeout_ms")"
+  response="$(curl --fail --silent --show-error --noproxy '*' \
+    --connect-timeout 1 --max-time "$request_timeout" \
+    --unix-socket "$m6_service_socket" \
+    -H 'content-type: application/json' --data "$request" http://localhost/)" || return
+  printf '%s\n' "$response"
+  remaining_budget_milliseconds "${label}-after" >/dev/null
+}
+
+wait_for_m6_service_ready() {
+  local health_request health_response
+  health_request='{"jsonrpc":"2.0","id":"m6-health","method":"taker_health","params":[{"schema_version":1}]}'
+  for _ in {1..100}; do
+    process_is_owned "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin" || break
+    if [[ -S "$m6_service_socket" \
+      && "$(stat -c %a -- "$m6_service_socket" 2>/dev/null)" == 600 \
+      && "$(stat -c %u -- "$m6_service_socket" 2>/dev/null)" == "$(id -u)" ]]; then
+      if health_response="$(m6_service_rpc 'm6-health' "$health_request" 2>/dev/null)" \
+        && jq -e '
+          .error == null and .result.schema_version == 1 and .result.ready == true
+          and .result.registered_methods == {
+            health:true,offer_list:true,swap_list:true,initiate:true,
+            monitor:true,claim:true,refund:true
+          }
+        ' <<<"$health_response" >/dev/null; then
+        printf '%s\n' "$health_response" >"${evidence_dir}/m6-taker-service-health-initial.json"
+        chmod 0600 "${evidence_dir}/m6-taker-service-health-initial.json"
+        return 0
+      fi
+    fi
+    sleep 0.05
+  done
+  echo 'M6 Taker service did not become ready with seven methods' >&2
+  sed -n '1,30p' "$m6_service_log" >&2 || true
+  return 1
+}
+
+
+start_m6_taker_service() {
+  [[ "$M6_TAKER_SERVICE_MODE" == 1 ]] || return 0
+  local handoff="${evidence_dir}/m5-chat-handoff.json"
+  local discovery="${evidence_dir}/m5-delivery-discovery.json"
+  local offer_id reservation_id maker_key signed_envelope
+  local signed_sha draft source_config signing_key agreement_output actor_root
+  local offer_request offer_response initiate_request initiate_response replay_response
+
+  offer_id="$(jq -er '.offer_id | strings' "$handoff")"
+  reservation_id="$(jq -er '.reservation_id | strings' "$handoff")"
+  maker_key="$(jq -er '.role_public_keys.maker | strings' "$handoff")"
+  signed_envelope="${m5_delivery_directory}/${offer_id}.offer.json"
+  draft="${application_root}/unsigned-draft.borsh"
+  signing_key="${provision_actors_root}/taker/zcash.key"
+  source_config="${provision_actors_root}/taker/actor-config.json"
+  agreement_output="${application_root}/final-agreement.borsh"
+  actor_root="${application_root}/taker-actors"
+  m6_service_registry="${application_root}/taker-service.sqlite3"
+  m6_service_config="${application_root}/taker-service.json"
+  m6_service_socket="${application_root}/runtime/taker-service.sock"
+  m6_service_log="${evidence_dir}/m6-taker-service.log"
+
+  jq -e --arg offer "$offer_id" --arg maker "$maker_key" '
+    .schema_version == 1 and (.offers | length) == 1
+    and .offers[0].offer.id == $offer and .offers[0].maker_public_key == $maker
+    and .offers[0].offer.pair_configuration.route == {pair:"Zcash",direction:"TakerSellsLez"}
+    and .offers[0].offer.pair_configuration.minimum_foreign_units == 100000000
+    and .offers[0].offer.pair_configuration.maximum_foreign_units == 100000000
+    and .offers[0].offer.price.lez_units_per_lot == 1
+    and .offers[0].offer.price.foreign_units_per_lot == 2000
+    and (.offers[0].signed_envelope_sha256 | test("^[0-9a-f]{64}$"))
+  ' "$discovery" >/dev/null || {
+    echo 'M6 authenticated offer terms do not yield the exact integral quote' >&2
+    return 1
+  }
+  signed_sha="$(jq -er '.offers[0].signed_envelope_sha256' "$discovery")"
+  [[ -f "$signed_envelope" && ! -L "$signed_envelope"
+    && "$(sha256sum "$signed_envelope" | cut -d ' ' -f1)" == "$signed_sha"
+    && -f "$draft" && ! -L "$draft"
+    && -f "$signing_key" && ! -L "$signing_key"
+    && -f "$source_config" && ! -L "$source_config"
+    && -f "$agreement_output" && ! -L "$agreement_output"
+    && -d "$actor_root" && ! -L "$actor_root" ]] || {
+    echo 'M6 prepared service authority is unavailable or drifted' >&2
+    return 1
+  }
+
+  "$m6_registry_init_bin" --database "$m6_service_registry"
+  jq -n --arg delivery "$m5_delivery_directory" --arg maker "$maker_key" \
+    --arg chat "$m5_chat_socket" --arg registry "$m6_service_registry" \
+    --arg swap "$m5_swap_id" --arg offer "$offer_id" \
+    --arg reservation "$reservation_id" --arg envelope "$signed_envelope" \
+    --arg envelope_sha "$signed_sha" --arg draft "$draft" \
+    --arg draft_sha "$(sha256sum "$draft" | cut -d ' ' -f1)" \
+    --arg signing_key "$signing_key" --arg source_config "$source_config" \
+    --arg source_sha "$(sha256sum "$source_config" | cut -d ' ' -f1)" \
+    --arg agreement_output "$agreement_output" --arg actor_root "$actor_root" \
+    --arg receipt "$m5_taker_acceptance_receipt" '
+    {schema_version:1,delivery_sources:[{source_id:"m6-local-maker",directory:$delivery,
+      maker_public_key:$maker}],chat_socket:$chat,maximum_offers:16,initiation:{
+      execute_prepared_zec:true,registry_database:$registry,prepared_zec:[{
+        source_id:"m6-local-maker",swap_id:$swap,offer_id:$offer,reservation_id:$reservation,
+        foreign_units:100000000,lez_units:50000,
+        signed_envelope:{path:$envelope,sha256:$envelope_sha},
+        unsigned_draft:{path:$draft,sha256:$draft_sha},
+        signing_key:{path:$signing_key},
+        source_config:{path:$source_config,sha256:$source_sha},
+        agreement_output:$agreement_output,actor_root:$actor_root,receipt_output:$receipt
+      }]}}
+  ' >"$m6_service_config"
+  chmod 0600 "$m6_service_config"
+
+  "$m6_service_bin" --config "$m6_service_config" --socket "$m6_service_socket" \
+    >"$m6_service_log" 2>&1 &
+  m6_service_pid=$!
+  m6_service_start_ticks="$(process_start_ticks "$m6_service_pid")"
+  [[ -n "$m6_service_start_ticks" ]] || return 1
+  wait_for_m6_service_ready
+
+  offer_request='{"jsonrpc":"2.0","id":"m6-offers","method":"taker_offer_list_v1","params":[{"schema_version":1,"route":{"pair":"Zcash","direction":"TakerSellsLez"}}]}'
+  offer_response="$(m6_service_rpc 'm6-offers' "$offer_request")"
+  printf '%s\n' "$offer_response" >"${evidence_dir}/m6-taker-service-offers.json"
+  jq -e --arg offer "$offer_id" --arg maker "$maker_key" '
+    .error == null and .result.schema_version == 1 and (.result.offers | length) == 1
+    and .result.offers[0].offer.id == $offer and .result.offers[0].maker_identity == $maker
+    and (.result.offers[0].signed_envelope_sha256 | arrays | length) == 32
+  ' <<<"$offer_response" >/dev/null
+
+  initiate_request="$(jq -nc --arg request_id "$m6_initiate_request_id" \
+    --arg offer "$offer_id" --argjson selected "$(jq -c '.result.offers[0]' <<<"$offer_response")" '
+    {jsonrpc:"2.0",id:"m6-initiate",method:"taker_swap_initiate_v1",params:[{
+      schema_version:1,request_id:$request_id,offer_id:$offer,
+      route:{pair:"Zcash",direction:"TakerSellsLez"},maker_identity:$selected.maker_identity,
+      signed_envelope_sha256:$selected.signed_envelope_sha256,foreign_units:100000000,
+      expected_lez_units:50000}]}
+  ')"
+  printf '%s\n' "$initiate_request" >"${evidence_dir}/m6-taker-service-init-request.json"
+  initiate_response="$(m6_service_rpc 'm6-initiate-first' "$initiate_request")"
+  replay_response="$(m6_service_rpc 'm6-initiate-replay' "$initiate_request")"
+  printf '%s\n' "$initiate_response" >"${evidence_dir}/m6-taker-service-init.json"
+  printf '%s\n' "$replay_response" >"${evidence_dir}/m6-taker-service-init-replay.json"
+  chmod 0600 "${evidence_dir}/m6-taker-service-"*.json
+  jq -e --arg swap "$m5_swap_id" '
+    .error == null and .result.schema_version == 1 and .result.was_replay == false
+    and .result.swap.swap_id == $swap and .result.swap.state == "not_activated"
+    and .result.swap.progress_generation == 0 and .result.swap.available_action == null
+  ' <<<"$initiate_response" >/dev/null
+  jq -e --arg swap "$m5_swap_id" '
+    .error == null and .result.schema_version == 1 and .result.was_replay == true
+    and .result.swap.swap_id == $swap and .result.swap.state == "not_activated"
+    and .result.swap.progress_generation == 0 and .result.swap.available_action == null
+  ' <<<"$replay_response" >/dev/null
+  assert_m5_taker_receipt_unchanged
 }
 
 allocate_port() {
@@ -1527,10 +1721,135 @@ assert_m5_taker_receipt_unchanged() {
   }
 }
 
+
+drive_m6_taker() {
+  local round="$1"
+  local monitor_request monitor_response state generation claim_request
+  local first_response replay_response mempool_before mempool_after_first mempool_after_replay
+  local output
+  process_is_owned "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin" || {
+    echo 'M6 Taker service identity changed during the corridor' >&2
+    return 1
+  }
+  [[ -S "$m6_service_socket" ]] || return 1
+  monitor_request="$(jq -nc --arg swap "$m5_swap_id" '
+    {jsonrpc:"2.0",id:"m6-monitor",method:"taker_swap_monitor_v1",params:[{
+      schema_version:1,swap_id:$swap}]}
+  ')"
+  monitor_response="$(m6_service_rpc "m6-monitor-${round}" "$monitor_request")"
+  jq -e --arg swap "$m5_swap_id" '
+    .error == null and .result.schema_version == 1 and .result.swap_id == $swap
+    and (.result.progress_generation | numbers) >= 0 and (.result.state | strings)
+  ' <<<"$monitor_response" >/dev/null || return 1
+  jq -nc --argjson round "$round" --argjson response "$monitor_response" \
+    '{schema_version:1,round:$round,response:$response}' \
+    >>"${evidence_dir}/m6-taker-service-monitor.ndjson"
+  state="$(jq -er '.result.state' <<<"$monitor_response")"
+  if [[ "$state" == completed ]]; then
+    jq -c '.result' <<<"$monitor_response"
+    return 0
+  fi
+
+  if [[ "$state" == claim_available || "$state" == claim_in_progress ]]; then
+    (( m5_transport_cutover_complete == 1 )) || {
+      echo 'M6 service claim became reachable before negotiation cutover' >&2
+      return 1
+    }
+    [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket"
+      && ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || {
+      echo 'M6 service claim retained a negotiation transport' >&2
+      return 1
+    }
+    if (( m6_claim_admitted == 0 )); then
+      [[ "$state" == claim_available
+        && "$(jq -er '.result.available_action' <<<"$monitor_response")" == claim ]] || return 1
+      m6_claim_generation="$(jq -er '.result.progress_generation | numbers' <<<"$monitor_response")"
+    fi
+    generation="$m6_claim_generation"
+    claim_request="$(jq -nc --arg request_id "$m6_claim_request_id" \
+      --arg swap "$m5_swap_id" --argjson generation "$generation" '
+      {jsonrpc:"2.0",id:"m6-claim",method:"taker_swap_claim_v1",params:[{
+        schema_version:1,request_id:$request_id,swap_id:$swap,expected_generation:$generation}]}
+    ')"
+
+    if (( m6_claim_admitted == 0 )); then
+      mempool_before="$(rpc "$ZEBRA_RPC_URL" \
+        '{"jsonrpc":"2.0","id":"m6-before","method":"getrawmempool","params":[]}')"
+      jq -e '.error == null and .result == []' <<<"$mempool_before" >/dev/null || {
+        echo 'M6 claim requires an isolated empty Zebra mempool' >&2
+        return 1
+      }
+      first_response="$(m6_service_rpc 'm6-claim-first' "$claim_request")"
+      mempool_after_first="$(rpc "$ZEBRA_RPC_URL" \
+        '{"jsonrpc":"2.0","id":"m6-after-first","method":"getrawmempool","params":[]}')"
+      replay_response="$(m6_service_rpc 'm6-claim-replay' "$claim_request")"
+      mempool_after_replay="$(rpc "$ZEBRA_RPC_URL" \
+        '{"jsonrpc":"2.0","id":"m6-after-replay","method":"getrawmempool","params":[]}')"
+      jq -e --arg swap "$m5_swap_id" --argjson generation "$generation" '
+        .error == null and .result == {schema_version:1,swap_id:$swap,action:"claim",
+          requested_after_generation:$generation,was_replay:false}
+      ' <<<"$first_response" >/dev/null
+      jq -e --arg swap "$m5_swap_id" --argjson generation "$generation" '
+        .error == null and .result == {schema_version:1,swap_id:$swap,action:"claim",
+          requested_after_generation:$generation,was_replay:true}
+      ' <<<"$replay_response" >/dev/null
+      m6_zcash_claim_txid="$(jq -er '.result | arrays | select(length == 1) | .[0] | strings' \
+        <<<"$mempool_after_first")"
+      jq -e --arg txid "$m6_zcash_claim_txid" '
+        .error == null and .result == [$txid]
+      ' <<<"$mempool_after_replay" >/dev/null || {
+        echo 'M6 exact claim replay changed the isolated Zebra mempool' >&2
+        return 1
+      }
+      jq -nc --argjson round "$round" --argjson first "$first_response" \
+        --argjson replay "$replay_response" --argjson before "$mempool_before" \
+        --argjson after_first "$mempool_after_first" \
+        --argjson after_replay "$mempool_after_replay" --arg txid "$m6_zcash_claim_txid" '
+        {schema_version:1,round:$round,first:$first,replay:$replay,
+          mempool_before:$before,mempool_after_first:$after_first,
+          mempool_after_replay:$after_replay,claim_txid:$txid}
+      ' >>"${evidence_dir}/m6-taker-service-claim.ndjson"
+      m6_claim_admitted=1
+      jq -c '.result + {m6_first_claim:true}' <<<"$first_response"
+      return 0
+    fi
+
+    replay_response="$(m6_service_rpc "m6-claim-reconcile-${round}" "$claim_request")"
+    jq -e --arg swap "$m5_swap_id" --argjson generation "$generation" '
+      .error == null and .result == {schema_version:1,swap_id:$swap,action:"claim",
+        requested_after_generation:$generation,was_replay:true}
+    ' <<<"$replay_response" >/dev/null
+    jq -nc --argjson round "$round" --argjson replay "$replay_response" \
+      '{schema_version:1,round:$round,reconcile:true,replay:$replay}' \
+      >>"${evidence_dir}/m6-taker-service-claim.ndjson"
+    jq -c '.result' <<<"$replay_response"
+    return 0
+  fi
+
+  case "$state" in
+    awaiting_first_lock|awaiting_second_lock|both_legs_locked|refund_available)
+      output="$(drive_actor taker "$taker_config" "$round")" || return
+      if jq -e '.operation == "zcash_followup_claim"' <<<"$output" >/dev/null; then
+        echo 'direct Taker drive crossed the M6 service claim boundary' >&2
+        return 1
+      fi
+      printf '%s\n' "$output"
+      ;;
+    *)
+      echo "M6 Taker monitor returned inadmissible state: ${state}" >&2
+      return 1
+      ;;
+  esac
+}
+
 drive_m5_taker() {
   local round="$1"
   if [[ "$M5_APPLICATION_MODE" != 1 ]]; then
     drive_actor taker "$taker_config" "$round"
+    return
+  fi
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
+    drive_m6_taker "$round"
     return
   fi
 
@@ -1688,6 +2007,30 @@ cut_over_m5_negotiation_transports() {
     }' >"${evidence_dir}/m5-post-lock-cutover.json"
   chmod 0600 "${evidence_dir}/m5-post-lock-cutover.json"
   m5_transport_cutover_complete=1
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
+    local m6_health_request m6_health_response cutover_tmp
+    process_is_owned "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin" || {
+      echo 'M6 Taker service did not survive negotiation cutover' >&2
+      return 1
+    }
+    [[ -S "$m6_service_socket" ]] || return 1
+    m6_health_request='{"jsonrpc":"2.0","id":"m6-cutover-health","method":"taker_health","params":[{"schema_version":1}]}'
+    m6_health_response="$(m6_service_rpc 'm6-cutover-health' "$m6_health_request")"
+    jq -e '
+      .error == null and .result.ready == true and .result.degraded == true
+      and .result.delivery == "unavailable" and .result.chat == "unavailable"
+      and .result.registered_methods == {health:true,offer_list:true,swap_list:true,
+        initiate:true,monitor:true,claim:true,refund:true}
+    ' <<<"$m6_health_response" >/dev/null || return 1
+    printf '%s\n' "$m6_health_response" >"${evidence_dir}/m6-taker-service-health-cutover.json"
+    cutover_tmp="${evidence_dir}/m5-post-lock-cutover.m6.tmp"
+    jq --argjson health "$m6_health_response" '
+      . + {m6_taker_service:{survived:true,owner_socket_alive:true,
+        negotiation_dependencies_unavailable:true,health:$health}}
+    ' "${evidence_dir}/m5-post-lock-cutover.json" >"$cutover_tmp"
+    chmod 0600 "$cutover_tmp"
+    mv -- "$cutover_tmp" "${evidence_dir}/m5-post-lock-cutover.json"
+  fi
 }
 
 observe_m5_supervised_maker() {
@@ -1797,6 +2140,28 @@ wait_for_m5_supervisor_terminal() {
 handle_zcash_submission() {
   local role="$1"
   local output="$2"
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]] && jq -e '
+    .m6_first_claim == true and .schema_version == 1 and .action == "claim"
+    and .was_replay == false
+  ' <<<"$output" >/dev/null; then
+    (( lez_revealing_claim_seen == 1 )) || {
+      echo 'refusing an M6 Zcash claim before the LEZ revealing claim' >&2
+      return 1
+    }
+    [[ "$role" == "$expected_zcash_claimant_role" && "$role" == taker ]] || {
+      echo "unexpected M6 Zcash claimant: ${role}" >&2
+      return 1
+    }
+    (( zcash_claim_mined == 0 )) || {
+      echo 'M6 Zcash follow-up claim was submitted more than once' >&2
+      return 1
+    }
+    [[ "$m6_zcash_claim_txid" =~ ^[0-9a-f]{64}$ ]] || return 1
+    zcash_claim_submitter="$role"
+    zcash_claim_mined=1
+    mine_blocks followup-claim 1
+    return 0
+  fi
   if jq -e '.outcome == "submitted" and .operation == "zcash_fund"' \
     <<<"$output" >/dev/null; then
     [[ "$role" == "$expected_zcash_funder_role" ]] || {
@@ -1885,6 +2250,10 @@ handle_lez_revealing_claim() {
   lez_revealing_claim_submitter="$role"
 }
 
+if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
+  start_m6_taker_service
+fi
+
 completed=0
 round=0
 while true; do
@@ -1905,7 +2274,11 @@ while true; do
     maker_phase="$(jq -r '.phase' <<<"$maker_output")"
   fi
 
-  taker_phase="$(jq -r '.phase' <<<"$taker_output")"
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
+    taker_phase="$(jq -r 'if .state == "completed" then "completed" else "active" end' <<<"$taker_output")"
+  else
+    taker_phase="$(jq -r '.phase' <<<"$taker_output")"
+  fi
   if [[ "$maker_phase" == completed && "$taker_phase" == completed ]]; then
     completed=1
     break
@@ -1952,7 +2325,43 @@ jq -e '.role == "maker" and .state == "active" and .phase == "completed"' \
   "${evidence_dir}/maker-status-final.json" >/dev/null
 jq -e '.role == "taker" and .state == "active" and .phase == "completed"' \
   "${evidence_dir}/taker-status-final.json" >/dev/null
-if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
+  m6_terminal_request="$(jq -nc --arg swap "$m5_swap_id" '
+    {jsonrpc:"2.0",id:"m6-terminal",method:"taker_swap_monitor_v1",params:[{
+      schema_version:1,swap_id:$swap}]}
+  ')"
+  m6_terminal_response="$(m6_service_rpc 'm6-terminal-monitor' "$m6_terminal_request")"
+  printf '%s\n' "$m6_terminal_response" >"${evidence_dir}/m6-taker-service-terminal.json"
+  jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_claim_generation" '
+    .error == null and .result.schema_version == 1 and .result.swap_id == $swap
+    and .result.state == "completed" and .result.progress_generation > $generation
+    and .result.available_action == null
+    and .result.privacy_guidance == "shield_received_transparent_zec_separately"
+  ' <<<"$m6_terminal_response" >/dev/null
+  jq -nc --argjson round "$round" --argjson response "$m6_terminal_response" \
+    '{schema_version:1,round:$round,terminal:true,response:$response}' \
+    >>"${evidence_dir}/m6-taker-service-monitor.ndjson"
+  (( m6_claim_admitted == 1 ))
+  jq -s -e --arg swap "$m5_swap_id" \
+    --arg txid "$m6_zcash_claim_txid" --argjson generation "$m6_claim_generation" '
+    length >= 1 and .[0].first.error == null and .[0].replay.error == null
+    and .[0].first.result == {schema_version:1,swap_id:$swap,action:"claim",
+      requested_after_generation:$generation,was_replay:false}
+    and .[0].replay.result == {schema_version:1,swap_id:$swap,action:"claim",
+      requested_after_generation:$generation,was_replay:true}
+    and .[0].mempool_before.result == []
+    and .[0].mempool_after_first.result == [$txid]
+    and .[0].mempool_after_replay.result == [$txid]
+  ' "${evidence_dir}/m6-taker-service-claim.ndjson" >/dev/null
+  stop_owned_process "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin"
+  m6_service_pid=''
+  m6_service_start_ticks=''
+  [[ ! -e "$m6_service_socket" ]] || {
+    echo 'M6 Taker service socket survived exact shutdown' >&2
+    exit 1
+  }
+fi
+if [[ "$M5_APPLICATION_MODE" == 1 && "$M6_TAKER_SERVICE_MODE" == 0 ]]; then
   assert_m5_taker_receipt_unchanged
   terminal_taker_timeout="$(bounded_actor_timeout 'm5-taker-terminal-monitor')"
   timeout --signal=KILL "${terminal_taker_timeout}s" \

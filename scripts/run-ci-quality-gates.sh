@@ -75,6 +75,7 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m3-private-demo-video-contract.sh
 ./scripts/check-m3-cryptographic-vectors.sh
 ./scripts/test-m5-application-contract.sh
+./scripts/test-m6-zec-service-runner-contract.sh
 ./scripts/test-m5-btc-application-contract.sh
 ./scripts/test-m5-btc-runner-splice-contract.sh
 ./scripts/test-m5-xmr-application-poc-contract.sh
