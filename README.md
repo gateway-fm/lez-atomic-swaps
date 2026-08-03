@@ -162,6 +162,14 @@ stopped on its own stale assertion because it expected a scalar
 the effect-bearing run is quarantined and a new fresh certificate remains
 required.
 
+ADR [0141](docs/architecture/0141-certify-terminal-refund-replay.md) closes the
+remaining evidence-design gap before that run: Zebra refund confirmation now
+requires exact-once membership in a canonical block, and an exact Refund replay
+after both actors are terminal must leave the ordered successful LEZ submission
+trace, Zebra height, and empty mempool unchanged. Both finalized refund blocks
+are re-read after replay. The focused runner contract is GREEN; fresh
+actual-node evidence remains pending.
+
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ
 artifacts, and export their exact dynamic loopback endpoints, chain identities,

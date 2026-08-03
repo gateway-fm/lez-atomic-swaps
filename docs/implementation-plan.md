@@ -5761,7 +5761,17 @@ scalar instead of the stable `error.data.category` field. This was an evidence
 consumer defect, not a protocol failure. The run is quarantined; the focused
 runner contract now locks the object-shaped envelope and is GREEN.
 
-Fresh Refund replay is next.
+ADR 0141 adds the final Refund certificate wiring before another effect-bearing
+run. A mined Zcash refund is accepted only when the generated block hash,
+verbosity-one block, expected height, exact-once transaction membership, and
+height-to-hash canonical lookup agree. After both role actors report
+`refunded`, the exact same service request is replayed and must return
+`was_replay:true`; ordered successful LEZ submissions, Zebra tip, and empty
+mempool must remain unchanged, and both canonical refund blocks are re-read.
+The result binds all new receipts by SHA-256. The focused runner contract
+progressed RED on absent terminal-replay evidence and is GREEN after wiring.
+Fresh actual-node execution remains next.
+
 Next in order:
 
 1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund

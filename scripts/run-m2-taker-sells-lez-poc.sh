@@ -243,6 +243,8 @@ m6_refund_generation=""
 m6_lez_refund_txid=""
 m6_lez_refund_finalized=0
 m6_zcash_refund_txid=""
+m6_zcash_refund_block_hash=""
+m6_zcash_refund_block_height=""
 m6_zcash_refund_mined=0
 m6_maker_supervisor_suppressed=0
 m6_maker_supervisor_restarted=0
@@ -1771,6 +1773,26 @@ m6_taker_lez_submission_set() {
   ' "$journal"
 }
 
+m6_taker_lez_submission_trace() {
+  local journal="${taker_sidecar_state_dir}/bridge-requests.v1.json"
+  [[ -f "$journal" && ! -L "$journal" ]] || return 1
+  jq -c --arg run_id "$run_id" '
+    select(.schema_version == 1 and .run_id == $run_id)
+    | [.entries[] | select(.method == "lez_bridge.v1.submit_transaction"
+        and .outcome.kind == "success")] as $submissions
+    | [$submissions[]
+      | {
+          request_sha256:
+            (.request_sha256 | strings | select(test("^[0-9a-f]{64}$"))),
+          transaction_id:
+            (.outcome.value.transaction_id | strings
+              | select(test("^[0-9a-f]{64}$")))
+        }]
+    | if length == ($submissions | length) then .
+      else error("malformed successful LEZ submission trace") end
+  ' "$journal"
+}
+
 m6_finalized_tip() {
   rpc "$LEZ_INDEXER_URL" '{"jsonrpc":"2.0","id":"m6-refund-tip","method":"getLastFinalizedBlockId","params":[]}' |
     jq -er '.result | numbers'
@@ -2036,6 +2058,100 @@ drive_m6_taker_refund() {
     fi
   fi
   jq -c '.result' <<<"$replay_response"
+}
+
+prove_m6_terminal_refund_replay() {
+  local trace_before="${evidence_dir}/m6-taker-lez-submission-trace-before-terminal-replay.json"
+  local trace_after="${evidence_dir}/m6-taker-lez-submission-trace-after-terminal-replay.json"
+  local zebra_before="${evidence_dir}/m6-zebra-terminal-replay-before.json"
+  local zebra_after="${evidence_dir}/m6-zebra-terminal-replay-after.json"
+  local request response tip_response mempool_response
+  local lez_height lez_hash lez_block zcash_block zcash_canonical
+  local replay_sha trace_sha zebra_before_sha zebra_after_sha
+
+  m6_taker_lez_submission_trace >"$trace_before"
+  tip_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":"m6-terminal-before-tip","method":"getblockcount","params":[]}')"
+  mempool_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":"m6-terminal-before-mempool","method":"getrawmempool","params":[]}')"
+  jq -n --argjson tip "$tip_response" --argjson mempool "$mempool_response" '
+    {schema_version:1,tip_response:$tip,mempool_response:$mempool}
+  ' >"$zebra_before"
+  jq -e '
+    .tip_response.error == null and (.tip_response.result | numbers) >= 1
+    and .mempool_response.error == null and .mempool_response.result == []
+  ' "$zebra_before" >/dev/null
+
+  request="$(jq -nc --arg request_id "$m6_refund_request_id" --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+    {jsonrpc:"2.0",id:"m6-refund-terminal-replay",
+      method:"taker_swap_refund_v1",params:[{
+        schema_version:1,request_id:$request_id,swap_id:$swap,
+        expected_generation:$generation}]}
+  ')"
+  response="$(m6_service_rpc 'm6-refund-terminal-replay' "$request" "$M6_SERVICE_ACTION_TIMEOUT_MS")"
+  printf '%s\n' "$response" >"${evidence_dir}/m6-taker-service-refund-terminal-replay.json"
+  jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+    .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
+      requested_after_generation:$generation,was_replay:true}
+  ' <<<"$response" >/dev/null
+
+  m6_taker_lez_submission_trace >"$trace_after"
+  cmp -s "$trace_before" "$trace_after" || {
+    echo 'terminal Refund replay changed the ordered successful LEZ submission trace' >&2
+    return 1
+  }
+  tip_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":"m6-terminal-after-tip","method":"getblockcount","params":[]}')"
+  mempool_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":"m6-terminal-after-mempool","method":"getrawmempool","params":[]}')"
+  jq -n --argjson tip "$tip_response" --argjson mempool "$mempool_response" '
+    {schema_version:1,tip_response:$tip,mempool_response:$mempool}
+  ' >"$zebra_after"
+  jq -n -e --slurpfile before "$zebra_before" --slurpfile after "$zebra_after" '
+    ($before | length) == 1 and ($after | length) == 1
+    and $before[0].tip_response.error == null
+    and $after[0].tip_response.error == null
+    and $before[0].tip_response.result == $after[0].tip_response.result
+    and $before[0].mempool_response.error == null
+    and $after[0].mempool_response.error == null
+    and $before[0].mempool_response.result == []
+    and $after[0].mempool_response.result == []
+  ' >/dev/null
+
+  lez_height="$(jq -er '.containing_block_id | numbers' "${evidence_dir}/m6-taker-lez-refund-finality.json")"
+  lez_hash="$(jq -er '.containing_block_hash | strings' "${evidence_dir}/m6-taker-lez-refund-finality.json")"
+  lez_block="$(rpc "$LEZ_INDEXER_URL" "$(jq -nc --argjson height "$lez_height" '{jsonrpc:"2.0",id:"m6-refund-terminal-lez-block",method:"getBlockById",params:[$height]}')")"
+  printf '%s\n' "$lez_block" >"${evidence_dir}/m6-taker-lez-refund-terminal-revalidation.json"
+  jq -e --arg tx "$m6_lez_refund_txid" --arg hash "$lez_hash" --argjson height "$lez_height" '
+    .error == null and .result.header.block_id == $height
+    and .result.header.hash == $hash and .result.bedrock_status == "Finalized"
+    and ([.result.body.transactions[]? | select(.Public.hash == $tx)] | length) == 1
+  ' <<<"$lez_block" >/dev/null
+
+  zcash_block="$(rpc "$ZEBRA_RPC_URL" "$(jq -nc --arg hash "$m6_zcash_refund_block_hash" '{jsonrpc:"2.0",id:"m6-refund-terminal-zcash-block",method:"getblock",params:[$hash,1]}')")"
+  zcash_canonical="$(rpc "$ZEBRA_RPC_URL" "$(jq -nc --argjson height "$m6_zcash_refund_block_height" '{jsonrpc:"2.0",id:"m6-refund-terminal-zcash-canonical",method:"getblockhash",params:[$height]}')")"
+  jq -n --arg tx "$m6_zcash_refund_txid" --arg hash "$m6_zcash_refund_block_hash" --argjson height "$m6_zcash_refund_block_height" --argjson block "$zcash_block" --argjson canonical "$zcash_canonical" '
+    {schema_version:1,transaction_id:$tx,block_hash:$hash,height:$height,
+      block_response:$block,canonical_hash_response:$canonical}
+  ' >"${evidence_dir}/m6-zebra-zcash-refund-terminal-revalidation.json"
+  jq -e --arg tx "$m6_zcash_refund_txid" --arg hash "$m6_zcash_refund_block_hash" --argjson height "$m6_zcash_refund_block_height" '
+    .schema_version == 1 and .transaction_id == $tx
+    and .block_response.error == null and .block_response.result.hash == $hash
+    and .block_response.result.height == $height
+    and ([.block_response.result.tx[] | select(. == $tx)] | length) == 1
+    and .canonical_hash_response.error == null
+    and .canonical_hash_response.result == $hash
+  ' "${evidence_dir}/m6-zebra-zcash-refund-terminal-revalidation.json" >/dev/null
+
+  replay_sha="$(sha256sum "${evidence_dir}/m6-taker-service-refund-terminal-replay.json" | cut -d ' ' -f1)"
+  trace_sha="$(sha256sum "$trace_after" | cut -d ' ' -f1)"
+  zebra_before_sha="$(sha256sum "$zebra_before" | cut -d ' ' -f1)"
+  zebra_after_sha="$(sha256sum "$zebra_after" | cut -d ' ' -f1)"
+  jq -n --arg replay_sha "$replay_sha" --arg trace_sha "$trace_sha" --arg zebra_before_sha "$zebra_before_sha" --arg zebra_after_sha "$zebra_after_sha" '
+    {schema_version:1,terminal_replay_was_exact:true,
+      ordered_lez_submission_trace_unchanged:true,zebra_tip_unchanged:true,
+      zebra_mempool_empty_before_and_after:true,
+      canonical_lez_refund_revalidated:true,
+      canonical_zcash_refund_revalidated:true,
+      replay_sha256:$replay_sha,lez_trace_sha256:$trace_sha,
+      zebra_before_sha256:$zebra_before_sha,zebra_after_sha256:$zebra_after_sha}
+  ' >"${evidence_dir}/m6-taker-service-refund-terminal-no-effect.json"
 }
 
 drive_m6_taker() {
@@ -2309,6 +2425,47 @@ mine_blocks() {
   (( rpc_status == 0 ))
 }
 
+prove_m6_zcash_refund_inclusion() {
+  local generated block canonical expected_height occurrences
+  generated="${evidence_dir}/zebra-generate-zcash-refund.json"
+  jq -e '
+    .error == null and (.result | arrays) and (.result | length) == 1
+    and (.result[0] | strings | test("^[0-9a-f]{64}$"))
+  ' "$generated" >/dev/null
+  m6_zcash_refund_block_hash="$(jq -er '.result[0]' "$generated")"
+  expected_height=$((zebra_tip + 6))
+  block="$(rpc "$ZEBRA_RPC_URL" "$(jq -nc --arg hash "$m6_zcash_refund_block_hash" '
+    {jsonrpc:"2.0",id:"m6-zcash-refund-block",method:"getblock",params:[$hash,1]}
+  ')")"
+  canonical="$(rpc "$ZEBRA_RPC_URL" "$(jq -nc --argjson height "$expected_height" '
+    {jsonrpc:"2.0",id:"m6-zcash-refund-canonical",method:"getblockhash",params:[$height]}
+  ')")"
+  occurrences="$(jq -er --arg tx "$m6_zcash_refund_txid" '
+    [.result.tx[] | select(. == $tx)] | length
+  ' <<<"$block")"
+  jq -n --arg tx "$m6_zcash_refund_txid" \
+    --arg hash "$m6_zcash_refund_block_hash" \
+    --argjson height "$expected_height" --argjson occurrences "$occurrences" \
+    --argjson block "$block" --argjson canonical "$canonical" '
+    {schema_version:1,transaction_id:$tx,block_hash:$hash,height:$height,
+      occurrences:$occurrences,block_response:$block,
+      canonical_hash_response:$canonical}
+  ' >"${evidence_dir}/m6-zebra-zcash-refund-inclusion.json"
+  jq -e --arg tx "$m6_zcash_refund_txid" \
+    --arg hash "$m6_zcash_refund_block_hash" \
+    --argjson height "$expected_height" '
+    .schema_version == 1 and .transaction_id == $tx and .block_hash == $hash
+    and .height == $height and .occurrences == 1
+    and .block_response.error == null
+    and .block_response.result.hash == $hash
+    and .block_response.result.height == $height
+    and ([.block_response.result.tx[] | select(. == $tx)] | length) == 1
+    and .canonical_hash_response.error == null
+    and .canonical_hash_response.result == $hash
+  ' "${evidence_dir}/m6-zebra-zcash-refund-inclusion.json" >/dev/null
+  m6_zcash_refund_block_height="$expected_height"
+}
+
 cut_over_m5_negotiation_transports() {
   stop_owned_m5_daemon
   m5_daemon_pid=''
@@ -2482,6 +2639,7 @@ observe_m5_supervised_maker() {
       "${evidence_dir}/m6-zebra-mempool-zcash-refund.json"
     m6_zcash_refund_txid="$(jq -er '.result[0]' "$mempool_file")"
     mine_blocks zcash-refund 1
+    prove_m6_zcash_refund_inclusion
     m6_zcash_refund_mined=1
   fi
 }
@@ -2757,6 +2915,16 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
   jq -nc --argjson round "$round" --argjson response "$m6_terminal_response" \
     '{schema_version:1,round:$round,terminal:true,response:$response}' \
     >>"${evidence_dir}/m6-taker-service-monitor.ndjson"
+  jq -s -e --arg swap "$m5_swap_id" --arg journey "$M6_ZEC_JOURNEY" '
+    length >= 2
+    and ([.[] | select(.terminal == true)] | length) == 1
+    and (.[-1].terminal == true)
+    and .[-1].response.error == null
+    and .[-1].response.result.swap_id == $swap
+    and .[-1].response.result.state ==
+      (if $journey == "claim" then "completed" else "refunded" end)
+    and ([.[] | select(.terminal != true)] | length) >= 1
+  ' "${evidence_dir}/m6-taker-service-monitor.ndjson" >/dev/null
   if [[ "$M6_ZEC_JOURNEY" == claim ]]; then
     (( m6_claim_admitted == 1 ))
     jq -s -e --arg swap "$m5_swap_id" \
@@ -2773,6 +2941,7 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
   else
     (( m6_refund_admitted == 1 && m6_lez_refund_finalized == 1 \
       && m6_zcash_refund_mined == 1 && m6_maker_supervisor_restarted == 1 ))
+    prove_m6_terminal_refund_replay
     jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
       if .error == null then
         .result.schema_version == 1 and .result.swap_id == $swap
@@ -2812,6 +2981,20 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
     jq -e --arg tx "$m6_zcash_refund_txid" '
       .error == null and .result == [$tx]
     ' "${evidence_dir}/m6-zebra-mempool-zcash-refund.json" >/dev/null
+    jq -e --arg tx "$m6_zcash_refund_txid" --arg hash "$m6_zcash_refund_block_hash" --argjson height "$m6_zcash_refund_block_height" '
+      .schema_version == 1 and .transaction_id == $tx
+      and .block_hash == $hash and .height == $height and .occurrences == 1
+      and .canonical_hash_response.result == $hash
+      and ([.block_response.result.tx[] | select(. == $tx)] | length) == 1
+    ' "${evidence_dir}/m6-zebra-zcash-refund-inclusion.json" >/dev/null
+    jq -e '
+      .schema_version == 1 and .terminal_replay_was_exact == true
+      and .ordered_lez_submission_trace_unchanged == true
+      and .zebra_tip_unchanged == true
+      and .zebra_mempool_empty_before_and_after == true
+      and .canonical_lez_refund_revalidated == true
+      and .canonical_zcash_refund_revalidated == true
+    ' "${evidence_dir}/m6-taker-service-refund-terminal-no-effect.json" >/dev/null
   fi
   stop_owned_process "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin"
   m6_service_pid=''
@@ -2948,6 +3131,12 @@ jq -n \
     "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-refund-maker-manual-action.json" | cut -d ' ' -f1; fi)" \
   --arg zcash_refund_mempool_sha256 \
     "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-zebra-mempool-zcash-refund.json" | cut -d ' ' -f1; fi)" \
+  --arg zcash_refund_inclusion_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-zebra-zcash-refund-inclusion.json" | cut -d ' ' -f1; fi)" \
+  --arg taker_refund_terminal_replay_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-service-refund-terminal-replay.json" | cut -d ' ' -f1; fi)" \
+  --arg taker_refund_terminal_no_effect_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-service-refund-terminal-no-effect.json" | cut -d ' ' -f1; fi)" \
   --argjson elapsed_ms "$((MAX_CORRIDOR_SECONDS * 1000 - $(remaining_budget_milliseconds 'result-before')))" '
   {
     schema_version: 1,
@@ -3011,7 +3200,11 @@ jq -n \
         lez_refund_finality_sha256: $lez_refund_finality_sha256,
         maker_refund_action_sha256: $maker_refund_action_sha256,
         zcash_refund_mempool_sha256: $zcash_refund_mempool_sha256,
+        zcash_refund_inclusion_sha256: $zcash_refund_inclusion_sha256,
+        taker_refund_terminal_replay_sha256: $taker_refund_terminal_replay_sha256,
+        taker_refund_terminal_no_effect_sha256: $taker_refund_terminal_no_effect_sha256,
         opposite_claim_rejected_after_refund_admission: true,
+        exact_terminal_replay_has_no_new_chain_effect: true,
         maker_supervisor_suppressed_until_lez_refund_finality: true,
         maker_supervisor_restarted_after_lez_refund_finality: true,
         deterministic_local_chain_funds: true
