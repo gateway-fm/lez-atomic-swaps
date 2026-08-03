@@ -3,6 +3,9 @@
 - Status: Accepted at `e9393cf`; receipt/lock hardening at `3307dca`
 - Date: 2026-08-03
 - Scope: M6 receipt-bound Taker swap list and monitor
+- Extended by: ADR 0137 adds terminal action authorization and effect replay;
+  this ADR's statements that claim and refund are absent remain historical to
+  its read-only checkpoint.
 
 ## Context
 
@@ -148,6 +151,12 @@ list unavailable, while never-published custody remains `Initiating`. Commit `c9
 `Offered` revision zero as `AwaitingFirstLock`, and fails closed on future or
 malformed agreement rows before exact recovery.
 
-Owner prototype sign-off still gates production QML and QtRO. Actor driving,
-generation-fenced claim/refund, actor-real UI composition, Basecamp packages,
-final gates, the M6 completion decision, and the M6 tag remain pending.
+ADR 0137 now extends this read checkpoint with one generation-fenced terminal
+authorization. Certification run `m6cert20260803164006` proves a service-driven
+`TakerSellsLez` Claim and exact durable replay against actual local LEZ v0.2
+and Zebra Regtest, with Zebra remaining at one exact mempool transaction.
+
+Owner prototype sign-off still gates production QML and QtRO. Equivalent
+service-driven Refund, durable rollback-incarnation hardening, actor-real UI
+composition, Basecamp packages, final gates, the M6 completion decision, and
+the M6 tag remain pending.

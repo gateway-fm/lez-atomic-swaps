@@ -60,11 +60,11 @@ The nonvisual Maker prerequisite is implemented at `8c6a7db`.
 `maker_local_route_save_v1` stores a same-route local policy, exact price, and
 replay result in one schema-v22 transaction. No QML or QtRO host calls it.
 
-The nonvisual Taker service is implemented through `e9393cf`.
+The nonvisual Taker service is implemented through `0c32200`.
 `lez-taker-service` reads one owner-private schema-v1 file and binds a
-distinct mode-0600 Unix socket. It always registers health and offer list. A
-validated prepared-ZEC context additionally registers initiate, swap list, and
-monitor; claim and refund remain absent.
+distinct mode-0600 Unix socket. It always registers health and offer list. A validated prepared-ZEC context additionally registers initiate, swap list,
+monitor, Claim, and Refund. Terminal calls are generation-fenced and only the
+service-resolved role actor receives chain authority.
 
 A new request authenticates Delivery at one trusted time and commits the exact
 public facts, full private authority, and replay row before any Chat call. With
@@ -73,8 +73,8 @@ countersigns and no-clobber persists the agreement, provisions the Taker actor,
 publishes the private receipt, and returns `NotActivated`. Restart replay
 verifies the current full authority against the durable row and uses the
 original admitted time. A valid receipt permits exact replay with the offer
-removed and Chat unavailable. Maker and Taker actors are present but not started; no wallet, Zebra, or LEZ
-effect is connected. Receipt-bound list and monitor select only the exact
+removed and Chat unavailable. Initiation and monitoring do not start either actor or connect a chain effect.
+Receipt-bound list and monitor select only the exact
 admitted prepared authority, reread the service-owned receipt/config under the
 actor lock, and project status with unit ports. Delivery and Chat may be
 unavailable for these reads.
@@ -103,24 +103,29 @@ flowchart TB
     Accept --> TakerActor["Provisioned Taker actor"]
     Accept --> Receipt["Private Taker receipt"]
     Service --> Monitor["Receipt-bound list and monitor"]
+    Service --> Terminal["Generation-fenced Claim or Refund"]
+    Terminal --> Registry
     Monitor --> Registry
     Monitor --> Receipt
     Monitor --> Lock["Per-swap actor lock"]
+    Terminal --> Lock
     Lock --> TakerActor
     MakerDb --> MakerActor["Queued Maker actor"]
 
-    MakerActor -.-> Zebra["Local Zebra RPC"]
-    MakerActor -.-> Lez["Local LEZ RPC"]
-    TakerActor -.-> Zebra
-    TakerActor -.-> Lez
+    MakerActor --> Zebra["Local Zebra Regtest RPC"]
+    MakerActor --> Lez["Local LEZ v0.2 RPCs"]
+    TakerActor --> Zebra
+    TakerActor --> Lez
 ```
 
-Dashed QML, QtRO, and node edges are planned or deliberately unexercised.
-Solid edges through Maker completion, Taker receipt, and locked local status
-projection are current. The service uses Delivery only for fresh selection and
-Chat only for pre-effect negotiation; monitor uses neither. Node access remains
-behind role actors and durable effect journals; neither actor is started by
-initiation or monitoring. A view or UI host must never call a
+Dashed QML and QtRO edges remain planned. Solid edges through Maker
+completion, Taker receipt, locked status, terminal authorization, and local
+actors are current. Initiation and monitoring start no actor and perform no node
+I/O. Certification run `m6cert20260803164006` exercised the service Claim edge
+and role actors through actual local LEZ v0.2 and Zebra Regtest. The first claim
+changed Zebra from empty to one exact mempool transaction; exact replay retained
+that same one transaction. Node access remains behind role actors and their
+durable effect journals. A view or UI host must never call a
 node, Delivery, or Chat endpoint directly.
 
 ### M6 ports, credentials, and resources
@@ -137,17 +142,17 @@ node, Delivery, or Chat endpoint directly.
 | Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the planned host may call it, the QML view may not |
 | Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
-| Taker service | Default `/run/lez-atomic-swaps/taker.sock`, or a run-owned absolute mode-0600 Unix socket below an owner mode-0700 directory | Unix ownership and mode admit the client; fixed DTOs/errors expose no paths, keys, receipts, commands, or raw evidence | Actual through `e9393cf`; health/list always, and prepared authority adds initiate, receipt-bound swap list, and monitor. Claim/refund remain absent; HTTP-only, batches disabled, bounded connections/bodies, inode-safe SIGTERM cleanup |
+| Taker service | Default `/run/lez-atomic-swaps/taker.sock`, or a run-owned absolute mode-0600 Unix socket below an owner mode-0700 directory | Unix ownership and mode admit the client; fixed DTOs/errors expose no paths, keys, receipts, commands, or raw evidence | Actual through `0c32200`; prepared authority exposes all seven fixed methods, including generation-fenced Claim and Refund. Fresh local evidence covers Claim only. HTTP-only, batches disabled, bounded connections/bodies, inode-safe SIGTERM cleanup |
 | Taker service configuration | Absolute owner-owned single-link regular mode-0400 or mode-0600 file, maximum 512 KiB | Pinned Delivery sources, Chat socket, existing registry, prepared ZEC files and signing key remain owner-only | Strict schema v1; `initiation.execute_prepared_zec` defaults false. Any nonempty prepared catalog currently requires Chat; true enables synchronous pre-effect acceptance |
 | Prepared-ZEC startup context | No separate endpoint; loaded inside the owner service | At most 256 exact prepared authorities; no UI visibility | Service-connected through `e9393cf`; draft/key/source config are revalidated, full durable replay authority must match, and enabled acceptance provisions agreement, Taker actor, and receipt before response. Direct retained-byte use-time handoff remains hardening |
-| Taker registry | Configured normalized absolute mode-0600 SQLite file inside the service | Stores private initiation authority; public APIs and fixed errors redact it | Admission is one immediate transaction. Replay and monitor require current full authority to match the durable private row; list is stable swap-ID order capped at 256. No chain effect |
+| Taker registry | Configured normalized absolute mode-0600 SQLite file inside the service | Stores private initiation and sole terminal-action authority; public APIs and fixed errors redact it | Initiation and terminal authorization each commit before their effects. Exact terminal replay returns the original action and may only re-enter the same actor journal; Claim and Refund cannot both be authorized |
 | Delivery | No M6 TCP port; zero to 32 owner-private signed directories pinned to Maker keys | Maker signing material never enters the UI or Taker response | Fresh listing/initiation dependency only. Completed receipt replay does not read the removed offer; configured directory startup availability is still required |
 | Chat | Absolute owner-owned mode-0600 Maker Unix socket; no TCP port | Maker signing and claim authority remain daemon-owned; Taker sends bounded public agreement material | Health probes metadata. With execution enabled, real propose/complete runs before response; completed receipt replay makes no Chat exchange |
-| LEZ node RPCs | No new M6 port. Existing runs publish run-scoped dynamic loopback endpoints or actor-sidecar endpoints in owner-private manifests | Run, role, capability, signer, and key files remain outside the UI | Existing sequencer, indexer, Bedrock, and role sidecars are actor-only resources; not started by the current prototype |
+| LEZ node RPCs | Run-scoped dynamic literal-loopback Bedrock, sequencer, and indexer endpoints plus role sidecars | Run, role, capability, signer, and key files remain outside the UI and service DTO | Certificate `m6cert20260803164006` reused isolated LEZ run `m6lez20260803155817`: Bedrock `127.0.0.1:32777`, sequencer `127.0.0.1:32778`, and indexer `127.0.0.1:32779`. Initiation/monitor do not contact them; role actors use sequencer/indexer |
 | Bitcoin Core RPC | No new M6 port. Existing Regtest runs allocate a dynamic literal-loopback RPC port | Provisioner cookie authority and distinct restricted mode-0600 role Basic credentials remain outside the UI | Existing isolated Core and role actors; not started by the current prototype |
 | Monero RPCs | No new M6 ports. Existing Regtest runs allocate distinct dynamic literal-loopback daemon and wallet ports | Distinct Digest RPC credentials and wallet-password files remain owner-private and outside the UI | Existing peerless daemon plus provisioner, Maker, and Taker wallets; not started by the current prototype |
-| Zcash RPC | No new M6 port. Existing Regtest runs publish each Zebra RPC on a dynamic literal-loopback port | The Regtest transport is unauthenticated; role signing keys and effect authority remain in actors, never the UI | Existing isolated Zebra projects and typed adapters; not started by the current prototype |
-| Public services | None in the current M6 prototype or planned local-functional composition | None | No public RPC, faucet, peer, public funds, analytics, CDN, font host, or external finality service |
+| Zcash RPC | One run-scoped dynamic literal-loopback Zebra Regtest endpoint | Regtest transport is unauthenticated; signing keys and effect authority remain in actors, never UI or DTOs | Certificate `m6cert20260803164006` used fresh Zebra run `m6zec20260803164006` at `127.0.0.1:32780` and observed empty, one exact claim transaction, and the same one transaction after replay, then locally mined confirmation |
+| Public swap services | None | None | No public RPC, faucet, public funds, analytics, CDN, font host, or external finality service. Pinned Bedrock may attempt best-effort UDP NTP through `pool.ntp.org` during startup; block or account for it in network-isolated setup |
 
 ### M6 external-resource and flakiness boundary
 
@@ -184,9 +189,18 @@ Stale files, wrong Maker keys, expired offers, clock drift, permission or inode
 changes, conflicting authority, result overflow, and registry or Chat errors
 fail closed. SQLite/filesystem sync, the bounded five-second busy timeout,
 short offer TTL, child readiness, disk pressure, clock jumps, and CPU
-scheduling can affect local tests. A post-admission failure retains durable
-work for exact retry and returns a fixed dependency error. It cannot trigger a
-chain or wallet call because neither actor is activated here.
+scheduling can affect local tests. A pre-effect initiation failure retains durable work for exact retry and
+returns a fixed dependency error. A terminal Claim admission can precede a
+chain response; the opposite action remains excluded and only exact replay may
+re-enter the actor journal. Local Claim composition uses Docker-isolated LEZ v0.2 and primary-only Zebra
+Regtest with deterministic genesis and Regtest funds. The swap uses no public
+RPC, faucet, or public funds and has no provider fallback. The pinned Bedrock
+process may attempt best-effort UDP NTP through `pool.ntp.org` during startup;
+therefore network-isolated test policy must account for or block that setup-time
+behavior rather than claiming universal DNS/NTP silence. Host
+load may delay local finality; stale manifests, partial Zebra maturity, disk
+pressure, or endpoint contention invalidate the run rather than authorizing
+reuse.
 
 The planned actor-real UI additionally inherits startup, finality, reorg, and
 bounded-RPC timing from local LEZ, Bitcoin, Monero, and Zcash lanes, plus

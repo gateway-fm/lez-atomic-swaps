@@ -110,11 +110,40 @@ records the service-connected components, fresh/restart sequences, and exact
 atomicity argument. ADR
 [0136](docs/architecture/0136-project-admitted-zec-swaps-under-actor-lock.md)
 records the receipt-bound read topology, fresh and restart/offline sequences,
-and its lock-scoped read-atomicity argument. Actor driving, claim, refund,
-durable receipt/state rollback-incarnation hardening, Basecamp/QML and QtRO
-packages,
-actor-real UI composition, final gates, owner sign-off, and the M6 tag remain
-pending.
+and its lock-scoped read-atomicity argument. ADR
+[0137](docs/architecture/0137-authorize-one-taker-terminal-action-before-effects.md)
+records generation-fenced terminal authorization and exact effect replay.
+Certification run `m6cert20260803164006` proves the service-driven `TakerSellsLez` Claim:
+Zebra mempool moved from empty to one exact transaction and stayed at that
+same one transaction on durable replay, then both local actors completed. The
+run reused the already isolated local LEZ v0.2 stack
+`m6lez20260803155817` and paired it with fresh Zebra Regtest
+`m6zec20260803164006`. Both used deterministic local funds; no public RPC,
+faucet, or public funds participated. A separate fresh LEZ stack was later deployed and onboarded successfully but
+was not part of this certificate. Equivalent service-driven Refund, durable
+receipt/state rollback-incarnation hardening, Maker and Taker Basecamp `ui_qml`
+packages, QtRO hosts, actor-real UI E2E, final gates, explicit owner sign-off,
+and the M6 tag remain pending.
+
+To repeat the proven nonvisual Claim boundary, start uniquely named isolated
+LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ
+artifacts, and export their exact dynamic loopback endpoints, chain identities,
+role accounts, signer files, and current deployment evidence as documented in
+[Flow 1Y](docs/manual-user-flows.md#reproduce-the-service-driven-zec-claim-on-actual-local-nodes). Then run:
+
+```sh
+cargo build --locked -p lez-maker-node --bins
+./scripts/test-m6-zec-service-runner-contract.sh
+./scripts/run-m6-zec-taker-service-poc.sh
+```
+
+The runner cleans only the application processes it starts and retains its private
+`/tmp/lez-atomic-swaps-${RUN_ID}` evidence root; the operator stops only the node
+containers recorded in each run manifest. Runtime funds are deterministic
+local genesis/Regtest outputs, with no public RPC, faucet, or public funds. The
+pinned Bedrock process may make a best-effort UDP NTP request through
+`pool.ntp.org` during stack startup, and cold Cargo/Docker acquisition may use
+registries; neither is swap-chain evidence.
 
 ### M5 verified progressive application PoC — historical implementation record
 

@@ -5640,6 +5640,42 @@ continues to project honest `Initiating` state across process restart. Pushed `c
 SQLite store with unit ports and proves `Offered` revision zero projects as
 `AwaitingFirstLock`; future payload and malformed agreement rows make monitor
 and the whole list fail closed, then exact restoration recovers. Next nonvisual work is actor driving
-and generation-fenced claim/refund. Owner prototype signoff still gates QML
-and QtRO; actor-real UI composition, Basecamp packages, final gates, milestone
-completion, and the M6 tag remain pending.
+and generation-fenced claim/refund.
+
+## M6 service-driven ZEC Claim PoC checkpoint (2026-08-03)
+
+Pushed commits `4cadbb0`, `3b7d927`, `6eb9523`, and `0c32200` connect the
+prepared `TakerSellsLez` actor to the owner service terminal-action boundary.
+The service admits one generation-fenced Claim before invoking the actor,
+refreshes custody after status replay under the same per-swap lock, and returns
+the same durable authorization to an identical retry. Claim and Refund remain
+mutually exclusive in the Taker registry.
+
+Certification run `m6cert20260803164006` is GREEN. At generation three, the
+first `taker_swap_claim_v1` response returned `was_replay: false`; Zebra
+Regtest moved from an empty mempool to exactly transaction
+`6b65cdff60f821717ba1e4cc862cec197ef16b0f7bccff4eb8c7e3d93ed11b70`.
+The immediate exact request returned `was_replay: true`, and Zebra retained
+that same one-element mempool. The runner mined the transaction and completed
+both roles after confirmed ZEC funding and the LEZ revealing claim. Elapsed
+provision-to-completion time was 35.100 seconds. Commit `e5b4c32` corrects
+future `result.json` summaries to report `owner_taker_service` and explicit M6
+mode. The retained certificate predates that reporting-only fix; its dedicated
+Claim/replay responses and mempool snapshots are the authoritative service
+evidence.
+
+This proof reused the already isolated actual local LEZ v0.2 run
+`m6lez20260803155817` and paired it with fresh Zebra Regtest run
+`m6zec20260803164006`. Both exposed dynamic literal-loopback RPCs and used
+deterministic genesis/Regtest funds and run-private files. No public RPC,
+faucet, public funds, or public deployment participated. A separate fresh LEZ
+stack was deployed and onboarded successfully afterward but was not used by
+this certificate. The one-command role runner is
+`scripts/run-m6-zec-taker-service-poc.sh`; it reuses the isolated endpoint lock,
+bounded clock, exact evidence, and scoped cleanup of the certified corridor.
+
+This completes the nonvisual Claim happy-path slice, not M6. Equivalent
+service-driven actual-node Refund, durable rollback-incarnation hardening,
+Maker and Taker Basecamp `ui_qml` packages, their QtRO hosts, actor-real UI
+E2E, explicit owner prototype signoff, final repository gates, and the M6 tag
+remain pending.

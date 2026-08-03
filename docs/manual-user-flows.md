@@ -4296,9 +4296,10 @@ owner-only daemon reports the same completed swap in `history` and `status`
 while Chat and Delivery stay absent; and all application evidence hashes are
 bound into `result.json`.
 
-The current repository contract enforces these requirements, but the new
-receipt-bound claim route has not yet completed a fresh isolated actual-node
-run. Do not infer that proof from the earlier packet-bearing M5 corridor runs.
+Fresh run `m6cert20260803164006` now proves the service-owned terminal Claim
+route against isolated actual local nodes. The earlier M5 receipt-bound CLI
+claim evidence remains a separate application boundary; do not substitute one
+for the other.
 
 Runtime external-resource inventory:
 
@@ -7593,13 +7594,121 @@ cargo test --locked -p lez-swap-store --test taker_facade_registry
 cargo test --locked -p lez-maker-node --test taker_initiation_config
 ```
 
-The registry.s 14 cases cover private exclusive creation/reopen, unsafe
+The registry's 14 cases cover private exclusive creation/reopen, unsafe
 ancestors and database drift, atomic admission, changed public/private
 conflict, exact replay, corruption, redaction, and two-connection concurrency.
 The five prepared-authority cases cover named Maker authentication, fixed ZEC
 route and amounts, catalog bounds, same-descriptor file binding, real
 secp256k1 key validation, required Chat, fixed errors, and redacted Debug.
 Neither component command starts a node, wallet, faucet, or public request.
+
+### Reproduce the service-driven ZEC Claim on actual local nodes
+
+Start fresh, uniquely named LEZ v0.2 and primary-only Zebra Regtest stacks by
+following [Flow 0B2](#flow-0b2-run-the-isolated-lez-v02-service-stack) and the
+node/bootstrap part of [Flow 1B](#flow-1b-composed-m5-zec-application-poc).
+Deploy the checked escrow and generate fresh role identities and canonical
+deployment, finality, and onboarding evidence. Mine Zebra only to the documented
+Regtest maturity prefix. Never copy an old endpoint, run ID, signer, or evidence
+file.
+
+Export the values from those fresh run manifests, then invoke the M6 wrapper:
+
+```bash
+export RUN_ID=m6claim-$(date -u +%Y%m%d%H%M%S)
+export LEZ_SEQUENCER_URL=http://127.0.0.1:SEQUENCER_PORT
+export LEZ_INDEXER_URL=http://127.0.0.1:INDEXER_PORT
+export ZEBRA_RPC_URL=http://127.0.0.1:ZEBRA_PORT
+export LEZ_CHAIN_ID=LOWERCASE_HEX32
+export LEZ_GENESIS_HASH=LOWERCASE_HEX32
+export ESCROW_PROGRAM_ID=LOWERCASE_HEX32
+export AUTHENTICATED_TRANSFER_PROGRAM_HEX=LOWERCASE_HEX32
+export AUTHENTICATED_TRANSFER_PROGRAM_BASE58=BASE58_PROGRAM_ID
+export MAKER_ACCOUNT_BASE58=BASE58_MAKER_ACCOUNT
+export TAKER_ACCOUNT_BASE58=BASE58_TAKER_ACCOUNT
+export M5_LEZ_DEPLOYMENT_EVIDENCE_FILE=/absolute/current/deployment.json
+export M5_LEZ_FINALITY_EVIDENCE_FILE=/absolute/current/finality.json
+export M5_LEZ_ONBOARDING_EVIDENCE_FILE=/absolute/current/onboarding/summary.json
+export M5_LEZ_MAKER_SIGNER_KEY_FILE=/absolute/private/maker/lez-signer.key
+export M5_LEZ_TAKER_SIGNER_KEY_FILE=/absolute/private/taker/lez-signer.key
+
+./scripts/run-m6-zec-taker-service-poc.sh
+```
+
+The wrapper fixes `M5_APPLICATION_MODE=1`, `M6_TAKER_SERVICE_MODE=1`, and
+`POC_DIRECTION=taker_sells_lez`. The underlying runner refuses non-loopback
+endpoints, reused or unsafe roots, and a concurrently owned endpoint tuple. It
+keeps the Taker service, Maker daemon, actors, sockets, files, and evidence
+below one run-private root and cleans up only processes it started. It does not
+own the LEZ or Zebra stacks; stop only the exact containers and networks named
+by their run manifests after inspection. Never use a broad prune while another
+run exists.
+
+Inspect the public evidence without printing private configuration or keys:
+
+```bash
+EVIDENCE=/tmp/lez-atomic-swaps-${RUN_ID}/evidence
+jq . "$EVIDENCE/m6-taker-service-claim-first.json"
+jq . "$EVIDENCE/m6-taker-service-claim-replay.json"
+jq . "$EVIDENCE/m6-zebra-mempool-before-claim.json"
+jq . "$EVIDENCE/m6-zebra-mempool-after-first-claim.json"
+jq . "$EVIDENCE/m6-zebra-mempool-after-claim-replay.json"
+jq . "$EVIDENCE/m6-taker-service-terminal.json"
+jq . "$EVIDENCE/result.json"
+```
+
+The retained certificate predates reporting fix `e5b4c32`, so its `result.json`
+still labels `application_plane.taker_claim_authority` as `receipt_bound_cli`
+and omits `m6_taker_service_mode`. Do not use that legacy summary field as
+service proof. The dedicated Claim first/replay responses and Zebra mempool
+snapshots above are authoritative; new runs emit `owner_taker_service` and the
+explicit M6 mode.
+
+A passing run must show replay false followed by replay true for the same Claim
+and generation, plus mempool `[]`, then `[TXID]`, then the identical `[TXID]`.
+The terminal view and both actor statuses must be completed. Certified local
+run `m6cert20260803164006`, which reused isolated LEZ run
+`m6lez20260803155817` at sequencer/indexer ports 32778/32779 and used
+fresh Zebra run `m6zec20260803164006` at port 32780, observed exact transaction
+`6b65cdff60f821717ba1e4cc862cec197ef16b0f7bccff4eb8c7e3d93ed11b70`
+and completed in 35.100 seconds. This identifier is evidence, not an input to a
+new run.
+
+```mermaid
+sequenceDiagram
+    actor T as Taker
+    participant S as Taker service
+    participant R as Taker registry
+    participant A as Taker ZEC actor
+    participant Z as Zebra Regtest
+    participant L as Local LEZ v0.2
+
+    Note over A,Z: Confirmed ZEC funding already observed
+    A->>L: Observe Maker revealing LEZ claim
+    T->>S: Claim with swap ID and generation
+    S->>R: Commit sole terminal authorization
+    S->>A: Invoke role-fixed Claim under swap lock
+    A->>Z: Submit exact journaled ZEC claim
+    Z-->>A: Mempool contains one exact transaction
+    A-->>S: Journaled outcome
+    T->>S: Retry identical Claim
+    S->>R: Load durable replay
+    S->>A: Reconcile exact journaled effect
+    Z-->>A: Same one transaction
+    A-->>S: Reconciled outcome
+    S-->>T: Replay true
+    Z-->>A: Locally mined confirmation
+    A-->>S: Completed
+```
+
+Atomicity is conditional rather than a distributed chain transaction. The
+registry selects Claim or Refund before effects, the actor lock excludes a
+concurrent worker, and the actor persists exact effect intent before send. An
+identical request can only reconcile that intent; it cannot authorize the
+opposite branch. ZEC is funded and confirmed before the LEZ revealing claim,
+and only that revealed secret authorizes the final ZEC claim. Timelocks retain
+the refund path if the happy sequence stops. See ADR 0137 for failure windows
+and limitations.
 
 ### External resources, isolation, and flakiness
 
@@ -7609,10 +7718,20 @@ SQLite. The real acceptance proof adds the local Maker daemon and Chat socket.
 Receipt-bound list and monitor use only the prepared catalog, Taker registry,
 private receipt/actor files, role-state lock, and local status projection; they
 do not read Delivery or Chat and use unit chain ports.
-It needs no Docker, chain node, wallet, faucet, peer, DNS, public funds, or
-external finality service. Placeholder loopback endpoints in actor configs are
-never contacted. Cargo may access its registry only on a cold locked dependency
-cache.
+Those pre-effect flows need no Docker, chain node, wallet, faucet, peer, DNS,
+public funds, or external finality service. Placeholder loopback endpoints in
+read-only actor configs are never contacted. The actual Claim flow separately uses a run-isolated LEZ v0.2 sequencer,
+indexer, and Bedrock plus primary-only Zebra Regtest on dynamic
+literal-loopback RPCs. New manual reproductions must use fresh uniquely named
+stacks. Certificate `m6cert20260803164006` instead reused already isolated LEZ
+run `m6lez20260803155817` and used fresh Zebra run `m6zec20260803164006`; a
+separate fresh LEZ deployment/onboarding succeeded later but did not contribute
+to that certificate. The swap uses deterministic local genesis/Regtest funds
+and local mining only, with no public RPC, faucet, public funds, or automatic
+provider fallback. The pinned Bedrock process may make best-effort UDP NTP
+requests through `pool.ntp.org` during startup, so universal DNS/NTP silence is
+not claimed. Cargo or Docker may access a registry only during cold setup,
+never as swap runtime evidence.
 
 Local sensitivities are the three-second offer TTL, system clock, 10-second
 child readiness, five-second shutdown, Unix ownership/mode/inode behavior,
@@ -7621,9 +7740,13 @@ acceptance needs Delivery and Chat. Completed receipt replay needs neither the
 offer nor a Chat exchange, but it still needs the configured Delivery directory
 and retained local custody.
 
-A failure after registry admission returns a fixed dependency error and leaves
-durable work for the exact request to retry. No chain effect can occur because
-actor activation is not connected. Remaining production hardening includes
+A pre-effect acceptance failure after registry admission returns a fixed
+dependency error and leaves durable work for the exact request to retry. In the
+actual Claim flow, a terminal authorization may precede a chain response; only
+the exact request may re-enter the actor journal, and the opposite action stays
+blocked. Host load can delay local finality, and stale manifests, partial Zebra
+maturity, port contention, or disk pressure require discarding the fresh run
+rather than reusing it. Remaining production hardening includes
 durable receipt/state rollback-incarnation fencing across restart, direct
 retained-byte draft/key handoff, exact use-time inode enforcement,
 least-authority admission-only configuration, spawned-service real-Chat E2E,

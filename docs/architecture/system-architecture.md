@@ -50,9 +50,10 @@ existing owner-restricted Unix JSON-RPC. The atomic route-save prerequisite is
 implemented. The Taker side has an exact seven-method DTO contract, an
 authenticated read backend, a strict owner-private startup loader, and
 `lez-taker-service` on its own mode-0600 Unix socket. Empty configurations
-register health and offer listing. A validated prepared-ZEC configuration also registers initiation, swap list,
-and monitor, and health truthfully reports exactly those five methods. Claim
-and refund remain unregistered.
+register health and offer listing. A validated prepared-ZEC configuration registers all seven methods: health,
+offer list, initiation, swap list, monitor, Claim, and Refund. Terminal requests
+are generation-fenced, mutually exclusive, and admitted durably before the
+role-fixed actor command.
 
 The Taker schema-v1 registry and strict prepared-ZEC context are
 service-wired through `e9393cf`. Durable request lookup remains first. A new
@@ -71,11 +72,14 @@ neither role actor starts. Receipt-bound list and monitor resolve only the prepa
 that exactly matches the private admission, reread receipt/config authority
 under the shared per-swap lock, and invoke status with unit ports. They remain
 available after Delivery and Chat disappear and perform no wallet, Zebra, or
-LEZ RPC. Actor driving, claim, and refund remain unregistered. Commit `3307dca` additionally fences the receipt digest and inode for the
+LEZ RPC. Commit `3307dca` additionally fences the receipt digest and inode for the
 process incarnation and rejects live actor-lock contention. Durable
 receipt/state rollback-incarnation fencing across restart remains hardening.
-XMR capability remains
-effect-checkpoint-only.
+XMR capability remains effect-checkpoint-only. Certification run
+`m6cert20260803164006` additionally drove the `TakerSellsLez` Claim through
+the owner service against actual local LEZ v0.2 and Zebra Regtest. Exact replay
+returns the durable action commit and reconciles the same single Zebra
+transaction; it does not create another submission.
 
 ```mermaid
 flowchart TB
@@ -107,11 +111,12 @@ flowchart TB
         MakerActor["Queued Maker actor"]
         TakerActor["Provisioned Taker actor"]
         Monitor["Receipt-bound list and monitor"]
+        Terminal["Generation-fenced Claim or Refund"]
         ActorLock["Per-swap actor lock"]
         RoleState[("Taker role-state DB if activated")]
     end
 
-    subgraph LocalChains["Existing isolated local nodes not called here"]
+    subgraph LocalChains["Isolated local chain processes"]
         Lez["LEZ sequencer indexer and sidecars"]
         Bitcoin["Bitcoin Core Regtest"]
         Monero["Monero Regtest and wallet RPC"]
@@ -145,26 +150,60 @@ flowchart TB
     Accept --> TakerActor
     Accept --> Receipt
     TakerService --> Monitor
+    TakerService --> Terminal
+    Terminal --> Registry
+    Terminal --> ActorLock
+    ActorLock --> TakerActor
     Monitor --> Registry
     Monitor --> Receipt
     Monitor --> ActorLock
-    ActorLock --> TakerActor
-    TakerActor -.-> RoleState
+    TakerActor --> RoleState
 
-    MakerActor -.-> Lez
-    MakerActor -.-> Zcash
-    TakerActor -.-> Lez
-    TakerActor -.-> Zcash
+    MakerActor --> Lez
+    MakerActor --> Zcash
+    TakerActor --> Lez
+    TakerActor --> Zcash
     MakerDaemon -.-> Bitcoin
     MakerDaemon -.-> Monero
+```
+
+```mermaid
+sequenceDiagram
+    actor T as Taker user
+    participant S as Owner Taker service
+    participant R as Taker registry
+    participant A as Taker ZEC actor
+    participant Z as Zebra Regtest
+    participant L as Local LEZ v0.2
+
+    Note over A,Z: Maker ZEC funding confirmed
+    A->>L: Observe revealing LEZ claim
+    T->>S: Claim at observed generation
+    S->>R: Admit sole terminal action
+    S->>A: Claim under per-swap lock
+    A->>Z: Submit exact journaled transaction
+    Z-->>A: One mempool transaction
+    A-->>S: Journaled outcome
+    T->>S: Retry identical request
+    S->>R: Load durable replay
+    S->>A: Reconcile exact journal
+    Z-->>A: Same one mempool transaction
+    A-->>S: Reconciled outcome
+    S-->>T: Durable replay result
+    Z-->>A: Local confirmation
+    A-->>S: Completed
 ```
 
 The process split is an authority boundary, not merely a UI detail. There is
 no Taker-service edge to the Maker owner RPC. Fresh Taker initiation reaches
 the Maker only through authenticated Delivery and the separate bounded Chat
-socket. The service can negotiate and provision exact role artifacts and project
-locked local actor status, but it cannot activate or drive an actor, poll chain
-progress, claim, refund, or call a node. Dashed QML/QtRO and node edges remain unimplemented at this checkpoint.
+socket. The service negotiates and provisions exact role artifacts, projects locked
+status, and can invoke the admitted ZEC Taker Claim or Refund command under the
+actor lock. The actor alone owns chain capabilities and journals. Certification run
+`m6cert20260803164006` exercised the Claim edge and the surrounding role actors
+against local LEZ v0.2 and Zebra Regtest; the empty-to-one-to-same-one mempool
+sequence proves exact replay did not add an effect. The QML and QtRO edges
+remain unimplemented and unexercised.
 
 A future QML or `ui-host` crash must not stop the autonomous Maker daemon or
 erase either role's durable recovery state. Delivery and Chat remain pre-lock
