@@ -13,7 +13,8 @@ use std::{
 
 use lez_maker_node::{
     TakerDependencyStateV1, TakerHealthRequestV1, TakerHealthV1, TakerOfferListRequestV1,
-    TakerOfferListV1, call_local_rpc,
+    TakerOfferListV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+    TakerSwapStateV1, TakerSwapViewV1, call_local_rpc,
 };
 use rustix::process::{Pid, Signal, kill_process};
 use serde_json::{Value, json};
@@ -25,7 +26,7 @@ use lez_maker_node::{
     DeliveryPublicationV1, RunLocalDelivery, TakerInitiationCommitV1, TakerMakerIdentityV1,
     TakerSwapInitiateRequestV1,
 };
-use lez_swap_core::{Pair, SwapDirection};
+use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_store::{
     LocalPriceV1, MakerOfferId, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
     SqliteSwapStore, SqliteTakerFacadeStore,
@@ -151,6 +152,10 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
     assert_eq!(first.swap.offer_id, request.offer_id);
     assert_eq!(first.swap.foreign_units, 42);
     assert_eq!(first.swap.lez_units, 84);
+    assert_eq!(first.swap.state, TakerSwapStateV1::Initiating);
+    assert_eq!(first.swap.progress_generation, 0);
+    assert_eq!(first.swap.available_action, None);
+    assert_eq!(first.swap.privacy_guidance, None);
     assert_eq!(
         SqliteTakerFacadeStore::open_existing(&fixture.registry)
             .unwrap()
@@ -161,6 +166,7 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
             .as_str(),
         "m6-process-zec-swap-001"
     );
+    assert_initiating_reads_are_public_and_effect_free(&socket, &first.swap, &fixture).await;
 
     assert!(service.terminate().await.success());
     assert!(!socket.exists());
@@ -168,6 +174,22 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
 
     let mut restarted = TestService::spawn(&fixture.config, &socket);
     wait_until_ready(&mut restarted, &socket).await;
+    let restarted_health: TakerHealthV1 = call_local_rpc(
+        &socket,
+        "taker_health",
+        &TakerHealthRequestV1 { schema_version: 1 },
+    )
+    .await
+    .unwrap();
+    let restarted_methods = restarted_health.registered_methods();
+    assert!(restarted_methods.health());
+    assert!(restarted_methods.offer_list());
+    assert!(restarted_methods.initiate());
+    assert!(restarted_methods.swap_list());
+    assert!(restarted_methods.monitor());
+    assert!(!restarted_methods.claim());
+    assert!(!restarted_methods.refund());
+    assert_initiating_reads_are_public_and_effect_free(&socket, &first.swap, &fixture).await;
     let replay: TakerInitiationCommitV1 =
         call_local_rpc(&socket, "taker_swap_initiate_v1", &request)
             .await
@@ -176,6 +198,88 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
     assert_eq!(replay.swap, first.swap);
     assert!(restarted.terminate().await.success());
     assert!(!socket.exists());
+}
+
+async fn assert_initiating_reads_are_public_and_effect_free(
+    socket: &Path,
+    expected: &TakerSwapViewV1,
+    fixture: &ProcessInitiationFixture,
+) {
+    let listed: TakerSwapListV1 = call_local_rpc(
+        socket,
+        "taker_swap_list_v1",
+        &TakerSwapListRequestV1 { schema_version: 1 },
+    )
+    .await
+    .unwrap();
+    assert_eq!(listed.schema_version, 1);
+    assert_eq!(listed.swaps.as_slice(), std::slice::from_ref(expected));
+
+    let monitored: TakerSwapViewV1 = call_local_rpc(
+        socket,
+        "taker_swap_monitor_v1",
+        &TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: expected.swap_id.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(&monitored, expected);
+    assert_eq!(monitored.state, TakerSwapStateV1::Initiating);
+    assert_eq!(monitored.progress_generation, 0);
+    assert_eq!(monitored.available_action, None);
+    assert_eq!(monitored.privacy_guidance, None);
+
+    let unknown = call_local_rpc::<_, TakerSwapViewV1>(
+        socket,
+        "taker_swap_monitor_v1",
+        &TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m6-process-unknown-swap-001").unwrap(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        unknown.to_string(),
+        "local RPC error -32014: Taker swap not found"
+    );
+
+    let public_wire = format!(
+        "{} {} {}",
+        serde_json::to_string(&listed).unwrap(),
+        serde_json::to_string(&monitored).unwrap(),
+        unknown
+    );
+    for private_marker in [
+        fixture.root.display().to_string(),
+        "m6-process-zec-reservation-001".to_owned(),
+        "signed.json".to_owned(),
+        "draft.json".to_owned(),
+        "key.bin".to_owned(),
+        "actor.json".to_owned(),
+        "process-draft".to_owned(),
+        "process-taker".to_owned(),
+        hex::encode([42; 32]),
+    ] {
+        assert!(
+            !public_wire.contains(&private_marker),
+            "private initiation material leaked in {public_wire}"
+        );
+    }
+
+    for absent_effect in [
+        fixture.root.join("agreement.json"),
+        fixture.root.join("actor-root"),
+        fixture.root.join("receipt.json"),
+    ] {
+        assert!(
+            !absent_effect.exists(),
+            "read-only Initiating projection created {}",
+            absent_effect.display()
+        );
+    }
 }
 
 #[test]

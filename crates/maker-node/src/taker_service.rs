@@ -240,7 +240,7 @@ async fn project_swap(
     .map_err(|_| MonitoringError::RegistryUnavailable)??;
 
     match fs::symlink_metadata(prepared.execution().receipt_output()) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && receipt_binding.is_none() => {
             Ok(commit_from_facts(&facts, false, TakerSwapStateV1::Initiating).swap)
         }
         Err(_) => Err(MonitoringError::DependencyUnavailable),

@@ -398,6 +398,120 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     .await;
     let recovered_artifacts =
         ServiceAcceptanceArtifacts::capture(&taker_files).expect("recovered monitor artifacts");
+
+    let missing_receipt = taker_files
+        .receipt
+        .with_file_name("acceptance-receipt.monitor-missing");
+    fs::rename(&taker_files.receipt, &missing_receipt).unwrap();
+    let missing_receipt_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let missing_receipt_list_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_list_v1",
+        json!([TakerSwapListRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    fs::rename(&missing_receipt, &taker_files.receipt).unwrap();
+    let missing_receipt_restored = ServiceAcceptanceArtifacts::capture(&taker_files)
+        .expect("restored post-removal acceptance artifacts");
+
+    let mut crossed_config: Value =
+        serde_json::from_slice(&canonical_artifacts.config_bytes).unwrap();
+    crossed_config["swap_id"] = json!("m6-crossed-swap-001");
+    let crossed_config_bytes = serde_json::to_vec(&crossed_config).unwrap();
+    let mut crossed_receipt: Value =
+        serde_json::from_slice(&canonical_artifacts.receipt_bytes).unwrap();
+    crossed_receipt["swap_id"] = json!("m6-crossed-swap-001");
+    crossed_receipt["actor_config_sha256"] =
+        json!(hex::encode(Sha256::digest(&crossed_config_bytes)));
+    let crossed_receipt_bytes = serde_json::to_vec(&crossed_receipt).unwrap();
+    overwrite_private_in_place(&canonical_artifacts.config_path, &crossed_config_bytes);
+    overwrite_private_in_place(&taker_files.receipt, &crossed_receipt_bytes);
+    let crossed_pair_before = ServiceAcceptanceArtifacts::capture(&taker_files)
+        .expect("coherently crossed config and receipt");
+    let crossed_pair_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let crossed_pair_list_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_list_v1",
+        json!([TakerSwapListRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    let crossed_pair_after = ServiceAcceptanceArtifacts::capture(&taker_files)
+        .expect("post-monitor coherently crossed artifacts");
+    overwrite_private_in_place(
+        &canonical_artifacts.config_path,
+        &canonical_artifacts.config_bytes,
+    );
+    overwrite_private_in_place(&taker_files.receipt, &canonical_artifacts.receipt_bytes);
+    let crossed_pair_restored = ServiceAcceptanceArtifacts::capture(&taker_files)
+        .expect("restored post-crossed acceptance artifacts");
+
+    let corrupt_state_bytes = b"m6-corrupt-role-state-not-sqlite";
+    write_private(monitor_config.role_state_db(), corrupt_state_bytes);
+    let corrupt_state_before = (
+        fs::symlink_metadata(monitor_config.role_state_db())
+            .unwrap()
+            .ino(),
+        fs::read(monitor_config.role_state_db()).unwrap(),
+    );
+    let corrupt_state_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let corrupt_state_list_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_list_v1",
+        json!([TakerSwapListRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    let corrupt_state_after = (
+        fs::symlink_metadata(monitor_config.role_state_db())
+            .unwrap()
+            .ino(),
+        fs::read(monitor_config.role_state_db()).unwrap(),
+    );
+    let corrupt_state_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files)
+        .expect("corrupt-state monitor acceptance artifacts");
+    let corrupt_state_bridge_absent = !monitor_config.bridge_journal_db().exists();
+    fs::remove_file(monitor_config.role_state_db()).unwrap();
+
+    let final_recovered_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let final_recovered_list_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_list_v1",
+        json!([TakerSwapListRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    let final_recovered_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files)
+        .expect("final recovered monitor artifacts");
     let monitor_effects_absent =
         !monitor_config.role_state_db().exists() && !monitor_config.bridge_journal_db().exists();
     let post_read_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files);
@@ -450,17 +564,36 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
             "swap_not_found",
         );
     }
-    for response in [&replaced_receipt_response, &locked_actor_response] {
+    for response in [
+        &replaced_receipt_response,
+        &locked_actor_response,
+        &crossed_pair_monitor_response,
+        &crossed_pair_list_response,
+        &corrupt_state_monitor_response,
+        &corrupt_state_list_response,
+        &missing_receipt_monitor_response,
+        &missing_receipt_list_response,
+    ] {
         assert_service_rpc_error(
             response,
             TAKER_DEPENDENCY_UNAVAILABLE,
             "Taker dependency unavailable",
             "taker_monitor_unavailable",
         );
+        assert!(
+            response.get("result").is_none(),
+            "dependency corruption must not downgrade into a plausible swap state: {response}"
+        );
     }
     let recovered_monitor: TakerSwapViewV1 =
         serde_json::from_value(recovered_monitor_response["result"].clone()).unwrap();
     assert_eq!(recovered_monitor, first.swap);
+    let final_recovered_monitor: TakerSwapViewV1 =
+        serde_json::from_value(final_recovered_monitor_response["result"].clone()).unwrap();
+    assert_eq!(final_recovered_monitor, first.swap);
+    let final_recovered_list: TakerSwapListV1 =
+        serde_json::from_value(final_recovered_list_response["result"].clone()).unwrap();
+    assert_eq!(final_recovered_list.swaps, vec![first.swap.clone()]);
     assert_service_responses_redacted(
         [
             &health_response,
@@ -483,6 +616,21 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         &reservation_id,
         &taker_files,
     );
+    assert_service_responses_redacted(
+        [
+            &missing_receipt_monitor_response,
+            &missing_receipt_list_response,
+            &crossed_pair_monitor_response,
+            &crossed_pair_list_response,
+            &corrupt_state_monitor_response,
+            &corrupt_state_list_response,
+            &final_recovered_monitor_response,
+            &final_recovered_list_response,
+        ],
+        run.path(),
+        &reservation_id,
+        &taker_files,
+    );
 
     let first_artifacts = first_artifacts.expect("service must provision Taker actor and receipt");
     let replay_artifacts =
@@ -492,6 +640,32 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     assert_eq!(restored_artifacts, first_artifacts);
     assert_eq!(locked_artifacts, first_artifacts);
     assert_eq!(recovered_artifacts, first_artifacts);
+    assert_eq!(missing_receipt_restored, first_artifacts);
+    assert_eq!(
+        crossed_pair_before.config_inode,
+        first_artifacts.config_inode
+    );
+    assert_eq!(
+        crossed_pair_before.receipt_inode,
+        first_artifacts.receipt_inode
+    );
+    assert_ne!(
+        crossed_pair_before.config_bytes,
+        first_artifacts.config_bytes
+    );
+    assert_ne!(
+        crossed_pair_before.receipt_bytes,
+        first_artifacts.receipt_bytes
+    );
+    assert_eq!(crossed_pair_after, crossed_pair_before);
+    assert_eq!(crossed_pair_restored, first_artifacts);
+    assert_eq!(corrupt_state_before, corrupt_state_after);
+    assert_eq!(corrupt_state_artifacts, first_artifacts);
+    assert!(
+        corrupt_state_bridge_absent,
+        "corrupt role state must not authorize a bridge effect"
+    );
+    assert_eq!(final_recovered_artifacts, first_artifacts);
     assert_eq!(
         post_read_artifacts.expect("read RPCs must retain Taker artifacts"),
         first_artifacts,
@@ -1680,6 +1854,16 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) {
         .write(true)
         .create_new(true)
         .mode(0o600)
+        .open(path)
+        .unwrap();
+    file.write_all(bytes).unwrap();
+    file.sync_all().unwrap();
+}
+
+fn overwrite_private_in_place(path: &Path, bytes: &[u8]) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
         .open(path)
         .unwrap();
     file.write_all(bytes).unwrap();
