@@ -929,6 +929,7 @@ const fn ensure_recovery_phase(phase: Phase) -> Result<(), ActorCommandError> {
         phase,
         Phase::AwaitingTakerConfirmations
             | Phase::TakerLockConfirmed
+            | Phase::AwaitingMakerConfirmations
             | Phase::BothLegsLocked
             | Phase::TakerLockReorged
             | Phase::MakerLockReorged
@@ -1242,7 +1243,6 @@ mod tests {
     fn recovery_admission_rejects_every_non_refund_phase() {
         for phase in [
             Phase::Offered,
-            Phase::AwaitingMakerConfirmations,
             Phase::ClaimEvidenceAvailable,
             Phase::Completed,
             Phase::MakerRecoveryAvailable,
@@ -1256,6 +1256,7 @@ mod tests {
         for phase in [
             Phase::AwaitingTakerConfirmations,
             Phase::TakerLockConfirmed,
+            Phase::AwaitingMakerConfirmations,
             Phase::BothLegsLocked,
             Phase::TakerLockReorged,
             Phase::MakerLockReorged,

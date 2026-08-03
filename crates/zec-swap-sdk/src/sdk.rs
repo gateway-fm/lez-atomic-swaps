@@ -1900,6 +1900,29 @@ where
     }
 }
 
+// Selects the agreement-ordered refund without weakening LEZ-before-Zcash ordering.
+// During Maker confirmation only the earlier LEZ leg in the reverse corridor is Taker-owned and live.
+const fn next_refund_step(
+    phase: Phase,
+    direction: lez_swap_core::SwapDirection,
+) -> Option<RefundStepV1> {
+    match phase {
+        Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged => {
+            Some(RefundStepV1::Lez)
+        }
+        Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed => match direction {
+            lez_swap_core::SwapDirection::TakerSellsForeign => Some(RefundStepV1::Zcash),
+            lez_swap_core::SwapDirection::TakerSellsLez => Some(RefundStepV1::Lez),
+        },
+        Phase::AwaitingMakerConfirmations
+            if matches!(direction, lez_swap_core::SwapDirection::TakerSellsLez) =>
+        {
+            Some(RefundStepV1::Lez)
+        }
+        _ => None,
+    }
+}
+
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
     Lez: LezRefundPort,
@@ -1926,17 +1949,9 @@ where
                     revision: self.revision,
                 });
             }
-            Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged => {
-                RefundStepV1::Lez
-            }
-            Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed => {
-                match self.agreement().direction() {
-                    lez_swap_core::SwapDirection::TakerSellsForeign => RefundStepV1::Zcash,
-                    lez_swap_core::SwapDirection::TakerSellsLez => RefundStepV1::Lez,
-                }
-            }
             phase if phase == lez_refunded_phase(self.agreement()) => RefundStepV1::Zcash,
-            phase => return Err(ZecSdkError::RefundNotReady(phase)),
+            phase => next_refund_step(phase, self.agreement().direction())
+                .ok_or(ZecSdkError::RefundNotReady(phase))?,
         };
 
         if self.local_participant() == step.owner(self.agreement()) {
@@ -2217,6 +2232,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taker_owned_lez_refund_remains_live_while_maker_lock_confirms() {
+        assert_eq!(
+            next_refund_step(
+                Phase::AwaitingMakerConfirmations,
+                lez_swap_core::SwapDirection::TakerSellsLez,
+            ),
+            Some(RefundStepV1::Lez)
+        );
+        assert_eq!(
+            next_refund_step(
+                Phase::AwaitingMakerConfirmations,
+                lez_swap_core::SwapDirection::TakerSellsForeign,
+            ),
+            None,
+            "the later Zcash leg stays fenced until the earlier LEZ refund projects"
+        );
+    }
 
     #[test]
     fn unchanged_evidence_requires_confirmed_phase_for_maker_eligibility() {

@@ -46,6 +46,18 @@ impl RefundStepV1 {
         }
     }
 
+    // The Taker may recover its earlier LEZ-funded leg while the Maker second lock is
+    // still confirming. The forward direction is intentionally excluded because its
+    // Taker-funded Zcash leg is later and must remain fenced behind a projected LEZ refund.
+    fn one_leg_lez_refund_is_valid(direction: SwapDirection, phase: Phase) -> bool {
+        matches!(
+            phase,
+            Phase::AwaitingTakerConfirmations
+                | Phase::TakerLockConfirmed
+                | Phase::AwaitingMakerConfirmations
+        ) && direction == SwapDirection::TakerSellsLez
+    }
+
     pub(crate) fn validate_active_phase(
         self,
         agreement: &ZecAgreementV1,
@@ -56,10 +68,7 @@ impl RefundStepV1 {
                 matches!(
                     phase,
                     Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged
-                ) || (matches!(
-                    phase,
-                    Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed
-                ) && agreement.direction() == SwapDirection::TakerSellsLez)
+                ) || Self::one_leg_lez_refund_is_valid(agreement.direction(), phase)
             }
             Self::Zcash => {
                 phase == lez_refunded_phase(agreement)
@@ -726,6 +735,22 @@ pub enum RefundError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn awaiting_maker_confirmations_only_admits_the_earlier_taker_owned_lez_refund() {
+        assert!(RefundStepV1::one_leg_lez_refund_is_valid(
+            SwapDirection::TakerSellsLez,
+            Phase::AwaitingMakerConfirmations,
+        ));
+        assert!(!RefundStepV1::one_leg_lez_refund_is_valid(
+            SwapDirection::TakerSellsForeign,
+            Phase::AwaitingMakerConfirmations,
+        ));
+        assert!(!RefundStepV1::one_leg_lez_refund_is_valid(
+            SwapDirection::TakerSellsForeign,
+            Phase::TakerLockConfirmed,
+        ));
+    }
 
     #[test]
     fn prepared_refund_is_bounded_and_redacted() {
