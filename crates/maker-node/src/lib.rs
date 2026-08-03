@@ -35,10 +35,10 @@ pub use service_control::{
 };
 pub use taker_facade::{
     TAKER_FACADE_METHODS_V1, TAKER_FACADE_SCHEMA_VERSION_V1, TakerActionCommitV1,
-    TakerClaimRequestV1, TakerDependencyStateV1, TakerHealthRequestV1, TakerHealthV1,
-    TakerInitiationCapabilityV1, TakerInitiationCommitV1, TakerMakerIdentityV1,
-    TakerMonitoringCapabilityV1, TakerOfferListRequestV1, TakerOfferListV1, TakerOfferViewV1,
-    TakerPairCapabilityV1, TakerPrivacyGuidanceV1, TakerRefundRequestV1,
+    TakerClaimRequestV1, TakerDependencyStateV1, TakerFacadeSchemaVersionError,
+    TakerHealthRequestV1, TakerHealthV1, TakerInitiationCapabilityV1, TakerInitiationCommitV1,
+    TakerMakerIdentityV1, TakerMonitoringCapabilityV1, TakerOfferListRequestV1, TakerOfferListV1,
+    TakerOfferViewV1, TakerPairCapabilityV1, TakerPrivacyGuidanceV1, TakerRefundRequestV1,
     TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
     TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
     taker_pair_capabilities_v1,

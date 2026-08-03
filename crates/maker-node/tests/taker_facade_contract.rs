@@ -221,6 +221,102 @@ fn action_requests_are_distinct_types_without_a_caller_selected_action_field() {
     }
 }
 
+#[test]
+fn every_request_accepts_schema_version_one() {
+    assert_all_request_schema_versions(1, true);
+}
+
+#[test]
+fn every_request_rejects_schema_version_zero() {
+    assert_all_request_schema_versions(0, false);
+}
+
+#[test]
+fn every_request_rejects_schema_version_two() {
+    assert_all_request_schema_versions(2, false);
+}
+
+fn assert_all_request_schema_versions(schema_version: u16, accepted: bool) {
+    let route = json!({"pair": "Zcash", "direction": "TakerSellsLez"});
+    let maker_identity = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    let commitment = vec![3_u8; 32];
+
+    assert_request_schema_version::<TakerHealthRequestV1>(
+        json!({"schema_version": schema_version}),
+        accepted,
+        TakerHealthRequestV1::validate_schema_version,
+    );
+    assert_request_schema_version::<TakerOfferListRequestV1>(
+        json!({"schema_version": schema_version, "route": null}),
+        accepted,
+        TakerOfferListRequestV1::validate_schema_version,
+    );
+    assert_request_schema_version::<TakerSwapListRequestV1>(
+        json!({"schema_version": schema_version}),
+        accepted,
+        TakerSwapListRequestV1::validate_schema_version,
+    );
+    assert_request_schema_version::<TakerSwapInitiateRequestV1>(
+        json!({
+            "schema_version": schema_version,
+            "request_id": "m6-initiate-request-001",
+            "offer_id": "m6-zec-offer-001",
+            "route": route,
+            "maker_identity": maker_identity,
+            "signed_envelope_sha256": commitment,
+            "foreign_units": 200_000_000_u64,
+            "expected_lez_units": 1_820_u128,
+        }),
+        accepted,
+        TakerSwapInitiateRequestV1::validate_schema_version,
+    );
+    assert_request_schema_version::<TakerSwapMonitorRequestV1>(
+        json!({"schema_version": schema_version, "swap_id": "m6-zec-swap-001"}),
+        accepted,
+        TakerSwapMonitorRequestV1::validate_schema_version,
+    );
+    assert_request_schema_version::<TakerClaimRequestV1>(
+        json!({
+            "schema_version": schema_version,
+            "request_id": "m6-claim-request-001",
+            "swap_id": "m6-zec-swap-001",
+            "expected_generation": 4,
+        }),
+        accepted,
+        TakerClaimRequestV1::validate_schema_version,
+    );
+    assert_request_schema_version::<TakerRefundRequestV1>(
+        json!({
+            "schema_version": schema_version,
+            "request_id": "m6-refund-request-001",
+            "swap_id": "m6-zec-swap-001",
+            "expected_generation": 4,
+        }),
+        accepted,
+        TakerRefundRequestV1::validate_schema_version,
+    );
+}
+
+fn assert_request_schema_version<T: DeserializeOwned>(
+    value: Value,
+    accepted: bool,
+    validate: fn(&T) -> Result<(), lez_maker_node::TakerFacadeSchemaVersionError>,
+) {
+    let schema_version = u16::try_from(value["schema_version"].as_u64().unwrap()).unwrap();
+    let request: T = serde_json::from_value(value).unwrap();
+    let result = validate(&request);
+    if accepted {
+        result.unwrap();
+    } else {
+        let error = result.unwrap_err();
+        assert_eq!(error.actual(), schema_version);
+        assert_eq!(
+            error.expected(),
+            lez_maker_node::TAKER_FACADE_SCHEMA_VERSION_V1
+        );
+    }
+}
+
 fn reject_unknown<T: DeserializeOwned>(mut value: Value) {
     assert!(serde_json::from_value::<T>(value.clone()).is_ok());
     value["unexpected"] = json!(true);

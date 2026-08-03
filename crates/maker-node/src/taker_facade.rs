@@ -13,6 +13,28 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 /// Current schema version for every Taker facade v1 message.
 pub const TAKER_FACADE_SCHEMA_VERSION_V1: u16 = 1;
 
+/// Unsupported schema version supplied to a Taker facade v1 request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("unsupported Taker facade request schema {actual}; expected {expected}")]
+pub struct TakerFacadeSchemaVersionError {
+    actual: u16,
+    expected: u16,
+}
+
+impl TakerFacadeSchemaVersionError {
+    /// Returns the unsupported version supplied by the caller.
+    #[must_use]
+    pub const fn actual(&self) -> u16 {
+        self.actual
+    }
+
+    /// Returns the only schema version accepted by this contract.
+    #[must_use]
+    pub const fn expected(&self) -> u16 {
+        self.expected
+    }
+}
+
 /// Exact allowlist for the first Taker facade contract.
 ///
 /// A server must register these methods individually. This list grants no
@@ -169,6 +191,46 @@ pub struct TakerRefundRequestV1 {
     /// Progress generation observed before the user confirmed the refund.
     pub expected_generation: u64,
 }
+
+fn validate_taker_facade_schema_version(actual: u16) -> Result<(), TakerFacadeSchemaVersionError> {
+    if actual == TAKER_FACADE_SCHEMA_VERSION_V1 {
+        Ok(())
+    } else {
+        Err(TakerFacadeSchemaVersionError {
+            actual,
+            expected: TAKER_FACADE_SCHEMA_VERSION_V1,
+        })
+    }
+}
+
+macro_rules! impl_request_schema_validation {
+    ($($request:ty),+ $(,)?) => {
+        $(
+            impl $request {
+                /// Verifies that this request uses the exact supported schema version.
+                ///
+                /// # Errors
+                ///
+                /// Returns an error unless `schema_version` is exactly one.
+                pub fn validate_schema_version(
+                    &self,
+                ) -> Result<(), TakerFacadeSchemaVersionError> {
+                    validate_taker_facade_schema_version(self.schema_version)
+                }
+            }
+        )+
+    };
+}
+
+impl_request_schema_validation!(
+    TakerHealthRequestV1,
+    TakerOfferListRequestV1,
+    TakerSwapListRequestV1,
+    TakerSwapInitiateRequestV1,
+    TakerSwapMonitorRequestV1,
+    TakerClaimRequestV1,
+    TakerRefundRequestV1,
+);
 
 /// Secret-free authenticated offer displayed before user confirmation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
