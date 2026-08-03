@@ -5592,8 +5592,48 @@ handoff and exact use-time inode enforcement remain production hardening.
 Admission-only catalogs retaining execution material and requiring Chat are a
 least-authority compatibility item.
 
-Next nonvisual work is the receipt-bound swap-list and monitor projection,
-followed by actor driving and generation-fenced claim/refund methods.
-Production QML and QtRO remain gated on explicit owner prototype signoff.
-Actor-real UI composition, Basecamp packages, final quality/evidence gates,
-and the M6 tag remain pending.
+The receipt-bound swap-list and monitor projection is now implemented by
+`e9393cf`; the next nonvisual work is actor driving and generation-fenced
+claim/refund methods. Production QML and QtRO remain gated on explicit owner
+prototype signoff. Actor-real UI composition, Basecamp packages, final
+quality/evidence gates, and the M6 tag remain pending.
+
+## M6 receipt-bound list and monitor checkpoint (2026-08-03)
+
+Pushed commit `e9393cf` registers `taker_swap_list_v1` and
+`taker_swap_monitor_v1` only when the service has a validated prepared-ZEC
+catalog and registry. Health then reports exactly five methods: health, offer
+list, swap list, initiate, and monitor. Claim and refund remain unregistered.
+
+The caller supplies only a schema version and, for monitor, a swap ID. The
+service resolves the immutable prepared entry, requires its exact durable
+private authority, and uses only the prepared receipt and actor root. A
+missing receipt projects `Initiating`. A receipt-bound actor is loaded and
+cross-checked, its per-swap kernel lock is acquired, and receipt/config
+authority is reread before the status-only actor command. Typed actor status
+is normalized into the secret-free Taker state, generation, available action,
+and privacy-guidance DTO. Unknown swap IDs and offer-ID substitution return
+the same fixed `swap_not_found` response. Results are capped at 256 and remain
+in stable registry swap-ID order.
+
+The real service acceptance proof now removes Delivery and Chat after
+completion, reloads the service, and proves health, one-item list, exact
+monitor, unknown/substituted-ID errors, response redaction, and no mutation of
+agreement, actor-config, or receipt bytes and inodes. The accepted swap remains
+`NotActivated` generation zero with no available action. Status uses unit
+ports, starts no actor, writes no role state or journal, and contacts no node,
+wallet, faucet, public RPC, Delivery, or Chat endpoint.
+
+ADR 0136 records the components, fresh monitor and restart/offline sequences,
+and the read-atomicity argument. The shared lock excludes concurrent actor
+progress for one projected swap, but one list is a sequence of per-swap
+snapshots rather than a global snapshot. Commit `3307dca` extends that
+boundary with a process-incarnation receipt digest/device/inode fence. Same-byte receipt replacement and live actor-lock
+contention now return one fixed redacted dependency error; restoring the exact
+receipt and releasing the lock restores the same `NotActivated` view without
+creating role state, a bridge journal, or chain effects. Durable rollback or
+state-incarnation fencing across a service restart remains production
+hardening. Next nonvisual work is actor driving
+and generation-fenced claim/refund. Owner prototype signoff still gates QML
+and QtRO; actor-real UI composition, Basecamp packages, final gates, milestone
+completion, and the M6 tag remain pending.

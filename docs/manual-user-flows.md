@@ -7346,8 +7346,10 @@ Status: reproducible progressive flow. The spawned service proof covers
 socket/configuration custody, authenticated reads, default-off admission, and
 restart. The real acceptance proof uses the same RPC module with a real Maker
 daemon, Delivery, and Chat and ends at durable actor provisioning before any
-chain effect. Swap list, monitor, actor drive, claim, and refund remain absent.
-This is not prototype signoff or an actor-real chain flow.
+chain effect. It then removes Delivery and Chat and reproduces the accepted
+swap through the receipt-bound list and monitor methods. Actor drive, claim,
+and refund remain absent. This is not prototype signoff or an actor-real chain
+flow.
 
 ### Build and isolated empty configuration
 
@@ -7504,10 +7506,24 @@ role-fixed Taker agreement, actor bundle, and mode-0600 receipt exist.
 
 The test removes the Delivery offer, makes Chat unavailable, reloads the
 service context, and retries the same request. The reply has
-`was_replay: true` and the identical projection. Agreement, actor config, and
-receipt bytes and inodes remain unchanged and no Maker actor is duplicated.
-The registry, configured Delivery directory, prepared inputs, and private
-artifacts must remain locally available.
+`was_replay: true` and the identical projection. It then verifies that health
+reports exactly health, offer list, swap list, initiate, and monitor; list
+returns exactly the admitted swap; and monitor returns `NotActivated`,
+generation zero, no action, and no privacy guidance. An unknown swap and use
+of the offer ID as a swap ID both return fixed code `-32014` with category
+`swap_not_found`. Responses expose no private path, key, reservation, or raw
+receipt material. Agreement, actor config, and receipt bytes and inodes remain
+unchanged and no Maker actor is duplicated. The same exact test also replaces
+the receipt with identical bytes on a new inode and holds the actor lock; both
+monitor attempts fail with fixed redacted code `-32010`. Restoring the original
+inode and releasing the lock restores the exact view without role-state,
+journal, or chain effects.
+
+The test owns one unique temporary root and every Unix socket, database, and
+artifact below it; it does not reuse a fixed port or Docker container. The
+registry, configured Delivery directory, prepared inputs, and private artifacts
+must remain locally available to the restarted service, but Delivery offer
+content and Chat availability are not monitor dependencies.
 
 ```mermaid
 sequenceDiagram
@@ -7518,6 +7534,7 @@ sequenceDiagram
     participant C as Maker Chat
     participant M as Maker database
     participant F as Taker artifacts
+    participant L as Per-swap actor lock
 
     U->>S: Initiate reviewed public facts
     S->>R: Lookup request
@@ -7544,6 +7561,12 @@ sequenceDiagram
         Note over S,C: No Delivery offer or Chat exchange
         S-->>U: NotActivated replay true
     end
+    U->>S: List then monitor swap ID
+    S->>R: Match exact admitted authority
+    S->>F: Cross-bind service-owned receipt and config
+    S->>L: Acquire lock and read Status with unit ports
+    L-->>S: Typed NotActivated generation zero
+    S-->>U: Redacted stable swap view
 ```
 
 Atomicity is layered, not distributed. Admission is one Taker SQLite
@@ -7556,7 +7579,8 @@ exact request instead of starting another swap.
 Neither actor starts. No actor state database or LEZ bridge journal exists and
 no Zebra, LEZ, wallet, faucet, public RPC, DNS, or fund effect occurs. This is
 real off-chain acceptance and recoverability, not a completed atomic swap.
-See ADR 0135 for the full argument.
+See ADR 0135 for acceptance atomicity and ADR 0136 for the locked-read
+atomicity and race argument.
 
 ### Reproduce the standalone registry and prepared authority
 
@@ -7566,7 +7590,7 @@ cargo test --locked -p lez-swap-store --test taker_facade_registry
 cargo test --locked -p lez-maker-node --test taker_initiation_config
 ```
 
-The registry's 12 cases cover private exclusive creation/reopen, unsafe
+The registry.s 14 cases cover private exclusive creation/reopen, unsafe
 ancestors and database drift, atomic admission, changed public/private
 conflict, exact replay, corruption, redaction, and two-connection concurrency.
 The five prepared-authority cases cover named Maker authentication, fixed ZEC
@@ -7579,6 +7603,9 @@ Neither component command starts a node, wallet, faucet, or public request.
 The empty service and default-off admission use only run-local executables,
 private files, Unix sockets, system time, signed deterministic offers, and
 SQLite. The real acceptance proof adds the local Maker daemon and Chat socket.
+Receipt-bound list and monitor use only the prepared catalog, Taker registry,
+private receipt/actor files, role-state lock, and local status projection; they
+do not read Delivery or Chat and use unit chain ports.
 It needs no Docker, chain node, wallet, faucet, peer, DNS, public funds, or
 external finality service. Placeholder loopback endpoints in actor configs are
 never contacted. Cargo may access its registry only on a cold locked dependency
@@ -7594,6 +7621,7 @@ and retained local custody.
 A failure after registry admission returns a fixed dependency error and leaves
 durable work for the exact request to retry. No chain effect can occur because
 actor activation is not connected. Remaining production hardening includes
-direct retained-byte draft/key handoff, exact use-time inode enforcement,
+durable receipt/state rollback-incarnation fencing across restart, direct
+retained-byte draft/key handoff, exact use-time inode enforcement,
 least-authority admission-only configuration, spawned-service real-Chat E2E,
 and actor lifecycle, finality, and chaos coverage.

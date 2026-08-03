@@ -74,6 +74,19 @@ configuration, admission, restart, and legacy Chat set is GREEN 14/14, with
 strict all-target Clippy, warning-fatal Rustdoc, formatting, and diff hygiene
 also GREEN.
 
+Commit `e9393cf` adds the first receipt-bound lifecycle reads. A service with a
+validated prepared-ZEC catalog now truthfully registers swap list and monitor
+beside health, offer list, and initiate. Both reads resolve only service-owned
+prepared authority, require the exact private registry admission, and derive
+actor status under the same per-swap kernel lock used by workers. After
+Delivery removal and Chat outage, list and monitor reproduce the accepted swap
+as `NotActivated` generation zero without rewriting its agreement, actor
+configuration, or receipt. Unknown swap IDs and offer-ID substitution receive
+the same fixed redacted error. The read path starts no actor and contacts no
+chain, wallet, Delivery, or Chat endpoint. Pushed hardening `3307dca` captures
+the receipt digest and inode at startup or acceptance, rejects same-byte inode
+replacement and live actor-lock contention, and recovers after restoration.
+
 This is negotiation and local handoff atomicity, not cross-chain completion.
 The service commits admission before any transport effect; deterministic Chat
 request IDs plus Maker transactions and Taker no-clobber publication make
@@ -91,9 +104,14 @@ the prepared-authority boundary; ADR
 the admission ordering; ADR
 [0135](docs/architecture/0135-complete-prepared-zec-acceptance-before-response.md)
 records the service-connected components, fresh/restart sequences, and exact
-atomicity argument. Swap list, monitor, claim, refund, actor driving,
-Basecamp/QML and QtRO packages, actor-real UI composition, final gates, owner
-sign-off, and the M6 tag remain pending.
+atomicity argument. ADR
+[0136](docs/architecture/0136-project-admitted-zec-swaps-under-actor-lock.md)
+records the receipt-bound read topology, fresh and restart/offline sequences,
+and its lock-scoped read-atomicity argument. Actor driving, claim, refund,
+durable receipt/state rollback-incarnation hardening, Basecamp/QML and QtRO
+packages,
+actor-real UI composition, final gates, owner sign-off, and the M6 tag remain
+pending.
 
 ### M5 verified progressive application PoC — historical implementation record
 

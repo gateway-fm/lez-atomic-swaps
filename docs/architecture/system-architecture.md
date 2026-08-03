@@ -50,12 +50,12 @@ existing owner-restricted Unix JSON-RPC. The atomic route-save prerequisite is
 implemented. The Taker side has an exact seven-method DTO contract, an
 authenticated read backend, a strict owner-private startup loader, and
 `lez-taker-service` on its own mode-0600 Unix socket. Empty configurations
-register health and offer listing. A validated prepared-ZEC configuration also
-registers initiation, and health truthfully reports exactly those three
-methods. Swap list, monitor, claim, and refund remain unregistered.
+register health and offer listing. A validated prepared-ZEC configuration also registers initiation, swap list,
+and monitor, and health truthfully reports exactly those five methods. Claim
+and refund remain unregistered.
 
 The Taker schema-v1 registry and strict prepared-ZEC context are
-service-wired through `5536dd0`. Durable request lookup remains first. A new
+service-wired through `e9393cf`. Durable request lookup remains first. A new
 request must match current authenticated Delivery at one trusted timestamp and
 commits public facts, full private authority, and replay before execution.
 With `execute_prepared_zec: true`, the service then uses the bounded Maker
@@ -67,9 +67,15 @@ Exact restart replay selects the current prepared entry and compares its full
 authority to the durable private row at the original admission time. A valid
 receipt replays after Delivery-offer removal and Chat outage without rewriting
 artifacts. Maker negotiation is completed and one Maker actor is queued, but
-neither role actor starts. No wallet, Zebra, or LEZ RPC is called. Swap list,
-monitor, actor driving, claim, and refund remain unregistered. XMR capability
-remains effect-checkpoint-only.
+neither role actor starts. Receipt-bound list and monitor resolve only the prepared authority
+that exactly matches the private admission, reread receipt/config authority
+under the shared per-swap lock, and invoke status with unit ports. They remain
+available after Delivery and Chat disappear and perform no wallet, Zebra, or
+LEZ RPC. Actor driving, claim, and refund remain unregistered. Commit `3307dca` additionally fences the receipt digest and inode for the
+process incarnation and rejects live actor-lock contention. Durable
+receipt/state rollback-incarnation fencing across restart remains hardening.
+XMR capability remains
+effect-checkpoint-only.
 
 ```mermaid
 flowchart TB
@@ -100,6 +106,9 @@ flowchart TB
         Receipt["Private Taker receipt"]
         MakerActor["Queued Maker actor"]
         TakerActor["Provisioned Taker actor"]
+        Monitor["Receipt-bound list and monitor"]
+        ActorLock["Per-swap actor lock"]
+        RoleState[("Taker role-state DB if activated")]
     end
 
     subgraph LocalChains["Existing isolated local nodes not called here"]
@@ -135,6 +144,12 @@ flowchart TB
     Accept --> Agreement
     Accept --> TakerActor
     Accept --> Receipt
+    TakerService --> Monitor
+    Monitor --> Registry
+    Monitor --> Receipt
+    Monitor --> ActorLock
+    ActorLock --> TakerActor
+    TakerActor -.-> RoleState
 
     MakerActor -.-> Lez
     MakerActor -.-> Zcash
@@ -147,9 +162,9 @@ flowchart TB
 The process split is an authority boundary, not merely a UI detail. There is
 no Taker-service edge to the Maker owner RPC. Fresh Taker initiation reaches
 the Maker only through authenticated Delivery and the separate bounded Chat
-socket. The service can negotiate and provision exact role artifacts, but it
-cannot activate or drive them, monitor chain progress, claim, refund, or call a
-node. Dashed QML/QtRO and node edges remain unimplemented at this checkpoint.
+socket. The service can negotiate and provision exact role artifacts and project
+locked local actor status, but it cannot activate or drive an actor, poll chain
+progress, claim, refund, or call a node. Dashed QML/QtRO and node edges remain unimplemented at this checkpoint.
 
 A future QML or `ui-host` crash must not stop the autonomous Maker daemon or
 erase either role's durable recovery state. Delivery and Chat remain pre-lock
