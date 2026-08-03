@@ -17,6 +17,7 @@ mod maker_actor_process;
 mod maker_application;
 mod maker_offer;
 mod public_effect_journal;
+mod taker_facade_registry;
 mod xmr_effect_workflow_journal;
 mod zec_recovery;
 
@@ -68,6 +69,10 @@ pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
     PublicEffectKey, PublicEffectObservation, PublicEffectOperation, PublicEffectSnapshot,
     PublicEffectState, PublicEffectSubmissionResult, SqlitePublicEffectJournal,
+};
+pub use taker_facade_registry::{
+    SqliteTakerFacadeStore, TakerFacadeStoreError, TakerInitiationAdmissionV1,
+    TakerInitiationAuthorityV1, TakerInitiationFactsV1, TakerPrivateFileBindingV1,
 };
 pub use xmr_effect_workflow_journal::{
     SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowDecision, XmrWorkflowIdentityV1,

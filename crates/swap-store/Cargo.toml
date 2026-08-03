@@ -22,6 +22,7 @@ lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk" }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 rustix = { version = "1.1.4", features = ["fs", "process"] }
+secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.150", features = ["arbitrary_precision"] }
 sha2 = "=0.10.9"
@@ -33,7 +34,6 @@ lez-adaptor-signature = { version = "0.1.0", path = "../adaptor-signature" }
 bitcoin = "=0.32.101"
 rand_chacha = "=0.3.1"
 tempfile = "3.27.0"
-secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
 tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread"] }
 zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
 zcash_protocol = { version = "=0.9.0", default-features = false }

@@ -1,0 +1,1173 @@
+//! Standalone owner-private persistence for the Taker facade.
+//!
+//! This first schema stores only initiation admission and public projections.
+//! It deliberately contains no worker, actor, Chat, chain, or action authority.
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::{self, File},
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
+
+use lez_bridge_protocol::RequestId;
+use lez_swap_core::{Pair, SwapDirection, SwapId};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension as _, Transaction, TransactionBehavior, params,
+};
+use rustix::fs::{CWD, Mode, OFlags, ResolveFlags, openat2};
+use secp256k1::PublicKey;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::{MakerOfferId, MakerRouteV1};
+
+const APPLICATION_ID: i64 = 0x4c54_4652;
+const SCHEMA_VERSION: i64 = 1;
+const PAYLOAD_VERSION: i64 = 1;
+const MAX_SOURCE_ID_BYTES: usize = 128;
+const MAX_PATH_BYTES: usize = 4_096;
+
+const CREATE_SCHEMA: &str = "
+CREATE TABLE taker_facade_swaps (
+    swap_id         TEXT PRIMARY KEY NOT NULL,
+    payload_version INTEGER NOT NULL CHECK (payload_version = 1),
+    public_json     TEXT NOT NULL,
+    created_at      INTEGER NOT NULL CHECK (created_at >= 0)
+) STRICT;
+CREATE TABLE taker_facade_authorities (
+    swap_id         TEXT PRIMARY KEY NOT NULL
+                        REFERENCES taker_facade_swaps(swap_id) ON DELETE CASCADE,
+    payload_version INTEGER NOT NULL CHECK (payload_version = 1),
+    private_json    TEXT NOT NULL
+) STRICT;
+CREATE TABLE taker_facade_requests (
+    request_id             TEXT PRIMARY KEY NOT NULL,
+    operation              TEXT NOT NULL CHECK (operation IN ('initiate', 'claim', 'refund')),
+    swap_id                TEXT NOT NULL REFERENCES taker_facade_swaps(swap_id) ON DELETE CASCADE,
+    request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
+    request_json           TEXT NOT NULL,
+    result_payload_version INTEGER NOT NULL CHECK (result_payload_version = 1),
+    result_json            TEXT NOT NULL,
+    state                  TEXT NOT NULL CHECK (state = 'admitted'),
+    created_at             INTEGER NOT NULL CHECK (created_at >= 0),
+    updated_at             INTEGER NOT NULL CHECK (updated_at >= created_at)
+) STRICT;
+";
+
+/// Fixed, path-free failures from the standalone Taker facade registry.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum TakerFacadeStoreError {
+    /// The registry could not be created or opened.
+    #[error("Taker registry storage is unavailable")]
+    DatabaseUnavailable,
+    /// The registry inode, ownership, mode, or link count changed.
+    #[error("Taker registry storage identity is unsafe")]
+    UnsafeDatabaseFile,
+    /// Exclusive creation found an existing valid registry.
+    #[error("Taker registry already exists")]
+    DatabaseAlreadyExists,
+    /// The database belongs to another application or schema.
+    #[error("Taker registry schema is foreign")]
+    ForeignSchema,
+    /// The database was written by a newer implementation.
+    #[error("Taker registry schema is newer than supported")]
+    FutureSchema,
+    /// Durable rows or constraints do not revalidate.
+    #[error("Taker registry state is corrupt")]
+    CorruptState,
+    /// Typed initiation facts or private authority are invalid.
+    #[error("Taker registry input is invalid")]
+    InvalidInput,
+    /// A request identity is already bound to another operation or payload.
+    #[error("Taker registry request conflicts with durable state")]
+    RequestConflict,
+    /// A swap identity is already bound to another request.
+    #[error("Taker registry swap conflicts with durable state")]
+    SwapConflict,
+    /// A bounded `SQLite` or serialization operation failed.
+    #[error("Taker registry operation is unavailable")]
+    StorageUnavailable,
+}
+
+/// Public immutable facts admitted for one Taker initiation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerInitiationFactsV1 {
+    schema_version: u16,
+    swap_id: SwapId,
+    offer_id: MakerOfferId,
+    route: MakerRouteV1,
+    #[serde(with = "maker_identity_serde")]
+    maker_identity: [u8; 33],
+    signed_envelope_sha256: [u8; 32],
+    foreign_units: u64,
+    lez_units: u128,
+}
+
+impl TakerInitiationFactsV1 {
+    /// Constructs exact public facts for the current ZEC Taker vertical.
+    ///
+    /// # Errors
+    ///
+    /// Rejects another route, a non-compressed identity, or zero amounts.
+    pub fn new(
+        swap_id: SwapId,
+        offer_id: MakerOfferId,
+        route: MakerRouteV1,
+        maker_identity: [u8; 33],
+        signed_envelope_sha256: [u8; 32],
+        foreign_units: u64,
+        lez_units: u128,
+    ) -> Result<Self, TakerFacadeStoreError> {
+        let value = Self {
+            schema_version: 1,
+            swap_id,
+            offer_id,
+            route,
+            maker_identity,
+            signed_envelope_sha256,
+            foreign_units,
+            lez_units,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Stable application swap identity.
+    #[must_use]
+    pub const fn swap_id(&self) -> &SwapId {
+        &self.swap_id
+    }
+
+    /// Immutable authenticated offer identity.
+    #[must_use]
+    pub const fn offer_id(&self) -> &MakerOfferId {
+        &self.offer_id
+    }
+
+    /// Exact pair and role-fixed direction.
+    #[must_use]
+    pub const fn route(&self) -> MakerRouteV1 {
+        self.route
+    }
+
+    /// Pinned compressed Maker identity.
+    #[must_use]
+    pub const fn maker_identity(&self) -> &[u8; 33] {
+        &self.maker_identity
+    }
+
+    /// Exact signed Delivery envelope commitment.
+    #[must_use]
+    pub const fn signed_envelope_sha256(&self) -> &[u8; 32] {
+        &self.signed_envelope_sha256
+    }
+
+    /// Selected foreign-chain atomic units.
+    #[must_use]
+    pub const fn foreign_units(&self) -> u64 {
+        self.foreign_units
+    }
+
+    /// Exact quoted LEZ atomic units.
+    #[must_use]
+    pub const fn lez_units(&self) -> u128 {
+        self.lez_units
+    }
+
+    fn validate(&self) -> Result<(), TakerFacadeStoreError> {
+        if self.schema_version != 1
+            || self.route.pair() != Pair::Zcash
+            || self.route.direction() != SwapDirection::TakerSellsLez
+            || PublicKey::from_slice(&self.maker_identity).is_err()
+            || self.foreign_units == 0
+            || self.lez_units == 0
+        {
+            return Err(TakerFacadeStoreError::InvalidInput);
+        }
+        Ok(())
+    }
+}
+
+/// Identified owner-private input selected by trusted service configuration.
+#[derive(Clone, Eq, PartialEq)]
+pub struct TakerPrivateFileBindingV1 {
+    path: PathBuf,
+    sha256: Option<[u8; 32]>,
+    device: u64,
+    inode: u64,
+}
+
+impl std::fmt::Debug for TakerPrivateFileBindingV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TakerPrivateFileBindingV1")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TakerPrivateFileBindingV1 {
+    /// Binds one immutable private input by normalized path, digest, and inode.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsafe path or zero inode.
+    pub fn immutable(
+        path: PathBuf,
+        sha256: [u8; 32],
+        device: u64,
+        inode: u64,
+    ) -> Result<Self, TakerFacadeStoreError> {
+        Self::new(path, Some(sha256), device, inode)
+    }
+
+    /// Binds one secret input by normalized path and inode without persisting a verifier.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsafe path or zero inode.
+    pub fn secret(path: PathBuf, device: u64, inode: u64) -> Result<Self, TakerFacadeStoreError> {
+        Self::new(path, None, device, inode)
+    }
+
+    fn new(
+        path: PathBuf,
+        sha256: Option<[u8; 32]>,
+        device: u64,
+        inode: u64,
+    ) -> Result<Self, TakerFacadeStoreError> {
+        validate_authority_path(&path)?;
+        if inode == 0 {
+            return Err(TakerFacadeStoreError::InvalidInput);
+        }
+        Ok(Self {
+            path,
+            sha256,
+            device,
+            inode,
+        })
+    }
+}
+
+/// Complete private, service-derived authority for a future initiation worker.
+#[derive(Clone, Eq, PartialEq)]
+pub struct TakerInitiationAuthorityV1 {
+    maker_source_id: Box<str>,
+    reservation_id: RequestId,
+    signed_envelope: TakerPrivateFileBindingV1,
+    unsigned_draft: TakerPrivateFileBindingV1,
+    signing_key: TakerPrivateFileBindingV1,
+    source_config: TakerPrivateFileBindingV1,
+    agreement_output: PathBuf,
+    actor_root: PathBuf,
+    receipt_output: PathBuf,
+}
+
+impl std::fmt::Debug for TakerInitiationAuthorityV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TakerInitiationAuthorityV1")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TakerInitiationAuthorityV1 {
+    /// Constructs one exact private authority without exposing it through getters.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsafe source identity, aliased paths, or a secret binding
+    /// that unexpectedly carries a persisted digest.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        maker_source_id: impl Into<Box<str>>,
+        reservation_id: RequestId,
+        signed_envelope: TakerPrivateFileBindingV1,
+        unsigned_draft: TakerPrivateFileBindingV1,
+        signing_key: TakerPrivateFileBindingV1,
+        source_config: TakerPrivateFileBindingV1,
+        agreement_output: PathBuf,
+        actor_root: PathBuf,
+        receipt_output: PathBuf,
+    ) -> Result<Self, TakerFacadeStoreError> {
+        let value = Self {
+            maker_source_id: maker_source_id.into(),
+            reservation_id,
+            signed_envelope,
+            unsigned_draft,
+            signing_key,
+            source_config,
+            agreement_output,
+            actor_root,
+            receipt_output,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    fn validate(&self) -> Result<(), TakerFacadeStoreError> {
+        if self.maker_source_id.is_empty()
+            || self.maker_source_id.len() > MAX_SOURCE_ID_BYTES
+            || !self
+                .maker_source_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || self.signed_envelope.sha256.is_none()
+            || self.unsigned_draft.sha256.is_none()
+            || self.signing_key.sha256.is_some()
+            || self.source_config.sha256.is_none()
+        {
+            return Err(TakerFacadeStoreError::InvalidInput);
+        }
+        for path in [
+            &self.agreement_output,
+            &self.actor_root,
+            &self.receipt_output,
+        ] {
+            validate_authority_path(path)?;
+        }
+        let paths = [
+            self.signed_envelope.path.as_path(),
+            self.unsigned_draft.path.as_path(),
+            self.signing_key.path.as_path(),
+            self.source_config.path.as_path(),
+            self.agreement_output.as_path(),
+            self.actor_root.as_path(),
+            self.receipt_output.as_path(),
+        ];
+        let mut unique = BTreeSet::new();
+        if paths.iter().any(|path| !unique.insert(*path)) {
+            return Err(TakerFacadeStoreError::InvalidInput);
+        }
+        Ok(())
+    }
+
+    fn stored(&self) -> StoredTakerInitiationAuthorityV1 {
+        StoredTakerInitiationAuthorityV1 {
+            schema_version: 1,
+            maker_source_id: self.maker_source_id.clone(),
+            reservation_id: self.reservation_id.clone(),
+            signed_envelope: self.signed_envelope.stored(),
+            unsigned_draft: self.unsigned_draft.stored(),
+            signing_key: self.signing_key.stored(),
+            source_config: self.source_config.stored(),
+            agreement_output: self.agreement_output.clone(),
+            actor_root: self.actor_root.clone(),
+            receipt_output: self.receipt_output.clone(),
+        }
+    }
+}
+
+impl TakerPrivateFileBindingV1 {
+    fn stored(&self) -> StoredTakerPrivateFileBindingV1 {
+        StoredTakerPrivateFileBindingV1 {
+            path: self.path.clone(),
+            sha256: self.sha256,
+            device: self.device,
+            inode: self.inode,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredTakerPrivateFileBindingV1 {
+    path: PathBuf,
+    sha256: Option<[u8; 32]>,
+    device: u64,
+    inode: u64,
+}
+
+impl StoredTakerPrivateFileBindingV1 {
+    fn validate(&self) -> Result<(), TakerFacadeStoreError> {
+        validate_authority_path(&self.path)?;
+        if self.inode == 0 {
+            return Err(TakerFacadeStoreError::CorruptState);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredTakerInitiationAuthorityV1 {
+    schema_version: u16,
+    maker_source_id: Box<str>,
+    reservation_id: RequestId,
+    signed_envelope: StoredTakerPrivateFileBindingV1,
+    unsigned_draft: StoredTakerPrivateFileBindingV1,
+    signing_key: StoredTakerPrivateFileBindingV1,
+    source_config: StoredTakerPrivateFileBindingV1,
+    agreement_output: PathBuf,
+    actor_root: PathBuf,
+    receipt_output: PathBuf,
+}
+
+impl StoredTakerInitiationAuthorityV1 {
+    fn validate(&self) -> Result<(), TakerFacadeStoreError> {
+        self.signed_envelope.validate()?;
+        self.unsigned_draft.validate()?;
+        self.signing_key.validate()?;
+        self.source_config.validate()?;
+        let value = TakerInitiationAuthorityV1 {
+            maker_source_id: self.maker_source_id.clone(),
+            reservation_id: self.reservation_id.clone(),
+            signed_envelope: self.signed_envelope.as_public(),
+            unsigned_draft: self.unsigned_draft.as_public(),
+            signing_key: self.signing_key.as_public(),
+            source_config: self.source_config.as_public(),
+            agreement_output: self.agreement_output.clone(),
+            actor_root: self.actor_root.clone(),
+            receipt_output: self.receipt_output.clone(),
+        };
+        if self.schema_version != 1 {
+            return Err(TakerFacadeStoreError::CorruptState);
+        }
+        value
+            .validate()
+            .map_err(|_| TakerFacadeStoreError::CorruptState)
+    }
+}
+
+impl StoredTakerPrivateFileBindingV1 {
+    fn as_public(&self) -> TakerPrivateFileBindingV1 {
+        TakerPrivateFileBindingV1 {
+            path: self.path.clone(),
+            sha256: self.sha256,
+            device: self.device,
+            inode: self.inode,
+        }
+    }
+}
+
+/// Durable public result of one initiation admission.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerInitiationAdmissionV1 {
+    schema_version: u16,
+    facts: TakerInitiationFactsV1,
+    was_replay: bool,
+}
+
+impl TakerInitiationAdmissionV1 {
+    /// Exact admitted public facts.
+    #[must_use]
+    pub const fn facts(&self) -> &TakerInitiationFactsV1 {
+        &self.facts
+    }
+
+    /// Whether the exact request and private authority were already durable.
+    #[must_use]
+    pub const fn was_replay(&self) -> bool {
+        self.was_replay
+    }
+}
+
+/// Standalone `SQLite` schema-v1 Taker facade registry.
+pub struct SqliteTakerFacadeStore {
+    connection: Connection,
+    path: PathBuf,
+    identity: FileIdentity,
+}
+
+impl std::fmt::Debug for SqliteTakerFacadeStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SqliteTakerFacadeStore")
+            .finish_non_exhaustive()
+    }
+}
+
+impl SqliteTakerFacadeStore {
+    /// Exclusively creates a new owner-private empty registry.
+    ///
+    /// # Errors
+    ///
+    /// Rejects existing, unsafe, foreign, or unavailable storage.
+    pub fn create_new(path: impl AsRef<Path>) -> Result<Self, TakerFacadeStoreError> {
+        let path = path.as_ref();
+        validate_database_path(path)?;
+        let guard = match openat2(
+            CWD,
+            path,
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+            ResolveFlags::NO_SYMLINKS,
+        ) {
+            Ok(descriptor) => File::from(descriptor),
+            Err(error) if error == rustix::io::Errno::EXIST => {
+                classify_existing(path)?;
+                return Err(TakerFacadeStoreError::DatabaseAlreadyExists);
+            }
+            Err(error) if error == rustix::io::Errno::LOOP => {
+                return Err(TakerFacadeStoreError::UnsafeDatabaseFile);
+            }
+            Err(_) => return Err(TakerFacadeStoreError::DatabaseUnavailable),
+        };
+        let identity = validate_database_file(&guard)?;
+        guard
+            .sync_all()
+            .map_err(|_| TakerFacadeStoreError::DatabaseUnavailable)?;
+        sync_parent(path)?;
+        let mut store = Self::open_connection(path, identity)?;
+        initialize_schema(&mut store.connection)?;
+        validate_connection(&store.connection)?;
+        drop(guard);
+        store.revalidate_storage()?;
+        Ok(store)
+    }
+
+    /// Opens an existing exact schema-v1 registry without migrating it.
+    ///
+    /// # Errors
+    ///
+    /// Missing, unsafe, foreign, future, or corrupt registries fail closed.
+    pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, TakerFacadeStoreError> {
+        let path = path.as_ref();
+        validate_database_path(path)?;
+        let file = open_checked(path)?;
+        let identity = validate_database_file(&file)?;
+        let store = Self::open_connection(path, identity)?;
+        validate_connection(&store.connection)?;
+        validate_all_records(&store.connection)?;
+        drop(file);
+        store.revalidate_storage()?;
+        Ok(store)
+    }
+
+    fn open_connection(path: &Path, identity: FileIdentity) -> Result<Self, TakerFacadeStoreError> {
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let connection = Connection::open_with_flags(path, flags)
+            .map_err(|_| TakerFacadeStoreError::DatabaseUnavailable)?;
+        configure(&connection)?;
+        Ok(Self {
+            connection,
+            path: path.to_owned(),
+            identity,
+        })
+    }
+
+    /// Atomically admits one initiation or exactly replays its original result.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid input, request reuse, an existing swap, corrupt state,
+    /// or an unavailable transaction. No partial request is retained on error.
+    pub fn admit_initiation(
+        &mut self,
+        request_id: &RequestId,
+        facts: &TakerInitiationFactsV1,
+        authority: &TakerInitiationAuthorityV1,
+        now: u64,
+    ) -> Result<TakerInitiationAdmissionV1, TakerFacadeStoreError> {
+        facts.validate()?;
+        authority.validate()?;
+        let now = i64::try_from(now).map_err(|_| TakerFacadeStoreError::InvalidInput)?;
+        let request_json = encode(facts)?;
+        let authority_json = encode(&authority.stored())?;
+        let result_json = request_json.clone();
+        self.revalidate_storage()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        if validate_exact_replay(
+            &transaction,
+            request_id,
+            facts,
+            &request_json,
+            &result_json,
+            &authority_json,
+        )? {
+            transaction
+                .commit()
+                .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+            self.revalidate_storage()?;
+            return Ok(TakerInitiationAdmissionV1 {
+                schema_version: 1,
+                facts: facts.clone(),
+                was_replay: true,
+            });
+        }
+        let exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM taker_facade_swaps WHERE swap_id = ?1)",
+                [facts.swap_id.as_str()],
+                |row| row.get(0),
+            )
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        if exists {
+            return Err(TakerFacadeStoreError::SwapConflict);
+        }
+        transaction
+            .execute(
+                "INSERT INTO taker_facade_swaps
+                 (swap_id, payload_version, public_json, created_at) VALUES (?1, 1, ?2, ?3)",
+                params![facts.swap_id.as_str(), request_json, now],
+            )
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        transaction
+            .execute(
+                "INSERT INTO taker_facade_authorities
+                 (swap_id, payload_version, private_json) VALUES (?1, 1, ?2)",
+                params![facts.swap_id.as_str(), authority_json],
+            )
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        transaction
+            .execute(
+                "INSERT INTO taker_facade_requests (
+                     request_id, operation, swap_id, request_payload_version, request_json,
+                     result_payload_version, result_json, state, created_at, updated_at
+                 ) VALUES (?1, 'initiate', ?2, 1, ?3, 1, ?3, 'admitted', ?4, ?4)",
+                params![
+                    request_id.as_str(),
+                    facts.swap_id.as_str(),
+                    request_json,
+                    now
+                ],
+            )
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        transaction
+            .commit()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        self.revalidate_storage()?;
+        Ok(TakerInitiationAdmissionV1 {
+            schema_version: 1,
+            facts: facts.clone(),
+            was_replay: false,
+        })
+    }
+
+    /// Lists every public initiation projection in stable swap-ID order.
+    ///
+    /// # Errors
+    ///
+    /// Rejects changed storage identity or malformed durable public facts.
+    pub fn list_initiations(&self) -> Result<Vec<TakerInitiationFactsV1>, TakerFacadeStoreError> {
+        self.revalidate_storage()?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT swap_id, payload_version, public_json
+                 FROM taker_facade_swaps ORDER BY swap_id",
+            )
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        drop(statement);
+        let mut results = Vec::with_capacity(rows.len());
+        for (swap_id, version, json) in rows {
+            if version != PAYLOAD_VERSION {
+                return Err(TakerFacadeStoreError::CorruptState);
+            }
+            let facts: TakerInitiationFactsV1 = decode(&json)?;
+            facts
+                .validate()
+                .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+            if facts.swap_id.as_str() != swap_id {
+                return Err(TakerFacadeStoreError::CorruptState);
+            }
+            results.push(facts);
+        }
+        self.revalidate_storage()?;
+        Ok(results)
+    }
+
+    fn revalidate_storage(&self) -> Result<(), TakerFacadeStoreError> {
+        validate_database_path(&self.path)?;
+        let file = open_checked(&self.path)?;
+        if validate_database_file(&file)? != self.identity {
+            return Err(TakerFacadeStoreError::UnsafeDatabaseFile);
+        }
+        Ok(())
+    }
+}
+
+fn validate_exact_replay(
+    transaction: &Transaction<'_>,
+    request_id: &RequestId,
+    facts: &TakerInitiationFactsV1,
+    request_json: &str,
+    result_json: &str,
+    authority_json: &str,
+) -> Result<bool, TakerFacadeStoreError> {
+    let Some((
+        operation,
+        swap_id,
+        request_version,
+        stored_request,
+        result_version,
+        stored_result,
+        state,
+    )) = transaction
+        .query_row(
+            "SELECT operation, swap_id, request_payload_version, request_json,
+                        result_payload_version, result_json, state
+                 FROM taker_facade_requests WHERE request_id = ?1",
+            [request_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?
+    else {
+        return Ok(false);
+    };
+    let (authority_version, stored_authority): (i64, String) = transaction
+        .query_row(
+            "SELECT payload_version, private_json FROM taker_facade_authorities WHERE swap_id = ?1",
+            [&swap_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    let (swap_version, stored_public): (i64, String) = transaction
+        .query_row(
+            "SELECT payload_version, public_json FROM taker_facade_swaps WHERE swap_id = ?1",
+            [&swap_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    if request_version != PAYLOAD_VERSION
+        || result_version != PAYLOAD_VERSION
+        || authority_version != PAYLOAD_VERSION
+        || swap_version != PAYLOAD_VERSION
+        || state != "admitted"
+        || stored_request != stored_public
+        || stored_result != stored_public
+    {
+        return Err(TakerFacadeStoreError::CorruptState);
+    }
+    if operation != "initiate"
+        || swap_id != facts.swap_id.as_str()
+        || stored_request != request_json
+        || stored_result != result_json
+        || stored_authority != authority_json
+    {
+        return Err(TakerFacadeStoreError::RequestConflict);
+    }
+    Ok(true)
+}
+
+fn initialize_schema(connection: &mut Connection) -> Result<(), TakerFacadeStoreError> {
+    let application: i64 = pragma(connection, "application_id")?;
+    let version: i64 = pragma(connection, "user_version")?;
+    let objects: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+    if application != 0 || version != 0 || objects != 0 {
+        return Err(TakerFacadeStoreError::ForeignSchema);
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+    transaction
+        .execute_batch(CREATE_SCHEMA)
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+    transaction
+        .pragma_update(None, "application_id", APPLICATION_ID)
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+    transaction
+        .pragma_update(None, "user_version", SCHEMA_VERSION)
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+    transaction
+        .commit()
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)
+}
+
+fn validate_connection(connection: &Connection) -> Result<(), TakerFacadeStoreError> {
+    let application: i64 = pragma(connection, "application_id")?;
+    let version: i64 = pragma(connection, "user_version")?;
+    if application == APPLICATION_ID && version > SCHEMA_VERSION {
+        return Err(TakerFacadeStoreError::FutureSchema);
+    }
+    if application != APPLICATION_ID || version != SCHEMA_VERSION {
+        return Err(TakerFacadeStoreError::ForeignSchema);
+    }
+    let names: String = connection
+        .query_row(
+            "SELECT group_concat(name, ',') FROM (
+                 SELECT name FROM sqlite_schema
+                 WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    let unexpected: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema
+             WHERE name NOT LIKE 'sqlite_%' AND type != 'table'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    let integrity: String = connection
+        .query_row("PRAGMA quick_check", [], |row| row.get(0))
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    let foreign_keys: i64 = connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    if names != "taker_facade_authorities,taker_facade_requests,taker_facade_swaps"
+        || unexpected != 0
+        || integrity != "ok"
+        || foreign_keys != 0
+    {
+        return Err(TakerFacadeStoreError::CorruptState);
+    }
+    for name in [
+        "taker_facade_swaps",
+        "taker_facade_authorities",
+        "taker_facade_requests",
+    ] {
+        let actual: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+        let expected = expected_table_schema(name)?;
+        if normalized_schema_sql(&actual) != normalized_schema_sql(&expected) {
+            return Err(TakerFacadeStoreError::CorruptState);
+        }
+    }
+    Ok(())
+}
+
+fn expected_table_schema(name: &str) -> Result<String, TakerFacadeStoreError> {
+    let marker = format!("CREATE TABLE {name}");
+    let start = CREATE_SCHEMA
+        .find(&marker)
+        .ok_or(TakerFacadeStoreError::CorruptState)?;
+    let tail = &CREATE_SCHEMA[start..];
+    let end = tail.find(";\n").unwrap_or(tail.len());
+    Ok(tail[..end].to_owned())
+}
+
+fn validate_all_records(connection: &Connection) -> Result<(), TakerFacadeStoreError> {
+    let public_by_swap = load_and_validate_swap_records(connection)?;
+    validate_request_records(connection, &public_by_swap)
+}
+
+fn load_and_validate_swap_records(
+    connection: &Connection,
+) -> Result<BTreeMap<String, String>, TakerFacadeStoreError> {
+    let mut statement = connection
+        .prepare("SELECT swap_id, payload_version, public_json FROM taker_facade_swaps")
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    drop(statement);
+    let mut public_by_swap = BTreeMap::new();
+    for (swap_id, version, json) in rows {
+        let facts: TakerInitiationFactsV1 = decode(&json)?;
+        if version != PAYLOAD_VERSION || facts.swap_id.as_str() != swap_id {
+            return Err(TakerFacadeStoreError::CorruptState);
+        }
+        facts
+            .validate()
+            .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+        let (authority_version, authority_json): (i64, String) = connection
+            .query_row(
+                "SELECT payload_version, private_json FROM taker_facade_authorities
+                 WHERE swap_id = ?1",
+                [&swap_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+        let authority: StoredTakerInitiationAuthorityV1 = decode(&authority_json)?;
+        if authority_version != PAYLOAD_VERSION {
+            return Err(TakerFacadeStoreError::CorruptState);
+        }
+        authority.validate()?;
+        if public_by_swap.insert(swap_id, json).is_some() {
+            return Err(TakerFacadeStoreError::CorruptState);
+        }
+    }
+    Ok(public_by_swap)
+}
+
+fn validate_request_records(
+    connection: &Connection,
+    public_by_swap: &BTreeMap<String, String>,
+) -> Result<(), TakerFacadeStoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT request_id, operation, swap_id, request_payload_version, request_json,
+                    result_payload_version, result_json, state, created_at, updated_at
+             FROM taker_facade_requests",
+        )
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    let requests = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
+        })
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    drop(statement);
+    let mut requested_swaps = BTreeSet::new();
+    for (
+        request_id,
+        operation,
+        swap_id,
+        request_version,
+        request_json,
+        result_version,
+        result_json,
+        state,
+        created_at,
+        updated_at,
+    ) in requests
+    {
+        let public_json = public_by_swap
+            .get(&swap_id)
+            .ok_or(TakerFacadeStoreError::CorruptState)?;
+        if RequestId::new(request_id).is_err()
+            || SwapId::new(swap_id.clone()).is_err()
+            || operation != "initiate"
+            || request_version != PAYLOAD_VERSION
+            || result_version != PAYLOAD_VERSION
+            || state != "admitted"
+            || created_at < 0
+            || updated_at < created_at
+            || request_json != *public_json
+            || result_json != *public_json
+            || !requested_swaps.insert(swap_id)
+        {
+            return Err(TakerFacadeStoreError::CorruptState);
+        }
+    }
+    if requested_swaps.len() != public_by_swap.len()
+        || requested_swaps
+            .iter()
+            .any(|swap_id| !public_by_swap.contains_key(swap_id))
+    {
+        return Err(TakerFacadeStoreError::CorruptState);
+    }
+    Ok(())
+}
+
+fn configure(connection: &Connection) -> Result<(), TakerFacadeStoreError> {
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .and_then(|()| connection.pragma_update(None, "journal_mode", "WAL"))
+        .and_then(|()| connection.pragma_update(None, "synchronous", "FULL"))
+        .and_then(|()| connection.pragma_update(None, "foreign_keys", "ON"))
+        .and_then(|()| connection.pragma_update(None, "secure_delete", "ON"))
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)
+}
+
+fn pragma(connection: &Connection, name: &str) -> Result<i64, TakerFacadeStoreError> {
+    connection
+        .pragma_query_value(None, name, |row| row.get(0))
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)
+}
+
+fn normalized_schema_sql(value: &str) -> String {
+    value
+        .trim()
+        .trim_end_matches(';')
+        .split_ascii_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn encode<T: Serialize>(value: &T) -> Result<String, TakerFacadeStoreError> {
+    serde_json::to_string(value).map_err(|_| TakerFacadeStoreError::StorageUnavailable)
+}
+
+fn decode<T: for<'de> Deserialize<'de>>(value: &str) -> Result<T, TakerFacadeStoreError> {
+    serde_json::from_str(value).map_err(|_| TakerFacadeStoreError::CorruptState)
+}
+
+fn validate_database_path(path: &Path) -> Result<(), TakerFacadeStoreError> {
+    if !normalized_absolute_file_path(path) {
+        return Err(TakerFacadeStoreError::DatabaseUnavailable);
+    }
+    let parent = path
+        .parent()
+        .ok_or(TakerFacadeStoreError::DatabaseUnavailable)?;
+    let metadata =
+        fs::symlink_metadata(parent).map_err(|_| TakerFacadeStoreError::DatabaseUnavailable)?;
+    if !metadata.file_type().is_dir()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(TakerFacadeStoreError::UnsafeDatabaseFile);
+    }
+    Ok(())
+}
+
+fn validate_authority_path(path: &Path) -> Result<(), TakerFacadeStoreError> {
+    if !normalized_absolute_file_path(path) || path.as_os_str().len() > MAX_PATH_BYTES {
+        return Err(TakerFacadeStoreError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn normalized_absolute_file_path(path: &Path) -> bool {
+    path.is_absolute()
+        && path.file_name().is_some()
+        && path
+            .components()
+            .all(|part| matches!(part, Component::RootDir | Component::Normal(_)))
+}
+
+fn open_checked(path: &Path) -> Result<File, TakerFacadeStoreError> {
+    openat2(
+        CWD,
+        path,
+        OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .map_err(|error| {
+        if error == rustix::io::Errno::LOOP {
+            TakerFacadeStoreError::UnsafeDatabaseFile
+        } else {
+            TakerFacadeStoreError::DatabaseUnavailable
+        }
+    })
+}
+
+fn classify_existing(path: &Path) -> Result<(), TakerFacadeStoreError> {
+    let file = open_checked(path).map_err(|_| TakerFacadeStoreError::UnsafeDatabaseFile)?;
+    validate_database_file(&file).map(|_| ())
+}
+
+fn validate_database_file(file: &File) -> Result<FileIdentity, TakerFacadeStoreError> {
+    let metadata = file
+        .metadata()
+        .map_err(|_| TakerFacadeStoreError::UnsafeDatabaseFile)?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.nlink() != 1
+    {
+        return Err(TakerFacadeStoreError::UnsafeDatabaseFile);
+    }
+    Ok(FileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+fn sync_parent(path: &Path) -> Result<(), TakerFacadeStoreError> {
+    openat2(
+        CWD,
+        path.parent()
+            .ok_or(TakerFacadeStoreError::DatabaseUnavailable)?,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .map_err(|_| TakerFacadeStoreError::DatabaseUnavailable)?
+    .sync_all()
+    .map_err(|_| TakerFacadeStoreError::DatabaseUnavailable)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+mod maker_identity_serde {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    const LOWER_HEX: &[u8; 16] = b"0123456789abcdef";
+
+    pub fn serialize<S>(value: &[u8; 33], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut encoded = String::with_capacity(66);
+        for byte in value {
+            encoded.push(char::from(LOWER_HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(LOWER_HEX[usize::from(byte & 0x0f)]));
+        }
+        serializer.serialize_str(&encoded)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 33], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value.len() != 66
+            || value
+                .bytes()
+                .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+        {
+            return Err(D::Error::custom(
+                "Maker identity is not canonical lowercase hex",
+            ));
+        }
+        let mut decoded = [0_u8; 33];
+        for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+            decoded[index] = (decode_nibble(pair[0]) << 4) | decode_nibble(pair[1]);
+        }
+        super::PublicKey::from_slice(&decoded)
+            .map_err(|_| D::Error::custom("Maker identity is not a compressed secp256k1 point"))?;
+        Ok(decoded)
+    }
+
+    const fn decode_nibble(byte: u8) -> u8 {
+        match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            _ => unreachable!(),
+        }
+    }
+}
