@@ -5682,3 +5682,51 @@ packages, their QtRO hosts, actor-real UI E2E, explicit owner prototype
 signoff, final repository gates, and the M6 tag remain pending. Durable
 rollback-incarnation anchoring remains deferred production hardening rather than
 an accepted issue-#112 PoC gate.
+
+## M6 refund liveness and pinned-finality checkpoint (2026-08-03)
+
+Three retained service-Refund runs closed successive REDs without claiming a
+successful journey. The first proved that service availability could precede
+the signed LEZ refund timestamp; the runner now waits for a finalized block
+whose timestamp reaches the signed deadline. The second proved that a typed
+`moving_tip` is retryable only through the same durable service request. The
+third retained one admitted Refund and four exact retries but no chain refund.
+
+The third failure is now separated into its actual causes. A local official
+LEZ v0.2 `getAccountAtBlock` call measured about 9.78 seconds while generated
+ZEC actors allowed 10 seconds for the entire bridge request. Separately,
+nonterminal refund observations rejected any forward finalized-height movement
+even after reading all facts at one immutable pinned height. The observed
+`observe_escrow` moving-tip log belonged to an independent background poll and
+was not itself the Refund eligibility failure.
+
+ADR 0138 records the production-correct component fix. Deterministic-local ZEC
+actors now use a finite 30-second bridge budget. Refund state, exact misses, and
+discovery misses may retain their old pinned clock across a bounded forward
+advance only after ID/hash agreement, complete parent-linked descendant proof,
+and repeated pin verification. Regression, pin replacement and ABA, broken
+ancestry, ID/hash disagreement, and advances beyond the protocol maximum still
+fail closed. No devnet cadence was slowed and no finality check was removed.
+
+The focused timeout test progressed RED at 10 seconds to GREEN at 30 seconds.
+The complete ZEC reference actor suite and all 26 finalized native refund
+observer tests are GREEN. The M6 service runner static contract remains GREEN.
+This is a component checkpoint, not an actual-node Refund certificate.
+
+Next in order:
+
+1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund
+   journey with fresh role funds;
+2. retain exact Zcash transaction-to-block inclusion plus post-terminal replay
+   evidence with no new LEZ or Zcash effect;
+3. rerun the Claim journey after the shared runner changes;
+4. update the manual flow, architecture/RPC inventory, evidence metrics, and
+   upstream production-blocker ledger; and
+5. after explicit prototype owner signoff, build the Maker and Taker Basecamp
+   QML packages, QtRO hosts, and actor-real UI E2E before final M6 gates/tag.
+
+The measured Logos v0.2 historical-account latency and lack of a batched
+multi-account-at-block RPC are recorded upstream production-performance items.
+They do not block local milestone certification under the accepted Logos-owned
+dependency policy. Coalescing identical in-flight repeatable observations after
+client cancellation remains project-controlled production hardening.

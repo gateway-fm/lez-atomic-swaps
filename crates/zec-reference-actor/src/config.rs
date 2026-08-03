@@ -34,6 +34,7 @@ const MAX_COOKIE_BYTES: usize = 1_024;
 const MAX_API_KEY_FILE_BYTES: usize = 1_026;
 const MAX_API_KEY_BYTES: usize = 1_024;
 const MAX_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
+const DEFAULT_LOCAL_BRIDGE_REQUEST_TIMEOUT_MILLIS: u64 = 30_000;
 const MAX_COUNTERPARTY_SCAN_BLOCKS: u32 = 50_000;
 const TATUM_TESTNET_ZEBRA_ENDPOINT: &str = "https://zcash-testnet-zebrad.gateway.tatum.io/";
 
@@ -546,7 +547,7 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
             journal_db: input.bridge_journal_db,
             capability_file: input.bridge_capability_file,
             runtime: input.bridge_runtime,
-            request_timeout_millis: 10_000,
+            request_timeout_millis: DEFAULT_LOCAL_BRIDGE_REQUEST_TIMEOUT_MILLIS,
         },
         zebra: ZebraConfig {
             route: ZebraRouteConfig::DeterministicLocal {
@@ -1442,5 +1443,60 @@ fn map_command_location_error(error: SecureFileError) -> ActorConfigError {
     match error {
         SecureFileError::Unavailable => ActorConfigError::CommandMaterialUnavailable,
         SecureFileError::Unsafe => ActorConfigError::UnsafeCommandMaterialFile,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use lez_bridge_protocol::{
+        DiscoveryWindow, Hex32, Participant, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    };
+    use lez_swap_core::SwapId;
+    use serde_json::json;
+    use url::Url;
+
+    use super::{
+        ActorRole, DeterministicLocalV0_2ActorConfigInput,
+        encode_deterministic_local_v0_2_actor_config,
+    };
+
+    #[test]
+    fn deterministic_local_actor_budget_exceeds_one_slow_indexer_read() {
+        let runtime = RuntimeDescriptor::new(
+            Participant::Maker,
+            RuntimeCompatibility::LeeV0_2_0,
+            Hex32::from_bytes([1; 32]),
+            Hex32::from_bytes([2; 32]),
+            Hex32::from_bytes([3; 32]),
+            Hex32::from_bytes([4; 32]),
+            Hex32::from_bytes([5; 32]),
+        );
+        let encoded =
+            encode_deterministic_local_v0_2_actor_config(DeterministicLocalV0_2ActorConfigInput {
+                role: ActorRole::Maker,
+                run_id: RunId::new("timeout-regression").unwrap(),
+                swap_id: SwapId::new("timeout-regression-swap").unwrap(),
+                signed_agreement_file: PathBuf::from("/tmp/agreement.borsh"),
+                signed_agreement_sha256: Hex32::from_bytes([6; 32]),
+                role_state_db: PathBuf::from("/tmp/actor.sqlite3"),
+                claim_recovery_key_id: "maker-claim".into(),
+                claim_recovery_key_file: PathBuf::from("/tmp/claim.key"),
+                claim_preimage_file: Some(PathBuf::from("/tmp/preimage.key")),
+                zcash_key_file: PathBuf::from("/tmp/zcash.key"),
+                bridge_endpoint: Url::parse("http://127.0.0.1:19001/").unwrap(),
+                bridge_journal_db: PathBuf::from("/tmp/bridge.sqlite3"),
+                bridge_capability_file: PathBuf::from("/tmp/sidecar.capability"),
+                bridge_runtime: runtime,
+                zebra_endpoint: Url::parse("http://127.0.0.1:19002/").unwrap(),
+                zebra_genesis_hash: Hex32::from_bytes([7; 32]),
+                counterparty_scan_blocks: 1_024,
+                lez_discovery_window: DiscoveryWindow::new(1, 256).unwrap(),
+                zcash_funding_outpoints: Vec::new(),
+            })
+            .unwrap();
+        let raw: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(raw["bridge"]["request_timeout_millis"], json!(30_000));
     }
 }

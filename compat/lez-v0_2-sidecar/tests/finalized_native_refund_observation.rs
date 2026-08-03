@@ -1386,7 +1386,7 @@ async fn terminal_refund_rejects_height_regression_and_unbounded_advance() {
 }
 
 #[tokio::test]
-async fn nonterminal_refund_snapshots_remain_same_tip_only() {
+async fn nonterminal_refund_snapshots_accept_verified_descendants_and_keep_pinned_clock() {
     let mut state_fixture = fixture().await;
     state_fixture.request.target = NativeRefundObservationTarget::StateOnly;
     let observer = FinalizedWitnessedRefundObserver::new(
@@ -1394,10 +1394,13 @@ async fn nonterminal_refund_snapshots_remain_same_tip_only() {
         Arc::clone(&state_fixture.planner),
         advancing_indexer(&state_fixture, FINALIZED_TIP_ID + 1),
     );
-    assert_eq!(
-        observer.observe(&state_fixture.request).await.unwrap_err(),
-        BridgeRuntimeError::MovingTip
-    );
+    let state = observer.observe(&state_fixture.request).await.unwrap();
+    assert!(matches!(
+        state.refund,
+        NativeRefundObservation::NotRequested
+    ));
+    assert_eq!(state.clock_before, state.clock_after);
+    assert_eq!(state.clock_after.height, FINALIZED_TIP_ID);
 
     let mut exact_miss_fixture = fixture().await;
     exact_miss_fixture.blocks[0].body.transactions.clear();
@@ -1406,22 +1409,22 @@ async fn nonterminal_refund_snapshots_remain_same_tip_only() {
         Arc::clone(&exact_miss_fixture.planner),
         advancing_indexer(&exact_miss_fixture, FINALIZED_TIP_ID + 1),
     );
-    assert_eq!(
-        observer
-            .observe(&exact_miss_fixture.request)
-            .await
-            .unwrap_err(),
-        BridgeRuntimeError::MovingTip
-    );
+    let exact_miss = observer.observe(&exact_miss_fixture.request).await.unwrap();
+    assert!(matches!(exact_miss.refund, NativeRefundObservation::Absent));
+    assert_eq!(exact_miss.clock_before, exact_miss.clock_after);
+    assert_eq!(exact_miss.clock_after.height, FINALIZED_TIP_ID);
 
     let mut absent_fixture = fixture().await;
     absent_fixture.blocks[0].body.transactions.clear();
     let indexer = advancing_indexer(&absent_fixture, FINALIZED_TIP_ID + 1);
     let (request, observer) = claimant_observer(&absent_fixture, indexer);
-    assert_eq!(
-        observer.observe(&request).await.unwrap_err(),
-        BridgeRuntimeError::MovingTip
-    );
+    let discovered_miss = observer.observe(&request).await.unwrap();
+    assert!(matches!(
+        discovered_miss.refund,
+        NativeRefundObservation::Absent
+    ));
+    assert_eq!(discovered_miss.clock_before, discovered_miss.clock_after);
+    assert_eq!(discovered_miss.clock_after.height, FINALIZED_TIP_ID);
 }
 
 #[tokio::test]

@@ -66,7 +66,7 @@ impl FinalizedWitnessedRefundObserver {
     /// # Errors
     ///
     /// Fails closed on actor/runtime/authority drift, incomplete finality, contradictory
-    /// block lookups, broken ancestry, a moving finalized tip, noncanonical refund bytes,
+    /// block lookups, broken finalized ancestry, noncanonical refund bytes,
     /// early inclusion, ambiguous discovery, or invalid historical terminal state.
     pub async fn observe(
         &self,
@@ -125,12 +125,7 @@ impl FinalizedWitnessedRefundObserver {
         {
             return Err(BridgeRuntimeError::InvalidObservation);
         }
-        self.ensure_snapshot(
-            finalized_before,
-            &tip_before,
-            matches!(&refund, NativeRefundObservation::Found(_)),
-        )
-        .await?;
+        self.ensure_snapshot(finalized_before, &tip_before).await?;
         Ok(ObserveNativeRefundResult::new(
             request.context.clone(),
             clock,
@@ -596,7 +591,6 @@ impl FinalizedWitnessedRefundObserver {
         &self,
         finalized_before: u64,
         tip_before: &Block,
-        terminal_refund_found: bool,
     ) -> Result<(), BridgeRuntimeError> {
         let finalized_after = self
             .indexer
@@ -614,10 +608,6 @@ impl FinalizedWitnessedRefundObserver {
                 Err(BridgeRuntimeError::MovingTip)
             };
         }
-        if !terminal_refund_found {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
-
         let descendant_count = finalized_after
             .checked_sub(finalized_before)
             .ok_or(BridgeRuntimeError::MovingTip)?;

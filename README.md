@@ -125,6 +125,17 @@ QtRO hosts, actor-real UI E2E, final gates, explicit owner sign-off, and the M6
 tag remain pending. Cross-restart receipt/state rollback anchoring remains
 documented production hardening, not an accepted-issue-#112 PoC gate.
 
+The first Refund attempts exposed a local liveness edge now fixed at the
+component boundary by
+[ADR 0138](docs/architecture/0138-pin-refund-snapshots-across-forward-finality.md).
+Generated local ZEC actors allow 30 seconds for the bridge instead of racing a
+measured roughly 9.8-second LEZ historical-account read at a 10-second outer
+deadline. Refund observations still return one explicitly pinned finalized
+clock; a forward finalized-height change is accepted only after bounded
+ID/hash, ancestry, and repeated-pin verification. The full 26-test refund
+observer suite is GREEN. A fresh actual-node service Refund certificate is
+still required before that happy path is claimed complete.
+
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ
 artifacts, and export their exact dynamic loopback endpoints, chain identities,
