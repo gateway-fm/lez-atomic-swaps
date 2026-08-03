@@ -41,4 +41,17 @@ handle_zcash_submission taker "$claim" || fail 'service claim fell through into 
 [[ "$lez_revealing_claim_seen" == 1 && "$lez_revealing_claim_submitter" == maker ]] ||
   fail 'service claim mutated prior LEZ-reveal evidence'
 
+required_markers=(
+  'm6_claim_generation:$generation'
+  'm6_zcash_claim_txid:$txid'
+  'm6-zebra-mempool-before-claim.json'
+  'm6-zebra-mempool-after-first-claim.json'
+  'm6-zebra-mempool-after-claim-replay.json'
+  'm6_claim_generation="$(jq -er'
+  '.m6_claim_generation | numbers'
+)
+for required in "${required_markers[@]}"; do
+  rg -Fq -- "$required" "$runner" || fail "runner is missing replay evidence propagation: ${required}"
+done
+
 printf '%s\n' 'M6 ZEC service runner contract passed'

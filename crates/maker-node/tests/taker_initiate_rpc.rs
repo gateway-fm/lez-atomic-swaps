@@ -39,9 +39,11 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
         BTreeSet::from([
             "taker_health",
             "taker_offer_list_v1",
+            "taker_swap_claim_v1",
             "taker_swap_initiate_v1",
             "taker_swap_list_v1",
             "taker_swap_monitor_v1",
+            "taker_swap_refund_v1",
         ])
     );
     let health: TakerHealthV1 = module
@@ -54,8 +56,8 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
     assert!(methods.initiate());
     assert!(methods.swap_list());
     assert!(methods.monitor());
-    assert!(!methods.claim());
-    assert!(!methods.refund());
+    assert!(methods.claim());
+    assert!(methods.refund());
 
     let mut mismatch = fixture.request("m6-initiation-mismatch-001");
     mismatch.signed_envelope_sha256[0] ^= 0xff;

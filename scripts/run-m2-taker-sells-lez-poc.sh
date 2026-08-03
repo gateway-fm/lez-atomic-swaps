@@ -1775,6 +1775,9 @@ drive_m6_taker() {
     if (( m6_claim_admitted == 0 )); then
       mempool_before="$(rpc "$ZEBRA_RPC_URL" \
         '{"jsonrpc":"2.0","id":"m6-before","method":"getrawmempool","params":[]}')"
+      printf '%s\n' "$mempool_before" \
+        >"${evidence_dir}/m6-zebra-mempool-before-claim.json"
+      chmod 0600 "${evidence_dir}/m6-zebra-mempool-before-claim.json"
       jq -e '.error == null and .result == []' <<<"$mempool_before" >/dev/null || {
         echo 'M6 claim requires an isolated empty Zebra mempool' >&2
         return 1
@@ -1782,17 +1785,35 @@ drive_m6_taker() {
       first_response="$(m6_service_rpc 'm6-claim-first' "$claim_request")"
       mempool_after_first="$(rpc "$ZEBRA_RPC_URL" \
         '{"jsonrpc":"2.0","id":"m6-after-first","method":"getrawmempool","params":[]}')"
+      printf '%s\n' "$first_response" \
+        >"${evidence_dir}/m6-taker-service-claim-first.json"
+      printf '%s\n' "$mempool_after_first" \
+        >"${evidence_dir}/m6-zebra-mempool-after-first-claim.json"
       replay_response="$(m6_service_rpc 'm6-claim-replay' "$claim_request")"
       mempool_after_replay="$(rpc "$ZEBRA_RPC_URL" \
         '{"jsonrpc":"2.0","id":"m6-after-replay","method":"getrawmempool","params":[]}')"
+      printf '%s\n' "$replay_response" \
+        >"${evidence_dir}/m6-taker-service-claim-replay.json"
+      printf '%s\n' "$mempool_after_replay" \
+        >"${evidence_dir}/m6-zebra-mempool-after-claim-replay.json"
+      chmod 0600 "${evidence_dir}/m6-taker-service-claim-first.json" \
+        "${evidence_dir}/m6-taker-service-claim-replay.json" \
+        "${evidence_dir}/m6-zebra-mempool-after-first-claim.json" \
+        "${evidence_dir}/m6-zebra-mempool-after-claim-replay.json"
       jq -e --arg swap "$m5_swap_id" --argjson generation "$generation" '
         .error == null and .result == {schema_version:1,swap_id:$swap,action:"claim",
           requested_after_generation:$generation,was_replay:false}
-      ' <<<"$first_response" >/dev/null
+      ' <<<"$first_response" >/dev/null || {
+        echo 'M6 first claim did not return its admitted action commit' >&2
+        return 1
+      }
       jq -e --arg swap "$m5_swap_id" --argjson generation "$generation" '
         .error == null and .result == {schema_version:1,swap_id:$swap,action:"claim",
           requested_after_generation:$generation,was_replay:true}
-      ' <<<"$replay_response" >/dev/null
+      ' <<<"$replay_response" >/dev/null || {
+        echo 'M6 exact claim replay did not return its durable action commit' >&2
+        return 1
+      }
       m6_zcash_claim_txid="$(jq -er '.result | arrays | select(length == 1) | .[0] | strings' \
         <<<"$mempool_after_first")"
       jq -e --arg txid "$m6_zcash_claim_txid" '
@@ -1810,7 +1831,10 @@ drive_m6_taker() {
           mempool_after_replay:$after_replay,claim_txid:$txid}
       ' >>"${evidence_dir}/m6-taker-service-claim.ndjson"
       m6_claim_admitted=1
-      jq -c '.result + {m6_first_claim:true}' <<<"$first_response"
+      jq -c --argjson generation "$generation" --arg txid "$m6_zcash_claim_txid" '
+        .result + {m6_first_claim:true,m6_claim_generation:$generation,
+          m6_zcash_claim_txid:$txid}
+      ' <<<"$first_response"
       return 0
     fi
 
@@ -2261,6 +2285,12 @@ while true; do
   remaining_budget_milliseconds "round-${round}-before" >/dev/null
 
   taker_output="$(drive_m5_taker "$round")"
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]] && \
+    jq -e '.m6_first_claim == true' <<<"$taker_output" >/dev/null; then
+    m6_claim_admitted=1
+    m6_claim_generation="$(jq -er '.m6_claim_generation | numbers' <<<"$taker_output")"
+    m6_zcash_claim_txid="$(jq -er '.m6_zcash_claim_txid | strings' <<<"$taker_output")"
+  fi
   handle_lez_revealing_claim taker "$taker_output"
   handle_zcash_submission taker "$taker_output"
 

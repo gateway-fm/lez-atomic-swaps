@@ -168,6 +168,73 @@ impl<R, S> ZebraRpcClaimPort<R, S> {
     }
 }
 
+impl<R, S> ZebraRpcClaimPort<R, S>
+where
+    R: ZebraRpc,
+{
+    async fn exact_submission_known_after_failed_send(
+        &self,
+        before: ZebraChainInfo,
+        transaction_id: TxId,
+        exact_submission: &[u8],
+    ) -> bool {
+        let Ok(Some(state)) = self.rpc.transaction_state(transaction_id).await else {
+            return false;
+        };
+        let (raw_transaction, confirmed) = match state {
+            ZebraTransactionState::Mempool { raw_transaction } => (raw_transaction, None),
+            ZebraTransactionState::Confirmed {
+                raw_transaction,
+                block_hash,
+                block_height,
+                confirmations,
+                in_active_chain,
+            } => (
+                raw_transaction,
+                Some((block_hash, block_height, confirmations, in_active_chain)),
+            ),
+        };
+        if raw_transaction != exact_submission {
+            return false;
+        }
+        if let Some((block_hash, block_height, _, in_active_chain)) = confirmed {
+            let Ok(canonical_block_hash) = self.rpc.block_hash(block_height).await else {
+                return false;
+            };
+            if !in_active_chain || canonical_block_hash != block_hash {
+                return false;
+            }
+        }
+        let Ok(after) = self.rpc.chain_info().await else {
+            return false;
+        };
+        if after.rpc_chain() != self.identity.rpc_chain()
+            || after.consensus_branch_id() != self.identity.consensus_branch_id()
+            || !same_tip(before, after)
+        {
+            return false;
+        }
+        let Ok(genesis) = self.rpc.block_hash(BlockHeight::from_u32(0)).await else {
+            return false;
+        };
+        if genesis != self.identity.genesis_hash() {
+            return false;
+        }
+        if let Some((_, block_height, confirmations, _)) = confirmed {
+            let Some(expected_confirmations) = u32::from(after.tip_height())
+                .checked_sub(u32::from(block_height))
+                .and_then(|depth| depth.checked_add(1))
+            else {
+                return false;
+            };
+            if confirmations != expected_confirmations {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// A fail-closed funding observation, claim validation, signing, or submission failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ZebraClaimError<RE, SE>
@@ -474,6 +541,16 @@ where
         {
             Ok(transaction_id) => transaction_id,
             Err(error) => {
+                if self
+                    .exact_submission_known_after_failed_send(
+                        before,
+                        transaction_id,
+                        prepared.exact_submission(),
+                    )
+                    .await
+                {
+                    return Ok(RefundSubmitOutcomeV1::Accepted);
+                }
                 return Ok(match R::classify_submission_failure(&error) {
                     ZebraSubmissionFailure::DefinitiveRejection => {
                         RefundSubmitOutcomeV1::DefinitivelyRejected
@@ -654,6 +731,16 @@ where
         {
             Ok(transaction_id) => transaction_id,
             Err(error) => {
+                if self
+                    .exact_submission_known_after_failed_send(
+                        before,
+                        transaction_id,
+                        prepared.exact_submission(),
+                    )
+                    .await
+                {
+                    return Ok(());
+                }
                 return Err(match R::classify_submission_failure(&error) {
                     ZebraSubmissionFailure::DefinitiveRejection => {
                         ZebraClaimError::SubmissionRejected(error)
@@ -3449,6 +3536,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_claim_broadcast_reconciles_exact_known_transaction() {
+        for confirmed in [false, true] {
+            let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
+            if confirmed {
+                set_confirmed_claim(&rpc, &prepared);
+            } else {
+                rpc.edit(|state| {
+                    state.calls.clear();
+                    state.transaction = Some(ZebraTransactionState::Mempool {
+                        raw_transaction: prepared.exact_submission().to_vec(),
+                    });
+                });
+            }
+            rpc.edit(|state| {
+                state.submissions.push_back(Err(FakeError::RpcCode(-27)));
+            });
+
+            port.submit_followup_claim(&fixture.agreement, &fixture.context, &prepared)
+                .await
+                .expect("the exact transaction is already known on the stable configured chain");
+            assert_exactly_one_send(&rpc, &prepared);
+            assert_eq!(
+                rpc.calls()
+                    .iter()
+                    .filter(|call| call.as_str() == "transaction_state")
+                    .count(),
+                1,
+                "one read-only reconciliation follows the failed send"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_claim_broadcast_never_reconciles_unstable_or_unbound_visibility() {
+        enum Mutation {
+            Bytes,
+            Tip,
+            Genesis,
+            Inactive,
+            Confirmations,
+        }
+
+        for mutation in [
+            Mutation::Bytes,
+            Mutation::Tip,
+            Mutation::Genesis,
+            Mutation::Inactive,
+            Mutation::Confirmations,
+        ] {
+            let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
+            rpc.edit(|state| {
+                state.calls.clear();
+                state.submissions.push_back(Err(FakeError::RpcCode(-27)));
+                match mutation {
+                    Mutation::Bytes => {
+                        state.transaction = Some(ZebraTransactionState::Mempool {
+                            raw_transaction: vec![0xff],
+                        });
+                    }
+                    Mutation::Tip => {
+                        state.transaction = Some(ZebraTransactionState::Mempool {
+                            raw_transaction: prepared.exact_submission().to_vec(),
+                        });
+                        let tip = canonical_tip();
+                        state.chain_info_overrides = VecDeque::from([
+                            Ok(tip),
+                            Ok(ZebraChainInfo::new(
+                                tip.rpc_chain(),
+                                BlockHeight::from_u32(TIP_HEIGHT + 1),
+                                BlockHash([0x44; 32]),
+                                tip.consensus_branch_id(),
+                            )),
+                        ]);
+                    }
+                    Mutation::Genesis => {
+                        state.transaction = Some(ZebraTransactionState::Mempool {
+                            raw_transaction: prepared.exact_submission().to_vec(),
+                        });
+                        state.block_hash_overrides = VecDeque::from([
+                            Ok(state.identity.genesis_hash()),
+                            Ok(BlockHash([0x99; 32])),
+                        ]);
+                    }
+                    Mutation::Inactive | Mutation::Confirmations => {
+                        state.transaction = Some(ZebraTransactionState::Confirmed {
+                            raw_transaction: prepared.exact_submission().to_vec(),
+                            block_hash: state.canonical_block,
+                            block_height: BlockHeight::from_u32(INCLUSION_HEIGHT),
+                            confirmations: if matches!(mutation, Mutation::Confirmations) {
+                                1
+                            } else {
+                                TIP_HEIGHT - INCLUSION_HEIGHT + 1
+                            },
+                            in_active_chain: !matches!(mutation, Mutation::Inactive),
+                        });
+                    }
+                }
+            });
+
+            assert!(matches!(
+                port.submit_followup_claim(&fixture.agreement, &fixture.context, &prepared)
+                    .await,
+                Err(ZebraClaimError::SubmissionOutcomeUnknown(
+                    FakeError::RpcCode(-27)
+                ))
+            ));
+            assert_exactly_one_send(&rpc, &prepared);
+        }
+    }
+
+    #[tokio::test]
     async fn counterparty_discovery_finds_exact_canonical_spend() {
         let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
         rpc.edit(|state| state.calls.clear());
@@ -4250,6 +4448,77 @@ mod tests {
             port.submit_refund(&fixture.agreement, &fixture.context, &prepared)
                 .await
                 .expect("moving post-submit tip is unknown"),
+            RefundSubmitOutcomeV1::Unknown,
+        );
+        assert_eq!(rpc.submitted(), [prepared.exact_submission().to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn failed_refund_broadcast_reconciles_exact_known_transaction() {
+        for confirmed in [false, true] {
+            let (fixture, rpc, port, prepared) =
+                prepared_refund_fixture(SwapDirection::TakerSellsForeign).await;
+            if confirmed {
+                set_confirmed_refund(&rpc, &prepared);
+            } else {
+                rpc.edit(|state| {
+                    state.calls.clear();
+                    state.transaction = Some(ZebraTransactionState::Mempool {
+                        raw_transaction: prepared.exact_submission().to_vec(),
+                    });
+                });
+            }
+            rpc.edit(|state| {
+                state.submissions.push_back(Err(FakeError::RpcCode(-27)));
+            });
+
+            assert_eq!(
+                port.submit_refund(&fixture.agreement, &fixture.context, &prepared)
+                    .await
+                    .expect("typed reconciled submission outcome"),
+                RefundSubmitOutcomeV1::Accepted,
+            );
+            assert_eq!(rpc.submitted(), [prepared.exact_submission().to_vec()]);
+            assert_eq!(
+                rpc.calls()
+                    .iter()
+                    .filter(|call| call.as_str() == "transaction_state")
+                    .count(),
+                1,
+                "one read-only reconciliation follows the failed send"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_refund_broadcast_does_not_reconcile_a_moving_tip() {
+        let (fixture, rpc, port, prepared) =
+            prepared_refund_fixture(SwapDirection::TakerSellsForeign).await;
+        rpc.edit(|state| {
+            state.calls.clear();
+            state.transaction = Some(ZebraTransactionState::Mempool {
+                raw_transaction: prepared.exact_submission().to_vec(),
+            });
+            state.submissions.push_back(Err(FakeError::RpcCode(-27)));
+            let before = ZebraChainInfo::new(
+                ZebraRpcChain::Test,
+                BlockHeight::from_u32(REFUND_TIP_HEIGHT),
+                BlockHash([REFUND_TIP_HASH_BYTE; 32]),
+                BranchId::Nu6_2,
+            );
+            let after = ZebraChainInfo::new(
+                ZebraRpcChain::Test,
+                BlockHeight::from_u32(REFUND_TIP_HEIGHT + 1),
+                BlockHash([NEXT_REFUND_TIP_HASH_BYTE; 32]),
+                BranchId::Nu6_2,
+            );
+            state.chain_info_overrides = VecDeque::from([Ok(before), Ok(after)]);
+        });
+
+        assert_eq!(
+            port.submit_refund(&fixture.agreement, &fixture.context, &prepared)
+                .await
+                .expect("unstable duplicate remains a typed unknown outcome"),
             RefundSubmitOutcomeV1::Unknown,
         );
         assert_eq!(rpc.submitted(), [prepared.exact_submission().to_vec()]);

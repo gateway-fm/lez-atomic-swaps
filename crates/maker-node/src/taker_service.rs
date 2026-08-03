@@ -241,7 +241,10 @@ async fn terminal_action(
     )
     .await?;
     if let Some(admission) = replay {
-        execute_terminal_actor_command(&config, &held_lock, action).await?;
+        if replay_actor_effect_is_required(&config, &held_lock, action, expected_generation).await?
+        {
+            execute_terminal_actor_command(&config, &held_lock, action).await?;
+        }
         revalidate_action_custody(&prepared, receipt_binding, &config, &held_lock).await?;
         return Ok(action_commit(&admission));
     }
@@ -404,6 +407,50 @@ async fn revalidate_action_custody(
     held_lock
         .validate_for_state(config.swap_id(), config.role_state_db())
         .map_err(|_| ActionError::DependencyUnavailable)
+}
+
+async fn replay_actor_effect_is_required(
+    config: &ActorConfig,
+    held_lock: &MakerActorHeldLock,
+    action: TakerTerminalActionV1,
+    expected_generation: u64,
+) -> Result<bool, ActionError> {
+    let output = execute_actor_command(config, ActorCommand::Status)
+        .await
+        .map_err(|_| ActionError::DependencyUnavailable)?;
+    held_lock
+        .validate_for_state(config.swap_id(), config.role_state_db())
+        .map_err(|_| ActionError::DependencyUnavailable)?;
+    let ActorCommandOutputV1::Status(status) = output else {
+        return Err(ActionError::DependencyUnavailable);
+    };
+    replay_actor_effect_required(status.projection(), expected_generation, action)
+}
+
+fn replay_actor_effect_required(
+    status: ActorStatusProjectionV1,
+    expected_generation: u64,
+    action: TakerTerminalActionV1,
+) -> Result<bool, ActionError> {
+    let ActorStatusProjectionV1::Active {
+        phase,
+        revision,
+        next_action,
+    } = status
+    else {
+        return Err(ActionError::DependencyUnavailable);
+    };
+    if revision > expected_generation {
+        return Ok(false);
+    }
+    if revision < expected_generation {
+        return Err(ActionError::ProgressChanged);
+    }
+    let (_, available_action, _) = normalized_actor_progress(phase, next_action);
+    if available_action != Some(action) {
+        return Err(ActionError::Unavailable);
+    }
+    Ok(true)
 }
 
 async fn lookup_action_replay(
@@ -891,6 +938,37 @@ mod tests {
                 None,
                 Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
             )
+        );
+    }
+
+    #[test]
+    fn exact_action_replay_only_reenters_an_unadvanced_matching_effect() {
+        let claim_available = ActorStatusProjectionV1::Active {
+            phase: Phase::ClaimEvidenceAvailable,
+            revision: 3,
+            next_action: ZecLifecycleAction::ClaimZcash,
+        };
+        assert!(
+            replay_actor_effect_required(claim_available, 3, TakerTerminalActionV1::Claim,)
+                .unwrap()
+        );
+
+        let completed = ActorStatusProjectionV1::Active {
+            phase: Phase::Completed,
+            revision: 4,
+            next_action: ZecLifecycleAction::Complete,
+        };
+        assert!(
+            !replay_actor_effect_required(completed, 3, TakerTerminalActionV1::Claim,).unwrap()
+        );
+
+        assert!(
+            replay_actor_effect_required(
+                ActorStatusProjectionV1::NotActivated,
+                3,
+                TakerTerminalActionV1::Claim,
+            )
+            .is_err()
         );
     }
 }
