@@ -12,7 +12,7 @@ use std::{
 use crate::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, RunLocalDelivery, ZecChatCompleteRequestV1,
     ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_chat_rpc,
-    secure_file::{load_raw_secret, read_private_file},
+    secure_file::{load_raw_secret, read_private_file, read_private_file_snapshot},
 };
 use anyhow::{Context as _, ensure};
 use lez_bridge_protocol::RequestId;
@@ -441,10 +441,21 @@ pub(crate) fn load_taker_actor_from_receipt_for_monitor(
     path: &Path,
     expected_actor_root: &Path,
     expected_swap_id: &SwapId,
+    expected_sha256: [u8; 32],
+    expected_device: u64,
+    expected_inode: u64,
 ) -> anyhow::Result<ActorConfig> {
-    let bytes = read_private_file(path, MAX_TAKER_RECEIPT_BYTES, "Taker acceptance receipt")?;
+    let snapshot =
+        read_private_file_snapshot(path, MAX_TAKER_RECEIPT_BYTES, "Taker acceptance receipt")?;
+    let identity = snapshot.identity();
+    ensure!(
+        Sha256::digest(snapshot.bytes()).as_slice() == expected_sha256
+            && identity.device() == expected_device
+            && identity.inode() == expected_inode,
+        "Taker acceptance receipt identity changed"
+    );
     let receipt: ZecAcceptanceReceiptV1 =
-        serde_json::from_slice(&bytes).context("decode Taker acceptance receipt")?;
+        serde_json::from_slice(snapshot.bytes()).context("decode Taker acceptance receipt")?;
     ensure!(
         receipt.swap_id.as_ref() == expected_swap_id.as_str()
             && receipt.actor_config_file.starts_with(expected_actor_root)
@@ -453,7 +464,7 @@ pub(crate) fn load_taker_actor_from_receipt_for_monitor(
                 .starts_with(expected_actor_root),
         "Taker acceptance receipt does not match service authority"
     );
-    let config = load_taker_actor_from_receipt_bytes(path, &bytes)?;
+    let config = load_taker_actor_from_receipt_bytes(path, snapshot.bytes())?;
     ensure!(
         config.swap_id() == expected_swap_id
             && config.role_state_db().starts_with(expected_actor_root)

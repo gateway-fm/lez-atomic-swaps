@@ -217,7 +217,7 @@ async fn project_swap(
 ) -> Result<TakerSwapViewV1, MonitoringError> {
     let lookup = Arc::clone(initiation);
     let swap_id = swap_id.clone();
-    let (prepared, facts) = tokio::task::spawn_blocking(move || {
+    let (prepared, facts, receipt_binding) = tokio::task::spawn_blocking(move || {
         let mut context = lookup
             .lock()
             .map_err(|_| MonitoringError::RegistryUnavailable)?;
@@ -233,7 +233,8 @@ async fn project_swap(
         if &facts != prepared.facts() {
             return Err(MonitoringError::RegistryUnavailable);
         }
-        Ok::<_, MonitoringError>((prepared, facts))
+        let receipt_binding = prepared.execution().receipt_binding();
+        Ok::<_, MonitoringError>((prepared, facts, receipt_binding))
     })
     .await
     .map_err(|_| MonitoringError::RegistryUnavailable)??;
@@ -243,24 +244,44 @@ async fn project_swap(
             Ok(commit_from_facts(&facts, false, TakerSwapStateV1::Initiating).swap)
         }
         Err(_) => Err(MonitoringError::DependencyUnavailable),
-        Ok(_) => project_receipt_bound_swap(&prepared, &facts).await,
+        Ok(_) => {
+            let receipt_binding = receipt_binding.ok_or(MonitoringError::DependencyUnavailable)?;
+            project_receipt_bound_swap(&prepared, &facts, receipt_binding).await
+        }
     }
 }
 
 async fn project_receipt_bound_swap(
     prepared: &PreparedZecTakerInitiationV1,
     facts: &TakerInitiationFactsV1,
+    receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
 ) -> Result<TakerSwapViewV1, MonitoringError> {
     let receipt = prepared.execution().receipt_output().to_path_buf();
     let actor_root = prepared.execution().actor_root().to_path_buf();
     let swap_id = prepared.swap_id().clone();
+    let receipt_sha256 = receipt_binding.sha256();
+    let receipt_identity = receipt_binding.identity();
     let (config, held_lock) = tokio::task::spawn_blocking(move || {
-        let before = load_taker_actor_from_receipt_for_monitor(&receipt, &actor_root, &swap_id)
-            .map_err(|_| MonitoringError::DependencyUnavailable)?;
+        let before = load_taker_actor_from_receipt_for_monitor(
+            &receipt,
+            &actor_root,
+            &swap_id,
+            receipt_sha256,
+            receipt_identity.device(),
+            receipt_identity.inode(),
+        )
+        .map_err(|_| MonitoringError::DependencyUnavailable)?;
         let held_lock = MakerActorHeldLock::acquire_for(before.swap_id(), before.role_state_db())
             .map_err(|_| MonitoringError::DependencyUnavailable)?;
-        let config = load_taker_actor_from_receipt_for_monitor(&receipt, &actor_root, &swap_id)
-            .map_err(|_| MonitoringError::DependencyUnavailable)?;
+        let config = load_taker_actor_from_receipt_for_monitor(
+            &receipt,
+            &actor_root,
+            &swap_id,
+            receipt_sha256,
+            receipt_identity.device(),
+            receipt_identity.inode(),
+        )
+        .map_err(|_| MonitoringError::DependencyUnavailable)?;
         if before.swap_id() != config.swap_id()
             || before.role_state_db() != config.role_state_db()
             || before.bridge_journal_db() != config.bridge_journal_db()
@@ -333,15 +354,11 @@ fn normalized_actor_progress(
         Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations => {
             (TakerSwapStateV1::AwaitingSecondLock, None, None)
         }
-        Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable
-            if next_action == ZecLifecycleAction::ClaimZcash =>
-        {
-            (
-                TakerSwapStateV1::ClaimAvailable,
-                Some(TakerTerminalActionV1::Claim),
-                None,
-            )
-        }
+        Phase::ClaimEvidenceAvailable if next_action == ZecLifecycleAction::ClaimZcash => (
+            TakerSwapStateV1::ClaimAvailable,
+            Some(TakerTerminalActionV1::Claim),
+            None,
+        ),
         Phase::BothLegsLocked => (TakerSwapStateV1::BothLegsLocked, None, None),
         Phase::Completed => (
             TakerSwapStateV1::Completed,
@@ -349,21 +366,53 @@ fn normalized_actor_progress(
             Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
         ),
         Phase::Refunded => (TakerSwapStateV1::Refunded, None, None),
-        Phase::MakerLegRefunded | Phase::TakerLegRefunded | Phase::MakerRecoveryAvailable
-            if next_action == ZecLifecycleAction::RefundZcash =>
-        {
-            (
-                TakerSwapStateV1::RefundAvailable,
-                Some(TakerTerminalActionV1::Refund),
-                None,
-            )
-        }
         Phase::TakerLockReorged
         | Phase::MakerLockReorged
         | Phase::ClaimEvidenceAvailable
         | Phase::MakerLegRefunded
         | Phase::TakerLegRefunded
         | Phase::MakerRecoveryAvailable => (TakerSwapStateV1::AttentionRequired, None, None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{TakerPrivacyGuidanceV1, TakerTerminalActionV1};
+
+    #[test]
+    fn zec_taker_projection_advertises_only_the_role_valid_followup_claim() {
+        assert_eq!(
+            normalized_actor_progress(Phase::Offered, ZecLifecycleAction::CreateAndFundLez),
+            (TakerSwapStateV1::AwaitingFirstLock, None, None)
+        );
+        assert_eq!(
+            normalized_actor_progress(Phase::BothLegsLocked, ZecLifecycleAction::Wait),
+            (TakerSwapStateV1::BothLegsLocked, None, None)
+        );
+        assert_eq!(
+            normalized_actor_progress(
+                Phase::ClaimEvidenceAvailable,
+                ZecLifecycleAction::ClaimZcash,
+            ),
+            (
+                TakerSwapStateV1::ClaimAvailable,
+                Some(TakerTerminalActionV1::Claim),
+                None,
+            )
+        );
+        assert_eq!(
+            normalized_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::RefundZcash,),
+            (TakerSwapStateV1::AttentionRequired, None, None)
+        );
+        assert_eq!(
+            normalized_actor_progress(Phase::Completed, ZecLifecycleAction::Complete),
+            (
+                TakerSwapStateV1::Completed,
+                None,
+                Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
+            )
+        );
     }
 }
 
@@ -434,6 +483,7 @@ async fn initiate(
         .await?;
         let state = if execution_enabled || receipt_present {
             execute_prepared_zec(&prepared, admitted_at).await?;
+            bind_prepared_receipt(&initiation, prepared.swap_id()).await?;
             TakerSwapStateV1::NotActivated
         } else {
             TakerSwapStateV1::Initiating
@@ -506,6 +556,7 @@ async fn initiate(
     .map_err(|_| InitiationError::Internal)??;
     let progress = if execution_enabled {
         execute_prepared_zec(&prepared, now).await?;
+        bind_prepared_receipt(&initiation, prepared.swap_id()).await?;
         TakerSwapStateV1::NotActivated
     } else {
         TakerSwapStateV1::Initiating
@@ -588,6 +639,23 @@ async fn prepared_execution_for_offer(
             Err(_) => return Err(InitiationError::ExecutionUnavailable),
         };
         Ok((prepared, execution_enabled, receipt_present))
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)?
+}
+
+async fn bind_prepared_receipt(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    swap_id: &SwapId,
+) -> Result<(), InitiationError> {
+    let context = Arc::clone(initiation);
+    let swap_id = swap_id.clone();
+    tokio::task::spawn_blocking(move || {
+        context
+            .lock()
+            .map_err(|_| InitiationError::Internal)?
+            .bind_prepared_zec_receipt(&swap_id)
+            .map_err(|()| InitiationError::ExecutionUnavailable)
     })
     .await
     .map_err(|_| InitiationError::Internal)?

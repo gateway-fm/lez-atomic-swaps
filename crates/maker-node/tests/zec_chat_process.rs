@@ -29,9 +29,9 @@ use lez_maker_node::{
 use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    LocalPriceV1, MakerActorKindV1, MakerActorScheduleState, MakerOfferId, MakerOfferStatus,
-    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationStatus,
-    SqliteSwapStore, SqliteTakerFacadeStore, maker_zec_chat_session_id,
+    LocalPriceV1, MakerActorHeldLock, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
+    MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
+    MakerZecNegotiationStatus, SqliteSwapStore, SqliteTakerFacadeStore, maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
@@ -55,6 +55,7 @@ use zcash_transparent::address::TransparentAddress;
 
 use zec_reference_actor::{ActorConfig, ActorRole};
 const CLAIM_PREIMAGE: [u8; 32] = [0x44; 32];
+const TAKER_DEPENDENCY_UNAVAILABLE: i64 = -32_010;
 const TAKER_SWAP_NOT_FOUND: i64 = -32_014;
 
 #[tokio::test]
@@ -337,6 +338,68 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         }]),
     )
     .await;
+    let canonical_artifacts =
+        ServiceAcceptanceArtifacts::capture(&taker_files).expect("canonical acceptance artifacts");
+    let original_receipt = taker_files
+        .receipt
+        .with_file_name("acceptance-receipt.original");
+    fs::rename(&taker_files.receipt, &original_receipt).unwrap();
+    write_private(&taker_files.receipt, &canonical_artifacts.receipt_bytes);
+    let replacement_before =
+        ServiceAcceptanceArtifacts::capture(&taker_files).expect("replacement receipt artifacts");
+    assert_ne!(
+        replacement_before.receipt_inode, canonical_artifacts.receipt_inode,
+        "same-byte replacement must use a distinct receipt inode"
+    );
+    assert_eq!(
+        replacement_before.receipt_bytes, canonical_artifacts.receipt_bytes,
+        "receipt replacement must preserve the exact accepted bytes"
+    );
+    let replaced_receipt_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let replacement_after = ServiceAcceptanceArtifacts::capture(&taker_files)
+        .expect("post-monitor replacement artifacts");
+    fs::remove_file(&taker_files.receipt).unwrap();
+    fs::rename(&original_receipt, &taker_files.receipt).unwrap();
+    let restored_artifacts =
+        ServiceAcceptanceArtifacts::capture(&taker_files).expect("restored acceptance artifacts");
+
+    let monitor_config = ActorConfig::load_private(&canonical_artifacts.config_path).unwrap();
+    let actor_lock =
+        MakerActorHeldLock::acquire_for(monitor_config.swap_id(), monitor_config.role_state_db())
+            .unwrap();
+    let locked_actor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let locked_artifacts =
+        ServiceAcceptanceArtifacts::capture(&taker_files).expect("locked monitor artifacts");
+    drop(actor_lock);
+    let recovered_monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let recovered_artifacts =
+        ServiceAcceptanceArtifacts::capture(&taker_files).expect("recovered monitor artifacts");
+    let monitor_effects_absent =
+        !monitor_config.role_state_db().exists() && !monitor_config.bridge_journal_db().exists();
     let post_read_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files);
     drop(replay_module);
     fs::rename(&offline_chat, &chat_socket).unwrap();
@@ -387,6 +450,17 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
             "swap_not_found",
         );
     }
+    for response in [&replaced_receipt_response, &locked_actor_response] {
+        assert_service_rpc_error(
+            response,
+            TAKER_DEPENDENCY_UNAVAILABLE,
+            "Taker dependency unavailable",
+            "taker_monitor_unavailable",
+        );
+    }
+    let recovered_monitor: TakerSwapViewV1 =
+        serde_json::from_value(recovered_monitor_response["result"].clone()).unwrap();
+    assert_eq!(recovered_monitor, first.swap);
     assert_service_responses_redacted(
         [
             &health_response,
@@ -399,16 +473,34 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         &reservation_id,
         &taker_files,
     );
+    assert_service_responses_redacted(
+        [
+            &replaced_receipt_response,
+            &locked_actor_response,
+            &recovered_monitor_response,
+        ],
+        run.path(),
+        &reservation_id,
+        &taker_files,
+    );
 
     let first_artifacts = first_artifacts.expect("service must provision Taker actor and receipt");
     let replay_artifacts =
         replay_artifacts.expect("receipt-bound replay must retain Taker artifacts");
     assert_eq!(replay_artifacts, first_artifacts);
+    assert_eq!(replacement_after, replacement_before);
+    assert_eq!(restored_artifacts, first_artifacts);
+    assert_eq!(locked_artifacts, first_artifacts);
+    assert_eq!(recovered_artifacts, first_artifacts);
     assert_eq!(
         post_read_artifacts.expect("read RPCs must retain Taker artifacts"),
         first_artifacts,
     );
     assert_private_receipt(&taker_files.receipt);
+    assert!(
+        monitor_effects_absent,
+        "failed and recovered monitors must not create Taker chain effects"
+    );
 
     let taker_config = ActorConfig::load_private(&first_artifacts.config_path).unwrap();
     assert_eq!(taker_config.role(), ActorRole::Taker);

@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt,
+    fmt, fs,
     os::unix::fs::{FileTypeExt as _, MetadataExt as _},
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -24,7 +24,7 @@ use crate::{
     AuthenticatedOfferRefV1, MAX_TAKER_DELIVERY_SOURCES_V1, MAX_TAKER_OFFER_RESULTS_V1,
     RunLocalDelivery, TakerDependencyProbe, TakerFacadeBackend, TakerMakerIdentityV1,
     TakerTrustedTimeSource,
-    secure_file::{PrivateFileSnapshot, read_private_file_snapshot},
+    secure_file::{PrivateFileIdentity, PrivateFileSnapshot, read_private_file_snapshot},
 };
 
 const MAXIMUM_STARTUP_CONFIGURATION_BYTES: u64 = 512 * 1024;
@@ -32,6 +32,7 @@ const STARTUP_SCHEMA_VERSION: u16 = 1;
 
 const MAX_PREPARED_ZEC_INITIATIONS: usize = 256;
 const MAX_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
+const MAX_PREPARED_RECEIPT_BYTES: u64 = 16 * 1024;
 const MAX_SIGNING_KEY_BYTES: u64 = 32;
 const MAX_SOURCE_ID_BYTES: usize = 128;
 
@@ -193,6 +194,26 @@ impl ConfiguredTakerInitiationContext {
             .find(|prepared| prepared.swap_id() == swap_id)
     }
 
+    /// Captures or revalidates the completed receipt for this process incarnation.
+    pub(crate) fn bind_prepared_zec_receipt(&mut self, swap_id: &SwapId) -> Result<(), ()> {
+        let prepared = self
+            .prepared_zec_by_offer
+            .values_mut()
+            .find(|prepared| prepared.swap_id() == swap_id)
+            .ok_or(())?;
+        let binding =
+            load_required_receipt_binding(prepared.execution.receipt_output()).map_err(|_| ())?;
+        if prepared
+            .execution
+            .receipt_binding
+            .is_some_and(|expected| expected != binding)
+        {
+            return Err(());
+        }
+        prepared.execution.receipt_binding = Some(binding);
+        Ok(())
+    }
+
     /// Mutably borrows the already-existing standalone registry.
     #[must_use]
     pub const fn registry_mut(&mut self) -> &mut SqliteTakerFacadeStore {
@@ -272,6 +293,23 @@ impl fmt::Debug for PreparedZecTakerInitiationV1 {
     }
 }
 
+/// Process-incarnation binding for one completed prepared receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedReceiptBindingV1 {
+    sha256: [u8; 32],
+    identity: PrivateFileIdentity,
+}
+
+impl PreparedReceiptBindingV1 {
+    pub(crate) const fn sha256(self) -> [u8; 32] {
+        self.sha256
+    }
+
+    pub(crate) const fn identity(self) -> PrivateFileIdentity {
+        self.identity
+    }
+}
+
 /// Cloneable, execution-ready ZEC input retained inside the owner process.
 ///
 /// Its public surface is intentionally opaque: only the service executor in
@@ -291,6 +329,7 @@ pub struct PreparedZecExecutionV1 {
     agreement_output: PathBuf,
     actor_root: PathBuf,
     receipt_output: PathBuf,
+    receipt_binding: Option<PreparedReceiptBindingV1>,
 }
 
 #[allow(dead_code)]
@@ -341,6 +380,10 @@ impl PreparedZecExecutionV1 {
 
     pub(crate) fn receipt_output(&self) -> &Path {
         &self.receipt_output
+    }
+
+    pub(crate) const fn receipt_binding(&self) -> Option<PreparedReceiptBindingV1> {
+        self.receipt_binding
     }
 }
 
@@ -649,6 +692,7 @@ fn build_initiation_context(
             agreement_output: configured.agreement_output.clone(),
             actor_root: configured.actor_root.clone(),
             receipt_output: configured.receipt_output.clone(),
+            receipt_binding: load_optional_receipt_binding(&configured.receipt_output)?,
         };
         let entry = PreparedZecTakerInitiationV1 {
             facts,
@@ -668,6 +712,31 @@ fn build_initiation_context(
         execute_prepared_zec: configuration.execute_prepared_zec,
         registry,
         prepared_zec_by_offer,
+    })
+}
+
+fn load_optional_receipt_binding(
+    path: &Path,
+) -> Result<Option<PreparedReceiptBindingV1>, TakerServiceStartupError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => load_required_receipt_binding(path).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(TakerServiceStartupError::InitiationUnavailable),
+    }
+}
+
+fn load_required_receipt_binding(
+    path: &Path,
+) -> Result<PreparedReceiptBindingV1, TakerServiceStartupError> {
+    let snapshot = read_private_file_snapshot(
+        path,
+        MAX_PREPARED_RECEIPT_BYTES,
+        "prepared Taker acceptance receipt",
+    )
+    .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?;
+    Ok(PreparedReceiptBindingV1 {
+        sha256: Sha256::digest(snapshot.bytes()).into(),
+        identity: snapshot.identity(),
     })
 }
 
