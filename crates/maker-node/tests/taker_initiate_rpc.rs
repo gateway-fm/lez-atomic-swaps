@@ -40,6 +40,8 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
             "taker_health",
             "taker_offer_list_v1",
             "taker_swap_initiate_v1",
+            "taker_swap_list_v1",
+            "taker_swap_monitor_v1",
         ])
     );
     let health: TakerHealthV1 = module
@@ -50,8 +52,8 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
     assert!(methods.health());
     assert!(methods.offer_list());
     assert!(methods.initiate());
-    assert!(!methods.swap_list());
-    assert!(!methods.monitor());
+    assert!(methods.swap_list());
+    assert!(methods.monitor());
     assert!(!methods.claim());
     assert!(!methods.refund());
 

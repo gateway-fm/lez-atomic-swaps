@@ -3,6 +3,7 @@
 mod support;
 
 use std::{
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::{Read as _, Write as _},
     os::unix::fs::{
@@ -15,14 +16,17 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use jsonrpsee::RpcModule;
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, ListRequest, LocalPriceSetRequest,
-    PairConfigureRequest, RunLocalDelivery, TakerInitiationCommitV1, TakerMakerIdentityV1,
-    TakerSwapInitiateRequestV1, TakerSwapStateV1, ZecChatProposalV1, ZecChatProposeRequestV1,
-    call_local_rpc, load_taker_service_context, taker_service_rpc_module,
+    PairConfigureRequest, RunLocalDelivery, TakerHealthRequestV1, TakerHealthV1,
+    TakerInitiationCommitV1, TakerMakerIdentityV1, TakerSwapInitiateRequestV1,
+    TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1, TakerSwapStateV1,
+    TakerSwapViewV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
+    load_taker_service_context, taker_service_rpc_module,
 };
-use lez_swap_core::{Pair, SwapDirection};
+use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
     LocalPriceV1, MakerActorKindV1, MakerActorScheduleState, MakerOfferId, MakerOfferStatus,
@@ -51,6 +55,7 @@ use zcash_transparent::address::TransparentAddress;
 
 use zec_reference_actor::{ActorConfig, ActorRole};
 const CLAIM_PREIMAGE: [u8; 32] = [0x44; 32];
+const TAKER_SWAP_NOT_FOUND: i64 = -32_014;
 
 #[tokio::test]
 async fn separate_taker_countersigns_and_maker_atomically_accepts_before_response() {
@@ -289,6 +294,50 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         .await
         .expect("durable receipt replay must not use Delivery or Chat");
     let replay_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files);
+    let registered = replay_module
+        .method_names()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    let health_response = service_rpc_response(
+        &replay_module,
+        "taker_health",
+        json!([TakerHealthRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    let list_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_list_v1",
+        json!([TakerSwapListRequestV1 { schema_version: 1 }]),
+    )
+    .await;
+    let monitor_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m5-chat-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let unknown_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m6-service-unknown-swap-001").unwrap(),
+        }]),
+    )
+    .await;
+    let mismatched_response = service_rpc_response(
+        &replay_module,
+        "taker_swap_monitor_v1",
+        json!([TakerSwapMonitorRequestV1 {
+            schema_version: 1,
+            swap_id: SwapId::new(offer_id.as_str()).unwrap(),
+        }]),
+    )
+    .await;
+    let post_read_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files);
     drop(replay_module);
     fs::rename(&offline_chat, &chat_socket).unwrap();
     stop_daemon_gracefully(&mut daemon, &daemon_paths);
@@ -300,10 +349,65 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     assert!(replay.was_replay);
     assert_eq!(replay.swap, first.swap);
 
+    assert_eq!(registered.len(), 5, "registered methods: {registered:?}");
+    for method in [
+        "taker_health",
+        "taker_offer_list_v1",
+        "taker_swap_list_v1",
+        "taker_swap_initiate_v1",
+        "taker_swap_monitor_v1",
+    ] {
+        assert!(
+            registered.contains(method),
+            "missing registered method {method}"
+        );
+    }
+    let health: TakerHealthV1 = serde_json::from_value(health_response["result"].clone()).unwrap();
+    let methods = health.registered_methods();
+    assert!(methods.swap_list());
+    assert!(methods.monitor());
+    assert!(!methods.claim());
+    assert!(!methods.refund());
+
+    let listed: TakerSwapListV1 = serde_json::from_value(list_response["result"].clone()).unwrap();
+    assert_eq!(listed.schema_version, 1);
+    assert_eq!(listed.swaps, vec![first.swap.clone()]);
+    let monitored: TakerSwapViewV1 =
+        serde_json::from_value(monitor_response["result"].clone()).unwrap();
+    assert_eq!(monitored, first.swap);
+    assert_eq!(monitored.state, TakerSwapStateV1::NotActivated);
+    assert_eq!(monitored.progress_generation, 0);
+    assert_eq!(monitored.available_action, None);
+    assert_eq!(monitored.privacy_guidance, None);
+    for response in [&unknown_response, &mismatched_response] {
+        assert_service_rpc_error(
+            response,
+            TAKER_SWAP_NOT_FOUND,
+            "Taker swap not found",
+            "swap_not_found",
+        );
+    }
+    assert_service_responses_redacted(
+        [
+            &health_response,
+            &list_response,
+            &monitor_response,
+            &unknown_response,
+            &mismatched_response,
+        ],
+        run.path(),
+        &reservation_id,
+        &taker_files,
+    );
+
     let first_artifacts = first_artifacts.expect("service must provision Taker actor and receipt");
     let replay_artifacts =
         replay_artifacts.expect("receipt-bound replay must retain Taker artifacts");
     assert_eq!(replay_artifacts, first_artifacts);
+    assert_eq!(
+        post_read_artifacts.expect("read RPCs must retain Taker artifacts"),
+        first_artifacts,
+    );
     assert_private_receipt(&taker_files.receipt);
 
     let taker_config = ActorConfig::load_private(&first_artifacts.config_path).unwrap();
@@ -385,6 +489,53 @@ fn service_digest_binding(path: &Path) -> Value {
         "path": path,
         "sha256": hex::encode(Sha256::digest(fs::read(path).unwrap())),
     })
+}
+
+async fn service_rpc_response(module: &RpcModule<()>, method: &str, params: Value) -> Value {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 17,
+        "method": method,
+        "params": params,
+    });
+    let (response, _) = module
+        .raw_json_request(&request.to_string(), 1)
+        .await
+        .unwrap();
+    serde_json::from_str(response.get()).unwrap()
+}
+
+fn assert_service_rpc_error(response: &Value, code: i64, message: &str, category: &str) {
+    assert_eq!(response["error"]["code"], code, "{response}");
+    assert_eq!(response["error"]["message"], message, "{response}");
+    assert_eq!(
+        response["error"]["data"]["category"], category,
+        "{response}"
+    );
+}
+
+fn assert_service_responses_redacted<const N: usize>(
+    responses: [&Value; N],
+    run_root: &Path,
+    reservation_id: &RequestId,
+    files: &TakerFiles,
+) {
+    let private_markers = [
+        run_root.display().to_string(),
+        reservation_id.as_str().to_owned(),
+        files.draft.display().to_string(),
+        files.key.display().to_string(),
+        files.source_actor_config.display().to_string(),
+        files.agreement.display().to_string(),
+        files.actor_root.display().to_string(),
+        files.receipt.display().to_string(),
+    ];
+    for response in responses {
+        let wire = response.to_string();
+        for marker in &private_markers {
+            assert!(!wire.contains(marker), "private marker leaked in {wire}");
+        }
+    }
 }
 
 async fn prepare_live_offer(

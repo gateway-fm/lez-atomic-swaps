@@ -17,8 +17,8 @@ mod secure_file;
 mod test_crash_hook;
 
 pub use command::{
-    ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusV1,
-    execute_actor_command,
+    ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusProjectionV1,
+    ActorStatusV1, execute_actor_command,
 };
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,

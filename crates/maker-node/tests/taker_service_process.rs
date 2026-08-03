@@ -136,8 +136,8 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
     assert!(methods.health());
     assert!(methods.offer_list());
     assert!(methods.initiate());
-    assert!(!methods.swap_list());
-    assert!(!methods.monitor());
+    assert!(methods.swap_list());
+    assert!(methods.monitor());
     assert!(!methods.claim());
     assert!(!methods.refund());
 

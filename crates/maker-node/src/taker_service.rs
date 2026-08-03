@@ -7,18 +7,29 @@ use std::{
 
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
-use lez_swap_store::{TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1};
+use lez_swap_core::{Phase, SwapId};
+use lez_swap_store::{
+    MakerActorHeldLock, TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1,
+};
+use lez_zec_swap_sdk::ZecLifecycleAction;
 use secp256k1::PublicKey;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
-use zec_reference_actor::{ActorConfig, ActorRole};
+use zec_reference_actor::{
+    ActorCommand, ActorCommandOutputV1, ActorConfig, ActorRole, ActorStatusProjectionV1,
+    execute_actor_command,
+};
 
 use crate::{
     ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
     PreparedZecTakerInitiationV1, TakerBackendError, TakerHealthRequestV1, TakerInitiationCommitV1,
-    TakerOfferListRequestV1, TakerSwapInitiateRequestV1, TakerSwapStateV1, TakerSwapViewV1,
+    TakerOfferListRequestV1, TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1,
+    TakerSwapMonitorRequestV1, TakerSwapStateV1, TakerSwapViewV1,
     secure_file::read_private_file_snapshot,
-    zec_taker_accept::{ZecTakeInput, take_zec_with_authenticated_offer_and_actor_config},
+    zec_taker_accept::{
+        ZecTakeInput, load_taker_actor_from_receipt_for_monitor,
+        take_zec_with_authenticated_offer_and_actor_config,
+    },
 };
 
 const INVALID_PARAMS_CODE: i32 = -32_602;
@@ -27,6 +38,8 @@ const DEPENDENCY_UNAVAILABLE_CODE: i32 = -32_010;
 const RESULT_LIMIT_EXCEEDED_CODE: i32 = -32_011;
 const AUTHENTICATED_OFFER_CONFLICT_CODE: i32 = -32_012;
 const INITIATION_CONFLICT_CODE: i32 = -32_013;
+const SWAP_NOT_FOUND_CODE: i32 = -32_014;
+const MAXIMUM_MONITORED_SWAPS: usize = 256;
 const MAXIMUM_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const SIGNING_KEY_BYTES: u64 = 32;
 
@@ -37,9 +50,9 @@ struct TakerServiceState {
 
 /// Builds the exact JSON-RPC module enabled by one validated service context.
 ///
-/// Health and authenticated offer listing are always registered. Initiation is
-/// registered only when the owner supplied a validated prepared authority and
-/// existing registry; no lifecycle or terminal-effect method is implied.
+/// Health and authenticated offer listing are always registered. A validated
+/// prepared catalog plus existing registry also registers initiation and the
+/// receipt-bound list/monitor methods. Terminal-effect methods remain absent.
 ///
 /// # Errors
 ///
@@ -91,6 +104,32 @@ pub fn taker_service_rpc_module(
     })?;
 
     if state.initiation.is_some() {
+        let list_state = Arc::clone(&state);
+        module.register_async_method("taker_swap_list_v1", move |params, _, _| {
+            let state = Arc::clone(&list_state);
+            async move {
+                let request: TakerSwapListRequestV1 = params.one().map_err(|_| {
+                    rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params")
+                })?;
+                list_swaps(state, request)
+                    .await
+                    .map_err(map_monitoring_error)
+            }
+        })?;
+
+        let monitor_state = Arc::clone(&state);
+        module.register_async_method("taker_swap_monitor_v1", move |params, _, _| {
+            let state = Arc::clone(&monitor_state);
+            async move {
+                let request: TakerSwapMonitorRequestV1 = params.one().map_err(|_| {
+                    rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params")
+                })?;
+                monitor_swap(state, request)
+                    .await
+                    .map_err(map_monitoring_error)
+            }
+        })?;
+
         let initiate_state = Arc::clone(&state);
         module.register_async_method("taker_swap_initiate_v1", move |params, _, _| {
             let state = Arc::clone(&initiate_state);
@@ -104,6 +143,258 @@ pub fn taker_service_rpc_module(
     }
 
     Ok(module)
+}
+
+#[derive(Clone, Copy, Debug)]
+enum MonitoringError {
+    UnsupportedSchemaVersion,
+    NotFound,
+    DependencyUnavailable,
+    RegistryUnavailable,
+    ResultLimitExceeded,
+}
+
+async fn list_swaps(
+    state: Arc<TakerServiceState>,
+    request: TakerSwapListRequestV1,
+) -> Result<TakerSwapListV1, MonitoringError> {
+    request
+        .validate_schema_version()
+        .map_err(|_| MonitoringError::UnsupportedSchemaVersion)?;
+    let initiation = state
+        .initiation
+        .clone()
+        .ok_or(MonitoringError::RegistryUnavailable)?;
+    let lookup = Arc::clone(&initiation);
+    let swap_ids = tokio::task::spawn_blocking(move || {
+        let mut context = lookup
+            .lock()
+            .map_err(|_| MonitoringError::RegistryUnavailable)?;
+        let facts = context
+            .registry_mut()
+            .list_initiations()
+            .map_err(|_| MonitoringError::RegistryUnavailable)?;
+        if facts.len() > MAXIMUM_MONITORED_SWAPS {
+            return Err(MonitoringError::ResultLimitExceeded);
+        }
+        Ok::<_, MonitoringError>(
+            facts
+                .into_iter()
+                .map(|facts| facts.swap_id().clone())
+                .collect::<Vec<_>>(),
+        )
+    })
+    .await
+    .map_err(|_| MonitoringError::RegistryUnavailable)??;
+
+    let mut swaps = Vec::with_capacity(swap_ids.len());
+    for swap_id in swap_ids {
+        swaps.push(project_swap(&initiation, &swap_id).await?);
+    }
+    Ok(TakerSwapListV1 {
+        schema_version: 1,
+        swaps,
+    })
+}
+
+async fn monitor_swap(
+    state: Arc<TakerServiceState>,
+    request: TakerSwapMonitorRequestV1,
+) -> Result<TakerSwapViewV1, MonitoringError> {
+    request
+        .validate_schema_version()
+        .map_err(|_| MonitoringError::UnsupportedSchemaVersion)?;
+    let initiation = state
+        .initiation
+        .clone()
+        .ok_or(MonitoringError::RegistryUnavailable)?;
+    project_swap(&initiation, &request.swap_id).await
+}
+
+async fn project_swap(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    swap_id: &SwapId,
+) -> Result<TakerSwapViewV1, MonitoringError> {
+    let lookup = Arc::clone(initiation);
+    let swap_id = swap_id.clone();
+    let (prepared, facts) = tokio::task::spawn_blocking(move || {
+        let mut context = lookup
+            .lock()
+            .map_err(|_| MonitoringError::RegistryUnavailable)?;
+        let prepared = context
+            .prepared_zec_for_swap(&swap_id)
+            .cloned()
+            .ok_or(MonitoringError::NotFound)?;
+        let facts = context
+            .registry_mut()
+            .lookup_initiation_for_monitor(&swap_id, prepared.authority())
+            .map_err(|_| MonitoringError::RegistryUnavailable)?
+            .ok_or(MonitoringError::NotFound)?;
+        if &facts != prepared.facts() {
+            return Err(MonitoringError::RegistryUnavailable);
+        }
+        Ok::<_, MonitoringError>((prepared, facts))
+    })
+    .await
+    .map_err(|_| MonitoringError::RegistryUnavailable)??;
+
+    match fs::symlink_metadata(prepared.execution().receipt_output()) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(commit_from_facts(&facts, false, TakerSwapStateV1::Initiating).swap)
+        }
+        Err(_) => Err(MonitoringError::DependencyUnavailable),
+        Ok(_) => project_receipt_bound_swap(&prepared, &facts).await,
+    }
+}
+
+async fn project_receipt_bound_swap(
+    prepared: &PreparedZecTakerInitiationV1,
+    facts: &TakerInitiationFactsV1,
+) -> Result<TakerSwapViewV1, MonitoringError> {
+    let receipt = prepared.execution().receipt_output().to_path_buf();
+    let actor_root = prepared.execution().actor_root().to_path_buf();
+    let swap_id = prepared.swap_id().clone();
+    let (config, held_lock) = tokio::task::spawn_blocking(move || {
+        let before = load_taker_actor_from_receipt_for_monitor(&receipt, &actor_root, &swap_id)
+            .map_err(|_| MonitoringError::DependencyUnavailable)?;
+        let held_lock = MakerActorHeldLock::acquire_for(before.swap_id(), before.role_state_db())
+            .map_err(|_| MonitoringError::DependencyUnavailable)?;
+        let config = load_taker_actor_from_receipt_for_monitor(&receipt, &actor_root, &swap_id)
+            .map_err(|_| MonitoringError::DependencyUnavailable)?;
+        if before.swap_id() != config.swap_id()
+            || before.role_state_db() != config.role_state_db()
+            || before.bridge_journal_db() != config.bridge_journal_db()
+            || before.signed_agreement_sha256() != config.signed_agreement_sha256()
+        {
+            return Err(MonitoringError::DependencyUnavailable);
+        }
+        held_lock
+            .validate_for_state(config.swap_id(), config.role_state_db())
+            .map_err(|_| MonitoringError::DependencyUnavailable)?;
+        Ok::<_, MonitoringError>((config, held_lock))
+    })
+    .await
+    .map_err(|_| MonitoringError::DependencyUnavailable)??;
+
+    let output = execute_actor_command(&config, ActorCommand::Status)
+        .await
+        .map_err(|_| MonitoringError::DependencyUnavailable)?;
+    held_lock
+        .validate_for_state(config.swap_id(), config.role_state_db())
+        .map_err(|_| MonitoringError::DependencyUnavailable)?;
+    let ActorCommandOutputV1::Status(status) = output else {
+        return Err(MonitoringError::DependencyUnavailable);
+    };
+    Ok(view_from_actor_status(facts, status.projection()))
+}
+
+fn view_from_actor_status(
+    facts: &TakerInitiationFactsV1,
+    status: ActorStatusProjectionV1,
+) -> TakerSwapViewV1 {
+    let (state, progress_generation, available_action, privacy_guidance) = match status {
+        ActorStatusProjectionV1::NotActivated => (TakerSwapStateV1::NotActivated, 0, None, None),
+        ActorStatusProjectionV1::Active {
+            phase,
+            revision,
+            next_action,
+        } => {
+            let (state, action, guidance) = normalized_actor_progress(phase, next_action);
+            (state, revision, action, guidance)
+        }
+    };
+    TakerSwapViewV1 {
+        schema_version: 1,
+        swap_id: facts.swap_id().clone(),
+        offer_id: facts.offer_id().clone(),
+        route: facts.route(),
+        foreign_units: facts.foreign_units(),
+        lez_units: facts.lez_units(),
+        progress_generation,
+        state,
+        available_action,
+        privacy_guidance,
+    }
+}
+
+fn normalized_actor_progress(
+    phase: Phase,
+    next_action: ZecLifecycleAction,
+) -> (
+    TakerSwapStateV1,
+    Option<crate::TakerTerminalActionV1>,
+    Option<crate::TakerPrivacyGuidanceV1>,
+) {
+    use crate::{TakerPrivacyGuidanceV1, TakerTerminalActionV1};
+    match phase {
+        Phase::Offered | Phase::AwaitingTakerConfirmations => {
+            (TakerSwapStateV1::AwaitingFirstLock, None, None)
+        }
+        Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations => {
+            (TakerSwapStateV1::AwaitingSecondLock, None, None)
+        }
+        Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable
+            if next_action == ZecLifecycleAction::ClaimZcash =>
+        {
+            (
+                TakerSwapStateV1::ClaimAvailable,
+                Some(TakerTerminalActionV1::Claim),
+                None,
+            )
+        }
+        Phase::BothLegsLocked => (TakerSwapStateV1::BothLegsLocked, None, None),
+        Phase::Completed => (
+            TakerSwapStateV1::Completed,
+            None,
+            Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
+        ),
+        Phase::Refunded => (TakerSwapStateV1::Refunded, None, None),
+        Phase::MakerLegRefunded | Phase::TakerLegRefunded | Phase::MakerRecoveryAvailable
+            if next_action == ZecLifecycleAction::RefundZcash =>
+        {
+            (
+                TakerSwapStateV1::RefundAvailable,
+                Some(TakerTerminalActionV1::Refund),
+                None,
+            )
+        }
+        Phase::TakerLockReorged
+        | Phase::MakerLockReorged
+        | Phase::ClaimEvidenceAvailable
+        | Phase::MakerLegRefunded
+        | Phase::TakerLegRefunded
+        | Phase::MakerRecoveryAvailable => (TakerSwapStateV1::AttentionRequired, None, None),
+    }
+}
+
+fn map_monitoring_error(error: MonitoringError) -> ErrorObjectOwned {
+    match error {
+        MonitoringError::UnsupportedSchemaVersion => rpc_error(
+            INVALID_PARAMS_CODE,
+            "Invalid params",
+            "unsupported_schema_version",
+        ),
+        MonitoringError::NotFound => rpc_error(
+            SWAP_NOT_FOUND_CODE,
+            "Taker swap not found",
+            "swap_not_found",
+        ),
+        MonitoringError::DependencyUnavailable => rpc_error(
+            DEPENDENCY_UNAVAILABLE_CODE,
+            "Taker dependency unavailable",
+            "taker_monitor_unavailable",
+        ),
+        MonitoringError::RegistryUnavailable => rpc_error(
+            INTERNAL_ERROR_CODE,
+            "Internal error",
+            "taker_registry_unavailable",
+        ),
+        MonitoringError::ResultLimitExceeded => rpc_error(
+            RESULT_LIMIT_EXCEEDED_CODE,
+            "Taker result limit exceeded",
+            "swap_limit_exceeded",
+        ),
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

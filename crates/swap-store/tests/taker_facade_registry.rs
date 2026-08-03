@@ -181,6 +181,74 @@ fn initiation_is_atomic_and_exactly_replays_after_restart() {
 }
 
 #[test]
+fn monitor_lookup_requires_exact_authority_and_hides_unknown_swaps() {
+    let root = private_root();
+    let database = root.path().join("monitor-lookup.sqlite3");
+    let request = request("m6-monitor-lookup-request");
+    let facts = make_facts("m6-monitor-lookup-swap", "m6-monitor-lookup-offer", 41);
+    let authority = make_authority(root.path(), "monitor-lookup", 41);
+    let mut registry = SqliteTakerFacadeStore::create_new(&database).unwrap();
+    registry
+        .admit_initiation(&request, &facts, &authority, 1_000)
+        .unwrap();
+
+    assert_eq!(
+        registry
+            .lookup_initiation_for_monitor(facts.swap_id(), &authority)
+            .unwrap(),
+        Some(facts.clone())
+    );
+    let drifted_authority = make_authority(root.path(), "monitor-lookup", 141);
+    assert_eq!(
+        registry.lookup_initiation_for_monitor(facts.swap_id(), &drifted_authority),
+        Err(TakerFacadeStoreError::SwapConflict)
+    );
+    let unknown = SwapId::new("m6-monitor-lookup-unknown").unwrap();
+    assert_eq!(
+        registry
+            .lookup_initiation_for_monitor(&unknown, &authority)
+            .unwrap(),
+        None
+    );
+
+    drop(registry);
+    let reopened = SqliteTakerFacadeStore::open_existing(&database).unwrap();
+    assert_eq!(
+        reopened
+            .lookup_initiation_for_monitor(facts.swap_id(), &authority)
+            .unwrap(),
+        Some(facts)
+    );
+}
+
+#[test]
+fn monitor_lookup_revalidates_the_complete_joined_admission() {
+    let root = private_root();
+    let database = root.path().join("monitor-corrupt.sqlite3");
+    let request = request("m6-monitor-corrupt-request");
+    let facts = make_facts("m6-monitor-corrupt-swap", "m6-monitor-corrupt-offer", 42);
+    let authority = make_authority(root.path(), "monitor-corrupt", 42);
+    let mut registry = SqliteTakerFacadeStore::create_new(&database).unwrap();
+    registry
+        .admit_initiation(&request, &facts, &authority, 1_000)
+        .unwrap();
+
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute(
+            "UPDATE taker_facade_requests SET result_json = ?1 WHERE request_id = ?2",
+            ["{}", request.as_str()],
+        )
+        .unwrap();
+    drop(connection);
+
+    assert_eq!(
+        registry.lookup_initiation_for_monitor(facts.swap_id(), &authority),
+        Err(TakerFacadeStoreError::CorruptState)
+    );
+}
+
+#[test]
 fn changed_payload_private_authority_or_operation_conflicts_globally() {
     let root = private_root();
     let database = root.path().join("registry.sqlite3");

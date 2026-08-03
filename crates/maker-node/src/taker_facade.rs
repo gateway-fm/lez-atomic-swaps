@@ -433,15 +433,15 @@ impl TakerRegisteredMethodsV1 {
         }
     }
 
-    /// Returns the honest method set of an admission-capable service.
+    /// Returns the honest method set of a receipt-monitoring admission service.
     #[must_use]
     pub const fn read_with_initiation() -> Self {
         Self {
             health: true,
             offer_list: true,
-            swap_list: false,
+            swap_list: true,
             initiate: true,
-            monitor: false,
+            monitor: true,
             claim: false,
             refund: false,
         }
@@ -618,7 +618,7 @@ impl TakerHealthV1 {
         }
     }
 
-    /// Reports that the service registered its admission-only initiation method.
+    /// Reports that the service registered initiation and receipt-bound reads.
     #[must_use]
     pub const fn with_initiation_registered(mut self) -> Self {
         self.registered_methods = TakerRegisteredMethodsV1::read_with_initiation();

@@ -16,7 +16,7 @@ use crate::{
 };
 use anyhow::{Context as _, ensure};
 use lez_bridge_protocol::RequestId;
-use lez_swap_core::{Pair, Participant, SwapDirection, UnixSeconds};
+use lez_swap_core::{Pair, Participant, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_zec_chat_session_id};
 use lez_zec_swap_sdk::{
@@ -434,6 +434,33 @@ async fn complete_zec(
 pub fn load_taker_actor_from_receipt(path: &Path) -> anyhow::Result<ActorConfig> {
     let bytes = read_private_file(path, MAX_TAKER_RECEIPT_BYTES, "Taker acceptance receipt")?;
     load_taker_actor_from_receipt_bytes(path, &bytes)
+}
+
+/// Loads one receipt selected by service-owned authority and binds its paths.
+pub(crate) fn load_taker_actor_from_receipt_for_monitor(
+    path: &Path,
+    expected_actor_root: &Path,
+    expected_swap_id: &SwapId,
+) -> anyhow::Result<ActorConfig> {
+    let bytes = read_private_file(path, MAX_TAKER_RECEIPT_BYTES, "Taker acceptance receipt")?;
+    let receipt: ZecAcceptanceReceiptV1 =
+        serde_json::from_slice(&bytes).context("decode Taker acceptance receipt")?;
+    ensure!(
+        receipt.swap_id.as_ref() == expected_swap_id.as_str()
+            && receipt.actor_config_file.starts_with(expected_actor_root)
+            && receipt
+                .actor_state_database
+                .starts_with(expected_actor_root),
+        "Taker acceptance receipt does not match service authority"
+    );
+    let config = load_taker_actor_from_receipt_bytes(path, &bytes)?;
+    ensure!(
+        config.swap_id() == expected_swap_id
+            && config.role_state_db().starts_with(expected_actor_root)
+            && config.bridge_journal_db().starts_with(expected_actor_root),
+        "receipt-bound Taker actor is outside service authority"
+    );
+    Ok(config)
 }
 
 fn load_taker_actor_from_receipt_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<ActorConfig> {

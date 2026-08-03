@@ -149,6 +149,25 @@ pub struct ActorStatusV1 {
     state: ActorStateV1,
 }
 
+/// Typed, secret-free view of durable actor lifecycle state.
+///
+/// This projection is deliberately separate from the serialized status schema so
+/// in-process callers can inspect status without depending on its JSON encoding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActorStatusProjectionV1 {
+    /// No durable activation exists for this actor yet.
+    NotActivated,
+    /// The actor has durable lifecycle state.
+    Active {
+        /// Current protocol phase.
+        phase: Phase,
+        /// Monotonic durable-state revision.
+        revision: u64,
+        /// Next safe high-level action for this role.
+        next_action: ZecLifecycleAction,
+    },
+}
+
 impl ActorStatusV1 {
     fn not_activated(role: ActorRole) -> Self {
         Self {
@@ -174,9 +193,32 @@ impl ActorStatusV1 {
             },
         }
     }
+
+    /// Return the role permanently bound to this actor status.
+    #[must_use]
+    pub const fn role(&self) -> ActorRole {
+        self.role
+    }
+
+    /// Project the wire-oriented status into typed lifecycle values.
+    #[must_use]
+    pub const fn projection(&self) -> ActorStatusProjectionV1 {
+        match self.state {
+            ActorStateV1::NotActivated => ActorStatusProjectionV1::NotActivated,
+            ActorStateV1::Active {
+                phase,
+                revision,
+                next_action,
+            } => ActorStatusProjectionV1::Active {
+                phase: phase.as_phase(),
+                revision,
+                next_action: next_action.as_lifecycle_action(),
+            },
+        }
+    }
 }
 
-#[derive(Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum ActorStateV1 {
     NotActivated,
@@ -187,7 +229,7 @@ enum ActorStateV1 {
     },
 }
 
-#[derive(Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ActorPhaseV1 {
     Offered,
@@ -225,7 +267,27 @@ impl From<Phase> for ActorPhaseV1 {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Serialize)]
+impl ActorPhaseV1 {
+    const fn as_phase(self) -> Phase {
+        match self {
+            Self::Offered => Phase::Offered,
+            Self::AwaitingTakerConfirmations => Phase::AwaitingTakerConfirmations,
+            Self::TakerLockConfirmed => Phase::TakerLockConfirmed,
+            Self::AwaitingMakerConfirmations => Phase::AwaitingMakerConfirmations,
+            Self::BothLegsLocked => Phase::BothLegsLocked,
+            Self::TakerLockReorged => Phase::TakerLockReorged,
+            Self::MakerLockReorged => Phase::MakerLockReorged,
+            Self::ClaimEvidenceAvailable => Phase::ClaimEvidenceAvailable,
+            Self::Completed => Phase::Completed,
+            Self::MakerLegRefunded => Phase::MakerLegRefunded,
+            Self::TakerLegRefunded => Phase::TakerLegRefunded,
+            Self::Refunded => Phase::Refunded,
+            Self::MakerRecoveryAvailable => Phase::MakerRecoveryAvailable,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ActorNextActionV1 {
     Wait,
@@ -247,6 +309,20 @@ impl From<ZecLifecycleAction> for ActorNextActionV1 {
             ZecLifecycleAction::ClaimZcash => Self::ClaimZcash,
             ZecLifecycleAction::RefundZcash => Self::RefundZcash,
             ZecLifecycleAction::Complete => Self::Complete,
+        }
+    }
+}
+
+impl ActorNextActionV1 {
+    const fn as_lifecycle_action(self) -> ZecLifecycleAction {
+        match self {
+            Self::Wait => ZecLifecycleAction::Wait,
+            Self::CreateAndFundLez => ZecLifecycleAction::CreateAndFundLez,
+            Self::FundZcash => ZecLifecycleAction::FundZcash,
+            Self::ClaimLez => ZecLifecycleAction::ClaimLez,
+            Self::ClaimZcash => ZecLifecycleAction::ClaimZcash,
+            Self::RefundZcash => ZecLifecycleAction::RefundZcash,
+            Self::Complete => ZecLifecycleAction::Complete,
         }
     }
 }
@@ -1006,6 +1082,93 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn status_projection_preserves_typed_lifecycle_values_and_wire_schema() {
+        let not_activated = ActorStatusV1::not_activated(ActorRole::Taker);
+        assert_eq!(not_activated.role(), ActorRole::Taker);
+        assert_eq!(
+            not_activated.projection(),
+            ActorStatusProjectionV1::NotActivated
+        );
+        assert_eq!(
+            serde_json::to_value(&not_activated).expect("status serializes"),
+            json!({
+                "schema_version": 1,
+                "role": "taker",
+                "state": "not_activated"
+            })
+        );
+
+        let phases = [
+            Phase::Offered,
+            Phase::AwaitingTakerConfirmations,
+            Phase::TakerLockConfirmed,
+            Phase::AwaitingMakerConfirmations,
+            Phase::BothLegsLocked,
+            Phase::TakerLockReorged,
+            Phase::MakerLockReorged,
+            Phase::ClaimEvidenceAvailable,
+            Phase::Completed,
+            Phase::MakerLegRefunded,
+            Phase::TakerLegRefunded,
+            Phase::Refunded,
+            Phase::MakerRecoveryAvailable,
+        ];
+        for phase in phases {
+            let status =
+                ActorStatusV1::active(ActorRole::Maker, phase, 17, ZecLifecycleAction::Wait);
+            assert_eq!(status.role(), ActorRole::Maker);
+            assert_eq!(
+                status.projection(),
+                ActorStatusProjectionV1::Active {
+                    phase,
+                    revision: 17,
+                    next_action: ZecLifecycleAction::Wait,
+                }
+            );
+        }
+
+        let actions = [
+            ZecLifecycleAction::Wait,
+            ZecLifecycleAction::CreateAndFundLez,
+            ZecLifecycleAction::FundZcash,
+            ZecLifecycleAction::ClaimLez,
+            ZecLifecycleAction::ClaimZcash,
+            ZecLifecycleAction::RefundZcash,
+            ZecLifecycleAction::Complete,
+        ];
+        for next_action in actions {
+            let status =
+                ActorStatusV1::active(ActorRole::Maker, Phase::BothLegsLocked, 23, next_action);
+            assert_eq!(
+                status.projection(),
+                ActorStatusProjectionV1::Active {
+                    phase: Phase::BothLegsLocked,
+                    revision: 23,
+                    next_action,
+                }
+            );
+        }
+
+        let active = ActorStatusV1::active(
+            ActorRole::Maker,
+            Phase::BothLegsLocked,
+            23,
+            ZecLifecycleAction::ClaimLez,
+        );
+        assert_eq!(
+            serde_json::to_value(&active).expect("status serializes"),
+            json!({
+                "schema_version": 1,
+                "role": "maker",
+                "state": "active",
+                "phase": "both_legs_locked",
+                "revision": 23,
+                "next_action": "claim_lez"
+            })
+        );
+    }
 
     #[test]
     fn claim_admission_rejects_every_non_claim_phase() {

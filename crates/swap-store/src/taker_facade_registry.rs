@@ -625,6 +625,56 @@ impl SqliteTakerFacadeStore {
         Ok(Some(facts))
     }
 
+    /// Resolves one admitted swap only when it is still bound to the exact
+    /// owner-private authority supplied by trusted service configuration.
+    ///
+    /// The private authority is used solely as a comparison key and is never
+    /// returned. Only an unknown swap returns `None`; authority drift fails
+    /// closed as a durable swap conflict.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid supplied authority, changed storage identity, or any
+    /// malformed, incomplete, duplicated, or inconsistently joined durable row.
+    pub fn lookup_initiation_for_monitor(
+        &self,
+        swap_id: &SwapId,
+        authority: &TakerInitiationAuthorityV1,
+    ) -> Result<Option<TakerInitiationFactsV1>, TakerFacadeStoreError> {
+        authority.validate()?;
+        let expected_authority = encode(&authority.stored())?;
+        self.revalidate_storage()?;
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        let mut rows = query_monitor_initiation(&transaction, swap_id)?;
+        let row = match rows.len() {
+            0 => {
+                let related_rows = related_monitor_row_count(&transaction, swap_id)?;
+                if related_rows == 0 {
+                    transaction
+                        .commit()
+                        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+                    self.revalidate_storage()?;
+                    return Ok(None);
+                }
+                return Err(TakerFacadeStoreError::CorruptState);
+            }
+            1 => rows.pop().ok_or(TakerFacadeStoreError::CorruptState)?,
+            _ => return Err(TakerFacadeStoreError::CorruptState),
+        };
+        let (facts, stored_authority) = validate_monitor_initiation(row, swap_id)?;
+        transaction
+            .commit()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        self.revalidate_storage()?;
+        if stored_authority != expected_authority {
+            return Err(TakerFacadeStoreError::SwapConflict);
+        }
+        Ok(Some(facts))
+    }
+
     /// Returns the original trusted admission timestamp for one initiation request.
     ///
     /// This timestamp is immutable and lets a restart revalidate already-accepted
@@ -812,6 +862,116 @@ impl SqliteTakerFacadeStore {
         }
         Ok(())
     }
+}
+
+struct MonitorInitiationRow {
+    public_version: i64,
+    public_json: String,
+    authority_version: i64,
+    authority_json: String,
+    request_id: String,
+    operation: String,
+    request_swap_id: String,
+    request_version: i64,
+    request_json: String,
+    result_version: i64,
+    result_json: String,
+    state: String,
+    created_at: i64,
+    updated_at: i64,
+}
+
+fn query_monitor_initiation(
+    connection: &Connection,
+    swap_id: &SwapId,
+) -> Result<Vec<MonitorInitiationRow>, TakerFacadeStoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT s.payload_version, s.public_json,
+                    a.payload_version, a.private_json,
+                    r.request_id, r.operation, r.swap_id,
+                    r.request_payload_version, r.request_json,
+                    r.result_payload_version, r.result_json, r.state,
+                    r.created_at, r.updated_at
+             FROM taker_facade_swaps AS s
+             JOIN taker_facade_authorities AS a ON a.swap_id = s.swap_id
+             JOIN taker_facade_requests AS r ON r.swap_id = s.swap_id
+             WHERE s.swap_id = ?1",
+        )
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+    let rows = statement
+        .query_map([swap_id.as_str()], |row| {
+            Ok(MonitorInitiationRow {
+                public_version: row.get(0)?,
+                public_json: row.get(1)?,
+                authority_version: row.get(2)?,
+                authority_json: row.get(3)?,
+                request_id: row.get(4)?,
+                operation: row.get(5)?,
+                request_swap_id: row.get(6)?,
+                request_version: row.get(7)?,
+                request_json: row.get(8)?,
+                result_version: row.get(9)?,
+                result_json: row.get(10)?,
+                state: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
+            })
+        })
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    drop(statement);
+    Ok(rows)
+}
+
+fn related_monitor_row_count(
+    connection: &Connection,
+    swap_id: &SwapId,
+) -> Result<i64, TakerFacadeStoreError> {
+    connection
+        .query_row(
+            "SELECT
+                 EXISTS(SELECT 1 FROM taker_facade_swaps WHERE swap_id = ?1) +
+                 EXISTS(SELECT 1 FROM taker_facade_authorities WHERE swap_id = ?1) +
+                 EXISTS(SELECT 1 FROM taker_facade_requests WHERE swap_id = ?1)",
+            [swap_id.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(|_| TakerFacadeStoreError::StorageUnavailable)
+}
+
+fn validate_monitor_initiation(
+    row: MonitorInitiationRow,
+    swap_id: &SwapId,
+) -> Result<(TakerInitiationFactsV1, String), TakerFacadeStoreError> {
+    let facts: TakerInitiationFactsV1 = decode(&row.public_json)?;
+    let stored_authority: StoredTakerInitiationAuthorityV1 = decode(&row.authority_json)?;
+    facts
+        .validate()
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    stored_authority
+        .validate()
+        .map_err(|_| TakerFacadeStoreError::CorruptState)?;
+    if row.public_version != PAYLOAD_VERSION
+        || row.authority_version != PAYLOAD_VERSION
+        || row.request_version != PAYLOAD_VERSION
+        || row.result_version != PAYLOAD_VERSION
+        || RequestId::new(row.request_id).is_err()
+        || row.operation != "initiate"
+        || row.state != "admitted"
+        || row.request_swap_id != swap_id.as_str()
+        || facts.swap_id.as_str() != swap_id.as_str()
+        || row.request_json != row.public_json
+        || row.result_json != row.public_json
+        || encode(&facts)? != row.public_json
+        || encode(&stored_authority)? != row.authority_json
+        || row.created_at < 0
+        || row.updated_at < row.created_at
+    {
+        return Err(TakerFacadeStoreError::CorruptState);
+    }
+    Ok((facts, row.authority_json))
 }
 
 fn validate_exact_replay(

@@ -183,6 +183,16 @@ impl ConfiguredTakerInitiationContext {
         self.prepared_zec_by_offer.get(offer_id.as_str())
     }
 
+    /// Looks up one fixed entry by application swap identity.
+    ///
+    /// Startup validation rejects duplicate swap identities and bounds the catalog.
+    #[must_use]
+    pub fn prepared_zec_for_swap(&self, swap_id: &SwapId) -> Option<&PreparedZecTakerInitiationV1> {
+        self.prepared_zec_by_offer
+            .values()
+            .find(|prepared| prepared.swap_id() == swap_id)
+    }
+
     /// Mutably borrows the already-existing standalone registry.
     #[must_use]
     pub const fn registry_mut(&mut self) -> &mut SqliteTakerFacadeStore {
