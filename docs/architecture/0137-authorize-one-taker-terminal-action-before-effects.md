@@ -124,13 +124,15 @@ sequenceDiagram
 
 Exact replay intentionally precedes the freshness check. Otherwise a request
 whose first effect advanced actor state but lost its RPC response would be
-mistaken for a stale new action. If replay finds a revision greater than the
-admitted generation, the service returns the durable replay without invoking
-the effect command. If the revision is unchanged and the same action remains
-available, the service re-enters the actor so its persist-before-send journal
-can reconcile unfinished or response-unknown work. A revision below the
-admitted generation, an unavailable same-generation action, corrupt status, or
-failed lock validation fails closed.
+mistaken for a stale new action. If replay finds an unchanged revision and the same action remains available,
+the service re-enters the actor so its persist-before-send journal can reconcile
+unfinished or response-unknown work. Advanced Claim replay never re-enters. An
+already-admitted Refund additionally re-enters only while the actor is in
+`MakerLegRefunded` or `TakerLegRefunded`, because the agreement-ordered second
+refund must still be submitted or observed before terminal `Refunded`. Every
+other advanced phase returns the durable replay without another actor effect. A
+revision below the admitted generation, an unavailable same-generation action,
+corrupt status, or failed lock validation fails closed.
 
 ## Response-loss and restart sequence
 
@@ -153,7 +155,13 @@ sequenceDiagram
     S2->>R: Exact replay lookup before freshness
     R-->>S2: Same action and generation
     S2->>A: Read actor status under the same swap lock
-    alt Actor revision already advanced
+    alt Advanced Refund is between its two legs
+        A-->>S2: MakerLegRefunded or TakerLegRefunded
+        S2->>A: Re-enter Recover for the remaining leg
+        A->>J: Submit or observe exact ordered refund
+        J-->>A: One retained outcome
+        S2-->>U: Replay true
+    else Advanced Claim or terminal Refund
         A-->>S2: Progress is newer
         S2-->>U: Replay true without another actor effect
     else Actor revision did not advance
@@ -223,11 +231,11 @@ transaction.
 ## Current proof status
 
 Repository commits `c3ca1de`, `9b19881`, `951fd38`, `8ecfc7a`, `0d2f30b`,
-`3b7d927`, `6eb9523`, and `0c32200` implement and exercise the private action
+`3b7d927`, `6eb9523`, `0c32200`, and `0ed6a59` implement and exercise the private action
 registry, seven-method service registration, generation fencing,
 one-action-per-swap exclusion, in-progress monitor overlays, registry
-initialization, custody refresh after status replay, and advanced versus
-unadvanced exact replay behavior. Commit `e5b4c32` corrects future summary
+initialization, custody refresh after status replay, and action-specific exact
+replay behavior, including the two intermediate Refund phases. Commit `e5b4c32` corrects future summary
 reporting for the service-owned authority; the retained certificate predates
 that reporting-only change. Commit `4cadbb0` added the isolated
 local-devnet runner that drives the Taker ZEC claim through the service.

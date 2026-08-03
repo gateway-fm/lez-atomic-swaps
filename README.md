@@ -120,10 +120,10 @@ run reused the already isolated local LEZ v0.2 stack
 `m6lez20260803155817` and paired it with fresh Zebra Regtest
 `m6zec20260803164006`. Both used deterministic local funds; no public RPC,
 faucet, or public funds participated. A separate fresh LEZ stack was later deployed and onboarded successfully but
-was not part of this certificate. Equivalent service-driven Refund, durable
-receipt/state rollback-incarnation hardening, Maker and Taker Basecamp `ui_qml`
-packages, QtRO hosts, actor-real UI E2E, final gates, explicit owner sign-off,
-and the M6 tag remain pending.
+was not part of this certificate. Equivalent service-driven Refund, Maker and Taker Basecamp `ui_qml` packages,
+QtRO hosts, actor-real UI E2E, final gates, explicit owner sign-off, and the M6
+tag remain pending. Cross-restart receipt/state rollback anchoring remains
+documented production hardening, not an accepted-issue-#112 PoC gate.
 
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ

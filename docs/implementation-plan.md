@@ -5674,8 +5674,11 @@ this certificate. The one-command role runner is
 `scripts/run-m6-zec-taker-service-poc.sh`; it reuses the isolated endpoint lock,
 bounded clock, exact evidence, and scoped cleanup of the certified corridor.
 
-This completes the nonvisual Claim happy-path slice, not M6. Equivalent
-service-driven actual-node Refund, durable rollback-incarnation hardening,
-Maker and Taker Basecamp `ui_qml` packages, their QtRO hosts, actor-real UI
-E2E, explicit owner prototype signoff, final repository gates, and the M6 tag
-remain pending.
+Commit `0ed6a59` keeps an already-admitted Refund live across the two
+intermediate refunded phases while advanced Claim and terminal Refund replay
+remain inert. This completes the nonvisual Claim happy-path slice, not M6.
+Equivalent service-driven actual-node Refund, Maker and Taker Basecamp `ui_qml`
+packages, their QtRO hosts, actor-real UI E2E, explicit owner prototype
+signoff, final repository gates, and the M6 tag remain pending. Durable
+rollback-incarnation anchoring remains deferred production hardening rather than
+an accepted issue-#112 PoC gate.

@@ -129,11 +129,11 @@ inventory but callers must use each view's generation rather than infer a
 global instant.
 
 The process-incarnation receipt fence rejects same-byte inode replacement.
-The remaining production hardening is explicit: receipt and role-state rollback
-across restart still need a durable monotonic incarnation binding rather than
-trusting the files present at the next startup. Claim and refund must later consume an observed generation through their own one-attempt,
-role-fixed effect boundaries. Neither gap permits this read path to issue an
-effect, but both prevent an M6 completion claim.
+Receipt and role-state rollback across restart still need a durable monotonic
+incarnation binding rather than trusting the files present at the next startup.
+That limitation remains explicit production hardening and does not block the
+accepted issue-#112 local-functional PoC. ADR 0137 adds generation-fenced Claim
+and Refund effect boundaries without changing this read-only guarantee.
 
 ## Evidence and consequences
 
@@ -157,6 +157,6 @@ authorization. Certification run `m6cert20260803164006` proves a service-driven
 and Zebra Regtest, with Zebra remaining at one exact mempool transaction.
 
 Owner prototype sign-off still gates production QML and QtRO. Equivalent
-service-driven Refund, durable rollback-incarnation hardening, actor-real UI
-composition, Basecamp packages, final gates, the M6 completion decision, and
-the M6 tag remain pending.
+service-driven Refund, actor-real UI composition, Basecamp packages, final
+gates, the M6 completion decision, and the M6 tag remain pending. Durable
+rollback-incarnation anchoring is deferred production hardening.
