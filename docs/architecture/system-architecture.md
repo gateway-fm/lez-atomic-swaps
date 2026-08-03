@@ -40,22 +40,25 @@ flowchart LR
 ```
 
 The production surface is planned as two independent Basecamp 0.2.0
-`ui_qml` packages. Dashed arrows below are M6 work that is not implemented.
-Basecamp loads each QML view in its own application surface and the generated
-Qt Remote Objects replica reaches a backend in a separate `ui-host` process.
-The Maker backend will translate an allowlisted, secret-free GUI contract to
-the existing owner-restricted Unix JSON-RPC. The Taker typed contract is now
-implemented as an exact seven-method, secret-free allowlist. Its role-fixed
-service, private receipt resolution, and transport remain planned; they must
-bind private role state without exposing paths, keys, generic process
-arguments, or raw node authority to QML. XMR capabilities remain explicitly
-effect-checkpoint-only.
+`ui_qml` packages. Basecamp loads each QML view in its own application surface
+and the generated Qt Remote Objects replica reaches a backend in a separate
+`ui-host` process. Those QML and QtRO boundaries remain dashed and gated by
+owner prototype sign-off.
 
-The first backend prerequisite is solid and does not cross the visual sign-off
-gate: the owner RPC now exposes strict `maker_local_route_save_v1`. It commits
-the Maker policy, same-route exact local price, and combined replay result in
-one schema-v22 transaction. The QML/QtRO host remains planned, and neither
-prototype calls this method.
+The Maker backend will translate an allowlisted secret-free GUI contract to the
+existing owner-restricted Unix JSON-RPC. The atomic route-save prerequisite is
+implemented. The Taker side now has an exact seven-method DTO contract, an
+authenticated read backend, a strict owner-private startup loader, and a real
+two-method `lez-taker-service` on its own mode-0600 Unix socket. Only health
+and authenticated offer listing are registered.
+
+A standalone Taker schema-v1 registry exists through `5c6500d`. It atomically
+stores current ZEC initiation facts, private service-derived authority, and
+exact request replay. Its durable request lookup can return revalidated public
+facts without live Delivery or trusted time, preserving replay-before-live
+dependency order for future wiring. No edge connects it to the service. Swap
+list, initiate, monitor, claim, and refund remain method-not-found. No mutation
+worker exists. XMR capability remains effect-checkpoint-only.
 
 ```mermaid
 flowchart TB
@@ -66,22 +69,23 @@ flowchart TB
         Basecamp["Basecamp host"]
         MakerQml["Maker ui_qml package<br/>planned"]
         TakerQml["Taker ui_qml package<br/>planned"]
-        MakerQtro["Maker QtRO replica<br/>planned"]
-        TakerQtro["Taker QtRO replica<br/>planned"]
-        MakerHost["Maker ui-host backend<br/>allowlisted and planned"]
-        TakerHost["Taker ui-host backend<br/>allowlisted and planned"]
+        MakerHost["Maker QtRO ui-host<br/>planned"]
+        TakerHost["Taker QtRO ui-host<br/>planned"]
     end
 
-    subgraph ExistingApplication["Existing application boundaries including M6 route save and Taker contract"]
-        MakerRpc["Owner Unix JSON-RPC<br/>mode 0600, allowlisted, atomic route save"]
-        MakerDaemon["Maker daemon<br/>sole Maker database writer"]
-        MakerDb[("Maker SQLite and effect journals")]
-        Delivery["Run-local Delivery adapter<br/>discovery and offers"]
-        Chat["Run-local Chat adapter<br/>negotiation only"]
-        TakerFacade["Typed Taker facade contract and authenticated read backend<br/>service and endpoint planned"]
-        TakerState[("Private Taker receipts and role state")]
-        MakerActors["Maker BTC, XMR, and ZEC actors"]
-        TakerActors["Taker BTC, XMR, and ZEC actors"]
+    subgraph CurrentM6["Current M6 application boundaries"]
+        MakerRpc["Maker owner Unix RPC<br/>atomic route save"]
+        MakerDaemon["Maker daemon"]
+        MakerDb[("Maker SQLite schema v22")]
+        TakerSocket["Taker owner Unix RPC<br/>health and offer list only"]
+        TakerService["lez-taker-service<br/>read-only"]
+        TakerConfig["Private read config<br/>Delivery keys and optional Chat probe"]
+        Registry[("Standalone Taker registry schema v1<br/>not service-wired")]
+        Worker["Taker mutation worker<br/>planned"]
+        Delivery["Authenticated run-local Delivery"]
+        ChatProbe["Optional Chat socket metadata probe"]
+        MakerActors["Maker pair actors"]
+        TakerActors["Taker pair actors"]
     end
 
     subgraph LocalChains["Existing isolated local actor and node paths"]
@@ -95,23 +99,23 @@ flowchart TB
     TakerUser -.-> Basecamp
     Basecamp -.-> MakerQml
     Basecamp -.-> TakerQml
-    MakerQml -.-> MakerQtro
-    TakerQml -.-> TakerQtro
-    MakerQtro -.-> MakerHost
-    TakerQtro -.-> TakerHost
+    MakerQml -.-> MakerHost
+    TakerQml -.-> TakerHost
     MakerHost -.-> MakerRpc
-    TakerHost -.-> TakerFacade
-    TakerFacade --> Delivery
+    TakerHost -.-> TakerSocket
 
     MakerRpc --> MakerDaemon
     MakerDaemon --> MakerDb
     MakerDaemon --> Delivery
-    Chat --> MakerDaemon
     MakerDaemon --> MakerActors
-    TakerFacade -.-> Delivery
-    TakerFacade -.-> Chat
-    TakerFacade -.-> TakerState
-    TakerState --> TakerActors
+
+    TakerSocket --> TakerService
+    TakerConfig --> TakerService
+    TakerService --> Delivery
+    TakerService --> ChatProbe
+    TakerService -.-> Registry
+    Registry -.-> Worker
+    Worker -.-> TakerActors
 
     MakerActors --> Lez
     MakerActors --> Bitcoin
@@ -124,14 +128,18 @@ flowchart TB
 ```
 
 The process split is an authority boundary, not merely a UI implementation
-detail. A QML or `ui-host` crash cannot stop the autonomous Maker daemon or
+detail. There is no Taker-service edge to the Maker RPC. The current Taker
+process can read only authenticated offers and dependency health. The
+standalone registry can admit one ZEC initiation in a library test, but the
+missing dashed service and worker edges mean it cannot create or drive a swap.
+
+A future QML or `ui-host` crash must not stop the autonomous Maker daemon or
 erase either role's durable recovery state. Delivery and Chat remain pre-lock
-discovery and negotiation transports only; after the first chain submission,
-the pair actors and their role-restricted node paths must retain enough local
-state to claim or refund without either transport. Existing solid runtime
-components retain their M2 to M5 evidence level: this diagram does not claim
-that a Basecamp-driven all-pair swap exists until the dashed edges are built
-and exercised through the corresponding independent role and node boundaries.
+discovery and negotiation transports only. After first submission, pair actors
+and role-restricted nodes must retain enough local state to claim or refund
+without either transport. Existing actor and chain components retain their M2
+through M5 evidence level. This diagram makes no Basecamp-driven swap claim
+until every dashed edge is built and actor-real exercised.
 
 ## Canonical M2 build, deployment, and actor boundary
 

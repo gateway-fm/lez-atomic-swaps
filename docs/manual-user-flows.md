@@ -7341,3 +7341,188 @@ flowchart LR
     Tx --> Price["Exact local price revision"]
     Tx --> Replay["Global replay result"]
 ```
+## Flow 1Y: run the actual read-only Taker owner service
+
+Status: reproducible process flow. This exercises the real service socket,
+configuration loader, health, and authenticated offer-list RPC. It cannot
+initiate, monitor, claim, or refund a swap and is not prototype sign-off or an
+actor-real chain flow.
+
+### Build and isolated empty configuration
+
+From the repository root, build only the owner service:
+
+```bash
+cargo build --locked -p lez-maker-node --bin lez-taker-service
+```
+
+Create a run-unique private root. The minimal configuration deliberately has no
+Delivery source and no Chat socket, so it needs no external runtime resource:
+
+```bash
+RUN_ROOT="$(mktemp -d /tmp/lez-m6-taker-read.XXXXXX)"
+chmod 700 "$RUN_ROOT"
+CONFIG="$RUN_ROOT/taker-service.json"
+SOCKET="$RUN_ROOT/taker.sock"
+
+cat >"$CONFIG" <<'JSON'
+{
+  "schema_version": 1,
+  "delivery_sources": [],
+  "maximum_offers": 16
+}
+JSON
+chmod 600 "$CONFIG"
+```
+
+The secure loader accepts an owner-owned single-link regular configuration file
+with exact mode 0400 or 0600. It binds zeroizing bytes to the same descriptor's
+device, inode, and length, revalidates length around the read, and reopens the
+path to reject replacement. This example uses mode 0600. The strict schema
+accepts only:
+
+- `schema_version` equal to one;
+- zero to 32 `delivery_sources`, each with an absolute `directory` and a
+  canonical 66-character lowercase compressed secp256k1
+  `maker_public_key`;
+- optional absolute `chat_socket`; and
+- `maximum_offers` from 1 through 1024.
+
+There is no registry, prepared-material, receipt, actor, executable, wallet,
+signing-key, or chain-node configuration field. Unknown fields fail before
+socket bind.
+
+### Start and call the two implemented methods
+
+Start on the run-owned absolute socket instead of the shared default
+`/run/lez-atomic-swaps/taker.sock`:
+
+```bash
+target/debug/lez-taker-service \
+  --config "$CONFIG" \
+  --socket "$SOCKET" \
+  >"$RUN_ROOT/service.log" 2>&1 &
+SERVICE_PID=$!
+
+for attempt in $(seq 1 100); do
+  test -S "$SOCKET" && break
+  kill -0 "$SERVICE_PID"
+  sleep 0.05
+done
+test -S "$SOCKET"
+test "$(stat -c %a "$RUN_ROOT")" = 700
+test "$(stat -c %a "$SOCKET")" = 600
+```
+
+Call health and list through HTTP JSON-RPC over the Unix socket:
+
+```bash
+curl --silent --show-error \
+  --unix-socket "$SOCKET" \
+  --header 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"taker_health","params":[{"schema_version":1}]}' \
+  http://localhost/
+
+curl --silent --show-error \
+  --unix-socket "$SOCKET" \
+  --header 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":2,"method":"taker_offer_list_v1","params":[{"schema_version":1,"route":null}]}' \
+  http://localhost/
+```
+
+For this empty configuration, health is ready with Delivery and Chat disabled,
+and the offer list is empty. Prove that initiation is honestly absent:
+
+```bash
+curl --silent --show-error \
+  --unix-socket "$SOCKET" \
+  --header 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":3,"method":"taker_swap_initiate_v1","params":[{}]}' \
+  http://localhost/
+```
+
+The response must be JSON-RPC code `-32601` for method not found. The same is
+true for swap list, monitor, claim, refund, every Maker method, and any generic
+dispatcher.
+
+Stop the exact child and confirm inode-safe cleanup:
+
+```bash
+kill -TERM "$SERVICE_PID"
+wait "$SERVICE_PID"
+test ! -e "$SOCKET"
+rm -rf -- "$RUN_ROOT"
+```
+
+Do not remove another run's directory or use a fixed socket while parallel work
+is active.
+
+```mermaid
+sequenceDiagram
+    actor U as Taker operator
+    participant C as Owner-private config
+    participant S as lez-taker-service
+    participant D as Pinned local Delivery
+    U->>C: Write strict mode 0600 schema v1
+    U->>S: Start with absolute run-owned socket
+    S->>C: Safe identified read
+    U->>S: taker_health
+    S-->>U: Ready and dependency states
+    U->>S: taker_offer_list_v1
+    S->>D: Read authenticated unexpired offers when configured
+    D-->>S: Public offer projections
+    S-->>U: Bounded secret-free list
+    U->>S: taker_swap_initiate_v1
+    S-->>U: Method not found
+    U->>S: SIGTERM
+    S-->>U: Remove only owned socket inode
+```
+
+### Use real local Delivery or Chat health
+
+To browse real offers, replace the empty `delivery_sources` array with entries
+whose directories already contain authenticated run-local Delivery envelopes
+and whose Maker public keys exactly match their signer. Every directory must be
+absolute. The optional `chat_socket` is only a metadata health probe for an
+euid-owned exact mode-0600 Unix socket; this service does not send a Chat
+message or negotiate.
+
+The service uses system wall time to reject expired offers. It fails the whole
+list rather than returning a partial set when a configured source is
+unavailable, the result cap is exceeded, or immutable duplicates conflict.
+There is no public RPC, faucet, peer, chain node, wallet, DNS, or automatic
+fallback.
+
+### Reproduce the standalone registry foundation
+
+The registry is not a service configuration option and has no manual mutation
+RPC. Its exact local proof is:
+
+```bash
+cargo test --locked -p lez-swap-store --test taker_facade_registry
+```
+
+The ten cases cover private exclusive creation and reopen, symlinked ancestors,
+database identity and schema drift, real curve-key validation, atomic
+initiation, exact replay and durable lookup after restart, changed public or
+private request conflict, same-swap rollback, row corruption, and public/error
+redaction. The durable lookup returns the original public admission without a
+live Delivery read; future service wiring must invoke it before current offer
+or trusted-time checks. No service currently invokes it.
+
+### External resources, isolation, and flakiness
+
+The empty-config service run uses only the local executable, owner-private
+config, Unix socket, and system clock. The registry proof uses only a run-unique
+temporary directory, SQLite, filesystem locks, and sync. Neither starts Docker,
+Delivery, Chat, LEZ, Bitcoin, Monero, Zebra, a wallet, a faucet, or a public
+network connection.
+
+With configured local Delivery, stale or missing directories, wrong pinned
+Maker keys, expired offers, wall-clock drift, ownership/mode/inode changes,
+result overflow, or conflicting duplicates fail closed. An optional missing or
+unsafe Chat socket makes health degraded but does not invent negotiation.
+SQLite sync latency and lock contention can slow or fail a registry operation;
+the busy timeout is bounded at five seconds. These failures create no chain
+effect because the registry has no worker and the service has no mutation
+method.

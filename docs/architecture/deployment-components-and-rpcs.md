@@ -47,39 +47,50 @@ or HTTP errors. These controls support the no-effects claim; they do not turn
 the prototype into an actor or chain integration.
 
 After prototype sign-off, the planned Basecamp deployment has separate Maker
-and Taker `ui_qml` packages and separate process-isolated `ui-host` Qt Remote
-Objects packages. Those packages and their QtRO endpoints are not implemented,
-so no QtRO socket name, TCP port, or credential scheme is assigned here. The
-Maker host is planned to translate only an allowlisted typed UI contract to the
-existing owner Unix RPC. The Taker host now has an implemented strict typed
-contract, but its role-fixed service and endpoint remain unimplemented.
-Neither QML view receives node endpoints,
-wallet credentials, signing keys, Delivery keys, Chat credentials, SQLite
-paths, or effect authority.
+and Taker `ui_qml` packages and process-isolated `ui-host` Qt Remote Objects
+packages. Those packages and their QtRO endpoints are not implemented, so no
+QtRO socket name, TCP port, or credential scheme is assigned here. The Maker
+host will translate an allowlisted typed UI contract to the existing owner Unix
+RPC. The Taker host will use the separate Taker owner socket; that socket and
+its read-only service now exist, but no QtRO host calls them. Neither QML view
+receives node endpoints, wallet credentials, signing keys, Delivery keys, Chat
+credentials, SQLite paths, or effect authority.
 
-The nonvisual Maker prerequisite is now implemented at `8c6a7db`.
-`maker_local_route_save_v1` is a strict, secret-free owner RPC that stores a
-same-route local policy and exact price plus one replay result in a single
-schema-v22 transaction. No QML or QtRO host calls it yet. Existing separate
-pair/price RPCs remain for the CLI and compatibility, but a future one-click UI
-save must use the combined operation and retry only its exact persisted
-request envelope.
+The nonvisual Maker prerequisite is implemented at `8c6a7db`.
+`maker_local_route_save_v1` stores a same-route local policy, exact price, and
+replay result in one schema-v22 transaction. No QML or QtRO host calls it.
+
+The nonvisual Taker read process is implemented through `8826836`.
+`lez-taker-service` reads one owner-private schema-v1 file and binds a distinct
+owner-only mode-0600 Unix socket. It registers only `taker_health` and
+`taker_offer_list_v1`. Its configuration accepts pinned local Delivery
+directories and Maker keys, optional Chat-socket metadata health, and an offer
+limit. It accepts no registry, receipt, actor, wallet, or node configuration.
+
+The standalone registry through `5c6500d` atomically admits one current ZEC
+`TakerSellsLez` initiation and can revalidate its public projection by request
+ID before live Delivery or trusted-time checks. It is not connected to the
+process. No initiate, swap-list, monitor, claim, or refund endpoint is
+registered.
 
 ```mermaid
 flowchart TB
     Maker["Maker operator"] -.-> MakerQml["Planned Maker ui_qml package"]
     MakerQml -.-> MakerHost["Planned Maker ui-host QtRO package"]
-    MakerHost -.-> OwnerRpc["Existing owner Unix RPC<br/>mode 0600 and atomic route save"]
-    OwnerRpc --> MakerDaemon["Existing Maker daemon and role actors"]
+    MakerHost -.-> OwnerRpc["Maker owner Unix RPC<br/>mode 0600"]
+    OwnerRpc --> MakerDaemon["Maker daemon and role actors"]
 
     Taker["Taker user"] -.-> TakerQml["Planned Taker ui_qml package"]
     TakerQml -.-> TakerHost["Planned Taker ui-host QtRO package"]
-    TakerHost -.-> TakerFacade["Typed contract and authenticated read backend<br/>service endpoint unassigned"]
-    TakerFacade -.-> TakerActors["Existing Taker role actors and receipt state"]
+    TakerHost -.-> TakerSocket["Taker owner Unix RPC<br/>mode 0600"]
+    TakerSocket --> TakerService["lez-taker-service<br/>health and offer list only"]
+    TakerConfig["Private read config"] --> TakerService
+    TakerService --> Delivery["Pinned local Delivery directories"]
+    TakerService --> ChatProbe["Optional Chat socket metadata probe"]
+    TakerService -.-> Registry[("Standalone Taker registry<br/>not wired")]
+    Registry -.-> Worker["Future mutation worker"]
+    Worker -.-> TakerActors["Existing Taker role actors"]
 
-    MakerDaemon --> DeliveryChat["Existing actor-owned Delivery and Chat boundaries"]
-    TakerFacade --> DeliveryChat
-    TakerActors --> DeliveryChat
     MakerDaemon --> NodeAdapters["Existing role-fixed node adapters and sidecars"]
     TakerActors --> NodeAdapters
     NodeAdapters --> Lez["Local LEZ RPCs"]
@@ -88,12 +99,11 @@ flowchart TB
     NodeAdapters --> Zcash["Local Zebra RPC"]
 ```
 
-Dashed edges in this M6 diagram are planned and carry no current deployment
-claim. Solid edges identify boundaries that already exist elsewhere in the
-repository; M6 has not yet composed all of them into one UI-driven run. Node
-access remains behind the role actors and their existing durable effect
-journals. A `ui_qml` view or `ui-host` must never call a node, sidecar, Delivery,
-or Chat endpoint directly.
+Dashed edges are planned and carry no current deployment claim. Solid Taker
+edges stop at authenticated local reads. The standalone registry has no solid
+service edge and no worker. Node access remains behind role actors and durable
+effect journals. A `ui_qml` view or `ui-host` must never call a node,
+sidecar, Delivery, or Chat endpoint directly.
 
 ### M6 ports, credentials, and resources
 
@@ -109,9 +119,11 @@ or Chat endpoint directly.
 | Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the planned host may call it, the QML view may not |
 | Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
-| Taker lifecycle facade | Contract/read backend have no endpoint yet; separate owner-only service transport is planned | No credential scheme exists yet; DTOs and fixed errors contain no paths, keys, receipts, commands, or raw evidence | Seven-method typed contract plus real key-pinned Delivery health/list backend implemented through `1584b76`; mutation registry, actor binding, and process remain planned |
-| Delivery | No M6 TCP port. Existing local discovery uses an owner-private signed directory | Maker signing material remains actor-owned and is never passed to either UI package | Existing local boundary; future UI reaches it only through role actors |
-| Chat | No fixed M6 port. Existing daemon integration uses a separately configured absolute mode-0600 Unix socket | Socket ownership plus protocol identity and signatures remain actor-owned | Existing local negotiation boundary; no direct UI access |
+| Taker read service | Default `/run/lez-atomic-swaps/taker.sock`, or a caller-selected absolute Unix path beneath an euid-owned mode-0700 directory; endpoint is mode 0600 | Unix ownership/mode are admission; response DTOs and fixed errors expose no paths, keys, receipts, commands, or raw evidence | Actual `lez-taker-service` through `8826836`; only `taker_health` and `taker_offer_list_v1`; HTTP-only, batches disabled, 16 connections, 64-KiB bodies, SIGTERM cleanup and replacement-inode preservation |
+| Taker read configuration | Absolute owner-owned single-link regular exact mode-0400 or mode-0600 file, maximum 64 KiB | Pinned Delivery directories and compressed Maker public keys; optional absolute Chat socket path; no wallet, signing key, registry, receipt, actor, or node field | Strict schema v1 with `delivery_sources`, optional `chat_socket`, and `maximum_offers` from 1 through 1024; `0ef38b0` binds zeroizing bytes to same-descriptor device, inode, and length and rejects path replacement |
+| Standalone Taker registry | Caller-selected normalized absolute mode-0600 SQLite file; no service endpoint | Stores private service-derived initiation bindings; public APIs and errors redact them | Schema v1 through `5c6500d`; ZEC `TakerSellsLez` admission, exact replay, and durable public lookup before live Delivery only; not configured or opened by the service; no initiate RPC or worker |
+| Delivery | No M6 TCP port. Current Taker reads use zero to 32 owner-private signed directories pinned to Maker keys | Maker signing material remains actor-owned and is never passed to either UI package | Actual read-only dependency; unavailable sources, expired offers, result overflow, or conflicting immutable duplicates fail closed |
+| Chat | No fixed M6 port. The Taker read service may inspect one absolute mode-0600 owner socket's metadata only | No Chat credential or payload crosses the health probe | Current Taker service reports disabled, available, or unavailable; it performs no Chat negotiation |
 | LEZ node RPCs | No new M6 port. Existing runs publish run-scoped dynamic loopback endpoints or actor-sidecar endpoints in owner-private manifests | Run, role, capability, signer, and key files remain outside the UI | Existing sequencer, indexer, Bedrock, and role sidecars are actor-only resources; not started by the current prototype |
 | Bitcoin Core RPC | No new M6 port. Existing Regtest runs allocate a dynamic literal-loopback RPC port | Provisioner cookie authority and distinct restricted mode-0600 role Basic credentials remain outside the UI | Existing isolated Core and role actors; not started by the current prototype |
 | Monero RPCs | No new M6 ports. Existing Regtest runs allocate distinct dynamic literal-loopback daemon and wallet ports | Distinct Digest RPC credentials and wallet-password files remain owner-private and outside the UI | Existing peerless daemon plus provisioner, Maker, and Taker wallets; not started by the current prototype |
@@ -128,22 +140,30 @@ local Docker proof additionally uses a digest-pinned official Puppeteer image,
 a unique container name, no network namespace, a read-only repository mount,
 disposable tmpfs state, bounded resources, and a sandbox-enabled browser.
 
-Runtime external resources are empty. If the pinned image is absent, acquiring
-it from GHCR is a setup dependency that may fail independently of the test;
-after acquisition, the test opens no external network. Remaining sensitivities
-are Docker and kernel sandbox support, Node/npm or image setup, loopback port
-and process limits, and CPU scheduling against bounded browser timeouts.
-System Chrome in CI may drift, although pass/fail uses DOM and state assertions
-rather than screenshots. Cold `npm ci` depends on registry or cache
-availability; runtime page loading does not.
+Prototype runtime external resources are empty. If the pinned image is absent,
+acquiring it from GHCR is a setup dependency that may fail independently of
+the test. Remaining prototype sensitivities are Docker and kernel sandbox
+support, Node/npm or image setup, local process limits, and CPU scheduling
+against browser timeouts.
 
-The planned actor-real UI inherits startup, finality, reorg, and bounded-RPC
-timing from the existing local LEZ, Bitcoin, Monero, and Zcash lanes, plus
+The read-only Taker service uses only its owner-private configuration, local
+Unix socket, system wall clock, configured local Delivery directories, and an
+optional local Chat-socket metadata probe. With an empty source list and no
+Chat socket it opens no dependency beyond its own socket and files. With real
+sources, stale or missing directories, wrong Maker keys, expired offers, clock
+drift, permission or inode changes, result limits, and conflicting duplicate
+offers fail closed. There is no automatic public provider or node fallback.
+
+The standalone registry test uses local SQLite and filesystem sync only.
+Filesystem latency, lock contention up to the bounded five-second busy timeout,
+or unsafe path and inode changes can fail an operation, but cannot trigger a
+chain or wallet call because no worker is connected.
+
+The planned actor-real UI additionally inherits startup, finality, reorg, and
+bounded-RPC timing from local LEZ, Bitcoin, Monero, and Zcash lanes, plus
 Basecamp, Qt, QtRO, and reproducible-package toolchain drift. Delivery or Chat
-availability can affect discovery and negotiation, while receipt-bound replay
-must remain independent where the existing role contract says it is. Those are
-future M6 composition risks, not current prototype flakiness, and they do not
-authorize public endpoint fallback or direct UI-to-node access.
+may affect pre-lock discovery and negotiation. These are future composition
+risks and never authorize public endpoint fallback or direct UI-to-node access.
 
 ## Current executable local topology
 

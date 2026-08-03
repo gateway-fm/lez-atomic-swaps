@@ -39,12 +39,30 @@ to end at `eb7e147`. The strict typed Taker facade contract is GREEN at
 commands, or raw evidence, and reports current Monero terminal routes honestly
 as effect checkpoints rather than completed swaps. Reusable owner-only server
 custody is GREEN at `270c5ef`; real authenticated Delivery health and bounded
-offer listing are GREEN at `1584b76`. Mutation methods remain absent until
-their durable registry and replay/generation journal exist. ADR
+offer listing are GREEN at `1584b76`. ADR
 [0130](docs/architecture/0130-expose-a-strict-role-fixed-taker-facade.md)
 records the typed boundary. ADR
 [0131](docs/architecture/0131-isolate-taker-facade-on-owner-service.md)
-records the separate process/socket decision and read-only flows.
+records the separate process/socket decision and read-only flows. The actual
+`lez-taker-service` is GREEN at `8826836`: an owner-private startup file
+configures only pinned Delivery sources, an optional metadata-only Chat socket
+probe, and the bounded offer result limit; its dedicated owner-only Unix socket
+registers only health and authenticated offer listing. Commit `0ef38b0`
+binds zeroizing configuration bytes to the same descriptor's device, inode,
+and length, revalidates them around the read, and rejects path replacement; an
+exact owner-owned single-link regular mode-0400 or mode-0600 file is accepted.
+The standalone schema-v1
+Taker registry foundation is GREEN through `5c6500d`. One immediate SQLite
+transaction admits the current ZEC `TakerSellsLez` public facts, private
+service-derived authority, and exact global replay result. A request-ID lookup
+revalidates the complete durable binding and returns its public facts without
+consulting live Delivery or trusted time, so future service replay can run
+before an offer expires or disappears. The registry is not connected to the
+service and grants no worker, actor, Chat, chain, claim, or refund authority.
+ADR [0132](docs/architecture/0132-persist-taker-initiation-admission-separately.md)
+records its atomicity and limitations. The other five target Taker methods,
+mutation workers, Basecamp/QML and QtRO packages, actor-real UI composition,
+final gates, owner sign-off, and the M6 tag remain pending.
 
 ### M5 verified progressive application PoC — historical implementation record
 

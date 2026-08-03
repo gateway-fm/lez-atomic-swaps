@@ -5442,7 +5442,52 @@ payload-free Chat health, and redacted diagnostics. Focused tests are GREEN
 6/6 with strict Clippy. No mutation method or generic dispatcher is exposed.
 
 ADR 0131 requires a separate owner-only Taker process rather than adding this
-authority to the Maker daemon. Next nonvisual work is the two-method typed RPC
-adapter and process, then a durable request/result registry and complete ZEC
-mutation vertical. Production QML and QtRO host work resume only after explicit
-owner prototype sign-off.
+authority to the Maker daemon.
+
+## M6 read-only Taker process checkpoint (2026-08-03)
+
+Pushed commits `3121a5d`, `b8b375c`, and `8826836` register only
+`taker_health` and `taker_offer_list_v1`, load their dependencies from a
+strict owner-private schema-v1 file, and run them through the dedicated
+`lez-taker-service` owner Unix socket. The configuration accepts only pinned
+Delivery directories and Maker keys, an optional metadata-only Chat socket
+probe, and a bounded offer maximum. It has no registry, prepared material,
+receipt, actor, wallet, or node field. Commit `0ef38b0` returns configuration
+bytes with their same-descriptor device, inode, and length identity, checks
+length around the read, reopens the path to reject replacement, zeroizes bytes,
+and accepts only an owner-owned single-link regular exact mode 0400 or 0600
+file.
+
+The process test proves empty health and offer listing, mode-0700 runtime and
+mode-0600 socket custody, Maker and all five unimplemented Taker methods as
+method-not-found, SIGTERM cleanup, restart, preservation of a replacement
+inode, and failure before bind for missing or invalid configuration and a
+relative socket. This is a read-only process boundary and creates no swap.
+
+## M6 standalone Taker initiation registry checkpoint (2026-08-03)
+
+Pushed commits `ca10c13` and `5c6500d` add a separate owner-private
+SQLite schema-v1 registry. For the current ZEC `TakerSellsLez` vertical, one
+immediate transaction commits exact public initiation facts, service-derived
+private authority, and the global request/result replay row. Exact replay
+survives restart. Durable `lookup_initiation` revalidates the request, public
+projection, and private authority, then returns only public facts without a
+live Delivery or trusted-time check. A future service can therefore check
+durable replay before an offer expires or disappears. Changed public or private
+payloads conflict; a same-swap loser rolls back without consuming its request
+ID; schema, row, symlink, curve-point, and file-identity drift fail closed. Ten
+focused tests plus the new lookup assertions, strict Clippy, Rustdoc,
+formatting, diff hygiene, and the swap-store library regression were GREEN
+before push.
+
+ADR 0132 records the components, success, conflict, restart, atomicity, and
+limitations. The registry is a standalone library and is not configured by or
+connected to `lez-taker-service`; `taker_swap_initiate_v1` remains
+method-not-found and no worker, actor, Chat, chain, wallet, claim, or refund
+effect exists.
+
+Next nonvisual work is service-owned authority resolution, registry wiring, and
+one complete bounded ZEC mutation vertical before expanding lifecycle reads and
+terminal admission. Production QML and QtRO host work remain gated on explicit
+owner prototype sign-off. Actor-real UI composition, Basecamp packages, final
+quality/evidence gates, and the M6 tag remain pending.
