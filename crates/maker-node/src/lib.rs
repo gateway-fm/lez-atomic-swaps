@@ -63,14 +63,14 @@ use lez_swap_store::{
     AlertObservedEvent, BtcAgreementAcceptance, EventCommit, LocalPriceV1, MakerActorKindV1,
     MakerActorManifestV1, MakerActorManualAction, MakerActorManualActionState,
     MakerActorProcessError, MakerActorProgressObservationV1, MakerActorScheduleState,
-    MakerBtcNegotiationV1, MakerConfigurationCommit, MakerOfferCommit, MakerOfferId,
-    MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1,
-    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerXmrActivationAcceptance,
-    MakerXmrNegotiationStatus, MakerXmrNegotiationV1, MakerZecNegotiationV1, OperatorAlert,
-    OperatorAlertKind, OperatorAlertRecordV1, OperatorAlertSeverity,
-    OperatorTerminalProjectionCommit, SqliteSwapStore, SqliteZecRecoveryStore, StoreError,
-    VersionedMakerRecord, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
-    maker_zec_chat_session_id, validate_maker_actor_program,
+    MakerBtcNegotiationV1, MakerConfigurationCommit, MakerLocalRouteCommit, MakerOfferCommit,
+    MakerOfferId, MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus,
+    MakerOfferV1, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
+    MakerXmrActivationAcceptance, MakerXmrNegotiationStatus, MakerXmrNegotiationV1,
+    MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
+    OperatorAlertSeverity, OperatorTerminalProjectionCommit, SqliteSwapStore,
+    SqliteZecRecoveryStore, StoreError, VersionedMakerRecord, maker_btc_chat_swap_id,
+    maker_xmr_chat_swap_id, maker_zec_chat_session_id, validate_maker_actor_program,
 };
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
@@ -699,6 +699,22 @@ impl From<&OperatorAlert> for OperatorAlertView {
             acknowledged: alert.acknowledged(),
         }
     }
+}
+
+/// Parameters for one atomic, idempotent local route and price mutation.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalRouteSaveRequest {
+    /// Stable request identity used for exact replay of the complete operation.
+    pub request_id: RequestId,
+    /// Current pair-policy revision, or `None` for insert-only.
+    pub expected_pair_revision: Option<u64>,
+    /// Current local-price revision, or `None` for insert-only.
+    pub expected_price_revision: Option<u64>,
+    /// Fully validated policy using the local price source.
+    pub configuration: MakerPairConfigurationV1,
+    /// Exact integer price for the same route.
+    pub price: LocalPriceV1,
 }
 
 /// Parameters for one idempotent maker pair-policy mutation.
@@ -1487,6 +1503,25 @@ fn owner_socket_is_available(path: &Path) -> bool {
 }
 
 fn register_pair_and_price_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<MakerLocalRouteCommit>, _>(
+        "maker_local_route_save_v1",
+        |params, context, _| {
+            let request: LocalRouteSaveRequest = params.one()?;
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .save_local_maker_route(
+                    &request.request_id,
+                    request.expected_pair_revision,
+                    request.expected_price_revision,
+                    &request.configuration,
+                    &request.price,
+                )
+                .map_err(application_store_error)
+        },
+    )?;
     module.register_blocking_method::<RpcResult<MakerConfigurationCommit>, _>(
         "maker_pair_configure",
         |params, context, _| {
@@ -2202,6 +2237,7 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
         | StoreError::MakerOffer(_)
         | StoreError::MissingMakerPair
         | StoreError::MissingMakerLocalPrice
+        | StoreError::MakerLocalRouteMismatch
         | StoreError::MakerPriceSourceMismatch
         | StoreError::MakerRouteDisabled
         | StoreError::MakerOfferExpired

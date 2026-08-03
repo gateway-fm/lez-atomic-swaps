@@ -53,8 +53,8 @@ pub use maker_actor_process::{
     validate_maker_actor_program,
 };
 pub use maker_application::{
-    LocalPriceV1, MakerConfigurationCommit, MakerConfigurationError, MakerPairConfigurationV1,
-    MakerPriceSourceKind, MakerRouteV1, VersionedMakerRecord,
+    LocalPriceV1, MakerConfigurationCommit, MakerConfigurationError, MakerLocalRouteCommit,
+    MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, VersionedMakerRecord,
 };
 pub use maker_offer::{
     MakerBtcAcceptanceCommit, MakerBtcAcceptanceReplay, MakerBtcNegotiationStatus,
@@ -91,7 +91,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-const DATABASE_SCHEMA_VERSION: i64 = 21;
+const DATABASE_SCHEMA_VERSION: i64 = 22;
 const LEGACY_CLAIM_MIGRATION_VERSION: i64 = 10;
 const SWAP_PAYLOAD_VERSION: i64 = 1;
 const ZCASH_EVENT_PAYLOAD_VERSION: i64 = 1;
@@ -414,6 +414,9 @@ pub enum StoreError {
     /// An enabled local-price route has no durable quote.
     #[error("enabled maker route has no local price")]
     MissingMakerLocalPrice,
+    /// A combined local-route request supplied different pair/direction keys.
+    #[error("maker local route and price keys do not match")]
+    MakerLocalRouteMismatch,
     /// A local-price mutation targeted a non-local price source.
     #[error("maker route does not use the local price source")]
     MakerPriceSourceMismatch,

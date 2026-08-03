@@ -266,6 +266,41 @@ impl MakerConfigurationCommit {
     }
 }
 
+/// Result of one atomic pair-policy and local-price mutation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MakerLocalRouteCommit {
+    pair_revision: u64,
+    price_revision: u64,
+    was_replay: bool,
+}
+
+impl MakerLocalRouteCommit {
+    /// Durable route-local pair-policy revision.
+    #[must_use]
+    pub const fn pair_revision(self) -> u64 {
+        self.pair_revision
+    }
+
+    /// Durable route-local price revision.
+    #[must_use]
+    pub const fn price_revision(self) -> u64 {
+        self.price_revision
+    }
+
+    /// Whether the exact request ID and complete payload were already committed.
+    #[must_use]
+    pub const fn was_replay(self) -> bool {
+        self.was_replay
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct StoredLocalRouteCommitV1 {
+    schema_version: u16,
+    pair_revision: u64,
+    price_revision: u64,
+}
+
 #[derive(Deserialize, Serialize)]
 struct StoredCommitV1 {
     schema_version: u16,
@@ -284,7 +319,120 @@ struct PriceMutationRequest<'a> {
     price: &'a LocalPriceV1,
 }
 
+#[derive(Serialize)]
+struct LocalRouteMutationRequest<'a> {
+    expected_pair_revision: Option<u64>,
+    expected_price_revision: Option<u64>,
+    configuration: &'a MakerPairConfigurationV1,
+    price: &'a LocalPriceV1,
+}
+
 impl SqliteSwapStore {
+    /// Atomically saves one local-price route policy and its exact price.
+    ///
+    /// Both rows and the replay record share one immediate transaction. This is the
+    /// owner-UI primitive for creating an enabled route without exposing partial state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid or mismatched local-route values, conflicting
+    /// request-ID reuse, stale pair/price revisions, corruption, overflow, or `SQLite` failure.
+    pub fn save_local_maker_route(
+        &mut self,
+        request_id: &RequestId,
+        expected_pair_revision: Option<u64>,
+        expected_price_revision: Option<u64>,
+        configuration: &MakerPairConfigurationV1,
+        price: &LocalPriceV1,
+    ) -> Result<MakerLocalRouteCommit, StoreError> {
+        configuration.validate()?;
+        price.validate()?;
+        if configuration.route() != price.route() {
+            return Err(StoreError::MakerLocalRouteMismatch);
+        }
+        if configuration.price_source() != MakerPriceSourceKind::Local {
+            return Err(StoreError::MakerPriceSourceMismatch);
+        }
+        let pair_json = serde_json::to_string(configuration)?;
+        let price_json = serde_json::to_string(price)?;
+        let request_json = serde_json::to_string(&LocalRouteMutationRequest {
+            expected_pair_revision,
+            expected_price_revision,
+            configuration,
+            price,
+        })?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(commit) = replay_local_route_mutation(&transaction, request_id, &request_json)?
+        {
+            transaction.commit()?;
+            return Ok(commit);
+        }
+        let route = configuration.route();
+        let pair_revision = next_revision(
+            &transaction,
+            "maker_pair_configurations",
+            route,
+            expected_pair_revision,
+        )?;
+        let price_revision = next_revision(
+            &transaction,
+            "maker_local_prices",
+            route,
+            expected_price_revision,
+        )?;
+        transaction.execute(
+            "INSERT INTO maker_pair_configurations (
+                 pair, direction, payload_version, payload_json, revision, updated_request_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(pair, direction) DO UPDATE SET
+                 payload_version = excluded.payload_version,
+                 payload_json = excluded.payload_json,
+                 revision = excluded.revision,
+                 updated_request_id = excluded.updated_request_id",
+            params![
+                pair_name(route.pair()),
+                direction_name(route.direction()),
+                APPLICATION_PAYLOAD_VERSION,
+                pair_json,
+                revision_to_sql(pair_revision)?,
+                request_id.as_str(),
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO maker_local_prices (
+                 pair, direction, payload_version, payload_json, revision, updated_request_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(pair, direction) DO UPDATE SET
+                 payload_version = excluded.payload_version,
+                 payload_json = excluded.payload_json,
+                 revision = excluded.revision,
+                 updated_request_id = excluded.updated_request_id",
+            params![
+                pair_name(route.pair()),
+                direction_name(route.direction()),
+                APPLICATION_PAYLOAD_VERSION,
+                price_json,
+                revision_to_sql(price_revision)?,
+                request_id.as_str(),
+            ],
+        )?;
+        persist_local_route_mutation(
+            &transaction,
+            request_id,
+            &request_json,
+            pair_revision,
+            price_revision,
+        )?;
+        transaction.commit()?;
+        Ok(MakerLocalRouteCommit {
+            pair_revision,
+            price_revision,
+            was_replay: false,
+        })
+    }
+
     /// Atomically configures one maker route and records its idempotency result.
     ///
     /// # Errors
@@ -473,6 +621,68 @@ impl SqliteSwapStore {
         })?;
         rows.map(|row| decode_price_record(row?)).collect()
     }
+}
+
+fn replay_local_route_mutation(
+    transaction: &rusqlite::Transaction<'_>,
+    request_id: &RequestId,
+    request_json: &str,
+) -> Result<Option<MakerLocalRouteCommit>, StoreError> {
+    let existing = transaction
+        .query_row(
+            "SELECT operation, request_json, result_json
+             FROM maker_application_mutations WHERE request_id = ?1",
+            params![request_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((stored_operation, stored_request, stored_result)) = existing else {
+        return Ok(None);
+    };
+    if stored_operation != "local_route_save" || stored_request != request_json {
+        return Err(StoreError::MakerConfigurationRequestConflict);
+    }
+    let result: StoredLocalRouteCommitV1 = serde_json::from_str(&stored_result)?;
+    if result.schema_version != 1 || result.pair_revision == 0 || result.price_revision == 0 {
+        return Err(StoreError::CorruptMakerConfiguration);
+    }
+    Ok(Some(MakerLocalRouteCommit {
+        pair_revision: result.pair_revision,
+        price_revision: result.price_revision,
+        was_replay: true,
+    }))
+}
+
+fn persist_local_route_mutation(
+    transaction: &rusqlite::Transaction<'_>,
+    request_id: &RequestId,
+    request_json: &str,
+    pair_revision: u64,
+    price_revision: u64,
+) -> Result<(), StoreError> {
+    let result_json = serde_json::to_string(&StoredLocalRouteCommitV1 {
+        schema_version: 1,
+        pair_revision,
+        price_revision,
+    })?;
+    transaction.execute(
+        "INSERT INTO maker_application_mutations (
+             request_id, operation, request_payload_version, request_json, result_json
+         ) VALUES (?1, 'local_route_save', ?2, ?3, ?4)",
+        params![
+            request_id.as_str(),
+            APPLICATION_PAYLOAD_VERSION,
+            request_json,
+            result_json,
+        ],
+    )?;
+    Ok(())
 }
 
 fn replay_configuration_mutation(
@@ -716,29 +926,29 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
              sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
              request_id              TEXT NOT NULL UNIQUE,
              operation               TEXT NOT NULL CHECK (
-                 operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'xmr_negotiation_stage', 'xmr_negotiation_complete', 'actor_action_request')
+                 operation IN ('pair_configure', 'local_price_set', 'local_route_save', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'xmr_negotiation_stage', 'xmr_negotiation_complete', 'actor_action_request')
              ),
              request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
              request_json            TEXT NOT NULL,
              result_json             TEXT NOT NULL
          ) STRICT;",
     )?;
-    let supports_xmr_completion: bool = transaction.query_row(
-        "SELECT instr(sql, 'xmr_negotiation_complete') > 0
+    let supports_local_route_save: bool = transaction.query_row(
+        "SELECT instr(sql, 'local_route_save') > 0
            FROM sqlite_master
           WHERE type = 'table' AND name = 'maker_application_mutations'",
         [],
         |row| row.get(0),
     )?;
-    if !supports_xmr_completion {
+    if !supports_local_route_save {
         transaction.execute_batch(
             "ALTER TABLE maker_application_mutations
-                 RENAME TO maker_application_mutations_before_xmr_completion;
+                 RENAME TO maker_application_mutations_before_local_route_save;
              CREATE TABLE maker_application_mutations (
                  sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
                  request_id              TEXT NOT NULL UNIQUE,
                  operation               TEXT NOT NULL CHECK (
-                     operation IN ('pair_configure', 'local_price_set', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'xmr_negotiation_stage', 'xmr_negotiation_complete', 'actor_action_request')
+                     operation IN ('pair_configure', 'local_price_set', 'local_route_save', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'xmr_negotiation_stage', 'xmr_negotiation_complete', 'actor_action_request')
                  ),
                  request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
                  request_json            TEXT NOT NULL,
@@ -748,9 +958,9 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
                  sequence, request_id, operation, request_payload_version, request_json, result_json
              )
              SELECT sequence, request_id, operation, request_payload_version, request_json, result_json
-               FROM maker_application_mutations_before_xmr_completion
+               FROM maker_application_mutations_before_local_route_save
               ORDER BY sequence;
-             DROP TABLE maker_application_mutations_before_xmr_completion;",
+             DROP TABLE maker_application_mutations_before_local_route_save;",
         )?;
     }
     let legacy_exists: bool = transaction.query_row(

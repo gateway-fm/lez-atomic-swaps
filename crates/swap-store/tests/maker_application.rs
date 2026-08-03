@@ -105,6 +105,91 @@ fn local_route_enablement_requires_a_price_and_rolls_back_request_id() {
 }
 
 #[test]
+fn enabled_local_route_save_is_atomic_replay_safe_and_survives_restart() {
+    let run = tempdir().expect("isolated store");
+    let database = run.path().join("atomic-local-route.sqlite3");
+    let zec = route(Pair::Zcash, SwapDirection::TakerSellsLez);
+    let enabled = policy(zec, true, MakerPriceSourceKind::Local);
+    let price = LocalPriceV1::new(zec, 5, 2).expect("reduced exact price");
+    let request_id = request("route-save-zec-001");
+
+    let mut store = SqliteSwapStore::open(&database).expect("open maker store");
+    let committed = store
+        .save_local_maker_route(&request_id, None, None, &enabled, &price)
+        .expect("commit enabled route and quote together");
+    assert_eq!(committed.pair_revision(), 1);
+    assert_eq!(committed.price_revision(), 1);
+    assert!(!committed.was_replay());
+
+    let replay = store
+        .save_local_maker_route(&request_id, None, None, &enabled, &price)
+        .expect("replay exact combined mutation");
+    assert_eq!(replay.pair_revision(), 1);
+    assert_eq!(replay.price_revision(), 1);
+    assert!(replay.was_replay());
+
+    let changed_price = LocalPriceV1::new(zec, 7, 3).expect("different reduced price");
+    assert!(matches!(
+        store.save_local_maker_route(&request_id, Some(1), Some(1), &enabled, &changed_price),
+        Err(StoreError::MakerConfigurationRequestConflict)
+    ));
+    drop(store);
+
+    let store = SqliteSwapStore::open(&database).expect("restart maker store");
+    let pairs = store.list_maker_pairs().expect("list durable pairs");
+    let prices = store.list_local_prices().expect("list durable prices");
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].revision(), 1);
+    assert_eq!(pairs[0].value(), &enabled);
+    assert_eq!(prices.len(), 1);
+    assert_eq!(prices[0].revision(), 1);
+    assert_eq!(prices[0].value(), &price);
+}
+
+#[test]
+fn combined_local_route_save_rolls_back_pair_when_price_cas_is_stale() {
+    let run = tempdir().expect("isolated store");
+    let mut store =
+        SqliteSwapStore::open(run.path().join("atomic-rollback.sqlite3")).expect("open store");
+    let bitcoin = route(Pair::Bitcoin, SwapDirection::TakerSellsForeign);
+    let disabled = policy(bitcoin, false, MakerPriceSourceKind::Local);
+    let enabled = policy(bitcoin, true, MakerPriceSourceKind::Local);
+    let original_price = LocalPriceV1::new(bitcoin, 3, 2).expect("initial price");
+    let changed_price = LocalPriceV1::new(bitcoin, 5, 2).expect("changed price");
+
+    store
+        .configure_maker_pair(&request("rollback-pair-create"), None, &disabled)
+        .expect("seed route");
+    store
+        .set_local_price(&request("rollback-price-create"), None, &original_price)
+        .expect("seed quote");
+
+    let combined_id = request("route-save-rollback-001");
+    assert!(matches!(
+        store.save_local_maker_route(&combined_id, Some(1), None, &enabled, &changed_price,),
+        Err(StoreError::StaleMakerConfiguration {
+            expected: None,
+            actual: Some(1),
+        })
+    ));
+
+    let pairs = store.list_maker_pairs().expect("list pair after rollback");
+    let prices = store
+        .list_local_prices()
+        .expect("list price after rollback");
+    assert_eq!(pairs[0].revision(), 1);
+    assert_eq!(pairs[0].value(), &disabled);
+    assert_eq!(prices[0].revision(), 1);
+    assert_eq!(prices[0].value(), &original_price);
+
+    let committed = store
+        .save_local_maker_route(&combined_id, Some(1), Some(1), &enabled, &changed_price)
+        .expect("failed transaction did not consume request ID");
+    assert_eq!(committed.pair_revision(), 2);
+    assert_eq!(committed.price_revision(), 2);
+}
+
+#[test]
 fn route_and_price_constructors_reject_unsafe_shapes() {
     assert_eq!(
         MakerRouteV1::new(Pair::Monero, SwapDirection::TakerSellsForeign),
@@ -171,7 +256,7 @@ fn schema_v10_migrates_to_current_without_rewriting_coordinator_bytes() {
             |row| row.get(0),
         )
         .expect("read retained aggregate bytes");
-    assert_eq!(version, 21);
+    assert_eq!(version, 22);
     assert_eq!(retained, encoded);
 }
 
@@ -241,7 +326,7 @@ fn schema_v18_migrates_btc_mutation_operations_without_losing_requests() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
-    assert_eq!(version, 21);
+    assert_eq!(version, 22);
     assert_eq!(retained, 1);
     assert!(table_sql.contains("btc_negotiation_stage"));
     assert!(table_sql.contains("btc_negotiation_complete"));
@@ -316,7 +401,7 @@ fn schema_v19_adds_xmr_stage_a_without_losing_global_requests() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
-    assert_eq!(version, 21);
+    assert_eq!(version, 22);
     assert_eq!(retained, 1);
     assert!(table_sql.contains("xmr_negotiation_stage"));
     assert_eq!(xmr_table, 1);
