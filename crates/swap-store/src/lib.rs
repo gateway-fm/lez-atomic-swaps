@@ -71,8 +71,9 @@ pub use public_effect_journal::{
     PublicEffectState, PublicEffectSubmissionResult, SqlitePublicEffectJournal,
 };
 pub use taker_facade_registry::{
-    SqliteTakerFacadeStore, TakerFacadeStoreError, TakerInitiationAdmissionV1,
-    TakerInitiationAuthorityV1, TakerInitiationFactsV1, TakerPrivateFileBindingV1,
+    SqliteTakerFacadeStore, TakerActionAdmissionV1, TakerFacadeActionV1, TakerFacadeStoreError,
+    TakerInitiationAdmissionV1, TakerInitiationAuthorityV1, TakerInitiationFactsV1,
+    TakerPrivateFileBindingV1,
 };
 pub use xmr_effect_workflow_journal::{
     SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowDecision, XmrWorkflowIdentityV1,
