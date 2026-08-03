@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -49,6 +49,7 @@ let browser;
 let origin;
 let server;
 let userDataDir;
+let ownedTestRoot;
 
 before(
   async () => {
@@ -99,7 +100,13 @@ before(
     assert(address && typeof address === "object", "HTTP server must expose its port");
     origin = `http://127.0.0.1:${address.port}`;
 
-    userDataDir = await mkdtemp(join(tmpdir(), "lez-m6-puppeteer-"));
+    const requestedTestRoot = process.env.M6_UI_TEST_ROOT;
+    const testRoot = requestedTestRoot ?? tmpdir();
+    if (requestedTestRoot) {
+      await mkdir(testRoot, { mode: 0o700 });
+      ownedTestRoot = testRoot;
+    }
+    userDataDir = await mkdtemp(join(testRoot, "lez-m6-puppeteer-"));
     browser = await puppeteer.launch({
       headless: true,
       userDataDir,
@@ -127,6 +134,7 @@ after(async () => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
   if (userDataDir) await rm(userDataDir, { force: true, recursive: true });
+  if (ownedTestRoot) await rm(ownedTestRoot, { force: true, recursive: true });
 });
 
 async function withAuditedPage(pathname, callback, viewport) {
