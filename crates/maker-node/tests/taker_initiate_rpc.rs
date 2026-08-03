@@ -141,6 +141,41 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
 }
 
 #[tokio::test]
+async fn replay_rejects_same_byte_signing_key_inode_drift() {
+    let fixture = Fixture::new();
+    let request = fixture.request("m6-replay-authority-drift-001");
+    let module =
+        taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
+    let first: TakerInitiationCommitV1 = module
+        .call("taker_swap_initiate_v1", [request.clone()])
+        .await
+        .unwrap();
+    assert!(!first.was_replay);
+    drop(module);
+
+    let replacement = fixture.root.join("replacement-key.bin");
+    private_file(replacement.clone(), &[42; 32]);
+    fs::remove_file(&fixture.key).unwrap();
+    fs::rename(replacement, &fixture.key).unwrap();
+
+    let replay_module =
+        taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
+    let response = rpc_response(
+        &replay_module,
+        "taker_swap_initiate_v1",
+        serde_json::to_value([request]).unwrap(),
+    )
+    .await;
+    assert_rpc_error(
+        &response,
+        INITIATION_CONFLICT,
+        "Taker initiation conflict",
+        "initiation_conflict",
+    );
+    assert_redacted(&response, &fixture);
+}
+
+#[tokio::test]
 async fn concurrent_exact_request_commits_once_and_replays_once() {
     let fixture = Fixture::new();
     let module =
@@ -223,6 +258,7 @@ struct Fixture {
     _run: tempfile::TempDir,
     root: PathBuf,
     config: PathBuf,
+    key: PathBuf,
     registry: PathBuf,
     delivery_offer: PathBuf,
     route: MakerRouteV1,
@@ -267,6 +303,7 @@ impl Fixture {
                     "directory": delivery,
                     "maker_public_key": hex::encode(maker),
                 }],
+                "chat_socket": root.join("chat.sock"),
                 "maximum_offers": 16,
                 "initiation": {
                     "registry_database": registry,
@@ -293,6 +330,7 @@ impl Fixture {
             _run: run,
             root,
             config,
+            key,
             registry,
             delivery_offer,
             route,

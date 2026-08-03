@@ -1,15 +1,24 @@
 //! JSON-RPC composition for the owner-local Taker service.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+};
 
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
+use lez_bridge_protocol::RequestId;
 use lez_swap_store::{TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1};
+use secp256k1::PublicKey;
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
+use zec_reference_actor::{ActorConfig, ActorRole};
 
 use crate::{
     ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
-    TakerBackendError, TakerHealthRequestV1, TakerInitiationCommitV1, TakerOfferListRequestV1,
-    TakerSwapInitiateRequestV1, TakerSwapStateV1, TakerSwapViewV1,
+    PreparedZecTakerInitiationV1, TakerBackendError, TakerHealthRequestV1, TakerInitiationCommitV1,
+    TakerOfferListRequestV1, TakerSwapInitiateRequestV1, TakerSwapStateV1, TakerSwapViewV1,
+    secure_file::read_private_file_snapshot,
+    zec_taker_accept::{ZecTakeInput, take_zec_with_authenticated_offer_and_actor_config},
 };
 
 const INVALID_PARAMS_CODE: i32 = -32_602;
@@ -18,6 +27,8 @@ const DEPENDENCY_UNAVAILABLE_CODE: i32 = -32_010;
 const RESULT_LIMIT_EXCEEDED_CODE: i32 = -32_011;
 const AUTHENTICATED_OFFER_CONFLICT_CODE: i32 = -32_012;
 const INITIATION_CONFLICT_CODE: i32 = -32_013;
+const MAXIMUM_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
+const SIGNING_KEY_BYTES: u64 = 32;
 
 struct TakerServiceState {
     backend: ConfiguredTakerFacadeBackend,
@@ -101,6 +112,7 @@ enum InitiationError {
     SelectionMismatch,
     Conflict,
     Backend(TakerBackendError),
+    ExecutionUnavailable,
     Internal,
 }
 
@@ -114,23 +126,28 @@ async fn initiate(
     let initiation = state.initiation.clone().ok_or(InitiationError::Internal)?;
 
     // Durable lookup deliberately precedes catalog selection, time, and Delivery.
-    let replay_id = request.request_id.clone();
-    let replay_context = Arc::clone(&initiation);
-    let replay = tokio::task::spawn_blocking(move || {
-        replay_context
-            .lock()
-            .map_err(|_| InitiationError::Internal)?
-            .registry_mut()
-            .lookup_initiation(&replay_id)
-            .map_err(map_store_error)
-    })
-    .await
-    .map_err(|_| InitiationError::Internal)??;
-    if let Some(facts) = replay {
+    let replay = lookup_replay(&initiation, &request.request_id).await?;
+    if let Some((facts, admitted_at)) = replay {
         if !request_matches_facts(&request, &facts) {
             return Err(InitiationError::Conflict);
         }
-        return Ok(commit_from_facts(&facts, true));
+        let (prepared, execution_enabled, receipt_present) =
+            prepared_execution_for_offer(&initiation, &request.offer_id).await?;
+        verify_replay_authority(
+            &initiation,
+            &request.request_id,
+            &facts,
+            &prepared,
+            admitted_at,
+        )
+        .await?;
+        let state = if execution_enabled || receipt_present {
+            execute_prepared_zec(&prepared, admitted_at).await?;
+            TakerSwapStateV1::NotActivated
+        } else {
+            TakerSwapStateV1::Initiating
+        };
+        return Ok(commit_from_facts(&facts, true, state));
     }
 
     // Clone private authority under the synchronous mutex, then release it
@@ -183,17 +200,165 @@ async fn initiate(
     let facts = prepared.facts().clone();
     let authority = prepared.authority().clone();
     let admission_context = Arc::clone(&initiation);
-    let admission = tokio::task::spawn_blocking(move || {
-        admission_context
+    let (admission, execution_enabled) = tokio::task::spawn_blocking(move || {
+        let mut context = admission_context
             .lock()
-            .map_err(|_| InitiationError::Internal)?
+            .map_err(|_| InitiationError::Internal)?;
+        let execution_enabled = context.execution_enabled();
+        let admission = context
             .registry_mut()
             .admit_initiation(&request_id, &facts, &authority, now)
-            .map_err(map_store_error)
+            .map_err(map_store_error)?;
+        Ok::<_, InitiationError>((admission, execution_enabled))
     })
     .await
     .map_err(|_| InitiationError::Internal)??;
-    Ok(commit_from_admission(&admission))
+    let progress = if execution_enabled {
+        execute_prepared_zec(&prepared, now).await?;
+        TakerSwapStateV1::NotActivated
+    } else {
+        TakerSwapStateV1::Initiating
+    };
+    Ok(commit_from_admission(&admission, progress))
+}
+
+async fn lookup_replay(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    request_id: &RequestId,
+) -> Result<Option<(TakerInitiationFactsV1, u64)>, InitiationError> {
+    let context = Arc::clone(initiation);
+    let request_id = request_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = context.lock().map_err(|_| InitiationError::Internal)?;
+        let registry = context.registry_mut();
+        let facts = registry
+            .lookup_initiation(&request_id)
+            .map_err(map_store_error)?;
+        let admitted_at = facts
+            .as_ref()
+            .map(|_| {
+                registry
+                    .lookup_initiation_admitted_at(&request_id)
+                    .map_err(map_store_error)?
+                    .ok_or(InitiationError::Internal)
+            })
+            .transpose()?;
+        Ok::<_, InitiationError>(facts.zip(admitted_at))
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)?
+}
+
+async fn verify_replay_authority(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    request_id: &RequestId,
+    facts: &TakerInitiationFactsV1,
+    prepared: &PreparedZecTakerInitiationV1,
+    admitted_at: u64,
+) -> Result<(), InitiationError> {
+    if prepared.facts() != facts {
+        return Err(InitiationError::Conflict);
+    }
+    let context = Arc::clone(initiation);
+    let request_id = request_id.clone();
+    let facts = facts.clone();
+    let authority = prepared.authority().clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = context.lock().map_err(|_| InitiationError::Internal)?;
+        let replay = context
+            .registry_mut()
+            .admit_initiation(&request_id, &facts, &authority, admitted_at)
+            .map_err(map_store_error)?;
+        if !replay.was_replay() || replay.facts() != &facts {
+            return Err(InitiationError::Internal);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)?
+}
+
+async fn prepared_execution_for_offer(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    offer_id: &lez_swap_store::MakerOfferId,
+) -> Result<(PreparedZecTakerInitiationV1, bool, bool), InitiationError> {
+    let context = Arc::clone(initiation);
+    let offer_id = offer_id.clone();
+    tokio::task::spawn_blocking(move || {
+        let context = context.lock().map_err(|_| InitiationError::Internal)?;
+        let execution_enabled = context.execution_enabled();
+        let prepared = context
+            .prepared_zec_for_offer(&offer_id)
+            .cloned()
+            .ok_or(InitiationError::SelectionMismatch)?;
+        let receipt_present = match fs::symlink_metadata(prepared.execution().receipt_output()) {
+            Ok(_) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(_) => return Err(InitiationError::ExecutionUnavailable),
+        };
+        Ok((prepared, execution_enabled, receipt_present))
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)?
+}
+
+async fn execute_prepared_zec(
+    prepared: &PreparedZecTakerInitiationV1,
+    admitted_at: u64,
+) -> Result<(), InitiationError> {
+    let execution = prepared.execution();
+    let draft = read_private_file_snapshot(
+        execution.unsigned_draft_path(),
+        MAXIMUM_PREPARED_INPUT_BYTES,
+        "prepared Taker unsigned draft",
+    )
+    .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    if draft.bytes() != execution.unsigned_draft()
+        || Sha256::digest(draft.bytes()).as_slice() != execution.unsigned_draft_sha256()
+    {
+        return Err(InitiationError::ExecutionUnavailable);
+    }
+    let signing_key = read_private_file_snapshot(
+        execution.signing_key_path(),
+        SIGNING_KEY_BYTES,
+        "prepared Taker signing key",
+    )
+    .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    if signing_key.bytes() != execution.signing_key() {
+        return Err(InitiationError::ExecutionUnavailable);
+    }
+    let actor = ActorConfig::load_private_pinned_sha256(
+        execution.source_config_path(),
+        execution.source_config_sha256(),
+    )
+    .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    if actor.role() != ActorRole::Taker || actor.swap_id() != prepared.swap_id() {
+        return Err(InitiationError::ExecutionUnavailable);
+    }
+    let maker = PublicKey::from_slice(prepared.maker_identity())
+        .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    take_zec_with_authenticated_offer_and_actor_config(
+        ZecTakeInput {
+            delivery: None,
+            expected_maker: &maker,
+            now_unix_seconds: admitted_at,
+            offer_id: prepared.offer_id().as_str(),
+            chat_socket: execution.chat_socket(),
+            reservation_id: prepared.reservation_id().as_str(),
+            foreign_units: prepared.facts().foreign_units(),
+            unsigned_draft_file: execution.unsigned_draft_path(),
+            source_taker_config_file: execution.source_config_path(),
+            taker_actor_root: execution.actor_root(),
+            acceptance_receipt_file: execution.receipt_output(),
+            taker_signing_key_file: execution.signing_key_path(),
+            agreement_output_file: execution.agreement_output(),
+        },
+        execution.authenticated_offer(),
+        &actor,
+    )
+    .await
+    .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    Ok(())
 }
 
 fn request_matches_facts(
@@ -208,11 +373,18 @@ fn request_matches_facts(
         && facts.lez_units() == request.expected_lez_units
 }
 
-fn commit_from_admission(admission: &TakerInitiationAdmissionV1) -> TakerInitiationCommitV1 {
-    commit_from_facts(admission.facts(), admission.was_replay())
+fn commit_from_admission(
+    admission: &TakerInitiationAdmissionV1,
+    state: TakerSwapStateV1,
+) -> TakerInitiationCommitV1 {
+    commit_from_facts(admission.facts(), admission.was_replay(), state)
 }
 
-fn commit_from_facts(facts: &TakerInitiationFactsV1, was_replay: bool) -> TakerInitiationCommitV1 {
+fn commit_from_facts(
+    facts: &TakerInitiationFactsV1,
+    was_replay: bool,
+    state: TakerSwapStateV1,
+) -> TakerInitiationCommitV1 {
     TakerInitiationCommitV1 {
         schema_version: 1,
         swap: TakerSwapViewV1 {
@@ -223,7 +395,7 @@ fn commit_from_facts(facts: &TakerInitiationFactsV1, was_replay: bool) -> TakerI
             foreign_units: facts.foreign_units(),
             lez_units: facts.lez_units(),
             progress_generation: 0,
-            state: TakerSwapStateV1::Initiating,
+            state,
             available_action: None,
             privacy_guidance: None,
         },
@@ -265,6 +437,11 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
             "initiation_conflict",
         ),
         InitiationError::Backend(error) => map_backend_error(error),
+        InitiationError::ExecutionUnavailable => rpc_error(
+            DEPENDENCY_UNAVAILABLE_CODE,
+            "Taker dependency unavailable",
+            "zec_acceptance_unavailable",
+        ),
         InitiationError::Internal => rpc_error(
             INTERNAL_ERROR_CODE,
             "Internal error",

@@ -18,10 +18,12 @@ use secp256k1::{PublicKey, SecretKey};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::{
-    MAX_TAKER_DELIVERY_SOURCES_V1, MAX_TAKER_OFFER_RESULTS_V1, RunLocalDelivery,
-    TakerDependencyProbe, TakerFacadeBackend, TakerMakerIdentityV1, TakerTrustedTimeSource,
+    AuthenticatedOfferRefV1, MAX_TAKER_DELIVERY_SOURCES_V1, MAX_TAKER_OFFER_RESULTS_V1,
+    RunLocalDelivery, TakerDependencyProbe, TakerFacadeBackend, TakerMakerIdentityV1,
+    TakerTrustedTimeSource,
     secure_file::{PrivateFileSnapshot, read_private_file_snapshot},
 };
 
@@ -154,11 +156,18 @@ impl fmt::Debug for ConfiguredTakerServiceContext {
 
 /// Existing registry plus a bounded static catalog of prepared ZEC authorities.
 pub struct ConfiguredTakerInitiationContext {
+    execute_prepared_zec: bool,
     registry: SqliteTakerFacadeStore,
     prepared_zec_by_offer: BTreeMap<Box<str>, PreparedZecTakerInitiationV1>,
 }
 
 impl ConfiguredTakerInitiationContext {
+    /// Whether admitted prepared ZEC swaps execute Chat acceptance before response.
+    #[must_use]
+    pub const fn execution_enabled(&self) -> bool {
+        self.execute_prepared_zec
+    }
+
     /// Number of configured role-fixed ZEC initiation entries.
     #[must_use]
     pub fn prepared_zec_count(&self) -> usize {
@@ -185,6 +194,7 @@ impl fmt::Debug for ConfiguredTakerInitiationContext {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ConfiguredTakerInitiationContext")
+            .field("execution_enabled", &self.execute_prepared_zec)
             .field("registry", &"[REDACTED]")
             .field("prepared_zec_count", &self.prepared_zec_by_offer.len())
             .finish_non_exhaustive()
@@ -197,6 +207,7 @@ pub struct PreparedZecTakerInitiationV1 {
     facts: TakerInitiationFactsV1,
     reservation_id: RequestId,
     authority: TakerInitiationAuthorityV1,
+    execution: PreparedZecExecutionV1,
 }
 
 impl PreparedZecTakerInitiationV1 {
@@ -234,12 +245,99 @@ impl PreparedZecTakerInitiationV1 {
     pub const fn authority(&self) -> &TakerInitiationAuthorityV1 {
         &self.authority
     }
+
+    /// Borrows the redacted execution-ready material retained at startup.
+    #[must_use]
+    pub const fn execution(&self) -> &PreparedZecExecutionV1 {
+        &self.execution
+    }
 }
 
 impl fmt::Debug for PreparedZecTakerInitiationV1 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PreparedZecTakerInitiationV1")
+            .field("configured", &true)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Cloneable, execution-ready ZEC input retained inside the owner process.
+///
+/// Its public surface is intentionally opaque: only the service executor in
+/// this crate can borrow private bytes or configured paths, while `Debug`
+/// never reveals either.
+#[derive(Clone)]
+pub struct PreparedZecExecutionV1 {
+    authenticated_offer: AuthenticatedOfferRefV1,
+    unsigned_draft_path: PathBuf,
+    unsigned_draft: Zeroizing<Vec<u8>>,
+    unsigned_draft_sha256: [u8; 32],
+    signing_key_path: PathBuf,
+    signing_key: Zeroizing<[u8; 32]>,
+    source_config_path: PathBuf,
+    source_config_sha256: [u8; 32],
+    chat_socket: PathBuf,
+    agreement_output: PathBuf,
+    actor_root: PathBuf,
+    receipt_output: PathBuf,
+}
+
+#[allow(dead_code)]
+impl PreparedZecExecutionV1 {
+    pub(crate) const fn authenticated_offer(&self) -> &AuthenticatedOfferRefV1 {
+        &self.authenticated_offer
+    }
+
+    pub(crate) fn unsigned_draft_path(&self) -> &Path {
+        &self.unsigned_draft_path
+    }
+
+    pub(crate) fn unsigned_draft(&self) -> &[u8] {
+        &self.unsigned_draft
+    }
+
+    pub(crate) const fn unsigned_draft_sha256(&self) -> [u8; 32] {
+        self.unsigned_draft_sha256
+    }
+
+    pub(crate) fn signing_key(&self) -> &[u8; 32] {
+        &self.signing_key
+    }
+
+    pub(crate) fn signing_key_path(&self) -> &Path {
+        &self.signing_key_path
+    }
+
+    pub(crate) fn source_config_path(&self) -> &Path {
+        &self.source_config_path
+    }
+
+    pub(crate) const fn source_config_sha256(&self) -> [u8; 32] {
+        self.source_config_sha256
+    }
+
+    pub(crate) fn chat_socket(&self) -> &Path {
+        &self.chat_socket
+    }
+
+    pub(crate) fn agreement_output(&self) -> &Path {
+        &self.agreement_output
+    }
+
+    pub(crate) fn actor_root(&self) -> &Path {
+        &self.actor_root
+    }
+
+    pub(crate) fn receipt_output(&self) -> &Path {
+        &self.receipt_output
+    }
+}
+
+impl fmt::Debug for PreparedZecExecutionV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedZecExecutionV1")
             .field("configured", &true)
             .finish_non_exhaustive()
     }
@@ -279,7 +377,14 @@ pub fn load_taker_service_context(
     let initiation = configuration
         .initiation
         .as_ref()
-        .map(|configured| build_initiation_context(configured, &source_bindings, &delivery_sources))
+        .map(|configured| {
+            build_initiation_context(
+                configured,
+                &source_bindings,
+                &delivery_sources,
+                configuration.chat_socket.as_deref(),
+            )
+        })
         .transpose()?;
     let chat = configuration
         .chat_socket
@@ -351,6 +456,7 @@ fn validate_configuration(
     };
     if initiation.prepared_zec.len() > MAX_PREPARED_ZEC_INITIATIONS
         || !validate_normalized_absolute(&initiation.registry_database)
+        || (!initiation.prepared_zec.is_empty() && configuration.chat_socket.is_none())
     {
         return Err(TakerServiceStartupError::InvalidConfiguration);
     }
@@ -410,6 +516,8 @@ struct DeliverySourceV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InitiationConfigurationV1 {
+    #[serde(default)]
+    execute_prepared_zec: bool,
     registry_database: PathBuf,
     prepared_zec: Vec<PreparedZecConfigurationV1>,
 }
@@ -450,6 +558,7 @@ fn build_initiation_context(
     configuration: &InitiationConfigurationV1,
     source_bindings: &BTreeMap<Box<str>, (usize, [u8; 33])>,
     delivery_sources: &[RunLocalDelivery],
+    chat_socket: Option<&Path>,
 ) -> Result<ConfiguredTakerInitiationContext, TakerServiceStartupError> {
     let registry = SqliteTakerFacadeStore::open_existing(&configuration.registry_database)
         .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?;
@@ -483,9 +592,11 @@ fn build_initiation_context(
         {
             return Err(TakerServiceStartupError::InvalidConfiguration);
         }
-        let unsigned_draft =
-            read_immutable_binding(&configured.unsigned_draft, "prepared Taker unsigned draft")?;
-        let signing_key =
+        let (unsigned_draft, unsigned_draft_snapshot) = read_immutable_snapshot_binding(
+            &configured.unsigned_draft,
+            "prepared Taker unsigned draft",
+        )?;
+        let (signing_key, signing_key_bytes) =
             read_secret_binding(&configured.signing_key, "prepared Taker signing key")?;
         let source_config = read_immutable_binding(
             &configured.source_config,
@@ -513,10 +624,27 @@ fn build_initiation_context(
             configured.lez_units,
         )
         .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
+        let execution = PreparedZecExecutionV1 {
+            authenticated_offer: authenticated,
+            unsigned_draft_path: configured.unsigned_draft.path.clone(),
+            unsigned_draft: unsigned_draft_snapshot.into_bytes(),
+            unsigned_draft_sha256: configured.unsigned_draft.sha256,
+            signing_key_path: configured.signing_key.path.clone(),
+            signing_key: signing_key_bytes,
+            source_config_path: configured.source_config.path.clone(),
+            source_config_sha256: configured.source_config.sha256,
+            chat_socket: chat_socket
+                .ok_or(TakerServiceStartupError::InvalidConfiguration)?
+                .to_path_buf(),
+            agreement_output: configured.agreement_output.clone(),
+            actor_root: configured.actor_root.clone(),
+            receipt_output: configured.receipt_output.clone(),
+        };
         let entry = PreparedZecTakerInitiationV1 {
             facts,
             reservation_id: configured.reservation_id.clone(),
             authority,
+            execution,
         };
         if prepared_zec_by_offer
             .insert(configured.offer_id.as_str().into(), entry)
@@ -527,6 +655,7 @@ fn build_initiation_context(
     }
 
     Ok(ConfiguredTakerInitiationContext {
+        execute_prepared_zec: configuration.execute_prepared_zec,
         registry,
         prepared_zec_by_offer,
     })
@@ -561,15 +690,22 @@ fn read_immutable_snapshot_binding(
 fn read_secret_binding(
     configured: &SecretPrivateFileV1,
     purpose: &str,
-) -> Result<TakerPrivateFileBindingV1, TakerServiceStartupError> {
+) -> Result<(TakerPrivateFileBindingV1, Zeroizing<[u8; 32]>), TakerServiceStartupError> {
     let snapshot = read_prepared_snapshot(&configured.path, MAX_SIGNING_KEY_BYTES, purpose)?;
     let identity = snapshot.identity();
     if snapshot.bytes().len() != 32 || SecretKey::from_slice(snapshot.bytes()).is_err() {
         return Err(TakerServiceStartupError::InvalidConfiguration);
     }
 
-    TakerPrivateFileBindingV1::secret(configured.path.clone(), identity.device(), identity.inode())
-        .map_err(|_| TakerServiceStartupError::InvalidConfiguration)
+    let mut key_bytes = Zeroizing::new([0_u8; 32]);
+    key_bytes.copy_from_slice(snapshot.bytes());
+    let binding = TakerPrivateFileBindingV1::secret(
+        configured.path.clone(),
+        identity.device(),
+        identity.inode(),
+    )
+    .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
+    Ok((binding, key_bytes))
 }
 
 fn read_prepared_snapshot(

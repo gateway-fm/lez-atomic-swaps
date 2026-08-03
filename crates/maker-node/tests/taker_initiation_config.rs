@@ -39,6 +39,10 @@ fn existing_registry_and_named_source_build_one_static_prepared_zec_entry() {
     );
     assert_eq!(prepared.facts().foreign_units(), 42);
     assert_eq!(prepared.facts().lez_units(), 84);
+    assert_eq!(
+        format!("{:?}", prepared.execution()),
+        "PreparedZecExecutionV1 { configured: true, .. }"
+    );
 
     let debug = format!("{context:?}");
     assert!(debug.contains("initiation_configured: true"));
@@ -64,6 +68,18 @@ fn legacy_read_configuration_remains_compatible_without_source_id() {
     let context = load_taker_service_context(&config).unwrap();
     assert!(context.initiation().is_none());
     assert!(load_taker_service_backend(&config).is_ok());
+}
+
+#[test]
+fn prepared_catalog_requires_an_owner_local_chat_socket() {
+    let fixture = Fixture::new();
+    let mut missing_chat = fixture.value.clone();
+    missing_chat.as_object_mut().unwrap().remove("chat_socket");
+    fixture.assert_invalid(
+        "missing-chat",
+        &missing_chat,
+        TakerServiceStartupError::InvalidConfiguration,
+    );
 }
 
 #[test]
@@ -241,6 +257,7 @@ impl Fixture {
         let draft = private_file(root.join("draft.json"), br#"{"unsigned":"draft"}"#);
         let key = private_file(root.join("key.bin"), &[42; 32]);
         let actor = private_file(root.join("actor.json"), br#"{"role":"taker"}"#);
+        let chat = root.join("chat.sock");
         let value = json!({
             "schema_version": 1,
             "delivery_sources": [{
@@ -248,6 +265,7 @@ impl Fixture {
                 "directory": delivery,
                 "maker_public_key": hex::encode(maker),
             }],
+            "chat_socket": chat,
             "maximum_offers": 16,
             "initiation": {
                 "registry_database": registry,

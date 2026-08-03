@@ -283,6 +283,7 @@ impl ProcessInitiationFixture {
                     "directory": delivery,
                     "maker_public_key": hex::encode(maker),
                 }],
+                "chat_socket": root.join("chat.sock"),
                 "maximum_offers": 16,
                 "initiation": {
                     "registry_database": registry,

@@ -18,15 +18,16 @@ use std::{
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, ListRequest, LocalPriceSetRequest,
-    PairConfigureRequest, RunLocalDelivery, ZecChatProposalV1, ZecChatProposeRequestV1,
-    call_local_rpc,
+    PairConfigureRequest, RunLocalDelivery, TakerInitiationCommitV1, TakerMakerIdentityV1,
+    TakerSwapInitiateRequestV1, TakerSwapStateV1, ZecChatProposalV1, ZecChatProposeRequestV1,
+    call_local_rpc, load_taker_service_context, taker_service_rpc_module,
 };
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
     LocalPriceV1, MakerActorKindV1, MakerActorScheduleState, MakerOfferId, MakerOfferStatus,
     MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, MakerZecNegotiationStatus,
-    SqliteSwapStore, maker_zec_chat_session_id,
+    SqliteSwapStore, SqliteTakerFacadeStore, maker_zec_chat_session_id,
 };
 use lez_zec_swap_sdk::{
     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
@@ -156,6 +157,234 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         &final_wire,
         &taker_files.receipt,
     );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn service_initiation_completes_real_chat_before_not_activated_response() {
+    let run = tempdir().expect("isolated service Chat root");
+    let runtime = run.path().join("runtime");
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&runtime)
+        .expect("create owner-only runtime");
+    let socket = runtime.join("maker.sock");
+    let chat_socket = runtime.join("chat.sock");
+    let ready = runtime.join("ready");
+    let database = run.path().join("maker.sqlite3");
+    let delivery = run.path().join("delivery");
+    let key_file = run.path().join("delivery-signing.key");
+    let claim_key_file = run.path().join("maker-claim-recovery.key");
+    let claim_preimage_file = run.path().join("maker-claim-preimage.key");
+    write_raw_key(&key_file, 8);
+    write_raw_key(&claim_key_file, 0x7a);
+    write_raw_key(&claim_preimage_file, CLAIM_PREIMAGE[0]);
+    let actor = actor_deployment(run.path(), "m5-chat-swap-001");
+    let daemon_paths = DaemonPaths {
+        socket: &socket,
+        chat_socket: &chat_socket,
+        ready: &ready,
+        database: &database,
+        delivery: &delivery,
+        key_file: &key_file,
+        claim_key_file: &claim_key_file,
+        claim_preimage_file: &claim_preimage_file,
+        actor_root: &actor.root,
+        actor_source_config: &actor.source_config,
+        actor_program: &actor.program,
+        actor_program_sha256: &actor.program_sha256,
+    };
+    let mut daemon = start_daemon(&daemon_paths);
+    wait_ready(&mut daemon, &ready, &socket);
+    let (route, offer_id) = prepare_live_offer(&socket, &database, &delivery).await;
+
+    let maker_secret = key(8);
+    let maker_key = public_key(&maker_secret);
+    let subscriber = RunLocalDelivery::subscriber(&delivery, maker_key).unwrap();
+    let authenticated = subscriber
+        .discover(&DeliveryOfferQueryV1::for_route(route, now()))
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("published offer is discoverable");
+    let reservation_id = request("m6-service-chat-reservation-001");
+    let draft_wire = unsigned_draft(
+        &authenticated,
+        &reservation_id,
+        &maker_secret,
+        &key(2),
+        actor.agreement_basis_time,
+    );
+    let taker_files = prepare_taker_files(run.path(), &draft_wire, &actor.source_config);
+    let signed_envelope = taker_files
+        .draft
+        .with_file_name("prepared-signed-offer.json");
+    write_private(&signed_envelope, authenticated.signed_envelope());
+
+    let registry = taker_files.draft.with_file_name("taker-service.sqlite3");
+    drop(SqliteTakerFacadeStore::create_new(&registry).unwrap());
+    let service_config = taker_files.draft.with_file_name("service.json");
+    let service_value = json!({
+        "schema_version": 1,
+        "delivery_sources": [{
+            "source_id": "m6-service-maker",
+            "directory": delivery,
+            "maker_public_key": hex::encode(maker_key.serialize()),
+        }],
+        "chat_socket": chat_socket,
+        "maximum_offers": 16,
+        "initiation": {
+            "execute_prepared_zec": true,
+            "registry_database": registry,
+            "prepared_zec": [{
+                "source_id": "m6-service-maker",
+                "swap_id": "m5-chat-swap-001",
+                "offer_id": offer_id,
+                "reservation_id": reservation_id,
+                "foreign_units": 10_000,
+                "lez_units": 25_000,
+                "signed_envelope": service_digest_binding(&signed_envelope),
+                "unsigned_draft": service_digest_binding(&taker_files.draft),
+                "signing_key": {"path": taker_files.key},
+                "source_config": service_digest_binding(&taker_files.source_actor_config),
+                "agreement_output": taker_files.agreement,
+                "actor_root": taker_files.actor_root,
+                "receipt_output": taker_files.receipt,
+            }]
+        }
+    });
+    write_private(
+        &service_config,
+        &serde_json::to_vec(&service_value).unwrap(),
+    );
+    let request = TakerSwapInitiateRequestV1 {
+        schema_version: 1,
+        request_id: RequestId::new("m6-service-chat-initiation-001").unwrap(),
+        offer_id: offer_id.clone(),
+        route,
+        maker_identity: TakerMakerIdentityV1::new(maker_key.serialize()).unwrap(),
+        signed_envelope_sha256: authenticated.commitment(),
+        foreign_units: 10_000,
+        expected_lez_units: 25_000,
+    };
+
+    let module =
+        taker_service_rpc_module(load_taker_service_context(&service_config).unwrap()).unwrap();
+    let first: TakerInitiationCommitV1 = module
+        .call("taker_swap_initiate_v1", [request.clone()])
+        .await
+        .unwrap();
+    let first_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files);
+    drop(module);
+
+    let delivery_offer = delivery.join(format!("{}.offer.json", offer_id.as_str()));
+    fs::remove_file(&delivery_offer).unwrap();
+    let offline_chat = chat_socket.with_file_name("chat.service-replay-offline");
+    fs::rename(&chat_socket, &offline_chat).unwrap();
+    let replay_module =
+        taker_service_rpc_module(load_taker_service_context(&service_config).unwrap()).unwrap();
+    let replay: TakerInitiationCommitV1 = replay_module
+        .call("taker_swap_initiate_v1", [request.clone()])
+        .await
+        .expect("durable receipt replay must not use Delivery or Chat");
+    let replay_artifacts = ServiceAcceptanceArtifacts::capture(&taker_files);
+    drop(replay_module);
+    fs::rename(&offline_chat, &chat_socket).unwrap();
+    stop_daemon_gracefully(&mut daemon, &daemon_paths);
+
+    assert!(!first.was_replay);
+    assert_eq!(first.swap.state, TakerSwapStateV1::NotActivated);
+    assert_eq!(first.swap.progress_generation, 0);
+    assert_eq!(first.swap.available_action, None);
+    assert!(replay.was_replay);
+    assert_eq!(replay.swap, first.swap);
+
+    let first_artifacts = first_artifacts.expect("service must provision Taker actor and receipt");
+    let replay_artifacts =
+        replay_artifacts.expect("receipt-bound replay must retain Taker artifacts");
+    assert_eq!(replay_artifacts, first_artifacts);
+    assert_private_receipt(&taker_files.receipt);
+
+    let taker_config = ActorConfig::load_private(&first_artifacts.config_path).unwrap();
+    assert_eq!(taker_config.role(), ActorRole::Taker);
+    assert_eq!(taker_config.swap_id().as_str(), "m5-chat-swap-001");
+    assert!(
+        !taker_config.role_state_db().exists(),
+        "admission must not start the Taker actor or create chain state"
+    );
+    assert!(
+        !taker_config.bridge_journal_db().exists(),
+        "admission must not execute an LEZ bridge effect"
+    );
+
+    let maker_store = SqliteSwapStore::open(&database).unwrap();
+    let negotiation = maker_store
+        .load_zec_maker_negotiation(&offer_id)
+        .unwrap()
+        .expect("real Chat negotiation must be durable");
+    assert_eq!(negotiation.status(), MakerZecNegotiationStatus::Completed);
+    assert_eq!(negotiation.reservation_id(), &reservation_id);
+    assert!(!negotiation.maker_proposal_wire().is_empty());
+    assert!(negotiation.final_agreement_wire().is_some());
+    let maker_actors = maker_store.list_maker_actor_processes().unwrap();
+    assert_eq!(maker_actors.len(), 1);
+    assert_eq!(
+        maker_actors[0].schedule_state(),
+        MakerActorScheduleState::Queued
+    );
+    assert!(
+        !maker_actors[0].manifest().state_database_path().exists(),
+        "acceptance must not start the Maker actor or perform a chain effect"
+    );
+    drop(maker_store);
+
+    assert!(
+        SqliteTakerFacadeStore::open_existing(&registry)
+            .unwrap()
+            .lookup_initiation(&request.request_id)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ServiceAcceptanceArtifacts {
+    config_path: PathBuf,
+    config_inode: u64,
+    config_bytes: Vec<u8>,
+    agreement_path: PathBuf,
+    agreement_inode: u64,
+    agreement_bytes: Vec<u8>,
+    receipt_inode: u64,
+    receipt_bytes: Vec<u8>,
+}
+
+impl ServiceAcceptanceArtifacts {
+    fn capture(files: &TakerFiles) -> Option<Self> {
+        let config_path = files.actor_root.join("taker/actor-config.json");
+        let agreement_path = files.actor_root.join("shared/agreement-v2.borsh");
+        if !config_path.is_file() || !agreement_path.is_file() || !files.receipt.is_file() {
+            return None;
+        }
+        Some(Self {
+            config_inode: fs::symlink_metadata(&config_path).ok()?.ino(),
+            config_bytes: fs::read(&config_path).ok()?,
+            agreement_inode: fs::symlink_metadata(&agreement_path).ok()?.ino(),
+            agreement_bytes: fs::read(&agreement_path).ok()?,
+            receipt_inode: fs::symlink_metadata(&files.receipt).ok()?.ino(),
+            receipt_bytes: fs::read(&files.receipt).ok()?,
+            config_path,
+            agreement_path,
+        })
+    }
+}
+
+fn service_digest_binding(path: &Path) -> Value {
+    json!({
+        "path": path,
+        "sha256": hex::encode(Sha256::digest(fs::read(path).unwrap())),
+    })
 }
 
 async fn prepare_live_offer(
