@@ -9,6 +9,7 @@ pub mod owner_rpc_server;
 mod price_source;
 mod run_local_delivery;
 pub mod secure_file;
+mod taker_rpc;
 mod service_control;
 mod taker_backend;
 mod taker_facade;
@@ -40,6 +41,7 @@ pub use taker_backend::{
     TakerDependencyProbe, TakerFacadeBackend, TakerTrustedTimeSource,
 };
 pub use taker_facade::{
+pub use taker_rpc::taker_read_only_rpc_module;
     TAKER_FACADE_METHODS_V1, TAKER_FACADE_SCHEMA_VERSION_V1, TakerActionCommitV1,
     TakerClaimRequestV1, TakerDependencyStateV1, TakerFacadeSchemaVersionError,
     TakerHealthRequestV1, TakerHealthV1, TakerInitiationCapabilityV1, TakerInitiationCommitV1,
