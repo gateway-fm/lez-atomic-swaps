@@ -140,6 +140,85 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
     assert_redacted(&changed_response, &fixture);
 }
 
+#[tokio::test]
+async fn concurrent_exact_request_commits_once_and_replays_once() {
+    let fixture = Fixture::new();
+    let module =
+        taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
+    let request = fixture.request("m6-concurrent-exact-request-001");
+    let params = serde_json::to_value([request.clone()]).unwrap();
+
+    let (first, second) = tokio::join!(
+        rpc_response(&module, "taker_swap_initiate_v1", params.clone()),
+        rpc_response(&module, "taker_swap_initiate_v1", params),
+    );
+    let mut commits = [first, second].map(|response| {
+        assert!(response.get("error").is_none(), "{response}");
+        serde_json::from_value::<TakerInitiationCommitV1>(response["result"].clone()).unwrap()
+    });
+    commits.sort_unstable_by_key(|commit| commit.was_replay);
+
+    assert!(!commits[0].was_replay);
+    assert!(commits[1].was_replay);
+    assert_eq!(commits[0].swap, commits[1].swap);
+    let registry = SqliteTakerFacadeStore::open_existing(&fixture.registry).unwrap();
+    assert_eq!(registry.list_initiations().unwrap().len(), 1);
+    assert!(
+        registry
+            .lookup_initiation(&request.request_id)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn concurrent_request_ids_for_one_prepared_swap_have_one_conflict() {
+    let fixture = Fixture::new();
+    let module =
+        taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
+    let first_request = fixture.request("m6-concurrent-conflict-request-a");
+    let second_request = fixture.request("m6-concurrent-conflict-request-b");
+
+    let (first, second) = tokio::join!(
+        rpc_response(
+            &module,
+            "taker_swap_initiate_v1",
+            serde_json::to_value([first_request.clone()]).unwrap(),
+        ),
+        rpc_response(
+            &module,
+            "taker_swap_initiate_v1",
+            serde_json::to_value([second_request.clone()]).unwrap(),
+        ),
+    );
+    let responses = [first, second];
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|response| response.get("result").is_some())
+            .count(),
+        1
+    );
+    let conflicts = responses
+        .iter()
+        .filter(|response| response.get("error").is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(conflicts.len(), 1);
+    assert_rpc_error(
+        conflicts[0],
+        INITIATION_CONFLICT,
+        "Taker initiation conflict",
+        "initiation_conflict",
+    );
+    assert_redacted(conflicts[0], &fixture);
+
+    let registry = SqliteTakerFacadeStore::open_existing(&fixture.registry).unwrap();
+    assert_eq!(registry.list_initiations().unwrap().len(), 1);
+    let durable = [&first_request.request_id, &second_request.request_id]
+        .map(|request_id| registry.lookup_initiation(request_id).unwrap());
+    assert_eq!(durable.iter().filter(|facts| facts.is_some()).count(), 1);
+}
+
 struct Fixture {
     _run: tempfile::TempDir,
     root: PathBuf,
