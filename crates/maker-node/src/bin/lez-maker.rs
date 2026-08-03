@@ -8,7 +8,7 @@ use lez_maker_node::{
     MakerActorMonitorRequestV1, MakerActorMonitorV1, MakerHealthV1, MakerServiceAction,
     OfferPublishRequest, OfferWithdrawRequest, OperatorAlertView, PairConfigureRequest,
     PriceQuoteRequest, PriceQuoteV1, RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
-    control_maker_service,
+    control_maker_service, secure_file::load_secp256k1_secret,
 };
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 use lez_swap_store::{
@@ -17,9 +17,6 @@ use lez_swap_store::{
 };
 use secp256k1::{PublicKey, Secp256k1};
 use serde::Serialize;
-
-#[path = "support/secure_file.rs"]
-mod secure_file;
 
 #[derive(Parser)]
 #[command(about = "Operator CLI for the LEZ atomic-swap maker daemon")]
@@ -363,7 +360,7 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
 }
 
 fn delivery_identity(signing_key_file: &Path) -> anyhow::Result<serde_json::Value> {
-    let signing_key = secure_file::load_secp256k1_secret(signing_key_file, "Delivery signing key")?;
+    let signing_key = load_secp256k1_secret(signing_key_file, "Delivery signing key")?;
     let public_key =
         PublicKey::from_secret_key(&Secp256k1::signing_only(), &signing_key).serialize();
     serde_json::to_value(DeliveryIdentityOutput {

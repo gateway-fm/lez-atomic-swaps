@@ -1,3 +1,5 @@
+//! Owner-private file loading shared by Maker application binaries.
+
 use std::{fs::File, io::Read as _, os::unix::fs::MetadataExt as _, path::Path};
 
 use anyhow::{Context as _, ensure};
@@ -5,7 +7,13 @@ use rustix::fs::{CWD, Mode, OFlags, ResolveFlags, openat2};
 use secp256k1::SecretKey;
 use zeroize::Zeroizing;
 
-pub(crate) fn read_private_file(
+/// Reads one bounded owner-private regular file without following symbolic links.
+///
+/// # Errors
+///
+/// Returns an error when the path cannot be opened safely, the file metadata is
+/// not private and stable, or its contents exceed `maximum_bytes`.
+pub fn read_private_file(
     path: &Path,
     maximum_bytes: u64,
     purpose: &str,
@@ -40,8 +48,13 @@ pub(crate) fn read_private_file(
     Ok(bytes)
 }
 
-#[allow(dead_code)]
-pub(crate) fn load_raw_secret(path: &Path, purpose: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
+/// Loads one nonzero raw 32-byte secret from an owner-private file.
+///
+/// # Errors
+///
+/// Returns an error when [`read_private_file`] rejects the file or its contents
+/// are not exactly 32 bytes or are all zero.
+pub fn load_raw_secret(path: &Path, purpose: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
     let bytes = read_private_file(path, 32, purpose)?;
     ensure!(
         bytes.len() == 32,
@@ -56,8 +69,13 @@ pub(crate) fn load_raw_secret(path: &Path, purpose: &str) -> anyhow::Result<Zero
     Ok(secret)
 }
 
-#[allow(dead_code)]
-pub(crate) fn load_secp256k1_secret(path: &Path, purpose: &str) -> anyhow::Result<SecretKey> {
+/// Loads a secp256k1 secret encoded as 32 raw bytes or 64 hexadecimal digits.
+///
+/// # Errors
+///
+/// Returns an error when [`read_private_file`] rejects the file or its contents
+/// do not encode a valid secp256k1 secret key in either accepted representation.
+pub fn load_secp256k1_secret(path: &Path, purpose: &str) -> anyhow::Result<SecretKey> {
     let encoded = read_private_file(path, 65, purpose)?;
     if encoded.len() == 32 {
         return SecretKey::from_slice(encoded.as_slice())

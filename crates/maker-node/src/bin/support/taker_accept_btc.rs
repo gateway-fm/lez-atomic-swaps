@@ -15,6 +15,7 @@ use lez_btc_swap_sdk::{
 use lez_maker_node::{
     BtcChatCompleteRequestV1, BtcChatCompleteResponseV1, BtcChatProposalV1,
     BtcChatProposeRequestV1, DeliveryOfferQueryV1, RunLocalDelivery, call_local_rpc,
+    secure_file::{load_raw_secret, read_private_file},
 };
 use lez_swap_core::{Pair, Participant, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
@@ -23,12 +24,9 @@ use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::{
-    secure_file::{load_raw_secret, read_private_file},
-    taker_accept::{
-        MAX_TAKER_RECEIPT_BYTES, ReplayOutput, decode_sha256, normalized_absolute,
-        publish_exact_new, resolved_new_path,
-    },
+use super::taker_accept::{
+    MAX_TAKER_RECEIPT_BYTES, ReplayOutput, decode_sha256, normalized_absolute, publish_exact_new,
+    resolved_new_path,
 };
 
 pub(crate) struct BtcTakeInput<'a> {

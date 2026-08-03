@@ -17,6 +17,7 @@ use lez_maker_node::{
     BtcMakerActorProvisioner, MakerActorSupervisorCancellation, MakerActorSupervisorConfig,
     MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, XmrMakerChatAuthority,
     ZecMakerActorProvisioner, chat_rpc_module, import_terminal_zec_maker_projection, rpc_module,
+    secure_file::{load_raw_secret, load_secp256k1_secret, read_private_file},
     supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
     supervise_one_due_maker_actor_until,
 };
@@ -36,10 +37,6 @@ use tokio::{net::UnixListener, task::JoinSet};
 use xmr_reference_actor::{
     XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, validate_maker_manifest_config_bytes,
 };
-#[path = "support/secure_file.rs"]
-mod secure_file;
-use secure_file::{load_raw_secret, load_secp256k1_secret, read_private_file};
-
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: u32 = 1024 * 1024;
 const MAXIMUM_CONNECTIONS: u32 = 16;

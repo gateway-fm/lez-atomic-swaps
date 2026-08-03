@@ -7,6 +7,7 @@ mod local_rpc;
 mod logos_price_source;
 mod price_source;
 mod run_local_delivery;
+pub mod secure_file;
 mod service_control;
 mod xmr_chat;
 pub use actor_supervisor::{

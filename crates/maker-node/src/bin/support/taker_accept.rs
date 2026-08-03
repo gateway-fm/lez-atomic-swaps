@@ -10,6 +10,7 @@ use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     DeliveryOfferQueryV1, RunLocalDelivery, ZecChatCompleteRequestV1, ZecChatCompleteResponseV1,
     ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
+    secure_file::{load_raw_secret, read_private_file},
 };
 use lez_swap_core::{Pair, Participant, SwapDirection, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
@@ -25,8 +26,6 @@ use tempfile::NamedTempFile;
 use zec_reference_actor::{
     ActorConfig, ActorRole, ZecActorProvisionV1, provision_zec_taker_actor_from_chat,
 };
-
-use super::secure_file::{load_raw_secret, read_private_file};
 
 pub(crate) const MAX_TAKER_RECEIPT_BYTES: u64 = 16 * 1024;
 

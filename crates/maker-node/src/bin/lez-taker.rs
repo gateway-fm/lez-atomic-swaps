@@ -26,8 +26,6 @@ use zec_reference_actor::{
     ActorCommand as ZecActorCommand, ActorConfig, ActorRole, execute_actor_command,
 };
 
-#[path = "support/secure_file.rs"]
-mod secure_file;
 #[path = "support/taker_accept.rs"]
 mod taker_accept;
 #[path = "support/taker_accept_btc.rs"]

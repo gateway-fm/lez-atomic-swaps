@@ -5,6 +5,7 @@ use lez_bridge_protocol::{RequestId, RunId};
 use lez_maker_node::{
     DeliveryOfferQueryV1, RunLocalDelivery, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
     XmrChatStageARequestV1, XmrChatStageAResponseV1, call_local_chat_rpc,
+    secure_file::read_private_file,
 };
 use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
@@ -24,12 +25,9 @@ use xmr_reference_actor::{
 };
 use zeroize::Zeroizing;
 
-use super::{
-    secure_file::read_private_file,
-    taker_accept::{
-        MAX_TAKER_RECEIPT_BYTES, decode_sha256, normalized_absolute, publish_exact_new,
-        resolved_new_path,
-    },
+use super::taker_accept::{
+    MAX_TAKER_RECEIPT_BYTES, decode_sha256, normalized_absolute, publish_exact_new,
+    resolved_new_path,
 };
 
 pub(crate) struct XmrTakeInput<'a> {
