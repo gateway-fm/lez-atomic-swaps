@@ -9,10 +9,11 @@ pub mod owner_rpc_server;
 mod price_source;
 mod run_local_delivery;
 pub mod secure_file;
-mod taker_rpc;
 mod service_control;
 mod taker_backend;
 mod taker_facade;
+mod taker_rpc;
+mod taker_service_config;
 mod xmr_chat;
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
@@ -41,7 +42,6 @@ pub use taker_backend::{
     TakerDependencyProbe, TakerFacadeBackend, TakerTrustedTimeSource,
 };
 pub use taker_facade::{
-pub use taker_rpc::taker_read_only_rpc_module;
     TAKER_FACADE_METHODS_V1, TAKER_FACADE_SCHEMA_VERSION_V1, TakerActionCommitV1,
     TakerClaimRequestV1, TakerDependencyStateV1, TakerFacadeSchemaVersionError,
     TakerHealthRequestV1, TakerHealthV1, TakerInitiationCapabilityV1, TakerInitiationCommitV1,
@@ -50,6 +50,11 @@ pub use taker_rpc::taker_read_only_rpc_module;
     TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
     TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
     taker_pair_capabilities_v1,
+};
+pub use taker_rpc::taker_read_only_rpc_module;
+pub use taker_service_config::{
+    ConfiguredTakerFacadeBackend, OwnerChatSocketProbe, SystemTakerTrustedTime,
+    TakerServiceStartupError, load_taker_service_backend,
 };
 use xmr_chat::register_xmr_chat_methods;
 pub use xmr_chat::{
