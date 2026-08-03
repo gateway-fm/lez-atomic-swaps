@@ -10,6 +10,7 @@ mod price_source;
 mod run_local_delivery;
 pub mod secure_file;
 mod service_control;
+mod taker_backend;
 mod taker_facade;
 mod xmr_chat;
 pub use actor_supervisor::{
@@ -33,6 +34,10 @@ pub use run_local_delivery::{
 };
 pub use service_control::{
     MakerServiceAction, MakerServiceControlError, MakerServiceControlV1, control_maker_service,
+};
+pub use taker_backend::{
+    MAX_TAKER_DELIVERY_SOURCES_V1, MAX_TAKER_OFFER_RESULTS_V1, TakerBackendError,
+    TakerDependencyProbe, TakerFacadeBackend, TakerTrustedTimeSource,
 };
 pub use taker_facade::{
     TAKER_FACADE_METHODS_V1, TAKER_FACADE_SCHEMA_VERSION_V1, TakerActionCommitV1,
