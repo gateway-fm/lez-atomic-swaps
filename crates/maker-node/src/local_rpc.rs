@@ -1,6 +1,6 @@
 //! Owner-local JSON-RPC client over a Unix-domain socket.
 
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 use anyhow::{Context as _, bail, ensure};
 use bytes::Bytes;
@@ -14,6 +14,7 @@ const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_ID: u64 = 1;
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: usize = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: usize = 1024 * 1024;
+const DEFAULT_LOCAL_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Serialize)]
 struct RpcRequest<'a, P> {
@@ -52,7 +53,14 @@ where
     P: Serialize,
     R: DeserializeOwned,
 {
-    call_local_rpc_bounded(socket, method, parameter, MAXIMUM_CONTROL_RPC_BODY_BYTES).await
+    call_local_rpc_bounded(
+        socket,
+        method,
+        parameter,
+        MAXIMUM_CONTROL_RPC_BODY_BYTES,
+        DEFAULT_LOCAL_RPC_TIMEOUT,
+    )
+    .await
 }
 
 /// Calls one typed taker-facing Chat method through a Unix socket.
@@ -72,10 +80,45 @@ where
     P: Serialize,
     R: DeserializeOwned,
 {
-    call_local_rpc_bounded(socket, method, parameter, MAXIMUM_CHAT_RPC_BODY_BYTES).await
+    call_local_rpc_bounded(
+        socket,
+        method,
+        parameter,
+        MAXIMUM_CHAT_RPC_BODY_BYTES,
+        DEFAULT_LOCAL_RPC_TIMEOUT,
+    )
+    .await
 }
 
 async fn call_local_rpc_bounded<P, R>(
+    socket: &Path,
+    method: &str,
+    parameter: &P,
+    maximum_body_bytes: usize,
+    request_timeout: Duration,
+) -> anyhow::Result<R>
+where
+    P: Serialize,
+    R: DeserializeOwned,
+{
+    ensure!(
+        !request_timeout.is_zero(),
+        "local RPC timeout must be nonzero"
+    );
+    tokio::time::timeout(
+        request_timeout,
+        call_local_rpc_without_timeout(socket, method, parameter, maximum_body_bytes),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "local RPC method {method} timed out after {} milliseconds",
+            request_timeout.as_millis()
+        )
+    })?
+}
+
+async fn call_local_rpc_without_timeout<P, R>(
     socket: &Path,
     method: &str,
     parameter: &P,
@@ -107,7 +150,7 @@ where
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
         .context("start local RPC HTTP connection")?;
-    let connection = tokio::spawn(connection);
+    let connection = AbortOnDropTask::new(tokio::spawn(connection));
     let request = Request::post("/")
         .header(header::HOST, "localhost")
         .header(header::CONTENT_TYPE, "application/json")
@@ -127,6 +170,7 @@ where
         .to_bytes();
     drop(sender);
     connection
+        .join()
         .await
         .context("join local RPC connection")?
         .context("finish local RPC connection")?;
@@ -141,5 +185,154 @@ where
         (Some(result), None) => Ok(result),
         (None, Some(error)) => bail!("local RPC error {}: {}", error.code, error.message),
         _ => bail!("local RPC response must contain exactly one result or error"),
+    }
+}
+
+#[derive(Debug)]
+struct AbortOnDropTask<T>(Option<tokio::task::JoinHandle<T>>);
+
+impl<T> AbortOnDropTask<T> {
+    fn new(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self(Some(handle))
+    }
+
+    async fn join(mut self) -> Result<T, tokio::task::JoinError> {
+        self.0.take().expect("connection task is present").await
+    }
+}
+
+impl<T> Drop for AbortOnDropTask<T> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{Read as _, Write as _},
+        os::unix::net::UnixListener,
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use serde_json::{Value, json};
+
+    use super::{MAXIMUM_CONTROL_RPC_BODY_BYTES, call_local_rpc, call_local_rpc_bounded};
+
+    const TEST_GUARD_TIMEOUT: Duration = Duration::from_secs(1);
+
+    #[tokio::test]
+    async fn nonresponsive_unix_peer_times_out_and_closes_connection() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("nonresponsive.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (closed_sender, closed_receiver) = mpsc::sync_channel(1);
+        let peer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let result = stream.read_to_end(&mut request);
+            closed_sender.send((result, request)).unwrap();
+        });
+
+        let request_timeout = Duration::from_millis(50);
+        let started = Instant::now();
+        let result = tokio::time::timeout(
+            TEST_GUARD_TIMEOUT,
+            call_local_rpc_bounded::<_, Value>(
+                &socket,
+                "stalled_method",
+                &json!({}),
+                MAXIMUM_CONTROL_RPC_BODY_BYTES,
+                request_timeout,
+            ),
+        )
+        .await
+        .expect("local RPC client ignored its configured timeout");
+        let error = result.expect_err("nonresponsive local RPC must fail");
+
+        assert!(
+            error.to_string().contains("stalled_method")
+                && error.to_string().contains("50 milliseconds"),
+            "unexpected timeout error: {error:#}"
+        );
+        assert!(started.elapsed() < TEST_GUARD_TIMEOUT);
+        let (closed, request) =
+            tokio::task::spawn_blocking(move || closed_receiver.recv_timeout(TEST_GUARD_TIMEOUT))
+                .await
+                .unwrap()
+                .expect("timed-out client left its Unix connection open");
+        closed.expect("read request until client closed");
+        assert!(String::from_utf8_lossy(&request).contains("stalled_method"));
+        peer.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn responsive_unix_peer_still_returns_typed_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("responsive.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let peer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let request = read_http_request(&mut stream);
+            assert!(String::from_utf8_lossy(&request).contains("maker_health"));
+
+            let body = r#"{"jsonrpc":"2.0","id":1,"result":{"ready":true}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let result: Value = call_local_rpc(&socket, "maker_health", &json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(result, json!({ "ready": true }));
+        peer.join().unwrap();
+    }
+
+    fn read_http_request(stream: &mut std::os::unix::net::UnixStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk).unwrap();
+            assert_ne!(read, 0, "client closed before completing request");
+            request.extend_from_slice(&chunk[..read]);
+            if request_is_complete(&request) {
+                return request;
+            }
+        }
+    }
+
+    fn request_is_complete(request: &[u8]) -> bool {
+        let Some(header_end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") else {
+            return false;
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().unwrap())
+            })
+            .unwrap_or(0);
+        request.len() >= header_end + 4 + content_length
     }
 }
