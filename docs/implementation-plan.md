@@ -5537,20 +5537,63 @@ and diff hygiene are GREEN. ADR 0134 records the components, sequence, fixed
 errors, and atomicity argument. Commit `e7a7e2b` adds service-level concurrent exact-replay
 and one-winner conflict evidence.
 
-Commit `0afb6da` then moves the already process-proven real ZEC acceptance,
+Commit `0afb6da` then moved the already process-proven real ZEC acceptance,
 countersigning, no-clobber agreement and receipt publication, and Taker actor
-provisioning into a single reusable library module. The legacy CLI and its
-BTC/XMR helper consumers retain behavior, while ZEC proposal and completion now
-use the intended 1-MiB bounded Chat transport. Its actual-process acceptance,
-response-loss retry, restart replay, and receipt integrity proof remains GREEN
-1/1. This is reuse only; the Taker service does not invoke it yet.
+provisioning into one reusable library module. Commit `b7280ac` retained the
+immutable original admission timestamp for expiry-safe replay.
 
-This closes service-owned admission, not the ZEC execution vertical. Delivery
-authentication and SQLite commit are separate, but the admitted record is
-bound to the exact authenticated commitment and neither step creates an
-external effect. Remaining nonvisual work is a durable worker that revalidates
-private bindings, performs real ZEC Chat acceptance, provisions the Taker actor,
-and drives receipt-bound Zebra and LEZ lifecycle state before swap-list,
-monitor, claim, or refund can be registered. Production QML and QtRO host work
-remain gated on explicit owner prototype sign-off. Actor-real UI composition,
-Basecamp packages, final quality/evidence gates, and the M6 tag remain pending.
+## M6 prepared ZEC service acceptance checkpoint (2026-08-03)
+
+Pushed commit `5536dd0` connects that path to
+`taker_swap_initiate_v1` behind explicit
+`initiation.execute_prepared_zec: true`. The default remains admission mode.
+At this commit any nonempty prepared catalog requires the owner-local Chat
+socket, whether or not execution is enabled.
+
+A new request preserves the admission-first ordering from ADR 0134. After the
+registry transaction is durable, the service revalidates prepared draft,
+signing-key, and source-actor material, performs real bounded Maker Chat
+proposal and completion, persists the countersigned agreement without
+clobbering, provisions the role-fixed Taker actor, and publishes the completion
+receipt. It returns `NotActivated` generation zero only after Maker completion
+and the receipt are durable.
+
+Replay reads the stored facts and original admission time before live offer
+checks. It then selects the current prepared entry and reuses exact registry
+admission to compare every public fact and private authority field with the
+durable row. A same-byte signing-key replacement at the same path but a new
+inode therefore conflicts. If a valid completion receipt exists, exact replay
+succeeds after both the Delivery offer and Chat socket are unavailable and
+does not rewrite agreement, actor-config, or receipt bytes or inodes. The
+digest-pinned `ActorConfig` object is passed directly into config-based
+provisioning instead of being reopened by path.
+
+The real service-connected proof crosses an in-process Taker RPC module, a real
+Maker daemon, signed local Delivery, the separate Chat socket, both SQLite
+stores, agreement validation and countersigning, Maker atomic completion,
+Taker actor provisioning, and receipt publication. Maker negotiation is
+`Completed`, exactly one Maker actor is queued, and the Taker bundle is
+role-correct. Neither actor starts: Maker and Taker state databases and the LEZ
+bridge journal remain absent, so no Zebra or LEZ RPC or wallet effect occurs.
+The separate `taker_service_process` suite continues to prove the executable
+owner socket and restart boundary.
+
+The affected suites are GREEN 14/14: direct admission/replay 4, configuration
+5, service process 3, and real/legacy Chat 2. Strict all-target Clippy,
+warning-fatal Rustdoc, formatting, and diff hygiene are GREEN. ADR 0135 records
+the component topology, fresh and restart sequences, failure-window recovery,
+and the exact pre-effect atomicity argument.
+
+This is synchronous, client-retried acceptance rather than an autonomous
+worker. A failure after registry admission returns dependency-unavailable and
+requires the exact request to resume, but no chain effect has started. Draft
+and signing-key paths are still reread after service preflight; retained-byte
+handoff and exact use-time inode enforcement remain production hardening.
+Admission-only catalogs retaining execution material and requiring Chat are a
+least-authority compatibility item.
+
+Next nonvisual work is the receipt-bound swap-list and monitor projection,
+followed by actor driving and generation-fenced claim/refund methods.
+Production QML and QtRO remain gated on explicit owner prototype signoff.
+Actor-real UI composition, Basecamp packages, final quality/evidence gates,
+and the M6 tag remain pending.

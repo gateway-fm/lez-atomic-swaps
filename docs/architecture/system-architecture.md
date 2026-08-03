@@ -54,18 +54,22 @@ register health and offer listing. A validated prepared-ZEC configuration also
 registers initiation, and health truthfully reports exactly those three
 methods. Swap list, monitor, claim, and refund remain unregistered.
 
-The Taker schema-v1 registry and strict prepared-ZEC context are service-wired
-at `1664c41`. Durable request lookup runs before catalog, time, or Delivery,
-so an exact retry survives process restart, offer removal, and expiry. A new
-request must match the prepared route, Maker, offer, signed-envelope
-commitment, and amounts, then match a currently authenticated Delivery offer at
-one trusted timestamp. One immediate transaction commits public facts, private
-authority, and replay before the service returns `Initiating` generation
-zero. Blocking registry work does not hold its mutex across async Delivery.
+The Taker schema-v1 registry and strict prepared-ZEC context are
+service-wired through `5536dd0`. Durable request lookup remains first. A new
+request must match current authenticated Delivery at one trusted timestamp and
+commits public facts, full private authority, and replay before execution.
+With `execute_prepared_zec: true`, the service then uses the bounded Maker
+Chat socket to obtain and complete the signed proposal, no-clobber persists the
+agreement and Taker actor, publishes the completion receipt, and returns
+`NotActivated` generation zero.
 
-Commit `0afb6da` makes the existing process-proven ZEC Chat acceptance and actor-provisioning path reusable with the bounded Chat transport, but no mutation worker invokes it. Admission performs no Chat negotiation, agreement
-countersigning, actor provisioning, wallet or signer action, Zebra or LEZ RPC,
-claim, or refund. XMR capability remains effect-checkpoint-only.
+Exact restart replay selects the current prepared entry and compares its full
+authority to the durable private row at the original admission time. A valid
+receipt replays after Delivery-offer removal and Chat outage without rewriting
+artifacts. Maker negotiation is completed and one Maker actor is queued, but
+neither role actor starts. No wallet, Zebra, or LEZ RPC is called. Swap list,
+monitor, actor driving, claim, and refund remain unregistered. XMR capability
+remains effect-checkpoint-only.
 
 ```mermaid
 flowchart TB
@@ -74,33 +78,35 @@ flowchart TB
 
     subgraph BasecampTarget["Planned Basecamp 0.2.0 application surface"]
         Basecamp["Basecamp host"]
-        MakerQml["Maker ui_qml package<br/>planned"]
-        TakerQml["Taker ui_qml package<br/>planned"]
-        MakerHost["Maker QtRO ui-host<br/>planned"]
-        TakerHost["Taker QtRO ui-host<br/>planned"]
+        MakerQml["Maker ui_qml package"]
+        TakerQml["Taker ui_qml package"]
+        MakerHost["Maker QtRO ui-host"]
+        TakerHost["Taker QtRO ui-host"]
     end
 
-    subgraph CurrentM6["Current M6 application boundaries"]
-        MakerRpc["Maker owner Unix RPC<br/>atomic route save"]
+    subgraph CurrentM6["Current M6 application and acceptance boundary"]
+        MakerRpc["Maker owner Unix RPC"]
         MakerDaemon["Maker daemon"]
         MakerDb[("Maker SQLite schema v22")]
-        TakerSocket["Taker owner Unix RPC<br/>health list and conditional initiate"]
-        TakerService["lez-taker-service<br/>authenticated read and admission"]
-        TakerConfig["Private service config<br/>reads plus optional prepared ZEC"]
-        PreparedConfig["Prepared-ZEC authority catalog<br/>service-wired"]
-        Registry[("Taker registry schema v1<br/>replay and atomic admission")]
-        Worker["Taker mutation worker<br/>planned"]
-        Delivery["Authenticated run-local Delivery"]
-        ChatProbe["Optional Chat socket metadata probe"]
-        MakerActors["Maker pair actors"]
-        TakerActors["Taker pair actors"]
+        Delivery["Authenticated local Delivery"]
+        Chat["Maker Chat Unix RPC"]
+        TakerSocket["Taker owner Unix RPC"]
+        TakerService["lez-taker-service"]
+        TakerConfig["Private service config"]
+        Prepared["Prepared ZEC authority"]
+        Registry[("Taker registry schema v1")]
+        Accept["Prepared ZEC acceptance"]
+        Agreement["Countersigned Taker agreement"]
+        Receipt["Private Taker receipt"]
+        MakerActor["Queued Maker actor"]
+        TakerActor["Provisioned Taker actor"]
     end
 
-    subgraph LocalChains["Existing isolated local actor and node paths"]
-        Lez["LEZ v0.2 sequencer and indexer<br/>through role sidecars"]
-        Bitcoin["Bitcoin Core Regtest<br/>role-restricted RPC"]
-        Monero["Monero Regtest<br/>monerod and wallet RPC"]
-        Zcash["Zcash Regtest<br/>Zebra RPC and local signer"]
+    subgraph LocalChains["Existing isolated local nodes not called here"]
+        Lez["LEZ sequencer indexer and sidecars"]
+        Bitcoin["Bitcoin Core Regtest"]
+        Monero["Monero Regtest and wallet RPC"]
+        Zcash["Zebra Regtest RPC"]
     end
 
     MakerOperator -.-> Basecamp
@@ -115,34 +121,35 @@ flowchart TB
     MakerRpc --> MakerDaemon
     MakerDaemon --> MakerDb
     MakerDaemon --> Delivery
-    MakerDaemon --> MakerActors
+    MakerDaemon --> Chat
 
     TakerSocket --> TakerService
     TakerConfig --> TakerService
-    PreparedConfig --> TakerService
-    PreparedConfig --> Registry
-    TakerService --> Delivery
-    TakerService --> ChatProbe
+    Prepared --> TakerService
     TakerService --> Registry
-    Registry -.-> Worker
-    Worker -.-> TakerActors
+    TakerService --> Delivery
+    TakerService --> Accept
+    Accept --> Chat
+    Chat --> MakerDaemon
+    MakerDb --> MakerActor
+    Accept --> Agreement
+    Accept --> TakerActor
+    Accept --> Receipt
 
-    MakerActors --> Lez
-    MakerActors --> Bitcoin
-    MakerActors --> Monero
-    MakerActors --> Zcash
-    TakerActors --> Lez
-    TakerActors --> Bitcoin
-    TakerActors --> Monero
-    TakerActors --> Zcash
+    MakerActor -.-> Lez
+    MakerActor -.-> Zcash
+    TakerActor -.-> Lez
+    TakerActor -.-> Zcash
+    MakerDaemon -.-> Bitcoin
+    MakerDaemon -.-> Monero
 ```
 
-The process split is an authority boundary, not merely a UI implementation
-detail. There is no Taker-service edge to the Maker RPC. The current Taker
-process reads authenticated offers and can durably admit one prepared ZEC
-initiation. The dashed worker edge is the important remaining boundary:
-admission cannot negotiate, provision, drive, monitor, claim, refund, or create
-a chain effect.
+The process split is an authority boundary, not merely a UI detail. There is
+no Taker-service edge to the Maker owner RPC. Fresh Taker initiation reaches
+the Maker only through authenticated Delivery and the separate bounded Chat
+socket. The service can negotiate and provision exact role artifacts, but it
+cannot activate or drive them, monitor chain progress, claim, refund, or call a
+node. Dashed QML/QtRO and node edges remain unimplemented at this checkpoint.
 
 A future QML or `ui-host` crash must not stop the autonomous Maker daemon or
 erase either role's durable recovery state. Delivery and Chat remain pre-lock

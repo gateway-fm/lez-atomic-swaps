@@ -1,8 +1,14 @@
 # ADR 0134: admit Taker initiation before starting any effect worker
 
-- Status: Accepted and service/process/concurrency GREEN through `e7a7e2b`
+- Status: Accepted admission-stage decision; extended by ADR 0135 at `5536dd0`
 - Date: 2026-08-03
 - Scope: M6 replay-first ZEC Taker service admission
+
+> Current extension: ADR 0135 and commit `5536dd0` preserve this
+> admission-first stage, then optionally complete real ZEC Chat acceptance and
+> return `NotActivated`. The components and sequence below are the still-valid
+> admission subflow, not the current terminal response.
+
 
 ## Context
 
@@ -137,8 +143,15 @@ agreement and role actors once a future durable worker composes them.
   initiation as the third method.
 - RPC errors expose fixed codes and categories, not paths, reservation IDs,
   keys, credentials, parser details, or private authority.
-- Exact process restart replay is independent of live Delivery.
-- The next nonvisual M6 slice must compose the real ZEC acceptance path
-  extracted at `0afb6da`, revalidate stored private bindings at use time,
-  persist worker progress or leases, and drive receipt-bound actors before swap
-  list, monitor, claim, or refund can be registered.
+- Exact process restart replay looks up durable facts before live Delivery.
+- ADR 0135 now composes the real ZEC acceptance path after this transaction,
+  revalidates exact private authority, provisions both role artifacts, and
+  publishes the Taker receipt before returning `NotActivated`.
+- Swap list, monitor, actor activation, claim, and refund remain unregistered.
+
+## Current extension
+
+The current component and end-to-end sequences, response-loss recovery windows,
+and pre-effect atomicity argument live in ADR 0135. Nothing in that extension
+turns the admission transaction and Maker database into a distributed commit:
+neither actor starts and no Zebra or LEZ effect occurs.

@@ -53,38 +53,47 @@ and length, revalidates them around the read, and rejects path replacement; an
 exact owner-owned single-link regular mode-0400 or mode-0600 file is accepted.
 Commit `ad088f8` makes health report the exact registered method set. The
 schema-v1 Taker registry foundation is GREEN through `9820400`, and
-`28006dc` adds the strict prepared-ZEC context loader. Commit `1664c41`
-wires both into the running service as admission only:
-`taker_swap_initiate_v1` is registered only when prepared authority is
-configured, and health then reports exactly three methods. Every request first
-checks durable replay on a blocking task. An exact retry returns its original
-public result without consulting the catalog, clock, or Delivery; changed
-reuse conflicts. A new request must match every prepared public fact and a
-currently authenticated Delivery offer at one trusted-time snapshot before one
-immediate SQLite transaction commits public facts, private authority, and the
-global replay result. The RPC returns only after commit as `Initiating`
-generation zero. Focused admission/read/config/process tests are GREEN 16/16,
-including process restart replay after the offer file is removed; all-target
-strict Clippy, warning-fatal Rustdoc, formatting, and diff hygiene are GREEN. Commit `e7a7e2b` also proves service-level concurrent exact replay
-and one-winner conflict. Commit `0afb6da` extracts the existing real ZEC Chat
-acceptance and actor-provisioning path into one reusable, redacted library
-module and uses the 1-MiB bounded Chat transport; it is not yet invoked by the
-service.
+`28006dc` adds the strict prepared-ZEC context loader. Commit `5536dd0` advances that boundary from admission-only to a reproducible
+real ZEC acceptance happy path. With `execute_prepared_zec: true`, a new
+request still commits its exact public facts, full private authority, and
+global replay result first; the service then performs the real bounded Chat
+proposal/completion exchange, countersigns and no-clobber persists the
+agreement, and provisions the role-fixed Taker actor before returning
+`NotActivated` generation zero. Maker negotiation is durably `Completed`
+and its actor is queued, but neither actor is started and no Zebra or LEZ
+effect occurs.
 
-This is local admission atomicity, not execution or cross-chain atomicity.
-There is still no worker, Chat acceptance, countersigned agreement, actor,
-Zebra or LEZ call, claim, or refund effect. Delivery authentication and the
-SQLite commit are separate, but the admission remains bound to the exact
-authenticated envelope commitment and creates no external effect.
+Restart replay uses the immutable original admission time, re-admits the
+current full prepared authority against the private durable row, and rejects
+even a same-byte signing-key replacement with a different inode. A valid
+completion receipt permits the exact retry after both the Delivery offer and
+Chat endpoint are unavailable, without rewriting the agreement, actor config,
+or receipt. The digest-pinned `ActorConfig` object is passed directly into
+provisioning, closing its prior check/use path race. The affected real-service,
+configuration, admission, restart, and legacy Chat set is GREEN 14/14, with
+strict all-target Clippy, warning-fatal Rustdoc, formatting, and diff hygiene
+also GREEN.
+
+This is negotiation and local handoff atomicity, not cross-chain completion.
+The service commits admission before any transport effect; deterministic Chat
+request IDs plus Maker transactions and Taker no-clobber publication make
+response-loss retries converge. No chain or wallet RPC is called at this
+checkpoint. Draft and signing-key bytes are revalidated before execution, but
+their path-based acceptance reread still leaves a same-process replacement
+hardening item; use-time inode-preserving direct-byte handoff remains required
+for production readiness.
+
 ADR [0132](docs/architecture/0132-persist-taker-initiation-admission-separately.md)
 records registry atomicity and limitations; ADR
 [0133](docs/architecture/0133-bind-prepared-zec-service-authority.md) records
 the prepared-authority boundary; ADR
 [0134](docs/architecture/0134-admit-taker-initiation-before-effects.md) records
-the service ordering and admission-only atomicity argument. Swap list, monitor,
-claim, refund, the real ZEC execution worker, Basecamp/QML and QtRO packages,
-actor-real UI composition, final gates, owner sign-off, and the M6 tag remain
-pending.
+the admission ordering; ADR
+[0135](docs/architecture/0135-complete-prepared-zec-acceptance-before-response.md)
+records the service-connected components, fresh/restart sequences, and exact
+atomicity argument. Swap list, monitor, claim, refund, actor driving,
+Basecamp/QML and QtRO packages, actor-real UI composition, final gates, owner
+sign-off, and the M6 tag remain pending.
 
 ### M5 verified progressive application PoC — historical implementation record
 

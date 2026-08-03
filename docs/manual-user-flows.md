@@ -7340,26 +7340,22 @@ flowchart LR
     Tx --> Price["Exact local price revision"]
     Tx --> Replay["Global replay result"]
 ```
-## Flow 1Y: run the actual Taker owner service and admission
+## Flow 1Y: run the actual Taker owner service and prepared acceptance
 
-Status: reproducible process flow. This exercises the real service socket,
-configuration loader, health, authenticated offer listing, conditional
-initiation, and restart replay. Admission does not execute a swap: monitor,
-claim, refund, Chat acceptance, actors, and chain effects remain absent. This
-is not prototype sign-off or an actor-real chain flow.
+Status: reproducible progressive flow. The spawned service proof covers
+socket/configuration custody, authenticated reads, default-off admission, and
+restart. The real acceptance proof uses the same RPC module with a real Maker
+daemon, Delivery, and Chat and ends at durable actor provisioning before any
+chain effect. Swap list, monitor, actor drive, claim, and refund remain absent.
+This is not prototype signoff or an actor-real chain flow.
 
 ### Build and isolated empty configuration
 
-From the repository root, build only the owner service:
+From the repository root:
 
 ```bash
 cargo build --locked -p lez-maker-node --bin lez-taker-service
-```
 
-Create a run-unique private root. The minimal configuration deliberately has no
-Delivery source and no Chat socket, so it needs no external runtime resource:
-
-```bash
 RUN_ROOT="$(mktemp -d /tmp/lez-m6-taker-read.XXXXXX)"
 chmod 700 "$RUN_ROOT"
 CONFIG="$RUN_ROOT/taker-service.json"
@@ -7376,31 +7372,21 @@ chmod 600 "$CONFIG"
 ```
 
 The secure loader accepts an owner-owned single-link regular configuration file
-with exact mode 0400 or 0600. It binds zeroizing bytes to the same descriptor's
-device, inode, and length, revalidates length around the read, and reopens the
-path to reject replacement. This example uses mode 0600. The strict schema
-accepts only:
+with exact mode 0400 or 0600 and fails before socket bind on unknown or unsafe
+fields. The top-level schema accepts version one, zero to 32 named pinned
+Delivery sources, an optional absolute `chat_socket`, a result limit from 1
+through 1024, and an optional `initiation` object.
 
-- `schema_version` equal to one;
-- zero to 32 `delivery_sources`, each with an absolute `directory` and a
-  canonical 66-character lowercase compressed secp256k1
-  `maker_public_key`;
-- optional absolute `chat_socket`; and
-- `maximum_offers` from 1 through 1024.
+Initiation selects one existing mode-0600 registry, an
+`execute_prepared_zec` boolean that defaults false, and at most 256 prepared
+ZEC `TakerSellsLez` entries. Each entry binds a named source, swap, offer,
+reservation, exact amounts, signed envelope, unsigned draft, signing key,
+source actor config, agreement output, actor root, and receipt output. All
+paths are normalized absolute paths. Any nonempty prepared catalog currently
+requires an owner-owned mode-0600 Chat socket even when execution is false.
+Execution true uses that socket for bounded real Chat propose and complete.
 
-Unknown fields fail before socket bind. An optional `initiation` object may
-select one existing mode-0600 registry and at most 256 prepared ZEC
-`TakerSellsLez` entries. Each entry references a unique named Delivery source
-and owner-fixed swap, offer, reservation, amounts, private files, and output
-paths. The loader authenticates the retained signed envelope, checks immutable
-digests and a real secp256k1 key, and keeps those fields out of RPC responses
-and fixed errors. No receipt, executable, wallet, node endpoint, or client
-request ID is accepted as public RPC authority.
-
-### Start an empty configuration and call the two baseline methods
-
-Start on the run-owned absolute socket instead of the shared default
-`/run/lez-atomic-swaps/taker.sock`:
+### Start the empty service and call baseline methods
 
 ```bash
 target/debug/lez-taker-service \
@@ -7409,19 +7395,14 @@ target/debug/lez-taker-service \
   >"$RUN_ROOT/service.log" 2>&1 &
 SERVICE_PID=$!
 
-for attempt in $(seq 1 100); do
+for _ in $(seq 1 100); do
   test -S "$SOCKET" && break
-  kill -0 "$SERVICE_PID"
+  kill -0 "$SERVICE_PID" 2>/dev/null
   sleep 0.05
 done
 test -S "$SOCKET"
-test "$(stat -c %a "$RUN_ROOT")" = 700
 test "$(stat -c %a "$SOCKET")" = 600
-```
 
-Call health and list through HTTP JSON-RPC over the Unix socket:
-
-```bash
 curl --silent --show-error \
   --unix-socket "$SOCKET" \
   --header 'content-type: application/json' \
@@ -7435,24 +7416,12 @@ curl --silent --show-error \
   http://localhost/
 ```
 
-For this empty configuration, health is ready with Delivery and Chat disabled,
-and the offer list is empty. Its `registered_methods` object must report
-`health` and `offer_list` as `true`, with `swap_list`, `initiate`, `monitor`,
-`claim`, and `refund` all `false`. Prove that initiation is honestly absent:
+Health is ready with Delivery and Chat disabled; the list is empty. Health
+reports only `health` and `offer_list` as registered. Calling initiate,
+swap list, monitor, claim, refund, a Maker method, or a generic dispatcher
+returns JSON-RPC method-not-found.
 
-```bash
-curl --silent --show-error \
-  --unix-socket "$SOCKET" \
-  --header 'content-type: application/json' \
-  --data '{"jsonrpc":"2.0","id":3,"method":"taker_swap_initiate_v1","params":[{}]}' \
-  http://localhost/
-```
-
-The response must be JSON-RPC code `-32601` for method not found. The same is
-true for swap list, monitor, claim, refund, every Maker method, and any generic
-dispatcher.
-
-Stop the exact child and confirm inode-safe cleanup:
+Stop only the test-owned child and verify exact socket cleanup:
 
 ```bash
 kill -TERM "$SERVICE_PID"
@@ -7461,51 +7430,39 @@ test ! -e "$SOCKET"
 rm -rf -- "$RUN_ROOT"
 ```
 
-Do not remove another run's directory or use a fixed socket while parallel work
-is active.
+Never reuse a fixed socket or remove another run's directory while parallel
+work is active.
 
 ```mermaid
 sequenceDiagram
     actor U as Taker operator
-    participant C as Owner-private config
+    participant C as Private config
     participant S as lez-taker-service
     participant D as Pinned local Delivery
-    U->>C: Write strict mode 0600 schema v1
-    U->>S: Start with absolute run-owned socket
-    S->>C: Safe identified read
-    U->>S: taker_health
-    S-->>U: Ready and dependency states
-    U->>S: taker_offer_list_v1
-    S->>D: Read authenticated unexpired offers when configured
-    D-->>S: Public offer projections
-    S-->>U: Bounded secret-free list
-    U->>S: taker_swap_initiate_v1
-    S-->>U: Method not found
+    U->>C: Write owner-only schema v1
+    U->>S: Start on run-owned Unix socket
+    S->>C: Same-descriptor secure read
+    U->>S: Health and offer list
+    S->>D: Read signed offers when configured
+    D-->>S: Authenticated public projections
+    S-->>U: Bounded secret-free responses
     U->>S: SIGTERM
     S-->>U: Remove only owned socket inode
 ```
 
-### Use real local Delivery or Chat health
+### Use real local Delivery and Chat
 
-To browse real offers, replace the empty `delivery_sources` array with entries
-whose directories already contain authenticated run-local Delivery envelopes
-and whose Maker public keys exactly match their signer. Every directory must be
-absolute. The optional `chat_socket` is only a metadata health probe for an
-euid-owned exact mode-0600 Unix socket; this service does not send a Chat
-message or negotiate.
+To browse real offers, configure absolute run-local Delivery directories and
+their exact Maker public keys. Health probes Chat socket metadata. An enabled
+prepared initiation uses the same separate Maker Chat socket for bounded
+`zec_chat_propose_v1` and `zec_chat_complete_v1`; no Chat credentials or
+Maker signing authority enter the response.
 
-The service uses system wall time to reject expired offers. It fails the whole
-list rather than returning a partial set when a configured source is
-unavailable, the result cap is exceeded, or immutable duplicates conflict.
-There is no public RPC, faucet, peer, chain node, wallet, DNS, or automatic
-fallback.
+Fresh list or initiation fails closed on missing Delivery, expired offers,
+wrong keys, unsafe Chat, result overflow, or conflicting immutable duplicates.
+There is no public provider fallback.
 
-### Reproduce service-wired admission and restart replay
-
-The reproducible user-shaped admission proof creates an owner-private registry,
-a real signed run-local Delivery offer, prepared private files, and the strict
-service configuration in one run-unique temporary directory. It calls the same
-typed JSON-RPC method a local UI host will call:
+### Reproduce default-off admission and process restart
 
 ```bash
 cargo test --locked -p lez-maker-node \
@@ -7518,105 +7475,125 @@ cargo test --locked -p lez-maker-node \
   --exact --nocapture
 ```
 
-The direct RPC case proves a changed commitment is rejected without a registry
-write, a valid first request returns `Initiating` generation zero only after
-the durable row exists, an exact retry succeeds after Delivery removal, and a
-changed reuse returns fixed conflict code `-32013`. The process case builds and
-starts the actual `lez-taker-service`, verifies that health reports exactly
-health, offer-list, and initiate, sends the first request over the owner Unix
-socket, terminates the process, removes the offer file, restarts the service,
-and receives the exact durable replay.
+These tests return `Initiating` generation zero, prove atomic registry commit,
+concurrent exact replay and one-winner conflict, reject a same-byte signing-key
+replacement with a new inode, and replay after the Delivery offer disappears.
+They leave execution false and perform no Chat acceptance.
 
-The fixture is the supported reproducible setup path for this checkpoint. A
-hand-built equivalent must first create the schema-v1 registry, publish a
-signed unexpired ZEC `TakerSellsLez` offer under a named pinned Delivery
-source, prepare the digest-bound draft/key/actor files and distinct output
-paths, and then send the exact public offer, route, Maker identity, envelope
-SHA-256, foreign units, expected LEZ units, and a dynamic request ID. None of
-the private paths or reservation identity belongs in the RPC request.
+### Reproduce real ZEC acceptance and offline replay
+
+```bash
+cargo test --locked -p lez-maker-node \
+  --test zec_chat_process \
+  service_initiation_completes_real_chat_before_not_activated_response \
+  -- --exact --nocapture --test-threads=1
+```
+
+The test creates one unique private root and starts the real Maker daemon with
+separate owner RPC and Chat Unix sockets, signed local Delivery, Maker SQLite,
+and a separate Taker registry. It loads `execute_prepared_zec: true`, invokes
+the real Taker service RPC module, validates and countersigns the ZEC agreement,
+completes Maker Chat, provisions the Taker actor, and publishes the receipt.
+The spawned `lez-taker-service` binary is not used in this exact test; the
+preceding process test independently covers its socket boundary.
+
+The first response has `was_replay: false`, state `NotActivated`, generation
+zero, no available action, and exact reviewed identities and amounts. Maker
+negotiation is `Completed`, exactly one Maker actor is queued, and the
+role-fixed Taker agreement, actor bundle, and mode-0600 receipt exist.
+
+The test removes the Delivery offer, makes Chat unavailable, reloads the
+service context, and retries the same request. The reply has
+`was_replay: true` and the identical projection. Agreement, actor config, and
+receipt bytes and inodes remain unchanged and no Maker actor is duplicated.
+The registry, configured Delivery directory, prepared inputs, and private
+artifacts must remain locally available.
 
 ```mermaid
 sequenceDiagram
     actor U as Taker client
     participant S as Taker service
-    participant R as Registry
-    participant C as Prepared catalog
+    participant R as Taker registry
     participant D as Authenticated Delivery
-    U->>S: Initiate with reviewed public facts
-    S->>R: Lookup request before live dependencies
-    alt Exact durable replay
-        R-->>S: Original public facts
-        S-->>U: Initiating generation zero replay true
-    else New request
+    participant C as Maker Chat
+    participant M as Maker database
+    participant F as Taker artifacts
+
+    U->>S: Initiate reviewed public facts
+    S->>R: Lookup request
+    alt New request
         R-->>S: No row
-        S->>C: Exact prepared selection
-        S->>D: Authenticate current offer at one trusted time
-        D-->>S: Matching public projection
-        S->>R: Atomic facts authority replay commit
+        S->>D: Authenticate exact offer at one time
+        D-->>S: Matching envelope
+        S->>R: Atomic facts and authority admission
         R-->>S: Durable admission
-        S-->>U: Initiating generation zero replay false
+        S->>C: Propose exact envelope and draft
+        C->>M: Durably stage Maker proposal
+        C-->>S: Maker signed proposal
+        S->>F: No-clobber agreement and Taker actor
+        S->>C: Complete countersigned agreement
+        C->>M: Atomically complete and queue Maker actor
+        C-->>S: Durable completion
+        S->>F: Publish completion receipt
+        S-->>U: NotActivated replay false
+    else Exact completed replay
+        R-->>S: Facts and original admitted time
+        S->>R: Verify current full private authority
+        R-->>S: Exact replay
+        S->>F: Validate agreement actor and receipt
+        Note over S,C: No Delivery offer or Chat exchange
+        S-->>U: NotActivated replay true
     end
 ```
 
-This does not prove either swap leg. No Chat acceptance, countersigned
-agreement, actor provisioning, Zebra RPC, LEZ RPC, wallet, signer effect,
-claim, or refund occurs. The next checkpoint must compose those existing ZEC
-components behind a durable worker.
+Atomicity is layered, not distributed. Admission is one Taker SQLite
+transaction and occurs first. Maker proposal and completion commit before their
+responses; completion atomically consumes the offer and queues one Maker actor.
+Taker agreement, actor, and receipt use create-new or exact-replay publication,
+and the receipt follows Maker completion. Crash windows converge through the
+exact request instead of starting another swap.
 
-### Reproduce the standalone registry foundation
+Neither actor starts. No actor state database or LEZ bridge journal exists and
+no Zebra, LEZ, wallet, faucet, public RPC, DNS, or fund effect occurs. This is
+real off-chain acceptance and recoverability, not a completed atomic swap.
+See ADR 0135 for the full argument.
 
-The registry has no separate RPC endpoint. A configured Taker service opens it
-internally; its exact standalone persistence proof is:
+### Reproduce the standalone registry and prepared authority
 
 ```bash
 cargo test --locked -p lez-swap-store --test taker_facade_registry
-```
 
-The 12 cases cover private exclusive creation and reopen, symlinked ancestors,
-database identity and schema drift, real curve-key validation, atomic
-initiation, exact replay and durable lookup after restart, changed public or
-private request conflict, same-swap rollback, row corruption, public/error
-redaction, and two-connection concurrency. Identical concurrent requests yield
-one new admission and one exact replay. Different requests for the same swap
-yield one winner and one `SwapConflict`; after reopen the losing request ID is
-still unused and can admit a different swap. The two concurrency cases passed
-40 repeated invocations, for 80 concurrent-test executions. The durable lookup
-returns the original public admission without a live Delivery read. The
-service-wired path invokes this lookup before catalog, time, or Delivery.
-
-### Reproduce prepared-ZEC authority loading
-
-This is a component proof, not a service or swap flow:
-
-```bash
 cargo test --locked -p lez-maker-node --test taker_initiation_config
 ```
 
-The four cases build a real signed local Delivery envelope and prove named
-Maker authentication, fixed ZEC `TakerSellsLez` route, offer, amount, exact
-integer quote and commitment; an existing registry; a maximum 256-entry static
-catalog; same-descriptor digest and file-identity binding; normalized globally
-distinct paths; exact 32-byte secp256k1 key validation; legacy read-config
-compatibility; fixed path-free errors; and redacted Debug. The catalog cannot
-contain a dynamic client request ID, caller-selected route, or caller-selected
-Maker identity. It starts no service, worker, actor, node, wallet, chain,
-Docker container, faucet, or network request.
+The registry's 12 cases cover private exclusive creation/reopen, unsafe
+ancestors and database drift, atomic admission, changed public/private
+conflict, exact replay, corruption, redaction, and two-connection concurrency.
+The five prepared-authority cases cover named Maker authentication, fixed ZEC
+route and amounts, catalog bounds, same-descriptor file binding, real
+secp256k1 key validation, required Chat, fixed errors, and redacted Debug.
+Neither component command starts a node, wallet, faucet, or public request.
 
 ### External resources, isolation, and flakiness
 
-The empty-config service run uses only the local executable, owner-private
-config, Unix socket, and system clock. The admission proof additionally uses a
-run-unique local Delivery directory, signed test offer, SQLite, and private
-fixture files. Neither starts Docker, Chat, LEZ, Bitcoin, Monero, Zebra, a
-wallet, a faucet, or a public network connection. Test funds are irrelevant
-because admission performs no node or chain operation.
+The empty service and default-off admission use only run-local executables,
+private files, Unix sockets, system time, signed deterministic offers, and
+SQLite. The real acceptance proof adds the local Maker daemon and Chat socket.
+It needs no Docker, chain node, wallet, faucet, peer, DNS, public funds, or
+external finality service. Placeholder loopback endpoints in actor configs are
+never contacted. Cargo may access its registry only on a cold locked dependency
+cache.
 
-With configured local Delivery, stale or missing directories, wrong pinned
-Maker keys, expired offers, wall-clock drift, ownership/mode/inode changes,
-result overflow, or conflicting duplicates fail closed. An optional missing or
-unsafe Chat socket makes health degraded but does not invent negotiation.
-SQLite sync latency and lock contention can slow or fail admission; the busy
-timeout is bounded at five seconds. Blocking registry work uses a blocking task
-and no mutex spans asynchronous Delivery. These failures create no chain effect
-because initiation is admission only and no worker, Chat, actor, wallet, or
-node adapter is connected.
+Local sensitivities are the three-second offer TTL, system clock, 10-second
+child readiness, five-second shutdown, Unix ownership/mode/inode behavior,
+filesystem sync, SQLite contention, disk pressure, and CPU scheduling. Fresh
+acceptance needs Delivery and Chat. Completed receipt replay needs neither the
+offer nor a Chat exchange, but it still needs the configured Delivery directory
+and retained local custody.
+
+A failure after registry admission returns a fixed dependency error and leaves
+durable work for the exact request to retry. No chain effect can occur because
+actor activation is not connected. Remaining production hardening includes
+direct retained-byte draft/key handoff, exact use-time inode enforcement,
+least-authority admission-only configuration, spawned-service real-Chat E2E,
+and actor lifecycle, finality, and chaos coverage.
