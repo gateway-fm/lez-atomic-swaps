@@ -12,142 +12,98 @@ No port is invented for an unimplemented integration. Exact current artifact,
 deployment, transaction, balance, and run facts are retained in the
 [canonical M2 certification packet](../evidence/m2-canonical-local-certification-20260714.json).
 
-## M6 current and planned UI deployment topology
+## M6 implemented UI deployment topology
 
-M6 currently has a dependency-free clickable prototype, not a daemon client.
-The three HTML entry points, one stylesheet, one script, and four local SVGs
-are ordinary static files. The optional manual server uses only Node's built-in
-HTTP and filesystem modules, binds `127.0.0.1`, and asks the kernel for a port
-by default. The browser keeps deterministic sample state in memory. It opens no
-Delivery, Chat, daemon, chain-node, wallet, Docker, faucet, or public-network
-connection and stores no credential or persistent browser state.
-
-```mermaid
-flowchart LR
-    Reviewer["Reviewer"] --> Browser["Browser with CSP"]
-    Browser -->|"GET from exact local origin"| Server["Node built-in static server<br/>127.0.0.1 and kernel-selected port"]
-    Server --> Files["Allowlisted HTML, CSS, JS, and SVG files"]
-    Browser --> Memory["Deterministic in-memory sample state"]
-    CI["CI node:test and Puppeteer"] --> TestServer["Run-local ephemeral test server<br/>127.0.0.1 and kernel-selected port"]
-    TestServer --> Chrome["System Google Chrome<br/>sandbox enabled"]
-    Chrome --> Profile["Run-unique temporary browser profile"]
-    LocalRunner["Local isolated Docker proof"] --> Container["Digest-pinned Puppeteer image<br/>network none and read-only repository"]
-    Container --> LocalServer["In-process ephemeral loopback test server"]
-    LocalServer --> LocalChrome["Sandboxed Chromium<br/>disposable tmpfs profile"]
-    Toolchain["Pinned Nix build preflight"] --> LGX["Core and UI LGX artifacts"]
-    LGX --> Lgpm["Exact lgpm 0.2 install complete"]
-    Lgpm -.-> Basecamp["Basecamp 0.2 runtime load pending"]
-    Boundary["No daemon, node, wallet, Delivery, Chat, or chain effects"]
-```
-
-The manual server sends a restrictive response CSP: static images, styles,
-and scripts may come only from the same local origin; `connect-src`,
-`object-src`, `base-uri`, and `form-action` are `none`. CI uses a stricter
-test-only CSP that also denies fonts, media, frames, workers, and framing. The
-browser test rejects every request outside its exact ephemeral local origin,
-keeps the Chromium sandbox enabled, and fails on browser console, page, request,
-or HTTP errors. These controls support the no-effects claim; they do not turn
-the prototype into an actor or chain integration.
-
-The packaging lane separately proves locked tutorial package and core/UI LGX
-builds plus exact `lgpm` 0.2.0 installation and dependency inventory. It does
-not run a Basecamp binary. The exact Basecamp root build was stopped at the
-14 GiB host-free safety threshold and all temporary build/runtime resources
-were removed; no runtime endpoint or credential follows from that rehearsal.
-
-After prototype sign-off, the planned Basecamp deployment has separate Maker
-and Taker `ui_qml` packages and process-isolated `ui-host` Qt Remote Objects
-packages. Those packages and their QtRO endpoints are not implemented, so no
-QtRO socket name, TCP port, or credential scheme is assigned here. The Maker
-host will translate an allowlisted typed UI contract to the existing owner Unix
-RPC. The Taker host will use the separate Taker owner socket; that socket and
-its role-fixed service and pre-effect ZEC acceptance now exist, but no QtRO host calls them. Neither QML view
-receives node endpoints, wallet credentials, signing keys, Delivery keys, Chat
-credentials, SQLite paths, or effect authority.
-
-The nonvisual Maker prerequisite is implemented at `8c6a7db`.
-`maker_local_route_save_v1` stores a same-route local policy, exact price, and
-replay result in one schema-v22 transaction. No QML or QtRO host calls it.
-
-The nonvisual Taker service is implemented through `0c32200`.
-`lez-taker-service` reads one owner-private schema-v1 file and binds a
-distinct mode-0600 Unix socket. It always registers health and offer list. A validated prepared-ZEC context additionally registers initiate, swap list,
-monitor, Claim, and Refund. Terminal calls are generation-fenced and only the
-service-resolved role actor receives chain authority.
-
-A new request authenticates Delivery at one trusted time and commits the exact
-public facts, full private authority, and replay row before any Chat call. With
-`execute_prepared_zec: true`, it then completes the real Maker Chat exchange,
-countersigns and no-clobber persists the agreement, provisions the Taker actor,
-publishes the private receipt, and returns `NotActivated`. Restart replay
-verifies the current full authority against the durable row and uses the
-original admitted time. A valid receipt permits exact replay with the offer
-removed and Chat unavailable. Initiation and monitoring do not start either actor or connect a chain effect.
-Receipt-bound list and monitor select only the exact
-admitted prepared authority, reread the service-owned receipt/config under the
-actor lock, and project status with unit ports. Delivery and Chat may be
-unavailable for these reads.
+M6 has both the signed-off dependency-free prototypes and two production-shape
+Basecamp 0.2 `ui_qml` packages. The prototypes remain a no-effect review tool.
+The role packages are consumer-locked, build module/LGX/developer-install and
+official integration outputs, and load in the pinned Basecamp 0.2.0-RC3 product.
+Each view uses a typed Qt Remote Objects replica whose C++ backend runs in a
+separate process. That backend can open only the matching owner Unix socket and
+translate only the role's fixed method allowlist.
 
 ```mermaid
 flowchart TB
-    Maker["Maker operator"] -.-> MakerQml["Planned Maker ui_qml"]
-    MakerQml -.-> MakerHost["Planned Maker QtRO host"]
-    MakerHost -.-> OwnerRpc["Maker owner Unix RPC"]
-    OwnerRpc --> MakerDaemon["Maker daemon"]
-    MakerDaemon --> MakerDb[("Maker SQLite")]
-    MakerDaemon --> Delivery["Signed local Delivery"]
-    MakerDaemon --> Chat["Maker Chat Unix RPC"]
+    Maker["Maker operator"] --> MakerBC["Basecamp Maker user directory"]
+    MakerBC --> MakerQml["Maker ui_qml view"]
+    MakerQml --> MakerQtRO["Typed Maker QtRO replica"]
+    MakerQtRO --> MakerHost["Process-isolated Maker backend"]
+    MakerHost --> MakerSocket["Owner mode-0600 Maker Unix socket"]
+    MakerSocket --> MakerDaemon["lez-maker-daemon"]
+    MakerDaemon --> MakerDb[("Maker SQLite schema v22")]
 
-    Taker["Taker user"] -.-> TakerQml["Planned Taker ui_qml"]
-    TakerQml -.-> TakerHost["Planned Taker QtRO host"]
-    TakerHost -.-> TakerSocket["Taker owner Unix RPC"]
+    Taker["Taker user"] --> TakerBC["Basecamp Taker user directory"]
+    TakerBC --> TakerQml["Taker ui_qml view"]
+    TakerQml --> TakerQtRO["Typed Taker QtRO replica"]
+    TakerQtRO --> TakerHost["Process-isolated Taker backend"]
+    TakerHost --> TakerSocket["Owner mode-0600 Taker Unix socket"]
     TakerSocket --> Service["lez-taker-service"]
-    Config["Private service config"] --> Service
-    Prepared["Prepared ZEC authority"] --> Service
-    Service --> Registry[("Taker registry")]
-    Service --> Delivery
-    Service --> Accept["Prepared ZEC acceptance"]
-    Accept --> Chat
-    Accept --> Agreement["Countersigned agreement"]
-    Accept --> TakerActor["Provisioned Taker actor"]
-    Accept --> Receipt["Private Taker receipt"]
-    Service --> Monitor["Receipt-bound list and monitor"]
-    Service --> Terminal["Generation-fenced Claim or Refund"]
-    Terminal --> Registry
-    Monitor --> Registry
-    Monitor --> Receipt
-    Monitor --> Lock["Per-swap actor lock"]
-    Terminal --> Lock
-    Lock --> TakerActor
-    MakerDb --> MakerActor["Queued Maker actor"]
+    Config["Owner-private service config"] --> Service
+    Service --> Registry[("Taker registry schema v1")]
 
-    MakerActor --> Zebra["Local Zebra Regtest RPC"]
-    MakerActor --> Lez["Local LEZ v0.2 RPCs"]
-    TakerActor --> Zebra
-    TakerActor --> Lez
+    MakerDaemon --> Delivery["Signed local Delivery"]
+    Service --> Delivery
+    Service --> Chat["Maker Chat owner Unix socket"]
+    MakerDaemon --> MakerActor["Role-fixed Maker actor"]
+    Service --> TakerActor["Role-fixed Taker actor"]
+    MakerActor --> LEZ["Run-local LEZ v0.2 RPCs"]
+    TakerActor --> LEZ
+    MakerActor --> Foreign["Run-local Bitcoin, Monero, or Zebra RPCs"]
+    TakerActor --> Foreign
+
+    Product["Official Basecamp MCP product test"] --> MakerBC
+    Product --> TakerBC
+    Isolation["Container network none and same effective UID"] --> Product
 ```
 
-Dashed QML and QtRO edges remain planned. Solid edges through Maker
-completion, Taker receipt, locked status, terminal authorization, and local
-actors are current. Initiation and monitoring start no actor and perform no node
-I/O. Fresh regression `m6claim0ba41aba` exercised the service Claim edge and role
-actors through wholly fresh local LEZ v0.2 and Zebra Regtest. The first claim
-changed Zebra from empty to exact transaction `0da6b4c2...d2abf`; exact replay
-retained that same one transaction, and local mining made it canonical at
-height 107 after LEZ Claim `f865903e...14d0cc` finalized in block 127.
-Node access remains behind role actors and their
-durable effect journals. A view or UI host must never call a
-node, Delivery, or Chat endpoint directly.
+The Maker product test loads the package, checks the real daemon, commits
+`maker_local_route_save_v1`, and reads history from isolated SQLite. The Taker
+product test loads its separate package, checks the real owner service, browses
+offers, submits an authenticated prepared request, repeats it as exact replay,
+lists swaps, and monitors the admitted swap. The post-product Rust assertion
+proves UI request `taker-ui-initiate-001` durably maps to
+`m6-process-zec-swap-001` in the real registry. Missing service tests for both
+roles fail closed without crashing Basecamp.
 
-Fresh run `m6refund8f76d87a` exercised the service Refund edge on wholly
-fresh LEZ and Zebra stacks. Taker finalized one LEZ Refund before parent-owned
-Maker recovery submitted one Zcash Refund; all application views reached
-`refunded`. During the ordered recovery interval, the parent preserved the
-service handoff without another Taker action RPC, preventing redundant
-historical-account reads from contending with Maker discovery. Local nested
-bounds are service caller 90 seconds, refund-only Maker attempt 75 seconds, and
-actor bridge 60 seconds inside the 300-second corridor. Terminal replay later
-resumed Taker observation and added no effect.
+Neither QML view receives a socket path, node endpoint, wallet credential,
+signing key, Delivery key, Chat credential, SQLite path, receipt, or arbitrary
+method name. The shared local client rejects symlinks, non-sockets, wrong owner,
+and any mode other than 0600, bounds HTTP/JSON messages to 64 KiB, uses finite
+connect/read timeouts, and has no TCP, web, or command-execution path.
+
+```mermaid
+sequenceDiagram
+    actor Taker as Taker user
+    participant QML as Basecamp Taker QML
+    participant Host as Taker process backend
+    participant Service as Taker owner service
+    participant Registry as Taker registry
+    Taker->>QML: Enter exact authenticated offer facts
+    QML->>Host: initiate with fixed request ID
+    Host->>Service: taker_swap_initiate_v1 over owner socket
+    Service->>Registry: Commit authority and replay row before effects
+    Service-->>Host: was_replay false
+    Host-->>QML: Render admitted swap
+    Taker->>QML: Repeat unchanged request
+    QML->>Host: same request ID and payload
+    Host->>Service: taker_swap_initiate_v1
+    Service->>Registry: Resolve exact replay first
+    Service-->>Host: was_replay true
+    QML->>Host: list and monitor exact swap
+    Host->>Service: Receipt-bound read methods
+    Service-->>QML: Public state under actor lock
+```
+
+The Basecamp composition run ends at admission, replay, list, and monitor; it
+does not claim that the click produced a chain transaction. Fresh actual-node
+service certificates separately prove ZEC Claim and Refund through the same
+owner service and actors. Claim run `m6claim0ba41aba` finalized LEZ Claim
+`f865903e...14d0cc` in block 127 and made exact Zcash Claim
+`0da6b4c2...d2abf` canonical at height 107, with no-effect replay. Refund run
+`m6refund8f76d87a` finalized LEZ Refund `c43df1bb...dcf5ad` in block 129 before
+canonical Zcash Refund `db066a94...5ab470` at height 110, with opposite-action
+conflict and no-effect replay. ADR 0147 contains the per-pair sequences and
+conditional atomicity arguments.
 
 ### M6 ports, credentials, and resources
 
@@ -158,12 +114,12 @@ resumed Taker observation and added no effect.
 | CI prototype server | `127.0.0.1:0`; the test reads the kernel-selected port from the listener | None | In-process `node:test` server; current and closed by the owning test run |
 | CI browser | No application listener; connects only to the exact CI test-server origin | None | `/usr/bin/google-chrome`, with Puppeteer download disabled, plus a profile below `${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}`; current, run-unique, sandboxed, and removed by that run |
 | Local isolated browser proof | In-process test server on kernel-selected loopback; container has `--network none` | None | Digest-pinned Puppeteer 25.3.0 image; read-only repository, disposable tmpfs/profile, unique container name, bounded CPU/memory/PIDs, Chromium sandbox enabled; current and GREEN 6/6 |
-| Basecamp toolchain preflight | No runtime listener | No application credentials; unsigned official tutorial artifacts were explicitly allowed only for local install rehearsal | Package, core/UI LGXs, and exact `lgpm` install GREEN. Full Basecamp build/load not certified after disk-safety stop. Temporary Nix volume, paths, containers, and images removed |
-| Maker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
-| Maker `ui-host` QtRO | QtRO transport and endpoint are unassigned | A future process-local admission mechanism must not expose daemon or chain credentials to QML | Separate process/package planned; allowlisted translation only |
-| Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the planned host may call it, the QML view may not |
-| Taker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
-| Taker `ui-host` QtRO | QtRO transport and endpoint are unassigned | Credential scheme unassigned; it must remain role-fixed and receipt-bound | Separate process/package planned, not implemented |
+| Pinned Basecamp product | Qt inspector uses loopback only inside the networkless product container; application packages add no TCP listener | Separate Maker and Taker user directories contain only the matching developer-install tree; no chain credential | Basecamp 0.2.0-RC3 build/load GREEN. Dedicated Nix store and digest-pinned image are setup resources; product runtime uses `--network none` |
+| Maker `ui_qml` | Internal typed QtRO connection managed by Basecamp; no application TCP port | No secrets, paths, arbitrary methods, node endpoints, or wallet authority in QML | Implemented package, LGX, installer, official standalone test, missing-service test, and real-daemon product flow GREEN |
+| Maker process backend | Opens only the absolute path in `LEZ_MAKER_RPC_SOCKET`; actual path stays in the process environment | Effective-UID ownership and exact mode 0600 admit the backend; QML cannot read or change the path | Six typed QtRO slots translate to six fixed Maker JSON-RPC methods; shared client caps messages at 64 KiB and rejects TCP/web/command execution |
+| Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the process backend may call it, the QML view may not |
+| Taker `ui_qml` | Internal typed QtRO connection managed by Basecamp; no application TCP port | No secrets, paths, arbitrary methods, node endpoints, or wallet authority in QML | Implemented package, LGX, installer, official standalone test, missing-service test, real-service test, and prepared actor-real product flow GREEN |
+| Taker process backend | Opens only the absolute path in `LEZ_TAKER_RPC_SOCKET`; actual path stays in the process environment | Effective-UID ownership and exact mode 0600 admit the backend; QML cannot read or change the path | Seven typed QtRO slots translate to the seven fixed Taker methods; no generic dispatcher or public fallback |
 | Taker service | Default `/run/lez-atomic-swaps/taker.sock`, or a run-owned absolute mode-0600 Unix socket below an owner mode-0700 directory | Unix ownership and mode admit the client; fixed DTOs/errors expose no paths, keys, receipts, commands, or raw evidence | Actual through `0c32200`; prepared authority exposes all seven fixed methods, including generation-fenced Claim and Refund. Fresh local evidence covers Claim and Refund. HTTP-only, batches disabled, bounded connections/bodies, inode-safe SIGTERM cleanup |
 | Taker service configuration | Absolute owner-owned single-link regular mode-0400 or mode-0600 file, maximum 512 KiB | Pinned Delivery sources, Chat socket, existing registry, prepared ZEC files and signing key remain owner-only | Strict schema v1; `initiation.execute_prepared_zec` defaults false. Any nonempty prepared catalog currently requires Chat; true enables synchronous pre-effect acceptance |
 | Prepared-ZEC startup context | No separate endpoint; loaded inside the owner service | At most 256 exact prepared authorities; no UI visibility | Service-connected through `e9393cf`; draft/key/source config are revalidated, full durable replay authority must match, and enabled acceptance provisions agreement, Taker actor, and receipt before response. Direct retained-byte use-time handoff remains hardening |
@@ -192,13 +148,14 @@ the test. Remaining prototype sensitivities are Docker and kernel sandbox
 support, Node/npm or image setup, local process limits, and CPU scheduling
 against browser timeouts.
 
-The Basecamp toolchain rehearsal used only immutable GitHub flake inputs and
+The Basecamp package/product build used only immutable GitHub flake inputs and
 `cache.nixos.org`; cold-cache DNS, GitHub, or Nix-cache availability can fail
-or delay it. It used no chain RPC, faucet, public funds, or public deployment.
-The full Basecamp root closure duplicated revisions and was safety-stopped at
-14 GiB host free space, so disk capacity is an explicit load-rehearsal
-prerequisite. Exact cleanup restored 433 GiB and removed the warmed closure; a
-future run must budget and fetch it again.
+or delay setup. The measured Basecamp closure is about 2.75 GB and a dedicated
+Nix-store volume prevents collisions with other projects. Once warm, both role
+product runs are networkless and use no chain RPC, faucet, public funds, or
+public deployment. A completely network-disabled cold reconstruction was not
+certified because the Nix fetcher source cache was not populated. This is a
+disclosed setup/reproducibility risk, not permission to use floating inputs.
 
 The Taker service uses only owner-private configuration and local resources.
 Fresh enabled acceptance adds system time, signed local Delivery, the Maker
@@ -240,11 +197,13 @@ state checks. Chain-history growth and historical-RPC concurrency therefore
 remain production capacity risks under LOGOS-024, not a reason to accept
 missing evidence.
 
-The planned actor-real UI additionally inherits startup, finality, reorg, and
-bounded-RPC timing from local LEZ, Bitcoin, Monero, and Zcash lanes, plus
-Basecamp, Qt, QtRO, and reproducible-package toolchain drift. Delivery or Chat
-may affect pre-lock discovery and negotiation. These are future composition
-risks and never authorize public endpoint fallback or direct UI-to-node access.
+Terminal actor-real use inherits startup, finality, reorg, and bounded-RPC
+timing from local LEZ, Bitcoin, Monero, and Zcash lanes, plus Basecamp, Qt,
+QtRO, and reproducible-package toolchain drift. Delivery or Chat may affect
+pre-lock discovery and negotiation. The current Basecamp product replay proves
+acceptance and monitoring composition; terminal chain effects remain layered
+service/actor evidence. None of these risks authorizes public endpoint fallback
+or direct UI-to-node access.
 
 ## Current executable local topology
 

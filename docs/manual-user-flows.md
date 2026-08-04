@@ -7153,7 +7153,8 @@ candidate claim.
 
 ## Flow 1X: review the M6 clickable Maker and Taker prototypes
 
-Status: reproducible prototype review flow; **owner sign-off is not claimed**.
+Status: reproducible prototype review flow; owner sign-off was explicitly
+granted on 2026-08-04 after the unchanged-input 6/6 replay.
 Every displayed offer, balance, status, receipt, confirmation, request, and
 outcome is deterministic sample state. No control in these pages can contact a
 daemon, wallet, Delivery, Chat, or chain node.
@@ -7320,10 +7321,12 @@ state and cannot affect a swap.
 
 ### Reproduce the Basecamp packaging preflight
 
-This is a build/install proof, **not** the Maker/Taker user flow and not a
-Basecamp runtime-load proof. Reserve a separate disk budget and stop before the
-host falls below 20 GiB free. The measured full Basecamp root closure reached
-the 14 GiB safety threshold and was deliberately stopped.
+This historical tutorial rehearsal is a build/install proof, **not** the
+Maker/Taker user flow. It was followed by a successful exact Basecamp runtime
+build and then by the repository role-package product proof in Flow 1X2. Reserve
+a separate disk budget and stop before the host falls below 20 GiB free. The
+first full-root attempt reached the 14 GiB safety threshold and was deliberately
+stopped; the later isolated replay completed after exact project cleanup.
 
 Use official tutorial commit
 `bfc34c451c08da9f78072dd825756a1e071a051d`, module-builder 0.2.0 commit
@@ -7352,9 +7355,9 @@ The JSON list must show `calc_ui_cpp` type `ui_qml` depending on
 tutorial artifacts; a production candidate must require signatures. GitHub and
 `cache.nixos.org` are cold-build dependencies and can cause setup flakiness. No
 chain RPC, faucet, public funds, or public deployment is used. Remove the
-dedicated store and temporary tree after capturing hashes. Do not claim
-Basecamp load unless the exact binary actually loads both packages and the
-journey is exercised.
+dedicated store and temporary tree after capturing hashes. This tutorial alone
+does not prove a repository package load; Flow 1X2 supplies that separate
+evidence.
 
 ### Reproduce the atomic Maker backend prerequisite
 
@@ -7380,6 +7383,144 @@ flowchart LR
     Tx --> Price["Exact local price revision"]
     Tx --> Replay["Global replay result"]
 ```
+## Flow 1X2: build and use the Maker and Taker Basecamp packages
+
+Status: reproducible local-functional product flow. It uses pinned Basecamp
+0.2.0-RC3, separate role user directories, process-isolated QtRO backends, and
+the real owner services. Runtime uses no public RPC, faucet, public funds, or
+public deployment.
+
+### Build the locked outputs
+
+With Nix flakes enabled, run from `apps/basecamp`:
+
+```sh
+nix build --no-update-lock-file .#maker -o result-maker
+nix build --no-update-lock-file .#taker -o result-taker
+nix build --no-update-lock-file .#maker-lgx -o result-maker-lgx
+nix build --no-update-lock-file .#taker-lgx -o result-taker-lgx
+nix build --no-update-lock-file .#maker-install -o result-maker-install
+nix build --no-update-lock-file .#taker-install -o result-taker-install
+nix build --no-update-lock-file .#maker-integration-test
+nix build --no-update-lock-file .#taker-integration-test
+```
+
+Expect both official integration outputs to build. The repository contract can
+be repeated without Nix from the repository root:
+
+```sh
+npm run test:m6:basecamp:contract
+```
+
+It must report two `ui_qml` packages, thirteen typed slots, and one owner-local
+transport. A cold build fetches immutable GitHub flake inputs and NARs from
+`cache.nixos.org`; those setup services can be flaky. Do not replace the lock
+with a floating tag. The product runtime is networkless after the closure is
+available.
+
+### Install each role separately
+
+```sh
+export M6_ROOT="${TMPDIR:-/tmp}/lez-m6-manual-$UID"
+export M6_MAKER_USER="$M6_ROOT/basecamp-maker"
+export M6_TAKER_USER="$M6_ROOT/basecamp-taker"
+install -d -m 0700 "$M6_ROOT" "$M6_MAKER_USER" "$M6_TAKER_USER"
+cp -a apps/basecamp/result-maker-install/. "$M6_MAKER_USER/"
+cp -a apps/basecamp/result-taker-install/. "$M6_TAKER_USER/"
+```
+
+Build Basecamp tag `0.2.0` only after verifying its exact commit is
+`48b26c0d33573b5dd3695ae5868b04328f79e5c6`; its internal version is
+`0.2.0-RC3`. Set `M6_BASECAMP_BIN` to the resulting absolute
+`bin/LogosBasecamp` path. The complete pinned checkout/build example is in
+`apps/basecamp/README.md`.
+
+### Repeat the Maker journey
+
+Start `lez-maker-daemon` with its normal private configuration and a run-owned
+absolute socket. The runtime directory must be owner mode 0700 and the socket
+owner mode 0600. Use the same effective UID for Basecamp:
+
+```sh
+export LEZ_MAKER_RPC_SOCKET="$M6_ROOT/runtime-maker/maker.sock"
+export M6_BASECAMP_USER_DIR="$M6_MAKER_USER"
+scripts/m6-basecamp-launch-wrapper.sh
+```
+
+Open **LEZ Atomic Swap Maker**, confirm **Backend connected**, then:
+
+1. select **Check service**;
+2. select the pair and direction and enter exact atomic-unit limits and price;
+3. select **Save route atomically**;
+4. select **Refresh swap history**;
+5. use monitor or a terminal control only for an existing role-owned swap and
+   its current generation.
+
+The route click is one `maker_local_route_save_v1` call. The daemon commits the
+policy, price, and replay result in one SQLite transaction. No QML or QtRO
+process receives the database path or chain credentials.
+
+### Repeat the Taker journey
+
+Follow Flow 1Y to create the strict owner-private configuration and start the
+real `lez-taker-service`. Then launch the separate Taker role:
+
+```sh
+export LEZ_TAKER_RPC_SOCKET="$M6_ROOT/runtime-taker/taker.sock"
+export M6_BASECAMP_USER_DIR="$M6_TAKER_USER"
+scripts/m6-basecamp-launch-wrapper.sh
+```
+
+Open **LEZ Atomic Swap Taker**, confirm **Backend connected**, then:
+
+1. select **Service health** and **Browse authenticated offers**;
+2. copy the chosen offer ID, Maker compressed public identity,
+   signed-envelope SHA-256, foreign atomic units, and expected LEZ atomic units
+   into the exact review form;
+3. select **Confirm and initiate** once and retain the returned swap ID;
+4. repeat the unchanged request and require an exact replay result;
+5. select **List my swaps**, enter the swap ID, and select **Monitor**;
+6. select **Claim** or **Refund** only when monitor advertises that action at
+   the displayed generation; shield received transparent ZEC separately after
+   wallet recognition.
+
+The retained automated product run drives those controls through the official
+Logos MCP harness. It observes `was_replay: false`, then `was_replay: true`, and
+proves request `taker-ui-initiate-001` maps to swap
+`m6-process-zec-swap-001` in the actual registry. This proves UI/package/backend/
+service composition through monitor. It does not claim that this particular UI
+run emitted terminal chain transactions; the fresh Claim and Refund service
+certificates are the separate actual-node layer.
+
+```mermaid
+sequenceDiagram
+    actor User as Role user
+    participant Basecamp as Pinned Basecamp role view
+    participant Backend as Process-isolated typed backend
+    participant Service as Owner role service
+    participant Store as Durable role store
+    User->>Basecamp: Perform role action
+    Basecamp->>Backend: Typed QtRO slot
+    Backend->>Service: Fixed JSON-RPC over owner Unix socket
+    Service->>Store: Atomic admission or revisioned operation
+    Store-->>Service: Durable result
+    Service-->>Backend: Secret-free projection
+    Backend-->>Basecamp: Render result
+    Note over Basecamp,Store: QML has no paths keys node endpoints or generic method
+```
+
+### Isolation, flakiness, and cleanup
+
+Use separate user directories, runtime directories, socket paths, container
+names, and a dedicated Nix volume. Product tests run with `--network none`; the
+Qt inspector loopback exists only inside that container. Local CPU/disk pressure,
+Nix cold-cache availability, Qt startup, and finite service deadlines can affect
+timing. They never authorize a public fallback or reuse of stale evidence.
+
+Stop only the processes started by this run and remove only `$M6_ROOT`, the six
+role result links, and the exact dedicated container/volume/image reference after
+verifying their names. Never globally prune Docker or Nix on a shared host.
+
 ## Flow 1Y: run the actual Taker owner service and prepared acceptance
 
 Status: reproducible progressive flow. The spawned service proof covers
@@ -7390,8 +7531,9 @@ chain effect. It then removes Delivery and Chat and reproduces the accepted
 swap through the receipt-bound list and monitor methods. The later Claim
 subsection is actual-local and certified. The Refund subsection is an
 executable fresh-node certificate candidate whose focused contract is GREEN;
-successful two-leg evidence remains pending. This is not prototype signoff or
-an actor-real Basecamp flow.
+successful two-leg evidence is now retained in Claim and Refund certificates.
+Flow 1X2 composes this service through actor-real Basecamp without conflating
+the UI product run with those separate terminal chain effects.
 
 ### Build and isolated empty configuration
 

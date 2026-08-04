@@ -225,8 +225,9 @@ transaction.
   response-unknown work. Only exact replay is authorized to reconcile it.
 - The current service path is prepared ZEC only. It does not generalize these
   terminal methods to BTC or XMR.
-- QML, QtRO, actor-real UI composition, owner prototype sign-off, and the M6 tag
-  remain outside this nonvisual slice.
+- QML, QtRO, actor-real UI composition, and owner prototype sign-off are now
+  GREEN under ADRs 0128 and 0147. They compose this nonvisual authority rather
+  than changing its one-winner and exact-replay rules.
 
 ## Current proof status
 
@@ -261,8 +262,11 @@ this certificate. The private evidence root is
 `/tmp/lez-atomic-swaps-m6cert20260803164006`; it is local run evidence, not a
 checked-in release artifact and not proof of public deployment.
 
-Equivalent service-driven actual-node refund proof remains pending. Maker and
-Taker Basecamp `ui_qml` packages, their separate QtRO hosts, actor-real UI E2E,
-explicit owner prototype sign-off, final gates, and the M6 completion tag also
-remain pending. Therefore this ADR proves the nonvisual ZEC Claim slice only;
-it does not certify the full M6 user journey.
+Fresh service-driven actual-node Claim regression `m6claim0ba41aba` and Refund
+certificate `m6refund8f76d87a` now prove both terminal branches, opposite-action
+conflict, exact replay, canonical Zcash membership, and finalized LEZ effects.
+The Maker and Taker Basecamp packages and prepared acceptance/replay/list/monitor
+product journey are separately GREEN under ADR 0147. Evidence remains layered:
+the Basecamp product run does not claim to have emitted the certified terminal
+transactions. This ADR continues to define the nonvisual terminal authority;
+the combined M6 user-journey claim is made only by the milestone evidence set.

@@ -1,6 +1,6 @@
 # ADR 0146: Pin Basecamp builds behind consumer locks
 
-Status: Accepted for M6 implementation on 2026-08-04
+Status: Accepted and implemented for M6 package/product evidence on 2026-08-04
 
 ## Context
 
@@ -45,8 +45,8 @@ package-manager, package-downloader, and main-UI modules, connected the local
 Qt Remote Objects transports, and passed the expected five-second offscreen
 runtime smoke. The exact output NAR is
 `sha256-lfg55Q/2x84ormtBRzFytP4hMfd1jH0sS7oIkcQN3nI=` and its closure is
-2,749,148,608 bytes. This certifies the pinned Basecamp binary/runtime, not a
-Maker or Taker package load.
+2,749,148,608 bytes. That preflight certified only the pinned Basecamp
+binary/runtime. The later M6 package replay loaded both repository products.
 
 ## Decision
 
@@ -70,13 +70,13 @@ flowchart LR
     Build --> LGX["Basecamp loadable LGX"]
     LGX --> Install["Exact lgpm 0.2 install"]
     Install --> Loader["Basecamp 0.2 runtime smoke green"]
-    Loader --> Product["Maker and Taker package load pending"]
+    Loader --> Product["Maker and Taker packages product GREEN"]
 ```
 
 The package build and the upstream integration harness are separate evidence
-lanes. The package and LGX lanes must be green. M6 will add repository-owned
-actor-real UI tests and will also exercise the official integration output if
-the pinned upstream builder can evaluate it. An upstream harness defect is not
+lanes. The package and LGX lanes are green. M6 adds repository-owned
+actor-real UI tests and exercises both official per-package integration outputs.
+The broader upstream all-output evaluation defect remains disclosed. It is not
 allowed to erase repository-owned UI coverage or to turn a failed check into a
 pass.
 
@@ -116,7 +116,24 @@ they do block an unqualified distributable-production claim.
   license defects, but repository source, tests, locks, artifact hashes, and CI
   policy remain fail-closed.
 - Successful `lgpm` installation proves package shape and dependency discovery.
-  The separate official smoke proves the pinned Basecamp binary/runtime, but
-  neither proves Maker or Taker package load or actor behavior.
-- Explicit prototype sign-off from ADR 0128 still precedes production Maker
-  and Taker UI source.
+  The separate official smoke proves the pinned Basecamp binary/runtime. The M6
+  package builds, official standalone tests, and product tests additionally
+  prove both role package loads and their real owner-service behavior.
+- Explicit prototype sign-off from ADR 0128 preceded the Maker and Taker UI
+  source; it was granted on 2026-08-04.
+
+## Implemented package evidence
+
+Commit `149cb84` added the two consumer-locked packages. Commit `0141e60`
+proved official product discovery/load, missing-service fail-closed behavior,
+and real Maker/Taker service calls. Commit `e3e6907` drove authenticated prepared
+Taker admission, exact UI replay, list, and monitor, then asserted the fixed UI
+request in the real registry. Module, LGX, developer-install, integration, NAR,
+and artifact hashes are retained in
+`docs/evidence/m6-basecamp-role-packages-20260804.json`.
+
+The product runtime is networkless. Cold package construction still requires
+immutable GitHub inputs and `cache.nixos.org` unless a complete source/NAR cache
+has already been populated. LOGOS-025 retains upstream licenses, signatures,
+SBOM/vulnerability review, graph cleanup, and offline-cold-build work for a
+distributable production artifact.

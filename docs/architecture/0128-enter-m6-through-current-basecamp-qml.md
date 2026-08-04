@@ -1,6 +1,6 @@
 # ADR 0128: Enter M6 through current Basecamp QML
 
-Status: Accepted for M6 entry on 2026-08-03
+Status: Accepted and implemented for the M6 local-functional PoC on 2026-08-04
 
 ## Context
 
@@ -91,3 +91,17 @@ sequenceDiagram
 Production readiness, public-chain execution, and upstream Basecamp API drift
 remain later hardening. M6 UI evidence cannot upgrade the chain evidence of
 M2-M5.
+
+## Implementation status
+
+All five PoC exit gates are GREEN. The owner approved the 6/6 clickable
+prototype replay. Consumer-locked Maker and Taker `ui_qml` packages now produce
+module, LGX, developer-install, and official integration outputs and load in the
+pinned Basecamp 0.2.0-RC3 product. The Maker product test exercises the real
+daemon's health, atomic route save, and history. The Taker product test exercises
+the real service's health, offer list, prepared initiation, exact replay, swap
+list, and monitor, followed by a direct durable registry assertion. ADR 0147
+records the final component, sequence, role, and conditional-atomicity boundary.
+
+Actual-node Claim and Refund remain layered service/actor certificates. The
+Basecamp product run is not represented as the source of those chain effects.

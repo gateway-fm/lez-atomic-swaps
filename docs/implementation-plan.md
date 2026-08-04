@@ -5416,9 +5416,10 @@ rejects an unknown path-shaped field before dispatch. The complete
 two-package Clippy, warning-fatal Rustdoc, formatting, and diff hygiene are
 GREEN.
 
-ADR 0129 records the atomicity argument and both success/failure flows. This is
-an implemented nonvisual prerequisite and does not cross the prototype
-sign-off gate: production QML and its QtRO host remain pending approval.
+ADR 0129 records the atomicity argument and both success/failure flows. At this
+2026-08-03 checkpoint it was an implemented nonvisual prerequisite and did not
+cross the then-pending prototype sign-off gate. Approval and the later QML/QtRO
+composition are recorded in the M6 checkpoints below.
 
 ## M6 typed Taker facade contract checkpoint (2026-08-03)
 
@@ -5980,3 +5981,59 @@ Owner signoff released the issue-#112 gate on 2026-08-04. RED now begins for
 the package contract and actor journey; GREEN will implement the two
 consumer-locked packages, load them in this proven pinned runtime, and run the
 actor-real journey with an explicit isolated disk budget.
+
+## M6 Basecamp role-package and actor-real checkpoint (2026-08-04)
+
+Commits `149cb84`, `0141e60`, and `e3e6907` close that RED. Two independent
+consumer-locked `ui_qml` packages now expose six typed Maker slots and seven
+typed Taker slots. Each QML view talks through its own process-isolated QtRO
+backend to one fixed owner-service method allowlist over an effective-user-owned
+mode-0600 Unix socket. The shared client rejects symlinks, non-sockets, wrong
+owners and modes, messages above 64 KiB, TCP/web transports, arbitrary method
+dispatch, and command execution.
+
+Both module outputs, LGXs, developer-install trees, and official standalone
+integration outputs build against module-builder 0.2.0 at exact commit
+`92ef691ea72844134f6c68fb447d37f855fc9690`. Both packages load in exact
+Basecamp commit `48b26c0d33573b5dd3695ae5868b04328f79e5c6`, internal
+`0.2.0-RC3`. Separate user directories and owner sockets preserve roles. The
+product container runs with no network and the same effective UID as the
+service.
+
+Repository-owned product tests prove both missing-service fail-closed paths.
+The Maker package then calls real daemon health, atomically saves one route, and
+reads history from isolated SQLite. The Taker baseline calls real service health
+and offer list. The stronger prepared rendezvous enters the exact authenticated
+offer facts through the Basecamp QML, observes new initiation, repeats the same
+fixed UI request as exact replay, lists swaps, and monitors the admitted swap.
+After Basecamp exits, the Rust process test opens the actual registry and proves
+`taker-ui-initiate-001` durably maps to `m6-process-zec-swap-001`.
+
+This product proof is intentionally layered with the fresh actual-node Claim and
+Refund certificates. It proves UI/package/backend/service composition through
+admission and monitor, not that the Basecamp click itself emitted their retained
+LEZ or Zcash transactions. ADR 0147 records the component schema, Maker and
+Taker operation sequences, per-pair terminal sequences, atomicity arguments,
+failure behavior, and limits. The machine-readable package evidence is
+`docs/evidence/m6-basecamp-role-packages-20260804.json`.
+
+Cold package construction can depend on DNS, immutable GitHub flake inputs, and
+`cache.nixos.org`; runtime is networkless and uses no public RPC, faucet, public
+funds, or public deployment. A fully network-disabled cold reconstruction was
+not proven because the Nix fetcher source cache was incomplete. LOGOS-025 keeps
+license, signature, upstream all-output evaluation, realized-closure SBOM and
+vulnerability review, graph review, and offline-cold-build work release-blocking
+but nonblocking for the private local PoC under the accepted Logos exception.
+
+Remaining M6 certification order:
+
+1. validate every documentation link, command, traceability row, architecture
+   diagram, evidence hash, and the exact candidate diff;
+2. run the repository format, strict Clippy, workspace test, warning-fatal
+   Rustdoc, Node audit/license, CI hardening, M6 prototype/package, and final
+   one-time Mermaid gates;
+3. remove only the dedicated M6 Nix volume, exact temporary checkouts/runtime
+   paths, and unused pinned image after the final product evidence is retained;
+4. commit and push the certification tree, then create and push
+   `m6-poc-complete` only when the candidate is clean and every local gate is
+   GREEN. No remote-green claim is made without observable Actions results.

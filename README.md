@@ -23,6 +23,28 @@ guidance. Prototype state is explicitly simulated and makes no RPC, chain,
 faucet, DNS, or public-network request. The current implementation order and
 limitations are tracked in the
 [implementation plan](docs/implementation-plan.md#m6-active-work-package-maker-and-taker-basecamp-mini-apps).
+
+The prototype gate and the Basecamp implementation are now GREEN. Commits
+`149cb84`, `0141e60`, and `e3e6907` build two consumer-locked role packages,
+load them in pinned Basecamp 0.2.0-RC3, fail closed without their owner service,
+and exercise real role services through typed process-isolated backends. Maker
+health, atomic route save, and history pass through `lez-maker-daemon`. Taker
+health, offer browse, prepared initiation, exact UI replay, list, monitor, and a
+post-product durable registry assertion pass through `lez-taker-service`.
+The [Basecamp package guide](apps/basecamp/README.md),
+[manual Flow 1X2](docs/manual-user-flows.md#flow-1x2-build-and-use-the-maker-and-taker-basecamp-packages),
+[ADR 0147](docs/architecture/0147-isolate-basecamp-role-packages-over-owner-services.md),
+and [machine-readable evidence](docs/evidence/m6-basecamp-role-packages-20260804.json)
+record the exact builds, component/RPC schema, role flows, per-pair sequence
+diagrams, atomicity arguments, external resources, flakiness, and cleanup.
+
+The product runtime is networkless and uses no public RPC, faucet, public funds,
+or public deployment. Cold Nix construction can contact immutable GitHub flake
+inputs and `cache.nixos.org`; availability of those setup services is a disclosed
+flakiness boundary. Terminal actual-node Claim and Refund certificates remain a
+separate service/actor evidence layer. They are not represented as transactions
+caused by the retained Basecamp product run. Final repository gates, exact M6
+resource cleanup, certification push, and tag remain before M6 completion.
 The first nonvisual backend prerequisite is GREEN at `8c6a7db`: strict
 `maker_local_route_save_v1` atomically stores one same-route pair policy,
 exact local price, and replay result in schema v22. It opens no external
@@ -126,8 +148,9 @@ Claim/Refund regression boundary. Both used deterministic local funds with no
 public RPC, faucet, public funds, or public deployment. The retained Claim
 packet is
 [m6-zec-service-claim-regression-certificate-20260804.json](docs/evidence/m6-zec-service-claim-regression-certificate-20260804.json).
-Maker and Taker Basecamp packages, actor-real UI E2E, final gates, and the M6
-tag remain. Prototype sign-off was explicitly approved on 2026-08-04.
+Maker and Taker Basecamp packages and the prepared actor-real UI product journey
+are now GREEN through `e3e6907`; final gates and the M6 tag remain. Prototype
+sign-off was explicitly approved on 2026-08-04.
 Cross-restart receipt/state rollback
 anchoring remains production hardening, not an issue-#112 PoC gate.
 
@@ -148,14 +171,15 @@ version `0.2.0-RC3`. A fresh isolated build of its official `smoke-test` output
 now certifies the Basecamp binary/runtime itself: the capability, package
 manager, and package downloader modules connected over Qt Remote Objects, the
 main UI loaded offscreen, and the upstream five-second smoke passed. Its exact
-2,749,148,608-byte closure is recorded in the evidence packet. This does not
-claim Maker/Taker package load; the issue-#112 prototype gate was released on
-2026-08-04 and those packages are now the active implementation slice. The first
+2,749,148,608-byte closure is recorded in the evidence packet. The later role
+evidence separately loads both Maker/Taker packages and drives their real owner
+services; the issue-#112 prototype gate was released on 2026-08-04. The first
 disk-constrained attempt remains
 recorded as a safe stop, and both attempts used exact-name isolation without
-touching unrelated Docker activity. A warmed networkless product replay,
-realized-closure SBOM, vulnerability, signature, and license review remain
-release gates. The upstream all-output integration
+touching unrelated Docker activity. The warmed networkless product replay is
+now GREEN. Realized-closure SBOM, vulnerability, signature, and license review
+remain production-release gates.
+The upstream broad all-output integration
 evaluation has a missing-store-source defect, and five direct Logos UI sources
 have no explicit license grant; LOGOS-025 records both as Logos-owned release
 blockers that do not waive repository-owned M6 tests. [ADR 0146](docs/architecture/0146-pin-basecamp-builds-behind-consumer-locks.md)
@@ -283,8 +307,8 @@ run completed in 211.530 seconds without a public RPC, faucet, public funds, or
 public deployment. The retained secret-free packet is
 [the M6 Refund certificate](docs/evidence/m6-zec-service-refund-certificate-20260804.json).
 Fresh Claim regression `m6claim0ba41aba` is also GREEN; owner prototype
-signoff is complete. Only the literal Basecamp UI outputs, final gates, and tag
-remain.
+signoff, literal Basecamp UI outputs, and actor-real prepared flow are complete.
+Only final certification gates, exact cleanup, push, and tag remain.
 
 Earlier run `m6refund7be4428a` consumed the 190-second
 provision-to-completion ceiling when the transient response arrived, leaving no

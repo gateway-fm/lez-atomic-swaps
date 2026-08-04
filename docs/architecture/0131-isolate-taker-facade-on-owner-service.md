@@ -146,5 +146,7 @@ refund remain absent until their real paths exist.
   initiation, SIGTERM cleanup, restart replay, and inode-safe cleanup are GREEN.
 - The implementation reuses maintained dependencies and already tested custody.
 - Initiation returns only durable `Initiating` generation-zero admission.
-- Effect workers, durable ZEC execution, terminal RPCs, Basecamp host, QML,
-  actor-real UI test, and owner prototype sign-off remain M6 work.
+- At this ADR's original read-only checkpoint, effect workers, durable ZEC
+  execution, terminal RPCs, Basecamp host, QML, actor-real UI test, and owner
+  prototype sign-off remained M6 work. ADRs 0132 through 0147 now record their
+  implemented local-PoC progression and evidence.

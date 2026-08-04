@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "milestone": "M6",
+  "evidence_kind": "basecamp_role_packages_and_actor_real_product_flow",
+  "date_utc": "2026-08-04",
+  "source": {
+    "repository_commit": "e3e6907",
+    "origin_main_equal_at_capture": true,
+    "worktree_clean_at_capture": true,
+    "logos_module_builder_version": "0.2.0",
+    "logos_module_builder_commit": "92ef691ea72844134f6c68fb447d37f855fc9690",
+    "logos_module_builder_nar_hash": "sha256-jm3NQ0BZ5qnUs/boE1vTil+mGbbp+Wix0ggl1HzR2gw=",
+    "logos_basecamp_tag": "0.2.0",
+    "logos_basecamp_commit": "48b26c0d33573b5dd3695ae5868b04328f79e5c6",
+    "logos_basecamp_internal_version": "0.2.0-RC3"
+  },
+  "isolation": {
+    "container_image": "nixos/nix@sha256:d78540374f6a886653cba47d5c3f61c5a41d42e2a8db2607b8d68cb226fd463e",
+    "dedicated_nix_store_volume": "lez-m6-nix-packages-4031752",
+    "product_runtime_network": "none",
+    "basecamp_and_service_effective_uid": 1000,
+    "separate_role_user_directories": true,
+    "separate_role_owner_sockets": true,
+    "unrelated_docker_resources_modified": false
+  },
+  "basecamp_runtime": {
+    "store_path": "/nix/store/s6hmr3jgcx0nfqf35wzdy70i2pqhbann-logos-basecamp-0.2.0-RC3",
+    "nar_hash": "sha256-DchTVmK2kxrBYu6yzE6XFBdIkoW5Nw1jc13S039vR0A=",
+    "nar_size_bytes": 18632416,
+    "closure_size_bytes": 2749107064,
+    "result": "passed"
+  },
+  "maker": {
+    "module": {
+      "store_path": "/nix/store/lmr1cjscqjmk7yg7p0500piy9wl1a0ly-logos-lez_atomic_swap_maker-module",
+      "nar_hash": "sha256-Zy33m/c/pecee10v7tfs9iKNMOM86G4an4j6lrcXm1w=",
+      "nar_size_bytes": 2085936,
+      "closure_size_bytes": 661886032
+    },
+    "lgx": {
+      "store_path": "/nix/store/9s87g2y892njqqpj08mgq63ihss5p0bb-logos-lez_atomic_swap_maker-module-lgx-0.1.0",
+      "nar_hash": "sha256-O/rVLIJAmi10jxblkixCfgSKtQGbpIdHBAxneeNpnpg=",
+      "nar_size_bytes": 673696,
+      "artifact_sha256": "ef9679a56f290478593ceed51db13febe9efb1c201c7630d029f18a2d0caff77"
+    },
+    "integration_test": {
+      "store_path": "/nix/store/wys6ig2hgvzq0m3rzijmm7bqii6kvs77-lez_atomic_swap_maker-integration-test",
+      "result": "passed"
+    },
+    "developer_install": {
+      "store_path": "/nix/store/3vp87arxqyl89gfj17r26fx80lwimg4w-logos-lez_atomic_swap_maker-module-install",
+      "nar_hash": "sha256-ZlJrFKjAPQ4W+6+eIih+byTypcD+Olj2qmQZ/fLp6Dc=",
+      "nar_size_bytes": 2087904,
+      "closure_size_bytes": 45096560
+    },
+    "product_tests": [
+      "Basecamp discovers and loads the Maker package and process backend",
+      "missing owner service fails closed",
+      "real lez-maker-daemon health succeeds",
+      "maker_local_route_save_v1 commits the route",
+      "swap history reads from isolated SQLite"
+    ]
+  },
+  "taker": {
+    "module": {
+      "store_path": "/nix/store/1z87if6vdazfg8a7qrcf4nmlfgcfzrp7-logos-lez_atomic_swap_taker-module",
+      "nar_hash": "sha256-BeJxT/qAyKUorKiOT0j1sOJK3U9iNWxMmPRhApSLF+I=",
+      "nar_size_bytes": 2088120,
+      "closure_size_bytes": 661888216
+    },
+    "lgx": {
+      "store_path": "/nix/store/4ggrs60q3qy1arj2szk09hhyzmx8gv2d-logos-lez_atomic_swap_taker-module-lgx-0.1.0",
+      "nar_hash": "sha256-OiYkyAY+PvtCToHobBS0Nb9I41qxgQHWbKSDarrW4IY=",
+      "nar_size_bytes": 675656,
+      "artifact_sha256": "846c3f971a6cca9a2ddf5c951ca62008213743c5b1686537f85581857c6f0aaf"
+    },
+    "integration_test": {
+      "store_path": "/nix/store/40mklavivgr66q6bmvd8v6axf9xck4gi-lez_atomic_swap_taker-integration-test",
+      "result": "passed"
+    },
+    "developer_install": {
+      "store_path": "/nix/store/4wjf8l72249306xnl6nagd1jrrf5vvvq-logos-lez_atomic_swap_taker-module-install",
+      "nar_hash": "sha256-3S4ICrS3QmgtkiYmj6YtuMQn7nYqXHZ8P6Q4AH863fw=",
+      "nar_size_bytes": 2090120,
+      "closure_size_bytes": 45098776
+    },
+    "product_tests": [
+      "Basecamp discovers and loads the Taker package and process backend",
+      "missing owner service fails closed",
+      "real lez-taker-service health and offer list succeed",
+      "prepared offer initiation returns was_replay false",
+      "the exact repeated UI request returns was_replay true",
+      "swap list and exact monitor return the admitted swap",
+      "registry maps taker-ui-initiate-001 to m6-process-zec-swap-001"
+    ],
+    "prepared_actor_flow_elapsed_seconds": 39.15
+  },
+  "contract": {
+    "ui_qml_packages": 2,
+    "typed_slots": 13,
+    "owner_local_transports": 1,
+    "arbitrary_method_dispatch": false,
+    "tcp_or_web_transport": false,
+    "socket_requirements": "effective-user-owned Unix socket with mode 0600",
+    "maximum_rpc_message_bytes": 65536
+  },
+  "layered_chain_evidence": {
+    "basecamp_click_claimed_to_create_chain_effect": false,
+    "claim_certificate": "m6-zec-service-claim-regression-certificate-20260804.json",
+    "claim_elapsed_seconds": 33.33,
+    "refund_certificate": "m6-zec-service-refund-certificate-20260804.json",
+    "refund_elapsed_seconds": 211.53,
+    "explanation": "The Basecamp product run proves role-correct UI, package, process backend, owner service, durable admission, exact replay, list, and monitor composition. Separate fresh actual-node service certificates prove terminal LEZ and Zcash effects and no-effect replay. They are not represented as one simultaneous UI-to-chain run."
+  },
+  "external_resources": {
+    "runtime_public_rpc_used": false,
+    "runtime_faucet_used": false,
+    "runtime_public_funds_used": false,
+    "runtime_public_deployment_used": false,
+    "runtime_dns_required": false,
+    "cold_build_fetch_sources": [
+      "immutable GitHub flake inputs",
+      "cache.nixos.org immutable NARs"
+    ],
+    "flakiness": "Cold-cache DNS, GitHub, or Nix-cache availability can fail or delay package construction. The warmed product runtime is networkless. A completely network-disabled cold reconstruction was not certified because the Nix fetcher cache was not populated."
+  },
+  "production_findings": {
+    "upstream_blocker": "LOGOS-025",
+    "local_m6_poc_blocked": false,
+    "production_distribution_blocked": true,
+    "remaining": [
+      "explicit licenses for five direct Logos UI sources",
+      "artifact signature policy",
+      "realized-closure SBOM and vulnerability review",
+      "networkless cold rebuild from a fully populated source and NAR cache",
+      "upstream integration output repair and dependency graph review"
+    ]
+  },
+  "scope": "M6 local-functional Basecamp role packages and actor-real product composition. No public deployment or production-ready distribution is claimed."
+}
