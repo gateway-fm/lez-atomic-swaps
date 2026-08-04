@@ -7019,6 +7019,76 @@ Compare a manual replay against
 `docs/evidence/m5-xmr-application-refund-corridor-20260731.json`; never reuse the
 reference run ID or any partial run state.
 
+## Flow 1Z: configure and verify automatic Maker route health
+
+Build and run the repository-owned process proof first:
+
+```bash
+cargo build --locked -p lez-maker-node --bins
+cargo test --locked -p lez-maker-node --test route_health
+```
+
+The second test starts the real `lez-maker-daemon`, configures and publishes a
+Zcash offer while its semantic command succeeds, removes that dependency, and
+polls only `maker_offer_list`. The offer reaches `withdrawn` without calling
+`maker_health`, proving the daemon timer initiated the transition. The component
+test separately keeps a reserved Zcash negotiation and an active Bitcoin offer,
+rejects only the unhealthy Zcash quote/publication, and returns the Bitcoin
+quote.
+
+For an operator deployment, create an owner-only JSON file. Add one entry for
+every dependency required by each route; all entries for the route must exit
+zero. A route omitted from a configured map is unavailable rather than silently
+unprobed. This illustrative fragment uses the exact route wire spelling:
+
+```json
+{
+  "schema_version": 1,
+  "commands": [
+    {
+      "route": {"pair": "Bitcoin", "direction": "TakerSellsForeign"},
+      "program": "/absolute/path/to/bitcoin-cli",
+      "program_sha256": "64-lowercase-or-uppercase-hex-characters",
+      "args": ["-rpcwait=0", "-rpccookiefile=/owner/path/.cookie", "getblockchaininfo"],
+      "timeout_milliseconds": 1000
+    }
+  ]
+}
+```
+
+Use the same exact node/profile configuration as the actor. A good semantic
+command checks network/genesis, synchronization/readiness, and any index or
+wallet capability the route needs, not merely whether a TCP port accepts a
+connection. Pin the executable bytes with `sha256sum`, make both the executable
+parent and configuration owner-controlled and non-writable, then start the
+daemon with:
+
+```bash
+chmod 0600 /absolute/path/to/route-health.json
+target/debug/lez-maker-daemon \
+  --database /absolute/owner/path/maker.sqlite3 \
+  --socket /absolute/owner/runtime/maker.sock \
+  --route-health-config /absolute/path/to/route-health.json \
+  --route-health-poll-milliseconds 1000
+```
+
+Run `lez-maker health` through the normal owner socket and inspect `routes`.
+Stop one selected local node. Within the poll cadence plus that command's
+timeout, its active offers must become `withdrawn`; a reserved offer must stay
+`reserved`, and another route must still quote. Restore the node and publish a
+new offer explicitly: withdrawal is durable and is never silently reversed.
+
+The repository test uses no Docker, public RPC, DNS, faucet, peer, public funds,
+or external endpoint. It creates one isolated owner-private temporary daemon,
+SQLite database, Unix socket, deterministic executable, and marker, then removes
+them through `tempfile`. A real manual rehearsal uses the already selected LEZ
+and foreign-node RPCs. Their startup, synchronization, credentials, rate limits,
+finality, and disk pressure can make health change or delay a sample. The probe
+does not retry chain effects and holds no wallet/signing key. Missed timer ticks
+are skipped and a slow sample cannot overlap another or block the async RPC
+accept loop. ADR 0150 contains the component, sequence, and CAS atomicity
+diagrams.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

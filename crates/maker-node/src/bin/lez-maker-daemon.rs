@@ -4,6 +4,7 @@ use std::{
     io::{self, Write as _},
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
+    sync::Arc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,8 +14,9 @@ use clap::{ArgGroup, Parser};
 use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
 use lez_maker_node::{
     BtcMakerActorProvisioner, MakerActorSupervisorCancellation, MakerActorSupervisorConfig,
-    MakerRpc, ProcessLogosPriceSource, RunLocalDelivery, XmrMakerChatAuthority,
-    ZecMakerActorProvisioner, chat_rpc_module, import_terminal_zec_maker_projection,
+    MakerRpc, ProcessLogosPriceSource, ProcessRouteHealthProbe, RunLocalDelivery,
+    XmrMakerChatAuthority, ZecMakerActorProvisioner, chat_rpc_module,
+    import_terminal_zec_maker_projection,
     owner_rpc_server::{OwnedPath, bind_owner_socket, server_config, validate_runtime_directory},
     rpc_module,
     secure_file::{load_raw_secret, load_secp256k1_secret, read_private_file},
@@ -232,6 +234,16 @@ struct Arguments {
     /// Maximum external observation age; defaults to 30 seconds when configured.
     #[arg(long, requires = "logos_price_worker")]
     logos_price_max_age_seconds: Option<u64>,
+    /// Owner-private strict JSON mapping routes to hash-pinned semantic health commands.
+    #[arg(long)]
+    route_health_config: Option<PathBuf>,
+    /// Automatic route-health reconciliation cadence; defaults to 1000 milliseconds.
+    #[arg(
+        long,
+        requires = "route_health_config",
+        value_parser = clap::value_parser!(u64).range(100..=60_000)
+    )]
+    route_health_poll_milliseconds: Option<u64>,
     /// Runs the persistent pair-neutral actor coordinator on a dedicated store connection.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     actor_supervisor: bool,
@@ -491,6 +503,7 @@ fn run_actor_supervisors(
 async fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let logos_price_source = configured_logos_price_source(&arguments)?;
+    let route_health_probe = configured_route_health_probe(&arguments)?;
     let zec_actor_provisioner = configured_zec_actor_provisioner(&arguments)?;
     let btc_chat_authority = configured_btc_chat_authority(&arguments)?;
     let xmr_chat_authority = configured_xmr_chat_authority(&arguments)?;
@@ -508,9 +521,18 @@ async fn main() -> anyhow::Result<()> {
         logos_price_source,
     )?;
     let context = attach_chat_health(context, arguments.chat_socket.as_deref());
+    let context = match route_health_probe {
+        Some(probe) => context.with_route_health_probe(Arc::new(probe)),
+        None => context,
+    };
+    if context.route_health_is_configured() {
+        context
+            .reconcile_route_health()
+            .context("perform initial route-health reconciliation")?;
+    }
     let module = rpc_module(context.clone())?;
     let chat_module = if chat_listener.is_some() {
-        Some(chat_rpc_module(context)?)
+        Some(chat_rpc_module(context.clone())?)
     } else {
         None
     };
@@ -535,12 +557,19 @@ async fn main() -> anyhow::Result<()> {
     let _supervisor_cancellation_guard =
         ActorSupervisorCancellationGuard(supervisor_cancellation.clone());
     let mut supervisor_tasks = JoinSet::new();
+    let mut route_health_tasks = JoinSet::new();
     if !actor_supervisor.is_empty() {
         let cancellation = supervisor_cancellation.clone();
         supervisor_tasks
             .spawn_blocking(move || run_actor_supervisors(actor_supervisor, &cancellation));
     }
     let mut daemon_error = None;
+    let route_health_enabled = context.route_health_is_configured();
+    let mut route_health_interval = tokio::time::interval(Duration::from_millis(
+        arguments.route_health_poll_milliseconds.unwrap_or(1_000),
+    ));
+    route_health_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    route_health_interval.tick().await;
     notify_ready()?;
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -593,6 +622,19 @@ async fn main() -> anyhow::Result<()> {
                 supervisor_cancellation.cancel();
                 break;
             }
+            _ = route_health_interval.tick(), if route_health_enabled && route_health_tasks.is_empty() => {
+                let health_context = context.clone();
+                route_health_tasks.spawn_blocking(move || health_context.reconcile_route_health());
+            }
+            result = route_health_tasks.join_next(), if !route_health_tasks.is_empty() => {
+                let result = result.expect("enabled route health task is present");
+                if let Err(error) = result.context("join route health task").and_then(|value| value) {
+                    daemon_error = Some(error.context("reconcile route health"));
+                    notify_stopping();
+                    supervisor_cancellation.cancel();
+                    break;
+                }
+            }
             signal = &mut shutdown => {
                 if let Err(error) = signal {
                     daemon_error = Some(anyhow::Error::new(error).context("wait for shutdown"));
@@ -610,6 +652,11 @@ async fn main() -> anyhow::Result<()> {
         result
             .context("join actor supervisor during shutdown")?
             .context("stop actor supervisor")?;
+    }
+    while let Some(result) = route_health_tasks.join_next().await {
+        result
+            .context("join route health task during shutdown")?
+            .context("stop route health task")?;
     }
     while let Some(connection) = connections.join_next().await {
         connection
@@ -773,6 +820,22 @@ fn configured_logos_price_source(
     )
     .context("validate Logos price source")
     .map(Some)
+}
+
+fn configured_route_health_probe(
+    arguments: &Arguments,
+) -> anyhow::Result<Option<ProcessRouteHealthProbe>> {
+    let Some(path) = arguments.route_health_config.as_deref() else {
+        ensure!(
+            arguments.route_health_poll_milliseconds.is_none(),
+            "route health poll cadence requires a route health configuration"
+        );
+        return Ok(None);
+    };
+    let bytes = read_private_file(path, 64 * 1024, "route health configuration")?;
+    ProcessRouteHealthProbe::from_json_bytes(&bytes)
+        .context("validate route health configuration")
+        .map(Some)
 }
 
 fn configured_zec_actor_provisioner(

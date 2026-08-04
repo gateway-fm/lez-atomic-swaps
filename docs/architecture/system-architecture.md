@@ -3118,6 +3118,67 @@ No milestone is complete merely because an internal API test passes. Its tag
 must point to the commit whose role-real evidence crosses every applicable
 boundary above.
 
+## M7 route-scoped chain health and advertisement control
+
+The Maker daemon now composes semantic node readiness through a configuration-
+only command adapter. Each route can require both its LEZ check and its foreign-
+node check. Bitcoin Core, Monero daemon/wallet RPC, Zebra, and LEZ remain the
+authoritative implementations; the Maker only consumes the bounded exit status
+of hash-pinned commands and receives no wallet or signing authority.
+
+```mermaid
+flowchart TB
+    subgraph MakerHost[Maker host]
+        Timer[Nonoverlapping periodic timer]
+        Probe[Bounded process probe]
+        Rpc[Owner and Chat RPC accept loop]
+        Db[(Maker SQLite offers)]
+        Ads[Delivery projection]
+    end
+    subgraph LocalOrPublic[Configured chain infrastructure]
+        Lez[LEZ RPC]
+        Btc[Bitcoin Core RPC]
+        Xmr[Monero daemon and wallet RPC]
+        Zec[Zebra RPC]
+    end
+    Timer --> Probe
+    Probe --> Lez
+    Probe --> Btc
+    Probe --> Xmr
+    Probe --> Zec
+    Timer --> Db
+    Db --> Ads
+    Rpc --> Db
+    Probe -. no key or transaction bytes .-> Rpc
+```
+
+Unavailable route status is additive in `maker_health`. The periodic worker is
+off the async accept loop, missed ticks are skipped, and only one sample may be
+live. An unavailable route rejects quote/publication and withdraws only active
+offers. Reserved/consumed negotiations and their role actors continue from
+durable state; another route remains independently serviceable.
+
+```mermaid
+sequenceDiagram
+    participant N as Selected node
+    participant P as Health worker
+    participant D as Maker daemon
+    participant S as SQLite
+    participant O as Other pair user
+    N--xP: Semantic command fails
+    P-->>D: Route unavailable
+    D->>S: CAS active offer to withdrawn
+    O->>D: Quote or continue other pair
+    D->>S: Read other route or accepted swap
+    S-->>D: Unchanged available state
+    D-->>O: Continue
+```
+
+The CAS is the atomic boundary: reservation and withdrawal cannot both win the
+same revision. This is local offer atomicity, not a new cross-chain atomicity
+claim. Pair protocol atomicity remains in the role-fixed actors and their chain
+evidence. ADR 0150 contains the detailed security and failure argument.
+
 
 ## M5 closure-candidate evidence layers
 

@@ -7,6 +7,7 @@ mod local_rpc;
 mod logos_price_source;
 pub mod owner_rpc_server;
 mod price_source;
+mod route_health;
 mod run_local_delivery;
 pub mod secure_file;
 mod service_control;
@@ -33,6 +34,7 @@ pub use daemon_lifecycle::{
 pub use local_rpc::{call_local_chat_rpc, call_local_rpc};
 pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
+pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
 pub use run_local_delivery::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery,
     RunLocalDeliveryError,
@@ -127,6 +129,7 @@ const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
 #[derive(Clone)]
 pub struct MakerRpc {
     store: Arc<Mutex<SqliteSwapStore>>,
+    route_health_probe: Option<Arc<dyn MakerRouteHealthProbe>>,
     logos_price_source: Option<Arc<ProcessLogosPriceSource>>,
     delivery: Option<Arc<RunLocalDelivery>>,
     chat_socket: Option<Arc<PathBuf>>,
@@ -144,6 +147,10 @@ impl std::fmt::Debug for MakerRpc {
         formatter
             .debug_struct("MakerRpc")
             .field("store", &self.store)
+            .field(
+                "route_health_probe",
+                &self.route_health_probe.as_ref().map(|_| "configured"),
+            )
             .field(
                 "logos_price_source",
                 &self.logos_price_source.as_ref().map(|_| "configured"),
@@ -188,6 +195,7 @@ impl MakerRpc {
     pub fn new(store: SqliteSwapStore) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),
+            route_health_probe: None,
             logos_price_source: None,
             delivery: None,
             chat_socket: None,
@@ -227,6 +235,7 @@ impl MakerRpc {
     ) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),
+            route_health_probe: None,
             logos_price_source: None,
             delivery: Some(Arc::new(delivery)),
             chat_socket: None,
@@ -286,6 +295,42 @@ impl MakerRpc {
         self.chat_socket = Some(Arc::new(socket));
         self
     }
+
+    /// Attaches the route-scoped chain dependency probe used for fail-closed publication.
+    #[must_use]
+    pub fn with_route_health_probe(mut self, probe: Arc<dyn MakerRouteHealthProbe>) -> Self {
+        self.route_health_probe = Some(probe);
+        self
+    }
+
+    /// Returns true when automatic route-scoped chain health is configured.
+    #[must_use]
+    pub fn route_health_is_configured(&self) -> bool {
+        self.route_health_probe.is_some()
+    }
+
+    /// Reconciles active advertisements against current route-scoped chain health.
+    ///
+    /// # Errors
+    ///
+    /// Fails when trusted time or durable offer reconciliation is unavailable.
+    pub fn reconcile_route_health(&self) -> anyhow::Result<()> {
+        let now_unix_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before Unix epoch")?
+            .as_secs();
+        reconcile_unhealthy_route_offers(self, now_unix_seconds)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+    }
+}
+
+/// Synchronous, bounded route-health boundary supplied by chain-specific adapters.
+///
+/// The Maker owns policy and offer withdrawal; an implementation only reports whether the
+/// already-configured chain dependency for one exact route can currently serve that route.
+pub trait MakerRouteHealthProbe: Send + Sync {
+    /// Returns the current availability of the selected route's chain dependency.
+    fn state(&self, route: MakerRouteV1) -> MakerDependencyStateV1;
 }
 
 /// Replays one stopped Maker actor offline and atomically imports its terminal operator view.
@@ -967,6 +1012,15 @@ pub struct MakerHealthV1 {
     degraded: bool,
     delivery: MakerDependencyStateV1,
     chat: MakerDependencyStateV1,
+    #[serde(default)]
+    routes: Vec<MakerRouteHealthV1>,
+}
+
+/// Read-only route-scoped chain dependency health.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MakerRouteHealthV1 {
+    route: MakerRouteV1,
+    state: MakerDependencyStateV1,
 }
 
 /// Read-only state of one optional maker application dependency.
@@ -982,14 +1036,22 @@ pub enum MakerDependencyStateV1 {
 }
 
 impl MakerHealthV1 {
-    const fn ready(delivery: MakerDependencyStateV1, chat: MakerDependencyStateV1) -> Self {
+    fn ready(
+        delivery: MakerDependencyStateV1,
+        chat: MakerDependencyStateV1,
+        routes: Vec<MakerRouteHealthV1>,
+    ) -> Self {
         Self {
             schema_version: 1,
             ready: true,
             degraded: matches!(delivery, MakerDependencyStateV1::Unavailable)
-                || matches!(chat, MakerDependencyStateV1::Unavailable),
+                || matches!(chat, MakerDependencyStateV1::Unavailable)
+                || routes
+                    .iter()
+                    .any(|route| route.state == MakerDependencyStateV1::Unavailable),
             delivery,
             chat,
+            routes,
         }
     }
 
@@ -1021,6 +1083,35 @@ impl MakerHealthV1 {
     #[must_use]
     pub const fn chat(&self) -> MakerDependencyStateV1 {
         self.chat
+    }
+
+    /// Returns the current state for an exact configured route, or disabled when absent.
+    #[must_use]
+    pub fn route_state(&self, route: MakerRouteV1) -> MakerDependencyStateV1 {
+        self.routes
+            .iter()
+            .find(|health| health.route == route)
+            .map_or(MakerDependencyStateV1::Disabled, |health| health.state)
+    }
+
+    /// Returns every configured route's chain dependency state.
+    #[must_use]
+    pub fn routes(&self) -> &[MakerRouteHealthV1] {
+        &self.routes
+    }
+}
+
+impl MakerRouteHealthV1 {
+    /// Exact route represented by this health row.
+    #[must_use]
+    pub const fn route(self) -> MakerRouteV1 {
+        self.route
+    }
+
+    /// Current dependency state for the route.
+    #[must_use]
+    pub const fn state(self) -> MakerDependencyStateV1 {
+        self.state
     }
 }
 
@@ -1481,18 +1572,28 @@ fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
         |params, context, _| {
             let _: ListRequest = params.one()?;
             let now_unix_seconds = trusted_now_unix_seconds()?;
-            let active = {
+            reconcile_unhealthy_route_offers(&context, now_unix_seconds)?;
+            let (active, routes) = {
                 let store = context
                     .store
                     .lock()
                     .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-                store.list_maker_pairs().map_err(application_store_error)?;
-                store
+                let routes = store
+                    .list_maker_pairs()
+                    .map_err(application_store_error)?
+                    .into_iter()
+                    .map(|record| MakerRouteHealthV1 {
+                        route: record.value().route(),
+                        state: route_dependency_state(&context, record.value().route()),
+                    })
+                    .collect::<Vec<_>>();
+                let active = store
                     .list_retryable_maker_offers(now_unix_seconds)
                     .map_err(application_store_error)?
                     .into_iter()
                     .map(|record| record.offer().clone())
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                (active, routes)
             };
             let delivery =
                 context
@@ -1519,9 +1620,98 @@ fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
                             MakerDependencyStateV1::Unavailable
                         }
                     });
-            Ok(MakerHealthV1::ready(delivery, chat))
+            Ok(MakerHealthV1::ready(delivery, chat, routes))
         },
     )?;
+    Ok(())
+}
+
+fn route_dependency_state(context: &MakerRpc, route: MakerRouteV1) -> MakerDependencyStateV1 {
+    let Some(probe) = context.route_health_probe.as_ref() else {
+        return MakerDependencyStateV1::Disabled;
+    };
+    match probe.state(route) {
+        MakerDependencyStateV1::Disabled => MakerDependencyStateV1::Unavailable,
+        state => state,
+    }
+}
+
+fn ensure_route_dependency_available(context: &MakerRpc, route: MakerRouteV1) -> RpcResult<()> {
+    if route_dependency_state(context, route) == MakerDependencyStateV1::Unavailable {
+        return Err(invalid_request("chain dependency is unavailable for route"));
+    }
+    Ok(())
+}
+
+fn route_health_withdrawal_request_id(record: &MakerOfferRecordV1) -> RequestId {
+    let mut digest = Sha256::new();
+    digest.update(b"lez-maker-route-health-withdraw-v1\0");
+    digest.update(record.offer().id().as_str().as_bytes());
+    digest.update(record.revision().to_be_bytes());
+    RequestId::new(hex::encode(digest.finalize())).expect("SHA-256 is a valid request ID")
+}
+
+fn reconcile_unhealthy_route_offers(context: &MakerRpc, now_unix_seconds: u64) -> RpcResult<()> {
+    let active = {
+        let store = context
+            .store
+            .lock()
+            .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+        store
+            .list_discoverable_maker_offers(now_unix_seconds)
+            .map_err(application_store_error)?
+    };
+    let mut route_states = Vec::new();
+    for record in &active {
+        let route = record.offer().route();
+        if !route_states.iter().any(|(observed, _)| *observed == route) {
+            route_states.push((route, route_dependency_state(context, route)));
+        }
+    }
+    for record in active {
+        if !route_states.iter().any(|(route, state)| {
+            *route == record.offer().route() && *state == MakerDependencyStateV1::Unavailable
+        }) {
+            continue;
+        }
+        let withdrew = {
+            let mut store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            match store.withdraw_maker_offer(
+                &route_health_withdrawal_request_id(&record),
+                record.offer().id(),
+                record.revision(),
+            ) {
+                Ok(_) => true,
+                Err(StoreError::MakerOfferUnavailable | StoreError::StaleMakerOffer { .. }) => {
+                    false
+                }
+                Err(error) => return Err(application_store_error(error)),
+            }
+        };
+        if withdrew && let Some(delivery) = &context.delivery {
+            let _ = delivery.withdraw(record.offer().id());
+        }
+    }
+    if let Some(delivery) = &context.delivery {
+        let retryable = {
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .list_retryable_maker_offers(now_unix_seconds)
+                .map_err(application_store_error)?
+                .into_iter()
+                .map(|record| record.offer().clone())
+                .collect::<Vec<_>>()
+        };
+        // Durable state remains authoritative. Failed cleanup is retried on the next sample;
+        // Delivery health stays degraded until its exact projection matches this set.
+        let _ = delivery.reconcile(&retryable, now_unix_seconds);
+    }
     Ok(())
 }
 
@@ -1614,6 +1804,7 @@ fn register_pair_and_price_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::
         |params, context, _| {
             let request: PriceQuoteRequest = params.one()?;
             let observed_at_unix_seconds = trusted_now_unix_seconds()?;
+            ensure_route_dependency_available(&context, request.route)?;
             quote_selected_price_source(&context, request.route, observed_at_unix_seconds)
         },
     )?;
@@ -1625,6 +1816,7 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
         "maker_offer_publish",
         |params, context, _| {
             let request: OfferPublishRequest = params.one()?;
+            ensure_route_dependency_available(&context, request.route)?;
             let offer_id = request.offer_id.clone();
             let now_unix_seconds = trusted_now_unix_seconds()?;
             let commit = publish_offer(&context, &request, now_unix_seconds)?;

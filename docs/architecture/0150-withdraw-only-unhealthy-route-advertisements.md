@@ -1,0 +1,115 @@
+# ADR 0150: Withdraw only unhealthy-route advertisements
+
+- Status: Accepted for the automatic Maker route-health control plane
+- Date: 2026-08-04
+
+## Context
+
+ADR 0115 made explicit route disablement pair-scoped, but a stopped chain node
+did not automatically affect advertisements. A Maker could therefore continue
+offering a route whose LEZ or foreign-chain dependency was unavailable. The
+repair must not revoke already accepted terms, expose authority to a probe, run
+an arbitrary shell, or stall other pairs while a node is slow.
+
+## Decision
+
+The daemon accepts an owner-private strict JSON map from exact routes to one or
+more semantic health commands. Operators normally configure one command for the
+LEZ dependency and one for the foreign node. Each executable is absolute,
+owner/root controlled, non-writable, single-linked, SHA-256 pinned, and checked
+before and after each invocation. Arguments are bounded. The daemon clears the
+environment, supplies no stdin, discards output, invokes no shell, enforces a
+maximum five-second command timeout, kills and reaps timeouts, and treats every
+nonzero exit or validation failure as unavailable.
+
+The daemon samples on a bounded periodic cadence in one `spawn_blocking` task.
+Missed ticks are skipped and another probe cannot overlap it, so a slow node
+cannot accumulate work or block the async owner/Chat accept loop. Quote and new
+publication also consult the selected route synchronously and fail before price
+or Delivery I/O when it is unavailable.
+
+```mermaid
+flowchart LR
+    Config[Owner private route health JSON] --> Daemon[Maker daemon]
+    Daemon --> Worker[Hash pinned semantic commands]
+    Worker --> LezRpc[LEZ RPC or CLI]
+    Worker --> BtcRpc[Bitcoin Core RPC or CLI]
+    Worker --> XmrRpc[Monero daemon or wallet RPC]
+    Worker --> ZecRpc[Zebra RPC or CLI]
+    Daemon --> Store[(Maker SQLite)]
+    Store --> Delivery[Delivery advertisements]
+    Daemon --> OwnerRpc[Owner Unix RPC]
+    Daemon --> ChatRpc[Taker Chat Unix RPC]
+```
+
+## Automatic withdrawal flow
+
+Only unexpired `Active` offers are candidates. For an unavailable route, the
+daemon derives a stable 64-character SHA-256 request ID from the operation
+domain, offer ID, and expected revision, then uses the existing SQLite
+compare-and-swap withdrawal. The durable withdrawal precedes best-effort
+Delivery cleanup. A concurrent reservation wins by advancing the offer
+revision; the stale withdrawal is ignored and the reserved negotiation stays
+valid. Reserved and consumed records are never selected for withdrawal.
+
+```mermaid
+sequenceDiagram
+    participant Timer as Daemon timer
+    participant Probe as Semantic probe
+    participant Store as Maker SQLite
+    participant Delivery as Delivery
+    participant Chat as Accepted Chat or actor
+    Timer->>Probe: Check exact route commands
+    Probe-->>Timer: Unavailable
+    Timer->>Store: List active unexpired offers
+    Timer->>Store: CAS withdraw offer at revision
+    alt Withdrawal wins
+        Store-->>Timer: Withdrawn at next revision
+        Timer->>Delivery: Remove advertisement
+    else Reservation won first
+        Store-->>Timer: Stale or unavailable
+        Timer-->>Chat: Preserve reserved negotiation
+    end
+```
+
+## Pair isolation and atomicity argument
+
+This control plane creates no chain effect and does not claim distributed
+cross-chain atomicity. Its atomic property is the SQLite offer-state
+linearization point. An offer can transition from `Active` to exactly one of
+`Reserved` or `Withdrawn`; compare-and-swap revisions prevent both from winning.
+Once reserved, expiry or later dependency loss cannot revoke the signed terms.
+Post-lock actors retain their independent journals and chain authority and do
+not depend on Delivery, Chat, or this health map.
+
+Route keys contain pair plus direction. Health loss for one key neither mutates
+another key nor disables its RPC path. The focused contract proves an unhealthy
+Zcash offer is withdrawn, a reserved Zcash negotiation survives, an independent
+Bitcoin offer and quote remain active, and new Zcash quote/publication fail
+closed. The process contract proves the periodic daemon performs withdrawal
+without a health request.
+
+```mermaid
+flowchart TD
+    Active[Active offer at revision N] --> Race{First durable CAS}
+    Race -->|Taker reservation| Reserved[Reserved at revision N plus 1]
+    Race -->|Health withdrawal| Withdrawn[Withdrawn at revision N plus 1]
+    Reserved --> Actor[Accepted swap actor continues]
+    Withdrawn --> NoNew[No new negotiation]
+    BadZec[Unavailable ZEC route] -. no mutation .-> GoodBtc[Available BTC route]
+```
+
+## Consequences and evidence boundary
+
+- The health executable is an adapter, not a new chain implementation; official
+  node CLIs or small reviewed semantic adapters can be used per deployment.
+- Program and argument changes are configuration changes, while executable
+  identity drift fails closed.
+- A route absent from a configured map is unavailable and fails closed. When no
+  probe map is configured at all, routes report `disabled` for legacy behavior;
+  the additive health response defaults missing route rows for rolling clients.
+- A failed Delivery cleanup cannot reactivate the durable offer. Delivery health
+  exposes stale projection state and startup reconciliation removes it.
+- This closes automatic policy, active withdrawal, and mid-negotiation
+  preservation at component/process level. Literal R3 still needs an actual
+  unaffected-pair swap while another real local chain node is absent.

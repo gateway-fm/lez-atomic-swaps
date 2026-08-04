@@ -647,8 +647,13 @@ non-retry boundary. A fresh RFP/issue acceptance audit confirms the literal M5 s
 of 7. Explicit selected-route disable is now process-GREEN: disabled Zcash quote
 and publication fail before price or Delivery I/O, an enabled Bitcoin quote is
 unaffected across restart, and revisioned Zcash re-enable restores quotes. Full
-R3 still requires automatic unavailable-node behavior and an actual unaffected-
-pair application. Fixed packaged-system-service start/stop and receipt-bound
+automatic route health is now process-GREEN: bounded hash-pinned semantic
+commands run periodically off the RPC loop, unavailable routes reject new work,
+active offers withdraw, reserved negotiations survive, and another route stays
+available. [Flow 1Z](docs/manual-user-flows.md#flow-1z-configure-and-verify-automatic-maker-route-health)
+documents configuration, local proof, RPC resources, and flakiness. Full R3
+still requires an actual unaffected-pair chain application while another real
+local node is absent. Fixed packaged-system-service start/stop and receipt-bound
 XMR Taker monitoring are now GREEN. XMR Taker claim/refund effect composition
 and actual-application concurrency remain. The tag-16 sidecar checkpoint is now
 component-GREEN: authenticated Taker preparation and completion feed only the

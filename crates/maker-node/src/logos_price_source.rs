@@ -176,7 +176,7 @@ impl PriceSource for ProcessLogosPriceSource {
     }
 }
 
-fn validate_secure_file(
+pub(crate) fn validate_secure_file(
     path: &Path,
     executable: bool,
     expected_sha256: Option<[u8; 32]>,

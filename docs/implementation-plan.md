@@ -288,6 +288,13 @@ attestation so neither can be misreported as the other.
   Stage-A/Stage-B envelope, role-fixed full lifecycle, retained restart
   identity, actor-owned durability/effects, structured errors, strict Rust
   gates and an external-wiring example.
+- [x] Close the automatic Maker route-health component through ADR 0150:
+  strict owner-private configuration, hash-pinned bounded semantic commands,
+  nonoverlapping periodic process isolation, fail-closed quote/publication,
+  deterministic active-offer CAS withdrawal, reserved-negotiation preservation,
+  unrelated-route continuity, real-daemon process proof and manual reproduction.
+  The remaining F1/R3 gate is the actual unaffected-pair chain journey while a
+  different real local node is absent.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -303,7 +310,7 @@ attestation so neither can be misreported as the other.
 ### Current repository-owned gap classes
 
 1. Traceability contains carried Partial/Planned statements from earlier PoC
-   boundaries, including automatic unavailable-node composition,
+   boundaries, including actual unaffected-pair unavailable-node composition,
    accepted-application actual-chain concurrency, crash/reorg/fee matrices,
    public calibration alternatives and non-BTC demo evidence.
 2. CI has strong lint, strict Rust, vulnerability, license, source, fuzz,
