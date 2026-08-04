@@ -37,11 +37,16 @@ was not satisfied.
 
 Exact Basecamp tag 0.2.0 resolves to
 `48b26c0d33573b5dd3695ae5868b04328f79e5c6` but reports internal version
-`0.2.0-RC3`. Its full root closure was not certified: the isolated build was
-stopped when host free space reached 14 GiB at 98 percent utilization. The
-upstream extra binary-cache configuration remained untrusted. No Basecamp
-binary or package-load claim follows from the successful package-manager
-installation. Exact project cleanup subsequently restored 433 GiB free.
+`0.2.0-RC3`. The first full-root attempt was stopped safely when host free
+space reached 14 GiB at 98 percent utilization. After disk cleanup, a fresh
+isolated replay built the official `smoke-test` output without accepting the
+upstream extra binary-cache configuration. Basecamp loaded its capability,
+package-manager, package-downloader, and main-UI modules, connected the local
+Qt Remote Objects transports, and passed the expected five-second offscreen
+runtime smoke. The exact output NAR is
+`sha256-lfg55Q/2x84ormtBRzFytP4hMfd1jH0sS7oIkcQN3nI=` and its closure is
+2,749,148,608 bytes. This certifies the pinned Basecamp binary/runtime, not a
+Maker or Taker package load.
 
 ## Decision
 
@@ -64,7 +69,8 @@ flowchart LR
     Build --> Plugin["QML and QtRO plugin"]
     Build --> LGX["Basecamp loadable LGX"]
     LGX --> Install["Exact lgpm 0.2 install"]
-    Install --> Loader["Basecamp 0.2 load pending"]
+    Install --> Loader["Basecamp 0.2 runtime smoke green"]
+    Loader --> Product["Maker and Taker package load pending"]
 ```
 
 The package build and the upstream integration harness are separate evidence
@@ -109,8 +115,8 @@ they do block an unqualified distributable-production claim.
 - M6 local certification may proceed around disclosed Logos-owned build and
   license defects, but repository source, tests, locks, artifact hashes, and CI
   policy remain fail-closed.
-- Successful `lgpm` installation proves package shape and dependency discovery,
-  not Basecamp binary load or runtime behavior; full load remains pending with a
-  safe isolated disk budget.
+- Successful `lgpm` installation proves package shape and dependency discovery.
+  The separate official smoke proves the pinned Basecamp binary/runtime, but
+  neither proves Maker or Taker package load or actor behavior.
 - Explicit prototype sign-off from ADR 0128 still precedes production Maker
   and Taker UI source.

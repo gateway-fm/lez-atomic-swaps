@@ -140,16 +140,18 @@ module-builder 0.2.0 at exact commit `92ef691e...fc9690`, package manager at
 GitHub caches only to fetch immutable inputs; it does not contact a chain,
 wallet, faucet, swap service, or public deployment.
 
-Exact Basecamp tag 0.2.0 resolves to `48b26c0d...79e5c6` but reports internal
-version `0.2.0-RC3`. Its full root build/load is **not certified**: the isolated
-run was stopped before exhaustion when host free space reached 14 GiB at 98
-percent. The successful `lgpm` install is not presented as a Basecamp load. All
-temporary M6 build/runtime resources were then removed by exact name, restoring
-433 GiB free without touching `gate55-*`. The final pass also removed the
-proven ignored/untracked `.e2e` and three Cargo `target` trees; tracked state
-remained clean. A later isolated load with an explicit
-disk budget, warmed networkless replay, realized-closure SBOM, vulnerability,
-signature, and license review remain gates. The upstream all-output integration
+Exact Basecamp tag 0.2.0 resolves to `48b26c0d...79e5c6` and reports internal
+version `0.2.0-RC3`. A fresh isolated build of its official `smoke-test` output
+now certifies the Basecamp binary/runtime itself: the capability, package
+manager, and package downloader modules connected over Qt Remote Objects, the
+main UI loaded offscreen, and the upstream five-second smoke passed. Its exact
+2,749,148,608-byte closure is recorded in the evidence packet. This does not
+claim Maker/Taker package load; those packages cannot be implemented before
+the issue-#112 prototype signoff. The first disk-constrained attempt remains
+recorded as a safe stop, and both attempts used exact-name isolation without
+touching unrelated Docker activity. A warmed networkless product replay,
+realized-closure SBOM, vulnerability, signature, and license review remain
+release gates. The upstream all-output integration
 evaluation has a missing-store-source defect, and five direct Logos UI sources
 have no explicit license grant; LOGOS-025 records both as Logos-owned release
 blockers that do not waive repository-owned M6 tests. [ADR 0146](docs/architecture/0146-pin-basecamp-builds-behind-consumer-locks.md)

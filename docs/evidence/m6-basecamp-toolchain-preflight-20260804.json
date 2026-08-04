@@ -98,17 +98,49 @@
     }
   },
   "basecamp_root_build_and_load": {
-    "result": "not_certified_safety_stop",
+    "result": "official_runtime_smoke_passed_product_package_load_pending",
     "basecamp_commit": "48b26c0d33573b5dd3695ae5868b04328f79e5c6",
+    "basecamp_version": "0.2.0-RC3",
     "untrusted_upstream_extra_cache_configuration_accepted": false,
-    "initial_dry_run_derivations": 101,
-    "initial_dry_run_download_mib": 506.5,
-    "initial_dry_run_unpacked_gib": 2.5,
-    "host_free_space_at_stop_gib": 14,
-    "stop_reason": "Host filesystem reached 98 percent usage; exact isolated container was stopped before exhaustion.",
-    "basecamp_binary_built": false,
+    "command": "nix --extra-experimental-features nix-command --extra-experimental-features flakes build --no-update-lock-file --no-accept-flake-config --no-link path:/work#smoke-test -L --print-out-paths",
+    "repository_commit_at_replay": "fed820eb9c4154554d558f2157795b6d407e7530",
+    "basecamp_lock_sha256": "1fc59da49fddce65efc4f668b53640849a0c103a162a43a3096a768c735a4419",
+    "dedicated_nix_store_volume": "lez-m6-nix-basecamp-fed820e",
+    "temporary_root": "/tmp/lez-m6-basecamp-runtime-fed820e",
+    "runtime_smoke_result": "passed",
+    "runtime_smoke_expected_timeout_exit_code": 124,
+    "runtime_smoke_elapsed_seconds": 5,
+    "basecamp_binary_built": true,
+    "basecamp_store_path": "/nix/store/55wr9ifffpzgqlwp3jzwxnwrag6l3313-logos-basecamp-0.2.0-RC3",
+    "smoke_store_path": "/nix/store/cckzvs6p79ygfd2l0rmw8816nklnyndp-logos-basecamp-smoke-test",
+    "smoke_deriver": "/nix/store/jpyhswazh00hhg3cijszwa5nsl4yhzfl-logos-basecamp-smoke-test.drv",
+    "smoke_nar_hash": "sha256-lfg55Q/2x84ormtBRzFytP4hMfd1jH0sS7oIkcQN3nI=",
+    "smoke_nar_size_bytes": 41544,
+    "smoke_closure_size_bytes": 2749148608,
+    "capability_module_loaded": true,
+    "package_manager_module_loaded": true,
+    "package_downloader_module_loaded": true,
+    "main_ui_loaded": true,
+    "qt_remote_objects_connected": true,
     "installed_packages_loaded_by_basecamp": false,
-    "disposition": "Do not claim Basecamp load. Repeat only with an isolated disk budget after prototype signoff or use a supported immutable upstream binary/cache."
+    "upstream_build_warning": "The install phase emitted a non-fatal cp missing-destination warning; the derivation and runtime smoke still passed.",
+    "temporary_resources_removed_after_evidence_capture": true,
+    "free_space_before_exact_cleanup_gib": 406,
+    "free_space_after_exact_cleanup_gib": 411,
+    "removed_resources": [
+      "lez-m6-nix-basecamp-fed820e volume (5.254 GB)",
+      "nixos/nix image d78540374f6a (988 MB)",
+      "/tmp/lez-m6-basecamp-runtime-fed820e checkout (9.2 MB)"
+    ],
+    "unrelated_docker_build_cache_modified": false,
+    "prior_safety_stop": {
+      "initial_dry_run_derivations": 101,
+      "initial_dry_run_download_mib": 506.5,
+      "initial_dry_run_unpacked_gib": 2.5,
+      "host_free_space_at_stop_gib": 14,
+      "reason": "The earlier attempt stopped before host exhaustion at 98 percent utilization."
+    },
+    "disposition": "The pinned official Basecamp binary/runtime is certified locally. Do not claim Maker/Taker package load until prototype signoff, package implementation, installation, and actor-real Basecamp replay pass."
   },
   "upstream_integration_check": {
     "command": "nix flake check --no-update-lock-file --no-build",
@@ -145,5 +177,5 @@
     ],
     "build_fetch_flakiness": "Cold-cache DNS, GitHub, or Nix-cache availability can fail or delay the first build; a warmed networkless replay remains a production gate."
   },
-  "scope": "Toolchain, packaging, and exact package-manager installation feasibility only; no Maker or Taker production UI, Basecamp binary load, actor journey, or milestone completion is claimed."
+  "scope": "Toolchain, packaging, exact package-manager installation, and the pinned official Basecamp binary/runtime smoke only; no Maker or Taker production UI, product package load, actor journey, or milestone completion is claimed."
 }

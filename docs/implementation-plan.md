@@ -5935,15 +5935,22 @@ Basecamp runtime load; unsigned input was allowed only for this local tutorial
 rehearsal.
 
 The exact Basecamp 0.2.0 root at
-`48b26c0d33573b5dd3695ae5868b04328f79e5c6` was evaluated and partially
-built without accepting its untrusted extra cache configuration. The run was
-stopped before host exhaustion when free space reached 14 GiB at 98 percent.
-No Basecamp binary or load result is claimed. Exact cleanup removed every M6
-temporary path, retained evidence container, project-tagged image, dedicated
-Nix volume, and attributable heavy support image while leaving `gate55-*`
-untouched; host free space recovered to 433 GiB. The final pass also removed
-the proven ignored/untracked `.e2e`, root `target`, LEZ sidecar `target`, and
-SPEL guest `target` trees without changing tracked state.
+`48b26c0d33573b5dd3695ae5868b04328f79e5c6` was first stopped safely before
+host exhaustion. After the disk cleanup, a fresh isolated replay built the
+official `smoke-test` output without accepting its untrusted extra cache. The
+Basecamp 0.2.0-RC3 binary loaded the capability, package-manager,
+package-downloader, and main-UI modules, connected local Qt Remote Objects, and
+passed its expected five-second offscreen smoke. The exact smoke output is
+`/nix/store/cckzvs6p79ygfd2l0rmw8816nklnyndp-logos-basecamp-smoke-test`, NAR
+hash `sha256-lfg55Q/2x84ormtBRzFytP4hMfd1jH0sS7oIkcQN3nI=`, with a
+2,749,148,608-byte closure. This certifies the pinned official runtime, not a
+Maker or Taker package load.
+
+After evidence capture, exact-name cleanup removed the 5.254 GB dedicated Nix
+volume, 988 MB pinned Nix image, and 9.2 MB temporary checkout. Reported host
+free space moved from 406 to 411 GiB while an unrelated active Miden build was
+simultaneously consuming Docker storage. Its images, 17.1 GB build cache,
+anonymous PostgreSQL volume, and `pr127-pg` container were left untouched.
 
 The upstream all-output `nix flake check --no-build` did not pass: evaluation
 of its integration-test output referenced a missing Nix-store source path.
@@ -5963,5 +5970,5 @@ review.
 
 Next remains the explicit issue-#112 prototype signoff. After approval, RED
 begins for the package contract and actor journey; GREEN will implement the two
-consumer-locked packages and recreate the pinned, measured build path with an
-explicit isolated disk budget.
+consumer-locked packages, load them in this now-proven pinned runtime, and run
+the actor-real journey with an explicit isolated disk budget.
