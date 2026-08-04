@@ -173,6 +173,13 @@ fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEs
         ZecEscrowInstruction::RefundNativeXmr { swap_id },
     )
     .expect("canonical tag-16 refund message");
+    let punish_message = Message::try_new(
+        ESCROW_PROGRAM,
+        vec![metadata, custody, claimant],
+        vec![41_u128.into()],
+        ZecEscrowInstruction::PunishNativeXmr { swap_id },
+    )
+    .expect("canonical tag-17 punish message");
     XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
         swap_id: Hex32::from_bytes(swap_id),
         activation_commitment: h(2),
@@ -197,7 +204,7 @@ fn terms(depositor: AccountId, claimant: AccountId, amount: u128) -> XmrNativeEs
         punish_at_ms: 20_000,
         claim_message_hash: Hex32::from_bytes(claim_message.hash()),
         refund_message_hash: Hex32::from_bytes(refund_message.hash()),
-        punish_message_hash: h(19),
+        punish_message_hash: Hex32::from_bytes(punish_message.hash()),
     })
     .expect("valid XMR v3 terms")
 }
@@ -1240,7 +1247,7 @@ async fn tag16_unknown_submission_is_never_resent_after_restart() {
     clippy::too_many_lines,
     reason = "one route contract covers all nine additive methods and replay semantics"
 )]
-async fn xmr_v3_routes_are_authenticated_bound_with_three_official_builders_enabled() {
+async fn xmr_v3_routes_are_authenticated_bound_with_four_official_builders_enabled() {
     let (depositor, depositor_key) = account(31);
     let (claimant, claimant_key) = account(32);
     let xmr_terms = terms(depositor, claimant, 42);
@@ -1288,16 +1295,25 @@ async fn xmr_v3_routes_are_authenticated_bound_with_three_official_builders_enab
             .await,
         ErrorCode::InvalidTransaction,
     );
-    assert_remote_code(
-        maker
-            .client
-            .prepare_native_xmr_punish_v3(PrepareNativeXmrPunishV3Request::new(
-                context(Participant::Maker, "prepare-punish"),
-                maker_runtime.clone(),
-                xmr_terms,
-            ))
-            .await,
-        ErrorCode::Unavailable,
+    let prepared_punish = maker
+        .client
+        .prepare_native_xmr_punish_v3(PrepareNativeXmrPunishV3Request::new(
+            context(Participant::Maker, "prepare-punish"),
+            maker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("tag-17 punishment uses the exact durable Maker planner");
+    assert_eq!(
+        prepared_punish.context.request_id.as_str(),
+        "prepare-punish"
+    );
+    assert_eq!(prepared_punish.terms, xmr_terms);
+    let punish = decode_official_public_transaction(prepared_punish.punish.exact_bytes.as_slice())
+        .expect("canonical official tag-17 transaction");
+    assert_eq!(
+        punish.message().hash(),
+        *xmr_terms.to_input().punish_message_hash.as_bytes()
     );
     let prepared_escrow = taker
         .client
@@ -1425,6 +1441,109 @@ async fn xmr_v3_routes_are_authenticated_bound_with_three_official_builders_enab
 
     maker.server.stop().await.expect("maker stop");
     taker.server.stop().await.expect("taker stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
+}
+
+#[tokio::test]
+async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable() {
+    let (depositor, _) = account(31);
+    let (claimant, claimant_key) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let maker_runtime = runtime(Participant::Maker, claimant);
+    let (sequencer_endpoint, sequencer, fixture) =
+        start_configurable_sequencer(SequencerSubmissionReply::Canonical).await;
+    let maker = start_sidecar(
+        Participant::Maker,
+        claimant,
+        claimant_key,
+        &sequencer_endpoint,
+    )
+    .await;
+    let preparation_request = PrepareNativeXmrPunishV3Request::new(
+        context(Participant::Maker, "prepare-punish-one-attempt"),
+        maker_runtime.clone(),
+        xmr_terms,
+    );
+    let prepared = maker
+        .fresh_client()
+        .prepare_native_xmr_punish_v3(preparation_request.clone())
+        .await
+        .expect("prepare exact durable tag-17 punishment");
+
+    assert_remote_code(
+        maker
+            .fresh_client()
+            .submit_transaction(SubmitTransactionRequest::new(
+                context(Participant::Maker, "arbitrary-punish-release-id"),
+                maker_runtime.clone(),
+                prepared.punish.clone(),
+            ))
+            .await,
+        ErrorCode::InvalidTransaction,
+    );
+    assert_eq!(fixture.lookup_count(), 0);
+    assert_eq!(fixture.send_count(), 0);
+
+    let submission_request = SubmitTransactionRequest::new(
+        submission_context(Participant::Maker, prepared.punish.transaction_id),
+        maker_runtime.clone(),
+        prepared.punish.clone(),
+    );
+    let submitted = maker
+        .fresh_client()
+        .submit_transaction(submission_request.clone())
+        .await
+        .expect("submit exact durable tag-17 punishment once");
+    assert_eq!(submitted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(submitted.transaction_id, prepared.punish.transaction_id);
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 1);
+    assert_eq!(
+        maker
+            .fresh_client()
+            .submit_transaction(submission_request.clone())
+            .await
+            .expect("same tag-17 release replays without node I/O"),
+        submitted
+    );
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 1);
+
+    maker.server.stop().await.expect("stop first Maker sidecar");
+    let restarted_nonce = Arc::new(CountingNonce {
+        value: 999,
+        calls: AtomicUsize::new(0),
+    });
+    let (restarted_client, restarted_server) = try_start_sidecar_at(
+        Participant::Maker,
+        claimant,
+        PrivateKey::try_new([32; 32]).expect("same Maker key"),
+        &sequencer_endpoint,
+        maker.directory.path(),
+        Arc::clone(&restarted_nonce),
+    )
+    .await
+    .expect("restart restores exact Tag-17 durable state");
+    assert_eq!(
+        restarted_client
+            .prepare_native_xmr_punish_v3(preparation_request)
+            .await
+            .expect("restart replays byte-identical punishment"),
+        prepared
+    );
+    assert_eq!(
+        restarted_client
+            .submit_transaction(submission_request)
+            .await
+            .expect("restart replays accepted one-attempt release"),
+        submitted
+    );
+    assert_eq!(restarted_nonce.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.lookup_count(), 1);
+    assert_eq!(fixture.send_count(), 1);
+
+    restarted_server.stop().await.expect("stop restarted Maker");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
 }

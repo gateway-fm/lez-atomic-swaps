@@ -21,7 +21,8 @@ use lez_bridge_protocol::{
     PrepareNativeRefundRequest, PrepareNativeRefundResult,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
     PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrRefundV3Request,
+    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
+    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
     PrepareNativeXmrRefundV3Result, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
     PrepareWitnessedAssetClaimV2Request, PrepareWitnessedAssetClaimV2Result,
     PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
@@ -105,6 +106,9 @@ pub enum NativePrepareError {
     /// Another XMR refund owns the aggregate-authority nonce.
     #[error("a distinct XMR refund already owns the reservation")]
     ActiveXmrRefundPrepare,
+    /// Another XMR punishment owns the claimant nonce.
+    #[error("a distinct XMR punishment already owns the reservation")]
+    ActiveXmrPunishPrepare,
     /// An XMR refund was already completed with different bytes.
     #[error("the XMR refund reservation was already completed differently")]
     ActiveXmrRefundCompletion,
@@ -206,14 +210,13 @@ struct ActivePrepare {
     result: PrepareNativeEscrowResult,
 }
 
-fn xmr_effect_owner(effect: XmrNativeEffectV3) -> Result<Participant, NativePrepareError> {
+fn xmr_effect_owner(effect: XmrNativeEffectV3) -> Participant {
     match effect {
         XmrNativeEffectV3::Initialize
         | XmrNativeEffectV3::Fund
         | XmrNativeEffectV3::AuthorizeClaim
-        | XmrNativeEffectV3::Refund => Ok(Participant::Taker),
-        XmrNativeEffectV3::Claim => Ok(Participant::Maker),
-        XmrNativeEffectV3::Punish => Err(NativePrepareError::InvalidTransactionBytes),
+        | XmrNativeEffectV3::Refund => Participant::Taker,
+        XmrNativeEffectV3::Claim | XmrNativeEffectV3::Punish => Participant::Maker,
     }
 }
 
@@ -226,6 +229,7 @@ struct PlannerState {
     completed_xmr_claim_v3: Option<ActiveXmrClaimCompletionV3>,
     active_xmr_refund_v3: Option<ActiveXmrRefundPrepareV3>,
     completed_xmr_refund_v3: Option<ActiveXmrRefundCompletionV3>,
+    active_xmr_punish_v3: Option<ActiveXmrPunishPrepareV3>,
     active_witnessed_escrow: Option<ActiveWitnessedEscrowPrepare>,
     active_claim: Option<ActiveClaimPrepare>,
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
@@ -277,6 +281,12 @@ struct ActiveXmrRefundPrepareV3 {
 struct ActiveXmrRefundCompletionV3 {
     request: CompleteNativeXmrRefundV3Request,
     result: CompleteNativeXmrRefundV3Result,
+}
+
+#[derive(Clone)]
+struct ActiveXmrPunishPrepareV3 {
+    request: PrepareNativeXmrPunishV3Request,
+    result: PrepareNativeXmrPunishV3Result,
 }
 
 #[derive(Clone)]
@@ -340,6 +350,8 @@ pub(crate) enum OwnedSubmission {
     XmrFunding { initialization: PreparedTransaction },
     /// The exact completed durable native-XMR tag-16 refund.
     XmrRefund,
+    /// The exact signed durable native-XMR tag-17 punishment.
+    XmrPunish,
     /// The exact durable local-profile clock transaction.
     CurrentProfileClock,
 }
@@ -1411,6 +1423,73 @@ impl NativeEscrowPlanner {
         }
     }
 
+    /// Prepares and durably reserves one claimant-signed tag-17 punishment.
+    ///
+    /// The Maker process signs the generated official transaction, but never
+    /// submits it during preparation. The guest program remains authoritative
+    /// for the funded-state and inclusive `punish_at` boundary.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role, runtime, terms, claimant, nonce, message-hash, ABI,
+    /// canonical-byte, signature, durable-state, or reservation drift.
+    pub async fn prepare_native_xmr_punish_v3(
+        &self,
+        request: &PrepareNativeXmrPunishV3Request,
+    ) -> Result<PrepareNativeXmrPunishV3Result, NativePrepareError> {
+        self.validate_xmr_punish_v3_request(request)?;
+        let mut state = self.state.lock().await;
+        if let Some(active) = state.active_xmr_punish_v3.as_ref() {
+            return if &active.request == request {
+                self.validate_prepared_native_xmr_punish_v3(&active.request, &active.result)?;
+                Ok(active.result.clone())
+            } else {
+                Err(NativePrepareError::ActiveXmrPunishPrepare)
+            };
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Some(recovered) = self.recover_durable_xmr_punish_v3(request)? {
+            state.active_xmr_punish_v3 = Some(ActiveXmrPunishPrepareV3 {
+                request: request.clone(),
+                result: recovered.clone(),
+            });
+            return Ok(recovered);
+        }
+
+        let nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?;
+        let result = PrepareNativeXmrPunishV3Result::new(
+            request.context.clone(),
+            request.terms,
+            self.prepare_message(self.xmr_punish_v3_message(request, nonce)?)?,
+        );
+        self.validate_prepared_native_xmr_punish_v3(request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref()
+            && let Err(error) = store.create(ReservationKind::XmrNativePunishV3, request, &result)
+        {
+            if error == DurableReservationError::AlreadyReserved {
+                let recovered = self
+                    .recover_durable_xmr_punish_v3(request)?
+                    .ok_or(DurableReservationError::Filesystem)?;
+                state.active_xmr_punish_v3 = Some(ActiveXmrPunishPrepareV3 {
+                    request: request.clone(),
+                    result: recovered.clone(),
+                });
+                return Ok(recovered);
+            }
+            return Err(error.into());
+        }
+        state.active_xmr_punish_v3 = Some(ActiveXmrPunishPrepareV3 {
+            request: request.clone(),
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
     /// Prepares and durably reserves one witnessed initialization/funding pair.
     ///
     /// The generated `InitializeNativeWitnessed` ABI fixes the ordered
@@ -2350,6 +2429,47 @@ impl NativeEscrowPlanner {
             #[cfg(not(target_os = "linux"))]
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
+
+        if let Some(active) = state.active_xmr_punish_v3.as_ref()
+            && active.result.punish == request.transaction
+        {
+            self.validate_prepared_native_xmr_punish_v3(&active.request, &active.result)?;
+            if request.context.request_id
+                != request.transaction.transaction_id.submission_request_id()
+                || request.context.run_id != active.request.context.run_id
+                || request.context.sidecar_role != Participant::Maker
+                || active.request.context.sidecar_role != request.context.sidecar_role
+                || request.runtime != self.expected_runtime
+                || active.request.runtime != request.runtime
+            {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let store = self
+                    .durable_store
+                    .as_ref()
+                    .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                let (stored_request, stored_result) = store
+                    .load::<PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result>(
+                        ReservationKind::XmrNativePunishV3,
+                    )?
+                    .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                if active.request != stored_request
+                    || active.result != stored_result
+                    || stored_request.context.run_id != request.context.run_id
+                    || stored_request.context.sidecar_role != request.context.sidecar_role
+                    || stored_request.runtime != request.runtime
+                    || stored_result.punish != request.transaction
+                {
+                    return Err(NativePrepareError::InvalidTransactionBytes);
+                }
+                self.validate_prepared_native_xmr_punish_v3(&stored_request, &stored_result)?;
+                return Ok(OwnedSubmission::XmrPunish);
+            }
+            #[cfg(not(target_os = "linux"))]
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
         drop(state);
 
         #[cfg(target_os = "linux")]
@@ -2424,6 +2544,12 @@ impl NativeEscrowPlanner {
             && &active.result.refund == prepared
         {
             self.validate_prepared_witnessed_asset_refund_v2(&active.request, &active.result)?;
+            return Ok(());
+        }
+        if let Some(active) = state.active_xmr_punish_v3.as_ref()
+            && &active.result.punish == prepared
+        {
+            self.validate_prepared_native_xmr_punish_v3(&active.request, &active.result)?;
             return Ok(());
         }
         if let Some(active) = state.active_refund.as_ref()
@@ -2759,6 +2885,28 @@ impl NativeEscrowPlanner {
         self.validate_completed_native_xmr_refund_v3(active, &stored_request, &stored_result)?;
         if &stored_request != request {
             return Err(NativePrepareError::ActiveXmrRefundCompletion);
+        }
+        Ok(Some(stored_result))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn recover_durable_xmr_punish_v3(
+        &self,
+        request: &PrepareNativeXmrPunishV3Request,
+    ) -> Result<Option<PrepareNativeXmrPunishV3Result>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some((stored_request, stored_result)) = store
+            .load::<PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result>(
+                ReservationKind::XmrNativePunishV3,
+            )?
+        else {
+            return Ok(None);
+        };
+        self.validate_prepared_native_xmr_punish_v3(&stored_request, &stored_result)?;
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveXmrPunishPrepare);
         }
         Ok(Some(stored_result))
     }
@@ -3131,6 +3279,34 @@ impl NativeEscrowPlanner {
         let authorization_nonce = self.xmr_claim_authorization_nonce(request)?;
         let expected = self.xmr_claim_authorization_message(request, authorization_nonce)?;
         if authorization.message() != &expected {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    /// Revalidates one signed durable tag-17 reservation against its request.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime/terms, nonce, signer, ordered accounts, message
+    /// hash, generated instruction, signature, transaction ID, or byte drift.
+    pub fn validate_prepared_native_xmr_punish_v3(
+        &self,
+        request: &PrepareNativeXmrPunishV3Request,
+        result: &PrepareNativeXmrPunishV3Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_xmr_punish_v3_request(request)?;
+        if result.context != request.context || result.terms != request.terms {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let transaction = decode_prepared_for_signer(&result.punish, self.signer_account_id)?;
+        let [nonce] = transaction.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        let expected = self.xmr_punish_v3_message(request, u128::from(*nonce))?;
+        if transaction.message() != &expected
+            || expected.hash() != *request.terms.to_input().punish_message_hash.as_bytes()
+        {
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
         Ok(())
@@ -3808,6 +3984,43 @@ impl NativeEscrowPlanner {
         .map_err(|_| NativePrepareError::InstructionEncoding)
     }
 
+    fn validate_xmr_punish_v3_request(
+        &self,
+        request: &PrepareNativeXmrPunishV3Request,
+    ) -> Result<(), NativePrepareError> {
+        if self.role != Participant::Maker
+            || request.context.sidecar_role != Participant::Maker
+            || request.runtime.sidecar_role != Participant::Maker
+        {
+            return Err(NativePrepareError::WrongRole);
+        }
+        let terms = request.terms.to_input();
+        if terms.claimant != Participant::Maker {
+            return Err(NativePrepareError::WrongClaimant);
+        }
+        self.validate_xmr_terms_v3_binding(&request.context, &request.runtime, &request.terms)
+    }
+
+    fn xmr_punish_v3_message(
+        &self,
+        request: &PrepareNativeXmrPunishV3Request,
+        nonce: u128,
+    ) -> Result<Message, NativePrepareError> {
+        self.validate_xmr_punish_v3_request(request)?;
+        let terms = request.terms.to_input();
+        let swap_id = *terms.swap_id.as_bytes();
+        let metadata = compute_metadata_pda(&self.escrow_program_id, &swap_id);
+        let custody = compute_custody_pda(&self.escrow_program_id, &swap_id);
+        let claimant = AccountId::new(*terms.claimant_account_id.as_bytes());
+        Message::try_new(
+            self.escrow_program_id,
+            vec![metadata, custody, claimant],
+            vec![nonce.into()],
+            ZecEscrowInstruction::PunishNativeXmr { swap_id },
+        )
+        .map_err(|_| NativePrepareError::InstructionEncoding)
+    }
+
     fn validate_xmr_claim_authorization_v3_request(
         &self,
         request: &PrepareNativeXmrClaimAuthorizationV3Request,
@@ -3950,7 +4163,7 @@ impl NativeEscrowPlanner {
         target: &PreparedTransaction,
     ) -> Result<(), NativePrepareError> {
         self.validate_xmr_terms_v3_binding(context, runtime, terms)?;
-        let expected_role = xmr_effect_owner(effect)?;
+        let expected_role = xmr_effect_owner(effect);
         if self.role != expected_role
             || context.sidecar_role != expected_role
             || runtime.sidecar_role != expected_role
@@ -4019,7 +4232,20 @@ impl NativeEscrowPlanner {
                     self.validate_owned_xmr_refund_v3(store, context, runtime, terms, target)?;
                 }
                 XmrNativeEffectV3::Punish => {
-                    return Err(NativePrepareError::InvalidTransactionBytes);
+                    let (stored_request, stored_result) = store
+                        .load::<PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result>(
+                            ReservationKind::XmrNativePunishV3,
+                        )?
+                        .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                    self.validate_prepared_native_xmr_punish_v3(&stored_request, &stored_result)?;
+                    if stored_request.context.run_id != context.run_id
+                        || stored_request.context.sidecar_role != context.sidecar_role
+                        || &stored_request.runtime != runtime
+                        || &stored_request.terms != terms
+                        || &stored_result.punish != target
+                    {
+                        return Err(NativePrepareError::InvalidTransactionBytes);
+                    }
                 }
             }
             Ok(())

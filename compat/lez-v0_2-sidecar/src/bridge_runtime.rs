@@ -631,6 +631,22 @@ impl BridgeRuntime {
             .map_err(Into::into)
     }
 
+    /// Prepares one exact signed tag-17 punishment without submission.
+    ///
+    /// # Errors
+    ///
+    /// Preserves strict Maker role, runtime, terms, claimant, nonce, message
+    /// hash, ABI, signature, and durable-reservation failures from the planner.
+    pub async fn prepare_native_xmr_punish_v3(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
+    ) -> Result<lez_bridge_protocol::PrepareNativeXmrPunishV3Result, BridgeRuntimeError> {
+        self.planner
+            .prepare_native_xmr_punish_v3(request)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Classifies one exact persisted XMR-native Fund in stable finalized history.
     ///
     /// # Errors

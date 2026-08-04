@@ -310,6 +310,10 @@ type RestoredRequests = (
             lez_bridge_protocol::CompleteNativeXmrRefundV3Result,
         )>,
     >,
+    Option<(
+        lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
+        lez_bridge_protocol::PrepareNativeXmrPunishV3Result,
+    )>,
 );
 
 impl DurableStore {
@@ -376,6 +380,7 @@ impl DurableStore {
                                 | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
                                 | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
                                 | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
+                                | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
                         )
                     })
             })
@@ -527,6 +532,7 @@ impl DurableStore {
         let mut completed_xmr_claim_v3 = None;
         let mut xmr_refund_v3 = None;
         let mut completed_xmr_refund_v3 = None;
+        let mut xmr_punish_v3 = None;
         for entry in self.persisted.entries.values() {
             let PersistedOutcome::Success(value) = &entry.outcome else {
                 continue;
@@ -671,6 +677,14 @@ impl DurableStore {
                             .map_err(|_| BridgeServerError::InvalidDurableState)?,
                     )));
                 }
+                METHOD_PREPARE_NATIVE_XMR_PUNISH_V3 if xmr_punish_v3.is_none() => {
+                    xmr_punish_v3 = Some((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
                 METHOD_PREPARE_NATIVE_ESCROW
                 | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
@@ -686,7 +700,8 @@ impl DurableStore {
                 | METHOD_PREPARE_NATIVE_XMR_CLAIM_V3
                 | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
                 | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
-                | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3 => {
+                | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
+                | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3 => {
                     return Err(BridgeServerError::InvalidDurableState);
                 }
                 _ => {}
@@ -709,6 +724,7 @@ impl DurableStore {
             completed_xmr_claim_v3,
             xmr_refund_v3,
             completed_xmr_refund_v3,
+            xmr_punish_v3,
         ))
     }
 }
@@ -739,13 +755,6 @@ impl OperationFailure {
         Self {
             code: ErrorCode::Internal,
             message: "durable bridge request outcome is unavailable",
-        }
-    }
-
-    const fn xmr_planner_unavailable() -> Self {
-        Self {
-            code: ErrorCode::Unavailable,
-            message: "official v0.2 XMR transaction planner is unavailable",
         }
     }
 }
@@ -884,6 +893,7 @@ async fn restore_runtime_requests(
         restored_xmr_claim_completion_v3,
         restored_xmr_refund_v3,
         restored_xmr_refund_completion_v3,
+        restored_xmr_punish_v3,
     ) = restored;
     if let Some((request, expected)) = restored_prepare {
         let observed = runtime
@@ -1020,6 +1030,15 @@ async fn restore_runtime_requests(
             .restore_completed_native_xmr_refund_v3(&request, &expected)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
+    }
+    if let Some((request, expected)) = restored_xmr_punish_v3 {
+        let observed = runtime
+            .prepare_native_xmr_punish_v3(&request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
     }
     Ok(())
 }
@@ -1620,25 +1639,6 @@ fn register_asset_v2_methods(
 fn register_xmr_v3_methods(
     module: &mut RpcModule<ServerState>,
 ) -> Result<(), jsonrpsee::core::RegisterMethodError> {
-    macro_rules! register_unavailable {
-        ($method:expr, $request:ty, $role:expr) => {
-            module.register_async_method($method, |params, state, _| async move {
-                let request = params.one::<$request>()?;
-                state.validate_xmr_v3_request(
-                    &request.context,
-                    &request.runtime,
-                    &request.terms,
-                    $role,
-                )?;
-                state
-                    .execute($method, &request.context, &request, || async {
-                        Err(OperationFailure::xmr_planner_unavailable())
-                    })
-                    .await
-            })?;
-        };
-    }
-
     module.register_async_method(
         METHOD_PREPARE_NATIVE_XMR_CLAIM_V3,
         |params, state, _| async move {
@@ -1751,11 +1751,34 @@ fn register_xmr_v3_methods(
                 .await
         },
     )?;
-    register_unavailable!(
+    module.register_async_method(
         METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
-        lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
-        Participant::Maker
-    );
+        |params, state, _| async move {
+            let request: lez_bridge_protocol::PrepareNativeXmrPunishV3Request = params.one()?;
+            state.validate_xmr_v3_request(
+                &request.context,
+                &request.runtime,
+                &request.terms,
+                Participant::Maker,
+            )?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .prepare_native_xmr_punish_v3(&operation)
+                            .await
+                            .map_err(OperationFailure::from)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
     module.register_async_method(
         METHOD_PREPARE_NATIVE_XMR_ESCROW_V3,
         |params, state, _| async move {
@@ -1993,6 +2016,7 @@ impl ServerState {
                 | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
                 | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
                 | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
+                | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
         );
         let repeatable = !is_submission_method(method)
             && (!prepare || matches!(&outcome, PersistedOutcome::Error(_)));
@@ -2076,6 +2100,7 @@ fn encode_request<Request: Serialize>(
             | METHOD_COMPLETE_NATIVE_XMR_CLAIM_V3
             | METHOD_PREPARE_NATIVE_XMR_REFUND_V3
             | METHOD_COMPLETE_NATIVE_XMR_REFUND_V3
+            | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
     )
     .then_some(request_value);
     Ok((request_sha256, replay_request))

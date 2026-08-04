@@ -6293,3 +6293,37 @@ The one-time diagram gate first rejected `Actor`, a reserved GitHub Mermaid
 sequence identifier, in the three pair diagrams. Renaming only that participant
 identifier to `PairActor` made all 429 conservative compatibility checks and all
 429 isolated SVG renders GREEN without changing the documented flows.
+
+## M7 Tag-17 durable release checkpoint (2026-08-04)
+
+RED first changed the authenticated Maker route contract from
+`Unavailable` to an exact official transaction requirement. The focused test
+failed at the expected remote `unavailable` response. An unrelated first
+compile attempt entered the pinned Rapisnark download fallback because
+`RAPIDSNARK_LIB_DIR` was not exported and the host has no `unzip`; rerunning
+with the already hash-verified local v0.0.8 library directory reached the
+intended RED in 5.56 seconds without installing or downloading dependencies.
+
+GREEN reuses the pinned generated instruction and NSSA transaction types but
+does not call the generated submit-on-build helper. The isolated Maker planner
+constructs tag 17 with ordered metadata, custody, and claimant accounts, signs
+with the claimant key, checks the immutable punishment-message hash, and
+persists exact bytes before exposure. The authenticated server restores that
+reservation after restart. Generic submission accepts only the transaction-ID-
+derived request identity and byte-identical owner-only reservation, then uses
+the existing lookup-plus-one-send durable journal.
+
+The focused route test and a separate operator-behavior test are GREEN. The
+latter proves an arbitrary release ID causes zero node calls, the exact release
+causes one lookup and one send, identical retry causes no node I/O, and restart
+replays both preparation and accepted release without consulting a changed
+nonce source. ADR 0158 records the component and sequence diagrams, conditional
+atomicity argument, resource boundary, and limits.
+
+F3, F5, and F6 remain open honestly: this checkpoint uses an authenticated
+literal-loopback sequencer double. The next progressive slice is a fresh
+isolated local LEZ deployment that submits the same sidecar-produced Tag-17
+bytes before and after the configured boundary, retains finalized metadata and
+custody facts, proves losing-branch rejection, and performs exact labelled
+cleanup. Only after that PoC will adverse races, process kill, and concurrency
+hardening be claimed.

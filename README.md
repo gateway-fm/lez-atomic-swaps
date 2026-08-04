@@ -729,7 +729,7 @@ component-GREEN: authenticated Taker preparation and completion feed only the
 transaction-derived one-attempt submission identity; an ambiguous send remains
 unknown across restart without resend; and Taker-exact plus Maker-discovery
 classification require canonical finalized refund facts in
-`[refund_at, punish_at)`. That lower component checkpoint used controlled local fixtures; the exact actual-node replay below closes Maker extraction, reconstructed-key sweep, and binding. Tag 17 remains open. The next role-correct component is now GREEN: the real
+`[refund_at, punish_at)`. That lower component checkpoint used controlled local fixtures; the exact actual-node replay below closes Maker extraction, reconstructed-key sweep, and binding. ADR 0158 now makes Tag-17 preparation and one-attempt release component-GREEN under the isolated Maker claimant key; the actual-node punishment transition and adverse races remain open. The next role-correct component is now GREEN: the real
 Taker process cryptographically verifies and publishes tag 16 through the
 transaction-derived one-attempt identity; the Maker accepts only canonical
 finalized discovery into the precommitted refund session; and one sweep engine
@@ -1184,10 +1184,11 @@ This executes the successful-claim branch of the conditional atomicity
 argument: the Maker cannot receive the LEZ custody balance without finalizing
 the signature that reveals Maker share `s_a`, which the Taker combines with
 retained `s_b` to spend the exact confirmed XMR output. It is not a distributed
-cross-chain transaction. The tag-16 signed-refund and tag-17 punishment paths,
-native plus two custom-token F7 parity, U9 Stagenet guide/CI, D1 XMR videos,
-repeatability, QA, chaos, information-security, production readiness, and
-independent review remain open.
+cross-chain transaction. The tag-16 signed-refund path is actual-node GREEN. Tag-17 exact preparation,
+durable custody, and one-attempt release are component-GREEN, while its
+actual-node transition remains open alongside native plus two custom-token F7
+parity, U9 Stagenet guide/CI, D1 XMR videos, repeatability, QA, chaos,
+information-security, production readiness, and independent review.
 
 The implementation retains the two-stage XMR SDK, pair-neutral adaptor leaf,
 checked guest tags 13 through 17, nine-method strict bridge boundary, durable

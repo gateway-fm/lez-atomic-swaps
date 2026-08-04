@@ -1,10 +1,10 @@
 id	state	gate_script	evidence	remaining
 F1	green	./scripts/test-m7-route-health-contract.sh	docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json	none
 F2	green	./scripts/check-m3-cryptographic-vectors.sh	docs/requirements-traceability.md	none
-F3	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Tag-17 punishment plus joined actual-node claim/refund receipts and adverse concurrency
+F3	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Tag-17 actual-node transition plus joined claim/refund receipts and adverse concurrency
 F4	open	./scripts/run-zebra-e2e.sh	docs/requirements-traceability.md	Composed actual-node recovery and post-lock margin matrix
-F5	open	./scripts/test-m4-lez-local-deployment-contract.sh	docs/requirements-traceability.md	Current guest deployment identity and Tag-17 punishment transition
-F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	XMR punishment, adversarial races, process-kill, reorg, and concurrency outcomes
+F5	open	./scripts/test-m4-lez-local-deployment-contract.sh	docs/requirements-traceability.md	Current guest deployment identity and actual-node Tag-17 punishment transition
+F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Actual-node XMR punishment, adversarial races, process-kill, reorg, and concurrency outcomes
 F7	open	./scripts/test-m3-f7-token-fixture-contract.sh	docs/requirements-traceability.md	Terminal composed custom-token claim/refund on the exact v0.2 actor route
 F8	upstream-deferred	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	LOGOS-021 live Logos price-module ABI compatibility
 F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Daemon-owned semantic XMR effects across claim refund and sweep journeys

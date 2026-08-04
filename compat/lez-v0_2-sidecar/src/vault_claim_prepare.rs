@@ -180,6 +180,7 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             | NativePrepareError::ActiveXmrClaimAuthorizationPrepare
             | NativePrepareError::ActiveXmrRefundPrepare
             | NativePrepareError::ActiveXmrRefundCompletion
+            | NativePrepareError::ActiveXmrPunishPrepare
             | NativePrepareError::ActiveWitnessedEscrowPrepare
             | NativePrepareError::ActiveClaimPrepare
             | NativePrepareError::ActiveWitnessedClaimPrepare
