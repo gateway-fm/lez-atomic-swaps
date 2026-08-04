@@ -3179,6 +3179,63 @@ same revision. This is local offer atomicity, not a new cross-chain atomicity
 claim. Pair protocol atomicity remains in the role-fixed actors and their chain
 evidence. ADR 0150 contains the detailed security and failure argument.
 
+## M7 generated SPEL custody ABI boundary
+
+The v0.2 escrow's generated `PROGRAM_IDL_JSON` is the only client-interface
+source. The deployment compatibility package and the executable sidecar feed
+that same value into the exact pinned SPEL generator. Tests and the artifact
+manifest bind both the IDL SHA-256 and the generated Rust-client SHA-256;
+sidecar build assertions independently bind native, XMR, and token account
+order and signer roles.
+
+```mermaid
+flowchart LR
+    Escrow[SPEL escrow source] --> Idl[Generated IDL]
+    Idl --> Generator[Pinned client generator]
+    Generator --> Deploy[Deployment client]
+    Generator --> Sidecar[Runtime sidecar client]
+    Idl --> IdlPin[IDL digest]
+    Deploy --> ClientPin[Client digest]
+    Sidecar --> Roles[Account and signer assertions]
+    IdlPin --> Manifest[Artifact manifest]
+    ClientPin --> Manifest
+    Roles --> Gate[M7 ABI and artifact gates]
+    Manifest --> Gate
+```
+
+At runtime, the role actor supplies only its authorized operation. The sidecar
+re-derives ordered accounts and signs as the depositor owner, claimant owner,
+claim aggregate authority, refund aggregate authority, or permissionless
+caller exactly as the instruction requires. Official ATAs remain accounts, not
+signers.
+
+```mermaid
+sequenceDiagram
+    participant Actor as Role-fixed actor
+    participant Sidecar as Generated-client sidecar
+    participant Escrow as LEZ escrow
+    participant Custody as Native or Token and ATA program
+    Actor->>Sidecar: Exact operation and role authority
+    Sidecar->>Sidecar: Derive accounts and enforce signer role
+    Sidecar->>Escrow: Ordered instruction and accounts
+    Escrow->>Custody: Validate and transfer in same transaction
+    alt Every check succeeds
+        Custody-->>Escrow: Commit custody effect
+        Escrow-->>Sidecar: Commit escrow transition
+    else Any account, role, or transfer check fails
+        Custody-->>Escrow: Error
+        Escrow-->>Sidecar: Whole LEZ transaction rolls back
+    end
+    Sidecar-->>Actor: Typed result
+```
+
+This preserves atomicity inside each LEZ transaction: escrow metadata and the
+native/token custody effect commit together or not at all. It does not turn the
+two chains into a distributed transaction. Conditional cross-chain atomicity
+continues to depend on the pair-specific reveal/refund/punishment construction,
+timelocks, and canonical-chain evidence. ADR 0151 records the detailed change
+and verification flow.
+
 
 ## M5 closure-candidate evidence layers
 

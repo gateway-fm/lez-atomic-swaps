@@ -29,6 +29,12 @@ and the actor journals exact request identity before submission. Finalized
 containing-block evidence, stable-tip evidence, escrow identity, participants,
 asset, amount, and branch are checked before projection.
 
+ADR 0151 makes the SPEL IDL the single source for both deployment and runtime
+clients. Exact IDL/client digests plus semantic account-order and signer-role
+assertions bind the current custody ABI to the local artifact manifest. This is
+interface integrity evidence, not a claim of public deployment or independent
+review.
+
 ## Cross-chain atomicity arguments
 
 Atomicity is conditional economic safety, not one transaction spanning two
@@ -134,4 +140,3 @@ jurisdiction, asset policy, sanctions and other applicable obligations.
    backed-up role store, re-run exact replay and refund drills, then roll out by
    pair. Rollback must not cross a schema or program version without an explicit
    compatible procedure.
-

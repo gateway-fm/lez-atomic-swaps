@@ -295,6 +295,15 @@ attestation so neither can be misreported as the other.
   unrelated-route continuity, real-daemon process proof and manual reproduction.
   The remaining F1/R3 gate is the actual unaffected-pair chain journey while a
   different real local node is absent.
+- [x] Close U7 generated-custody ABI drift through ADR 0151: use one pinned
+  v0.2 SPEL IDL for deployment and runtime generation; hash both the raw IDL
+  and generated Rust client; bind both to the deployment manifest and artifact
+  verifier; assert all native, XMR and token account/signer surfaces; and run a
+  fast network-free wiring contract in ordinary CI. The runtime sidecar's
+  minimally reconciled lock now includes its existing local SDK-core edge; its
+  full locked-offline tests, strict Clippy, warning-fatal Rustdoc, advisories,
+  bans, licenses and source policy pass. Public deployment remains separately
+  deferred and is not implied by this interface freeze.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

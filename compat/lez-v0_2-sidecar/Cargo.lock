@@ -3652,6 +3652,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-swap-sdk-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "lez-swap-core",
+ "serde",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "lez-v0-2-sidecar"
 version = "0.0.0"
 dependencies = [
@@ -3716,9 +3727,11 @@ dependencies = [
 name = "lez-xmr-swap-sdk"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "hex",
  "lez-adaptor-signature",
  "lez-swap-core",
+ "lez-swap-sdk-core",
  "monero",
  "musig2",
  "postcard",

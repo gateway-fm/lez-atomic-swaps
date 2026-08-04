@@ -1,4 +1,5 @@
 use lez_zec_escrow_v02::PROGRAM_IDL_JSON;
+use sha2::{Digest, Sha256};
 
 #[allow(dead_code, unused_imports, unused_mut)]
 mod generated_client {
@@ -38,6 +39,11 @@ const EXPECTED_ASSOCIATED_TOKEN_ACCOUNT: [i64; 8] = [
 
 #[test]
 fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
+    let idl_sha256 = hex::encode(Sha256::digest(PROGRAM_IDL_JSON.as_bytes()));
+    assert_eq!(
+        idl_sha256, "04895050affb173d3e87329994ecbbed54781a38d5454ce5b36e155916e4134f",
+        "the generated IDL changed without an explicit ABI review"
+    );
     let idl: serde_json::Value =
         serde_json::from_str(PROGRAM_IDL_JSON).expect("SPEL must generate valid escrow IDL");
     let instructions = idl["instructions"]
@@ -74,6 +80,11 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
     let generated = spel_client_gen::generate_from_idl_json(PROGRAM_IDL_JSON)
         .expect("the exact SPEL PR head must generate the typed v0.2 client")
         .client_code;
+    let generated_client_sha256 = hex::encode(Sha256::digest(generated.as_bytes()));
+    assert_eq!(
+        generated_client_sha256, "bcc0d3898343317bdd3bcc0987ec9559db7f4060c4e9fb45f096d1bcd34b48ac",
+        "the generated client changed without an explicit ABI review"
+    );
     let funding = generated_method(&generated, "fund_token", Some("claim_token"));
     assert!(funding.contains(
         "let signer_ids: Vec<AccountId> = vec![\n            accounts.depositor_owner,\n        ];"
@@ -222,6 +233,10 @@ fn v02_escrow_guest_generated_client_and_deployment_inputs_exist() {
     assert_eq!(
         manifest["interface"]["idl_sha256"].as_str(),
         Some("04895050affb173d3e87329994ecbbed54781a38d5454ce5b36e155916e4134f")
+    );
+    assert_eq!(
+        manifest["interface"]["generated_client_sha256"].as_str(),
+        Some("bcc0d3898343317bdd3bcc0987ec9559db7f4060c4e9fb45f096d1bcd34b48ac")
     );
     assert_eq!(
         manifest["interface"]["instruction_count"].as_integer(),

@@ -14,7 +14,7 @@ U3	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-tracea
 U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Literal XMR Taker semantic claim/refund and abandonment journeys
 U5	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
 U6	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
-U7	open	./scripts/verify-spel-compatibility.sh	docs/requirements-traceability.md	Reconcile and freeze the generated IDL/client for the current custody ABI
+U7	green	./scripts/verify-lez-v02-provisional.sh	docs/requirements-traceability.md	none
 U8	green	./scripts/test-bitcoin-testnet4-route-contract.sh	docs/requirements-traceability.md	none
 U9	green	./scripts/test-monero-stagenet-guide-contract.sh	docs/requirements-traceability.md	none
 U10	green	./scripts/test-zcash-testnet-guide-contract.sh	docs/requirements-traceability.md	none
