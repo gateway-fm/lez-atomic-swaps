@@ -1,9 +1,13 @@
 //! Actual-process contract for the owner-only read-only Taker service.
 
 use std::{
-    fs,
+    env, fs,
+    io::Write as _,
     os::unix::{
-        fs::{DirBuilderExt as _, FileTypeExt as _, MetadataExt as _, PermissionsExt as _},
+        fs::{
+            DirBuilderExt as _, FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _,
+            PermissionsExt as _,
+        },
         net::UnixListener,
     },
     path::{Path, PathBuf},
@@ -197,6 +201,67 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
     assert!(replay.was_replay);
     assert_eq!(replay.swap, first.swap);
     assert!(restarted.terminate().await.success());
+    assert!(!socket.exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires the external pinned-Basecamp product driver"]
+async fn basecamp_prepared_offer_rendezvous_drives_the_production_taker_service() {
+    let rendezvous = PathBuf::from(
+        env::var_os("M6_BASECAMP_RENDEZVOUS")
+            .expect("M6_BASECAMP_RENDEZVOUS must select a new absolute file"),
+    );
+    assert!(rendezvous.is_absolute());
+    let acknowledgement = rendezvous.with_extension("done");
+    assert!(!rendezvous.exists());
+    assert!(!acknowledgement.exists());
+
+    let fixture = ProcessInitiationFixture::new();
+    let runtime = private_directory(fixture.root.join("basecamp-runtime"));
+    let socket = runtime.join("taker.sock");
+    let mut service = TestService::spawn(&fixture.config, &socket);
+    wait_until_ready(&mut service, &socket).await;
+
+    let request = fixture.request();
+    let public_fixture = json!({
+        "schema_version": 1,
+        "socket": socket,
+        "offer_id": request.offer_id,
+        "maker_identity": hex::encode(fixture.maker),
+        "signed_envelope_sha256": hex::encode(fixture.commitment),
+        "foreign_units": request.foreign_units,
+        "expected_lez_units": request.expected_lez_units,
+        "swap_id": "m6-process-zec-swap-001",
+    });
+    let mut handoff = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&rendezvous)
+        .unwrap();
+    handoff
+        .write_all(&serde_json::to_vec(&public_fixture).unwrap())
+        .unwrap();
+    handoff.sync_all().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(300);
+    while !acknowledgement.exists() {
+        assert!(
+            service.child_mut().try_wait().unwrap().is_none(),
+            "Taker service exited while Basecamp held the rendezvous"
+        );
+        assert!(Instant::now() < deadline, "Basecamp rendezvous timed out");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(fs::read_to_string(&acknowledgement).unwrap(), "ok\n");
+
+    let committed = SqliteTakerFacadeStore::open_existing(&fixture.registry)
+        .unwrap()
+        .lookup_initiation(&RequestId::new("taker-ui-initiate-001").unwrap())
+        .unwrap()
+        .expect("Basecamp must commit the prepared initiation");
+    assert_eq!(committed.swap_id().as_str(), "m6-process-zec-swap-001");
+    assert!(service.terminate().await.success());
     assert!(!socket.exists());
 }
 

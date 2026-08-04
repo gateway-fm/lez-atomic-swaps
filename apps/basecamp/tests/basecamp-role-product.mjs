@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 
 const framework = process.env.LOGOS_QT_MCP;
 if (!framework) throw new Error("LOGOS_QT_MCP must select the pinned official test framework");
@@ -22,13 +23,23 @@ const role = process.env.M6_BASECAMP_ROLE;
 const expected = roles[role];
 if (!expected) throw new Error("M6_BASECAMP_ROLE must be maker or taker");
 const expectService = process.env.M6_BASECAMP_EXPECT_SERVICE === "1";
+const takerFixture = role === "taker" && process.env.M6_TAKER_FIXTURE_JSON
+  ? JSON.parse(readFileSync(process.env.M6_TAKER_FIXTURE_JSON, "utf8"))
+  : null;
 
 const { test, run } = await import(resolve(framework, "test-framework/framework.mjs"));
 
 async function property(app, objectName, propertyName) {
   const found = await app.findByProperty("objectName", objectName);
   if (found.error || !found.matches || found.matches.length !== 1) {
-    throw new Error(`expected exactly one ${objectName}, got ${JSON.stringify(found)}`);
+    const named = await app.findByProperty("objectName");
+    const available = (named.matches || [])
+      .map((entry) => entry.value)
+      .filter((value) => typeof value === "string" && value.length > 0);
+    throw new Error(
+      `expected exactly one ${objectName}, got ${JSON.stringify(found)}; `
+      + `available object names: ${JSON.stringify(available)}`,
+    );
   }
   const response = await app.getProperties(found.matches[0].id);
   if (response.error) throw new Error(response.error);
@@ -37,17 +48,33 @@ async function property(app, objectName, propertyName) {
   return value.value;
 }
 
-async function expectSuccessfulOutput(app, action) {
+async function invokeSuccessfully(app, button, action, predicate = () => true) {
+  const before = await property(app, expected.output, "text");
+  await app.click(button);
+  let envelope;
   await app.waitFor(async () => {
     const raw = await property(app, expected.output, "text");
-    let envelope;
-    try {
-      envelope = JSON.parse(raw);
-    } catch {
-      throw new Error(`${action} did not return JSON: ${raw}`);
+    if (raw === before || raw === "Waiting for owner-local service...") {
+      throw new Error(`${action} has not completed`);
     }
-    if (envelope.ok !== true) throw new Error(`${action} failed: ${raw}`);
-  }, { timeout: 15000, interval: 300, description: `${role} ${action} success` });
+    envelope = JSON.parse(raw);
+    if (envelope.ok !== true || !predicate(envelope.result)) {
+      throw new Error(`${action} returned an unexpected result: ${raw}`);
+    }
+  }, { timeout: 15000, interval: 300, description: `${role} ${action} completion` });
+  return envelope;
+}
+
+async function evaluateIn(app, objectName, expression) {
+  const found = await app.findByProperty("objectName", objectName);
+  if (found.error || !found.matches || found.matches.length !== 1) {
+    throw new Error(`expected exactly one ${objectName}, got ${JSON.stringify(found)}`);
+  }
+  const response = await app.inspector.send("evaluate", {
+    objectId: found.matches[0].id,
+    expression,
+  });
+  if (response.error) throw new Error(`evaluate in ${objectName}: ${response.error}`);
 }
 
 test(`${role}: pinned Basecamp discovers and loads the role package`, async (app) => {
@@ -66,16 +93,31 @@ test(`${role}: pinned Basecamp discovers and loads the role package`, async (app
 
 if (expectService) {
   test(`${role}: Basecamp calls the real owner-local role service`, async (app) => {
-    await app.click(expected.health);
-    await expectSuccessfulOutput(app, "health");
+    await invokeSuccessfully(app, expected.health, "health");
     if (role === "maker") {
-      await app.click("Save route atomically");
-      await expectSuccessfulOutput(app, "atomic route save");
-      await app.click("Refresh swap history");
-      await expectSuccessfulOutput(app, "history");
+      await invokeSuccessfully(app, "Save route atomically", "atomic route save");
+      await invokeSuccessfully(app, "Refresh swap history", "history");
     } else {
-      await app.click("Browse authenticated offers");
-      await expectSuccessfulOutput(app, "offer browsing");
+      await invokeSuccessfully(app, "Browse authenticated offers", "offer browsing");
+      if (takerFixture) {
+        await evaluateIn(app, "takerReview", [
+          `offerId.text = ${JSON.stringify(String(takerFixture.offer_id))}`,
+          `makerIdentity.text = ${JSON.stringify(String(takerFixture.maker_identity))}`,
+          `envelopeDigest.text = ${JSON.stringify(String(takerFixture.signed_envelope_sha256))}`,
+          `foreignUnits.text = ${JSON.stringify(String(takerFixture.foreign_units))}`,
+          `lezUnits.text = ${JSON.stringify(String(takerFixture.expected_lez_units))}`,
+          "true",
+        ].join("; "));
+        await invokeSuccessfully(app, "Confirm and initiate", "prepared initiation",
+          (result) => result.was_replay === false);
+        await invokeSuccessfully(app, "Confirm and initiate", "exact initiation replay",
+          (result) => result.was_replay === true);
+        await invokeSuccessfully(app, "List my swaps", "swap list");
+        await evaluateIn(app, "takerProgress",
+          `swapId.text = ${JSON.stringify(String(takerFixture.swap_id))}; true`);
+        await invokeSuccessfully(app, "Monitor", "swap monitor",
+          (result) => result.swap_id === takerFixture.swap_id);
+      }
     }
   });
 } else {

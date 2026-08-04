@@ -65,15 +65,40 @@ Item {
                         columns: 2
                         anchors.fill: parent
                         Label { text: "Offer ID" }
-                        TextField { id: offerId; Layout.fillWidth: true }
+                        TextField {
+                            id: offerId
+                            objectName: "takerOfferId"
+                            placeholderText: "Authenticated offer ID"
+                            Layout.fillWidth: true
+                        }
                         Label { text: "Maker public identity" }
-                        TextField { id: makerIdentity; Layout.fillWidth: true }
+                        TextField {
+                            id: makerIdentity
+                            objectName: "takerMakerIdentity"
+                            placeholderText: "Compressed Maker public key"
+                            Layout.fillWidth: true
+                        }
                         Label { text: "Signed-envelope SHA-256" }
-                        TextField { id: envelopeDigest; Layout.fillWidth: true }
+                        TextField {
+                            id: envelopeDigest
+                            objectName: "takerEnvelopeDigest"
+                            placeholderText: "Signed-envelope digest"
+                            Layout.fillWidth: true
+                        }
                         Label { text: "Foreign atomic units" }
-                        TextField { id: foreignUnits; text: "100000000" }
+                        TextField {
+                            id: foreignUnits
+                            objectName: "takerForeignUnits"
+                            placeholderText: "Foreign atomic units"
+                            text: "100000000"
+                        }
                         Label { text: "Expected LEZ atomic units" }
-                        TextField { id: lezUnits; text: "50000" }
+                        TextField {
+                            id: lezUnits
+                            objectName: "takerLezUnits"
+                            placeholderText: "Expected LEZ atomic units"
+                            text: "50000"
+                        }
                         Button {
                             objectName: "takerInitiate"
                             text: "Confirm and initiate"
@@ -93,16 +118,16 @@ Item {
                     Layout.fillWidth: true
                     RowLayout {
                         anchors.fill: parent
-                        TextField { id: swapId; placeholderText: "Swap ID"; Layout.fillWidth: true }
+                        TextField { id: swapId; objectName: "takerSwapId"; placeholderText: "Swap ID"; Layout.fillWidth: true }
                         TextField { id: generation; placeholderText: "Generation"; text: "0" }
-                        Button { text: "Monitor"; onClicked: root.invoke(root.backend.monitor(swapId.text)) }
+                        Button { objectName: "takerMonitor"; text: "Monitor"; onClicked: root.invoke(root.backend.monitor(swapId.text)) }
                         Button { objectName: "takerClaim"; text: "Claim"; onClicked: root.invoke(root.backend.claim("taker-ui-claim-001", swapId.text, generation.text)) }
                         Button { objectName: "takerRefund"; text: "Refund"; onClicked: root.invoke(root.backend.refund("taker-ui-refund-001", swapId.text, generation.text)) }
                     }
                 }
 
                 RowLayout {
-                    Button { text: "List my swaps"; onClicked: root.invoke(root.backend.listSwaps()) }
+                    Button { objectName: "takerListSwaps"; text: "List my swaps"; onClicked: root.invoke(root.backend.listSwaps()) }
                     Label {
                         objectName: "takerShielding"
                         text: "Privacy reminder: shield claimed transparent ZEC in your wallet"
