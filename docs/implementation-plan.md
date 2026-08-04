@@ -304,6 +304,14 @@ attestation so neither can be misreported as the other.
   full locked-offline tests, strict Clippy, warning-fatal Rustdoc, advisories,
   bans, licenses and source policy pass. Public deployment remains separately
   deferred and is not implied by this interface freeze.
+- [x] Close the first XMR semantic-worker custody prerequisite through ADR
+  0152: retain the already validated Stage A/B, own/peer packets, private-role
+  manifest and private view key; seal them on FDs 211 through 216 before the
+  workflow CAS; preserve zeroizing/redacted handling; and deliberately exclude
+  stale mutable-journal bytes. Focused RED failed at the child boundary, then
+  the full XMR actor suite, strict Clippy and warning-fatal Rustdoc passed.
+  This does not close U3/U4/F9: live journal authority and branch-produced
+  signature, finalized-evidence and extracted-scalar inputs remain next.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -330,6 +338,10 @@ attestation so neither can be misreported as the other.
 4. Logos-owned upstream limitations remain nonblocking for milestone
    implementation but release-visible. Repository findings and proposal errata
    are not eligible for that exception.
+5. The receipt-v2 XMR process boundary now carries immutable semantic
+   application inputs. Its sender/observer programs remain nonsemantic markers
+   until the live-journal and branch-artifact ABI is implemented and the real
+   local LEZ/Monero journey is replayed through the literal CLI.
 
 The working ETA will be recalculated after the hard-requirement audit because
 the carried matrix mixes completed evidence with historical gaps. The initial

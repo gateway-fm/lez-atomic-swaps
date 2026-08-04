@@ -934,7 +934,15 @@ revalidation, propagation, and finality evidence before release.
 
 ### M5 XMR role-process pre-effect deployment
 
-Status: process-GREEN through the receipt-v2 Taker Tag14 sender, local finalized-observer, durable reconciliation, and process-free Complete replay. The current exact locked/offline black-box passed 1 of 1 in 133.16 seconds; the focused effect-route suite passed 5 of 5, and strict Clippy plus warning-fatal Rustdoc are GREEN. Solid edges below are fixed-local process-component evidence. Semantic transaction construction, actual-chain observation, and isolated-chain RPC execution remain dashed and open.
+Status: process-GREEN through the receipt-v2 Taker Tag14 sender,
+local finalized-observer, durable reconciliation, and process-free Complete
+replay. ADR 0152 additionally seals the validated Stage A/B, own/peer packets,
+private-role manifest, and private view key on FDs 211 through 216 before the
+one-attempt CAS. The focused effect-route suite passes 5 of 5, and strict
+Clippy plus warning-fatal Rustdoc are GREEN. Solid edges below are fixed-local
+process-component evidence. Semantic transaction construction, live-journal
+handoff, branch-produced artifacts, actual-chain observation, and isolated-chain
+RPC execution remain dashed and open.
 
 ```mermaid
 flowchart TB
@@ -967,7 +975,7 @@ flowchart TB
         EffectReceipt[("Receipt v2 and schema v3 authority")]
         Claim["lez-taker claim"]
         Workflow[("Workflow v2 journal")]
-        Marker["Hash-pinned Tag14 sender marker"]
+        Marker["Hash-pinned Tag14 sender marker with sealed application inputs"]
         Observer["Role-fixed finalized observer marker"]
         Parser["Bounded exact Tag14 result parser"]
         Reconciled["Durable Succeeded then Complete"]
@@ -1023,7 +1031,7 @@ flowchart TB
 | Maker role manifest | `actor-provision.json` from `xmr-reference-actor provision-application maker` | Daemon requires canonical schema 1, Maker role, exact swap, exact role-journal state path, normalized authority paths, and lowercase digests before readiness |
 | Taker acceptance | `lez-taker --accept-xmr-offer` plus Stage A/B, role root, public packets, role journal, actor root, and receipt flags | Taker authenticates Delivery only on first acceptance, provisions only Taker authority, activates over Chat, and publishes its receipt after Maker commit |
 | Taker receipt-only monitor | `lez-taker monitor --receipt` with the private canonical XMR receipt | Digest-pinned canonical Taker-manifest bytes bind the swap and state before the per-swap lock; full Stage A/B, packet, private-role, and claim/refund-journal semantics are reread under the lock; returns only secret-free `application_activated` and never contacts Delivery, Chat, a daemon, a node, or an RPC |
-| Receipt-v2 Taker Tag14 process | `lez-taker claim --receipt` under separate actor/workflow locks | First call invokes/reaps one FD-197..210 sender marker and leaves Started; second call runs the role-fixed observer, exact-compares the sending-plan identity, strictly parses finalized evidence, and reconciles Succeeded; third call is process-free Complete. No RPC or semantic transaction |
+| Receipt-v2 Taker Tag14 process | `lez-taker claim --receipt` under separate actor/workflow locks | First call invokes/reaps one FD-197..216 sender marker and leaves Started; 200..210 contain runtime/credentials and 211..216 contain sealed validated application material. The second call uses the same custody for its observer, exact-compares the sending-plan identity, parses finalized evidence, and reconciles Succeeded; the third is process-free Complete. No live journal handoff, RPC, or semantic transaction yet |
 | Durable replay | Same database, registry, actor root, receipt, reservation, and command after Delivery removal | Durable actor bypasses discovery; exact Stage A/B replay returns revision 3 without replacing role artifacts |
 | Public effects | Maker application database and immutable role journals | The application database has no public-effect table; any participating effect journal must be absent or contain zero rows, and both input role journals remain byte-identical |
 
@@ -1065,7 +1073,14 @@ reopen/final-equality path-ABA concern remains production hardening rather than 
 PoC blocker; full semantic validation still occurs under the exact per-swap
 kernel lock and grants no effect authority.
 
-Runtime external resources are empty: no chain RPC, local node, Docker project, faucet, DNS, network, or funds. The process proof uses only temporary Unix sockets, SQLite, and owner-private files. This isolates application semantics from chain/finality flakiness. It does not validate Monero or LEZ behavior. The receipt-v2 route runs only its node-free marker worker. Keep semantic effect actions disabled until the selected worker has a bounded result and the route composes the exact isolated dynamic-loopback Monero and LEZ adapters.
+Runtime external resources are empty: no chain RPC, local node, Docker project,
+faucet, DNS, network, or funds. The process proof uses only temporary Unix
+sockets, SQLite, sealed memfds, and owner-private files. This isolates custody
+ABI behavior from chain/finality flakiness. It does not validate Monero or LEZ
+behavior. The receipt-v2 route still runs only its node-free marker worker.
+Keep semantic effect actions disabled until typed live-journal and
+branch-artifact authorities are present and the route composes the exact
+isolated dynamic-loopback Monero and LEZ adapters.
 
 #### Schema-v3 XMR invocation component
 
@@ -1092,7 +1107,7 @@ flowchart LR
 |---|---|---|
 | Schema-v3 loader | Retains exact effect-authority digest and workflow identity | No node or RPC opening |
 | Role-fixed selector | Admits only three Maker and three Taker sending slots | No classifier/verifier send authority |
-| Pre-authorization custody | Pins tool, runtime, ten secrets, both locks, and one FD map before workflow CAS | No semantic transaction construction |
+| Pre-authorization custody | Pins tool, runtime, ten secrets, six immutable validated application artifacts, both locks, and one FD map before workflow CAS | No live mutable-journal or branch-artifact handoff; no semantic transaction construction |
 | Workflow result | First call consumes InvokeOnce and leaves Started; second runs only the role-fixed observer and reconciles exact local evidence as Succeeded; third returns Complete without a process | No semantic transaction, actual-chain classifier, or chain publication |
 
 The real receipt-v2 Taker route proves corrupt-program and wrong-role failure

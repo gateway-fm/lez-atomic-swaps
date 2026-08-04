@@ -176,6 +176,22 @@ pub struct ValidatedXmrEffectExecutionV3 {
     pub(crate) effect: ValidatedXmrEffectAuthorityV1,
     pub(crate) workflow_identity: XmrWorkflowIdentityV1,
     pub(crate) effect_authority_sha256: [u8; 32],
+    pub(crate) application: ValidatedXmrEffectApplicationV1,
+}
+
+/// Exact immutable application material retained across semantic validation.
+///
+/// The private-role manifest and view key remain zeroizing and are never
+/// exposed through the public API or debug output. The mutable adaptor journal
+/// is deliberately excluded: effect workers use the separately held live
+/// journal authority instead of a stale provisioning-time byte snapshot.
+pub(crate) struct ValidatedXmrEffectApplicationV1 {
+    pub(crate) stage_a_wire: Vec<u8>,
+    pub(crate) stage_b_wire: Vec<u8>,
+    pub(crate) own_public_packet: Vec<u8>,
+    pub(crate) peer_public_packet: Vec<u8>,
+    pub(crate) private_manifest: Zeroizing<Vec<u8>>,
+    pub(crate) private_view_key: Zeroizing<Vec<u8>>,
 }
 
 impl fmt::Debug for ValidatedXmrEffectExecutionV3 {
@@ -188,6 +204,7 @@ impl fmt::Debug for ValidatedXmrEffectExecutionV3 {
                 "effect_authority_sha256",
                 &hex::encode(self.effect_authority_sha256),
             )
+            .field("application_material", &"[REDACTED; VALIDATED]")
             .finish_non_exhaustive()
     }
 }
@@ -1206,8 +1223,14 @@ struct ValidatedXmrRoleAuthorityV2 {
     activation_commitment: [u8; 32],
     published_stage_a: PathBuf,
     stage_a_sha256: [u8; 32],
+    stage_a_wire: Vec<u8>,
     published_stage_b: PathBuf,
     stage_b_sha256: [u8; 32],
+    stage_b_wire: Vec<u8>,
+    own_public_packet: Vec<u8>,
+    peer_public_packet: Vec<u8>,
+    private_manifest: Zeroizing<Vec<u8>>,
+    private_view_key: Zeroizing<Vec<u8>>,
     role_journal_snapshot: Zeroizing<Vec<u8>>,
 }
 
@@ -1348,8 +1371,14 @@ fn load_validated_xmr_role_authority_bytes(
         activation_commitment: activation.activation_commitment(),
         published_stage_a: manifest.published_stage_a,
         stage_a_sha256: sha256(&stage_a_wire),
+        stage_a_wire,
         published_stage_b: manifest.published_stage_b,
         stage_b_sha256: sha256(&stage_b_wire),
+        stage_b_wire,
+        own_public_packet: own_packet,
+        peer_public_packet: peer_packet,
+        private_manifest: Zeroizing::new(source_manifest),
+        private_view_key: source_view_key,
         role_journal_snapshot: Zeroizing::new(journal_snapshot),
     })
 }
@@ -1592,6 +1621,14 @@ pub fn load_validated_xmr_effect_execution_v3_bytes(
         effect,
         workflow_identity: identity,
         effect_authority_sha256,
+        application: ValidatedXmrEffectApplicationV1 {
+            stage_a_wire: legacy.stage_a_wire,
+            stage_b_wire: legacy.stage_b_wire,
+            own_public_packet: legacy.own_public_packet,
+            peer_public_packet: legacy.peer_public_packet,
+            private_manifest: legacy.private_manifest,
+            private_view_key: legacy.private_view_key,
+        },
     })
 }
 

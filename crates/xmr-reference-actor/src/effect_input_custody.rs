@@ -21,7 +21,8 @@ use zeroize::{Zeroize as _, Zeroizing};
 use lez_swap_store::{MakerActorHeldLock, PinnedChildFdPlan, PinnedExecutable};
 
 use crate::{
-    ValidatedXmrEffectAuthorityV1, XmrEffectAuthenticatedRpcV1, open_path_no_symlinks,
+    ValidatedXmrEffectAuthorityV1, XmrEffectAuthenticatedRpcV1,
+    application_provision::ValidatedXmrEffectApplicationV1, open_path_no_symlinks,
     open_private_directory,
 };
 
@@ -50,6 +51,27 @@ pub const XMR_EFFECT_ROLE_USERNAME_FD: i32 = 208;
 pub const XMR_EFFECT_ROLE_PASSWORD_FD: i32 = 209;
 /// Fixed child descriptor containing the shared-wallet file password.
 pub const XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD: i32 = 210;
+/// Fixed child descriptor containing exact validated Stage-A wire bytes.
+pub const XMR_EFFECT_STAGE_A_FD: i32 = 211;
+/// Fixed child descriptor containing exact validated Stage-B wire bytes.
+pub const XMR_EFFECT_STAGE_B_FD: i32 = 212;
+/// Fixed child descriptor containing the local role's public packet.
+pub const XMR_EFFECT_OWN_PUBLIC_PACKET_FD: i32 = 213;
+/// Fixed child descriptor containing the peer role's public packet.
+pub const XMR_EFFECT_PEER_PUBLIC_PACKET_FD: i32 = 214;
+/// Fixed child descriptor containing the validated private-role manifest.
+pub const XMR_EFFECT_PRIVATE_MANIFEST_FD: i32 = 215;
+/// Fixed child descriptor containing the validated private Monero view key.
+pub const XMR_EFFECT_PRIVATE_VIEW_KEY_FD: i32 = 216;
+
+struct PinnedXmrEffectApplicationInputsV1 {
+    stage_a: File,
+    stage_b: File,
+    own_public_packet: File,
+    peer_public_packet: File,
+    private_manifest: File,
+    private_view_key: File,
+}
 
 /// One immutable secret snapshot intended for descriptor-path child handoff.
 #[must_use]
@@ -163,6 +185,7 @@ pub struct PinnedXmrEffectInputsV1 {
     runtime_snapshot: File,
     capability: PinnedXmrEffectSecretV1,
     monero: PinnedXmrEffectMoneroCredentialsV1,
+    application: Option<PinnedXmrEffectApplicationInputsV1>,
 }
 
 impl fmt::Debug for PinnedXmrEffectInputsV1 {
@@ -176,6 +199,10 @@ impl fmt::Debug for PinnedXmrEffectInputsV1 {
             )
             .field("capability", &self.capability)
             .field("monero", &self.monero)
+            .field(
+                "application_material",
+                &self.application.as_ref().map(|_| "[REDACTED; SEALED]"),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -197,12 +224,45 @@ impl PinnedXmrEffectInputsV1 {
         &self.monero
     }
 
+    pub(crate) fn with_application_material(
+        mut self,
+        application: &ValidatedXmrEffectApplicationV1,
+    ) -> Result<Self> {
+        ensure!(
+            self.application.is_none(),
+            "XMR effect application material is already pinned"
+        );
+        self.application = Some(PinnedXmrEffectApplicationInputsV1 {
+            stage_a: seal_bytes("XMR Stage-A wire", &application.stage_a_wire)?,
+            stage_b: seal_bytes("XMR Stage-B wire", &application.stage_b_wire)?,
+            own_public_packet: seal_bytes(
+                "XMR own public role packet",
+                &application.own_public_packet,
+            )?,
+            peer_public_packet: seal_bytes(
+                "XMR peer public role packet",
+                &application.peer_public_packet,
+            )?,
+            private_manifest: seal_bytes(
+                "XMR private role manifest",
+                &application.private_manifest,
+            )?,
+            private_view_key: seal_bytes(
+                "XMR private Monero view key",
+                &application.private_view_key,
+            )?,
+        });
+        Ok(self)
+    }
+
     /// Consumes all pinned inputs into one executable-and-lock child mapping.
     ///
     /// Program FD 197, actor lock FD 198, workflow lock FD 199, runtime FD 200,
     /// capability FD 201, role-separated Monero RPC credentials FDs 202..=209,
     /// and shared-wallet file password FD 210 are installed by one command
-    /// mapping. No secret enters argv or env.
+    /// mapping. A semantically validated execution additionally installs exact
+    /// immutable application material on FDs 211 through 216. No secret enters
+    /// argv or env.
     ///
     /// # Errors
     ///
@@ -220,6 +280,7 @@ impl PinnedXmrEffectInputsV1 {
             runtime_snapshot,
             capability,
             monero,
+            application,
         } = self;
         let PinnedXmrEffectMoneroCredentialsV1 {
             daemon,
@@ -244,7 +305,7 @@ impl PinnedXmrEffectInputsV1 {
             username: role_username,
             password: role_password,
         } = role_wallet;
-        let plan = PinnedChildFdPlan::new(vec![
+        let mut descriptors = vec![
             (runtime_snapshot, XMR_EFFECT_RUNTIME_FD),
             (capability.into_snapshot(), XMR_EFFECT_CAPABILITY_FD),
             (
@@ -277,8 +338,25 @@ impl PinnedXmrEffectInputsV1 {
                 shared_wallet_file_password.into_snapshot(),
                 XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD,
             ),
-        ])
-        .context("validate XMR effect child descriptor plan")?;
+        ];
+        if let Some(application) = application {
+            descriptors.extend([
+                (application.stage_a, XMR_EFFECT_STAGE_A_FD),
+                (application.stage_b, XMR_EFFECT_STAGE_B_FD),
+                (
+                    application.own_public_packet,
+                    XMR_EFFECT_OWN_PUBLIC_PACKET_FD,
+                ),
+                (
+                    application.peer_public_packet,
+                    XMR_EFFECT_PEER_PUBLIC_PACKET_FD,
+                ),
+                (application.private_manifest, XMR_EFFECT_PRIVATE_MANIFEST_FD),
+                (application.private_view_key, XMR_EFFECT_PRIVATE_VIEW_KEY_FD),
+            ]);
+        }
+        let plan = PinnedChildFdPlan::new(descriptors)
+            .context("validate XMR effect child descriptor plan")?;
         executable
             .into_command_with_locks_and_fd_plan(actor_lock, workflow_lock, plan)
             .context("compose XMR effect command")
@@ -344,6 +422,7 @@ impl ValidatedXmrEffectAuthorityV1 {
                 role_wallet,
                 shared_wallet_file_password,
             },
+            application: None,
         })
     }
 }

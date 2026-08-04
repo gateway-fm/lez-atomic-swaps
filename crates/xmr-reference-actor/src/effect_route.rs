@@ -235,7 +235,9 @@ impl ValidatedXmrEffectExecutionV3 {
         let inputs = self
             .effect_authority()
             .pin_effect_inputs_at_use()
-            .context("pin role-fixed XMR effect inputs")?;
+            .context("pin role-fixed XMR effect inputs")?
+            .with_application_material(&self.application)
+            .context("pin validated XMR application inputs")?;
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(
@@ -313,7 +315,9 @@ impl ValidatedXmrEffectExecutionV3 {
         let inputs = self
             .effect_authority()
             .pin_effect_inputs_at_use()
-            .context("pin role-fixed XMR effect observer inputs")?;
+            .context("pin role-fixed XMR effect observer inputs")?
+            .with_application_material(&self.application)
+            .context("pin validated XMR observer application inputs")?;
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(

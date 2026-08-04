@@ -86,12 +86,12 @@ have no fabricated ATA signer.
 
 ```mermaid
 sequenceDiagram
-    participant Actor as Role-fixed swap actor
+    participant PairActor as Role-fixed swap actor
     participant Sidecar as Generated-client sidecar
     participant Escrow as LEZ escrow program
     participant Native as Authenticated transfer
     participant Token as Token and ATA programs
-    Actor->>Sidecar: Prepare exact operation and role authority
+    PairActor->>Sidecar: Prepare exact operation and role authority
     Sidecar->>Sidecar: Re-derive accounts and enforce signer role
     alt Native asset
         Sidecar->>Escrow: Ordered native accounts and instruction
@@ -103,7 +103,7 @@ sequenceDiagram
         Token-->>Escrow: Success or whole transaction fails
     end
     Escrow-->>Sidecar: Committed effect or no effect
-    Sidecar-->>Actor: Typed prepared or observed result
+    Sidecar-->>PairActor: Typed prepared or observed result
 ```
 
 ## Atomicity and security argument

@@ -39,7 +39,9 @@ pub use effect_authority::{
 #[cfg(feature = "sessions")]
 pub use effect_input_custody::{
     PinnedXmrEffectInputsV1, PinnedXmrEffectMoneroCredentialsV1, PinnedXmrEffectRpcCredentialsV1,
-    PinnedXmrEffectSecretV1,
+    PinnedXmrEffectSecretV1, XMR_EFFECT_OWN_PUBLIC_PACKET_FD, XMR_EFFECT_PEER_PUBLIC_PACKET_FD,
+    XMR_EFFECT_PRIVATE_MANIFEST_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_STAGE_A_FD,
+    XMR_EFFECT_STAGE_B_FD,
 };
 #[cfg(feature = "sessions")]
 pub use effect_route::{

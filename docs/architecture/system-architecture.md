@@ -2563,7 +2563,7 @@ flowchart TB
     Receipt["Receipt v2"] --> Claim["lez-taker claim"]
     Claim --> Loader["Schema v3 execution loader"]
     Loader --> Selector["Taker Tag14 selector"]
-    Selector --> Pin["Hash pin runtime secrets and dual locks"]
+    Selector --> Pin["Hash pin runtime, secrets, application bytes, and dual locks"]
     Pin --> Authorize["Workflow v2 durable CAS"]
     Authorize -->|Prepared| Invoke["InvokeOnce"]
     Invoke --> Sender["Tag14 sender marker"]
@@ -2580,15 +2580,19 @@ flowchart TB
 
 Program, inputs, both locks, and the complete descriptor command are validated
 before `authorize_once`, so a corrupt path, wrong role, or crossed lock cannot
-burn Prepared. InvokeOnce alone starts the sender and leaves Started. On the
+burn Prepared. ADR 0152 extends that command with sealed Stage A/B, own/peer
+packets, private-role manifest, and private view key on FDs 211 through 216;
+no stale mutable-journal snapshot is passed. InvokeOnce alone starts the sender
+and leaves Started. On the
 second claim, ObserveOnly starts only the role-fixed observer from Started or
 Unknown, exact-compares the original sending-plan identity, parses bounded
 step-exact output, locally derives the evidence source, and reconciles
 Succeeded. Prepared and Succeeded cannot start the observer; observer failure
 changes no journal state. The third claim reads Complete and starts no process.
 The solid route is fixed-local process evidence only. The dashed RPC edge is not
-invoked: no semantic tag-14 construction, chain submission, node interaction,
-or actual-chain finality proof exists at this checkpoint.
+invoked: no typed live-journal or branch-produced artifact handoff, semantic
+tag-14 construction, chain submission, node interaction, or actual-chain
+finality proof exists at this checkpoint.
 
 #### Actual local components and RPCs
 
@@ -3211,11 +3215,11 @@ signers.
 
 ```mermaid
 sequenceDiagram
-    participant Actor as Role-fixed actor
+    participant PairActor as Role-fixed actor
     participant Sidecar as Generated-client sidecar
     participant Escrow as LEZ escrow
     participant Custody as Native or Token and ATA program
-    Actor->>Sidecar: Exact operation and role authority
+    PairActor->>Sidecar: Exact operation and role authority
     Sidecar->>Sidecar: Derive accounts and enforce signer role
     Sidecar->>Escrow: Ordered instruction and accounts
     Escrow->>Custody: Validate and transfer in same transaction
@@ -3226,7 +3230,7 @@ sequenceDiagram
         Custody-->>Escrow: Error
         Escrow-->>Sidecar: Whole LEZ transaction rolls back
     end
-    Sidecar-->>Actor: Typed result
+    Sidecar-->>PairActor: Typed result
 ```
 
 This preserves atomicity inside each LEZ transaction: escrow metadata and the

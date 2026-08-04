@@ -37,19 +37,24 @@ const TAKER_OWNER: &str = "15151515151515151515151515151515151515151515151515151
 const MAKER_OWNER: &str = "2424242424242424242424242424242424242424242424242424242424242424";
 const WORKER: &[u8] = br#"#!/bin/sh
 set -eu
-for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210; do
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216; do
     test -e "/proc/self/fd/$fd"
 done
-test ! -e /proc/self/fd/211
+test ! -e /proc/self/fd/217
+if test "${XMR_TEST_EMIT_APPLICATION_HASHES:-}" = "1"; then
+    for fd in 211 212 213 214 215 216; do
+        sha256sum "/proc/self/fd/$fd" | cut -d ' ' -f 1
+    done
+fi
 "#;
 const OBSERVER: &[u8] = br#"#!/bin/sh
 set -eu
 test "$#" -eq 2
 test "$1" = "--xmr-workflow-step"
-for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210; do
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216; do
     test -e "/proc/self/fd/$fd"
 done
-test ! -e /proc/self/fd/211
+test ! -e /proc/self/fd/217
 printf '{"schema_version":1,"step":"%s","state":"pending"}\n' "$2"
 "#;
 
@@ -129,6 +134,7 @@ struct RouteFixture {
     worker: PathBuf,
     effect_bytes: Vec<u8>,
     manifest_bytes: Vec<u8>,
+    application_sha256: Vec<String>,
 }
 
 fn actor_binary() -> &'static str {
@@ -836,6 +842,21 @@ fn route_fixture() -> RouteFixture {
     )
     .expect("publish schema-v3 effect manifest");
     let manifest_bytes = fs::read(effect_manifest).expect("read schema-v3 effect manifest");
+    let application_sha256 = [
+        taker_actor.stage_a_file().to_path_buf(),
+        taker_actor.stage_b_file().to_path_buf(),
+        material.taker_packet.clone(),
+        material.maker_packet.clone(),
+        material.taker_root.join("manifest.json"),
+        material.taker_root.join("monero-view.key"),
+    ]
+    .iter()
+    .map(|path| {
+        hex::encode(Sha256::digest(
+            fs::read(path).expect("read application input"),
+        ))
+    })
+    .collect();
 
     RouteFixture {
         _material: material,
@@ -845,6 +866,7 @@ fn route_fixture() -> RouteFixture {
         worker,
         effect_bytes,
         manifest_bytes,
+        application_sha256,
     }
 }
 
@@ -900,7 +922,21 @@ fn taker_tag14_effect_route_pins_before_authorizing_and_never_rearms() {
         }
     };
     assert!(first_plan.iter().any(|byte| *byte != 0));
-    assert!(command.status().expect("run pinned Tag14 worker").success());
+    let output = command
+        .env("XMR_TEST_EMIT_APPLICATION_HASHES", "1")
+        .output()
+        .expect("run pinned Tag14 worker");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .expect("ASCII application hashes")
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+        fixture.application_sha256,
+        "child descriptors must contain the exact validated application bytes"
+    );
 
     let reopened = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
