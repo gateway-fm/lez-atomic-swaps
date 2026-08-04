@@ -25,6 +25,7 @@ materially affect safe reproduction.
 - [Independent review scope and reproducible handoff](review-scope.md)
 - [Finding severity and remediation register](findings-register.md)
 - [Machine-auditable hard-requirement inventory](hard-requirements.tsv)
+- [Machine-auditable submission-requirement inventory](submission-requirements.tsv)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)
@@ -49,6 +50,11 @@ work is active. The release-candidate command
 repository-owned `open` row; approved public-evidence policy and Logos-owned
 upstream disclosures remain visible without masquerading as implementation
 work.
+
+`./scripts/test-m7-submission-requirements-audit.sh` applies the same rule to
+S1–S13 and D1. Its strict self-closure mode is
+`M7_REQUIRE_SELF_CLOSED=1`; only S12 and S13 may use `external-review`, so no
+other unfinished item can be mislabeled as somebody else's blocker.
 
 ```mermaid
 flowchart LR

@@ -18,6 +18,7 @@ required_files=(
   docs/milestone-7/review-scope.md
   docs/milestone-7/findings-register.md
   docs/milestone-7/hard-requirements.tsv
+  docs/milestone-7/submission-requirements.tsv
   docs/milestone-7/doc-packets/btc-sdk.md
   docs/milestone-7/doc-packets/xmr-sdk.md
   docs/milestone-7/doc-packets/zec-sdk.md
@@ -97,6 +98,8 @@ rg -Fq "doc-packet.yml" docs/milestone-7/README.md \
   || fail "M7 README does not name the template"
 rg -Fq "M7_REQUIRE_CLOSED=1" docs/milestone-7/README.md \
   || fail "M7 README does not document strict hard-requirement closure"
+rg -Fq "M7_REQUIRE_SELF_CLOSED=1" docs/milestone-7/README.md \
+  || fail "M7 README does not document strict submission self-closure"
 
 # The temporary authority capture is useful during development but is not a CI
 # dependency. When it exists, prove the recorded source was not edited locally.

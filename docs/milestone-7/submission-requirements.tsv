@@ -1,0 +1,15 @@
+id	state	gate_script	evidence	remaining
+S1	policy-deferred	./scripts/verify-lez-v02-local-stack-contract.sh	docs/requirements-traceability.md	ADR-0023 permits exact local v0.2 deployment evidence while public deployment and smoke remain unclaimed
+S2	green	./scripts/test-m4-lez-local-deployment-contract.sh	docs/requirements-traceability.md	none
+S3	open	./scripts/test-ci-hardening-policy.sh	docs/requirements-traceability.md	Observe or reproduce every required default-branch job on the exact review-candidate commit
+S4	open	./scripts/test-m7-hard-requirements-audit.sh	docs/milestone-7/hard-requirements.tsv	Close all 19 repository-owned F U R P rows and run strict mode
+S5	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Complete daemon-owned all-pair reference journeys plus dependency and concurrency composition
+S6	green	./scripts/check-requirements-traceability.sh	docs/requirements-traceability.md	none
+S7	green	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/mainnet-readiness.md	none
+S8	open	./scripts/test-m4-xmr-agreement-contract.sh	docs/requirements-traceability.md	Full-lifecycle XMR public API errors docs doctest and external-wiring example
+S9	green	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/README.md	none
+S10	green	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/README.md	none
+S11	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
+S12	external-review	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/review-scope.md	Mutually agreed independent on-chain review report and remediation closure
+S13	external-review	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/review-scope.md	Mutually agreed independent protocol review report and remediation closure
+D1	open	./scripts/test-m3-private-demo-video-contract.sh	docs/requirements-traceability.md	Generate and verify happy refund and concurrent videos for XMR and ZEC
