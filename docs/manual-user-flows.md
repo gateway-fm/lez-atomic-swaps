@@ -7778,15 +7778,21 @@ sequenceDiagram
     Z-->>R: Canonical exact-once inclusion
 ```
 
-The atomicity argument and its limits are recorded in ADR 0144. Until a fresh
-run completes, this subsection is a reproduction procedure, not evidence that
-both service-driven legs are certified.
+The atomicity argument and its limits are recorded in ADRs 0144 and 0145.
+Fresh pushed-commit run `m6refund8f76d87a` followed this procedure on
+new LEZ run `m6lez8f76d87a` and new Zebra run
+`m6refundzec8f76d87b`. LEZ Refund `c43df1bb...dcf5ad` finalized
+exactly once at block 129 before Maker Zcash Refund
+`db066a94...5ab470` appeared exactly once in canonical block 110. All
+three application views reached `refunded`, the opposite Claim conflicted,
+and terminal replay changed neither chain. The run took 211.530 seconds. See
+`docs/evidence/m6-zec-service-refund-certificate-20260804.json`.
 
-The next fresh reproduction must also exercise ADR 0145. After the LEZ Refund
-is finalized and the parent restarts Maker recovery, the runner must emit the
-same parent handoff without invoking another Taker action RPC until the Zcash
-refund is mined. The later terminal replay must resume Taker observation and
-reach `refunded`. Inspect the retained runner and actor configs:
+Every new reproduction must exercise the same ADR 0145 boundary. After the LEZ
+Refund is finalized and the parent restarts Maker recovery, the runner emits
+the same parent handoff without invoking another Taker action RPC until the
+Zcash refund is mined. The later terminal replay resumes Taker observation and
+must reach `refunded`. Inspect the retained runner and actor configs:
 
 ```bash
 rg -n 'M6_SERVICE_ACTION_TIMEOUT_MS|M6_REFUND_SUPERVISOR_ATTEMPT_TIMEOUT_MS' \
@@ -7821,7 +7827,12 @@ private receipt/actor files, role-state lock, and local status projection; they
 do not read Delivery or Chat and use unit chain ports.
 Those pre-effect flows need no Docker, chain node, wallet, faucet, peer, DNS,
 public funds, or external finality service. Placeholder loopback endpoints in
-read-only actor configs are never contacted. The actual Claim flow separately uses a run-isolated LEZ v0.2 sequencer,
+read-only actor configs are never contacted. The certified Refund flow used
+fresh run-isolated LEZ v0.2 Bedrock, sequencer, and indexer at dynamic loopback
+ports 32821 through 32823 and fresh primary-only Zebra Regtest at 32824.
+Deterministic genesis/Vault allocations and Regtest outputs supplied funds; no
+public RPC, faucet, public funds, public deployment, or provider fallback was
+used. The actual Claim flow separately uses a run-isolated LEZ v0.2 sequencer,
 indexer, and Bedrock plus primary-only Zebra Regtest on dynamic
 literal-loopback RPCs. New manual reproductions must use fresh uniquely named
 stacks. Certificate `m6cert20260803164006` instead reused already isolated LEZ

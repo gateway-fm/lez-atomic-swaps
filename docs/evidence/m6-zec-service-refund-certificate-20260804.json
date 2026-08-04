@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "milestone": "M6",
+  "evidence_kind": "service_driven_zec_refund_local_certificate",
+  "date_utc": "2026-08-04",
+  "source": {
+    "commit": "8f76d87dbfbd7d4e94f65a40f6c7fb3f009097cb",
+    "branch": "main",
+    "origin_main_equal_at_start": true,
+    "worktree_clean_at_start": true
+  },
+  "run": {
+    "run_id": "m6refund8f76d87a",
+    "direction": "taker_sells_lez",
+    "journey": "refund",
+    "result": "completed",
+    "elapsed_milliseconds_from_provisioning": 211530,
+    "drive_rounds": 91,
+    "same_run_drive_retries": 0
+  },
+  "fresh_lez": {
+    "run_id": "m6lez8f76d87a",
+    "compose_project": "lez-atomic-swaps-lez-v02-m6lez8f76d87a",
+    "bedrock_rpc": "http://127.0.0.1:32821",
+    "sequencer_rpc": "http://127.0.0.1:32822",
+    "indexer_rpc": "http://127.0.0.1:32823",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_hash": "c2a374205ac35cba15466d1345af63c83670dfa5e1d4171b1bfa4b6ce544b673",
+    "escrow_program_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433",
+    "deployment_transaction_id": "f5f4e7a15c1c87333cc69be9392e0fa576bdb25ca0fad45c127fa16e51cd0b5c",
+    "deployment_block_id": 84,
+    "deployment_block_hash": "2241a14712ccf8c4e861f78b2c85415a32e564c1c473bf7ead9dd32acc295004",
+    "deployment_occurrences": 1,
+    "maker_vault_claim_block_id": 91,
+    "taker_vault_claim_block_id": 96,
+    "service_restart_counts": [0, 0, 0]
+  },
+  "fresh_zebra": {
+    "run_id": "m6refundzec8f76d87b",
+    "compose_project": "lez-atomic-swaps-m6refundzec8f76d87b",
+    "rpc": "http://127.0.0.1:32824",
+    "genesis_hash": "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327",
+    "initial_height": 104,
+    "initial_tip": "f82b0bab245ae53a4dac25cff68b35502e3b2c6e9038d84fe3a7c46a616cfe15",
+    "maturity_generate_calls": 1,
+    "maturity_blocks": 104,
+    "final_height": 110,
+    "restart_count": 0
+  },
+  "service_authority": {
+    "owner": "owner_taker_service",
+    "refund_generation": 2,
+    "first_was_replay": false,
+    "exact_replay_was_replay": true,
+    "opposite_claim_error_code": -32017,
+    "opposite_claim_error_category": "taker_action_conflict",
+    "transient_count": 0
+  },
+  "atomic_order_observed": [
+    "zcash_funded_and_confirmed",
+    "lez_refund_finalized",
+    "zcash_refund_submitted_and_confirmed"
+  ],
+  "maker_lock_reconciliation": {
+    "authority": "direct_observation_only",
+    "phase": "both_legs_locked",
+    "revision": 2,
+    "zebra_height_before": 106,
+    "zebra_height_after": 106,
+    "mempool_before": [],
+    "mempool_after": [],
+    "new_chain_effect": false
+  },
+  "lez_refund": {
+    "transaction_id": "c43df1bbac5b9aa051760b4679275c50031341deab772db19b3f2ee291dcf5ad",
+    "containing_block_id": 129,
+    "containing_block_hash": "107843935d37c432543a77df85915a17cd1e235fd5019c4c9965d942fd7a2c38",
+    "bedrock_status": "Finalized",
+    "occurrences": 1
+  },
+  "zcash_refund": {
+    "transaction_id": "db066a94221e19dd4de8dd0de1377f51c394fa43d915991e0ce76255715ab470",
+    "containing_block_height": 110,
+    "containing_block_hash": "57330b49f0d74e3b537b571986583b10ceccb290f9821498f45df2215625432c",
+    "canonical_hash_equal": true,
+    "occurrences": 1
+  },
+  "terminal": {
+    "maker_phase": "refunded",
+    "maker_revision": 4,
+    "taker_phase": "refunded",
+    "taker_revision": 4,
+    "service_state": "refunded",
+    "service_generation": 4,
+    "ordered_lez_submission_trace_unchanged_on_replay": true,
+    "zebra_height_before_replay": 110,
+    "zebra_height_after_replay": 110,
+    "zebra_mempool_before_replay": [],
+    "zebra_mempool_after_replay": [],
+    "canonical_lez_refund_revalidated": true,
+    "canonical_zcash_refund_revalidated": true
+  },
+  "evidence_sha256": {
+    "result": "0729ada2b914e73af289f2816640610ede53d2299dd77e94b037e885528c14df",
+    "deployment": "d7329f48b30a20a36c655ef7b2db5b5478f5dbebe4e543341c2dbc7222aa7ddf",
+    "deployment_finality": "4308050f3c52bab71d1fa5f2b54c9c272702d222cdee58cedeb098de8122fa9c",
+    "onboarding": "f019a62e2f1b267b3939223397a3467c9d3ae473b5c56b313f58ec18be05d29f",
+    "maker_lock_reconciliation": "e199723dffdcf3b5010d457c0be6e6f92ea357988c79d8568157f70f19749d20",
+    "lez_refund_finality": "8b397bb36b42557cf5c746d8821ee38b20b58f5212bb66a657b000adbf3f2627",
+    "zcash_refund_inclusion": "13be262fa8a96f2fb6d806e642d111338549e9f1fec0e65b8d31c06f78c997f9",
+    "terminal_no_effect": "9b86a2203ac744a9a14ce79f9799f9fcfce30e8dbeda89f67560d96c307bcdf7"
+  },
+  "external_resources": {
+    "runtime": ["isolated_local_lez_v0_2", "isolated_local_zebra_regtest"],
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false,
+    "automatic_provider_fallback": false
+  },
+  "claim_scope": "Conditional cross-chain atomicity under canonical local-chain observations, ordered timelocks, durable one-winner authorization, and actor/sidecar at-most-once journals; not a distributed atomic commit or future-reorg proof."
+}

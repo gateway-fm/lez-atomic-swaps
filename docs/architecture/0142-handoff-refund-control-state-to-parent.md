@@ -1,6 +1,6 @@
 # ADR 0142: Handoff Refund control state to the parent
 
-- Status: Accepted; executable runner contract GREEN, actual-node proof pending
+- Status: Accepted; executable runner contract and fresh actual-node proof GREEN
 - Date: 2026-08-03
 - Scope: M6 service-driven ZEC Refund runner authority and liveness
 - Extends: ADRs 0137, 0140, and 0141
@@ -101,5 +101,6 @@ Refund branch without losing its durable control state.
 - The executable contract covers pending, finalized, exact replay,
   replaced-generation, and regressive-finality cases.
 - No chain deadline, block cadence, per-call timeout, or outer ceiling changes.
-- Run `m6refund734db82a` remains quarantined; a fresh isolated-node Refund
-  certificate is still required.
+- Run `m6refund734db82a` remains quarantined. Fresh run `m6refund8f76d87a`
+  closes the isolated-node proof; see
+  [`m6-zec-service-refund-certificate-20260804.json`](../evidence/m6-zec-service-refund-certificate-20260804.json).

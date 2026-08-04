@@ -1,6 +1,6 @@
 # ADR 0145: Serialize Refund observation and layer local timeouts
 
-- Status: Accepted; executable and actor-config regressions GREEN, fresh actual-node proof pending
+- Status: Accepted; executable, actor-config, and fresh actual-node Refund proof GREEN
 - Date: 2026-08-04
 - Scope: M6 service-driven ZEC Refund liveness without weakening chain evidence
 - Extends: ADRs 0138, 0139, 0141, 0142, 0143, and 0144
@@ -119,6 +119,23 @@ signed refund deadline, chain cadence, discovery window, finality test,
 generation fence, request identity, or 300-second fail-safe. A timeout remains
 uncertain observation and never proves absence.
 
+## Actual-node result
+
+Fresh run `m6refund8f76d87a` completed from pushed commit `8f76d87` in
+211.530 seconds. It used fresh LEZ run `m6lez8f76d87a` and fresh Zebra
+run `m6refundzec8f76d87b`, all on dynamic loopback endpoints with zero
+container restarts. LEZ Refund `c43df1bb...dcf5ad` finalized exactly once
+in block 129. Maker then submitted Zcash Refund
+`db066a94...5ab470`, which appeared exactly once in canonical block 110.
+
+Maker, Taker, and service all reached `refunded`. The initial Taker Refund
+returned replay false; exact replay returned true; the opposite Claim returned
+the durable conflict; the transient log was empty. Terminal replay preserved
+the ordered LEZ submission trace, Zebra height 110, and empty Zebra mempool,
+then revalidated both canonical blocks. The secret-free retained packet is
+[m6-zec-service-refund-certificate-20260804.json](../evidence/m6-zec-service-refund-certificate-20260804.json).
+No public RPC, faucet, public funds, or public deployment participated.
+
 ## Consequences
 
 - The executable contract proves the quiescent branch invokes neither the
@@ -128,8 +145,7 @@ uncertain observation and never proves absence.
 - The local actor-config regression is GREEN at 60 seconds.
 - Run `m6refund43f2cbca` remains quarantined; it diagnosed liveness but did not
   complete both legs.
-- A fresh LEZ deployment, fresh role allocations, and fresh Zebra Regtest
-  funds are required for the certificate.
+- Fresh run `m6refund8f76d87a` certifies the service-driven Refund path.
 - Production should add historical-state batching or caching, coalesce
   identical in-flight observations, and enforce shared indexer concurrency.
   Those Logos v0.2 performance limitations are recorded upstream-release

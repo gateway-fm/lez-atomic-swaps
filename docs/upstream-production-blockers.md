@@ -1,6 +1,6 @@
 # Upstream blockers to production
 
-Last upstream recheck: 2026-07-31; milestone disposition updated: 2026-07-31
+Last upstream recheck: 2026-08-04; milestone disposition updated: 2026-08-04
 
 This register contains live-release blockers owned by upstream projects or
 services. Logos-owned items follow ADR 0018; other third-party items remain
@@ -32,6 +32,7 @@ milestone must close or explicitly accept every open item.
 | LOGOS-021 | RFP-003 and issue #112 require a Logos C-API price source, but neither authority identifies an immutable module, ABI version, ownership contract, error model, or release artifact | A fixture can validate memory and failure safety, but cannot prove compatibility with the eventual production price module or its availability/staleness semantics | GREEN local sub-slice: a fixed-width provisional v1 ABI, actual-C worker, and bounded parent fail closed on invalid/stale/unavailable data, aborts, hangs, output overflow, and artifact drift. Bind accepted quotes into durable signed offers; selecting and live-testing the upstream module remains a production gate | Logos names and releases an immutable supported C-API module/ABI and the adapter passes authorized live compatibility and outage tests, or production review explicitly accepts a different audited source |
 | LOGOS-022 | Official LEZ v0.2 indexer finalized-history surface at commit `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a` | The progressive bounded reader can verify by-ID/by-hash linkage and pin the endpoint inside the requested finalized prefix, but the indexer supplies no snapshot token or proof tying an older completed prefix endpoint to the current finalized head. A consistently faulty authoritative indexer could therefore present a self-consistent historical fork. | Treat the indexer as an authoritative local PoC dependency, never describe its facts as consensus proofs, validate every returned block/transaction/account fact and exact request envelope, require only exact positive evidence for lifecycle projection, and keep prefix misses non-absent. Exact-byte one-attempt journals bound duplicate effects. This Logos limitation is nonblocking for private local milestone certification under ADR 0018. | Logos provides proof-bearing finalized ancestry or an authenticated snapshot token/checkpoint with a reviewed verification recipe; otherwise release review explicitly accepts the authoritative-indexer trust model and its monitoring/operational controls. |
 | LOGOS-023 | Official external LEZ v0.2/RISC Zero source lock at commit `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a`, retained locally at `/tmp/lez-v020-native-investigation/Cargo.lock`, resolves `ruint 1.17.2` | `RUSTSEC-2026-0220` affects `ruint` before 1.20.0. The exact upstream source graph behind the pinned LEZ service provenance therefore remains advisory-positive even when repository-owned compatibility locks are remediated. Reachability of the affected shift and formatting paths in the hash-pinned prebuilt services has not been proven, so an advisory-clean production claim is blocked. | Keep the official runtime confined to the isolated private local profile, pin and hash-check its source commit and service artifacts, and disclose the advisory without using it to waive repository-controlled findings. Under ADR 0018 this Logos-owned graph is nonblocking for the exact local M5 PoC, but it remains release-blocking. | Logos publishes a compatible immutable LEZ/RISC Zero graph resolving `ruint >=1.20.0` and the exact production artifacts pass a current advisory audit, or release review explicitly accepts a documented reachability and residual-risk analysis. |
+| LOGOS-024 | Official LEZ v0.2 indexer `getAccountAtBlock` implementation at commit `a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a` | Each historical account request reconstructs state from genesis, with no atomic multi-account batch, cache, or shared observation coalescing. Repeated block-157 reads measured 10.84 and 11.39 seconds. A Refund observation needs two sequential account phases for Maker and up to three for Taker, so concurrent recovery can oversubscribe the local indexer and violate otherwise valid caller deadlines as chain history grows. | ADR 0145 serializes the already-finalized Taker observation behind Maker recovery and uses bounded 60/75/90-second local actor/supervisor/service layers inside a 300-second corridor. It retains containing-block and finalized-tip checks, fails closed on timeout, and completed fresh local certificate `m6refund8f76d87a`. This Logos-owned performance limitation does not block local milestone certification. | Logos provides a supported atomic multi-account historical snapshot API plus indexed/cached state access and documented concurrency/latency bounds, or production review validates an equivalent shared batching, cache, and in-flight coalescing layer under realistic chain history and load. |
 The 2026-07-21 actual local claim did not close any upstream production
 
 blocker. The omitted-empty Monero `connections` response was handled by a
@@ -58,10 +59,10 @@ cannot confuse the corrected finding with a live upstream blocker.
 
 ## Milestone use
 
-An M2, M3, or M5 evidence packet may list these items as open while certifying the
-exact repository-controlled implementation. In particular, LOGOS-017 and
-LOGOS-023 do not block deterministic or local milestone certification under the
-owner policy; they remain production-release caveats. The required M3 actual-node refund
+An M2, M3, M5, or M6 evidence packet may list these items as open while
+certifying the exact repository-controlled implementation. In particular,
+LOGOS-017, LOGOS-023, and LOGOS-024 do not block deterministic or local
+milestone certification under the owner policy; they remain production-release caveats. The required M3 actual-node refund
 evidence is independently GREEN and is not waived by that exception. These upstream items
 may not be used to waive canonical adapter validation, reorg/restart safety, complete role effects, independent
 actor tests, or the composed corridor. M7 production readiness revisits the

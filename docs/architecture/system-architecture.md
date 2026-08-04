@@ -1,6 +1,6 @@
 # System architecture and actor flows
 
-Status: Living target architecture — 2026-08-03
+Status: Living target architecture — 2026-08-04
 
 This is the canonical whole-system view. ADRs record why individual choices
 were made; this document shows how the choices compose into the product that
@@ -80,6 +80,11 @@ XMR capability remains effect-checkpoint-only. Certification run
 the owner service against actual local LEZ v0.2 and Zebra Regtest. Exact replay
 returns the durable action commit and reconciles the same single Zebra
 transaction; it does not create another submission.
+Fresh pushed-commit run `m6refund8f76d87a` also drove the
+service Refund on wholly fresh LEZ and Zebra stacks. LEZ finalized the Taker
+Refund exactly once before parent-owned Maker recovery submitted the Zcash
+Refund exactly once; all views reached `refunded`, and terminal replay changed
+neither chain.
 
 ```mermaid
 flowchart TB
@@ -193,6 +198,41 @@ sequenceDiagram
     Z-->>A: Local confirmation
     A-->>S: Completed
 ```
+
+```mermaid
+sequenceDiagram
+    actor U as Taker user
+    participant S as Owner Taker service
+    participant R as Taker registry
+    participant TA as Taker ZEC actor
+    participant L as Local LEZ v0.2
+    participant P as Parent recovery loop
+    participant MA as Maker ZEC actor
+    participant Z as Zebra Regtest
+
+    U->>S: Refund at observed generation G
+    S->>R: Durably admit sole Refund winner
+    S->>TA: Execute Refund under per-swap lock
+    TA->>L: Submit exact LEZ Refund
+    L-->>P: Exact Refund finalized
+    P->>MA: Start Maker recovery after finality
+    Note over S,TA: Taker action reconciliation yields during Maker recovery
+    MA->>L: Discover finalized Refund with pinned account state
+    MA->>Z: Submit exact journaled Zcash Refund
+    Z-->>P: Canonical exact-once inclusion
+    P->>S: Resume terminal Refund replay
+    S->>TA: Reconcile exact finalized journal
+    S-->>U: Refunded with no new chain effect
+```
+
+This Refund order is conditionally atomic: the sole terminal winner is durable
+before effect I/O, LEZ recovery is finalized before Maker receives Zcash
+recovery authority, and exact journals make every retry observation or replay
+rather than a new send. Temporarily yielding Taker observation cannot suppress
+a legitimate Taker effect because its sole Refund is already finalized and
+Claim is excluded. Acceptance still requires one canonical effect on each
+chain and terminal replay with no new effect. This is not a distributed atomic
+commit or a proof against future public-chain reorganization.
 
 The process split is an authority boundary, not merely a UI detail. There is
 no Taker-service edge to the Maker owner RPC. Fresh Taker initiation reaches

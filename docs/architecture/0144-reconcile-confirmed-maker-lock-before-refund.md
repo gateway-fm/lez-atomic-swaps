@@ -1,6 +1,6 @@
 # ADR 0144: Reconcile the confirmed Maker lock before Refund
 
-- Status: Accepted; executable runner contract GREEN, actual-node proof pending
+- Status: Accepted; executable runner contract and fresh actual-node proof GREEN
 - Date: 2026-08-04
 - Scope: M6 service-driven ZEC Refund state projection and recovery
 - Extends: ADRs 0137, 0141, 0142, and 0143
@@ -123,5 +123,5 @@ and independent production review.
   or actor calls, moving tips, and nonempty mempools.
 - Run `m6refund7be4428a` remains quarantined. It proves the missing-projection
   diagnosis, not a completed Refund.
-- A fresh isolated-node Refund certificate and subsequent Claim regression are
-  still required.
+- Fresh run `m6refund8f76d87a` closes the isolated-node Refund proof; see
+  [`m6-zec-service-refund-certificate-20260804.json`](../evidence/m6-zec-service-refund-certificate-20260804.json). The subsequent Claim regression remains required.

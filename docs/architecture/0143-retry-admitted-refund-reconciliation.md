@@ -1,6 +1,6 @@
 # ADR 0143: Retry admitted Refund reconciliation
 
-- Status: Accepted; executable runner contract GREEN, actual-node proof pending
+- Status: Accepted; executable runner contract and fresh actual-node proof GREEN
 - Date: 2026-08-03
 - Scope: M6 service-driven ZEC Refund reconciliation liveness
 - Extends: ADRs 0137, 0140, 0142
@@ -61,17 +61,17 @@ sequenceDiagram
     participant Parent as Parent runner
     participant Service as Taker service
     participant Registry as Action registry
-    participant Actor as Taker actor
+    participant TA as Taker actor
     participant Sidecar as LEZ sidecar
 
     User->>Parent: Continue admitted Refund
     Parent->>Service: Same request and generation
     Service->>Registry: Resolve durable winner
     Registry-->>Service: Same Refund
-    Service->>Actor: Reconcile exact action
-    Actor->>Sidecar: Observe finalized state
-    Sidecar-->>Actor: Moving tip transient
-    Actor-->>Service: Dependency unavailable
+    Service->>TA: Reconcile exact action
+    TA->>Sidecar: Observe finalized state
+    Sidecar-->>TA: Moving tip transient
+    TA-->>Service: Dependency unavailable
     Service-->>Parent: Fixed error envelope
     Parent->>Parent: Persist transient and retain handoff
     Parent->>Service: Retry in later bounded round
@@ -97,5 +97,6 @@ fatal, and the global monotonic ceiling prevents unbounded retry.
 - The change adds no new timeout, mining, signing, or submission authority.
 - The outer fail-safe changed from 190 to 300 seconds; protocol and per-call
   limits did not change and successful execution does not wait for the ceiling.
-- Run `m6refund5320572a` remains quarantined; a fresh isolated-node Refund
-  certificate is still required.
+- Run `m6refund5320572a` remains quarantined. Fresh run `m6refund8f76d87a`
+  closes the isolated-node proof; see
+  [`m6-zec-service-refund-certificate-20260804.json`](../evidence/m6-zec-service-refund-certificate-20260804.json).

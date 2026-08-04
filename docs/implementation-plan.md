@@ -5863,22 +5863,28 @@ of 90 seconds below the unchanged 300-second corridor. It retains both
 containing-block and finalized-tip account checks. The effect-bearing run is
 quarantined and all funds, identities, and evidence must be fresh again.
 
+Fresh pushed-commit run `m6refund8f76d87a` then completed in 211.530
+seconds on wholly fresh LEZ deployment/onboarding `m6lez8f76d87a` and
+Zebra `m6refundzec8f76d87b`. It finalized LEZ Refund
+`c43df1bb...dcf5ad` exactly once at block 129, then confirmed Maker-owned
+Zcash Refund `db066a94...5ab470` exactly once in canonical block 110.
+Maker, Taker, and service reached `refunded`; the opposite Claim conflict
+and exact replay were durable; the transient log was empty; terminal replay
+changed neither chain and revalidated both inclusions. The retained packet is
+`docs/evidence/m6-zec-service-refund-certificate-20260804.json`.
+
 Next in order:
 
-1. commit and push the ADR 0145 liveness slice;
-2. run a wholly fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund
-   journey with fresh role funds;
-3. retain exact Zcash transaction-to-block inclusion plus post-terminal replay
-   evidence with no new LEZ or Zcash effect;
-4. rerun the Claim journey after the shared runner changes;
-5. update retained evidence, milestone metrics, and the
-   upstream production-blocker ledger; and
-6. after explicit prototype owner signoff, build the Maker and Taker Basecamp
+1. commit and push the Refund certificate, architecture/RPC inventory,
+   evidence metrics, and upstream blocker update;
+2. rerun the Claim journey on fresh nodes after the shared local actor timeout
+   change;
+3. after explicit prototype owner signoff, build the Maker and Taker Basecamp
    QML packages, QtRO hosts, and actor-real UI E2E before final M6 gates/tag.
 
 The measured Logos v0.2 historical-account latency, per-account genesis
 reconstruction, and lack of a batched multi-account-at-block RPC are recorded
-upstream production-performance items. They do not block local milestone
+as LOGOS-024. They do not block local milestone
 certification under the accepted Logos-owned dependency policy. Shared
 concurrency control, caching, and coalescing identical in-flight repeatable
 observations remain production hardening.

@@ -234,6 +234,19 @@ preserves the strict parent handoff, and fails open to normal reconciliation
 when any predicate edge changes. The run is quarantined and cannot certify
 either leg. A wholly fresh Refund certificate is still required.
 
+Fresh pushed-commit run `m6refund8f76d87a` now closes that certificate.
+It used new LEZ deployment/onboarding run `m6lez8f76d87a` and new Zebra
+run `m6refundzec8f76d87b`, all with zero restarts and deterministic local
+funds. LEZ Refund `c43df1bb...dcf5ad` finalized exactly once in block 129
+before Maker's Zcash Refund `db066a94...5ab470` appeared exactly once in
+canonical block 110. Maker, Taker, and service reached `refunded`; opposite
+Claim was rejected; the transient log was empty; exact terminal replay changed
+neither the LEZ submission trace nor Zebra height 110 and empty mempool. The
+run completed in 211.530 seconds without a public RPC, faucet, public funds, or
+public deployment. The retained secret-free packet is
+[the M6 Refund certificate](docs/evidence/m6-zec-service-refund-certificate-20260804.json).
+The service-driven Claim regression and literal Basecamp UI outputs remain.
+
 Earlier run `m6refund7be4428a` consumed the 190-second
 provision-to-completion ceiling when the transient response arrived, leaving no
 later bounded round. The current outer
