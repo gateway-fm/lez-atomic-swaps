@@ -606,6 +606,16 @@ Receipt-v2 authority wiring and marker replacement remain open. Reproduction,
 components, sequence, and the conditional-atomicity limit are in
 [ADR 0155](docs/architecture/0155-invoke-the-xmr-release-worker-through-sealed-descriptors.md).
 
+Receipt authority is now versioned before that worker can be selected. Schema
+1 remains the existing marker-only profile. Schema 2 is Taker-only and requires
+the release-worker v2 ABI, a distinct release-only sidecar/capability, local or
+exact-pinned finalized indexer, encrypted-journal directory, protection-key
+file, and key identifier as one canonical authority. Downgrade, omission,
+public-local endpoints, capability/path aliasing, and a changed public origin
+fail closed. This is an authority checkpoint only: it reads no release secret,
+does not invoke the worker, and consumes no workflow CAS. See
+[ADR 0156](docs/architecture/0156-version-the-tag14-release-authority.md).
+
 That first checkpoint is deliberately zero-effect: it starts no Monero or LEZ
 node, opens no chain RPC, and uses no Docker service, faucet, DNS, network, or
 funds. [Flow 1P](docs/manual-user-flows.md#flow-1p-repeat-the-xmr-role-process-pre-effect-checkpoint)

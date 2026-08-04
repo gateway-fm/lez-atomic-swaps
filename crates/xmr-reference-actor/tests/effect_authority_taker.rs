@@ -12,7 +12,9 @@ use lez_swap_core::SwapId;
 use lez_swap_store::MakerActorHeldLock;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use xmr_reference_actor::{ActorRole, load_validated_xmr_effect_authority_bytes};
+use xmr_reference_actor::{
+    ActorRole, XmrTag14ReleaseNodeProfileV1, load_validated_xmr_effect_authority_bytes,
+};
 
 const SWAP: [u8; 32] = [0x81; 32];
 const AGREEMENT: [u8; 32] = [0x82; 32];
@@ -60,6 +62,17 @@ struct MoneroRpc {
 }
 
 #[derive(Clone, Serialize)]
+struct Tag14Release {
+    sidecar_url: String,
+    indexer_url: String,
+    node_profile: &'static str,
+    state_directory: PathBuf,
+    capability_file: PathBuf,
+    protection_key_file: PathBuf,
+    protection_key_id: &'static str,
+}
+
+#[derive(Clone, Serialize)]
 struct TakerEffectAuthority {
     schema_version: u16,
     pair: &'static str,
@@ -74,6 +87,8 @@ struct TakerEffectAuthority {
     lez: LezRpc,
     monero: MoneroRpc,
     taker_tools: TakerTools,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tag14_release: Option<Tag14Release>,
 }
 
 fn tool(name: &str, byte: u8, abi: &'static str) -> Tool {
@@ -126,7 +141,24 @@ fn manifest() -> TakerEffectAuthority {
             monero_verify: tool("xmr-verify", 0x88, "lez_xmr_monero_verify_v2"),
             tag16_refund: tool("xmr-reference-tag16", 0x89, "lez_xmr_tag16_refund_v1"),
         },
+        tag14_release: None,
     }
+}
+
+fn release_manifest() -> TakerEffectAuthority {
+    let mut authority = manifest();
+    authority.schema_version = 2;
+    authority.taker_tools.tag14_authorize.abi = "lez_xmr_tag14_release_v2";
+    authority.tag14_release = Some(Tag14Release {
+        sidecar_url: "http://127.0.0.1:32978/".to_owned(),
+        indexer_url: "http://127.0.0.1:32979/".to_owned(),
+        node_profile: "local",
+        state_directory: PathBuf::from("/var/lib/lez/taker/tag14-release"),
+        capability_file: PathBuf::from("/run/lez/taker-release.capability"),
+        protection_key_file: PathBuf::from("/run/lez/taker-release.key"),
+        protection_key_id: "taker-release-key-1",
+    });
+    authority
 }
 
 fn canonical(value: &TakerEffectAuthority) -> Vec<u8> {
@@ -193,6 +225,120 @@ fn taker_profile_is_fixed_and_cannot_cross_role_or_tool_authority() {
             RUN,
         )
         .is_err()
+    );
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one schema contract keeps positive and downgrade/cross-authority failures together"
+)]
+fn taker_v2_release_authority_is_explicit_and_schema_fixed() {
+    let valid = release_manifest();
+    let authority = load_validated_xmr_effect_authority_bytes(
+        &canonical(&valid),
+        ActorRole::Taker,
+        SWAP,
+        AGREEMENT,
+        ACTIVATION,
+        RUN,
+    )
+    .expect("schema-v2 Taker authority must admit the explicit release profile");
+    assert_eq!(authority.schema_version(), 2);
+    let release = authority.tag14_release().expect("typed release authority");
+    assert_eq!(release.node_profile(), XmrTag14ReleaseNodeProfileV1::Local);
+    assert_eq!(release.sidecar_url().as_str(), "http://127.0.0.1:32978/");
+    assert_eq!(release.indexer_url().as_str(), "http://127.0.0.1:32979/");
+    assert_eq!(
+        release.state_directory(),
+        Path::new("/var/lib/lez/taker/tag14-release")
+    );
+    assert_eq!(release.protection_key_id(), "taker-release-key-1");
+
+    let mut missing = release_manifest();
+    missing.tag14_release = None;
+    assert!(
+        load_validated_xmr_effect_authority_bytes(
+            &canonical(&missing),
+            ActorRole::Taker,
+            SWAP,
+            AGREEMENT,
+            ACTIVATION,
+            RUN,
+        )
+        .is_err(),
+        "schema v2 must not fall back to marker authority"
+    );
+
+    let mut legacy_with_release = release_manifest();
+    legacy_with_release.schema_version = 1;
+    assert!(
+        load_validated_xmr_effect_authority_bytes(
+            &canonical(&legacy_with_release),
+            ActorRole::Taker,
+            SWAP,
+            AGREEMENT,
+            ACTIVATION,
+            RUN,
+        )
+        .is_err(),
+        "schema v1 must not silently gain release authority"
+    );
+
+    let mut public_indexer = release_manifest();
+    public_indexer
+        .tag14_release
+        .as_mut()
+        .expect("release profile")
+        .indexer_url = "http://192.0.2.1:32979/".to_owned();
+    assert!(
+        load_validated_xmr_effect_authority_bytes(
+            &canonical(&public_indexer),
+            ActorRole::Taker,
+            SWAP,
+            AGREEMENT,
+            ACTIVATION,
+            RUN,
+        )
+        .is_err(),
+        "local release profile must remain literal loopback"
+    );
+
+    let mut official = release_manifest();
+    let official_release = official.tag14_release.as_mut().expect("release profile");
+    official_release.node_profile = "official_public";
+    official_release.indexer_url = "https://testnet.lez.logos.co/".to_owned();
+    assert!(
+        load_validated_xmr_effect_authority_bytes(
+            &canonical(&official),
+            ActorRole::Taker,
+            SWAP,
+            AGREEMENT,
+            ACTIVATION,
+            RUN,
+        )
+        .is_ok(),
+        "only the exact pinned official indexer is portable"
+    );
+
+    let mut aliased = release_manifest();
+    let capability = aliased.lez.capability_file.clone();
+    aliased
+        .tag14_release
+        .as_mut()
+        .expect("release profile")
+        .capability_file = capability;
+    assert!(
+        load_validated_xmr_effect_authority_bytes(
+            &canonical(&aliased),
+            ActorRole::Taker,
+            SWAP,
+            AGREEMENT,
+            ACTIVATION,
+            RUN,
+        )
+        .is_err(),
+        "general and release-only capabilities must not alias"
     );
 }
 

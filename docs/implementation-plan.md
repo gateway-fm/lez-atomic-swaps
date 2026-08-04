@@ -351,6 +351,13 @@ attestation so neither can be misreported as the other.
   routine. The process proof rejects mutable/unsealed inputs at zero wire calls,
   then admits exactly once and observes only after restart. Receipt-v2 authority
   wiring and replacement of the Tag14 marker remain the next semantic step.
+- [x] Close the versioned Tag14 authority prerequisite through ADR 0156:
+  preserve schema-1 marker semantics, require schema 2 plus the release-worker
+  v2 ABI and a complete Taker-only release profile, separate general and
+  release-only capabilities, and validate local/exact-public indexer policy,
+  journal/key paths and key identity canonically. The focused Taker authority
+  suite is GREEN 8 of 8 and the full XMR actor regression stays GREEN. Sealed
+  at-use release custody, pre-CAS invocation and marker replacement remain next.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

@@ -2570,6 +2570,7 @@ flowchart TB
     Pin --> Authorize["Workflow v2 durable CAS"]
     Authorize -->|Prepared| Invoke["InvokeOnce"]
     Invoke --> Tag14["Tag14 sender marker"]
+    ReleaseAuthority["Schema 2 Taker release authority"] -.->|"future sealed custody"| ReleaseWorker
     ReleasePrepare["Exclusive Tag14 release preparer"] --> ReleaseJournal[("Encrypted release journal")]
     ReleaseJournal --> ReleaseWorker["No-argument release worker with sealed FDs 220 to 222 and directory FD 223"]
     Tag14 -.->|"future authority wiring"| ReleaseWorker

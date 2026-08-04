@@ -6943,6 +6943,21 @@ the only expected variability. ADR 0155 contains the component and sequence
 diagrams and explains why the release is conditional on finalized Fund plus the
 confirmed Monero output and why ambiguous publication never rearms.
 
+To verify that only an explicit versioned receipt authority can select that
+future worker, run:
+
+```bash
+cargo +1.96.0 test --locked --offline -p xmr-reference-actor \
+  --test effect_authority_taker
+```
+
+Expected result is 8 of 8. Schema 1 remains marker-only. Schema 2 requires the
+Taker release-worker v2 ABI, distinct release sidecar/capability/key/journal
+authority, and either literal-loopback local indexer configuration or the exact
+pinned Logos Testnet indexer. This command uses temporary files only and makes
+no network, Docker, node, wallet, faucet, peer, or funding call. ADR 0156 gives
+the component, validation sequence, and authority-level atomicity argument.
+
 
 ## Flow 1W: run the role-correct XMR application refund locally
 

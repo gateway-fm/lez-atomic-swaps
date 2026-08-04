@@ -10,6 +10,7 @@ use crate::ActorRole;
 /// Maximum accepted canonical effect-authority byte length.
 pub const XMR_EFFECT_AUTHORITY_MAX_BYTES: u64 = 64 * 1024;
 pub(crate) const MAX_AUTHORITY_BYTES: usize = 64 * 1024;
+const OFFICIAL_PUBLIC_INDEXER_ENDPOINT: &str = "https://testnet.lez.logos.co/";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +64,25 @@ struct MoneroRpc {
     shared_wallet: AuthenticatedRpc,
     role_wallet: AuthenticatedRpc,
     shared_wallet_file_password_file: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Tag14ReleaseNodeProfile {
+    Local,
+    OfficialPublic,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Tag14Release {
+    sidecar_url: String,
+    indexer_url: String,
+    node_profile: Tag14ReleaseNodeProfile,
+    state_directory: PathBuf,
+    capability_file: PathBuf,
+    protection_key_file: PathBuf,
+    protection_key_id: String,
 }
 
 /// One validated executable slot in an XMR effect plan.
@@ -202,6 +222,66 @@ impl XmrEffectMoneroRpcV1 {
     }
 }
 
+/// Finalized-indexer route selected by a schema-v2 Tag14 release authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum XmrTag14ReleaseNodeProfileV1 {
+    /// Explicit literal-loopback local indexer.
+    Local,
+    /// Exact allowlisted Logos LEZ Testnet indexer.
+    OfficialPublic,
+}
+
+/// Validated release-only authority for the Taker Tag14 worker.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct XmrTag14ReleaseAuthorityV1 {
+    sidecar_url: Url,
+    indexer_url: Url,
+    node_profile: XmrTag14ReleaseNodeProfileV1,
+    state_directory: PathBuf,
+    capability_file: PathBuf,
+    protection_key_file: PathBuf,
+    protection_key_id: Box<str>,
+}
+
+impl XmrTag14ReleaseAuthorityV1 {
+    /// Literal-loopback release-only sidecar endpoint.
+    #[must_use]
+    pub const fn sidecar_url(&self) -> &Url {
+        &self.sidecar_url
+    }
+    /// Local or exact allowlisted finalized-indexer endpoint.
+    #[must_use]
+    pub const fn indexer_url(&self) -> &Url {
+        &self.indexer_url
+    }
+    /// Finalized-indexer route profile.
+    pub const fn node_profile(&self) -> XmrTag14ReleaseNodeProfileV1 {
+        self.node_profile
+    }
+    /// Owner-private directory containing the encrypted release journal.
+    #[must_use]
+    pub fn state_directory(&self) -> &Path {
+        &self.state_directory
+    }
+    /// Release-only sidecar capability source.
+    #[must_use]
+    pub fn capability_file(&self) -> &Path {
+        &self.capability_file
+    }
+    /// Release-journal protection-key source.
+    #[must_use]
+    pub fn protection_key_file(&self) -> &Path {
+        &self.protection_key_file
+    }
+    /// Nonsecret protection-key rotation identifier.
+    #[must_use]
+    pub fn protection_key_id(&self) -> &str {
+        &self.protection_key_id
+    }
+}
+
 /// Fixed Maker effect tool profile.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use]
@@ -289,12 +369,15 @@ struct EffectAuthorityV1 {
     maker_tools: Option<MakerTools>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     taker_tools: Option<TakerTools>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tag14_release: Option<Tag14Release>,
 }
 
 /// Fully validated role-fixed XMR effect authority.
 #[derive(Debug)]
 #[must_use]
 pub struct ValidatedXmrEffectAuthorityV1 {
+    schema_version: u16,
     role: ActorRole,
     swap_id: [u8; 32],
     agreement_commitment: [u8; 32],
@@ -307,9 +390,16 @@ pub struct ValidatedXmrEffectAuthorityV1 {
     monero: XmrEffectMoneroRpcV1,
     maker_tools: Option<XmrMakerEffectToolsV1>,
     taker_tools: Option<XmrTakerEffectToolsV1>,
+    tag14_release: Option<XmrTag14ReleaseAuthorityV1>,
 }
 
 impl ValidatedXmrEffectAuthorityV1 {
+    /// Exact validated authority schema.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
     /// Role fixed by the authority.
     #[must_use]
     pub const fn role(&self) -> ActorRole {
@@ -379,6 +469,12 @@ impl ValidatedXmrEffectAuthorityV1 {
     pub const fn taker_tools(&self) -> Option<&XmrTakerEffectToolsV1> {
         self.taker_tools.as_ref()
     }
+
+    /// Schema-v2 Taker Tag14 release authority.
+    #[must_use]
+    pub const fn tag14_release(&self) -> Option<&XmrTag14ReleaseAuthorityV1> {
+        self.tag14_release.as_ref()
+    }
 }
 
 /// Validates canonical owner-private XMR effect-authority bytes.
@@ -405,7 +501,7 @@ pub fn load_validated_xmr_effect_authority_bytes(
     canonical.push(b'\n');
     ensure!(canonical == bytes, "XMR effect authority is noncanonical");
     ensure!(
-        authority.schema_version == 1
+        matches!(authority.schema_version, 1 | 2)
             && authority.pair == "monero"
             && authority.role == expected_role
             && decode_digest(&authority.swap_id)? == expected_swap
@@ -445,7 +541,9 @@ pub fn load_validated_xmr_effect_authority_bytes(
     validate_rpc_set(&authority.monero)?;
     validate_digest(&authority.lez.runtime_sha256)?;
     validate_profile(&authority)?;
+    validate_release_profile(&authority, &paths)?;
     let EffectAuthorityV1 {
+        schema_version,
         role,
         run_id,
         workflow_journal,
@@ -455,9 +553,11 @@ pub fn load_validated_xmr_effect_authority_bytes(
         monero,
         maker_tools,
         taker_tools,
+        tag14_release,
         ..
     } = authority;
     Ok(ValidatedXmrEffectAuthorityV1 {
+        schema_version,
         role,
         swap_id: expected_swap,
         agreement_commitment: expected_agreement,
@@ -470,6 +570,24 @@ pub fn load_validated_xmr_effect_authority_bytes(
         monero: validated_monero(monero)?,
         maker_tools: maker_tools.map(validated_maker_tools).transpose()?,
         taker_tools: taker_tools.map(validated_taker_tools).transpose()?,
+        tag14_release: tag14_release.map(validated_tag14_release).transpose()?,
+    })
+}
+
+fn validated_tag14_release(release: Tag14Release) -> Result<XmrTag14ReleaseAuthorityV1> {
+    Ok(XmrTag14ReleaseAuthorityV1 {
+        sidecar_url: Url::parse(&release.sidecar_url)
+            .context("parse validated Tag14 release sidecar URL")?,
+        indexer_url: Url::parse(&release.indexer_url)
+            .context("parse validated Tag14 release indexer URL")?,
+        node_profile: match release.node_profile {
+            Tag14ReleaseNodeProfile::Local => XmrTag14ReleaseNodeProfileV1::Local,
+            Tag14ReleaseNodeProfile::OfficialPublic => XmrTag14ReleaseNodeProfileV1::OfficialPublic,
+        },
+        state_directory: release.state_directory,
+        capability_file: release.capability_file,
+        protection_key_file: release.protection_key_file,
+        protection_key_id: release.protection_key_id.into_boxed_str(),
     })
 }
 
@@ -595,7 +713,14 @@ fn validate_profile(authority: &EffectAuthorityV1) -> Result<()> {
                 &tools.monero_verify,
                 &tools.tag16_refund,
             ])?;
-            validate_tool(&tools.tag14_authorize, "lez_xmr_tag14_authorize_v1")?;
+            validate_tool(
+                &tools.tag14_authorize,
+                if authority.schema_version == 2 {
+                    "lez_xmr_tag14_release_v2"
+                } else {
+                    "lez_xmr_tag14_authorize_v1"
+                },
+            )?;
             validate_tool(
                 &tools.finalized_classifier,
                 "lez_xmr_finalized_classifier_v1",
@@ -606,6 +731,61 @@ fn validate_profile(authority: &EffectAuthorityV1) -> Result<()> {
         }
         _ => anyhow::bail!("XMR effect authority role profile is invalid"),
     }
+}
+
+fn validate_release_profile(
+    authority: &EffectAuthorityV1,
+    existing_paths: &[&PathBuf],
+) -> Result<()> {
+    let release = match (
+        authority.schema_version,
+        authority.role,
+        authority.tag14_release.as_ref(),
+    ) {
+        (1, ActorRole::Maker | ActorRole::Taker, None) => return Ok(()),
+        (2, ActorRole::Taker, Some(release)) => release,
+        _ => anyhow::bail!("XMR Tag14 release authority schema/profile is invalid"),
+    };
+    let release_paths = [
+        &release.state_directory,
+        &release.capability_file,
+        &release.protection_key_file,
+    ];
+    ensure!(
+        release_paths.iter().all(|path| normalized_absolute(path))
+            && release_paths
+                .iter()
+                .enumerate()
+                .all(|(index, path)| release_paths[index + 1..].iter().all(|other| path != other))
+            && release_paths
+                .iter()
+                .all(|path| existing_paths.iter().all(|existing| path != existing))
+            && !release
+                .capability_file
+                .starts_with(&release.state_directory)
+            && !release
+                .protection_key_file
+                .starts_with(&release.state_directory),
+        "XMR Tag14 release authority paths are invalid or overlap"
+    );
+    validate_rpc(&release.sidecar_url)?;
+    match release.node_profile {
+        Tag14ReleaseNodeProfile::Local => validate_rpc(&release.indexer_url)?,
+        Tag14ReleaseNodeProfile::OfficialPublic => ensure!(
+            release.indexer_url == OFFICIAL_PUBLIC_INDEXER_ENDPOINT,
+            "XMR Tag14 official indexer endpoint changed"
+        ),
+    }
+    ensure!(
+        !release.protection_key_id.is_empty()
+            && release.protection_key_id.len() <= 128
+            && release
+                .protection_key_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
+        "XMR Tag14 protection-key identifier is invalid"
+    );
+    Ok(())
 }
 
 fn validate_tool_paths<const N: usize>(tools: [&Tool; N]) -> Result<()> {
