@@ -7181,6 +7181,58 @@ are skipped and a slow sample cannot overlap another or block the async RPC
 accept loop. ADR 0150 contains the component, sequence, and CAS atomicity
 diagrams.
 
+## Flow 1ZA: complete Zcash while the real local Bitcoin node is absent
+
+This is the literal F1/R3 operator rehearsal. First prepare fresh identities,
+one uniquely named LEZ v0.2 stack, one primary-only Zebra Regtest node at the
+required maturity height, current deployment/finality/onboarding receipts, and
+all application environment variables exactly as in [Flow 1B](#flow-1b-composed-m5-zec-application-poc).
+Do not reuse a partial application root or either node run ID.
+
+Choose a short unique application ID and run the composed harness:
+
+```bash
+export RUN_ID=m7outage-$(date -u +%Y%m%d%H%M%S)
+./scripts/test-m7-route-health-contract.sh
+./scripts/run-m7-unaffected-pair-outage-poc.sh
+```
+
+The harness additionally provisions a unique Bitcoin Core 31.1 Regtest service
+through the existing pinned service runner. It verifies network, genesis,
+height, no peers, and dynamic loopback publication; stops the exact labelled
+container; proves its authenticated RPC is unavailable; and gives the Maker a
+hash-pinned semantic map for that stopped Bitcoin route and the still-live
+Zebra route. The literal Bitcoin quote must fail while Maker CLI, Taker CLI,
+Delivery/Chat handoff, and the independent Zcash actors complete the surviving
+swap. The same states must remain visible after a Maker restart.
+
+On success the command prints an owner-private certificate path below
+`/tmp/lez-m7-outage-$RUN_ID`. Inspect only secret-free projections:
+
+```bash
+jq . "/tmp/lez-m7-outage-$RUN_ID/result.json"
+jq . "/tmp/lez-atomic-swaps-$RUN_ID/evidence/m7-route-health-before-swap.json"
+jq . "/tmp/lez-atomic-swaps-$RUN_ID/evidence/m7-route-health-after-restart.json"
+jq . "/tmp/lez-atomic-swaps-$RUN_ID/evidence/result.json"
+```
+
+The wrapper always removes only its exact Bitcoin container, tmpfs volume,
+private network, and run-tagged image. It deliberately does not stop the LEZ or
+Zebra stacks supplied by the operator; use the exact cleanup commands printed
+by those two launchers. It also retains its owner-private proof and application
+roots for inspection; remove those paths only after copying the selected
+secret-free certificate.
+
+Runtime chain resources are three real local protocol services: LEZ v0.2,
+Zebra Regtest, and Bitcoin Core 31.1 Regtest before its deliberate stop. There
+is no public RPC, faucet, peer, public funds, or DNS dependency in the swap.
+Funds are fresh local genesis/Regtest fixtures. Cold Bitcoin source/image,
+Cargo, LEZ guest, or Zebra image acquisition can use their pinned upstreams and
+is setup—not runtime—evidence. Host CPU/disk pressure, image builds, Zebra block
+generation, LEZ finality cadence, and the deliberate three-second semantic
+probe timeout can delay or fail a run; an ambiguous or partial run is discarded
+and never resumed under the same ID.
+
 ## Troubleshooting
 
 - **`RUN_ID` is rejected or an active project already exists:** choose another

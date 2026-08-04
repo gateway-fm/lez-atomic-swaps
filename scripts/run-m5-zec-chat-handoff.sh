@@ -17,7 +17,8 @@ usage() {
     '  --maker-daemon-bin FILE --maker-cli-bin FILE --taker-bin FILE' \
     '  --draft-bin FILE --finalize-bin FILE' \
     '  --actor-program FILE --actor-program-sha256 HEX32' \
-    '  --actor-inspector-bin FILE --pair-inspector-bin FILE'
+    '  --actor-inspector-bin FILE --pair-inspector-bin FILE' \
+    '  [--route-health-config FILE --route-health-poll-milliseconds MS]'
 }
 
 run_id=''
@@ -35,6 +36,8 @@ actor_program=''
 actor_program_sha256=''
 actor_inspector_bin=''
 pair_inspector_bin=''
+route_health_config=''
+route_health_poll_milliseconds='100'
 while (( $# > 0 )); do
   case "$1" in
     --run-id) run_id="${2:-}"; shift 2 ;;
@@ -51,6 +54,8 @@ while (( $# > 0 )); do
     --actor-program-sha256) actor_program_sha256="${2:-}"; shift 2 ;;
     --actor-inspector-bin) actor_inspector_bin="${2:-}"; shift 2 ;;
     --pair-inspector-bin) pair_inspector_bin="${2:-}"; shift 2 ;;
+    --route-health-config) route_health_config="${2:-}"; shift 2 ;;
+    --route-health-poll-milliseconds) route_health_poll_milliseconds="${2:-}"; shift 2 ;;
     --finalize-bin) finalize_bin="${2:-}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; fail "unknown argument $1" ;;
@@ -86,6 +91,18 @@ for binary in "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
 done
 [[ "$actor_program_sha256" =~ ^[0-9a-f]{64}$ ]] ||
   fail 'actor program SHA-256 must be lowercase hex32'
+if [[ -n "$route_health_config" ]]; then
+  [[ "$route_health_config" == /* && -f "$route_health_config" \
+    && ! -L "$route_health_config" ]] || fail 'route-health config is unavailable or unsafe'
+  [[ "$(stat -c %u -- "$route_health_config")" == "$(id -u)" \
+    && "$(stat -c %a -- "$route_health_config")" == 600 \
+    && "$(stat -c %h -- "$route_health_config")" == 1 ]] ||
+    fail 'route-health config must be owner-only and single-link'
+  [[ "$route_health_poll_milliseconds" =~ ^[0-9]+$ ]] ||
+    fail 'route-health poll interval must be an integer'
+  (( route_health_poll_milliseconds >= 50 && route_health_poll_milliseconds <= 5000 )) ||
+    fail 'route-health poll interval must be within 50..=5000 milliseconds'
+fi
 [[ -f "$actor_program" && -x "$actor_program" && ! -L "$actor_program" ]] ||
   fail 'actor program is unavailable or unsafe'
 [[ "$(stat -c %u -- "$actor_program")" == "$(id -u)" ]] ||
@@ -247,6 +264,11 @@ trap 'exit 143' TERM
 start_daemon() {
   local ready="$1"
   local log="$2"
+  local -a health_arguments=()
+  if [[ -n "$route_health_config" ]]; then
+    health_arguments=(--route-health-config "$route_health_config"
+      --route-health-poll-milliseconds "$route_health_poll_milliseconds")
+  fi
   "$maker_daemon_bin" \
     --socket "$maker_socket" \
     --chat-socket "$chat_socket" \
@@ -261,6 +283,7 @@ start_daemon() {
     --zec-maker-actor-root "$actor_root" \
     --zec-actor-program "$actor_program" \
     --zec-actor-program-sha256 "$actor_program_sha256" \
+    "${health_arguments[@]}" \
     >"$log" 2>&1 &
   daemon_pid=$!
   daemon_start_ticks="$(process_start_ticks "$daemon_pid")"
@@ -306,6 +329,36 @@ start_daemon "$ready_file" "$daemon_log"
 "$maker_cli_bin" --socket "$maker_socket" publish-offer \
   --request-id "m5-publish-${token}" --offer-id "$offer_id" --pair zcash \
   --direction taker-sells-lez >"$evidence_dir/m5-publish-offer.json"
+
+if [[ -n "$route_health_config" ]]; then
+  "$maker_cli_bin" --socket "$maker_socket" configure-pair \
+    --request-id "m7-config-bitcoin-off-${token}" --pair bitcoin \
+    --direction taker-sells-foreign --enabled false --price-source local \
+    --minimum-foreign-units 1 --maximum-foreign-units 1 \
+    --offer-ttl-seconds "$offer_ttl_seconds" \
+    >"$evidence_dir/m7-configure-bitcoin-disabled.json"
+  "$maker_cli_bin" --socket "$maker_socket" health \
+    >"$evidence_dir/m7-route-health-before-swap.json"
+  jq -e '
+    .schema_version == 1 and .ready == true and .degraded == true
+    and any(.routes[];
+      .route == {pair:"Zcash",direction:"TakerSellsLez"}
+      and .state == "available")
+    and any(.routes[];
+      .route == {pair:"Bitcoin",direction:"TakerSellsForeign"}
+      and .state == "unavailable")
+  ' "$evidence_dir/m7-route-health-before-swap.json" >/dev/null ||
+    fail 'route health did not isolate the absent Bitcoin node from Zcash'
+  if "$maker_cli_bin" --socket "$maker_socket" quote --pair bitcoin \
+      --direction taker-sells-foreign \
+      >"$evidence_dir/m7-bitcoin-quote-unexpected.json" \
+      2>"$evidence_dir/m7-bitcoin-quote-rejected.txt"; then
+    fail 'unavailable Bitcoin route unexpectedly quoted'
+  fi
+  rg -Fq 'chain dependency is unavailable' \
+    "$evidence_dir/m7-bitcoin-quote-rejected.txt" ||
+    fail 'Bitcoin route rejection did not identify its unavailable dependency'
+fi
 
 accepted_at="$(date -u +%s)"
 "$taker_bin" --delivery-directory "$delivery_directory" \
@@ -479,6 +532,20 @@ start_daemon "$restart_ready_file" "$daemon_restart_log"
 "$maker_cli_bin" --socket "$maker_socket" prices >"$evidence_dir/m5-prices-after-restart.json"
 "$maker_cli_bin" --socket "$maker_socket" offers >"$evidence_dir/m5-offers-after-restart.json"
 "$maker_cli_bin" --socket "$maker_socket" history >"$evidence_dir/m5-history-after-restart.json"
+if [[ -n "$route_health_config" ]]; then
+  "$maker_cli_bin" --socket "$maker_socket" health \
+    >"$evidence_dir/m7-route-health-after-restart.json"
+  jq -e '
+    .schema_version == 1 and .ready == true and .degraded == true
+    and any(.routes[];
+      .route == {pair:"Zcash",direction:"TakerSellsLez"}
+      and .state == "available")
+    and any(.routes[];
+      .route == {pair:"Bitcoin",direction:"TakerSellsForeign"}
+      and .state == "unavailable")
+  ' "$evidence_dir/m7-route-health-after-restart.json" >/dev/null ||
+    fail 'route-health isolation did not survive Maker restart'
+fi
 jq -e '
   length == 1 and .[0].revision == 2 and .[0].value.enabled == true
   and .[0].value.route.pair == "Zcash"

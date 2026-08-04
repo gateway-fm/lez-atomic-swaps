@@ -110,6 +110,56 @@ flowchart TD
   the additive health response defaults missing route rows for rolling clients.
 - A failed Delivery cleanup cannot reactivate the durable offer. Delivery health
   exposes stale projection state and startup reconciliation removes it.
-- This closes automatic policy, active withdrawal, and mid-negotiation
-  preservation at component/process level. Literal R3 still needs an actual
-  unaffected-pair swap while another real local chain node is absent.
+- `run-m7-unaffected-pair-outage-poc.sh` composes the literal proof boundary. It
+  provisions an isolated Bitcoin Core 31.1 Regtest service, authenticates its
+  network and genesis, stops that exact labelled container, and then runs the
+  ordinary Zcash application corridor. The same Maker daemon probes both the
+  unavailable Bitcoin route and surviving Zebra route through one hash-pinned
+  adapter. A fresh retained successful execution is still required before F1
+  or R3 changes from `open` to `green`.
+
+```mermaid
+flowchart LR
+    BtcStart[Bitcoin Core Regtest healthy] --> BtcStop[Stop exact run container]
+    BtcStop --> BtcProbe[Bitcoin semantic probe unavailable]
+    Zebra[Zebra Regtest healthy] --> ZecProbe[Zcash semantic probe available]
+    BtcProbe --> Maker[Maker daemon]
+    ZecProbe --> Maker
+    Maker --> Reject[Bitcoin quote rejected]
+    Maker --> ZecSwap[Zcash Maker and Taker corridor]
+    ZecSwap --> Lez[LEZ finalized claim]
+    ZecSwap --> ZecClaim[Zcash confirmed claim]
+```
+
+```mermaid
+sequenceDiagram
+    participant Harness as M7 run harness
+    participant Bitcoin as Bitcoin Core Regtest
+    participant Maker as Maker daemon
+    participant Zebra as Zebra Regtest
+    participant Users as Maker CLI and Taker CLI
+    participant Actors as Maker and Taker actors
+    Harness->>Bitcoin: Validate regtest genesis and height
+    Harness->>Bitcoin: Stop exact labelled container
+    Harness->>Maker: Start with hash-pinned two-route probe map
+    Maker->>Bitcoin: Semantic chain and genesis probe
+    Bitcoin--xMaker: Connection unavailable
+    Maker->>Zebra: Height and genesis probe
+    Zebra-->>Maker: Expected Regtest identity
+    Users->>Maker: Configure and publish Zcash offer
+    Users->>Maker: Attempt Bitcoin quote
+    Maker--xUsers: Reject unavailable route
+    Users->>Maker: Discover, reserve, and countersign Zcash swap
+    Actors->>Zebra: Fund then claim after LEZ revelation
+    Actors-->>Users: Both roles completed
+    Maker->>Bitcoin: Probe remains unavailable after restart
+    Maker->>Zebra: Probe remains available after restart
+```
+
+The outage harness changes no swap atomicity argument. The Zcash corridor keeps
+the signed foreign-first ordering: confirmed Zcash funding precedes the
+revealing LEZ claim, and only that revelation enables the Zcash claimant. The
+route-health control has no chain authority and cannot make a partial swap; it
+only gates new offers and quotes before acceptance. Once accepted, the
+role-separated actor journals continue independently of route health, Delivery,
+and Chat.

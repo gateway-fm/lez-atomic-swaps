@@ -295,6 +295,14 @@ attestation so neither can be misreported as the other.
   unrelated-route continuity, real-daemon process proof and manual reproduction.
   The remaining F1/R3 gate is the actual unaffected-pair chain journey while a
   different real local node is absent.
+- [x] Implement the reproducible F1/R3 actual-node composition runner without
+  changing the existing M5/M6 default path: provision and authenticate a unique
+  Bitcoin Core 31.1 Regtest node, stop only its exact run-owned container, bind
+  one hash-pinned semantic probe to the stopped Bitcoin route and live Zebra
+  route, reject the Bitcoin quote, complete the literal Zcash user/actor path,
+  and verify route isolation across Maker restart. The contract and adjacent
+  runner contracts are GREEN; retain a fresh full execution certificate before
+  changing F1/R3 to `green`.
 - [x] Close U7 generated-custody ABI drift through ADR 0151: use one pinned
   v0.2 SPEL IDL for deployment and runtime generation; hash both the raw IDL
   and generated Rust client; bind both to the deployment manifest and artifact

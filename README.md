@@ -710,7 +710,16 @@ active offers withdraw, reserved negotiations survive, and another route stays
 available. [Flow 1Z](docs/manual-user-flows.md#flow-1z-configure-and-verify-automatic-maker-route-health)
 documents configuration, local proof, RPC resources, and flakiness. Full R3
 still requires an actual unaffected-pair chain application while another real
-local node is absent. Fixed packaged-system-service start/stop and receipt-bound
+local node is absent.
+
+The repository now contains the exact full-composition runner for that last
+gate: `scripts/run-m7-unaffected-pair-outage-poc.sh`. It starts a unique real
+Bitcoin Core 31.1 Regtest service, verifies its genesis, stops only that labelled
+container, then drives the ordinary actual-node Zcash Maker/Taker corridor with
+semantic genesis-bound health checks for both routes. F1/R3 remain open until a
+fresh run produces and retains the terminal certificate; the runner's presence
+alone is not counted as execution evidence.
+Fixed packaged-system-service start/stop and receipt-bound
 XMR Taker monitoring are now GREEN. XMR Taker claim/refund effect composition
 and actual-application concurrency remain. The tag-16 sidecar checkpoint is now
 component-GREEN: authenticated Taker preparation and completion feed only the

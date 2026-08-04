@@ -24,6 +24,8 @@ readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
 readonly M5_APPLICATION_MODE="${M5_APPLICATION_MODE:-0}"
 readonly M6_TAKER_SERVICE_MODE="${M6_TAKER_SERVICE_MODE:-0}"
 readonly M6_ZEC_JOURNEY="${M6_ZEC_JOURNEY:-claim}"
+readonly M7_ROUTE_HEALTH_CONFIG="${M7_ROUTE_HEALTH_CONFIG:-}"
+readonly M7_ROUTE_HEALTH_POLL_MILLISECONDS="${M7_ROUTE_HEALTH_POLL_MILLISECONDS:-100}"
 readonly DISCOVERY_BLOCKS=256
 readonly POLL_INTERVAL_SECONDS=0.10
 readonly MAX_PRE_EFFECT_SECONDS=25
@@ -1211,6 +1213,13 @@ jq -e \
 ' "${evidence_dir}/provision-summary.json" >/dev/null
 
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+  m7_route_health_arguments=()
+  if [[ -n "$M7_ROUTE_HEALTH_CONFIG" ]]; then
+    m7_route_health_arguments=(
+      --route-health-config "$M7_ROUTE_HEALTH_CONFIG"
+      --route-health-poll-milliseconds "$M7_ROUTE_HEALTH_POLL_MILLISECONDS"
+    )
+  fi
   "$m5_handoff_driver" \
     --run-id "$run_id" \
     --source-actors-root "$provision_actors_root" \
@@ -1227,6 +1236,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     --actor-program-sha256 "$m5_actor_program_sha256" \
     --actor-inspector-bin "$actor_inspector_bin" \
     --pair-inspector-bin "$m5_pair_inspector_bin" \
+    "${m7_route_health_arguments[@]}" \
     >"${evidence_dir}/m5-handoff-path.txt"
   [[ "$(<"${evidence_dir}/m5-handoff-path.txt")" == \
       "${evidence_dir}/m5-chat-handoff.json" ]] || {
