@@ -1,15 +1,18 @@
 # Zcash public-testnet node, wallet, and funding guide
 
-Status: self-hosted and public-provider routes selected on 2026-07-13; live corridor execution
-and clean-machine rehearsal pending.
+Status: self-hosted and public-provider routes plus project-owned transparent
+signing are locally contract-tested; live public corridor and clean-machine
+rehearsal remain deliberately unclaimed.
 
-This guide separates what an operator can configure today from the missing M2
-implementation. It does not claim a passing public-testnet swap. The primary
+This guide separates locally executable capability from public evidence. **No public**
+Testnet RPC, faucet, funds, transaction, or deployment participated in
+the retained M2/M5/M6 certificates. The primary
 route is a self-hosted Zebra JSON-RPC endpoint. No Zcash Foundation-operated
 public Zebra JSON-RPC service was found. Tatum's documented Zebrad-powered
 Testnet gateway is the selected public-provider route; it is not interchangeable
-with lightwalletd gRPC, and it remains unavailable to this project until the
-HTTPS credential transport and exact method contract pass a live rehearsal.
+with lightwalletd gRPC. The exact HTTPS/API-key route is locally validated
+without a public call; credentials, funded TAZ, provider behavior, and a live
+rehearsal remain absent.
 
 ```mermaid
 flowchart LR
@@ -53,9 +56,12 @@ flowchart LR
   [Zallet release](https://github.com/zcash/zallet/releases/tag/v0.1.0-alpha.4),
   [export-key implementation](https://github.com/zcash/zallet/blob/v0.1.0-alpha.4/zallet/src/components/json_rpc/methods/export_key.rs),
   and [RPC migration table](https://github.com/zcash/zallet/blob/main/book/src/zcashd/json_rpc.md).
-- Therefore the corridor still needs project-owned disposable transparent key
-  custody and signing. Zallet is optional funding infrastructure, not the swap
-  signer. Never import production seeds to bridge this gap.
+- The project-owned signer is implemented in `lez-zec-swap-sdk` and consumed
+  by role-fixed actors from mode-0600 key files. `build_funding_transaction`
+  selects and ZIP-244-signs exact transparent funding; `build_claim_transaction`
+  and `build_refund_transaction` sign the BIP-199 branches. Actual Regtest
+  Claim/Refund certificates prove this path. Zallet remains optional funding
+  infrastructure, not the swap signer; never import production seeds.
 - Zallet alpha.4 documents NU6.2 support, while Zebra 6.0 schedules NU6.3 at
   Testnet height 4,134,000. Treat Zallet as fail-closed until its reported sync
   and branch compatibility are verified for the current tip.
@@ -156,21 +162,27 @@ the actor needs: `getblockcount`, `getblockhash`, `getblock`,
 `getrawtransaction`, `getrawmempool`, `gettxout`, and `sendrawtransaction`.
 Method discovery and unauthenticated availability alone are not sufficient.
 
-The current production adapter intentionally accepts literal loopback HTTP only,
-so it cannot yet consume this route. The public transport must be a separate
-configuration that requires HTTPS, a bounded sensitive API-key header, no URL
-credentials, bounded response bodies/time/concurrency, and no automatic retry
-of `sendrawtransaction` after an unknown outcome. Validate returned chain,
+The checked schema-v3 adapter accepts this route only as exact allowlisted HTTPS
+with a bounded sensitive `x-api-key` header, no URL credentials, bounded
+response bodies/time/concurrency, and no automatic retry of
+`sendrawtransaction` after an unknown outcome. Validate returned chain,
 branch, genesis, block, transaction, and stable-tip facts exactly as on the
-self-hosted route. Where practical, cross-check read evidence against the
+self-hosted route. Local tests construct the TLS client and reject origin,
+credential, profile, redirect, and trust substitution without connecting.
+Where practical, cross-check read evidence against the
 self-hosted node; never merge disagreeing observations or silently fail over
 between nodes during a state transition.
 
 ## Disposable transparent wallet and funds
 
-The intended swap address is produced by project-owned testnet key custody,
-which is not implemented yet. Once it exists, record only its `tm...` address
-and never log its secret key.
+Each role-fixed actor already consumes a distinct project-owned secp256k1
+transparent secret from a regular non-symlink mode-0600 file, verifies that it
+controls the agreement-bound P2PKH destination, and redacts it from diagnostics.
+For Testnet, generate fresh disposable role keys with an audited offline
+procedure, record only their `tm...` addresses in public evidence, and never
+log or reuse their secrets. Funding, Claim, and Refund use the same
+`build_funding_transaction`, `build_claim_transaction`, and
+`build_refund_transaction` code exercised by local actual-node actors.
 
 The official Zcash testnet guide currently points users to Zcash Discord support
 or the community `https://faucet.zecpages.com/` faucet. See the
@@ -208,11 +220,16 @@ is not a production custody boundary.
 
 ## Public-testnet corridor rehearsal
 
-This section remains blocked until project-owned transparent signing and the
-actual public-testnet actor adapter exist. The eventual rehearsal must:
+The binaries, project-owned signer, actor, and both schema-v3 route shapes exist.
+The public rehearsal remains intentionally skipped under the private-delivery
+policy until an operator supplies public credentials/funds and elects to run it.
+Use the repository's [manual user flows](manual-user-flows.md) as the executable
+command source; this section adds the public-route prerequisites and evidence.
+That rehearsal must:
 
 1. build the workspace and exact SDK with `cargo build --locked`;
-2. start independent maker and taker processes with separate keys and state;
+2. start the existing independent Maker and Taker actors with separate
+   mode-0600 keys, credentials, journals, and state;
    run the evidence suite once through self-hosted Zebra and once through the
    selected Tatum Zebrad route rather than switching a live swap mid-effect;
 3. query and record node version, height, sync state, and next consensus branch;
@@ -255,4 +272,4 @@ diagnostic evidence and are never silently ignored.
 | Community faucet | Optional | External community operator | No SLA/current limits; may time out or be depleted |
 | Zcash Discord funding request | Optional fallback | External support process | Manual response and availability |
 | Zallet alpha.4 | Optional funding wallet only | Local operator | Alpha compatibility; no arbitrary HTLC signing; NU6.3 must be reverified |
-| Project transparent signer | Required repository work | Independent maker/taker | Not implemented; no public-testnet corridor can pass without it |
+| Project-owned signer | Implemented and required | Independent Maker/Taker actors | Exact funding/claim/refund construction is locally actual-node GREEN; public key generation, funded TAZ, live broadcast, and custody operations remain unrehearsed |

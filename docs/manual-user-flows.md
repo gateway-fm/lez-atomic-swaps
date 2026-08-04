@@ -9,8 +9,9 @@ actor boundary, expected result, or cleanup rule changes.
 Public-testnet setup and funding prerequisites are maintained in the
 [Zcash public-testnet guide](zcash-testnet-setup.md). That guide selects a
 self-hosted Zebra route and Tatum's public-provider Testnet Zebrad route, but
-explicitly leaves live execution pending the project-owned transparent signer,
-HTTPS provider transport, and actor adapter.
+explicitly leaves only credentials, funded TAZ, public deployment, and live
+execution pending. The signer, actor, and exact HTTPS transport are locally
+contract-tested; none is misrepresented as public evidence.
 
 Bitcoin self-hosted and exact-HTTPS Testnet4 node, wallet, funding, SDK-route,
 and external-flakiness steps are maintained in the
