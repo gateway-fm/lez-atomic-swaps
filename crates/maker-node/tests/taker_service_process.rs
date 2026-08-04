@@ -244,7 +244,7 @@ async fn basecamp_prepared_offer_rendezvous_drives_the_production_taker_service(
         .unwrap();
     handoff.sync_all().unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(300);
+    let deadline = Instant::now() + Duration::from_mins(5);
     while !acknowledgement.exists() {
         assert!(
             service.child_mut().try_wait().unwrap().is_none(),

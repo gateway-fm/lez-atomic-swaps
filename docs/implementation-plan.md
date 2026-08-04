@@ -6037,3 +6037,9 @@ Remaining M6 certification order:
 4. commit and push the certification tree, then create and push
    `m6-poc-complete` only when the candidate is clean and every local gate is
    GREEN. No remote-green claim is made without observable Actions results.
+
+Certification RED/GREEN update: warning-fatal Rust 1.96 Clippy rejected the
+unchanged five-minute external Basecamp rendezvous ceiling when written as
+`Duration::from_secs(300)`. The semantics-preserving refactor expresses it as
+`Duration::from_mins(5)`. Focused and full workspace all-target/all-feature
+Clippy are GREEN; no timeout value or product behavior changed.
