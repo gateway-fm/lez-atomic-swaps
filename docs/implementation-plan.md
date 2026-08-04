@@ -293,16 +293,16 @@ attestation so neither can be misreported as the other.
   nonoverlapping periodic process isolation, fail-closed quote/publication,
   deterministic active-offer CAS withdrawal, reserved-negotiation preservation,
   unrelated-route continuity, real-daemon process proof and manual reproduction.
-  The remaining F1/R3 gate is the actual unaffected-pair chain journey while a
-  different real local node is absent.
+  The component and literal actual-node F1/R3 journey are both certified by
+  the checked clean-run evidence below.
 - [x] Implement the reproducible F1/R3 actual-node composition runner without
   changing the existing M5/M6 default path: provision and authenticate a unique
   Bitcoin Core 31.1 Regtest node, stop only its exact run-owned container, bind
   one hash-pinned semantic probe to the stopped Bitcoin route and live Zebra
   route, reject the Bitcoin quote, complete the literal Zcash user/actor path,
-  and verify route isolation across Maker restart. The contract and adjacent
-  runner contracts are GREEN; retain a fresh full execution certificate before
-  changing F1/R3 to `green`.
+  and verify route isolation across Maker restart. Contracts and the clean
+  pushed execution `m7outage-2c63218-a` are GREEN; F1/R3 now reference the
+  checked terminal certificate.
 - [x] Close U7 generated-custody ABI drift through ADR 0151: use one pinned
   v0.2 SPEL IDL for deployment and runtime generation; hash both the raw IDL
   and generated Rust client; bind both to the deployment manifest and artifact
@@ -400,6 +400,23 @@ attestation so neither can be misreported as the other.
   visible. GREEN applies that two-row invariant only when route health is
   configured and preserves the exact one-row baseline otherwise. No actor or
   chain submission ran; another fresh clean-commit replay remains required.
+- [x] Certify F1/R3 through clean pushed run `m7outage-2c63218-a`. The harness
+  authenticated and stopped its exact Bitcoin Core 31.1 Regtest container;
+  owner-private hash-pinned probes reported Bitcoin unavailable and Zcash
+  available before and after Maker restart; the Bitcoin quote failed closed;
+  and the ordinary role-correct Zcash application completed through actual
+  local Zebra and LEZ nodes. The 36.920-second corridor used zero same-run
+  retries and observed confirmed Zcash funding before the revealing LEZ claim,
+  then confirmed Zcash claim. The checked certificate binds commit `2c63218`,
+  every retained evidence hash, empty runtime external resources and no public
+  RPC, faucet or funds. F1/R3 inventory rows are now GREEN.
+  The first full quality replay then caught ShellCheck SC2155 in the new digest
+  assignments. Declaration and assignment are split without semantic change,
+  and the focused contract now requires both digests to become immutable.
+  The next gate exposed an older M5 lock assertion coupled to Cargo dependency
+  ordering. It now extracts the exact `lez-xmr-swap-sdk` package block from both
+  locked graphs and checks the required runtime edges individually, including
+  `async-trait` and `lez-swap-sdk-core`, without changing either dependency set.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -415,9 +432,9 @@ attestation so neither can be misreported as the other.
 ### Current repository-owned gap classes
 
 1. Traceability contains carried Partial/Planned statements from earlier PoC
-   boundaries, including actual unaffected-pair unavailable-node composition,
-   accepted-application actual-chain concurrency, crash/reorg/fee matrices,
-   public calibration alternatives and non-BTC demo evidence.
+   boundaries, including accepted-application actual-chain concurrency,
+   crash/reorg/fee matrices, public calibration alternatives and non-BTC demo
+   evidence.
 2. CI has strong lint, strict Rust, vulnerability, license, source, fuzz,
    architecture and isolation gates, but does not yet produce one review dossier.
 3. Public deployment remains intentionally skipped under the stealth/local

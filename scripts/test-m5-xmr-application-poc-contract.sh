@@ -259,13 +259,15 @@ dependencies = \[
 \]' "$sidecar_lock" ||
   fail 'sidecar lock omits the reachable lez-swap-core package'
 for xmr_lock in "$sidecar_lock" "$release_lock"; do
-  rg -Uq 'name = "lez-xmr-swap-sdk"
-version = "0.1.0"
-dependencies = \[
- "hex",
- "lez-adaptor-signature",
- "lez-swap-core",' "$xmr_lock" ||
+  xmr_sdk_block="$(sed -n '/^name = "lez-xmr-swap-sdk"$/,/^$/p' "$xmr_lock")"
+  [[ -n "$xmr_sdk_block" ]] ||
     fail "locked graph omits XMR SDK runtime dependency edges: ${xmr_lock}"
+  rg -Fq 'version = "0.1.0"' <<<"$xmr_sdk_block" ||
+    fail "locked graph contains an unexpected XMR SDK version: ${xmr_lock}"
+  for required_edge in async-trait hex lez-adaptor-signature lez-swap-core lez-swap-sdk-core; do
+    rg -Fq " \"${required_edge}\"," <<<"$xmr_sdk_block" ||
+      fail "locked XMR SDK omits ${required_edge}: ${xmr_lock}"
+  done
 done
 
 rg -Uq 'name = "command-fds"

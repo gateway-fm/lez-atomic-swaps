@@ -128,9 +128,10 @@ chmod 0600 "$bitcoin_unavailable"
 
 readonly health_program_source="${PWD}/scripts/probe-local-json-rpc-health.sh"
 readonly health_program="$proof_root/bin/probe-local-json-rpc-health"
-readonly health_source_sha256="$(sha256sum "$health_program_source" | awk '{print $1}')"
+health_source_sha256="$(sha256sum "$health_program_source" | awk '{print $1}')"
 install -m 0500 "$health_program_source" "$health_program"
-readonly health_sha256="$(sha256sum "$health_program" | awk '{print $1}')"
+health_sha256="$(sha256sum "$health_program" | awk '{print $1}')"
+readonly health_source_sha256 health_sha256
 [[ -x "$health_program" && ! -L "$health_program" \
   && "$health_sha256" =~ ^[0-9a-f]{64}$ ]] ||
   fail 'semantic health-probe executable identity is invalid'

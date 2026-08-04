@@ -16,9 +16,10 @@ readonly outage_runner="scripts/run-m7-unaffected-pair-outage-poc.sh"
 readonly handoff_runner="scripts/run-m5-zec-chat-handoff.sh"
 readonly corridor_runner="scripts/run-m2-taker-sells-lez-poc.sh"
 readonly semantic_probe="scripts/probe-local-json-rpc-health.sh"
+readonly actual_node_certificate="docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json"
 
 for path in "$source" "$daemon" "$policy_test" "$adr" "$outage_runner" \
-  "$handoff_runner" "$corridor_runner" "$semantic_probe"; do
+  "$handoff_runner" "$corridor_runner" "$semantic_probe" "$actual_node_certificate"; do
   [[ -s "$path" ]] || fail "missing ${path}"
 done
 
@@ -35,6 +36,7 @@ for literal in \
   'mkdir -m 0700 "$proof_root/bin"' \
   'install -m 0500 "$health_program_source" "$health_program"' \
   '[[ "$health_sha256" == "$health_source_sha256" ]]' \
+  'readonly health_source_sha256 health_sha256' \
   'docker container stop' \
   'm7-bitcoin-healthy-before-stop.json' \
   'm7-bitcoin-unavailable-after-stop.json' \
@@ -75,6 +77,22 @@ for literal in \
     || fail "missing route-health evidence token: ${literal}"
 done
 
+jq -e '
+  .schema_version == 1
+  and .kind == "m7_unaffected_pair_actual_node_outage_poc"
+  and .result == "passed"
+  and .repository_commit == "2c63218542c0ce9d53df521b5fd88bf46693fcb8"
+  and .absent_route == {pair:"Bitcoin",direction:"TakerSellsForeign",actual_local_node:true}
+  and .surviving_route == {pair:"Zcash",direction:"TakerSellsLez",actual_local_node:true}
+  and .absent_route_failed_closed == true
+  and .route_isolation_survived_maker_restart == true
+  and .unaffected_pair_swap_completed == true
+  and .atomic_claim_order_observed == true
+  and ([.evidence_sha256[] | test("^[0-9a-f]{64}$")] | all)
+  and (.evidence_sha256 | length) == 6
+  and .runtime_external_resources == []
+  and .public_rpc_used == false and .faucet_used == false and .public_funds_used == false
+' "$actual_node_certificate" >/dev/null || fail "checked actual-node outage certificate is invalid"
 rg -Fq 'route_health_tasks.spawn_blocking' "$daemon" \
   || fail "semantic health workers are not isolated from the async RPC loop"
 rg -Fq 'MissedTickBehavior::Skip' "$daemon" \

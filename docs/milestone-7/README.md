@@ -26,6 +26,7 @@ materially affect safe reproduction.
 - [Finding severity and remediation register](findings-register.md)
 - [Machine-auditable hard-requirement inventory](hard-requirements.tsv)
 - [Machine-auditable submission-requirement inventory](submission-requirements.tsv)
+- [F1/R3 actual-node dependency-loss certificate](../evidence/m7-unaffected-pair-outage-2c63218-20260804.json)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

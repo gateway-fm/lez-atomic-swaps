@@ -708,17 +708,20 @@ automatic route health is now process-GREEN: bounded hash-pinned semantic
 commands run periodically off the RPC loop, unavailable routes reject new work,
 active offers withdraw, reserved negotiations survive, and another route stays
 available. [Flow 1Z](docs/manual-user-flows.md#flow-1z-configure-and-verify-automatic-maker-route-health)
-documents configuration, local proof, RPC resources, and flakiness. Full R3
-still requires an actual unaffected-pair chain application while another real
-local node is absent.
+documents configuration, local proof, RPC resources, and flakiness. F1/R3 are
+now actual-node GREEN through the same operator-visible control.
 
-The repository now contains the exact full-composition runner for that last
-gate: `scripts/run-m7-unaffected-pair-outage-poc.sh`. It starts a unique real
-Bitcoin Core 31.1 Regtest service, verifies its genesis, stops only that labelled
-container, then drives the ordinary actual-node Zcash Maker/Taker corridor with
-semantic genesis-bound health checks for both routes. F1/R3 remain open until a
-fresh run produces and retains the terminal certificate; the runner's presence
-alone is not counted as execution evidence.
+`scripts/run-m7-unaffected-pair-outage-poc.sh` starts a unique real Bitcoin Core
+31.1 Regtest service, verifies its genesis, stops only that labelled container,
+then drives the ordinary actual-node Zcash Maker/Taker corridor with semantic
+genesis-bound health checks for both routes. Clean pushed run
+`m7outage-2c63218-a` rejected the stopped Bitcoin route before and after Maker
+restart while the independent Zebra/LEZ claim journey completed both roles in
+36.920 seconds with zero same-run retries. Confirmed Zcash funding preceded the
+revealing LEZ claim, which preceded the confirmed Zcash claim. The secret-free
+certificate is
+`docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json`; no public RPC,
+faucet, public funds, peer, or runtime external resource participated.
 Fixed packaged-system-service start/stop and receipt-bound
 XMR Taker monitoring are now GREEN. XMR Taker claim/refund effect composition
 and actual-application concurrency remain. The tag-16 sidecar checkpoint is now

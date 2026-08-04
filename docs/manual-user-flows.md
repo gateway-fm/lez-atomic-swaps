@@ -7216,6 +7216,16 @@ jq . "/tmp/lez-atomic-swaps-$RUN_ID/evidence/m7-route-health-after-restart.json"
 jq . "/tmp/lez-atomic-swaps-$RUN_ID/evidence/result.json"
 ```
 
+Checked example `m7outage-2c63218-a` at commit `2c63218` completed both role
+journals in 36.920 seconds after provisioning, with 69 bounded drive rounds,
+zero same-run retries and three generated Zebra blocks. Its certificate is
+[`m7-unaffected-pair-outage-2c63218-20260804.json`](evidence/m7-unaffected-pair-outage-2c63218-20260804.json).
+The first cold LEZ compatibility-sidecar release build on this host took 18
+minutes 54 seconds; retaining its verified Cargo target reduced the same warm
+build in the certified run to 1.21 seconds. That cache changes setup time only:
+the runner still revalidates source/artifact identities and executes fresh role
+and chain state.
+
 The wrapper always removes only its exact Bitcoin container, tmpfs volume,
 private network, and run-tagged image. It deliberately does not stop the LEZ or
 Zebra stacks supplied by the operator; use the exact cleanup commands printed

@@ -115,8 +115,8 @@ flowchart TD
   network and genesis, stops that exact labelled container, and then runs the
   ordinary Zcash application corridor. The same Maker daemon probes both the
   unavailable Bitcoin route and surviving Zebra route through one hash-pinned
-  adapter. A fresh retained successful execution is still required before F1
-  or R3 changes from `open` to `green`.
+  adapter. Its clean actual-node execution and certificate are recorded below;
+  F1 and R3 are GREEN at this private-local boundary.
 - Fresh run `m7outage-5e9d47d-a` proved the stopped Bitcoin node was
   semantically unavailable, then failed before daemon readiness and before any
   swap submission because the checked-out `scripts/` directory was group
@@ -135,6 +135,16 @@ flowchart TD
   The assertion is now mode-aware: normal M5 still requires exactly one Zcash
   route, while M7 requires that route plus the exact disabled Bitcoin route.
   No role actor or chain submission ran; this remains bounded RED evidence.
+
+- Clean pushed run `m7outage-2c63218-a` completed the repaired composition.
+  Both semantic route states survived Maker restart, the Bitcoin quote failed
+  closed, and the actual Zebra/LEZ Zcash claim journey completed both roles in
+  36.920 seconds with zero same-run retries. Three deterministic Zebra blocks
+  established the exact order: confirmed Zcash funding, finalized revealing
+  LEZ claim, then confirmed Zcash claim. The checked secret-free certificate is
+  `docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json`. Runtime
+  external resources are empty; no public RPC, faucet, public funds, or peer
+  participated.
 
 ```mermaid
 flowchart LR

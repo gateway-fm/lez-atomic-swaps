@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "m7_unaffected_pair_actual_node_outage_poc",
+  "result": "passed",
+  "run_id": "m7outage-2c63218-a",
+  "repository_commit": "2c63218542c0ce9d53df521b5fd88bf46693fcb8",
+  "absent_route": {
+    "pair": "Bitcoin",
+    "direction": "TakerSellsForeign",
+    "actual_local_node": true
+  },
+  "surviving_route": {
+    "pair": "Zcash",
+    "direction": "TakerSellsLez",
+    "actual_local_node": true
+  },
+  "absent_route_failed_closed": true,
+  "route_isolation_survived_maker_restart": true,
+  "unaffected_pair_swap_completed": true,
+  "atomic_claim_order_observed": true,
+  "evidence_sha256": {
+    "bitcoin_runtime": "bef8c01c95b93464f6af313828ed0e7beb2c35bb77552bbd3fa4e35c827a1341",
+    "bitcoin_unavailable": "d7c343d340c24dac1ef9ccf824855f476a89dbb1a6e3a62e356a50cbc3d279c0",
+    "route_health_config": "be2c671176b2577ffdee6b3e27c5485af3ea115cbc60f8d35ddad989f7a1842e",
+    "before_swap_health": "d8eafc09a9e568fc9c8f685cf43e00ce161168ff442fdf653833dfd30646248b",
+    "after_restart_health": "d8eafc09a9e568fc9c8f685cf43e00ce161168ff442fdf653833dfd30646248b",
+    "corridor_result": "f7f974d3db91aff254986cbff432c4e61f73f095c084b38301e66e76b9183ccf"
+  },
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false
+}
