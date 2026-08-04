@@ -8,7 +8,7 @@ F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceab
 F7	open	./scripts/test-m3-f7-token-fixture-contract.sh	docs/requirements-traceability.md	Terminal composed custom-token claim/refund on the exact v0.2 actor route
 F8	upstream-deferred	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	LOGOS-021 live Logos price-module ABI compatibility
 F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Daemon-owned semantic XMR effects and automatic unavailable-node composition
-U1	open	./scripts/test-m4-xmr-agreement-contract.sh	docs/requirements-traceability.md	Public durable full-lifecycle XMR SDK facade and doctest
+U1	green	./scripts/test-m7-xmr-sdk-facade-contract.sh	docs/requirements-traceability.md	none
 U2	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Accepted-application actual-chain concurrency and process crash recovery
 U3	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Complete supported-pair semantic claim/refund daemon action matrix
 U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Literal XMR Taker semantic claim/refund and abandonment journeys

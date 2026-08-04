@@ -6,7 +6,7 @@ S4	open	./scripts/test-m7-hard-requirements-audit.sh	docs/milestone-7/hard-requi
 S5	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Complete daemon-owned all-pair reference journeys plus dependency and concurrency composition
 S6	green	./scripts/check-requirements-traceability.sh	docs/requirements-traceability.md	none
 S7	green	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/mainnet-readiness.md	none
-S8	open	./scripts/test-m4-xmr-agreement-contract.sh	docs/requirements-traceability.md	Full-lifecycle XMR public API errors docs doctest and external-wiring example
+S8	green	./scripts/test-m7-xmr-sdk-facade-contract.sh	docs/requirements-traceability.md	none
 S9	green	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/README.md	none
 S10	green	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/README.md	none
 S11	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none

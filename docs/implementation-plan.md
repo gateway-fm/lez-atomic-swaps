@@ -283,7 +283,11 @@ attestation so neither can be misreported as the other.
   work; strict mode rejects every self-owned open row.
 - [x] Reconcile S1–S13 and D1 against current executable evidence. Their
   14-row manifest preserves S12/S13 as the only `external-review` verdicts and
-  strict self-closure currently exposes five repository-owned grouped gaps.
+  strict self-closure currently exposes four repository-owned grouped gaps.
+- [x] Close XMR U1/S8 API parity through ADR 0149: a bounded canonical
+  Stage-A/Stage-B envelope, role-fixed full lifecycle, retained restart
+  identity, actor-owned durability/effects, structured errors, strict Rust
+  gates and an external-wiring example.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -299,9 +303,9 @@ attestation so neither can be misreported as the other.
 ### Current repository-owned gap classes
 
 1. Traceability contains carried Partial/Planned statements from earlier PoC
-   boundaries, including full XMR SDK/example parity, automatic unavailable-node
-   composition, accepted-application actual-chain concurrency, crash/reorg/fee
-   matrices, public calibration alternatives and non-BTC demo evidence.
+   boundaries, including automatic unavailable-node composition,
+   accepted-application actual-chain concurrency, crash/reorg/fee matrices,
+   public calibration alternatives and non-BTC demo evidence.
 2. CI has strong lint, strict Rust, vulnerability, license, source, fuzz,
    architecture and isolation gates, but does not yet produce one review dossier.
 3. Public deployment remains intentionally skipped under the stealth/local

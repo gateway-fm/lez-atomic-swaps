@@ -84,6 +84,7 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m7-review-readiness-contract.sh
 ./scripts/test-m7-hard-requirements-audit.sh
 ./scripts/test-m7-submission-requirements-audit.sh
+./scripts/test-m7-xmr-sdk-facade-contract.sh
 ./scripts/test-monero-stagenet-guide-contract.sh
 ./scripts/test-zcash-testnet-guide-contract.sh
 ./scripts/test-bitcoin-testnet4-route-contract.sh

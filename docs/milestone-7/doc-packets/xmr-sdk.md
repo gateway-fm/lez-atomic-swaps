@@ -4,8 +4,9 @@
 
 ## What the user achieves
 
-A Rust developer validates the LEZ-first Monero agreement, cross-curve DLEQ,
-spend-key-share and role-actor integration used by the local swap corridor.
+A Rust developer composes the role-fixed LEZ-first Monero lifecycle from offer
+discovery and negotiation through activation, restart, claim, refund or
+punishment while keeping secrets and effects inside the role actor.
 
 ## Why it matters
 
@@ -14,7 +15,8 @@ without pretending Monero has a script or accepting unsupported XMR-first flow.
 
 ## Key components
 
-- `lez-xmr-swap-sdk`: agreement, DLEQ and shared-spend primitives.
+- `lez-xmr-swap-sdk`: agreement, DLEQ/shared-spend primitives, canonical
+  Stage-A/Stage-B negotiation envelope, public lifecycle facade and errors.
 - `xmr-reference-actor`: role-fixed Stage A/B and terminal actor boundary.
 - `lez-xmr-monero-adapter`: bounded authenticated daemon/wallet observations.
 - LEZ v0.2 sidecar: finalized witnessed-claim/refund evidence and preparation.
@@ -38,6 +40,9 @@ are required only for the isolated actual Regtest corridor.
 git clone https://github.com/mandrigin/lez-atomic-swaps.git
 cd lez-atomic-swaps
 cargo test --locked -p lez-xmr-swap-sdk --all-targets
+cargo clippy --locked -p lez-xmr-swap-sdk --all-targets -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo doc --locked -p lez-xmr-swap-sdk --no-deps
+cargo run --locked -p lez-xmr-swap-sdk --example lifecycle-wiring
 cargo test --locked -p xmr-reference-actor --all-targets
 ./scripts/test-m5-xmr-application-poc-contract.sh
 ```
@@ -52,8 +57,10 @@ contacted by these commands.
 
 ## Expected result
 
-The SDK unit, integration and `dleq-spike` example targets finish with zero
-failed tests.
+Twenty-two SDK tests pass, strict Clippy and Rustdoc pass, and both
+`dleq-spike` and `lifecycle-wiring` targets compile. The facade rejects role,
+swap, agreement, activation, revision and branch substitution; its post-lock
+type contains no Delivery or Chat capability.
 
 ## Configuration details
 
@@ -64,6 +71,9 @@ actor journals and Docker names; use Flow 1R/1W in the manual guide.
 ## Failure modes and limits
 
 - XMR-first agreements are rejected by design; select LEZ-first.
+- The concrete `XmrRoleActorPort` adapter must own process-durable journals,
+  validate Stage B with its private view key and reconcile unknown effects;
+  the SDK intentionally cannot replace that authority.
 - Cold release/image setup can fail on immutable-source availability; verify
   checksums and do not fall back to an unpinned binary.
 - Regtest timing/topology is deterministic local evidence, not Stagenet parity.
@@ -95,4 +105,3 @@ SDK-only: 2 CPU, 8 GB RAM, 20 GB disk. Full local LEZ/Monero run: 4 CPU,
 Treat shares, wallet seeds, DLEQ nonces, Stage-B records and recovery journals
 as secrets. Keep distinct authenticated role wallets and never expose wallet RPC
 outside literal loopback. Independent cryptographic review is mandatory.
-

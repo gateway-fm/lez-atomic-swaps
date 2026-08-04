@@ -2149,9 +2149,11 @@ dependencies = [
 name = "lez-xmr-swap-sdk"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "hex",
  "lez-adaptor-signature",
  "lez-swap-core",
+ "lez-swap-sdk-core",
  "monero",
  "musig2",
  "postcard",
@@ -2162,6 +2164,7 @@ dependencies = [
  "sha2 0.10.9",
  "sigma_fun",
  "thiserror 2.0.18",
+ "tokio",
  "zeroize",
 ]
 
