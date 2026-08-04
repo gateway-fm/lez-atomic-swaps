@@ -33,7 +33,9 @@ the component, success/failure flows, and atomicity scope.
 The local actor-browser proof is GREEN 6/6 through the digest-pinned,
 networkless, read-only Docker runner at
 `scripts/run-m6-prototype-e2e-isolated.sh`; no chain, wallet, faucet, public
-RPC, or public network is involved. Owner-local RPC calls are now bounded end
+RPC, or public network is involved. An unchanged-input replay on 2026-08-04
+passed all six journeys in 19.34 seconds against commit `1afc0db`, then removed its exact
+784 MB runner image. Owner-local RPC calls are now bounded end
 to end at `eb7e147`. The strict typed Taker facade contract is GREEN at
 `6161e35`: it exposes seven versioned methods, no caller-selected paths, keys,
 commands, or raw evidence, and reports current Monero terminal routes honestly

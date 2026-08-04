@@ -29,10 +29,13 @@ The automated companion proof is:
 ```
 
 It is GREEN 6/6 at `53e6cd8` through the digest-pinned runner added at
-`e48ad9c`. The container has no network namespace, mounts the repository
-read-only, uses disposable state and a unique name, keeps Chromium sandboxing
-enabled, and performs exact cleanup. A missing local image may require a
-one-time GHCR pull; the test itself has no external runtime resource.
+`e48ad9c`, and a fresh unchanged-input replay passed all 6 journeys in
+19.34 seconds against repository commit `1afc0db`. The container has no
+network namespace, mounts the repository read-only, uses disposable state and
+a unique name, keeps Chromium sandboxing enabled, and performs exact cleanup.
+A missing local image may require a one-time GHCR pull; the test itself has no
+external runtime resource. The fresh machine-readable packet is
+`docs/evidence/m6-prototype-revalidation-20260804.json`.
 
 ## Review checklist
 

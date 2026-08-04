@@ -5388,6 +5388,15 @@ the gate before production Basecamp QML work under ADR 0128. This checkpoint
 implements the first of four literal M6 outputs but does not claim Basecamp
 loadability, backend authority, chain effects, or M6 completion.
 
+Fresh unchanged-input replay on 2026-08-04 revalidated the contract and all six
+actor-browser journeys against repository commit `1afc0db`. The sandboxed,
+networkless digest-pinned runner completed in 19.34 seconds and was removed
+afterward. A direct host attempt executed no journey because Chromium correctly
+refused to disable its unavailable host sandbox; it was not counted as product
+evidence. The exact packet is
+`docs/evidence/m6-prototype-revalidation-20260804.json`. Human signoff remains
+the issue-#112 gate and is not inferred from the automated pass.
+
 ## M6 atomic Maker route backend checkpoint (2026-08-03)
 
 Pushed commit `8c6a7db` removes the non-atomic three-request sequence behind
