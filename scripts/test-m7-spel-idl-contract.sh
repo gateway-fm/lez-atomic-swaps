@@ -14,6 +14,8 @@ readonly provisional_build="compat/lez-v0.2-provisional/build.rs"
 readonly deployment_test="compat/lez-v0.2-provisional/tests/escrow_deployment.rs"
 readonly sidecar_build="compat/lez-v0_2-sidecar/build.rs"
 readonly artifact_manifest="compat/lez-v0.2-provisional/escrow/methods/guest/deployment-manifest.toml"
+readonly checked_artifact_manifest="compat/lez-v0.2-provisional/escrow/methods/guest/m4-deployment-manifest.toml"
+readonly artifact_runner="scripts/run-m4-lez-artifact-tests.sh"
 readonly artifact_verifier="scripts/verify-lez-v02-provisional.sh"
 readonly sidecar_verifier="scripts/verify-lez-v02-sidecar.sh"
 readonly adr="docs/architecture/0151-freeze-generated-spel-custody-abi.md"
@@ -27,11 +29,23 @@ for path in \
   "$deployment_test" \
   "$sidecar_build" \
   "$artifact_manifest" \
+  "$checked_artifact_manifest" \
+  "$artifact_runner" \
   "$artifact_verifier" \
   "$sidecar_verifier" \
   "$adr"; do
   [[ -s "$path" ]] || fail "missing ${path}"
 done
+
+deployment_manifest_sha256="$(sha256sum "$artifact_manifest" | awk '{print $1}')"
+artifact_runner_sha256="$(sha256sum "$artifact_runner" | awk '{print $1}')"
+rg -Fqx "deployment_manifest_sha256 = \"${deployment_manifest_sha256}\"" \
+  "$checked_artifact_manifest" || fail "checked artifact manifest does not bind the deployment manifest"
+rg -Fq "require_sha256 \"${deployment_manifest_sha256}\"" "$artifact_runner" ||
+  fail "artifact runner source boundary does not bind the deployment manifest"
+rg -Fqx "artifact_runner_sha256 = \"${artifact_runner_sha256}\"" \
+  "$checked_artifact_manifest" || fail "checked artifact manifest does not bind its runner"
+"$artifact_runner" verify-source >/dev/null || fail "artifact source boundary is not executable"
 
 rg -Fq 'spel_commit = "df17acd98436be4f09c55877dae1fe2e73cbcdca"' \
   "$provisional_manifest" || fail "provisional package does not pin the reviewed SPEL commit"

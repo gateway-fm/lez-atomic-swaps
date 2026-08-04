@@ -131,3 +131,11 @@ it does not replace actual-node claim/refund/punishment and reorg evidence.
 - The current SPEL and LEZ pins are upstream dependencies. Their future release
   availability is recorded separately and does not prevent local milestone
   certification of the exact checked versions.
+- The first actual M7 outage rehearsal exposed a missing transitive binding:
+  adding the generated-client digest changed the deployment manifest while the
+  checked-artifact runner and its manifest still pinned the previous manifest
+  hash. The deployment guard rejected this before any chain send. The fast M7
+  contract now derives the current deployment-manifest and artifact-runner
+  hashes, requires both in the checked-artifact manifest, and executes the
+  runner's zero-build `verify-source` mode. Future custody-manifest changes
+  therefore fail ordinary CI before a live deployment rehearsal.

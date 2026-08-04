@@ -312,6 +312,12 @@ attestation so neither can be misreported as the other.
   full locked-offline tests, strict Clippy, warning-fatal Rustdoc, advisories,
   bans, licenses and source policy pass. Public deployment remains separately
   deferred and is not implied by this interface freeze.
+- [x] Repair the transitive checked-artifact binding found by the fresh M7
+  actual-node rehearsal: update the artifact source guard to the custody-frozen
+  deployment manifest, rebind the checked-artifact manifest to the runner, and
+  make the fast SPEL contract derive and execute both identities. The observed
+  stale proof failed before its sole send; a fresh proof and deployment must be
+  generated from the repaired pushed commit.
 - [x] Close the first XMR semantic-worker custody prerequisite through ADR
   0152: retain the already validated Stage A/B, own/peer packets, private-role
   manifest and private view key; seal them on FDs 211 through 216 before the
