@@ -34,9 +34,14 @@ use zec_reference_actor::ActorConfig;
 use support::actor_deployment;
 use xmr_chat_fixture::XmrChatFixture;
 
+static DAEMON_SUPERVISOR_PROCESS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 #[allow(clippy::too_many_lines)] // One process journey keeps readiness, RPC, and reap ordering visible.
 fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigterm() {
+    let _process_test_guard = DAEMON_SUPERVISOR_PROCESS_TEST_LOCK
+        .lock()
+        .expect("daemon-supervisor process test lock");
     let root = tempdir().expect("isolated daemon-supervisor root");
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
         .expect("owner-only test root");
@@ -167,6 +172,9 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
 #[test]
 #[allow(clippy::too_many_lines)] // One process journey keeps all three durable actor rows visible.
 fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
+    let _process_test_guard = DAEMON_SUPERVISOR_PROCESS_TEST_LOCK
+        .lock()
+        .expect("daemon-supervisor process test lock");
     let root = tempdir().expect("isolated three-pair daemon root");
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
         .expect("owner-only test root");

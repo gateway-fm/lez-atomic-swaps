@@ -6052,3 +6052,11 @@ passed 2/2 in 255.34 seconds, isolating parallel fixture thrash rather than a
 daemon defect. A test-only Tokio mutex now serializes only those two process
 journeys. The original default test command is GREEN 2/2 in 250.71 seconds;
 production code, RPCs, timeouts, and protocol behavior are unchanged.
+
+The next exact workspace run exposed the same class in the two
+daemon-supervisor process journeys: parallel child churn made one isolated test
+miss an expected PID observation. The unchanged sequential diagnostic passed
+2/2 in 17.64 seconds. A second test-only standard mutex now serializes only
+those two daemon process journeys. Their original default command is GREEN 2/2
+in 21.86 seconds; production supervisor concurrency coverage remains inside the
+three-pair test, and no production scheduling or timeout changed.
