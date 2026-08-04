@@ -2703,6 +2703,10 @@ without bypassing provenance checks. Public stagenet peers, sync, funding, and
 reorg behavior remain unmeasured and are not inferred from Regtest. The actual
 M4 claim checkpoint used those real official local processes through loopback,
 not daemon or wallet mocks; its LEZ and Monero runtime resource list is empty.
+The [Monero Stagenet setup guide](docs/monero-stagenet-setup.md) separately
+documents pinned verification, self-hosted and untrusted public-node routes,
+role wallet RPCs, funding, security, cleanup, and flakiness without claiming a
+public run.
 
 The M4 checked-artifact runner also records runtime resources as empty. Its
 fresh recursive test opens no RPC or public service, but cold setup can require

@@ -274,6 +274,9 @@ attestation so neither can be misreported as the other.
   proposal text and Logos documentation template.
 - [x] Create the S7 mainnet-readiness write-up, S12/S13 review scope, finding
   policy and five locally validated documentation packets.
+- [x] Close missing U9 operator documentation with a pinned self-hosted Stagenet
+  daemon/wallet/funding journey, explicit untrusted public-node option,
+  resource/flakiness inventory and no-public-call CI contract.
 - [ ] Reconcile every F/U/R/P/S/D row against current executable evidence;
   replace stale milestone prose and make each hard-requirement gate executable.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,

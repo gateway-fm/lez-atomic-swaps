@@ -3735,6 +3735,11 @@ closed; every new attempt requires a new run ID. Public stagenet latency,
 reorgs, funding services, quotas, and peer behavior are not measured by this
 local checkpoint and remain explicit M4 closure work.
 
+For pinned release, self-hosted Stagenet daemon, separate wallet RPC, funding,
+untrusted public-node, manual rehearsal, cleanup, and flakiness procedures, use
+the [Monero Stagenet setup guide](monero-stagenet-setup.md). It does not turn
+the retained Regtest certificate into public evidence.
+
 ## Flow 1: maker operator CLI and daemon restart
 
 The executable acceptance fixture is the quickest exact reproduction:
