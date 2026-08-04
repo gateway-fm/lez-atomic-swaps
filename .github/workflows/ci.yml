@@ -68,7 +68,6 @@ jobs:
       CARGO_BUILD_JOBS: "2"
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
       PUPPETEER_SKIP_DOWNLOAD: "true"
-      M6_UI_TEST_ROOT: ${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -86,6 +85,8 @@ jobs:
       - name: Audit Node tooling licenses
         run: npm run audit:licenses
       - name: Exercise M6 clickable role prototypes
+        env:
+          M6_UI_TEST_ROOT: ${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           google-chrome --version
           npm run test:m6:prototype

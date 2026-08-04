@@ -3,7 +3,8 @@ set -euo pipefail
 
 readonly image="ghcr.io/puppeteer/puppeteer@sha256:9665f5b57abc5cc7080a641878964018de219055a4d2c9d8d050ceb1161778ba"
 readonly chrome="/home/pptruser/.cache/puppeteer/chrome/linux-150.0.7871.24/chrome-linux64/chrome"
-readonly repository_root="$(git rev-parse --show-toplevel)"
+repository_root="$(git rev-parse --show-toplevel)"
+readonly repository_root
 readonly container_name="lez-m6-ui-$UID-$$"
 
 cleanup() {

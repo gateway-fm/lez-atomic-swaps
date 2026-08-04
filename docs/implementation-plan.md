@@ -124,8 +124,9 @@ created under the previous test-first strategy. ADR 0027 carries it forward for
 later revalidation; it does not imply that the M2 QA, chaos, information-
 security, or production-readiness phase has been entered or completed. M2 and
 M3 are certified at their reproducible local-functional PoC boundaries; their
-QA and later hardening phases remain inactive. M6 is now the active progressive
-local-PoC slice; M4 and M5 are certified at their owner-selected PoC boundaries.
+QA and later hardening phases remain inactive. M4, M5, and M6 are certified at
+their owner-selected local-functional PoC boundaries. M7 is not active and
+requires a separate owner transition.
 The final column is a post-M2 backlog, not
 an instruction to start every listed refactor now. Restart, refund, reorg,
 concurrency, broad negative testing, and new RED-GREEN-REFACTOR work wait for
@@ -6025,18 +6026,25 @@ license, signature, upstream all-output evaluation, realized-closure SBOM and
 vulnerability review, graph review, and offline-cold-build work release-blocking
 but nonblocking for the private local PoC under the accepted Logos exception.
 
-Remaining M6 certification order:
+M6 certification closure:
 
-1. validate every documentation link, command, traceability row, architecture
-   diagram, evidence hash, and the exact candidate diff;
-2. run the repository format, strict Clippy, workspace test, warning-fatal
-   Rustdoc, Node audit/license, CI hardening, M6 prototype/package, and final
-   one-time Mermaid gates;
-3. remove only the dedicated M6 Nix volume, exact temporary checkouts/runtime
-   paths, and unused pinned image after the final product evidence is retained;
-4. commit and push the certification tree, then create and push
-   `m6-poc-complete` only when the candidate is clean and every local gate is
-   GREEN. No remote-green claim is made without observable Actions results.
+1. requirements traceability, the exact diff, JSON evidence, architecture
+   compatibility, all 429 Mermaid renders, and the package contract are GREEN;
+2. formatting, strict all-target/all-feature Clippy, the locked workspace
+   all-target test suite, both feature-gated crash seams, warning-fatal Rustdoc,
+   root dependency advisories/bans/licenses/sources, Node audit/license, CI
+   hardening, and the pinned shell/workflow/Dockerfile/Compose quality wrapper
+   are GREEN;
+3. the sandboxed, networkless browser prototype is GREEN 6/6; host AppArmor did
+   not permit Chromium's namespace sandbox, so neither UI nor Mermaid proof used
+   `--no-sandbox` on the host;
+4. all seven exact `/tmp/lez-m6-*` paths, the 33 GiB repository Cargo target,
+   the dedicated M6 Nix volume, and both unused pinned test images were removed.
+   No unrelated Docker resource was pruned, and 354 GiB was available after
+   cleanup;
+5. `m6-poc-complete` identifies the final clean certification commit once its
+   push and annotated tag push succeed. No remote-green claim is made because
+   no observable Actions result was used for this local certification.
 
 Certification RED/GREEN update: warning-fatal Rust 1.96 Clippy rejected the
 unchanged five-minute external Basecamp rendezvous ceiling when written as
@@ -6060,3 +6068,25 @@ miss an expected PID observation. The unchanged sequential diagnostic passed
 those two daemon process journeys. Their original default command is GREEN 2/2
 in 21.86 seconds; production supervisor concurrency coverage remains inside the
 three-pair test, and no production scheduling or timeout changed.
+
+The retained authoritative rerun
+`cargo test --quiet --locked --workspace --all-targets` is GREEN. Three tests
+remain explicitly ignored because they require their pinned Docker/Zebra
+actual-node routes; their corresponding fresh terminal certificates are
+retained separately rather than falsely counted as part of the workspace run.
+
+Final quality RED/GREEN found four stale static-contract assumptions and one
+invalid GitHub Actions context. The M5 contract now recognizes the M6-specific
+suppressed-authority status observation, both `Completed` and `Refunded` real
+RPC enum projections, and the one receipt-bound CLI authority branch. The XMR
+contract follows the current typed loader into its Taker-role semantic
+validation instead of requiring a removed redundant method call. The service
+lifecycle contract follows the shared secure-file module that accepts only
+owner-owned single-link mode-0400-or-0600 bounded regular files. The M6 browser
+test's `${{ runner.temp }}` expression moved from invalid job scope to step
+scope. The complete maintained quality wrapper is GREEN after these changes.
+
+The one-time diagram gate first rejected `Actor`, a reserved GitHub Mermaid
+sequence identifier, in the three pair diagrams. Renaming only that participant
+identifier to `PairActor` made all 429 conservative compatibility checks and all
+429 isolated SVG renders GREEN without changing the documented flows.

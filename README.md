@@ -9,10 +9,10 @@ together with the live
 [RFP-003](https://github.com/logos-co/rfp/blob/master/RFPs/RFP-003-atomic-swaps.md).
 The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
-### M6 active progressive Basecamp mini-app PoC
+### M6 certified local-functional Basecamp mini-app PoC
 
 M5 is verified at the local-functional PoC boundary by tag
-`m5-poc-complete`. M6 is now active under
+`m5-poc-complete`. M6 is certified by `m6-poc-complete` under
 [ADR 0128](docs/architecture/0128-enter-m6-through-current-basecamp-qml.md):
 first, deterministic local clickable Maker and Taker prototypes for journey
 sign-off; then two current Basecamp 0.2.0 `ui_qml` packages over typed,
@@ -20,8 +20,8 @@ role-correct backend boundaries. The Maker journey covers pair and price
 configuration, active monitoring, and history. The Taker journey covers offer
 browsing, initiation, progress, terminal action, and ZEC shield-after-swap
 guidance. Prototype state is explicitly simulated and makes no RPC, chain,
-faucet, DNS, or public-network request. The current implementation order and
-limitations are tracked in the
+faucet, DNS, or public-network request. The implementation history and deferred
+production limitations are tracked in the
 [implementation plan](docs/implementation-plan.md#m6-active-work-package-maker-and-taker-basecamp-mini-apps).
 
 The prototype gate and the Basecamp implementation are now GREEN. Commits
@@ -43,8 +43,9 @@ or public deployment. Cold Nix construction can contact immutable GitHub flake
 inputs and `cache.nixos.org`; availability of those setup services is a disclosed
 flakiness boundary. Terminal actual-node Claim and Refund certificates remain a
 separate service/actor evidence layer. They are not represented as transactions
-caused by the retained Basecamp product run. Final repository gates, exact M6
-resource cleanup, certification push, and tag remain before M6 completion.
+caused by the retained Basecamp product run. Local repository, security,
+quality, architecture, package, and product gates are GREEN; exact M6 resources
+were removed without global prune. No remote-Actions-green claim is made.
 The first nonvisual backend prerequisite is GREEN at `8c6a7db`: strict
 `maker_local_route_save_v1` atomically stores one same-route pair policy,
 exact local price, and replay result in schema v22. It opens no external
@@ -149,8 +150,9 @@ public RPC, faucet, public funds, or public deployment. The retained Claim
 packet is
 [m6-zec-service-claim-regression-certificate-20260804.json](docs/evidence/m6-zec-service-claim-regression-certificate-20260804.json).
 Maker and Taker Basecamp packages and the prepared actor-real UI product journey
-are now GREEN through `e3e6907`; final gates and the M6 tag remain. Prototype
-sign-off was explicitly approved on 2026-08-04.
+are GREEN through the retained `e3e6907` product capture and the final
+`m6-poc-complete` certification tag. Prototype sign-off was explicitly approved
+on 2026-08-04.
 Cross-restart receipt/state rollback
 anchoring remains production hardening, not an issue-#112 PoC gate.
 

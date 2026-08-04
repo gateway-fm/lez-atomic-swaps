@@ -161,20 +161,20 @@ layer; they are deliberately not represented as effects caused by that UI run.
 sequenceDiagram
     actor User as Role user in Basecamp
     participant Service as Owner role service
-    participant Actor as Role-fixed BTC actor
+    participant PairActor as Role-fixed BTC actor
     participant LEZ as Local LEZ Vault
     participant BTC as Bitcoin Core Regtest
     User->>Service: Generation-fenced Claim or Refund
     Service->>Service: Atomically authorize one terminal branch
-    Service->>Actor: Invoke exact admitted action
+    Service->>PairActor: Invoke exact admitted action
     alt Claim path
-        Actor->>BTC: Spend HTLC with secret
-        Actor->>LEZ: Submit matching Vault Claim
+        PairActor->>BTC: Spend HTLC with secret
+        PairActor->>LEZ: Submit matching Vault Claim
     else Refund path after deadlines
-        Actor->>LEZ: Submit Vault Refund
-        Actor->>BTC: Spend elapsed HTLC refund branch
+        PairActor->>LEZ: Submit Vault Refund
+        PairActor->>BTC: Spend elapsed HTLC refund branch
     end
-    Actor-->>Service: Durable journal result
+    PairActor-->>Service: Durable journal result
     Service-->>User: Exact result or exact replay
 ```
 
@@ -190,16 +190,16 @@ the UI boundary.
 sequenceDiagram
     actor User as Role user in Basecamp
     participant Service as Owner role service
-    participant Actor as Role-fixed XMR actor
+    participant PairActor as Role-fixed XMR actor
     participant LEZ as Local LEZ Vault
     participant XMR as Monero Regtest wallets
     User->>Service: Monitor or generation-fenced terminal intent
-    Service->>Actor: Invoke allowlisted role method
-    Actor->>LEZ: Observe or submit the matching Vault branch
-    Actor->>XMR: Observe wallet proof and spend checkpoint
-    XMR-->>Actor: Confirmed wallet evidence
-    LEZ-->>Actor: Finalized Vault evidence
-    Actor-->>Service: Durable paired checkpoint
+    Service->>PairActor: Invoke allowlisted role method
+    PairActor->>LEZ: Observe or submit the matching Vault branch
+    PairActor->>XMR: Observe wallet proof and spend checkpoint
+    XMR-->>PairActor: Confirmed wallet evidence
+    LEZ-->>PairActor: Finalized Vault evidence
+    PairActor-->>Service: Durable paired checkpoint
     Service-->>User: Public status projection
 ```
 
@@ -216,20 +216,20 @@ sequenceDiagram
     actor User as Role user in Basecamp
     participant Service as Taker owner service
     participant Registry as Terminal registry
-    participant Actor as Role-fixed ZEC actor
+    participant PairActor as Role-fixed ZEC actor
     participant LEZ as Local LEZ Vault
     participant ZEC as Zebra Regtest
     User->>Service: Claim or Refund with expected generation
     Service->>Registry: Replay, winner, availability, then atomic admission
-    Service->>Actor: Invoke only the admitted branch
+    Service->>PairActor: Invoke only the admitted branch
     alt Claim
-        Actor->>ZEC: Submit transparent Claim once
-        Actor->>LEZ: Finalize matching Vault Claim
+        PairActor->>ZEC: Submit transparent Claim once
+        PairActor->>LEZ: Finalize matching Vault Claim
     else Refund
-        Actor->>LEZ: Finalize Vault Refund after deadline
-        Actor->>ZEC: Submit transparent Refund once
+        PairActor->>LEZ: Finalize Vault Refund after deadline
+        PairActor->>ZEC: Submit transparent Refund once
     end
-    Actor-->>Service: Journaled terminal result
+    PairActor-->>Service: Journaled terminal result
     Service-->>User: Result with replay flag
 ```
 
@@ -266,4 +266,3 @@ networkless and uses no public RPC, faucet, public funds, or public deployment.
 LOGOS-025 retains upstream license, signature, graph, and offline-rebuild work
 for production distribution. These Logos-owned findings do not weaken the
 repository-owned role, transport, replay, atomicity, security, or quality gates.
-

@@ -17,11 +17,16 @@
   "isolation": {
     "container_image": "nixos/nix@sha256:d78540374f6a886653cba47d5c3f61c5a41d42e2a8db2607b8d68cb226fd463e",
     "dedicated_nix_store_volume": "lez-m6-nix-packages-4031752",
+    "dedicated_nix_store_volume_removed_after_certification": true,
     "product_runtime_network": "none",
     "basecamp_and_service_effective_uid": 1000,
     "separate_role_user_directories": true,
     "separate_role_owner_sockets": true,
-    "unrelated_docker_resources_modified": false
+    "unrelated_docker_resources_modified": false,
+    "pinned_test_images_removed_after_certification": true,
+    "all_named_m6_temporary_paths_removed": true,
+    "repository_cargo_target_removed": true,
+    "available_disk_gib_after_cleanup": 354
   },
   "basecamp_runtime": {
     "store_path": "/nix/store/s6hmr3jgcx0nfqf35wzdy70i2pqhbann-logos-basecamp-0.2.0-RC3",
@@ -103,6 +108,45 @@
     "tcp_or_web_transport": false,
     "socket_requirements": "effective-user-owned Unix socket with mode 0600",
     "maximum_rpc_message_bytes": 65536
+  },
+  "certification": {
+    "tag": "m6-poc-complete",
+    "candidate_parent_commit": "38fd5c4",
+    "remote_actions_green_claimed": false,
+    "local_gates": {
+      "cargo_fmt_all_check": "passed",
+      "cargo_clippy_workspace_all_targets_all_features_deny_warnings": "passed",
+      "cargo_test_locked_workspace_all_targets": "passed",
+      "zec_actor_crash_hook": "passed_2_of_2",
+      "daemon_actor_crash_routing": "passed_3_of_3",
+      "rustdoc_workspace_all_features_deny_warnings": "passed",
+      "root_cargo_deny_advisories_bans_licenses_sources": "passed",
+      "node_audit_moderate": "passed_zero_vulnerabilities",
+      "node_license_audit": "passed",
+      "ci_hardening_contract": "passed",
+      "pinned_ci_quality_wrapper": "passed",
+      "requirements_traceability": "passed",
+      "markdown_local_targets": "passed_177_files",
+      "docker_isolation_contract": "passed",
+      "spin_lock_remediation": "passed_all_eleven_lockfiles",
+      "lez_cost_evidence_stability": "passed",
+      "basecamp_package_contract": "passed_2_packages_13_slots_1_transport",
+      "isolated_browser_prototype": "passed_6_of_6",
+      "mermaid_github_compatibility": "passed_429_of_429",
+      "mermaid_isolated_svg_render": "passed_429_of_429"
+    },
+    "ignored_workspace_tests": {
+      "count": 3,
+      "reason": "Explicit pinned Docker/Zebra actual-node routes; corresponding layered actual-node certificates are retained separately."
+    },
+    "red_green_fixes": [
+      "serialized only the two heavy XMR process fixtures and only the two daemon-supervisor process fixtures without changing production concurrency or timeouts",
+      "renamed the reserved Mermaid sequence participant Actor to PairActor",
+      "kept Chromium sandboxing enabled by running browser and diagram proofs in digest-pinned networkless containers",
+      "made the isolated browser wrapper preserve git failure status",
+      "updated stale M5/M6 static contracts to the current M6-aware authority, terminal-phase, typed-XMR-loader, and shared secure-file boundaries",
+      "moved runner.temp use from invalid job-level GitHub Actions environment scope to the M6 browser-test step"
+    ]
   },
   "layered_chain_evidence": {
     "basecamp_click_claimed_to_create_chain_effect": false,

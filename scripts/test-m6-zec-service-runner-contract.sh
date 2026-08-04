@@ -64,11 +64,15 @@ handler_source="$(sed -n '/^handle_zcash_submission() {$/,/^}$/p' "$runner")"
 # claim must stop after its one Zcash effect and must not be reclassified as
 # the earlier LEZ revealing claim.
 eval "$handler_source"
+# shellcheck disable=SC2034 # Consumed by the eval-extracted production handler.
 M6_TAKER_SERVICE_MODE=1
 lez_revealing_claim_seen=1
+# shellcheck disable=SC2034 # Consumed by the eval-extracted production handler.
 expected_zcash_claimant_role=taker
+# shellcheck disable=SC2034 # Consumed by the eval-extracted production handler.
 expected_zcash_funder_role=maker
 zcash_claim_mined=0
+# shellcheck disable=SC2034 # Consumed by the eval-extracted production handler.
 m6_zcash_claim_txid="$(printf 'a%.0s' {1..64})"
 zcash_claim_submitter=''
 lez_revealing_claim_submitter=maker
@@ -210,6 +214,7 @@ for released in admitted finalized restarted zcash_mined; do
   m6_refund_admitted=1
   m6_lez_refund_finalized=1
   m6_maker_supervisor_restarted=1
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted quiescence helper.
   m6_zcash_refund_mined=0
   case "$released" in
     admitted) m6_refund_admitted=0 ;;
@@ -224,6 +229,7 @@ done
 m6_refund_admitted=1
 m6_lez_refund_finalized=1
 m6_maker_supervisor_restarted=1
+# shellcheck disable=SC2034 # Consumed by the eval-extracted handoff helper.
 m6_zcash_refund_mined=0
 handoff="$(emit_m6_refund_parent_handoff \
   '{"jsonrpc":"2.0","id":"m6-monitor","result":{"state":"refund_in_progress"}}')"
@@ -244,6 +250,7 @@ taker_config="$quiescence_root/taker.json"
 m5_delivery_offline="$quiescence_root/offline"
 m5_maker_socket="$quiescence_root/maker.sock"
 m5_chat_socket="$quiescence_root/chat.sock"
+# shellcheck disable=SC2034 # Consumed by the eval-extracted refund driver.
 m5_delivery_directory="$quiescence_root/delivery"
 mkdir -m 0700 "$evidence_dir" "$m5_delivery_offline"
 printf '%s\n' '{}' >"$taker_config"
@@ -304,10 +311,14 @@ export EXPECTED_MAKER_CONFIG="$maker_config"
 ZEBRA_RPC_URL=http://127.0.0.1:1
 m5_daemon_pid=''
 m5_daemon_start_ticks=''
+# shellcheck disable=SC2034 # Consumed by the eval-extracted reconciliation helper.
 m5_transport_cutover_complete=1
+# shellcheck disable=SC2034 # Consumed by the eval-extracted reconciliation helper.
 m5_maker_socket="$maker_lock_root/maker.sock"
+# shellcheck disable=SC2034 # Consumed by the eval-extracted reconciliation helper.
 m5_chat_socket="$maker_lock_root/chat.sock"
 m6_maker_supervisor_suppressed=0
+# shellcheck disable=SC2034 # Consumed by the eval-extracted reconciliation helper.
 zcash_fund_mined=2
 rpc_mode=normal
 bounded_actor_timeout() {
@@ -371,6 +382,7 @@ fi
   && ! -s "$timeout_calls" && ! -s "$budget_calls" ]] ||
   fail 'unsuppressed Maker-lock reconciliation performed I/O'
 
+# shellcheck disable=SC2034 # Consumed by the eval-extracted reconciliation helper.
 m6_maker_supervisor_suppressed=1
 m5_daemon_pid=123
 m5_daemon_start_ticks=456
@@ -380,7 +392,9 @@ fi
 [[ ! -s "$actor_calls" && ! -s "$rpc_calls"
   && ! -s "$timeout_calls" && ! -s "$budget_calls" ]] ||
   fail 'live-daemon Maker-lock reconciliation performed I/O'
+# shellcheck disable=SC2034 # Consumed by the eval-extracted reconciliation helper.
 m5_daemon_pid=''
+# shellcheck disable=SC2034 # Consumed by the eval-extracted reconciliation helper.
 m5_daemon_start_ticks=''
 
 assert_reconciliation_calls() {

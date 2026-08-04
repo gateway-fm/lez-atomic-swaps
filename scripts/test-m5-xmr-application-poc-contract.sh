@@ -11,6 +11,7 @@ readonly release_lock="compat/lez-v0_2-xmr-release-service/Cargo.lock"
 readonly taker_cli="crates/maker-node/src/bin/lez-taker.rs"
 readonly xmr_receipt_loader="crates/maker-node/src/bin/support/taker_accept_xmr.rs"
 readonly xmr_process_test="crates/maker-node/tests/xmr_chat_process.rs"
+readonly xmr_application_provision="crates/xmr-reference-actor/src/application_provision.rs"
 
 fail() {
   echo "M5 XMR application-to-chain contract failed: $*" >&2
@@ -299,7 +300,8 @@ if rg -Fq -- '--shared-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"'
   fail 'runner reuses the Maker RPC as the reconstructed shared-wallet process'
 fi
 
-for source in "$taker_cli" "$xmr_receipt_loader" "$xmr_process_test"; do
+for source in "$taker_cli" "$xmr_receipt_loader" "$xmr_process_test" \
+  "$xmr_application_provision"; do
   [[ -f "$source" && ! -L "$source" ]] ||
     fail "receipt-only XMR Taker monitor source is absent or unsafe: ${source}"
 done
@@ -312,7 +314,6 @@ for required in \
   'MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())' \
   'MakerActorHeldLock::acquire_for(selector.swap_id(), selector.workflow_journal())' \
   'load_validated_xmr_taker_authority_bytes(selector.manifest_bytes())' \
-  '.validate_authority()' \
   'selector.receipt_matches(&authority)' \
   'XMR Taker claim and refund are not yet composed' \
   'phase: "application_activated"' \
@@ -320,6 +321,13 @@ for required in \
   'refund_session: "presignature_verified"'; do
   rg -Fq -- "$required" "$taker_cli" ||
     fail "Taker CLI omits receipt-only XMR monitor boundary: ${required}"
+done
+
+for required in \
+  'pub fn load_validated_xmr_taker_authority_bytes(' \
+  'load_validated_xmr_role_authority_bytes(bytes, ActorRole::Taker)?;'; do
+  rg -Fq -- "$required" "$xmr_application_provision" ||
+    fail "typed XMR Taker authority loader omits semantic validation: ${required}"
 done
 
 for required in \

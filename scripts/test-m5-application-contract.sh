@@ -139,11 +139,14 @@ for required in \
   'acceptance_receipt_sha256:$receipt_sha256' \
   'swap_id:$swap' \
   'taker_claim_authority:' \
-  'then "receipt_bound_cli" else null end' \
+  'elif $m5_application_mode == 1 then' \
+  '"receipt_bound_cli"' \
   'direct_taker_claim_effects:'; do
   rg -Fq -- "$required" "$runner" ||
     fail "M5 runner is missing receipt-bound Taker claim contract: ${required}"
 done
+[[ "$(rg -Fc '"receipt_bound_cli"' "$runner")" == 1 ]] ||
+  fail 'M5 runner must project receipt-bound CLI authority exactly once'
 
 [[ "$(rg -Fc '"$taker_bin" claim --receipt "$m5_taker_acceptance_receipt"' "$runner")" == 1 ]] ||
   fail 'M5 runner must have exactly one receipt-bound Taker claim call site'
@@ -267,8 +270,8 @@ status_capture_function="$(sed -n \
   fail "supervised Maker status helper is missing"
 [[ "$(rg -Fc 'capture_m5_supervised_maker_status' "$runner")" == 3 ]] ||
   fail "supervised Maker status helper must have exactly two call sites"
-[[ "$(rg -Fc '"$actor_bin" --config "$maker_config" status' "$runner")" == 3 ]] ||
-  fail "only pre/final status and the supervised helper may invoke direct Maker status"
+[[ "$(rg -Fc '"$actor_bin" --config "$maker_config" status' "$runner")" == 4 ]] ||
+  fail "only pre/final status, the supervised helper, and the constrained M6 suppressed-authority observation may invoke direct Maker status"
 
 status_retry_test_root="$(mktemp -d "${TMPDIR:-/tmp}/lez-m5-status-contract.XXXXXX")" ||
   fail "could not create supervised status contract root"
@@ -276,13 +279,20 @@ chmod 0700 "$status_retry_test_root"
 trap 'rm -rf -- "$status_retry_test_root"' EXIT
 (
   eval "$status_capture_function"
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted production helper.
   actor_bin=fake_actor
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted production helper.
   maker_config=/tmp/m5-contract-maker-config
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted production helper.
   m5_daemon_pid=91
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted production helper.
   m5_daemon_start_ticks=92
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted production helper.
   m5_daemon_bin=/tmp/m5-contract-daemon
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted production helper.
   evidence_dir="$status_retry_test_root"
   MAX_SUPERVISED_STATUS_RETRIES=8
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted production helper.
   SUPERVISED_STATUS_RETRY_DELAY_SECONDS=0
   process_is_owned() { return 0; }
   remaining_budget_milliseconds() { return 0; }
@@ -338,6 +348,7 @@ trap 'rm -rf -- "$status_retry_test_root"' EXIT
   [[ "$fake_actor_calls" == 1 ]] || exit 1
 
   process_is_owned() { return 0; }
+  # shellcheck disable=SC2034 # Consumed by the eval-extracted production helper.
   MAX_SUPERVISED_STATUS_RETRIES=1
   fake_actor_calls=0
   if capture_m5_supervised_maker_status \
@@ -363,14 +374,16 @@ for required in \
   'm5-history-after-terminal-restart.json' \
   'm5-status-after-terminal-restart.json' \
   'm5-terminal-operator-projection.json' \
+  'expected_phase=Completed' \
+  'expected_phase=Refunded' \
   'chain_rpc_used_during_import: false' \
   'private_material_disclosed: false'; do
   rg -Fq -- "$required" <<<"$projection_function" ||
     fail "terminal projection is missing contract: ${required}"
 done
 
-[[ "$(rg -Fc '.phase == "Completed"' <<<"$projection_function")" == 2 ]] ||
-  fail "history and status must use the real maker RPC terminal enum spelling"
+[[ "$(rg -Fc '.phase == $phase' <<<"$projection_function")" == 2 ]] ||
+  fail "history and status must compare against the selected real maker RPC terminal enum"
 if rg -Fq '.phase == "completed"' <<<"$projection_function"; then
   fail "runner must not compare maker RPC phases to actor-status spelling"
 fi
