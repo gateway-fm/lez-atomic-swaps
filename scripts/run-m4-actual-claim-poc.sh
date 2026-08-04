@@ -28,6 +28,7 @@ readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"
 readonly m5_xmr_journey="${M5_XMR_JOURNEY:-claim}"
 readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"
 readonly m5_xmr_refund_window_ms=600000
+readonly m7_xmr_punish_delay_ms="${M7_XMR_PUNISH_DELAY_MS:-180000}"
 
 fail() {
   echo "M4 actual-claim runner failed: $*" >&2
@@ -71,6 +72,13 @@ emit_contract() {
       tag13_handoff_exporter_implemented: true,
       tag13_handoff_exporter_reachable_in_execute: true,
       tag13_handoff_exporter_executed_in_certifying_replay: false,
+      tag17_driver_implemented: true,
+      tag17_prepare_only_before_boundary: true,
+      tag17_transaction_id_bound_release: true,
+      tag17_actual_node_transition_reachable_in_execute: true,
+      tag17_actual_node_transition_executed_in_certifying_replay: false,
+      tag17_punish_delay_ms: {minimum: 120000, maximum: 600000, default: 180000},
+      tag17_phases: ["tag17_prepare", "tag17_wait", "tag17", "tag17_finality"],
       available_unwired_launchers: [
         "run-m4-lez-sidecar.sh"
       ],
@@ -142,7 +150,8 @@ emit_contract() {
         "lez-v02-xmr-release-prepare", "lez-v0-2-xmr-release-service",
         "lez-v02-xmr-classify-finalized", "xmr-reference-tag15",
         "lez-adaptor-role-runner", "lez-v02-xmr-regtest-sweep",
-        "bind-finalized-claim-sweep"
+        "bind-finalized-claim-sweep",
+        "lez-v02-xmr-tag17"
       ]
     }
   '
@@ -246,6 +255,8 @@ environment_preflight() {
     claim)
       [[ -z "${M5_XMR_REFUND_DELAY_MS:-}" ]] ||
         fail "M5_XMR_REFUND_DELAY_MS requires M5_XMR_JOURNEY=refund"
+      [[ -z "${M7_XMR_PUNISH_DELAY_MS:-}" ]] ||
+        fail "M7_XMR_PUNISH_DELAY_MS requires M5_XMR_JOURNEY=punish"
       ;;
     refund)
       [[ "$m5_xmr_application_mode" == 1 ]] ||
@@ -253,8 +264,19 @@ environment_preflight() {
       [[ "$m5_xmr_refund_delay_ms" =~ ^[0-9]+$ ]] &&
         (( m5_xmr_refund_delay_ms >= 600000 && m5_xmr_refund_delay_ms <= 3600000 )) ||
         fail "M5_XMR_REFUND_DELAY_MS must be 600000..3600000 milliseconds"
+      [[ -z "${M7_XMR_PUNISH_DELAY_MS:-}" ]] ||
+        fail "M7_XMR_PUNISH_DELAY_MS requires M5_XMR_JOURNEY=punish"
       ;;
-    *) fail "M5_XMR_JOURNEY must be claim or refund" ;;
+    punish)
+      [[ "$m5_xmr_application_mode" == 0 ]] ||
+        fail "M5_XMR_JOURNEY=punish is a protocol PoC and requires M5_XMR_APPLICATION_MODE=0"
+      [[ -z "${M5_XMR_REFUND_DELAY_MS:-}" ]] ||
+        fail "M5_XMR_REFUND_DELAY_MS requires M5_XMR_JOURNEY=refund"
+      [[ "$m7_xmr_punish_delay_ms" =~ ^[0-9]+$ ]] &&
+        (( m7_xmr_punish_delay_ms >= 120000 && m7_xmr_punish_delay_ms <= 600000 && m7_xmr_punish_delay_ms % 1000 == 0 )) ||
+        fail "M7_XMR_PUNISH_DELAY_MS must be 120000..600000 milliseconds"
+      ;;
+    *) fail "M5_XMR_JOURNEY must be claim, refund, or punish" ;;
   esac
   [[ "${RAPIDSNARK_LIB_DIR:-}" == /* && -d "$RAPIDSNARK_LIB_DIR" ]] ||
     fail "RAPIDSNARK_LIB_DIR must be an absolute verified library directory"
@@ -772,7 +794,7 @@ build_identity_and_artifact() {
     cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
       --bin lez-v02-vault-claim-poc --bin lez-v02-xmr-stage-a-compose \
       --bin lez-v02-xmr-stage-a-poc --bin lez-v02-bridge-poc --bin lez-v02-xmr-tag13-export \
-      --bin lez-v02-xmr-regtest-fund --bin lez-v02-xmr-regtest-verify --bin lez-v02-xmr-regtest-sweep --example lez-v02-local-actor-identity
+      --bin lez-v02-xmr-tag17 --bin lez-v02-xmr-regtest-fund --bin lez-v02-xmr-regtest-verify --bin lez-v02-xmr-regtest-sweep --example lez-v02-local-actor-identity
   if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
     CARGO_TARGET_DIR="$sidecar_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
@@ -822,6 +844,7 @@ build_identity_and_artifact() {
   readonly tag13_binary="${staged_binary_root}/lez-v02-xmr-stage-a-poc"
   readonly bridge_binary="${staged_binary_root}/lez-v02-bridge-poc"
   readonly tag13_export_binary="${staged_binary_root}/lez-v02-xmr-tag13-export"
+  readonly tag17_binary="${staged_binary_root}/lez-v02-xmr-tag17"
   readonly monero_fund_binary="${staged_binary_root}/lez-v02-xmr-regtest-fund"
   readonly monero_verify_binary="${staged_binary_root}/lez-v02-xmr-regtest-verify"
   readonly monero_sweep_binary="${staged_binary_root}/lez-v02-xmr-regtest-sweep"
@@ -861,6 +884,7 @@ build_identity_and_artifact() {
     "$tag13_binary" "tag13 runner"
   stage_executable "${sidecar_target}/debug/lez-v02-bridge-poc" "$bridge_binary" "LEZ sidecar bridge"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-tag13-export" "$tag13_export_binary" "Tag13 handoff exporter"
+  stage_executable "${sidecar_target}/debug/lez-v02-xmr-tag17" "$tag17_binary" "Tag17 driver"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-fund" "$monero_fund_binary" "Monero funding"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-verify" "$monero_verify_binary" "Monero verification"
   stage_executable "${sidecar_target}/debug/lez-v02-xmr-regtest-sweep" "$monero_sweep_binary" "Monero sweep"
@@ -1442,6 +1466,10 @@ compose_xmr_agreement() {
     readonly refund_at_ms="$((now_seconds * 1000 + m5_xmr_refund_delay_ms))"
     readonly maker_xmr_funding_cutoff_ms="$((refund_at_ms - 300000))"
     readonly punish_at_ms="$((refund_at_ms + m5_xmr_refund_window_ms))"
+  elif [[ "$m5_xmr_journey" == punish ]]; then
+    readonly punish_at_ms="$((now_seconds * 1000 + m7_xmr_punish_delay_ms))"
+    readonly refund_at_ms="$((punish_at_ms - 30000))"
+    readonly maker_xmr_funding_cutoff_ms="$((punish_at_ms - 60000))"
   else
     # Keep the original actual-claim timing byte-for-byte equivalent by default.
     readonly maker_xmr_funding_cutoff_ms="$(((now_seconds + 14400) * 1000))"
@@ -2237,6 +2265,140 @@ bind_refund_sweep() {
   record_phase refund_evidence completed
 }
 
+
+prepare_tag17_punishment() {
+  [[ "$m5_xmr_journey" == punish ]] || fail "Tag17 preparation requires the punish journey"
+  record_phase tag17_prepare started
+  readonly tag17_prepare_evidence="${evidence_root}/tag17-prepared.json"
+  readonly tag17_transaction="${evidence_root}/tag17-transaction.json"
+  readonly tag17_preboundary="${evidence_root}/tag17-preboundary.json"
+  readonly tag17_prepare_request_id="${run_id}-tag17-prepare-001"
+  local maker_endpoint funding_height
+  maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
+  funding_height="$(jq -er '.funding.containing_block_id' "$tag13_internal")"
+  "$tag17_binary" --mode prepare --sidecar-endpoint "$maker_endpoint" \
+    --capability-file "$maker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+    --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+    --prepare-request-id "$tag17_prepare_request_id" \
+    --output-evidence "$tag17_prepare_evidence"
+  require_owner_file "$tag17_prepare_evidence" "Tag17 prepare evidence"
+  jq -e --arg run "$run_id" --arg request "$tag17_prepare_request_id" '
+    .schema=="lez_v02_m7_actual_local_tag17_v1"
+    and .role=="maker" and .mode=="prepare" and .run_id==$run
+    and .prepare_request_id==$request and .submission.request_id==null
+    and .submission.outcome==null and .submission.performed==false
+    and .submission.automatic_retry==false and .resources.public_rpc_used==false
+    and .resources.faucet_used==false and .resources.public_funds_used==false
+    and (.punish.transaction_id|test("^[0-9a-f]{64}$"))
+  ' "$tag17_prepare_evidence" >/dev/null || fail "Tag17 prepare evidence is incomplete"
+  jq -e '.punish' "$tag17_prepare_evidence" >"$tag17_transaction"
+  chmod 0600 "$tag17_transaction"
+  require_owner_file "$tag17_transaction" "Tag17 exact transaction"
+  "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
+    --capability-file "$maker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+    --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+    --request-id "${run_id}-tag17-preboundary-001" --role maker --effect punish \
+    --exact-transaction-file "$tag17_transaction" --start-height "$funding_height" \
+    --max-blocks 1 --output-result "$tag17_preboundary" >/dev/null
+  require_owner_file "$tag17_preboundary" "Tag17 pre-boundary evidence"
+  jq -e --argjson punish "$punish_at_ms" '
+    (.outcome.status=="absent" or .outcome.status=="uncertain")
+    and .outcome.finalized_clock.timestamp_ms < $punish
+  ' "$tag17_preboundary" >/dev/null ||
+    fail "Tag17 was not prepared against a pre-boundary finalized clock"
+  (( $(date -u +%s%3N) < punish_at_ms )) ||
+    fail "host clock reached punish_at before Tag17 preparation completed"
+  record_phase tag17_prepare completed
+}
+
+publish_and_classify_tag17_punishment() {
+  [[ "$m5_xmr_journey" == punish ]] || fail "Tag17 publication requires the punish journey"
+  record_phase tag17_wait started
+  local host_timestamp_ms target_timestamp_ms maker_endpoint taker_endpoint
+  target_timestamp_ms="$((punish_at_ms + 2000))"
+  for _ in {1..2400}; do
+    host_timestamp_ms="$(date -u +%s%3N)"
+    (( host_timestamp_ms >= target_timestamp_ms )) && break
+    sleep .25
+  done
+  (( host_timestamp_ms >= target_timestamp_ms )) ||
+    fail "host clock did not reach the bounded Tag17 safety margin"
+  record_phase tag17_wait completed
+
+  record_phase tag17 started
+  readonly tag17_release_evidence="${evidence_root}/tag17-released.json"
+  maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
+  taker_endpoint="$(jq -er '.endpoint' "$taker_sidecar_root/pid-manifest.json")"
+  "$tag17_binary" --mode release --sidecar-endpoint "$maker_endpoint" \
+    --capability-file "$maker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+    --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+    --prepare-request-id "$tag17_prepare_request_id" \
+    --output-evidence "$tag17_release_evidence"
+  require_owner_file "$tag17_release_evidence" "Tag17 release evidence"
+  jq -e --arg run "$run_id" --arg request "$tag17_prepare_request_id" '
+    .schema=="lez_v02_m7_actual_local_tag17_v1"
+    and .role=="maker" and .mode=="release" and .run_id==$run
+    and .prepare_request_id==$request
+    and .submission.request_id==.punish.transaction_id
+    and .submission.outcome!=null and .submission.performed==true
+    and .submission.automatic_retry==false and .resources.public_rpc_used==false
+    and .resources.faucet_used==false and .resources.public_funds_used==false
+  ' "$tag17_release_evidence" >/dev/null || fail "Tag17 release evidence is incomplete"
+  cmp -- "$tag17_transaction" <(jq -e '.punish' "$tag17_release_evidence") ||
+    fail "Tag17 release bytes differ from the pre-boundary reservation"
+  record_phase tag17 completed
+
+  record_phase tag17_finality started
+  readonly tag17_maker_finality="${evidence_root}/tag17-maker-finalized.json"
+  readonly tag17_taker_finality="${evidence_root}/tag17-taker-finalized.json"
+  local funding_height attempt result_tmp
+  funding_height="$(jq -er '.funding.containing_block_id' "$tag13_internal")"
+  result_tmp="${tag17_maker_finality}.attempt"
+  for attempt in {1..2400}; do
+    rm -f -- "$result_tmp"
+    "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
+      --capability-file "$maker_sidecar_root/capability" \
+      --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+      --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+      --request-id "${run_id}-tag17-maker-finality-${attempt}" --role maker --effect punish \
+      --exact-transaction-file "$tag17_transaction" --start-height "$funding_height" \
+      --max-blocks 64 --output-result "$result_tmp" >/dev/null 2>&1 || true
+    if jq -e --argjson punish "$punish_at_ms" '
+      .outcome.status=="found" and .outcome.facts.instruction.effect=="punish"
+      and .outcome.facts.metadata.state=="claimed"
+      and .outcome.facts.custody.balance=="0"
+      and .outcome.facts.containing_block.timestamp_ms >= $punish
+    ' "$result_tmp" >/dev/null 2>&1; then
+      mv "$result_tmp" "$tag17_maker_finality"
+      break
+    fi
+    sleep .25
+  done
+  require_owner_file "$tag17_maker_finality" "Maker Tag17 finality evidence"
+  "$classifier_binary" --sidecar-endpoint "$taker_endpoint" \
+    --capability-file "$taker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/taker-runtime.json" \
+    --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+    --request-id "${run_id}-tag17-taker-finality-001" --role taker --effect punish \
+    --start-height "$funding_height" --max-blocks 64 \
+    --output-result "$tag17_taker_finality" >/dev/null
+  require_owner_file "$tag17_taker_finality" "Taker Tag17 finality evidence"
+  jq -e --argjson punish "$punish_at_ms" '
+    .outcome.status=="found" and .outcome.facts.instruction.effect=="punish"
+    and .outcome.facts.metadata.state=="claimed"
+    and .outcome.facts.custody.balance=="0"
+    and .outcome.facts.containing_block.timestamp_ms >= $punish
+  ' "$tag17_taker_finality" >/dev/null ||
+    fail "Taker did not discover the finalized Tag17 transition"
+  cmp -- <(jq -S -c '.outcome.facts' "$tag17_maker_finality") \
+    <(jq -S -c '.outcome.facts' "$tag17_taker_finality") ||
+    fail "Maker exact and Taker discovery Tag17 facts differ"
+  record_phase tag17_finality completed
+}
+
 prepare_tag14_release() {
   record_phase release started
   readonly release_root="${private_root}/tag14-release"
@@ -2398,8 +2560,15 @@ execute_run() {
   submit_tag13
   export_tag13_handoff
   start_role_sidecars
-  fund_and_verify_monero
-  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+  if [[ "$m5_xmr_journey" == punish ]]; then
+    prepare_tag17_punishment
+    publish_and_classify_tag17_punishment
+  else
+    fund_and_verify_monero
+  fi
+  if [[ "$m5_xmr_journey" == punish ]]; then
+    :
+  elif [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
     wait_for_m5_xmr_refund_window
     prepare_tag16_refund_signature
     publish_tag16_refund

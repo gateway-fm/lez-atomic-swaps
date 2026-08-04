@@ -417,6 +417,26 @@ attestation so neither can be misreported as the other.
   ordering. It now extracts the exact `lez-xmr-swap-sdk` package block from both
   locked graphs and checks the required runtime edges individually, including
   `async-trait` and `lez-swap-sdk-core`, without changing either dependency set.
+
+- [x] Compose the reproducible actual-local Tag-17 PoC without changing the
+  claim/refund defaults. A narrow Maker CLI prepares the exact durable
+  punishment without submission, then releases only the transaction-ID-bound
+  reservation. The isolated runner adds a configurable 120--600 second,
+  whole-second local boundary, proves absence against the pre-boundary
+  finalized clock, waits outside the guest, performs one release, and requires
+  byte-identical Maker exact-owner and Taker terms-discovery finalized facts.
+  The focused driver unit test, new executable runner/CI contract, historical
+  M4 runner contract, formatting, whitespace and CI-hardening gates are GREEN.
+  No public RPC, peer, faucet, public funds or external finality service is
+  introduced; the Monero local stack supplies only agreement identity in this
+  protocol-transition PoC and no Monero funding effect is claimed.
+- [ ] Push the clean Tag-17 PoC implementation, execute
+  `M5_XMR_JOURNEY=punish` from that exact commit against fresh isolated local
+  nodes, retain the prepared/released/finalized/cleanup evidence and phase
+  timings, then publish a secret-free certificate and update F5 only if the
+  deployed guest identity and exact actual-node transition both match. Keep F3
+  and F6 open until the joined abandonment economics and adverse recovery races
+  are independently proved.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
