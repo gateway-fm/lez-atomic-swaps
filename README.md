@@ -129,18 +129,30 @@ prototype sign-off, and the M6 tag remain. Cross-restart receipt/state rollback
 anchoring remains production hardening, not an issue-#112 PoC gate.
 
 The current Basecamp 0.2 C++/QML toolchain is independently preflight-GREEN
-through both the default plugin package and an actual `.lgx` artifact. The
-rehearsal uses a repository-consumer lock, module-builder 0.2.0 at exact commit
-`92ef691e...fc9690`, and digest-pinned Nix 2.35.1. It opens the public Nix and
-GitHub caches only to fetch the immutable build closure; it does not contact a
-chain, wallet, faucet, swap service, or public deployment. A later warmed
-networkless replay and realized-closure SBOM, vulnerability, and license review
-remain production gates. The upstream all-output integration evaluation has a
-missing-store-source defect, and five direct Logos UI sources have no explicit
-license grant; LOGOS-025 records both as Logos-owned release blockers that do
-not waive repository-owned M6 tests. [ADR 0146](docs/architecture/0146-pin-basecamp-builds-behind-consumer-locks.md)
-records the pinned build, component flow, test split, and exact artifact hashes.
-The machine-readable result is
+for the default plugin package, core and UI `.lgx` artifacts, and exact `lgpm`
+0.2.0 installation/dependency discovery. The package manager inventory resolves
+`calc_ui_cpp` as `ui_qml`, depends on `calc_module`, and retains the QML view,
+plugin, and process-isolated replica factory. The unsigned official tutorial
+artifacts were allowed only for this local rehearsal; production signature
+policy is not satisfied. The rehearsal uses a repository-consumer lock,
+module-builder 0.2.0 at exact commit `92ef691e...fc9690`, package manager at
+`7a1f1cf...1be584`, and digest-pinned Nix 2.35.1. It opens the public Nix and
+GitHub caches only to fetch immutable inputs; it does not contact a chain,
+wallet, faucet, swap service, or public deployment.
+
+Exact Basecamp tag 0.2.0 resolves to `48b26c0d...79e5c6` but reports internal
+version `0.2.0-RC3`. Its full root build/load is **not certified**: the isolated
+run was stopped before exhaustion when host free space reached 14 GiB at 98
+percent. The successful `lgpm` install is not presented as a Basecamp load. All
+temporary M6 build/runtime resources were then removed by exact name, restoring
+161 GiB free without touching `gate55-*`. A later isolated load with an explicit
+disk budget, warmed networkless replay, realized-closure SBOM, vulnerability,
+signature, and license review remain gates. The upstream all-output integration
+evaluation has a missing-store-source defect, and five direct Logos UI sources
+have no explicit license grant; LOGOS-025 records both as Logos-owned release
+blockers that do not waive repository-owned M6 tests. [ADR 0146](docs/architecture/0146-pin-basecamp-builds-behind-consumer-locks.md)
+records the pinned build, install versus load boundary, component flow, test
+split, and exact artifact hashes. The machine-readable result is
 [m6-basecamp-toolchain-preflight-20260804.json](docs/evidence/m6-basecamp-toolchain-preflight-20260804.json).
 
 The first Refund attempts exposed a local liveness edge now fixed at the

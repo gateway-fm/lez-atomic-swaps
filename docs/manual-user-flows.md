@@ -7318,6 +7318,44 @@ server to obtain a new URL; never replace the ephemeral bind with a shared fixed
 port during parallel work. Closing the server or browser discards all sample
 state and cannot affect a swap.
 
+### Reproduce the Basecamp packaging preflight
+
+This is a build/install proof, **not** the Maker/Taker user flow and not a
+Basecamp runtime-load proof. Reserve a separate disk budget and stop before the
+host falls below 20 GiB free. The measured full Basecamp root closure reached
+the 14 GiB safety threshold and was deliberately stopped.
+
+Use official tutorial commit
+`bfc34c451c08da9f78072dd825756a1e071a051d`, module-builder 0.2.0 commit
+`92ef691ea72844134f6c68fb447d37f855fc9690`, package-manager 0.2.0 commit
+`7a1f1cf35b22dc1a3407d6b5cafce333321be584`, and Nix image digest
+`sha256:d78540374f6a886653cba47d5c3f61c5a41d42e2a8db2607b8d68cb226fd463e`.
+Do not accept a floating scaffold input or an untrusted upstream extra cache.
+After following the tutorial prerequisite to build `libcalc.so`, the relevant
+commands inside a dedicated Nix store are:
+
+```sh
+nix build --no-update-lock-file .#default
+nix build --no-update-lock-file .#lgx
+nix build github:logos-co/logos-package-manager/7a1f1cf35b22dc1a3407d6b5cafce333321be584#cli
+lgpm --modules-dir BASECAMP_DATA/modules --allow-unsigned install --file logos-calc_module-module-lib.lgx
+lgpm --ui-plugins-dir BASECAMP_DATA/plugins --allow-unsigned install --file logos-calc_ui_cpp-module.lgx
+lgpm --modules-dir BASECAMP_DATA/modules --ui-plugins-dir BASECAMP_DATA/plugins --json list
+```
+
+Expect core LGX SHA-256
+`959126dcd54ded28be30a33c63a9c191febf119b7bd7f3c664ae89376e8d8f54`
+and UI LGX SHA-256
+`d184c0423dc7dc5bee98e74eb1cf51c4edc3e381ce017ab88a38caf857e13bd5`.
+The JSON list must show `calc_ui_cpp` type `ui_qml` depending on
+`calc_module`. `--allow-unsigned` is acceptable only for these official local
+tutorial artifacts; a production candidate must require signatures. GitHub and
+`cache.nixos.org` are cold-build dependencies and can cause setup flakiness. No
+chain RPC, faucet, public funds, or public deployment is used. Remove the
+dedicated store and temporary tree after capturing hashes. Do not claim
+Basecamp load unless the exact binary actually loads both packages and the
+journey is exercised.
+
 ### Reproduce the atomic Maker backend prerequisite
 
 This is a developer proof behind the future Maker UI, not prototype sign-off

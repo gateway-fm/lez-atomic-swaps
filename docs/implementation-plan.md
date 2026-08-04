@@ -5923,6 +5923,26 @@ production Maker or Taker view.
 The retained machine-readable result is
 `docs/evidence/m6-basecamp-toolchain-preflight-20260804.json`.
 
+The documented core prerequisite was also packaged into
+`logos-calc_module-module-lib.lgx` with SHA-256
+`959126dcd54ded28be30a33c63a9c191febf119b7bd7f3c664ae89376e8d8f54`.
+Exact `lgpm` 0.2.0 commit `7a1f1cf35b22dc1a3407d6b5cafce333321be584`
+built successfully and installed both unsigned official tutorial artifacts into
+an owner-private temporary tree. Its JSON inventory resolved `calc_ui_cpp` as
+a `ui_qml` package depending on `calc_module` and retained the plugin, replica
+factory, and QML view. This proves installation and dependency discovery, not
+Basecamp runtime load; unsigned input was allowed only for this local tutorial
+rehearsal.
+
+The exact Basecamp 0.2.0 root at
+`48b26c0d33573b5dd3695ae5868b04328f79e5c6` was evaluated and partially
+built without accepting its untrusted extra cache configuration. The run was
+stopped before host exhaustion when free space reached 14 GiB at 98 percent.
+No Basecamp binary or load result is claimed. Exact cleanup removed every M6
+temporary path, retained evidence container, project-tagged image, dedicated
+Nix volume, and attributable heavy support image while leaving `gate55-*`
+untouched; host free space recovered to 161 GiB.
+
 The upstream all-output `nix flake check --no-build` did not pass: evaluation
 of its integration-test output referenced a missing Nix-store source path.
 The isolated Nix store subsequently passed full existence, link-hash, and
@@ -5941,4 +5961,5 @@ review.
 
 Next remains the explicit issue-#112 prototype signoff. After approval, RED
 begins for the package contract and actor journey; GREEN will implement the two
-consumer-locked packages and reuse the warmed, measured build path.
+consumer-locked packages and recreate the pinned, measured build path with an
+explicit isolated disk budget.

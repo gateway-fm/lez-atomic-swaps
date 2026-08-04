@@ -34,6 +34,9 @@ flowchart LR
     LocalRunner["Local isolated Docker proof"] --> Container["Digest-pinned Puppeteer image<br/>network none and read-only repository"]
     Container --> LocalServer["In-process ephemeral loopback test server"]
     LocalServer --> LocalChrome["Sandboxed Chromium<br/>disposable tmpfs profile"]
+    Toolchain["Pinned Nix build preflight"] --> LGX["Core and UI LGX artifacts"]
+    LGX --> Lgpm["Exact lgpm 0.2 install complete"]
+    Lgpm -.-> Basecamp["Basecamp 0.2 runtime load pending"]
     Boundary["No daemon, node, wallet, Delivery, Chat, or chain effects"]
 ```
 
@@ -45,6 +48,12 @@ browser test rejects every request outside its exact ephemeral local origin,
 keeps the Chromium sandbox enabled, and fails on browser console, page, request,
 or HTTP errors. These controls support the no-effects claim; they do not turn
 the prototype into an actor or chain integration.
+
+The packaging lane separately proves locked tutorial package and core/UI LGX
+builds plus exact `lgpm` 0.2.0 installation and dependency inventory. It does
+not run a Basecamp binary. The exact Basecamp root build was stopped at the
+14 GiB host-free safety threshold and all temporary build/runtime resources
+were removed; no runtime endpoint or credential follows from that rehearsal.
 
 After prototype sign-off, the planned Basecamp deployment has separate Maker
 and Taker `ui_qml` packages and process-isolated `ui-host` Qt Remote Objects
@@ -149,6 +158,7 @@ resumed Taker observation and added no effect.
 | CI prototype server | `127.0.0.1:0`; the test reads the kernel-selected port from the listener | None | In-process `node:test` server; current and closed by the owning test run |
 | CI browser | No application listener; connects only to the exact CI test-server origin | None | `/usr/bin/google-chrome`, with Puppeteer download disabled, plus a profile below `${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}`; current, run-unique, sandboxed, and removed by that run |
 | Local isolated browser proof | In-process test server on kernel-selected loopback; container has `--network none` | None | Digest-pinned Puppeteer 25.3.0 image; read-only repository, disposable tmpfs/profile, unique container name, bounded CPU/memory/PIDs, Chromium sandbox enabled; current and GREEN 6/6 |
+| Basecamp toolchain preflight | No runtime listener | No application credentials; unsigned official tutorial artifacts were explicitly allowed only for local install rehearsal | Package, core/UI LGXs, and exact `lgpm` install GREEN. Full Basecamp build/load not certified after disk-safety stop. Temporary Nix volume, paths, containers, and images removed |
 | Maker `ui_qml` | No port; Basecamp package loading is planned | No secrets in QML | Package metadata, QML, and assets are planned, not implemented |
 | Maker `ui-host` QtRO | QtRO transport and endpoint are unassigned | A future process-local admission mechanism must not expose daemon or chain credentials to QML | Separate process/package planned; allowlisted translation only |
 | Maker owner control | Default `/run/lez-atomic-swaps/maker.sock`; Unix mode 0600 beneath an effective-UID-owned mode-0700 runtime directory | Unix ownership and mode are the transport admission boundary; no browser credential | Existing Maker daemon RPC including atomic `maker_local_route_save_v1`; the planned host may call it, the QML view may not |
@@ -181,6 +191,14 @@ acquiring it from GHCR is a setup dependency that may fail independently of
 the test. Remaining prototype sensitivities are Docker and kernel sandbox
 support, Node/npm or image setup, local process limits, and CPU scheduling
 against browser timeouts.
+
+The Basecamp toolchain rehearsal used only immutable GitHub flake inputs and
+`cache.nixos.org`; cold-cache DNS, GitHub, or Nix-cache availability can fail
+or delay it. It used no chain RPC, faucet, public funds, or public deployment.
+The full Basecamp root closure duplicated revisions and was safety-stopped at
+14 GiB host free space, so disk capacity is an explicit load-rehearsal
+prerequisite. Exact cleanup restored 161 GiB and removed the warmed closure; a
+future run must budget and fetch it again.
 
 The Taker service uses only owner-private configuration and local resources.
 Fresh enabled acceptance adds system time, signed local Delivery, the Maker

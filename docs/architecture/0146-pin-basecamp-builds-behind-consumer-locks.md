@@ -24,6 +24,25 @@ The all-output `nix flake check --no-build` failed while evaluating the
 upstream integration-test derivation because it referenced a missing Nix-store
 source path; the default package and LGX builds themselves completed.
 
+The documented core prerequisite was then built and packaged as
+`logos-calc_module-module-lib.lgx`, SHA-256
+`959126dcd54ded28be30a33c63a9c191febf119b7bd7f3c664ae89376e8d8f54`.
+Exact package manager 0.2.0 commit
+`7a1f1cf35b22dc1a3407d6b5cafce333321be584` built and installed both LGXs
+into an owner-private isolated tree. Its JSON inventory recognized the
+`calc_ui_cpp` `ui_qml` package, its `calc_module` dependency, QML view, plugin,
+and replica factory. The official tutorial artifacts are unsigned, so this
+local rehearsal explicitly allowed unsigned input; production signature policy
+was not satisfied.
+
+Exact Basecamp tag 0.2.0 resolves to
+`48b26c0d33573b5dd3695ae5868b04328f79e5c6` but reports internal version
+`0.2.0-RC3`. Its full root closure was not certified: the isolated build was
+stopped when host free space reached 14 GiB at 98 percent utilization. The
+upstream extra binary-cache configuration remained untrusted. No Basecamp
+binary or package-load claim follows from the successful package-manager
+installation. Exact project cleanup subsequently restored 161 GiB free.
+
 ## Decision
 
 Each production Maker and Taker package will own and commit its consumer
@@ -44,7 +63,8 @@ flowchart LR
     Source --> Build
     Build --> Plugin["QML and QtRO plugin"]
     Build --> LGX["Basecamp loadable LGX"]
-    LGX --> Loader["Locked Basecamp and lgpm rehearsal"]
+    LGX --> Install["Exact lgpm 0.2 install"]
+    Install --> Loader["Basecamp 0.2 load pending"]
 ```
 
 The package build and the upstream integration harness are separate evidence
@@ -89,5 +109,8 @@ they do block an unqualified distributable-production claim.
 - M6 local certification may proceed around disclosed Logos-owned build and
   license defects, but repository source, tests, locks, artifact hashes, and CI
   policy remain fail-closed.
+- Successful `lgpm` installation proves package shape and dependency discovery,
+  not Basecamp binary load or runtime behavior; full load remains pending with a
+  safe isolated disk budget.
 - Explicit prototype sign-off from ADR 0128 still precedes production Maker
   and Taker UI source.

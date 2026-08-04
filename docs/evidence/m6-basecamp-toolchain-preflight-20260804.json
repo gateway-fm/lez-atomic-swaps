@@ -11,6 +11,11 @@
     "logos_module_builder_tag": "0.2.0",
     "logos_module_builder_commit": "92ef691ea72844134f6c68fb447d37f855fc9690",
     "logos_module_builder_nar_hash": "sha256-jm3NQ0BZ5qnUs/boE1vTil+mGbbp+Wix0ggl1HzR2gw=",
+    "logos_basecamp_tag": "0.2.0",
+    "logos_basecamp_commit": "48b26c0d33573b5dd3695ae5868b04328f79e5c6",
+    "logos_basecamp_internal_version": "0.2.0-RC3",
+    "logos_package_manager_tag": "0.2.0",
+    "logos_package_manager_commit": "7a1f1cf35b22dc1a3407d6b5cafce333321be584",
     "consumer_lock_sha256": "160529b12ebfd29507810f225898ff2d0a3f11810e4f0119fbb3bdb65cadeb6d",
     "consumer_lock_bytes": 1160767
   },
@@ -25,7 +30,9 @@
     "pids_limit": 1024,
     "no_new_privileges": true,
     "unrelated_docker_resources_modified": false,
-    "repository_modified_by_build": false
+    "repository_modified_by_build": false,
+    "temporary_resources_removed_after_evidence_capture": true,
+    "free_space_after_exact_project_cleanup_gib": 161
   },
   "package_build": {
     "command": "nix build --no-update-lock-file .#default",
@@ -43,6 +50,59 @@
     "store_path": "/nix/store/bi1wla9z7nk4ayv4zln6fyrckhlhj3hg-logos-calc_ui_cpp-module-lgx-1.0.0",
     "artifact": "logos-calc_ui_cpp-module.lgx",
     "artifact_sha256": "d184c0423dc7dc5bee98e74eb1cf51c4edc3e381ce017ab88a38caf857e13bd5"
+  },
+  "core_lgx_build": {
+    "result": "passed",
+    "documented_prerequisite": "libcalc.so built before module packaging",
+    "store_path": "/nix/store/36ns1acjdyg34gyvcl47b2b8ah1bq316-logos-calc_module-module-lib-lgx-1.0.0",
+    "artifact": "logos-calc_module-module-lib.lgx",
+    "artifact_sha256": "959126dcd54ded28be30a33c63a9c191febf119b7bd7f3c664ae89376e8d8f54"
+  },
+  "package_manager_build": {
+    "result": "passed",
+    "reported_version": "0.2.0 (dev build)",
+    "reported_commit": "7a1f1cf35b22dc1a3407d6b5cafce333321be584",
+    "store_path": "/nix/store/ki47x9icxz8bzrp96z526v61llijr0g0-logos-package-manager-cli-0.2.0",
+    "dry_run_download_mib": 124.9,
+    "dry_run_unpacked_mib": 500.4
+  },
+  "isolated_install_rehearsal": {
+    "result": "passed",
+    "unsigned_tutorial_artifacts_explicitly_allowed": true,
+    "production_signature_policy_satisfied": false,
+    "core_install": {
+      "name": "calc_module",
+      "type": "core",
+      "version": "1.0.0",
+      "root_hash": "b72c1ef7b8f213940a7d67c0f39428344ecd54776f9e8bca1e5bd81ffcb0cb32"
+    },
+    "ui_install": {
+      "name": "calc_ui_cpp",
+      "type": "ui_qml",
+      "version": "1.0.0",
+      "dependencies": [
+        "calc_module"
+      ],
+      "root_hash": "e321c6ba21cf300f18cd9ca5c7f89debbad22157b7fb3e312280eb9d90cb82ed",
+      "process_isolated_backend_artifacts": [
+        "calc_ui_cpp_plugin.so",
+        "calc_ui_cpp_replica_factory.so"
+      ],
+      "view": "qml/Main.qml"
+    }
+  },
+  "basecamp_root_build_and_load": {
+    "result": "not_certified_safety_stop",
+    "basecamp_commit": "48b26c0d33573b5dd3695ae5868b04328f79e5c6",
+    "untrusted_upstream_extra_cache_configuration_accepted": false,
+    "initial_dry_run_derivations": 101,
+    "initial_dry_run_download_mib": 506.5,
+    "initial_dry_run_unpacked_gib": 2.5,
+    "host_free_space_at_stop_gib": 14,
+    "stop_reason": "Host filesystem reached 98 percent usage; exact isolated container was stopped before exhaustion.",
+    "basecamp_binary_built": false,
+    "installed_packages_loaded_by_basecamp": false,
+    "disposition": "Do not claim Basecamp load. Repeat only with an isolated disk budget after prototype signoff or use a supported immutable upstream binary/cache."
   },
   "upstream_integration_check": {
     "command": "nix flake check --no-update-lock-file --no-build",
@@ -79,5 +139,5 @@
     ],
     "build_fetch_flakiness": "Cold-cache DNS, GitHub, or Nix-cache availability can fail or delay the first build; a warmed networkless replay remains a production gate."
   },
-  "scope": "Toolchain and packaging feasibility only; no Maker or Taker production UI, Basecamp load, actor journey, or milestone completion is claimed."
+  "scope": "Toolchain, packaging, and exact package-manager installation feasibility only; no Maker or Taker production UI, Basecamp binary load, actor journey, or milestone completion is claimed."
 }
