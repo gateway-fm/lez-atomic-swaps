@@ -1,0 +1,9 @@
+class LezAtomicSwapMaker
+{
+    SLOT(QString health())
+    SLOT(QString saveRoute(QString requestId, QString pair, QString direction, QString minimumForeignUnits, QString maximumForeignUnits, QString offerTtlSeconds, QString lezUnitsPerLot, QString foreignUnitsPerLot))
+    SLOT(QString history())
+    SLOT(QString monitor(QString swapId))
+    SLOT(QString claim(QString requestId, QString swapId, QString expectedGeneration))
+    SLOT(QString refund(QString requestId, QString swapId, QString expectedGeneration))
+}

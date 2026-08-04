@@ -115,6 +115,7 @@ require_fixed 'PUPPETEER_SKIP_DOWNLOAD: "true"' "$workflow"
 require_fixed 'M6_UI_TEST_ROOT: ${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}' "$workflow"
 require_fixed 'google-chrome --version' "$workflow"
 require_fixed 'npm run test:m6:prototype' "$workflow"
+require_fixed 'npm run test:m6:basecamp:contract' "$workflow"
 require_fixed './scripts/test-lez-cost-evidence.sh' "$workflow"
 require_fixed './scripts/check-lez-cost-evidence.sh "$cost_evidence" "$cost_json"' \
   "$standalone_runner"

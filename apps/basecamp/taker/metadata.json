@@ -1,0 +1,11 @@
+{
+  "name": "lez_atomic_swap_taker",
+  "version": "0.1.0",
+  "type": "ui_qml",
+  "interface": "universal",
+  "main": "lez_atomic_swap_taker_plugin",
+  "view": "qml/Main.qml",
+  "icon": "icons/taker-route.svg",
+  "dependencies": [],
+  "codegen": { "rep": "src/lez_atomic_swap_taker.rep" }
+}

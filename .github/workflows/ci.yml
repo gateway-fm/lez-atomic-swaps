@@ -89,6 +89,8 @@ jobs:
         run: |
           google-chrome --version
           npm run test:m6:prototype
+      - name: Verify M6 Basecamp package boundary
+        run: npm run test:m6:basecamp:contract
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace --all-targets

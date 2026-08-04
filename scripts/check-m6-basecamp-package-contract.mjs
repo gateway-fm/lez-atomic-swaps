@@ -135,19 +135,19 @@ rejectPattern(
 const lockFile = resolve(basecampRoot, "flake.lock");
 const lock = parseJson(lockFile, "consumer flake lock");
 if (lock !== null) {
-  const lockedBuilders = Object.values(lock.nodes ?? {}).filter(
-    (node) =>
-      node?.locked?.owner === "logos-co" &&
-      node?.locked?.repo === "logos-module-builder",
-  );
+  const rootNode = lock.nodes?.[lock.root];
+  const directBuilderName = rootNode?.inputs?.["logos-module-builder"];
+  const directBuilder =
+    typeof directBuilderName === "string" ? lock.nodes?.[directBuilderName] : null;
   if (
-    lockedBuilders.length !== 1 ||
-    lockedBuilders[0].locked.rev !== builderCommit ||
-    lockedBuilders[0].locked.narHash !== builderNarHash
+    directBuilder?.locked?.owner !== "logos-co" ||
+    directBuilder?.locked?.repo !== "logos-module-builder" ||
+    directBuilder.locked.rev !== builderCommit ||
+    directBuilder.locked.narHash !== builderNarHash
   ) {
     report(
       lockFile,
-      "must pin exactly one module-builder node to the approved commit and NAR hash",
+      "root input must pin module-builder to the approved commit and NAR hash",
     );
   }
 }
