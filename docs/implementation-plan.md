@@ -5941,7 +5941,9 @@ stopped before host exhaustion when free space reached 14 GiB at 98 percent.
 No Basecamp binary or load result is claimed. Exact cleanup removed every M6
 temporary path, retained evidence container, project-tagged image, dedicated
 Nix volume, and attributable heavy support image while leaving `gate55-*`
-untouched; host free space recovered to 161 GiB.
+untouched; host free space recovered to 433 GiB. The final pass also removed
+the proven ignored/untracked `.e2e`, root `target`, LEZ sidecar `target`, and
+SPEL guest `target` trees without changing tracked state.
 
 The upstream all-output `nix flake check --no-build` did not pass: evaluation
 of its integration-test output referenced a missing Nix-store source path.

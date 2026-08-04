@@ -197,7 +197,7 @@ The Basecamp toolchain rehearsal used only immutable GitHub flake inputs and
 or delay it. It used no chain RPC, faucet, public funds, or public deployment.
 The full Basecamp root closure duplicated revisions and was safety-stopped at
 14 GiB host free space, so disk capacity is an explicit load-rehearsal
-prerequisite. Exact cleanup restored 161 GiB and removed the warmed closure; a
+prerequisite. Exact cleanup restored 433 GiB and removed the warmed closure; a
 future run must budget and fetch it again.
 
 The Taker service uses only owner-private configuration and local resources.

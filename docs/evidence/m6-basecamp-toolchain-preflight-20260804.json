@@ -32,7 +32,13 @@
     "unrelated_docker_resources_modified": false,
     "repository_modified_by_build": false,
     "temporary_resources_removed_after_evidence_capture": true,
-    "free_space_after_exact_project_cleanup_gib": 161
+    "free_space_after_exact_project_cleanup_gib": 433,
+    "ignored_project_output_paths_removed": [
+      ".e2e",
+      "target",
+      "compat/lez-v0_2-sidecar/target",
+      "compat/spel-zec-escrow/methods/guest/target"
+    ]
   },
   "package_build": {
     "command": "nix build --no-update-lock-file .#default",

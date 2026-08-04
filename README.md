@@ -145,7 +145,9 @@ version `0.2.0-RC3`. Its full root build/load is **not certified**: the isolated
 run was stopped before exhaustion when host free space reached 14 GiB at 98
 percent. The successful `lgpm` install is not presented as a Basecamp load. All
 temporary M6 build/runtime resources were then removed by exact name, restoring
-161 GiB free without touching `gate55-*`. A later isolated load with an explicit
+433 GiB free without touching `gate55-*`. The final pass also removed the
+proven ignored/untracked `.e2e` and three Cargo `target` trees; tracked state
+remained clean. A later isolated load with an explicit
 disk budget, warmed networkless replay, realized-closure SBOM, vulnerability,
 signature, and license review remain gates. The upstream all-output integration
 evaluation has a missing-store-source defect, and five direct Logos UI sources

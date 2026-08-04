@@ -41,7 +41,7 @@ Exact Basecamp tag 0.2.0 resolves to
 stopped when host free space reached 14 GiB at 98 percent utilization. The
 upstream extra binary-cache configuration remained untrusted. No Basecamp
 binary or package-load claim follows from the successful package-manager
-installation. Exact project cleanup subsequently restored 161 GiB free.
+installation. Exact project cleanup subsequently restored 433 GiB free.
 
 ## Decision
 
