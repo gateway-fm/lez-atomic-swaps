@@ -1,6 +1,6 @@
 # ADR 0138: Pin refund snapshots across forward finality
 
-- Status: Accepted and component GREEN
+- Status: Accepted for snapshot semantics; local timeout value superseded by ADR 0145
 - Date: 2026-08-03
 - Scope: M6 ZEC refund liveness without weaker finalized evidence
 - Extends: ADRs 0015, 0033, 0102, and 0137

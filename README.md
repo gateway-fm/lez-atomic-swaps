@@ -128,20 +128,21 @@ documented production hardening, not an accepted-issue-#112 PoC gate.
 The first Refund attempts exposed a local liveness edge now fixed at the
 component boundary by
 [ADR 0138](docs/architecture/0138-pin-refund-snapshots-across-forward-finality.md).
-Generated local ZEC actors allow 30 seconds for the bridge instead of racing a
-measured roughly 9.8-second LEZ historical-account read at a 10-second outer
-deadline. Refund observations still return one explicitly pinned finalized
-clock; a forward finalized-height change is accepted only after bounded
+At that checkpoint generated local ZEC actors moved from 10 to 30 seconds for
+the bridge; ADR 0145 now sets the generated local budget to 60 seconds after
+measuring multi-phase historical reads. Refund observations still return one
+explicitly pinned finalized clock; a forward finalized-height change is
+accepted only after bounded
 ID/hash, ancestry, and repeated-pin verification. The full 26-test refund
 observer suite is GREEN. A fresh actual-node service Refund certificate is
 still required before that happy path is claimed complete.
 
 A fresh clean-chain attempt then exposed a second bounded liveness mismatch:
 service terminal calls stopped at 15 seconds while the invoked actor may spend
-up to 30 seconds on its bridge request. ADR
+up to 30 seconds on its bridge request at that checkpoint. ADR
 [0139](docs/architecture/0139-bound-service-actions-above-actor-bridges.md)
-keeps queries at 15 seconds and gives Claim/Refund calls 40 seconds, always
-capped by the unchanged monotonic corridor deadline. That effect-bearing run is
+records the historical 15-second query and 40-second action split and is
+superseded by ADR 0145 for the current Refund path. That effect-bearing run is
 quarantined; a new fresh-chain Refund replay remains required before the happy
 path is certified.
 
@@ -218,8 +219,24 @@ deadline, live-authority, changed-tip, dirty-mempool, and evidence regressions
 are GREEN. Run `m6refund7be4428a` is quarantined; a fresh Refund certificate
 remains required before claiming both service-driven legs.
 
-That run consumed the 190-second provision-to-completion ceiling when the
-transient response arrived, leaving no later bounded round. The current outer
+Fresh run `m6refund43f2cbca` then proved ADR 0144 on actual nodes and
+finalized one LEZ Refund, but Maker and Taker refund observers contended on the
+Logos LEZ v0.2 historical-account path. Each `getAccountAtBlock` rebuilds
+state from genesis; measured reads at block 157 took 10.84 and 11.39 seconds.
+ADR
+[0145](docs/architecture/0145-serialize-refund-observation-and-layer-timeouts.md)
+therefore pauses redundant Taker action reconciliation only after LEZ Refund
+finality and while parent-owned Maker recovery is active. Local actor bridge,
+refund-only Maker attempt, and service action budgets are now 60, 75, and 90
+seconds respectively, all inside the unchanged 300-second corridor. The
+executable test proves this branch makes zero Taker actor/service action calls,
+preserves the strict parent handoff, and fails open to normal reconciliation
+when any predicate edge changes. The run is quarantined and cannot certify
+either leg. A wholly fresh Refund certificate is still required.
+
+Earlier run `m6refund7be4428a` consumed the 190-second
+provision-to-completion ceiling when the transient response arrived, leaving no
+later bounded round. The current outer
 fail-safe is therefore 300 seconds. This changes no timelock, block cadence,
 per-call budget, finality rule, or success-path delay.
 

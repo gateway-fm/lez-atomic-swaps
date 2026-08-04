@@ -32,7 +32,8 @@ readonly MAX_DRIVE_RETRIES=8
 readonly DRIVE_RETRY_DELAY_SECONDS=0.15
 readonly RAPIDSNARK_LIB_DIR="${RAPIDSNARK_LIB_DIR:-/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227}"
 readonly M6_SERVICE_QUERY_TIMEOUT_MS=15000
-readonly M6_SERVICE_ACTION_TIMEOUT_MS=40000
+readonly M6_SERVICE_ACTION_TIMEOUT_MS=90000
+readonly M6_REFUND_SUPERVISOR_ATTEMPT_TIMEOUT_MS=75000
 readonly MAX_SUPERVISED_STATUS_RETRIES=8
 readonly SUPERVISED_STATUS_RETRY_DELAY_SECONDS=0.05
 readonly BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--I/usr/lib/gcc/x86_64-linux-gnu/13/include}"
@@ -409,6 +410,14 @@ start_m5_full_supervised_daemon() {
 }
 
 start_m5_supervisor_only_daemon() {
+  local actor_attempt_timeout_ms=20000
+  if (( $# == 1 )); then
+    actor_attempt_timeout_ms="$1"
+  elif (( $# != 0 )); then
+    return 1
+  fi
+  [[ "$actor_attempt_timeout_ms" =~ ^[0-9]+$
+    && "$actor_attempt_timeout_ms" -ge 1 && "$actor_attempt_timeout_ms" -le 300000 ]] || return 1
   local ready_file="${application_root}/runtime/ready-supervisor-only"
   local log="${evidence_dir}/m5-maker-daemon-supervisor-only.log"
   [[ ! -e "$ready_file" && ! -e "$m5_supervisor_socket" \
@@ -422,7 +431,7 @@ start_m5_supervisor_only_daemon() {
     --database "$m5_application_database" \
     --ready-file "$ready_file" \
     --actor-supervisor \
-    --actor-attempt-timeout-milliseconds 20000 \
+    --actor-attempt-timeout-milliseconds "$actor_attempt_timeout_ms" \
     --actor-effect-cutoff-boottime-milliseconds "$corridor_deadline_monotonic_ms" \
     --actor-poll-milliseconds 10 \
     --actor-requeue-delay-seconds 1 \
@@ -1985,7 +1994,7 @@ start_m6_refund_maker_supervisor() {
   m5_daemon_pid=''
   m5_daemon_start_ticks=''
   [[ ! -e "$m5_supervisor_socket" && ! -e "$ready_file" ]] || return 1
-  start_m5_supervisor_only_daemon
+  start_m5_supervisor_only_daemon "$M6_REFUND_SUPERVISOR_ATTEMPT_TIMEOUT_MS"
   m6_maker_supervisor_suppressed=0
   m6_maker_supervisor_restarted=1
 }
@@ -2061,6 +2070,24 @@ m6_refund_replay_is_transient() {
   ' <<<"$response" >/dev/null 2>&1
 }
 
+m6_refund_waits_for_maker_recovery() {
+  (( m6_refund_admitted == 1 && m6_lez_refund_finalized == 1
+    && m6_maker_supervisor_restarted == 1 && m6_zcash_refund_mined == 0 ))
+}
+
+emit_m6_refund_parent_handoff() {
+  local response="$1"
+  jq -c --argjson generation "$m6_refund_generation" \
+    --arg txid "$m6_lez_refund_txid" \
+    --argjson finalized "$m6_lez_refund_finalized" \
+    --argjson start_tip "$m6_lez_refund_start_tip" '
+    (.result // {}) + {m6_refund_parent_handoff:true,m6_refund_admitted:true,
+      m6_refund_generation:$generation,m6_lez_refund_txid:$txid,
+      m6_lez_refund_finalized:($finalized == 1),
+      m6_lez_refund_start_tip:$start_tip}
+  ' <<<"$response"
+}
+
 drive_m6_taker_refund() {
   local round="$1" monitor_response="$2" state="$3"
   local status_file="${evidence_dir}/m6-taker-refund-actor-status-${round}.json"
@@ -2107,6 +2134,11 @@ drive_m6_taker_refund() {
     { echo 'M6 refund requires isolated Maker authority after cutover' >&2; return 1; }
   [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket"
     && ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || return 1
+
+  if m6_refund_waits_for_maker_recovery; then
+    emit_m6_refund_parent_handoff "$monitor_response"
+    return
+  fi
 
   if (( m6_refund_admitted == 0 )); then
     [[ "$state" == refund_available
@@ -2202,15 +2234,7 @@ drive_m6_taker_refund() {
       m6_lez_refund_finalized=1
     fi
   fi
-  jq -c --argjson generation "$m6_refund_generation" \
-    --arg txid "$m6_lez_refund_txid" \
-    --argjson finalized "$m6_lez_refund_finalized" \
-    --argjson start_tip "$m6_lez_refund_start_tip" '
-    (.result // {}) + {m6_refund_parent_handoff:true,m6_refund_admitted:true,
-      m6_refund_generation:$generation,m6_lez_refund_txid:$txid,
-      m6_lez_refund_finalized:($finalized == 1),
-      m6_lez_refund_start_tip:$start_tip}
-  ' <<<"$replay_response"
+  emit_m6_refund_parent_handoff "$replay_response"
 }
 
 prove_m6_terminal_refund_replay() {

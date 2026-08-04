@@ -7782,6 +7782,35 @@ The atomicity argument and its limits are recorded in ADR 0144. Until a fresh
 run completes, this subsection is a reproduction procedure, not evidence that
 both service-driven legs are certified.
 
+The next fresh reproduction must also exercise ADR 0145. After the LEZ Refund
+is finalized and the parent restarts Maker recovery, the runner must emit the
+same parent handoff without invoking another Taker action RPC until the Zcash
+refund is mined. The later terminal replay must resume Taker observation and
+reach `refunded`. Inspect the retained runner and actor configs:
+
+```bash
+rg -n 'M6_SERVICE_ACTION_TIMEOUT_MS|M6_REFUND_SUPERVISOR_ATTEMPT_TIMEOUT_MS' \
+  scripts/run-m2-taker-sells-lez-poc.sh
+jq '.bridge.request_timeout_millis' \
+  "$EVIDENCE/../application/taker-actors/taker/actor-config.json"
+jq '.bridge.request_timeout_millis' \
+  "$EVIDENCE/../application/maker-actors/"*/maker/actor-config.json
+```
+
+The expected local hierarchy is a 60,000-millisecond actor bridge, a
+75,000-millisecond refund-only Maker attempt, and a 90,000-millisecond service
+action caller, all capped by the 300-second monotonic Refund corridor. Query
+calls remain 15,000 milliseconds and ordinary pre-cutover Maker attempts remain
+20,000 milliseconds. These are liveness bounds, not finality delays; successful
+calls return immediately.
+
+Logos LEZ v0.2 `getAccountAtBlock` currently reconstructs historical state
+per account from genesis. At block 157, two retained diagnostic reads took
+10.84 and 11.39 seconds. This can make runtime duration sensitive to chain
+height and concurrent historical reads, but it cannot satisfy acceptance with
+missing evidence. The certificate still fails closed unless both exact
+finalized legs and terminal no-effect replay are present.
+
 ### External resources, isolation, and flakiness
 
 The empty service and default-off admission use only run-local executables,

@@ -34,7 +34,7 @@ const MAX_COOKIE_BYTES: usize = 1_024;
 const MAX_API_KEY_FILE_BYTES: usize = 1_026;
 const MAX_API_KEY_BYTES: usize = 1_024;
 const MAX_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
-const DEFAULT_LOCAL_BRIDGE_REQUEST_TIMEOUT_MILLIS: u64 = 30_000;
+const DEFAULT_LOCAL_BRIDGE_REQUEST_TIMEOUT_MILLIS: u64 = 60_000;
 const MAX_COUNTERPARTY_SCAN_BLOCKS: u32 = 50_000;
 const TATUM_TESTNET_ZEBRA_ENDPOINT: &str = "https://zcash-testnet-zebrad.gateway.tatum.io/";
 
@@ -1463,7 +1463,7 @@ mod tests {
     };
 
     #[test]
-    fn deterministic_local_actor_budget_exceeds_one_slow_indexer_read() {
+    fn deterministic_local_actor_budget_covers_refund_historical_phases() {
         let runtime = RuntimeDescriptor::new(
             Participant::Maker,
             RuntimeCompatibility::LeeV0_2_0,
@@ -1497,6 +1497,6 @@ mod tests {
             })
             .unwrap();
         let raw: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
-        assert_eq!(raw["bridge"]["request_timeout_millis"], json!(30_000));
+        assert_eq!(raw["bridge"]["request_timeout_millis"], json!(60_000));
     }
 }

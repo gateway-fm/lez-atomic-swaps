@@ -1,6 +1,6 @@
 # ADR 0139: Bound service actions above actor bridges
 
-- Status: Accepted; focused runner contract GREEN
+- Status: Superseded for the measured Refund path by ADR 0145
 - Date: 2026-08-03
 - Scope: M6 ZEC terminal-action liveness and bounded cancellation
 - Extends: ADRs 0137 and 0138

@@ -5845,21 +5845,40 @@ reconciliation and is GREEN after exact-call, timeout, changed-tip, dirty-
 mempool, live-authority, and certificate-binding regressions. Run
 `m6refund7be4428a` is quarantined; a fresh-node certificate is still required.
 
+Fresh run `m6refund43f2cbca` proved the ADR 0144 projection on fresh LEZ
+and Zebra nodes, then finalized one LEZ Refund and restarted Maker recovery.
+The run did not produce the Zcash refund. Its windows, chain state, and actor
+state were correct. Measured Logos LEZ v0.2 historical reads instead exposed
+two liveness faults: simultaneous Maker discovery and Taker exact replay
+oversubscribed the indexer's three historical slots, and the old 20/30/40
+second supervisor/bridge/service layers were shorter than the two-phase Maker
+and three-phase Taker observations.
+
+ADR 0145 is GREEN at the component boundary. It suppresses only redundant
+Taker action reconciliation after finalized LEZ Refund and during active Maker
+recovery, preserving the exact parent handoff with zero Taker actor or action
+RPC calls. It uses a generated local actor bridge budget of 60 seconds, a
+refund-only Maker supervisor attempt of 75 seconds, and a service action caller
+of 90 seconds below the unchanged 300-second corridor. It retains both
+containing-block and finalized-tip account checks. The effect-bearing run is
+quarantined and all funds, identities, and evidence must be fresh again.
+
 Next in order:
 
-1. commit and push the ADR 0144 reconciliation slice;
-2. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund
+1. commit and push the ADR 0145 liveness slice;
+2. run a wholly fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund
    journey with fresh role funds;
 3. retain exact Zcash transaction-to-block inclusion plus post-terminal replay
    evidence with no new LEZ or Zcash effect;
 4. rerun the Claim journey after the shared runner changes;
-5. update the manual flow, architecture/RPC inventory, evidence metrics, and
+5. update retained evidence, milestone metrics, and the
    upstream production-blocker ledger; and
 6. after explicit prototype owner signoff, build the Maker and Taker Basecamp
    QML packages, QtRO hosts, and actor-real UI E2E before final M6 gates/tag.
 
-The measured Logos v0.2 historical-account latency and lack of a batched
-multi-account-at-block RPC are recorded upstream production-performance items.
-They do not block local milestone certification under the accepted Logos-owned
-dependency policy. Coalescing identical in-flight repeatable observations after
-client cancellation remains project-controlled production hardening.
+The measured Logos v0.2 historical-account latency, per-account genesis
+reconstruction, and lack of a batched multi-account-at-block RPC are recorded
+upstream production-performance items. They do not block local milestone
+certification under the accepted Logos-owned dependency policy. Shared
+concurrency control, caching, and coalescing identical in-flight repeatable
+observations remain production hardening.

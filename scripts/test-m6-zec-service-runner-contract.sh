@@ -15,6 +15,36 @@ readonly refund_wrapper="scripts/run-m6-zec-taker-service-refund-poc.sh"
 [[ -x "$wrapper" && ! -L "$wrapper" ]] || fail 'wrapper is not a regular executable'
 [[ -x "$refund_wrapper" && ! -L "$refund_wrapper" ]] ||
   fail 'refund wrapper is not a regular executable'
+
+bridge_timeout_ms="$(sed -nE '
+  s/^const DEFAULT_LOCAL_BRIDGE_REQUEST_TIMEOUT_MILLIS: u64 = ([0-9_]+);$/\1/p
+' crates/zec-reference-actor/src/config.rs)"
+service_action_timeout_ms="$(sed -nE '
+  s/^readonly M6_SERVICE_ACTION_TIMEOUT_MS=([0-9]+)$/\1/p
+' "$runner")"
+refund_supervisor_timeout_ms="$(sed -nE '
+  s/^readonly M6_REFUND_SUPERVISOR_ATTEMPT_TIMEOUT_MS=([0-9]+)$/\1/p
+' "$runner")"
+corridor_seconds="$(sed -nE '
+  /^  refund\)/,/^    ;;/ s/^    MAX_CORRIDOR_SECONDS=([0-9]+)$/\1/p
+' "$runner")"
+bridge_timeout_ms="$(tr -d '_' <<<"$bridge_timeout_ms")"
+[[ "$bridge_timeout_ms" =~ ^[0-9]+$
+  && "$service_action_timeout_ms" =~ ^[0-9]+$
+  && "$refund_supervisor_timeout_ms" =~ ^[0-9]+$
+  && "$corridor_seconds" =~ ^[0-9]+$ ]] ||
+  fail 'M6 Refund timeout hierarchy is unavailable'
+(( bridge_timeout_ms == 60000 )) ||
+  fail 'local actor bridge does not cover the measured three-phase historical observation'
+(( refund_supervisor_timeout_ms > bridge_timeout_ms )) ||
+  fail 'Refund supervisor attempt does not dominate the actor bridge'
+(( service_action_timeout_ms > refund_supervisor_timeout_ms )) ||
+  fail 'service action caller does not dominate the Refund supervisor attempt'
+(( service_action_timeout_ms < corridor_seconds * 1000 )) ||
+  fail 'service action caller is not bounded by the unchanged corridor'
+rg -Fq -- 'start_m5_supervisor_only_daemon "$M6_REFUND_SUPERVISOR_ATTEMPT_TIMEOUT_MS"' \
+  "$runner" || fail 'Refund restart does not use its scoped supervisor budget'
+
 bash -n "$runner" "$wrapper" "$refund_wrapper"
 
 rg -Fq 'export M6_TAKER_SERVICE_MODE=1' "$wrapper" || fail 'wrapper does not select M6 service mode'
@@ -158,6 +188,90 @@ if m6_refund_replay_is_transient '{"jsonrpc":"2.0","id":"m6-refund-replay",
   "extra":true}'; then
   fail 'Refund replay envelope with extra fields was accepted'
 fi
+
+quiesce_source="$(sed -n '/^m6_refund_waits_for_maker_recovery() {$/,/^}$/p' "$runner")"
+[[ -n "$quiesce_source" ]] ||
+  fail 'post-finality Taker reconciliation does not yield to Maker recovery'
+eval "$quiesce_source"
+emit_handoff_source="$(sed -n '/^emit_m6_refund_parent_handoff() {$/,/^}$/p' "$runner")"
+[[ -n "$emit_handoff_source" ]] || fail 'Refund parent handoff emitter is missing'
+eval "$emit_handoff_source"
+
+m6_refund_admitted=1
+m6_lez_refund_finalized=1
+m6_maker_supervisor_restarted=1
+m6_zcash_refund_mined=0
+m6_refund_generation=2
+m6_lez_refund_txid=05d1f9cf1abb7a25594a0da5044a5c6bf25e8b35093d7c6a38290cbb33f79f6a
+m6_lez_refund_start_tip=151
+m6_refund_waits_for_maker_recovery ||
+  fail 'finalized LEZ Refund did not yield Taker reconciliation to Maker recovery'
+for released in admitted finalized restarted zcash_mined; do
+  m6_refund_admitted=1
+  m6_lez_refund_finalized=1
+  m6_maker_supervisor_restarted=1
+  m6_zcash_refund_mined=0
+  case "$released" in
+    admitted) m6_refund_admitted=0 ;;
+    finalized) m6_lez_refund_finalized=0 ;;
+    restarted) m6_maker_supervisor_restarted=0 ;;
+    zcash_mined) m6_zcash_refund_mined=1 ;;
+  esac
+  if m6_refund_waits_for_maker_recovery; then
+    fail "Maker-recovery quiescence survived changed state: ${released}"
+  fi
+done
+m6_refund_admitted=1
+m6_lez_refund_finalized=1
+m6_maker_supervisor_restarted=1
+m6_zcash_refund_mined=0
+handoff="$(emit_m6_refund_parent_handoff \
+  '{"jsonrpc":"2.0","id":"m6-monitor","result":{"state":"refund_in_progress"}}')"
+jq -e --arg tx "$m6_lez_refund_txid" '
+  .state == "refund_in_progress" and .m6_refund_parent_handoff == true
+  and .m6_refund_admitted == true and .m6_refund_generation == 2
+  and .m6_lez_refund_txid == $tx and .m6_lez_refund_finalized == true
+  and .m6_lez_refund_start_tip == 151
+' <<<"$handoff" >/dev/null || fail 'quiescent Refund handoff changed parent state'
+
+drive_refund_source="$(sed -n '/^drive_m6_taker_refund() {$/,/^}$/p' "$runner")"
+[[ -n "$drive_refund_source" ]] || fail 'Refund drive function is missing'
+eval "$drive_refund_source"
+quiescence_root="$(mktemp -d)"
+quiescence_calls="$quiescence_root/calls"
+evidence_dir="$quiescence_root/evidence"
+taker_config="$quiescence_root/taker.json"
+m5_delivery_offline="$quiescence_root/offline"
+m5_maker_socket="$quiescence_root/maker.sock"
+m5_chat_socket="$quiescence_root/chat.sock"
+m5_delivery_directory="$quiescence_root/delivery"
+mkdir -m 0700 "$evidence_dir" "$m5_delivery_offline"
+printf '%s\n' '{}' >"$taker_config"
+: >"$quiescence_calls"
+actor_bin="$quiescence_root/actor"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'printf '\''actor:%s\n'\'' "$*" >>"$M6_QUIESCENCE_CALLS"' \
+  'exit 97' >"$actor_bin"
+chmod 0500 "$actor_bin"
+export M6_QUIESCENCE_CALLS="$quiescence_calls"
+m6_service_rpc() {
+  printf '%s\n' "rpc:$*" >>"$quiescence_calls"
+  return 97
+}
+m5_transport_cutover_complete=1
+quiescent_output="$(drive_m6_taker_refund 77 \
+  '{"jsonrpc":"2.0","id":"m6-monitor","result":{"state":"refund_in_progress"}}' \
+  refund_in_progress)" || fail 'post-finality quiescence did not return successfully'
+[[ ! -s "$quiescence_calls" ]] ||
+  fail 'post-finality quiescence invoked the Taker actor or service RPC'
+jq -e --arg tx "$m6_lez_refund_txid" '
+  .state == "refund_in_progress" and .m6_refund_parent_handoff == true
+  and .m6_refund_admitted == true and .m6_refund_generation == 2
+  and .m6_lez_refund_txid == $tx and .m6_lez_refund_finalized == true
+  and .m6_lez_refund_start_tip == 151
+' <<<"$quiescent_output" >/dev/null ||
+  fail 'quiescent Refund drive did not preserve the monitor handoff envelope'
+rm -rf "$quiescence_root"
 
 maker_lock_source="$(sed -n '/^reconcile_m6_suppressed_maker_lock() {$/,/^}$/p' "$runner")"
 [[ -n "$maker_lock_source" ]] || fail 'suppressed Maker-lock reconciliation is missing'
@@ -339,7 +453,8 @@ jq -e '
 required_markers=(
   'readonly M6_ZEC_JOURNEY="${M6_ZEC_JOURNEY:-claim}"'
   'readonly M6_SERVICE_QUERY_TIMEOUT_MS=15000'
-  'readonly M6_SERVICE_ACTION_TIMEOUT_MS=40000'
+  'readonly M6_SERVICE_ACTION_TIMEOUT_MS=90000'
+  'readonly M6_REFUND_SUPERVISOR_ATTEMPT_TIMEOUT_MS=75000'
   'M6_ZEC_JOURNEY must be claim or refund'
   'MAX_CORRIDOR_SECONDS=300'
   'm6_claim_generation:$generation'
