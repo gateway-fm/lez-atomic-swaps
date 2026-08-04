@@ -159,6 +159,183 @@ if m6_refund_replay_is_transient '{"jsonrpc":"2.0","id":"m6-refund-replay",
   fail 'Refund replay envelope with extra fields was accepted'
 fi
 
+maker_lock_source="$(sed -n '/^reconcile_m6_suppressed_maker_lock() {$/,/^}$/p' "$runner")"
+[[ -n "$maker_lock_source" ]] || fail 'suppressed Maker-lock reconciliation is missing'
+eval "$maker_lock_source"
+maker_lock_root="$(mktemp -d)"
+trap 'rm -rf "$maker_lock_root"' EXIT
+actor_bin="$maker_lock_root/actor"
+actor_calls="$maker_lock_root/actor-calls"
+rpc_calls="$maker_lock_root/rpc-calls"
+timeout_calls="$maker_lock_root/timeout-calls"
+budget_calls="$maker_lock_root/budget-calls"
+maker_config="$maker_lock_root/maker.json"
+evidence_dir="$maker_lock_root/evidence"
+mkdir -m 0700 "$evidence_dir"
+printf '%s\n' '{}' >"$maker_config"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'printf '\''%s\n'\'' '\''{"schema_version":1,"role":"maker","command":"drive","outcome":"projected","operation":"maker_lock","phase":"both_legs_locked","revision":2,"next_action":"claim_lez"}'\''' \
+  >"$actor_bin"
+chmod 0500 "$actor_bin"
+mv "$actor_bin" "$maker_lock_root/actor-output"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  '[[ "$#" -eq 3 && "$1" == "--config" && "$2" == "$EXPECTED_MAKER_CONFIG" && "$3" == "drive" ]]' \
+  'echo "$*" >>"$ACTOR_CALLS"' \
+  'exec "$ACTOR_OUTPUT" "$@"' >"$actor_bin"
+chmod 0500 "$actor_bin"
+export ACTOR_CALLS="$actor_calls"
+export ACTOR_OUTPUT="$maker_lock_root/actor-output"
+export EXPECTED_MAKER_CONFIG="$maker_config"
+ZEBRA_RPC_URL=http://127.0.0.1:1
+m5_daemon_pid=''
+m5_daemon_start_ticks=''
+m5_transport_cutover_complete=1
+m5_maker_socket="$maker_lock_root/maker.sock"
+m5_chat_socket="$maker_lock_root/chat.sock"
+m6_maker_supervisor_suppressed=0
+zcash_fund_mined=2
+rpc_mode=normal
+bounded_actor_timeout() {
+  [[ "$1" == m6-maker-lock-reconciliation ]] || return 1
+  printf '%s\n' '1.000'
+}
+timeout() {
+  [[ "$#" -eq 6 && "$1" == '--signal=KILL' && "$2" == '1.000s'
+    && "$3" == "$actor_bin" && "$4" == '--config'
+    && "$5" == "$maker_config" && "$6" == drive ]] || return 1
+  printf '%s\n' "$*" >>"$timeout_calls"
+  shift 2
+  "$@"
+}
+remaining_budget_milliseconds() {
+  [[ "$1" == m6-maker-lock-reconciliation-after ]] || return 1
+  printf '%s\n' "$1" >>"$budget_calls"
+  printf '%s\n' '1000'
+}
+rpc() {
+  [[ "$1" == "$ZEBRA_RPC_URL" ]] || return 1
+  local id method
+  id="$(jq -er '.id' <<<"$2")" || return
+  method="$(jq -er '.method' <<<"$2")" || return
+  printf '%s:%s\n' "$id" "$method" >>"$rpc_calls"
+  case "$id:$method" in
+    m6-maker-lock-before-tip:getblockcount)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":106}'
+      ;;
+    m6-maker-lock-before-mempool:getrawmempool)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":[]}'
+      ;;
+    m6-maker-lock-after-tip:getblockcount)
+      if [[ "$rpc_mode" == changed_tip ]]; then
+        printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":107}'
+      else
+        printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":106}'
+      fi
+      ;;
+    m6-maker-lock-after-mempool:getrawmempool)
+      if [[ "$rpc_mode" == dirty_mempool ]]; then
+        printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":["unexpected"]}'
+      else
+        printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":[]}'
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+: >"$actor_calls"
+: >"$rpc_calls"
+: >"$timeout_calls"
+: >"$budget_calls"
+if reconcile_m6_suppressed_maker_lock >/dev/null 2>&1; then
+  fail 'Maker-lock reconciliation ran without suppressed authority'
+fi
+[[ ! -s "$actor_calls" && ! -s "$rpc_calls"
+  && ! -s "$timeout_calls" && ! -s "$budget_calls" ]] ||
+  fail 'unsuppressed Maker-lock reconciliation performed I/O'
+
+m6_maker_supervisor_suppressed=1
+m5_daemon_pid=123
+m5_daemon_start_ticks=456
+if reconcile_m6_suppressed_maker_lock >/dev/null 2>&1; then
+  fail 'Maker-lock reconciliation ran with live daemon authority'
+fi
+[[ ! -s "$actor_calls" && ! -s "$rpc_calls"
+  && ! -s "$timeout_calls" && ! -s "$budget_calls" ]] ||
+  fail 'live-daemon Maker-lock reconciliation performed I/O'
+m5_daemon_pid=''
+m5_daemon_start_ticks=''
+
+assert_reconciliation_calls() {
+  mapfile -t actual_rpc_calls <"$rpc_calls"
+  expected_rpc_calls=(
+    'm6-maker-lock-before-tip:getblockcount'
+    'm6-maker-lock-before-mempool:getrawmempool'
+    'm6-maker-lock-after-tip:getblockcount'
+    'm6-maker-lock-after-mempool:getrawmempool'
+  )
+  [[ "${actual_rpc_calls[*]}" == "${expected_rpc_calls[*]}" ]] ||
+    fail 'Maker-lock reconciliation made unexpected or reordered RPC calls'
+  (( $(wc -l <"$actor_calls") == 1 )) ||
+    fail 'Maker-lock reconciliation did not invoke exactly one actor command'
+  [[ "$(sed -n '1p' "$actor_calls")" == "--config $maker_config drive" ]] ||
+    fail 'Maker-lock reconciliation actor argv changed'
+  [[ "$(sed -n '1p' "$timeout_calls")" == "--signal=KILL 1.000s $actor_bin --config $maker_config drive"
+    && "$(wc -l <"$timeout_calls")" -eq 1 ]] ||
+    fail 'Maker-lock reconciliation did not use one exact hard timeout'
+  [[ "$(sed -n '1p' "$budget_calls")" == m6-maker-lock-reconciliation-after
+    && "$(wc -l <"$budget_calls")" -eq 1 ]] ||
+    fail 'Maker-lock reconciliation did not recheck its corridor budget'
+}
+
+rpc_mode=changed_tip
+: >"$actor_calls"
+: >"$rpc_calls"
+: >"$timeout_calls"
+: >"$budget_calls"
+if reconcile_m6_suppressed_maker_lock >/dev/null 2>&1; then
+  fail 'Maker-lock reconciliation accepted a changed Zebra tip'
+fi
+assert_reconciliation_calls
+
+rpc_mode=dirty_mempool
+: >"$actor_calls"
+: >"$rpc_calls"
+: >"$timeout_calls"
+: >"$budget_calls"
+if reconcile_m6_suppressed_maker_lock >/dev/null 2>&1; then
+  fail 'Maker-lock reconciliation accepted a nonempty Zebra mempool'
+fi
+assert_reconciliation_calls
+
+rpc_mode=normal
+: >"$actor_calls"
+: >"$rpc_calls"
+: >"$timeout_calls"
+: >"$budget_calls"
+reconcile_m6_suppressed_maker_lock || fail 'suppressed Maker lock did not reconcile'
+assert_reconciliation_calls
+jq -e '
+  .schema_version == 1 and .result == "passed"
+  and .authority == "direct_observation_only"
+  and .actor.role == "maker" and .actor.command == "drive"
+  and .actor.operation == "maker_lock" and .actor.outcome == "projected"
+  and .actor.phase == "both_legs_locked" and .actor.next_action == "claim_lez"
+  and .actor_timeout_seconds == "1.000"
+  and .before.tip.error == null and .before.tip.result == 106
+  and .after.tip.error == null and .after.tip.result == 106
+  and .before.tip.result == .after.tip.result
+  and .before.mempool.error == null and .before.mempool.result == []
+  and .after.mempool.error == null and .after.mempool.result == []
+  and .before.mempool.result == .after.mempool.result
+  and .zebra_tip_unchanged == true and .zebra_mempool_unchanged_empty == true
+  and .new_chain_effect == false
+' "$evidence_dir/m6-maker-lock-reconciliation.json" >/dev/null ||
+  fail 'Maker-lock reconciliation evidence is incomplete'
+
 required_markers=(
   'readonly M6_ZEC_JOURNEY="${M6_ZEC_JOURNEY:-claim}"'
   'readonly M6_SERVICE_QUERY_TIMEOUT_MS=15000'
@@ -215,6 +392,9 @@ required_markers=(
   'm6-zebra-mempool-zcash-refund.json'
   'm6_maker_supervisor_suppressed=1'
   'start_m6_refund_maker_supervisor'
+  'reconcile_m6_suppressed_maker_lock'
+  'm6-maker-lock-reconciliation.json'
+  'maker_lock_reconciliation_sha256'
   'direct Taker drive crossed the M6 service terminal-action boundary'
   '--arg journey "$M6_ZEC_JOURNEY"'
   'journey: $journey'

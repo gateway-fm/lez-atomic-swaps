@@ -1882,6 +1882,70 @@ prove_m6_lez_refund_finality() {
   chmod 0600 "${evidence_dir}/m6-taker-lez-refund-finality.json"
 }
 
+reconcile_m6_suppressed_maker_lock() {
+  (( m6_maker_supervisor_suppressed == 1 && zcash_fund_mined == 2 \
+    && m5_transport_cutover_complete == 1 )) || return 1
+  [[ -z "$m5_daemon_pid" && -z "$m5_daemon_start_ticks" ]] || {
+    echo 'refusing direct Maker-lock observation while daemon authority is live' >&2
+    return 1
+  }
+  [[ ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" ]] || {
+    echo 'refusing direct Maker-lock observation while daemon transports exist' >&2
+    return 1
+  }
+  local before_tip before_mempool after_tip after_mempool actor_output actor_timeout
+  local output_file="${evidence_dir}/m6-maker-lock-reconciliation.json"
+  before_tip="$(rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m6-maker-lock-before-tip","method":"getblockcount","params":[]}')"
+  before_mempool="$(rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m6-maker-lock-before-mempool","method":"getrawmempool","params":[]}')"
+  jq -e '
+    .error == null and (.result | numbers) >= 1
+  ' <<<"$before_tip" >/dev/null || return
+  jq -e '.error == null and .result == []' <<<"$before_mempool" >/dev/null || return
+
+  actor_timeout="$(bounded_actor_timeout 'm6-maker-lock-reconciliation')" || return
+  actor_output="$(timeout --signal=KILL "${actor_timeout}s" \
+    "$actor_bin" --config "$maker_config" drive)" || return
+  remaining_budget_milliseconds 'm6-maker-lock-reconciliation-after' >/dev/null || return
+  jq -e '
+    .schema_version == 1 and .role == "maker" and .command == "drive"
+    and .outcome == "projected" and .operation == "maker_lock"
+    and .phase == "both_legs_locked" and (.revision | numbers) >= 2
+    and .next_action == "claim_lez"
+  ' <<<"$actor_output" >/dev/null || {
+    echo 'suppressed Maker lock did not reconcile to both locked legs' >&2
+    return 1
+  }
+
+  after_tip="$(rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m6-maker-lock-after-tip","method":"getblockcount","params":[]}')"
+  after_mempool="$(rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m6-maker-lock-after-mempool","method":"getrawmempool","params":[]}')"
+  jq -e --argjson before "$before_tip" '
+    .error == null and .result == $before.result
+  ' <<<"$after_tip" >/dev/null || return
+  jq -e --argjson before "$before_mempool" '
+    .error == null and .result == [] and .result == $before.result
+  ' <<<"$after_mempool" >/dev/null || return
+
+  jq -n --argjson actor "$actor_output" \
+    --arg actor_timeout "$actor_timeout" \
+    --argjson before_tip "$before_tip" --argjson after_tip "$after_tip" \
+    --argjson before_mempool "$before_mempool" \
+    --argjson after_mempool "$after_mempool" '
+    {schema_version:1,result:"passed",authority:"direct_observation_only",
+      actor:$actor,before:{tip:$before_tip,mempool:$before_mempool},
+      after:{tip:$after_tip,mempool:$after_mempool},
+      actor_timeout_seconds:$actor_timeout,
+      zebra_tip_unchanged:($before_tip.result == $after_tip.result),
+      zebra_mempool_unchanged_empty:
+        ($before_mempool.result == [] and $after_mempool.result == []),
+      new_chain_effect:false}
+  ' >"$output_file"
+  chmod 0600 "$output_file"
+}
+
 start_m6_refund_maker_supervisor() {
   (( m6_maker_supervisor_suppressed == 1 && m6_lez_refund_finalized == 1 )) || return 1
   local ready_file="${application_root}/runtime/ready-refund-control"
@@ -2706,6 +2770,9 @@ observe_m5_supervised_maker() {
     fi
     mine_blocks funding 2
     cut_over_m5_negotiation_transports
+    if [[ "$M6_ZEC_JOURNEY" == refund ]]; then
+      reconcile_m6_suppressed_maker_lock
+    fi
   fi
 
   if [[ "$M6_ZEC_JOURNEY" == refund && "$m6_maker_supervisor_restarted" == 1
@@ -2942,6 +3009,26 @@ else
   }
   [[ "$m6_lez_refund_txid" =~ ^[0-9a-f]{64}$ \
     && "$m6_zcash_refund_txid" =~ ^[0-9a-f]{64}$ ]] || exit 1
+  jq -e '
+    .schema_version == 1 and .result == "passed"
+    and .authority == "direct_observation_only"
+    and .actor.role == "maker" and .actor.command == "drive"
+    and .actor.operation == "maker_lock" and .actor.outcome == "projected"
+    and .actor.phase == "both_legs_locked" and .actor.next_action == "claim_lez"
+    and (.actor_timeout_seconds | strings | test("^[0-9]+[.][0-9]{3}$"))
+    and .before.tip.error == null and (.before.tip.result | numbers) >= 1
+    and .after.tip.error == null and (.after.tip.result | numbers) >= 1
+    and .before.tip.result == .after.tip.result
+    and .before.mempool.error == null and .before.mempool.result == []
+    and .after.mempool.error == null and .after.mempool.result == []
+    and .before.mempool.result == .after.mempool.result
+    and .zebra_tip_unchanged == true
+    and .zebra_mempool_unchanged_empty == true
+    and .new_chain_effect == false
+  ' "${evidence_dir}/m6-maker-lock-reconciliation.json" >/dev/null || {
+    echo 'M6 Refund lacks valid no-effect Maker-lock reconciliation evidence' >&2
+    exit 1
+  }
 fi
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   (( m5_transport_cutover_complete == 1 )) || {
@@ -3237,6 +3324,8 @@ jq -n \
   --arg zcash_refund_txid "$m6_zcash_refund_txid" \
   --arg lez_refund_window_sha256 \
     "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-lez-refund-window.json" | cut -d ' ' -f1; fi)" \
+  --arg maker_lock_reconciliation_sha256 \
+    "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-maker-lock-reconciliation.json" | cut -d ' ' -f1; fi)" \
   --arg taker_refund_commit_sha256 \
     "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-service-refund-commit.json" | cut -d ' ' -f1; fi)" \
   --arg taker_refund_transients_sha256 \
@@ -3311,6 +3400,7 @@ jq -n \
         lez_refund_transaction_id: $lez_refund_txid,
         zcash_refund_transaction_id: $zcash_refund_txid,
         lez_refund_window_sha256: $lez_refund_window_sha256,
+        maker_lock_reconciliation_sha256: $maker_lock_reconciliation_sha256,
         taker_refund_commit_sha256: $taker_refund_commit_sha256,
         taker_refund_transients_sha256: $taker_refund_transients_sha256,
         lez_refund_finality_sha256: $lez_refund_finality_sha256,

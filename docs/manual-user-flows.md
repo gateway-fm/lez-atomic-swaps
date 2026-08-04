@@ -7348,9 +7348,11 @@ socket/configuration custody, authenticated reads, default-off admission, and
 restart. The real acceptance proof uses the same RPC module with a real Maker
 daemon, Delivery, and Chat and ends at durable actor provisioning before any
 chain effect. It then removes Delivery and Chat and reproduces the accepted
-swap through the receipt-bound list and monitor methods. Actor drive, claim,
-and refund remain absent. This is not prototype signoff or an actor-real chain
-flow.
+swap through the receipt-bound list and monitor methods. The later Claim
+subsection is actual-local and certified. The Refund subsection is an
+executable fresh-node certificate candidate whose focused contract is GREEN;
+successful two-leg evidence remains pending. This is not prototype signoff or
+an actor-real Basecamp flow.
 
 ### Build and isolated empty configuration
 
@@ -7709,6 +7711,76 @@ opposite branch. ZEC is funded and confirmed before the LEZ revealing claim,
 and only that revealed secret authorizes the final ZEC claim. Timelocks retain
 the refund path if the happy sequence stops. See ADR 0137 for failure windows
 and limitations.
+
+### Reproduce the service-driven ZEC Refund certificate candidate
+
+Use wholly fresh LEZ v0.2 deployment/onboarding, role identities, deterministic
+funds, Zebra Regtest maturity, dynamic loopback ports, and a fresh run ID exactly
+as in the Claim subsection. The Claim-only wrapper intentionally rejects this
+journey; invoke the shared runner with all application/service/refund selectors
+explicit:
+
+```bash
+export RUN_ID=m6refund-$(date -u +%Y%m%d%H%M%S)
+export M5_APPLICATION_MODE=1
+export M6_TAKER_SERVICE_MODE=1
+export M6_ZEC_JOURNEY=refund
+export POC_DIRECTION=taker_sells_lez
+
+./scripts/run-m2-taker-sells-lez-poc.sh
+```
+
+Keep the same endpoint, chain, program, deployment, onboarding, account, and
+private signer exports listed for Claim. Never use the quarantined
+`m6refund7be4428a` identities, funds, node state, or evidence as inputs.
+
+Inspect the additional owner-private Refund evidence:
+
+```bash
+EVIDENCE=/tmp/lez-atomic-swaps-${RUN_ID}/evidence
+jq . "$EVIDENCE/m6-maker-lock-reconciliation.json"
+jq . "$EVIDENCE/m6-taker-service-refund-commit.json"
+jq . "$EVIDENCE/m6-taker-lez-refund-finality.json"
+jq . "$EVIDENCE/m6-zebra-zcash-refund-inclusion.json"
+jq . "$EVIDENCE/m6-taker-service-refund-terminal-no-effect.json"
+jq . "$EVIDENCE/result.json"
+```
+
+A passing certificate must show one bounded observation-only Maker call with
+normal Maker daemon authority absent, exact `maker_lock` projection to
+`both_legs_locked`, unchanged Zebra height, and empty mempool before and after.
+The service must then select only Refund, reject the opposite Claim, finalize
+the Taker LEZ refund, and start parent-owned Maker recovery only after that
+finality. The Zcash refund must appear exactly once in the canonical block named
+by the evidence. Exact terminal replay must change neither the ordered
+successful LEZ submission trace nor the Zebra tip or empty mempool.
+`result.json.refund_path.maker_lock_reconciliation_sha256` must equal the
+SHA-256 of the reconciliation evidence file.
+
+```mermaid
+sequenceDiagram
+    actor T as Taker
+    participant R as Certificate runner
+    participant Z as Zebra Regtest
+    participant M as Maker actor
+    participant S as Taker service
+    participant L as Local LEZ v0.2
+    participant P as Maker supervisor
+
+    R->>Z: Confirm Maker funding and snapshot empty mempool
+    R->>M: Observe canonical lock once while daemon is suppressed
+    M-->>R: both_legs_locked with no new effect
+    T->>S: Admit Refund and exclude Claim
+    S->>L: Submit or reconcile Taker LEZ refund
+    L-->>R: Exact finalized refund
+    R->>P: Start parent-owned recovery
+    P->>Z: Submit or reconcile Maker Zcash refund
+    Z-->>R: Canonical exact-once inclusion
+```
+
+The atomicity argument and its limits are recorded in ADR 0144. Until a fresh
+run completes, this subsection is a reproduction procedure, not evidence that
+both service-driven legs are certified.
 
 ### External resources, isolation, and flakiness
 

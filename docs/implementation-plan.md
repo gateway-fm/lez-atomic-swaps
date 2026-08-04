@@ -5825,16 +5825,37 @@ protocol deadline, per-call timeout, cadence, or finality rule changed. The
 seconds to allow a later bounded round; success does not wait for this ceiling.
 The effect-bearing run is quarantined; another fresh-node certificate is required.
 
+Fresh run `m6refund7be4428a` then proved that the transient retry was no longer
+the first failure. It reached durable Refund, opposite-Claim exclusion,
+finalized LEZ Refund, and parent recovery handoff, but no Zcash refund appeared.
+The Maker daemon had been stopped after its funding transaction was confirmed
+and before its own actor projected that lock. The Taker actor durably held both
+locks, while the Maker coordinator still held only `taker_lock_confirmed`.
+From that incomplete local phase, observing the Taker LEZ refund correctly
+terminalized the Maker as if no second lock existed.
+
+ADR 0144 adds one bounded observation-only reconciliation after the two funding
+blocks and daemon/transport suppression. It requires exact one-call Maker
+`maker_lock` projection to `both_legs_locked`, unchanged Zebra height, and an
+empty mempool before and after. Final acceptance revalidates the evidence and
+binds its SHA-256 into `result.json`. Thus the already-canonical funding fact
+reaches durable Maker state without overlapping daemon authority or adding a
+chain effect. The executable contract progressed RED on the absent
+reconciliation and is GREEN after exact-call, timeout, changed-tip, dirty-
+mempool, live-authority, and certificate-binding regressions. Run
+`m6refund7be4428a` is quarantined; a fresh-node certificate is still required.
+
 Next in order:
 
-1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund
+1. commit and push the ADR 0144 reconciliation slice;
+2. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund
    journey with fresh role funds;
-2. retain exact Zcash transaction-to-block inclusion plus post-terminal replay
+3. retain exact Zcash transaction-to-block inclusion plus post-terminal replay
    evidence with no new LEZ or Zcash effect;
-3. rerun the Claim journey after the shared runner changes;
-4. update the manual flow, architecture/RPC inventory, evidence metrics, and
+4. rerun the Claim journey after the shared runner changes;
+5. update the manual flow, architecture/RPC inventory, evidence metrics, and
    upstream production-blocker ledger; and
-5. after explicit prototype owner signoff, build the Maker and Taker Basecamp
+6. after explicit prototype owner signoff, build the Maker and Taker Basecamp
    QML packages, QtRO hosts, and actor-real UI E2E before final M6 gates/tag.
 
 The measured Logos v0.2 historical-account latency and lack of a batched

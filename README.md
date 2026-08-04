@@ -205,6 +205,19 @@ other response shapes fail closed. The executable contract is GREEN. The run
 is quarantined and one further wholly fresh Refund certificate remains
 required.
 
+That fresh discovery run exposed a distinct state-projection gap rather than a
+retry or timeout fault. The Maker's Zcash funding was canonical and confirmed,
+but the daemon was cut over before the Maker actor durably recorded its own
+lock. ADR
+[0144](docs/architecture/0144-reconcile-confirmed-maker-lock-before-refund.md)
+now permits one bounded observation-only Maker step while normal Maker
+authority and transports are suppressed. It must reach `both_legs_locked` while
+Zebra height stays unchanged and both before/after mempools stay empty. Final
+acceptance validates and SHA-binds that evidence into the result. Exact-call,
+deadline, live-authority, changed-tip, dirty-mempool, and evidence regressions
+are GREEN. Run `m6refund7be4428a` is quarantined; a fresh Refund certificate
+remains required before claiming both service-driven legs.
+
 That run consumed the 190-second provision-to-completion ceiling when the
 transient response arrived, leaving no later bounded round. The current outer
 fail-safe is therefore 300 seconds. This changes no timelock, block cadence,
