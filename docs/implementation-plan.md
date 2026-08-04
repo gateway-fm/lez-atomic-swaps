@@ -430,13 +430,33 @@ attestation so neither can be misreported as the other.
   No public RPC, peer, faucet, public funds or external finality service is
   introduced; the Monero local stack supplies only agreement identity in this
   protocol-transition PoC and no Monero funding effect is claimed.
-- [ ] Push the clean Tag-17 PoC implementation, execute
-  `M5_XMR_JOURNEY=punish` from that exact commit against fresh isolated local
-  nodes, retain the prepared/released/finalized/cleanup evidence and phase
-  timings, then publish a secret-free certificate and update F5 only if the
-  deployed guest identity and exact actual-node transition both match. Keep F3
-  and F6 open until the joined abandonment economics and adverse recovery races
-  are independently proved.
+- [x] Execute the first pushed actual-node RED rehearsal
+  `m7tag17124df10a`. The current checked guest passed all five recursive tests,
+  deployed with the exact expected ELF/ImageID, and the isolated Maker/Taker
+  onboarding, Monero 0.18.5.1 Regtest identity, agreement, Tag13 preparation,
+  pre-boundary absence/uncertainty, durable Tag17 preparation and exactly one
+  transaction-ID-bound release all passed. The sequencer accepted transaction
+  `02f1ae...4597`, but canonical classification never produced a retained
+  finality file because the observer rejected `Punish` and the fixed 64-block
+  scan waited for its entire future range. Exact cleanup passed, the sentinel
+  survived, and independent post-run Docker queries found no run-labelled
+  resource. This is RED chain execution, not F5 certification.
+- [x] Close the RED observer defect with protocol-first TDD. The shared
+  actor-realistic test now proves Maker exact ownership and Taker terms
+  discovery for canonical Tag17 bytes, claimant-only signing, ordered
+  metadata/custody/claimant accounts, terminal `Claimed` metadata, zero
+  custody, no aggregate signature, and rejection before the inclusive
+  `punish_at` boundary. The protocol fact constructor independently enforces
+  the same timestamp. Actual-node search now advances through contiguous,
+  fully finalized eight-block pages only after a typed `uncertain` result;
+  this retains full Bedrock finality, cannot skip a height, and bounds local
+  post-inclusion wait without treating page size as confirmation depth.
+- [ ] Execute `M5_XMR_JOURNEY=punish` from the exact pushed classifier-fix
+  commit against fresh isolated local nodes, retain prepared/released/finalized/
+  cleanup evidence and phase timings, then publish a secret-free certificate
+  and update F5 only if the deployed guest identity and both actor views match.
+  Keep F3 and F6 open until the joined abandonment economics and adverse
+  recovery races are independently proved.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -6340,10 +6360,17 @@ replays both preparation and accepted release without consulting a changed
 nonce source. ADR 0158 records the component and sequence diagrams, conditional
 atomicity argument, resource boundary, and limits.
 
-F3, F5, and F6 remain open honestly: this checkpoint uses an authenticated
-literal-loopback sequencer double. The next progressive slice is a fresh
-isolated local LEZ deployment that submits the same sidecar-produced Tag-17
-bytes before and after the configured boundary, retains finalized metadata and
-custody facts, proves losing-branch rejection, and performs exact labelled
-cleanup. Only after that PoC will adverse races, process kill, and concurrency
-hardening be claimed.
+The first pushed actual-node rehearsal `m7tag17124df10a` then proved the
+checked guest build/deployment, actor onboarding, Tag13 prerequisite,
+pre-boundary classification, durable Tag17 preparation, and exactly one
+accepted transaction-ID-bound release. It failed at canonical evidence because
+the observer did not yet classify `Punish` and requested full coverage of a
+fixed 64-block range. Cleanup still passed exactly. Focused RED/GREEN now covers
+Maker exact-owner and Taker terms-discovery facts, the inclusive boundary,
+terminal state and custody, while contiguous eight-block finalized pages remove
+the unnecessary future-range wait without weakening Bedrock finality.
+
+F3, F5, and F6 remain open honestly until a fresh pushed replay retains both
+actor views of the finalized transition. F5 may close after that replay; F3 and
+F6 additionally require the joined two-devnet abandonment economics,
+losing-branch proof, and adverse process/concurrency cases.

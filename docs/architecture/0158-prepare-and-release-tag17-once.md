@@ -50,6 +50,11 @@ flowchart LR
     Sequencer --> Guest["Checked LEZ v0.2 escrow guest"]
     Guest --> Metadata[("XMR escrow metadata")]
     Guest --> Custody[("LEZ custody account")]
+    Sequencer --> Indexer["Local finalized indexer RPC"]
+    MakerSidecar --> Classifier["Exact-owner classifier"]
+    TakerActor["Taker XMR actor"] --> TakerSidecar["Authenticated Taker sidecar"]
+    TakerSidecar --> Classifier
+    Classifier --> Indexer
 ```
 
 ## Preparation and release flow
@@ -58,8 +63,11 @@ flowchart LR
 sequenceDiagram
     participant MakerActor as Maker XMR actor
     participant Sidecar as Maker sidecar
+    participant TakerActor as Taker XMR actor
+    participant TakerSidecar as Taker sidecar
     participant Store as Owner-only stores
     participant Node as Local LEZ sequencer
+    participant Indexer as Local finalized indexer
     participant Guest as Escrow guest
     MakerActor->>Sidecar: Prepare Tag17 with runtime and immutable terms
     Sidecar->>Sidecar: Verify Maker role, claimant, programs, PDAs
@@ -82,7 +90,25 @@ sequenceDiagram
     end
     Sidecar->>Store: Retain terminal release result
     Sidecar-->>MakerActor: Accepted or already known
+    loop Contiguous eight-block finalized pages
+        MakerActor->>Sidecar: Classify exact retained Tag17
+        Sidecar->>Indexer: Read finalized page and historical accounts
+        alt Page fully covered without Tag17
+            Sidecar-->>MakerActor: Typed uncertain and next contiguous page
+        else Exact Tag17 is finalized
+            Sidecar-->>MakerActor: Canonical transaction, block, metadata and custody facts
+        end
+    end
+    TakerActor->>TakerSidecar: Discover Tag17 by immutable terms in the found page
+    TakerSidecar->>Indexer: Independently read the same finalized page
+    TakerSidecar-->>TakerActor: Byte-identical canonical facts
 ```
+
+The page size is scan pagination, not confirmation depth. A page advances only
+after its end height is Bedrock-finalized and re-read consistently; pages are
+contiguous from the finalized Tag13 funding height. Therefore reducing a page
+from 64 to eight blocks cannot weaken finality or skip a candidate, and it
+reduces local post-inclusion wait to at most the remainder of one page.
 
 ## Atomicity argument
 
@@ -118,8 +144,19 @@ nonce-source access. They use deterministic keys, owner-private temporary
 directories, and an in-process literal-loopback sequencer double. No Docker,
 public RPC, faucet, public funds, DNS, or external service is used.
 
-This component checkpoint does not claim the actual LEZ guest transition or a
-joined two-devnet recovery corridor. F3, F5, and F6 remain open until a fresh
-isolated local-node run proves pre-boundary rejection, post-boundary Tag-17
-finalization, terminal custody/account facts, losing-branch rejection, exact
-cleanup, and the required adverse concurrency cases.
+Pushed rehearsal `m7tag17124df10a` executed the current checked guest and
+obtained one accepted Tag17 release after the boundary, with no public RPC,
+faucet, public funds or external finality service. It did not certify F5:
+canonical evidence failed because this observer still rejected `Punish` and
+the runner waited for an unnecessary fixed 64-block range. Exact cleanup passed
+and independent Docker queries found no run-labelled resource.
+
+RED/GREEN now makes the observer accept only the canonical
+`PunishNativeXmr` instruction, metadata/custody/claimant account order,
+claimant signature, agreement message hash, timestamp at or after
+`punish_at`, terminal `Claimed` metadata and zero custody. Maker exact-owner
+and Taker discovery tests agree on the same facts, while the protocol model
+independently rejects pre-boundary facts. A fresh pushed actual-node replay is
+still required before F5 changes to GREEN. F3 and F6 additionally remain open
+for a joined two-devnet recovery corridor, losing-branch rejection, exact
+cleanup, and adverse concurrency cases.

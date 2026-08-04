@@ -30,10 +30,10 @@ use lez_bridge_protocol::{
     FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
     FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimV3Request,
-    PrepareNativeXmrEscrowV3Request, PrepareNativeXmrRefundV3Request, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, XmrClaimPartialV3, XmrNativeEffectV3,
-    XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3, XmrNativeEscrowTermsV3,
-    XmrNativeEscrowTermsV3Input,
+    PrepareNativeXmrEscrowV3Request, PrepareNativeXmrPunishV3Request,
+    PrepareNativeXmrRefundV3Request, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
+    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -294,6 +294,13 @@ fn terms(depositor: AccountId, claimant: AccountId) -> XmrNativeEscrowTermsV3 {
         ZecEscrowInstruction::RefundNativeXmr { swap_id: SWAP_ID },
     )
     .expect("canonical tag-16 message");
+    let punish_message = Message::try_new(
+        ESCROW_PROGRAM,
+        vec![metadata, custody, claimant],
+        vec![41_u128.into()],
+        ZecEscrowInstruction::PunishNativeXmr { swap_id: SWAP_ID },
+    )
+    .expect("canonical tag-17 message");
     XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
         swap_id: Hex32::from_bytes(SWAP_ID),
         activation_commitment: h(2),
@@ -318,7 +325,7 @@ fn terms(depositor: AccountId, claimant: AccountId) -> XmrNativeEscrowTermsV3 {
         punish_at_ms: 20_000,
         claim_message_hash: Hex32::from_bytes(claim_message.hash()),
         refund_message_hash: Hex32::from_bytes(refund_message.hash()),
-        punish_message_hash: h(19),
+        punish_message_hash: Hex32::from_bytes(punish_message.hash()),
     })
     .expect("valid XMR terms")
 }
@@ -1730,9 +1737,9 @@ async fn authenticated_exact_persisted_fund_requires_stable_finalized_history() 
 #[tokio::test]
 #[allow(
     clippy::too_many_lines,
-    reason = "one actor-realistic journey keeps tag 14 through 16 owner and counterparty paths joined"
+    reason = "one actor-realistic journey keeps tag 14 through 17 owner and counterparty paths joined"
 )]
-async fn tag_14_through_tag_16_are_classified_by_owner_and_counterparty() {
+async fn tag_14_through_tag_17_are_classified_by_owner_and_counterparty() {
     let directory = TempDir::new().expect("state root");
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).expect("private root");
     let taker_directory = directory.path().join("taker-planner");
@@ -1875,6 +1882,20 @@ async fn tag_14_through_tag_16_are_classified_by_owner_and_counterparty() {
         .await
         .expect("durable completed tag-16 refund")
         .refund;
+
+    let punish = maker_planner
+        .prepare_native_xmr_punish_v3(&PrepareNativeXmrPunishV3Request::new(
+            MessageContext::new(
+                RunId::new(RUN_ID).expect("run id"),
+                RequestId::new("tag17-prepare").expect("request id"),
+                Participant::Maker,
+            ),
+            maker_runtime.clone(),
+            xmr_terms,
+        ))
+        .await
+        .expect("durable tag-17 punishment")
+        .punish;
 
     let (node_endpoint, node, sends) = start_node().await;
     for (id, descriptor, planner, target) in [
@@ -2156,8 +2177,132 @@ async fn tag_14_through_tag_16_are_classified_by_owner_and_counterparty() {
         bridge.stop().await.expect("boundary sidecar stops");
     }
 
+    for (id, descriptor, planner, target) in [
+        (
+            "tag17-owner-exact",
+            maker_runtime.clone(),
+            Arc::clone(&maker_planner),
+            FinalizedNativeXmrTransactionTargetV3::exact(punish.clone()),
+        ),
+        (
+            "tag17-counterparty-discovery",
+            taker_runtime.clone(),
+            Arc::clone(&taker_planner),
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        ),
+    ] {
+        let indexer = finalized_effect_indexer_at(
+            &punish,
+            &xmr_terms,
+            claimant,
+            EscrowStatus::Claimed,
+            0,
+            20_000,
+        );
+        let (client, bridge) = start_classifier_sidecar(
+            directory.path(),
+            id,
+            descriptor.clone(),
+            planner,
+            &node_endpoint,
+            indexer,
+        )
+        .await;
+        let classified = client
+            .classify_finalized_native_xmr_effect_v3(
+                ClassifyFinalizedNativeXmrEffectV3Request::new(
+                    MessageContext::new(
+                        RunId::new(RUN_ID).expect("run id"),
+                        RequestId::new(id).expect("request id"),
+                        descriptor.sidecar_role,
+                    ),
+                    descriptor,
+                    xmr_terms,
+                    XmrNativeEffectV3::Punish,
+                    target,
+                    DiscoveryWindow::new(FUNDING_BLOCK, 2).expect("window"),
+                ),
+            )
+            .await
+            .expect("tag-17 finalized classification");
+        let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = classified.outcome else {
+            panic!("tag-17 must be found")
+        };
+        let input = xmr_terms.to_input();
+        assert_eq!(facts.transaction.transaction_id, punish.transaction_id);
+        assert_eq!(facts.transaction.exact_bytes, punish.exact_bytes);
+        assert_eq!(facts.instruction.effect, XmrNativeEffectV3::Punish);
+        assert_eq!(facts.instruction.message_hash, input.punish_message_hash);
+        assert_eq!(
+            facts.instruction.ordered_account_ids.as_slice(),
+            [
+                input.metadata_account_id,
+                input.custody_account_id,
+                input.claimant_account_id,
+            ]
+        );
+        assert_eq!(
+            facts.transaction.signer_account_ids.as_slice(),
+            [input.claimant_account_id]
+        );
+        assert_eq!(facts.aggregate_signature, None);
+        assert_eq!(facts.metadata.state, XmrNativeEscrowStateV3::Claimed);
+        assert_eq!(facts.custody.balance.as_u128(), 0);
+        bridge.stop().await.expect("tag-17 sidecar stops");
+    }
+
+    for (timestamp, accepted) in [(19_999, false), (20_000, true), (20_001, true)] {
+        let id = format!("tag17-boundary-{timestamp}");
+        let indexer = finalized_effect_indexer_at(
+            &punish,
+            &xmr_terms,
+            claimant,
+            EscrowStatus::Claimed,
+            0,
+            timestamp,
+        );
+        let (client, bridge) = start_classifier_sidecar(
+            directory.path(),
+            &format!("{id}-idempotency.json"),
+            maker_runtime.clone(),
+            Arc::clone(&maker_planner),
+            &node_endpoint,
+            indexer,
+        )
+        .await;
+        let result = client
+            .classify_finalized_native_xmr_effect_v3(
+                ClassifyFinalizedNativeXmrEffectV3Request::new(
+                    MessageContext::new(
+                        RunId::new(RUN_ID).expect("run id"),
+                        RequestId::new(id).expect("request id"),
+                        Participant::Maker,
+                    ),
+                    maker_runtime.clone(),
+                    xmr_terms,
+                    XmrNativeEffectV3::Punish,
+                    FinalizedNativeXmrTransactionTargetV3::exact(punish.clone()),
+                    DiscoveryWindow::new(FUNDING_BLOCK, 2).expect("window"),
+                ),
+            )
+            .await;
+        if accepted {
+            let classified = result.expect("timestamp at or after punish_at");
+            assert!(matches!(
+                classified.outcome,
+                FinalizedNativeXmrScanOutcomeV3::Found { .. }
+            ));
+        } else {
+            assert_remote_code(
+                result.expect_err("timestamp before punish_at fails closed"),
+                ErrorCode::InvalidTransaction,
+            );
+        }
+        bridge.stop().await.expect("boundary sidecar stops");
+    }
+
     assert_eq!(taker_nonce.calls.load(Ordering::SeqCst), 2);
-    assert_eq!(maker_nonce.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(maker_nonce.calls.load(Ordering::SeqCst), 2);
     assert_eq!(sends.load(Ordering::SeqCst), 0);
     node.stop().expect("node stops");
     node.stopped().await;

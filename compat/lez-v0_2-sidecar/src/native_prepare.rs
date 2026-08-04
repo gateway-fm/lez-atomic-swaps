@@ -4336,7 +4336,7 @@ impl NativeEscrowPlanner {
     /// # Errors
     ///
     /// Rejects invalid bindings and all role/effect pairs except Maker reading
-    /// tag 14 or tag 16 and Taker reading tag 15.
+    /// tag 14 or tag 16 and Taker reading tag 15 or tag 17.
     pub(crate) fn validate_xmr_effect_discovery_v3(
         &self,
         context: &MessageContext,
@@ -4350,7 +4350,10 @@ impl NativeEscrowPlanner {
             (
                 Participant::Maker,
                 XmrNativeEffectV3::AuthorizeClaim | XmrNativeEffectV3::Refund
-            ) | (Participant::Taker, XmrNativeEffectV3::Claim)
+            ) | (
+                Participant::Taker,
+                XmrNativeEffectV3::Claim | XmrNativeEffectV3::Punish
+            )
         ) {
             return Err(NativePrepareError::WrongRole);
         }

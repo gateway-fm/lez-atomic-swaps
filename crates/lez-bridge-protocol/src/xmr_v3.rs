@@ -1513,6 +1513,12 @@ fn validate_finalized_facts(
             "refund timestamp",
         )?;
     }
+    if effect == XmrNativeEffectV3::Punish {
+        ensure_fact(
+            facts.containing_block.timestamp_ms >= terms.0.punish_at_ms,
+            "punish timestamp",
+        )?;
+    }
 
     ensure_fact(facts.instruction.effect == effect, "instruction effect")?;
     validate_nonzero(&[

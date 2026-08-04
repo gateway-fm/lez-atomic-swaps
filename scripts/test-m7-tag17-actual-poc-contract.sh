@@ -34,6 +34,7 @@ jq -e '
   and .tag17_actual_node_transition_reachable_in_execute == true
   and .tag17_actual_node_transition_executed_in_certifying_replay == false
   and .tag17_punish_delay_ms == {minimum:120000,maximum:600000,default:180000}
+  and .tag17_finality_page_blocks == 8
   and .tag17_phases == ["tag17_prepare","tag17_wait","tag17","tag17_finality"]
   and (.required_future_binaries | index("lez-v02-xmr-tag17") != null)
 ' <<<"$contract" >/dev/null || fail "runner does not expose the Tag-17 safety contract"
@@ -55,7 +56,7 @@ for required in   '--mode prepare'   '.submission.performed==false'   '.submissi
     fail "prepare phase omits boundary: ${required}"
 done
 
-for required in   '--mode release'   '.submission.request_id==.punish.transaction_id'   '.submission.automatic_retry==false'   '.resources.public_rpc_used==false'   'cmp -- "$tag17_transaction"'   '--role maker --effect punish'   '--role taker --effect punish'   '.outcome.facts.containing_block.timestamp_ms >= $punish'   'Maker exact and Taker discovery Tag17 facts differ'; do
+for required in   '--mode release'   '.submission.request_id==.punish.transaction_id'   '.submission.automatic_retry==false'   '.resources.public_rpc_used==false'   'cmp -- "$tag17_transaction"'   '--role maker --effect punish'   '--role taker --effect punish'   '--max-blocks "$tag17_finality_page_blocks"'   '.outcome.status=="uncertain"'   '.outcome.scanned_window.start_height==$start'   'scan_start_height="$((scan_end_height + 1))"'   '.outcome.facts.containing_block.timestamp_ms >= $punish'   'Maker exact and Taker discovery Tag17 facts differ'; do
   rg -Fq -- "$required" <<<"$publish_source" ||
     fail "release/finality phase omits boundary: ${required}"
 done

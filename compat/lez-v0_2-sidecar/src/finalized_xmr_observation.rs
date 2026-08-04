@@ -351,7 +351,8 @@ impl FinalizedNativeXmrEffectObserver {
                 ZecEscrowInstruction::AuthorizeNativeXmrClaim { swap_id, .. },
             ) => swap_id == *input.swap_id.as_bytes(),
             (XmrNativeEffectV3::Claim, ZecEscrowInstruction::ClaimNativeXmr { swap_id })
-            | (XmrNativeEffectV3::Refund, ZecEscrowInstruction::RefundNativeXmr { swap_id }) => {
+            | (XmrNativeEffectV3::Refund, ZecEscrowInstruction::RefundNativeXmr { swap_id })
+            | (XmrNativeEffectV3::Punish, ZecEscrowInstruction::PunishNativeXmr { swap_id }) => {
                 swap_id == *input.swap_id.as_bytes()
             }
             _ => false,
@@ -399,8 +400,9 @@ impl FinalizedNativeXmrEffectObserver {
                 BridgeRuntimeError::InvalidObservation,
             ));
         }
-        if effect == XmrNativeEffectV3::Refund
-            && !(input.refund_at_ms..input.punish_at_ms).contains(&block.timestamp)
+        if (effect == XmrNativeEffectV3::Refund
+            && !(input.refund_at_ms..input.punish_at_ms).contains(&block.timestamp))
+            || (effect == XmrNativeEffectV3::Punish && block.timestamp < input.punish_at_ms)
         {
             return Err(ClassifiedFailure::Runtime(
                 BridgeRuntimeError::InvalidObservation,
@@ -473,11 +475,9 @@ impl FinalizedNativeXmrEffectObserver {
             XmrNativeEffectV3::Refund => ZecEscrowInstruction::RefundNativeXmr {
                 swap_id: *input.swap_id.as_bytes(),
             },
-            XmrNativeEffectV3::Punish => {
-                return Err(ClassifiedFailure::Runtime(
-                    BridgeRuntimeError::InvalidObservation,
-                ));
-            }
+            XmrNativeEffectV3::Punish => ZecEscrowInstruction::PunishNativeXmr {
+                swap_id: *input.swap_id.as_bytes(),
+            },
         };
         let canonical_instruction = risc0_zkvm::serde::to_vec(&canonical_instruction)
             .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
@@ -524,11 +524,11 @@ impl FinalizedNativeXmrEffectObserver {
                 input.depositor_account_id,
                 input.refund_authority_account_id,
             ],
-            XmrNativeEffectV3::Punish => {
-                return Err(ClassifiedFailure::Runtime(
-                    BridgeRuntimeError::InvalidObservation,
-                ));
-            }
+            XmrNativeEffectV3::Punish => vec![
+                input.metadata_account_id,
+                input.custody_account_id,
+                input.claimant_account_id,
+            ],
         };
         let expected_accounts = AccountIds::new(expected_accounts)
             .map_err(|_| ClassifiedFailure::Runtime(BridgeRuntimeError::InvalidObservation))?;
@@ -548,6 +548,7 @@ impl FinalizedNativeXmrEffectObserver {
         let expected_signer = match effect {
             XmrNativeEffectV3::Claim => input.claim_authority_account_id,
             XmrNativeEffectV3::Refund => input.refund_authority_account_id,
+            XmrNativeEffectV3::Punish => input.claimant_account_id,
             _ => input.depositor_account_id,
         };
         let expected_signers = AccountIds::new(vec![expected_signer])
@@ -734,13 +735,10 @@ impl FinalizedNativeXmrEffectObserver {
             XmrNativeEffectV3::AuthorizeClaim => {
                 (XmrNativeEscrowStateV3::ClaimAuthorized, input.amount)
             }
-            XmrNativeEffectV3::Claim => (XmrNativeEscrowStateV3::Claimed, 0),
-            XmrNativeEffectV3::Refund => (XmrNativeEscrowStateV3::Refunded, 0),
-            XmrNativeEffectV3::Punish => {
-                return Err(ClassifiedFailure::Runtime(
-                    BridgeRuntimeError::InvalidObservation,
-                ));
+            XmrNativeEffectV3::Claim | XmrNativeEffectV3::Punish => {
+                (XmrNativeEscrowStateV3::Claimed, 0)
             }
+            XmrNativeEffectV3::Refund => (XmrNativeEscrowStateV3::Refunded, 0),
         };
         let state = validate_metadata(terms, &metadata)?;
         if state != expected_state {

@@ -29,6 +29,7 @@ readonly m5_xmr_journey="${M5_XMR_JOURNEY:-claim}"
 readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"
 readonly m5_xmr_refund_window_ms=600000
 readonly m7_xmr_punish_delay_ms="${M7_XMR_PUNISH_DELAY_MS:-180000}"
+readonly tag17_finality_page_blocks=8
 
 fail() {
   echo "M4 actual-claim runner failed: $*" >&2
@@ -78,6 +79,7 @@ emit_contract() {
       tag17_actual_node_transition_reachable_in_execute: true,
       tag17_actual_node_transition_executed_in_certifying_replay: false,
       tag17_punish_delay_ms: {minimum: 120000, maximum: 600000, default: 180000},
+      tag17_finality_page_blocks: 8,
       tag17_phases: ["tag17_prepare", "tag17_wait", "tag17", "tag17_finality"],
       available_unwired_launchers: [
         "run-m4-lez-sidecar.sh"
@@ -2354,8 +2356,9 @@ publish_and_classify_tag17_punishment() {
   record_phase tag17_finality started
   readonly tag17_maker_finality="${evidence_root}/tag17-maker-finalized.json"
   readonly tag17_taker_finality="${evidence_root}/tag17-taker-finalized.json"
-  local funding_height attempt result_tmp
+  local funding_height attempt result_tmp scan_start_height scan_end_height
   funding_height="$(jq -er '.funding.containing_block_id' "$tag13_internal")"
+  scan_start_height="$funding_height"
   result_tmp="${tag17_maker_finality}.attempt"
   for attempt in {1..2400}; do
     rm -f -- "$result_tmp"
@@ -2364,8 +2367,9 @@ publish_and_classify_tag17_punishment() {
       --runtime-file "$tag13_handoff_root/maker-runtime.json" \
       --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
       --request-id "${run_id}-tag17-maker-finality-${attempt}" --role maker --effect punish \
-      --exact-transaction-file "$tag17_transaction" --start-height "$funding_height" \
-      --max-blocks 64 --output-result "$result_tmp" >/dev/null 2>&1 || true
+      --exact-transaction-file "$tag17_transaction" --start-height "$scan_start_height" \
+      --max-blocks "$tag17_finality_page_blocks" \
+      --output-result "$result_tmp" >/dev/null 2>&1 || true
     if jq -e --argjson punish "$punish_at_ms" '
       .outcome.status=="found" and .outcome.facts.instruction.effect=="punish"
       and .outcome.facts.metadata.state=="claimed"
@@ -2375,6 +2379,17 @@ publish_and_classify_tag17_punishment() {
       mv "$result_tmp" "$tag17_maker_finality"
       break
     fi
+    scan_end_height="$((scan_start_height + tag17_finality_page_blocks - 1))"
+    if jq -e --argjson start "$scan_start_height" \
+        --argjson blocks "$tag17_finality_page_blocks" \
+        --argjson end "$scan_end_height" '
+      .outcome.status=="uncertain"
+      and .outcome.scanned_window.start_height==$start
+      and .outcome.scanned_window.max_blocks==$blocks
+      and .outcome.finalized_clock.height >= $end
+    ' "$result_tmp" >/dev/null 2>&1; then
+      scan_start_height="$((scan_end_height + 1))"
+    fi
     sleep .25
   done
   require_owner_file "$tag17_maker_finality" "Maker Tag17 finality evidence"
@@ -2383,7 +2398,7 @@ publish_and_classify_tag17_punishment() {
     --runtime-file "$tag13_handoff_root/taker-runtime.json" \
     --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
     --request-id "${run_id}-tag17-taker-finality-001" --role taker --effect punish \
-    --start-height "$funding_height" --max-blocks 64 \
+    --start-height "$scan_start_height" --max-blocks "$tag17_finality_page_blocks" \
     --output-result "$tag17_taker_finality" >/dev/null
   require_owner_file "$tag17_taker_finality" "Taker Tag17 finality evidence"
   jq -e --argjson punish "$punish_at_ms" '

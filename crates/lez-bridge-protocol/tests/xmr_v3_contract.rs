@@ -745,6 +745,32 @@ fn refund_finalized_facts_enforce_half_open_refund_window() {
 }
 
 #[test]
+fn punish_finalized_facts_enforce_inclusive_punish_boundary() {
+    let clock = ChainClock::new(h(71), 110, 30_000);
+    let window = DiscoveryWindow::new(90, 21).expect("window");
+    for (timestamp_ms, accepted) in [(19_999, false), (20_000, true), (20_001, true)] {
+        let (target, mut facts) = effect_fixture(XmrNativeEffectV3::Punish);
+        facts.containing_block.timestamp_ms = timestamp_ms;
+        let result = ClassifyFinalizedNativeXmrEffectV3Result::new(
+            context(),
+            terms(),
+            XmrNativeEffectV3::Punish,
+            target,
+            FinalizedNativeXmrScanOutcomeV3::found(clock, window, facts),
+        );
+        if accepted {
+            let _ = result.expect("punishment timestamp at or after punish_at");
+        } else {
+            assert_eq!(
+                result,
+                Err(ProtocolValueError::XmrFactsMismatch("punish timestamp")),
+                "timestamp {timestamp_ms} must be rejected",
+            );
+        }
+    }
+}
+
+#[test]
 fn finalized_outcomes_are_distinct_and_reject_mixed_or_incomplete_evidence() {
     let clock = ChainClock::new(h(71), 110, 30_000);
     let window = DiscoveryWindow::new(90, 21).expect("window");
