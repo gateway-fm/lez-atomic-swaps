@@ -113,17 +113,20 @@ records the receipt-bound read topology, fresh and restart/offline sequences,
 and its lock-scoped read-atomicity argument. ADR
 [0137](docs/architecture/0137-authorize-one-taker-terminal-action-before-effects.md)
 records generation-fenced terminal authorization and exact effect replay.
-Certification run `m6cert20260803164006` proves the service-driven `TakerSellsLez` Claim:
-Zebra mempool moved from empty to one exact transaction and stayed at that
-same one transaction on durable replay, then both local actors completed. The
-run reused the already isolated local LEZ v0.2 stack
-`m6lez20260803155817` and paired it with fresh Zebra Regtest
-`m6zec20260803164006`. Both used deterministic local funds; no public RPC,
-faucet, or public funds participated. A separate fresh LEZ stack was later deployed and onboarded successfully but
-was not part of this certificate. Equivalent service-driven Refund, Maker and Taker Basecamp `ui_qml` packages,
-QtRO hosts, actor-real UI E2E, final gates, explicit owner sign-off, and the M6
-tag remain pending. Cross-restart receipt/state rollback anchoring remains
-documented production hardening, not an accepted-issue-#112 PoC gate.
+Fresh regression `m6claim0ba41aba` now proves the service-driven
+`TakerSellsLez` Claim on wholly fresh LEZ and Zebra stacks after the shared
+timeout change. Exact replay preserved the same one Zcash transaction,
+`0da6b4c2...d2abf`; LEZ Claim `f865903e...14d0cc` finalized in block
+127; the Zcash Claim is canonical at height 107; and both actors plus the
+service completed in 33.330 seconds with zero drive retries. Together with
+fresh Refund certificate `m6refund8f76d87a`, this closes the nonvisual M6
+Claim/Refund regression boundary. Both used deterministic local funds with no
+public RPC, faucet, public funds, or public deployment. The retained Claim
+packet is
+[m6-zec-service-claim-regression-certificate-20260804.json](docs/evidence/m6-zec-service-claim-regression-certificate-20260804.json).
+Maker and Taker Basecamp packages, actor-real UI E2E, final gates, explicit
+prototype sign-off, and the M6 tag remain. Cross-restart receipt/state rollback
+anchoring remains production hardening, not an issue-#112 PoC gate.
 
 The first Refund attempts exposed a local liveness edge now fixed at the
 component boundary by
@@ -134,8 +137,8 @@ measuring multi-phase historical reads. Refund observations still return one
 explicitly pinned finalized clock; a forward finalized-height change is
 accepted only after bounded
 ID/hash, ancestry, and repeated-pin verification. The full 26-test refund
-observer suite is GREEN. A fresh actual-node service Refund certificate is
-still required before that happy path is claimed complete.
+observer suite is GREEN. At that checkpoint a fresh actual-node service Refund
+certificate was still required; `m6refund8f76d87a` subsequently closed it.
 
 A fresh clean-chain attempt then exposed a second bounded liveness mismatch:
 service terminal calls stopped at 15 seconds while the invoked actor may spend
@@ -143,8 +146,7 @@ up to 30 seconds on its bridge request at that checkpoint. ADR
 [0139](docs/architecture/0139-bound-service-actions-above-actor-bridges.md)
 records the historical 15-second query and 40-second action split and is
 superseded by ADR 0145 for the current Refund path. That effect-bearing run is
-quarantined; a new fresh-chain Refund replay remains required before the happy
-path is certified.
+quarantined. At that checkpoint a new fresh-chain Refund replay was required.
 
 A following fresh run returned the durable Refund commit within that budget,
 but its deliberate opposite Claim check exposed transient actor availability
@@ -152,24 +154,24 @@ before the already durable terminal winner. ADR
 [0140](docs/architecture/0140-prefer-durable-terminal-conflicts.md) now resolves
 exact replay and any existing Claim/Refund winner before actor availability,
 while SQLite admission remains the final one-winner authority. Process and race
-regressions are GREEN; the effect-bearing discovery run is quarantined and a
-fresh Refund certificate is still pending.
+regressions are GREEN; the effect-bearing discovery run is quarantined; fresh run
+`m6refund8f76d87a` subsequently closed the certificate.
 
 The next fresh run proved the corrected conflict response on actual local nodes:
 Refund committed and the opposite Claim returned `-32017`. The runner then
 stopped on its own stale assertion because it expected a scalar
 `error.data`, while every service error uses the documented
 `error.data.category` envelope. The runner contract now locks that envelope;
-the effect-bearing run is quarantined and a new fresh certificate remains
-required.
+the effect-bearing run is quarantined; fresh run `m6refund8f76d87a`
+subsequently closed the certificate.
 
 ADR [0141](docs/architecture/0141-certify-terminal-refund-replay.md) closes the
 remaining evidence-design gap before that run: Zebra refund confirmation now
 requires exact-once membership in a canonical block, and an exact Refund replay
 after both actors are terminal must leave the ordered successful LEZ submission
 trace, Zebra height, and empty mempool unchanged. Both finalized refund blocks
-are re-read after replay. The focused runner contract is GREEN; fresh
-actual-node evidence remains pending.
+are re-read after replay. The focused runner contract and fresh actual-node
+evidence are GREEN through `m6refund8f76d87a`.
 
 A fresh run on `8e0ed10` reached finalized LEZ Refund and Maker recovery but
 exhausted the old 130-second outer runner ceiling before the Zcash refund. The
@@ -189,8 +191,8 @@ now makes that boundary explicit. The child emits a strictly validated,
 monotonic control envelope; the parent restores it and alone starts Maker
 recovery once. Executable regressions cover pending, finalized, exact replay,
 replacement, and regression cases. The contract is GREEN. Run
-`m6refund734db82a` is quarantined, the ceiling was not raised again, and one
-new fresh-node Refund certificate remains required.
+`m6refund734db82a` is quarantined, the ceiling was not raised again, and at that checkpoint one
+new fresh-node Refund certificate was required.
 
 Fresh clean run `m6refund5320572a` then proved that handoff on actual nodes:
 the LEZ Refund finalized, the parent started Maker recovery, and the exact
@@ -203,8 +205,8 @@ persists that exact object-shaped response and continues only the already
 admitted request in a later bounded corridor round. The registry winner,
 generation, request ID, parent handoff, and actor journal stay unchanged; all
 other response shapes fail closed. The executable contract is GREEN. The run
-is quarantined and one further wholly fresh Refund certificate remains
-required.
+is quarantined; at that checkpoint one further wholly fresh Refund
+certificate was required.
 
 That fresh discovery run exposed a distinct state-projection gap rather than a
 retry or timeout fault. The Maker's Zcash funding was canonical and confirmed,
@@ -216,8 +218,8 @@ authority and transports are suppressed. It must reach `both_legs_locked` while
 Zebra height stays unchanged and both before/after mempools stay empty. Final
 acceptance validates and SHA-binds that evidence into the result. Exact-call,
 deadline, live-authority, changed-tip, dirty-mempool, and evidence regressions
-are GREEN. Run `m6refund7be4428a` is quarantined; a fresh Refund certificate
-remains required before claiming both service-driven legs.
+are GREEN. Run `m6refund7be4428a` is quarantined; at that checkpoint a fresh
+Refund certificate was required before claiming both service-driven legs.
 
 Fresh run `m6refund43f2cbca` then proved ADR 0144 on actual nodes and
 finalized one LEZ Refund, but Maker and Taker refund observers contended on the
@@ -232,7 +234,7 @@ seconds respectively, all inside the unchanged 300-second corridor. The
 executable test proves this branch makes zero Taker actor/service action calls,
 preserves the strict parent handoff, and fails open to normal reconciliation
 when any predicate edge changes. The run is quarantined and cannot certify
-either leg. A wholly fresh Refund certificate is still required.
+either leg. At that checkpoint a wholly fresh Refund certificate was still required.
 
 Fresh pushed-commit run `m6refund8f76d87a` now closes that certificate.
 It used new LEZ deployment/onboarding run `m6lez8f76d87a` and new Zebra
@@ -245,7 +247,8 @@ neither the LEZ submission trace nor Zebra height 110 and empty mempool. The
 run completed in 211.530 seconds without a public RPC, faucet, public funds, or
 public deployment. The retained secret-free packet is
 [the M6 Refund certificate](docs/evidence/m6-zec-service-refund-certificate-20260804.json).
-The service-driven Claim regression and literal Basecamp UI outputs remain.
+Fresh Claim regression `m6claim0ba41aba` is also GREEN; only the literal
+Basecamp UI outputs, owner prototype signoff, final gates, and tag remain.
 
 Earlier run `m6refund7be4428a` consumed the 190-second
 provision-to-completion ceiling when the transient response arrived, leaving no

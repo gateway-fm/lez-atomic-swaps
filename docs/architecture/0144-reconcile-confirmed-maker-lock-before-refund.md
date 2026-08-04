@@ -124,4 +124,4 @@ and independent production review.
 - Run `m6refund7be4428a` remains quarantined. It proves the missing-projection
   diagnosis, not a completed Refund.
 - Fresh run `m6refund8f76d87a` closes the isolated-node Refund proof; see
-  [`m6-zec-service-refund-certificate-20260804.json`](../evidence/m6-zec-service-refund-certificate-20260804.json). The subsequent Claim regression remains required.
+  [`m6-zec-service-refund-certificate-20260804.json`](../evidence/m6-zec-service-refund-certificate-20260804.json). Fresh Claim regression `m6claim0ba41aba` subsequently passed.

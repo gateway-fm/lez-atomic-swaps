@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "milestone": "M6",
+  "evidence_kind": "service_driven_zec_claim_local_regression_certificate",
+  "date_utc": "2026-08-04",
+  "source": {
+    "commit": "0ba41abef9e02e74359e23453c464d77e212af28",
+    "branch": "main",
+    "origin_main_equal_at_start": true,
+    "worktree_clean_at_start": true
+  },
+  "run": {
+    "run_id": "m6claim0ba41aba",
+    "direction": "taker_sells_lez",
+    "journey": "claim",
+    "result": "completed",
+    "elapsed_milliseconds_from_provisioning": 33330,
+    "drive_rounds": 43,
+    "same_run_drive_retries": 0
+  },
+  "fresh_lez": {
+    "run_id": "m6claimlez0ba41aba",
+    "compose_project": "lez-atomic-swaps-lez-v02-m6claimlez0ba41aba",
+    "bedrock_rpc": "http://127.0.0.1:32826",
+    "sequencer_rpc": "http://127.0.0.1:32827",
+    "indexer_rpc": "http://127.0.0.1:32828",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_hash": "4148cb14bf0441f3298654b3c73b23c31605a9ee10e2abd77eca6064963b34d4",
+    "escrow_program_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433",
+    "deployment_transaction_id": "f5f4e7a15c1c87333cc69be9392e0fa576bdb25ca0fad45c127fa16e51cd0b5c",
+    "deployment_block_id": 85,
+    "deployment_block_hash": "726f427b0f5d2a641f89174b01a21b1c5aa94fdb8e996691d2c2c7edcb7e37df",
+    "deployment_occurrences": 1,
+    "maker_vault_claim_block_id": 92,
+    "taker_vault_claim_block_id": 100,
+    "service_restart_counts": [0, 0, 0]
+  },
+  "fresh_zebra": {
+    "run_id": "m6claimzec0ba41aba",
+    "compose_project": "lez-atomic-swaps-m6claimzec0ba41aba",
+    "rpc": "http://127.0.0.1:32825",
+    "genesis_hash": "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327",
+    "initial_height": 104,
+    "initial_tip": "27b171cadff4ec2d31257932fc1988d2ba849885ae1d5d1e71a2eecdb4322062",
+    "maturity_generate_calls": 1,
+    "maturity_blocks": 104,
+    "final_height": 107,
+    "restart_count": 0
+  },
+  "service_authority": {
+    "owner": "owner_taker_service",
+    "claim_generation": 3,
+    "first_was_replay": false,
+    "exact_replay_was_replay": true,
+    "direct_taker_claim_effects": false,
+    "transient_count": 0,
+    "admitted_claim_rows": 1,
+    "admitted_refund_rows": 0,
+    "opposite_refund_excluded_by_durable_winner": true
+  },
+  "atomic_order_observed": [
+    "lez_first_lock_finalized",
+    "zcash_maker_lock_confirmed",
+    "lez_revealing_claim_finalized",
+    "zcash_followup_claim_submitted_and_confirmed"
+  ],
+  "locked_effects": {
+    "lez_first_lock_transaction_id": "b522b49ac0cf9ee6af94b5e08785f2e55c08199318cefe00661710fd283a97e7",
+    "lez_first_lock_block_id": 126,
+    "lez_first_lock_block_hash": "86048cae69905ae01f954b5c0592a8a80bbdbee1e3eb7d20936f06b38014c714",
+    "lez_first_lock_status": "Finalized",
+    "lez_first_lock_occurrences": 1,
+    "zcash_maker_lock_transaction_id": "f4111a1f7fb614ac4e7d760e9eccb39b7d5a6ba1fd7db1aa25da555172888db0",
+    "zcash_maker_lock_block_height": 105,
+    "zcash_maker_lock_block_hash": "3baf28b1c632d3e1c88bb3a96f393a26c007db6a7a8557047f22dee053b9889e",
+    "zcash_maker_lock_occurrences": 1
+  },
+  "lez_claim": {
+    "transaction_id": "f865903ea97384169de670a14c3a438812eea72e67c4dffb464afeff7e14d0cc",
+    "containing_block_id": 127,
+    "containing_block_hash": "7b0779fff0f7e00ca7ba698f08986d3bd74a2e6713663e41ca7b50907bb9fbe5",
+    "bedrock_status_at_revalidation": "Finalized",
+    "finalized_tip_at_revalidation": 159,
+    "occurrences": 1
+  },
+  "zcash_claim": {
+    "transaction_id": "0da6b4c219dfea030e3790447f01f71cbf1779dab5d2531b4e6a2df829dd2abf",
+    "containing_block_height": 107,
+    "containing_block_hash": "0ca27e10cd85c94422db2ee79a94e8379a160b7380e0b23309d107223e8015f9",
+    "canonical_hash_equal": true,
+    "occurrences": 1,
+    "mempool_before": [],
+    "mempool_after_first": ["0da6b4c219dfea030e3790447f01f71cbf1779dab5d2531b4e6a2df829dd2abf"],
+    "mempool_after_exact_replay": ["0da6b4c219dfea030e3790447f01f71cbf1779dab5d2531b4e6a2df829dd2abf"]
+  },
+  "terminal": {
+    "maker_phase": "completed",
+    "maker_revision": 4,
+    "taker_phase": "completed",
+    "taker_revision": 4,
+    "service_state": "completed",
+    "service_generation": 4,
+    "fresh_operator_restart_reports_terminal": true,
+    "transports_absent_through_terminal_state": true,
+    "drive_retry_count": 0,
+    "nonempty_actor_stderr_files": 0
+  },
+  "evidence_sha256": {
+    "result": "a62ab09e9202096040e5bdbb4f98d6eb80fe07f4d38948647ddecd8a87d1c417",
+    "deployment": "7ef4cf17debba49d89a7f010891c355f05262d144bc279d05735928d18991703",
+    "deployment_finality": "12b73fcfc2bc35797494907d4572cce975f35063fd8655c2f23cfbaafab6d507",
+    "onboarding": "7c98afab213107f6a35f2151b4b4903477b8f4926f9e856c1a1c9b3919dc1aee",
+    "claim_first": "0d7f411a49ed1236fcf034b3972259b8eb0f03c54e244927e3cd65e2cde479bc",
+    "claim_replay": "fca462d61d6a9f93c6a94bf56f55c16f63edfe19cf568aa0a57951f122560895",
+    "service_terminal": "98e08e72d618709fc730ce0302f8274c46175244599e9b90a720b03edadf353c",
+    "mempool_before": "3aa104923bf24f8de2dbb485799f00eb985dfe1fe534fa7267f9a77138d70d2b",
+    "mempool_after_first": "0a76ab40314a2c7bcfc36029c03fa847fcd2003a96ddb4b483dd3fbfd0a6e33c",
+    "mempool_after_replay": "edf540b33760617d4d3ba5790102777dbb89fb2d5f1377d2a032479e35eaa38f",
+    "maker_terminal": "96eb16c7c848dfeb8cc1618d574c3d409fac88f5b78be34704b0757b129c020f",
+    "taker_terminal": "0ad7bedcff3d29ccfb095ac2211783235148959088fc5a3be678d87801706949"
+  },
+  "external_resources": {
+    "runtime": ["isolated_local_lez_v0_2", "isolated_local_zebra_regtest"],
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false,
+    "automatic_provider_fallback": false
+  },
+  "claim_scope": "Conditional cross-chain atomicity under canonical local-chain observations, secret-gated claiming, durable one-winner authorization, and actor/sidecar at-most-once journals; not a distributed atomic commit or future-reorg proof."
+}

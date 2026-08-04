@@ -4296,8 +4296,9 @@ owner-only daemon reports the same completed swap in `history` and `status`
 while Chat and Delivery stay absent; and all application evidence hashes are
 bound into `result.json`.
 
-Fresh run `m6cert20260803164006` now proves the service-owned terminal Claim
-route against isolated actual local nodes. The earlier M5 receipt-bound CLI
+Fresh regression `m6claim0ba41aba` proves the service-owned terminal Claim
+route against wholly fresh isolated local LEZ and Zebra nodes after the shared
+timeout change. The earlier M5 receipt-bound CLI
 claim evidence remains a separate application boundary; do not substitute one
 for the other.
 
@@ -7659,7 +7660,8 @@ jq . "$EVIDENCE/m6-taker-service-terminal.json"
 jq . "$EVIDENCE/result.json"
 ```
 
-The retained certificate predates reporting fix `e5b4c32`, so its `result.json`
+Earlier certificate `m6cert20260803164006` predates reporting fix
+`e5b4c32`, so its `result.json`
 still labels `application_plane.taker_claim_authority` as `receipt_bound_cli`
 and omits `m6_taker_service_mode`. Do not use that legacy summary field as
 service proof. The dedicated Claim first/replay responses and Zebra mempool
@@ -7668,13 +7670,15 @@ explicit M6 mode.
 
 A passing run must show replay false followed by replay true for the same Claim
 and generation, plus mempool `[]`, then `[TXID]`, then the identical `[TXID]`.
-The terminal view and both actor statuses must be completed. Certified local
-run `m6cert20260803164006`, which reused isolated LEZ run
-`m6lez20260803155817` at sequencer/indexer ports 32778/32779 and used
-fresh Zebra run `m6zec20260803164006` at port 32780, observed exact transaction
-`6b65cdff60f821717ba1e4cc862cec197ef16b0f7bccff4eb8c7e3d93ed11b70`
-and completed in 35.100 seconds. This identifier is evidence, not an input to a
-new run.
+The terminal view and both actor statuses must be completed. Fresh regression
+`m6claim0ba41aba` used new LEZ run
+`m6claimlez0ba41aba` at Bedrock/sequencer/indexer ports 32826/32827/32828
+and new Zebra run `m6claimzec0ba41aba` at port 32825. Service replay kept
+exact Zcash transaction `0da6b4c219dfea030e3790447f01f71cbf1779dab5d2531b4e6a2df829dd2abf`;
+LEZ Claim `f865903ea97384169de670a14c3a438812eea72e67c4dffb464afeff7e14d0cc`
+finalized in block 127; both roles completed in 33.330 seconds with zero drive
+retries. See `docs/evidence/m6-zec-service-claim-regression-certificate-20260804.json`.
+These identifiers are evidence, not inputs to a new run.
 
 ```mermaid
 sequenceDiagram

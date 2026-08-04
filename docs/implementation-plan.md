@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -124,8 +124,8 @@ created under the previous test-first strategy. ADR 0027 carries it forward for
 later revalidation; it does not imply that the M2 QA, chaos, information-
 security, or production-readiness phase has been entered or completed. M2 and
 M3 are certified at their reproducible local-functional PoC boundaries; their
-QA and later hardening phases remain inactive. M5 is now the active progressive
-local-PoC slice; M4 is certified at its owner-selected PoC boundary.
+QA and later hardening phases remain inactive. M6 is now the active progressive
+local-PoC slice; M4 and M5 are certified at their owner-selected PoC boundaries.
 The final column is a post-M2 backlog, not
 an instruction to start every listed refactor now. Restart, refund, reorg,
 concurrency, broad negative testing, and new RED-GREEN-REFACTOR work wait for
@@ -5731,8 +5731,8 @@ effect replay and uncertain-send authority; the timeout change cannot mint a
 second effect.
 
 The focused runner contract progressed RED before the two budgets and GREEN
-after explicit Refund and Claim action wiring. Fresh actual-node Refund proof
-is next, followed by post-terminal no-effect replay and a Claim regression run.
+after explicit Refund and Claim action wiring. At that checkpoint fresh actual-node Refund proof was next,
+followed by post-terminal no-effect replay and a Claim regression run. Both are now GREEN.
 
 ## M6 durable terminal-conflict checkpoint (2026-08-03)
 
@@ -5800,8 +5800,9 @@ start tip that cannot be replaced, permits finality only with one lowercase
 recovery at most once. The executable contract progressed RED on the absent
 handoff and is GREEN for pending, finalized, exact replay, replaced-generation,
 and regressive-finality cases. No protocol timeout, chain cadence, or
-190-second fail-safe ceiling changed. Both effect-bearing discovery runs are
-quarantined; a completely fresh certificate remains required.
+190-second fail-safe ceiling changed. Both effect-bearing discovery runs are quarantined; fresh
+certificate
+`m6refund8f76d87a` subsequently closed the required proof.
 
 Fresh pushed-commit run `m6refund5320572a` used new LEZ genesis allocations,
 one new checked deployment, two new finalized Vault claims, and a new Zebra
@@ -5823,7 +5824,8 @@ semantically validates every admission and reconciliation transient. No
 protocol deadline, per-call timeout, cadence, or finality rule changed. The
 190-second outer fail-safe expired as the transient arrived, so it is now 300
 seconds to allow a later bounded round; success does not wait for this ceiling.
-The effect-bearing run is quarantined; another fresh-node certificate is required.
+The effect-bearing run is quarantined; at that checkpoint another fresh-node
+certificate was required.
 
 Fresh run `m6refund7be4428a` then proved that the transient retry was no longer
 the first failure. It reached durable Refund, opposite-Claim exclusion,
@@ -5843,7 +5845,8 @@ reaches durable Maker state without overlapping daemon authority or adding a
 chain effect. The executable contract progressed RED on the absent
 reconciliation and is GREEN after exact-call, timeout, changed-tip, dirty-
 mempool, live-authority, and certificate-binding regressions. Run
-`m6refund7be4428a` is quarantined; a fresh-node certificate is still required.
+`m6refund7be4428a` is quarantined; at that checkpoint a fresh-node certificate
+was still required.
 
 Fresh run `m6refund43f2cbca` proved the ADR 0144 projection on fresh LEZ
 and Zebra nodes, then finalized one LEZ Refund and restarted Maker recovery.
@@ -5873,14 +5876,23 @@ and exact replay were durable; the transient log was empty; terminal replay
 changed neither chain and revalidated both inclusions. The retained packet is
 `docs/evidence/m6-zec-service-refund-certificate-20260804.json`.
 
+Fresh pushed-commit regression `m6claim0ba41aba` then completed the Claim
+journey in 33.330 seconds on new LEZ deployment/onboarding
+`m6claimlez0ba41aba` and new Zebra `m6claimzec0ba41aba`. LEZ Claim
+`f865903e...14d0cc` is finalized exactly once in block 127; exact service
+replay preserved the sole Zcash Claim `0da6b4c2...d2abf`, canonical at height
+107. Maker, Taker, and service reached `completed`; drive retries and actor
+stderr were empty. The retained packet is
+`docs/evidence/m6-zec-service-claim-regression-certificate-20260804.json`.
+
 Next in order:
 
-1. commit and push the Refund certificate, architecture/RPC inventory,
-   evidence metrics, and upstream blocker update;
-2. rerun the Claim journey on fresh nodes after the shared local actor timeout
-   change;
-3. after explicit prototype owner signoff, build the Maker and Taker Basecamp
-   QML packages, QtRO hosts, and actor-real UI E2E before final M6 gates/tag.
+1. commit and push the fresh Claim regression certificate and synchronized
+   implementation/traceability status;
+2. obtain the explicit prototype signoff required by issue #112 before the
+   production build; and
+3. build the Maker and Taker Basecamp QML/backend packages, reproducible LGX
+   artifacts, and actor-real UI E2E before final M6 gates/tag.
 
 The measured Logos v0.2 historical-account latency, per-account genesis
 reconstruction, and lack of a batched multi-account-at-block RPC are recorded

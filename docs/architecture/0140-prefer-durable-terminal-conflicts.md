@@ -1,6 +1,6 @@
 # ADR 0140: Prefer durable terminal conflicts
 
-- Status: Accepted; process, race, and runner-envelope regressions GREEN
+- Status: Accepted; process, race, runner-envelope, and fresh actual-node regressions GREEN
 - Date: 2026-08-03
 - Scope: M6 Taker Claim-versus-Refund decision precedence
 - Extends: ADRs 0137 and 0139

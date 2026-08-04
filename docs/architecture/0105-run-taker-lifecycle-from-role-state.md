@@ -1,6 +1,6 @@
 # ADR 0105: Run Taker lifecycle commands from role-local state
 
-- Status: Accepted; receipt-bound runner contract GREEN; fresh actual-node execution pending
+- Status: Accepted; receipt-bound runner contract and fresh actual-node execution GREEN
 - Date: 2026-07-28
 - Milestone: M5 progressive local-functional PoC
 
@@ -135,9 +135,9 @@ sequenceDiagram
     R->>T: Terminal monitor through same receipt
 ```
 
-This diagram is the executable runner contract. A fresh isolated LEZ v0.2 and
-Zebra Regtest replay is still required before treating these exact arrows as
-new actual-node evidence.
+This diagram is the executable runner contract. Fresh Claim regression
+`m6claim0ba41aba` and Refund certificate `m6refund8f76d87a` now treat these
+arrows as actual local-node evidence; see the retained M6 certificates.
 
 ## Atomicity argument
 

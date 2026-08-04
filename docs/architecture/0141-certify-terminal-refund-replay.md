@@ -1,6 +1,6 @@
 # ADR 0141: Certify terminal Refund replay
 
-- Status: Accepted; focused runner contract GREEN, actual-node proof pending
+- Status: Accepted; focused runner contract and fresh actual-node proof GREEN
 - Date: 2026-08-03
 - Scope: M6 service-driven ZEC Refund evidence and replay atomicity
 - Extends: ADRs 0137, 0139, and 0140
@@ -112,4 +112,6 @@ for the ceiling.
   idempotency certificate.
 - The proof adds bounded read-only RPC calls and no new chain mutation; its
   complete Refund corridor has a 300-second fail-safe ceiling.
-- A fresh actual-node run is still required before the Refund path is GREEN.
+- Fresh run `m6refund8f76d87a` proves canonical exact-once Refund inclusion and
+  terminal no-effect replay; see
+  [`m6-zec-service-refund-certificate-20260804.json`](../evidence/m6-zec-service-refund-certificate-20260804.json).

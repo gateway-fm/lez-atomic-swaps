@@ -75,11 +75,12 @@ available after Delivery and Chat disappear and perform no wallet, Zebra, or
 LEZ RPC. Commit `3307dca` additionally fences the receipt digest and inode for the
 process incarnation and rejects live actor-lock contention. Durable
 receipt/state rollback-incarnation fencing across restart remains hardening.
-XMR capability remains effect-checkpoint-only. Certification run
-`m6cert20260803164006` additionally drove the `TakerSellsLez` Claim through
-the owner service against actual local LEZ v0.2 and Zebra Regtest. Exact replay
-returns the durable action commit and reconciles the same single Zebra
-transaction; it does not create another submission.
+XMR capability remains effect-checkpoint-only. Fresh regression
+`m6claim0ba41aba` drove the `TakerSellsLez` Claim
+through the owner service against wholly fresh local LEZ v0.2 and Zebra
+Regtest. LEZ Claim `f865903e...14d0cc` finalized in block 127, and exact
+service replay reconciled the same sole Zcash transaction
+`0da6b4c2...d2abf` before canonical inclusion at height 107.
 Fresh pushed-commit run `m6refund8f76d87a` also drove the
 service Refund on wholly fresh LEZ and Zebra stacks. LEZ finalized the Taker
 Refund exactly once before parent-owned Maker recovery submitted the Zcash
@@ -239,10 +240,12 @@ no Taker-service edge to the Maker owner RPC. Fresh Taker initiation reaches
 the Maker only through authenticated Delivery and the separate bounded Chat
 socket. The service negotiates and provisions exact role artifacts, projects locked
 status, and can invoke the admitted ZEC Taker Claim or Refund command under the
-actor lock. The actor alone owns chain capabilities and journals. Certification run
-`m6cert20260803164006` exercised the Claim edge and the surrounding role actors
-against local LEZ v0.2 and Zebra Regtest; the empty-to-one-to-same-one mempool
-sequence proves exact replay did not add an effect. The QML and QtRO edges
+actor lock. The actor alone owns chain capabilities and journals. Fresh regression
+`m6claim0ba41aba` exercised the Claim edge and surrounding
+role actors against wholly fresh local LEZ v0.2 and Zebra Regtest. LEZ Claim
+`f865903e...14d0cc` finalized in block 127; the empty-to-one-to-same-one
+Zebra sequence retained exact Claim `0da6b4c2...d2abf`, later canonical at
+height 107, proving replay added no effect. The QML and QtRO edges
 remain unimplemented and unexercised.
 
 A future QML or `ui-host` crash must not stop the autonomous Maker daemon or
