@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "milestone": "M6",
+  "evidence_kind": "basecamp_0_2_cpp_qml_toolchain_preflight",
+  "date_utc": "2026-08-04",
+  "source": {
+    "repository_commit": "c3bba12e04b296ed9ce4738b544b897106bea02e",
+    "origin_main_equal_at_start": true,
+    "worktree_clean_at_start": true,
+    "logos_tutorial_commit": "bfc34c451c08da9f78072dd825756a1e071a051d",
+    "logos_module_builder_tag": "0.2.0",
+    "logos_module_builder_commit": "92ef691ea72844134f6c68fb447d37f855fc9690",
+    "logos_module_builder_nar_hash": "sha256-jm3NQ0BZ5qnUs/boE1vTil+mGbbp+Wix0ggl1HzR2gw=",
+    "consumer_lock_sha256": "160529b12ebfd29507810f225898ff2d0a3f11810e4f0119fbb3bdb65cadeb6d",
+    "consumer_lock_bytes": 1160767
+  },
+  "isolation": {
+    "container_image": "nixos/nix@sha256:d78540374f6a886653cba47d5c3f61c5a41d42e2a8db2607b8d68cb226fd463e",
+    "image_version": "2.35.1",
+    "image_platform": "linux/amd64",
+    "dedicated_nix_store_volume": "lez-m6-nix-store-preflight-c3bba12a",
+    "temporary_root": "/tmp/lez-m6-nix-preflight-c3bba12a",
+    "cpu_limit": 4,
+    "memory_limit_gib": 12,
+    "pids_limit": 1024,
+    "no_new_privileges": true,
+    "unrelated_docker_resources_modified": false,
+    "repository_modified_by_build": false
+  },
+  "package_build": {
+    "command": "nix build --no-update-lock-file .#default",
+    "result": "passed",
+    "store_path": "/nix/store/4ixg1vsrvrg7kxx30q9iq2rwzl75a8ji-logos-calc_ui_cpp-module",
+    "deriver": "/nix/store/1937fvvwiy1w5m9g2hlk2dxr8n6ip62s-logos-calc_ui_cpp-module.drv",
+    "nar_hash": "sha256-UoyshKh+zzMVigumE3BhjMgQUEFaM8HsuyFcXvCEdpk=",
+    "nar_size_bytes": 2130512,
+    "qt_version": "6.9.2",
+    "qt_remote_objects_runtime_reference": true
+  },
+  "lgx_build": {
+    "command": "nix build --no-update-lock-file .#lgx",
+    "result": "passed",
+    "store_path": "/nix/store/bi1wla9z7nk4ayv4zln6fyrckhlhj3hg-logos-calc_ui_cpp-module-lgx-1.0.0",
+    "artifact": "logos-calc_ui_cpp-module.lgx",
+    "artifact_sha256": "d184c0423dc7dc5bee98e74eb1cf51c4edc3e381ce017ab88a38caf857e13bd5"
+  },
+  "upstream_integration_check": {
+    "command": "nix flake check --no-update-lock-file --no-build",
+    "result": "failed",
+    "failed_output": "packages.x86_64-linux.integration-test",
+    "fixed_error": "referenced_nix_store_source_path_is_not_valid",
+    "isolated_store_verify_check_contents": "passed",
+    "disposition": "upstream_release_finding_not_suppressed; repository_owned_actor_ui_tests_required"
+  },
+  "release_findings": {
+    "blocker_id": "LOGOS-025",
+    "floating_scaffold_input": true,
+    "official_tutorial_consumer_lock_present": false,
+    "duplicate_repository_revisions_in_graph": true,
+    "direct_logos_sources_without_explicit_license_grant": [
+      "logos-plugin-qt",
+      "logos-protocol",
+      "logos-qt-sdk",
+      "nix-bundle-logos-module-install",
+      "logos-view-module-runtime"
+    ],
+    "local_m6_poc_blocked": false,
+    "production_distribution_blocked": true
+  },
+  "external_resources": {
+    "runtime_chain_or_swap_resources": [],
+    "public_chain_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false,
+    "build_fetch_sources": [
+      "github.com immutable flake inputs",
+      "cache.nixos.org immutable NARs"
+    ],
+    "build_fetch_flakiness": "Cold-cache DNS, GitHub, or Nix-cache availability can fail or delay the first build; a warmed networkless replay remains a production gate."
+  },
+  "scope": "Toolchain and packaging feasibility only; no Maker or Taker production UI, Basecamp load, actor journey, or milestone completion is claimed."
+}

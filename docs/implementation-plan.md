@@ -5887,11 +5887,9 @@ stderr were empty. The retained packet is
 
 Next in order:
 
-1. commit and push the fresh Claim regression certificate and synchronized
-   implementation/traceability status;
-2. obtain the explicit prototype signoff required by issue #112 before the
+1. obtain the explicit prototype signoff required by issue #112 before the
    production build; and
-3. build the Maker and Taker Basecamp QML/backend packages, reproducible LGX
+2. build the Maker and Taker Basecamp QML/backend packages, reproducible LGX
    artifacts, and actor-real UI E2E before final M6 gates/tag.
 
 The measured Logos v0.2 historical-account latency, per-account genesis
@@ -5900,3 +5898,47 @@ as LOGOS-024. They do not block local milestone
 certification under the accepted Logos-owned dependency policy. Shared
 concurrency control, caching, and coalescing identical in-flight repeatable
 observations remain production hardening.
+
+## M6 Basecamp 0.2 toolchain preflight checkpoint (2026-08-04)
+
+The official Logos tutorial at exact commit
+`bfc34c451c08da9f78072dd825756a1e071a051d` was copied into a run-private
+temporary directory and its C++/QML calculator was locked against the exact
+module-builder 0.2.0 commit
+`92ef691ea72844134f6c68fb447d37f855fc9690`. The rehearsal used only the
+digest-pinned Linux/amd64 Nix 2.35.1 image
+`sha256:d78540374f6a886653cba47d5c3f61c5a41d42e2a8db2607b8d68cb226fd463e`,
+a dedicated Nix-store volume, unique container names, literal temporary
+mounts, four CPUs, 12 GiB memory, and a 1024-process cap. It did not edit the
+repository or touch unrelated Docker resources.
+
+The default package built successfully from the generated consumer lock. Its
+2,130,512-byte NAR has hash
+`sha256-UoyshKh+zzMVigumE3BhjMgQUEFaM8HsuyFcXvCEdpk=` and explicitly retains
+Qt 6.9.2 Qt Remote Objects. The `.#lgx` output then built successfully and
+created `logos-calc_ui_cpp-module.lgx` with file SHA-256
+`d184c0423dc7dc5bee98e74eb1cf51c4edc3e381ce017ab88a38caf857e13bd5`.
+This closes the pre-signoff toolchain feasibility risk without implementing a
+production Maker or Taker view.
+The retained machine-readable result is
+`docs/evidence/m6-basecamp-toolchain-preflight-20260804.json`.
+
+The upstream all-output `nix flake check --no-build` did not pass: evaluation
+of its integration-test output referenced a missing Nix-store source path.
+The isolated Nix store subsequently passed full existence, link-hash, and
+content-hash verification, while the package and LGX outputs remained green.
+ADR 0146 therefore requires separate locked package, LGX, repository-owned UI
+test, and optional official-harness lanes rather than suppressing the failed
+upstream check.
+
+The generated graph is fully revision/NAR locked but large and revision-
+duplicative. Five direct Logos sources in the selected graph have no license
+file or declared package license. LOGOS-025 records that production-release
+finding. The local M6 PoC may proceed under the accepted Logos-owned dependency
+exception; distribution and production readiness may not silently inherit a
+license grant or skip a realized-closure SBOM, vulnerability, and license
+review.
+
+Next remains the explicit issue-#112 prototype signoff. After approval, RED
+begins for the package contract and actor journey; GREEN will implement the two
+consumer-locked packages and reuse the warmed, measured build path.

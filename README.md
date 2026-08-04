@@ -128,6 +128,21 @@ Maker and Taker Basecamp packages, actor-real UI E2E, final gates, explicit
 prototype sign-off, and the M6 tag remain. Cross-restart receipt/state rollback
 anchoring remains production hardening, not an issue-#112 PoC gate.
 
+The current Basecamp 0.2 C++/QML toolchain is independently preflight-GREEN
+through both the default plugin package and an actual `.lgx` artifact. The
+rehearsal uses a repository-consumer lock, module-builder 0.2.0 at exact commit
+`92ef691e...fc9690`, and digest-pinned Nix 2.35.1. It opens the public Nix and
+GitHub caches only to fetch the immutable build closure; it does not contact a
+chain, wallet, faucet, swap service, or public deployment. A later warmed
+networkless replay and realized-closure SBOM, vulnerability, and license review
+remain production gates. The upstream all-output integration evaluation has a
+missing-store-source defect, and five direct Logos UI sources have no explicit
+license grant; LOGOS-025 records both as Logos-owned release blockers that do
+not waive repository-owned M6 tests. [ADR 0146](docs/architecture/0146-pin-basecamp-builds-behind-consumer-locks.md)
+records the pinned build, component flow, test split, and exact artifact hashes.
+The machine-readable result is
+[m6-basecamp-toolchain-preflight-20260804.json](docs/evidence/m6-basecamp-toolchain-preflight-20260804.json).
+
 The first Refund attempts exposed a local liveness edge now fixed at the
 component boundary by
 [ADR 0138](docs/architecture/0138-pin-refund-snapshots-across-forward-finality.md).
