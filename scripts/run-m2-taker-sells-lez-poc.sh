@@ -42,10 +42,10 @@ case "$M6_ZEC_JOURNEY" in
     MAX_CORRIDOR_SECONDS=49
     ;;
   refund)
-    # The ceiling covers the fixed 60-second LEZ deadline, two bounded
+    # The ceiling covers the fixed 60-second LEZ deadline, bounded transient
     # service-to-actor reconciliations, LEZ finality, Zcash CLTV recovery, and
-    # the terminal no-effect replay. It does not change any protocol deadline.
-    MAX_CORRIDOR_SECONDS=190
+    # terminal no-effect replay. It does not change any protocol deadline.
+    MAX_CORRIDOR_SECONDS=300
     ;;
   *) echo 'M6_ZEC_JOURNEY must be claim or refund' >&2; exit 2 ;;
 esac
@@ -1986,6 +1986,17 @@ apply_m6_refund_parent_handoff() {
   fi
 }
 
+m6_refund_replay_is_transient() {
+  local response="$1"
+  jq -e '
+    . == {
+      jsonrpc:"2.0",id:"m6-refund-replay",
+      error:{code:-32010,message:"Taker dependency unavailable",
+        data:{category:"taker_action_execution_unavailable"}}
+    }
+  ' <<<"$response" >/dev/null 2>&1
+}
+
 drive_m6_taker_refund() {
   local round="$1" monitor_response="$2" state="$3"
   local status_file="${evidence_dir}/m6-taker-refund-actor-status-${round}.json"
@@ -2102,11 +2113,20 @@ drive_m6_taker_refund() {
   ')"
   replay_response="$(m6_service_rpc "m6-refund-replay-${round}" "$refund_request" "$M6_SERVICE_ACTION_TIMEOUT_MS")"
   printf '%s\n' "$replay_response" >"${evidence_dir}/m6-taker-service-refund-replay.json"
-  jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+  if jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
     .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
       requested_after_generation:$generation,was_replay:true}
-  ' <<<"$replay_response" >/dev/null || return 1
-  jq -nc --argjson round "$round" --argjson replay "$replay_response"     '{schema_version:1,round:$round,replay:$replay}'     >>"${evidence_dir}/m6-taker-service-refund.ndjson"
+  ' <<<"$replay_response" >/dev/null; then
+    jq -nc --argjson round "$round" --argjson replay "$replay_response" \
+      '{schema_version:1,round:$round,replay:$replay}' \
+      >>"${evidence_dir}/m6-taker-service-refund.ndjson"
+  elif m6_refund_replay_is_transient "$replay_response"; then
+    jq -nc --argjson round "$round" --argjson response "$replay_response" '
+      {schema_version:1,phase:"reconcile",round:$round,response:$response}
+    ' >>"${evidence_dir}/m6-taker-service-refund-transients.ndjson"
+  else
+    return 1
+  fi
 
   if (( m6_lez_refund_finalized == 0 )); then
     before_set="$(jq -c . "${evidence_dir}/m6-taker-lez-submissions-before-refund.json")"
@@ -2122,7 +2142,7 @@ drive_m6_taker_refund() {
     --arg txid "$m6_lez_refund_txid" \
     --argjson finalized "$m6_lez_refund_finalized" \
     --argjson start_tip "$m6_lez_refund_start_tip" '
-    .result + {m6_refund_parent_handoff:true,m6_refund_admitted:true,
+    (.result // {}) + {m6_refund_parent_handoff:true,m6_refund_admitted:true,
       m6_refund_generation:$generation,m6_lez_refund_txid:$txid,
       m6_lez_refund_finalized:($finalized == 1),
       m6_lez_refund_start_tip:$start_tip}
@@ -3014,6 +3034,30 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
     (( m6_refund_admitted == 1 && m6_lez_refund_finalized == 1 \
       && m6_zcash_refund_mined == 1 && m6_maker_supervisor_restarted == 1 ))
     prove_m6_terminal_refund_replay
+    jq -s -e '
+      all(.[];
+        .schema_version == 1
+        and (
+          if .phase == "reconcile" then
+            (.round | type) == "number" and .round >= 1
+            and .round == (.round | floor)
+            and .response == {
+              jsonrpc:"2.0",id:"m6-refund-replay",
+              error:{code:-32010,message:"Taker dependency unavailable",
+                data:{category:"taker_action_execution_unavailable"}}
+            }
+          else
+            .phase == null and (.attempt | type) == "number" and .attempt >= 1
+            and .attempt == (.attempt | floor)
+            and .response == {
+              jsonrpc:"2.0",id:"m6-refund",
+              error:{code:-32010,message:"Taker dependency unavailable",
+                data:{category:"taker_action_execution_unavailable"}}
+            }
+          end
+        )
+      )
+    ' "${evidence_dir}/m6-taker-service-refund-transients.ndjson" >/dev/null
     jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
       if .error == null then
         .result.schema_version == 1 and .result.swap_id == $swap

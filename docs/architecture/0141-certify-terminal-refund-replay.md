@@ -98,8 +98,10 @@ Fresh run `m6refund8e0ed10a` reached finalized LEZ Refund and Maker recovery
 but consumed the old 130-second runner ceiling before Zcash recovery. The fixed
 60-second refund deadline, two measured service-to-actor reconciliations, and
 finalized LEZ observation accounted for the budget. The outer ceiling is now
-190 seconds so the Zcash refund and terminal replay retain bounded headroom.
-This does not alter a chain timelock, block cadence, finality rule, or the
+300 seconds: this ADR first raised it to 190 seconds, and ADR 0143 later
+recorded a real already-admitted moving-tip reconciliation arriving at that
+ceiling and added one further bounded round. This does not alter a chain
+timelock, block cadence, finality rule, or the
 15-second query and 40-second action limits, and a successful run does not wait
 for the ceiling.
 
@@ -109,5 +111,5 @@ for the ceiling.
 - In-progress replay remains useful liveness evidence but is not the terminal
   idempotency certificate.
 - The proof adds bounded read-only RPC calls and no new chain mutation; its
-  complete Refund corridor has a 190-second fail-safe ceiling.
+  complete Refund corridor has a 300-second fail-safe ceiling.
 - A fresh actual-node run is still required before the Refund path is GREEN.

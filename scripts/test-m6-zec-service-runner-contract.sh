@@ -127,12 +127,44 @@ if apply_m6_refund_parent_handoff "$replacement_handoff" >/dev/null 2>&1; then
   fail 'finalized Refund parent state accepted a replacement transaction'
 fi
 
+transient_source="$(sed -n '/^m6_refund_replay_is_transient() {$/,/^}$/p' "$runner")"
+[[ -n "$transient_source" ]] || fail 'Refund replay transient classifier is missing'
+eval "$transient_source"
+valid_transient='{"jsonrpc":"2.0","id":"m6-refund-replay","error":{"code":-32010,
+  "message":"Taker dependency unavailable",
+  "data":{"category":"taker_action_execution_unavailable"}}}'
+m6_refund_replay_is_transient "$valid_transient" ||
+  fail 'documented Refund reconciliation transient was rejected'
+if m6_refund_replay_is_transient '{"jsonrpc":"2.0","id":"m6-refund-replay",
+  "error":{"code":-32010,
+  "message":"Taker dependency unavailable",
+  "data":"taker_action_execution_unavailable"}}'; then
+  fail 'scalar Refund reconciliation error envelope was accepted'
+fi
+if m6_refund_replay_is_transient '{"jsonrpc":"2.0","id":"m6-refund-replay",
+  "error":{"code":-32010,
+  "message":"Taker dependency unavailable",
+  "data":{"category":"different"}}}'; then
+  fail 'wrong Refund reconciliation transient category was accepted'
+fi
+if m6_refund_replay_is_transient '{"jsonrpc":"1.0","id":"wrong",
+  "error":{"code":-32010,"message":"Taker dependency unavailable",
+  "data":{"category":"taker_action_execution_unavailable"}}}'; then
+  fail 'wrong Refund replay version and ID were accepted'
+fi
+if m6_refund_replay_is_transient '{"jsonrpc":"2.0","id":"m6-refund-replay",
+  "error":{"code":-32010,"message":"Taker dependency unavailable",
+  "data":{"category":"taker_action_execution_unavailable","extra":true}},
+  "extra":true}'; then
+  fail 'Refund replay envelope with extra fields was accepted'
+fi
+
 required_markers=(
   'readonly M6_ZEC_JOURNEY="${M6_ZEC_JOURNEY:-claim}"'
   'readonly M6_SERVICE_QUERY_TIMEOUT_MS=15000'
   'readonly M6_SERVICE_ACTION_TIMEOUT_MS=40000'
   'M6_ZEC_JOURNEY must be claim or refund'
-  'MAX_CORRIDOR_SECONDS=190'
+  'MAX_CORRIDOR_SECONDS=300'
   'm6_claim_generation:$generation'
   'm6_zcash_claim_txid:$txid'
   'm6-zebra-mempool-before-claim.json'
@@ -148,6 +180,8 @@ required_markers=(
   'm6_refund_parent_handoff:true'
   'm6_lez_refund_start_tip:$start_tip'
   'apply_m6_refund_parent_handoff "$taker_output"'
+  'm6_refund_replay_is_transient'
+  'phase:"reconcile"'
   'taker_swap_refund_v1'
   'action:"refund"'
   'taker_action_conflict'

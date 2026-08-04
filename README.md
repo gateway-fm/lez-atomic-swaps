@@ -173,7 +173,8 @@ actual-node evidence remains pending.
 A fresh run on `8e0ed10` reached finalized LEZ Refund and Maker recovery but
 exhausted the old 130-second outer runner ceiling before the Zcash refund. The
 fixed 60-second protocol deadline and all per-call/finality rules remain
-unchanged. Only the fail-safe test ceiling is now 190 seconds, covering the two
+unchanged. That checkpoint raised the fail-safe test ceiling to 190 seconds,
+covering the two
 measured service-to-actor reconciliations plus terminal no-effect replay; this
 adds no wait to a successful path. The effect-bearing run is quarantined.
 
@@ -189,6 +190,25 @@ recovery once. Executable regressions cover pending, finalized, exact replay,
 replacement, and regression cases. The contract is GREEN. Run
 `m6refund734db82a` is quarantined, the ceiling was not raised again, and one
 new fresh-node Refund certificate remains required.
+
+Fresh clean run `m6refund5320572a` then proved that handoff on actual nodes:
+the LEZ Refund finalized, the parent started Maker recovery, and the exact
+service replay evidence advanced. A subsequent replay encountered the
+sidecar's bounded `moving_tip` observation guard, which the service correctly
+reported as `-32010 / taker_action_execution_unavailable`; the runner
+incorrectly treated that documented transient as terminal. ADR
+[0143](docs/architecture/0143-retry-admitted-refund-reconciliation.md) now
+persists that exact object-shaped response and continues only the already
+admitted request in a later bounded corridor round. The registry winner,
+generation, request ID, parent handoff, and actor journal stay unchanged; all
+other response shapes fail closed. The executable contract is GREEN. The run
+is quarantined and one further wholly fresh Refund certificate remains
+required.
+
+That run consumed the 190-second provision-to-completion ceiling when the
+transient response arrived, leaving no later bounded round. The current outer
+fail-safe is therefore 300 seconds. This changes no timelock, block cadence,
+per-call budget, finality rule, or success-path delay.
 
 To repeat the proven nonvisual Claim boundary, start uniquely named isolated
 LEZ v0.2 and primary-only Zebra Regtest stacks, deploy/onboard the checked LEZ

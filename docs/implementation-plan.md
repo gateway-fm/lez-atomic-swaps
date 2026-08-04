@@ -5803,6 +5803,28 @@ and regressive-finality cases. No protocol timeout, chain cadence, or
 190-second fail-safe ceiling changed. Both effect-bearing discovery runs are
 quarantined; a completely fresh certificate remains required.
 
+Fresh pushed-commit run `m6refund5320572a` used new LEZ genesis allocations,
+one new checked deployment, two new finalized Vault claims, and a new Zebra
+height-104 Regtest prefix. It proved the ADR 0142 handoff through finalized LEZ
+Refund and parent-owned Maker recovery. On the following already-admitted
+reconciliation, the sidecar rejected a moving finalized observation tip and
+the service returned the fixed `-32010`
+`taker_action_execution_unavailable` envelope. The runner treated that
+expected retryable actor result as fatal.
+
+ADR 0143 accepts only that exact object-shaped response after durable Refund
+admission, records it as a reconciliation transient, emits the same validated
+parent state, and lets a later bounded main-loop round retry the same request
+ID, swap, action, and generation. Any changed category or scalar envelope
+still fails closed, as do a wrong JSON-RPC version or ID and any extra field.
+The executable contract progressed RED on the absent classifier and is GREEN
+for the accepted exact object plus the rejected variants. Final acceptance
+semantically validates every admission and reconciliation transient. No
+protocol deadline, per-call timeout, cadence, or finality rule changed. The
+190-second outer fail-safe expired as the transient arrived, so it is now 300
+seconds to allow a later bounded round; success does not wait for this ceiling.
+The effect-bearing run is quarantined; another fresh-node certificate is required.
+
 Next in order:
 
 1. run a fresh isolated LEZ v0.2 deployment/onboarding and Zebra Regtest Refund
