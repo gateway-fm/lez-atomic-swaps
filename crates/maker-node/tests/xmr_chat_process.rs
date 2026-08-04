@@ -52,10 +52,12 @@ const FOREIGN_UNITS_PICONERO: u64 = 1_000_000_000_000;
 const LEZ_UNITS: u128 = 1_000;
 const FINALIZED_TAG14_EVIDENCE_SHA256: [u8; 32] = [0xc3; 32];
 const FINALIZED_TAG16_EVIDENCE_SHA256: [u8; 32] = [0xd6; 32];
+static XMR_CHAT_PROCESS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // The full user-visible ordering is intentionally one audit surface.
 async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically() {
+    let _process_test_guard = XMR_CHAT_PROCESS_TEST_LOCK.lock().await;
     let run = tempdir().expect("isolated XMR Chat process root");
     make_private_directory(run.path());
     let runtime = run.path().join("runtime");
@@ -498,6 +500,7 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // One independent user-visible refund journey is one audit surface.
 async fn receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once() {
+    let _process_test_guard = XMR_CHAT_PROCESS_TEST_LOCK.lock().await;
     let run = tempdir().expect("isolated XMR refund process root");
     make_private_directory(run.path());
     let runtime = run.path().join("runtime");

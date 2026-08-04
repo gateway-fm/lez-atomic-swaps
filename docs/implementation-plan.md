@@ -6043,3 +6043,12 @@ unchanged five-minute external Basecamp rendezvous ceiling when written as
 `Duration::from_secs(300)`. The semantics-preserving refactor expresses it as
 `Duration::from_mins(5)`. Focused and full workspace all-target/all-feature
 Clippy are GREEN; no timeout value or product behavior changed.
+
+The first full workspace test attempt exposed independent shared-host
+contention: the two XMR Chat process journeys concurrently secure-hashed large
+debug actor binaries and both missed their unchanged 30-second per-daemon
+readiness bound. Disk had 324 GiB free. An unchanged sequential diagnostic
+passed 2/2 in 255.34 seconds, isolating parallel fixture thrash rather than a
+daemon defect. A test-only Tokio mutex now serializes only those two process
+journeys. The original default test command is GREEN 2/2 in 250.71 seconds;
+production code, RPCs, timeouts, and protocol behavior are unchanged.
