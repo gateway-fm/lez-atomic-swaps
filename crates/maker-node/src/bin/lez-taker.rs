@@ -983,8 +983,11 @@ fn execute_xmr_taker_effect(
         XmrWorkflowStep::RefundLezTag16 => ("refund", "refund_lez_tag16"),
         _ => return Err(anyhow::anyhow!("XMR Taker effect step is unsupported")),
     };
-    if step == XmrWorkflowStep::RefundLezTag16 {
-        execute_xmr_tag16_preflight(execution, state_lock, workflow_lock)?;
+    if step == XmrWorkflowStep::RefundLezTag16
+        || (step == XmrWorkflowStep::AuthorizeLezTag14
+            && execution.effect_authority().tag14_release().is_some())
+    {
+        execute_xmr_taker_preflight(execution, step, action, state_lock, workflow_lock)?;
     }
     let prepared = execution
         .prepare_effect_invocation(step, state_lock, workflow_lock)
@@ -1053,13 +1056,15 @@ fn execute_xmr_taker_effect(
     Ok(())
 }
 
-fn execute_xmr_tag16_preflight(
+fn execute_xmr_taker_preflight(
     execution: &ValidatedXmrEffectExecutionV3,
+    step: XmrWorkflowStep,
+    action: &'static str,
     state_lock: &MakerActorHeldLock,
     workflow_lock: &MakerActorHeldLock,
 ) -> anyhow::Result<()> {
     let Some(mut command) = execution
-        .prepare_effect_preflight(XmrWorkflowStep::RefundLezTag16, state_lock, workflow_lock)
+        .prepare_effect_preflight(step, state_lock, workflow_lock)
         .map_err(|_| anyhow::anyhow!("XMR Taker effect route is unavailable or unsafe"))?
     else {
         return Ok(());
@@ -1070,23 +1075,25 @@ fn execute_xmr_tag16_preflight(
         .stderr(Stdio::null());
     let mut child = command
         .spawn()
-        .map_err(|_| anyhow::anyhow!("XMR Taker refund preflight is unavailable"))?;
+        .map_err(|_| anyhow::anyhow!("XMR Taker {action} preflight is unavailable"))?;
     let status = match child.wait_timeout(Duration::from_secs(30)) {
         Ok(Some(status)) => status,
         Ok(None) => {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(anyhow::anyhow!("XMR Taker refund preflight timed out"));
+            return Err(anyhow::anyhow!("XMR Taker {action} preflight timed out"));
         }
         Err(_) => {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(anyhow::anyhow!("XMR Taker refund preflight is unavailable"));
+            return Err(anyhow::anyhow!(
+                "XMR Taker {action} preflight is unavailable"
+            ));
         }
     };
     ensure!(
         status.success(),
-        "XMR Taker refund is not yet eligible or its preflight failed"
+        "XMR Taker {action} is not yet eligible or its preflight failed"
     );
     Ok(())
 }

@@ -217,7 +217,7 @@ impl std::fmt::Debug for XmrPreparedEffectInvocationV1 {
 }
 
 impl ValidatedXmrEffectExecutionV3 {
-    /// Composes a non-sending Tag16 readiness process while leaving the
+    /// Composes a non-sending Tag14/Tag16 readiness process while leaving the
     /// workflow invocation authority unchanged.
     ///
     /// Returns `None` after the invocation CAS has already been consumed, so
@@ -225,7 +225,7 @@ impl ValidatedXmrEffectExecutionV3 {
     ///
     /// # Errors
     ///
-    /// Rejects every non-Tag16 route, unsafe or changed program/input, crossed
+    /// Rejects every unsupported route, unsafe or changed program/input, crossed
     /// locks, foreign workflow identity, missing step, or corrupt state.
     pub fn prepare_effect_preflight(
         &self,
@@ -235,32 +235,16 @@ impl ValidatedXmrEffectExecutionV3 {
     ) -> Result<Option<Command>> {
         ensure!(
             self.effect_authority().role() == ActorRole::Taker
-                && step == XmrWorkflowStep::RefundLezTag16,
-            "only the Taker Tag16 route supports effect preflight"
+                && (step == XmrWorkflowStep::RefundLezTag16
+                    || (step == XmrWorkflowStep::AuthorizeLezTag14
+                        && self.effect_authority().tag14_release().is_some())),
+            "only semantic Taker Tag14 and Tag16 routes support effect preflight"
         );
         let tool = select_tool(self.effect_authority(), step)?;
         let digest = tool_plan_identity(self, step, tool);
-        let child_plan = canonical_xmr_effect_child_plan_bytes(
-            self.effect_authority(),
-            XmrEffectChildModeV1::Preflight,
-            step,
-            tool.abi(),
-            digest,
-        )
-        .context("compose XMR preflight child plan")?;
         let executable = tool
             .verify_program_at_use()
             .context("pin role-fixed XMR preflight tool")?;
-        let inputs = self
-            .effect_authority()
-            .pin_effect_inputs_at_use()
-            .context("pin role-fixed XMR preflight inputs")?
-            .with_application_material(&self.application)
-            .context("pin validated XMR preflight application inputs")?
-            .with_child_plan(&child_plan)
-            .context("pin XMR preflight child plan")?
-            .with_invocation_material(&self.application, step)
-            .context("pin step-specific XMR preflight material")?;
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(
@@ -274,9 +258,32 @@ impl ValidatedXmrEffectExecutionV3 {
                 self.effect_authority().workflow_journal(),
             )
             .context("bind XMR preflight workflow lock")?;
-        let command = inputs
-            .into_command(executable, actor_lock, workflow_lock)
-            .context("compose role-fixed XMR preflight child")?;
+        let command = if step == XmrWorkflowStep::AuthorizeLezTag14 {
+            self.pin_tag14_release_inputs_at_use(XmrEffectChildModeV1::Preflight)
+                .context("pin Tag14 release preflight inputs")?
+                .into_command(executable, actor_lock, workflow_lock)
+                .context("compose role-fixed Tag14 release preflight child")?
+        } else {
+            let child_plan = canonical_xmr_effect_child_plan_bytes(
+                self.effect_authority(),
+                XmrEffectChildModeV1::Preflight,
+                step,
+                tool.abi(),
+                digest,
+            )
+            .context("compose XMR preflight child plan")?;
+            self.effect_authority()
+                .pin_effect_inputs_at_use()
+                .context("pin role-fixed XMR preflight inputs")?
+                .with_application_material(&self.application)
+                .context("pin validated XMR preflight application inputs")?
+                .with_child_plan(&child_plan)
+                .context("pin XMR preflight child plan")?
+                .with_invocation_material(&self.application, step)
+                .context("pin step-specific XMR preflight material")?
+                .into_command(executable, actor_lock, workflow_lock)
+                .context("compose role-fixed XMR preflight child")?
+        };
         let workflow =
             SqliteXmrWorkflowJournal::open_existing(self.effect_authority().workflow_journal())
                 .context("open XMR effect workflow for preflight")?;
@@ -309,27 +316,9 @@ impl ValidatedXmrEffectExecutionV3 {
     ) -> Result<XmrPreparedEffectInvocationV1> {
         let tool = select_tool(self.effect_authority(), step)?;
         let digest = tool_plan_identity(self, step, tool);
-        let child_plan = canonical_xmr_effect_child_plan_bytes(
-            self.effect_authority(),
-            XmrEffectChildModeV1::Invoke,
-            step,
-            tool.abi(),
-            digest,
-        )
-        .context("compose XMR sending child plan")?;
         let executable = tool
             .verify_program_at_use()
             .context("pin role-fixed XMR effect tool")?;
-        let inputs = self
-            .effect_authority()
-            .pin_effect_inputs_at_use()
-            .context("pin role-fixed XMR effect inputs")?
-            .with_application_material(&self.application)
-            .context("pin validated XMR application inputs")?
-            .with_child_plan(&child_plan)
-            .context("pin XMR sending child plan")?
-            .with_invocation_material(&self.application, step)
-            .context("pin step-specific XMR invocation material")?;
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(
@@ -343,9 +332,34 @@ impl ValidatedXmrEffectExecutionV3 {
                 self.effect_authority().workflow_journal(),
             )
             .context("bind XMR workflow lock")?;
-        let command = inputs
-            .into_command(executable, actor_lock, workflow_lock)
-            .context("compose role-fixed XMR effect child")?;
+        let command = if step == XmrWorkflowStep::AuthorizeLezTag14
+            && self.effect_authority().tag14_release().is_some()
+        {
+            self.pin_tag14_release_inputs_at_use(XmrEffectChildModeV1::Invoke)
+                .context("pin Tag14 release invocation inputs")?
+                .into_command(executable, actor_lock, workflow_lock)
+                .context("compose role-fixed Tag14 release child")?
+        } else {
+            let child_plan = canonical_xmr_effect_child_plan_bytes(
+                self.effect_authority(),
+                XmrEffectChildModeV1::Invoke,
+                step,
+                tool.abi(),
+                digest,
+            )
+            .context("compose XMR sending child plan")?;
+            self.effect_authority()
+                .pin_effect_inputs_at_use()
+                .context("pin role-fixed XMR effect inputs")?
+                .with_application_material(&self.application)
+                .context("pin validated XMR application inputs")?
+                .with_child_plan(&child_plan)
+                .context("pin XMR sending child plan")?
+                .with_invocation_material(&self.application, step)
+                .context("pin step-specific XMR invocation material")?
+                .into_command(executable, actor_lock, workflow_lock)
+                .context("compose role-fixed XMR effect child")?
+        };
 
         let mut workflow =
             SqliteXmrWorkflowJournal::open_existing(self.effect_authority().workflow_journal())

@@ -591,19 +591,17 @@ Maker Monero recovery. Reproduction and resource/flakiness details are in
 with components, sequence, and conditional atomicity in
 [ADR 0154](docs/architecture/0154-derive-tag16-in-the-sealed-effect-child.md).
 
-The next M7 checkpoint prepares the existing safe Tag14 release service for
-that same supervisor boundary without pretending the marker has become
-semantic. Its no-argument mode accepts only a typed invocation, release-only
-capability, and journal protection key on fully sealed FDs 220 through 222,
-plus the already-open owner-private journal directory on FD 223.
+M7 also composes the existing safe Tag14 release service through that
+supervisor boundary. Its no-argument mode accepts only a typed invocation,
+release-only capability, and journal protection key on fully sealed FDs 220
+through 222, plus the already-open owner-private journal directory on FD 223.
 Mutable or unsealed inputs fail before journal or RPC use; two fresh process
 invocations produce exactly one accepted release and an observe-only restart.
 The service still consumes the separately prepared encrypted journal that binds
 finalized LEZ Fund, the exact confirmed Monero output, and authenticated wallet
 topology, and still rechecks finalized time after its publication CAS. No
 Docker, node, public RPC, faucet, or funds participate in this component proof.
-Receipt-v2 authority wiring and marker replacement remain open. Reproduction,
-components, sequence, and the conditional-atomicity limit are in
+Reproduction, components, sequence, and the conditional-atomicity limit are in
 [ADR 0155](docs/architecture/0155-invoke-the-xmr-release-worker-through-sealed-descriptors.md).
 
 Receipt authority is now versioned before that worker can be selected. Schema
@@ -612,9 +610,21 @@ the release-worker v2 ABI, a distinct release-only sidecar/capability, local or
 exact-pinned finalized indexer, encrypted-journal directory, protection-key
 file, and key identifier as one canonical authority. Downgrade, omission,
 public-local endpoints, capability/path aliasing, and a changed public origin
-fail closed. This is an authority checkpoint only: it reads no release secret,
-does not invoke the worker, and consumes no workflow CAS. See
+fail closed. See
 [ADR 0156](docs/architecture/0156-version-the-tag14-release-authority.md).
+
+The schema-v2 route is now connected to `lez-taker claim`. A non-sending
+preflight opens, decrypts, authenticates, and exact-binds the release journal
+before the parent consumes its workflow CAS; it makes zero indexer or sidecar
+calls and accepts only Prepared or already-Admitted state. The parent then
+repins and derives the canonical release invocation from the exact validated
+Stage A/B, private view key, runtime, run, and release profile. Only FDs
+220..223 reach the worker; general LEZ/Monero credentials, application-private
+material, and the spend share are absent. Real worker process proof, the
+eight-case route suite, and the literal claim flow with rejected-preflight
+retry/invoke/observe/Complete are GREEN. A joined actual-node CLI replay,
+semantic finalized observer, and subsequent Monero sweep remain open. See
+[ADR 0157](docs/architecture/0157-preflight-and-compose-tag14-release.md).
 
 That first checkpoint is deliberately zero-effect: it starts no Monero or LEZ
 node, opens no chain RPC, and uses no Docker service, faucet, DNS, network, or

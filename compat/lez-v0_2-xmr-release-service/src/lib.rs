@@ -125,7 +125,16 @@ pub struct XmrReleaseServiceConfig {
 #[serde(deny_unknown_fields)]
 struct XmrReleaseSealedInvocationV1 {
     schema_version: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mode: Option<XmrReleaseInvocationMode>,
     public_config: XmrReleaseServiceConfig,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum XmrReleaseInvocationMode {
+    Preflight,
+    Invoke,
 }
 
 impl fmt::Debug for XmrReleaseServiceConfig {
@@ -186,6 +195,9 @@ impl fmt::Debug for XmrReleaseServicePaths {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum XmrReleaseServiceOutcome {
+    /// All local credentials, bindings, and authenticated journal bytes are
+    /// ready; no clock or submission route was used.
+    Ready,
     /// The node accepted the exact authorization.
     AdmittedAccepted,
     /// The node already knew the exact authorization.
@@ -273,10 +285,26 @@ impl XmrReleaseServiceReport {
         }
     }
 
+    fn ready(durable_state: ReleaseState, profile: ReleaseNodeRouteProfile) -> Self {
+        Self {
+            schema_version: XMR_RELEASE_SERVICE_SCHEMA_VERSION,
+            event: "xmr_claim_authorization_preflight",
+            outcome: XmrReleaseServiceOutcome::Ready,
+            durable_state: durable_state.into(),
+            node_profile: profile.as_str(),
+        }
+    }
+
     /// Returns true only when exact node admission is durable.
     #[must_use]
     pub const fn is_durably_admitted(self) -> bool {
         matches!(self.durable_state, XmrReleaseDurableState::Admitted)
+    }
+
+    /// Returns true for a no-send readiness result or durable exact admission.
+    #[must_use]
+    pub const fn is_successful_process_outcome(self) -> bool {
+        matches!(self.outcome, XmrReleaseServiceOutcome::Ready) || self.is_durably_admitted()
     }
 }
 
@@ -487,7 +515,14 @@ pub async fn run_xmr_release_service_once(
     .map_err(|_| XmrReleaseServiceError::ReleaseClientUnavailable)?;
     let store = ReleaseStore::open(paths.journal_path())
         .map_err(|_| XmrReleaseServiceError::ReleaseJournalUnavailable)?;
-    run_xmr_release_service_once_with_material(config, store, key, client).await
+    run_xmr_release_service_once_with_material(
+        config,
+        store,
+        key,
+        client,
+        XmrReleaseInvocationMode::Invoke,
+    )
+    .await
 }
 
 /// Executes the sole prepared-journal publication from fixed sealed
@@ -504,9 +539,11 @@ pub async fn run_xmr_release_service_once_from_sealed_descriptors()
         read_sealed_descriptor(XMR_RELEASE_INVOCATION_FD, MAX_PUBLIC_CONFIG_BYTES_U64)?;
     let invocation: XmrReleaseSealedInvocationV1 = serde_json::from_slice(&invocation_bytes)
         .map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?;
-    if invocation.schema_version != 1 {
-        return Err(XmrReleaseServiceError::InvalidSealedInvocation);
-    }
+    let mode = match (invocation.schema_version, invocation.mode) {
+        (1, None) => XmrReleaseInvocationMode::Invoke,
+        (2, Some(mode)) => mode,
+        _ => return Err(XmrReleaseServiceError::InvalidSealedInvocation),
+    };
     validate_config(&invocation.public_config)?;
     let state_directory = open_private_directory_descriptor(XMR_RELEASE_STATE_DIRECTORY_FD)?;
 
@@ -545,13 +582,8 @@ pub async fn run_xmr_release_service_once_from_sealed_descriptors()
     .map_err(|_| XmrReleaseServiceError::ReleaseClientUnavailable)?;
     let store = ReleaseStore::open_in_directory(state_directory, RELEASE_JOURNAL_NAME)
         .map_err(|_| XmrReleaseServiceError::ReleaseJournalUnavailable)?;
-    run_xmr_release_service_once_with_material(
-        invocation.public_config,
-        store,
-        key,
-        client,
-    )
-    .await
+    run_xmr_release_service_once_with_material(invocation.public_config, store, key, client, mode)
+        .await
 }
 
 async fn run_xmr_release_service_once_with_material(
@@ -559,10 +591,8 @@ async fn run_xmr_release_service_once_with_material(
     store: ReleaseStore,
     key: PublicationProtectionKey,
     client: XmrReleaseClient,
+    mode: XmrReleaseInvocationMode,
 ) -> Result<XmrReleaseServiceReport, XmrReleaseServiceError> {
-    let mut clock = config
-        .node_profile
-        .connect_indexer(&config.indexer_endpoint)?;
     let binding = XmrReleaseSubmissionBindingV3::new(
         config.run_id.clone(),
         config.runtime.clone(),
@@ -573,6 +603,18 @@ async fn run_xmr_release_service_once_with_material(
     let snapshot = store
         .load_xmr_claim_release(swap_id, &config.run_id, &key)
         .map_err(|_| XmrReleaseServiceError::ReleaseJournalUnavailable)?;
+    if mode == XmrReleaseInvocationMode::Preflight {
+        let state = store
+            .preflight_xmr_claim_release(&snapshot, &key, &binding, &client)
+            .map_err(|_| XmrReleaseServiceError::PublicationFailed)?;
+        if !matches!(state, ReleaseState::Prepared | ReleaseState::Admitted) {
+            return Err(XmrReleaseServiceError::PublicationFailed);
+        }
+        return Ok(XmrReleaseServiceReport::ready(state, config.node_profile));
+    }
+    let mut clock = config
+        .node_profile
+        .connect_indexer(&config.indexer_endpoint)?;
     let outcome = store
         .publish_xmr_claim_release(snapshot, &key, &binding, &client, &mut clock)
         .await

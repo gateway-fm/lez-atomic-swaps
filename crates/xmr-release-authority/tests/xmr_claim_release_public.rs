@@ -1275,17 +1275,50 @@ async fn run_sealed_release_worker(
     run_release_worker_with_sealed_descriptors(worker, public_config, state_directory, true).await
 }
 
+async fn run_sealed_release_preflight_worker(
+    worker: std::ffi::OsString,
+    public_config: Value,
+    state_directory: &std::path::Path,
+) -> std::process::Output {
+    run_release_worker_with_sealed_descriptors_and_mode(
+        worker,
+        public_config,
+        state_directory,
+        true,
+        Some("preflight"),
+    )
+    .await
+}
+
 async fn run_release_worker_with_sealed_descriptors(
     worker: std::ffi::OsString,
     public_config: Value,
     state_directory: &std::path::Path,
     seal_protection_key: bool,
 ) -> std::process::Output {
-    let mut invocation = serde_json::to_vec(&json!({
-        "schema_version": 1,
-        "public_config": public_config,
-    }))
-    .expect("encode sealed release invocation");
+    run_release_worker_with_sealed_descriptors_and_mode(
+        worker,
+        public_config,
+        state_directory,
+        seal_protection_key,
+        None,
+    )
+    .await
+}
+
+async fn run_release_worker_with_sealed_descriptors_and_mode(
+    worker: std::ffi::OsString,
+    public_config: Value,
+    state_directory: &std::path::Path,
+    seal_protection_key: bool,
+    mode: Option<&str>,
+) -> std::process::Output {
+    let invocation_value = mode.map_or_else(
+        || json!({"schema_version": 1, "public_config": public_config}),
+        |mode| json!({"schema_version": 2, "mode": mode, "public_config": public_config}),
+    );
+    let mut invocation =
+        serde_json::to_vec(&invocation_value).expect("encode sealed release invocation");
     invocation.push(b'\n');
     let protection_key = if seal_protection_key {
         sealed_process_input("xmr-release-protection-key", M4_RELEASE_KEY_HEX.as_bytes())
@@ -1520,6 +1553,37 @@ async fn subprocess_worker_admits_once_and_restart_observes_only() {
     assert_eq!(indexer.finalized_calls.load(Ordering::SeqCst), 0);
     assert_eq!(indexer.by_id_calls.load(Ordering::SeqCst), 0);
     assert_eq!(indexer.by_hash_calls.load(Ordering::SeqCst), 0);
+
+    let preflight =
+        run_sealed_release_preflight_worker(worker.clone(), config.clone(), directory.path()).await;
+    assert_process_output_redacted(&preflight, directory.path());
+    assert!(
+        preflight.status.success(),
+        "release preflight failed with status {}: {}",
+        preflight.status,
+        String::from_utf8_lossy(&preflight.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&preflight.stdout).expect("preflight report"),
+        json!({
+            "schema_version": 1,
+            "event": "xmr_claim_authorization_preflight",
+            "outcome": "ready",
+            "durable_state": "prepared",
+            "node_profile": "local"
+        })
+    );
+    assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(indexer.finalized_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.by_id_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.by_hash_calls.load(Ordering::SeqCst), 0);
+    let preflight_store = ReleaseStore::open(&journal_path).expect("post-preflight journal");
+    let still_prepared = preflight_store
+        .load_xmr_claim_release(*terms.to_input().swap_id.as_bytes(), &run_id(), &key)
+        .expect("authenticated post-preflight load");
+    assert_eq!(still_prepared.state(), ReleaseState::Prepared);
+    drop(preflight_store);
 
     let first = run_sealed_release_worker(worker.clone(), config.clone(), directory.path()).await;
     assert_process_output_redacted(&first, directory.path());

@@ -75,6 +75,24 @@ grep -Fq '"step":"refund_lez_tag16"' /proc/self/fd/217
 grep -Fq '"executable_abi":"lez_xmr_tag16_refund_v1"' /proc/self/fd/217
 sha256sum /proc/self/fd/218 | cut -d ' ' -f 1
 "#;
+const RELEASE_WORKER: &[u8] = br#"#!/bin/sh
+set -eu
+test "$#" -eq 0
+for fd in 197 198 199 220 221 222 223; do
+    test -e "/proc/self/fd/$fd"
+done
+for fd in 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219; do
+    test ! -e "/proc/self/fd/$fd"
+done
+grep -Fq '"schema_version":2' /proc/self/fd/220
+grep -Fq '"sidecar_endpoint":"http://127.0.0.1:32978/"' /proc/self/fd/220
+grep -Fq '"indexer_endpoint":"http://127.0.0.1:32979/"' /proc/self/fd/220
+if grep -Fq '"mode":"preflight"' /proc/self/fd/220; then
+    test "${XMR_TEST_PREFLIGHT_FAIL:-}" != "1"
+    exit 0
+fi
+grep -Fq '"mode":"invoke"' /proc/self/fd/220
+"#;
 const OBSERVER: &[u8] = br#"#!/bin/sh
 set -eu
 test "$#" -eq 2
@@ -129,6 +147,17 @@ struct MoneroFixture {
 }
 
 #[derive(Serialize)]
+struct Tag14ReleaseFixture {
+    sidecar_url: String,
+    indexer_url: String,
+    node_profile: &'static str,
+    state_directory: PathBuf,
+    capability_file: PathBuf,
+    protection_key_file: PathBuf,
+    protection_key_id: &'static str,
+}
+
+#[derive(Serialize)]
 struct EffectAuthorityFixture {
     schema_version: u16,
     pair: &'static str,
@@ -143,6 +172,8 @@ struct EffectAuthorityFixture {
     lez: LezFixture,
     monero: MoneroFixture,
     taker_tools: TakerToolsFixture,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tag14_release: Option<Tag14ReleaseFixture>,
 }
 
 struct MaterialFixture {
@@ -683,6 +714,11 @@ fn write_effect_inputs(root: &Path) -> (PathBuf, PathBuf, Vec<PathBuf>) {
     (runtime, capability, secrets)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "one serialized authority fixture keeps every role-fixed path and semantic profile visible"
+)]
 fn effect_authority(
     root: &Path,
     worker: &Path,
@@ -691,8 +727,23 @@ fn effect_authority(
     swap: [u8; 32],
     agreement: [u8; 32],
     activation: [u8; 32],
+    semantic_tag14: bool,
 ) -> Vec<u8> {
     let (runtime, capability, secrets) = write_effect_inputs(root);
+    if semantic_tag14 {
+        let runtime_descriptor = lez_bridge_protocol::RuntimeDescriptor::new(
+            lez_bridge_protocol::Participant::Taker,
+            lez_bridge_protocol::RuntimeCompatibility::LeeV0_2_0,
+            lez_bridge_protocol::Hex32::from_bytes([60; 32]),
+            lez_bridge_protocol::Hex32::from_bytes([40; 32]),
+            lez_bridge_protocol::Hex32::from_bytes([41; 32]),
+            lez_bridge_protocol::Hex32::from_bytes([42, 0, 0, 0].repeat(8).try_into().unwrap()),
+            lez_bridge_protocol::Hex32::from_bytes([0x15; 32]),
+        );
+        let mut runtime_bytes = serde_json::to_vec(&runtime_descriptor).expect("runtime JSON");
+        runtime_bytes.push(b'\n');
+        fs::write(&runtime, runtime_bytes).expect("replace runtime fixture");
+    }
     let classifier = root.join("classifier");
     let claim_sweep = root.join("claim-sweep");
     let monero_verify = root.join("monero-verify");
@@ -706,8 +757,20 @@ fn effect_authority(
         username_file: secrets[index].clone(),
         password_file: secrets[index + 1].clone(),
     };
+    let release_state = semantic_tag14.then(|| owner_directory(root, "tag14-release"));
+    let release_capability = root.join("tag14-release.capability");
+    let release_key = root.join("tag14-release.key");
+    if semantic_tag14 {
+        write_private(&release_capability, b"release-capability", 0o600);
+        write_private(
+            &release_key,
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            0o600,
+        );
+    }
+    let runtime_bytes = fs::read(&runtime).expect("runtime fixture");
     let fixture = EffectAuthorityFixture {
-        schema_version: 1,
+        schema_version: if semantic_tag14 { 2 } else { 1 },
         pair: "monero",
         role: ActorRole::Taker,
         swap_id: hex::encode(swap),
@@ -719,7 +782,7 @@ fn effect_authority(
         evidence_root: root.join("evidence"),
         lez: LezFixture {
             sidecar_url: "http://127.0.0.1:32972/".to_owned(),
-            runtime_sha256: hex::encode(Sha256::digest(b"{\"role\":\"taker\"}\n")),
+            runtime_sha256: hex::encode(Sha256::digest(&runtime_bytes)),
             runtime_file: runtime,
             capability_file: capability,
         },
@@ -737,8 +800,17 @@ fn effect_authority(
                     .file_name()
                     .and_then(|name| name.to_str())
                     .expect("ASCII worker name"),
-                Sha256::digest(WORKER).into(),
-                "lez_xmr_tag14_authorize_v1",
+                Sha256::digest(if semantic_tag14 {
+                    RELEASE_WORKER
+                } else {
+                    WORKER
+                })
+                .into(),
+                if semantic_tag14 {
+                    "lez_xmr_tag14_release_v2"
+                } else {
+                    "lez_xmr_tag14_authorize_v1"
+                },
             ),
             finalized_classifier: tool(
                 root,
@@ -765,6 +837,15 @@ fn effect_authority(
                 "lez_xmr_tag16_refund_v1",
             ),
         },
+        tag14_release: release_state.map(|state_directory| Tag14ReleaseFixture {
+            sidecar_url: "http://127.0.0.1:32978/".to_owned(),
+            indexer_url: "http://127.0.0.1:32979/".to_owned(),
+            node_profile: "local",
+            state_directory,
+            capability_file: release_capability,
+            protection_key_file: release_key,
+            protection_key_id: "taker-release-key-1",
+        }),
     };
     let mut bytes = serde_json::to_vec(&fixture).expect("serialize effect authority");
     bytes.push(b'\n');
@@ -809,6 +890,23 @@ fn route_fixture_for(
     terminal_branch: XmrWorkflowBranch,
     terminal_step: XmrWorkflowStep,
 ) -> RouteFixture {
+    route_fixture_for_mode(terminal_branch, terminal_step, false)
+}
+
+fn semantic_release_route_fixture() -> RouteFixture {
+    route_fixture_for_mode(
+        XmrWorkflowBranch::Claim,
+        XmrWorkflowStep::AuthorizeLezTag14,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+fn route_fixture_for_mode(
+    terminal_branch: XmrWorkflowBranch,
+    terminal_step: XmrWorkflowStep,
+    semantic_tag14: bool,
+) -> RouteFixture {
     let material = provision_material();
     let agreement = signed_stage_a(&material);
     let maker_sessions = initialize_sessions(&material, &agreement, "maker");
@@ -834,7 +932,15 @@ fn route_fixture_for(
         .join("xmr-effect-workflow.sqlite3");
     let effect_root = owner_directory(&material.material, "effect-inputs");
     let worker = effect_root.join("tag14-worker");
-    write_private(&worker, WORKER, 0o700);
+    write_private(
+        &worker,
+        if semantic_tag14 {
+            RELEASE_WORKER
+        } else {
+            WORKER
+        },
+        0o700,
+    );
     let effect_bytes = effect_authority(
         &effect_root,
         &worker,
@@ -843,6 +949,7 @@ fn route_fixture_for(
         swap_bytes,
         taker_actor.agreement_commitment(),
         taker_actor.activation_commitment(),
+        semantic_tag14,
     );
     let authority_digest: [u8; 32] = Sha256::digest(&effect_bytes).into();
     let identity = XmrWorkflowIdentityV1::new(
@@ -922,6 +1029,56 @@ fn route_fixture_for(
         application_sha256,
         private_xmr_share_sha256,
     }
+}
+
+#[test]
+fn semantic_tag14_preflight_is_least_privilege_and_does_not_consume_cas() {
+    let fixture = semantic_release_route_fixture();
+    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+        .expect("acquire Taker state lock");
+    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+        .expect("acquire Taker workflow lock");
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Taker,
+        RUN_ID,
+    )
+    .expect("load semantic Tag14 authority");
+
+    let mut preflight = execution
+        .prepare_effect_preflight(
+            XmrWorkflowStep::AuthorizeLezTag14,
+            &actor_lock,
+            &workflow_lock,
+        )
+        .expect("compose Tag14 preflight")
+        .expect("Prepared Tag14 requires preflight");
+    preflight.env("XMR_TEST_PREFLIGHT_FAIL", "1");
+    assert!(!preflight.status().expect("run failing preflight").success());
+
+    let mut invocation = match execution
+        .prepare_effect_invocation(
+            XmrWorkflowStep::AuthorizeLezTag14,
+            &actor_lock,
+            &workflow_lock,
+        )
+        .expect("failed preflight leaves Tag14 invocation available")
+    {
+        XmrPreparedEffectInvocationV1::InvokeOnce { command, .. } => command,
+        XmrPreparedEffectInvocationV1::ObserveOnly { .. }
+        | XmrPreparedEffectInvocationV1::Complete { .. } => {
+            panic!("prepared semantic Tag14 must invoke exactly once")
+        }
+    };
+    let output = invocation
+        .output()
+        .expect("run Tag14 release descriptor probe");
+    assert!(
+        output.status.success(),
+        "Tag14 descriptor probe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

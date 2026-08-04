@@ -12,6 +12,12 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, ensure};
+use lez_bridge_adapter::XmrLezBridgeBindingV3;
+use lez_bridge_protocol::{
+    MessageContext, Participant as BridgeParticipant, RequestId, RunId, RuntimeDescriptor,
+    XmrNativeEscrowTermsV3,
+};
+use lez_xmr_swap_sdk::{MoneroPrivateViewKey, XmrActivatedAgreementV1, XmrAgreementV1};
 use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, memfd_create};
 use rustix::io::fcntl_dupfd_cloexec;
 use sha2::{Digest as _, Sha256};
@@ -21,7 +27,8 @@ use zeroize::{Zeroize as _, Zeroizing};
 use lez_swap_store::{MakerActorHeldLock, PinnedChildFdPlan, PinnedExecutable};
 
 use crate::{
-    ValidatedXmrEffectAuthorityV1, XmrEffectAuthenticatedRpcV1,
+    ActorRole, ValidatedXmrEffectAuthorityV1, ValidatedXmrEffectExecutionV3,
+    XmrEffectAuthenticatedRpcV1, XmrEffectChildModeV1, XmrTag14ReleaseNodeProfileV1,
     application_provision::ValidatedXmrEffectApplicationV1, open_path_no_symlinks,
     open_private_directory,
 };
@@ -69,6 +76,14 @@ pub const XMR_EFFECT_PRIVATE_VIEW_KEY_FD: i32 = 216;
 pub const XMR_EFFECT_CHILD_PLAN_FD: i32 = 217;
 /// Invocation-only private XMR spend share for Tag16 and Monero sweep senders.
 pub const XMR_EFFECT_PRIVATE_XMR_SHARE_FD: i32 = 218;
+/// Typed schema-v2 Tag14 release invocation.
+pub const XMR_TAG14_RELEASE_INVOCATION_FD: i32 = 220;
+/// Release-only sidecar capability.
+pub const XMR_TAG14_RELEASE_CAPABILITY_FD: i32 = 221;
+/// Release-journal protection key.
+pub const XMR_TAG14_RELEASE_PROTECTION_KEY_FD: i32 = 222;
+/// Already-open owner-private release state directory.
+pub const XMR_TAG14_RELEASE_STATE_DIRECTORY_FD: i32 = 223;
 
 struct PinnedXmrEffectApplicationInputsV1 {
     stage_a: File,
@@ -77,6 +92,70 @@ struct PinnedXmrEffectApplicationInputsV1 {
     peer_public_packet: File,
     private_manifest: File,
     private_view_key: File,
+}
+
+#[derive(serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct XmrTag14ReleaseInvocationWireV2 {
+    schema_version: u16,
+    mode: &'static str,
+    public_config: XmrTag14ReleasePublicConfigWireV1,
+}
+
+#[derive(serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct XmrTag14ReleasePublicConfigWireV1 {
+    schema_version: u16,
+    sidecar_endpoint: String,
+    indexer_endpoint: String,
+    node_profile: &'static str,
+    run_id: RunId,
+    runtime: RuntimeDescriptor,
+    terms: XmrNativeEscrowTermsV3,
+    protection_key_id: String,
+}
+
+/// Invocation-specific custody for the semantic Taker Tag14 release worker.
+#[must_use]
+pub(crate) struct PinnedXmrTag14ReleaseInputsV1 {
+    invocation: File,
+    capability: File,
+    protection_key: File,
+    state_directory: File,
+}
+
+impl fmt::Debug for PinnedXmrTag14ReleaseInputsV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PinnedXmrTag14ReleaseInputsV1")
+            .field("invocation", &"[SEALED]")
+            .field("capability", &"[REDACTED; SEALED]")
+            .field("protection_key", &"[REDACTED; SEALED]")
+            .field("state_directory", &"[OPEN DIRECTORY]")
+            .finish()
+    }
+}
+
+impl PinnedXmrTag14ReleaseInputsV1 {
+    /// Consumes the release-only inputs into one no-argument child mapping.
+    pub(crate) fn into_command(
+        self,
+        executable: PinnedExecutable,
+        actor_lock: &MakerActorHeldLock,
+        workflow_lock: &MakerActorHeldLock,
+    ) -> Result<Command> {
+        let descriptors = vec![
+            (self.invocation, XMR_TAG14_RELEASE_INVOCATION_FD),
+            (self.capability, XMR_TAG14_RELEASE_CAPABILITY_FD),
+            (self.protection_key, XMR_TAG14_RELEASE_PROTECTION_KEY_FD),
+            (self.state_directory, XMR_TAG14_RELEASE_STATE_DIRECTORY_FD),
+        ];
+        let plan = PinnedChildFdPlan::new(descriptors)
+            .context("validate XMR Tag14 release descriptor plan")?;
+        executable
+            .into_command_with_locks_and_fd_plan(actor_lock, workflow_lock, plan)
+            .context("compose XMR Tag14 release command")
+    }
 }
 
 /// One immutable secret snapshot intended for descriptor-path child handoff.
@@ -484,6 +563,159 @@ impl ValidatedXmrEffectAuthorityV1 {
             invocation_xmr_share: None,
         })
     }
+}
+
+impl ValidatedXmrEffectExecutionV3 {
+    /// Pins only the four descriptor-native inputs required by the schema-v2
+    /// Taker Tag14 release service.
+    ///
+    /// The general LEZ capability, every Monero RPC credential, application
+    /// private manifest, view key, and spend share are deliberately excluded
+    /// from the returned child plan. Stage A/B and the view key are used only
+    /// inside the parent to rederive the exact public release binding.
+    pub(crate) fn pin_tag14_release_inputs_at_use(
+        &self,
+        mode: XmrEffectChildModeV1,
+    ) -> Result<PinnedXmrTag14ReleaseInputsV1> {
+        ensure!(
+            self.effect_authority().role() == ActorRole::Taker
+                && self.effect_authority().schema_version() == 2,
+            "semantic Tag14 release requires schema-v2 Taker authority"
+        );
+        let mode = match mode {
+            XmrEffectChildModeV1::Preflight => "preflight",
+            XmrEffectChildModeV1::Invoke => "invoke",
+            XmrEffectChildModeV1::Observe => {
+                anyhow::bail!("Tag14 release custody cannot authorize observation")
+            }
+        };
+        let runtime_source = read_stable_private_source(
+            self.effect_authority().lez().runtime_file(),
+            MAX_RUNTIME_BYTES,
+            "XMR Tag14 runtime",
+        )?;
+        ensure!(
+            Sha256::digest(&runtime_source.bytes).as_slice()
+                == self.effect_authority().lez().runtime_sha256(),
+            "XMR Tag14 runtime digest changed at use"
+        );
+        let runtime: RuntimeDescriptor = serde_json::from_slice(&runtime_source.bytes)
+            .context("XMR Tag14 runtime JSON is invalid")?;
+        let invocation_bytes = self.tag14_release_invocation_bytes(mode, runtime)?;
+        let release = self
+            .effect_authority()
+            .tag14_release()
+            .context("Tag14 release authority is unavailable")?;
+        let mut identities = BTreeSet::from([(
+            runtime_source.identity.device,
+            runtime_source.identity.inode,
+        )]);
+        let capability = pin_secret(
+            release.capability_file(),
+            "XMR Tag14 release capability",
+            &mut identities,
+        )?
+        .into_snapshot();
+        let protection_key = pin_secret(
+            release.protection_key_file(),
+            "XMR Tag14 release protection key",
+            &mut identities,
+        )?
+        .into_snapshot();
+        let state_directory = open_private_directory(
+            release.state_directory(),
+            "XMR Tag14 release state directory",
+        )?;
+        Ok(PinnedXmrTag14ReleaseInputsV1 {
+            invocation: seal_bytes("XMR Tag14 release invocation", &invocation_bytes)?,
+            capability,
+            protection_key,
+            state_directory,
+        })
+    }
+
+    fn tag14_release_invocation_bytes(
+        &self,
+        mode: &'static str,
+        runtime: RuntimeDescriptor,
+    ) -> Result<Vec<u8>> {
+        let release = self
+            .effect_authority()
+            .tag14_release()
+            .context("Tag14 release authority is unavailable")?;
+        let agreement = XmrAgreementV1::from_wire(&self.application.stage_a_wire)
+            .context("XMR Tag14 Stage-A agreement is invalid")?;
+        let view_key = parse_private_view_key_bytes(&self.application.private_view_key)?;
+        let activation = XmrActivatedAgreementV1::from_wire(
+            &agreement,
+            &self.application.stage_b_wire,
+            &view_key,
+        )
+        .context("XMR Tag14 Stage-B activation is invalid")?;
+        ensure!(
+            agreement.body().swap_id() == self.effect_authority().swap_id()
+                && agreement.agreement_commitment()
+                    == self.effect_authority().agreement_commitment()
+                && activation.activation_commitment()
+                    == self.effect_authority().activation_commitment(),
+            "XMR Tag14 application identity changed"
+        );
+        let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
+            .context("XMR Tag14 Stage-B binding is invalid")?;
+        let run_id = RunId::new(self.effect_authority().run_id().to_owned())
+            .context("XMR Tag14 run ID is invalid")?;
+        let context = MessageContext::new(
+            run_id.clone(),
+            RequestId::new("release-config").context("XMR Tag14 request ID is invalid")?,
+            BridgeParticipant::Taker,
+        );
+        binding
+            .terms()
+            .validate_runtime_binding(&context, &runtime)
+            .context("XMR Tag14 runtime is not bound by Stage B")?;
+        let invocation = XmrTag14ReleaseInvocationWireV2 {
+            schema_version: 2,
+            mode,
+            public_config: XmrTag14ReleasePublicConfigWireV1 {
+                schema_version: 1,
+                sidecar_endpoint: release.sidecar_url().as_str().to_owned(),
+                indexer_endpoint: release.indexer_url().as_str().to_owned(),
+                node_profile: match release.node_profile() {
+                    XmrTag14ReleaseNodeProfileV1::Local => "local",
+                    XmrTag14ReleaseNodeProfileV1::OfficialPublic => "official_public",
+                },
+                run_id,
+                runtime,
+                terms: binding.terms(),
+                protection_key_id: release.protection_key_id().to_owned(),
+            },
+        };
+        let mut invocation_bytes =
+            serde_json::to_vec(&invocation).context("encode XMR Tag14 release invocation")?;
+        invocation_bytes.push(b'\n');
+        Ok(invocation_bytes)
+    }
+}
+
+fn parse_private_view_key_bytes(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {
+    let mut text = Zeroizing::new(
+        String::from_utf8(bytes.to_vec()).context("XMR Tag14 view key is not UTF-8")?,
+    );
+    while text.ends_with(['\n', '\r']) {
+        text.pop();
+    }
+    ensure!(
+        text.len() == 64
+            && text
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "XMR Tag14 view key is not exact lowercase hex"
+    );
+    let mut scalar = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(text.as_bytes(), scalar.as_mut()).context("decode XMR Tag14 view key")?;
+    text.zeroize();
+    MoneroPrivateViewKey::from_monero_little_endian(*scalar)
+        .context("XMR Tag14 view key is not a canonical scalar")
 }
 
 fn pin_rpc(

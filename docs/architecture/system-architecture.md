@@ -2565,15 +2565,18 @@ flowchart TB
     Receipt["Receipt v2"] --> Claim["lez-taker claim"]
     Claim --> Loader["Schema v3 execution loader"]
     Loader --> Selector["Role and workflow selector"]
-    Selector --> Pin["Hash pin runtime, secrets, application bytes, child plan, and dual locks"]
+    Selector --> Pin["Hash pin role-specific inputs and dual locks"]
     Pin --> Share["Add sealed FD 218 only for share-consuming senders"]
     Pin --> Authorize["Workflow v2 durable CAS"]
-    Authorize -->|Prepared| Invoke["InvokeOnce"]
-    Invoke --> Tag14["Tag14 sender marker"]
-    ReleaseAuthority["Schema 2 Taker release authority"] -.->|"future sealed custody"| ReleaseWorker
+    Authorize -->|Prepared schema 1| Invoke["InvokeOnce"]
+    Invoke --> Tag14["Legacy Tag14 sender marker"]
+    ReleaseAuthority["Schema 2 Taker release authority"] --> ReleasePreflight["Tag14 release preflight with FDs 220 to 223"]
     ReleasePrepare["Exclusive Tag14 release preparer"] --> ReleaseJournal[("Encrypted release journal")]
+    ReleaseJournal --> ReleasePreflight
+    ReleasePreflight -->|"ready with zero network and no CAS"| Authorize
+    Authorize -->|"Prepared schema 2 to Started CAS"| ReleaseWorker
     ReleaseJournal --> ReleaseWorker["No-argument release worker with sealed FDs 220 to 222 and directory FD 223"]
-    Tag14 -.->|"future authority wiring"| ReleaseWorker
+    ReleaseAuthority --> ReleaseWorker
     ReleaseWorker --> ReleaseSidecar["Authenticated release-only sidecar"]
     ReleaseSidecar -.-> Node
     Invoke --> Tag16["Real Tag16 sender"]
@@ -2590,8 +2593,8 @@ flowchart TB
     Parser --> Reconcile["Exact plan and evidence reconciliation"]
     Reconcile --> Succeeded["Succeeded and complete"]
     Authorize -->|Succeeded| Complete["Complete with no process"]
-    Tag14 -.-> Rpc["Future receipt-v2 release authority"]
-    Observer -.-> Rpc
+    ReleaseWorker --> Started
+    Observer -.-> Rpc["Future semantic finalized Tag14 observer"]
 ```
 
 Program, inputs, both locks, and the complete descriptor command are validated
@@ -2602,7 +2605,11 @@ no stale mutable-journal snapshot is passed. ADR 0153 adds a canonical
 secret-free execution plan on sealed FD 217, binding mode, step, identities,
 ABI, original sending-plan digest, journal, evidence root, and loopback RPC
 origins. ADR 0154 supplies FD 218 only to Tag16 and the two Monero sweep
-senders. Tag14 and every observer prove that descriptor absent. The no-argument
+senders. The schema-v2 Tag14 parent instead derives exact public release terms
+from validated Stage A/B and grants only sealed FDs 220 through 223; general
+credentials, private application bytes, and FD 218 are absent. A read-only
+worker preflight authenticates the journal and binding at zero network calls
+before the parent repins and consumes the workflow CAS. The no-argument
 Tag16 child reconstructs the exact Taker refund session, requires its live
 durable presignature to equal Stage B, adapts it with the sealed Taker share,
 verifies the result, and performs one authenticated prepare, complete, and
@@ -2613,12 +2620,13 @@ Unknown, exact-compares the original sending-plan identity, parses bounded
 step-exact output, locally derives the evidence source, and reconciles
 Succeeded. Prepared and Succeeded cannot start the observer; observer failure
 changes no journal state. The third claim reads Complete and starts no process.
-The solid Tag16-to-sidecar route is semantic local process evidence; the dashed
-sidecar-to-node and Tag14/observer edges are not invoked in this checkpoint.
-Literal receipt-v2 CLI composition, refund-window admission before the CAS,
-actual-node submission/finality, semantic Tag14 and Monero sweeps, and
-read-only finalized reconciliation remain open. ADR 0154 gives the complete
-conditional-atomicity sequence and limits.
+The solid Tag16-to-sidecar route and Tag14 worker boundaries are semantic local
+process evidence. The literal CLI covers rejected Tag14 preflight, retry,
+invoke once, observe/reconcile, and Complete, while the real release worker
+separately proves preflight, admission, and restart. Their single joined
+actual-node replay, semantic finalized Tag14 observer, Monero sweeps, and
+adverse crash/reorg/concurrency evidence remain open. ADRs 0154 and 0157 give
+the complete conditional-atomicity sequences and limits.
 
 #### Actual local components and RPCs
 

@@ -229,6 +229,31 @@ impl<C: FinalizedLezClockSource> XmrAuthorizationPublicationTransport
 }
 
 impl ReleaseStore {
+    /// Authenticates one prepared release and its exact client binding without
+    /// reading the chain clock, consuming the publication CAS, or submitting.
+    ///
+    /// This is the process-supervisor preflight boundary. A successful return
+    /// proves that the journal exists, decrypts with the supplied key, and is
+    /// bound to the exact run/runtime/terms and release-only client. The caller
+    /// must still invoke [`Self::publish_xmr_claim_release`] after obtaining its
+    /// own durable one-attempt authority.
+    ///
+    /// # Errors
+    ///
+    /// Rejects storage drift, journal authentication failure, or any binding
+    /// mismatch without mutating the journal or using a network route.
+    pub fn preflight_xmr_claim_release(
+        &self,
+        snapshot: &ReleaseSnapshot,
+        key: &PublicationProtectionKey,
+        binding: &XmrReleaseSubmissionBindingV3,
+        client: &XmrReleaseClient,
+    ) -> Result<ReleaseState, ReleaseError> {
+        validate_publication_binding(snapshot, binding, client)?;
+        self.validate_for_publication(snapshot, key)?;
+        Ok(snapshot.state())
+    }
+
     /// Publishes one prepared XMR claim authorization through sealed capabilities.
     ///
     /// The typed binding, client run, and client runtime are exact-checked before
@@ -248,14 +273,9 @@ impl ReleaseStore {
         client: &XmrReleaseClient,
         clock: &mut C,
     ) -> Result<ReleasePublicationOutcome, ReleasePublicationError> {
+        validate_publication_binding(&snapshot, binding, client)?;
         let authenticated_target =
             crate::issuer::release_target_bytes(&binding.run_id, &binding.runtime, &binding.terms);
-        if snapshot.target() != authenticated_target.as_slice()
-            || client.expected_run_id() != &binding.run_id
-            || client.expected_runtime() != &binding.runtime
-        {
-            return Err(ReleaseError::BindingMismatch.into());
-        }
         let publication_id = snapshot.publication_id();
         let mut request_binding = RELEASE_REQUEST_DOMAIN.to_vec();
         request_binding.extend_from_slice(&snapshot.activation());
@@ -271,6 +291,23 @@ impl ReleaseStore {
             clock,
         };
         self.publish_or_observe(snapshot, key, &mut transport).await
+    }
+}
+
+fn validate_publication_binding(
+    snapshot: &ReleaseSnapshot,
+    binding: &XmrReleaseSubmissionBindingV3,
+    client: &XmrReleaseClient,
+) -> Result<(), ReleaseError> {
+    let authenticated_target =
+        crate::issuer::release_target_bytes(&binding.run_id, &binding.runtime, &binding.terms);
+    if snapshot.target() != authenticated_target.as_slice()
+        || client.expected_run_id() != &binding.run_id
+        || client.expected_runtime() != &binding.runtime
+    {
+        Err(ReleaseError::BindingMismatch)
+    } else {
+        Ok(())
     }
 }
 

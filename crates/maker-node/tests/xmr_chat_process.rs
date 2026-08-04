@@ -22,7 +22,9 @@ use std::{
 mod xmr_chat_fixture;
 use xmr_chat_fixture::XmrChatFixture;
 
-use lez_bridge_protocol::RequestId;
+use lez_bridge_protocol::{
+    Hex32, Participant as BridgeParticipant, RequestId, RuntimeCompatibility, RuntimeDescriptor,
+};
 use lez_maker_node::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, LocalPriceSetRequest, PairConfigureRequest,
     RunLocalDelivery, XmrChatStageARequestV1, XmrChatStageAResponseV1, call_local_chat_rpc,
@@ -37,6 +39,7 @@ use lez_swap_store::{
     XmrWorkflowDecision, XmrWorkflowReconciliationSource, XmrWorkflowReconciliationV2,
     XmrWorkflowStep, maker_xmr_chat_swap_id,
 };
+use lez_xmr_swap_sdk::{XmrAgreementV1, XmrRoleV1};
 use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::Serialize;
@@ -278,6 +281,18 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
             "effect_authority": "validated"
         })
     );
+    write_private_bytes(&effect.preflight_rejection_marker, b"reject\n");
+    let rejected_claim_preflight = run_taker_lifecycle("claim", &effect.receipt);
+    assert!(!rejected_claim_preflight.status.success());
+    assert!(rejected_claim_preflight.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(rejected_claim_preflight.stderr).unwrap(),
+        "XMR Taker claim is not yet eligible or its preflight failed\n"
+    );
+    assert!(fs::read(&effect.invocation_marker).unwrap().is_empty());
+    fs::remove_file(&effect.preflight_rejection_marker)
+        .expect("remove injected claim preflight rejection");
+
     let first_claim = run_taker_lifecycle("claim", &effect.receipt);
     assert!(
         first_claim.status.success(),
@@ -300,7 +315,10 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     );
     assert_ne!(plan_identity, "0".repeat(64));
-    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert_eq!(
+        fs::read(&effect.invocation_marker).unwrap(),
+        b"preflight\ninvoked\n"
+    );
     assert!(fs::read(&effect.observer_marker).unwrap().is_empty());
 
     let replayed_claim = run_taker_lifecycle("claim", &effect.receipt);
@@ -316,7 +334,10 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
     assert_eq!(replayed_claim["step"], "authorize_lez_tag14");
     assert_eq!(replayed_claim["tool_plan_identity_sha256"], plan_identity);
     assert_eq!(replayed_claim["chain_effect_finalized"], true);
-    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert_eq!(
+        fs::read(&effect.invocation_marker).unwrap(),
+        b"preflight\ninvoked\n"
+    );
     assert_eq!(fs::read(&effect.observer_marker).unwrap(), b"observed\n");
     assert_taker_tag14_reconciliation(&effect, &plan_identity);
 
@@ -333,7 +354,10 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
     assert_eq!(completed_claim["step"], "authorize_lez_tag14");
     assert_eq!(completed_claim["tool_plan_identity_sha256"], plan_identity);
     assert_eq!(completed_claim["chain_effect_finalized"], true);
-    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert_eq!(
+        fs::read(&effect.invocation_marker).unwrap(),
+        b"preflight\ninvoked\n"
+    );
     assert_eq!(fs::read(&effect.observer_marker).unwrap(), b"observed\n");
     assert_taker_tag14_reconciliation(&effect, &plan_identity);
 
@@ -1568,9 +1592,35 @@ fn taker_effect_authority(
     terminal_step: XmrWorkflowStep,
     run_id: &str,
 ) -> TakerEffectAuthority {
+    let agreement = XmrAgreementV1::from_wire(
+        &fs::read(
+            receipt["stage_a_file"]
+                .as_str()
+                .expect("Stage-A receipt path"),
+        )
+        .expect("read accepted Stage A"),
+    )
+    .expect("parse accepted Stage A");
+    let lez = agreement.body().lez();
+    let runtime = RuntimeDescriptor::new(
+        BridgeParticipant::Taker,
+        RuntimeCompatibility::LeeV0_2_0,
+        Hex32::from_bytes([0x77; 32]),
+        Hex32::from_bytes(lez.channel_id()),
+        Hex32::from_bytes(lez.genesis_hash()),
+        Hex32::from_bytes(effect_program_id_bytes(lez.escrow_program_id())),
+        Hex32::from_bytes(
+            agreement
+                .body()
+                .participants()
+                .for_role(XmrRoleV1::Taker)
+                .lez_owner_account(),
+        ),
+    );
     let runtime_file = effect_root.join("lez-runtime.json");
-    let runtime_bytes = b"{\"role\":\"taker\",\"schema_version\":1}\n";
-    write_private_bytes(&runtime_file, runtime_bytes);
+    let mut runtime_bytes = serde_json::to_vec(&runtime).expect("encode fixture runtime");
+    runtime_bytes.push(b'\n');
+    write_private_bytes(&runtime_file, &runtime_bytes);
     let capability_file = effect_root.join("lez.capability");
     write_private_bytes(&capability_file, b"fixture-capability\n");
     for name in [
@@ -1595,7 +1645,9 @@ fn taker_effect_authority(
         .expect("UTF-8 preflight rejection marker path");
     assert!(!marker_text.contains('\''));
     assert!(!rejection_marker_text.contains('\''));
-    let sender_worker = format!("#!/bin/sh\nset -eu\nprintf 'invoked\\n' >> '{marker_text}'\n");
+    let tag14_release_worker = format!(
+        "#!/bin/sh\nset -eu\n[ \"$#\" -eq 0 ]\nfor fd in 197 198 199 220 221 222 223; do test -e \"/proc/self/fd/$fd\"; done\nfor fd in 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219; do test ! -e \"/proc/self/fd/$fd\"; done\nif grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/220; then\n  test ! -e '{rejection_marker_text}'\n  printf 'preflight\\n' >> '{marker_text}'\n  exit 0\nfi\ngrep -Fq '\"mode\":\"invoke\"' /proc/self/fd/220\nprintf 'invoked\\n' >> '{marker_text}'\n"
+    );
     let preflight_aware_sender_worker = format!(
         "#!/bin/sh\nset -eu\nif grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/217; then\n  test ! -e '{rejection_marker_text}'\n  printf 'preflight\\n' >> '{marker_text}'\n  exit 0\nfi\nprintf 'invoked\\n' >> '{marker_text}'\n"
     );
@@ -1604,7 +1656,7 @@ fn taker_effect_authority(
         XmrWorkflowStep::AuthorizeLezTag14 => (
             "authorize_lez_tag14",
             FINALIZED_TAG14_EVIDENCE_SHA256,
-            sender_worker.as_str(),
+            tag14_release_worker.as_str(),
             inert_worker,
         ),
         XmrWorkflowStep::RefundLezTag16 => (
@@ -1630,8 +1682,30 @@ fn taker_effect_authority(
     let finalized_worker = format!(
         "#!/bin/sh\nset -eu\n[ \"$#\" -eq 2 ]\n[ \"$1\" = '--xmr-workflow-step' ]\n[ \"$2\" = '{step_name}' ]\nprintf 'observed\\n' >> '{observer_marker_text}'\nprintf '%s\\n' '{finalized_result}'\n"
     );
+    let tag14_release = if terminal_step == XmrWorkflowStep::AuthorizeLezTag14 {
+        let state_directory = effect_root.join("tag14-release-state");
+        make_private_directory(&state_directory);
+        let capability_file = effect_root.join("tag14-release.capability");
+        let protection_key_file = effect_root.join("tag14-release.key");
+        write_private_bytes(&capability_file, b"fixture-release-capability");
+        write_private_bytes(
+            &protection_key_file,
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        Some(Tag14ReleaseAuthority {
+            sidecar_url: "http://127.0.0.1:36978/".to_owned(),
+            indexer_url: "http://127.0.0.1:36979/".to_owned(),
+            node_profile: "local",
+            state_directory,
+            capability_file,
+            protection_key_file,
+            protection_key_id: "taker-release-key-1",
+        })
+    } else {
+        None
+    };
     TakerEffectAuthority {
-        schema_version: 1,
+        schema_version: if tag14_release.is_some() { 2 } else { 1 },
         pair: "monero",
         role: "taker",
         swap_id: receipt["swap_id"].as_str().unwrap().to_owned(),
@@ -1647,7 +1721,7 @@ fn taker_effect_authority(
         lez: EffectLezRpc {
             sidecar_url: "http://127.0.0.1:36972/".to_owned(),
             runtime_file,
-            runtime_sha256: hex::encode(Sha256::digest(runtime_bytes)),
+            runtime_sha256: hex::encode(Sha256::digest(&runtime_bytes)),
             capability_file,
         },
         monero: EffectMoneroRpc {
@@ -1662,7 +1736,11 @@ fn taker_effect_authority(
                 effect_root,
                 "tag14-authorize",
                 tag14_worker.as_bytes(),
-                "lez_xmr_tag14_authorize_v1",
+                if tag14_release.is_some() {
+                    "lez_xmr_tag14_release_v2"
+                } else {
+                    "lez_xmr_tag14_authorize_v1"
+                },
             ),
             finalized_classifier: effect_tool(
                 effect_root,
@@ -1689,7 +1767,16 @@ fn taker_effect_authority(
                 "lez_xmr_tag16_refund_v1",
             ),
         },
+        tag14_release,
     }
+}
+
+fn effect_program_id_bytes(words: [u32; 8]) -> [u8; 32] {
+    let mut bytes = [0_u8; 32];
+    for (index, word) in words.into_iter().enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    bytes
 }
 
 #[derive(Serialize)]
@@ -1733,6 +1820,17 @@ struct EffectMoneroRpc {
 }
 
 #[derive(Serialize)]
+struct Tag14ReleaseAuthority {
+    sidecar_url: String,
+    indexer_url: String,
+    node_profile: &'static str,
+    state_directory: PathBuf,
+    capability_file: PathBuf,
+    protection_key_file: PathBuf,
+    protection_key_id: &'static str,
+}
+
+#[derive(Serialize)]
 struct TakerEffectAuthority {
     schema_version: u16,
     pair: &'static str,
@@ -1747,6 +1845,8 @@ struct TakerEffectAuthority {
     lez: EffectLezRpc,
     monero: EffectMoneroRpc,
     taker_tools: TakerEffectTools,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tag14_release: Option<Tag14ReleaseAuthority>,
 }
 
 fn effect_tool(root: &Path, name: &str, program: &[u8], abi: &'static str) -> EffectTool {

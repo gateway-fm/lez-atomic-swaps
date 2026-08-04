@@ -1,7 +1,7 @@
 id	state	gate_script	evidence	remaining
 F1	open	./scripts/test-m7-route-health-contract.sh	docs/requirements-traceability.md	Complete an actual unaffected-pair swap while another real local chain node is absent
 F2	green	./scripts/check-m3-cryptographic-vectors.sh	docs/requirements-traceability.md	none
-F3	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Tag-17 punishment plus semantic claim/refund receipts and adverse concurrency
+F3	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Tag-17 punishment plus joined actual-node claim/refund receipts and adverse concurrency
 F4	open	./scripts/run-zebra-e2e.sh	docs/requirements-traceability.md	Composed actual-node recovery and post-lock margin matrix
 F5	open	./scripts/test-m4-lez-local-deployment-contract.sh	docs/requirements-traceability.md	Current guest deployment identity and Tag-17 punishment transition
 F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	XMR punishment, adversarial races, process-kill, reorg, and concurrency outcomes
@@ -11,7 +11,7 @@ F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-tracea
 U1	green	./scripts/test-m7-xmr-sdk-facade-contract.sh	docs/requirements-traceability.md	none
 U2	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Accepted-application actual-chain concurrency and process crash recovery
 U3	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Complete supported-pair semantic claim/refund daemon action matrix
-U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Literal XMR Taker semantic claim/refund and abandonment journeys
+U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Join the semantic XMR claim CLI to actual nodes and complete Monero sweep plus abandonment journeys
 U5	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
 U6	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
 U7	green	./scripts/verify-lez-v02-provisional.sh	docs/requirements-traceability.md	none

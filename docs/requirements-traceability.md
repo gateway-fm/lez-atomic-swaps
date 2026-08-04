@@ -247,13 +247,15 @@ was unavailable and neither this row nor the tag claims remote CI green.
 | F8 | Pluggable local and Logos-module C-API price sources | Price-port contract suite; config/CLI mutation E2E; fake and real C-ABI adapter tests including stale/unavailable feeds | Partial M5: local daemon/CLI quoting is GREEN. The actual-C worker and bounded parent are GREEN for validation and isolation. Schema v15 atomically binds the policy, module SHA epoch, monotonic quote head, immutable offer, and replay record; retry-before-effect, rollback/equivocation, and stale quote cases pass. The real daemon selects without fallback, invokes outside the store mutex, signs exact quote/module fields into Delivery, exact-replays with the failed module, rejects fresh requests while failed, and reconciles after restart. Eventual upstream compatibility remains LOGOS-021 |
 | F9 | Headless maker covers configuration, pricing, advertisement, execution, monitoring, and full CLI operation | UJ-007 actual CLI/daemon suite plus restart, history, manual claim/refund, pricing, advertisement, and fixed-service lifecycle cases | Partial M7: owner-local configuration/pricing/offers/create/status/history/alerts, generation-fenced actions, simultaneous workers, fixed service control, and automatic route-scoped health/withdrawal are process-GREEN. Health workers are bounded, hash-pinned, nonoverlapping and isolated from the RPC loop; accepted state is not revoked. ADRs 0152–0154 give receipt-v2 XMR children exact sealed application inputs, a canonical plan, least-privilege branch material, and one real Tag16 semantic sender. Literal CLI preflight/send/observe/Complete composition of that sender is GREEN. ADR 0155 makes the existing finalized-gated Tag14 release service safe to invoke through no-argument sealed descriptors, but the CLI authority wiring remains open. Semantic Tag14 composition/observation/sweeps, complete all-pair lifecycle, and the actual unaffected-pair dependency-loss composition remain |
 
-Current M7 Tag14 authority update for F3/F9/U4: ADR 0156 preserves the
-schema-1 marker ABI while schema 2 requires a typed release-only sidecar,
-indexer trust profile, state directory, capability, protection key, and key
-identifier. Validation rejects role, endpoint, and authority-path aliasing
-before workflow effects. This is an authority checkpoint only; at-use custody,
-the semantic release invocation, reconciliation, and actual-node evidence
-remain open and are not represented as complete.
+Current M7 Tag14 update for F3/F9/U4: ADRs 0156 and 0157 preserve the schema-1
+marker while schema 2 selects the real release ABI, authenticates the journal
+and binding before workflow CAS, rederives the invocation from validated Stage
+A/B, and grants only release FDs 220..223. Real worker preflight/invoke/restart,
+the eight-case actor route, and literal claim rejected-preflight/invoke/observe/
+Complete are GREEN. The real worker and literal CLI proofs remain separately
+composed: a joined actual-node CLI replay, semantic finalized Tag14 observer,
+Monero claim sweep, Tag17 punishment, and adverse concurrency still remain and
+are not represented as complete.
 
 Current F7 execution update: clean pushed Runs X (`422c72e`), Z (`1555749`),
 AA (`df7ed86`), and AD (`0826dd5`) each completed both actual-node custom-token

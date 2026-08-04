@@ -71,8 +71,8 @@ fn write_report(report: XmrReleaseServiceReport) -> Result<()> {
     println!();
     io::stdout().flush().context("flush release report")?;
     ensure!(
-        report.is_durably_admitted(),
-        "release is not durably admitted"
+        report.is_successful_process_outcome(),
+        "release is neither ready nor durably admitted"
     );
     Ok(())
 }

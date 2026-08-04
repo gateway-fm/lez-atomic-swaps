@@ -356,8 +356,20 @@ attestation so neither can be misreported as the other.
   v2 ABI and a complete Taker-only release profile, separate general and
   release-only capabilities, and validate local/exact-public indexer policy,
   journal/key paths and key identity canonically. The focused Taker authority
-  suite is GREEN 8 of 8 and the full XMR actor regression stays GREEN. Sealed
-  at-use release custody, pre-CAS invocation and marker replacement remain next.
+  suite is GREEN 8 of 8 and the full XMR actor regression stays GREEN. ADR 0157
+  subsequently closes sealed at-use custody, pre-CAS invocation and schema-v2
+  marker replacement.
+- [x] Close semantic Tag14 preflight and receipt-v2 composition through ADR
+  0157: add a schema-v2 `preflight`/`invoke` sealed worker mode; authenticate
+  the exact journal, key, run/runtime/terms and release-only client without a
+  network call or CAS; rederive the invocation from retained validated Stage
+  A/B inside the parent; and grant only FDs 220..223. The parent preflights
+  while Prepared, then repins before the workflow CAS and one invocation.
+  Real worker process proof is GREEN 1 of 1, effect routing is GREEN 8 of 8,
+  and the literal claim journey is GREEN 1 of 1 in 164.85 seconds with rejected
+  preflight retry, invoke once, observe/reconcile, process-free Complete and
+  losing-branch exclusion. A joined actual-node CLI replay, semantic finalized
+  observer, Monero claim sweep, and adverse crash/concurrency cases remain.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

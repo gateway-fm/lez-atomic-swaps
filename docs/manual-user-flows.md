@@ -6706,12 +6706,13 @@ The stable plan hash binds the v1 tool-plan domain, role, step, ABI, pinned
 program SHA-256, and exact effect-authority SHA-256. It does not expose or
 pretend to immutably bind rotating credential contents.
 
-These fixtures run a descriptor-checking sender and fixed finalized-classifier
-marker only. They do not open an RPC or node, construct or submit semantic tag
-14, classify real chain finality, or move funds. The real receipt-v2 lifecycle
-route now performs process invocation plus evidence-shaped durable
-reconciliation, while semantic Tag14 and actual-chain observation remain open.
-Literal M5 remains 4 of 7.
+These schema-v1 fixtures run a descriptor-checking sender and fixed
+finalized-classifier marker only. They do not open an RPC or node, construct or
+submit semantic tag 14, classify real chain finality, or move funds. The legacy
+receipt-v2 lifecycle performs process invocation plus evidence-shaped durable
+reconciliation. Schema-v2 semantic composition is documented separately under
+ADR 0157; joined actual-chain observation remains open. Literal M5 remains 4
+of 7.
 
 ### Invoke the receipt-v2 Taker Tag14 process checkpoint
 
@@ -6905,11 +6906,11 @@ role-correct Maker/Taker wallets. See ADR 0121 for its component, sequence, and
 conditional-atomicity diagrams, and ADR 0154 for the sealed-child component,
 invocation sequence, and exact conditional-atomicity argument.
 
-### Verify the sealed Tag14 release-worker prerequisite
+### Verify the sealed semantic Tag14 release path
 
 This focused M7 check exercises the established release-only service through
-the no-argument child ABI that the receipt-v2 claim route will consume. It does
-not replace the current Tag14 marker or claim actual-chain finality.
+the no-argument child ABI consumed by the schema-v2 receipt claim route. It
+does not claim actual-chain finality or the subsequent Monero sweep.
 
 ```bash
 cargo +1.96.0 clippy --locked --offline \
@@ -6922,12 +6923,14 @@ M4_RELEASE_PROCESS_OFFLINE=1 \
 
 Expected result is 1 of 1. A group-writable legacy public configuration and an
 unsealed FD 222 protection key must fail before any finalized-indexer or
-sidecar request. The first fully sealed no-argument process reports
+sidecar request. A schema-v2 preflight reports `ready`, leaves the authenticated
+journal `prepared`, and keeps all indexer and sidecar counters at zero. The
+first fully sealed invoke process reports
 `admitted_accepted`; a fresh restart reports `observe_only`; the sidecar
 submission counter remains exactly one. Output must not contain the capability,
 protection key, private root, or release material.
 
-FD 220 contains the bounded schema-v1 public invocation, FD 221 the
+FD 220 contains the bounded schema-v2 mode and public invocation, FD 221 the
 release-only capability, and FD 222 the lowercase protection key. These three
 are owner-owned, mode `0400`, unlinked, and fully sealed against write, grow,
 shrink, and further seal changes. FD 223 is an already-open owner-owned
@@ -6943,20 +6946,36 @@ the only expected variability. ADR 0155 contains the component and sequence
 diagrams and explains why the release is conditional on finalized Fund plus the
 confirmed Monero output and why ambiguous publication never rearms.
 
-To verify that only an explicit versioned receipt authority can select that
-future worker, run:
+To verify the versioned authority, least-privilege route, and literal CLI
+control flow, run:
 
 ```bash
 cargo +1.96.0 test --locked --offline -p xmr-reference-actor \
   --test effect_authority_taker
+
+cargo +1.96.0 test --locked --offline -p xmr-reference-actor \
+  --test effect_route \
+  semantic_tag14_preflight_is_least_privilege_and_does_not_consume_cas \
+  -- --exact
+
+cargo +1.96.0 test --locked --offline -p lez-maker-node \
+  --test xmr_chat_process \
+  real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically \
+  -- --exact
 ```
 
-Expected result is 8 of 8. Schema 1 remains marker-only. Schema 2 requires the
+Expected results are authority 8 of 8, focused route 1 of 1, and literal CLI 1
+of 1. Schema 1 remains marker-only. Schema 2 requires the
 Taker release-worker v2 ABI, distinct release sidecar/capability/key/journal
 authority, and either literal-loopback local indexer configuration or the exact
-pinned Logos Testnet indexer. This command uses temporary files only and makes
-no network, Docker, node, wallet, faucet, peer, or funding call. ADR 0156 gives
-the component, validation sequence, and authority-level atomicity argument.
+pinned Logos Testnet indexer. A deliberately rejected CLI preflight leaves the
+workflow CAS available; the retry preflights once, invokes once, observes once,
+then returns Complete without a process. The Tag14 child receives only program,
+two lock descriptors, and FDs 220..223. These commands use temporary files and
+local process/RPC doubles only; they make no Docker, external-node, public-RPC,
+DNS, faucet, peer, or funding call. Cold compilation and the full role-generated
+Stage A/B process flow dominate timing. ADRs 0156 and 0157 give the authority,
+component, publication sequence, and conditional-atomicity arguments.
 
 
 ## Flow 1W: run the role-correct XMR application refund locally
