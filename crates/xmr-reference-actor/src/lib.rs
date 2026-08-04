@@ -14,6 +14,8 @@ mod application_provision;
 #[cfg(feature = "sessions")]
 mod effect_authority;
 #[cfg(feature = "sessions")]
+mod effect_child_plan;
+#[cfg(feature = "sessions")]
 mod effect_input_custody;
 #[cfg(feature = "sessions")]
 mod effect_route;
@@ -37,11 +39,17 @@ pub use effect_authority::{
     XmrTakerEffectToolsV1, load_validated_xmr_effect_authority_bytes,
 };
 #[cfg(feature = "sessions")]
+pub use effect_child_plan::{
+    XMR_EFFECT_CHILD_PLAN_MAX_BYTES, XmrEffectChildModeV1, XmrEffectChildPlanV1,
+    load_xmr_effect_child_plan_fd, load_xmr_effect_child_plan_fd_for,
+    parse_xmr_effect_child_plan_v1,
+};
+#[cfg(feature = "sessions")]
 pub use effect_input_custody::{
     PinnedXmrEffectInputsV1, PinnedXmrEffectMoneroCredentialsV1, PinnedXmrEffectRpcCredentialsV1,
-    PinnedXmrEffectSecretV1, XMR_EFFECT_OWN_PUBLIC_PACKET_FD, XMR_EFFECT_PEER_PUBLIC_PACKET_FD,
-    XMR_EFFECT_PRIVATE_MANIFEST_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_STAGE_A_FD,
-    XMR_EFFECT_STAGE_B_FD,
+    PinnedXmrEffectSecretV1, XMR_EFFECT_CHILD_PLAN_FD, XMR_EFFECT_OWN_PUBLIC_PACKET_FD,
+    XMR_EFFECT_PEER_PUBLIC_PACKET_FD, XMR_EFFECT_PRIVATE_MANIFEST_FD,
+    XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD,
 };
 #[cfg(feature = "sessions")]
 pub use effect_route::{

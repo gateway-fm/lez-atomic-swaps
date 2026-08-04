@@ -34,9 +34,10 @@ authorization. Sender and observer children receive this fixed extension:
 
 The private manifest and view key remain zeroizing, never appear in argv, env,
 serialization, or debug output, and are copied only into sealed kernel-backed
-files. Descriptor 217 is intentionally absent. Mutable role-journal state and
-later branch artifacts such as final signatures, finalized observations, and
-extracted adaptor scalars require live, typed authorities in the next slice.
+files. ADR 0153 subsequently assigns descriptor 217 to a canonical secret-free
+execution plan, never to a stale role-journal snapshot. Mutable role-journal
+state and later branch artifacts such as final signatures, finalized
+observations, and extracted adaptor scalars require live, typed authorities.
 
 The lower-level effect-authority custody API retains its original 200 through
 210 contract. Only a fully validated schema-v3 execution can add 211 through
@@ -93,9 +94,8 @@ material, one-attempt chain submission, and exact reconciliation.
 
 ## Consequences
 
-- Sender and observer process tests now require descriptors 211 through 216 and
-  prove 217 is absent; the complete actor suite, strict Clippy, and
-  warning-fatal Rustdoc are green.
+- Sender and observer process tests require descriptors 211 through 216 for
+  application material; ADR 0153 extends the command through descriptor 217.
 - No Docker, node, public RPC, faucet, public funds, or external network is used
   by this test. It isolates custody ABI behavior from chain flakiness.
 - U3, U4, and F9 remain open. The next repository-owned work is a typed live

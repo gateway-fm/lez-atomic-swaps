@@ -26,8 +26,9 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use xmr_reference_actor::{
-    ActorRole, ValidatedRolePacket, XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverStateV1,
-    XmrPreparedEffectInvocationV1, load_validated_xmr_effect_execution_v3_bytes,
+    ActorRole, ValidatedRolePacket, XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectChildModeV1,
+    XmrEffectObserverStateV1, XmrPreparedEffectInvocationV1,
+    load_validated_xmr_effect_execution_v3_bytes, parse_xmr_effect_child_plan_v1,
     parse_xmr_effect_observer_result_v1, provision_xmr_taker_actor_from_material,
     publish_xmr_effect_manifest_v3,
 };
@@ -37,24 +38,28 @@ const TAKER_OWNER: &str = "15151515151515151515151515151515151515151515151515151
 const MAKER_OWNER: &str = "2424242424242424242424242424242424242424242424242424242424242424";
 const WORKER: &[u8] = br#"#!/bin/sh
 set -eu
-for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216; do
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do
     test -e "/proc/self/fd/$fd"
 done
-test ! -e /proc/self/fd/217
+test ! -e /proc/self/fd/218
+grep -Fq '"mode":"invoke"' /proc/self/fd/217
 if test "${XMR_TEST_EMIT_APPLICATION_HASHES:-}" = "1"; then
     for fd in 211 212 213 214 215 216; do
         sha256sum "/proc/self/fd/$fd" | cut -d ' ' -f 1
     done
+    cat /proc/self/fd/217
 fi
 "#;
 const OBSERVER: &[u8] = br#"#!/bin/sh
 set -eu
 test "$#" -eq 2
 test "$1" = "--xmr-workflow-step"
-for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216; do
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do
     test -e "/proc/self/fd/$fd"
 done
-test ! -e /proc/self/fd/217
+test ! -e /proc/self/fd/218
+grep -Fq '"mode":"observe"' /proc/self/fd/217
+grep -Fq "\"step\":\"$2\"" /proc/self/fd/217
 printf '{"schema_version":1,"step":"%s","state":"pending"}\n' "$2"
 "#;
 
@@ -926,17 +931,7 @@ fn taker_tag14_effect_route_pins_before_authorizing_and_never_rearms() {
         .env("XMR_TEST_EMIT_APPLICATION_HASHES", "1")
         .output()
         .expect("run pinned Tag14 worker");
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    assert_eq!(
-        String::from_utf8(output.stdout)
-            .expect("ASCII application hashes")
-            .lines()
-            .map(str::to_owned)
-            .collect::<Vec<_>>(),
-        fixture.application_sha256,
-        "child descriptors must contain the exact validated application bytes"
-    );
+    assert_sender_material_and_plan(&fixture, first_plan, output);
 
     let reopened = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
@@ -961,6 +956,56 @@ fn taker_tag14_effect_route_pins_before_authorizing_and_never_rearms() {
             panic!("started Tag14 must be observe-only and expose no command")
         }
     }
+}
+
+fn assert_sender_material_and_plan(fixture: &RouteFixture, first_plan: [u8; 32], output: Output) {
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("ASCII application hashes and plan");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines[..6],
+        fixture
+            .application_sha256
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        "child descriptors must contain the exact validated application bytes"
+    );
+    let plan_bytes = format!("{}\n", lines[6]);
+    let plan = parse_xmr_effect_child_plan_v1(plan_bytes.as_bytes())
+        .expect("parse sealed sending child plan");
+    assert_eq!(plan.role(), ActorRole::Taker);
+    assert_eq!(plan.mode(), XmrEffectChildModeV1::Invoke);
+    assert_eq!(plan.step(), XmrWorkflowStep::AuthorizeLezTag14);
+    assert_eq!(plan.run_id(), RUN_ID);
+    assert_eq!(plan.sending_tool_plan_sha256(), first_plan);
+    assert_eq!(plan.executable_abi(), "lez_xmr_tag14_authorize_v1");
+    assert_eq!(plan.adaptor_journal(), fixture.actor_state);
+    assert_eq!(
+        plan.evidence_root(),
+        fixture.worker.parent().unwrap().join("evidence")
+    );
+    assert_eq!(plan.lez_sidecar_url().as_str(), "http://127.0.0.1:32972/");
+    assert_eq!(plan.monero_daemon_url().as_str(), "http://127.0.0.1:32974/");
+    let mut noncanonical = plan_bytes.clone().into_bytes();
+    noncanonical.pop();
+    assert!(parse_xmr_effect_child_plan_v1(&noncanonical).is_err());
+    let crossed = format!(
+        "{}\n",
+        lines[6].replacen("\"role\":\"taker\"", "\"role\":\"maker\"", 1)
+    );
+    assert!(parse_xmr_effect_child_plan_v1(crossed.as_bytes()).is_err());
+    let public_rpc = format!(
+        "{}\n",
+        lines[6].replacen("http://127.0.0.1:32972/", "http://192.0.2.1:32972/", 1,)
+    );
+    assert!(parse_xmr_effect_child_plan_v1(public_rpc.as_bytes()).is_err());
+    let zero_plan = format!(
+        "{}\n",
+        lines[6].replacen(&hex::encode(first_plan), &"0".repeat(64), 1)
+    );
+    assert!(parse_xmr_effect_child_plan_v1(zero_plan.as_bytes()).is_err());
 }
 
 #[test]

@@ -10,7 +10,10 @@ use lez_swap_store::{
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
-use crate::{ActorRole, ValidatedXmrEffectExecutionV3, XmrEffectToolV1};
+use crate::{
+    ActorRole, ValidatedXmrEffectExecutionV3, XmrEffectChildModeV1, XmrEffectToolV1,
+    effect_child_plan::canonical_xmr_effect_child_plan_bytes,
+};
 
 const TOOL_PLAN_DOMAIN_V1: &[u8] = b"lez-xmr-effect-tool-plan-v1\0";
 /// Maximum accepted typed observer-result JSON bytes.
@@ -229,6 +232,14 @@ impl ValidatedXmrEffectExecutionV3 {
     ) -> Result<XmrPreparedEffectInvocationV1> {
         let tool = select_tool(self.effect_authority(), step)?;
         let digest = tool_plan_identity(self, step, tool);
+        let child_plan = canonical_xmr_effect_child_plan_bytes(
+            self.effect_authority(),
+            XmrEffectChildModeV1::Invoke,
+            step,
+            tool.abi(),
+            digest,
+        )
+        .context("compose XMR sending child plan")?;
         let executable = tool
             .verify_program_at_use()
             .context("pin role-fixed XMR effect tool")?;
@@ -237,7 +248,9 @@ impl ValidatedXmrEffectExecutionV3 {
             .pin_effect_inputs_at_use()
             .context("pin role-fixed XMR effect inputs")?
             .with_application_material(&self.application)
-            .context("pin validated XMR application inputs")?;
+            .context("pin validated XMR application inputs")?
+            .with_child_plan(&child_plan)
+            .context("pin XMR sending child plan")?;
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(
@@ -309,6 +322,14 @@ impl ValidatedXmrEffectExecutionV3 {
         let sending_tool = select_tool(self.effect_authority(), step)?;
         let (observer, reconciliation_source) = select_observer(self.effect_authority(), step)?;
         let digest = tool_plan_identity(self, step, sending_tool);
+        let child_plan = canonical_xmr_effect_child_plan_bytes(
+            self.effect_authority(),
+            XmrEffectChildModeV1::Observe,
+            step,
+            observer.abi(),
+            digest,
+        )
+        .context("compose XMR observer child plan")?;
         let executable = observer
             .verify_program_at_use()
             .context("pin role-fixed XMR effect observer")?;
@@ -317,7 +338,9 @@ impl ValidatedXmrEffectExecutionV3 {
             .pin_effect_inputs_at_use()
             .context("pin role-fixed XMR effect observer inputs")?
             .with_application_material(&self.application)
-            .context("pin validated XMR observer application inputs")?;
+            .context("pin validated XMR observer application inputs")?
+            .with_child_plan(&child_plan)
+            .context("pin XMR observer child plan")?;
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(

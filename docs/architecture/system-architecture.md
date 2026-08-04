@@ -2563,7 +2563,7 @@ flowchart TB
     Receipt["Receipt v2"] --> Claim["lez-taker claim"]
     Claim --> Loader["Schema v3 execution loader"]
     Loader --> Selector["Taker Tag14 selector"]
-    Selector --> Pin["Hash pin runtime, secrets, application bytes, and dual locks"]
+    Selector --> Pin["Hash pin runtime, secrets, application bytes, child plan, and dual locks"]
     Pin --> Authorize["Workflow v2 durable CAS"]
     Authorize -->|Prepared| Invoke["InvokeOnce"]
     Invoke --> Sender["Tag14 sender marker"]
@@ -2582,17 +2582,19 @@ Program, inputs, both locks, and the complete descriptor command are validated
 before `authorize_once`, so a corrupt path, wrong role, or crossed lock cannot
 burn Prepared. ADR 0152 extends that command with sealed Stage A/B, own/peer
 packets, private-role manifest, and private view key on FDs 211 through 216;
-no stale mutable-journal snapshot is passed. InvokeOnce alone starts the sender
-and leaves Started. On the
+no stale mutable-journal snapshot is passed. ADR 0153 adds a canonical
+secret-free execution plan on sealed FD 217, binding mode, step, identities,
+ABI, original sending-plan digest, journal, evidence root, and loopback RPC
+origins. InvokeOnce alone starts the sender and leaves Started. On the
 second claim, ObserveOnly starts only the role-fixed observer from Started or
 Unknown, exact-compares the original sending-plan identity, parses bounded
 step-exact output, locally derives the evidence source, and reconciles
 Succeeded. Prepared and Succeeded cannot start the observer; observer failure
 changes no journal state. The third claim reads Complete and starts no process.
 The solid route is fixed-local process evidence only. The dashed RPC edge is not
-invoked: no typed live-journal or branch-produced artifact handoff, semantic
-tag-14 construction, chain submission, node interaction, or actual-chain
-finality proof exists at this checkpoint.
+invoked: the live journal is address-bound but no semantic journal transition
+or branch-produced artifact custody, tag-14 construction, chain submission,
+node interaction, or actual-chain finality proof exists at this checkpoint.
 
 #### Actual local components and RPCs
 

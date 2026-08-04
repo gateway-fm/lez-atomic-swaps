@@ -312,6 +312,14 @@ attestation so neither can be misreported as the other.
   the full XMR actor suite, strict Clippy and warning-fatal Rustdoc passed.
   This does not close U3/U4/F9: live journal authority and branch-produced
   signature, finalized-evidence and extracted-scalar inputs remain next.
+- [x] Close the second XMR semantic-worker prerequisite through ADR 0153: add
+  one bounded canonical secret-free child plan on sealed FD 217, bind role,
+  invoke/observe mode, step, immutable identities, selected ABI, original
+  sending-plan digest, adaptor journal, evidence root and all validated
+  loopback RPC origins, and verify the descriptor's seals again in the child
+  loader. RED failed on missing FD 217; focused sender/observer tests and strict
+  Clippy are GREEN. This binds the live-journal address but does not yet
+  implement semantic journal transitions or branch-produced artifact custody.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -339,9 +347,10 @@ attestation so neither can be misreported as the other.
    implementation but release-visible. Repository findings and proposal errata
    are not eligible for that exception.
 5. The receipt-v2 XMR process boundary now carries immutable semantic
-   application inputs. Its sender/observer programs remain nonsemantic markers
-   until the live-journal and branch-artifact ABI is implemented and the real
-   local LEZ/Monero journey is replayed through the literal CLI.
+   application inputs plus a canonical execution plan. Its sender/observer
+   programs remain nonsemantic markers until live-journal transitions and
+   branch-artifact custody are implemented and the real local LEZ/Monero
+   journey is replayed through the literal CLI.
 
 The working ETA will be recalculated after the hard-requirement audit because
 the carried matrix mixes completed evidence with historical gaps. The initial

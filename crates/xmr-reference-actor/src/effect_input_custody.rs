@@ -63,6 +63,8 @@ pub const XMR_EFFECT_PEER_PUBLIC_PACKET_FD: i32 = 214;
 pub const XMR_EFFECT_PRIVATE_MANIFEST_FD: i32 = 215;
 /// Fixed child descriptor containing the validated private Monero view key.
 pub const XMR_EFFECT_PRIVATE_VIEW_KEY_FD: i32 = 216;
+/// Fixed child descriptor containing the canonical secret-free execution plan.
+pub const XMR_EFFECT_CHILD_PLAN_FD: i32 = 217;
 
 struct PinnedXmrEffectApplicationInputsV1 {
     stage_a: File,
@@ -186,6 +188,7 @@ pub struct PinnedXmrEffectInputsV1 {
     capability: PinnedXmrEffectSecretV1,
     monero: PinnedXmrEffectMoneroCredentialsV1,
     application: Option<PinnedXmrEffectApplicationInputsV1>,
+    child_plan: Option<File>,
 }
 
 impl fmt::Debug for PinnedXmrEffectInputsV1 {
@@ -203,6 +206,7 @@ impl fmt::Debug for PinnedXmrEffectInputsV1 {
                 "application_material",
                 &self.application.as_ref().map(|_| "[REDACTED; SEALED]"),
             )
+            .field("child_plan", &self.child_plan.as_ref().map(|_| "[SEALED]"))
             .finish_non_exhaustive()
     }
 }
@@ -255,14 +259,23 @@ impl PinnedXmrEffectInputsV1 {
         Ok(self)
     }
 
+    pub(crate) fn with_child_plan(mut self, bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            self.child_plan.is_none(),
+            "XMR effect child plan is already pinned"
+        );
+        self.child_plan = Some(seal_bytes("XMR effect child plan", bytes)?);
+        Ok(self)
+    }
+
     /// Consumes all pinned inputs into one executable-and-lock child mapping.
     ///
     /// Program FD 197, actor lock FD 198, workflow lock FD 199, runtime FD 200,
     /// capability FD 201, role-separated Monero RPC credentials FDs 202..=209,
     /// and shared-wallet file password FD 210 are installed by one command
     /// mapping. A semantically validated execution additionally installs exact
-    /// immutable application material on FDs 211 through 216. No secret enters
-    /// argv or env.
+    /// immutable application material on FDs 211 through 216 and a canonical
+    /// secret-free execution plan on FD 217. No secret enters argv or env.
     ///
     /// # Errors
     ///
@@ -281,6 +294,7 @@ impl PinnedXmrEffectInputsV1 {
             capability,
             monero,
             application,
+            child_plan,
         } = self;
         let PinnedXmrEffectMoneroCredentialsV1 {
             daemon,
@@ -355,6 +369,9 @@ impl PinnedXmrEffectInputsV1 {
                 (application.private_view_key, XMR_EFFECT_PRIVATE_VIEW_KEY_FD),
             ]);
         }
+        if let Some(child_plan) = child_plan {
+            descriptors.push((child_plan, XMR_EFFECT_CHILD_PLAN_FD));
+        }
         let plan = PinnedChildFdPlan::new(descriptors)
             .context("validate XMR effect child descriptor plan")?;
         executable
@@ -423,6 +440,7 @@ impl ValidatedXmrEffectAuthorityV1 {
                 shared_wallet_file_password,
             },
             application: None,
+            child_plan: None,
         })
     }
 }
