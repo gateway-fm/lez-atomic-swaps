@@ -9,7 +9,8 @@ use std::{
 use anyhow::{Context as _, Result, ensure};
 use clap::Parser;
 use lez_v0_2_xmr_release_service::{
-    XmrReleaseServicePaths, read_xmr_release_service_config, run_xmr_release_service_once,
+    XmrReleaseServicePaths, XmrReleaseServiceReport, read_xmr_release_service_config,
+    run_xmr_release_service_once, run_xmr_release_service_once_from_sealed_descriptors,
 };
 
 /// Publish one prepared XMR claim authorization from a sealed journal.
@@ -32,10 +33,22 @@ struct Arguments {
 
 #[tokio::main]
 async fn main() {
-    if let Err(error) = execute(Arguments::parse()).await {
+    let result = if std::env::args_os().len() == 1 {
+        execute_sealed().await
+    } else {
+        execute(Arguments::parse()).await
+    };
+    if let Err(error) = result {
         eprintln!("XMR release process failed: {error}");
         std::process::exit(1);
     }
+}
+
+async fn execute_sealed() -> Result<()> {
+    let report = run_xmr_release_service_once_from_sealed_descriptors()
+        .await
+        .context("sealed release attempt failed")?;
+    write_report(report)
 }
 
 async fn execute(arguments: Arguments) -> Result<()> {
@@ -50,6 +63,10 @@ async fn execute(arguments: Arguments) -> Result<()> {
     let report = run_xmr_release_service_once(config, &paths)
         .await
         .context("release attempt failed")?;
+    write_report(report)
+}
+
+fn write_report(report: XmrReleaseServiceReport) -> Result<()> {
     serde_json::to_writer(io::stdout().lock(), &report).context("encode release report")?;
     println!();
     io::stdout().flush().context("flush release report")?;

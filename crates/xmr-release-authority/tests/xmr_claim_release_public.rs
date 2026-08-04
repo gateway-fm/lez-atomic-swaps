@@ -1,7 +1,8 @@
 //! Public-boundary happy path for the M4 XMR claim-release issuer.
-use std::os::unix::fs::PermissionsExt as _;
+use std::{ffi::CString, fs::File, io::Write as _, os::unix::fs::PermissionsExt as _};
 
 use async_trait::async_trait;
+use command_fds::{CommandFdExt as _, FdMapping};
 use std::str::FromStr as _;
 use std::sync::{
     Arc, OnceLock,
@@ -50,6 +51,7 @@ use lez_xmr_swap_sdk::{
 };
 use monero_rpc::monero::{Block, Hash as MoneroHash, consensus::encode::serialize_hex};
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng as _};
+use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use secp256k1::{Keypair, Message as SecpMessage, PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -78,6 +80,10 @@ const REFUND_AT_MS: u64 = 20_000;
 const MONERO_TX: [u8; 32] = [2; 32];
 const MONERO_GENESIS: [u8; 32] = [31; 32];
 const MONERO_AMOUNT: u64 = 1_000_000_000_000;
+const XMR_RELEASE_INVOCATION_FD: i32 = 220;
+const XMR_RELEASE_CAPABILITY_FD: i32 = 221;
+const XMR_RELEASE_PROTECTION_KEY_FD: i32 = 222;
+const XMR_RELEASE_STATE_DIRECTORY_FD: i32 = 223;
 
 struct ProofFixture {
     maker_wire: Vec<u8>,
@@ -1226,6 +1232,101 @@ async fn run_release_worker(
         .expect("spawn isolated release worker")
 }
 
+fn sealed_process_input(label: &str, bytes: &[u8]) -> File {
+    let name = CString::new(label).expect("sealed release label");
+    let descriptor = memfd_create(
+        name.as_c_str(),
+        MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+    )
+    .expect("create sealed release descriptor");
+    let mut file = File::from(descriptor);
+    fchmod(&file, Mode::RUSR | Mode::WUSR).expect("make release descriptor writable");
+    file.write_all(bytes)
+        .expect("write sealed release descriptor");
+    fchmod(&file, Mode::RUSR).expect("make release descriptor read-only");
+    fcntl_add_seals(
+        &file,
+        SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+    )
+    .expect("seal release descriptor");
+    file
+}
+
+fn unsealed_process_input(label: &str, bytes: &[u8]) -> File {
+    let name = CString::new(label).expect("unsealed release label");
+    let descriptor = memfd_create(
+        name.as_c_str(),
+        MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+    )
+    .expect("create unsealed release descriptor");
+    let mut file = File::from(descriptor);
+    fchmod(&file, Mode::RUSR | Mode::WUSR).expect("make release descriptor writable");
+    file.write_all(bytes)
+        .expect("write unsealed release descriptor");
+    fchmod(&file, Mode::RUSR).expect("make release descriptor read-only");
+    file
+}
+
+async fn run_sealed_release_worker(
+    worker: std::ffi::OsString,
+    public_config: Value,
+    state_directory: &std::path::Path,
+) -> std::process::Output {
+    run_release_worker_with_sealed_descriptors(worker, public_config, state_directory, true).await
+}
+
+async fn run_release_worker_with_sealed_descriptors(
+    worker: std::ffi::OsString,
+    public_config: Value,
+    state_directory: &std::path::Path,
+    seal_protection_key: bool,
+) -> std::process::Output {
+    let mut invocation = serde_json::to_vec(&json!({
+        "schema_version": 1,
+        "public_config": public_config,
+    }))
+    .expect("encode sealed release invocation");
+    invocation.push(b'\n');
+    let protection_key = if seal_protection_key {
+        sealed_process_input("xmr-release-protection-key", M4_RELEASE_KEY_HEX.as_bytes())
+    } else {
+        unsealed_process_input("xmr-release-protection-key", M4_RELEASE_KEY_HEX.as_bytes())
+    };
+    let descriptors = [
+        (
+            sealed_process_input("xmr-release-invocation", &invocation),
+            XMR_RELEASE_INVOCATION_FD,
+        ),
+        (
+            sealed_process_input("xmr-release-capability", CAPABILITY.as_bytes()),
+            XMR_RELEASE_CAPABILITY_FD,
+        ),
+        (protection_key, XMR_RELEASE_PROTECTION_KEY_FD),
+        (
+            File::open(state_directory).expect("open release state directory"),
+            XMR_RELEASE_STATE_DIRECTORY_FD,
+        ),
+    ];
+    let mut command = std::process::Command::new(worker);
+    command
+        .fd_mappings(
+            descriptors
+                .into_iter()
+                .map(|(file, child_fd)| FdMapping {
+                    parent_fd: file.into(),
+                    child_fd,
+                })
+                .collect(),
+        )
+        .expect("map sealed release descriptors");
+    let mut command = tokio::process::Command::from(command);
+    command.kill_on_drop(true);
+    tokio::time::timeout(Duration::from_secs(15), command.output())
+        .await
+        .expect("sealed release worker exceeded 15-second bound")
+        .expect("spawn sealed release worker")
+}
+
 fn assert_process_output_redacted(output: &std::process::Output, private_root: &std::path::Path) {
     let rendered = format!(
         "{}{}",
@@ -1402,19 +1503,31 @@ async fn subprocess_worker_admits_once_and_restart_observes_only() {
 
     std::fs::set_permissions(&public_config_path, std::fs::Permissions::from_mode(0o644))
         .expect("integrity-controlled public config");
-    let first = run_release_worker(
+    let unsealed = run_release_worker_with_sealed_descriptors(
         worker.clone(),
-        public_config_path.clone(),
-        directory.path().to_path_buf(),
-        capability_path.clone(),
-        protection_key_path.clone(),
+        config.clone(),
+        directory.path(),
+        false,
     )
     .await;
+    assert_process_output_redacted(&unsealed, directory.path());
+    assert!(
+        !unsealed.status.success(),
+        "unsealed protection key unexpectedly reached release authority"
+    );
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(bridge.submission_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.finalized_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.by_id_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(indexer.by_hash_calls.load(Ordering::SeqCst), 0);
+
+    let first = run_sealed_release_worker(worker.clone(), config.clone(), directory.path()).await;
     assert_process_output_redacted(&first, directory.path());
     assert!(
         first.status.success(),
-        "first release worker failed with status: {}",
-        first.status
+        "first release worker failed with status {}: {}",
+        first.status,
+        String::from_utf8_lossy(&first.stderr)
     );
     assert_eq!(
         serde_json::from_slice::<Value>(&first.stdout).expect("first report"),
@@ -1432,19 +1545,13 @@ async fn subprocess_worker_admits_once_and_restart_observes_only() {
     assert_eq!(indexer.by_id_calls.load(Ordering::SeqCst), 8);
     assert_eq!(indexer.by_hash_calls.load(Ordering::SeqCst), 8);
 
-    let second = run_release_worker(
-        worker,
-        public_config_path,
-        directory.path().to_path_buf(),
-        capability_path,
-        protection_key_path,
-    )
-    .await;
+    let second = run_sealed_release_worker(worker, config, directory.path()).await;
     assert_process_output_redacted(&second, directory.path());
     assert!(
         second.status.success(),
-        "restart release worker failed with status: {}",
-        second.status
+        "restart release worker failed with status {}: {}",
+        second.status,
+        String::from_utf8_lossy(&second.stderr)
     );
     assert_eq!(
         serde_json::from_slice::<Value>(&second.stdout).expect("restart report"),

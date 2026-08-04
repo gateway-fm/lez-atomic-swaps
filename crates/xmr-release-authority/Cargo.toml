@@ -27,6 +27,7 @@ thiserror = "=2.0.18"
 zeroize = { version = "=1.9.0", features = ["derive"] }
 
 [dev-dependencies]
+command-fds = "=0.3.3"
 digest_auth = { version = "=0.3.1", default-features = false }
 jsonrpsee = { version = "0.26.0", features = ["server"] }
 lez-adaptor-signature = { path = "../adaptor-signature", version = "=0.1.0" }

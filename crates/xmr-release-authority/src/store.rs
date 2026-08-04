@@ -29,6 +29,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     fs::{self, File},
+    os::fd::AsRawFd as _,
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     sync::{Mutex, MutexGuard},
@@ -335,6 +336,28 @@ impl ReleaseStore {
         Self::open_with_policy(path.as_ref(), DatabaseOpenPolicy::OpenOrCreate)
     }
 
+    /// Opens or initializes one journal relative to an already-open directory.
+    ///
+    /// The directory descriptor is retained for the lifetime of the store and
+    /// must reference an owner-owned mode-`0700` directory. The database name
+    /// must be one ordinary path component. This entry point lets an isolated
+    /// child consume a parent-pinned directory without reopening a mutable
+    /// pathname.
+    pub fn open_in_directory(
+        directory: File,
+        database_name: impl AsRef<OsStr>,
+    ) -> Result<Self, ReleaseError> {
+        let database_name = validate_database_name(database_name.as_ref())?;
+        let directory = SecureDirectory::from_descriptor(directory)?;
+        let path = directory.path.join(&database_name);
+        Self::open_prevalidated(
+            &path,
+            directory,
+            database_name,
+            DatabaseOpenPolicy::OpenOrCreate,
+        )
+    }
+
     /// Exclusively creates and initializes one owner-private release journal.
     ///
     /// Unlike [`Self::open`], this never opens or migrates an existing journal.
@@ -348,13 +371,26 @@ impl ReleaseStore {
     fn open_with_policy(path: &Path, policy: DatabaseOpenPolicy) -> Result<Self, ReleaseError> {
         let (path, parent, database_name) = validate_database_path(path)?;
         let directory = SecureDirectory::open(&parent)?;
+        Self::open_prevalidated(&path, directory, database_name, policy)
+    }
+
+    fn open_prevalidated(
+        path: &Path,
+        directory: SecureDirectory,
+        database_name: OsString,
+        policy: DatabaseOpenPolicy,
+    ) -> Result<Self, ReleaseError> {
         let (database_identity, creation_guard) =
             prepare_database_file(&directory, &database_name, policy)?;
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        // SQLite's NOFOLLOW rejects the kernel-owned /proc/self/fd parent
+        // symlink. Descriptor-relative creation already used openat NOFOLLOW,
+        // and the exact database inode is verified immediately after open.
+        if !directory.descriptor_relative {
+            flags |= OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        }
         let mut connection =
-            Connection::open_with_flags(&path, flags).map_err(|_| ReleaseError::Store)?;
+            Connection::open_with_flags(path, flags).map_err(|_| ReleaseError::Store)?;
         verify_database_file(&directory, &database_name, database_identity)?;
         connection
             .busy_timeout(Duration::from_secs(5))
@@ -1070,11 +1106,23 @@ fn validate_database_path(path: &Path) -> Result<(PathBuf, PathBuf, OsString), R
     Ok((path, parent, database_name))
 }
 
+fn validate_database_name(name: &OsStr) -> Result<OsString, ReleaseError> {
+    let mut components = Path::new(name).components();
+    let Some(Component::Normal(name)) = components.next() else {
+        return Err(ReleaseError::InvalidPath);
+    };
+    if name.is_empty() || components.next().is_some() {
+        return Err(ReleaseError::InvalidPath);
+    }
+    Ok(name.to_os_string())
+}
+
 struct SecureDirectory {
     descriptor: File,
     path: PathBuf,
     device: u64,
     inode: u64,
+    descriptor_relative: bool,
 }
 
 impl SecureDirectory {
@@ -1087,17 +1135,34 @@ impl SecureDirectory {
             path: path.to_path_buf(),
             device: metadata.dev(),
             inode: metadata.ino(),
+            descriptor_relative: false,
+        };
+        directory.revalidate()?;
+        Ok(directory)
+    }
+
+    fn from_descriptor(descriptor: File) -> Result<Self, ReleaseError> {
+        let metadata = validate_private_directory(&descriptor)?;
+        let directory = Self {
+            path: PathBuf::from(format!("/proc/self/fd/{}", descriptor.as_raw_fd())),
+            descriptor,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            descriptor_relative: true,
         };
         directory.revalidate()?;
         Ok(directory)
     }
 
     fn revalidate(&self) -> Result<(), ReleaseError> {
-        validate_trusted_parent_chain(&self.path)?;
         let held = validate_private_directory(&self.descriptor)?;
         if held.dev() != self.device || held.ino() != self.inode {
             return Err(ReleaseError::InsecureDirectory);
         }
+        if self.descriptor_relative {
+            return Ok(());
+        }
+        validate_trusted_parent_chain(&self.path)?;
         let reopened = open_secure_directory(&self.path)?;
         let current = validate_private_directory(&reopened)?;
         if current.dev() != self.device || current.ino() != self.inode {
@@ -1645,6 +1710,27 @@ mod tests {
         assert!(sql.contains("publication_id != zeroblob(32)"));
         assert!(sql.contains("window_end > window_start"));
         assert_eq!(DATABASE_SCHEMA_VERSION, 3);
+    }
+
+    #[test]
+    fn descriptor_relative_open_survives_directory_rename_and_rejects_paths() {
+        let directory = directory();
+        let original = directory.path().to_path_buf();
+        let moved = original.with_extension("moved");
+        let descriptor = File::open(&original).unwrap();
+        let store = ReleaseStore::open_in_directory(descriptor, "descriptor.sqlite").unwrap();
+        fs::rename(&original, &moved).unwrap();
+        store.revalidate_storage().unwrap();
+        drop(store);
+        fs::rename(&moved, &original).unwrap();
+
+        for invalid in ["", ".", "..", "../release.sqlite", "nested/release.sqlite"] {
+            let descriptor = File::open(&original).unwrap();
+            assert_eq!(
+                ReleaseStore::open_in_directory(descriptor, invalid).unwrap_err(),
+                ReleaseError::InvalidPath
+            );
+        }
     }
 
     #[test]

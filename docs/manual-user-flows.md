@@ -6905,6 +6905,44 @@ role-correct Maker/Taker wallets. See ADR 0121 for its component, sequence, and
 conditional-atomicity diagrams, and ADR 0154 for the sealed-child component,
 invocation sequence, and exact conditional-atomicity argument.
 
+### Verify the sealed Tag14 release-worker prerequisite
+
+This focused M7 check exercises the established release-only service through
+the no-argument child ABI that the receipt-v2 claim route will consume. It does
+not replace the current Tag14 marker or claim actual-chain finality.
+
+```bash
+cargo +1.96.0 clippy --locked --offline \
+  --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml \
+  --all-targets --all-features --no-deps -- -D warnings
+
+M4_RELEASE_PROCESS_OFFLINE=1 \
+  ./scripts/test-m4-xmr-release-worker-process.sh
+```
+
+Expected result is 1 of 1. A group-writable legacy public configuration and an
+unsealed FD 222 protection key must fail before any finalized-indexer or
+sidecar request. The first fully sealed no-argument process reports
+`admitted_accepted`; a fresh restart reports `observe_only`; the sidecar
+submission counter remains exactly one. Output must not contain the capability,
+protection key, private root, or release material.
+
+FD 220 contains the bounded schema-v1 public invocation, FD 221 the
+release-only capability, and FD 222 the lowercase protection key. These three
+are owner-owned, mode `0400`, unlinked, and fully sealed against write, grow,
+shrink, and further seal changes. FD 223 is an already-open owner-owned
+mode-`0700` state directory; journal access remains relative to that retained
+descriptor, so a pathname rename or replacement cannot redirect it.
+
+External runtime resources: none. The proof uses authenticated in-process
+sidecar and finalized-indexer doubles, temporary SQLite, sealed memfds, and
+deterministic cryptographic fixtures. It starts no Docker service, LEZ node,
+Monero daemon, wallet RPC, DNS, public endpoint, faucet, peer, or funds.
+Cold compilation, filesystem sync, cryptographic work, and host scheduling are
+the only expected variability. ADR 0155 contains the component and sequence
+diagrams and explains why the release is conditional on finalized Fund plus the
+confirmed Monero output and why ambiguous publication never rearms.
+
 
 ## Flow 1W: run the role-correct XMR application refund locally
 

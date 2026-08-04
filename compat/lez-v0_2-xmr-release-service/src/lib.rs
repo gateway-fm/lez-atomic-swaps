@@ -27,6 +27,7 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use lez_bridge_adapter::{
     CapabilityFileXmrReleaseClientFactory, FreshLezBridgeTransportFactory as _,
 };
+use lez_bridge_client::{BridgeClientConfig, SidecarCapability, XmrReleaseClient};
 use lez_bridge_protocol::{
     ChainClock, Hex32, MessageContext, Participant, RequestId, RunId, RuntimeDescriptor,
     XmrNativeEscrowTermsV3,
@@ -39,6 +40,7 @@ use lez_xmr_release_authority::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::{Host, Url};
+use zeroize::Zeroizing;
 
 const MAX_PUBLIC_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_PUBLIC_CONFIG_BYTES_U64: u64 = MAX_PUBLIC_CONFIG_BYTES as u64;
@@ -49,6 +51,16 @@ const MAX_INDEXER_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_INDEXER_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
 const OFFICIAL_PUBLIC_INDEXER_ENDPOINT: &str = "https://testnet.lez.logos.co/";
 const PINNED_V0_2_GENESIS_BLOCK_ID: u64 = 1;
+const MAX_SEALED_SECRET_BYTES: u64 = 256;
+
+/// Sealed descriptor containing the typed release invocation.
+pub const XMR_RELEASE_INVOCATION_FD: i32 = 220;
+/// Sealed descriptor containing the release-only sidecar capability.
+pub const XMR_RELEASE_CAPABILITY_FD: i32 = 221;
+/// Sealed descriptor containing the release-journal protection key.
+pub const XMR_RELEASE_PROTECTION_KEY_FD: i32 = 222;
+/// Open owner-private directory containing the release journal.
+pub const XMR_RELEASE_STATE_DIRECTORY_FD: i32 = 223;
 
 /// Current strict public configuration schema.
 pub const XMR_RELEASE_SERVICE_SCHEMA_VERSION: u16 = 1;
@@ -107,6 +119,13 @@ pub struct XmrReleaseServiceConfig {
     pub terms: XmrNativeEscrowTermsV3,
     /// Non-secret journal-key rotation identifier.
     pub protection_key_id: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct XmrReleaseSealedInvocationV1 {
+    schema_version: u16,
+    public_config: XmrReleaseServiceConfig,
 }
 
 impl fmt::Debug for XmrReleaseServiceConfig {
@@ -282,6 +301,9 @@ pub enum XmrReleaseServiceError {
     /// Publication failed before a durable terminal outcome.
     #[error("XMR release publication failed")]
     PublicationFailed,
+    /// The no-argument sealed invocation descriptor was absent or invalid.
+    #[error("XMR release sealed invocation is invalid")]
+    InvalidSealedInvocation,
 }
 
 #[derive(Clone)]
@@ -449,6 +471,95 @@ pub async fn run_xmr_release_service_once(
 ) -> Result<XmrReleaseServiceReport, XmrReleaseServiceError> {
     validate_config(&config)?;
     validate_private_paths(paths)?;
+    let key = PublicationProtectionKey::from_owner_private_file(
+        config.protection_key_id.clone(),
+        &paths.protection_key_file,
+    )
+    .map_err(|_| XmrReleaseServiceError::ProtectionKeyUnavailable)?;
+    let client = CapabilityFileXmrReleaseClientFactory::new(
+        config.sidecar_endpoint.clone(),
+        &paths.capability_file,
+        config.run_id.clone(),
+        config.runtime.clone(),
+        RELEASE_REQUEST_TIMEOUT,
+    )
+    .fresh_transport()
+    .map_err(|_| XmrReleaseServiceError::ReleaseClientUnavailable)?;
+    let store = ReleaseStore::open(paths.journal_path())
+        .map_err(|_| XmrReleaseServiceError::ReleaseJournalUnavailable)?;
+    run_xmr_release_service_once_with_material(config, store, key, client).await
+}
+
+/// Executes the sole prepared-journal publication from fixed sealed
+/// descriptors 220 through 223 and no command-line arguments.
+///
+/// # Errors
+///
+/// Rejects missing, unsealed, mutable, oversized, malformed, role-crossed, or
+/// credential-invalid descriptors before opening the release journal or using
+/// any network route.
+pub async fn run_xmr_release_service_once_from_sealed_descriptors()
+-> Result<XmrReleaseServiceReport, XmrReleaseServiceError> {
+    let invocation_bytes =
+        read_sealed_descriptor(XMR_RELEASE_INVOCATION_FD, MAX_PUBLIC_CONFIG_BYTES_U64)?;
+    let invocation: XmrReleaseSealedInvocationV1 = serde_json::from_slice(&invocation_bytes)
+        .map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?;
+    if invocation.schema_version != 1 {
+        return Err(XmrReleaseServiceError::InvalidSealedInvocation);
+    }
+    validate_config(&invocation.public_config)?;
+    let state_directory = open_private_directory_descriptor(XMR_RELEASE_STATE_DIRECTORY_FD)?;
+
+    let capability_bytes =
+        read_sealed_descriptor(XMR_RELEASE_CAPABILITY_FD, MAX_SEALED_SECRET_BYTES)?;
+    let capability_text = std::str::from_utf8(&capability_bytes)
+        .map_err(|_| XmrReleaseServiceError::ReleaseClientUnavailable)?;
+    let capability = SidecarCapability::new(capability_text.to_owned())
+        .map_err(|_| XmrReleaseServiceError::ReleaseClientUnavailable)?;
+
+    let key_bytes = read_sealed_descriptor(XMR_RELEASE_PROTECTION_KEY_FD, MAX_SEALED_SECRET_BYTES)?;
+    let key_text = std::str::from_utf8(&key_bytes)
+        .map_err(|_| XmrReleaseServiceError::ProtectionKeyUnavailable)?;
+    if key_text.len() != 64
+        || !key_text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(XmrReleaseServiceError::ProtectionKeyUnavailable);
+    }
+    let mut key_material = Zeroizing::new([0_u8; 32]);
+    hex::decode_to_slice(key_text, key_material.as_mut())
+        .map_err(|_| XmrReleaseServiceError::ProtectionKeyUnavailable)?;
+    let key = PublicationProtectionKey::new(
+        invocation.public_config.protection_key_id.clone(),
+        std::mem::take(&mut *key_material),
+    )
+    .map_err(|_| XmrReleaseServiceError::ProtectionKeyUnavailable)?;
+    let client = XmrReleaseClient::connect(BridgeClientConfig::new(
+        invocation.public_config.sidecar_endpoint.clone(),
+        capability,
+        invocation.public_config.run_id.clone(),
+        invocation.public_config.runtime.clone(),
+        RELEASE_REQUEST_TIMEOUT,
+    ))
+    .map_err(|_| XmrReleaseServiceError::ReleaseClientUnavailable)?;
+    let store = ReleaseStore::open_in_directory(state_directory, RELEASE_JOURNAL_NAME)
+        .map_err(|_| XmrReleaseServiceError::ReleaseJournalUnavailable)?;
+    run_xmr_release_service_once_with_material(
+        invocation.public_config,
+        store,
+        key,
+        client,
+    )
+    .await
+}
+
+async fn run_xmr_release_service_once_with_material(
+    config: XmrReleaseServiceConfig,
+    store: ReleaseStore,
+    key: PublicationProtectionKey,
+    client: XmrReleaseClient,
+) -> Result<XmrReleaseServiceReport, XmrReleaseServiceError> {
     let mut clock = config
         .node_profile
         .connect_indexer(&config.indexer_endpoint)?;
@@ -458,27 +569,10 @@ pub async fn run_xmr_release_service_once(
         config.terms,
     )
     .map_err(|_| XmrReleaseServiceError::InvalidPublicConfiguration)?;
-    let key = PublicationProtectionKey::from_owner_private_file(
-        config.protection_key_id,
-        &paths.protection_key_file,
-    )
-    .map_err(|_| XmrReleaseServiceError::ProtectionKeyUnavailable)?;
-    let journal_path = paths.journal_path();
-    let store = ReleaseStore::open(&journal_path)
-        .map_err(|_| XmrReleaseServiceError::ReleaseJournalUnavailable)?;
     let swap_id = *config.terms.to_input().swap_id.as_bytes();
     let snapshot = store
         .load_xmr_claim_release(swap_id, &config.run_id, &key)
         .map_err(|_| XmrReleaseServiceError::ReleaseJournalUnavailable)?;
-    let client = CapabilityFileXmrReleaseClientFactory::new(
-        config.sidecar_endpoint,
-        &paths.capability_file,
-        config.run_id.clone(),
-        config.runtime,
-        RELEASE_REQUEST_TIMEOUT,
-    )
-    .fresh_transport()
-    .map_err(|_| XmrReleaseServiceError::ReleaseClientUnavailable)?;
     let outcome = store
         .publish_xmr_claim_release(snapshot, &key, &binding, &client, &mut clock)
         .await
@@ -557,14 +651,7 @@ fn validate_official_public_endpoint(endpoint: &str) -> Result<(), XmrReleaseSer
 }
 
 fn validate_private_paths(paths: &XmrReleaseServicePaths) -> Result<(), XmrReleaseServiceError> {
-    let state_metadata = fs::symlink_metadata(&paths.state_directory)
-        .map_err(|_| XmrReleaseServiceError::InvalidPrivateFileLayout)?;
-    if !state_metadata.file_type().is_dir()
-        || state_metadata.uid() != rustix::process::geteuid().as_raw()
-        || state_metadata.permissions().mode() & 0o7777 != 0o700
-    {
-        return Err(XmrReleaseServiceError::InvalidPrivateFileLayout);
-    }
+    validate_state_directory(&paths.state_directory)?;
     let capability = fs::canonicalize(&paths.capability_file)
         .map_err(|_| XmrReleaseServiceError::InvalidPrivateFileLayout)?;
     let protection_key = fs::canonicalize(&paths.protection_key_file)
@@ -583,6 +670,70 @@ fn validate_private_paths(paths: &XmrReleaseServicePaths) -> Result<(), XmrRelea
     } else {
         Ok(())
     }
+}
+
+fn validate_state_directory(path: &Path) -> Result<(), XmrReleaseServiceError> {
+    let state_metadata =
+        fs::symlink_metadata(path).map_err(|_| XmrReleaseServiceError::InvalidPrivateFileLayout)?;
+    if !state_metadata.file_type().is_dir()
+        || state_metadata.uid() != rustix::process::geteuid().as_raw()
+        || state_metadata.permissions().mode() & 0o7777 != 0o700
+    {
+        return Err(XmrReleaseServiceError::InvalidPrivateFileLayout);
+    }
+    Ok(())
+}
+
+fn read_sealed_descriptor(
+    fd: i32,
+    maximum: u64,
+) -> Result<Zeroizing<Vec<u8>>, XmrReleaseServiceError> {
+    use rustix::fs::{SealFlags, fcntl_get_seals};
+
+    let path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+    let file = File::open(path).map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?;
+    let required = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
+    let seals =
+        fcntl_get_seals(&file).map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.permissions().mode() & 0o7777 != 0o400
+        || metadata.nlink() != 0
+        || metadata.len() == 0
+        || metadata.len() > maximum
+        || !seals.contains(required)
+    {
+        return Err(XmrReleaseServiceError::InvalidSealedInvocation);
+    }
+    let mut bytes = Zeroizing::new(Vec::new());
+    (&file)
+        .take(maximum + 1)
+        .read_to_end(bytes.as_mut())
+        .map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?;
+    if u64::try_from(bytes.len()).map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?
+        != metadata.len()
+    {
+        return Err(XmrReleaseServiceError::InvalidSealedInvocation);
+    }
+    Ok(bytes)
+}
+
+fn open_private_directory_descriptor(fd: i32) -> Result<File, XmrReleaseServiceError> {
+    let directory = File::open(format!("/proc/self/fd/{fd}"))
+        .map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?;
+    let metadata = directory
+        .metadata()
+        .map_err(|_| XmrReleaseServiceError::InvalidSealedInvocation)?;
+    if !metadata.file_type().is_dir()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.permissions().mode() & 0o7777 != 0o700
+    {
+        return Err(XmrReleaseServiceError::InvalidSealedInvocation);
+    }
+    Ok(directory)
 }
 
 fn validate_public_metadata(metadata: &fs::Metadata) -> Result<(), XmrReleaseServiceError> {

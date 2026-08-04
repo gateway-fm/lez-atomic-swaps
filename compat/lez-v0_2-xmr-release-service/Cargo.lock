@@ -2040,6 +2040,7 @@ dependencies = [
  "lez-zec-swap-sdk",
  "rusqlite",
  "rustix",
+ "secp256k1 0.29.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2059,6 +2060,7 @@ dependencies = [
  "indexer_service_rpc",
  "jsonrpsee",
  "lez-bridge-adapter",
+ "lez-bridge-client",
  "lez-bridge-protocol",
  "lez-swap-core",
  "lez-xmr-monero-adapter",
@@ -2118,9 +2120,11 @@ dependencies = [
 name = "lez-xmr-swap-sdk"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "hex",
  "lez-adaptor-signature",
  "lez-swap-core",
+ "lez-swap-sdk-core",
  "monero",
  "musig2",
  "postcard",

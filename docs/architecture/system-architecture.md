@@ -2570,6 +2570,11 @@ flowchart TB
     Pin --> Authorize["Workflow v2 durable CAS"]
     Authorize -->|Prepared| Invoke["InvokeOnce"]
     Invoke --> Tag14["Tag14 sender marker"]
+    ReleasePrepare["Exclusive Tag14 release preparer"] --> ReleaseJournal[("Encrypted release journal")]
+    ReleaseJournal --> ReleaseWorker["No-argument release worker with sealed FDs 220 to 222 and directory FD 223"]
+    Tag14 -.->|"future authority wiring"| ReleaseWorker
+    ReleaseWorker --> ReleaseSidecar["Authenticated release-only sidecar"]
+    ReleaseSidecar -.-> Node
     Invoke --> Tag16["Real Tag16 sender"]
     Share --> Tag16
     Journal[("Live Taker adaptor journal")] --> Tag16
@@ -2584,7 +2589,7 @@ flowchart TB
     Parser --> Reconcile["Exact plan and evidence reconciliation"]
     Reconcile --> Succeeded["Succeeded and complete"]
     Authorize -->|Succeeded| Complete["Complete with no process"]
-    Tag14 -.-> Rpc["Future semantic Tag14 RPC"]
+    Tag14 -.-> Rpc["Future receipt-v2 release authority"]
     Observer -.-> Rpc
 ```
 

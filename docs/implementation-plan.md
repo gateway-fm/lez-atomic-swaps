@@ -340,6 +340,17 @@ attestation so neither can be misreported as the other.
   process-free Complete, and losing-branch exclusion. Actual-node
   replay, semantic Tag14, Monero sweep workers and finalized observers remain
   open.
+- [x] Close the safe Tag14 worker-invocation prerequisite through ADR 0155:
+  reuse the established exclusive release preparer and release-only service
+  instead of introducing a generic sender that lacks the finalized Monero-lock
+  prerequisite. Add a no-argument ABI on sealed FDs 220 through 222 for typed
+  invocation, release-only capability, and protection key plus already-open
+  owner-private journal directory FD 223; validate all inputs
+  before journal or RPC use; and retain the original encrypted-journal,
+  post-CAS finalized-clock and no-ambiguous-retry semantics in one shared
+  routine. The process proof rejects mutable/unsealed inputs at zero wire calls,
+  then admits exactly once and observes only after restart. Receipt-v2 authority
+  wiring and replacement of the Tag14 marker remain the next semantic step.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

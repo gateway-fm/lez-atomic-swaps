@@ -591,6 +591,21 @@ Maker Monero recovery. Reproduction and resource/flakiness details are in
 with components, sequence, and conditional atomicity in
 [ADR 0154](docs/architecture/0154-derive-tag16-in-the-sealed-effect-child.md).
 
+The next M7 checkpoint prepares the existing safe Tag14 release service for
+that same supervisor boundary without pretending the marker has become
+semantic. Its no-argument mode accepts only a typed invocation, release-only
+capability, and journal protection key on fully sealed FDs 220 through 222,
+plus the already-open owner-private journal directory on FD 223.
+Mutable or unsealed inputs fail before journal or RPC use; two fresh process
+invocations produce exactly one accepted release and an observe-only restart.
+The service still consumes the separately prepared encrypted journal that binds
+finalized LEZ Fund, the exact confirmed Monero output, and authenticated wallet
+topology, and still rechecks finalized time after its publication CAS. No
+Docker, node, public RPC, faucet, or funds participate in this component proof.
+Receipt-v2 authority wiring and marker replacement remain open. Reproduction,
+components, sequence, and the conditional-atomicity limit are in
+[ADR 0155](docs/architecture/0155-invoke-the-xmr-release-worker-through-sealed-descriptors.md).
+
 That first checkpoint is deliberately zero-effect: it starts no Monero or LEZ
 node, opens no chain RPC, and uses no Docker service, faucet, DNS, network, or
 funds. [Flow 1P](docs/manual-user-flows.md#flow-1p-repeat-the-xmr-role-process-pre-effect-checkpoint)
