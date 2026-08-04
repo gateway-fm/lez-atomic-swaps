@@ -107,6 +107,7 @@ Item {
                     onClicked: root.invoke(root.backend.history())
                 }
                 TextArea {
+                    objectName: "makerOutput"
                     text: root.output
                     readOnly: true
                     wrapMode: Text.WrapAnywhere

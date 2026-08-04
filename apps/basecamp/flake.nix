@@ -29,9 +29,11 @@
         value = {
           maker = makerPackage.packages.${system}.default;
           maker-lgx = makerPackage.packages.${system}.lgx;
+          maker-install = makerPackage.packages.${system}.install;
           maker-integration-test = makerPackage.packages.${system}.integration-test;
           taker = takerPackage.packages.${system}.default;
           taker-lgx = takerPackage.packages.${system}.lgx;
+          taker-install = takerPackage.packages.${system}.install;
           taker-integration-test = takerPackage.packages.${system}.integration-test;
           default = makerPackage.packages.${system}.default;
         };

@@ -1,7 +1,10 @@
 {
   "name": "lez_atomic_swap_taker",
+  "display_name": "LEZ Atomic Swap Taker",
   "version": "0.1.0",
   "type": "ui_qml",
+  "category": "finance",
+  "description": "Review authenticated offers and operate Taker swaps through an owner-local service.",
   "interface": "universal",
   "main": "lez_atomic_swap_taker_plugin",
   "view": "qml/Main.qml",

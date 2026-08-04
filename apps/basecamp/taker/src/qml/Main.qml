@@ -110,6 +110,7 @@ Item {
                     }
                 }
                 TextArea {
+                    objectName: "takerOutput"
                     text: root.output
                     readOnly: true
                     wrapMode: Text.WrapAnywhere

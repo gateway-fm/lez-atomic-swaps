@@ -15,7 +15,14 @@ nix build .#maker
 nix build .#taker
 nix build .#maker-lgx
 nix build .#taker-lgx
+nix build .#maker-install
+nix build .#taker-install
 ```
+
+The `*-lgx` outputs are the distributable package archives. The `*-install`
+outputs are the official developer-install directory trees used by the pinned
+Basecamp build; copy their contents into an isolated Basecamp `--user-dir`
+before starting the matching role instance.
 
 Start the applicable repository service as the same operating-system user,
 then set exactly one endpoint before launching its standalone package:

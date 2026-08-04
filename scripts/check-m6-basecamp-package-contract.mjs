@@ -15,6 +15,7 @@ const packages = [
   {
     directory: "maker",
     name: "lez_atomic_swap_maker",
+    displayName: "LEZ Atomic Swap Maker",
     main: "lez_atomic_swap_maker_plugin",
     icon: "icons/maker-console.svg",
     environment: "LEZ_MAKER_RPC_SOCKET",
@@ -36,11 +37,13 @@ const packages = [
       "makerSave",
       "makerActive",
       "makerHistory",
+      "makerOutput",
     ],
   },
   {
     directory: "taker",
     name: "lez_atomic_swap_taker",
+    displayName: "LEZ Atomic Swap Taker",
     main: "lez_atomic_swap_taker_plugin",
     icon: "icons/taker-route.svg",
     environment: "LEZ_TAKER_RPC_SOCKET",
@@ -63,6 +66,7 @@ const packages = [
       "takerClaim",
       "takerRefund",
       "takerShielding",
+      "takerOutput",
     ],
   },
 ];
@@ -117,6 +121,12 @@ for (const value of ["maker", "taker"]) {
     flakeSource,
     new RegExp(`${value}Package\\s*=.*mkLogosQmlModule`, "s"),
     `must build the ${value} package through mkLogosQmlModule`,
+  );
+  requirePattern(
+    rootFlake,
+    flakeSource,
+    new RegExp(`${value}-install\\s*=.*\\.install`),
+    `must expose the official ${value} developer-install tree`,
   );
 }
 requirePattern(
@@ -190,8 +200,10 @@ for (const pkg of packages) {
   if (metadata !== null) {
     const expected = {
       name: pkg.name,
+      display_name: pkg.displayName,
       version: "0.1.0",
       type: "ui_qml",
+      category: "finance",
       interface: "universal",
       main: pkg.main,
       view: "qml/Main.qml",
@@ -202,6 +214,9 @@ for (const pkg of packages) {
     }
     if (!Array.isArray(metadata.dependencies) || metadata.dependencies.length !== 0) {
       report(metadataFile, "must not grant a generic Logos module dependency");
+    }
+    if (typeof metadata.description !== "string" || metadata.description.length < 40) {
+      report(metadataFile, "must provide a meaningful user-facing description");
     }
     if (metadata.codegen?.rep !== `src/${pkg.name}.rep`) {
       report(metadataFile, "must select the role-specific typed QtRO interface");
