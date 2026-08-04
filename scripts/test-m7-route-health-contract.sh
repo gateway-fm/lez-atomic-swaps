@@ -32,6 +32,9 @@ done
 for literal in \
   'BITCOIN_CORE_E2E_MODE=service' \
   'BITCOIN_CORE_E2E_KEEP_RUNNING=1' \
+  'mkdir -m 0700 "$proof_root/bin"' \
+  'install -m 0500 "$health_program_source" "$health_program"' \
+  '[[ "$health_sha256" == "$health_source_sha256" ]]' \
   'docker container stop' \
   'm7-bitcoin-healthy-before-stop.json' \
   'm7-bitcoin-unavailable-after-stop.json' \

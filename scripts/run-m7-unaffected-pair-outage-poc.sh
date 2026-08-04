@@ -25,12 +25,13 @@ readonly bitcoin_unavailable="$proof_root/m7-bitcoin-unavailable-after-stop.json
 readonly result="$proof_root/result.json"
 readonly corridor_evidence="${POC_OUTPUT_ROOT:-/tmp/lez-atomic-swaps-${run_id}}/evidence"
 
-for command_name in awk chmod curl date docker git id jq mkdir readlink rg sha256sum stat; do
+for command_name in awk chmod curl date docker git id install jq mkdir readlink rg sha256sum stat; do
   command -v "$command_name" >/dev/null || fail "missing command ${command_name}"
 done
 [[ ! -e "$proof_root" && ! -L "$proof_root" ]] ||
   fail "refusing to reuse proof root ${proof_root}"
 mkdir -m 0700 "$proof_root"
+mkdir -m 0700 "$proof_root/bin"
 
 bitcoin_container=''
 bitcoin_image=''
@@ -125,11 +126,15 @@ jq -n --arg run_id "$bitcoin_run_id" --arg container_id "$bitcoin_container" \
 ' >"$bitcoin_unavailable"
 chmod 0600 "$bitcoin_unavailable"
 
-readonly health_program="${PWD}/scripts/probe-local-json-rpc-health.sh"
+readonly health_program_source="${PWD}/scripts/probe-local-json-rpc-health.sh"
+readonly health_program="$proof_root/bin/probe-local-json-rpc-health"
+readonly health_source_sha256="$(sha256sum "$health_program_source" | awk '{print $1}')"
+install -m 0500 "$health_program_source" "$health_program"
 readonly health_sha256="$(sha256sum "$health_program" | awk '{print $1}')"
 [[ -x "$health_program" && ! -L "$health_program" \
   && "$health_sha256" =~ ^[0-9a-f]{64}$ ]] ||
   fail 'semantic health-probe executable identity is invalid'
+[[ "$health_sha256" == "$health_source_sha256" ]] || fail 'staged health-probe identity changed'
 [[ "${ZEBRA_RPC_URL:-}" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}/?$ ]] ||
   fail 'ZEBRA_RPC_URL must identify the fresh surviving loopback node'
 

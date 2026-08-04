@@ -384,6 +384,14 @@ attestation so neither can be misreported as the other.
   preflight retry, invoke once, observe/reconcile, process-free Complete and
   losing-branch exclusion. A joined actual-node CLI replay, semantic finalized
   observer, Monero claim sweep, and adverse crash/concurrency cases remain.
+- [x] Repair the actual F1/R3 probe-custody mismatch found by fresh run
+  `m7outage-5e9d47d-a`. Bitcoin Core provenance, semantic health and exact
+  container outage passed; Maker then rejected the probe before readiness
+  because its repository parent was group writable. No offer, actor or swap
+  submission occurred. RED now requires run-private executable staging; GREEN
+  installs the source-hashed probe under the `0700` proof root with mode `0500`,
+  verifies byte identity, and retains the fail-closed validator unchanged. A
+  fresh clean-commit actual-node replay is still required before closing F1/R3.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

@@ -117,6 +117,14 @@ flowchart TD
   unavailable Bitcoin route and surviving Zebra route through one hash-pinned
   adapter. A fresh retained successful execution is still required before F1
   or R3 changes from `open` to `green`.
+- Fresh run `m7outage-5e9d47d-a` proved the stopped Bitcoin node was
+  semantically unavailable, then failed before daemon readiness and before any
+  swap submission because the checked-out `scripts/` directory was group
+  writable and therefore correctly rejected by the executable-custody policy.
+  The harness now copies the source-hashed probe into its owner-private `0700`
+  proof directory with mode `0500`, checks the staged digest is identical, and
+  passes only that immutable path to the daemon. The retained run is RED
+  diagnostic evidence, not an F1/R3 certificate.
 
 ```mermaid
 flowchart LR
