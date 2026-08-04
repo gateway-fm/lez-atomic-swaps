@@ -101,6 +101,7 @@ assert_trivy_step() {
 
 require_fixed 'tags: ["m*-complete*"]' "$workflow"
 require_fixed './scripts/run-ci-quality-gates.sh' "$workflow"
+require_fixed './scripts/test-m7-review-readiness-contract.sh' "$workflow"
 require_fixed './scripts/test-spin-lock-remediation.sh' "$workflow"
 require_fixed './scripts/check-spin-lock-remediation.sh' "$workflow"
 require_fixed './scripts/test-m4-xmr-release-worker-process.sh' "$workflow"

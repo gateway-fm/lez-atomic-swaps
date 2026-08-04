@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: ./scripts/test-lez-cost-evidence.sh
       - run: ./scripts/test-ci-hardening-policy.sh
+      - run: ./scripts/test-m7-review-readiness-contract.sh
       - run: ./scripts/test-spin-lock-remediation.sh
       - run: ./scripts/check-github-action-pins.sh
       - run: ./scripts/run-ci-quality-gates.sh

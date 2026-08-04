@@ -13,13 +13,12 @@ architecture, sequencing, risks, or acceptance evidence changes.
 3. Actual pinned upstream source and executable behavior, where prose and code
    disagree.
 
-The 2026-07-28 authority refresh pins the live RFP repository at master commit
-`b59c620d6ee8b8281657cbb6eca0381172a8e16d`, RFP-003 file blob
-`ec6b602ea4f14627173c9a5236e021d8eff83e16`, and raw-file SHA-256
+The 2026-08-04 M7 authority refresh pins the live RFP repository at master
+commit `bff4bb291fa59fae70cb5310eb78d4e4d566a9a8` and raw-file SHA-256
 `a83d0b87ab32e459235a8fea7766519b7fe85ec99d7bcaf1dfe44d329bc3d498`.
 Replacement issue #112 is open, retains the `accepted` and `RFP-003` labels,
 continues to supersede issue #61, and retains newline-normalized body SHA-256
-`49356263a762307abc0f8dd2863ac5af8fe13d9b17b674f242d025de655f1c87`.
+`593399d667d0187e591f0cb1814e12533830cd05b7fd50ce67ce5bcf672f7cf4`.
 The intervening RFP changes alter legal/responsibility and privacy wording but
 do not alter the seven accepted M5 outputs. These
 immutable source identities anchor this plan; the issue state remains a mutable
@@ -125,8 +124,9 @@ later revalidation; it does not imply that the M2 QA, chaos, information-
 security, or production-readiness phase has been entered or completed. M2 and
 M3 are certified at their reproducible local-functional PoC boundaries; their
 QA and later hardening phases remain inactive. M4, M5, and M6 are certified at
-their owner-selected local-functional PoC boundaries. M7 is not active and
-requires a separate owner transition.
+their owner-selected local-functional PoC boundaries. The owner entered M7 on
+2026-08-04 and directed completion of every repository-controlled item before
+raising the formal external-review dependency.
 The final column is a post-M2 backlog, not
 an instruction to start every listed refactor now. Restart, refund, reorg,
 concurrency, broad negative testing, and new RED-GREEN-REFACTOR work wait for
@@ -254,6 +254,59 @@ explicitly chooses when a phase ends and when work switches milestones. A switch
 does not imply completion or authorize a completion tag. When directed, M2 and
 M3 may overlap after M1; M4 follows M3 for cryptography-lead capacity, M5/M6 may
 overlap the tail of M4, and M7 follows all implementation milestones.
+
+## M7 active work package: independent-review readiness and closure
+
+Entered: 2026-08-04. The owner authorized all repository-controlled M7 work and
+excluded only performance of the independent external review itself. No
+external blocker is to be raised until self-owned implementation, tests,
+hardening, documentation and handoff preparation are exhausted.
+
+The exact official `logos-co/logos-docs` template is pinned at commit
+`63ecf397ca5dae4b81de85a578ec839a78fec1c0`, SHA-256
+`7f5a8507bd98bb54dfe4e1ab8b9e9e3a9bff8f3b64f1d1bbfa508a62fff4ccee`.
+ADR 0148 separates repository review-readiness from the independent S12/S13
+attestation so neither can be misreported as the other.
+
+### Progressive closure order
+
+- [x] Reconcile the live RFP, accepted replacement issue #112, terms, exact M7
+  proposal text and Logos documentation template.
+- [x] Create the S7 mainnet-readiness write-up, S12/S13 review scope, finding
+  policy and five locally validated documentation packets.
+- [ ] Reconcile every F/U/R/P/S/D row against current executable evidence;
+  replace stale milestone prose and make each hard-requirement gate executable.
+- [ ] Close repository-controlled SDK, application, graceful-degradation,
+  restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
+- [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
+  information-security review and production-readiness review.
+- [ ] Produce one immutable candidate with source, dependency, artifact,
+  evidence, threat/atomicity, command, SBOM/vulnerability and cleanup manifests;
+  replay all safe local role journeys from that exact commit.
+- [ ] Push and mark the repository-controlled review-ready candidate only after
+  every local gate is GREEN. Do not tag M7 complete without external S12/S13.
+- [ ] Then raise the first external dependency: mutually agree and engage a
+  reputable reviewer. Process subsequent external blockers one at a time.
+
+### Current repository-owned gap classes
+
+1. Traceability contains carried Partial/Planned statements from earlier PoC
+   boundaries, including full XMR SDK/example parity, automatic unavailable-node
+   composition, accepted-application actual-chain concurrency, crash/reorg/fee
+   matrices, public calibration alternatives and non-BTC demo evidence.
+2. CI has strong lint, strict Rust, vulnerability, license, source, fuzz,
+   architecture and isolation gates, but does not yet produce one review dossier.
+3. Public deployment remains intentionally skipped under the stealth/local
+   policy. Configuration portability, deployment instructions and honest
+   release blockers remain mandatory; public transaction evidence does not.
+4. Logos-owned upstream limitations remain nonblocking for milestone
+   implementation but release-visible. Repository findings and proposal errata
+   are not eligible for that exception.
+
+The working ETA will be recalculated after the hard-requirement audit because
+the carried matrix mixes completed evidence with historical gaps. The initial
+range is 5-10 focused workdays for repository-controlled review readiness,
+excluding actual-node cold-source outages and third-party review calendar time.
 
 ## Milestone 2 plan: transparent ZEC end to end
 
