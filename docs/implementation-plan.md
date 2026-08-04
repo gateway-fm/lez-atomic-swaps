@@ -329,10 +329,17 @@ attestation so neither can be misreported as the other.
   sidecar. RED first exposed missing FD 218, then exposed the incompatible
   on-disk capability policy at the sealed-FD boundary. GREEN preserves the
   strict manual capability-file policy while adding one bounded sealed-client
-  path. Tag16 process tests pass 4 of 4 and effect routing passes 6 of 6,
-  including drift-before-RPC and least-privilege cases. Literal receipt-v2 CLI
-  use, pre-CAS window admission, actual-node replay, Tag14, Monero sweep workers
-  and finalized observers remain open.
+  path. A read-only `Prepared` check now starts a sealed prepare-only child
+  before the one-attempt CAS. Rejected or too-early preparation performs no
+  complete, submission, evidence write, or workflow transition; successful
+  preparation is followed by repinning, CAS, and the existing one-send child.
+  Restart states skip preflight and cannot rearm. Tag16 process tests pass 6 of
+  6, effect routing passes 7 of 7, and the literal receipt-v2 refund journey
+  passes 1 of 1 in 106.26 seconds, including rejected-preflight retry without
+  CAS consumption, one accepted preflight, one invocation, observation,
+  process-free Complete, and losing-branch exclusion. Actual-node
+  replay, semantic Tag14, Monero sweep workers and finalized observers remain
+  open.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -362,10 +369,10 @@ attestation so neither can be misreported as the other.
 5. The receipt-v2 XMR process boundary now carries immutable application
    inputs, a canonical execution plan and least-privilege branch material. The
    real Tag16 child derives its signature from the Stage-B-matching live journal
-   and submits through an authenticated local sidecar. Tag14, finalized
-   observation, Monero sweep semantics, literal CLI integration, pre-CAS window
-   admission and a fresh local LEZ/Monero replay through this exact boundary
-   remain repository work.
+   and submits through an authenticated local sidecar. Literal CLI integration
+   and pre-CAS prepare-only admission are process-GREEN. Tag14, finalized
+   observation, Monero sweep semantics, and a fresh local LEZ/Monero replay
+   through this exact boundary remain repository work.
 
 The working ETA will be recalculated after the hard-requirement audit because
 the carried matrix mixes completed evidence with historical gaps. The initial
@@ -5419,7 +5426,9 @@ New closure evidence:
    Drive command; ZEC/XMR Claim remain Claim, and all Refund intents map to
    Recover. `manual_actions_map_to_pair_semantic_commands` is GREEN 1/1.
 3. `receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once` is
-   GREEN 1/1 in 84.21 seconds. It proves Tag16 sender once, restart-only
+   GREEN 1/1 in 106.26 seconds after the M7 preflight integration. It proves
+   rejected-preflight retry, prepare-only preflight once, Tag16 sender once,
+   restart-only
    observer, exact-plan/evidence reconciliation, third-call Complete, and
    losing-claim exclusion through the real Taker CLI after Delivery/Chat and
    the Maker daemon are removed.

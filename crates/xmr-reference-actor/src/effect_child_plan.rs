@@ -27,6 +27,8 @@ pub const XMR_EFFECT_CHILD_PLAN_MAX_BYTES: usize = 8 * 1024;
 #[serde(rename_all = "snake_case")]
 #[must_use]
 pub enum XmrEffectChildModeV1 {
+    /// Readiness check that may prepare durable sidecar bytes but cannot submit.
+    Preflight,
     /// One sending attempt authorized by the parent workflow CAS.
     Invoke,
     /// Read-only reconciliation after a prior attempt.

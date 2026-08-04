@@ -217,6 +217,83 @@ impl std::fmt::Debug for XmrPreparedEffectInvocationV1 {
 }
 
 impl ValidatedXmrEffectExecutionV3 {
+    /// Composes a non-sending Tag16 readiness process while leaving the
+    /// workflow invocation authority unchanged.
+    ///
+    /// Returns `None` after the invocation CAS has already been consumed, so
+    /// restart reconciliation never repeats preflight or attempts a send.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every non-Tag16 route, unsafe or changed program/input, crossed
+    /// locks, foreign workflow identity, missing step, or corrupt state.
+    pub fn prepare_effect_preflight(
+        &self,
+        step: XmrWorkflowStep,
+        actor_lock: &MakerActorHeldLock,
+        workflow_lock: &MakerActorHeldLock,
+    ) -> Result<Option<Command>> {
+        ensure!(
+            self.effect_authority().role() == ActorRole::Taker
+                && step == XmrWorkflowStep::RefundLezTag16,
+            "only the Taker Tag16 route supports effect preflight"
+        );
+        let tool = select_tool(self.effect_authority(), step)?;
+        let digest = tool_plan_identity(self, step, tool);
+        let child_plan = canonical_xmr_effect_child_plan_bytes(
+            self.effect_authority(),
+            XmrEffectChildModeV1::Preflight,
+            step,
+            tool.abi(),
+            digest,
+        )
+        .context("compose XMR preflight child plan")?;
+        let executable = tool
+            .verify_program_at_use()
+            .context("pin role-fixed XMR preflight tool")?;
+        let inputs = self
+            .effect_authority()
+            .pin_effect_inputs_at_use()
+            .context("pin role-fixed XMR preflight inputs")?
+            .with_application_material(&self.application)
+            .context("pin validated XMR preflight application inputs")?
+            .with_child_plan(&child_plan)
+            .context("pin XMR preflight child plan")?
+            .with_invocation_material(&self.application, step)
+            .context("pin step-specific XMR preflight material")?;
+        let identity = self.workflow_identity();
+        actor_lock
+            .validate_for_state(
+                identity.swap_id(),
+                self.effect_authority().adaptor_journal(),
+            )
+            .context("bind XMR preflight actor lock")?;
+        workflow_lock
+            .validate_for_state(
+                identity.swap_id(),
+                self.effect_authority().workflow_journal(),
+            )
+            .context("bind XMR preflight workflow lock")?;
+        let command = inputs
+            .into_command(executable, actor_lock, workflow_lock)
+            .context("compose role-fixed XMR preflight child")?;
+        let workflow =
+            SqliteXmrWorkflowJournal::open_existing(self.effect_authority().workflow_journal())
+                .context("open XMR effect workflow for preflight")?;
+        workflow
+            .validate_initialized(identity)
+            .context("bind XMR preflight workflow identity")?;
+        if workflow
+            .requires_invocation_preflight(identity, step)
+            .context("validate XMR preflight eligibility")?
+        {
+            Ok(Some(command))
+        } else {
+            drop(command);
+            Ok(None)
+        }
+    }
+
     /// Pins one role-fixed worker and all inputs before consuming its only
     /// durable invocation authority.
     ///

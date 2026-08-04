@@ -89,6 +89,7 @@ struct StageFixture {
 #[derive(Clone, Copy, Debug)]
 enum Behavior {
     Happy,
+    RejectPrepare,
     RejectSubmit,
 }
 
@@ -159,6 +160,13 @@ async fn spawn_sidecar(behavior: Behavior) -> MockSidecar {
                     .expect("call recorder")
                     .prepare
                     .push(request.clone());
+                if matches!(fixture.behavior, Behavior::RejectPrepare) {
+                    return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                        -32_002,
+                        "injected preparation failure",
+                        None::<Value>,
+                    ));
+                }
                 json_value(
                     PrepareNativeXmrRefundV3Result::new(
                         request.context.clone(),
@@ -412,10 +420,11 @@ fn effect_child_command(
     inputs: &Inputs,
     endpoint: &str,
 ) -> (Command, PathBuf) {
-    effect_child_command_with_presignature(
+    effect_child_command_with_mode_and_presignature(
         stage,
         inputs,
         endpoint,
+        "invoke",
         stage.activation.body().refund_presignature(),
     )
 }
@@ -424,6 +433,31 @@ fn effect_child_command_with_presignature(
     stage: &StageFixture,
     inputs: &Inputs,
     endpoint: &str,
+    presignature: [u8; 65],
+) -> (Command, PathBuf) {
+    effect_child_command_with_mode_and_presignature(stage, inputs, endpoint, "invoke", presignature)
+}
+
+fn effect_child_command_with_mode(
+    stage: &StageFixture,
+    inputs: &Inputs,
+    endpoint: &str,
+    mode: &'static str,
+) -> (Command, PathBuf) {
+    effect_child_command_with_mode_and_presignature(
+        stage,
+        inputs,
+        endpoint,
+        mode,
+        stage.activation.body().refund_presignature(),
+    )
+}
+
+fn effect_child_command_with_mode_and_presignature(
+    stage: &StageFixture,
+    inputs: &Inputs,
+    endpoint: &str,
+    mode: &'static str,
     presignature: [u8; 65],
 ) -> (Command, PathBuf) {
     let root = inputs.runtime.parent().expect("fixture root");
@@ -437,7 +471,7 @@ fn effect_child_command_with_presignature(
         schema_version: 1,
         pair: "monero",
         role: ActorRole::Taker,
-        mode: "invoke",
+        mode,
         step: "refund_lez_tag16",
         run_id: RUN,
         swap_id: hex::encode(stage.agreement.body().swap_id()),
@@ -610,6 +644,48 @@ async fn sealed_effect_child_derives_stage_b_tag16_from_the_live_journal_and_sub
         .expect("effect evidence JSON");
     assert_eq!(report["schema"], "lez_v02_m5_actual_local_tag16_v1");
     assert_eq!(report["submission_outcome"], "accepted");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_effect_child_preflight_prepares_only_and_never_publishes_evidence() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let sidecar = spawn_sidecar(Behavior::Happy).await;
+    let (mut command, evidence) =
+        effect_child_command_with_mode(&stage, &inputs, &sidecar.endpoint, "preflight");
+    let output = command
+        .output()
+        .expect("spawn sealed Tag16 preflight child");
+    assert!(
+        output.status.success(),
+        "sealed Tag16 preflight failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    assert!(!evidence.exists());
+    let calls = sidecar.calls.lock().expect("call recorder");
+    assert_eq!(calls.prepare.len(), 1);
+    assert!(calls.complete.is_empty());
+    assert!(calls.submit.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_effect_child_rejected_preflight_never_completes_submits_or_publishes() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let sidecar = spawn_sidecar(Behavior::RejectPrepare).await;
+    let (mut command, evidence) =
+        effect_child_command_with_mode(&stage, &inputs, &sidecar.endpoint, "preflight");
+    let output = command
+        .output()
+        .expect("spawn rejected Tag16 preflight child");
+    assert_failure(&output, "rejected Tag16 preflight");
+    assert!(!evidence.exists());
+    let calls = sidecar.calls.lock().expect("call recorder");
+    assert_eq!(calls.prepare.len(), 1);
+    assert!(calls.complete.is_empty());
+    assert!(calls.submit.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -573,10 +573,16 @@ M7 now extends that generic custody boundary with the first real semantic
 sender. The no-argument `xmr-reference-tag16` child receives the exact runtime,
 capability, Stage A/B, view key, canonical plan, and Taker share on sealed FDs;
 requires its live durable refund presignature to equal Stage B; adapts and
-verifies the final signature in memory; and performs one authenticated local
-prepare, complete, and exact submission. Tag16 process tests are GREEN 4 of 4
-and effect routing is GREEN 6 of 6, including journal-drift-before-RPC and FD
-218 least-privilege checks. These tests use an authenticated in-process
+verifies the final signature in memory; and supports a prepare-only preflight
+before the parent consumes its one-attempt CAS. Rejected preparation cannot
+complete, submit, publish evidence, or change workflow state. Successful
+preflight is followed by repinning, CAS, and one authenticated local prepare,
+complete, and exact submission; restart states skip preflight and cannot
+rearm. Tag16 process tests are GREEN 6 of 6, effect routing is GREEN 7 of 7,
+and the literal receipt-v2 refund journey is GREEN 1 of 1 in 106.26 seconds.
+These tests include journal-drift-before-RPC, least-privilege FD 218, and
+one-preflight/one-invocation/restart-reconciliation checks. They use an
+authenticated in-process
 loopback sidecar, sealed memfds, temporary SQLite, and deterministic material.
 They use no Docker, external node, public RPC, DNS, faucet, public funds, or
 deployment, and therefore do not claim actual-node finality or the subsequent
@@ -2974,10 +2980,12 @@ The literal accepted RFP-003 issue #112 deliverables are now composed as follows
 | Delivery and Chat degradation | Retained post-lock transport removal, replay, and degraded-state evidence |
 | Coordinator fuzzing | Retained literal fuzz target, seeds, and smoke evidence |
 
-The XMR receipt-v2 Tag16 user path is GREEN 1 of 1 in 84.21 seconds: the first
-refund sends once and leaves Started, the second runs the role-fixed observer
-and reconciles Succeeded, the third is Complete without a process, and the
-losing claim fails closed. The all-pair Maker matrix exposed a real Bitcoin
+The XMR receipt-v2 Tag16 user path is GREEN 1 of 1 in 106.26 seconds: an
+injected rejected preflight sends nothing, leaves the CAS available, and is
+successfully retried; the accepted attempt then sends once and leaves Started;
+the second runs the role-fixed observer and reconciles Succeeded; the third is
+Complete without a process; and the losing claim fails closed. The all-pair
+Maker matrix exposed a real Bitcoin
 manual-claim RED at JSON-RPC code `-32602`; production now preserves the user
 claim intent while mapping it to Bitcoin's semantic `drive` command. The
 focused mapping unit is GREEN 1 of 1.

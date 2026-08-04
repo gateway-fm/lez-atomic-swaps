@@ -595,6 +595,18 @@ async fn receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once() {
         .unwrap();
     stop_daemon(&mut maker, &daemon, true);
 
+    write_private_bytes(&effect.preflight_rejection_marker, b"reject\n");
+    let rejected_preflight = run_taker_lifecycle("refund", &effect.receipt);
+    assert!(!rejected_preflight.status.success());
+    assert!(rejected_preflight.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(rejected_preflight.stderr).unwrap(),
+        "XMR Taker refund is not yet eligible or its preflight failed\n"
+    );
+    assert!(fs::read(&effect.invocation_marker).unwrap().is_empty());
+    fs::remove_file(&effect.preflight_rejection_marker)
+        .expect("remove injected preflight rejection");
+
     let first_refund = run_taker_lifecycle("refund", &effect.receipt);
     assert!(
         first_refund.status.success(),
@@ -614,7 +626,10 @@ async fn receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once() {
         .to_owned();
     assert_eq!(plan_identity.len(), 64);
     assert_ne!(plan_identity, "0".repeat(64));
-    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert_eq!(
+        fs::read(&effect.invocation_marker).unwrap(),
+        b"preflight\ninvoked\n"
+    );
     assert!(fs::read(&effect.observer_marker).unwrap().is_empty());
 
     let observed_refund = run_taker_lifecycle("refund", &effect.receipt);
@@ -630,7 +645,10 @@ async fn receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once() {
     assert_eq!(observed_refund["step"], "refund_lez_tag16");
     assert_eq!(observed_refund["tool_plan_identity_sha256"], plan_identity);
     assert_eq!(observed_refund["chain_effect_finalized"], true);
-    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert_eq!(
+        fs::read(&effect.invocation_marker).unwrap(),
+        b"preflight\ninvoked\n"
+    );
     assert_eq!(fs::read(&effect.observer_marker).unwrap(), b"observed\n");
     assert_taker_refund_reconciliation(&effect, &plan_identity);
 
@@ -642,7 +660,10 @@ async fn receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once() {
     assert_eq!(completed_refund["step"], "refund_lez_tag16");
     assert_eq!(completed_refund["tool_plan_identity_sha256"], plan_identity);
     assert_eq!(completed_refund["chain_effect_finalized"], true);
-    assert_eq!(fs::read(&effect.invocation_marker).unwrap(), b"invoked\n");
+    assert_eq!(
+        fs::read(&effect.invocation_marker).unwrap(),
+        b"preflight\ninvoked\n"
+    );
     assert_eq!(fs::read(&effect.observer_marker).unwrap(), b"observed\n");
     assert_taker_refund_reconciliation(&effect, &plan_identity);
 
@@ -1466,6 +1487,7 @@ struct XmrTakerEffectFixture {
     workflow_journal: PathBuf,
     invocation_marker: PathBuf,
     observer_marker: PathBuf,
+    preflight_rejection_marker: PathBuf,
     run_id: String,
 }
 
@@ -1501,6 +1523,7 @@ impl XmrTakerEffectFixture {
         let workflow_journal = effect_root.join("workflow.sqlite3");
         let invocation_marker = effect_root.join(format!("{step_name}-invocations.log"));
         let observer_marker = effect_root.join(format!("{step_name}-observations.log"));
+        let preflight_rejection_marker = effect_root.join("reject-tag16-preflight");
         write_private_bytes(&invocation_marker, b"");
         write_private_bytes(&observer_marker, b"");
         let run_id = run_id.to_owned();
@@ -1510,6 +1533,7 @@ impl XmrTakerEffectFixture {
             &workflow_journal,
             &invocation_marker,
             &observer_marker,
+            &preflight_rejection_marker,
             terminal_step,
             &run_id,
         );
@@ -1524,17 +1548,23 @@ impl XmrTakerEffectFixture {
             run_id,
             invocation_marker,
             observer_marker,
+            preflight_rejection_marker,
         }
     }
 }
 
-#[allow(clippy::too_many_lines)] // One visible fixture binds every role-fixed tool slot.
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "one visible fixture binds every role-fixed tool slot and test control"
+)]
 fn taker_effect_authority(
     receipt: &Value,
     effect_root: &Path,
     workflow_journal: &Path,
     invocation_marker: &Path,
     observer_marker: &Path,
+    preflight_rejection_marker: &Path,
     terminal_step: XmrWorkflowStep,
     run_id: &str,
 ) -> TakerEffectAuthority {
@@ -1560,8 +1590,15 @@ fn taker_effect_authority(
         );
     }
     let marker_text = invocation_marker.to_str().expect("UTF-8 marker path");
+    let rejection_marker_text = preflight_rejection_marker
+        .to_str()
+        .expect("UTF-8 preflight rejection marker path");
     assert!(!marker_text.contains('\''));
+    assert!(!rejection_marker_text.contains('\''));
     let sender_worker = format!("#!/bin/sh\nset -eu\nprintf 'invoked\\n' >> '{marker_text}'\n");
+    let preflight_aware_sender_worker = format!(
+        "#!/bin/sh\nset -eu\nif grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/217; then\n  test ! -e '{rejection_marker_text}'\n  printf 'preflight\\n' >> '{marker_text}'\n  exit 0\nfi\nprintf 'invoked\\n' >> '{marker_text}'\n"
+    );
     let inert_worker = "#!/bin/sh\nexit 0\n";
     let (step_name, effect_evidence_sha256, tag14_worker, tag16_worker) = match terminal_step {
         XmrWorkflowStep::AuthorizeLezTag14 => (
@@ -1574,7 +1611,7 @@ fn taker_effect_authority(
             "refund_lez_tag16",
             FINALIZED_TAG16_EVIDENCE_SHA256,
             inert_worker,
-            sender_worker.as_str(),
+            preflight_aware_sender_worker.as_str(),
         ),
         _ => panic!("fixture supports only Taker LEZ terminal effects"),
     };

@@ -452,7 +452,7 @@ neither a production-readiness nor public-deployment certification.
 |---|---|---|
 | Daemon | PoC complete | Retained system-service, supervision, restart, and daemon-owned ZEC local-chain evidence |
 | Maker CLI | PoC complete; all-pair matrix 1/1 in 0.64s | Real CLI/daemon and durable rows; marker actors add no chain effect |
-| Taker CLI | PoC complete; receipt-v2 Tag16 refund 1/1 in 84.21s | Send once, observe/reconcile, Complete, losing claim; fixed process observer is not actual-chain proof |
+| Taker CLI | PoC complete; receipt-v2 Tag16 refund 1/1 in 106.26s | Rejected-preflight retry, prepare-only preflight, send once, observe/reconcile, Complete, losing claim; fixed process observer is not actual-chain proof |
 | Coordinator persistence/crash/concurrency | PoC complete; three-pair overlap 1/1 in 16.31s | One daemon/database; XMR failure isolated from BTC/ZEC Terminal; child reap and restart exact/no replay; markers only |
 | Price sources | PoC complete | Retained local and Logos-module C-API evidence |
 | Delivery/Chat degradation | PoC complete | Retained durable replay and post-lock transport-removal evidence |

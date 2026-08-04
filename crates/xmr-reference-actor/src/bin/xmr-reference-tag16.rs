@@ -34,7 +34,7 @@ use xmr_reference_actor::{
     ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
     XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_STAGE_A_FD,
     XMR_EFFECT_STAGE_B_FD, XmrEffectChildModeV1, XmrEffectChildPlanV1,
-    load_xmr_effect_child_plan_fd_for,
+    load_xmr_effect_child_plan_fd,
 };
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -115,21 +115,34 @@ async fn main() {
 }
 
 async fn execute_effect_child() -> Result<()> {
-    let (inputs, output) = validate_effect_child_inputs()?;
+    let (inputs, output, mode) = validate_effect_child_inputs()?;
+    if mode == XmrEffectChildModeV1::Preflight {
+        ensure!(
+            publish_tag16(inputs, true).await?.is_none(),
+            "Tag16 preflight unexpectedly produced submission evidence"
+        );
+        return Ok(());
+    }
     let mut evidence_file = reserve_evidence(&output)?;
-    let evidence = publish_tag16(inputs).await?;
+    let evidence = publish_tag16(inputs, false)
+        .await?
+        .context("Tag16 invocation produced no submission evidence")?;
     write_evidence(&mut evidence_file, &evidence)?;
     Ok(())
 }
 
-fn validate_effect_child_inputs() -> Result<(ValidatedInputs, PathBuf)> {
-    let plan = load_xmr_effect_child_plan_fd_for(
-        ActorRole::Taker,
-        XmrEffectChildModeV1::Invoke,
-        XmrWorkflowStep::RefundLezTag16,
-        "lez_xmr_tag16_refund_v1",
-    )
-    .context("load Tag16 effect-child plan")?;
+fn validate_effect_child_inputs() -> Result<(ValidatedInputs, PathBuf, XmrEffectChildModeV1)> {
+    let plan = load_xmr_effect_child_plan_fd().context("load Tag16 effect-child plan")?;
+    ensure!(
+        plan.role() == ActorRole::Taker
+            && matches!(
+                plan.mode(),
+                XmrEffectChildModeV1::Preflight | XmrEffectChildModeV1::Invoke
+            )
+            && plan.step() == XmrWorkflowStep::RefundLezTag16
+            && plan.executable_abi() == "lez_xmr_tag16_refund_v1",
+        "XMR effect child plan differs from the compiled Tag16 route"
+    );
     validate_evidence_root(plan.evidence_root())?;
     let runtime: RuntimeDescriptor = serde_json::from_slice(&read_sealed_fd(
         XMR_EFFECT_RUNTIME_FD,
@@ -205,7 +218,7 @@ fn validate_effect_child_inputs() -> Result<(ValidatedInputs, PathBuf)> {
         signature,
     };
     let output = plan.evidence_root().join("tag16-refund-submission.json");
-    Ok((inputs, output))
+    Ok((inputs, output, plan.mode()))
 }
 
 fn derive_effect_child_signature(
@@ -264,7 +277,9 @@ async fn execute(arguments: Arguments) -> Result<()> {
     let output_evidence = arguments.output_evidence.clone();
     let inputs = validate_inputs(arguments)?;
     let mut evidence_file = reserve_evidence(&output_evidence)?;
-    let evidence = publish_tag16(inputs).await?;
+    let evidence = publish_tag16(inputs, false)
+        .await?
+        .context("manual Tag16 invocation produced no submission evidence")?;
     write_evidence(&mut evidence_file, &evidence)?;
     println!(
         "{}",
@@ -347,7 +362,10 @@ fn validate_inputs(arguments: Arguments) -> Result<ValidatedInputs> {
     })
 }
 
-async fn publish_tag16(inputs: ValidatedInputs) -> Result<Tag16Evidence> {
+async fn publish_tag16(
+    inputs: ValidatedInputs,
+    preflight_only: bool,
+) -> Result<Option<Tag16Evidence>> {
     let ValidatedInputs {
         sidecar_endpoint,
         capability,
@@ -392,6 +410,9 @@ async fn publish_tag16(inputs: ValidatedInputs) -> Result<Tag16Evidence> {
         ))
         .await
         .context("tag-16 preparation failed")?;
+    if preflight_only {
+        return Ok(None);
+    }
     let completed = client
         .complete_native_xmr_refund_v3(
             CompleteNativeXmrRefundV3Request::new(
@@ -426,7 +447,7 @@ async fn publish_tag16(inputs: ValidatedInputs) -> Result<Tag16Evidence> {
         submitted.transaction_id == completed.refund.transaction_id,
         "tag-16 returned a different transaction identity"
     );
-    Ok(Tag16Evidence {
+    Ok(Some(Tag16Evidence {
         schema: "lez_v02_m5_actual_local_tag16_v1",
         role: Participant::Taker,
         run_id,
@@ -438,7 +459,7 @@ async fn publish_tag16(inputs: ValidatedInputs) -> Result<Tag16Evidence> {
         prepared_message_hash: hex::encode(prepared.refund.message_hash.as_bytes()),
         automatic_submission_retry: false,
         public_rpc_used: false,
-    })
+    }))
 }
 
 fn write_evidence(file: &mut File, evidence: &Tag16Evidence) -> Result<()> {

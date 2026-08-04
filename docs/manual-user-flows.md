@@ -6866,7 +6866,7 @@ cargo +1.96.0 test --locked --offline \
   --all-features --bin lez-v02-xmr-regtest-sweep
 ```
 
-Expected focused results are 4 of 4 Tag16 process cases and 6 of 6 effect-route
+Expected focused results are 6 of 6 Tag16 process cases and 7 of 7 effect-route
 cases. The process proof verifies the canonical Stage-A refund hash,
 cryptographic final signature, distinct prepare/complete identities, one
 transaction-derived submission, and no retry. It now also starts the actual
@@ -6874,8 +6874,10 @@ no-argument effect child with sealed FDs, derives the final signature from the
 live Stage-B-matching Taker journal plus FD 218, and rejects a changed durable
 presignature before any sidecar call or evidence write. The route proof requires
 FD 218 for Tag16 and the Monero sender but proves it absent from Tag14 and every
-observer. Negative paths reject crossed role/session/signature/request inputs
-before wire access.
+observer. A successful preflight calls only prepare and writes no evidence; a
+rejected preflight calls neither complete nor submit and leaves the durable
+one-attempt CAS available. Negative paths reject crossed
+role/session/signature/request inputs before wire access.
 
 The broader all-target command remains useful when validating Maker ingestion
 and the Monero sweep selector:
@@ -7192,7 +7194,7 @@ Repeat the receipt-v2 XMR Tag16 Taker refund journey:
 cargo +1.96.0 test --locked --offline -p lez-maker-node --test xmr_chat_process receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once -- --exact --nocapture
 ```
 
-Expected: GREEN 1/1; the measured closure run took 84.21 seconds. The test
+Expected: GREEN 1/1; the latest measured run took 106.26 seconds. The test
 creates a real signed Delivery/Chat acceptance and receipt v2, prepares the
 refund workflow, removes Delivery and stops Chat plus the Maker daemon, then
 runs the user command three times and the losing command once:
@@ -7204,7 +7206,13 @@ target/debug/lez-taker refund --receipt /absolute/private/acceptance-receipt-v2.
 target/debug/lez-taker claim --receipt /absolute/private/acceptance-receipt-v2.json
 ```
 
-The first refund invokes Tag16 once and leaves Started. The second invokes only
+The test first injects one rejected preflight and proves it produces no sender
+marker; after removing that injection, the same receipt remains retryable. The
+successful refund starts a sealed prepare-only Tag16 child while the workflow is
+Prepared. Only after that succeeds does the parent repin inputs, consume the
+one-attempt CAS, invoke Tag16 once, and leave Started. Preflight performs no
+complete, submission, or evidence publication; a failure therefore remains
+retryable without rearming. The second command skips preflight and invokes only
 the role-fixed observer, verifies the exact sending-plan identity, and
 reconciles Succeeded. The third returns Complete with neither process. The
 losing claim fails closed and does not alter any captured artifact.
@@ -7233,7 +7241,7 @@ still contend for the shared target directory.
 
 Cold compilation, uncached dependencies, cryptographic XMR fixture generation,
 filesystem sync latency, process scheduling, and host load can extend the
-recorded 0.64, 84.21, and 16.31 second measurements. There is no public-service
+recorded 0.64, 106.26, and 16.31 second measurements. There is no public-service
 flakiness. A timeout or failure is not chain evidence and must not be waived.
 
 The Maker matrix, overlap actors, and receipt-v2 observer remain fixed process

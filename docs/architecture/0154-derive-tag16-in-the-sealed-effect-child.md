@@ -20,13 +20,17 @@ manual operation less safe.
 
 ## Decision
 
-The no-argument `xmr-reference-tag16` mode is the Taker-only semantic effect
-child for `refund_lez_tag16`. It accepts no secret in argv or the environment.
+The no-argument `xmr-reference-tag16` modes are the Taker-only semantic effect
+children for `refund_lez_tag16`. They accept no secret in argv or the
+environment. A read-only workflow check starts `preflight` only while the
+step is `Prepared`; after the preflight succeeds, the parent consumes the
+one-attempt CAS and starts `invoke`. `Started`, `Unknown`, and `Succeeded`
+restart paths never preflight or re-send.
 It reconstructs and independently checks:
 
-- the invoke-only Taker route, exact step, ABI, run, swap, Stage-A agreement,
-  Stage-B activation, live adaptor journal, evidence root, and loopback sidecar
-  origin from sealed FD 217;
+- the preflight-or-invoke Taker route, exact step, ABI, run, swap, Stage-A
+  agreement, Stage-B activation, live adaptor journal, evidence root, and
+  loopback sidecar origin from sealed FD 217;
 - the exact runtime, capability, Stage A, Stage B, private view key, and Taker
   Monero spend share from sealed FDs 200, 201, 211, 212, 216, and 218;
 - the exact Taker refund-session identity and `PresignatureVerified` live
@@ -34,12 +38,15 @@ It reconstructs and independently checks:
 - byte equality between the live durable presignature and the presignature
   committed by Stage B.
 
-Only invocation steps that can spend Monero or adapt the LEZ refund receive FD
-218. Tag14, every observer, and unrelated children do not. The child adapts the
-durable presignature in memory, cryptographically verifies the final signature,
-uses deterministic prepare/complete request IDs, and performs one authenticated
-prepare, complete, and exact transaction submission. It reserves a no-clobber
-owner-private evidence file before the network attempt.
+Only Tag16 preflight/invocation and invocation steps that can spend Monero
+receive FD 218. Tag14, every observer, and unrelated children do not. Both
+Tag16 modes adapt the durable presignature in memory and cryptographically
+verify the final signature. Preflight makes only the deterministic,
+sidecar-durable prepare call, then exits without reserving evidence, completing,
+or submitting. Invoke reserves a no-clobber owner-private evidence file and
+performs prepare, complete, and exact transaction submission under deterministic
+request identities. The sidecar prepare operation is non-sending and
+idempotently returns the exact prepared bytes.
 
 Manual path-based invocation retains the strict mode-`0600`, owner, single-link
 capability-file factory. The sealed child instead parses FD 201 once with the
@@ -50,11 +57,15 @@ the on-disk policy is not relaxed.
 
 ```mermaid
 flowchart LR
-    Parent["Taker workflow parent"] --> Plan["Sealed invoke plan FD 217"]
+    Parent["Taker workflow parent"] --> Prepared{"Workflow Prepared"}
+    Prepared --> Preflight["Sealed preflight plan FD 217"]
+    Preflight --> Prepare["Authenticated prepare only"]
+    Prepare --> CAS["Prepared to Started CAS"]
+    CAS --> Plan["Sealed invoke plan FD 217"]
     Parent --> App["Stage A and B plus view key"]
     Parent --> Share["Taker XMR share FD 218"]
     Parent --> Journal[("Live Taker adaptor journal")]
-    Plan --> Child["Tag16 effect child"]
+    Plan --> Child["Tag16 invoke child"]
     App --> Child
     Share --> Child
     Journal --> Child
@@ -73,9 +84,16 @@ sequenceDiagram
     participant Child as Tag16 child
     participant Sidecar as Local LEZ sidecar
     participant Chain as LEZ chain
-    Parent->>Parent: Pin executable and sealed FDs before CAS
+    Parent->>Parent: Read-only check requires preflight
+    Parent->>Child: Spawn sealed preflight route
+    Child->>Journal: Load exact Stage-B-matching refund row
+    Child->>Child: Adapt and verify final signature
+    Child->>Sidecar: Prepare exact signed refund only
+    Sidecar-->>Child: Durable prepared witnessed refund
+    Child-->>Parent: Exit success without evidence or submit
+    Parent->>Parent: Repin executable and sealed FDs
     Parent->>Parent: CAS Prepared to Started once
-    Parent->>Child: Spawn invoke-only route
+    Parent->>Child: Spawn sealed invoke route
     Child->>Journal: Load exact Taker refund row
     Journal-->>Child: Stage-B-matching durable presignature
     Child->>Child: Adapt with sealed Taker share and verify
@@ -108,25 +126,34 @@ conditional on the validated protocol construction and finality assumptions:
    derive that Taker share.
 
 Process atomicity is narrower. All descriptor, plan, application, journal, and
-signature checks occur before RPC use. The parent consumes the one-attempt CAS
-before spawn, so an interrupted send remains `Started` or `Unknown` and must be
-resolved by read-only finalized observation; it must never be blindly sent
-again. A changed journal presignature fails before any sidecar call or evidence
-write. No-clobber evidence prevents a later invocation from overwriting the
-first attempt's record.
+signature checks occur before RPC use. While the workflow is `Prepared`, a
+failed or too-early prepare-only preflight leaves the one-attempt CAS untouched,
+so the operator can retry when the refund window opens. A successful preflight
+does not imply a send: the parent repins all invocation inputs, consumes the CAS,
+and only then starts the sending mode. An interruption after CAS remains
+`Started` or `Unknown` and must be resolved by read-only finalized
+observation; it must never be blindly sent again. A window or chain-state race
+after successful preflight is consequently treated as sending ambiguity rather
+than grounds to rearm. A changed journal presignature fails before any sidecar
+call or evidence write. No-clobber evidence prevents a later invocation from
+overwriting the first attempt's record.
 
 This checkpoint proves the real semantic child against an authenticated local
 sidecar double, not actual LEZ finality or the later Maker Monero sweep. The
 historical isolated two-devnet refund corridor proves those downstream
-conditional steps separately. Literal receipt-v2 CLI composition, pre-CAS
-refund-window admission, actual-node replay through this child, Tag17, adverse
-reorgs, and independent cryptographic review remain open.
+conditional steps separately. Literal receipt-v2 CLI composition and pre-CAS
+admission are now process-GREEN; actual-node replay through this child, Tag17,
+adverse reorgs, and independent cryptographic review remain open.
 
 ## Verification and resources
 
-The Tag16 process suite is GREEN 4 of 4, including the real sealed child and a
-live-journal drift rejection before RPC. The effect-route suite is GREEN 6 of
-6 and proves FD 218 reaches only the three sending steps that require it.
+The Tag16 process suite is GREEN 6 of 6, including invoke, successful
+prepare-only preflight, rejected preflight, and live-journal drift rejection.
+The effect-route suite is GREEN 7 of 7 and proves rejected preflight leaves the
+one-attempt CAS available. The literal receipt-v2 refund journey is GREEN 1 of
+1 in 106.26 seconds and proves rejected-preflight retry without CAS
+consumption, one accepted preflight, one invoke, restart observation,
+process-free completion, and losing-branch exclusion.
 
 These focused tests use temporary owner-private files, sealed memfds, SQLite,
 deterministic cryptographic fixtures, and an authenticated in-process loopback

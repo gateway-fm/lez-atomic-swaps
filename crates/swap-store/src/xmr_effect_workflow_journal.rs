@@ -743,6 +743,28 @@ impl SqliteXmrWorkflowJournal {
         self.revalidate_storage()
     }
 
+    /// Reports whether the exact step is still Prepared and therefore needs a
+    /// non-sending preflight before its one invocation authority is consumed.
+    ///
+    /// # Errors
+    ///
+    /// Wrong role, branch scope, identity, missing step, or corrupt storage
+    /// fails closed. This method never changes durable workflow state.
+    pub fn requires_invocation_preflight(
+        &self,
+        identity: &XmrWorkflowIdentityV1,
+        step: XmrWorkflowStep,
+    ) -> Result<bool, StoreError> {
+        ensure_step_role(identity, step)?;
+        self.revalidate_storage()?;
+        ensure_scope(&self.connection, identity, step.scope())?;
+        let snapshot =
+            load_step(&self.connection, step)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
+        validate_step(identity, step, &snapshot)?;
+        self.revalidate_storage()?;
+        Ok(snapshot.state == StepState::Prepared)
+    }
+
     /// Reconciles Started or Unknown to Succeeded with exact durable evidence.
     ///
     /// # Errors

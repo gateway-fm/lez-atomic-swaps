@@ -66,6 +66,10 @@ for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 21
     test -e "/proc/self/fd/$fd"
 done
 test ! -e /proc/self/fd/219
+if grep -Fq '"mode":"preflight"' /proc/self/fd/217; then
+    test "${XMR_TEST_PREFLIGHT_FAIL:-}" != "1"
+    exit 0
+fi
 grep -Fq '"mode":"invoke"' /proc/self/fd/217
 grep -Fq '"step":"refund_lez_tag16"' /proc/self/fd/217
 grep -Fq '"executable_abi":"lez_xmr_tag16_refund_v1"' /proc/self/fd/217
@@ -951,6 +955,38 @@ fn taker_tag16_invocation_alone_receives_the_validated_xmr_share() {
         String::from_utf8(output.stdout).unwrap().trim(),
         fixture.private_xmr_share_sha256
     );
+}
+
+#[test]
+fn failed_tag16_preflight_does_not_consume_the_one_attempt_cas() {
+    let fixture = refund_route_fixture();
+    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+        .expect("acquire Taker state lock");
+    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+        .expect("acquire Taker workflow lock");
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Taker,
+        RUN_ID,
+    )
+    .expect("load executable refund authority");
+    let mut preflight = execution
+        .prepare_effect_preflight(XmrWorkflowStep::RefundLezTag16, &actor_lock, &workflow_lock)
+        .expect("compose Tag16 preflight")
+        .expect("Prepared Tag16 requires preflight");
+    preflight.env("XMR_TEST_PREFLIGHT_FAIL", "1");
+    assert!(!preflight.status().expect("run failing preflight").success());
+    assert!(matches!(
+        execution
+            .prepare_effect_invocation(
+                XmrWorkflowStep::RefundLezTag16,
+                &actor_lock,
+                &workflow_lock,
+            )
+            .expect("preflight failure leaves invocation available"),
+        XmrPreparedEffectInvocationV1::InvokeOnce { .. }
+    ));
 }
 
 #[test]
