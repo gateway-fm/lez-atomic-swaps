@@ -1,0 +1,29 @@
+id	state	gate_script	evidence	remaining
+F1	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Automatic node-health withdrawal, mid-negotiation degradation, and unaffected-pair actual swap
+F2	green	./scripts/check-m3-cryptographic-vectors.sh	docs/requirements-traceability.md	none
+F3	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Tag-17 punishment plus semantic claim/refund receipts and adverse concurrency
+F4	open	./scripts/run-zebra-e2e.sh	docs/requirements-traceability.md	Composed actual-node recovery and post-lock margin matrix
+F5	open	./scripts/test-m4-lez-local-deployment-contract.sh	docs/requirements-traceability.md	Current guest deployment identity and Tag-17 punishment transition
+F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	XMR punishment, adversarial races, process-kill, reorg, and concurrency outcomes
+F7	open	./scripts/test-m3-f7-token-fixture-contract.sh	docs/requirements-traceability.md	Terminal composed custom-token claim/refund on the exact v0.2 actor route
+F8	upstream-deferred	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	LOGOS-021 live Logos price-module ABI compatibility
+F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Daemon-owned semantic XMR effects and automatic unavailable-node composition
+U1	open	./scripts/test-m4-xmr-agreement-contract.sh	docs/requirements-traceability.md	Public durable full-lifecycle XMR SDK facade and doctest
+U2	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Accepted-application actual-chain concurrency and process crash recovery
+U3	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Complete supported-pair semantic claim/refund daemon action matrix
+U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Literal XMR Taker semantic claim/refund and abandonment journeys
+U5	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
+U6	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
+U7	open	./scripts/verify-spel-compatibility.sh	docs/requirements-traceability.md	Reconcile and freeze the generated IDL/client for the current custody ABI
+U8	green	./scripts/test-bitcoin-testnet4-route-contract.sh	docs/requirements-traceability.md	none
+U9	green	./scripts/test-monero-stagenet-guide-contract.sh	docs/requirements-traceability.md	none
+U10	green	./scripts/test-zcash-testnet-guide-contract.sh	docs/requirements-traceability.md	none
+R1	open	./scripts/run-zebra-e2e.sh	docs/requirements-traceability.md	Actual-process reorg/replacement and refund-order hardening
+R2	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Process-kill recovery, different-UID isolation, and adverse-node continuation
+R3	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Automatic dependency health, offer withdrawal, negotiation behavior, and unaffected actual pair
+R4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Claim unknown-outcome corruption matrix plus process-kill actual-node restart
+R5	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	One daemon and database with distinct accepted agreements and actual-chain effects
+R6	open	./scripts/test-m3-direction-phase-timings-contract.sh	docs/requirements-traceability.md	Cutoff races, congestion model, public calibration, and actual reorg margins
+R7	open	./scripts/run-bitcoin-core-e2e.sh	docs/requirements-traceability.md	Maker-lock admission, fee stress, bounded RBF or CPFP, and reorg
+R8	green	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	none
+P1	policy-deferred	./scripts/test-lez-cost-evidence.sh	docs/requirements-traceability.md	ADR-0023 defers named public-testnet v0.2 compute evidence while exact local version budgets remain enforced

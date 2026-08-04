@@ -277,8 +277,12 @@ attestation so neither can be misreported as the other.
 - [x] Close missing U9 operator documentation with a pinned self-hosted Stagenet
   daemon/wallet/funding journey, explicit untrusted public-node option,
   resource/flakiness inventory and no-public-call CI contract.
-- [ ] Reconcile every F/U/R/P/S/D row against current executable evidence;
-  replace stale milestone prose and make each hard-requirement gate executable.
+- [x] Reconcile the exact F1–F9, U1–U10, R1–R8 and P1 inventory against
+  current executable evidence. The 28-row TSV now requires a repository-owned
+  executable gate, retained evidence, explicit state and concrete remaining
+  work; strict mode rejects every self-owned open row.
+- [ ] Reconcile S1–S13 and D1 against current executable evidence, replacing
+  stale milestone prose and preserving S12/S13 as independent-only verdicts.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

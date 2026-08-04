@@ -24,6 +24,7 @@ materially affect safe reproduction.
 - [Mainnet-readiness write-up](mainnet-readiness.md)
 - [Independent review scope and reproducible handoff](review-scope.md)
 - [Finding severity and remediation register](findings-register.md)
+- [Machine-auditable hard-requirement inventory](hard-requirements.tsv)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)
@@ -39,10 +40,21 @@ then additionally requires the agreed reviewer report, remediation of every
 Critical and High finding, and a recorded decision for every Medium and Low
 finding. A self-review cannot satisfy that independent-review condition.
 
+`./scripts/test-m7-hard-requirements-audit.sh` enforces the exact F1–F9,
+U1–U10, R1–R8, and P1 inventory, one repository-owned executable gate and one
+retained evidence source per row, and honest `green`, `open`,
+`policy-deferred`, or `upstream-deferred` state. CI runs inventory mode while
+work is active. The release-candidate command
+`M7_REQUIRE_CLOSED=1 ./scripts/test-m7-hard-requirements-audit.sh` rejects every
+repository-owned `open` row; approved public-evidence policy and Logos-owned
+upstream disclosures remain visible without masquerading as implementation
+work.
+
 ```mermaid
 flowchart LR
     Authority["Pinned RFP and accepted issue"] --> SelfWork["Gateway implementation and self-review"]
-    SelfWork --> Tests["Hard-requirement and security gates"]
+    SelfWork --> Audit["Exact F U R P inventory"]
+    Audit --> Tests["Hard-requirement and security gates"]
     Tests --> Bundle["Immutable reviewer bundle"]
     Bundle --> External["Independent S12 and S13 review"]
     External --> Register["Finding register"]
@@ -50,4 +62,3 @@ flowchart LR
     Remediation --> Recheck["Independent closure check"]
     Recheck --> Release["M7 release decision"]
 ```
-

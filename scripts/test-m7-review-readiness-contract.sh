@@ -9,13 +9,15 @@ fail() {
 }
 
 readonly template_commit="63ecf397ca5dae4b81de85a578ec839a78fec1c0"
-readonly template_sha256="$(sha256sum /tmp/lez-m7-doc-packet-template.yml 2>/dev/null | cut -d ' ' -f 1 || true)"
+template_sha256="$(sha256sum /tmp/lez-m7-doc-packet-template.yml 2>/dev/null | cut -d ' ' -f 1 || true)"
+readonly template_sha256
 
 required_files=(
   docs/milestone-7/README.md
   docs/milestone-7/mainnet-readiness.md
   docs/milestone-7/review-scope.md
   docs/milestone-7/findings-register.md
+  docs/milestone-7/hard-requirements.tsv
   docs/milestone-7/doc-packets/btc-sdk.md
   docs/milestone-7/doc-packets/xmr-sdk.md
   docs/milestone-7/doc-packets/zec-sdk.md
@@ -93,6 +95,8 @@ rg -Fq "${template_commit}" docs/milestone-7/README.md \
   || fail "M7 README does not pin the template authority"
 rg -Fq "doc-packet.yml" docs/milestone-7/README.md \
   || fail "M7 README does not name the template"
+rg -Fq "M7_REQUIRE_CLOSED=1" docs/milestone-7/README.md \
+  || fail "M7 README does not document strict hard-requirement closure"
 
 # The temporary authority capture is useful during development but is not a CI
 # dependency. When it exists, prove the recorded source was not edited locally.
