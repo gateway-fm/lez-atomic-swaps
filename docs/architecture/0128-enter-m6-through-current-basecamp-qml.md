@@ -13,6 +13,10 @@ build emits an `.lgx` package. QML cannot contact the owner Unix socket
 directly through an invented browser API; it must use a supported
 process-isolated backend or Logos module boundary.
 
+The repository owner explicitly approved prototype commit `0abdbc2` on
+2026-08-04 after the unchanged-input 6/6 browser revalidation at `17573cd`.
+The sign-off gate in this ADR is therefore released for implementation.
+
 ## Decision
 
 Use a progressive two-surface delivery:

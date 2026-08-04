@@ -1,6 +1,6 @@
 # M6 clickable prototype review
 
-Status: Awaiting owner sign-off
+Status: Approved by repository owner
 
 Prototype checkpoint: `0abdbc2`
 
@@ -54,12 +54,13 @@ external runtime resource. The fresh machine-readable packet is
 
 ## Sign-off record
 
-- Decision: pending
-- Reviewer: pending
+- Decision: approved
+- Reviewer: repository owner (explicit chat approval)
 - Reviewed commit: `0abdbc2`
-- Date: pending
-- Required changes: pending
+- Revalidated evidence commit: `17573cd`
+- Date: 2026-08-04
+- Required changes: none
 
-After an explicit `approved` decision, update this record with the reviewer,
-date, exact accepted commit, and any conditions. Production QML must not be
-described as accepted before that update.
+This approval releases the issue-#112 gate for production Maker and Taker QML.
+It approves the reviewed journeys and terminology, not the as-yet-unimplemented
+packages, backend bridge, chain effects, or M6 completion.

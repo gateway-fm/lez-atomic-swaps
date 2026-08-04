@@ -5394,8 +5394,9 @@ networkless digest-pinned runner completed in 19.34 seconds and was removed
 afterward. A direct host attempt executed no journey because Chromium correctly
 refused to disable its unavailable host sandbox; it was not counted as product
 evidence. The exact packet is
-`docs/evidence/m6-prototype-revalidation-20260804.json`. Human signoff remains
-the issue-#112 gate and is not inferred from the automated pass.
+`docs/evidence/m6-prototype-revalidation-20260804.json`. The repository owner
+explicitly approved the reviewed prototype on 2026-08-04, releasing the
+issue-#112 production-QML gate without treating automation as human approval.
 
 ## M6 atomic Maker route backend checkpoint (2026-08-03)
 
@@ -5603,8 +5604,8 @@ least-authority compatibility item.
 
 The receipt-bound swap-list and monitor projection is now implemented by
 `e9393cf`; the next nonvisual work is actor driving and generation-fenced
-claim/refund methods. Production QML and QtRO remain gated on explicit owner
-prototype signoff. Actor-real UI composition, Basecamp packages, final
+claim/refund methods. The owner released the production QML and QtRO signoff
+gate on 2026-08-04. Actor-real UI composition, Basecamp packages, final
 quality/evidence gates, and the M6 tag remain pending.
 
 ## M6 receipt-bound list and monitor checkpoint (2026-08-03)
@@ -5687,8 +5688,8 @@ Commit `0ed6a59` keeps an already-admitted Refund live across the two
 intermediate refunded phases while advanced Claim and terminal Refund replay
 remain inert. This completes the nonvisual Claim happy-path slice, not M6.
 Equivalent service-driven actual-node Refund, Maker and Taker Basecamp `ui_qml`
-packages, their QtRO hosts, actor-real UI E2E, explicit owner prototype
-signoff, final repository gates, and the M6 tag remain pending. Durable
+packages, their QtRO hosts, actor-real UI E2E, final repository gates, and the
+M6 tag remain pending. Owner prototype signoff is complete. Durable
 rollback-incarnation anchoring remains deferred production hardening rather than
 an accepted issue-#112 PoC gate.
 
@@ -5896,9 +5897,7 @@ stderr were empty. The retained packet is
 
 Next in order:
 
-1. obtain the explicit prototype signoff required by issue #112 before the
-   production build; and
-2. build the Maker and Taker Basecamp QML/backend packages, reproducible LGX
+1. build the Maker and Taker Basecamp QML/backend packages, reproducible LGX
    artifacts, and actor-real UI E2E before final M6 gates/tag.
 
 The measured Logos v0.2 historical-account latency, per-account genesis
@@ -5977,7 +5976,7 @@ exception; distribution and production readiness may not silently inherit a
 license grant or skip a realized-closure SBOM, vulnerability, and license
 review.
 
-Next remains the explicit issue-#112 prototype signoff. After approval, RED
-begins for the package contract and actor journey; GREEN will implement the two
-consumer-locked packages, load them in this now-proven pinned runtime, and run
-the actor-real journey with an explicit isolated disk budget.
+Owner signoff released the issue-#112 gate on 2026-08-04. RED now begins for
+the package contract and actor journey; GREEN will implement the two
+consumer-locked packages, load them in this proven pinned runtime, and run the
+actor-real journey with an explicit isolated disk budget.

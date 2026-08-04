@@ -126,8 +126,9 @@ Claim/Refund regression boundary. Both used deterministic local funds with no
 public RPC, faucet, public funds, or public deployment. The retained Claim
 packet is
 [m6-zec-service-claim-regression-certificate-20260804.json](docs/evidence/m6-zec-service-claim-regression-certificate-20260804.json).
-Maker and Taker Basecamp packages, actor-real UI E2E, final gates, explicit
-prototype sign-off, and the M6 tag remain. Cross-restart receipt/state rollback
+Maker and Taker Basecamp packages, actor-real UI E2E, final gates, and the M6
+tag remain. Prototype sign-off was explicitly approved on 2026-08-04.
+Cross-restart receipt/state rollback
 anchoring remains production hardening, not an issue-#112 PoC gate.
 
 The current Basecamp 0.2 C++/QML toolchain is independently preflight-GREEN
@@ -148,8 +149,9 @@ now certifies the Basecamp binary/runtime itself: the capability, package
 manager, and package downloader modules connected over Qt Remote Objects, the
 main UI loaded offscreen, and the upstream five-second smoke passed. Its exact
 2,749,148,608-byte closure is recorded in the evidence packet. This does not
-claim Maker/Taker package load; those packages cannot be implemented before
-the issue-#112 prototype signoff. The first disk-constrained attempt remains
+claim Maker/Taker package load; the issue-#112 prototype gate was released on
+2026-08-04 and those packages are now the active implementation slice. The first
+disk-constrained attempt remains
 recorded as a safe stop, and both attempts used exact-name isolation without
 touching unrelated Docker activity. A warmed networkless product replay,
 realized-closure SBOM, vulnerability, signature, and license review remain
@@ -280,8 +282,9 @@ neither the LEZ submission trace nor Zebra height 110 and empty mempool. The
 run completed in 211.530 seconds without a public RPC, faucet, public funds, or
 public deployment. The retained secret-free packet is
 [the M6 Refund certificate](docs/evidence/m6-zec-service-refund-certificate-20260804.json).
-Fresh Claim regression `m6claim0ba41aba` is also GREEN; only the literal
-Basecamp UI outputs, owner prototype signoff, final gates, and tag remain.
+Fresh Claim regression `m6claim0ba41aba` is also GREEN; owner prototype
+signoff is complete. Only the literal Basecamp UI outputs, final gates, and tag
+remain.
 
 Earlier run `m6refund7be4428a` consumed the 190-second
 provision-to-completion ceiling when the transient response arrived, leaving no
