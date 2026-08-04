@@ -392,6 +392,14 @@ attestation so neither can be misreported as the other.
   installs the source-hashed probe under the `0700` proof root with mode `0500`,
   verifies byte identity, and retains the fail-closed validator unchanged. A
   fresh clean-commit actual-node replay is still required before closing F1/R3.
+- [x] Repair the post-restart projection mismatch found by clean run
+  `m7outage-f482acd-a`. Both semantic route states survived restart and the
+  Bitcoin quote failed closed; application acceptance completed, but handoff
+  stopped before actor execution because the legacy assertion expected only
+  the Zcash row. RED requires the intentional disabled Bitcoin row to remain
+  visible. GREEN applies that two-row invariant only when route health is
+  configured and preserves the exact one-row baseline otherwise. No actor or
+  chain submission ran; another fresh clean-commit replay remains required.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

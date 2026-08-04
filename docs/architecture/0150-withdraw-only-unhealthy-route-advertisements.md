@@ -126,6 +126,16 @@ flowchart TD
   passes only that immutable path to the daemon. The retained run is RED
   diagnostic evidence, not an F1/R3 certificate.
 
+- Clean run `m7outage-f482acd-a` passed immutable probe custody, reported the
+  stopped Bitcoin route unavailable and live Zcash route available before and
+  after Maker restart, rejected the Bitcoin quote, and atomically accepted the
+  Zcash application. It then stopped before actor handoff because the baseline
+  restart assertion expected only one configured route while the M7 harness
+  intentionally retains the disabled Bitcoin route for operator visibility.
+  The assertion is now mode-aware: normal M5 still requires exactly one Zcash
+  route, while M7 requires that route plus the exact disabled Bitcoin route.
+  No role actor or chain submission ran; this remains bounded RED evidence.
+
 ```mermaid
 flowchart LR
     BtcStart[Bitcoin Core Regtest healthy] --> BtcStop[Stop exact run container]

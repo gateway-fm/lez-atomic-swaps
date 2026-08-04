@@ -546,11 +546,22 @@ if [[ -n "$route_health_config" ]]; then
   ' "$evidence_dir/m7-route-health-after-restart.json" >/dev/null ||
     fail 'route-health isolation did not survive Maker restart'
 fi
-jq -e '
-  length == 1 and .[0].revision == 2 and .[0].value.enabled == true
-  and .[0].value.route.pair == "Zcash"
-  and .[0].value.route.direction == "TakerSellsLez"
-' "$evidence_dir/m5-pairs-after-restart.json" >/dev/null
+if [[ -n "$route_health_config" ]]; then
+  jq -e '
+    length == 2 and any(.[];
+      .value.route.pair == "Bitcoin" and .value.enabled == false
+      and .value.route.direction == "TakerSellsForeign" and .revision == 1)
+    and any(.[];
+      .value.route.pair == "Zcash" and .value.enabled == true
+      and .value.route.direction == "TakerSellsLez" and .revision == 2)
+  ' "$evidence_dir/m5-pairs-after-restart.json" >/dev/null
+else
+  jq -e '
+    length == 1 and .[0].revision == 2 and .[0].value.enabled == true
+    and .[0].value.route.pair == "Zcash"
+    and .[0].value.route.direction == "TakerSellsLez"
+  ' "$evidence_dir/m5-pairs-after-restart.json" >/dev/null
+fi
 jq -e '
   length == 1 and .[0].revision == 1
   and .[0].value.route.pair == "Zcash"

@@ -48,6 +48,9 @@ done
 for literal in \
   '--route-health-config' \
   '--route-health-poll-milliseconds' \
+  'length == 2 and any(.[];' \
+  '.value.route.pair == "Bitcoin" and .value.enabled == false' \
+  '.value.route.pair == "Zcash" and .value.enabled == true' \
   'm7-route-health-before-swap.json' \
   'm7-route-health-after-restart.json'; do
   rg -Fq -- "$literal" "$handoff_runner" \
