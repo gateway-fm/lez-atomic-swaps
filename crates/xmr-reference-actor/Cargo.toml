@@ -16,6 +16,7 @@ sessions = [
     "dep:lez-adaptor-role-runner",
     "dep:lez-adaptor-signature",
     "dep:lez-bridge-adapter",
+    "dep:lez-bridge-client",
     "dep:lez-bridge-protocol",
     "dep:lez-swap-core",
     "dep:lez-swap-store",
@@ -29,6 +30,7 @@ hex = "=0.4.3"
 lez-adaptor-role-runner = { version = "=0.1.0", path = "../adaptor-role-runner", optional = true }
 lez-adaptor-signature = { version = "=0.1.0", path = "../adaptor-signature", optional = true }
 lez-bridge-adapter = { version = "=0.1.0", path = "../lez-bridge-adapter", optional = true }
+lez-bridge-client = { version = "=0.1.0", path = "../lez-bridge-client", optional = true }
 lez-bridge-protocol = { version = "=0.1.0", path = "../lez-bridge-protocol", optional = true }
 lez-swap-core = { version = "=0.1.0", path = "../swap-core", optional = true }
 lez-swap-store = { version = "=0.1.0", path = "../swap-store", optional = true }
@@ -54,8 +56,8 @@ path = "src/bin/xmr-reference-tag16.rs"
 required-features = ["sessions"]
 
 [dev-dependencies]
+command-fds = "=0.3.3"
 jsonrpsee = { version = "0.26.0", features = ["server"] }
-lez-bridge-client = { version = "=0.1.0", path = "../lez-bridge-client" }
 rand_chacha = "=0.3.1"
 tempfile = "=3.27.0"
 tower = "0.5.2"

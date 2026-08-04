@@ -47,9 +47,11 @@ pub use effect_child_plan::{
 #[cfg(feature = "sessions")]
 pub use effect_input_custody::{
     PinnedXmrEffectInputsV1, PinnedXmrEffectMoneroCredentialsV1, PinnedXmrEffectRpcCredentialsV1,
-    PinnedXmrEffectSecretV1, XMR_EFFECT_CHILD_PLAN_FD, XMR_EFFECT_OWN_PUBLIC_PACKET_FD,
-    XMR_EFFECT_PEER_PUBLIC_PACKET_FD, XMR_EFFECT_PRIVATE_MANIFEST_FD,
-    XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD,
+    PinnedXmrEffectSecretV1, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_CHILD_PLAN_FD,
+    XMR_EFFECT_OWN_PUBLIC_PACKET_FD, XMR_EFFECT_PEER_PUBLIC_PACKET_FD,
+    XMR_EFFECT_PRIVATE_MANIFEST_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+    XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_STAGE_A_FD,
+    XMR_EFFECT_STAGE_B_FD,
 };
 #[cfg(feature = "sessions")]
 pub use effect_route::{

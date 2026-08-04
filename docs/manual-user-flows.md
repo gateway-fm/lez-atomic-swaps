@@ -6856,26 +6856,43 @@ export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
 export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
 
 cargo +1.96.0 test --locked --offline \
-  -p xmr-reference-actor --all-features --all-targets
+  -p xmr-reference-actor --features sessions --test tag16_process
+
+cargo +1.96.0 test --locked --offline \
+  -p xmr-reference-actor --features sessions --test effect_route
 
 cargo +1.96.0 test --locked --offline \
   --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
   --all-features --bin lez-v02-xmr-regtest-sweep
 ```
 
-Expected focused results include 2 of 2 authenticated tag-16 process cases, the
-Maker refund-ingestion command and finalized-role gate, and 4 of 4 sweep
-selector cases. The process proof verifies the canonical Stage-A refund hash,
+Expected focused results are 4 of 4 Tag16 process cases and 6 of 6 effect-route
+cases. The process proof verifies the canonical Stage-A refund hash,
 cryptographic final signature, distinct prepare/complete identities, one
-transaction-derived submission, and no retry. Negative paths reject crossed
-role/session/signature/request inputs before wire access. The sweep proof keeps
-legacy claim evidence unchanged and requires refund to use the Maker share plus
-extracted Taker scalar, Maker destination, Taker confirmation wallet, and v3
-refund evidence.
+transaction-derived submission, and no retry. It now also starts the actual
+no-argument effect child with sealed FDs, derives the final signature from the
+live Stage-B-matching Taker journal plus FD 218, and rejects a changed durable
+presignature before any sidecar call or evidence write. The route proof requires
+FD 218 for Tag16 and the Monero sender but proves it absent from Tag14 and every
+observer. Negative paths reject crossed role/session/signature/request inputs
+before wire access.
+
+The broader all-target command remains useful when validating Maker ingestion
+and the Monero sweep selector:
+
+```bash
+cargo +1.96.0 test --locked --offline \
+  -p xmr-reference-actor --all-features --all-targets
+```
+
+That broader suite keeps legacy claim evidence unchanged and requires refund to
+use the Maker share plus extracted Taker scalar, Maker destination, Taker
+confirmation wallet, and v3 refund evidence.
 
 External runtime resources: none. The process test uses an authenticated
-in-process sidecar and deterministic role material; the ingestion and sweep
-tests use temporary files and local value selection. They start no Docker
+in-process loopback sidecar, sealed memfds, SQLite and deterministic role
+material; the ingestion and sweep tests use temporary files and local value
+selection. They start no Docker
 service, LEZ node, Monero daemon, wallet RPC, DNS lookup, public RPC, faucet,
 peer, or funds. This makes the component gate fast and deterministic but cannot
 show finality, reconstructed-wallet acceptance, fees, confirmations, or
@@ -6883,7 +6900,8 @@ cross-chain binding. The actual runner must use a fresh isolated private Docker
 engine, ephemeral loopback sequencer/indexer/monerod/wallet endpoints,
 deterministic local genesis/Regtest funds, a neutral shared-wallet process, and
 role-correct Maker/Taker wallets. See ADR 0121 for its component, sequence, and
-conditional-atomicity diagrams.
+conditional-atomicity diagrams, and ADR 0154 for the sealed-child component,
+invocation sequence, and exact conditional-atomicity argument.
 
 
 ## Flow 1W: run the role-correct XMR application refund locally
@@ -7218,14 +7236,15 @@ filesystem sync latency, process scheduling, and host load can extend the
 recorded 0.64, 84.21, and 16.31 second measurements. There is no public-service
 flakiness. A timeout or failure is not chain evidence and must not be waived.
 
-The Maker matrix and overlap actors are fixed marker programs; the Tag16 sender
-and observer are also process fixtures. These runs certify CLI/daemon/store/
+The Maker matrix, overlap actors, and receipt-v2 observer remain fixed process
+fixtures. ADR 0154 separately proves the real sealed Tag16 sender against an
+authenticated local sidecar double. These runs certify CLI/daemon/store/
 scheduler authority, replay, and isolation, not a new chain transaction. To
 repeat actual chain behavior, follow the retained M2 ZEC, M3 BTC, M4 XMR, and
 M5 accepted-application corridor sections of this guide with their isolated
 local nodes. A fresh simultaneous accepted-application actual-chain composite
-and semantic receipt-v2 XMR workers are post-PoC hardening, not part of this
-candidate claim.
+and the remaining semantic receipt-v2 XMR workers are post-PoC hardening, not
+part of this candidate claim.
 
 ## Flow 1X: review the M6 clickable Maker and Taker prototypes
 

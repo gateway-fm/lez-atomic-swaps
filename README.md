@@ -569,6 +569,22 @@ inventory, and cold-build, hashing, lock-contention, and host-scheduling
 flakiness notes are maintained in
 [Flow 1T](docs/manual-user-flows.md#flow-1t-monitor-an-accepted-xmr-application-as-the-taker).
 
+M7 now extends that generic custody boundary with the first real semantic
+sender. The no-argument `xmr-reference-tag16` child receives the exact runtime,
+capability, Stage A/B, view key, canonical plan, and Taker share on sealed FDs;
+requires its live durable refund presignature to equal Stage B; adapts and
+verifies the final signature in memory; and performs one authenticated local
+prepare, complete, and exact submission. Tag16 process tests are GREEN 4 of 4
+and effect routing is GREEN 6 of 6, including journal-drift-before-RPC and FD
+218 least-privilege checks. These tests use an authenticated in-process
+loopback sidecar, sealed memfds, temporary SQLite, and deterministic material.
+They use no Docker, external node, public RPC, DNS, faucet, public funds, or
+deployment, and therefore do not claim actual-node finality or the subsequent
+Maker Monero recovery. Reproduction and resource/flakiness details are in
+[Flow 1V](docs/manual-user-flows.md#flow-1v-repeat-the-role-correct-xmr-refund-continuation-checkpoint),
+with components, sequence, and conditional atomicity in
+[ADR 0154](docs/architecture/0154-derive-tag16-in-the-sealed-effect-child.md).
+
 That first checkpoint is deliberately zero-effect: it starts no Monero or LEZ
 node, opens no chain RPC, and uses no Docker service, faucet, DNS, network, or
 funds. [Flow 1P](docs/manual-user-flows.md#flow-1p-repeat-the-xmr-role-process-pre-effect-checkpoint)

@@ -320,6 +320,19 @@ attestation so neither can be misreported as the other.
   loader. RED failed on missing FD 217; focused sender/observer tests and strict
   Clippy are GREEN. This binds the live-journal address but does not yet
   implement semantic journal transitions or branch-produced artifact custody.
+- [x] Close the first real XMR semantic sender through ADR 0154: retain the
+  cryptographically validated private XMR share and expose it only to Tag16 and
+  Monero sending steps on sealed FD 218; make no-argument Tag16 load the exact
+  Stage A/B, runtime, capability, view key, plan and live Taker refund journal;
+  require the durable presignature to equal Stage B; adapt and verify in memory;
+  and prepare, complete and submit exactly once through the authenticated local
+  sidecar. RED first exposed missing FD 218, then exposed the incompatible
+  on-disk capability policy at the sealed-FD boundary. GREEN preserves the
+  strict manual capability-file policy while adding one bounded sealed-client
+  path. Tag16 process tests pass 4 of 4 and effect routing passes 6 of 6,
+  including drift-before-RPC and least-privilege cases. Literal receipt-v2 CLI
+  use, pre-CAS window admission, actual-node replay, Tag14, Monero sweep workers
+  and finalized observers remain open.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -346,11 +359,13 @@ attestation so neither can be misreported as the other.
 4. Logos-owned upstream limitations remain nonblocking for milestone
    implementation but release-visible. Repository findings and proposal errata
    are not eligible for that exception.
-5. The receipt-v2 XMR process boundary now carries immutable semantic
-   application inputs plus a canonical execution plan. Its sender/observer
-   programs remain nonsemantic markers until live-journal transitions and
-   branch-artifact custody are implemented and the real local LEZ/Monero
-   journey is replayed through the literal CLI.
+5. The receipt-v2 XMR process boundary now carries immutable application
+   inputs, a canonical execution plan and least-privilege branch material. The
+   real Tag16 child derives its signature from the Stage-B-matching live journal
+   and submits through an authenticated local sidecar. Tag14, finalized
+   observation, Monero sweep semantics, literal CLI integration, pre-CAS window
+   admission and a fresh local LEZ/Monero replay through this exact boundary
+   remain repository work.
 
 The working ETA will be recalculated after the hard-requirement audit because
 the carried matrix mixes completed evidence with historical gaps. The initial

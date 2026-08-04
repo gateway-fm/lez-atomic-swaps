@@ -4242,6 +4242,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "command-fds",
  "hex",
  "jsonrpsee",
  "lez-adaptor-role-runner",

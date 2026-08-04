@@ -87,19 +87,19 @@ its role, step, mode, ABI, RPC origin, or sending identity after authorization.
 The observer cannot grant itself sending authority; the parent selects its mode
 and reconciliation source.
 
-This is process and retry atomicity, not cross-chain completion. The plan names
-the locked live journal but does not yet prove that a semantic worker safely
-opens and advances it, and it does not supply final signatures, finalized
-observations, or extracted adaptor scalars. Actual LEZ/Monero effects and their
-conditional atomicity still require those branch authorities and local-node
-replay.
+This is process and retry atomicity, not cross-chain completion. ADR 0154 now
+uses the locked live journal and branch-private FD 218 for the real Tag16
+sender. Finalized observations, extracted adaptor scalars, the Tag14 sender,
+and Monero sweep workers still require their own semantic boundaries and
+local-node replay.
 
 ## Consequences
 
-- Sender and observer process tests require FDs 197 through 217 and prove 218
-  absent. The sender test parses the exact plan and verifies role, mode, step,
-  run, ABI, journal, evidence root, RPC origin, and sending digest.
+- Every process test requires FDs 197 through 217. Tag14 and observers prove FD
+  218 absent; Tag16 and Monero sending probes require FD 218 and prove FD 219
+  absent. The tests parse the exact plan and verify role, mode, step, run, ABI,
+  journal, evidence root, RPC origin, and sending digest.
 - This contract is network-free and uses no Docker, node, public RPC, faucet,
   public funds, or DNS.
-- The next slice can implement one semantic worker against a stable typed
-  interface instead of duplicating the effect-authority file format.
+- ADR 0154 implements the first semantic worker against this stable typed
+  interface without duplicating the effect-authority file format.

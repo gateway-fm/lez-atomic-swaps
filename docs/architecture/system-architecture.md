@@ -2556,25 +2556,35 @@ cutoff. Separately, schema-v3 receipt/effect authority now has a node-free
 role-fixed receipt-v2 process-invocation boundary. The loader retains the immutable
 effect-authority digest and exact initialized workflow identity. Only six
 sending slots are admitted: Maker Monero fund, tag 15, and Monero refund sweep;
-and Taker tag 14, Monero claim sweep, and tag 16.
+and Taker tag 14, Monero claim sweep, and tag 16. ADR 0154 makes Tag16 the
+first real semantic sender on this boundary; the other slots remain at their
+previous implementation levels.
 
 ```mermaid
 flowchart TB
     Receipt["Receipt v2"] --> Claim["lez-taker claim"]
     Claim --> Loader["Schema v3 execution loader"]
-    Loader --> Selector["Taker Tag14 selector"]
+    Loader --> Selector["Role and workflow selector"]
     Selector --> Pin["Hash pin runtime, secrets, application bytes, child plan, and dual locks"]
+    Pin --> Share["Add sealed FD 218 only for share-consuming senders"]
     Pin --> Authorize["Workflow v2 durable CAS"]
     Authorize -->|Prepared| Invoke["InvokeOnce"]
-    Invoke --> Sender["Tag14 sender marker"]
-    Sender --> Started["Started and invoked unreconciled"]
+    Invoke --> Tag14["Tag14 sender marker"]
+    Invoke --> Tag16["Real Tag16 sender"]
+    Share --> Tag16
+    Journal[("Live Taker adaptor journal")] --> Tag16
+    Tag16 --> Sidecar["Authenticated local LEZ sidecar API"]
+    Sidecar -.-> Node["Configured LEZ node"]
+    Started["Started and invoked unreconciled"]
+    Tag14 --> Started
+    Tag16 --> Started
     Authorize -->|Started or Unknown| Observe["ObserveOnly"]
     Observe --> Observer["Role fixed finalized observer"]
     Observer --> Parser["Bounded exact Tag14 parser"]
     Parser --> Reconcile["Exact plan and evidence reconciliation"]
     Reconcile --> Succeeded["Succeeded and complete"]
     Authorize -->|Succeeded| Complete["Complete with no process"]
-    Sender -.-> Rpc["Future semantic LEZ RPC"]
+    Tag14 -.-> Rpc["Future semantic Tag14 RPC"]
     Observer -.-> Rpc
 ```
 
@@ -2585,16 +2595,24 @@ packets, private-role manifest, and private view key on FDs 211 through 216;
 no stale mutable-journal snapshot is passed. ADR 0153 adds a canonical
 secret-free execution plan on sealed FD 217, binding mode, step, identities,
 ABI, original sending-plan digest, journal, evidence root, and loopback RPC
-origins. InvokeOnce alone starts the sender and leaves Started. On the
+origins. ADR 0154 supplies FD 218 only to Tag16 and the two Monero sweep
+senders. Tag14 and every observer prove that descriptor absent. The no-argument
+Tag16 child reconstructs the exact Taker refund session, requires its live
+durable presignature to equal Stage B, adapts it with the sealed Taker share,
+verifies the result, and performs one authenticated prepare, complete, and
+exact submission. The process suite proves this against a local sidecar double
+and rejects journal drift before RPC. InvokeOnce alone starts the sender and leaves Started. On the
 second claim, ObserveOnly starts only the role-fixed observer from Started or
 Unknown, exact-compares the original sending-plan identity, parses bounded
 step-exact output, locally derives the evidence source, and reconciles
 Succeeded. Prepared and Succeeded cannot start the observer; observer failure
 changes no journal state. The third claim reads Complete and starts no process.
-The solid route is fixed-local process evidence only. The dashed RPC edge is not
-invoked: the live journal is address-bound but no semantic journal transition
-or branch-produced artifact custody, tag-14 construction, chain submission,
-node interaction, or actual-chain finality proof exists at this checkpoint.
+The solid Tag16-to-sidecar route is semantic local process evidence; the dashed
+sidecar-to-node and Tag14/observer edges are not invoked in this checkpoint.
+Literal receipt-v2 CLI composition, refund-window admission before the CAS,
+actual-node submission/finality, semantic Tag14 and Monero sweeps, and
+read-only finalized reconciliation remain open. ADR 0154 gives the complete
+conditional-atomicity sequence and limits.
 
 #### Actual local components and RPCs
 

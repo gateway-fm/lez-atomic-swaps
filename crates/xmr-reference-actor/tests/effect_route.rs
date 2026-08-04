@@ -50,6 +50,27 @@ if test "${XMR_TEST_EMIT_APPLICATION_HASHES:-}" = "1"; then
     cat /proc/self/fd/217
 fi
 "#;
+const MONERO_WORKER: &[u8] = br#"#!/bin/sh
+set -eu
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218; do
+    test -e "/proc/self/fd/$fd"
+done
+test ! -e /proc/self/fd/219
+grep -Fq '"mode":"invoke"' /proc/self/fd/217
+grep -Fq '"step":"sweep_monero_claim"' /proc/self/fd/217
+grep -Fq '"executable_abi":"lez_xmr_monero_claim_sweep_v2"' /proc/self/fd/217
+"#;
+const REFUND_WORKER: &[u8] = br#"#!/bin/sh
+set -eu
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218; do
+    test -e "/proc/self/fd/$fd"
+done
+test ! -e /proc/self/fd/219
+grep -Fq '"mode":"invoke"' /proc/self/fd/217
+grep -Fq '"step":"refund_lez_tag16"' /proc/self/fd/217
+grep -Fq '"executable_abi":"lez_xmr_tag16_refund_v1"' /proc/self/fd/217
+sha256sum /proc/self/fd/218 | cut -d ' ' -f 1
+"#;
 const OBSERVER: &[u8] = br#"#!/bin/sh
 set -eu
 test "$#" -eq 2
@@ -140,6 +161,7 @@ struct RouteFixture {
     effect_bytes: Vec<u8>,
     manifest_bytes: Vec<u8>,
     application_sha256: Vec<String>,
+    private_xmr_share_sha256: String,
 }
 
 fn actor_binary() -> &'static str {
@@ -672,9 +694,9 @@ fn effect_authority(
     let monero_verify = root.join("monero-verify");
     let tag16_refund = root.join("tag16-refund");
     write_private(&classifier, OBSERVER, 0o700);
-    write_private(&claim_sweep, WORKER, 0o700);
+    write_private(&claim_sweep, MONERO_WORKER, 0o700);
     write_private(&monero_verify, OBSERVER, 0o700);
-    write_private(&tag16_refund, WORKER, 0o700);
+    write_private(&tag16_refund, REFUND_WORKER, 0o700);
     let rpc_at = |_name: &str, port: u16, index: usize| RpcFixture {
         url: format!("http://127.0.0.1:{port}/"),
         username_file: secrets[index].clone(),
@@ -723,7 +745,7 @@ fn effect_authority(
             monero_claim: tool(
                 root,
                 "claim-sweep",
-                Sha256::digest(WORKER).into(),
+                Sha256::digest(MONERO_WORKER).into(),
                 "lez_xmr_monero_claim_sweep_v2",
             ),
             monero_verify: tool(
@@ -735,7 +757,7 @@ fn effect_authority(
             tag16_refund: tool(
                 root,
                 "tag16-refund",
-                Sha256::digest(WORKER).into(),
+                Sha256::digest(REFUND_WORKER).into(),
                 "lez_xmr_tag16_refund_v1",
             ),
         },
@@ -771,6 +793,18 @@ fn complete_step(
 
 #[allow(clippy::too_many_lines)]
 fn route_fixture() -> RouteFixture {
+    route_fixture_for(XmrWorkflowBranch::Claim, XmrWorkflowStep::AuthorizeLezTag14)
+}
+
+fn refund_route_fixture() -> RouteFixture {
+    route_fixture_for(XmrWorkflowBranch::Refund, XmrWorkflowStep::RefundLezTag16)
+}
+
+#[allow(clippy::too_many_lines)]
+fn route_fixture_for(
+    terminal_branch: XmrWorkflowBranch,
+    terminal_step: XmrWorkflowStep,
+) -> RouteFixture {
     let material = provision_material();
     let agreement = signed_stage_a(&material);
     let maker_sessions = initialize_sessions(&material, &agreement, "maker");
@@ -827,11 +861,11 @@ fn route_fixture() -> RouteFixture {
     );
     complete_step(&mut journal, &identity, XmrWorkflowStep::FundLezTag13, 0x43);
     journal
-        .select_branch(&identity, XmrWorkflowBranch::Claim)
-        .expect("select claim branch");
+        .select_branch(&identity, terminal_branch)
+        .expect("select terminal branch");
     journal
-        .prepare_step(&identity, XmrWorkflowStep::AuthorizeLezTag14)
-        .expect("prepare tag 14");
+        .prepare_step(&identity, terminal_step)
+        .expect("prepare terminal step");
     drop(journal);
 
     let effect_file = effect_root.join("effect-authority.json");
@@ -862,17 +896,61 @@ fn route_fixture() -> RouteFixture {
         ))
     })
     .collect();
+    let share_hex = fs::read_to_string(material.taker_root.join("xmr-share.key"))
+        .expect("read Taker XMR share");
+    let private_xmr_share_sha256 = hex::encode(Sha256::digest(
+        hex::decode(share_hex.trim()).expect("decode XMR share"),
+    ));
+    let selected_worker = match terminal_step {
+        XmrWorkflowStep::AuthorizeLezTag14 => worker,
+        XmrWorkflowStep::RefundLezTag16 => effect_root.join("tag16-refund"),
+        _ => panic!("unsupported fixture terminal step"),
+    };
 
     RouteFixture {
         _material: material,
         swap_id,
         workflow,
         actor_state: taker_journal,
-        worker,
+        worker: selected_worker,
         effect_bytes,
         manifest_bytes,
         application_sha256,
+        private_xmr_share_sha256,
     }
+}
+
+#[test]
+fn taker_tag16_invocation_alone_receives_the_validated_xmr_share() {
+    let fixture = refund_route_fixture();
+    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+        .expect("acquire Taker state lock");
+    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+        .expect("acquire Taker workflow lock");
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Taker,
+        RUN_ID,
+    )
+    .expect("load executable refund authority");
+    let mut command = match execution
+        .prepare_effect_invocation(XmrWorkflowStep::RefundLezTag16, &actor_lock, &workflow_lock)
+        .expect("prepare Tag16 invocation")
+    {
+        XmrPreparedEffectInvocationV1::InvokeOnce { command, .. } => command,
+        XmrPreparedEffectInvocationV1::ObserveOnly { .. }
+        | XmrPreparedEffectInvocationV1::Complete { .. } => {
+            panic!("prepared Tag16 must invoke exactly once")
+        }
+    };
+    let output = command.output().expect("run Tag16 descriptor probe");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        fixture.private_xmr_share_sha256
+    );
 }
 
 #[test]

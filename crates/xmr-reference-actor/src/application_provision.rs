@@ -192,6 +192,7 @@ pub(crate) struct ValidatedXmrEffectApplicationV1 {
     pub(crate) peer_public_packet: Vec<u8>,
     pub(crate) private_manifest: Zeroizing<Vec<u8>>,
     pub(crate) private_view_key: Zeroizing<Vec<u8>>,
+    pub(crate) private_xmr_share: Zeroizing<[u8; 32]>,
 }
 
 impl fmt::Debug for ValidatedXmrEffectExecutionV3 {
@@ -1231,6 +1232,7 @@ struct ValidatedXmrRoleAuthorityV2 {
     peer_public_packet: Vec<u8>,
     private_manifest: Zeroizing<Vec<u8>>,
     private_view_key: Zeroizing<Vec<u8>>,
+    private_xmr_share: Zeroizing<[u8; 32]>,
     role_journal_snapshot: Zeroizing<Vec<u8>>,
 }
 
@@ -1363,6 +1365,7 @@ fn load_validated_xmr_role_authority_bytes(
         "published Stage-B wire",
         &stage_b_wire,
     )?;
+    let private_xmr_share = material.share.into_monero_little_endian();
 
     Ok(ValidatedXmrRoleAuthorityV2 {
         swap_id: agreement.body().swap_id(),
@@ -1379,6 +1382,7 @@ fn load_validated_xmr_role_authority_bytes(
         peer_public_packet: peer_packet,
         private_manifest: Zeroizing::new(source_manifest),
         private_view_key: source_view_key,
+        private_xmr_share,
         role_journal_snapshot: Zeroizing::new(journal_snapshot),
     })
 }
@@ -1628,6 +1632,7 @@ pub fn load_validated_xmr_effect_execution_v3_bytes(
             peer_public_packet: legacy.peer_public_packet,
             private_manifest: legacy.private_manifest,
             private_view_key: legacy.private_view_key,
+            private_xmr_share: legacy.private_xmr_share,
         },
     })
 }

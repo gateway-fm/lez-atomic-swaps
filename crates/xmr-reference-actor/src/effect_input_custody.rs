@@ -25,6 +25,8 @@ use crate::{
     application_provision::ValidatedXmrEffectApplicationV1, open_path_no_symlinks,
     open_private_directory,
 };
+#[cfg(feature = "sessions")]
+use lez_swap_store::XmrWorkflowStep;
 
 const MAX_RUNTIME_BYTES: u64 = 16 * 1024;
 const MAX_SECRET_BYTES: u64 = 256;
@@ -65,6 +67,8 @@ pub const XMR_EFFECT_PRIVATE_MANIFEST_FD: i32 = 215;
 pub const XMR_EFFECT_PRIVATE_VIEW_KEY_FD: i32 = 216;
 /// Fixed child descriptor containing the canonical secret-free execution plan.
 pub const XMR_EFFECT_CHILD_PLAN_FD: i32 = 217;
+/// Invocation-only private XMR spend share for Tag16 and Monero sweep senders.
+pub const XMR_EFFECT_PRIVATE_XMR_SHARE_FD: i32 = 218;
 
 struct PinnedXmrEffectApplicationInputsV1 {
     stage_a: File,
@@ -189,6 +193,7 @@ pub struct PinnedXmrEffectInputsV1 {
     monero: PinnedXmrEffectMoneroCredentialsV1,
     application: Option<PinnedXmrEffectApplicationInputsV1>,
     child_plan: Option<File>,
+    invocation_xmr_share: Option<File>,
 }
 
 impl fmt::Debug for PinnedXmrEffectInputsV1 {
@@ -207,6 +212,13 @@ impl fmt::Debug for PinnedXmrEffectInputsV1 {
                 &self.application.as_ref().map(|_| "[REDACTED; SEALED]"),
             )
             .field("child_plan", &self.child_plan.as_ref().map(|_| "[SEALED]"))
+            .field(
+                "invocation_xmr_share",
+                &self
+                    .invocation_xmr_share
+                    .as_ref()
+                    .map(|_| "[REDACTED; SEALED]"),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -268,6 +280,30 @@ impl PinnedXmrEffectInputsV1 {
         Ok(self)
     }
 
+    #[cfg(feature = "sessions")]
+    pub(crate) fn with_invocation_material(
+        mut self,
+        application: &ValidatedXmrEffectApplicationV1,
+        step: XmrWorkflowStep,
+    ) -> Result<Self> {
+        ensure!(
+            self.invocation_xmr_share.is_none(),
+            "XMR effect invocation material is already pinned"
+        );
+        if matches!(
+            step,
+            XmrWorkflowStep::SweepMoneroClaim
+                | XmrWorkflowStep::RefundLezTag16
+                | XmrWorkflowStep::SweepMoneroRefund
+        ) {
+            self.invocation_xmr_share = Some(seal_bytes(
+                "XMR private spend share",
+                application.private_xmr_share.as_ref(),
+            )?);
+        }
+        Ok(self)
+    }
+
     /// Consumes all pinned inputs into one executable-and-lock child mapping.
     ///
     /// Program FD 197, actor lock FD 198, workflow lock FD 199, runtime FD 200,
@@ -295,6 +331,7 @@ impl PinnedXmrEffectInputsV1 {
             monero,
             application,
             child_plan,
+            invocation_xmr_share,
         } = self;
         let PinnedXmrEffectMoneroCredentialsV1 {
             daemon,
@@ -372,6 +409,9 @@ impl PinnedXmrEffectInputsV1 {
         if let Some(child_plan) = child_plan {
             descriptors.push((child_plan, XMR_EFFECT_CHILD_PLAN_FD));
         }
+        if let Some(invocation_xmr_share) = invocation_xmr_share {
+            descriptors.push((invocation_xmr_share, XMR_EFFECT_PRIVATE_XMR_SHARE_FD));
+        }
         let plan = PinnedChildFdPlan::new(descriptors)
             .context("validate XMR effect child descriptor plan")?;
         executable
@@ -441,6 +481,7 @@ impl ValidatedXmrEffectAuthorityV1 {
             },
             application: None,
             child_plan: None,
+            invocation_xmr_share: None,
         })
     }
 }

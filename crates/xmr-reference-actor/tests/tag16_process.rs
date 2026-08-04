@@ -1,15 +1,18 @@
 #![cfg(feature = "sessions")]
 
 use std::{
-    fs::{self, OpenOptions},
+    ffi::CString,
+    fs::{self, File, OpenOptions},
     io::Write as _,
-    os::unix::fs::OpenOptionsExt as _,
+    os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::{Arc, Mutex},
 };
 
+use command_fds::{CommandFdExt as _, FdMapping};
 use jsonrpsee::RpcModule;
+use lez_adaptor_role_runner::{Role, ValidatedSession};
 use lez_adaptor_signature::{
     AdaptorSessionContext, AdaptorSigner, SigningRole, adapt_presignature,
 };
@@ -25,6 +28,10 @@ use lez_bridge_protocol::{
     PreparedWitnessedClaim, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
     SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
+use lez_swap_store::{
+    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
+    AdaptorSessionReservation, SecretNonceBytes, SqliteAdaptorSessionJournal,
+};
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
     MoneroSharedAddressV1, XMR_ACTIVATION_SCHEMA_V1, XMR_AGREEMENT_SCHEMA_V1,
@@ -34,6 +41,7 @@ use lez_xmr_swap_sdk::{
     XmrSessionTranscriptV1, XmrSwapDirectionV1, XmrWindowsV1,
 };
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng as _};
+use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use secp256k1::{Keypair, Message as SecpMessage, PublicKey, Secp256k1, SecretKey};
 use serde::Serialize;
 use serde_json::Value;
@@ -41,6 +49,11 @@ use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tower::ServiceBuilder;
 use tower_http::validate_request::ValidateRequestHeaderLayer;
+use xmr_reference_actor::{
+    ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_CHILD_PLAN_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+    XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_STAGE_A_FD,
+    XMR_EFFECT_STAGE_B_FD, parse_xmr_effect_child_plan_v1,
+};
 
 const CAPABILITY: &str = "m5-xmr-tag16-process-capability-00000001";
 const RUN: &str = "m5-xmr-tag16-process-run";
@@ -59,6 +72,11 @@ const VIEW_KEY_BYTES: [u8; 32] = {
 };
 const SESSION_DOMAIN: &[u8] = b"logos.gateway.lez-xmr.adaptor-session.v1\0";
 const REFUND_MESSAGE_BYTES: [u8; 128] = [0xd1; 128];
+const TAKER_XMR_SHARE_BYTES: [u8; 32] = {
+    let mut bytes = [0; 32];
+    bytes[0] = 13;
+    bytes
+};
 
 struct StageFixture {
     agreement: XmrAgreementV1,
@@ -217,6 +235,28 @@ struct Inputs {
     final_signature: PathBuf,
 }
 
+#[derive(Serialize)]
+struct EffectChildPlanFixture<'a> {
+    schema_version: u16,
+    pair: &'static str,
+    role: ActorRole,
+    mode: &'static str,
+    step: &'static str,
+    run_id: &'static str,
+    swap_id: String,
+    agreement_commitment: String,
+    activation_commitment: String,
+    executable_abi: &'static str,
+    sending_tool_plan_sha256: String,
+    adaptor_journal: &'a Path,
+    evidence_root: &'a Path,
+    lez_sidecar_url: &'a str,
+    monero_daemon_url: &'static str,
+    monero_funding_wallet_url: &'static str,
+    monero_shared_wallet_url: &'static str,
+    monero_role_wallet_url: &'static str,
+}
+
 impl Inputs {
     fn new(stage: &StageFixture) -> Self {
         let directory = TempDir::new().expect("temporary process root");
@@ -298,6 +338,178 @@ fn command_with_request_ids(
     command
 }
 
+fn sealed_memfd(label: &str, bytes: &[u8]) -> File {
+    let name = CString::new(label).expect("memfd label");
+    let descriptor = memfd_create(
+        name.as_c_str(),
+        MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+    )
+    .expect("create sealed descriptor");
+    let mut file = File::from(descriptor);
+    fchmod(&file, Mode::RUSR | Mode::WUSR).expect("make descriptor writable");
+    file.write_all(bytes).expect("write sealed descriptor");
+    fchmod(&file, Mode::RUSR).expect("make descriptor read-only");
+    fcntl_add_seals(
+        &file,
+        SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+    )
+    .expect("seal descriptor");
+    file
+}
+
+fn taker_refund_journal(stage: &StageFixture, path: &Path, presignature: [u8; 65]) {
+    let session = ValidatedSession::from_untweaked_context(
+        stage
+            .agreement
+            .refund_session_descriptor()
+            .context()
+            .expect("refund context"),
+    )
+    .expect("validated refund session");
+    let identity = session.identity(Role::Taker);
+    let transcript = stage.activation.body().refund_transcript();
+    let mut journal = SqliteAdaptorSessionJournal::open(path).expect("create Taker journal");
+    let _ = journal
+        .reserve(AdaptorSessionReservation::new(
+            identity.clone(),
+            SecretNonceBytes::new([0x91; 97]),
+            AdaptorPublicNonce::new(transcript.taker_public_nonce()),
+            AdaptorNonceCommitment::new(transcript.taker_nonce_commitment()),
+        ))
+        .expect("reserve exact Taker refund transcript");
+    let _ = journal
+        .record_peer_commitment(
+            &identity,
+            AdaptorNonceCommitment::new(transcript.maker_nonce_commitment()),
+        )
+        .expect("record Maker commitment");
+    let _ = journal
+        .record_verified_peer_public_nonce(
+            &identity,
+            AdaptorPublicNonce::new(transcript.maker_public_nonce()),
+        )
+        .expect("record Maker nonce");
+    let _ = journal
+        .sign_and_persist_partial(&identity, |_| {
+            Ok(AdaptorPartialSignature::new(
+                stage.activation.body().taker_refund_partial(),
+            ))
+        })
+        .expect("persist exact Taker partial");
+    let _ = journal
+        .record_verified_peer_partial(
+            &identity,
+            AdaptorPartialSignature::new(stage.activation.body().maker_refund_partial()),
+        )
+        .expect("record exact Maker partial");
+    let _ = journal
+        .record_verified_presignature(&identity, AdaptorPresignature::new(presignature))
+        .expect("record exact Stage-B presignature");
+}
+
+fn effect_child_command(
+    stage: &StageFixture,
+    inputs: &Inputs,
+    endpoint: &str,
+) -> (Command, PathBuf) {
+    effect_child_command_with_presignature(
+        stage,
+        inputs,
+        endpoint,
+        stage.activation.body().refund_presignature(),
+    )
+}
+
+fn effect_child_command_with_presignature(
+    stage: &StageFixture,
+    inputs: &Inputs,
+    endpoint: &str,
+    presignature: [u8; 65],
+) -> (Command, PathBuf) {
+    let root = inputs.runtime.parent().expect("fixture root");
+    let journal = root.join("taker-adaptor.sqlite");
+    taker_refund_journal(stage, &journal, presignature);
+    let evidence_root = root.join("evidence");
+    fs::create_dir(&evidence_root).expect("create evidence root");
+    fs::set_permissions(&evidence_root, fs::Permissions::from_mode(0o700))
+        .expect("protect evidence root");
+    let plan = EffectChildPlanFixture {
+        schema_version: 1,
+        pair: "monero",
+        role: ActorRole::Taker,
+        mode: "invoke",
+        step: "refund_lez_tag16",
+        run_id: RUN,
+        swap_id: hex::encode(stage.agreement.body().swap_id()),
+        agreement_commitment: hex::encode(stage.agreement.agreement_commitment()),
+        activation_commitment: hex::encode(stage.activation.activation_commitment()),
+        executable_abi: "lez_xmr_tag16_refund_v1",
+        sending_tool_plan_sha256: hex::encode([0xa7; 32]),
+        adaptor_journal: &journal,
+        evidence_root: &evidence_root,
+        lez_sidecar_url: endpoint,
+        monero_daemon_url: "http://127.0.0.1:32974/",
+        monero_funding_wallet_url: "http://127.0.0.1:32975/",
+        monero_shared_wallet_url: "http://127.0.0.1:32976/",
+        monero_role_wallet_url: "http://127.0.0.1:32977/",
+    };
+    let mut plan_bytes = serde_json::to_vec(&plan).expect("effect-child plan JSON");
+    plan_bytes.push(b'\n');
+    let _ = parse_xmr_effect_child_plan_v1(&plan_bytes).expect("canonical effect-child plan");
+    let descriptors = vec![
+        (
+            sealed_memfd(
+                "tag16-runtime",
+                &serde_json::to_vec(&stage.runtime).expect("runtime JSON"),
+            ),
+            XMR_EFFECT_RUNTIME_FD,
+        ),
+        (
+            sealed_memfd("tag16-capability", CAPABILITY.as_bytes()),
+            XMR_EFFECT_CAPABILITY_FD,
+        ),
+        (
+            sealed_memfd(
+                "tag16-stage-a",
+                &stage.agreement.encode_wire().expect("Stage-A wire"),
+            ),
+            XMR_EFFECT_STAGE_A_FD,
+        ),
+        (
+            sealed_memfd(
+                "tag16-stage-b",
+                &stage.activation.encode_wire().expect("Stage-B wire"),
+            ),
+            XMR_EFFECT_STAGE_B_FD,
+        ),
+        (
+            sealed_memfd("tag16-view-key", hex::encode(VIEW_KEY_BYTES).as_bytes()),
+            XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+        ),
+        (
+            sealed_memfd("tag16-child-plan", &plan_bytes),
+            XMR_EFFECT_CHILD_PLAN_FD,
+        ),
+        (
+            sealed_memfd("tag16-xmr-share", &TAKER_XMR_SHARE_BYTES),
+            XMR_EFFECT_PRIVATE_XMR_SHARE_FD,
+        ),
+    ];
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xmr-reference-tag16"));
+    command
+        .fd_mappings(
+            descriptors
+                .into_iter()
+                .map(|(file, child_fd)| FdMapping {
+                    parent_fd: file.into(),
+                    child_fd,
+                })
+                .collect(),
+        )
+        .expect("map sealed effect-child descriptors");
+    (command, evidence_root.join("tag16-refund-submission.json"))
+}
+
 fn assert_failure(output: &Output, label: &str) {
     assert!(!output.status.success(), "{label} unexpectedly succeeded");
     assert!(output.stdout.is_empty(), "{label} leaked stdout");
@@ -366,6 +578,60 @@ async fn taker_process_binds_stage_a_refund_and_submits_canonical_transaction_on
         .expect("spawn rejected submission");
     assert_failure(&failed, "rejected submission");
     assert_eq!(rejecting.calls.lock().expect("calls").submit.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_effect_child_derives_stage_b_tag16_from_the_live_journal_and_submits_once() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let sidecar = spawn_sidecar(Behavior::Happy).await;
+    let (mut command, evidence) = effect_child_command(&stage, &inputs, &sidecar.endpoint);
+    let output = command.output().expect("spawn sealed Tag16 effect child");
+    assert!(
+        output.status.success(),
+        "sealed Tag16 child failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+
+    let calls = sidecar.calls.lock().expect("call recorder");
+    assert_eq!(calls.prepare.len(), 1);
+    assert_eq!(calls.complete.len(), 1);
+    assert_eq!(calls.submit.len(), 1);
+    assert_eq!(
+        calls.complete[0].aggregate_signature.as_bytes(),
+        &stage.final_signature
+    );
+    assert_eq!(calls.submit[0].transaction, completed_transaction());
+    drop(calls);
+
+    let report: Value = serde_json::from_slice(&fs::read(evidence).expect("effect evidence"))
+        .expect("effect evidence JSON");
+    assert_eq!(report["schema"], "lez_v02_m5_actual_local_tag16_v1");
+    assert_eq!(report["submission_outcome"], "accepted");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_effect_child_rejects_live_journal_drift_before_sidecar_use() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let sidecar = spawn_sidecar(Behavior::Happy).await;
+    let mut changed = stage.activation.body().refund_presignature();
+    changed[0] ^= 1;
+    let (mut command, evidence) =
+        effect_child_command_with_presignature(&stage, &inputs, &sidecar.endpoint, changed);
+    let output = command.output().expect("spawn drifted Tag16 effect child");
+    assert_failure(&output, "drifted live journal");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("durable Taker refund presignature differs from Stage B")
+    );
+    assert!(!evidence.exists());
+    let calls = sidecar.calls.lock().expect("call recorder");
+    assert!(calls.prepare.is_empty());
+    assert!(calls.complete.is_empty());
+    assert!(calls.submit.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]

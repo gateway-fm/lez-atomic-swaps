@@ -250,7 +250,9 @@ impl ValidatedXmrEffectExecutionV3 {
             .with_application_material(&self.application)
             .context("pin validated XMR application inputs")?
             .with_child_plan(&child_plan)
-            .context("pin XMR sending child plan")?;
+            .context("pin XMR sending child plan")?
+            .with_invocation_material(&self.application, step)
+            .context("pin step-specific XMR invocation material")?;
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(

@@ -12,21 +12,30 @@ use std::{
 
 use anyhow::{Context as _, Result, bail, ensure};
 use clap::Parser;
-use lez_adaptor_role_runner::{ValidatedSession, read_final_signature_packet};
-use lez_adaptor_signature::verify_final_signature;
+use lez_adaptor_role_runner::{Role, ValidatedSession, read_final_signature_packet};
+use lez_adaptor_signature::{adapt_presignature, verify_final_signature};
 use lez_bridge_adapter::{
     CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory as _, XmrLezBridgeBindingV3,
 };
+use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     AggregateBip340Signature, CompleteNativeXmrRefundV3Request, MessageContext, Participant,
     PrepareNativeXmrRefundV3Request, RequestId, RunId, RuntimeDescriptor, SubmissionOutcome,
     SubmitTransactionRequest,
 };
+use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal, XmrWorkflowStep};
 use lez_xmr_swap_sdk::{
-    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
-    XmrActivatedAgreementV1, XmrAgreementV1,
+    CrossCurveScalar, MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES,
+    MoneroPrivateViewKey, XmrActivatedAgreementV1, XmrAgreementV1,
 };
+use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::Serialize;
+use xmr_reference_actor::{
+    ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+    XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_STAGE_A_FD,
+    XMR_EFFECT_STAGE_B_FD, XmrEffectChildModeV1, XmrEffectChildPlanV1,
+    load_xmr_effect_child_plan_fd_for,
+};
 use zeroize::{Zeroize as _, Zeroizing};
 
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
@@ -78,7 +87,7 @@ struct Tag16Evidence {
 
 struct ValidatedInputs {
     sidecar_endpoint: String,
-    capability_file: PathBuf,
+    capability: CapabilitySource,
     runtime: RuntimeDescriptor,
     run_id: RunId,
     prepare_request_id: RequestId,
@@ -87,12 +96,168 @@ struct ValidatedInputs {
     signature: [u8; 64],
 }
 
+enum CapabilitySource {
+    PrivateFile(PathBuf),
+    SealedDescriptor(SidecarCapability),
+}
+
 #[tokio::main]
 async fn main() {
-    if let Err(error) = execute(Arguments::parse()).await {
+    let result = if std::env::args_os().len() == 1 {
+        Box::pin(execute_effect_child()).await
+    } else {
+        execute(Arguments::parse()).await
+    };
+    if let Err(error) = result {
         eprintln!("M5 Taker tag-16 publication failed: {error:#}");
         std::process::exit(1);
     }
+}
+
+async fn execute_effect_child() -> Result<()> {
+    let (inputs, output) = validate_effect_child_inputs()?;
+    let mut evidence_file = reserve_evidence(&output)?;
+    let evidence = publish_tag16(inputs).await?;
+    write_evidence(&mut evidence_file, &evidence)?;
+    Ok(())
+}
+
+fn validate_effect_child_inputs() -> Result<(ValidatedInputs, PathBuf)> {
+    let plan = load_xmr_effect_child_plan_fd_for(
+        ActorRole::Taker,
+        XmrEffectChildModeV1::Invoke,
+        XmrWorkflowStep::RefundLezTag16,
+        "lez_xmr_tag16_refund_v1",
+    )
+    .context("load Tag16 effect-child plan")?;
+    validate_evidence_root(plan.evidence_root())?;
+    let runtime: RuntimeDescriptor = serde_json::from_slice(&read_sealed_fd(
+        XMR_EFFECT_RUNTIME_FD,
+        MAX_RUNTIME_BYTES,
+        "Taker runtime",
+    )?)
+    .context("Taker runtime JSON is invalid")?;
+    ensure!(
+        runtime.sidecar_role == Participant::Taker,
+        "tag 16 requires the Taker runtime"
+    );
+    let agreement = XmrAgreementV1::from_wire(&read_sealed_fd(
+        XMR_EFFECT_STAGE_A_FD,
+        MAX_XMR_AGREEMENT_WIRE_BYTES,
+        "Stage-A agreement",
+    )?)
+    .context("Stage-A agreement is invalid")?;
+    let view_key_bytes = Zeroizing::new(read_sealed_fd(
+        XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+        MAX_SECRET_BYTES,
+        "Monero view key",
+    )?);
+    let view_key = read_view_key_bytes(&view_key_bytes)?;
+    let activation = XmrActivatedAgreementV1::from_wire(
+        &agreement,
+        &read_sealed_fd(
+            XMR_EFFECT_STAGE_B_FD,
+            MAX_XMR_ACTIVATION_WIRE_BYTES,
+            "Stage-B activation",
+        )?,
+        &view_key,
+    )
+    .context("Stage-B activation is invalid")?;
+    ensure!(
+        agreement.body().swap_id() == plan.swap_id()
+            && agreement.agreement_commitment() == plan.agreement_commitment()
+            && activation.activation_commitment() == plan.activation_commitment(),
+        "Tag16 effect-child application identity changed"
+    );
+    let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
+        .context("Stage-B binding is invalid")?;
+    let signature = derive_effect_child_signature(&plan, &agreement, &activation)?;
+    let run_id = RunId::new(plan.run_id().to_owned()).context("run ID is invalid")?;
+    let prepare_request_id = RequestId::new(format!("{}-tag16-prepare-001", plan.run_id()))
+        .context("prepare request ID is invalid")?;
+    let complete_request_id = RequestId::new(format!("{}-tag16-complete-001", plan.run_id()))
+        .context("complete request ID is invalid")?;
+    binding
+        .terms()
+        .validate_runtime_binding(
+            &MessageContext::new(
+                run_id.clone(),
+                prepare_request_id.clone(),
+                Participant::Taker,
+            ),
+            &runtime,
+        )
+        .context("Taker runtime is not bound by Stage B")?;
+    let capability_bytes = Zeroizing::new(read_sealed_fd(
+        XMR_EFFECT_CAPABILITY_FD,
+        MAX_SECRET_BYTES,
+        "Taker LEZ capability",
+    )?);
+    let capability = parse_capability_bytes(&capability_bytes)?;
+    let inputs = ValidatedInputs {
+        sidecar_endpoint: plan.lez_sidecar_url().as_str().to_owned(),
+        capability: CapabilitySource::SealedDescriptor(capability),
+        runtime,
+        run_id,
+        prepare_request_id,
+        complete_request_id,
+        binding,
+        signature,
+    };
+    let output = plan.evidence_root().join("tag16-refund-submission.json");
+    Ok((inputs, output))
+}
+
+fn derive_effect_child_signature(
+    plan: &XmrEffectChildPlanV1,
+    agreement: &XmrAgreementV1,
+    activation: &XmrActivatedAgreementV1,
+) -> Result<[u8; 64]> {
+    let refund_context = agreement
+        .refund_session_descriptor()
+        .context()
+        .context("refund session descriptor is invalid")?;
+    let session = ValidatedSession::from_untweaked_context(refund_context.clone())
+        .context("refund session is invalid")?;
+    let identity = session.identity(Role::Taker);
+    let journal = SqliteAdaptorSessionJournal::open_existing(plan.adaptor_journal())
+        .context("open locked Taker adaptor journal")?;
+    let snapshot = journal
+        .load(identity.session_id())
+        .context("load durable Taker refund session")?
+        .context("durable Taker refund session is absent")?;
+    ensure!(
+        snapshot.identity() == &identity
+            && snapshot.phase() == AdaptorSessionPhase::PresignatureVerified,
+        "durable Taker refund session differs or is incomplete"
+    );
+    let presignature = snapshot
+        .presignature()
+        .context("durable Taker refund presignature is absent")?;
+    ensure!(
+        *presignature.bytes() == activation.body().refund_presignature(),
+        "durable Taker refund presignature differs from Stage B"
+    );
+    let share_bytes = Zeroizing::new(
+        read_sealed_fd(
+            XMR_EFFECT_PRIVATE_XMR_SHARE_FD,
+            32,
+            "Taker private XMR share",
+        )?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Taker private XMR share has wrong length"))?,
+    );
+    let share = CrossCurveScalar::from_monero_little_endian(*share_bytes)
+        .context("Taker private XMR share is invalid")?;
+    let signature = adapt_presignature(
+        &refund_context,
+        *presignature.bytes(),
+        share.adaptor_scalar_big_endian(),
+    )
+    .context("adapt durable Taker refund presignature")?;
+    verify_final_signature(&refund_context, signature)
+        .context("adapted Taker refund signature is invalid")?;
+    Ok(signature)
 }
 
 async fn execute(arguments: Arguments) -> Result<()> {
@@ -172,7 +337,7 @@ fn validate_inputs(arguments: Arguments) -> Result<ValidatedInputs> {
 
     Ok(ValidatedInputs {
         sidecar_endpoint: arguments.sidecar_endpoint,
-        capability_file: arguments.capability_file,
+        capability: CapabilitySource::PrivateFile(arguments.capability_file),
         runtime,
         run_id,
         prepare_request_id,
@@ -183,25 +348,47 @@ fn validate_inputs(arguments: Arguments) -> Result<ValidatedInputs> {
 }
 
 async fn publish_tag16(inputs: ValidatedInputs) -> Result<Tag16Evidence> {
+    let ValidatedInputs {
+        sidecar_endpoint,
+        capability,
+        runtime,
+        run_id,
+        prepare_request_id,
+        complete_request_id,
+        binding,
+        signature,
+    } = inputs;
     let prepare_context = MessageContext::new(
-        inputs.run_id.clone(),
-        inputs.prepare_request_id.clone(),
+        run_id.clone(),
+        prepare_request_id.clone(),
         Participant::Taker,
     );
-    let client = CapabilityFileBridgeClientFactory::new(
-        inputs.sidecar_endpoint,
-        inputs.capability_file,
-        inputs.run_id.clone(),
-        inputs.runtime.clone(),
-        REQUEST_TIMEOUT,
-    )
-    .fresh_transport()
-    .context("authenticated Taker sidecar client is unavailable")?;
+    let client = match capability {
+        CapabilitySource::PrivateFile(path) => CapabilityFileBridgeClientFactory::new(
+            sidecar_endpoint,
+            path,
+            run_id.clone(),
+            runtime.clone(),
+            REQUEST_TIMEOUT,
+        )
+        .fresh_transport()
+        .context("authenticated Taker sidecar client is unavailable")?,
+        CapabilitySource::SealedDescriptor(capability) => {
+            BridgeClient::connect(BridgeClientConfig::new(
+                sidecar_endpoint,
+                capability,
+                run_id.clone(),
+                runtime.clone(),
+                REQUEST_TIMEOUT,
+            ))
+            .context("authenticated sealed Taker sidecar client is unavailable")?
+        }
+    };
     let prepared = client
         .prepare_native_xmr_refund_v3(PrepareNativeXmrRefundV3Request::new(
             prepare_context,
-            inputs.runtime.clone(),
-            inputs.binding.terms(),
+            runtime.clone(),
+            binding.terms(),
         ))
         .await
         .context("tag-16 preparation failed")?;
@@ -209,14 +396,14 @@ async fn publish_tag16(inputs: ValidatedInputs) -> Result<Tag16Evidence> {
         .complete_native_xmr_refund_v3(
             CompleteNativeXmrRefundV3Request::new(
                 MessageContext::new(
-                    inputs.run_id.clone(),
-                    inputs.complete_request_id.clone(),
+                    run_id.clone(),
+                    complete_request_id.clone(),
                     Participant::Taker,
                 ),
-                inputs.runtime.clone(),
-                inputs.binding.terms(),
+                runtime.clone(),
+                binding.terms(),
                 prepared.refund.clone(),
-                AggregateBip340Signature::from_bytes(inputs.signature),
+                AggregateBip340Signature::from_bytes(signature),
             )
             .context("tag-16 completion request is invalid")?,
         )
@@ -226,11 +413,11 @@ async fn publish_tag16(inputs: ValidatedInputs) -> Result<Tag16Evidence> {
     let submitted = client
         .submit_transaction(SubmitTransactionRequest::new(
             MessageContext::new(
-                inputs.run_id.clone(),
+                run_id.clone(),
                 submission_request_id.clone(),
                 Participant::Taker,
             ),
-            inputs.runtime,
+            runtime,
             completed.refund.clone(),
         ))
         .await
@@ -242,9 +429,9 @@ async fn publish_tag16(inputs: ValidatedInputs) -> Result<Tag16Evidence> {
     Ok(Tag16Evidence {
         schema: "lez_v02_m5_actual_local_tag16_v1",
         role: Participant::Taker,
-        run_id: inputs.run_id,
-        prepare_request_id: inputs.prepare_request_id,
-        complete_request_id: inputs.complete_request_id,
+        run_id,
+        prepare_request_id,
+        complete_request_id,
         submission_request_id,
         transaction_id: hex::encode(submitted.transaction_id.as_bytes()),
         submission_outcome: submitted.outcome,
@@ -263,15 +450,17 @@ fn write_evidence(file: &mut File, evidence: &Tag16Evidence) -> Result<()> {
 }
 
 fn read_view_key(path: &Path) -> Result<MoneroPrivateViewKey> {
-    let mut text = Zeroizing::new(
-        String::from_utf8(read_bounded_file(
-            path,
-            MAX_SECRET_BYTES,
-            true,
-            "Monero view key",
-        )?)
-        .context("Monero view key is not UTF-8")?,
-    );
+    read_view_key_bytes(&read_bounded_file(
+        path,
+        MAX_SECRET_BYTES,
+        true,
+        "Monero view key",
+    )?)
+}
+
+fn read_view_key_bytes(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {
+    let mut text =
+        Zeroizing::new(String::from_utf8(bytes.to_vec()).context("Monero view key is not UTF-8")?);
     while text.ends_with(['\n', '\r']) {
         text.pop();
     }
@@ -287,6 +476,57 @@ fn read_view_key(path: &Path) -> Result<MoneroPrivateViewKey> {
     text.zeroize();
     MoneroPrivateViewKey::from_monero_little_endian(*bytes)
         .context("Monero view key is not a canonical scalar")
+}
+
+fn parse_capability_bytes(bytes: &[u8]) -> Result<SidecarCapability> {
+    let mut text = Zeroizing::new(
+        String::from_utf8(bytes.to_vec()).context("Taker LEZ capability is not UTF-8")?,
+    );
+    if text.ends_with("\r\n") {
+        let content_len = text.len() - 2;
+        text.truncate(content_len);
+    } else if text.ends_with('\n') {
+        text.pop();
+    }
+    SidecarCapability::new(text.as_str().to_owned()).context("Taker LEZ capability is invalid")
+}
+
+fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    let mut file =
+        File::open(format!("/proc/self/fd/{fd}")).with_context(|| format!("open {label} FD"))?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect {label} FD"))?;
+    let required = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
+    ensure!(
+        metadata.file_type().is_file()
+            && metadata.permissions().mode() & 0o7777 == 0o400
+            && fcntl_get_seals(&file)
+                .with_context(|| format!("inspect {label} seals"))?
+                .contains(required),
+        "{label} FD is unsafe"
+    );
+    let mut bytes = Vec::new();
+    std::io::Read::by_ref(&mut file)
+        .take(u64::try_from(maximum).unwrap_or(u64::MAX) + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {label} FD"))?;
+    ensure!(
+        bytes.len() <= maximum && metadata.len() == u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        "{label} FD is oversized or changed"
+    );
+    Ok(bytes)
+}
+
+fn validate_evidence_root(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).context("inspect Tag16 evidence root")?;
+    ensure!(
+        metadata.file_type().is_dir()
+            && metadata.uid() == rustix::process::getuid().as_raw()
+            && metadata.permissions().mode() & 0o7777 == 0o700,
+        "Tag16 evidence root is unsafe"
+    );
+    Ok(())
 }
 
 fn read_bounded_file(

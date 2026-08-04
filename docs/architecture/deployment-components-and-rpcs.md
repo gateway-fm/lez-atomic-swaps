@@ -940,11 +940,13 @@ replay. ADR 0152 additionally seals the validated Stage A/B, own/peer packets,
 private-role manifest, and private view key on FDs 211 through 216 before the
 one-attempt CAS. ADR 0153 adds a canonical role/mode/step/identity/ABI/journal/
 evidence/RPC plan on sealed FD 217. The focused effect-route suite passes 5 of
-5, and strict
-Clippy plus warning-fatal Rustdoc are GREEN. Solid edges below are fixed-local
-process-component evidence. Semantic transaction construction, live-journal
-handoff, branch-produced artifacts, actual-chain observation, and isolated-chain
-RPC execution remain dashed and open.
+5 at the ADR 0153 checkpoint. ADR 0154 adds least-privilege FD 218 custody and
+the real Tag16 sender; the current effect-route suite passes 6 of 6 and the
+Tag16 process suite passes 4 of 4. Strict Clippy plus warning-fatal Rustdoc are
+rerun for each pushed slice. Solid edges below are fixed-local component
+evidence. Tag16 construction and authenticated sidecar calls are semantic;
+actual-node submission/finality through this boundary, Tag14, observation,
+Monero sweeps, and literal CLI composition remain dashed and open.
 
 ```mermaid
 flowchart TB
@@ -976,8 +978,11 @@ flowchart TB
         MonitorStatus["Secret-free application_activated status"]
         EffectReceipt[("Receipt v2 and schema v3 authority")]
         Claim["lez-taker claim"]
+        Refund["lez-taker refund"]
         Workflow[("Workflow v2 journal")]
         Marker["Hash-pinned Tag14 sender marker with sealed application inputs"]
+        Tag16["Real Tag16 sender with sealed FD 218"]
+        Tag16Evidence[("No-clobber Tag16 evidence")]
         Observer["Role-fixed finalized observer marker"]
         Parser["Bounded exact Tag14 result parser"]
         Reconciled["Durable Succeeded then Complete"]
@@ -1010,8 +1015,15 @@ flowchart TB
     TakerAuthority --> MonitorStatus
     Receipt --> EffectReceipt
     EffectReceipt --> Claim
+    EffectReceipt --> Refund
     Claim --> Workflow
+    Refund --> Workflow
     Workflow -->|"Prepared"| Marker
+    Workflow -->|"Prepared refund"| Tag16
+    TakerJournal --> Tag16
+    Tag16 --> Tag16Sidecar["Authenticated local LEZ sidecar API"]
+    Tag16 --> Tag16Evidence
+    Tag16Sidecar -.-> LezNodes
     Workflow -->|"Started or Unknown"| Observer
     Observer --> Parser
     Parser --> Reconciled
@@ -1034,6 +1046,7 @@ flowchart TB
 | Taker acceptance | `lez-taker --accept-xmr-offer` plus Stage A/B, role root, public packets, role journal, actor root, and receipt flags | Taker authenticates Delivery only on first acceptance, provisions only Taker authority, activates over Chat, and publishes its receipt after Maker commit |
 | Taker receipt-only monitor | `lez-taker monitor --receipt` with the private canonical XMR receipt | Digest-pinned canonical Taker-manifest bytes bind the swap and state before the per-swap lock; full Stage A/B, packet, private-role, and claim/refund-journal semantics are reread under the lock; returns only secret-free `application_activated` and never contacts Delivery, Chat, a daemon, a node, or an RPC |
 | Receipt-v2 Taker Tag14 process | `lez-taker claim --receipt` under separate actor/workflow locks | First call invokes/reaps one FD-197..217 sender marker and leaves Started; 200..210 contain runtime/credentials, 211..216 contain sealed validated application material, and 217 contains the canonical secret-free execution plan. The second call uses observe mode with the observer ABI and original sending identity; the third is process-free Complete. No semantic journal transition, RPC, or transaction yet |
+| Sealed Taker Tag16 child | no-argument `xmr-reference-tag16` selected for `lez_xmr_tag16_refund_v1` | Receives the canonical plan plus Stage A/B, runtime, sealed capability, view key and Taker share; loads the exact live Taker refund row; requires its presignature to equal Stage B; adapts and verifies in memory; and calls authenticated local prepare, complete and submit exactly once. Component proof uses an in-process loopback sidecar, so the configured sidecar-to-LEZ-node edge, finality, later Maker extraction and Monero recovery are not claimed here |
 | Durable replay | Same database, registry, actor root, receipt, reservation, and command after Delivery removal | Durable actor bypasses discovery; exact Stage A/B replay returns revision 3 without replacing role artifacts |
 | Public effects | Maker application database and immutable role journals | The application database has no public-effect table; any participating effect journal must be absent or contain zero rows, and both input role journals remain byte-identical |
 
