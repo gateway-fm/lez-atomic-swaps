@@ -550,6 +550,14 @@ attestation so neither can be misreported as the other.
   digests, publishes the child packet by no-replace exact replay, selects only
   Refund by durable CAS and prepares the semantic sweep. Parser and strict
   all-target compile gates are GREEN; joined actual-node replay remains.
+- [x] Wire the exact-evidence activation into the isolated joined runner. The
+  opt-in M7 mode starts the real role sidecars before first schema-3 actor
+  registration, admits Refund only through the generation-fenced owner CLI,
+  supervises the semantic non-mining sender, mines exactly ten confirmations
+  through a separate run-owned Regtest driver, and reconciles through the
+  spend-authority-free observer. The machine-readable runner contract and
+  static control-flow regression are GREEN; an exact pushed-commit replay is
+  the next PoC gate and is not yet claimed.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

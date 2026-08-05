@@ -50,6 +50,10 @@ sequenceDiagram
     participant Evidence as Private evidence root
     participant Journal as XMR workflow
     participant Supervisor as Maker supervisor
+    participant Owner as Maker owner CLI
+    participant Sender as Refund sender
+    participant Driver as External Regtest driver
+    participant Observer as Refund observer
 
     Runner->>Gate: Exact application, funding, Tag16 and packet
     Gate->>Gate: Revalidate both chains and role identity
@@ -59,6 +63,11 @@ sequenceDiagram
     Gate->>Journal: Prepare Monero refund sweep
     Runner->>Supervisor: Start from schema 3 registry
     Supervisor->>Journal: Read durable Refund step
+    Owner->>Supervisor: Refund with current generation
+    Supervisor->>Sender: Consume one attempt and submit
+    Driver->>Driver: Mine exactly ten local blocks
+    Supervisor->>Observer: Observe without spend authority
+    Observer-->>Supervisor: Finalized exact transaction
 ```
 
 Conditional atomicity is preserved because finalized Tag-16 is the only input
@@ -77,8 +86,12 @@ therefore replayable without rearming a chain send.
     cargo test --locked -p xmr-reference-actor --test provision
     cargo check --locked -p xmr-reference-actor --all-targets
     cargo clippy --locked -p xmr-reference-actor --all-targets -- -D warnings
+    ./scripts/test-m4-actual-claim-poc-contract.sh
 
 The component gate performs no RPC or chain mutation. It consumes existing
 owner-local evidence from isolated LEZ and official Monero Regtest processes.
 The joined runner replay remains the proof that those files arise from the
 actual nodes and that the normal supervisor completes the two-leg recovery.
+The runner is now wired behind `M7_XMR_SUPERVISED_REFUND=1`; its first exact
+pushed-commit replay remains pending, so this ADR does not yet claim joined
+actual-node completion.

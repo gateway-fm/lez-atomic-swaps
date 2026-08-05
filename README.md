@@ -35,8 +35,7 @@ submits once through role-correct local wallet RPCs without mining, waiting, or
 retrying. ADR [0167](docs/architecture/0167-observe-maker-monero-refund-without-spend-authority.md)
 now supplies its read-only restart observer: exact transaction finality is
 re-proved through typed Maker-wallet and daemon RPCs without either refund
-secret, and the receipt is atomically published. ADR [0168](docs/architecture/0168-activate-maker-refund-from-finalized-evidence.md) now removes operator branch selection: exact funding plus finalized Maker-side Tag16 evidence alone import the completed common step and prepare Refund by durable CAS. The fresh actual-node
-observation and joined replay remain open.
+secret, and the receipt is atomically published. ADR [0168](docs/architecture/0168-activate-maker-refund-from-finalized-evidence.md) now removes operator branch selection: exact funding plus finalized Maker-side Tag16 evidence alone import the completed common step and prepare Refund by durable CAS. The opt-in joined runner is contract-GREEN and composes schema-3 registration, the generation-fenced owner action, semantic sender, a separate ten-block Regtest driver, and the read-only observer. Its exact pushed-commit actual-node replay remains open; reproduce the wired mode with [manual Flow 1ZF](docs/manual-user-flows.md#flow-1zf-repeat-the-joined-supervised-maker-refund).
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined
 two-devnet F3/F6 corridor.

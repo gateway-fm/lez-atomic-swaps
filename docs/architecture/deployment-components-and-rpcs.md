@@ -2218,9 +2218,16 @@ flowchart LR
     Workflow --> Actor[xmr maker actor]
     Actor --> Sender[Refund sender]
     Actor --> Observer[Finality observer]
+    Owner[lez maker owner CLI] --> Actor
+    Driver[Run owned confirmation driver] --> DaemonRPC[Monero daemon RPC]
 ```
 
 The gate contacts no endpoint. Once activated, the sender uses only the shared
 and Maker wallet loopback RPCs; the observer uses only the Maker wallet and
 Monero daemon loopback RPCs. The funding wallet is a distinct test authority
 used before activation and never enters the refund child.
+The isolated PoC runner, not either child, calls `generateblocks` for exactly
+ten confirmations using the run-owned daemon credential. Production has no
+such driver: ordinary external mining supplies confirmations. The joined mode
+is wired and contract-tested, but its first exact pushed-commit replay is still
+pending.

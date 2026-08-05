@@ -8570,3 +8570,76 @@ filesystem synchronization, SQLite contention and disk pressure can vary the
 runtime; Internet or chain availability cannot. The positive typed
 wallet-plus-canonical-daemon finality path is exercised by the next fresh
 joined official Monero Regtest flow rather than simulated here.
+
+
+## Flow 1ZF: Repeat the joined supervised Maker refund
+
+This opt-in flow joins fresh isolated LEZ v0.2 and official Monero 0.18.5.1
+Regtest nodes to the real schema-3 Maker supervisor. It uses the finalized
+Tag16 evidence to select Refund, admits the action through `lez-maker refund`
+with the current durable generation, submits one Maker-directed Monero sweep,
+mines ten local confirmation blocks outside both effect children, and lets the
+read-only observer terminalize the swap.
+
+First verify the runner contract and use a clean exact commit:
+
+```bash
+./scripts/test-m4-actual-claim-poc-contract.sh
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RUN_ID=m7refund-yyyymmdd-nonce
+export M5_XMR_APPLICATION_MODE=1
+export M5_XMR_JOURNEY=refund
+export M5_XMR_REFUND_DELAY_MS=600000
+export M7_XMR_SUPERVISED_REFUND=1
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+The run ID must be unique and the worktree must remain clean. The minimum
+ten-minute signed refund window is protocol time, not Monero finality time; the
+local finalized-clock driver advances it deterministically. The M7 test-only
+supervisor requeue is one second, while the default remains 3600 seconds.
+
+```mermaid
+sequenceDiagram
+    participant Taker as Taker role
+    participant LEZ as Local LEZ nodes
+    participant Gate as Refund activation gate
+    participant Owner as Maker owner CLI
+    participant MakerActor as Maker supervisor and actor
+    participant Shared as Shared wallet RPC
+    participant Driver as Regtest confirmation driver
+    participant Monerod as Local Monero daemon
+    participant MakerWallet as Maker wallet RPC
+
+    Taker->>LEZ: Finalize Tag16 refund
+    LEZ-->>Gate: Maker-local finalized evidence
+    Gate->>MakerActor: Durable Refund prepared
+    Owner->>MakerActor: Refund at current generation
+    MakerActor->>Shared: Sweep once to Maker address
+    Driver->>Monerod: Generate exactly ten blocks
+    MakerActor->>MakerWallet: Observe exact incoming sweep
+    MakerActor->>Monerod: Verify canonical finality
+    MakerActor-->>Owner: Terminal refunded
+```
+
+Atomicity is conditional across the two independent chains: confirmed Monero
+funding precedes finalized Tag16; only that finalized LEZ effect exposes the
+share needed for Maker recovery; the durable branch CAS excludes Claim and
+Punish; the sender consumes one attempt before submission and never mines or
+retries; and the observer has no spend authority. Crashes replay from durable
+evidence without rearming the send. This is not a distributed transaction and
+does not claim immunity from finality-model failure or future deep reorgs.
+
+All chain endpoints are unique literal-loopback services owned by this run. No
+public RPC, peer, faucet, public funds, DNS lookup, provider, or public
+deployment participates. Test funds come from deterministic local genesis and
+Regtest outputs. Flakiness can come from cold Cargo/Risc0 builds, CPU or disk
+pressure, filesystem synchronization, Docker startup, local-node readiness, or
+contention; Internet and faucet availability cannot affect the result. Cleanup
+is exact-label and process-identity scoped and must preserve the foreign
+sentinel. Never use a broad Docker prune as part of this flow.

@@ -3577,6 +3577,8 @@ flowchart LR
     Observer --> MakerWallet[Maker wallet RPC]
     Sender --> MoneroDaemon[Monero daemon RPC]
     Observer --> MoneroDaemon
+    Owner[Maker owner CLI] --> Actor
+    Driver[Run owned Regtest block driver] --> MoneroDaemon
 ```
 
 ```mermaid
@@ -3585,15 +3587,23 @@ sequenceDiagram
     participant Monero as Official Monero Regtest
     participant Gate as Refund activation gate
     participant Workflow as XMR workflow
-    participant Actor as Maker role actor
+    participant MakerActor as Maker role actor
+    participant Owner as Maker owner CLI
+    participant Sender as Refund sender
+    participant Driver as Regtest block driver
+    participant Observer as Refund observer
 
     Monero-->>Gate: Exact funded shared output receipt
     LEZ-->>Gate: Finalized Tag16 and aggregate signature
     Gate->>Workflow: Import funding as Succeeded
     Gate->>Workflow: Select Refund by compare and set
     Gate->>Workflow: Prepare sweep
-    Actor->>Workflow: Consume one refund attempt
-    Actor->>Monero: Submit once, then observe only
+    Owner->>MakerActor: Refund with current lease generation
+    MakerActor->>Workflow: Consume one refund attempt
+    MakerActor->>Sender: Submit once
+    Driver->>Monero: Mine exactly ten local blocks
+    MakerActor->>Observer: Observe only without spend authority
+    Observer-->>MakerActor: Finalized exact transaction
 ```
 
 The gate itself opens no RPC. The effect authority still names distinct

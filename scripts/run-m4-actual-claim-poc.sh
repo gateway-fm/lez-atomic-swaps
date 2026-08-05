@@ -29,6 +29,8 @@ readonly m5_xmr_journey="${M5_XMR_JOURNEY:-claim}"
 readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"
 readonly m5_xmr_refund_window_ms=600000
 readonly m7_xmr_punish_delay_ms="${M7_XMR_PUNISH_DELAY_MS:-180000}"
+readonly m7_xmr_supervised_refund="${M7_XMR_SUPERVISED_REFUND:-0}"
+readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : 3600))
 readonly tag17_finality_page_blocks=8
 
 fail() {
@@ -81,6 +83,20 @@ emit_contract() {
       tag17_punish_delay_ms: {minimum: 120000, maximum: 600000, default: 180000},
       tag17_finality_page_blocks: 8,
       tag17_phases: ["tag17_prepare", "tag17_wait", "tag17", "tag17_finality"],
+      m7_supervised_refund: {
+        mode_flag: "M7_XMR_SUPERVISED_REFUND",
+        requires_application_mode: true,
+        requires_refund_journey: true,
+        provisioning_order: "post_tag13_and_sidecars_before_actor_registration",
+        actor_requeue_seconds: {isolated_test: 1, default: 3600},
+        operator_branch_selector: false,
+        owner_action: "lez-maker refund",
+        sender_abi: "lez_xmr_monero_refund_sweep_v3",
+        observer_abi: "lez_xmr_monero_verify_v2",
+        external_confirmation_blocks: 10,
+        confirmation_driver_outside_sender_and_observer: true,
+        runtime_external_resources: []
+      },
       available_unwired_launchers: [
         "run-m4-lez-sidecar.sh"
       ],
@@ -252,6 +268,13 @@ environment_preflight() {
     done
   elif [[ "$m5_xmr_application_mode" != 0 ]]; then
     fail "M5_XMR_APPLICATION_MODE must be unset, 0, or 1"
+  fi
+  [[ "$m7_xmr_supervised_refund" == 0 || "$m7_xmr_supervised_refund" == 1 ]] ||
+    fail "M7_XMR_SUPERVISED_REFUND must be unset, 0, or 1"
+  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+    require_command curl
+    [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]] ||
+      fail "M7_XMR_SUPERVISED_REFUND=1 requires M5_XMR_APPLICATION_MODE=1 and M5_XMR_JOURNEY=refund"
   fi
   case "$m5_xmr_journey" in
     claim)
@@ -817,6 +840,12 @@ build_identity_and_artifact() {
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
         --bin xmr-reference-tag16
   fi
+  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+    CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+      cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
+        --bin xmr-reference-monero-refund --bin xmr-reference-monero-verify \
+        --bin xmr-reference-tag17
+  fi
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline -p lez-maker-node \
@@ -840,6 +869,11 @@ build_identity_and_artifact() {
   if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
     readonly tag16_binary="${staged_binary_root}/xmr-reference-tag16"
     readonly local_clock_driver_binary="${staged_binary_root}/lez-v02-local-clock-driver"
+  fi
+  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+    readonly m7_monero_refund_binary="${staged_binary_root}/xmr-reference-monero-refund"
+    readonly m7_monero_observer_binary="${staged_binary_root}/xmr-reference-monero-verify"
+    readonly m7_tag17_binary="${staged_binary_root}/xmr-reference-tag17"
   fi
   readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
   readonly agreement_composer_binary="${staged_binary_root}/lez-v02-xmr-stage-a-compose"
@@ -877,6 +911,14 @@ build_identity_and_artifact() {
       "$tag16_binary" "Tag16 refund driver"
     stage_executable "${sidecar_target}/debug/lez-v02-local-clock-driver" \
       "$local_clock_driver_binary" "local finalized-clock driver"
+  fi
+  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+    stage_executable "${workspace_target}/debug/xmr-reference-monero-refund" \
+      "$m7_monero_refund_binary" "M7 Monero refund sender"
+    stage_executable "${workspace_target}/debug/xmr-reference-monero-verify" \
+      "$m7_monero_observer_binary" "M7 Monero refund observer"
+    stage_executable "${workspace_target}/debug/xmr-reference-tag17" \
+      "$m7_tag17_binary" "M7 Tag17 effect worker"
   fi
   stage_executable "${workspace_target}/debug/lez-adaptor-role-runner" \
     "$agreement_role_runner_binary" "agreement role runner"
@@ -1269,7 +1311,7 @@ start_m5_xmr_application_daemon() {
       --actor-supervisor
       --actor-attempt-timeout-milliseconds 120000
       --actor-poll-milliseconds 20
-      --actor-requeue-delay-seconds 3600
+      --actor-requeue-delay-seconds "$m5_actor_requeue_delay_seconds"
       --actor-failure-backoff-seconds 30
       --actor-max-output-bytes 8192
     )
@@ -1691,6 +1733,107 @@ wait_m5_xmr_typed_blocked() {
   require_owner_file "$m5_xmr_blocked_monitor" "M5 XMR typed Blocked monitor"
 }
 
+provision_m7_maker_effect_application() {
+  [[ "$m7_xmr_supervised_refund" == 1 ]] ||
+    fail "M7 Maker effect provisioning requires the supervised-refund mode"
+  readonly m7_maker_effect_root="$m5_xmr_application_root/maker-effects"
+  readonly m7_maker_effect_evidence_root="$m7_maker_effect_root/evidence"
+  readonly m7_maker_effect_authority="$m7_maker_effect_root/effect-authority.json"
+  readonly m7_maker_effect_workflow="$m7_maker_effect_root/workflow.sqlite"
+  readonly m7_maker_effect_manifest="$m7_maker_effect_root/actor-provision-v3.json"
+  readonly m7_maker_effect_provision="$evidence_root/m7-maker-effect-provision.json"
+  mkdir -m 0700 "$m7_maker_effect_root" "$m7_maker_effect_evidence_root"
+
+  local maker_endpoint maker_runtime maker_capability
+  maker_endpoint="$(jq -er .endpoint "$maker_sidecar_root/pid-manifest.json")"
+  maker_runtime="$tag13_handoff_root/maker-runtime.json"
+  maker_capability="$maker_sidecar_root/capability"
+  require_owner_file "$maker_runtime" "M7 Maker sidecar runtime"
+  require_owner_file "$maker_capability" "M7 Maker sidecar capability"
+
+  jq -n \
+    --arg swap "$m5_xmr_planned_swap_id" \
+    --arg agreement "$(jq -er .agreement_commitment "$m5_xmr_maker_provision")" \
+    --arg activation "$(jq -er .activation_commitment "$m5_xmr_maker_provision")" \
+    --arg run "$run_id" \
+    --arg workflow "$m7_maker_effect_workflow" \
+    --arg adaptor "$m5_xmr_maker_role_journal" \
+    --arg evidence "$m7_maker_effect_evidence_root" \
+    --arg lez_url "$maker_endpoint" \
+    --arg runtime "$maker_runtime" \
+    --arg runtime_sha "$(sha256_file "$maker_runtime")" \
+    --arg capability "$maker_capability" \
+    --arg daemon_url "$(manifest_value MONERO_DAEMON_ENDPOINT "$monero_manifest")" \
+    --arg daemon_user "$(manifest_value MONERO_DAEMON_USERNAME_FILE "$monero_manifest")" \
+    --arg daemon_password "$(manifest_value MONERO_DAEMON_PASSWORD_FILE "$monero_manifest")" \
+    --arg funding_url "$(manifest_value MONERO_TAKER_WALLET_ENDPOINT "$monero_manifest")" \
+    --arg funding_user "$(manifest_value MONERO_TAKER_RPC_USERNAME_FILE "$monero_manifest")" \
+    --arg funding_password "$(manifest_value MONERO_TAKER_RPC_PASSWORD_FILE "$monero_manifest")" \
+    --arg shared_url "$(manifest_value MONERO_FUNDING_WALLET_ENDPOINT "$monero_manifest")" \
+    --arg shared_user "$(manifest_value MONERO_FUNDING_RPC_USERNAME_FILE "$monero_manifest")" \
+    --arg shared_password "$(manifest_value MONERO_FUNDING_RPC_PASSWORD_FILE "$monero_manifest")" \
+    --arg role_url "$(manifest_value MONERO_MAKER_WALLET_ENDPOINT "$monero_manifest")" \
+    --arg role_user "$(manifest_value MONERO_MAKER_RPC_USERNAME_FILE "$monero_manifest")" \
+    --arg role_password "$(manifest_value MONERO_MAKER_RPC_PASSWORD_FILE "$monero_manifest")" \
+    --arg shared_file_password "$(manifest_value MONERO_FUNDING_WALLET_PASSWORD_FILE "$monero_manifest")" \
+    --arg fund_program "$monero_fund_binary" --arg fund_sha "$(sha256_file "$monero_fund_binary")" \
+    --arg claim_program "$tag15_binary" --arg claim_sha "$(sha256_file "$tag15_binary")" \
+    --arg classifier_program "$classifier_binary" --arg classifier_sha "$(sha256_file "$classifier_binary")" \
+    --arg refund_program "$m7_monero_refund_binary" --arg refund_sha "$(sha256_file "$m7_monero_refund_binary")" \
+    --arg verify_program "$m7_monero_observer_binary" --arg verify_sha "$(sha256_file "$m7_monero_observer_binary")" \
+    --arg punish_program "$m7_tag17_binary" --arg punish_sha "$(sha256_file "$m7_tag17_binary")" '
+      {
+        schema_version:3,pair:"monero",role:"maker",swap_id:$swap,
+        agreement_commitment:$agreement,activation_commitment:$activation,
+        run_id:$run,workflow_journal:$workflow,adaptor_journal:$adaptor,
+        evidence_root:$evidence,
+        lez:{sidecar_url:$lez_url,runtime_file:$runtime,runtime_sha256:$runtime_sha,
+          capability_file:$capability},
+        monero:{
+          daemon:{url:$daemon_url,username_file:$daemon_user,password_file:$daemon_password},
+          funding_wallet:{url:$funding_url,username_file:$funding_user,password_file:$funding_password},
+          shared_wallet:{url:$shared_url,username_file:$shared_user,password_file:$shared_password},
+          role_wallet:{url:$role_url,username_file:$role_user,password_file:$role_password},
+          shared_wallet_file_password_file:$shared_file_password
+        },
+        maker_tools:{
+          monero_fund:{program:$fund_program,program_sha256:$fund_sha,abi:"lez_xmr_monero_fund_v2"},
+          lez_claim:{program:$claim_program,program_sha256:$claim_sha,abi:"lez_xmr_tag15_claim_v1"},
+          finalized_classifier:{program:$classifier_program,program_sha256:$classifier_sha,
+            abi:"lez_xmr_finalized_classifier_v1"},
+          monero_refund:{program:$refund_program,program_sha256:$refund_sha,
+            abi:"lez_xmr_monero_refund_sweep_v3"},
+          monero_verify:{program:$verify_program,program_sha256:$verify_sha,
+            abi:"lez_xmr_monero_verify_v2"},
+          lez_punish:{program:$punish_program,program_sha256:$punish_sha,
+            abi:"lez_xmr_tag17_punish_v1"}
+        }
+      }
+    ' >"$m7_maker_effect_authority"
+  chmod 0600 "$m7_maker_effect_authority"
+  require_owner_file "$m7_maker_effect_authority" "M7 Maker effect authority"
+
+  "$agreement_actor_binary" provision-effect-application maker \
+    --application-manifest "$m5_xmr_actor_config" \
+    --effect-authority "$m7_maker_effect_authority" \
+    --workflow-journal "$m7_maker_effect_workflow" \
+    --run-id "$run_id" --output-manifest "$m7_maker_effect_manifest" \
+    >"$m7_maker_effect_provision"
+  chmod 0600 "$m7_maker_effect_provision"
+  require_owner_file "$m7_maker_effect_provision" "M7 Maker effect provision"
+  require_owner_file "$m7_maker_effect_manifest" "M7 Maker effect manifest"
+  require_owner_file "$m7_maker_effect_workflow" "M7 Maker effect workflow"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" --arg run "$run_id" \
+    --arg config "$m7_maker_effect_manifest" '
+      .schema_version==1 and .role=="maker" and .swap_id==$swap and .run_id==$run
+      and .config_path==$config and .was_replay==false
+      and .private_material_disclosed==false
+    ' "$m7_maker_effect_provision" >/dev/null ||
+    fail "M7 Maker schema-3 effect provision is incomplete"
+  m5_xmr_actor_config="$m7_maker_effect_manifest"
+}
+
+
 complete_m5_xmr_application_handoff() {
   record_phase m5_xmr_application started
   readonly m5_xmr_maker_role_journal="${agreement_root}/stage-b/private/maker.sqlite"
@@ -1721,6 +1864,9 @@ complete_m5_xmr_application_handoff() {
   m5_xmr_decoded_stage_a_swap_id="$(jq -er .swap_id "$m5_xmr_maker_provision")"
   m5_xmr_actor_config="$(jq -er .config_path "$m5_xmr_maker_provision")"
   m5_xmr_actor_state="$(jq -er .state_database_path "$m5_xmr_maker_provision")"
+  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+    provision_m7_maker_effect_application
+  fi
   readonly m5_xmr_decoded_stage_a_swap_id m5_xmr_actor_config m5_xmr_actor_state
   require_owner_file "$m5_xmr_actor_config" "M5 XMR Maker actor manifest"
   require_owner_file "$m5_xmr_actor_state" "M5 XMR Maker actor state"
@@ -1846,8 +1992,10 @@ complete_m5_xmr_application_handoff() {
     --arg reconciled_swap "$(jq -er .swap_id "$m5_xmr_reconciled_delivery_plan")" \
     --arg reconciled_envelope "$(jq -er .signed_envelope_sha256 "$m5_xmr_reconciled_delivery_plan")" \
     --argjson daemon_pid "$m5_last_stopped_daemon_pid" \
+    --argjson tag13_started "$m7_xmr_supervised_refund" \
+    --argjson requeue_delay "$m5_actor_requeue_delay_seconds" \
     --argjson process_group "$m5_last_stopped_daemon_group" '
-      {schema_version:1,kind:"m5_xmr_application_pre_tag13_cutoff",result:"passed",
+      {schema_version:1,kind:(if $tag13_started then "m7_xmr_post_tag13_application_handoff" else "m5_xmr_application_pre_tag13_cutoff" end),result:"passed",
        plan_swap_id:$swap,agreement_receipt_swap_id:$receipt_swap,
        decoded_stage_a_swap_id:$decoded,initial_acceptance_swap_id:$initial_swap,
        replay_acceptance_swap_id:$replay_swap,
@@ -1855,7 +2003,7 @@ complete_m5_xmr_application_handoff() {
        supervisor:{resolution:"blocked",schedule_state:"queued",attempt_count:1,
          child_process:null,manual_action:null,chain_effect_executed:false,
          phase:"offered",revision:0,next_action:"xmr_chain_effects_not_yet_composed",
-         minimum_reobservation_seconds:60,configured_reobservation_seconds:3600},
+         minimum_reobservation_seconds:60,configured_reobservation_seconds:$requeue_delay},
        replay:{original_delivery_root_removed:true,
          publisher_reconciled_consumed_offer_before_outage:true,
          reconciled_offer_authenticated:true,reconciled_offer_swap_id:$reconciled_swap,
@@ -1864,7 +2012,7 @@ complete_m5_xmr_application_handoff() {
          journal_device_inode_size_hash_unchanged:true,sqlite_sidecars_present:false},
        cutoff:{daemon_pid:$daemon_pid,process_group:$process_group,pid_absent:true,
          process_group_absent:true,owner_socket_absent:true,chat_socket_absent:true,
-         ready_files_absent:true},legacy_tag13_started:false}
+         ready_files_absent:true},legacy_tag13_started:$tag13_started}
     ' >"$m5_xmr_cutoff_evidence"
   chmod 0600 "$m5_xmr_cutoff_evidence"
   require_owner_file "$m5_xmr_cutoff_evidence" "M5 XMR pre-Tag13 cutoff evidence"
@@ -2549,6 +2697,166 @@ bind_claim_sweep() {
 }
 
 
+m7_monero_rpc() {
+  local credentials="$1" endpoint="$2" request="$3"
+  require_owner_file "$credentials" "M7 Monero curl authority"
+  printf '%s' "$request" |
+    curl --config "$credentials" --data-binary @- "$endpoint/json_rpc"
+}
+
+mine_m7_refund_confirmations() {
+  readonly m7_maker_address_evidence="$evidence_root/m7-maker-wallet-address.json"
+  readonly m7_refund_mining_evidence="$evidence_root/m7-refund-confirmation-blocks.json"
+  local maker_credentials maker_endpoint daemon_credentials daemon_endpoint
+  local address_response maker_address mine_request
+  maker_credentials="$(manifest_value MONERO_MAKER_CREDENTIAL_FILE "$monero_manifest")"
+  maker_endpoint="$(manifest_value MONERO_MAKER_WALLET_ENDPOINT "$monero_manifest")"
+  daemon_credentials="$(manifest_value MONERO_DAEMON_CREDENTIAL_FILE "$monero_manifest")"
+  daemon_endpoint="$(manifest_value MONERO_DAEMON_ENDPOINT "$monero_manifest")"
+
+  address_response="$(m7_monero_rpc "$maker_credentials" "$maker_endpoint" \
+    '{"jsonrpc":"2.0","id":"m7-refund","method":"get_address","params":{"account_index":0}}')"
+  printf '%s\n' "$address_response" >"$m7_maker_address_evidence"
+  chmod 0600 "$m7_maker_address_evidence"
+  require_owner_file "$m7_maker_address_evidence" "M7 Maker wallet address evidence"
+  maker_address="$(jq -er 'if (.error==null and (.result.address|type=="string")) then .result.address else error("missing Maker address") end' \
+    "$m7_maker_address_evidence")"
+
+  mine_request="$(jq -cn --arg address "$maker_address" '{
+    jsonrpc:"2.0",id:"m7-refund",method:"generateblocks",
+    params:{amount_of_blocks:10,wallet_address:$address,starting_nonce:1000}
+  }')"
+  m7_monero_rpc "$daemon_credentials" "$daemon_endpoint" "$mine_request" \
+    >"$m7_refund_mining_evidence"
+  chmod 0600 "$m7_refund_mining_evidence"
+  require_owner_file "$m7_refund_mining_evidence" "M7 refund confirmation mining evidence"
+  jq -e '.error==null and .result.status=="OK" and (.result.blocks|length)==10' \
+    "$m7_refund_mining_evidence" >/dev/null ||
+    fail "M7 external confirmation driver did not mine exactly ten blocks"
+}
+
+activate_and_supervise_m7_maker_refund() {
+  [[ "$m7_xmr_supervised_refund" == 1 ]] ||
+    fail "M7 supervised refund requires its isolated mode"
+  record_phase m7_refund_activation started
+  readonly m7_refund_activation_evidence="$evidence_root/m7-refund-activation.json"
+  "$agreement_actor_binary" activate-maker-refund-workflow \
+    --effect-manifest "$m7_maker_effect_manifest" \
+    --effect-authority "$m7_maker_effect_authority" \
+    --run-id "$run_id" --monero-run-id "$MONERO_RUN_ID" \
+    --monero-funding-evidence "$monero_funding_evidence" \
+    --monero-funding-receipt "$monero_verification_evidence" \
+    --finalized-refund "$tag16_refund_finality_result" \
+    --observed-final-signature "$maker_observed_refund_signature" \
+    >"$m7_refund_activation_evidence"
+  chmod 0600 "$m7_refund_activation_evidence"
+  require_owner_file "$m7_refund_activation_evidence" "M7 refund activation evidence"
+  jq -e --arg run "$run_id" --arg monero_run "$MONERO_RUN_ID" \
+    --arg swap "$m5_xmr_planned_swap_id" '
+      .schema=="lez_v02_m7_maker_refund_activation_v1" and .role=="maker"
+      and .run_id==$run and .monero_run_id==$monero_run and .swap_id==$swap
+      and .selected_branch=="refund" and .prepared_step=="sweep_monero_refund"
+      and .private_material_disclosed==false
+    ' "$m7_refund_activation_evidence" >/dev/null ||
+    fail "M7 refund activation output is incomplete"
+  record_phase m7_refund_activation completed
+
+  record_phase m7_refund_supervisor started
+  readonly m7_refund_action_evidence="$evidence_root/m7-refund-action.json"
+  readonly m7_refund_submitted_monitor="$evidence_root/m7-refund-submitted-monitor.json"
+  readonly m7_refund_terminal_monitor="$evidence_root/m7-refund-terminal-monitor.json"
+  readonly m7_refund_submission="$m7_maker_effect_evidence_root/monero-refund-submission.json"
+  readonly m7_refund_finality="$m7_maker_effect_evidence_root/monero-refund-finalized.json"
+  local current_monitor="$evidence_root/.m7-refund-current-monitor.json"
+  local generation=""
+  start_m5_xmr_application_daemon m7-refund 1
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+    --id "$m5_xmr_planned_swap_id" >"$current_monitor"
+  generation="$(jq -er '.lease_generation | select(type=="number")' "$current_monitor")"
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" refund \
+    --id "$m5_xmr_planned_swap_id" --request-id "$run_id-m7-refund-001" \
+    --expected-generation "$generation" >"$m7_refund_action_evidence"
+  chmod 0600 "$m7_refund_action_evidence"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" --argjson generation "$generation" '
+    .schema_version==1 and .swap_id==$swap and .action=="refund"
+    and .requested_after_generation==$generation and .was_replay==false
+  ' "$m7_refund_action_evidence" >/dev/null ||
+    fail "M7 owner refund action was not admitted exactly"
+
+  local observed_submission=0
+  for _ in {1..3600}; do
+    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+      --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
+      jq -e '
+        .schedule_state=="queued"
+        and .progress.observation.state=="active"
+        and .progress.observation.phase=="maker_recovery_available"
+        and .progress.observation.revision==1
+        and .manual_action.action=="refund" and .manual_action.state=="queued"
+      ' "$current_monitor" >/dev/null 2>&1; then
+      observed_submission=1
+      break
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M7 Maker daemon exited before refund submission"
+    sleep 0.05
+  done
+  [[ "$observed_submission" == 1 ]] ||
+    fail "M7 supervisor did not retain the submitted refund state"
+  mv "$current_monitor" "$m7_refund_submitted_monitor"
+  chmod 0600 "$m7_refund_submitted_monitor"
+  require_owner_file "$m7_refund_submission" "M7 Maker refund submission"
+  jq -e --arg run "$run_id" --arg swap "$m5_xmr_planned_swap_id" '
+    .schema=="lez_v02_m7_monero_refund_submission_v1" and .role=="maker"
+    and .run_id==$run and .swap_id==$swap
+    and .finality_observer_required==true
+    and .automatic_submission_retry==false
+    and .public_rpc_used==false and .faucet_used==false
+  ' "$m7_refund_submission" >/dev/null ||
+    fail "M7 semantic refund sender evidence is incomplete"
+  record_phase m7_refund_supervisor submitted
+
+  mine_m7_refund_confirmations
+
+  local observed_terminal=0
+  for _ in {1..3600}; do
+    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+      --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
+      jq -e '
+        .schedule_state=="terminal"
+        and .progress.observation.state=="active"
+        and .progress.observation.phase=="refunded"
+        and .progress.observation.revision==2
+        and .progress.observation.next_action=="complete"
+        and .manual_action.action=="refund" and .manual_action.state=="completed"
+      ' "$current_monitor" >/dev/null 2>&1; then
+      observed_terminal=1
+      break
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M7 Maker daemon exited before refund finality"
+    sleep 0.05
+  done
+  [[ "$observed_terminal" == 1 ]] ||
+    fail "M7 supervisor did not terminalize the finalized refund"
+  mv "$current_monitor" "$m7_refund_terminal_monitor"
+  chmod 0600 "$m7_refund_terminal_monitor"
+  require_owner_file "$m7_refund_finality" "M7 Maker refund finality"
+  jq -e --arg tx "$(jq -er .transaction_id "$m7_refund_submission")" '
+    .schema=="lez_v02_m7_monero_refund_finality_v1" and .role=="maker"
+    and .transaction_id==$tx and .confirmations>=10
+    and .finality_observer_sent_transaction==false
+    and .public_rpc_used==false and .faucet_used==false
+  ' "$m7_refund_finality" >/dev/null ||
+    fail "M7 semantic refund finality evidence is incomplete"
+  stop_m5_xmr_application_daemon ||
+    fail "M7 Maker daemon did not stop after terminal refund"
+  record_phase m7_refund_supervisor completed
+}
+
+
 execute_run() {
   run_preflight
   require_command docker
@@ -2568,13 +2876,16 @@ execute_run() {
     prepare_m5_xmr_delivery_plan
   fi
   compose_xmr_agreement
-  if [[ "$m5_xmr_application_mode" == 1 ]]; then
+  if [[ "$m5_xmr_application_mode" == 1 && "$m7_xmr_supervised_refund" == 0 ]]; then
     complete_m5_xmr_application_handoff
     verify_m5_xmr_application_cutoff
   fi
   submit_tag13
   export_tag13_handoff
   start_role_sidecars
+  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+    complete_m5_xmr_application_handoff
+  fi
   if [[ "$m5_xmr_journey" == punish ]]; then
     prepare_tag17_punishment
     publish_and_classify_tag17_punishment
@@ -2589,9 +2900,13 @@ execute_run() {
     publish_tag16_refund
     classify_tag16_refund_finality
     ingest_refund_signature
-    extract_refund_adaptor_scalar
-    sweep_monero_refund
-    bind_refund_sweep
+    if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+      activate_and_supervise_m7_maker_refund
+    else
+      extract_refund_adaptor_scalar
+      sweep_monero_refund
+      bind_refund_sweep
+    fi
   else
     prepare_tag14_release
     publish_tag14_release

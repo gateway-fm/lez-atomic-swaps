@@ -108,6 +108,18 @@ jq -e '
   and .automatic_submission_retry == false
   and .dynamic_literal_loopback_ports == true
   and .public_runtime_resources == []
+  and .m7_supervised_refund.mode_flag == "M7_XMR_SUPERVISED_REFUND"
+  and .m7_supervised_refund.requires_application_mode == true
+  and .m7_supervised_refund.requires_refund_journey == true
+  and .m7_supervised_refund.provisioning_order == "post_tag13_and_sidecars_before_actor_registration"
+  and .m7_supervised_refund.actor_requeue_seconds == {isolated_test:1,default:3600}
+  and .m7_supervised_refund.operator_branch_selector == false
+  and .m7_supervised_refund.owner_action == "lez-maker refund"
+  and .m7_supervised_refund.sender_abi == "lez_xmr_monero_refund_sweep_v3"
+  and .m7_supervised_refund.observer_abi == "lez_xmr_monero_verify_v2"
+  and .m7_supervised_refund.external_confirmation_blocks == 10
+  and .m7_supervised_refund.confirmation_driver_outside_sender_and_observer == true
+  and .m7_supervised_refund.runtime_external_resources == []
   and .implemented_execute_through == "evidence"
   and .actor_onboarding_implemented == true
   and .successful_claim_tail_implemented == false
@@ -239,6 +251,8 @@ for required in \
   lez-v02-xmr-release-prepare lez-v0-2-xmr-release-service \
   lez-v02-xmr-classify-finalized xmr-reference-tag15 \
   lez-adaptor-role-runner lez-v02-xmr-regtest-sweep \
+  activate-maker-refund-workflow xmr-reference-monero-refund xmr-reference-monero-verify \
+  lez_xmr_monero_refund_sweep_v3 lez_xmr_monero_verify_v2 M7_XMR_SUPERVISED_REFUND \
   bind-finalized-claim-sweep M4_EXPECTED_COMMIT MONERO_RUN_ID; do
   rg -Fq -- "$required" "$runner" || fail "runner omits required boundary: ${required}"
 done
@@ -356,6 +370,36 @@ sidecar_line="$(rg -n -m1 -F 'start_role_sidecars' <<<"$execute_source")"
 sidecar_line="${sidecar_line%%:*}"
 [[ "$export_line" =~ ^[0-9]+$ && "$sidecar_line" =~ ^[0-9]+$ ]] || fail "sidecar continuation boundaries are unavailable"
 (( execute_tag13_line < export_line && export_line < sidecar_line && sidecar_line < post_tag13_return_line )) || fail "tag13 handoff/sidecar completion ordering is invalid"
+
+m7_provision_source="$(function_source provision_m7_maker_effect_application)"
+[[ -n "$m7_provision_source" ]] || fail "M7 Maker effect provisioning function is unavailable"
+for m7_provision_boundary in \
+  'schema_version:3,pair:"monero",role:"maker"' \
+  'abi:"lez_xmr_monero_refund_sweep_v3"' \
+  'abi:"lez_xmr_monero_verify_v2"' \
+  'm5_xmr_actor_config="$m7_maker_effect_manifest"'; do
+  rg -Fq -- "$m7_provision_boundary" <<<"$m7_provision_source" ||
+    fail "M7 effect provision omits boundary: ${m7_provision_boundary}"
+done
+
+m7_supervisor_source="$(function_source activate_and_supervise_m7_maker_refund)"
+[[ -n "$m7_supervisor_source" ]] || fail "M7 supervised refund function is unavailable"
+for m7_supervisor_boundary in \
+  'activate-maker-refund-workflow' \
+  '--expected-generation "$generation"' \
+  'mine_m7_refund_confirmations' \
+  '.manual_action.action=="refund" and .manual_action.state=="completed"' \
+  '.finality_observer_sent_transaction==false'; do
+  rg -Fq -- "$m7_supervisor_boundary" <<<"$m7_supervisor_source" ||
+    fail "M7 supervisor omits boundary: ${m7_supervisor_boundary}"
+done
+
+m7_mining_source="$(function_source mine_m7_refund_confirmations)"
+[[ -n "$m7_mining_source" ]] || fail "M7 external confirmation driver is unavailable"
+rg -Fq 'params:{amount_of_blocks:10' <<<"$m7_mining_source" ||
+  fail "M7 confirmation driver does not request exactly ten blocks"
+rg -Fq '.result.blocks|length)==10' <<<"$m7_mining_source" ||
+  fail "M7 confirmation driver does not verify exactly ten blocks"
 
 tag13_source="$(function_source submit_tag13)"
 [[ -n "$tag13_source" ]] || fail "tag-13 submission function is unavailable"
