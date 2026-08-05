@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_tag17_poc",
+  "result": "passed",
+  "run_id": "m7tag17a23a314a",
+  "repository_commit": "a23a314cfa71c82b0272a04f97fd6e60510510c0",
+  "duration_seconds": 2895,
+  "guest": {
+    "recursive_tests_passed": 5,
+    "recursive_tests_total": 5,
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "deployment": {
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "transaction_id": "f5f4e7a15c1c87333cc69be9392e0fa576bdb25ca0fad45c127fa16e51cd0b5c",
+    "containing_block_id": 84,
+    "containing_block_hash": "ccd12ef20fca44065f655373d4857a99d83884c7e4843b2ad4b146ec844f9932",
+    "canonical_window_occurrences": 1,
+    "send_attempts": 1,
+    "bedrock_status": "Finalized",
+    "program_id_is_current_guest_image_id": true
+  },
+  "tag13": {
+    "funding_transaction_id": "bc4d8a5d006023e4560d8f36b6a23ba2d8ba12244500656c15a5a25ac270178e",
+    "containing_block_id": 112,
+    "finalized_timestamp_ms": 1785887326038
+  },
+  "tag17": {
+    "transaction_id": "fee4314c8bf4f8534145dca6fcb57cd094f1e2c4d5922d09a69fb5e2cb84136b",
+    "punish_at_ms": 1785887438000,
+    "prepared_before_submission": true,
+    "preboundary_outcome": "uncertain",
+    "preboundary_finalized_timestamp_ms": 1785887326038,
+    "release_request_equals_transaction_id": true,
+    "release_outcome": "accepted",
+    "release_performed": true,
+    "automatic_retry": false,
+    "finalized_transaction_block_id": 124,
+    "finalized_transaction_block_hash": "2e105cb1c4b7edd419c978ce7fdd54cf50536ddc886f7e8ada3674c1f9ea9e93",
+    "finalized_transaction_timestamp_ms": 1785887447877,
+    "finalized_tip_id": 127,
+    "finalized_tip_timestamp_ms": 1785887478510,
+    "finality_page_blocks": 8,
+    "finality_page_is_pagination_not_confirmation_depth": true,
+    "boundary_margin_ms": 9877,
+    "effect": "punish",
+    "claimant_only_signature": true,
+    "aggregate_signature_absent": true,
+    "terminal_metadata_state": "claimed",
+    "terminal_custody_balance": "0",
+    "maker_taker_finalized_facts_equal": true
+  },
+  "timing": {
+    "release_to_maker_finality_seconds": 75,
+    "maker_to_taker_finality_seconds": 4,
+    "source": "owner-private evidence file modification times"
+  },
+  "monero": {
+    "version": "0.18.5.1",
+    "network": "Regtest",
+    "role": "agreement_identity_only",
+    "funding_or_spend_effect": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived": true,
+    "tag13_no_retry_latch_preserved": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "evidence_sha256": {
+    "deployment_bundle": "c0f208feadf069c7f095bd30c578f8f7ad9b7269f33a0d4ff469276650f98b84",
+    "actor_onboarding": "d5b3c216bea9106a71e3346c7da9dd720401c61224bc2f5ee9ad2109f00fc81f",
+    "xmr_agreement_receipt": "a4bfe4bce037b1f717489808dab0d274acb74ae69397aff3853e14cb3c29bddb",
+    "tag13": "2eefdee37e00eb95ed5266ecb53a6faa471518ebecd080bc39c6636880a296cb",
+    "tag17_prepared": "b2aab3fa3b92ad74eba0931283f1e24ecf2e7247fc0d6907b4ac86e07384ef63",
+    "tag17_preboundary": "2b904eed931d6e822c5dd4a0f5f090500bee6a7102a77d56dfe3b32ee5d66bff",
+    "tag17_released": "41f91ffce2afd4ae44e1233e5c0690dea20f557c772b0dcfbb140c40176caea8",
+    "tag17_maker_finalized": "8f1ad270de384d1b0630b0f0cfc957b8a6f4b3f1c7fdd96781a47fdbdd9a3b2d",
+    "tag17_taker_finalized": "729260493faf424ea356d23d6dd30052cb1f96bfcaf1343e9a2944a3c75f43b7",
+    "phases": "6b508e6e47dd603b48998f822bc08ec041794fa4e0dd754a60699b26c2b6431b",
+    "cleanup": "61c8ff16057d36ee675941715e9c34ceca182faf50d8079f586bf4e12a8a9581"
+  },
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment": false
+}

@@ -107,6 +107,7 @@ require_fixed './scripts/test-m7-submission-requirements-audit.sh' "$quality_run
 require_fixed './scripts/test-m7-xmr-sdk-facade-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-route-health-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-tag17-actual-poc-contract.sh' "$quality_runner"
+require_fixed './scripts/test-m7-tag17-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-spel-idl-contract.sh' "$quality_runner"
 require_fixed './scripts/test-monero-stagenet-guide-contract.sh' "$quality_runner"
 require_fixed './scripts/test-zcash-testnet-guide-contract.sh' "$quality_runner"

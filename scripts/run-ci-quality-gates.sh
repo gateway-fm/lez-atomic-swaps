@@ -87,6 +87,7 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m7-xmr-sdk-facade-contract.sh
 ./scripts/test-m7-route-health-contract.sh
 ./scripts/test-m7-tag17-actual-poc-contract.sh
+./scripts/test-m7-tag17-actual-certificate.sh
 ./scripts/test-m7-spel-idl-contract.sh
 ./scripts/test-monero-stagenet-guide-contract.sh
 ./scripts/test-zcash-testnet-guide-contract.sh

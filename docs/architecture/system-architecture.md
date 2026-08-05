@@ -2726,11 +2726,11 @@ sequenceDiagram
     T->>B: Bind Stage A and B, journal, finalized tag 15, packet, and extraction
     X-->>B: Independent receipt at block 121 under stable tip 130
     B-->>T: Owner-private conditional-atomicity snapshot
-    Note over T,M: No canonical reveal uses pending tag 16 and tag 17 recovery
-    Note over T,M: Implementation status successful claim GREEN and recovery pending
+    Note over T,M: Claim path is GREEN and Tag16 and Tag17 are separately actual-node GREEN
+    Note over T,M: Joined abandonment economics and adverse recovery races remain
 ```
 
-#### Recovery sequence still required
+#### Recovery sequence and remaining joined proof
 
 ```mermaid
 sequenceDiagram
@@ -2750,7 +2750,7 @@ sequenceDiagram
     end
 ```
 
-This second diagram is the intended atomic recovery branch, not executed evidence. The current generic unsigned LEZ refund reveals no share and cannot substitute for signed tag 16. Actual-node tag 16 and tag 17 publication, finality, extraction, and wallet recovery remain required before the full pair is certified.
+The signed Tag16 branch and the post-boundary Tag17 terminal LEZ transition are now separately actual-node GREEN. Run `m5xmrrefund45924caa` covers Tag16 plus the Maker Monero recovery sweep; run `m7tag17a23a314a` covers Tag17 publication, finality and identical Maker/Taker classification. The diagram remains the joined economic target: one fresh abandonment journey must connect the actual Monero output, the mutually exclusive deadline branches, losing-branch rejection and recovery under adverse process/concurrency cases.
 
 <!-- atomicity-argument: lez-xmr/taker-sells-lez -->
 
@@ -2769,18 +2769,18 @@ The XMR construction does not create a single distributed transaction. Its safet
 
 The argument is conditional on the cryptography and finality assumptions, on the exact messages committed in Stage A/B, and on the one-host PoC custody boundary. The release journal and sidecar journal are separate SQLite databases and no transaction spans them. Quarantined failed preparation states, rollback of an older valid journal, same-UID file races, cancellation after the publication CAS, and definitive-absence recovery remain production hardening.
 
-**Economic safety:** in the executed claim branch, the Maker receives LEZ only by publishing the finalized aggregate signature that lets the Taker reconstruct and spend the exact Stage-A Monero output. The unexecuted refund and punishment branches remain outside this proof.
+**Economic safety:** in the executed claim branch, the Maker receives LEZ only by publishing the finalized aggregate signature that lets the Taker reconstruct and spend the exact Stage-A Monero output. Tag16 and Tag17 now have separate actual-node branch proofs, but the joined abandonment economics and adverse losing-branch races remain outside this claim proof.
 
 **Replay/idempotency:** create-new evidence, durable role journals, exclusive release preparation, and one-attempt submission prevent a replay from becoming a second authorized effect; they support the reveal construction but are not its cryptographic atomicity mechanism.
 
 **Conditional liveness:** the argument assumes canonical LEZ and Monero finality, retained role journals and shares, usable local nodes, fees, inclusion, and enough signed recovery margin. A crash can delay the follower, while canonical disclosure preserves its authority.
 
-**Implementation status:** the actual local successful-claim branch and its
-owner-private direct finalized-Claim-to-sweep binder are working-tree GREEN.
-The binder revalidated LEZ Claim at height 4208 under finalized tip 4220 and
-the matching Monero receipt at height 121 under stable tip 130. Exact
-committed-tree replay, the full runner, tag 16 refund, tag 17 punishment, and
-survivor recovery are still pending, so no M4 completion tag is authorized.
+**Implementation status:** the historical claim binder revalidated LEZ Claim
+at height 4208 under finalized tip 4220 and the matching Monero receipt at
+height 121 under stable tip 130. Later exact pushed runs separately close the
+role-correct claim, Tag16 refund plus Maker sweep, and Tag17 terminal LEZ
+transition. Joined abandonment economics and adverse survivor races remain;
+this historical section does not itself authorize a milestone tag.
 
 Official Monero 0.18.5.1 may omit `connections` for an empty list. The local compatibility decoder accepts omission only as empty while `get_info` independently requires zero incoming and zero outgoing peers. Two failed preparation states exposed this wire difference and remain quarantined; only fresh `release3` reached Prepared and Admitted.
 

@@ -6839,7 +6839,7 @@ prove the actual local-devnet refund tail. That next flow must ingest the
 finalized signature as Maker, extract the Taker adaptor scalar, reconstruct the
 exact Stage-A shared Monero spend key, sweep through the neutral shared-wallet
 RPC to the Maker destination, mine confirmations through the Taker wallet, and
-bind both chains. Tag 17 and final M5 certification also remain open.
+bind both chains. This paragraph records that historical component checkpoint; later run `m5xmrrefund45924caa` closes the Tag16 recovery tail and run `m7tag17a23a314a` separately closes actual-node Tag17. Joined abandonment economics remain open.
 
 See ADR 0120 for the component, sequence, and conditional-atomicity diagrams.
 
@@ -7242,6 +7242,82 @@ is setup—not runtime—evidence. Host CPU/disk pressure, image builds, Zebra b
 generation, LEZ finality cadence, and the deliberate three-second semantic
 probe timeout can delay or fail a run; an ambiguous or partial run is discarded
 and never resumed under the same ID.
+
+## Flow 1ZB: repeat the actual-local Tag17 punishment PoC
+
+This is the reproducible local F5 proof. It uses a fresh deployment of the
+current checked Risc0 guest, independent Maker and Taker sidecars, the real
+local LEZ v0.2 Bedrock/sequencer/indexer stack, and official Monero 0.18.5.1
+Regtest processes. Monero supplies the Stage-A agreement identity only: this
+flow intentionally creates no Monero funding or spend and therefore does not
+claim the joined F3/F6 abandonment economics.
+
+Use a unique private root and exact pushed commit. The tool and circuit paths
+are the pinned prerequisites already used by the M4/M5 actual-local runner;
+replace the example run ID on every attempt:
+
+```bash
+export RUN_ID=m7tag17-$(date -u +%Y%m%d%H%M%S)
+export M4_RUN_ROOT="/tmp/lez-m7-runs/$RUN_ID"
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RAPIDSNARK_LIB_DIR=/tmp/lez-atomic-swaps-tools/rapidsnark-v0.0.8/d4133227
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/tmp/lez-v02-provisional-tools-m5btc-f9d0349-artifact
+export LOGOS_BLOCKCHAIN_CIRCUITS="$LEZ_M4_TOOL_DIR/logos-blockchain-circuits-v0.4.2"
+export M5_XMR_JOURNEY=punish
+export M5_XMR_APPLICATION_MODE=0
+export M7_XMR_PUNISH_DELAY_MS=180000
+
+./scripts/test-m7-tag17-actual-poc-contract.sh
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+The runner rejects dirty or mismatched source, pre-existing roots, reused IDs,
+non-loopback RPCs, unsupported boundary delays, and application mode. It first
+passes all five recursive guest cases and deploys that exact ELF/ImageID once.
+It then onboards fresh roles, creates the local agreement and Tag13 prerequisite,
+prepares Tag17 without submission, requires an `absent` or `uncertain`
+observation below `punish_at`, waits outside the guest, and releases exactly
+once under the transaction ID. Maker exact-owner and Taker terms-discovery must
+produce byte-identical finalized facts with claimant-only signing, terminal
+`Claimed` metadata and zero custody.
+
+Inspect the owner-private evidence without copying private transaction bytes
+into a public report:
+
+```bash
+jq ".outcome.status, .outcome.finalized_clock" "$M4_RUN_ROOT/evidence/tag17-preboundary.json"
+jq ".submission, .resources" "$M4_RUN_ROOT/evidence/tag17-released.json"
+jq "{status:.outcome.status, clock:.outcome.finalized_clock,
+     block:.outcome.facts.containing_block,
+     state:.outcome.facts.metadata.state,
+     custody:.outcome.facts.custody.balance}" \
+  "$M4_RUN_ROOT/evidence/tag17-maker-finalized.json"
+cmp <(jq -cS ".outcome.facts" "$M4_RUN_ROOT/evidence/tag17-maker-finalized.json") \
+    <(jq -cS ".outcome.facts" "$M4_RUN_ROOT/evidence/tag17-taker-finalized.json")
+jq . "$M4_RUN_ROOT/evidence/cleanup.json"
+```
+
+Checked run `m7tag17a23a314a` at commit `a23a314` took 48 minutes 15
+seconds including cold builds. Release-to-Maker finality took about 75 seconds,
+then the independent Taker view took four seconds. Its certificate is
+[`m7-actual-tag17-a23a314-20260804.json`](evidence/m7-actual-tag17-a23a314-20260804.json).
+The classifier scans contiguous fully finalized eight-block pages; eight is
+pagination, not confirmation depth. A page cannot be skipped and discovery
+advances only after a typed full-coverage `uncertain` result.
+
+All runtime endpoints are dynamic literal loopback: Bedrock, LEZ sequencer and
+indexer, two sidecars, `monerod`, and three wallet RPCs. Funds are deterministic
+local LEZ genesis outputs. No public RPC, faucet, public funds, public
+deployment, peer or external finality service is used. Cold Cargo/Git, Docker,
+Risc0, circuit and Monero acquisition may require their pinned upstreams during
+setup. Bedrock can make a best-effort NTP attempt, but certification trusts only
+the canonical finalized block identity and timestamp. CPU/disk pressure, cold
+builds, local finality cadence and wall-clock scheduling can slow the run; an
+ambiguous or partial run is discarded rather than resumed. The schema-v2
+cleanup removes only the exact labelled run resources, proves sidecar ports
+closed, preserves a foreign sentinel and refuses broad cleanup.
 
 ## Troubleshooting
 

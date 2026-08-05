@@ -451,12 +451,19 @@ attestation so neither can be misreported as the other.
   fully finalized eight-block pages only after a typed `uncertain` result;
   this retains full Bedrock finality, cannot skip a height, and bounds local
   post-inclusion wait without treating page size as confirmation depth.
-- [ ] Execute `M5_XMR_JOURNEY=punish` from the exact pushed classifier-fix
-  commit against fresh isolated local nodes, retain prepared/released/finalized/
-  cleanup evidence and phase timings, then publish a secret-free certificate
-  and update F5 only if the deployed guest identity and both actor views match.
-  Keep F3 and F6 open until the joined abandonment economics and adverse
-  recovery races are independently proved.
+- [x] Execute `M5_XMR_JOURNEY=punish` from exact pushed classifier-fix commit
+  `a23a314` against fresh isolated local nodes. Run `m7tag17a23a314a` rebuilt
+  and deployed the current five-of-five guest, retained the pre-boundary
+  `uncertain` result, performed one transaction-ID-bound release, and found
+  byte-identical Maker exact-owner and Taker terms-discovery facts. Tag17 was
+  finalized at height 124, 9.877 seconds after `punish_at`, with terminal
+  `Claimed` metadata and zero custody under finalized tip 127. Exact cleanup
+  passed and the checked secret-free certificate is
+  `docs/evidence/m7-actual-tag17-a23a314-20260804.json`. The complete replay
+  took 48 minutes 15 seconds; after release, Maker finality took about 75
+  seconds and the independent Taker view another four. F5 is GREEN locally.
+  F3 and F6 remain open for joined abandonment economics and adverse recovery
+  races rather than for missing Tag17 chain execution.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -3167,13 +3174,14 @@ Only a genuinely fresh third database was eligible for publication.
   `lez-adaptor-signature` crate. ADR 0056 preserves BTC top-level API and
   byte-exact hash behavior; leaf, vector, facade, process, and direct-consumer
   regressions are green.
-- [ ] Pin and execute the exact adaptor pre-signature, adaptation, extraction,
+- [x] Pin and execute the exact adaptor pre-signature, adaptation, extraction,
   retained-share addition, and reconstructed Monero spend equations. Both
   DLEQ-bound shares, canonical proof wire, symmetric addition, shared address,
-  exact claim presignature adaptation/extraction, and the official-wallet
-  reconstructed claim spend are actual-local green. Generated tag-15/tag-16/
-  tag-17 messages and hashes replace placeholders; the signed-refund
-  adaptation/extraction and tag-16/tag-17 builders remain.
+  exact claim and refund adaptation/extraction, official-wallet reconstructed
+  spends, and generated tag-15/tag-16/tag-17 messages and builders are GREEN.
+  Exact Tag16 plus Maker sweep and exact Tag17 finality are actual-node GREEN.
+  Joined abandonment economics and independent cryptographic review remain
+  separate gates.
 - [x] Lock the current crypto-slice graph and pass strict lint, Rustdoc,
   advisories, bans, licenses, and source policy. The rejected unmaintained
   bincode feature was replaced by pinned postcard rather than allowlisted.
@@ -4373,11 +4381,11 @@ Current corrective slice:
 
 - [x] Correct the claim runner to the three-origin Maker to neutral shared wallet to Taker topology.
 - [x] Add a fail-closed source contract preventing either economic actor RPC from hosting the shared wallet.
-- [ ] Run and retain one fresh exact-commit role-correct claim replay.
+- [x] Run and retain one fresh exact-commit role-correct claim replay.
 - [x] Enable authenticated Taker tag-16 preparation and aggregate completion with independent durable replay and zero submission.
 - [x] Add transaction-derived one-attempt tag-16 submission and finalized Taker-exact plus Maker-discovery classification.
-- [ ] Add Maker finalized-signature ingestion, extraction, role-correct reconstructed-key sweep, binding, and exact actual-node evidence.
-- [ ] Close tag 17, final application-owned effects, accepted-application concurrency, unavailable-route composition, and milestone gates.
+- [x] Add Maker finalized-signature ingestion, extraction, role-correct reconstructed-key sweep, binding, and exact actual-node evidence.
+- [ ] Close final application-owned effects, accepted-application concurrency, unavailable-route composition, and milestone gates. Tag17 is separately actual-node GREEN under ADR 0158.
 
 Exact pushed-tree run `m5-xmr-app-20260730-2c6aec1-h` then repeated the full
 corridor from commit `2c6aec1` and passed cleanup schema v2. Swap
@@ -6370,7 +6378,14 @@ Maker exact-owner and Taker terms-discovery facts, the inclusive boundary,
 terminal state and custody, while contiguous eight-block finalized pages remove
 the unnecessary future-range wait without weakening Bedrock finality.
 
-F3, F5, and F6 remain open honestly until a fresh pushed replay retains both
-actor views of the finalized transition. F5 may close after that replay; F3 and
-F6 additionally require the joined two-devnet abandonment economics,
-losing-branch proof, and adverse process/concurrency cases.
+Fresh pushed replay `m7tag17a23a314a` closes that RED on commit `a23a314`.
+The current five-of-five guest was freshly deployed as ImageID
+`b7f87278...b0433`; the pre-boundary finalized clock was below `punish_at`;
+one transaction-ID-bound release finalized at height 124; and Maker exact-owner
+and Taker discovery retained identical canonical facts, `Claimed` metadata and
+zero custody. The eight-block value is contiguous pagination, not confirmation
+depth. Exact cleanup and independent absence checks passed. The checked
+certificate is `docs/evidence/m7-actual-tag17-a23a314-20260804.json`. F5 is
+therefore GREEN at the local-functional boundary. F3 and F6 remain open only
+for joined two-devnet abandonment economics, losing-branch proof, and adverse
+process/concurrency cases; public deployment remains deliberately deferred.

@@ -9,6 +9,16 @@ together with the live
 [RFP-003](https://github.com/logos-co/rfp/blob/master/RFPs/RFP-003-atomic-swaps.md).
 The earlier issue #61 is superseded and Ethereum is not an in-scope pair.
 
+M7 local F5 is GREEN on exact pushed run `m7tag17a23a314a`: the current
+five-of-five Risc0 guest was freshly deployed to isolated LEZ v0.2, one
+post-boundary Tag17 punishment finalized, Maker and Taker independently agreed
+on the canonical terminal state, and exact cleanup passed. Reproduction and
+resource details are in [manual Flow 1ZB](docs/manual-user-flows.md#flow-1zb-repeat-the-actual-local-tag17-punishment-poc),
+with checked evidence in
+[`m7-actual-tag17-a23a314-20260804.json`](docs/evidence/m7-actual-tag17-a23a314-20260804.json).
+F3/F6 still require the joined two-devnet abandonment economics and adverse
+recovery races; public deployment remains deliberately deferred.
+
 ### M6 certified local-functional Basecamp mini-app PoC
 
 M5 is verified at the local-functional PoC boundary by tag
@@ -729,7 +739,7 @@ component-GREEN: authenticated Taker preparation and completion feed only the
 transaction-derived one-attempt submission identity; an ambiguous send remains
 unknown across restart without resend; and Taker-exact plus Maker-discovery
 classification require canonical finalized refund facts in
-`[refund_at, punish_at)`. That lower component checkpoint used controlled local fixtures; the exact actual-node replay below closes Maker extraction, reconstructed-key sweep, and binding. ADR 0158 now makes Tag-17 preparation and one-attempt release component-GREEN under the isolated Maker claimant key; the actual-node punishment transition and adverse races remain open. The next role-correct component is now GREEN: the real
+`[refund_at, punish_at)`. That lower component checkpoint used controlled local fixtures; the exact actual-node replay below closes Maker extraction, reconstructed-key sweep, and binding. ADR 0158 and run `m7tag17a23a314a` make Tag-17 preparation, one-attempt release, and two-role finalized classification actual-node GREEN under the isolated Maker claimant key; joined abandonment economics and adverse races remain open. The next role-correct component is now GREEN: the real
 Taker process cryptographically verifies and publishes tag 16 through the
 transaction-derived one-attempt identity; the Maker accepts only canonical
 finalized discovery into the precommitted refund session; and one sweep engine
@@ -1184,9 +1194,11 @@ This executes the successful-claim branch of the conditional atomicity
 argument: the Maker cannot receive the LEZ custody balance without finalizing
 the signature that reveals Maker share `s_a`, which the Taker combines with
 retained `s_b` to spend the exact confirmed XMR output. It is not a distributed
-cross-chain transaction. The tag-16 signed-refund path is actual-node GREEN. Tag-17 exact preparation,
-durable custody, and one-attempt release are component-GREEN, while its
-actual-node transition remains open alongside native plus two custom-token F7
+cross-chain transaction. The tag-16 signed-refund path is actual-node GREEN.
+Tag-17 exact preparation, durable custody, one-attempt release, and two-role
+finalized classification are actual-node GREEN under ADR 0158 and run
+`m7tag17a23a314a`. Joined abandonment economics remain open alongside native
+plus two custom-token F7
 parity, U9 Stagenet guide/CI, D1 XMR videos, repeatability, QA, chaos,
 information-security, production readiness, and independent review.
 

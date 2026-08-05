@@ -146,8 +146,8 @@ public RPC, faucet, public funds, DNS, or external service is used.
 
 Pushed rehearsal `m7tag17124df10a` executed the current checked guest and
 obtained one accepted Tag17 release after the boundary, with no public RPC,
-faucet, public funds or external finality service. It did not certify F5:
-canonical evidence failed because this observer still rejected `Punish` and
+faucet, public funds or external finality service. It was retained as RED:
+canonical evidence failed because the observer still rejected `Punish` and
 the runner waited for an unnecessary fixed 64-block range. Exact cleanup passed
 and independent Docker queries found no run-labelled resource.
 
@@ -156,7 +156,16 @@ RED/GREEN now makes the observer accept only the canonical
 claimant signature, agreement message hash, timestamp at or after
 `punish_at`, terminal `Claimed` metadata and zero custody. Maker exact-owner
 and Taker discovery tests agree on the same facts, while the protocol model
-independently rejects pre-boundary facts. A fresh pushed actual-node replay is
-still required before F5 changes to GREEN. F3 and F6 additionally remain open
-for a joined two-devnet recovery corridor, losing-branch rejection, exact
-cleanup, and adverse concurrency cases.
+independently rejects pre-boundary facts.
+
+Fresh pushed run `m7tag17a23a314a` completed that proof on commit `a23a314`.
+It built and deployed the current five-of-five guest as ImageID
+`b7f87278...b0433`, retained finalized pre-boundary uncertainty, released one
+transaction-ID-bound Tag17, and found the transaction at finalized height 124.
+Its containing timestamp was 9.877 seconds after `punish_at`; both actors
+retained identical canonical facts, terminal `Claimed` metadata and zero
+custody. Exact cleanup passed and the checked certificate is
+[`m7-actual-tag17-a23a314-20260804.json`](../evidence/m7-actual-tag17-a23a314-20260804.json).
+F5 is GREEN at the local-functional boundary. F3 and F6 remain open for a
+joined two-devnet abandonment corridor, losing-branch rejection, and adverse
+process/concurrency cases; public deployment remains deferred.
