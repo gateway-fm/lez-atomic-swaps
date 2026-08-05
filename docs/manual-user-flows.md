@@ -8627,6 +8627,14 @@ the runner publishes it without replacement before deleting the private effect
 tree. Absence of that retained file invalidates the certification packet even
 when the terminal monitor is GREEN.
 
+The reference replay is `m7refund-7cd3a9c-a` at exact pushed commit
+`7cd3a9c16f716543cd130f4caab20be909e35cb0`. It passed with one refund send,
+ten confirmation blocks, terminal revision 2, completed manual action, retained
+mode-`0600` single-link receipt, and exact cleanup. Verify the checked packet
+with `./scripts/test-m7-maker-refund-actual-certificate.sh`; its public summary
+is `docs/evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`. The replay does
+not prove a daemon restart after submission.
+
 The role journal is a mutable SQLite database. Its manifest SHA-256 records the
 exact provisioning snapshot, while sender-to-observer restarts validate a
 stable owner-only snapshot and its complete Stage-A/Stage-B session semantics.

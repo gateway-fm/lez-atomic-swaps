@@ -631,9 +631,12 @@ attestation so neither can be misreported as the other.
   and byte equality, then performs exact cleanup. The focused filesystem test
   proves the happy handoff and replacement rejection; shell syntax and diff
   hygiene pass.
-- [ ] Execute one fresh pushed-commit replay that retains
+- [x] Execute fresh pushed-commit replay `m7refund-7cd3a9c-a`, retain
   `evidence/monero-refund-finalized.json`, terminal monitor, phase ledger and
-  cleanup together, then check in a secret-free certificate with exact hashes.
+  cleanup together, and check in the exact-hash secret-free certificate
+  `docs/evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`. The receipt
+  survived cleanup as mode `0600` with one link; the private source and every
+  exact run-labelled Docker resource were absent afterward.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -6623,9 +6626,20 @@ supplies both invocation-only inputs, asserts both are absent from the observer,
 and completes Tag17 plus Monero Refund invoke/restart/reconcile in 302.10
 seconds without relaxing any supervisor assertion.
 
-The next PoC gate is one fresh pushed-commit exact replay producing
-`monero-refund-finalized.json`, workflow revision 2, a completed manual Refund
-action, terminal scheduler state and exact cleanup. Corrected ETA after the next
-push is 55 to 90 minutes for that local-functional replay; repository-controlled
-M7 candidate closure remains 1 to 2 focused days after the PoC, excluding the
-independent S12/S13 review and policy-deferred public deployment.
+Exact pushed-commit run `m7refund-7cd3a9c-a` closes that PoC gate. It freshly
+built and deployed the five-of-five guest, finalized Tag13 and Tag16, admitted
+one generation-fenced owner Refund, retained one semantic Maker Monero send,
+mined exactly ten confirmation blocks outside both effect children, and reached
+workflow revision 2 with completed manual action and terminal scheduler state.
+The retained `monero-refund-finalized.json` is byte-bound in
+`docs/evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`; it remained mode
+`0600` and single-link after source-status-zero exact cleanup removed the
+private source and all run-owned Docker resources. This run proves durable
+same-daemon retry/terminalization, not a daemon restart after submission.
+
+The next repository-owned slices are semantic joined Claim and the Taker
+Monero claim sweep, abandonment/adverse recovery, accepted-application
+actual-chain concurrency, timelock/fee/reorg matrices, demos, and the immutable
+candidate security/SBOM/vulnerability dossier. Corrected ETA remains 1 to 2
+focused days for repository-controlled candidate closure, excluding independent
+S12/S13 review and policy-deferred public deployment.

@@ -6,8 +6,8 @@
 ## Context
 
 Exact pushed run `m7refund-d6ebaaf-a` completed the joined Maker refund: one
-semantic wallet submission, exactly ten Regtest confirmation blocks, restart-
-only wallet and daemon observation, workflow revision 2, a completed manual
+semantic wallet submission, exactly ten Regtest confirmation blocks, read-only
+wallet and daemon observation, workflow revision 2, a completed manual
 Refund action, terminal scheduler state, and exit-status-zero exact cleanup.
 
 The observer's canonical `monero-refund-finalized.json` lived under the private
@@ -69,6 +69,8 @@ it cannot authorize, retry, or change the refund.
 The focused contract progressed RED because no retention function or call
 existed. GREEN executes the real filesystem handoff, checks byte identity,
 mode `0600`, one link, and rejection of replacement. Shell syntax and diff
-hygiene pass. A fresh pushed-commit replay must retain the receipt and pass
-cleanup before the joined refund certificate can be checked into the review
-packet; `m7refund-d6ebaaf-a` remains functional diagnostic evidence.
+hygiene pass. Exact pushed-commit run `m7refund-7cd3a9c-a` then retained the
+canonical receipt across source-status-zero exact cleanup, which removed the
+private source and every run-owned Docker resource. The checked packet is
+[`m7-actual-maker-refund-7cd3a9c-20260805.json`](../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json);
+`m7refund-d6ebaaf-a` remains functional diagnostic evidence only.

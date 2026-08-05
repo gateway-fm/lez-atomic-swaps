@@ -53,13 +53,20 @@ keeps the raw digest as provisioning provenance and revalidates complete stable
 session semantics on restart. Its RED-to-GREEN physical-rewrite regression and
 complete XMR actor suite pass. Fresh pushed run `m7refund-d6ebaaf-a` then
 completed the joined refund through one wallet send, exactly ten local blocks,
-restart-only finality, workflow revision 2, completed manual Refund, terminal
+read-only finality, workflow revision 2, completed manual Refund, terminal
 scheduler state and exact cleanup. The audit found that cleanup also removed the
 validated secret-free finality receipt from its private effect directory. ADR
 [0172](docs/architecture/0172-retain-refund-finality-before-scoped-cleanup.md)
-now publishes that receipt create-once into retained evidence before cleanup;
-one fresh pushed replay remains the certification gate, not a functional fix.
-Reproduce it with [manual Flow
+now publishes that receipt create-once into retained evidence before cleanup.
+Exact pushed-commit run `m7refund-7cd3a9c-a` certifies the corrected boundary:
+Tag16 finalized Refund, the normal Maker supervisor submitted one semantic
+Monero refund, a separate driver mined exactly ten official Regtest blocks, the
+observer terminalized revision 2 without spend authority, the owner action
+completed, and exact cleanup left the mode-`0600`, single-link finality receipt
+intact while removing every run-owned Docker resource. The checked secret-safe
+packet is
+[`m7-actual-maker-refund-7cd3a9c-20260805.json`](docs/evidence/m7-actual-maker-refund-7cd3a9c-20260805.json).
+This run does not claim a daemon restart after submission. Reproduce it with [manual Flow
 1ZF](docs/manual-user-flows.md#flow-1zf-repeat-the-joined-supervised-maker-refund).
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined

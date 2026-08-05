@@ -102,12 +102,13 @@ reorg conditions remains a release gate.
 
 The project is currently certified only on isolated private local networks. The
 normal Maker supervisor derives schema-3 recovery from the durable Refund or
-Punish branch. Fresh exact-commit execution now joins finalized Tag16, one
-role-correct Monero refund submission, ten local confirmations, restart-only
-observation and terminal scheduler state. ADR 0172 still requires a fresh
-certificate replay that retains the validated finality receipt across cleanup;
-the semantic Claim journey, full abandonment economics and adverse matrix
-remain release gates.
+Punish branch. Exact pushed-commit run `m7refund-7cd3a9c-a` joins finalized
+Tag16, one role-correct Monero refund submission, ten local confirmations,
+spend-authority-free observation, terminal scheduler state, retained finality
+and exact cleanup. Its checked packet is
+`../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`. A daemon restart
+after submission is not claimed; the semantic Claim journey, full abandonment
+economics and adverse matrix remain release gates.
 No public RPC, faucet, public funds or public deployment is represented by that
 evidence. S12/S13 independent review is outstanding. Public-network timelock and
 fee calibration, durable rollback anchoring, cold reproducible Logos UI supply

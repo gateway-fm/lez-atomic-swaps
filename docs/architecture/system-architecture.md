@@ -3677,7 +3677,7 @@ flowchart LR
     StageA[Stage A] --> Semantics
     StageB[Stage B] --> Semantics
     Semantics --> Sender[One shot sender]
-    Semantics --> Observer[Restart observer]
+    Semantics --> Observer[Read only observer]
     Observer --> Terminal[Terminal refund]
 ```
 
@@ -3706,4 +3706,9 @@ flowchart LR
 
 The retained copy carries no private share, final-signature input, credential,
 wallet password, or RPC authority. It is evidence-only and cannot rearm the
-consumed workflow attempt.
+consumed workflow attempt. Exact pushed-commit run `m7refund-7cd3a9c-a`
+retained that receipt after terminal revision 2 and exact cleanup; the checked
+packet is
+[`m7-actual-maker-refund-7cd3a9c-20260805.json`](../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json).
+The run proves same-daemon durable retry and read-only terminal observation,
+not a daemon restart after submission.

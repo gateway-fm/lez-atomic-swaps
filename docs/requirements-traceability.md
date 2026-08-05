@@ -257,18 +257,18 @@ composed: a joined actual-node CLI replay, semantic finalized Tag14 observer,
 Monero claim sweep, and adverse concurrency still remain and are not represented
 as complete. Tag17 is separately actual-node GREEN under ADR 0158, and both Maker recovery branch routes are normal-supervisor process GREEN under ADRs 0163 and 0164.
 
-Current M7 refund-restart update for F3/F6/F9/U4: clean exact-commit Run
-`m7refund-d6ebaaf-a` proved the joined Maker refund path through one semantic
-sender submission, ten deterministic Regtest confirmations, restart-only
-wallet and daemon observation, workflow revision 2, completed manual Refund,
-terminal scheduler state and exact cleanup. ADR 0171's semantic role-journal
-restart fix therefore closes the functional defect while keeping FDs 218 and
-219 invocation-only and absent from the observer. The post-run audit found that
-the validated secret-free `monero-refund-finalized.json` remained below the
-ephemeral private root and was removed by correct scoped cleanup. ADR 0172 adds
-an allowlisted, create-once, fsynced, byte-identical retained handoff. A fresh
-pushed replay must preserve that receipt before the joined refund certificate
-is checked in; this is an evidence-packaging gate, not another chain defect.
+Current M7 refund update for F3/F6/F9/U4: clean exact-commit Run
+`m7refund-7cd3a9c-a` certifies the joined Maker refund path. Finalized Tag16
+preceded one semantic Maker Monero submission; a separate run-owned driver
+mined exactly ten Regtest blocks; the spend-authority-free observer proved the
+exact unlocked output; and workflow revision 2, completed manual Refund,
+terminal scheduler state and source-status-zero exact cleanup followed. ADR
+0172 retained the allowlisted canonical `monero-refund-finalized.json` as a
+mode-`0600`, single-link, byte-identical receipt before cleanup removed its
+private source. The checked packet is
+`docs/evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`. This closes the
+joined Refund observation/certificate slice, not semantic Claim, daemon restart
+after submission, abandonment economics, or adverse concurrency/reorg/fee work.
 
 Current F7 execution update: clean pushed Runs X (`422c72e`), Z (`1555749`),
 AA (`df7ed86`), and AD (`0826dd5`) each completed both actual-node custom-token
