@@ -153,6 +153,15 @@ runner now uses jq join-output mode to preserve the same sorted object bytes
 without a terminator. Bash syntax and the M4/M5 runner contracts are GREEN;
 exact cleanup passed.
 
+The source-bound `d297163` replay proved the receipt correction, completed the
+same activation, and reached the semantic release worker through the literal
+receipt-v2 CLI. The non-sending preflight child failed before eligibility
+because `openssl rand -hex 32` had persisted 64 lowercase-hex bytes plus a
+newline. The legacy pathname loader tolerated that terminator, but the sealed
+descriptor worker deliberately accepts exactly 64 key bytes. The runner now
+removes only the generator's line terminator before persisting the owner-private
+key; no worker parser or security boundary is relaxed. Exact cleanup passed.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

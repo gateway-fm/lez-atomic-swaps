@@ -6707,5 +6707,13 @@ S12/S13 review and policy-deferred public deployment.
   appended a newline to otherwise canonical bytes. The runner now uses
   join-output mode; Bash syntax and M4/M5 runner contracts are GREEN, and exact
   cleanup passed.
+- [ ] Replay newline-free sealed release-key composition. Exact run
+  `m7claim-d297163-a` proved the receipt-v2 correction, completed Taker Claim
+  activation, and entered the literal semantic Tag14 route. Its non-sending
+  child then failed before eligibility because `openssl rand -hex` had appended
+  a newline to the 64 lowercase-hex protection key. The older pathname loader
+  tolerated that terminator, while the least-privilege sealed-descriptor worker
+  correctly requires exactly 64 bytes. The runner now strips only that output
+  terminator before the key is persisted; exact cleanup passed.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

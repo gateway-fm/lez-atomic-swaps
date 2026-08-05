@@ -2828,7 +2828,7 @@ prepare_tag14_release() {
   readonly release_protection_key="${release_root}/protection.key"
   mkdir -m 0700 "$release_root" "$release_config_root" "$release_state_root"
   record_resource ephemeral_path "$release_root" "$release_root"
-  openssl rand -hex 32 >"$release_protection_key"
+  openssl rand -hex 32 | tr -d '\n' >"$release_protection_key"
   chmod 600 "$release_protection_key"
   local taker_endpoint
   taker_endpoint="$(jq -er ' .endpoint ' "$taker_sidecar_root/pid-manifest.json")"
