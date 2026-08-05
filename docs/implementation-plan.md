@@ -610,6 +610,30 @@ attestation so neither can be misreported as the other.
   was interrupted only after the race was established; exact cleanup passed
   with source status 130 and no foreign resource targeted. This diagnostic ID
   must not be reused. A fresh pushed replay remains the terminal PoC gate.
+- [x] Exercise the fifth exact pushed attempt `m7refund-e7016d8-a`. Durable
+  receipt detection admitted the separate driver, one real Maker refund was
+  sent, and exactly ten official Regtest blocks were mined. Restart observation
+  then failed because the schema-3 manifest treated mutable SQLite page bytes
+  as immutable. ADR 0171 keeps that digest as provisioning provenance but
+  revalidates complete session semantics on every restart. Its real `VACUUM`
+  RED/GREEN, complete XMR actor suite and normal-supervisor process proof pass.
+- [x] Exercise the sixth exact pushed attempt `m7refund-d6ebaaf-a`. The joined
+  path completed one semantic Maker wallet send, exactly ten local confirmation
+  blocks, restart-only wallet and daemon finality, workflow revision 2,
+  completed manual Refund, terminal scheduler state, and exit-status-zero exact
+  cleanup. This closes the functional PoC defect. Post-run audit found that the
+  validated finality receipt was correctly removed with its private effect root
+  instead of being retained for review; this run is functional diagnostic
+  evidence and its ID must not be reused for certification.
+- [x] Close the retained-finality RED under ADR 0172. The runner now requires an
+  exact secret-free schema, writes an owner-private `O_EXCL` staging file,
+  fsyncs, publishes without replacement, unlinks staging, revalidates one link
+  and byte equality, then performs exact cleanup. The focused filesystem test
+  proves the happy handoff and replacement rejection; shell syntax and diff
+  hygiene pass.
+- [ ] Execute one fresh pushed-commit replay that retains
+  `evidence/monero-refund-finalized.json`, terminal monitor, phase ledger and
+  cleanup together, then check in a secret-free certificate with exact hashes.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

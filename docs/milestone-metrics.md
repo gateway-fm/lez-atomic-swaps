@@ -483,12 +483,13 @@ actual-chain overlap remain QA/production-hardening measurements after PoC.
 
 | Measurement | Result | Interpretation |
 |---|---|---|
-| Exact pushed replay | `m7refund-e7016d8-a` | Diagnostic, not terminal PoC evidence |
+| Exact pushed replay | `m7refund-d6ebaaf-a` | Functional terminal PoC; certification replay still required for retained finality |
 | Real refund sends | 1 | Durable one-attempt authority and create-new receipt held across 40 failed restart cycles |
 | External confirmation blocks | 10 | Run-owned Regtest driver, separate from sender and observer |
 | Wallet and daemon observation | Exact incoming unlocked output at 10 confirmations | Node behavior and wallet synchronization were correct |
-| Restart defect | Raw SQLite role-journal digest changed after legitimate use | Representation invariant, not protocol-state corruption |
+| Terminal result | Revision 2, completed manual Refund, terminal scheduler, cleanup exit status 0 | Sender and restart observer joined correctly |
 | RED/GREEN | Physical rewrite failed before fix and passes after semantic validation | Exact regression reproduces changed bytes with unchanged sessions |
 | Normal-supervisor process proof | GREEN in 302.10 seconds | Tag17 and Monero Refund each invoke once and reconcile after restart; refund invocation alone receives FDs 218 and 219 |
-| Current PoC ETA after next push | 55 to 90 minutes | One fresh exact replay through terminal observation and cleanup |
+| Evidence retention defect | Validated finality lived below the ephemeral private root | ADR 0172 publishes an allowlisted byte-identical receipt before cleanup |
+| Current certification ETA after next push | 35 to 55 minutes | One fresh exact replay through retained finality and cleanup |
 | Repository-controlled candidate ETA | 1 to 2 focused days after PoC | Excludes independent S12/S13 review and policy-deferred public deployment |

@@ -19,7 +19,7 @@ function_source() {
   sed -n "/^${function_name}() {$/,/^}$/p" "$runner"
 }
 
-for command_name in bash chmod id jq mkdir mktemp readlink rg rm sed stat unlink wc; do
+for command_name in bash chmod cmp dd id jq ln mkdir mktemp readlink rg rm sed stat sync unlink wc; do
   command -v "$command_name" >/dev/null || fail "missing test dependency: ${command_name}"
 done
 [[ -f "$evidence_contract" && ! -L "$evidence_contract" ]] ||
@@ -412,6 +412,7 @@ for m7_supervisor_boundary in \
   'activate-maker-refund-workflow' \
   '--expected-generation "$generation"' \
   'mine_m7_refund_confirmations' \
+  'retain_m7_refund_finality_evidence' \
   '.manual_action.action=="refund" and .manual_action.state=="completed"' \
   '.finality_observer_sent_transaction==false'; do
   rg -Fq -- "$m7_supervisor_boundary" <<<"$m7_supervisor_source" ||
@@ -422,6 +423,57 @@ rg -Fq '[[ -f "$m7_refund_submission" ]] &&' <<<"$m7_supervisor_source" ||
 rg -Fq '(.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")' \
   <<<"$m7_supervisor_source" ||
   fail "M7 supervisor still depends on a transient queued-only handoff"
+
+m7_finality_retention_source="$(function_source retain_m7_refund_finality_evidence)"
+[[ -n "$m7_finality_retention_source" ]] ||
+  fail "M7 retained refund-finality function is unavailable"
+for m7_retention_boundary in \
+  'monero-refund-finalized.json' \
+  'require_owner_file "$source"' \
+  'ln -- "$temporary" "$destination"' \
+  'cmp -s -- "$source" "$destination"' \
+  'sync -f "$destination"' \
+  'sync -f "$evidence_root"'; do
+  rg -Fq -- "$m7_retention_boundary" <<<"$m7_finality_retention_source" ||
+    fail "M7 finality retention omits boundary: ${m7_retention_boundary}"
+done
+
+m7_retention_root="$test_root/m7-finality-retention"
+mkdir -m 0700 "$m7_retention_root"
+m7_retention_source="$test_root/m7-private-finality.json"
+jq -cn '
+  {
+    schema:"lez_v02_m7_monero_refund_finality_v1",role:"maker",
+    run_id:"m7-retention-test",swap_id:("1"*64),agreement_commitment:("2"*64),
+    activation_commitment:("3"*64),submission_sha256:("4"*64),
+    sending_tool_plan_sha256:("5"*64),monero_genesis_hash:("6"*64),
+    destination_address:"regtest-maker-address",received_amount_piconero:900,
+    transaction_id:("7"*64),containing_block_hash:("8"*64),
+    containing_block_height:121,confirmations:10,stable_tip_hash:("9"*64),
+    stable_tip_height:130,required_confirmations:10,
+    finality_observer_sent_transaction:false,public_rpc_used:false,faucet_used:false
+  }
+' >"$m7_retention_source"
+chmod 0600 "$m7_retention_source"
+(
+  evidence_root="$m7_retention_root"
+  eval "$(function_source require_owner_file)"
+  eval "$m7_finality_retention_source"
+  retain_m7_refund_finality_evidence "$m7_retention_source"
+)
+m7_retained_finality="$m7_retention_root/monero-refund-finalized.json"
+cmp -s -- "$m7_retention_source" "$m7_retained_finality" ||
+  fail "M7 retained refund finality differs from its private source"
+[[ "$(stat -c '%a:%h' "$m7_retained_finality")" == "600:1" ]] ||
+  fail "M7 retained refund finality is not owner-private and single-link"
+if (
+  evidence_root="$m7_retention_root"
+  eval "$(function_source require_owner_file)"
+  eval "$m7_finality_retention_source"
+  retain_m7_refund_finality_evidence "$m7_retention_source"
+) 2>/dev/null; then
+  fail "M7 retained refund finality replay replaced an existing receipt"
+fi
 
 m7_mining_source="$(function_source mine_m7_refund_confirmations)"
 [[ -n "$m7_mining_source" ]] || fail "M7 external confirmation driver is unavailable"

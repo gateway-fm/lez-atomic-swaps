@@ -2324,3 +2324,31 @@ The journal, wallet and daemon remain owner-local, isolated resources. The
 provisioning SHA-256 remains recorded but is not confused with an immutable
 database-file promise; Stage wires, role packets, private manifests, effect
 authority and executable identities remain byte-pinned.
+
+### Retained finality across private cleanup
+
+ADR 0172 adds no RPC and changes no component authority. It moves only the
+already validated, secret-free finality receipt from the ephemeral effect root
+to the retained run evidence root before exact cleanup.
+
+```mermaid
+sequenceDiagram
+    participant Wallet as Maker wallet RPC
+    participant Daemon as Monero daemon RPC
+    participant Observer as Read only observer
+    participant Private as Private effect root
+    participant Retained as Run evidence root
+    participant Cleanup as Exact cleanup
+
+    Observer->>Wallet: Verify exact incoming output
+    Observer->>Daemon: Verify canonical block and stable tip
+    Observer->>Private: Publish canonical finality
+    Private-->>Retained: Validate and publish create once
+    Retained->>Retained: Sync and compare exact bytes
+    Cleanup->>Private: Remove run-owned private tree
+    Cleanup-->>Retained: Preserve finality receipt
+```
+
+The retained path is owner-private, single-link and run-scoped. Unknown fields,
+replacement, unsafe ownership or mode, and byte drift all fail the run before a
+successful cleanup record can be emitted.

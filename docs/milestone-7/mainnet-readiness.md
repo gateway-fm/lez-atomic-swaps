@@ -100,7 +100,14 @@ reorg conditions remains a release gate.
 
 ## Known limitations
 
-The project is currently certified only on isolated private local networks. The normal Maker supervisor now derives schema-3 recovery from the durable Refund or Punish branch and proves both routes through pending and terminal process states. The semantic Maker Monero refund child reconstructs from finalized Tag16 and submits once through role-correct local wallet RPCs without mining or retrying, but actual-node observation and the joined LEZ/Monero abandonment corridor remain release gates.
+The project is currently certified only on isolated private local networks. The
+normal Maker supervisor derives schema-3 recovery from the durable Refund or
+Punish branch. Fresh exact-commit execution now joins finalized Tag16, one
+role-correct Monero refund submission, ten local confirmations, restart-only
+observation and terminal scheduler state. ADR 0172 still requires a fresh
+certificate replay that retains the validated finality receipt across cleanup;
+the semantic Claim journey, full abandonment economics and adverse matrix
+remain release gates.
 No public RPC, faucet, public funds or public deployment is represented by that
 evidence. S12/S13 independent review is outstanding. Public-network timelock and
 fee calibration, durable rollback anchoring, cold reproducible Logos UI supply

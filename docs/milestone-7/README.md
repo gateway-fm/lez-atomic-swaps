@@ -37,6 +37,7 @@ materially affect safe reproduction.
 - [Pinned adaptor-journal custody decision](../architecture/0169-preserve-pinned-adaptor-journal-through-refund-activation.md)
 - [Durable submission handoff decision](../architecture/0170-drive-refund-confirmations-from-durable-submission.md)
 - [Semantic mutable-journal restart decision](../architecture/0171-validate-mutable-role-journals-semantically.md)
+- [Retained refund-finality decision](../architecture/0172-retain-refund-finality-before-scoped-cleanup.md)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

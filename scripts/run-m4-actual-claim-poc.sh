@@ -258,7 +258,7 @@ configure_run_identity() {
 
 environment_preflight() {
   local command_name
-  for command_name in awk bash base64 cargo chmod cmp cp cut date diff flock git id \
+  for command_name in awk bash base64 cargo chmod cmp cp cut date dd diff flock git id \
       install jq ln mkdir mktemp openssl readlink rg sed sha256sum sort stat sync tac tr unlink wc xxd; do
     require_command "$command_name"
   done
@@ -2735,6 +2735,44 @@ mine_m7_refund_confirmations() {
     fail "M7 external confirmation driver did not mine exactly ten blocks"
 }
 
+retain_m7_refund_finality_evidence() {
+  local source="$1"
+  local destination="${evidence_root}/monero-refund-finalized.json"
+  local temporary="${destination}.tmp"
+  require_owner_file "$source" "M7 private refund finality"
+  [[ ! -e "$destination" && ! -L "$destination" && ! -e "$temporary" && ! -L "$temporary" ]] ||
+    fail "M7 retained refund finality path already exists"
+  jq -e '
+    keys == ([
+      "activation_commitment", "agreement_commitment", "confirmations",
+      "containing_block_hash", "containing_block_height", "destination_address",
+      "faucet_used", "finality_observer_sent_transaction", "monero_genesis_hash",
+      "public_rpc_used", "received_amount_piconero", "required_confirmations",
+      "role", "run_id", "schema", "sending_tool_plan_sha256", "stable_tip_hash",
+      "stable_tip_height", "submission_sha256", "swap_id", "transaction_id"
+    ] | sort)
+    and .schema=="lez_v02_m7_monero_refund_finality_v1" and .role=="maker"
+    and .finality_observer_sent_transaction==false
+    and .public_rpc_used==false and .faucet_used==false
+  ' "$source" >/dev/null || fail "M7 private refund finality is not secret-free"
+  (umask 077; dd if="$source" of="$temporary" bs=65536 iflag=fullblock \
+    oflag=nofollow conv=excl,fsync status=none) ||
+    fail "M7 refund finality staging failed"
+  chmod 0600 "$temporary"
+  require_owner_file "$temporary" "M7 staged refund finality"
+  cmp -s -- "$source" "$temporary" || fail "M7 staged refund finality changed"
+  sync -f "$temporary"
+  ln -- "$temporary" "$destination" || {
+    unlink -- "$temporary"
+    fail "M7 retained refund finality publication failed"
+  }
+  unlink -- "$temporary"
+  sync -f "$destination"
+  sync -f "$evidence_root"
+  require_owner_file "$destination" "M7 retained refund finality"
+  cmp -s -- "$source" "$destination" || fail "M7 retained refund finality changed"
+}
+
 activate_and_supervise_m7_maker_refund() {
   [[ "$m7_xmr_supervised_refund" == 1 ]] ||
     fail "M7 supervised refund requires its isolated mode"
@@ -2853,6 +2891,7 @@ activate_and_supervise_m7_maker_refund() {
     and .public_rpc_used==false and .faucet_used==false
   ' "$m7_refund_finality" >/dev/null ||
     fail "M7 semantic refund finality evidence is incomplete"
+  retain_m7_refund_finality_evidence "$m7_refund_finality"
   stop_m5_xmr_application_daemon ||
     fail "M7 Maker daemon did not stop after terminal refund"
   record_phase m7_refund_supervisor completed

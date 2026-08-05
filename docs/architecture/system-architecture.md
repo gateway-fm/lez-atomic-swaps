@@ -3686,3 +3686,24 @@ authority. Such a representation-only change cannot rearm the durable attempt,
 change the selected branch or replace evidence. Any semantic mismatch, unsafe
 file, sidecar, identity drift or immutable-input digest drift still fails
 before an effect.
+
+## M7 retained refund finality
+
+ADR 0172 keeps the finality observer's canonical receipt after the private
+effect directory is removed. The handoff accepts only the exact secret-free
+schema, creates and syncs a private staging file, publishes without replacement,
+and rechecks byte identity and link count before cleanup.
+
+```mermaid
+flowchart LR
+    Observer[Finality observer] --> Private[Private finality receipt]
+    Private --> Allowlist[Exact field allowlist]
+    Allowlist --> Staging[Exclusive staging file]
+    Staging --> Public[No replace retained receipt]
+    Public --> Certificate[Joined refund certificate]
+    Private --> Cleanup[Scoped private cleanup]
+```
+
+The retained copy carries no private share, final-signature input, credential,
+wallet password, or RPC authority. It is evidence-only and cannot rearm the
+consumed workflow attempt.

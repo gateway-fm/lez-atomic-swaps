@@ -258,18 +258,17 @@ Monero claim sweep, and adverse concurrency still remain and are not represented
 as complete. Tag17 is separately actual-node GREEN under ADR 0158, and both Maker recovery branch routes are normal-supervisor process GREEN under ADRs 0163 and 0164.
 
 Current M7 refund-restart update for F3/F6/F9/U4: clean exact-commit Run
-`m7refund-e7016d8-a` proved the joined Maker refund path through one semantic
-sender submission and ten deterministic Regtest confirmations. The wallet and
-daemon independently observed the same unlocked output, but the restarted
-observer failed closed because it compared the mutable SQLite role journal's
-physical bytes with its provisioning-time digest. ADR 0171 replaces that
-invalid restart invariant with owner-only source and complete role-journal
-semantic validation; its RED/GREEN `VACUUM` regression and the complete XMR
-actor suite pass. The real normal-supervisor proof is also GREEN with the
-private share and finalized Tag16 signature restricted to invocation-only FDs
-218 and 219 and absent from the observer. A fresh pushed-commit replay must
-still prove terminal supervisor reconciliation, so this update does not close
-the joined corridor.
+`m7refund-d6ebaaf-a` proved the joined Maker refund path through one semantic
+sender submission, ten deterministic Regtest confirmations, restart-only
+wallet and daemon observation, workflow revision 2, completed manual Refund,
+terminal scheduler state and exact cleanup. ADR 0171's semantic role-journal
+restart fix therefore closes the functional defect while keeping FDs 218 and
+219 invocation-only and absent from the observer. The post-run audit found that
+the validated secret-free `monero-refund-finalized.json` remained below the
+ephemeral private root and was removed by correct scoped cleanup. ADR 0172 adds
+an allowlisted, create-once, fsynced, byte-identical retained handoff. A fresh
+pushed replay must preserve that receipt before the joined refund certificate
+is checked in; this is an evidence-packaging gate, not another chain defect.
 
 Current F7 execution update: clean pushed Runs X (`422c72e`), Z (`1555749`),
 AA (`df7ed86`), and AD (`0826dd5`) each completed both actual-node custom-token

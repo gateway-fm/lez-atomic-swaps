@@ -8620,6 +8620,13 @@ durable Refund action, and the consumed attempt plus create-new receipt prevent
 a second send. The read-only observer must still prove the exact transaction
 and terminalize the supervisor.
 
+The retained run must contain
+`evidence/monero-refund-finalized.json` after cleanup. It is a byte-identical,
+owner-private, single-link copy of the observer's canonical secret-free receipt;
+the runner publishes it without replacement before deleting the private effect
+tree. Absence of that retained file invalidates the certification packet even
+when the terminal monitor is GREEN.
+
 The role journal is a mutable SQLite database. Its manifest SHA-256 records the
 exact provisioning snapshot, while sender-to-observer restarts validate a
 stable owner-only snapshot and its complete Stage-A/Stage-B session semantics.
