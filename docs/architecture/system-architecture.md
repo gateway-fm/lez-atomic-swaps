@@ -3634,3 +3634,28 @@ flowchart LR
 No validation is removed: the gate checks finalized byte equality and session
 identity, and the sender verifies presignature extraction before consuming its
 one-attempt wallet authority.
+
+## M7 durable submission handoff
+
+ADR 0170 removes a transient scheduler sample from the boundary between the
+semantic refund sender and the separate local confirmation driver. Durable
+submission evidence plus the unchanged active Refund action authorize the
+driver; terminal success still belongs to the read-only observer.
+
+```mermaid
+flowchart LR
+    Sender[Semantic refund sender] --> Shared[Shared wallet RPC]
+    Sender --> Receipt[Create new submission receipt]
+    Supervisor[Maker supervisor] --> Gate[Durable handoff gate]
+    Receipt --> Gate
+    Gate --> Driver[Run owned confirmation driver]
+    Driver --> Daemon[Monero daemon RPC]
+    Daemon --> Observer[Read only observer]
+    Receipt --> Observer
+    Observer --> Terminal[Terminal refunded state]
+```
+
+The gate accepts queued, leased or backoff only when the same Refund action and
+revision-1 Maker recovery remain active. It validates the receipt before the
+driver contacts the daemon. The consumed one-attempt CAS and create-new receipt
+prevent an overlapping leased replay from submitting again.

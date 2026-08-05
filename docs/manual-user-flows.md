@@ -8612,6 +8612,14 @@ in create-new effect custody; the sealed sender later verifies it against the
 durable presignature before the only wallet submission. The legacy non-M7
 refund flow retains its original ingestion and explicit extraction steps.
 
+After the semantic sender publishes its create-new submission receipt, the
+runner validates the exact run, swap, no-retry and local-only fields before
+the separate Regtest driver mines ten blocks. It does not wait for a transient
+`queued` scheduler sample: queued, leased and backoff all preserve the same
+durable Refund action, and the consumed attempt plus create-new receipt prevent
+a second send. The read-only observer must still prove the exact transaction
+and terminalize the supervisor.
+
 ```mermaid
 sequenceDiagram
     participant Taker as Taker role

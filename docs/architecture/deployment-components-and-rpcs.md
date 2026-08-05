@@ -2261,3 +2261,35 @@ sequenceDiagram
 The activation gate itself opens no RPC. The only new behavior is avoiding a
 configured read-write/WAL open of the original byte-pinned adaptor database
 before schema-3 validation. The legacy path remains unchanged.
+
+### Durable refund submission to local confirmation RPC
+
+ADR 0170 changes no endpoint or child authority. The sender still owns the
+shared-wallet submission RPC, the run-owned driver alone owns Regtest
+`generateblocks`, and the observer owns only Maker-wallet and daemon reads.
+
+```mermaid
+sequenceDiagram
+    participant Sender as Refund sender
+    participant Shared as Shared wallet RPC
+    participant Receipt as Effect evidence root
+    participant Supervisor as Maker supervisor
+    participant Driver as Regtest driver
+    participant Daemon as Monero daemon RPC
+    participant Observer as Finality observer
+
+    Sender->>Shared: Submit once after attempt CAS
+    Shared-->>Sender: Transaction and fee result
+    Sender->>Receipt: Publish create new
+    Supervisor-->>Driver: Same active Refund action
+    Receipt-->>Driver: Validate exact local receipt
+    Driver->>Daemon: Generate exactly ten blocks
+    Observer->>Receipt: Read exact transaction
+    Observer->>Daemon: Verify confirmations
+    Observer-->>Supervisor: Terminal refunded
+```
+
+A leased or backoff scheduler state does not grant submission authority. It is
+accepted only for the driver handoff after the receipt exists and validates.
+The driver cannot access either wallet RPC, and the observer cannot access the
+private share or final-signature descriptor.

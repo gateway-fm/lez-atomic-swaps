@@ -41,9 +41,14 @@ removes operator branch selection from exact funding and finalized Maker-side
 Tag16 evidence. ADR
 [0169](docs/architecture/0169-preserve-pinned-adaptor-journal-through-refund-activation.md)
 keeps the schema-3 byte-pinned adaptor journal immutable until activation.
-The third exact joined replay reached finalized Tag16 and stopped before any
-refund send; its focused custody fix is contract-GREEN and a fresh exact replay
-remains the PoC gate. Reproduce it with [manual Flow
+ADR
+[0170](docs/architecture/0170-drive-refund-confirmations-from-durable-submission.md)
+now starts the separate local confirmation driver from validated durable send
+evidence instead of a transient scheduler sample. The fourth exact joined
+replay passed activation and submitted one real Maker refund exactly once; it
+then exposed this runner-only handoff race before confirmation mining. The
+focused fix is contract-GREEN, and terminal replay remains the PoC gate.
+Reproduce it with [manual Flow
 1ZF](docs/manual-user-flows.md#flow-1zf-repeat-the-joined-supervised-maker-refund).
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined

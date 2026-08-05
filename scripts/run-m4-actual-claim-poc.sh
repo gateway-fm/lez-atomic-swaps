@@ -2785,14 +2785,16 @@ activate_and_supervise_m7_maker_refund() {
 
   local observed_submission=0
   for _ in {1..3600}; do
-    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+    if [[ -f "$m7_refund_submission" ]] &&
+      "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
       --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
       jq -e '
-        .schedule_state=="queued"
+        (.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")
         and .progress.observation.state=="active"
         and .progress.observation.phase=="maker_recovery_available"
         and .progress.observation.revision==1
-        and .manual_action.action=="refund" and .manual_action.state=="queued"
+        and .manual_action.action=="refund"
+        and (.manual_action.state=="queued" or .manual_action.state=="leased")
       ' "$current_monitor" >/dev/null 2>&1; then
       observed_submission=1
       break

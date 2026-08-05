@@ -594,6 +594,22 @@ attestation so neither can be misreported as the other.
   ingestion tests and all ten effect-route tests pass. Exact cleanup passed and
   this diagnostic ID must not be reused. A fresh pushed replay remains the PoC
   gate.
+- [x] Exercise the fourth exact pushed joined attempt `m7refund-8f836c7-a`.
+  It passed all cold source and artifact builds, five recursive guest tests,
+  fresh finalized LEZ deployment, both actor onboardings, official Monero
+  Regtest, schema-3 registration, real funding and independent verification,
+  the signed refund window, finalized Tag16 and evidence-driven activation.
+  The semantic Maker child then submitted Monero refund transaction
+  `b34c5fcbde4e9f7c8617e6e2286f7aad8230fa8253fd67b50f1f437dcc02ff0e`
+  once and published its create-new receipt. The runner did not invoke its
+  separate ten-block driver because it required a transient queued supervisor
+  state while the 20-millisecond daemon poll exposed leased or backoff states.
+  ADR 0170 gates the driver on the durable validated receipt plus the same
+  active Refund action across queued, leased or backoff replay-safe states.
+  The focused RED/GREEN contract, Bash syntax and diff hygiene pass. The run
+  was interrupted only after the race was established; exact cleanup passed
+  with source status 130 and no foreign resource targeted. This diagnostic ID
+  must not be reused. A fresh pushed replay remains the terminal PoC gate.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

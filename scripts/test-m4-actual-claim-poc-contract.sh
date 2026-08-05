@@ -417,6 +417,11 @@ for m7_supervisor_boundary in \
   rg -Fq -- "$m7_supervisor_boundary" <<<"$m7_supervisor_source" ||
     fail "M7 supervisor omits boundary: ${m7_supervisor_boundary}"
 done
+rg -Fq '[[ -f "$m7_refund_submission" ]] &&' <<<"$m7_supervisor_source" ||
+  fail "M7 supervisor does not gate confirmation mining on durable submission evidence"
+rg -Fq '(.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")' \
+  <<<"$m7_supervisor_source" ||
+  fail "M7 supervisor still depends on a transient queued-only handoff"
 
 m7_mining_source="$(function_source mine_m7_refund_confirmations)"
 [[ -n "$m7_mining_source" ]] || fail "M7 external confirmation driver is unavailable"
