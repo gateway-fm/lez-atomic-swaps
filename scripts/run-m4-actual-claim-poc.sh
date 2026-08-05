@@ -30,6 +30,7 @@ readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"
 readonly m5_xmr_refund_window_ms=600000
 readonly m7_xmr_punish_delay_ms="${M7_XMR_PUNISH_DELAY_MS:-180000}"
 readonly m7_xmr_supervised_refund="${M7_XMR_SUPERVISED_REFUND:-0}"
+readonly m7_xmr_semantic_claim="${M7_XMR_SEMANTIC_CLAIM:-0}"
 readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : 3600))
 readonly tag17_finality_page_blocks=8
 
@@ -271,6 +272,14 @@ environment_preflight() {
   fi
   [[ "$m7_xmr_supervised_refund" == 0 || "$m7_xmr_supervised_refund" == 1 ]] ||
     fail "M7_XMR_SUPERVISED_REFUND must be unset, 0, or 1"
+  [[ "$m7_xmr_semantic_claim" == 0 || "$m7_xmr_semantic_claim" == 1 ]] ||
+    fail "M7_XMR_SEMANTIC_CLAIM must be unset, 0, or 1"
+  if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
+    [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == claim ]] ||
+      fail "M7_XMR_SEMANTIC_CLAIM=1 requires M5_XMR_APPLICATION_MODE=1 and M5_XMR_JOURNEY=claim"
+    [[ "$m7_xmr_supervised_refund" == 0 ]] ||
+      fail "M7 semantic claim and supervised refund modes are mutually exclusive"
+  fi
   if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     require_command curl
     [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]] ||
@@ -835,10 +844,16 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
       --bin xmr-reference-actor --bin xmr-reference-tag15
-  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+  if [[ "$m5_xmr_application_mode" == 1 &&
+        ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
-        --bin xmr-reference-tag16
+        --bin xmr-reference-tag16 --bin xmr-reference-monero-verify
+  fi
+  if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
+    CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+      cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
+        --bin xmr-reference-finalized-classifier
   fi
   if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
@@ -866,13 +881,19 @@ build_identity_and_artifact() {
   mkdir -m 0700 "$staged_binary_root"
   readonly agreement_actor_binary="${staged_binary_root}/xmr-reference-actor"
   readonly tag15_binary="${staged_binary_root}/xmr-reference-tag15"
-  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+  if [[ "$m5_xmr_application_mode" == 1 &&
+        ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ]]; then
     readonly tag16_binary="${staged_binary_root}/xmr-reference-tag16"
+    readonly m7_monero_observer_binary="${staged_binary_root}/xmr-reference-monero-verify"
+  fi
+  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
     readonly local_clock_driver_binary="${staged_binary_root}/lez-v02-local-clock-driver"
+  fi
+  if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
+    readonly m7_finalized_classifier_binary="${staged_binary_root}/xmr-reference-finalized-classifier"
   fi
   if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     readonly m7_monero_refund_binary="${staged_binary_root}/xmr-reference-monero-refund"
-    readonly m7_monero_observer_binary="${staged_binary_root}/xmr-reference-monero-verify"
     readonly m7_tag17_binary="${staged_binary_root}/xmr-reference-tag17"
   fi
   readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
@@ -906,17 +927,24 @@ build_identity_and_artifact() {
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/xmr-reference-tag15" "$tag15_binary" "Tag15 driver"
-  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
+  if [[ "$m5_xmr_application_mode" == 1 &&
+        ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-tag16" \
       "$tag16_binary" "Tag16 refund driver"
+    stage_executable "${workspace_target}/debug/xmr-reference-monero-verify" \
+      "$m7_monero_observer_binary" "M7 Monero observer"
+  fi
+  if [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]]; then
     stage_executable "${sidecar_target}/debug/lez-v02-local-clock-driver" \
       "$local_clock_driver_binary" "local finalized-clock driver"
+  fi
+  if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
+    stage_executable "${workspace_target}/debug/xmr-reference-finalized-classifier" \
+      "$m7_finalized_classifier_binary" "M7 finalized Tag14 observer"
   fi
   if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-monero-refund" \
       "$m7_monero_refund_binary" "M7 Monero refund sender"
-    stage_executable "${workspace_target}/debug/xmr-reference-monero-verify" \
-      "$m7_monero_observer_binary" "M7 Monero refund observer"
     stage_executable "${workspace_target}/debug/xmr-reference-tag17" \
       "$m7_tag17_binary" "M7 Tag17 effect worker"
   fi
@@ -1674,7 +1702,8 @@ write_m5_application_artifact_snapshot() {
 }
 
 run_m5_xmr_taker_acceptance() {
-  local output="$1" use_delivery="$2"
+  local output="$1" use_delivery="$2" effect_mode="${3:-0}"
+  local receipt="$m5_xmr_taker_receipt"
   local -a arguments=(
     --maker-public-key "$m5_xmr_delivery_public_key"
     --now-unix-seconds "$(date -u +%s)"
@@ -1691,8 +1720,20 @@ run_m5_xmr_taker_acceptance() {
     --xmr-maker-public-packet "${agreement_root}/exchange/maker.json"
     --xmr-taker-role-journal "$m5_xmr_taker_role_journal"
     --xmr-taker-actor-root "$m5_xmr_taker_actor_root"
-    --xmr-acceptance-receipt "$m5_xmr_taker_receipt"
+    --xmr-acceptance-receipt "$receipt"
   )
+  if [[ "$effect_mode" == 1 ]]; then
+    receipt="$m7_taker_effect_receipt"
+    arguments[${#arguments[@]}-1]="$receipt"
+    arguments+=(
+      --xmr-effect-authority-file "$m7_taker_effect_authority"
+      --xmr-effect-manifest-file "$m7_taker_effect_manifest"
+      --xmr-workflow-journal "$m7_taker_effect_workflow"
+      --xmr-run-id "$run_id"
+    )
+  elif [[ "$effect_mode" != 0 ]]; then
+    fail "M5 XMR Taker acceptance effect mode is invalid"
+  fi
   if [[ "$use_delivery" == 1 ]]; then
     arguments=(--delivery-directory "$m5_xmr_delivery_root" "${arguments[@]}")
   fi
@@ -2562,6 +2603,197 @@ publish_and_classify_tag17_punishment() {
   record_phase tag17_finality completed
 }
 
+provision_m7_taker_claim_effect_application() {
+  [[ "$m7_xmr_semantic_claim" == 1 ]] ||
+    fail "M7 Taker effect provisioning requires semantic-claim mode"
+  readonly m7_taker_effect_root="$m5_xmr_application_root/taker-claim-effects"
+  readonly m7_taker_effect_evidence_root="$m7_taker_effect_root/evidence"
+  readonly m7_taker_effect_authority="$m7_taker_effect_root/effect-authority.json"
+  readonly m7_taker_effect_workflow="$m7_taker_effect_root/workflow.sqlite"
+  readonly m7_taker_effect_manifest="$m7_taker_effect_root/actor-provision-v3.json"
+  readonly m7_taker_effect_receipt="$m7_taker_effect_root/acceptance-receipt-v2.json"
+  readonly m7_taker_effect_acceptance="$evidence_root/m7-taker-effect-acceptance.json"
+  readonly m7_taker_release_capability="$m7_taker_effect_root/tag14-release.capability"
+  mkdir -m 0700 "$m7_taker_effect_root" "$m7_taker_effect_evidence_root"
+  install -m 0600 -- "$taker_sidecar_root/capability" "$m7_taker_release_capability"
+  require_owner_file "$m7_taker_release_capability" "M7 Taker release capability"
+  [[ ! "$m7_taker_release_capability" -ef "$taker_sidecar_root/capability" ]] ||
+    fail "M7 Taker general and release capabilities alias one inode"
+
+  local taker_endpoint taker_runtime taker_application_manifest taker_adaptor_journal
+  taker_endpoint="$(jq -er .endpoint "$taker_sidecar_root/pid-manifest.json")"
+  taker_runtime="$tag13_handoff_root/taker-runtime.json"
+  taker_application_manifest="$(jq -er .actor_manifest_file "$m5_xmr_taker_receipt")"
+  taker_adaptor_journal="$(jq -er .actor_state_database "$m5_xmr_taker_receipt")"
+  require_owner_file "$taker_runtime" "M7 Taker sidecar runtime"
+  require_owner_file "$taker_application_manifest" "M7 Taker application manifest"
+  require_owner_file "$taker_adaptor_journal" "M7 Taker adaptor journal"
+
+  jq -cn \
+    --arg swap "$m5_xmr_planned_swap_id" \
+    --arg agreement "$(jq -er .agreement_commitment "$m5_xmr_maker_provision")" \
+    --arg activation "$(jq -er .activation_commitment "$m5_xmr_maker_provision")" \
+    --arg run "$run_id" \
+    --arg workflow "$m7_taker_effect_workflow" \
+    --arg adaptor "$taker_adaptor_journal" \
+    --arg evidence "$m7_taker_effect_evidence_root" \
+    --arg lez_url "$taker_endpoint" \
+    --arg runtime "$taker_runtime" \
+    --arg runtime_sha "$(sha256_file "$taker_runtime")" \
+    --arg capability "$taker_sidecar_root/capability" \
+    --arg daemon_url "${monero_env[MONERO_DAEMON_ENDPOINT]}" \
+    --arg daemon_user "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" \
+    --arg daemon_password "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" \
+    --arg funding_url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" \
+    --arg funding_user "${monero_env[MONERO_MAKER_RPC_USERNAME_FILE]}" \
+    --arg funding_password "${monero_env[MONERO_MAKER_RPC_PASSWORD_FILE]}" \
+    --arg shared_url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" \
+    --arg shared_user "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" \
+    --arg shared_password "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" \
+    --arg role_url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" \
+    --arg role_user "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" \
+    --arg role_password "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" \
+    --arg shared_file_password "${monero_env[MONERO_FUNDING_WALLET_PASSWORD_FILE]}" \
+    --arg tag14_program "$release_service_binary" \
+    --arg tag14_sha "$(sha256_file "$release_service_binary")" \
+    --arg classifier_program "$m7_finalized_classifier_binary" \
+    --arg classifier_sha "$(sha256_file "$m7_finalized_classifier_binary")" \
+    --arg claim_program "$monero_sweep_binary" \
+    --arg claim_sha "$(sha256_file "$monero_sweep_binary")" \
+    --arg verify_program "$m7_monero_observer_binary" \
+    --arg verify_sha "$(sha256_file "$m7_monero_observer_binary")" \
+    --arg refund_program "$tag16_binary" \
+    --arg refund_sha "$(sha256_file "$tag16_binary")" \
+    --arg release_sidecar "$taker_endpoint" \
+    --arg release_indexer "$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")" \
+    --arg release_state "$release_state_root" \
+    --arg release_capability "$m7_taker_release_capability" \
+    --arg release_key "$release_protection_key" '
+      {
+        schema_version:2,pair:"monero",role:"taker",swap_id:$swap,
+        agreement_commitment:$agreement,activation_commitment:$activation,
+        run_id:$run,workflow_journal:$workflow,adaptor_journal:$adaptor,
+        evidence_root:$evidence,
+        lez:{sidecar_url:$lez_url,runtime_file:$runtime,runtime_sha256:$runtime_sha,
+          capability_file:$capability},
+        monero:{
+          daemon:{url:$daemon_url,username_file:$daemon_user,password_file:$daemon_password},
+          funding_wallet:{url:$funding_url,username_file:$funding_user,password_file:$funding_password},
+          shared_wallet:{url:$shared_url,username_file:$shared_user,password_file:$shared_password},
+          role_wallet:{url:$role_url,username_file:$role_user,password_file:$role_password},
+          shared_wallet_file_password_file:$shared_file_password
+        },
+        taker_tools:{
+          tag14_authorize:{program:$tag14_program,program_sha256:$tag14_sha,
+            abi:"lez_xmr_tag14_release_v2"},
+          finalized_classifier:{program:$classifier_program,program_sha256:$classifier_sha,
+            abi:"lez_xmr_finalized_classifier_v1"},
+          monero_claim:{program:$claim_program,program_sha256:$claim_sha,
+            abi:"lez_xmr_monero_claim_sweep_v2"},
+          monero_verify:{program:$verify_program,program_sha256:$verify_sha,
+            abi:"lez_xmr_monero_verify_v2"},
+          tag16_refund:{program:$refund_program,program_sha256:$refund_sha,
+            abi:"lez_xmr_tag16_refund_v1"}
+        },
+        tag14_release:{
+          sidecar_url:$release_sidecar,indexer_url:$release_indexer,node_profile:"local",
+          state_directory:$release_state,capability_file:$release_capability,
+          protection_key_file:$release_key,protection_key_id:"m4-local-release-key-001"
+        }
+      }
+    ' >"$m7_taker_effect_authority"
+  chmod 0600 "$m7_taker_effect_authority"
+  require_owner_file "$m7_taker_effect_authority" "M7 Taker effect authority"
+
+  start_m5_xmr_application_daemon m7-claim-authority 1
+  run_m5_xmr_taker_acceptance "$m7_taker_effect_acceptance" 0 1
+  stop_m5_xmr_application_daemon ||
+    fail "M7 Taker authority daemon did not stop after receipt-v2 upgrade"
+  require_owner_file "$m7_taker_effect_manifest" "M7 Taker effect manifest"
+  require_owner_file "$m7_taker_effect_workflow" "M7 Taker effect workflow"
+  require_owner_file "$m7_taker_effect_receipt" "M7 Taker receipt-v2"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    .schema_version==1 and .swap_id==$swap
+    and .replay=={stage_a:true,activation:true}
+    and .actor.role=="taker" and .actor.provisioning_replay==true
+    and .actor.effect_provisioning_replay==false and .actor.receipt_replay==false
+    and .private_material_disclosed==false
+  ' "$m7_taker_effect_acceptance" >/dev/null ||
+    fail "M7 Taker receipt-v2 upgrade drift"
+  jq -e --arg run "$run_id" --arg swap "$m5_xmr_planned_swap_id" '
+    .schema_version==2 and .pair=="monero" and .role=="taker"
+    and .run_id==$run and .swap_id==$swap
+    and (.effect_authority_sha256|test("^[0-9a-f]{64}$"))
+    and (.effect_manifest_sha256|test("^[0-9a-f]{64}$"))
+  ' "$m7_taker_effect_receipt" >/dev/null ||
+    fail "M7 Taker receipt-v2 is incomplete"
+}
+
+activate_and_run_m7_taker_tag14() {
+  readonly m7_taker_claim_activation="$m7_taker_effect_evidence_root/taker-claim-activation.json"
+  readonly m7_taker_tag14_invocation="$evidence_root/m7-taker-tag14-invocation.json"
+  readonly m7_taker_tag14_terminal="$evidence_root/m7-taker-tag14-terminal.json"
+  "$agreement_actor_binary" activate-taker-claim-workflow \
+    --effect-manifest "$m7_taker_effect_manifest" \
+    --effect-authority "$m7_taker_effect_authority" \
+    --run-id "$run_id" --monero-run-id "$MONERO_RUN_ID" \
+    --tag13-evidence "$tag13_internal" \
+    --monero-funding-evidence "$monero_funding_evidence" \
+    --monero-funding-receipt "$monero_verification_evidence" \
+    >"$m7_taker_claim_activation"
+  chmod 0600 "$m7_taker_claim_activation"
+  require_owner_file "$m7_taker_claim_activation" "M7 Taker claim activation"
+  jq -e --arg run "$run_id" --arg swap "$m5_xmr_planned_swap_id" '
+    .schema=="lez_v02_m7_taker_claim_activation_v1" and .role=="taker"
+    and .run_id==$run and .swap_id==$swap and .selected_branch=="claim"
+    and .prepared_step=="authorize_lez_tag14"
+    and (.tag14_scan_start_height|type)=="number"
+    and .private_material_disclosed==false
+  ' "$m7_taker_claim_activation" >/dev/null ||
+    fail "M7 Taker claim activation is incomplete"
+
+  record_phase tag14_publication started
+  "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+    >"$m7_taker_tag14_invocation"
+  chmod 0600 "$m7_taker_tag14_invocation"
+  jq -e --arg run "$run_id" '
+    .schema_version==3 and .pair=="monero" and .role=="taker"
+    and .action=="claim" and .step=="authorize_lez_tag14"
+    and .state=="invoked_unreconciled" and .run_id==$run
+    and (.tool_plan_identity_sha256|test("^[0-9a-f]{64}$"))
+    and .chain_effect_finalized==false
+  ' "$m7_taker_tag14_invocation" >/dev/null ||
+    fail "M7 Taker Tag14 invocation did not consume exactly one semantic route"
+  record_phase tag14_publication completed
+
+  record_phase tag14_finality started
+  local attempt current
+  current="$evidence_root/.m7-taker-tag14-current.json"
+  for attempt in {1..600}; do
+    rm -f -- "$current"
+    if "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" >"$current" 2>/dev/null &&
+      jq -e --arg run "$run_id" '
+        .schema_version==3 and .pair=="monero" and .role=="taker"
+        and .action=="claim" and .step=="authorize_lez_tag14"
+        and .state=="complete" and .run_id==$run
+        and .chain_effect_finalized==true
+      ' "$current" >/dev/null 2>&1; then
+      mv "$current" "$m7_taker_tag14_terminal"
+      break
+    fi
+    sleep 0.25
+  done
+  require_owner_file "$m7_taker_tag14_terminal" "M7 Taker Tag14 terminal action"
+  readonly tag14_finality_result="$m7_taker_effect_evidence_root/tag14-finalized.json"
+  require_owner_file "$tag14_finality_result" "M7 semantic Tag14 finality"
+  jq -e '
+    .effect=="authorize_claim" and .outcome.status=="found"
+    and .outcome.facts.instruction.effect=="authorize_claim"
+  ' "$tag14_finality_result" >/dev/null ||
+    fail "M7 semantic Tag14 finality evidence is incomplete"
+  record_phase tag14_finality completed
+}
+
 prepare_tag14_release() {
   record_phase release started
   readonly release_root="${private_root}/tag14-release"
@@ -2951,8 +3183,13 @@ execute_run() {
     fi
   else
     prepare_tag14_release
-    publish_tag14_release
-    classify_tag14_finality
+    if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
+      provision_m7_taker_claim_effect_application
+      activate_and_run_m7_taker_tag14
+    else
+      publish_tag14_release
+      classify_tag14_finality
+    fi
     prepare_tag15_signature
     publish_tag15
     classify_tag15_finality

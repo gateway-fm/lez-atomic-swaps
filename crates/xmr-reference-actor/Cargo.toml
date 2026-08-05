@@ -72,6 +72,11 @@ name = "xmr-reference-monero-verify"
 path = "src/bin/xmr-reference-monero-verify.rs"
 required-features = ["sessions"]
 
+[[bin]]
+name = "xmr-reference-finalized-classifier"
+path = "src/bin/xmr-reference-finalized-classifier.rs"
+required-features = ["sessions"]
+
 [dev-dependencies]
 command-fds = "=0.3.3"
 jsonrpsee = { version = "0.26.0", features = ["server"] }

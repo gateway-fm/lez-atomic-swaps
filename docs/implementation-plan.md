@@ -6651,3 +6651,25 @@ actual-chain concurrency, timelock/fee/reorg matrices, demos, and the immutable
 candidate security/SBOM/vulnerability dossier. Corrected ETA remains 1 to 2
 focused days for repository-controlled candidate closure, excluding independent
 S12/S13 review and policy-deferred public deployment.
+
+## M7 receipt-v2 Tag14 join checkpoint (2026-08-05)
+
+- [x] Add an evidence-driven Taker Claim activation command with no operator
+  branch selector. It validates schema-2 application authority, exact Stage
+  A/B, finalized Tag13 Initialize/Fund and the independent confirmed Monero
+  funding pair before importing role-local reconciliations and preparing only
+  Tag14.
+- [x] Add a sealed read-only Tag14 classifier that derives exact terms from
+  Stage A/B, uses fresh read request identities, scans from the retained Tag13
+  successor, and atomically publishes one canonical finalized receipt.
+- [x] Wire an isolated `M7_XMR_SEMANTIC_CLAIM=1` runner mode through a real
+  receipt-v2 upgrade and the literal `lez-taker claim --receipt` user flow.
+  Existing legacy claim and refund defaults are unchanged.
+- [x] Record the component, user-flow and conditional-atomicity decision in ADR
+  0173. Focused provisioning tests, both existing runner contracts, formatting,
+  compile checks and strict Clippy are GREEN.
+- [ ] Commit and push the implementation checkpoint, then run one clean
+  commit-pinned actual LEZ/Monero replay. Until that succeeds, Tag14 remains
+  implementation-ready rather than actual-node certified.
+- [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
+  receipt-v2 Taker Monero claim sweep before adverse-case hardening.

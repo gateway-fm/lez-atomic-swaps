@@ -104,7 +104,7 @@ use lez_xmr_swap_sdk::{
     XmrActivationBodyV1, XmrSessionTranscriptV1,
 };
 #[cfg(feature = "sessions")]
-use maker_refund_activation::activate_maker_refund_workflow;
+use maker_refund_activation::{activate_maker_refund_workflow, activate_taker_claim_workflow};
 #[cfg(feature = "sessions")]
 use monero::Address as MoneroAddress;
 #[cfg(feature = "sessions")]
@@ -535,6 +535,32 @@ pub enum Action {
         /// Canonical signature packet already ingested into the Maker session.
         #[arg(long, value_name = "PRIVATE_JSON")]
         observed_final_signature: PathBuf,
+    },
+    /// Activate only the Taker claim branch from exact finalized Tag-13 and
+    /// independently verified Monero funding evidence.
+    #[cfg(feature = "sessions")]
+    ActivateTakerClaimWorkflow {
+        /// Existing owner-private schema-3 Taker application manifest.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        effect_manifest: PathBuf,
+        /// Existing immutable Taker effect authority referenced by the manifest.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        effect_authority: PathBuf,
+        /// Exact effect-workflow run identity.
+        #[arg(long)]
+        run_id: String,
+        /// Exact Monero child run identity in the funding receipt.
+        #[arg(long)]
+        monero_run_id: String,
+        /// Canonical finalized Tag-13 Initialize/Fund evidence.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        tag13_evidence: PathBuf,
+        /// Canonical one-shot actual-local Monero funding evidence.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        monero_funding_evidence: PathBuf,
+        /// Independent canonical Monero funding receipt.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        monero_funding_receipt: PathBuf,
     },
     /// Bind finalized LEZ Claim evidence and its verified adaptor extraction to one
     /// independently verified actual-local Monero sweep.
@@ -1211,6 +1237,24 @@ pub fn execute(cli: Cli) -> Result<()> {
             &monero_funding_receipt,
             &finalized_refund,
             &observed_final_signature,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::ActivateTakerClaimWorkflow {
+            effect_manifest,
+            effect_authority,
+            run_id,
+            monero_run_id,
+            tag13_evidence,
+            monero_funding_evidence,
+            monero_funding_receipt,
+        } => activate_taker_claim_workflow(
+            &effect_manifest,
+            &effect_authority,
+            &run_id,
+            &monero_run_id,
+            &tag13_evidence,
+            &monero_funding_evidence,
+            &monero_funding_receipt,
         ),
         #[cfg(feature = "sessions")]
         Action::BindFinalizedClaimSweep {
