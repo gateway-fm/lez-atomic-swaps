@@ -282,7 +282,11 @@ impl ValidatedXmrEffectExecutionV3 {
                 .context("pin validated XMR preflight application inputs")?
                 .with_child_plan(&child_plan)
                 .context("pin XMR preflight child plan")?
-                .with_invocation_material(&self.application, step)
+                .with_invocation_material(
+                    &self.application,
+                    step,
+                    self.effect_authority().evidence_root(),
+                )
                 .context("pin step-specific XMR preflight material")?
                 .into_command(executable, actor_lock, workflow_lock)
                 .context("compose role-fixed XMR preflight child")?
@@ -358,7 +362,11 @@ impl ValidatedXmrEffectExecutionV3 {
                 .context("pin validated XMR application inputs")?
                 .with_child_plan(&child_plan)
                 .context("pin XMR sending child plan")?
-                .with_invocation_material(&self.application, step)
+                .with_invocation_material(
+                    &self.application,
+                    step,
+                    self.effect_authority().evidence_root(),
+                )
                 .context("pin step-specific XMR invocation material")?
                 .into_command(executable, actor_lock, workflow_lock)
                 .context("compose role-fixed XMR effect child")?

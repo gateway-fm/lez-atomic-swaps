@@ -37,6 +37,7 @@ use lez_swap_store::XmrWorkflowStep;
 
 const MAX_RUNTIME_BYTES: u64 = 16 * 1024;
 const MAX_SECRET_BYTES: u64 = 256;
+const MAX_FINAL_SIGNATURE_PACKET_BYTES: u64 = 4 * 1024;
 
 /// Fixed child descriptor containing exact LEZ runtime bytes.
 pub const XMR_EFFECT_RUNTIME_FD: i32 = 200;
@@ -76,6 +77,10 @@ pub const XMR_EFFECT_PRIVATE_VIEW_KEY_FD: i32 = 216;
 pub const XMR_EFFECT_CHILD_PLAN_FD: i32 = 217;
 /// Invocation-only private XMR spend share for Tag16 and Monero sweep senders.
 pub const XMR_EFFECT_PRIVATE_XMR_SHARE_FD: i32 = 218;
+/// Invocation-only finalized Tag16 signature packet for Maker refund extraction.
+pub const XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD: i32 = 219;
+/// Fixed owner-private artifact name ingested from finalized Tag16 evidence.
+pub const XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE: &str = "finalized-refund-signature.json";
 /// Typed schema-v2 Tag14 release invocation.
 pub const XMR_TAG14_RELEASE_INVOCATION_FD: i32 = 220;
 /// Release-only sidecar capability.
@@ -273,6 +278,7 @@ pub struct PinnedXmrEffectInputsV1 {
     application: Option<PinnedXmrEffectApplicationInputsV1>,
     child_plan: Option<File>,
     invocation_xmr_share: Option<File>,
+    invocation_refund_signature: Option<File>,
 }
 
 impl fmt::Debug for PinnedXmrEffectInputsV1 {
@@ -293,10 +299,14 @@ impl fmt::Debug for PinnedXmrEffectInputsV1 {
             .field("child_plan", &self.child_plan.as_ref().map(|_| "[SEALED]"))
             .field(
                 "invocation_xmr_share",
+                &self.invocation_xmr_share.as_ref().map(|_| "[SEALED]"),
+            )
+            .field(
+                "invocation_refund_signature",
                 &self
-                    .invocation_xmr_share
+                    .invocation_refund_signature
                     .as_ref()
-                    .map(|_| "[REDACTED; SEALED]"),
+                    .map(|_| "[SEALED]"),
             )
             .finish_non_exhaustive()
     }
@@ -364,10 +374,15 @@ impl PinnedXmrEffectInputsV1 {
         mut self,
         application: &ValidatedXmrEffectApplicationV1,
         step: XmrWorkflowStep,
+        evidence_root: &Path,
     ) -> Result<Self> {
         ensure!(
             self.invocation_xmr_share.is_none(),
             "XMR effect invocation material is already pinned"
+        );
+        ensure!(
+            self.invocation_refund_signature.is_none(),
+            "XMR refund signature material is already pinned"
         );
         if matches!(
             step,
@@ -378,6 +393,17 @@ impl PinnedXmrEffectInputsV1 {
             self.invocation_xmr_share = Some(seal_bytes(
                 "XMR private spend share",
                 application.private_xmr_share.as_ref(),
+            )?);
+        }
+        if step == XmrWorkflowStep::SweepMoneroRefund {
+            let signature = read_stable_private_source(
+                &evidence_root.join(XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE),
+                MAX_FINAL_SIGNATURE_PACKET_BYTES,
+                "finalized XMR refund signature",
+            )?;
+            self.invocation_refund_signature = Some(seal_bytes(
+                "finalized XMR refund signature",
+                &signature.bytes,
             )?);
         }
         Ok(self)
@@ -411,6 +437,7 @@ impl PinnedXmrEffectInputsV1 {
             application,
             child_plan,
             invocation_xmr_share,
+            invocation_refund_signature,
         } = self;
         let PinnedXmrEffectMoneroCredentialsV1 {
             daemon,
@@ -491,6 +518,12 @@ impl PinnedXmrEffectInputsV1 {
         if let Some(invocation_xmr_share) = invocation_xmr_share {
             descriptors.push((invocation_xmr_share, XMR_EFFECT_PRIVATE_XMR_SHARE_FD));
         }
+        if let Some(invocation_refund_signature) = invocation_refund_signature {
+            descriptors.push((
+                invocation_refund_signature,
+                XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD,
+            ));
+        }
         let plan = PinnedChildFdPlan::new(descriptors)
             .context("validate XMR effect child descriptor plan")?;
         executable
@@ -561,6 +594,7 @@ impl ValidatedXmrEffectAuthorityV1 {
             application: None,
             child_plan: None,
             invocation_xmr_share: None,
+            invocation_refund_signature: None,
         })
     }
 }

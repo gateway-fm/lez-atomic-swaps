@@ -2113,3 +2113,44 @@ proves the LEZ RPC leg separately; the existing historical Maker recovery run
 proves a Monero sweep separately. A fresh application-owned joined run and the
 semantic no-argument Monero refund worker remain open, so configuration-only
 public portability is not yet a production-readiness claim.
+
+## M7 sealed refund-signature deployment boundary
+
+ADR 0165 adds no endpoint. It narrows the existing Refund worker deployment by
+requiring two invocation-only sealed inputs before the one-attempt CAS.
+
+```mermaid
+flowchart TB
+    Evidence[Owner private finalized Tag16 artifact] -->|FD 219| Worker[Refund worker]
+    Share[Owner private Maker share] -->|FD 218| Worker
+    Journal[(Owner private adaptor SQLite)] --> Worker
+    Worker --> SharedWallet[Shared wallet RPC loopback]
+    SharedWallet --> Monerod[Monero daemon RPC loopback]
+    SharedWallet --> Observer[Role fixed Monero verifier]
+    Observer --> Workflow[(XMR workflow SQLite)]
+    Evidence -. not mapped .-> Observer
+    Share -. not mapped .-> Observer
+```
+
+```mermaid
+sequenceDiagram
+    participant PairActor as Maker role actor
+    participant Store as Workflow SQLite
+    participant Worker as Refund worker
+    participant Wallet as Shared wallet RPC
+    participant Verify as Monero verifier
+
+    PairActor->>PairActor: Open and seal stable inputs
+    PairActor->>Store: Consume send authority once
+    PairActor->>Worker: Start no argument child
+    Worker->>Wallet: Submit authenticated sweep
+    PairActor->>Verify: Later read only observation
+    Verify-->>PairActor: Finalized receipt
+    PairActor->>Store: Complete original plan
+```
+
+The focused custody tests do not open either loopback RPC and therefore cannot
+flake on node availability. The semantic child will use the configured local
+wallet and daemon origins; switching to reviewed remote endpoints remains a
+configuration change, while any required on-chain deployment remains a
+separate deployment operation.

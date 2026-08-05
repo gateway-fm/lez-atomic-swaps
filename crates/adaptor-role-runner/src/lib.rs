@@ -282,6 +282,36 @@ impl fmt::Debug for VerifiedAdaptorSecret {
     }
 }
 
+/// Extracts and verifies one adaptor scalar entirely in memory.
+///
+/// The role-fixed journal supplies the exact durable aggregate presignature.
+/// The supplied final signature is verified against the validated session, and
+/// the extracted scalar is point-checked by the adaptor implementation. No
+/// scalar file is read or written.
+///
+/// # Errors
+///
+/// Rejects a missing, role-crossed, or incomplete journal and an invalid or
+/// unrelated final signature. Errors and Debug output never contain secret bytes.
+pub fn extract_verified_adaptor_secret(
+    journal_path: &std::path::Path,
+    session: &ValidatedSession,
+    role: Role,
+    final_signature: [u8; 64],
+) -> Result<VerifiedAdaptorSecret, RunnerError> {
+    let identity = session.identity(role);
+    let journal = SqliteAdaptorSessionJournal::open_existing(journal_path)?;
+    let presignature = required_snapshot(&journal, &identity)?
+        .presignature()
+        .ok_or(RunnerError::PresignatureUnavailable)?;
+    verify_final_signature(session.context(), final_signature)
+        .map_err(|_| RunnerError::CryptographicValidation)?;
+    let extracted =
+        extract_adaptor_secret(session.context(), *presignature.bytes(), final_signature)
+            .map_err(|_| RunnerError::CryptographicValidation)?;
+    Ok(VerifiedAdaptorSecret { bytes: extracted })
+}
+
 /// Verifies one owner-private extracted scalar against the exact durable transcript.
 ///
 /// The role-fixed existing journal supplies the aggregate presignature. The final
@@ -302,19 +332,12 @@ pub fn verify_extracted_adaptor_secret(
     final_signature: [u8; 64],
     extracted_scalar_file: &std::path::Path,
 ) -> Result<VerifiedAdaptorSecret, RunnerError> {
-    let identity = session.identity(role);
-    let journal = SqliteAdaptorSessionJournal::open_existing(journal_path)?;
-    let presignature = required_snapshot(&journal, &identity)?
-        .presignature()
-        .ok_or(RunnerError::PresignatureUnavailable)?;
-    let extracted =
-        extract_adaptor_secret(session.context(), *presignature.bytes(), final_signature)
-            .map_err(|_| RunnerError::CryptographicValidation)?;
+    let extracted = extract_verified_adaptor_secret(journal_path, session, role, final_signature)?;
     let supplied = files::read_secret_scalar(extracted_scalar_file)?;
-    if extracted[..].ct_eq(&supplied[..]).unwrap_u8() != 1 {
+    if extracted.bytes[..].ct_eq(&supplied[..]).unwrap_u8() != 1 {
         return Err(RunnerError::CryptographicValidation);
     }
-    Ok(VerifiedAdaptorSecret { bytes: extracted })
+    Ok(extracted)
 }
 
 /// Reads and validates one canonical aggregate final-signature packet.

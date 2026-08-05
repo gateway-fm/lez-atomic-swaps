@@ -75,6 +75,17 @@ grep -Fq '"step":"refund_lez_tag16"' /proc/self/fd/217
 grep -Fq '"executable_abi":"lez_xmr_tag16_refund_v1"' /proc/self/fd/217
 sha256sum /proc/self/fd/218 | cut -d ' ' -f 1
 "#;
+const MAKER_REFUND_WORKER: &[u8] = br#"#!/bin/sh
+set -eu
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219; do
+    test -e "/proc/self/fd/$fd"
+done
+grep -Fq '"mode":"invoke"' /proc/self/fd/217
+grep -Fq '"step":"sweep_monero_refund"' /proc/self/fd/217
+grep -Fq '"executable_abi":"lez_xmr_monero_refund_sweep_v3"' /proc/self/fd/217
+sha256sum /proc/self/fd/218 | cut -d ' ' -f 1
+sha256sum /proc/self/fd/219 | cut -d ' ' -f 1
+"#;
 const RELEASE_WORKER: &[u8] = br#"#!/bin/sh
 set -eu
 test "$#" -eq 0
@@ -114,6 +125,7 @@ for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 21
     test -e "/proc/self/fd/$fd"
 done
 test ! -e /proc/self/fd/218
+test ! -e /proc/self/fd/219
 grep -Fq '"mode":"observe"' /proc/self/fd/217
 grep -Fq "\"step\":\"$2\"" /proc/self/fd/217
 printf '{"schema_version":1,"step":"%s","state":"pending"}\n' "$2"
@@ -223,6 +235,7 @@ struct RouteFixture {
     manifest_bytes: Vec<u8>,
     application_sha256: Vec<String>,
     private_xmr_share_sha256: String,
+    refund_signature_sha256: Option<String>,
 }
 
 fn actor_binary() -> &'static str {
@@ -900,6 +913,11 @@ fn maker_effect_authority(
     let (runtime, capability, secrets) = write_effect_inputs(root, "maker");
     let classifier = root.join("classifier");
     write_private(&classifier, OBSERVER, 0o700);
+    let refund_worker = root.join("maker-refund-sweep");
+    write_private(&refund_worker, MAKER_REFUND_WORKER, 0o700);
+    let monero_verify = root.join("maker-monero-verify");
+    write_private(&monero_verify, OBSERVER, 0o700);
+    let _evidence = owner_directory(root, "evidence");
     let rpc_at = |port: u16, index: usize| RpcFixture {
         url: format!("http://127.0.0.1:{port}/"),
         username_file: secrets[index].clone(),
@@ -951,13 +969,13 @@ fn maker_effect_authority(
             monero_refund: tool(
                 root,
                 "maker-refund-sweep",
-                [0x66; 32],
+                Sha256::digest(MAKER_REFUND_WORKER).into(),
                 "lez_xmr_monero_refund_sweep_v3",
             ),
             monero_verify: tool(
                 root,
                 "maker-monero-verify",
-                [0x70; 32],
+                Sha256::digest(OBSERVER).into(),
                 "lez_xmr_monero_verify_v2",
             ),
             lez_punish: tool(
@@ -1024,8 +1042,19 @@ fn semantic_release_route_fixture() -> RouteFixture {
     )
 }
 
-#[allow(clippy::too_many_lines)]
 fn maker_punish_route_fixture() -> RouteFixture {
+    maker_recovery_route_fixture(XmrWorkflowBranch::Punish, XmrWorkflowStep::PunishLezTag17)
+}
+
+fn maker_refund_route_fixture() -> RouteFixture {
+    maker_recovery_route_fixture(
+        XmrWorkflowBranch::Refund,
+        XmrWorkflowStep::SweepMoneroRefund,
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+fn maker_recovery_route_fixture(branch: XmrWorkflowBranch, step: XmrWorkflowStep) -> RouteFixture {
     let material = provision_material();
     let agreement = signed_stage_a(&material);
     let maker_sessions = initialize_sessions(&material, &agreement, "maker");
@@ -1050,8 +1079,15 @@ fn maker_punish_route_fixture() -> RouteFixture {
         .state_directory()
         .join("xmr-effect-workflow.sqlite3");
     let effect_root = owner_directory(&material.material, "effect-inputs");
-    let worker = effect_root.join("tag17-worker");
-    write_private(&worker, PUNISH_WORKER, 0o700);
+    let worker = match step {
+        XmrWorkflowStep::PunishLezTag17 => {
+            let worker = effect_root.join("tag17-worker");
+            write_private(&worker, PUNISH_WORKER, 0o700);
+            worker
+        }
+        XmrWorkflowStep::SweepMoneroRefund => effect_root.join("maker-refund-sweep"),
+        _ => panic!("unsupported Maker recovery fixture step"),
+    };
     let effect_bytes = maker_effect_authority(
         &effect_root,
         &worker,
@@ -1061,6 +1097,14 @@ fn maker_punish_route_fixture() -> RouteFixture {
         maker_actor.agreement_commitment(),
         maker_actor.activation_commitment(),
     );
+    let refund_signature_sha256 = (step == XmrWorkflowStep::SweepMoneroRefund).then(|| {
+        let bytes = b"canonical-finalized-refund-signature\n";
+        let path = effect_root
+            .join("evidence")
+            .join("finalized-refund-signature.json");
+        write_private(&path, bytes, 0o600);
+        hex::encode(Sha256::digest(bytes))
+    });
     let authority_digest: [u8; 32] = Sha256::digest(&effect_bytes).into();
     let identity = XmrWorkflowIdentityV1::new(
         swap_id.clone(),
@@ -1098,10 +1142,10 @@ fn maker_punish_route_fixture() -> RouteFixture {
         )
         .expect("reconcile Maker Monero funding");
     journal
-        .select_branch(&identity, XmrWorkflowBranch::Punish)
+        .select_branch(&identity, branch)
         .expect("select Maker punishment branch");
     journal
-        .prepare_step(&identity, XmrWorkflowStep::PunishLezTag17)
+        .prepare_step(&identity, step)
         .expect("prepare Maker Tag17 step");
     drop(journal);
 
@@ -1145,6 +1189,7 @@ fn maker_punish_route_fixture() -> RouteFixture {
         manifest_bytes,
         application_sha256,
         private_xmr_share_sha256,
+        refund_signature_sha256,
     }
 }
 
@@ -1275,7 +1320,77 @@ fn route_fixture_for_mode(
         manifest_bytes,
         application_sha256,
         private_xmr_share_sha256,
+        refund_signature_sha256: None,
     }
+}
+
+#[test]
+fn maker_refund_route_receives_signature_and_share_only_for_invocation() {
+    let fixture = maker_refund_route_fixture();
+    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+        .expect("acquire Maker state lock");
+    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+        .expect("acquire Maker workflow lock");
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Maker,
+        RUN_ID,
+    )
+    .expect("load schema-v3 Maker Refund authority");
+    let step = XmrWorkflowStep::SweepMoneroRefund;
+    let (mut command, sending_plan) = match execution
+        .prepare_effect_invocation(step, &actor_lock, &workflow_lock)
+        .expect("prepare Maker Refund invocation")
+    {
+        XmrPreparedEffectInvocationV1::InvokeOnce {
+            command,
+            tool_plan_identity_sha256,
+        } => (command, tool_plan_identity_sha256),
+        XmrPreparedEffectInvocationV1::ObserveOnly { .. }
+        | XmrPreparedEffectInvocationV1::Complete { .. } => {
+            panic!("Prepared Maker Refund must invoke exactly once")
+        }
+    };
+    let output = command.output().expect("run Maker Refund descriptor probe");
+    assert!(
+        output.status.success(),
+        "Maker Refund descriptor probe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let hashes = String::from_utf8(output.stdout).unwrap();
+    let hashes = hashes.lines().collect::<Vec<_>>();
+    assert_eq!(hashes[0], fixture.private_xmr_share_sha256);
+    assert_eq!(
+        hashes[1],
+        fixture.refund_signature_sha256.as_deref().unwrap()
+    );
+
+    let reopened = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Maker,
+        RUN_ID,
+    )
+    .expect("reopen Maker Refund authority");
+    assert!(matches!(
+        reopened
+            .prepare_effect_invocation(step, &actor_lock, &workflow_lock)
+            .expect("restart Maker Refund route"),
+        XmrPreparedEffectInvocationV1::ObserveOnly {
+            tool_plan_identity_sha256
+        } if tool_plan_identity_sha256 == sending_plan
+    ));
+    let (mut observer, observed_plan, source) = reopened
+        .prepare_effect_observation(step, &actor_lock, &workflow_lock)
+        .expect("Started Maker Refund admits Monero verifier")
+        .into_parts();
+    assert_eq!(observed_plan, sending_plan);
+    assert_eq!(
+        source,
+        XmrWorkflowReconciliationSource::MoneroWalletTransaction
+    );
+    assert_observer_pending(&mut observer, step);
 }
 
 #[test]

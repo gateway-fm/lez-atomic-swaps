@@ -26,7 +26,10 @@ actor lock safely, submits once, then observes and terminalizes on the next
 cycle without resending. ADR [0164](docs/architecture/0164-select-maker-recovery-from-durable-branch.md)
 now makes the same command select only the durable Refund or Punish branch; the
 real process proof covers both one-shot routes and keeps the private spend share
-invocation-only.
+invocation-only. ADR [0165](docs/architecture/0165-seal-finalized-refund-signature-for-in-memory-extraction.md)
+also seals finalized Tag16 on invocation-only FD 219 and verifies extraction
+against the exact durable presignature without creating a plaintext scalar
+handoff; the semantic wallet-RPC sender and joined replay remain open.
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined
 two-devnet F3/F6 corridor.

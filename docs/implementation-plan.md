@@ -510,6 +510,14 @@ attestation so neither can be misreported as the other.
   process test proves both routes invoke once and restart into observation
   without resending. The semantic Monero sweep worker, actual-node join and
   adverse recovery matrix remain open.
+- [x] Seal finalized Tag16 evidence for transcript-bound in-memory refund
+  extraction through ADR 0165. The Refund sender alone receives the stable
+  owner-private signature packet on FD 219 and Maker share on FD 218, both
+  pinned before CAS; the restart observer receives neither. The adaptor runner
+  verifies the signature against the exact durable presignature and returns an
+  opaque in-memory scalar without accepting or writing a scalar handoff file.
+  Focused real-transcript and real-process descriptor tests are GREEN. The
+  semantic one-shot wallet-RPC child is the next RED/GREEN slice.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

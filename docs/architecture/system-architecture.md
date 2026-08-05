@@ -3449,3 +3449,49 @@ observation-only. Refund receives FD 218 only during its sending child; Punish
 and both observers reject it. The strict real-process test proves these
 control-plane and custody invariants for both branches. It does not replace the
 semantic Monero worker or the joined actual-node economic corridor.
+
+## M7 sealed Maker Monero refund extraction
+
+ADR 0165 extends only the Refund edge. Finalized Tag16 is normalized into one
+owner-private canonical artifact, pinned before CAS, and passed with the Maker
+share to the sender. Extraction uses the exact role journal in memory; the
+observer receives neither reconstruction input.
+
+```mermaid
+flowchart LR
+    Lez[Finalized LEZ Tag16] --> Artifact[Private canonical signature]
+    Artifact -->|FD 219| Sender[Monero refund sender]
+    Share[Maker share] -->|FD 218| Sender
+    RoleJournal[(Maker adaptor journal)] --> Sender
+    Sender --> Wallet[Shared wallet RPC]
+    Wallet --> Monerod[Monero daemon RPC]
+    Wallet --> Verify[Monero verifier]
+    Verify --> Workflow[(XMR workflow SQLite)]
+    Artifact -. excluded .-> Verify
+    Share -. excluded .-> Verify
+```
+
+```mermaid
+sequenceDiagram
+    participant Router as Maker effect router
+    participant Workflow as XMR workflow
+    participant Sender as Refund sender
+    participant Journal as Maker adaptor journal
+    participant Wallet as Monero wallet RPC
+    participant Observer as Monero verifier
+
+    Router->>Router: Pin signature and share
+    Router->>Workflow: Prepared to Started CAS
+    Router->>Sender: Invoke with FDs 218 and 219
+    Sender->>Journal: Load exact presignature
+    Sender->>Sender: Verify and extract in memory
+    Sender->>Wallet: Submit sweep once
+    Router->>Observer: Restart observation without secrets
+    Observer-->>Router: Finalized transaction evidence
+    Router->>Workflow: Reconcile Succeeded
+```
+
+The current GREEN boundary covers stable-file custody, descriptor exclusion,
+and real transcript-bound extraction without RPC. The depicted wallet and
+daemon calls describe the next semantic worker slice and are not yet claimed by
+this checkpoint.

@@ -17,7 +17,8 @@ use std::{
 
 use lez_adaptor_role_runner::{
     Role, RunnerError, ValidatedSession, accept_published_peer_partial_and_adapt,
-    verify_extracted_adaptor_secret, write_observed_final_signature_packet,
+    extract_verified_adaptor_secret, verify_extracted_adaptor_secret,
+    write_observed_final_signature_packet,
 };
 use lez_adaptor_signature::{
     AdaptorSessionContext, adapt_presignature, aggregate_adaptor_presignature,
@@ -676,6 +677,15 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
         assert_eq!(redacted, "VerifiedAdaptorSecret(REDACTED)");
         assert!(!redacted.contains(&hex::encode(ADAPTOR_SECRET)));
         assert_eq!(*verified.into_big_endian_bytes(), ADAPTOR_SECRET);
+
+        let extracted_in_memory = extract_verified_adaptor_secret(
+            &fixture.taker_journal,
+            &session,
+            Role::Taker,
+            final_signature,
+        )
+        .expect("in-memory extraction verifies against durable transcript");
+        assert_eq!(*extracted_in_memory.into_big_endian_bytes(), ADAPTOR_SECRET);
 
         let mut wrong_signature = final_signature;
         wrong_signature[63] ^= 1;
