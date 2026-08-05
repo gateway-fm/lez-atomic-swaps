@@ -6668,8 +6668,13 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Record the component, user-flow and conditional-atomicity decision in ADR
   0173. Focused provisioning tests, both existing runner contracts, formatting,
   compile checks and strict Clippy are GREEN.
-- [ ] Commit and push the implementation checkpoint, then run one clean
-  commit-pinned actual LEZ/Monero replay. Until that succeeds, Tag14 remains
-  implementation-ready rather than actual-node certified.
+- [x] Commit and push the implementation checkpoint as `aae5c5c`.
+- [ ] Complete one clean commit-pinned actual LEZ/Monero replay. The first
+  replay reached the application handoff and preserved a RED caused by numeric
+  jq truthiness before Tag13; exact cleanup passed. The follow-up emits a real
+  JSON boolean and retains byte-identical safe activation/finality evidence;
+  focused syntax, boolean-regression, M4 and M5 contract checks are GREEN.
+  Until the fresh replay succeeds, Tag14 remains implementation-ready rather
+  than actual-node certified.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

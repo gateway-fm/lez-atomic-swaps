@@ -101,6 +101,15 @@ compile checks, and strict Clippy are GREEN. The new mode has not yet completed
 a clean commit-pinned actual-node replay, so this ADR records implementation,
 not milestone certification.
 
+The first source-bound replay of commit `aae5c5c` proved the checked LEZ
+deployment, both finalized actor claims, the Monero 0.18.5.1 topology, and the
+agreement/application handoff before stopping prior to Tag13. Its RED was a
+runner evidence-type defect: Bash supplied numeric `0` to jq, where every
+number is truthy, instead of the required JSON boolean `false`. Exact cleanup
+passed. The follow-up emits explicit booleans and retains byte-identical safe
+activation and Tag14-finality evidence outside the private cleanup boundary;
+a fresh commit-bound replay remains required.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

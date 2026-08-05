@@ -2033,7 +2033,7 @@ complete_m5_xmr_application_handoff() {
     --arg reconciled_swap "$(jq -er .swap_id "$m5_xmr_reconciled_delivery_plan")" \
     --arg reconciled_envelope "$(jq -er .signed_envelope_sha256 "$m5_xmr_reconciled_delivery_plan")" \
     --argjson daemon_pid "$m5_last_stopped_daemon_pid" \
-    --argjson tag13_started "$m7_xmr_supervised_refund" \
+    --argjson tag13_started "$([[ "$m7_xmr_supervised_refund" == 1 ]] && printf true || printf false)" \
     --argjson requeue_delay "$m5_actor_requeue_delay_seconds" \
     --argjson process_group "$m5_last_stopped_daemon_group" '
       {schema_version:1,kind:(if $tag13_started then "m7_xmr_post_tag13_application_handoff" else "m5_xmr_application_pre_tag13_cutoff" end),result:"passed",
@@ -2731,8 +2731,10 @@ provision_m7_taker_claim_effect_application() {
 
 activate_and_run_m7_taker_tag14() {
   readonly m7_taker_claim_activation="$m7_taker_effect_evidence_root/taker-claim-activation.json"
+  readonly m7_taker_claim_activation_retained="$evidence_root/m7-taker-claim-activation.json"
   readonly m7_taker_tag14_invocation="$evidence_root/m7-taker-tag14-invocation.json"
   readonly m7_taker_tag14_terminal="$evidence_root/m7-taker-tag14-terminal.json"
+  readonly m7_taker_tag14_finality_retained="$evidence_root/m7-taker-tag14-finality.json"
   "$agreement_actor_binary" activate-taker-claim-workflow \
     --effect-manifest "$m7_taker_effect_manifest" \
     --effect-authority "$m7_taker_effect_authority" \
@@ -2751,6 +2753,10 @@ activate_and_run_m7_taker_tag14() {
     and .private_material_disclosed==false
   ' "$m7_taker_claim_activation" >/dev/null ||
     fail "M7 Taker claim activation is incomplete"
+  install -m 0600 -- "$m7_taker_claim_activation" "$m7_taker_claim_activation_retained"
+  require_owner_file "$m7_taker_claim_activation_retained" "retained M7 Taker claim activation"
+  cmp -- "$m7_taker_claim_activation" "$m7_taker_claim_activation_retained" ||
+    fail "retained M7 Taker claim activation differs"
 
   record_phase tag14_publication started
   "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
@@ -2791,6 +2797,10 @@ activate_and_run_m7_taker_tag14() {
     and .outcome.facts.instruction.effect=="authorize_claim"
   ' "$tag14_finality_result" >/dev/null ||
     fail "M7 semantic Tag14 finality evidence is incomplete"
+  install -m 0600 -- "$tag14_finality_result" "$m7_taker_tag14_finality_retained"
+  require_owner_file "$m7_taker_tag14_finality_retained" "retained M7 semantic Tag14 finality"
+  cmp -- "$tag14_finality_result" "$m7_taker_tag14_finality_retained" ||
+    fail "retained M7 semantic Tag14 finality differs"
   record_phase tag14_finality completed
 }
 
