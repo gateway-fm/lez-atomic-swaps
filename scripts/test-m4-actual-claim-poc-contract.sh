@@ -382,6 +382,20 @@ for m7_provision_boundary in \
     fail "M7 effect provision omits boundary: ${m7_provision_boundary}"
 done
 
+if rg -Fq 'manifest_value MONERO_' <<<"$m7_provision_source"; then
+  fail "M7 effect provision bypasses the already validated Monero manifest map"
+fi
+for m7_manifest_key in \
+  MONERO_DAEMON_ENDPOINT MONERO_DAEMON_USERNAME_FILE MONERO_DAEMON_PASSWORD_FILE \
+  MONERO_TAKER_WALLET_ENDPOINT MONERO_TAKER_RPC_USERNAME_FILE MONERO_TAKER_RPC_PASSWORD_FILE \
+  MONERO_FUNDING_WALLET_ENDPOINT MONERO_FUNDING_RPC_USERNAME_FILE \
+  MONERO_FUNDING_RPC_PASSWORD_FILE MONERO_FUNDING_WALLET_PASSWORD_FILE \
+  MONERO_MAKER_WALLET_ENDPOINT MONERO_MAKER_RPC_USERNAME_FILE MONERO_MAKER_RPC_PASSWORD_FILE; do
+  m7_manifest_reference="$(printf '${monero_env[%s]}' "$m7_manifest_key")"
+  rg -Fq -- "$m7_manifest_reference" <<<"$m7_provision_source" ||
+    fail "M7 effect provision omits parsed Monero manifest key: ${m7_manifest_key}"
+done
+
 m7_supervisor_source="$(function_source activate_and_supervise_m7_maker_refund)"
 [[ -n "$m7_supervisor_source" ]] || fail "M7 supervised refund function is unavailable"
 for m7_supervisor_boundary in \

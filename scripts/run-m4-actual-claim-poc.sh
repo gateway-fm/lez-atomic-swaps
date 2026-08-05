@@ -1763,19 +1763,19 @@ provision_m7_maker_effect_application() {
     --arg runtime "$maker_runtime" \
     --arg runtime_sha "$(sha256_file "$maker_runtime")" \
     --arg capability "$maker_capability" \
-    --arg daemon_url "$(manifest_value MONERO_DAEMON_ENDPOINT "$monero_manifest")" \
-    --arg daemon_user "$(manifest_value MONERO_DAEMON_USERNAME_FILE "$monero_manifest")" \
-    --arg daemon_password "$(manifest_value MONERO_DAEMON_PASSWORD_FILE "$monero_manifest")" \
-    --arg funding_url "$(manifest_value MONERO_TAKER_WALLET_ENDPOINT "$monero_manifest")" \
-    --arg funding_user "$(manifest_value MONERO_TAKER_RPC_USERNAME_FILE "$monero_manifest")" \
-    --arg funding_password "$(manifest_value MONERO_TAKER_RPC_PASSWORD_FILE "$monero_manifest")" \
-    --arg shared_url "$(manifest_value MONERO_FUNDING_WALLET_ENDPOINT "$monero_manifest")" \
-    --arg shared_user "$(manifest_value MONERO_FUNDING_RPC_USERNAME_FILE "$monero_manifest")" \
-    --arg shared_password "$(manifest_value MONERO_FUNDING_RPC_PASSWORD_FILE "$monero_manifest")" \
-    --arg role_url "$(manifest_value MONERO_MAKER_WALLET_ENDPOINT "$monero_manifest")" \
-    --arg role_user "$(manifest_value MONERO_MAKER_RPC_USERNAME_FILE "$monero_manifest")" \
-    --arg role_password "$(manifest_value MONERO_MAKER_RPC_PASSWORD_FILE "$monero_manifest")" \
-    --arg shared_file_password "$(manifest_value MONERO_FUNDING_WALLET_PASSWORD_FILE "$monero_manifest")" \
+    --arg daemon_url "${monero_env[MONERO_DAEMON_ENDPOINT]}" \
+    --arg daemon_user "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" \
+    --arg daemon_password "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" \
+    --arg funding_url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" \
+    --arg funding_user "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" \
+    --arg funding_password "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" \
+    --arg shared_url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" \
+    --arg shared_user "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" \
+    --arg shared_password "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" \
+    --arg role_url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" \
+    --arg role_user "${monero_env[MONERO_MAKER_RPC_USERNAME_FILE]}" \
+    --arg role_password "${monero_env[MONERO_MAKER_RPC_PASSWORD_FILE]}" \
+    --arg shared_file_password "${monero_env[MONERO_FUNDING_WALLET_PASSWORD_FILE]}" \
     --arg fund_program "$monero_fund_binary" --arg fund_sha "$(sha256_file "$monero_fund_binary")" \
     --arg claim_program "$tag15_binary" --arg claim_sha "$(sha256_file "$tag15_binary")" \
     --arg classifier_program "$classifier_binary" --arg classifier_sha "$(sha256_file "$classifier_binary")" \
@@ -2709,10 +2709,10 @@ mine_m7_refund_confirmations() {
   readonly m7_refund_mining_evidence="$evidence_root/m7-refund-confirmation-blocks.json"
   local maker_credentials maker_endpoint daemon_credentials daemon_endpoint
   local address_response maker_address mine_request
-  maker_credentials="$(manifest_value MONERO_MAKER_CREDENTIAL_FILE "$monero_manifest")"
-  maker_endpoint="$(manifest_value MONERO_MAKER_WALLET_ENDPOINT "$monero_manifest")"
-  daemon_credentials="$(manifest_value MONERO_DAEMON_CREDENTIAL_FILE "$monero_manifest")"
-  daemon_endpoint="$(manifest_value MONERO_DAEMON_ENDPOINT "$monero_manifest")"
+  maker_credentials="${monero_env[MONERO_MAKER_CREDENTIAL_FILE]}"
+  maker_endpoint="${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"
+  daemon_credentials="${monero_env[MONERO_DAEMON_CREDENTIAL_FILE]}"
+  daemon_endpoint="${monero_env[MONERO_DAEMON_ENDPOINT]}"
 
   address_response="$(m7_monero_rpc "$maker_credentials" "$maker_endpoint" \
     '{"jsonrpc":"2.0","id":"m7-refund","method":"get_address","params":{"account_index":0}}')"

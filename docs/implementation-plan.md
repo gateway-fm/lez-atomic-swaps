@@ -558,6 +558,15 @@ attestation so neither can be misreported as the other.
   spend-authority-free observer. The machine-readable runner contract and
   static control-flow regression are GREEN; an exact pushed-commit replay is
   the next PoC gate and is not yet claimed.
+- [x] Exercise the first exact pushed joined attempt `m7refund-d143123-a`. It
+  passed cold source/artifact builds, all five recursive guest tests, fresh LEZ
+  deployment, role onboarding, official Monero Regtest topology and real Tag13,
+  then failed before schema-3 registration or any refund send because authority
+  construction bypassed the already validated exported-manifest parser. Exact
+  process and Docker cleanup passed. A focused RED contract now forbids raw
+  `manifest_value MONERO_*` reads and requires all thirteen validated map keys;
+  the minimal parsed-map fix is GREEN. This attempt is diagnostic, not PoC
+  evidence, and its one-shot ID must not be reused.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
