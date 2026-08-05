@@ -157,6 +157,24 @@ struct Tag13EvidenceV2 {
     atomicity_claim: String,
 }
 
+fn read_canonical_tag13_evidence(path: &Path) -> Result<(Tag13EvidenceV2, Vec<u8>)> {
+    let bytes = read_private_input(
+        path,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
+        "finalized Tag-13 evidence",
+    )?;
+    let evidence: Tag13EvidenceV2 =
+        serde_json::from_slice(&bytes).context("finalized Tag-13 evidence is malformed")?;
+    let mut canonical = serde_json::to_vec_pretty(&evidence)
+        .context("encode canonical finalized Tag-13 evidence")?;
+    canonical.push(b'\n');
+    ensure!(
+        canonical == bytes,
+        "finalized Tag-13 evidence is noncanonical"
+    );
+    Ok((evidence, bytes))
+}
+
 #[derive(Serialize)]
 struct ImportedTag13PlanV1 {
     schema_version: u16,
@@ -283,10 +301,7 @@ pub(crate) fn activate_taker_claim_workflow(
         "claim activation application identity changed"
     );
 
-    let (tag13, tag13_bytes) = read_canonical_private_json::<Tag13EvidenceV2>(
-        tag13_evidence,
-        "finalized Tag-13 evidence",
-    )?;
+    let (tag13, tag13_bytes) = read_canonical_tag13_evidence(tag13_evidence)?;
     validate_tag13(&execution, &agreement, &activation, &tag13)?;
 
     let (funding, funding_bytes) = read_canonical_private_json::<FundingEvidenceV2>(

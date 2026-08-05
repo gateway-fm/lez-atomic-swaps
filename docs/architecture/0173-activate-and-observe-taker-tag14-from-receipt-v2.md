@@ -135,6 +135,16 @@ complete producer schema in its declared order, reuses the shared typed escrow
 terms, denies unknown fields at every local envelope, and validates and decodes
 once. Focused library tests are GREEN; another source-bound replay is required.
 
+The source-bound `7cd0d88` replay then proved the complete schema through
+finalized Tag13, confirmed Monero funding, release preparation and direct
+effect promotion, but reached the same canonical error. Inspection of the
+producer established the remaining distinction: stdout is compact JSON, while
+the authoritative durable file is deliberately canonical pretty JSON plus a
+newline. The earlier byte diagnostic exercised stdout. The activator now uses
+a Tag13-specific reader that reproduces the producer's exact durable encoding;
+the generic compact reader remains unchanged for every other evidence schema.
+Exact cleanup passed again.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

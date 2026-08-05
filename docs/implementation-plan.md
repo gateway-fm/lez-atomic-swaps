@@ -6695,5 +6695,11 @@ S12/S13 review and policy-deferred public deployment.
   schema v2 again passed. The activator now mirrors the complete producer
   schema and nested field order, reuses the shared typed escrow terms, and
   denies unknown fields; focused library tests are GREEN.
+- [ ] Replay the producer-exact durable Tag13 reader. Exact run
+  `m7claim-7cd0d88-a` proved every prerequisite and the complete schema but
+  exposed the final encoding distinction: the producer's stdout is compact,
+  while its authoritative durable file is canonical pretty JSON plus newline.
+  The activator now reproduces that exact producer encoding without changing
+  the generic compact evidence reader; cleanup schema v2 passed.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.
