@@ -22,6 +22,8 @@ struct MakerTools {
     finalized_classifier: Tool,
     monero_refund: Tool,
     monero_verify: Tool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lez_punish: Option<Tool>,
 }
 
 #[derive(Clone, Serialize)]
@@ -114,6 +116,7 @@ fn manifest() -> MakerEffectAuthority {
             finalized_classifier: tool("xmr-classifier", 0x60, "lez_xmr_finalized_classifier_v1"),
             monero_refund: tool("xmr-refund-sweep", 0x66, "lez_xmr_monero_refund_sweep_v3"),
             monero_verify: tool("xmr-verify", 0x70, "lez_xmr_monero_verify_v2"),
+            lez_punish: None,
         },
     }
 }
@@ -164,6 +167,46 @@ fn load(bytes: &[u8]) -> anyhow::Result<()> {
     assert_eq!(tools.monero_refund().program_sha256(), [0x66; 32]);
     assert_eq!(tools.monero_verify().program_sha256(), [0x70; 32]);
     Ok(())
+}
+
+#[test]
+fn schema_v3_maker_requires_exact_tag17_tool_and_preserves_older_profiles() {
+    let mut schema_v3 = manifest();
+    schema_v3.schema_version = 3;
+    schema_v3.maker_tools.lez_punish =
+        Some(tool("xmr-reference-tag17", 0x77, "lez_xmr_tag17_punish_v1"));
+    let authority = load_validated_xmr_effect_authority_bytes(
+        &canonical(&schema_v3),
+        ActorRole::Maker,
+        SWAP,
+        AGREEMENT,
+        ACTIVATION,
+        RUN,
+    )
+    .expect("canonical schema-v3 Maker authority");
+    assert_eq!(authority.schema_version(), 3);
+    assert_eq!(
+        authority
+            .maker_tools()
+            .unwrap()
+            .lez_punish()
+            .expect("schema-v3 Tag17 tool")
+            .abi(),
+        "lez_xmr_tag17_punish_v1"
+    );
+
+    let mut missing = schema_v3.clone();
+    missing.maker_tools.lez_punish = None;
+    assert!(load(&canonical(&missing)).is_err());
+
+    let mut wrong_abi = schema_v3.clone();
+    wrong_abi.maker_tools.lez_punish.as_mut().unwrap().abi = "lez_xmr_tag15_claim_v1";
+    assert!(load(&canonical(&wrong_abi)).is_err());
+
+    let mut legacy_with_tag17 = schema_v3;
+    legacy_with_tag17.schema_version = 1;
+    assert!(load(&canonical(&legacy_with_tag17)).is_err());
+    load(&canonical(&manifest())).expect("unchanged schema-v1 Maker authority");
 }
 
 #[test]

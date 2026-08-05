@@ -28,6 +28,8 @@ struct MakerTools {
     finalized_classifier: Tool,
     monero_refund: Tool,
     monero_verify: Tool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lez_punish: Option<Tool>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -291,6 +293,7 @@ pub struct XmrMakerEffectToolsV1 {
     finalized_classifier: XmrEffectToolV1,
     monero_refund: XmrEffectToolV1,
     monero_verify: XmrEffectToolV1,
+    lez_punish: Option<XmrEffectToolV1>,
 }
 
 impl XmrMakerEffectToolsV1 {
@@ -313,6 +316,11 @@ impl XmrMakerEffectToolsV1 {
     /// Monero receipt verifier.
     pub const fn monero_verify(&self) -> &XmrEffectToolV1 {
         &self.monero_verify
+    }
+    /// Schema-v3 Maker Tag17 punishment tool.
+    #[must_use]
+    pub const fn lez_punish(&self) -> Option<&XmrEffectToolV1> {
+        self.lez_punish.as_ref()
     }
 }
 
@@ -501,7 +509,7 @@ pub fn load_validated_xmr_effect_authority_bytes(
     canonical.push(b'\n');
     ensure!(canonical == bytes, "XMR effect authority is noncanonical");
     ensure!(
-        matches!(authority.schema_version, 1 | 2)
+        (1..=3).contains(&authority.schema_version)
             && authority.pair == "monero"
             && authority.role == expected_role
             && decode_digest(&authority.swap_id)? == expected_swap
@@ -633,6 +641,7 @@ fn validated_maker_tools(tools: MakerTools) -> Result<XmrMakerEffectToolsV1> {
         finalized_classifier: validated_tool(tools.finalized_classifier)?,
         monero_refund: validated_tool(tools.monero_refund)?,
         monero_verify: validated_tool(tools.monero_verify)?,
+        lez_punish: tools.lez_punish.map(validated_tool).transpose()?,
     })
 }
 
@@ -689,6 +698,13 @@ fn validate_profile(authority: &EffectAuthorityV1) -> Result<()> {
         authority.taker_tools.as_ref(),
     ) {
         (ActorRole::Maker, Some(tools), None) => {
+            ensure!(
+                matches!(
+                    (authority.schema_version, tools.lez_punish.as_ref()),
+                    (1, None) | (3, Some(_))
+                ),
+                "XMR Maker Tag17 authority schema/profile is invalid"
+            );
             validate_tool_paths([
                 &tools.monero_fund,
                 &tools.lez_claim,
@@ -696,6 +712,10 @@ fn validate_profile(authority: &EffectAuthorityV1) -> Result<()> {
                 &tools.monero_refund,
                 &tools.monero_verify,
             ])?;
+            if let Some(punish) = tools.lez_punish.as_ref() {
+                validate_tool_paths([punish])?;
+                validate_tool(punish, "lez_xmr_tag17_punish_v1")?;
+            }
             validate_tool(&tools.monero_fund, "lez_xmr_monero_fund_v2")?;
             validate_tool(&tools.lez_claim, "lez_xmr_tag15_claim_v1")?;
             validate_tool(
@@ -742,7 +762,9 @@ fn validate_release_profile(
         authority.role,
         authority.tag14_release.as_ref(),
     ) {
-        (1, ActorRole::Maker | ActorRole::Taker, None) => return Ok(()),
+        (1, ActorRole::Maker | ActorRole::Taker, None) | (3, ActorRole::Maker, None) => {
+            return Ok(());
+        }
         (2, ActorRole::Taker, Some(release)) => release,
         _ => anyhow::bail!("XMR Tag14 release authority schema/profile is invalid"),
     };

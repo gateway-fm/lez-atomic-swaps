@@ -473,6 +473,11 @@ attestation so neither can be misreported as the other.
   Claim/Refund journals open without migration and retain user version 2. This
   is a durable composition prerequisite; the effect route, sealed worker, joined
   Monero economics and adverse process cases remain open.
+- [x] Version the Maker Tag17 effect authority through ADR 0160. Schema 3
+  requires an exact `lez_xmr_tag17_punish_v1` tool, while schema-1 Maker and
+  schema-2 Taker canonical profiles retain their prior meaning. Missing tools,
+  ABI drift and cross-version injection fail before executable or RPC use. The
+  focused authority RED/GREEN is complete; route and worker composition follow.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

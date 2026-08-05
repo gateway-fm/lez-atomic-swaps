@@ -209,6 +209,7 @@ flowchart TB
     M5XmrClock --> M7Tag17["0158 Actual Tag17 release"]
     XmrRoleJournals --> M7PunishWorkflow["0159 Durable punishment branch"]
     M7Tag17 --> M7PunishWorkflow
+    M7PunishWorkflow --> M7Tag17Authority["0160 Versioned Tag17 authority"]
 ```
 
 | ADR | Decision | Status |
@@ -372,3 +373,4 @@ flowchart TB
 | [0157](0157-preflight-and-compose-tag14-release.md) | Authenticate the Tag14 journal before workflow CAS and compose the semantic release worker with only FDs 220 through 223 | Accepted semantic-composition checkpoint; real worker preflight/invoke and literal CLI control flow are GREEN, while a joined actual-node replay, finalized observer, and Monero sweep remain |
 | [0158](0158-prepare-and-release-tag17-once.md) | Prepare the exact Maker-signed Tag17 transaction durably and release it once under transaction-derived identity | Accepted and actual-node GREEN on pushed run `m7tag17a23a314a`; the current guest deployment, pre-boundary negative, one release, two-role finalized facts and exact cleanup close local F5. Joined abandonment economics and adverse concurrency remain |
 | [0159](0159-model-tag17-as-a-durable-application-branch.md) | Persist Tag17 as a Maker-only exclusive workflow branch with one-attempt restart semantics | Accepted prerequisite; schema-v3 Punish authority and exact unmigrated schema-v2 compatibility are GREEN. Effect-router, sealed-worker and joined abandonment composition remain |
+| [0160](0160-version-maker-tag17-effect-authority.md) | Require an explicit schema-3 Maker tool before Tag17 can enter the effect router | Accepted prerequisite; canonical schema/role/ABI validation is GREEN while route selection and sealed execution remain |
