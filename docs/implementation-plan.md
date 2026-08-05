@@ -580,6 +580,20 @@ attestation so neither can be misreported as the other.
   diff hygiene. This diagnostic ID must not be reused. The next gate is a fresh
   exact-commit replay through registration, funding, send, external local
   confirmation mining and restart-only terminal observation.
+- [x] Exercise the third exact pushed joined attempt `m7refund-3e513ab-a`.
+  Both prior fixes held: schema-3 provision, application replay, real Monero
+  funding and verification, the signed refund window, Tag16 submission and
+  finalized Maker discovery all passed. Activation then failed before branch
+  selection or any refund send while revalidating the immutable Maker
+  application. The supervised path had opened the original byte-pinned adaptor
+  SQLite journal through the legacy ingestion helper immediately beforehand.
+  ADR 0169 splits custody: schema 3 passes the already-created canonical Tag16
+  packet to activation, which validates it against finalized facts and places
+  it create-new in effect custody; only the legacy M5 route retains journal
+  ingestion. The focused RED/GREEN runner contract, Bash syntax, legacy
+  ingestion tests and all ten effect-route tests pass. Exact cleanup passed and
+  this diagnostic ID must not be reused. A fresh pushed replay remains the PoC
+  gate.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

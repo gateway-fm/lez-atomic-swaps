@@ -3610,3 +3610,27 @@ The gate itself opens no RPC. The effect authority still names distinct
 literal-loopback LEZ sidecar, Monero daemon, funding wallet, shared wallet and
 Maker role-wallet origins. Actual node behavior and finality are proven by the
 joined replay rather than inferred from loopback transport.
+
+## M7 immutable adaptor-journal custody
+
+ADR 0169 keeps the schema-3 application manifest valid between finalized
+Tag16 and Refund activation. The already-created canonical Tag16 packet moves
+directly into the activation gate; only the legacy M5 route opens the original
+adaptor journal through its ingestion helper.
+
+```mermaid
+flowchart LR
+    Tag16[Canonical Tag16 packet] --> LEZ[Finalized LEZ]
+    LEZ --> Gate[Refund activation gate]
+    Manifest[Immutable schema 3 manifest] --> Gate
+    Journal[(Byte pinned adaptor journal)] --> Manifest
+    Gate --> Custody[Create new effect custody]
+    Custody --> Sender[Sealed refund sender]
+    Journal --> Sender
+    Sender --> SharedWallet[Shared wallet RPC]
+    Legacy[Legacy M5 route] --> Ingestion[Journal opening ingestion]
+```
+
+No validation is removed: the gate checks finalized byte equality and session
+identity, and the sender verifies presignature extraction before consuming its
+one-attempt wallet authority.

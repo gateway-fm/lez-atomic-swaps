@@ -2231,3 +2231,33 @@ ten confirmations using the run-owned daemon credential. Production has no
 such driver: ordinary external mining supplies confirmations. The joined mode
 is wired and contract-tested, but its first exact pushed-commit replay is still
 pending.
+
+### Schema-3 signature custody without a pre-activation journal open
+
+ADR 0169 separates the application-owned route from the legacy ingestion
+process. All paths remain owner-private and no additional endpoint is added.
+
+```mermaid
+sequenceDiagram
+    participant Tag16 as Tag16 preparation
+    participant LEZ as Local LEZ finality
+    participant Gate as Activation gate
+    participant Journal as Pinned adaptor SQLite
+    participant Evidence as Effect evidence root
+    participant Sender as Refund sender
+    participant Shared as Shared wallet RPC
+
+    Tag16->>LEZ: Submit canonical final signature
+    LEZ-->>Gate: Finalized aggregate signature
+    Gate->>Journal: Validate immutable application snapshot
+    Gate->>Gate: Compare canonical packet to finalized bytes
+    Gate->>Evidence: Publish create new
+    Sender->>Journal: Read durable presignature
+    Sender->>Evidence: Read finalized packet
+    Sender->>Sender: Extract and verify in memory
+    Sender->>Shared: Submit once
+```
+
+The activation gate itself opens no RPC. The only new behavior is avoiding a
+configured read-write/WAL open of the original byte-pinned adaptor database
+before schema-3 validation. The legacy path remains unchanged.

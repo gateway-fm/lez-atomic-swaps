@@ -8604,6 +8604,14 @@ ten-minute signed refund window is protocol time, not Monero finality time; the
 local finalized-clock driver advances it deterministically. The M7 test-only
 supervisor requeue is one second, while the default remains 3600 seconds.
 
+In supervised schema-3 mode, the runner passes the canonical packet produced
+during Tag16 preparation directly to the activation gate. It deliberately does
+not reopen the byte-pinned adaptor SQLite journal through the legacy ingestion
+helper. Activation checks that packet against finalized Tag16 facts and puts it
+in create-new effect custody; the sealed sender later verifies it against the
+durable presignature before the only wallet submission. The legacy non-M7
+refund flow retains its original ingestion and explicit extraction steps.
+
 ```mermaid
 sequenceDiagram
     participant Taker as Taker role

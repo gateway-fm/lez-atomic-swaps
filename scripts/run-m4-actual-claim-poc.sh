@@ -2899,10 +2899,11 @@ execute_run() {
     prepare_tag16_refund_signature
     publish_tag16_refund
     classify_tag16_refund_finality
-    ingest_refund_signature
     if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+      readonly maker_observed_refund_signature="$taker_refund_final_signature"
       activate_and_supervise_m7_maker_refund
     else
+      ingest_refund_signature
       extract_refund_adaptor_scalar
       sweep_monero_refund
       bind_refund_sweep

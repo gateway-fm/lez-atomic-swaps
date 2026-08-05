@@ -371,6 +371,14 @@ sidecar_line="${sidecar_line%%:*}"
 [[ "$export_line" =~ ^[0-9]+$ && "$sidecar_line" =~ ^[0-9]+$ ]] || fail "sidecar continuation boundaries are unavailable"
 (( execute_tag13_line < export_line && export_line < sidecar_line && sidecar_line < post_tag13_return_line )) || fail "tag13 handoff/sidecar completion ordering is invalid"
 
+readonly m7_refund_custody_branch='if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+      readonly maker_observed_refund_signature="$taker_refund_final_signature"
+      activate_and_supervise_m7_maker_refund
+    else
+      ingest_refund_signature'
+rg -UFq "$m7_refund_custody_branch" <<<"$execute_source" ||
+  fail "schema-3 refund path mutates its pinned adaptor journal before activation"
+
 m7_provision_source="$(function_source provision_m7_maker_effect_application)"
 [[ -n "$m7_provision_source" ]] || fail "M7 Maker effect provisioning function is unavailable"
 rg -Fq 'jq -cn \' <<<"$m7_provision_source" ||
