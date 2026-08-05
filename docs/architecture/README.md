@@ -206,6 +206,9 @@ flowchart TB
     M5XmrTag16Checkpoint --> M5XmrRefundRoles["0121 Ingest and reconstruct refund"]
     M5XmrRefundRoles --> M5XmrRefundRunner["0122 Compose refund runner tail"]
     M5XmrRefundRunner --> M5XmrClock["0123 Sealed finalized clock"]
+    M5XmrClock --> M7Tag17["0158 Actual Tag17 release"]
+    XmrRoleJournals --> M7PunishWorkflow["0159 Durable punishment branch"]
+    M7Tag17 --> M7PunishWorkflow
 ```
 
 | ADR | Decision | Status |
@@ -368,3 +371,4 @@ flowchart TB
 | [0156](0156-version-the-tag14-release-authority.md) | Require an explicit schema-v2 Taker profile before a receipt may select the semantic Tag14 release worker | Accepted authority checkpoint; v1 marker compatibility and v2 release-only paths/endpoints/ABI validation are GREEN, with custody and CLI invocation subsequently closed by ADR 0157 |
 | [0157](0157-preflight-and-compose-tag14-release.md) | Authenticate the Tag14 journal before workflow CAS and compose the semantic release worker with only FDs 220 through 223 | Accepted semantic-composition checkpoint; real worker preflight/invoke and literal CLI control flow are GREEN, while a joined actual-node replay, finalized observer, and Monero sweep remain |
 | [0158](0158-prepare-and-release-tag17-once.md) | Prepare the exact Maker-signed Tag17 transaction durably and release it once under transaction-derived identity | Accepted and actual-node GREEN on pushed run `m7tag17a23a314a`; the current guest deployment, pre-boundary negative, one release, two-role finalized facts and exact cleanup close local F5. Joined abandonment economics and adverse concurrency remain |
+| [0159](0159-model-tag17-as-a-durable-application-branch.md) | Persist Tag17 as a Maker-only exclusive workflow branch with one-attempt restart semantics | Accepted prerequisite; schema-v3 Punish authority and exact unmigrated schema-v2 compatibility are GREEN. Effect-router, sealed-worker and joined abandonment composition remain |

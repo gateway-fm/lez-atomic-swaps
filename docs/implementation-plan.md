@@ -464,6 +464,15 @@ attestation so neither can be misreported as the other.
   seconds and the independent Taker view another four. F5 is GREEN locally.
   F3 and F6 remain open for joined abandonment economics and adverse recovery
   races rather than for missing Tag17 chain execution.
+- [x] Add the first application-owned Tag17 authority boundary through ADR 0159.
+  Workflow schema v3 adds a Maker-only Punish branch after reconciled Monero
+  funding, makes Claim Refund and Punish mutually exclusive, consumes exactly
+  one invocation authority, and reconciles completion only from exact finalized
+  LEZ evidence. Focused RED/GREEN covers wrong-role and losing-branch rejection,
+  restart ObserveOnly, Unknown recovery, and exact replay. Existing schema-v2
+  Claim/Refund journals open without migration and retain user version 2. This
+  is a durable composition prerequisite; the effect route, sealed worker, joined
+  Monero economics and adverse process cases remain open.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

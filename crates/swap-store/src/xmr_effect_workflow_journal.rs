@@ -17,10 +17,10 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension as _, TransactionBehavio
 use crate::{StoreError, participant_name};
 
 const APPLICATION_ID: i64 = 0x4c58_5752;
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const MAX_RUN_ID_BYTES: usize = 128;
 
-const CREATE_SCHEMA: &str = "
+const CREATE_SCHEMA_V2: &str = "
 CREATE TABLE xmr_workflow_identity (
     singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
     swap_id TEXT NOT NULL CHECK (length(swap_id) = 64),
@@ -73,6 +73,25 @@ CREATE TABLE xmr_workflow_steps (
     FOREIGN KEY (singleton_id) REFERENCES xmr_workflow_identity(singleton_id)
 ) STRICT, WITHOUT ROWID;
 ";
+
+fn create_schema_v3() -> String {
+    CREATE_SCHEMA_V2
+        .replacen(
+            "selected_branch IN ('claim', 'refund')",
+            "selected_branch IN ('claim', 'refund', 'punish')",
+            1,
+        )
+        .replacen(
+            "'refund_lez_tag16', 'sweep_monero_refund'",
+            "'refund_lez_tag16', 'sweep_monero_refund', 'punish_lez_tag17'",
+            1,
+        )
+        .replacen(
+            "scope IN ('common', 'claim', 'refund')",
+            "scope IN ('common', 'claim', 'refund', 'punish')",
+            1,
+        )
+}
 
 /// Immutable identity of one role-local XMR workflow.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -133,6 +152,8 @@ pub enum XmrWorkflowBranch {
     Claim,
     /// Deadline recovery path.
     Refund,
+    /// Later Maker punishment after Taker abandonment.
+    Punish,
 }
 
 impl XmrWorkflowBranch {
@@ -140,6 +161,7 @@ impl XmrWorkflowBranch {
         match self {
             Self::Claim => "claim",
             Self::Refund => "refund",
+            Self::Punish => "punish",
         }
     }
 
@@ -147,6 +169,7 @@ impl XmrWorkflowBranch {
         match value {
             "claim" => Ok(Self::Claim),
             "refund" => Ok(Self::Refund),
+            "punish" => Ok(Self::Punish),
             _ => Err(StoreError::CorruptXmrWorkflowState),
         }
     }
@@ -162,6 +185,8 @@ pub enum XmrWorkflowStepScope {
     Claim,
     /// Deadline recovery path.
     Refund,
+    /// Later Maker punishment after Taker abandonment.
+    Punish,
 }
 
 impl XmrWorkflowStepScope {
@@ -170,6 +195,7 @@ impl XmrWorkflowStepScope {
             Self::Common => "common",
             Self::Claim => "claim",
             Self::Refund => "refund",
+            Self::Punish => "punish",
         }
     }
 
@@ -178,6 +204,7 @@ impl XmrWorkflowStepScope {
             "common" => Ok(Self::Common),
             "claim" => Ok(Self::Claim),
             "refund" => Ok(Self::Refund),
+            "punish" => Ok(Self::Punish),
             _ => Err(StoreError::CorruptXmrWorkflowState),
         }
     }
@@ -187,6 +214,7 @@ impl XmrWorkflowStepScope {
             Self::Common => None,
             Self::Claim => Some(XmrWorkflowBranch::Claim),
             Self::Refund => Some(XmrWorkflowBranch::Refund),
+            Self::Punish => Some(XmrWorkflowBranch::Punish),
         }
     }
 }
@@ -288,11 +316,13 @@ pub enum XmrWorkflowStep {
     RefundLezTag16,
     /// Maker sweeps the refund-path shared Monero output.
     SweepMoneroRefund,
+    /// Maker publishes the later LEZ tag-17 punishment.
+    PunishLezTag17,
 }
 
 impl XmrWorkflowStep {
     /// Complete stable effect-step catalog in protocol order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::InitializeLezTag13,
         Self::FundLezTag13,
         Self::FundMonero,
@@ -301,6 +331,7 @@ impl XmrWorkflowStep {
         Self::SweepMoneroClaim,
         Self::RefundLezTag16,
         Self::SweepMoneroRefund,
+        Self::PunishLezTag17,
     ];
 
     /// Stable lowercase name used by durable state and effect-worker ABIs.
@@ -315,6 +346,7 @@ impl XmrWorkflowStep {
             Self::SweepMoneroClaim => "sweep_monero_claim",
             Self::RefundLezTag16 => "refund_lez_tag16",
             Self::SweepMoneroRefund => "sweep_monero_refund",
+            Self::PunishLezTag17 => "punish_lez_tag17",
         }
     }
 
@@ -322,12 +354,29 @@ impl XmrWorkflowStep {
     #[must_use]
     pub const fn role(self) -> Participant {
         match self {
-            Self::FundMonero | Self::ClaimLezTag15 | Self::SweepMoneroRefund => Participant::Maker,
+            Self::FundMonero
+            | Self::ClaimLezTag15
+            | Self::SweepMoneroRefund
+            | Self::PunishLezTag17 => Participant::Maker,
             Self::InitializeLezTag13
             | Self::FundLezTag13
             | Self::AuthorizeLezTag14
             | Self::SweepMoneroClaim
             | Self::RefundLezTag16 => Participant::Taker,
+        }
+    }
+
+    const fn reconciliation_source(self) -> XmrWorkflowReconciliationSource {
+        match self {
+            Self::FundMonero | Self::SweepMoneroClaim | Self::SweepMoneroRefund => {
+                XmrWorkflowReconciliationSource::MoneroWalletTransaction
+            }
+            Self::InitializeLezTag13
+            | Self::FundLezTag13
+            | Self::AuthorizeLezTag14
+            | Self::ClaimLezTag15
+            | Self::RefundLezTag16
+            | Self::PunishLezTag17 => XmrWorkflowReconciliationSource::LezFinalizedEvent,
         }
     }
 
@@ -341,6 +390,7 @@ impl XmrWorkflowStep {
                 XmrWorkflowStepScope::Claim
             }
             Self::RefundLezTag16 | Self::SweepMoneroRefund => XmrWorkflowStepScope::Refund,
+            Self::PunishLezTag17 => XmrWorkflowStepScope::Punish,
         }
     }
 
@@ -349,7 +399,9 @@ impl XmrWorkflowStep {
             Self::InitializeLezTag13 | Self::FundMonero => None,
             Self::FundLezTag13 => Some(Self::InitializeLezTag13),
             Self::AuthorizeLezTag14 | Self::RefundLezTag16 => Some(Self::FundLezTag13),
-            Self::ClaimLezTag15 | Self::SweepMoneroRefund => Some(Self::FundMonero),
+            Self::ClaimLezTag15 | Self::SweepMoneroRefund | Self::PunishLezTag17 => {
+                Some(Self::FundMonero)
+            }
             Self::SweepMoneroClaim => Some(Self::AuthorizeLezTag14),
         }
     }
@@ -364,6 +416,7 @@ impl XmrWorkflowStep {
             "sweep_monero_claim" => Ok(Self::SweepMoneroClaim),
             "refund_lez_tag16" => Ok(Self::RefundLezTag16),
             "sweep_monero_refund" => Ok(Self::SweepMoneroRefund),
+            "punish_lez_tag17" => Ok(Self::PunishLezTag17),
             _ => Err(StoreError::CorruptXmrWorkflowState),
         }
     }
@@ -464,7 +517,7 @@ impl SqliteXmrWorkflowJournal {
         Ok(journal)
     }
 
-    /// Opens an existing exact schema-v1 journal without creating or migrating it.
+    /// Opens an existing exact supported journal without creating or migrating it.
     ///
     /// # Errors
     ///
@@ -706,7 +759,7 @@ impl SqliteXmrWorkflowJournal {
     ///
     /// # Errors
     ///
-    /// Schema v2 requires `reconcile_succeeded` with exact evidence.
+    /// Supported schemas require `reconcile_succeeded` with exact evidence.
     pub fn mark_succeeded(
         &mut self,
         identity: &XmrWorkflowIdentityV1,
@@ -777,7 +830,7 @@ impl SqliteXmrWorkflowJournal {
         reconciliation: &XmrWorkflowReconciliationV2,
     ) -> Result<(), StoreError> {
         ensure_step_role(identity, step)?;
-        validate_reconciliation(reconciliation)?;
+        validate_reconciliation(step, reconciliation)?;
         self.revalidate_storage()?;
         let transaction = self
             .connection
@@ -869,7 +922,8 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
         return Err(StoreError::ForeignXmrWorkflowSchema);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(CREATE_SCHEMA)?;
+    let schema = create_schema_v3();
+    transaction.execute_batch(&schema)?;
     transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -882,7 +936,7 @@ fn validate_connection(connection: &Connection) -> Result<(), StoreError> {
     if version > SCHEMA_VERSION {
         return Err(StoreError::FutureXmrWorkflowSchema);
     }
-    if app != APPLICATION_ID || version != SCHEMA_VERSION {
+    if app != APPLICATION_ID || !(2..=SCHEMA_VERSION).contains(&version) {
         return Err(StoreError::ForeignXmrWorkflowSchema);
     }
     let names: String = connection.query_row(
@@ -905,7 +959,12 @@ fn validate_connection(connection: &Connection) -> Result<(), StoreError> {
         [],
         |row| row.get(0),
     )?;
-    let (expected_identity_sql, expected_steps_tail) = CREATE_SCHEMA
+    let expected_schema = if version == 2 {
+        CREATE_SCHEMA_V2.to_owned()
+    } else {
+        create_schema_v3()
+    };
+    let (expected_identity_sql, expected_steps_tail) = expected_schema
         .split_once("CREATE TABLE xmr_workflow_steps")
         .ok_or(StoreError::CorruptXmrWorkflowState)?;
     let expected_steps_sql = format!("CREATE TABLE xmr_workflow_steps{expected_steps_tail}");
@@ -1120,11 +1179,15 @@ fn ensure_predecessor(connection: &Connection, step: XmrWorkflowStep) -> Result<
     }
 }
 
-fn validate_reconciliation(reconciliation: &XmrWorkflowReconciliationV2) -> Result<(), StoreError> {
-    if reconciliation
-        .effect_evidence_sha256
-        .iter()
-        .all(|byte| *byte == 0)
+fn validate_reconciliation(
+    step: XmrWorkflowStep,
+    reconciliation: &XmrWorkflowReconciliationV2,
+) -> Result<(), StoreError> {
+    if reconciliation.source != step.reconciliation_source()
+        || reconciliation
+            .effect_evidence_sha256
+            .iter()
+            .all(|byte| *byte == 0)
         || reconciliation
             .tool_plan_identity_sha256
             .iter()
@@ -1169,6 +1232,10 @@ fn validate_step(
         && snapshot.role == identity.local_role
         && snapshot.role == expected.role()
         && snapshot.scope == expected.scope()
+        && snapshot
+            .reconciliation
+            .as_ref()
+            .is_none_or(|value| value.source == expected.reconciliation_source())
     {
         Ok(())
     } else {
@@ -1308,4 +1375,64 @@ fn sync_parent(path: &Path) -> Result<(), StoreError> {
 struct FileIdentity {
     device: u64,
     inode: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn exact_schema_v2_remains_readable_and_unmigrated() {
+        let root = tempdir().expect("isolated schema-v2 compatibility root");
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.path().join("workflow-v2.sqlite3");
+        drop(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .unwrap(),
+        );
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(CREATE_SCHEMA_V2).unwrap();
+        connection
+            .pragma_update(None, "application_id", APPLICATION_ID)
+            .unwrap();
+        connection.pragma_update(None, "user_version", 2).unwrap();
+        drop(connection);
+
+        let identity = XmrWorkflowIdentityV1::new(
+            SwapId::new("a7".repeat(32)).unwrap(),
+            Participant::Maker,
+            "schema-v2-compatibility".into(),
+            [0xa8; 32],
+            [0xa9; 32],
+            [0xaa; 32],
+        )
+        .unwrap();
+        let mut journal = SqliteXmrWorkflowJournal::open_existing(&path).unwrap();
+        journal.initialize(&identity).unwrap();
+        journal
+            .prepare_step(&identity, XmrWorkflowStep::FundMonero)
+            .unwrap();
+        journal
+            .select_branch(&identity, XmrWorkflowBranch::Refund)
+            .unwrap();
+        assert!(
+            journal
+                .select_branch(&identity, XmrWorkflowBranch::Punish)
+                .is_err(),
+            "schema-v2 cannot persist the additive schema-v3 branch"
+        );
+        drop(journal);
+
+        let connection = Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2, "opening schema-v2 must not migrate it");
+    }
 }

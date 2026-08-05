@@ -2726,8 +2726,8 @@ sequenceDiagram
     T->>B: Bind Stage A and B, journal, finalized tag 15, packet, and extraction
     X-->>B: Independent receipt at block 121 under stable tip 130
     B-->>T: Owner-private conditional-atomicity snapshot
-    Note over T,M: Claim path is GREEN and Tag16 and Tag17 are separately actual-node GREEN
-    Note over T,M: Joined abandonment economics and adverse recovery races remain
+    Note over T,M: No canonical reveal before cutoff leaves only recovery branches
+    Note over T,M: Implementation status claim Tag16 and Tag17 are separately actual-node GREEN and joined abandonment remains open
 ```
 
 #### Recovery sequence and remaining joined proof

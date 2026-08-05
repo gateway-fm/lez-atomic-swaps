@@ -43,12 +43,11 @@ fn create(
     byte: u8,
 ) -> (SqliteXmrWorkflowJournal, XmrWorkflowIdentityV1) {
     let path = root.join(format!("workflow-{byte:02x}.sqlite3"));
-    let mut journal =
-        SqliteXmrWorkflowJournal::create_new(path).expect("create schema-v2 workflow");
+    let mut journal = SqliteXmrWorkflowJournal::create_new(path).expect("create current workflow");
     let identity = identity(role, byte);
     journal
         .initialize(&identity)
-        .expect("initialize schema-v2 workflow");
+        .expect("initialize current workflow");
     (journal, identity)
 }
 
@@ -77,10 +76,10 @@ fn complete_prepared(
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn schema_v2_catalog_has_exact_scopes_roles_and_role_local_predecessors() {
+fn schema_v3_catalog_has_exact_scopes_roles_and_role_local_predecessors() {
     use XmrWorkflowStep::{
         AuthorizeLezTag14, ClaimLezTag15, FundLezTag13, FundMonero, InitializeLezTag13,
-        RefundLezTag16, SweepMoneroClaim, SweepMoneroRefund,
+        PunishLezTag17, RefundLezTag16, SweepMoneroClaim, SweepMoneroRefund,
     };
 
     let expected = [
@@ -118,6 +117,11 @@ fn schema_v2_catalog_has_exact_scopes_roles_and_role_local_predecessors() {
         (
             SweepMoneroRefund,
             XmrWorkflowStepScope::Refund,
+            Participant::Maker,
+        ),
+        (
+            PunishLezTag17,
+            XmrWorkflowStepScope::Punish,
             Participant::Maker,
         ),
     ];
@@ -287,7 +291,7 @@ fn started_and_unknown_reconcile_once_with_exact_persisted_v2_evidence() {
         } else {
             assert!(
                 journal.mark_succeeded(&identity, step).is_err(),
-                "schema v2 forbids evidence-free success"
+                "current workflow forbids evidence-free success"
             );
         }
 
@@ -361,7 +365,7 @@ fn started_and_unknown_reconcile_once_with_exact_persisted_v2_evidence() {
         let path = root.path().join(format!("workflow-{byte:02x}.sqlite3"));
         drop(journal);
         let mut reopened =
-            SqliteXmrWorkflowJournal::open_existing(path).expect("reopen schema-v2 workflow");
+            SqliteXmrWorkflowJournal::open_existing(path).expect("reopen current workflow");
         assert_eq!(
             reopened.authorize_once(&identity, step).unwrap(),
             XmrWorkflowDecision::Complete
