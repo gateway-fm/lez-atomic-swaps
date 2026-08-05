@@ -2705,21 +2705,35 @@ provision_m7_taker_claim_effect_application() {
   chmod 0600 "$m7_taker_effect_authority"
   require_owner_file "$m7_taker_effect_authority" "M7 Taker effect authority"
 
-  start_m5_xmr_application_daemon m7-claim-authority 1
-  run_m5_xmr_taker_acceptance "$m7_taker_effect_acceptance" 0 1
-  stop_m5_xmr_application_daemon ||
-    fail "M7 Taker authority daemon did not stop after receipt-v2 upgrade"
+  "$agreement_actor_binary" provision-effect-application taker \
+    --application-manifest "$taker_application_manifest" \
+    --effect-authority "$m7_taker_effect_authority" \
+    --workflow-journal "$m7_taker_effect_workflow" \
+    --run-id "$run_id" --output-manifest "$m7_taker_effect_manifest" \
+    >"$m7_taker_effect_acceptance"
+  chmod 0600 "$m7_taker_effect_acceptance"
   require_owner_file "$m7_taker_effect_manifest" "M7 Taker effect manifest"
   require_owner_file "$m7_taker_effect_workflow" "M7 Taker effect workflow"
+  jq -cS --arg authority "$m7_taker_effect_authority" \
+    --arg authority_sha "$(sha256_file "$m7_taker_effect_authority")" \
+    --arg manifest "$m7_taker_effect_manifest" \
+    --arg manifest_sha "$(sha256_file "$m7_taker_effect_manifest")" \
+    --arg workflow "$m7_taker_effect_workflow" --arg run "$run_id" '
+      . + {schema_version:2,run_id:$run,
+        effect_authority_file:$authority,effect_authority_sha256:$authority_sha,
+        effect_manifest_file:$manifest,effect_manifest_sha256:$manifest_sha,
+        workflow_journal:$workflow}
+    ' "$m5_xmr_taker_receipt" >"$m7_taker_effect_receipt"
+  chmod 0600 "$m7_taker_effect_receipt"
   require_owner_file "$m7_taker_effect_receipt" "M7 Taker receipt-v2"
   jq -e --arg swap "$m5_xmr_planned_swap_id" '
-    .schema_version==1 and .swap_id==$swap
-    and .replay=={stage_a:true,activation:true}
-    and .actor.role=="taker" and .actor.provisioning_replay==true
-    and .actor.effect_provisioning_replay==false and .actor.receipt_replay==false
+    .schema_version==1 and .swap_id==$swap and .role=="taker"
+    and .was_replay==false
+    and (.config_sha256|test("^[0-9a-f]{64}$"))
+    and (.effect_authority_sha256|test("^[0-9a-f]{64}$"))
     and .private_material_disclosed==false
   ' "$m7_taker_effect_acceptance" >/dev/null ||
-    fail "M7 Taker receipt-v2 upgrade drift"
+    fail "M7 Taker direct effect promotion drift"
   jq -e --arg run "$run_id" --arg swap "$m5_xmr_planned_swap_id" '
     .schema_version==2 and .pair=="monero" and .role=="taker"
     and .run_id==$run and .swap_id==$swap

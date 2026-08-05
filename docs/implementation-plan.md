@@ -6676,5 +6676,12 @@ S12/S13 review and policy-deferred public deployment.
   focused syntax, boolean-regression, M4 and M5 contract checks are GREEN.
   Until the fresh replay succeeds, Tag14 remains implementation-ready rather
   than actual-node certified.
+- [ ] Replay the direct effect-promotion correction. The `a204cca` replay
+  proved the boolean fix, finalized Tag13, confirmed Monero funding and release
+  preparation, then correctly rejected full actor reprovisioning after the
+  role journal had advanced. The runner now reuses
+  `provision-effect-application` on the accepted actor and composes canonical
+  receipt v2 from the immutable receipt v1 plus digest-pinned effect provision;
+  exact cleanup and focused runner contracts are GREEN.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

@@ -110,6 +110,15 @@ passed. The follow-up emits explicit booleans and retains byte-identical safe
 activation and Tag14-finality evidence outside the private cleanup boundary;
 a fresh commit-bound replay remains required.
 
+The source-bound `a204cca` replay then proved that fix, finalized Tag13, both
+chain prerequisites and release preparation. Its next RED occurred before
+Tag14 because full actor reprovisioning was attempted after Tag13 had
+legitimately advanced the role journal. The correction reuses the existing
+`provision-effect-application` promotion command against the already accepted
+actor manifest, then composes the canonical receipt v2 from receipt v1 and the
+digest-pinned effect provision. It does not replay or weaken actor authority.
+Exact cleanup again passed.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public
