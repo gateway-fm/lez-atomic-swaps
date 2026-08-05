@@ -119,6 +119,17 @@ actor manifest, then composes the canonical receipt v2 from receipt v1 and the
 digest-pinned effect provision. It does not replay or weaken actor authority.
 Exact cleanup again passed.
 
+The source-bound `2d3c859` replay proved the direct promotion: checked LEZ
+deployment and actor claims, Monero 0.18.5.1 isolation, finalized Tag13,
+confirmed Monero funding, and a fresh schema-2 Taker effect application all
+passed. The next RED exposed an activator defect before Tag14: it decoded the
+typed canonical Tag13 document through an untyped JSON map, reordered its
+fields, and rejected the honest producer bytes as noncanonical. Exact cleanup
+passed with the no-retry latch preserved and no foreign or broad cleanup. The
+correction validates and decodes `Tag13EvidenceV2` in one typed operation; the
+complete XMR reference-actor suite is GREEN, and a fresh source-bound replay is
+required.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

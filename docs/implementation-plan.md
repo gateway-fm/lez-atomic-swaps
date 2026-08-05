@@ -6683,5 +6683,11 @@ S12/S13 review and policy-deferred public deployment.
   `provision-effect-application` on the accepted actor and composes canonical
   receipt v2 from the immutable receipt v1 plus digest-pinned effect provision;
   exact cleanup and focused runner contracts are GREEN.
+- [ ] Replay the typed Tag13 correction. Exact run `m7claim-2d3c859-a` proved
+  the direct effect promotion and both chain prerequisites, then preserved a
+  RED because the new activator decoded typed canonical producer bytes through
+  an untyped JSON map before comparing them. Cleanup schema v2 passed. The
+  activator now decodes the typed schema directly, and the full XMR
+  reference-actor suite is GREEN.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

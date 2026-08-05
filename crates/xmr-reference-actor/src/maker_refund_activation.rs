@@ -224,10 +224,10 @@ pub(crate) fn activate_taker_claim_workflow(
         "claim activation application identity changed"
     );
 
-    let (tag13_value, tag13_bytes) =
-        read_canonical_private_json::<Value>(tag13_evidence, "finalized Tag-13 evidence")?;
-    let tag13: Tag13EvidenceV2 =
-        serde_json::from_value(tag13_value).context("decode finalized Tag-13 evidence")?;
+    let (tag13, tag13_bytes) = read_canonical_private_json::<Tag13EvidenceV2>(
+        tag13_evidence,
+        "finalized Tag-13 evidence",
+    )?;
     validate_tag13(&execution, &agreement, &activation, &tag13)?;
 
     let (funding, funding_bytes) = read_canonical_private_json::<FundingEvidenceV2>(
