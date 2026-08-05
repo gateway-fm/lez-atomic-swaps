@@ -150,6 +150,7 @@ unique_line() {
 
 for required in \
   'readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"' \
+  'readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : 3600))' \
   'M5_XMR_APPLICATION_MODE must be unset, 0, or 1' \
   'RUN_ID="$artifact_run_id" "$artifact_runner" verify-source' \
   'cargo +1.96.0 build --locked --offline -p lez-maker-node' \
@@ -172,7 +173,7 @@ for required in \
   'provision-application maker' \
   '--xmr-actor-manifest-registry-file "$m5_xmr_actor_registry"' \
   '--accept-xmr-offer "$m5_xmr_offer_id"' \
-  '--actor-requeue-delay-seconds 3600' \
+  '--actor-requeue-delay-seconds "$m5_actor_requeue_delay_seconds"' \
   'next_action:"xmr_chain_effects_not_yet_composed"' \
   'mv "$m5_xmr_delivery_root" "$m5_xmr_removed_delivery_root"' \
   'm5_delivery_offer_files_absent "$m5_xmr_delivery_root"' \
@@ -180,7 +181,8 @@ for required in \
   'cmp -- "$m5_xmr_journals_before" "$m5_xmr_journals_after"' \
   'stop_m5_xmr_application_daemon || fail "M5 XMR replay daemon did not stop before legacy Tag 13"' \
   'verify_m5_xmr_application_cutoff() {' \
-  'configured_reobservation_seconds:3600' \
+  '--argjson requeue_delay "$m5_actor_requeue_delay_seconds"' \
+  'configured_reobservation_seconds:$requeue_delay' \
   'ps -eo pgid=,stat=' \
   '$2 !~ /^Z/' \
   'readonly m5_xmr_reconciled_delivery_root=' \
@@ -223,13 +225,21 @@ artifact_preflight_line="$(unique_line '^  RUN_ID="\$artifact_run_id" "\$artifac
 build_line="$(unique_line '^  build_identity_and_artifact$' 'heavy build invocation')"
 plan_line="$(unique_line '^    prepare_m5_xmr_delivery_plan$' 'M5 plan invocation')"
 compose_line="$(unique_line '^  compose_xmr_agreement$' 'agreement invocation')"
-handoff_line="$(unique_line '^    complete_m5_xmr_application_handoff$' 'M5 handoff invocation')"
+mapfile -t handoff_lines < <(
+  rg -n '^    complete_m5_xmr_application_handoff$' "$runner" | sed 's/:.*//'
+)
+[[ "${#handoff_lines[@]}" == 2 ]] ||
+  fail 'delegated runner must contain ordinary and M7 handoff invocations exactly once each'
+handoff_line="${handoff_lines[0]}"
+m7_handoff_line="${handoff_lines[1]}"
 cutoff_line="$(unique_line '^    verify_m5_xmr_application_cutoff$' 'M5 cutoff invocation')"
 tag13_line="$(unique_line '^  submit_tag13$' 'Tag13 invocation')"
-readonly artifact_preflight_line build_line plan_line compose_line handoff_line cutoff_line tag13_line
+sidecars_line="$(unique_line '^  start_role_sidecars$' 'role-sidecar invocation')"
+readonly artifact_preflight_line build_line plan_line compose_line handoff_line m7_handoff_line cutoff_line tag13_line sidecars_line
 (( artifact_preflight_line < build_line && build_line < plan_line &&
    plan_line < compose_line && compose_line < handoff_line &&
-   handoff_line < cutoff_line && cutoff_line < tag13_line )) ||
+   handoff_line < cutoff_line && cutoff_line < tag13_line &&
+   tag13_line < sidecars_line && sidecars_line < m7_handoff_line )) ||
   fail 'M5 application plan/handoff/cutoff does not precede legacy Tag13 exactly'
 
 replay_daemon_line="$(unique_line '^  start_m5_xmr_application_daemon replay 1$' 'M5 replay daemon invocation')"
@@ -494,16 +504,18 @@ refund_wait_line="$(unique_line '^    wait_for_m5_xmr_refund_window$' 'refund-wi
 refund_prepare_line="$(unique_line '^    prepare_tag16_refund_signature$' 'tag16 signature invocation')"
 refund_publish_line="$(unique_line '^    publish_tag16_refund$' 'tag16 publication invocation')"
 refund_classify_line="$(unique_line '^    classify_tag16_refund_finality$' 'tag16 classification invocation')"
-refund_ingest_line="$(unique_line '^    ingest_refund_signature$' 'refund ingestion invocation')"
-refund_extract_line="$(unique_line '^    extract_refund_adaptor_scalar$' 'refund extraction invocation')"
-refund_sweep_line="$(unique_line '^    sweep_monero_refund$' 'refund sweep invocation')"
-refund_bind_line="$(unique_line '^    bind_refund_sweep$' 'refund binding invocation')"
+supervised_refund_line="$(unique_line '^      activate_and_supervise_m7_maker_refund$' 'M7 supervised refund invocation')"
+refund_ingest_line="$(unique_line '^      ingest_refund_signature$' 'refund ingestion invocation')"
+refund_extract_line="$(unique_line '^      extract_refund_adaptor_scalar$' 'refund extraction invocation')"
+refund_sweep_line="$(unique_line '^      sweep_monero_refund$' 'refund sweep invocation')"
+refund_bind_line="$(unique_line '^      bind_refund_sweep$' 'refund binding invocation')"
 readonly refund_wait_line refund_prepare_line refund_publish_line refund_classify_line
-readonly refund_ingest_line refund_extract_line refund_sweep_line refund_bind_line
+readonly supervised_refund_line refund_ingest_line refund_extract_line refund_sweep_line refund_bind_line
 (( refund_wait_line < refund_prepare_line && refund_prepare_line < refund_publish_line &&
-   refund_publish_line < refund_classify_line && refund_classify_line < refund_ingest_line &&
+   refund_publish_line < refund_classify_line && refund_classify_line < supervised_refund_line &&
+   supervised_refund_line < refund_ingest_line &&
    refund_ingest_line < refund_extract_line && refund_extract_line < refund_sweep_line &&
    refund_sweep_line < refund_bind_line )) ||
-  fail 'M5 refund journey order is not wait/adapt/tag16/classify/ingest/extract/sweep/bind'
+  fail 'refund journey order does not branch after finality into supervised M7 or legacy ingest/extract/sweep/bind'
 
 echo 'M5 XMR application-to-chain contract passed'

@@ -637,6 +637,14 @@ attestation so neither can be misreported as the other.
   `docs/evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`. The receipt
   survived cleanup as mode `0600` with one link; the private source and every
   exact run-labelled Docker resource were absent afterward.
+- [x] Run the complete pinned CI quality suite after certificate publication.
+  RED first found ShellCheck SC2034 in the dynamically scoped retention fixture
+  and a stale M5 contract that still required one literal 3600-second handoff.
+  GREEN exports the fixture root and proves the production 3600-second default,
+  isolated M7 one-second override, exact daemon/evidence propagation, and both
+  ordered pre-Tag13 and post-sidecar handoffs. ShellCheck, Actionlint, Hadolint,
+  Compose validation, all M3/M5/M6/M7 contracts, certificate checks, fuzz,
+  SPEL ABI and nonconnecting public-guide route tests pass.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

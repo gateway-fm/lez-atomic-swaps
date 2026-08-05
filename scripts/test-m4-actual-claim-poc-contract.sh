@@ -456,7 +456,7 @@ jq -cn '
 ' >"$m7_retention_source"
 chmod 0600 "$m7_retention_source"
 (
-  evidence_root="$m7_retention_root"
+  export evidence_root="$m7_retention_root"
   eval "$(function_source require_owner_file)"
   eval "$m7_finality_retention_source"
   retain_m7_refund_finality_evidence "$m7_retention_source"
@@ -467,7 +467,7 @@ cmp -s -- "$m7_retention_source" "$m7_retained_finality" ||
 [[ "$(stat -c '%a:%h' "$m7_retained_finality")" == "600:1" ]] ||
   fail "M7 retained refund finality is not owner-private and single-link"
 if (
-  evidence_root="$m7_retention_root"
+  export evidence_root="$m7_retention_root"
   eval "$(function_source require_owner_file)"
   eval "$m7_finality_retention_source"
   retain_m7_refund_finality_evidence "$m7_retention_source"
