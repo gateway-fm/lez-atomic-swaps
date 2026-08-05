@@ -2615,8 +2615,21 @@ provision_m7_taker_claim_effect_application() {
   readonly m7_taker_effect_acceptance="$evidence_root/m7-taker-effect-acceptance.json"
   readonly m7_taker_release_capability="$m7_taker_effect_root/tag14-release.capability"
   mkdir -m 0700 "$m7_taker_effect_root" "$m7_taker_effect_evidence_root"
-  install -m 0600 -- "$taker_sidecar_root/capability" "$m7_taker_release_capability"
+  local release_capability_partial
+  release_capability_partial="$(mktemp "${m7_taker_release_capability}.partial.XXXXXXXX")"
+  if ! tr -d '\r\n' <"$taker_sidecar_root/capability" >"$release_capability_partial"; then
+    rm -f -- "$release_capability_partial"
+    fail "M7 Taker release capability normalization failed"
+  fi
+  chmod 0600 "$release_capability_partial"
+  if ! ln -- "$release_capability_partial" "$m7_taker_release_capability"; then
+    rm -f -- "$release_capability_partial"
+    fail "M7 Taker release capability create-new publication failed"
+  fi
+  rm -f -- "$release_capability_partial"
   require_owner_file "$m7_taker_release_capability" "M7 Taker release capability"
+  [[ "$(wc -c <"$m7_taker_release_capability")" -eq 64 ]] ||
+    fail "M7 Taker release capability must contain exactly 64 bytes"
   [[ ! "$m7_taker_release_capability" -ef "$taker_sidecar_root/capability" ]] ||
     fail "M7 Taker general and release capabilities alias one inode"
 

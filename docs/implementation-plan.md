@@ -6715,5 +6715,14 @@ S12/S13 review and policy-deferred public deployment.
   tolerated that terminator, while the least-privilege sealed-descriptor worker
   correctly requires exactly 64 bytes. The runner now strips only that output
   terminator before the key is persisted; exact cleanup passed.
+- [ ] Replay newline-free sealed release-capability composition. Exact run
+  `m7claim-fa7e3ec-a` showed that the key correction was necessary but
+  incomplete: it reached the same non-sending child, where the copied sidecar
+  bearer also retained the launcher's line terminator. The ordinary pathname
+  reader explicitly removes one line ending; the sealed worker correctly gives
+  raw descriptor bytes to the strict bearer grammar. The dedicated release
+  copy is now normalized into a distinct create-new inode and asserted to be
+  exactly 64 bytes. The live sidecar credential and strict worker are unchanged;
+  exact cleanup passed.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

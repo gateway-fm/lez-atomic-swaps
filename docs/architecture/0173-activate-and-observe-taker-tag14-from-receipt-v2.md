@@ -162,6 +162,15 @@ descriptor worker deliberately accepts exactly 64 key bytes. The runner now
 removes only the generator's line terminator before persisting the owner-private
 key; no worker parser or security boundary is relaxed. Exact cleanup passed.
 
+The source-bound `fa7e3ec` replay demonstrated that the key correction was
+necessary but incomplete. The copied sidecar bearer had the same representation
+mismatch: its launcher emits one line terminator and ordinary pathname readers
+explicitly remove it, whereas the sealed worker correctly applies the strict
+bearer grammar directly to descriptor bytes. The runner now normalizes only the
+dedicated release-capability copy, publishes it create-new on a distinct inode,
+and requires exactly 64 bytes. The live sidecar credential, authenticated value,
+and strict worker parser remain unchanged. Exact cleanup passed.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public
