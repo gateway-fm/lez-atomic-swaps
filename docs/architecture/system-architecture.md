@@ -2554,11 +2554,12 @@ The atomicity claim is deliberately local. Stage A cannot create a coordinator, 
 The schema-v2 scheduled actor above remains the honest zero-effect application
 cutoff. Separately, schema-v3 receipt/effect authority now has a node-free
 role-fixed receipt-v2 process-invocation boundary. The loader retains the immutable
-effect-authority digest and exact initialized workflow identity. Only six
-sending slots are admitted: Maker Monero fund, tag 15, and Monero refund sweep;
-and Taker tag 14, Monero claim sweep, and tag 16. ADR 0154 makes Tag16 the
-first real semantic sender on this boundary; the other slots remain at their
-previous implementation levels.
+effect-authority digest and exact initialized workflow identity. Only seven
+sending slots are admitted: Maker Monero fund, tag 15, Monero refund sweep,
+and tag 17; and Taker tag 14, Monero claim sweep, and tag 16. ADR 0154 makes
+Tag16 the first real semantic sender on this boundary and ADR 0162 adds the
+semantic Tag17 sender; the other slots remain at their previous implementation
+levels.
 
 ```mermaid
 flowchart TB
@@ -2567,7 +2568,7 @@ flowchart TB
     Loader --> Selector["Role and workflow selector"]
     Selector --> Pin["Hash pin role-specific inputs and dual locks"]
     Pin --> Share["Add sealed FD 218 only for share-consuming senders"]
-    Pin --> Authorize["Workflow v2 durable CAS"]
+    Pin --> Authorize["Workflow v2 or v3 durable CAS"]
     Authorize -->|Prepared schema 1| Invoke["InvokeOnce"]
     Invoke --> Tag14["Legacy Tag14 sender marker"]
     ReleaseAuthority["Schema 2 Taker release authority"] --> ReleasePreflight["Tag14 release preflight with FDs 220 to 223"]
@@ -2581,6 +2582,14 @@ flowchart TB
     ReleaseSidecar -.-> Node
     Invoke --> Tag16["Real Tag16 sender"]
     Share --> Tag16
+    MakerAuthority["Schema 3 Maker Tag17 authority"] --> Tag17Preflight["Prepare-only semantic Tag17 worker"]
+    Pin --> Tag17Preflight
+    Tag17Preflight --> Authorize
+    Authorize -->|"Prepared schema 3 to Started CAS"| Tag17Worker["One-attempt semantic Tag17 worker"]
+    Tag17Worker --> Sidecar
+    Tag17Worker --> Started
+    Share -.-> Excluded["FD 218 rejected by Tag17 worker"]
+    Excluded -.-> Tag17Worker
     Journal[("Live Taker adaptor journal")] --> Tag16
     Tag16 --> Sidecar["Authenticated local LEZ sidecar API"]
     Sidecar -.-> Node["Configured LEZ node"]
@@ -2607,7 +2616,10 @@ ABI, original sending-plan digest, journal, evidence root, and loopback RPC
 origins. ADR 0154 supplies FD 218 only to Tag16 and the two Monero sweep
 senders. The schema-v2 Tag14 parent instead derives exact public release terms
 from validated Stage A/B and grants only sealed FDs 220 through 223; general
-credentials, private application bytes, and FD 218 are absent. A read-only
+credentials, private application bytes, and FD 218 are absent. The schema-v3
+Maker Tag17 worker receives the application material but rejects FD 218 before
+parsing or RPC. It performs prepare-only preflight, then submits only the exact
+prepared transaction after the parent consumes one-attempt authority. A read-only
 worker preflight authenticates the journal and binding at zero network calls
 before the parent repins and consumes the workflow CAS. The no-argument
 Tag16 child reconstructs the exact Taker refund session, requires its live
@@ -2620,13 +2632,13 @@ Unknown, exact-compares the original sending-plan identity, parses bounded
 step-exact output, locally derives the evidence source, and reconciles
 Succeeded. Prepared and Succeeded cannot start the observer; observer failure
 changes no journal state. The third claim reads Complete and starts no process.
-The solid Tag16-to-sidecar route and Tag14 worker boundaries are semantic local
-process evidence. The literal CLI covers rejected Tag14 preflight, retry,
+The solid Tag16-to-sidecar and Tag17-to-sidecar routes plus the Tag14 worker
+boundary are semantic local process evidence. The literal CLI covers rejected Tag14 preflight, retry,
 invoke once, observe/reconcile, and Complete, while the real release worker
 separately proves preflight, admission, and restart. Their single joined
 actual-node replay, semantic finalized Tag14 observer, Monero sweeps, and
-adverse crash/reorg/concurrency evidence remain open. ADRs 0154 and 0157 give
-the complete conditional-atomicity sequences and limits.
+adverse crash/reorg/concurrency evidence remain open. ADRs 0154, 0157, and
+0162 give the complete conditional-atomicity sequences and limits.
 
 #### Actual local components and RPCs
 

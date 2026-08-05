@@ -55,6 +55,11 @@ name = "xmr-reference-tag16"
 path = "src/bin/xmr-reference-tag16.rs"
 required-features = ["sessions"]
 
+[[bin]]
+name = "xmr-reference-tag17"
+path = "src/bin/xmr-reference-tag17.rs"
+required-features = ["sessions"]
+
 [dev-dependencies]
 command-fds = "=0.3.3"
 jsonrpsee = { version = "0.26.0", features = ["server"] }

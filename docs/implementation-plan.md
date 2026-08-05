@@ -477,13 +477,23 @@ attestation so neither can be misreported as the other.
   requires an exact `lez_xmr_tag17_punish_v1` tool, while schema-1 Maker and
   schema-2 Taker canonical profiles retain their prior meaning. Missing tools,
   ABI drift and cross-version injection fail before executable or RPC use. The
-  focused authority RED/GREEN is complete; route and worker composition follow.
+  focused authority RED/GREEN is complete; ADRs 0161 and 0162 close route and
+  semantic-worker composition.
 - [x] Route Maker Tag17 through least-privilege sealed descriptors under ADR
   0161. A real Maker application fixture proves non-mutating preflight,
   pin-before-CAS invocation, exactly one command, restart ObserveOnly, finalized
   LEZ observation with the original sending-plan digest, and explicit absence of
   the private Monero share from sender and observer. The semantic no-argument
-  Tag17 child remains the next RED/GREEN slice.
+  Tag17 child was the next RED/GREEN slice and is closed by ADR 0162.
+- [x] Close the semantic Tag17 sender through ADR 0162. The no-argument
+  Maker worker rejects private-share FD 218 before parsing or RPC, binds the
+  exact Stage A/B application and Maker runtime, performs prepare-only preflight,
+  submits only the prepared transaction once with transaction-derived identity,
+  and writes create-once secret-free evidence. Focused RED exposed the protocol
+  field and fixture-reuse assumptions; GREEN passes all nine sealed XMR process
+  tests including rejected preflight and forbidden-share zero-call cases. No
+  Docker, node, public RPC, faucet, funds or external service is used by this
+  process proof; ADR 0158 remains the separate actual-node finality proof.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -514,7 +524,8 @@ attestation so neither can be misreported as the other.
    inputs, a canonical execution plan and least-privilege branch material. The
    real Tag16 child derives its signature from the Stage-B-matching live journal
    and submits through an authenticated local sidecar. Literal Tag14 and Tag16
-   CLI integration are process-GREEN, and Tag17 is actual-node GREEN. Complete
+   CLI integration are process-GREEN; Tag17 is semantic-process and actual-node
+   GREEN. Complete
    application-owned joined claim/refund/abandonment corridors, Monero sweep
    semantics, and adverse restart/concurrency remain repository work.
 

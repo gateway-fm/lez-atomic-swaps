@@ -84,7 +84,7 @@ excluded by ADR 0159.
 
 The GREEN proof uses a real role-correct Maker application, Stage A/B, Maker
 adaptor journal, workflow database, inherited locks, executable descriptor,
-and sealed inputs. The child is currently a descriptor probe rather than the
-semantic Tag17 implementation. It performs no RPC, Docker, faucet, funds, or
-external call. The next slice replaces that probe with the no-argument worker
-that reuses the actual Tag17 sidecar operations.
+and sealed inputs. This checkpoint used a descriptor probe and performed no RPC, Docker, faucet,
+funds, or external call. ADR 0162 replaces that probe with the no-argument
+semantic worker and proves authenticated prepare-only preflight plus exact
+one-attempt submission against a loopback sidecar double.

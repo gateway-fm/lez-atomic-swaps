@@ -18,12 +18,13 @@ use lez_adaptor_signature::{
 };
 use lez_bridge_adapter::XmrLezBridgeBindingV3;
 use lez_bridge_client::{
-    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_REFUND_V3, RUN_ID_HEADER,
-    SIDECAR_ROLE_HEADER,
+    METHOD_COMPLETE_NATIVE_XMR_REFUND_V3, METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+    METHOD_PREPARE_NATIVE_XMR_REFUND_V3, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
 };
 use lez_bridge_protocol::{
     CompleteNativeXmrRefundV3Request, CompleteNativeXmrRefundV3Result, ExactMessageBytes,
     ExactTransactionBytes, Hex32, METHOD_SUBMIT_TRANSACTION, Participant,
+    PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
     PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result, PreparedTransaction,
     PreparedWitnessedClaim, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
     SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
@@ -96,6 +97,7 @@ enum Behavior {
 #[derive(Clone, Debug, Default)]
 struct Calls {
     prepare: Vec<PrepareNativeXmrRefundV3Request>,
+    punish: Vec<PrepareNativeXmrPunishV3Request>,
     complete: Vec<CompleteNativeXmrRefundV3Request>,
     submit: Vec<SubmitTransactionRequest>,
 }
@@ -225,6 +227,90 @@ async fn spawn_sidecar(behavior: Behavior) -> MockSidecar {
             ))
         })
         .expect("register exact submission");
+    let handle = server.start(module);
+    MockSidecar {
+        endpoint: format!("http://{address}"),
+        calls: fixture.calls,
+        _handle: handle,
+    }
+}
+
+async fn spawn_tag17_sidecar(behavior: Behavior) -> MockSidecar {
+    let fixture = ServerFixture {
+        behavior,
+        calls: Arc::default(),
+    };
+    let middleware = ServiceBuilder::new()
+        .layer(
+            ValidateRequestHeaderLayer::has_header_value(
+                "authorization",
+                &format!("Bearer {CAPABILITY}"),
+            )
+            .expect("authorization header"),
+        )
+        .layer(
+            ValidateRequestHeaderLayer::has_header_value(RUN_ID_HEADER, RUN).expect("run header"),
+        )
+        .layer(
+            ValidateRequestHeaderLayer::has_header_value(SIDECAR_ROLE_HEADER, "maker")
+                .expect("Maker role header"),
+        );
+    let server = jsonrpsee::server::ServerBuilder::default()
+        .set_http_middleware(middleware)
+        .build("127.0.0.1:0")
+        .await
+        .expect("Tag17 mock sidecar binds");
+    let address = server.local_addr().expect("Tag17 sidecar address");
+    let mut module = RpcModule::new(fixture.clone());
+    module
+        .register_async_method(
+            METHOD_PREPARE_NATIVE_XMR_PUNISH_V3,
+            |params, fixture, _| async move {
+                let request: PrepareNativeXmrPunishV3Request = params.one()?;
+                fixture
+                    .calls
+                    .lock()
+                    .expect("call recorder")
+                    .punish
+                    .push(request.clone());
+                if matches!(fixture.behavior, Behavior::RejectPrepare) {
+                    return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                        -32_002,
+                        "injected Tag17 preparation failure",
+                        None::<Value>,
+                    ));
+                }
+                json_value(PrepareNativeXmrPunishV3Result::new(
+                    request.context,
+                    request.terms,
+                    completed_transaction(),
+                ))
+            },
+        )
+        .expect("register Tag17 preparation");
+    module
+        .register_async_method(METHOD_SUBMIT_TRANSACTION, |params, fixture, _| async move {
+            let request: SubmitTransactionRequest = params.one()?;
+            fixture
+                .calls
+                .lock()
+                .expect("call recorder")
+                .submit
+                .push(request.clone());
+            if matches!(fixture.behavior, Behavior::RejectSubmit) {
+                return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                    -32_001,
+                    "injected Tag17 submission failure",
+                    None::<Value>,
+                ));
+            }
+            json_value(SubmitTransactionResult::new(
+                request.context,
+                request.transaction.transaction_id,
+                SubmissionOutcome::Accepted,
+            ))
+        })
+        .expect("register Tag17 submission");
     let handle = server.start(module);
     MockSidecar {
         endpoint: format!("http://{address}"),
@@ -544,9 +630,204 @@ fn effect_child_command_with_mode_and_presignature(
     (command, evidence_root.join("tag16-refund-submission.json"))
 }
 
+fn tag17_effect_child_command(
+    stage: &StageFixture,
+    inputs: &Inputs,
+    endpoint: &str,
+    mode: &'static str,
+    include_private_share: bool,
+) -> (Command, PathBuf) {
+    let root = inputs.runtime.parent().expect("fixture root");
+    let evidence_root = root.join("tag17-evidence");
+    fs::create_dir_all(&evidence_root).expect("create Tag17 evidence root");
+    fs::set_permissions(&evidence_root, fs::Permissions::from_mode(0o700))
+        .expect("protect Tag17 evidence root");
+    let mut runtime = stage.runtime.clone();
+    runtime.sidecar_role = Participant::Maker;
+    runtime.signer_account_id = Hex32::from_bytes([21; 32]);
+    let adaptor_journal = root.join("maker-adaptor.sqlite");
+    let plan = EffectChildPlanFixture {
+        schema_version: 1,
+        pair: "monero",
+        role: ActorRole::Maker,
+        mode,
+        step: "punish_lez_tag17",
+        run_id: RUN,
+        swap_id: hex::encode(stage.agreement.body().swap_id()),
+        agreement_commitment: hex::encode(stage.agreement.agreement_commitment()),
+        activation_commitment: hex::encode(stage.activation.activation_commitment()),
+        executable_abi: "lez_xmr_tag17_punish_v1",
+        sending_tool_plan_sha256: hex::encode([0xb7; 32]),
+        adaptor_journal: &adaptor_journal,
+        evidence_root: &evidence_root,
+        lez_sidecar_url: endpoint,
+        monero_daemon_url: "http://127.0.0.1:32974/",
+        monero_funding_wallet_url: "http://127.0.0.1:32975/",
+        monero_shared_wallet_url: "http://127.0.0.1:32976/",
+        monero_role_wallet_url: "http://127.0.0.1:32977/",
+    };
+    let mut plan_bytes = serde_json::to_vec(&plan).expect("Tag17 child plan JSON");
+    plan_bytes.push(b'\n');
+    let _ = parse_xmr_effect_child_plan_v1(&plan_bytes).expect("canonical Tag17 child plan");
+    let mut descriptors = vec![
+        (
+            sealed_memfd(
+                "tag17-runtime",
+                &serde_json::to_vec(&runtime).expect("Maker runtime JSON"),
+            ),
+            XMR_EFFECT_RUNTIME_FD,
+        ),
+        (
+            sealed_memfd("tag17-capability", CAPABILITY.as_bytes()),
+            XMR_EFFECT_CAPABILITY_FD,
+        ),
+        (
+            sealed_memfd(
+                "tag17-stage-a",
+                &stage.agreement.encode_wire().expect("Stage-A wire"),
+            ),
+            XMR_EFFECT_STAGE_A_FD,
+        ),
+        (
+            sealed_memfd(
+                "tag17-stage-b",
+                &stage.activation.encode_wire().expect("Stage-B wire"),
+            ),
+            XMR_EFFECT_STAGE_B_FD,
+        ),
+        (
+            sealed_memfd("tag17-view-key", hex::encode(VIEW_KEY_BYTES).as_bytes()),
+            XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+        ),
+        (
+            sealed_memfd("tag17-child-plan", &plan_bytes),
+            XMR_EFFECT_CHILD_PLAN_FD,
+        ),
+    ];
+    if include_private_share {
+        descriptors.push((
+            sealed_memfd("forbidden-tag17-xmr-share", &TAKER_XMR_SHARE_BYTES),
+            XMR_EFFECT_PRIVATE_XMR_SHARE_FD,
+        ));
+    }
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xmr-reference-tag17"));
+    command
+        .fd_mappings(
+            descriptors
+                .into_iter()
+                .map(|(file, child_fd)| FdMapping {
+                    parent_fd: file.into(),
+                    child_fd,
+                })
+                .collect(),
+        )
+        .expect("map sealed Tag17 descriptors");
+    (
+        command,
+        evidence_root.join("tag17-punishment-submission.json"),
+    )
+}
+
 fn assert_failure(output: &Output, label: &str) {
     assert!(!output.status.success(), "{label} unexpectedly succeeded");
     assert!(output.stdout.is_empty(), "{label} leaked stdout");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_tag17_preflight_prepares_only_and_rejected_preflight_has_no_effect() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let sidecar = spawn_tag17_sidecar(Behavior::Happy).await;
+    let (mut command, evidence) =
+        tag17_effect_child_command(&stage, &inputs, &sidecar.endpoint, "preflight", false);
+    let output = command.output().expect("spawn sealed Tag17 preflight");
+    assert!(
+        output.status.success(),
+        "Tag17 preflight failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    assert!(!evidence.exists());
+    {
+        let calls = sidecar.calls.lock().expect("Tag17 calls");
+        assert_eq!(calls.punish.len(), 1);
+        assert!(calls.submit.is_empty());
+        assert_eq!(calls.punish[0].context.sidecar_role, Participant::Maker);
+        assert_eq!(calls.punish[0].terms, stage.binding.terms());
+    }
+
+    let rejected = spawn_tag17_sidecar(Behavior::RejectPrepare).await;
+    let (mut command, rejected_evidence) =
+        tag17_effect_child_command(&stage, &inputs, &rejected.endpoint, "preflight", false);
+    let output = command.output().expect("spawn rejected Tag17 preflight");
+    assert_failure(&output, "rejected Tag17 preflight");
+    assert!(!rejected_evidence.exists());
+    let calls = rejected.calls.lock().expect("rejected Tag17 calls");
+    assert_eq!(calls.punish.len(), 1);
+    assert!(calls.submit.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_tag17_rejects_forbidden_private_share_before_sidecar_use() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let sidecar = spawn_tag17_sidecar(Behavior::Happy).await;
+    let (mut command, evidence) =
+        tag17_effect_child_command(&stage, &inputs, &sidecar.endpoint, "invoke", true);
+    let output = command
+        .output()
+        .expect("spawn Tag17 with forbidden private share");
+    assert_failure(&output, "Tag17 forbidden private share");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("received forbidden Monero private-share FD")
+    );
+    assert!(!evidence.exists());
+    let calls = sidecar.calls.lock().expect("Tag17 calls");
+    assert!(calls.punish.is_empty());
+    assert!(calls.submit.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_tag17_invocation_submits_exactly_once_and_writes_bounded_evidence() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let sidecar = spawn_tag17_sidecar(Behavior::Happy).await;
+    let (mut command, evidence) =
+        tag17_effect_child_command(&stage, &inputs, &sidecar.endpoint, "invoke", false);
+    let output = command.output().expect("spawn sealed Tag17 invocation");
+    assert!(
+        output.status.success(),
+        "Tag17 invocation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    let calls = sidecar.calls.lock().expect("Tag17 calls");
+    assert_eq!(calls.punish.len(), 1);
+    assert_eq!(calls.submit.len(), 1);
+    assert_eq!(calls.submit[0].transaction, completed_transaction());
+    assert_eq!(
+        calls.submit[0].context.request_id,
+        calls.submit[0]
+            .transaction
+            .transaction_id
+            .submission_request_id()
+    );
+    drop(calls);
+
+    let report: Value = serde_json::from_slice(&fs::read(evidence).expect("Tag17 evidence"))
+        .expect("Tag17 evidence JSON");
+    assert_eq!(report["schema"], "lez_v02_m7_actual_local_tag17_worker_v1");
+    assert_eq!(report["role"], "maker");
+    assert_eq!(report["submission_outcome"], "accepted");
+    assert_eq!(
+        report["prepared_message_hash"],
+        hex::encode(stage.agreement.body().messages().punish())
+    );
+    assert_eq!(report["automatic_submission_retry"], false);
+    assert_eq!(report["public_rpc_used"], false);
 }
 
 #[tokio::test(flavor = "multi_thread")]

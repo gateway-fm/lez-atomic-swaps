@@ -211,6 +211,7 @@ flowchart TB
     M7Tag17 --> M7PunishWorkflow
     M7PunishWorkflow --> M7Tag17Authority["0160 Versioned Tag17 authority"]
     M7Tag17Authority --> M7Tag17Route["0161 Least privilege Tag17 route"]
+    M7Tag17Route --> M7Tag17Worker["0162 Semantic sealed Tag17 worker"]
 ```
 
 | ADR | Decision | Status |
@@ -373,6 +374,7 @@ flowchart TB
 | [0156](0156-version-the-tag14-release-authority.md) | Require an explicit schema-v2 Taker profile before a receipt may select the semantic Tag14 release worker | Accepted authority checkpoint; v1 marker compatibility and v2 release-only paths/endpoints/ABI validation are GREEN, with custody and CLI invocation subsequently closed by ADR 0157 |
 | [0157](0157-preflight-and-compose-tag14-release.md) | Authenticate the Tag14 journal before workflow CAS and compose the semantic release worker with only FDs 220 through 223 | Accepted semantic-composition checkpoint; real worker preflight/invoke and literal CLI control flow are GREEN, while a joined actual-node replay, finalized observer, and Monero sweep remain |
 | [0158](0158-prepare-and-release-tag17-once.md) | Prepare the exact Maker-signed Tag17 transaction durably and release it once under transaction-derived identity | Accepted and actual-node GREEN on pushed run `m7tag17a23a314a`; the current guest deployment, pre-boundary negative, one release, two-role finalized facts and exact cleanup close local F5. Joined abandonment economics and adverse concurrency remain |
-| [0159](0159-model-tag17-as-a-durable-application-branch.md) | Persist Tag17 as a Maker-only exclusive workflow branch with one-attempt restart semantics | Accepted prerequisite; schema-v3 Punish authority and exact unmigrated schema-v2 compatibility are GREEN. Effect-router, sealed-worker and joined abandonment composition remain |
-| [0160](0160-version-maker-tag17-effect-authority.md) | Require an explicit schema-3 Maker tool before Tag17 can enter the effect router | Accepted prerequisite; canonical schema/role/ABI validation is GREEN while route selection and sealed execution remain |
-| [0161](0161-route-tag17-with-least-privilege-descriptors.md) | Route Maker Tag17 through pin-before-CAS sealed inputs and finalized-only observation without the private Monero share | Accepted process checkpoint; real role material, locks, one attempt, restart and observer routing are GREEN while the semantic child remains next |
+| [0159](0159-model-tag17-as-a-durable-application-branch.md) | Persist Tag17 as a Maker-only exclusive workflow branch with one-attempt restart semantics | Accepted prerequisite; schema-v3 Punish authority, exact unmigrated schema-v2 compatibility, routing, and the semantic worker are GREEN. Joined abandonment composition remains |
+| [0160](0160-version-maker-tag17-effect-authority.md) | Require an explicit schema-3 Maker tool before Tag17 can enter the effect router | Accepted prerequisite; canonical schema/role/ABI validation, route selection, and sealed execution are GREEN under ADRs 0161 and 0162 |
+| [0161](0161-route-tag17-with-least-privilege-descriptors.md) | Route Maker Tag17 through pin-before-CAS sealed inputs and finalized-only observation without the private Monero share | Accepted process checkpoint; real role material, locks, one attempt, restart and observer routing are GREEN; ADR 0162 closes the semantic child |
+| [0162](0162-run-tag17-through-a-semantic-sealed-worker.md) | Validate the exact Maker application and publish only the prepared Tag17 through a no-argument least-privilege worker | Accepted semantic-process checkpoint; preflight, exact one-attempt submission, bounded evidence and fail-closed FD 218 exclusion are GREEN |
