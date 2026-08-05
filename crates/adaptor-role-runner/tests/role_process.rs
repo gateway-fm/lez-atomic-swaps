@@ -17,8 +17,8 @@ use std::{
 
 use lez_adaptor_role_runner::{
     Role, RunnerError, ValidatedSession, accept_published_peer_partial_and_adapt,
-    extract_verified_adaptor_secret, verify_extracted_adaptor_secret,
-    write_observed_final_signature_packet,
+    extract_verified_adaptor_secret, read_final_signature_packet_bytes,
+    verify_extracted_adaptor_secret, write_observed_final_signature_packet,
 };
 use lez_adaptor_signature::{
     AdaptorSessionContext, adapt_presignature, aggregate_adaptor_presignature,
@@ -686,6 +686,12 @@ fn exercise(domain: Domain, crosswire_checks: bool) {
         )
         .expect("in-memory extraction verifies against durable transcript");
         assert_eq!(*extracted_in_memory.into_big_endian_bytes(), ADAPTOR_SECRET);
+        let packet_bytes = fs::read(&final_signature_packet).expect("read canonical packet");
+        assert_eq!(
+            read_final_signature_packet_bytes(&packet_bytes, &session)
+                .expect("parse pinned canonical final-signature bytes"),
+            final_signature
+        );
 
         let mut wrong_signature = final_signature;
         wrong_signature[63] ^= 1;

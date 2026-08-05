@@ -508,16 +508,26 @@ attestation so neither can be misreported as the other.
   invocation-only private-share FD 218, Punish selects preflight plus Tag17,
   and Claim or an unselected branch fails closed. One real supervisor/actor
   process test proves both routes invoke once and restart into observation
-  without resending. The semantic Monero sweep worker, actual-node join and
-  adverse recovery matrix remain open.
+  without resending. The semantic Maker refund worker is subsequently closed
+  by ADR 0166; the actual-node join and adverse recovery matrix remain open.
 - [x] Seal finalized Tag16 evidence for transcript-bound in-memory refund
   extraction through ADR 0165. The Refund sender alone receives the stable
   owner-private signature packet on FD 219 and Maker share on FD 218, both
   pinned before CAS; the restart observer receives neither. The adaptor runner
   verifies the signature against the exact durable presignature and returns an
   opaque in-memory scalar without accepting or writing a scalar handoff file.
-  Focused real-transcript and real-process descriptor tests are GREEN. The
-  semantic one-shot wallet-RPC child is the next RED/GREEN slice.
+  Focused real-transcript and real-process descriptor tests are GREEN. ADR 0166
+  subsequently closes the semantic one-shot wallet-RPC child.
+- [x] Submit the semantic Maker Monero refund once without confirmation mining
+  through ADR 0166. The no-argument child validates the compiled role/mode/step
+  ABI, exact Stage A/B and Maker runtime, durable presignature, FD 219 final
+  signature, FD 218 retained share, DLEQ reconstruction, three independent RPC
+  authorities and exact unlocked accounting. It reads the Maker destination
+  from the role wallet and sends once through the shared wallet. The typed
+  adapter returns explicitly non-final evidence and the daemon fixture records
+  zero calls; restart finality remains a separate observer. Happy and corrupted
+  signature process tests plus all affected strict gates are GREEN. The next
+  slice is the joined local-node application recovery and observer replay.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -552,7 +562,7 @@ attestation so neither can be misreported as the other.
    and normal Maker-supervisor GREEN through ADR 0163. ADR 0164 also makes the
    application choose durable Refund versus Punish and proves both one-shot
    process routes. Complete joined claim,
-   refund, and abandonment corridors plus the semantic Monero sweep worker, actual-node join, and adverse restart/concurrency remain repository work.
+   refund, and abandonment corridors plus the semantic Taker claim sweep, actual-node join, and adverse restart/concurrency remain repository work; ADR 0166 closes the Maker refund sender.
 
 The working ETA will be recalculated after the hard-requirement audit because
 the carried matrix mixes completed evidence with historical gaps. The initial
@@ -6468,6 +6478,6 @@ root README, readiness write-up, traceability and both machine-readable M7
 inventories now record the exact boundary. No Docker, node, RPC, faucet, DNS,
 peer, public funds or public deployment participated. Inventory remains
 honestly 14 hard requirements open, 4 submission groups open, and S12/S13 as
-the only two external-review items. The semantic no-argument Monero refund
-worker, fresh joined actual-node corridor, and adverse crash/concurrency matrix
-remain the next repository-owned slices.
+the only two external-review items. ADR 0166 subsequently closes the
+semantic no-argument Maker Monero refund worker. The fresh joined actual-node corridor, semantic Taker claim sweep, and
+adverse crash/concurrency matrix remain the next repository-owned slices.

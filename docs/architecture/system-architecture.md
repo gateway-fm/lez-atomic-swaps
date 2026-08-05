@@ -3491,7 +3491,28 @@ sequenceDiagram
     Router->>Workflow: Reconcile Succeeded
 ```
 
-The current GREEN boundary covers stable-file custody, descriptor exclusion,
-and real transcript-bound extraction without RPC. The depicted wallet and
-daemon calls describe the next semantic worker slice and are not yet claimed by
-this checkpoint.
+ADR 0166 closes the semantic sending edge: the real no-argument child performs
+transcript-bound reconstruction, reads the Maker destination from the role
+wallet, and submits once through the shared wallet. Its deterministic process
+test uses independent loopback wallet fixtures and proves zero direct daemon
+calls. Canonical actual-node observation and the joined two-devnet corridor are
+not claimed by this checkpoint.
+
+```mermaid
+sequenceDiagram
+    participant Parent as Maker effect router
+    participant Worker as Semantic refund child
+    participant RoleWallet as Maker role wallet RPC
+    participant SharedWallet as Shared wallet RPC
+    participant Monerod as Monero daemon
+    participant Finality as Separate observer
+
+    Parent->>Worker: Invoke once after CAS
+    Worker->>RoleWallet: Read standard destination
+    Worker->>SharedWallet: Restore, refresh and check principal
+    SharedWallet->>Monerod: Wallet managed chain access
+    Worker->>SharedWallet: Sweep all once
+    Worker-->>Parent: Nonfinal submission evidence
+    Note over Worker,Monerod: Worker never mines or calls daemon directly
+    Parent->>Finality: Restart observation without FDs 218 and 219
+```

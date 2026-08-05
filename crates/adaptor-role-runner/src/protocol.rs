@@ -258,12 +258,17 @@ impl PublicPacketV1 {
 
     fn load(path: &Path) -> Result<(Self, Vec<u8>), RunnerError> {
         let bytes = files::read_public(path)?;
+        let packet = Self::from_canonical_bytes(&bytes)?;
+        Ok((packet, bytes))
+    }
+
+    fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, RunnerError> {
         let packet: Self =
-            serde_json::from_slice(&bytes).map_err(|_| RunnerError::InvalidPublicPacket)?;
+            serde_json::from_slice(bytes).map_err(|_| RunnerError::InvalidPublicPacket)?;
         if packet.canonical_bytes()? != bytes {
             return Err(RunnerError::NoncanonicalPublicPacket);
         }
-        Ok((packet, bytes))
+        Ok(packet)
     }
 
     fn validate_header(
@@ -331,6 +336,16 @@ pub(crate) fn read_aggregate_packet<const N: usize>(
     session: &ValidatedSession,
 ) -> Result<[u8; N], RunnerError> {
     let (packet, _) = PublicPacketV1::load(path)?;
+    packet.validate_header(kind, PacketSender::Aggregate, session)?;
+    decode_exact(&packet.payload)
+}
+
+pub(crate) fn read_aggregate_packet_bytes<const N: usize>(
+    bytes: &[u8],
+    kind: PacketKind,
+    session: &ValidatedSession,
+) -> Result<[u8; N], RunnerError> {
+    let packet = PublicPacketV1::from_canonical_bytes(bytes)?;
     packet.validate_header(kind, PacketSender::Aggregate, session)?;
     decode_exact(&packet.payload)
 }

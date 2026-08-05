@@ -81,8 +81,9 @@ Claim and Punish, while the pre-send CAS excludes a second submission after a
 crash. Pinning both reconstruction inputs before that CAS avoids consuming send
 authority and then discovering a missing or replaced source. Observation is
 capability-separated and cannot reconstruct or resend. This checkpoint proves
-custody and transcript-bound extraction; the semantic RPC sender and joined
-two-devnet replay remain the next repository-controlled work.
+custody and transcript-bound extraction. ADR 0166 closes the semantic RPC
+sender without mining or waiting; the joined two-devnet replay remains the next
+repository-controlled work.
 
 ## Verification and resources
 

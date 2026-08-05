@@ -76,9 +76,7 @@ selected before effect preparation, the CAS consumes the only send authority
 before the external call, and Started or Unknown can only observe the original
 tool-plan identity. A crash cannot re-enter the sender. The private share is
 available only to the role-fixed sending child and cannot be exposed to the
-read-only verifier. This process checkpoint does not prove the semantic Monero
-worker itself or a fresh joined two-devnet abandonment corridor; those remain
-repository-controlled M7 work.
+read-only verifier. ADR 0166 subsequently closes the semantic Maker Monero sender. This process checkpoint does not prove a fresh joined two-devnet abandonment corridor; that remains repository-controlled M7 work.
 
 ```mermaid
 sequenceDiagram

@@ -41,6 +41,8 @@ use lez_xmr_swap_sdk::{
     XmrNamedProfileV1, XmrParticipantIdentityV1, XmrParticipantsV1, XmrRoleV1,
     XmrSessionTranscriptV1, XmrSwapDirectionV1, XmrWindowsV1,
 };
+use monero::util::key::{PrivateKey as MoneroPrivateKey, PublicKey as MoneroPublicKey};
+use monero::{Address as MoneroAddress, Network as MoneroNetwork};
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng as _};
 use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use secp256k1::{Keypair, Message as SecpMessage, PublicKey, Secp256k1, SecretKey};
@@ -51,9 +53,12 @@ use tempfile::TempDir;
 use tower::ServiceBuilder;
 use tower_http::validate_request::ValidateRequestHeaderLayer;
 use xmr_reference_actor::{
-    ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_CHILD_PLAN_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
-    XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_STAGE_A_FD,
-    XMR_EFFECT_STAGE_B_FD, parse_xmr_effect_child_plan_v1,
+    ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_CHILD_PLAN_FD, XMR_EFFECT_DAEMON_PASSWORD_FD,
+    XMR_EFFECT_DAEMON_USERNAME_FD, XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD,
+    XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_ROLE_PASSWORD_FD,
+    XMR_EFFECT_ROLE_USERNAME_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_SHARED_PASSWORD_FD,
+    XMR_EFFECT_SHARED_USERNAME_FD, XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD,
+    XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, parse_xmr_effect_child_plan_v1,
 };
 
 const CAPABILITY: &str = "m5-xmr-tag16-process-capability-00000001";
@@ -71,11 +76,17 @@ const VIEW_KEY_BYTES: [u8; 32] = {
     bytes[0] = 17;
     bytes
 };
+const RESTORE_HEIGHT_FOR_ASSERTION: u64 = 0;
 const SESSION_DOMAIN: &[u8] = b"logos.gateway.lez-xmr.adaptor-session.v1\0";
 const REFUND_MESSAGE_BYTES: [u8; 128] = [0xd1; 128];
 const TAKER_XMR_SHARE_BYTES: [u8; 32] = {
     let mut bytes = [0; 32];
     bytes[0] = 13;
+    bytes
+};
+const MAKER_XMR_SHARE_BYTES: [u8; 32] = {
+    let mut bytes = [0; 32];
+    bytes[0] = 11;
     bytes
 };
 
@@ -112,6 +123,132 @@ struct MockSidecar {
     endpoint: String,
     calls: Arc<Mutex<Calls>>,
     _handle: jsonrpsee::server::ServerHandle,
+}
+
+#[derive(Clone)]
+struct WalletFixture {
+    address: String,
+    restored_address: String,
+    amount_piconero: u64,
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+struct MockWallet {
+    endpoint: String,
+    calls: Arc<Mutex<Vec<String>>>,
+    _handle: jsonrpsee::server::ServerHandle,
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one exact typed wallet-RPC fixture keeps the recorded call contract together"
+)]
+async fn spawn_wallet(
+    address: String,
+    restored_address: String,
+    amount_piconero: u64,
+) -> MockWallet {
+    let fixture = WalletFixture {
+        address,
+        restored_address,
+        amount_piconero,
+        calls: Arc::default(),
+    };
+    let server = jsonrpsee::server::ServerBuilder::default()
+        .build("127.0.0.1:0")
+        .await
+        .expect("mock wallet binds");
+    let address = server.local_addr().expect("mock wallet address");
+    let mut module = RpcModule::new(fixture.clone());
+    module
+        .register_method("get_address", |_params, fixture, _| {
+            fixture
+                .calls
+                .lock()
+                .expect("wallet calls")
+                .push("get_address".to_owned());
+            json_value(serde_json::json!({
+                "address": fixture.address,
+                "addresses": []
+            }))
+        })
+        .expect("register get_address");
+    module
+        .register_method("close_wallet", |_params, fixture, _| {
+            fixture
+                .calls
+                .lock()
+                .expect("wallet calls")
+                .push("close_wallet".to_owned());
+            json_value(serde_json::json!({}))
+        })
+        .expect("register close_wallet");
+    module
+        .register_method("generate_from_keys", |_params, fixture, _| {
+            fixture
+                .calls
+                .lock()
+                .expect("wallet calls")
+                .push("generate_from_keys".to_owned());
+            json_value(serde_json::json!({
+                "address": fixture.restored_address,
+                "info": "restored"
+            }))
+        })
+        .expect("register generate_from_keys");
+    module
+        .register_method("refresh", |_params, fixture, _| {
+            fixture
+                .calls
+                .lock()
+                .expect("wallet calls")
+                .push("refresh".to_owned());
+            json_value(serde_json::json!({
+                "blocks_fetched": 1,
+                "received_money": true
+            }))
+        })
+        .expect("register refresh");
+    module
+        .register_method("get_balance", |_params, fixture, _| {
+            fixture
+                .calls
+                .lock()
+                .expect("wallet calls")
+                .push("get_balance".to_owned());
+            json_value(serde_json::json!({
+                "balance": fixture.amount_piconero,
+                "unlocked_balance": fixture.amount_piconero,
+                "multisig_import_needed": false,
+                "per_subaddress": []
+            }))
+        })
+        .expect("register get_balance");
+    module
+        .register_method("sweep_all", |_params, fixture, _| {
+            fixture
+                .calls
+                .lock()
+                .expect("wallet calls")
+                .push("sweep_all".to_owned());
+            json_value(serde_json::json!({
+                "tx_hash_list": ["77".repeat(32)],
+                "tx_key_list": null,
+                "amount_list": [fixture.amount_piconero - 2_000_000_000],
+                "fee_list": [2_000_000_000_u64],
+                "tx_blob_list": null,
+                "tx_metadata_list": null,
+                "multisig_txset": "",
+                "unsigned_txset": ""
+            }))
+        })
+        .expect("register sweep_all");
+    let handle = server.start(module);
+    MockWallet {
+        endpoint: format!("http://{address}"),
+        calls: fixture.calls,
+        _handle: handle,
+    }
 }
 
 fn json_value(value: impl Serialize) -> Result<Value, jsonrpsee::types::ErrorObjectOwned> {
@@ -345,10 +482,10 @@ struct EffectChildPlanFixture<'a> {
     adaptor_journal: &'a Path,
     evidence_root: &'a Path,
     lez_sidecar_url: &'a str,
-    monero_daemon_url: &'static str,
-    monero_funding_wallet_url: &'static str,
-    monero_shared_wallet_url: &'static str,
-    monero_role_wallet_url: &'static str,
+    monero_daemon_url: &'a str,
+    monero_funding_wallet_url: &'a str,
+    monero_shared_wallet_url: &'a str,
+    monero_role_wallet_url: &'a str,
 }
 
 impl Inputs {
@@ -498,6 +635,59 @@ fn taker_refund_journal(stage: &StageFixture, path: &Path, presignature: [u8; 65
         .expect("record exact Maker partial");
     let _ = journal
         .record_verified_presignature(&identity, AdaptorPresignature::new(presignature))
+        .expect("record exact Stage-B presignature");
+}
+
+fn maker_refund_journal(stage: &StageFixture, path: &Path) {
+    let session = ValidatedSession::from_untweaked_context(
+        stage
+            .agreement
+            .refund_session_descriptor()
+            .context()
+            .expect("refund context"),
+    )
+    .expect("validated refund session");
+    let identity = session.identity(Role::Maker);
+    let transcript = stage.activation.body().refund_transcript();
+    let mut journal = SqliteAdaptorSessionJournal::open(path).expect("create Maker journal");
+    let _ = journal
+        .reserve(AdaptorSessionReservation::new(
+            identity.clone(),
+            SecretNonceBytes::new([0x92; 97]),
+            AdaptorPublicNonce::new(transcript.maker_public_nonce()),
+            AdaptorNonceCommitment::new(transcript.maker_nonce_commitment()),
+        ))
+        .expect("reserve exact Maker refund transcript");
+    let _ = journal
+        .record_peer_commitment(
+            &identity,
+            AdaptorNonceCommitment::new(transcript.taker_nonce_commitment()),
+        )
+        .expect("record Taker commitment");
+    let _ = journal
+        .record_verified_peer_public_nonce(
+            &identity,
+            AdaptorPublicNonce::new(transcript.taker_public_nonce()),
+        )
+        .expect("record Taker nonce");
+    let _ = journal
+        .sign_and_persist_partial(&identity, |_| {
+            Ok(AdaptorPartialSignature::new(
+                stage.activation.body().maker_refund_partial(),
+            ))
+        })
+        .expect("persist exact Maker partial");
+    let _ = journal
+        .record_verified_peer_partial(
+            &identity,
+            AdaptorPartialSignature::new(stage.activation.body().taker_refund_partial()),
+        )
+        .expect("record exact Taker partial");
+    let _ = journal
+        .record_verified_presignature(
+            &identity,
+            AdaptorPresignature::new(stage.activation.body().refund_presignature()),
+        )
         .expect("record exact Stage-B presignature");
 }
 
@@ -728,6 +918,150 @@ fn tag17_effect_child_command(
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the fixed-descriptor process contract is clearer as one complete mapping"
+)]
+fn maker_refund_effect_child_command(
+    stage: &StageFixture,
+    inputs: &Inputs,
+    daemon_endpoint: &str,
+    shared_endpoint: &str,
+    role_endpoint: &str,
+) -> (Command, PathBuf) {
+    let root = inputs.runtime.parent().expect("fixture root");
+    let evidence_root = root.join("maker-refund-evidence");
+    fs::create_dir(&evidence_root).expect("create Maker refund evidence root");
+    fs::set_permissions(&evidence_root, fs::Permissions::from_mode(0o700))
+        .expect("protect Maker refund evidence root");
+    let journal = root.join("maker-refund-adaptor.sqlite");
+    maker_refund_journal(stage, &journal);
+    let mut runtime = stage.runtime.clone();
+    runtime.sidecar_role = Participant::Maker;
+    runtime.signer_account_id = Hex32::from_bytes([21; 32]);
+    let plan = EffectChildPlanFixture {
+        schema_version: 1,
+        pair: "monero",
+        role: ActorRole::Maker,
+        mode: "invoke",
+        step: "sweep_monero_refund",
+        run_id: RUN,
+        swap_id: hex::encode(stage.agreement.body().swap_id()),
+        agreement_commitment: hex::encode(stage.agreement.agreement_commitment()),
+        activation_commitment: hex::encode(stage.activation.activation_commitment()),
+        executable_abi: "lez_xmr_monero_refund_sweep_v3",
+        sending_tool_plan_sha256: hex::encode([0xc7; 32]),
+        adaptor_journal: &journal,
+        evidence_root: &evidence_root,
+        lez_sidecar_url: "http://127.0.0.1:32973/",
+        monero_daemon_url: daemon_endpoint,
+        monero_funding_wallet_url: "http://127.0.0.1:32975/",
+        monero_shared_wallet_url: shared_endpoint,
+        monero_role_wallet_url: role_endpoint,
+    };
+    let mut plan_bytes = serde_json::to_vec(&plan).expect("refund child plan JSON");
+    plan_bytes.push(b'\n');
+    let _ = parse_xmr_effect_child_plan_v1(&plan_bytes).expect("canonical refund child plan");
+    let descriptors = vec![
+        (
+            sealed_memfd(
+                "refund-runtime",
+                &serde_json::to_vec(&runtime).expect("Maker runtime JSON"),
+            ),
+            XMR_EFFECT_RUNTIME_FD,
+        ),
+        (
+            sealed_memfd("refund-daemon-user", b"daemon-user"),
+            XMR_EFFECT_DAEMON_USERNAME_FD,
+        ),
+        (
+            sealed_memfd("refund-daemon-password", b"daemon-password"),
+            XMR_EFFECT_DAEMON_PASSWORD_FD,
+        ),
+        (
+            sealed_memfd("refund-shared-user", b"shared-user"),
+            XMR_EFFECT_SHARED_USERNAME_FD,
+        ),
+        (
+            sealed_memfd("refund-shared-password", b"shared-password"),
+            XMR_EFFECT_SHARED_PASSWORD_FD,
+        ),
+        (
+            sealed_memfd("refund-role-user", b"role-user"),
+            XMR_EFFECT_ROLE_USERNAME_FD,
+        ),
+        (
+            sealed_memfd("refund-role-password", b"role-password"),
+            XMR_EFFECT_ROLE_PASSWORD_FD,
+        ),
+        (
+            sealed_memfd("refund-wallet-file-password", b"wallet-file-password"),
+            XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD,
+        ),
+        (
+            sealed_memfd(
+                "refund-stage-a",
+                &stage.agreement.encode_wire().expect("Stage-A wire"),
+            ),
+            XMR_EFFECT_STAGE_A_FD,
+        ),
+        (
+            sealed_memfd(
+                "refund-stage-b",
+                &stage.activation.encode_wire().expect("Stage-B wire"),
+            ),
+            XMR_EFFECT_STAGE_B_FD,
+        ),
+        (
+            sealed_memfd("refund-view-key", hex::encode(VIEW_KEY_BYTES).as_bytes()),
+            XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+        ),
+        (
+            sealed_memfd("refund-child-plan", &plan_bytes),
+            XMR_EFFECT_CHILD_PLAN_FD,
+        ),
+        (
+            sealed_memfd("refund-maker-share", &MAKER_XMR_SHARE_BYTES),
+            XMR_EFFECT_PRIVATE_XMR_SHARE_FD,
+        ),
+        (
+            sealed_memfd(
+                "refund-final-signature",
+                &fs::read(&inputs.final_signature).expect("canonical final-signature packet"),
+            ),
+            XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD,
+        ),
+    ];
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xmr-reference-monero-refund"));
+    command
+        .fd_mappings(
+            descriptors
+                .into_iter()
+                .map(|(file, child_fd)| FdMapping {
+                    parent_fd: file.into(),
+                    child_fd,
+                })
+                .collect(),
+        )
+        .expect("map sealed refund descriptors");
+    (command, evidence_root.join("monero-refund-submission.json"))
+}
+
+fn standard_monero_address(seed: u8) -> String {
+    let mut spend = [0_u8; 32];
+    spend[0] = seed;
+    let mut view = [0_u8; 32];
+    view[0] = seed.saturating_add(1);
+    let spend = MoneroPrivateKey::from_slice(&spend).expect("destination spend scalar");
+    let view = MoneroPrivateKey::from_slice(&view).expect("destination view scalar");
+    MoneroAddress::standard(
+        MoneroNetwork::Mainnet,
+        MoneroPublicKey::from_private_key(&spend),
+        MoneroPublicKey::from_private_key(&view),
+    )
+    .to_string()
+}
+
 fn assert_failure(output: &Output, label: &str) {
     assert!(!output.status.success(), "{label} unexpectedly succeeded");
     assert!(output.stdout.is_empty(), "{label} leaked stdout");
@@ -828,6 +1162,95 @@ async fn sealed_tag17_invocation_submits_exactly_once_and_writes_bounded_evidenc
     );
     assert_eq!(report["automatic_submission_retry"], false);
     assert_eq!(report["public_rpc_used"], false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_maker_refund_reconstructs_and_submits_once_without_mining_or_finality_wait() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let shared_address = stage.agreement.shared_address().address_string();
+    let amount = stage.agreement.body().monero().amount_piconero();
+    let daemon = spawn_wallet(standard_monero_address(3), shared_address.clone(), amount).await;
+    let shared = spawn_wallet(standard_monero_address(5), shared_address, amount).await;
+    let maker_destination = standard_monero_address(7);
+    let role = spawn_wallet(maker_destination.clone(), maker_destination.clone(), amount).await;
+    let (mut command, evidence) = maker_refund_effect_child_command(
+        &stage,
+        &inputs,
+        &daemon.endpoint,
+        &shared.endpoint,
+        &role.endpoint,
+    );
+    let output = command.output().expect("spawn sealed Maker refund worker");
+    assert!(
+        output.status.success(),
+        "Maker refund worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    assert!(daemon.calls.lock().expect("daemon calls").is_empty());
+    assert_eq!(
+        *role.calls.lock().expect("role wallet calls"),
+        ["get_address"]
+    );
+    assert_eq!(
+        *shared.calls.lock().expect("shared wallet calls"),
+        [
+            "close_wallet",
+            "generate_from_keys",
+            "refresh",
+            "get_balance",
+            "sweep_all"
+        ]
+    );
+    let report: Value = serde_json::from_slice(&fs::read(evidence).expect("refund evidence"))
+        .expect("refund evidence JSON");
+    assert_eq!(report["schema"], "lez_v02_m7_monero_refund_submission_v1");
+    assert_eq!(report["role"], "maker");
+    assert_eq!(report["destination_address"], maker_destination);
+    assert_eq!(report["funded_amount_piconero"], amount);
+    assert_eq!(report["received_amount_piconero"], amount - 2_000_000_000);
+    assert_eq!(report["fee_piconero"], 2_000_000_000_u64);
+    assert_eq!(report["transaction_id"], "77".repeat(32));
+    assert_eq!(report["restore_height"], RESTORE_HEIGHT_FOR_ASSERTION);
+    assert_eq!(report["finality_observer_required"], true);
+    assert_eq!(report["automatic_submission_retry"], false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_maker_refund_rejects_invalid_final_signature_before_any_rpc() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    fs::remove_file(&inputs.final_signature).expect("remove valid signature fixture");
+    let mut invalid_signature = stage.final_signature;
+    invalid_signature[63] ^= 1;
+    write_final_signature_packet(&inputs.final_signature, &stage.agreement, invalid_signature);
+    let shared_address = stage.agreement.shared_address().address_string();
+    let amount = stage.agreement.body().monero().amount_piconero();
+    let daemon = spawn_wallet(standard_monero_address(3), shared_address.clone(), amount).await;
+    let shared = spawn_wallet(standard_monero_address(5), shared_address, amount).await;
+    let destination = standard_monero_address(7);
+    let role = spawn_wallet(destination.clone(), destination, amount).await;
+    let (mut command, evidence) = maker_refund_effect_child_command(
+        &stage,
+        &inputs,
+        &daemon.endpoint,
+        &shared.endpoint,
+        &role.endpoint,
+    );
+    let output = command
+        .output()
+        .expect("spawn invalid-signature Maker refund worker");
+    assert_failure(&output, "invalid-signature Maker refund worker");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("extract refund adaptor scalar from durable Maker transcript")
+    );
+    assert!(!evidence.exists());
+    assert!(daemon.calls.lock().expect("daemon calls").is_empty());
+    assert!(shared.calls.lock().expect("shared calls").is_empty());
+    assert!(role.calls.lock().expect("role calls").is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]

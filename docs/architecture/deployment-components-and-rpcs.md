@@ -2110,8 +2110,7 @@ Both focused routes use real sealed authority, workflow SQLite, inherited actor
 lock, distinct workflow lock, supervisor lease and terminal Maker-store update.
 They start no Docker resource or local node. The existing actual-node Tag17 run
 proves the LEZ RPC leg separately; the existing historical Maker recovery run
-proves a Monero sweep separately. A fresh application-owned joined run and the
-semantic no-argument Monero refund worker remain open, so configuration-only
+proves a Monero sweep separately. A fresh application-owned joined run and actual-node refund observation remain open, so configuration-only
 public portability is not yet a production-readiness claim.
 
 ## M7 sealed refund-signature deployment boundary
@@ -2149,8 +2148,50 @@ sequenceDiagram
     PairActor->>Store: Complete original plan
 ```
 
-The focused custody tests do not open either loopback RPC and therefore cannot
-flake on node availability. The semantic child will use the configured local
-wallet and daemon origins; switching to reviewed remote endpoints remains a
-configuration change, while any required on-chain deployment remains a
-separate deployment operation.
+The ADR 0165 custody tests open no RPC. ADR 0166 additionally runs the real
+semantic child against three independent ephemeral loopback fixtures: Maker
+role wallet, shared wallet, and daemon authority. Only the two wallet origins
+receive calls; the daemon fixture receives none. This proves process routing
+and the absence of sender-side confirmation mining, not real-node behavior.
+Switching to reviewed remote endpoints remains a configuration change, while
+any required on-chain deployment remains a separate deployment operation.
+
+## M7 semantic Maker refund RPC deployment
+
+```mermaid
+flowchart LR
+    Actor[xmr maker actor] -->|FDs 200 to 219| Worker[xmr reference monero refund]
+    Worker -->|get address| RoleWallet[Maker wallet RPC]
+    Worker -->|close generate refresh balance sweep| SharedWallet[Shared wallet RPC]
+    RoleWallet --> Monerod[Monero daemon]
+    SharedWallet --> Monerod
+    Observer[Monero finality verifier] --> RoleWallet
+    Observer --> Monerod
+    Worker -. no direct RPC .-> Monerod
+    Actor --> Workflow[(XMR workflow SQLite)]
+    Observer --> Workflow
+```
+
+```mermaid
+sequenceDiagram
+    participant Worker as Refund sender
+    participant MakerWallet as Maker wallet RPC
+    participant SharedWallet as Shared wallet RPC
+    participant Monerod as Monero daemon RPC
+    participant Observer as Finality verifier
+
+    Worker->>MakerWallet: get_address account 0 index 0
+    Worker->>SharedWallet: close_wallet
+    Worker->>SharedWallet: generate_from_keys restore height 0
+    Worker->>SharedWallet: refresh from height 0
+    Worker->>SharedWallet: get_balance exact principal
+    Worker->>SharedWallet: sweep_all relay true
+    Note over Worker,Monerod: No generate_blocks and no direct daemon request
+    Observer->>MakerWallet: Refresh and locate exact receipt
+    Observer->>Monerod: Verify canonical block and confirmation depth
+```
+
+The second half is the target observer topology; its fresh joined actual-node
+replay remains open. In production, wallet RPCs themselves are configured to
+their selected daemon. The sender receives separate credentials for each
+literal-loopback origin and never falls back to DNS, public RPC, or a provider.

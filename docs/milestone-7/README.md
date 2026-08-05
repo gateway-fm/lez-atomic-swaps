@@ -31,6 +31,7 @@ materially affect safe reproduction.
 - [Supervised Maker Tag17 recovery decision](../architecture/0163-supervise-maker-tag17-recovery.md)
 - [Durable Maker recovery branch-selection decision](../architecture/0164-select-maker-recovery-from-durable-branch.md)
 - [Sealed finalized-refund extraction decision](../architecture/0165-seal-finalized-refund-signature-for-in-memory-extraction.md)
+- [Non-mining Maker Monero refund sender decision](../architecture/0166-submit-maker-monero-refund-without-mining.md)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

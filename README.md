@@ -29,7 +29,10 @@ real process proof covers both one-shot routes and keeps the private spend share
 invocation-only. ADR [0165](docs/architecture/0165-seal-finalized-refund-signature-for-in-memory-extraction.md)
 also seals finalized Tag16 on invocation-only FD 219 and verifies extraction
 against the exact durable presignature without creating a plaintext scalar
-handoff; the semantic wallet-RPC sender and joined replay remain open.
+handoff. ADR [0166](docs/architecture/0166-submit-maker-monero-refund-without-mining.md)
+now provides the semantic Maker refund child: it reconstructs in memory and
+submits once through role-correct local wallet RPCs without mining, waiting, or
+retrying. Actual-node observation and the joined replay remain open.
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined
 two-devnet F3/F6 corridor.

@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last updated: 2026-07-30
+Last updated: 2026-08-04
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -8459,3 +8459,65 @@ indexer activity, and disk pressure can increase runtime. No network response
 can make the test pass or fail. Use a fresh repository worktree and do not run
 global Docker prune; this flow creates only temporary files and removes them on
 success or failure.
+
+## Flow 1ZD: Repeat the semantic Maker Monero refund sender
+
+This focused flow runs the same no-argument binary selected by the durable
+Maker Refund branch. It builds a deterministic signed Stage A/B application,
+persists the real Maker adaptor transcript, seals finalized Tag16 on FD 219 and
+the Maker share on FD 218, reconstructs the shared spend key in memory, reads a
+Maker-owned destination, and submits one sweep through the independent shared
+wallet RPC.
+
+From the repository root:
+
+```bash
+cargo test -p xmr-reference-actor --test tag16_process \
+  sealed_maker_refund_reconstructs_and_submits_once_without_mining_or_finality_wait \
+  -- --exact --nocapture
+cargo test -p xmr-reference-actor --test tag16_process \
+  sealed_maker_refund_rejects_invalid_final_signature_before_any_rpc \
+  -- --exact --nocapture
+```
+
+A pass proves the exact wallet call trace:
+
+```text
+Maker role wallet: get_address
+Shared wallet: close_wallet, generate_from_keys, refresh, get_balance, sweep_all
+Daemon authority: no calls
+```
+
+The submission evidence must report schema
+`lez_v02_m7_monero_refund_submission_v1`, role `maker`, the exact Maker
+destination, funded principal equal to received amount plus fee, one nonzero
+transaction ID, `finality_observer_required=true`, and
+`automatic_submission_retry=false`. The corrupted canonical Tag16 packet must
+fail before every RPC and before evidence creation.
+
+```mermaid
+sequenceDiagram
+    participant Parent as Maker route fixture
+    participant Worker as Refund worker
+    participant MakerWallet as Maker wallet fixture
+    participant SharedWallet as Shared wallet fixture
+    participant Daemon as Daemon fixture
+
+    Parent->>Worker: Invoke with sealed application and secrets
+    Worker->>Worker: Verify Tag16 and reconstruct in memory
+    Worker->>MakerWallet: Read Maker destination
+    Worker->>SharedWallet: Restore and verify exact principal
+    Worker->>SharedWallet: Submit one sweep
+    Worker-->>Parent: Nonfinal secret-free evidence
+    Note over Worker,Daemon: No daemon request, mining or finality wait
+```
+
+This reproduction needs a warm Cargo toolchain and only ephemeral
+literal-loopback JSON-RPC fixtures plus temporary owner-private files and
+SQLite. It starts no Docker container, `monerod`, wallet daemon, LEZ node,
+faucet, DNS lookup, peer, public RPC, public funds, or public deployment. It can
+vary with cold compilation, CPU, entropy, filesystem sync, SQLite contention,
+or disk pressure, but not chain or Internet availability. It proves the
+semantic sending boundary; the next joined flow must replace the fixtures with
+fresh isolated LEZ and Monero nodes, run finality observation after restart,
+and prove the losing branches remain impossible.

@@ -67,6 +67,45 @@ pub struct ConfirmedMoneroSweep {
     confirmation_tip_height: u64,
 }
 
+/// One reconstructed-wallet sweep submission without confirmation mining.
+///
+/// This receipt is intentionally not finality evidence. A durable caller must
+/// persist its transaction identity and use a separate read-only observer.
+#[derive(Debug, Eq, PartialEq)]
+#[must_use]
+pub struct SubmittedMoneroSweep {
+    transaction_id: MoneroTransactionId,
+    funded_amount_piconero: u64,
+    received_amount_piconero: u64,
+    fee_piconero: u64,
+}
+
+impl SubmittedMoneroSweep {
+    /// Sole submitted sweep transaction identity.
+    #[must_use]
+    pub const fn transaction_id(&self) -> MoneroTransactionId {
+        self.transaction_id
+    }
+
+    /// Exact unlocked shared-wallet amount checked before submission.
+    #[must_use]
+    pub const fn funded_amount_piconero(&self) -> u64 {
+        self.funded_amount_piconero
+    }
+
+    /// Exact amount directed to the destination after the fee.
+    #[must_use]
+    pub const fn received_amount_piconero(&self) -> u64 {
+        self.received_amount_piconero
+    }
+
+    /// Exact fee reported for the sole sweep transaction.
+    #[must_use]
+    pub const fn fee_piconero(&self) -> u64 {
+        self.fee_piconero
+    }
+}
+
 impl ConfirmedMoneroSweep {
     /// Sole sweep transaction identity.
     #[must_use]
@@ -331,12 +370,57 @@ impl MoneroRegtestWalletEffects {
         destination: Address,
         mining_address: Address,
     ) -> Result<ConfirmedMoneroSweep, MoneroWalletEffectError> {
+        validate_standard_address(&mining_address)?;
+        let submitted = self
+            .restore_shared_and_sweep_once(
+                expected_address,
+                reconstructed_spend_key,
+                private_view_key,
+                wallet_filename,
+                wallet_password,
+                restore_height,
+                expected_amount_piconero,
+                destination,
+            )
+            .await?;
+        let confirmation_tip_height = self.mine_confirmations(mining_address).await?;
+        Ok(ConfirmedMoneroSweep {
+            transaction_id: submitted.transaction_id,
+            funded_amount_piconero: submitted.funded_amount_piconero,
+            received_amount_piconero: submitted.received_amount_piconero,
+            fee_piconero: submitted.fee_piconero,
+            confirmation_tip_height,
+        })
+    }
+
+    /// Restores the point-checked shared wallet and submits exactly one sweep.
+    ///
+    /// Unlike [`Self::restore_shared_and_sweep`], this method never mines or
+    /// waits for confirmation. It is the sending half of the durable actor
+    /// boundary: callers persist the returned transaction identity and restart
+    /// through a separate read-only finality observer rather than retrying.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on an unsafe wallet filename/password, address or key
+    /// mismatch, non-exact balance, typed RPC failure, or a split/empty sweep.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn restore_shared_and_sweep_once(
+        &self,
+        expected_address: &MoneroSharedAddressV1,
+        reconstructed_spend_key: ReconstructedMoneroSpendKey,
+        private_view_key: MoneroPrivateViewKey,
+        wallet_filename: String,
+        wallet_password: String,
+        restore_height: u64,
+        expected_amount_piconero: u64,
+        destination: Address,
+    ) -> Result<SubmittedMoneroSweep, MoneroWalletEffectError> {
         validate_wallet_filename(&wallet_filename)?;
         if !valid_credential(&wallet_password, true) {
             return Err(MoneroWalletEffectError::InvalidWalletPassword);
         }
         validate_standard_address(&destination)?;
-        validate_standard_address(&mining_address)?;
         let expected_amount =
             NonZeroU64::new(expected_amount_piconero).ok_or(MoneroWalletEffectError::ZeroAmount)?;
         let address = parse_shared_standard_address(expected_address)?;
@@ -417,13 +501,11 @@ impl MoneroRegtestWalletEffects {
             .next()
             .ok_or(MoneroWalletEffectError::InvalidSweepTransactionCount)?
             .0;
-        let confirmation_tip_height = self.mine_confirmations(mining_address).await?;
-        Ok(ConfirmedMoneroSweep {
+        Ok(SubmittedMoneroSweep {
             transaction_id,
             funded_amount_piconero: expected_amount.get(),
             received_amount_piconero,
             fee_piconero,
-            confirmation_tip_height,
         })
     }
 
@@ -657,6 +739,21 @@ mod tests {
             validate_sweep_accounting(&[amount], &[fee], 1_000_000),
             Ok((999_000, 1_000))
         );
+    }
+
+    #[test]
+    fn submitted_sweep_is_explicitly_nonfinal_and_preserves_exact_accounting() {
+        let transaction_id = [7_u8; 32].into();
+        let submitted = SubmittedMoneroSweep {
+            transaction_id,
+            funded_amount_piconero: 1_000_000,
+            received_amount_piconero: 999_000,
+            fee_piconero: 1_000,
+        };
+        assert_eq!(submitted.transaction_id(), transaction_id);
+        assert_eq!(submitted.funded_amount_piconero(), 1_000_000);
+        assert_eq!(submitted.received_amount_piconero(), 999_000);
+        assert_eq!(submitted.fee_piconero(), 1_000);
     }
 
     #[test]

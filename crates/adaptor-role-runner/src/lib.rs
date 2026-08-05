@@ -352,6 +352,24 @@ pub fn read_final_signature_packet(
     protocol::read_aggregate_packet(path, PacketKind::FinalSignature, session)
 }
 
+/// Reads canonical aggregate final-signature bytes already pinned by a caller.
+///
+/// This is the descriptor-native counterpart to
+/// [`read_final_signature_packet`]. It preserves the same canonical packet,
+/// kind, session, role-neutral sender, and context-binding checks without
+/// reopening a path.
+///
+/// # Errors
+///
+/// Rejects malformed or noncanonical bytes, a wrong packet kind, or any
+/// session/context drift.
+pub fn read_final_signature_packet_bytes(
+    bytes: &[u8],
+    session: &ValidatedSession,
+) -> Result<[u8; 64], RunnerError> {
+    protocol::read_aggregate_packet_bytes(bytes, PacketKind::FinalSignature, session)
+}
+
 /// Converts an authenticated on-chain aggregate signature into the exact
 /// canonical packet consumed by the existing extraction action.
 ///
