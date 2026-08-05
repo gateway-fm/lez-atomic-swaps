@@ -234,11 +234,14 @@ impl ValidatedXmrEffectExecutionV3 {
         workflow_lock: &MakerActorHeldLock,
     ) -> Result<Option<Command>> {
         ensure!(
-            self.effect_authority().role() == ActorRole::Taker
+            (self.effect_authority().role() == ActorRole::Taker
                 && (step == XmrWorkflowStep::RefundLezTag16
                     || (step == XmrWorkflowStep::AuthorizeLezTag14
-                        && self.effect_authority().tag14_release().is_some())),
-            "only semantic Taker Tag14 and Tag16 routes support effect preflight"
+                        && self.effect_authority().tag14_release().is_some())))
+                || (self.effect_authority().role() == ActorRole::Maker
+                    && self.effect_authority().schema_version() == 3
+                    && step == XmrWorkflowStep::PunishLezTag17),
+            "only semantic Taker Tag14 and Tag16 or Maker Tag17 routes support effect preflight"
         );
         let tool = select_tool(self.effect_authority(), step)?;
         let digest = tool_plan_identity(self, step, tool);
@@ -474,6 +477,9 @@ fn select_tool(
         (ActorRole::Maker, XmrWorkflowStep::FundMonero) => maker(authority)?.monero_fund(),
         (ActorRole::Maker, XmrWorkflowStep::ClaimLezTag15) => maker(authority)?.lez_claim(),
         (ActorRole::Maker, XmrWorkflowStep::SweepMoneroRefund) => maker(authority)?.monero_refund(),
+        (ActorRole::Maker, XmrWorkflowStep::PunishLezTag17) => maker(authority)?
+            .lez_punish()
+            .context("Maker Tag17 effect tool is unavailable")?,
         (ActorRole::Taker, XmrWorkflowStep::AuthorizeLezTag14) => {
             taker(authority)?.tag14_authorize()
         }
@@ -491,7 +497,7 @@ fn select_observer(
     step: XmrWorkflowStep,
 ) -> Result<(&XmrEffectToolV1, XmrWorkflowReconciliationSource)> {
     let observer = match (authority.role(), step) {
-        (ActorRole::Maker, XmrWorkflowStep::ClaimLezTag15) => (
+        (ActorRole::Maker, XmrWorkflowStep::ClaimLezTag15 | XmrWorkflowStep::PunishLezTag17) => (
             maker(authority)?.finalized_classifier(),
             XmrWorkflowReconciliationSource::LezFinalizedEvent,
         ),

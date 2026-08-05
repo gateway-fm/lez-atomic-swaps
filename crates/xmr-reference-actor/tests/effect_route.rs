@@ -29,8 +29,8 @@ use xmr_reference_actor::{
     ActorRole, ValidatedRolePacket, XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectChildModeV1,
     XmrEffectObserverStateV1, XmrPreparedEffectInvocationV1,
     load_validated_xmr_effect_execution_v3_bytes, parse_xmr_effect_child_plan_v1,
-    parse_xmr_effect_observer_result_v1, provision_xmr_taker_actor_from_material,
-    publish_xmr_effect_manifest_v3,
+    parse_xmr_effect_observer_result_v1, provision_xmr_maker_actor_from_material,
+    provision_xmr_taker_actor_from_material, publish_xmr_effect_manifest_v3,
 };
 
 const RUN_ID: &str = "m5-xmr-tag14-effect-route-red";
@@ -93,6 +93,19 @@ if grep -Fq '"mode":"preflight"' /proc/self/fd/220; then
 fi
 grep -Fq '"mode":"invoke"' /proc/self/fd/220
 "#;
+const PUNISH_WORKER: &[u8] = br#"#!/bin/sh
+set -eu
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do
+    test -e "/proc/self/fd/$fd"
+done
+test ! -e /proc/self/fd/218
+grep -Fq "\"step\":\"punish_lez_tag17\"" /proc/self/fd/217
+grep -Fq "\"executable_abi\":\"lez_xmr_tag17_punish_v1\"" /proc/self/fd/217
+if grep -Fq "\"mode\":\"preflight\"" /proc/self/fd/217; then
+    exit 0
+fi
+grep -Fq "\"mode\":\"invoke\"" /proc/self/fd/217
+"#;
 const OBSERVER: &[u8] = br#"#!/bin/sh
 set -eu
 test "$#" -eq 2
@@ -111,6 +124,16 @@ struct ToolFixture {
     program: PathBuf,
     program_sha256: String,
     abi: &'static str,
+}
+
+#[derive(Serialize)]
+struct MakerToolsFixture {
+    monero_fund: ToolFixture,
+    lez_claim: ToolFixture,
+    finalized_classifier: ToolFixture,
+    monero_refund: ToolFixture,
+    monero_verify: ToolFixture,
+    lez_punish: ToolFixture,
 }
 
 #[derive(Serialize)]
@@ -171,7 +194,10 @@ struct EffectAuthorityFixture {
     evidence_root: PathBuf,
     lez: LezFixture,
     monero: MoneroFixture,
-    taker_tools: TakerToolsFixture,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maker_tools: Option<MakerToolsFixture>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    taker_tools: Option<TakerToolsFixture>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tag14_release: Option<Tag14ReleaseFixture>,
 }
@@ -582,7 +608,7 @@ fn activated_stage_b(
     agreement: &Path,
     maker_sessions: &Path,
     taker_sessions: &Path,
-) -> (PathBuf, PathBuf) {
+) -> (PathBuf, PathBuf, PathBuf) {
     let journals = owner_directory(&fixture.material, "journals");
     let maker_journal = journals.join("maker.sqlite");
     let taker_journal = journals.join("taker.sqlite");
@@ -679,7 +705,7 @@ fn activated_stage_b(
         .output()
         .expect("spawn Stage-B assembler");
     assert_success(&assembled, "Stage-B assembler");
-    (activated, taker_journal)
+    (activated, maker_journal, taker_journal)
 }
 
 fn tool(root: &Path, name: &str, digest: [u8; 32], abi: &'static str) -> ToolFixture {
@@ -690,10 +716,14 @@ fn tool(root: &Path, name: &str, digest: [u8; 32], abi: &'static str) -> ToolFix
     }
 }
 
-fn write_effect_inputs(root: &Path) -> (PathBuf, PathBuf, Vec<PathBuf>) {
+fn write_effect_inputs(root: &Path, role: &str) -> (PathBuf, PathBuf, Vec<PathBuf>) {
     let runtime = root.join("runtime.json");
     let capability = root.join("lez.capability");
-    write_private(&runtime, b"{\"role\":\"taker\"}\n", 0o600);
+    write_private(
+        &runtime,
+        format!("{{\"role\":\"{role}\"}}\n").as_bytes(),
+        0o600,
+    );
     write_private(&capability, b"capability\n", 0o600);
     let secrets = [
         "daemon.username",
@@ -729,7 +759,7 @@ fn effect_authority(
     activation: [u8; 32],
     semantic_tag14: bool,
 ) -> Vec<u8> {
-    let (runtime, capability, secrets) = write_effect_inputs(root);
+    let (runtime, capability, secrets) = write_effect_inputs(root, "taker");
     if semantic_tag14 {
         let runtime_descriptor = lez_bridge_protocol::RuntimeDescriptor::new(
             lez_bridge_protocol::Participant::Taker,
@@ -793,7 +823,8 @@ fn effect_authority(
             role_wallet: rpc_at("taker", 32977, 6),
             shared_wallet_file_password_file: secrets[8].clone(),
         },
-        taker_tools: TakerToolsFixture {
+        maker_tools: None,
+        taker_tools: Some(TakerToolsFixture {
             tag14_authorize: tool(
                 root,
                 worker
@@ -836,7 +867,7 @@ fn effect_authority(
                 Sha256::digest(REFUND_WORKER).into(),
                 "lez_xmr_tag16_refund_v1",
             ),
-        },
+        }),
         tag14_release: release_state.map(|state_directory| Tag14ReleaseFixture {
             sidecar_url: "http://127.0.0.1:32978/".to_owned(),
             indexer_url: "http://127.0.0.1:32979/".to_owned(),
@@ -848,6 +879,98 @@ fn effect_authority(
         }),
     };
     let mut bytes = serde_json::to_vec(&fixture).expect("serialize effect authority");
+    bytes.push(b'\n');
+    bytes
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "Maker fixture keeps the complete schema-v3 authority visible"
+)]
+fn maker_effect_authority(
+    root: &Path,
+    worker: &Path,
+    workflow: &Path,
+    actor_state: &Path,
+    swap: [u8; 32],
+    agreement: [u8; 32],
+    activation: [u8; 32],
+) -> Vec<u8> {
+    let (runtime, capability, secrets) = write_effect_inputs(root, "maker");
+    let classifier = root.join("classifier");
+    write_private(&classifier, OBSERVER, 0o700);
+    let rpc_at = |port: u16, index: usize| RpcFixture {
+        url: format!("http://127.0.0.1:{port}/"),
+        username_file: secrets[index].clone(),
+        password_file: secrets[index + 1].clone(),
+    };
+    let runtime_bytes = fs::read(&runtime).expect("Maker runtime fixture");
+    let worker_name = worker
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("ASCII Tag17 worker name");
+    let fixture = EffectAuthorityFixture {
+        schema_version: 3,
+        pair: "monero",
+        role: ActorRole::Maker,
+        swap_id: hex::encode(swap),
+        agreement_commitment: hex::encode(agreement),
+        activation_commitment: hex::encode(activation),
+        run_id: RUN_ID,
+        workflow_journal: workflow.to_path_buf(),
+        adaptor_journal: actor_state.to_path_buf(),
+        evidence_root: root.join("evidence"),
+        lez: LezFixture {
+            sidecar_url: "http://127.0.0.1:32972/".to_owned(),
+            runtime_file: runtime,
+            runtime_sha256: hex::encode(Sha256::digest(runtime_bytes)),
+            capability_file: capability,
+        },
+        monero: MoneroFixture {
+            daemon: rpc_at(32974, 0),
+            funding_wallet: rpc_at(32975, 2),
+            shared_wallet: rpc_at(32976, 4),
+            role_wallet: rpc_at(32977, 6),
+            shared_wallet_file_password_file: secrets[8].clone(),
+        },
+        maker_tools: Some(MakerToolsFixture {
+            monero_fund: tool(
+                root,
+                "maker-monero-fund",
+                [0x50; 32],
+                "lez_xmr_monero_fund_v2",
+            ),
+            lez_claim: tool(root, "maker-tag15", [0x55; 32], "lez_xmr_tag15_claim_v1"),
+            finalized_classifier: tool(
+                root,
+                "classifier",
+                Sha256::digest(OBSERVER).into(),
+                "lez_xmr_finalized_classifier_v1",
+            ),
+            monero_refund: tool(
+                root,
+                "maker-refund-sweep",
+                [0x66; 32],
+                "lez_xmr_monero_refund_sweep_v3",
+            ),
+            monero_verify: tool(
+                root,
+                "maker-monero-verify",
+                [0x70; 32],
+                "lez_xmr_monero_verify_v2",
+            ),
+            lez_punish: tool(
+                root,
+                worker_name,
+                Sha256::digest(PUNISH_WORKER).into(),
+                "lez_xmr_tag17_punish_v1",
+            ),
+        }),
+        taker_tools: None,
+        tag14_release: None,
+    };
+    let mut bytes = serde_json::to_vec(&fixture).expect("serialize Maker effect authority");
     bytes.push(b'\n');
     bytes
 }
@@ -902,6 +1025,130 @@ fn semantic_release_route_fixture() -> RouteFixture {
 }
 
 #[allow(clippy::too_many_lines)]
+fn maker_punish_route_fixture() -> RouteFixture {
+    let material = provision_material();
+    let agreement = signed_stage_a(&material);
+    let maker_sessions = initialize_sessions(&material, &agreement, "maker");
+    let taker_sessions = initialize_sessions(&material, &agreement, "taker");
+    let (activation, maker_journal, _taker_journal) =
+        activated_stage_b(&material, &agreement, &maker_sessions, &taker_sessions);
+
+    let actors = owner_directory(&material.material, "actors");
+    let maker_actor = provision_xmr_maker_actor_from_material(
+        &material.maker_root,
+        &material.maker_packet,
+        &material.taker_packet,
+        &agreement,
+        &activation,
+        &maker_journal,
+        &actors.join("maker"),
+    )
+    .expect("provision Maker application actor");
+    let swap_bytes = maker_actor.swap_id();
+    let swap_id = SwapId::new(hex::encode(swap_bytes)).expect("canonical swap ID");
+    let workflow = maker_actor
+        .state_directory()
+        .join("xmr-effect-workflow.sqlite3");
+    let effect_root = owner_directory(&material.material, "effect-inputs");
+    let worker = effect_root.join("tag17-worker");
+    write_private(&worker, PUNISH_WORKER, 0o700);
+    let effect_bytes = maker_effect_authority(
+        &effect_root,
+        &worker,
+        &workflow,
+        &maker_journal,
+        swap_bytes,
+        maker_actor.agreement_commitment(),
+        maker_actor.activation_commitment(),
+    );
+    let authority_digest: [u8; 32] = Sha256::digest(&effect_bytes).into();
+    let identity = XmrWorkflowIdentityV1::new(
+        swap_id.clone(),
+        Participant::Maker,
+        RUN_ID.into(),
+        maker_actor.agreement_commitment(),
+        maker_actor.activation_commitment(),
+        authority_digest,
+    )
+    .expect("valid Maker workflow identity");
+    let mut journal =
+        SqliteXmrWorkflowJournal::create_new(&workflow).expect("create Maker workflow journal");
+    journal
+        .initialize(&identity)
+        .expect("initialize Maker workflow");
+    journal
+        .prepare_step(&identity, XmrWorkflowStep::FundMonero)
+        .expect("prepare Maker Monero funding");
+    assert_eq!(
+        journal
+            .authorize_once(&identity, XmrWorkflowStep::FundMonero)
+            .unwrap(),
+        XmrWorkflowDecision::InvokeOnce
+    );
+    journal
+        .reconcile_succeeded(
+            &identity,
+            XmrWorkflowStep::FundMonero,
+            &XmrWorkflowReconciliationV2::new(
+                [0x81; 32],
+                [0x82; 32],
+                XmrWorkflowReconciliationSource::MoneroWalletTransaction,
+            )
+            .unwrap(),
+        )
+        .expect("reconcile Maker Monero funding");
+    journal
+        .select_branch(&identity, XmrWorkflowBranch::Punish)
+        .expect("select Maker punishment branch");
+    journal
+        .prepare_step(&identity, XmrWorkflowStep::PunishLezTag17)
+        .expect("prepare Maker Tag17 step");
+    drop(journal);
+
+    let effect_file = effect_root.join("effect-authority.json");
+    write_private(&effect_file, &effect_bytes, 0o600);
+    let effect_manifest = effect_root.join("effect-manifest.json");
+    publish_xmr_effect_manifest_v3(
+        maker_actor.manifest_file(),
+        ActorRole::Maker,
+        &effect_file,
+        &workflow,
+        RUN_ID,
+        &effect_manifest,
+    )
+    .expect("publish Maker schema-v3 effect manifest");
+    let manifest_bytes = fs::read(effect_manifest).expect("read Maker effect manifest");
+    let application_sha256 = [
+        maker_actor.stage_a_file().to_path_buf(),
+        maker_actor.stage_b_file().to_path_buf(),
+        material.maker_packet.clone(),
+        material.taker_packet.clone(),
+        material.maker_root.join("manifest.json"),
+        material.maker_root.join("monero-view.key"),
+    ]
+    .iter()
+    .map(|path| hex::encode(Sha256::digest(fs::read(path).expect("read Maker input"))))
+    .collect();
+    let share_hex = fs::read_to_string(material.maker_root.join("xmr-share.key"))
+        .expect("read Maker XMR share");
+    let private_xmr_share_sha256 = hex::encode(Sha256::digest(
+        hex::decode(share_hex.trim()).expect("decode Maker XMR share"),
+    ));
+
+    RouteFixture {
+        _material: material,
+        swap_id,
+        workflow,
+        actor_state: maker_journal,
+        worker,
+        effect_bytes,
+        manifest_bytes,
+        application_sha256,
+        private_xmr_share_sha256,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 fn route_fixture_for_mode(
     terminal_branch: XmrWorkflowBranch,
     terminal_step: XmrWorkflowStep,
@@ -911,7 +1158,7 @@ fn route_fixture_for_mode(
     let agreement = signed_stage_a(&material);
     let maker_sessions = initialize_sessions(&material, &agreement, "maker");
     let taker_sessions = initialize_sessions(&material, &agreement, "taker");
-    let (activation, taker_journal) =
+    let (activation, _maker_journal, taker_journal) =
         activated_stage_b(&material, &agreement, &maker_sessions, &taker_sessions);
 
     let actors = owner_directory(&material.material, "actors");
@@ -1029,6 +1276,81 @@ fn route_fixture_for_mode(
         application_sha256,
         private_xmr_share_sha256,
     }
+}
+
+#[test]
+fn maker_tag17_route_preflights_invokes_once_and_observes_without_private_share() {
+    let fixture = maker_punish_route_fixture();
+    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+        .expect("acquire Maker state lock");
+    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+        .expect("acquire Maker workflow lock");
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Maker,
+        RUN_ID,
+    )
+    .expect("load schema-v3 Maker Tag17 authority");
+    let step = XmrWorkflowStep::PunishLezTag17;
+
+    let prepared = fs::read(&fixture.workflow).unwrap();
+    let mut preflight = execution
+        .prepare_effect_preflight(step, &actor_lock, &workflow_lock)
+        .expect("compose Maker Tag17 preflight")
+        .expect("Prepared Tag17 requires preflight");
+    assert!(preflight.status().expect("run Tag17 preflight").success());
+    assert_eq!(
+        fs::read(&fixture.workflow).unwrap(),
+        prepared,
+        "preflight must not consume the workflow CAS"
+    );
+
+    let sending_plan = match execution
+        .prepare_effect_invocation(step, &actor_lock, &workflow_lock)
+        .expect("prepare Tag17 invocation")
+    {
+        XmrPreparedEffectInvocationV1::InvokeOnce {
+            mut command,
+            tool_plan_identity_sha256,
+        } => {
+            assert!(
+                command
+                    .status()
+                    .expect("run Tag17 descriptor probe")
+                    .success()
+            );
+            tool_plan_identity_sha256
+        }
+        XmrPreparedEffectInvocationV1::ObserveOnly { .. }
+        | XmrPreparedEffectInvocationV1::Complete { .. } => {
+            panic!("Prepared Tag17 must invoke exactly once")
+        }
+    };
+    assert!(sending_plan.iter().any(|byte| *byte != 0));
+
+    let reopened = load_validated_xmr_effect_execution_v3_bytes(
+        &fixture.manifest_bytes,
+        &fixture.effect_bytes,
+        ActorRole::Maker,
+        RUN_ID,
+    )
+    .expect("reopen Maker Tag17 authority");
+    assert!(matches!(
+        reopened
+            .prepare_effect_invocation(step, &actor_lock, &workflow_lock)
+            .expect("restart Tag17 route"),
+        XmrPreparedEffectInvocationV1::ObserveOnly {
+            tool_plan_identity_sha256
+        } if tool_plan_identity_sha256 == sending_plan
+    ));
+    let (mut observer, observed_plan, source) = reopened
+        .prepare_effect_observation(step, &actor_lock, &workflow_lock)
+        .expect("Started Tag17 admits finalized classifier")
+        .into_parts();
+    assert_eq!(observed_plan, sending_plan);
+    assert_eq!(source, XmrWorkflowReconciliationSource::LezFinalizedEvent);
+    assert_observer_pending(&mut observer, step);
 }
 
 #[test]

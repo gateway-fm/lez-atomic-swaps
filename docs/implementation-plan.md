@@ -478,6 +478,12 @@ attestation so neither can be misreported as the other.
   schema-2 Taker canonical profiles retain their prior meaning. Missing tools,
   ABI drift and cross-version injection fail before executable or RPC use. The
   focused authority RED/GREEN is complete; route and worker composition follow.
+- [x] Route Maker Tag17 through least-privilege sealed descriptors under ADR
+  0161. A real Maker application fixture proves non-mutating preflight,
+  pin-before-CAS invocation, exactly one command, restart ObserveOnly, finalized
+  LEZ observation with the original sending-plan digest, and explicit absence of
+  the private Monero share from sender and observer. The semantic no-argument
+  Tag17 child remains the next RED/GREEN slice.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
