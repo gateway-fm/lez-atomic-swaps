@@ -213,6 +213,10 @@ flowchart TB
     M7Tag17Authority --> M7Tag17Route["0161 Least privilege Tag17 route"]
     M7Tag17Route --> M7Tag17Worker["0162 Semantic sealed Tag17 worker"]
     M7Tag17Worker --> M7Tag17Supervisor["0163 Supervised Tag17 recovery"]
+    M7Tag17Supervisor --> M7RecoveryBranch["0164 Durable recovery branch"]
+    M7RecoveryBranch --> M7RefundCustody["0165 Sealed refund extraction"]
+    M7RefundCustody --> M7RefundSender["0166 One shot Monero refund"]
+    M7RefundSender --> M7RefundObserver["0167 Read only refund finality"]
 ```
 
 | ADR | Decision | Status |
@@ -383,3 +387,4 @@ flowchart TB
 | [0164](0164-select-maker-recovery-from-durable-branch.md) | Derive Maker Refund or Punish effects only from the validated durable workflow branch | Accepted application checkpoint; real supervisor/actor process proves both branches invoke once and observe-only on restart, while the semantic Monero worker and joined two-devnet corridor remain open |
 | [0165](0165-seal-finalized-refund-signature-for-in-memory-extraction.md) | Pin finalized Tag16 and the Maker share before CAS, then derive the refund scalar only in memory from the exact durable transcript | Accepted semantic-worker prerequisite; descriptor custody and real transcript extraction are GREEN, while RPC submission and joined two-devnet replay remain open |
 | [0166](0166-submit-maker-monero-refund-without-mining.md) | Restore and sweep the Maker refund once, returning non-final evidence without mining, waiting, or retrying | Accepted semantic-worker checkpoint; role-correct typed wallet-RPC process tests are GREEN, while actual-node observation and joined replay remain open |
+| [0167](0167-observe-maker-monero-refund-without-spend-authority.md) | Re-observe the exact Maker refund through typed wallet and daemon evidence without receiving reconstruction or submission authority | Accepted observer checkpoint; secret-exclusion, changed-evidence rejection, strict pending classification and atomic receipt publication are GREEN, while the fresh actual-node finality replay remains open |

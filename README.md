@@ -32,7 +32,11 @@ against the exact durable presignature without creating a plaintext scalar
 handoff. ADR [0166](docs/architecture/0166-submit-maker-monero-refund-without-mining.md)
 now provides the semantic Maker refund child: it reconstructs in memory and
 submits once through role-correct local wallet RPCs without mining, waiting, or
-retrying. Actual-node observation and the joined replay remain open.
+retrying. ADR [0167](docs/architecture/0167-observe-maker-monero-refund-without-spend-authority.md)
+now supplies its read-only restart observer: exact transaction finality is
+re-proved through typed Maker-wallet and daemon RPCs without either refund
+secret, and the receipt is atomically published. The fresh actual-node
+observation and joined replay remain open.
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined
 two-devnet F3/F6 corridor.

@@ -8521,3 +8521,52 @@ or disk pressure, but not chain or Internet availability. It proves the
 semantic sending boundary; the next joined flow must replace the fixtures with
 fresh isolated LEZ and Monero nodes, run finality observation after restart,
 and prove the losing branches remain impossible.
+
+## Flow 1ZE: Repeat the semantic Maker Monero finality-observer boundary
+
+This focused flow verifies the production observer selected when the durable
+refund effect is already Started or Unknown. It checks that only known
+non-final chain states map to Pending, that the observer rejects an inherited
+spend share before all RPC, and that changed sender evidence cannot reach an
+RPC or create final evidence.
+
+From the repository root:
+
+```bash
+cargo test --locked -p xmr-reference-actor --bin xmr-reference-monero-verify -- --nocapture
+cargo test --locked -p xmr-reference-actor --test tag16_process sealed_maker_refund_observer -- --nocapture
+```
+
+Expected result: four tests pass. The two process tests must leave stdout
+empty on rejection, record zero daemon and Maker-wallet calls, and create no
+`monero-refund-finalized.json`.
+
+```mermaid
+sequenceDiagram
+    participant Parent as Maker route fixture
+    participant Observer as Refund observer
+    participant Evidence as Private evidence root
+    participant Wallet as Maker wallet fixture
+    participant Daemon as Daemon fixture
+
+    Parent->>Observer: Observe with sealed plan
+    alt FD 218 is present
+        Observer--xParent: Reject before parsing or RPC
+    else Sender evidence changed
+        Observer->>Evidence: Validate canonical submission and plan digest
+        Observer--xParent: Reject before RPC
+    else Joined actual-node run
+        Observer->>Wallet: Verify exact incoming transaction
+        Observer->>Daemon: Verify stable canonical finality
+        Observer-->>Parent: Pending or finalized digest
+    end
+```
+
+This focused boundary uses only deterministic temporary role material, SQLite
+and ephemeral literal-loopback JSON-RPC fixtures. It starts no Docker
+container, `monerod`, wallet daemon, LEZ node, faucet, peer, DNS request, public
+RPC, public funds or deployment. Cold compilation, CPU/entropy scheduling,
+filesystem synchronization, SQLite contention and disk pressure can vary the
+runtime; Internet or chain availability cannot. The positive typed
+wallet-plus-canonical-daemon finality path is exercised by the next fresh
+joined official Monero Regtest flow rather than simulated here.

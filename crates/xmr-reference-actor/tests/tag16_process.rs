@@ -1047,6 +1047,105 @@ fn maker_refund_effect_child_command(
     (command, evidence_root.join("monero-refund-submission.json"))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the process fixture makes every sealed authority input explicit"
+)]
+fn maker_refund_observer_command(
+    stage: &StageFixture,
+    evidence_root: &Path,
+    daemon_endpoint: &str,
+    role_endpoint: &str,
+    include_private_share: bool,
+) -> Command {
+    let root = evidence_root.parent().expect("fixture root");
+    let journal = root.join("maker-refund-adaptor.sqlite");
+    let plan = EffectChildPlanFixture {
+        schema_version: 1,
+        pair: "monero",
+        role: ActorRole::Maker,
+        mode: "observe",
+        step: "sweep_monero_refund",
+        run_id: RUN,
+        swap_id: hex::encode(stage.agreement.body().swap_id()),
+        agreement_commitment: hex::encode(stage.agreement.agreement_commitment()),
+        activation_commitment: hex::encode(stage.activation.activation_commitment()),
+        executable_abi: "lez_xmr_monero_verify_v2",
+        sending_tool_plan_sha256: hex::encode([0xc7; 32]),
+        adaptor_journal: &journal,
+        evidence_root,
+        lez_sidecar_url: "http://127.0.0.1:32973/",
+        monero_daemon_url: daemon_endpoint,
+        monero_funding_wallet_url: "http://127.0.0.1:32975/",
+        monero_shared_wallet_url: "http://127.0.0.1:32976/",
+        monero_role_wallet_url: role_endpoint,
+    };
+    let mut plan_bytes = serde_json::to_vec(&plan).expect("observer child plan JSON");
+    plan_bytes.push(b'\n');
+    let _ = parse_xmr_effect_child_plan_v1(&plan_bytes).expect("canonical observer child plan");
+    let mut descriptors = vec![
+        (
+            sealed_memfd("observer-daemon-user", b"daemon-user"),
+            XMR_EFFECT_DAEMON_USERNAME_FD,
+        ),
+        (
+            sealed_memfd("observer-daemon-password", b"daemon-password"),
+            XMR_EFFECT_DAEMON_PASSWORD_FD,
+        ),
+        (
+            sealed_memfd("observer-role-user", b"role-user"),
+            XMR_EFFECT_ROLE_USERNAME_FD,
+        ),
+        (
+            sealed_memfd("observer-role-password", b"role-password"),
+            XMR_EFFECT_ROLE_PASSWORD_FD,
+        ),
+        (
+            sealed_memfd(
+                "observer-stage-a",
+                &stage.agreement.encode_wire().expect("Stage-A wire"),
+            ),
+            XMR_EFFECT_STAGE_A_FD,
+        ),
+        (
+            sealed_memfd(
+                "observer-stage-b",
+                &stage.activation.encode_wire().expect("Stage-B wire"),
+            ),
+            XMR_EFFECT_STAGE_B_FD,
+        ),
+        (
+            sealed_memfd("observer-view-key", hex::encode(VIEW_KEY_BYTES).as_bytes()),
+            XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+        ),
+        (
+            sealed_memfd("observer-child-plan", &plan_bytes),
+            XMR_EFFECT_CHILD_PLAN_FD,
+        ),
+    ];
+    if include_private_share {
+        descriptors.push((
+            sealed_memfd("forbidden-observer-xmr-share", &MAKER_XMR_SHARE_BYTES),
+            XMR_EFFECT_PRIVATE_XMR_SHARE_FD,
+        ));
+    }
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xmr-reference-monero-verify"));
+    command
+        .arg("--xmr-workflow-step")
+        .arg("sweep_monero_refund")
+        .fd_mappings(
+            descriptors
+                .into_iter()
+                .map(|(file, child_fd)| FdMapping {
+                    parent_fd: file.into(),
+                    child_fd,
+                })
+                .collect(),
+        )
+        .expect("map sealed observer descriptors");
+    command
+}
+
 fn standard_monero_address(seed: u8) -> String {
     let mut spend = [0_u8; 32];
     spend[0] = seed;
@@ -1251,6 +1350,118 @@ async fn sealed_maker_refund_rejects_invalid_final_signature_before_any_rpc() {
     assert!(daemon.calls.lock().expect("daemon calls").is_empty());
     assert!(shared.calls.lock().expect("shared calls").is_empty());
     assert!(role.calls.lock().expect("role calls").is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_maker_refund_observer_rejects_invocation_secret_before_all_rpc() {
+    let stage = build_stage_b();
+    let root = tempfile::tempdir().expect("observer fixture root");
+    let evidence_root = root.path().join("observer-evidence");
+    fs::create_dir(&evidence_root).expect("create observer evidence root");
+    fs::set_permissions(&evidence_root, fs::Permissions::from_mode(0o700))
+        .expect("protect observer evidence root");
+    let daemon = spawn_wallet(
+        standard_monero_address(3),
+        stage.agreement.shared_address().address_string(),
+        stage.agreement.body().monero().amount_piconero(),
+    )
+    .await;
+    let role_address = standard_monero_address(7);
+    let role = spawn_wallet(
+        role_address.clone(),
+        role_address,
+        stage.agreement.body().monero().amount_piconero(),
+    )
+    .await;
+    let mut command = maker_refund_observer_command(
+        &stage,
+        &evidence_root,
+        &daemon.endpoint,
+        &role.endpoint,
+        true,
+    );
+    let output = command.output().expect("spawn forbidden-input observer");
+    assert_failure(&output, "forbidden-input observer");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("received forbidden private XMR share FD")
+    );
+    assert!(output.stdout.is_empty());
+    assert!(daemon.calls.lock().expect("daemon calls").is_empty());
+    assert!(role.calls.lock().expect("role calls").is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_maker_refund_observer_rejects_changed_submission_before_all_rpc() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let shared_address = stage.agreement.shared_address().address_string();
+    let amount = stage.agreement.body().monero().amount_piconero();
+    let daemon = spawn_wallet(standard_monero_address(3), shared_address.clone(), amount).await;
+    let shared = spawn_wallet(standard_monero_address(5), shared_address, amount).await;
+    let role_address = standard_monero_address(7);
+    let role = spawn_wallet(role_address.clone(), role_address, amount).await;
+    let (mut sender, submission) = maker_refund_effect_child_command(
+        &stage,
+        &inputs,
+        &daemon.endpoint,
+        &shared.endpoint,
+        &role.endpoint,
+    );
+    let output = sender.output().expect("spawn sealed Maker refund worker");
+    assert!(
+        output.status.success(),
+        "Maker refund worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    daemon.calls.lock().expect("daemon calls").clear();
+    role.calls.lock().expect("role calls").clear();
+    let mut valid_observer = maker_refund_observer_command(
+        &stage,
+        submission.parent().expect("evidence root"),
+        &daemon.endpoint,
+        &role.endpoint,
+        false,
+    );
+    let output = valid_observer
+        .output()
+        .expect("spawn valid-input observer against incomplete daemon fixture");
+    assert_failure(
+        &output,
+        "valid-input observer against incomplete daemon fixture",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("typed Monero RPC operation `on_get_block_hash(0)` failed"),
+        "valid sender evidence did not reach the typed observer RPC boundary: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    let mut changed: Value =
+        serde_json::from_slice(&fs::read(&submission).expect("submission evidence"))
+            .expect("submission JSON");
+    changed["sending_tool_plan_sha256"] = Value::String(hex::encode([0xd8; 32]));
+    let mut changed_bytes = serde_json::to_vec(&changed).expect("changed submission JSON");
+    changed_bytes.push(b'\n');
+    fs::write(&submission, changed_bytes).expect("replace changed submission");
+    let mut observer = maker_refund_observer_command(
+        &stage,
+        submission.parent().expect("evidence root"),
+        &daemon.endpoint,
+        &role.endpoint,
+        false,
+    );
+    let output = observer.output().expect("spawn changed-input observer");
+    assert_failure(&output, "changed-input observer");
+    assert!(output.stdout.is_empty());
+    assert!(daemon.calls.lock().expect("daemon calls").is_empty());
+    assert!(role.calls.lock().expect("role calls").is_empty());
+    assert!(
+        !submission
+            .parent()
+            .expect("evidence root")
+            .join("monero-refund-finalized.json")
+            .exists()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

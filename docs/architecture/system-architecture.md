@@ -3516,3 +3516,42 @@ sequenceDiagram
     Note over Worker,Monerod: Worker never mines or calls daemon directly
     Parent->>Finality: Restart observation without FDs 218 and 219
 ```
+
+## M7 read-only Maker refund finality observer
+
+ADR 0167 closes the semantic observation edge. The observer validates the
+original sender receipt and sending-plan digest, receives neither spend input,
+and can report only Pending or a typed canonical finality proof.
+
+```mermaid
+flowchart LR
+    SenderReceipt[Canonical sender receipt] --> FinalityObserver[Refund finality observer]
+    ObservePlan[Sealed observe plan] --> FinalityObserver
+    FinalityObserver --> MakerWallet[Maker wallet RPC]
+    FinalityObserver --> MoneroDaemon[Monero daemon RPC]
+    FinalityObserver --> AtomicReceipt[Atomic finality receipt]
+    AtomicReceipt --> EffectWorkflow[(Effect workflow)]
+    RefundShare[Maker spend share] -. excluded .-> FinalityObserver
+    Tag16Signature[Finalized Tag16] -. excluded .-> FinalityObserver
+```
+
+```mermaid
+sequenceDiagram
+    participant MakerActor as Maker role actor
+    participant Observer as Monero observer
+    participant Wallet as Maker wallet RPC
+    participant Daemon as Monero daemon RPC
+    participant Workflow as XMR workflow
+
+    MakerActor->>Observer: Observe original refund plan
+    Observer->>Wallet: Locate exact incoming sweep
+    Observer->>Daemon: Prove stable canonical membership
+    alt Non-final
+        Observer-->>MakerActor: Pending
+    else Exact ten-confirmation proof
+        Observer-->>MakerActor: Finalized evidence digest
+        MakerActor->>Workflow: Reconcile succeeded
+    else Any identity or semantic mismatch
+        Observer--xMakerActor: Fail closed
+    end
+```

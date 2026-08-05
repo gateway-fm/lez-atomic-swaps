@@ -2191,7 +2191,11 @@ sequenceDiagram
     Observer->>Monerod: Verify canonical block and confirmation depth
 ```
 
-The second half is the target observer topology; its fresh joined actual-node
-replay remains open. In production, wallet RPCs themselves are configured to
-their selected daemon. The sender receives separate credentials for each
-literal-loopback origin and never falls back to DNS, public RPC, or a provider.
+ADR 0167 implements the second half as `xmr-reference-monero-verify`. The
+observer contacts only the configured Maker-wallet and daemon RPC origins,
+receives neither FD 218 nor FD 219, returns Pending for bounded non-final
+states, and atomically publishes a receipt only after exact stable-tip,
+canonical-block, destination, amount and ten-confirmation checks. Its fresh
+joined actual-node replay remains open. In production, wallet RPCs themselves
+are configured to their selected daemon. Neither sender nor observer falls
+back to DNS, a public RPC, faucet or provider.

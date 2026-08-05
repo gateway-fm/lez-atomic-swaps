@@ -528,6 +528,15 @@ attestation so neither can be misreported as the other.
   zero calls; restart finality remains a separate observer. Happy and corrupted
   signature process tests plus all affected strict gates are GREEN. The next
   slice is the joined local-node application recovery and observer replay.
+- [x] Implement the restart-only Maker Monero finality observer through ADR
+  0167. The existing schema-3 verifier ABI now validates the sealed Observe
+  plan, Stage A/B, canonical submission and original sending-plan identity,
+  explicitly rejects FDs 218/219, and uses the maintained typed wallet/daemon
+  verifier. Only bounded non-final states return Pending; semantic, chain or
+  accounting mismatches fail closed. Final evidence uses fsynced staging plus
+  no-replace atomic publication and must be re-derived and byte-identical on
+  replay. Unit and real-process negative tests are GREEN. The fresh official
+  Regtest happy-path observation remains part of the joined local-node slice.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
