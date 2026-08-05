@@ -145,6 +145,14 @@ a Tag13-specific reader that reproduces the producer's exact durable encoding;
 the generic compact reader remains unchanged for every other evidence schema.
 Exact cleanup passed again.
 
+The source-bound `0c88ec7` replay proved that reader and completed Taker claim
+activation before the literal CLI failed closed on receipt ambiguity. The
+receipt-v2 loader requires exact newline-free `serde_json::to_vec` bytes; the
+runner's otherwise canonical sorted jq composition appended a newline. The
+runner now uses jq join-output mode to preserve the same sorted object bytes
+without a terminator. Bash syntax and the M4/M5 runner contracts are GREEN;
+exact cleanup passed.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

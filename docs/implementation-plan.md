@@ -6701,5 +6701,11 @@ S12/S13 review and policy-deferred public deployment.
   while its authoritative durable file is canonical pretty JSON plus newline.
   The activator now reproduces that exact producer encoding without changing
   the generic compact evidence reader; cleanup schema v2 passed.
+- [ ] Replay newline-free receipt-v2 composition. Exact run
+  `m7claim-0c88ec7-a` proved the durable Tag13 reader and completed Taker Claim
+  activation, then the literal CLI rejected receipt ambiguity because jq had
+  appended a newline to otherwise canonical bytes. The runner now uses
+  join-output mode; Bash syntax and M4/M5 runner contracts are GREEN, and exact
+  cleanup passed.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

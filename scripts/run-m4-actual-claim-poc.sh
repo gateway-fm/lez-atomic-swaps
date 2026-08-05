@@ -2714,7 +2714,7 @@ provision_m7_taker_claim_effect_application() {
   chmod 0600 "$m7_taker_effect_acceptance"
   require_owner_file "$m7_taker_effect_manifest" "M7 Taker effect manifest"
   require_owner_file "$m7_taker_effect_workflow" "M7 Taker effect workflow"
-  jq -cS --arg authority "$m7_taker_effect_authority" \
+  jq -jcS --arg authority "$m7_taker_effect_authority" \
     --arg authority_sha "$(sha256_file "$m7_taker_effect_authority")" \
     --arg manifest "$m7_taker_effect_manifest" \
     --arg manifest_sha "$(sha256_file "$m7_taker_effect_manifest")" \
