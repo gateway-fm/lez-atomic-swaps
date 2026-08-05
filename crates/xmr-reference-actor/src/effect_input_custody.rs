@@ -731,7 +731,7 @@ impl ValidatedXmrEffectExecutionV3 {
     }
 }
 
-fn parse_private_view_key_bytes(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {
+pub(crate) fn parse_private_view_key_bytes(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {
     let mut text = Zeroizing::new(
         String::from_utf8(bytes.to_vec()).context("XMR Tag14 view key is not UTF-8")?,
     );

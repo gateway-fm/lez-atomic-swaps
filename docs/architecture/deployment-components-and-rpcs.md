@@ -2199,3 +2199,28 @@ canonical-block, destination, amount and ten-confirmation checks. Its fresh
 joined actual-node replay remains open. In production, wallet RPCs themselves
 are configured to their selected daemon. Neither sender nor observer falls
 back to DNS, a public RPC, faucet or provider.
+
+### Evidence-driven activation before supervisor restart
+
+ADR 0168 adds a non-RPC gate between finalized Tag-16 ingestion and the
+schema-3 supervisor restart. It reads the canonical funding effect/receipt,
+Maker finalized-classifier result and observed signature from owner-private
+files, then advances only the durable Refund branch.
+
+```mermaid
+flowchart LR
+    FundingFile[Funding evidence] --> Gate[Refund activation gate]
+    ReceiptFile[Independent funding receipt] --> Gate
+    Tag16File[Finalized Tag16 result] --> Gate
+    SignatureFile[Observed signature packet] --> Gate
+    Gate --> EvidenceRoot[Maker effect evidence root]
+    Gate --> Workflow[(Maker workflow SQLite)]
+    Workflow --> Actor[xmr maker actor]
+    Actor --> Sender[Refund sender]
+    Actor --> Observer[Finality observer]
+```
+
+The gate contacts no endpoint. Once activated, the sender uses only the shared
+and Maker wallet loopback RPCs; the observer uses only the Maker wallet and
+Monero daemon loopback RPCs. The funding wallet is a distinct test authority
+used before activation and never enters the refund child.

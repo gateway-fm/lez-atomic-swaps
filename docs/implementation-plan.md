@@ -543,6 +543,13 @@ attestation so neither can be misreported as the other.
   manifest together; it emits only a canonical secret-free summary. The daemon
   already accepts this schema-3 projection, so the actual runner can register
   it from the first activation instead of mutating a registered legacy actor.
+- [x] Activate the schema-3 Maker Refund workflow only from exact evidence.
+  ADR 0168 adds a no-branch CLI gate that revalidates the application, one-shot
+  funding plus independent receipt, finalized Maker-side Tag16 discovery and
+  observed signature packet. It imports funding with stable evidence/plan
+  digests, publishes the child packet by no-replace exact replay, selects only
+  Refund by durable CAS and prepares the semantic sweep. Parser and strict
+  all-target compile gates are GREEN; joined actual-node replay remains.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

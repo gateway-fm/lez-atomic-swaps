@@ -446,3 +446,75 @@ fn effect_application_provision_cli_requires_complete_role_fixed_authority() {
         .collect::<Vec<_>>();
     assert!(Cli::try_parse_from(incomplete).is_err());
 }
+
+#[test]
+fn maker_refund_activation_cli_has_no_operator_branch_selector() {
+    let arguments = [
+        "xmr-reference-actor",
+        "activate-maker-refund-workflow",
+        "--effect-manifest",
+        "/private/effects/maker/actor-provision-v3.json",
+        "--effect-authority",
+        "/private/effects/maker/authority.json",
+        "--run-id",
+        "m7-joined-refund",
+        "--monero-run-id",
+        "m7-joined-refund-xmr",
+        "--monero-funding-evidence",
+        "/private/evidence/monero-funding.json",
+        "--monero-funding-receipt",
+        "/private/evidence/monero-verification.json",
+        "--finalized-refund",
+        "/private/evidence/tag16-refund-finalized.json",
+        "--observed-final-signature",
+        "/private/tag16/maker-observed-final-signature.json",
+    ];
+    let cli = Cli::try_parse_from(arguments).expect("parse Maker refund activation CLI");
+    match cli.action {
+        Action::ActivateMakerRefundWorkflow {
+            effect_manifest,
+            effect_authority,
+            run_id,
+            monero_run_id,
+            monero_funding_evidence,
+            monero_funding_receipt,
+            finalized_refund,
+            observed_final_signature,
+        } => {
+            assert_eq!(
+                effect_manifest,
+                Path::new("/private/effects/maker/actor-provision-v3.json")
+            );
+            assert_eq!(
+                effect_authority,
+                Path::new("/private/effects/maker/authority.json")
+            );
+            assert_eq!(run_id, "m7-joined-refund");
+            assert_eq!(monero_run_id, "m7-joined-refund-xmr");
+            assert_eq!(
+                monero_funding_evidence,
+                Path::new("/private/evidence/monero-funding.json")
+            );
+            assert_eq!(
+                monero_funding_receipt,
+                Path::new("/private/evidence/monero-verification.json")
+            );
+            assert_eq!(
+                finalized_refund,
+                Path::new("/private/evidence/tag16-refund-finalized.json")
+            );
+            assert_eq!(
+                observed_final_signature,
+                Path::new("/private/tag16/maker-observed-final-signature.json")
+            );
+        }
+        _ => panic!("wrong CLI action"),
+    }
+
+    let mut with_branch = arguments.to_vec();
+    with_branch.extend(["--branch", "claim"]);
+    assert!(
+        Cli::try_parse_from(with_branch).is_err(),
+        "operator-selected branch input must not be accepted"
+    );
+}

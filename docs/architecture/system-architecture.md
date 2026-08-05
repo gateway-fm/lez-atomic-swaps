@@ -3555,3 +3555,48 @@ sequenceDiagram
         Observer--xMakerActor: Fail closed
     end
 ```
+
+## M7 evidence-driven Maker refund activation
+
+ADR 0168 removes operator branch selection from the actual application seam.
+The schema-3 effect workflow is promoted to Refund only after exact local
+Monero funding and finalized Maker-side Tag-16 evidence agree with Stage A/B.
+
+```mermaid
+flowchart LR
+    Stage[Stage A and B] --> Activation[Refund activation gate]
+    Funding[Monero funding and receipt] --> Activation
+    Classifier[Maker finalized classifier] --> Activation
+    Signature[Observed Tag16 signature] --> Activation
+    Activation --> Evidence[Private fixed evidence]
+    Activation --> Workflow[(Schema 3 workflow)]
+    Workflow --> Actor[Maker role actor]
+    Actor --> Sender[Refund sender]
+    Actor --> Observer[Refund observer]
+    Sender --> SharedWallet[Shared wallet RPC]
+    Observer --> MakerWallet[Maker wallet RPC]
+    Sender --> MoneroDaemon[Monero daemon RPC]
+    Observer --> MoneroDaemon
+```
+
+```mermaid
+sequenceDiagram
+    participant LEZ as Local LEZ finality
+    participant Monero as Official Monero Regtest
+    participant Gate as Refund activation gate
+    participant Workflow as XMR workflow
+    participant Actor as Maker role actor
+
+    Monero-->>Gate: Exact funded shared output receipt
+    LEZ-->>Gate: Finalized Tag16 and aggregate signature
+    Gate->>Workflow: Import funding as Succeeded
+    Gate->>Workflow: Select Refund by compare and set
+    Gate->>Workflow: Prepare sweep
+    Actor->>Workflow: Consume one refund attempt
+    Actor->>Monero: Submit once, then observe only
+```
+
+The gate itself opens no RPC. The effect authority still names distinct
+literal-loopback LEZ sidecar, Monero daemon, funding wallet, shared wallet and
+Maker role-wallet origins. Actual node behavior and finality are proven by the
+joined replay rather than inferred from loopback transport.

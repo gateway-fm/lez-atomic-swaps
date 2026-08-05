@@ -19,6 +19,8 @@ mod effect_child_plan;
 mod effect_input_custody;
 #[cfg(feature = "sessions")]
 mod effect_route;
+#[cfg(feature = "sessions")]
+mod maker_refund_activation;
 
 #[cfg(feature = "sessions")]
 pub use application_provision::{
@@ -101,6 +103,8 @@ use lez_xmr_swap_sdk::{
     ReconstructedMoneroSpendKey, ValidatedXmrActivationBodyV1, XmrActivatedAgreementV1,
     XmrActivationBodyV1, XmrSessionTranscriptV1,
 };
+#[cfg(feature = "sessions")]
+use maker_refund_activation::activate_maker_refund_workflow;
 #[cfg(feature = "sessions")]
 use monero::Address as MoneroAddress;
 #[cfg(feature = "sessions")]
@@ -502,6 +506,35 @@ pub enum Action {
         /// New owner-private canonical final-signature packet for extraction/reconstruction.
         #[arg(long, value_name = "NEW_PRIVATE_JSON")]
         output_final_signature: PathBuf,
+    },
+    /// Activate only the Maker refund branch from exact finalized Tag-16 and
+    /// independently verified Monero funding evidence.
+    #[cfg(feature = "sessions")]
+    ActivateMakerRefundWorkflow {
+        /// Existing owner-private schema-3 Maker application manifest.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        effect_manifest: PathBuf,
+        /// Existing immutable Maker effect authority referenced by the manifest.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        effect_authority: PathBuf,
+        /// Exact effect-workflow run identity.
+        #[arg(long)]
+        run_id: String,
+        /// Exact Monero child run identity in the funding receipt.
+        #[arg(long)]
+        monero_run_id: String,
+        /// Canonical one-shot actual-local funding evidence.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        monero_funding_evidence: PathBuf,
+        /// Independent canonical Monero funding receipt.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        monero_funding_receipt: PathBuf,
+        /// Canonical Maker-sidecar finalized Tag-16 discovery.
+        #[arg(long, value_name = "FINALIZED_JSON")]
+        finalized_refund: PathBuf,
+        /// Canonical signature packet already ingested into the Maker session.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        observed_final_signature: PathBuf,
     },
     /// Bind finalized LEZ Claim evidence and its verified adaptor extraction to one
     /// independently verified actual-local Monero sweep.
@@ -1158,6 +1191,26 @@ pub fn execute(cli: Cli) -> Result<()> {
             &run_id,
             &finalized_refund,
             &output_final_signature,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::ActivateMakerRefundWorkflow {
+            effect_manifest,
+            effect_authority,
+            run_id,
+            monero_run_id,
+            monero_funding_evidence,
+            monero_funding_receipt,
+            finalized_refund,
+            observed_final_signature,
+        } => activate_maker_refund_workflow(
+            &effect_manifest,
+            &effect_authority,
+            &run_id,
+            &monero_run_id,
+            &monero_funding_evidence,
+            &monero_funding_receipt,
+            &finalized_refund,
+            &observed_final_signature,
         ),
         #[cfg(feature = "sessions")]
         Action::BindFinalizedClaimSweep {
