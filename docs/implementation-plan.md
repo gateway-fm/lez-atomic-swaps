@@ -6689,5 +6689,11 @@ S12/S13 review and policy-deferred public deployment.
   an untyped JSON map before comparing them. Cleanup schema v2 passed. The
   activator now decodes the typed schema directly, and the full XMR
   reference-actor suite is GREEN.
+- [ ] Replay the complete-schema Tag13 correction. Exact run
+  `m7claim-987dd32-a` falsified the reduced typed decoder at the same boundary:
+  it ignored producer-owned fields before canonical reserialization. Cleanup
+  schema v2 again passed. The activator now mirrors the complete producer
+  schema and nested field order, reuses the shared typed escrow terms, and
+  denies unknown fields; focused library tests are GREEN.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

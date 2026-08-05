@@ -126,9 +126,14 @@ passed. The next RED exposed an activator defect before Tag14: it decoded the
 typed canonical Tag13 document through an untyped JSON map, reordered its
 fields, and rejected the honest producer bytes as noncanonical. Exact cleanup
 passed with the no-retry latch preserved and no foreign or broad cleanup. The
-correction validates and decodes `Tag13EvidenceV2` in one typed operation; the
-complete XMR reference-actor suite is GREEN, and a fresh source-bound replay is
-required.
+first correction decoded a reduced `Tag13EvidenceV2` in one typed operation.
+
+The source-bound `987dd32` replay falsified that correction at the same check.
+The reduced type silently ignored producer-owned fields, so its reserialization
+could not equal the complete document. The corrected boundary mirrors the
+complete producer schema in its declared order, reuses the shared typed escrow
+terms, denies unknown fields at every local envelope, and validates and decodes
+once. Focused library tests are GREEN; another source-bound replay is required.
 
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,

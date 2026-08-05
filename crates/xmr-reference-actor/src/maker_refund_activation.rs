@@ -8,14 +8,15 @@ use std::{io::Write as _, path::Path};
 use anyhow::{Context as _, Result, anyhow, ensure};
 use lez_adaptor_role_runner::{ValidatedSession, read_final_signature_packet};
 use lez_bridge_adapter::XmrLezBridgeBindingV3;
-use lez_bridge_protocol::{Participant as BridgeParticipant, XmrNativeEffectV3};
+use lez_bridge_protocol::{
+    Participant as BridgeParticipant, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+};
 use lez_swap_store::{
     SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowReconciliationSource,
     XmrWorkflowReconciliationV2, XmrWorkflowStep,
 };
 use lez_xmr_swap_sdk::{MoneroAddressNetworkV1, XmrActivatedAgreementV1, XmrAgreementV1};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
 use crate::{
@@ -56,6 +57,7 @@ struct FundingEvidenceV2 {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct Tag13ClockV1 {
     block_hash: String,
     height: u64,
@@ -63,13 +65,56 @@ struct Tag13ClockV1 {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Tag13RuntimeV1 {
+    sidecar_role: String,
+    compatibility: String,
+    chain_id: String,
+    channel_id: String,
+    genesis_block_hash: String,
+    escrow_program_id: String,
+    signer_account_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Tag13AccountNonceV1 {
+    account_id: String,
+    nonce: u128,
+    presence: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Tag13NonceSnapshotV1 {
+    finalized_clock: Tag13ClockV1,
+    genesis_block_hash: String,
+    maker_owner: Tag13AccountNonceV1,
+    taker_owner: Tag13AccountNonceV1,
+    claim_authority: Tag13AccountNonceV1,
+    refund_authority: Tag13AccountNonceV1,
+    bracket: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Tag13ScanWindowV1 {
+    start_height: u64,
+    max_blocks: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct Tag13EffectV1 {
     effect: String,
     transaction_id: String,
     submission_outcome: String,
     finalized_clock: Tag13ClockV1,
+    scanned_window: Tag13ScanWindowV1,
     containing_block_id: u64,
     containing_block_hash: String,
+    transaction_index: u32,
+    classifier_calls: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -77,21 +122,35 @@ struct Tag13EffectV1 {
     clippy::struct_excessive_bools,
     reason = "independent negative assurance facts must remain explicit at the import boundary"
 )]
+#[serde(deny_unknown_fields)]
 struct Tag13EvidenceV2 {
     schema: String,
     role: String,
     run_id: String,
+    prepare_request_id: String,
+    runtime: Tag13RuntimeV1,
+    terms: XmrNativeEscrowTermsV3,
     stage_a_agreement_wire_sha256: String,
     stage_b_activation_wire_sha256: String,
-    terms: Value,
+    finalized_nonce_snapshot: Tag13NonceSnapshotV1,
+    maker_xmr_funding_cutoff_ms: u64,
+    cutoff_authority: String,
+    agreement_source: String,
+    activation_source: String,
+    claim_message_hash_source: String,
+    refund_message_hash_source: String,
+    punish_message_hash_source: String,
     initialization: Tag13EffectV1,
     funding: Tag13EffectV1,
-    maker_xmr_funding_cutoff_ms: u64,
+    execution_scope: String,
+    funding_barrier: String,
     public_rpc_used: bool,
     automatic_submission_retry: bool,
     send_attempt_ceiling_per_effect_per_process: u64,
     finality_polling_is_submission_retry: bool,
     crash_atomic_submission: bool,
+    public_stage_a_input_snapshot_durably_journaled: bool,
+    recovery_limitation: String,
     monero_lock_observed: bool,
     swap_completed: bool,
     atomic_swap_proven: bool,
@@ -344,8 +403,7 @@ fn validate_tag13(
 ) -> Result<()> {
     let binding = XmrLezBridgeBindingV3::new(agreement, activation)
         .context("derive finalized Tag-13 terms from Stage B")?;
-    let expected_terms =
-        serde_json::to_value(binding.terms()).context("encode expected Tag-13 terms")?;
+    let expected_terms = binding.terms();
     ensure!(
         evidence.schema == TAG13_SCHEMA
             && evidence.role == "taker"
