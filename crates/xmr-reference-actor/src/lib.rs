@@ -237,6 +237,28 @@ pub enum Action {
         #[arg(long, value_name = "NEW_ACTOR_ROOT")]
         output_root: PathBuf,
     },
+    /// Promote one validated role application to replay-safe schema-3 effect authority.
+    #[cfg(feature = "sessions")]
+    ProvisionEffectApplication {
+        /// Fixed role bound by the existing application manifest.
+        #[arg(value_enum)]
+        role: ActorRole,
+        /// Existing owner-private schema-2 application manifest.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        application_manifest: PathBuf,
+        /// Existing immutable role-fixed effect authority.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        effect_authority: PathBuf,
+        /// New or exactly replayed role-local effect workflow journal.
+        #[arg(long, value_name = "PRIVATE_SQLITE")]
+        workflow_journal: PathBuf,
+        /// Exact run identity committed by the effect authority.
+        #[arg(long)]
+        run_id: String,
+        /// New or byte-identical owner-private schema-3 manifest.
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        output_manifest: PathBuf,
+    },
     /// Sign one canonical unsigned Stage-A wire with this role's private agreement key.
     SignStageA {
         /// Fixed role bound by the private manifest.
@@ -952,6 +974,22 @@ pub fn execute(cli: Cli) -> Result<()> {
             &activation_stage_b,
             &role_journal,
             &output_root,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::ProvisionEffectApplication {
+            role,
+            application_manifest,
+            effect_authority,
+            workflow_journal,
+            run_id,
+            output_manifest,
+        } => provision_effect_application(
+            role,
+            &application_manifest,
+            &effect_authority,
+            &workflow_journal,
+            &run_id,
+            &output_manifest,
         ),
         Action::SignStageA {
             role,
@@ -1823,6 +1861,24 @@ struct XmrActorProvisionCliSummaryV1<'a> {
 }
 
 #[cfg(feature = "sessions")]
+#[derive(Serialize)]
+struct XmrEffectProvisionCliSummaryV1 {
+    schema_version: u16,
+    was_replay: bool,
+    role: ActorRole,
+    swap_id: String,
+    run_id: String,
+    agreement_commitment: String,
+    activation_commitment: String,
+    config_path: PathBuf,
+    config_sha256: String,
+    effect_authority_path: PathBuf,
+    effect_authority_sha256: String,
+    workflow_journal_path: PathBuf,
+    private_material_disclosed: bool,
+}
+
+#[cfg(feature = "sessions")]
 #[allow(clippy::too_many_arguments)]
 fn provision_application_actor(
     role: ActorRole,
@@ -1874,6 +1930,44 @@ fn provision_application_actor(
     std::io::stdout()
         .write_all(&bytes)
         .context("write XMR actor provision summary")
+}
+
+#[cfg(feature = "sessions")]
+fn provision_effect_application(
+    role: ActorRole,
+    application_manifest: &Path,
+    effect_authority: &Path,
+    workflow_journal: &Path,
+    run_id: &str,
+    output_manifest: &Path,
+) -> Result<()> {
+    let provision = provision_xmr_effect_manifest_v3(
+        application_manifest,
+        role,
+        effect_authority,
+        workflow_journal,
+        run_id,
+        output_manifest,
+    )?;
+    let summary = XmrEffectProvisionCliSummaryV1 {
+        schema_version: 1,
+        was_replay: provision.was_replay(),
+        role: provision.role(),
+        swap_id: hex::encode(provision.swap_id()),
+        run_id: provision.run_id().to_owned(),
+        agreement_commitment: hex::encode(provision.agreement_commitment()),
+        activation_commitment: hex::encode(provision.activation_commitment()),
+        config_path: provision.manifest_file().to_path_buf(),
+        config_sha256: hex::encode(provision.manifest_sha256()),
+        effect_authority_path: provision.effect_authority_file().to_path_buf(),
+        effect_authority_sha256: hex::encode(provision.effect_authority_sha256()),
+        workflow_journal_path: provision.workflow_journal().to_path_buf(),
+        private_material_disclosed: false,
+    };
+    let bytes = canonical_json_bytes(&summary, "encode XMR effect provision summary")?;
+    std::io::stdout()
+        .write_all(&bytes)
+        .context("write XMR effect provision summary")
 }
 
 fn provision(

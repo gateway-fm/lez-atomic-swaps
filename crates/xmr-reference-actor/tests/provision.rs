@@ -389,3 +389,60 @@ fn application_provision_cli_requires_every_role_fixed_authority_path() {
         .collect::<Vec<_>>();
     assert!(Cli::try_parse_from(without_journal).is_err());
 }
+
+#[test]
+fn effect_application_provision_cli_requires_complete_role_fixed_authority() {
+    let arguments = [
+        "xmr-reference-actor",
+        "provision-effect-application",
+        "maker",
+        "--application-manifest",
+        "/private/actors/maker/actor-provision.json",
+        "--effect-authority",
+        "/private/effects/maker/authority.json",
+        "--workflow-journal",
+        "/private/effects/maker/workflow.sqlite",
+        "--run-id",
+        "m7-joined-refund",
+        "--output-manifest",
+        "/private/effects/maker/actor-provision-v3.json",
+    ];
+    let cli = Cli::try_parse_from(arguments).expect("parse effect provision CLI");
+    match cli.action {
+        Action::ProvisionEffectApplication {
+            role,
+            application_manifest,
+            effect_authority,
+            workflow_journal,
+            run_id,
+            output_manifest,
+        } => {
+            assert_eq!(role, ActorRole::Maker);
+            assert_eq!(
+                application_manifest,
+                Path::new("/private/actors/maker/actor-provision.json")
+            );
+            assert_eq!(
+                effect_authority,
+                Path::new("/private/effects/maker/authority.json")
+            );
+            assert_eq!(
+                workflow_journal,
+                Path::new("/private/effects/maker/workflow.sqlite")
+            );
+            assert_eq!(run_id, "m7-joined-refund");
+            assert_eq!(
+                output_manifest,
+                Path::new("/private/effects/maker/actor-provision-v3.json")
+            );
+        }
+        _ => panic!("wrong CLI action"),
+    }
+    let incomplete = arguments
+        .into_iter()
+        .filter(|value| {
+            *value != "--effect-authority" && *value != "/private/effects/maker/authority.json"
+        })
+        .collect::<Vec<_>>();
+    assert!(Cli::try_parse_from(incomplete).is_err());
+}

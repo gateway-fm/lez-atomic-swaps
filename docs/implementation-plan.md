@@ -537,6 +537,12 @@ attestation so neither can be misreported as the other.
   no-replace atomic publication and must be re-derived and byte-identical on
   replay. Unit and real-process negative tests are GREEN. The fresh official
   Regtest happy-path observation remains part of the joined local-node slice.
+- [x] Expose replay-safe schema-3 effect provisioning through the normal role
+  actor CLI. The command requires the existing application manifest, immutable
+  effect authority, distinct workflow journal, exact run ID and output
+  manifest together; it emits only a canonical secret-free summary. The daemon
+  already accepts this schema-3 projection, so the actual runner can register
+  it from the first activation instead of mutating a registered legacy actor.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
