@@ -493,10 +493,10 @@ attestation so neither can be misreported as the other.
 5. The receipt-v2 XMR process boundary now carries immutable application
    inputs, a canonical execution plan and least-privilege branch material. The
    real Tag16 child derives its signature from the Stage-B-matching live journal
-   and submits through an authenticated local sidecar. Literal CLI integration
-   and pre-CAS prepare-only admission are process-GREEN. Tag14, finalized
-   observation, Monero sweep semantics, and a fresh local LEZ/Monero replay
-   through this exact boundary remain repository work.
+   and submits through an authenticated local sidecar. Literal Tag14 and Tag16
+   CLI integration are process-GREEN, and Tag17 is actual-node GREEN. Complete
+   application-owned joined claim/refund/abandonment corridors, Monero sweep
+   semantics, and adverse restart/concurrency remain repository work.
 
 The working ETA will be recalculated after the hard-requirement audit because
 the carried matrix mixes completed evidence with historical gaps. The initial
