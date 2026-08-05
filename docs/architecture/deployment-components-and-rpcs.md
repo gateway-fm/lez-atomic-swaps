@@ -2041,6 +2041,9 @@ actual-chain overlap remain post-PoC hardening.
 
 ## M7 schema-3 Maker Tag17 supervisor deployment
 
+This section records the Tag17-only checkpoint from ADR 0163. The current
+branch-aware deployment under ADR 0164 is documented in the section below.
+
 ```mermaid
 flowchart LR
     MakerCLI[Maker CLI] --> OwnerSocket[Owner Unix RPC]
@@ -2073,3 +2076,40 @@ local nodes. No evidence currently claims that the focused test opened the
 dashed RPC edges or joined the subsequent Monero recovery sweep. Local-to-public
 portability requires replacing configuration and deploying the reviewed LEZ
 program; it does not permit implicit endpoint fallback.
+
+
+## M7 branch-aware Maker recovery deployment
+
+```mermaid
+flowchart TB
+    CLI[Maker CLI] --> Socket[Owner Unix RPC]
+    Socket --> Daemon[Maker daemon]
+    Daemon --> Store[(Maker SQLite)]
+    Store --> Supervisor[Maker supervisor]
+    Supervisor --> Actor[xmr maker actor]
+    Actor --> Workflow[(XMR workflow SQLite)]
+    Workflow --> Branch{Refund or Punish}
+    Branch -->|Refund| RefundWorker[Monero refund worker]
+    RefundWorker --> Wallet[Role wallet RPC]
+    Wallet --> Monerod[Monero daemon RPC]
+    Branch -->|Punish| Tag17Worker[Tag17 worker]
+    Tag17Worker --> Sidecar[Authenticated LEZ sidecar]
+    Sidecar --> Sequencer[LEZ sequencer RPC]
+    Sidecar --> Indexer[LEZ indexer RPC]
+    Actor --> Observer[Role fixed observer]
+    Observer --> Wallet
+    Observer --> Sidecar
+```
+
+| Route | Production-shaped RPCs | Focused process proof | Secret custody |
+|---|---|---|---|
+| Refund | role/shared wallet RPC and Monero daemon RPC | strict local worker and verifier, no RPC | FD 218 only for invocation |
+| Punish | authenticated Maker sidecar, sequencer and indexer RPC | strict local preflight, worker and observer, no RPC | FD 218 always absent |
+
+Both focused routes use real sealed authority, workflow SQLite, inherited actor
+lock, distinct workflow lock, supervisor lease and terminal Maker-store update.
+They start no Docker resource or local node. The existing actual-node Tag17 run
+proves the LEZ RPC leg separately; the existing historical Maker recovery run
+proves a Monero sweep separately. A fresh application-owned joined run and the
+semantic no-argument Monero refund worker remain open, so configuration-only
+public portability is not yet a production-readiness claim.

@@ -2464,9 +2464,9 @@ flowchart TB
     Derive --> Activate["SQLite activation transaction"]
     Activate --> Swap[("Monero coordinator")]
     Activate --> Consumed[("Consumed offer")]
-    Activate --> Actor[("Immutable Monero Maker actor")]
+    Activate --> PairActor[("Immutable Monero Maker actor")]
     Activate --> Replay[("Exact replay record")]
-    Actor --> Supervisor["Maker-node supervisor"]
+    PairActor --> Supervisor["Maker-node supervisor"]
     Supervisor --> SealedConfig["Schema-v2 config on sealed FD 196"]
     SealedConfig --> RoleActor["xmr-maker-actor pre-effect validation"]
     RoleActor -->|"typed blocked status"| Supervisor
@@ -2923,7 +2923,7 @@ authority, not a cross-system atomic commit.
 flowchart LR
     Agreement["Validated countersigned agreement"]
     Signers[("Existing maker and taker signer journals")]
-    Actor["Role-fixed actor<br/>revisions zero through four"]
+    PairActor["Role-fixed actor<br/>revisions zero through four"]
     Prepared["Complete public Bitcoin or LEZ transaction"]
     Effects[("Role local public effect journal")]
     Observe["Exact chain observation"]
@@ -2935,10 +2935,10 @@ flowchart LR
     Evidence["m3schema4-20260717d<br/>2 of 2 schema-4 directions Completed"]
     RefundEvidence["m3refund-20260716h<br/>2 of 2 actual-node refund orders"]
 
-    Agreement --> Actor
-    Signers --> Actor
-    Actor --> Prepared
-    Actor --> MakerLock
+    Agreement --> PairActor
+    Signers --> PairActor
+    PairActor --> Prepared
+    PairActor --> MakerLock
     Prepared --> Effects
     Effects --> Observe
     Observe --> Core
@@ -2947,9 +2947,9 @@ flowchart LR
     Effects -->|"single Started winner"| Sidecar
     Core -->|"confirmed exact bytes"| Lifecycle
     Sidecar -->|"finalized exact bytes"| Lifecycle
-    Lifecycle --> Actor
+    Lifecycle --> PairActor
     Lifecycle --> RefundStore
-    Actor --> Evidence
+    PairActor --> Evidence
     Lifecycle --> RefundEvidence
 ```
 
@@ -3320,6 +3320,10 @@ new Bitcoin actor verb.
 
 ## M7 supervised Maker Tag17 recovery boundary
 
+This section records the Tag17 checkpoint from ADR 0163. ADR 0164 is the
+current routing decision: the actor derives Refund or Punish only from the
+durable workflow branch; the branch-aware component and sequence follow below.
+
 The normal Maker process plane now consumes schema-3 XMR authority. A queued
 operator Refund action is the only route from the typed pre-effect status to
 Maker Tag17 recovery. The role actor receives the supervisor-held actor lock,
@@ -3360,25 +3364,25 @@ sequenceDiagram
     participant Owner as Owner RPC
     participant Store as Maker SQLite
     participant Supervisor
-    participant Actor as XMR Maker actor
+    participant PairActor as XMR Maker actor
     participant Workflow as XMR workflow
     participant Lez as LEZ sidecar and nodes
 
     Maker->>Owner: Queue Refund for exact swap
     Owner->>Store: Persist request and branch
     Supervisor->>Store: Lease due process and action
-    Supervisor->>Actor: Status with sealed schema 3 config
-    Actor-->>Supervisor: Offered and no automatic effect
-    Supervisor->>Actor: Recover with inherited actor lock
-    Actor->>Workflow: Preflight then Prepared to Started
-    Actor->>Lez: Submit exact Tag17 once
-    Actor-->>Supervisor: Awaiting observation
+    Supervisor->>PairActor: Status with sealed schema 3 config
+    PairActor-->>Supervisor: Offered and no automatic effect
+    Supervisor->>PairActor: Recover with inherited actor lock
+    PairActor->>Workflow: Preflight then Prepared to Started
+    PairActor->>Lez: Submit exact Tag17 once
+    PairActor-->>Supervisor: Awaiting observation
     Supervisor->>Store: Requeue same action
-    Supervisor->>Actor: Recover on later cycle
-    Actor->>Lez: Observe original plan only
-    Lez-->>Actor: Finalized nonzero evidence
-    Actor->>Workflow: Reconcile Succeeded
-    Actor-->>Supervisor: Refunded and complete
+    Supervisor->>PairActor: Recover on later cycle
+    PairActor->>Lez: Observe original plan only
+    Lez-->>PairActor: Finalized nonzero evidence
+    PairActor->>Workflow: Reconcile Succeeded
+    PairActor-->>Supervisor: Refunded and complete
     Supervisor->>Store: Complete action and process
 ```
 
@@ -3390,3 +3394,58 @@ conditional on the Stage A and B construction, mutually exclusive branch,
 canonical LEZ finality, Monero funding evidence, and recovery deadlines. This
 component proof does not replace the still-open joined two-devnet abandonment
 and adverse-race certificate.
+
+
+## M7 durable Maker recovery branch selection
+
+ADR 0164 removes the last hard-coded Tag17 choice from the Maker role actor.
+The operator authorizes recovery, while the validated workflow row alone chooses
+Refund or Punish. Claim and an unselected branch fail before effect preparation.
+
+```mermaid
+flowchart LR
+    Supervisor[Maker supervisor] --> PairActor[xmr maker actor]
+    PairActor --> Locks[Actor and workflow locks]
+    Locks --> Journal[(XMR workflow SQLite)]
+    Journal --> Choice{Durable branch}
+    Choice -->|Refund| Sweep[Monero refund sweep]
+    Choice -->|Punish| Preflight[Tag17 preflight]
+    Preflight --> Tag17[Tag17 sender]
+    Choice -->|Claim or none| Reject[Fail closed]
+    Sweep --> Verify[Monero verifier]
+    Tag17 --> Finality[LEZ finalized observer]
+    Share[Private share FD 218] --> Sweep
+    Share -. excluded .-> Tag17
+    Share -. excluded .-> Verify
+    Share -. excluded .-> Finality
+```
+
+```mermaid
+sequenceDiagram
+    participant Supervisor
+    participant PairActor as XMR Maker actor
+    participant Workflow as XMR workflow
+    participant Effect as Selected effect
+    participant Observer as Selected observer
+
+    Supervisor->>PairActor: Recover with inherited lock
+    PairActor->>Workflow: Validate identity and read branch
+    opt Punish only
+        PairActor->>Effect: Read-only preflight
+    end
+    PairActor->>Workflow: Prepared to Started CAS
+    PairActor->>Effect: Invoke selected route once
+    PairActor-->>Supervisor: Awaiting observation
+    Supervisor->>PairActor: Recover after restart
+    PairActor->>Workflow: Read same branch and Started state
+    PairActor->>Observer: Observe original plan only
+    Observer-->>PairActor: Finalized evidence
+    PairActor->>Workflow: Reconcile Succeeded
+    PairActor-->>Supervisor: Refunded and complete
+```
+
+The CAS precedes either external effect and makes Started or Unknown
+observation-only. Refund receives FD 218 only during its sending child; Punish
+and both observers reject it. The strict real-process test proves these
+control-plane and custody invariants for both branches. It does not replace the
+semantic Monero worker or the joined actual-node economic corridor.

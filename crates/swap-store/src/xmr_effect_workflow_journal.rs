@@ -597,6 +597,24 @@ impl SqliteXmrWorkflowJournal {
         self.revalidate_storage()
     }
 
+    /// Returns the exact durable branch selected for this workflow, if any.
+    ///
+    /// # Errors
+    ///
+    /// Missing, malformed, crossed, or changed durable identity fails closed.
+    pub fn selected_branch(
+        &self,
+        identity: &XmrWorkflowIdentityV1,
+    ) -> Result<Option<XmrWorkflowBranch>, StoreError> {
+        validate_identity(identity)?;
+        self.revalidate_storage()?;
+        let (durable, selected, _) =
+            load_identity(&self.connection)?.ok_or(StoreError::MissingXmrWorkflowIdentity)?;
+        ensure_identity(identity, &durable)?;
+        self.revalidate_storage()?;
+        Ok(selected)
+    }
+
     /// Selects one branch with a durable compare-and-set.
     ///
     /// # Errors
@@ -1472,6 +1490,7 @@ mod tests {
         .unwrap();
         let mut journal = SqliteXmrWorkflowJournal::create_new(&path).unwrap();
         journal.initialize(&identity).unwrap();
+        assert_eq!(journal.selected_branch(&identity).unwrap(), None);
         journal
             .prepare_step(&identity, XmrWorkflowStep::FundMonero)
             .unwrap();
@@ -1496,6 +1515,10 @@ mod tests {
         journal
             .select_branch(&identity, XmrWorkflowBranch::Punish)
             .unwrap();
+        assert_eq!(
+            journal.selected_branch(&identity).unwrap(),
+            Some(XmrWorkflowBranch::Punish)
+        );
         journal
             .prepare_step(&identity, XmrWorkflowStep::PunishLezTag17)
             .unwrap();

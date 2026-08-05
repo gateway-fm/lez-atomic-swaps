@@ -503,6 +503,13 @@ attestation so neither can be misreported as the other.
   terminal refunded revision 2, completes the manual action, and terminalizes
   the process. The proof is local and networkless; the fresh joined two-devnet
   abandonment corridor and adverse recovery matrix remain open.
+- [x] Make Maker recovery branch-aware through ADR 0164. The actor reads only
+  the validated durable branch: Refund selects the Monero refund sweep with
+  invocation-only private-share FD 218, Punish selects preflight plus Tag17,
+  and Claim or an unselected branch fails closed. One real supervisor/actor
+  process test proves both routes invoke once and restart into observation
+  without resending. The semantic Monero sweep worker, actual-node join and
+  adverse recovery matrix remain open.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -534,8 +541,10 @@ attestation so neither can be misreported as the other.
    real Tag16 child derives its signature from the Stage-B-matching live journal
    and submits through an authenticated local sidecar. Literal Tag14 and Tag16
    CLI integration are process-GREEN; Tag17 is semantic-process, actual-node,
-   and normal Maker-supervisor GREEN through ADR 0163. Complete joined claim,
-   refund, and abandonment corridors plus Monero sweep semantics and adverse restart/concurrency remain repository work.
+   and normal Maker-supervisor GREEN through ADR 0163. ADR 0164 also makes the
+   application choose durable Refund versus Punish and proves both one-shot
+   process routes. Complete joined claim,
+   refund, and abandonment corridors plus the semantic Monero sweep worker, actual-node join, and adverse restart/concurrency remain repository work.
 
 The working ETA will be recalculated after the hard-requirement audit because
 the carried matrix mixes completed evidence with historical gaps. The initial
@@ -6428,3 +6437,29 @@ certificate is `docs/evidence/m7-actual-tag17-a23a314-20260804.json`. F5 is
 therefore GREEN at the local-functional boundary. F3 and F6 remain open only
 for joined two-devnet abandonment economics, losing-branch proof, and adverse
 process/concurrency cases; public deployment remains deliberately deferred.
+
+
+## M7 branch-aware Maker recovery checkpoint (2026-08-04)
+
+RED first proved that the actor had no durable branch-to-step selector. GREEN
+adds one read-only, identity-validated journal query and rejects Claim or an
+unselected branch. A second route check caught that only Tag17 supports semantic
+preflight; Refund correctly enters its one-attempt CAS directly.
+
+The real supervisor and actor process test then exposed two fixture assumptions:
+the Tag17 step name was mechanically corrupted during refactoring, and the
+read-only Monero verifier was incorrectly expected to receive private-share FD
+218. Focused regression tests fixed the canonical route name and preserved the
+least-privilege rule: only the Refund invocation receives FD 218. The final
+process run is GREEN in 237.52 seconds. Tag17 executed preflight, invoke and
+observe exactly once; Refund executed invoke and observe exactly once; both
+completed the durable operator action without a restart send.
+
+ADR 0164, system/deployment component and RPC diagrams, manual Flow 1ZC, the
+root README, readiness write-up, traceability and both machine-readable M7
+inventories now record the exact boundary. No Docker, node, RPC, faucet, DNS,
+peer, public funds or public deployment participated. Inventory remains
+honestly 14 hard requirements open, 4 submission groups open, and S12/S13 as
+the only two external-review items. The semantic no-argument Monero refund
+worker, fresh joined actual-node corridor, and adverse crash/concurrency matrix
+remain the next repository-owned slices.

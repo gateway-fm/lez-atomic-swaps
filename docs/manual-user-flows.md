@@ -5037,7 +5037,7 @@ sequenceDiagram
     participant C as Maker CLI
     participant D as Maker daemon
     participant DB as Application SQLite
-    participant S as Actor supervisor
+    participant S as PairActor supervisor
     participant A as Sealed pair actor
 
     O->>C: monitor swap ID
@@ -8361,19 +8361,20 @@ retained-byte draft/key handoff, exact use-time inode enforcement,
 least-authority admission-only configuration, spawned-service real-Chat E2E,
 and actor lifecycle, finality, and chaos coverage.
 
-## Flow 1ZC: Repeat the supervised Maker Tag17 recovery checkpoint
+## Flow 1ZC: Repeat both supervised Maker recovery branches
 
 This focused flow emulates the actual operator and daemon usage boundary. It
 creates a real signed XMR Stage A and Stage B application, provisions schema-3
 Maker effect authority, registers the real digest-pinned xmr-maker-actor in the
 Maker store, queues Refund through the durable operator-action API, and runs two
-normal supervisor cycles.
+normal supervisor cycles. It repeats that process with independent durable Punish and
+Refund workflow branches while reusing the expensive signed application fixture.
 
 From the repository root:
 
 ```bash
 cargo test -p lez-maker-node --test maker_xmr_tag17_supervisor \
-  real_maker_actor_submits_tag17_once_then_reconciles_terminal_refund \
+  real_maker_actor_executes_both_recovery_branches_once_then_reconciles \
   -- --exact --nocapture
 ```
 
@@ -8388,29 +8389,60 @@ The test is intentionally self-cleaning. A pass must prove all of the following:
 - the exact effect trace is preflight, invoke, observe with no second send;
 - the nested sender and observer retain actor lock FD 198 and workflow lock FD
   199, receive sealed FDs 200 through 217, and reject private-share FD 218.
+- the second independent workflow selects durable Refund, invokes the Monero
+  refund route once with private-share FD 218, then observes without FD 218;
+- the Refund trace is exactly invoke then observe, with no preflight and no
+  restart send, and reaches the same terminal operator state.
 
 ```mermaid
 sequenceDiagram
     actor Operator
     participant Store as Maker store
     participant Supervisor
-    participant Actor as XMR Maker actor
+    participant PairActor as XMR Maker actor
     participant Effect as Tag17 route
 
     Operator->>Store: Queue Refund
-    Supervisor->>Actor: Status
-    Actor-->>Supervisor: Offered and blocked
-    Supervisor->>Actor: Recover
-    Actor->>Effect: Preflight then invoke once
-    Effect-->>Actor: Await finality
-    Actor-->>Supervisor: Awaiting observation
+    Supervisor->>PairActor: Status
+    PairActor-->>Supervisor: Offered and blocked
+    Supervisor->>PairActor: Recover
+    PairActor->>Effect: Preflight then invoke once
+    Effect-->>PairActor: Await finality
+    PairActor-->>Supervisor: Awaiting observation
     Supervisor->>Store: Keep action queued
-    Supervisor->>Actor: Recover on next cycle
-    Actor->>Effect: Observe only
-    Effect-->>Actor: Finalized evidence
-    Actor-->>Supervisor: Refunded and complete
+    Supervisor->>PairActor: Recover on next cycle
+    PairActor->>Effect: Observe only
+    Effect-->>PairActor: Finalized evidence
+    PairActor-->>Supervisor: Refunded and complete
     Supervisor->>Store: Complete action and process
 ```
+
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Store as Maker store
+    participant Supervisor
+    participant PairActor as XMR Maker actor
+    participant Refund as Monero refund route
+    participant Verify as Monero verifier
+
+    Operator->>Store: Queue recovery
+    Supervisor->>PairActor: Recover
+    PairActor->>Store: Read durable Refund branch
+    PairActor->>Refund: Invoke once with FD 218
+    PairActor-->>Supervisor: Awaiting observation
+    Supervisor->>PairActor: Recover on next cycle
+    PairActor->>Verify: Observe without FD 218
+    Verify-->>PairActor: Finalized wallet evidence
+    PairActor-->>Supervisor: Refunded and complete
+    Supervisor->>Store: Complete action and process
+```
+
+Refund is conditionally atomic at this boundary because durable branch
+selection precedes its one-attempt CAS, Started and Unknown cannot invoke again,
+and only the original plan verifier can reconcile success. Punish retains the
+read-only-preflight, one-attempt-CAS and finalized-only argument shown above.
+The exclusive branch row prevents one recovery request from authorizing both.
 
 No Docker container, LEZ node, Monero node, wallet RPC, faucet, DNS, public
 funds, peer, or public deployment participates in this checkpoint. The Tag17

@@ -7,11 +7,11 @@ F5	green	./scripts/test-m7-tag17-actual-certificate.sh	docs/evidence/m7-actual-t
 F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Joined abandonment economics, losing-branch exclusion, adversarial races, process-kill, reorg, and concurrency outcomes
 F7	open	./scripts/test-m3-f7-token-fixture-contract.sh	docs/requirements-traceability.md	Terminal composed custom-token claim/refund on the exact v0.2 actor route
 F8	upstream-deferred	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	LOGOS-021 live Logos price-module ABI compatibility
-F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Maker Tag17 recovery is supervisor-owned under ADR 0163; semantic Tag14 claim, Tag16 refund, and both Monero sweep journeys remain
+F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Maker recovery selects durable Refund or Punish under ADR 0164; semantic Tag14 claim, Tag16 refund, Monero claim sweep, and the real Monero refund worker/actual-node join remain
 U1	green	./scripts/test-m7-xmr-sdk-facade-contract.sh	docs/requirements-traceability.md	none
 U2	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Accepted-application actual-chain concurrency and process crash recovery
-U3	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Complete semantic claim/refund daemon action matrix after supervised Maker Tag17 recovery
-U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Join semantic XMR claim and refund to actual nodes and complete both Monero sweep plus abandonment journeys; supervised Maker Tag17 recovery is closed
+U3	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Complete semantic claim/refund daemon action matrix after branch-aware supervised Maker recovery
+U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Join semantic XMR claim and refund to actual nodes and complete both Monero workers plus abandonment journeys; branch-aware supervised Maker recovery is closed
 U5	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
 U6	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
 U7	green	./scripts/verify-lez-v02-provisional.sh	docs/requirements-traceability.md	none

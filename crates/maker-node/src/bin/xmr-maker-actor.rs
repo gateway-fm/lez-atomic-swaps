@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context as _, Result, anyhow, ensure};
 use clap::{Parser as _, Subcommand};
 use lez_swap_store::{
-    MAKER_ACTOR_CONFIG_FD, MakerActorHeldLock, SqliteXmrWorkflowJournal,
+    MAKER_ACTOR_CONFIG_FD, MakerActorHeldLock, SqliteXmrWorkflowJournal, XmrWorkflowBranch,
     XmrWorkflowReconciliationV2, XmrWorkflowStep,
 };
 use serde::Serialize;
@@ -24,8 +24,6 @@ use xmr_reference_actor::{
 };
 
 const EFFECT_TIMEOUT: Duration = Duration::from_secs(30);
-const RECOVERY_STEP: XmrWorkflowStep = XmrWorkflowStep::PunishLezTag17;
-
 #[derive(Debug, clap::Parser)]
 #[command(about = "One-shot supervised LEZ/XMR Maker actor")]
 struct Arguments {
@@ -138,9 +136,13 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
         MakerActorHeldLock::acquire_for(identity.swap_id(), authority.workflow_journal())
             .context("acquire XMR Maker workflow lock")?;
 
-    execute_preflight(&execution, &actor_lock, &workflow_lock)?;
+    let recovery_step = selected_recovery_step(&execution)?;
+
+    if recovery_requires_preflight(recovery_step) {
+        execute_preflight(&execution, recovery_step, &actor_lock, &workflow_lock)?;
+    }
     let prepared = execution
-        .prepare_effect_invocation(RECOVERY_STEP, &actor_lock, &workflow_lock)
+        .prepare_effect_invocation(recovery_step, &actor_lock, &workflow_lock)
         .context("prepare XMR Maker recovery")?;
     let finalized = match prepared {
         XmrPreparedEffectInvocationV1::InvokeOnce {
@@ -148,7 +150,7 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
             tool_plan_identity_sha256: _,
         } => {
             if run_silent(&mut command).is_err() {
-                mark_unknown(&execution)?;
+                mark_unknown(&execution, recovery_step)?;
                 return Err(anyhow!("XMR Maker recovery invocation is ambiguous"));
             }
             false
@@ -157,6 +159,7 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
             tool_plan_identity_sha256,
         } => observe_and_reconcile(
             &execution,
+            recovery_step,
             tool_plan_identity_sha256,
             &actor_lock,
             &workflow_lock,
@@ -165,7 +168,7 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
             tool_plan_identity_sha256: _,
         } => true,
     };
-    let revision = workflow_revision(&execution)?;
+    let revision = workflow_revision(&execution, recovery_step)?;
     Ok(if finalized {
         RecoverOutput {
             schema_version: 1,
@@ -191,11 +194,12 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
 
 fn execute_preflight(
     execution: &ValidatedXmrEffectExecutionV3,
+    recovery_step: XmrWorkflowStep,
     actor_lock: &MakerActorHeldLock,
     workflow_lock: &MakerActorHeldLock,
 ) -> Result<()> {
     let Some(mut command) = execution
-        .prepare_effect_preflight(RECOVERY_STEP, actor_lock, workflow_lock)
+        .prepare_effect_preflight(recovery_step, actor_lock, workflow_lock)
         .context("prepare XMR Maker recovery preflight")?
     else {
         return Ok(());
@@ -228,12 +232,13 @@ fn run_silent(command: &mut ProcessCommand) -> Result<()> {
 
 fn observe_and_reconcile(
     execution: &ValidatedXmrEffectExecutionV3,
+    recovery_step: XmrWorkflowStep,
     expected_plan: [u8; 32],
     actor_lock: &MakerActorHeldLock,
     workflow_lock: &MakerActorHeldLock,
 ) -> Result<bool> {
     let prepared = execution
-        .prepare_effect_observation(RECOVERY_STEP, actor_lock, workflow_lock)
+        .prepare_effect_observation(recovery_step, actor_lock, workflow_lock)
         .context("prepare XMR Maker recovery observation")?;
     let (mut command, plan, source) = prepared.into_parts();
     ensure!(plan == expected_plan, "XMR Maker recovery plan changed");
@@ -271,7 +276,7 @@ fn observe_and_reconcile(
         bytes.len() <= XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES,
         "XMR Maker observer output is oversized"
     );
-    let result = parse_xmr_effect_observer_result_v1(&bytes, RECOVERY_STEP)
+    let result = parse_xmr_effect_observer_result_v1(&bytes, recovery_step)
         .context("parse XMR Maker observer output")?;
     match result.state() {
         XmrEffectObserverStateV1::Pending => Ok(false),
@@ -291,7 +296,7 @@ fn observe_and_reconcile(
             workflow
                 .reconcile_succeeded(
                     execution.workflow_identity(),
-                    RECOVERY_STEP,
+                    recovery_step,
                     &reconciliation,
                 )
                 .context("reconcile XMR Maker recovery")?;
@@ -300,7 +305,10 @@ fn observe_and_reconcile(
     }
 }
 
-fn workflow_revision(execution: &ValidatedXmrEffectExecutionV3) -> Result<u64> {
+fn workflow_revision(
+    execution: &ValidatedXmrEffectExecutionV3,
+    recovery_step: XmrWorkflowStep,
+) -> Result<u64> {
     let workflow =
         SqliteXmrWorkflowJournal::open_existing(execution.effect_authority().workflow_journal())
             .context("open XMR Maker recovery workflow revision")?;
@@ -308,11 +316,14 @@ fn workflow_revision(execution: &ValidatedXmrEffectExecutionV3) -> Result<u64> {
         .validate_initialized(execution.workflow_identity())
         .context("validate XMR Maker recovery workflow revision")?;
     workflow
-        .step_revision(execution.workflow_identity(), RECOVERY_STEP)
+        .step_revision(execution.workflow_identity(), recovery_step)
         .context("load XMR Maker recovery workflow revision")
 }
 
-fn mark_unknown(execution: &ValidatedXmrEffectExecutionV3) -> Result<()> {
+fn mark_unknown(
+    execution: &ValidatedXmrEffectExecutionV3,
+    recovery_step: XmrWorkflowStep,
+) -> Result<()> {
     let mut workflow =
         SqliteXmrWorkflowJournal::open_existing(execution.effect_authority().workflow_journal())
             .context("open ambiguous XMR Maker recovery workflow")?;
@@ -320,8 +331,34 @@ fn mark_unknown(execution: &ValidatedXmrEffectExecutionV3) -> Result<()> {
         .validate_initialized(execution.workflow_identity())
         .context("validate ambiguous XMR Maker recovery workflow")?;
     workflow
-        .mark_unknown(execution.workflow_identity(), RECOVERY_STEP)
+        .mark_unknown(execution.workflow_identity(), recovery_step)
         .context("mark XMR Maker recovery ambiguous")
+}
+
+fn selected_recovery_step(execution: &ValidatedXmrEffectExecutionV3) -> Result<XmrWorkflowStep> {
+    let workflow =
+        SqliteXmrWorkflowJournal::open_existing(execution.effect_authority().workflow_journal())
+            .context("open XMR Maker recovery workflow branch")?;
+    workflow
+        .validate_initialized(execution.workflow_identity())
+        .context("validate XMR Maker recovery workflow branch")?;
+    let branch = workflow
+        .selected_branch(execution.workflow_identity())
+        .context("load XMR Maker recovery branch")?
+        .context("XMR Maker recovery branch is not selected")?;
+    recovery_step_for_branch(branch)
+}
+
+fn recovery_requires_preflight(step: XmrWorkflowStep) -> bool {
+    step == XmrWorkflowStep::PunishLezTag17
+}
+
+fn recovery_step_for_branch(branch: XmrWorkflowBranch) -> Result<XmrWorkflowStep> {
+    match branch {
+        XmrWorkflowBranch::Refund => Ok(XmrWorkflowStep::SweepMoneroRefund),
+        XmrWorkflowBranch::Punish => Ok(XmrWorkflowStep::PunishLezTag17),
+        XmrWorkflowBranch::Claim => Err(anyhow!("claim branch has no Maker recovery effect")),
+    }
 }
 
 fn parse_config_fd(value: &str) -> Result<i32, String> {
@@ -338,4 +375,26 @@ fn parse_config_fd(value: &str) -> Result<i32, String> {
 fn exit_with(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(2);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maker_recovery_step_is_derived_only_from_the_durable_branch() {
+        assert_eq!(
+            recovery_step_for_branch(XmrWorkflowBranch::Refund).unwrap(),
+            XmrWorkflowStep::SweepMoneroRefund
+        );
+        assert_eq!(
+            recovery_step_for_branch(XmrWorkflowBranch::Punish).unwrap(),
+            XmrWorkflowStep::PunishLezTag17
+        );
+        assert!(recovery_step_for_branch(XmrWorkflowBranch::Claim).is_err());
+        assert!(recovery_requires_preflight(XmrWorkflowStep::PunishLezTag17));
+        assert!(!recovery_requires_preflight(
+            XmrWorkflowStep::SweepMoneroRefund
+        ));
+    }
 }

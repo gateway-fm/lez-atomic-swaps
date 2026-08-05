@@ -62,31 +62,31 @@ sequenceDiagram
     actor Operator
     participant Store as Maker store
     participant Supervisor
-    participant Actor as xmr maker actor
+    participant PairActor as xmr maker actor
     participant Workflow as XMR workflow
     participant Worker as Tag17 worker
     participant Observer as Finalized observer
 
     Operator->>Store: Queue Refund
     Supervisor->>Store: Lease action and process
-    Supervisor->>Actor: Status with sealed config
-    Actor-->>Supervisor: Offered and blocked
-    Supervisor->>Actor: Recover with transferred actor lock
-    Actor->>Workflow: Acquire distinct lock
-    Actor->>Worker: Preflight with sealed inputs
-    Worker-->>Actor: Eligible with no effect
-    Actor->>Workflow: Prepared to Started CAS
-    Actor->>Worker: Invoke exact Tag17 once
-    Worker-->>Actor: Accepted
-    Actor-->>Supervisor: Awaiting observation revision 1
+    Supervisor->>PairActor: Status with sealed config
+    PairActor-->>Supervisor: Offered and blocked
+    Supervisor->>PairActor: Recover with transferred actor lock
+    PairActor->>Workflow: Acquire distinct lock
+    PairActor->>Worker: Preflight with sealed inputs
+    Worker-->>PairActor: Eligible with no effect
+    PairActor->>Workflow: Prepared to Started CAS
+    PairActor->>Worker: Invoke exact Tag17 once
+    Worker-->>PairActor: Accepted
+    PairActor-->>Supervisor: Awaiting observation revision 1
     Supervisor->>Store: Requeue same action
 
-    Supervisor->>Actor: Recover after restart
-    Actor->>Workflow: Load Started
-    Actor->>Observer: Observe exact sending plan
-    Observer-->>Actor: Finalized evidence
-    Actor->>Workflow: Reconcile Succeeded
-    Actor-->>Supervisor: Refunded and complete
+    Supervisor->>PairActor: Recover after restart
+    PairActor->>Workflow: Load Started
+    PairActor->>Observer: Observe exact sending plan
+    Observer-->>PairActor: Finalized evidence
+    PairActor->>Workflow: Reconcile Succeeded
+    PairActor-->>Supervisor: Refunded and complete
     Supervisor->>Store: Complete action and terminalize process
 ```
 
@@ -122,7 +122,7 @@ abandonment journey is still required to prove the whole economic corridor.
 
 ```text
 cargo test -p lez-maker-node --test maker_xmr_tag17_supervisor \
-  real_maker_actor_submits_tag17_once_then_reconciles_terminal_refund -- --exact
+  real_maker_actor_executes_both_recovery_branches_once_then_reconciles -- --exact
 cargo test -p lez-maker-node --test maker_actor_supervisor \
   queued_xmr_recover_overrides_typed_blocked_status_without_generic_effect -- --exact
 cargo test -p lez-maker-node xmr_recover_effect_is_exactly_nonterminal_until_finalized -- --exact

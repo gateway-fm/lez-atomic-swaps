@@ -23,7 +23,10 @@ The application-owned Maker Tag17 recovery boundary is also GREEN under
 [ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the
 normal supervisor runs the real schema-3 role actor, transfers its existing
 actor lock safely, submits once, then observes and terminalizes on the next
-cycle without resending.
+cycle without resending. ADR [0164](docs/architecture/0164-select-maker-recovery-from-durable-branch.md)
+now makes the same command select only the durable Refund or Punish branch; the
+real process proof covers both one-shot routes and keeps the private spend share
+invocation-only.
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined
 two-devnet F3/F6 corridor.
