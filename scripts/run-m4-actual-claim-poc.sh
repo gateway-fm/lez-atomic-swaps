@@ -1751,7 +1751,7 @@ provision_m7_maker_effect_application() {
   require_owner_file "$maker_runtime" "M7 Maker sidecar runtime"
   require_owner_file "$maker_capability" "M7 Maker sidecar capability"
 
-  jq -n \
+  jq -cn \
     --arg swap "$m5_xmr_planned_swap_id" \
     --arg agreement "$(jq -er .agreement_commitment "$m5_xmr_maker_provision")" \
     --arg activation "$(jq -er .activation_commitment "$m5_xmr_maker_provision")" \

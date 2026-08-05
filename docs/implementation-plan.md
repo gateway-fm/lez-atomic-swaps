@@ -567,6 +567,19 @@ attestation so neither can be misreported as the other.
   `manifest_value MONERO_*` reads and requires all thirteen validated map keys;
   the minimal parsed-map fix is GREEN. This attempt is diagnostic, not PoC
   evidence, and its one-shot ID must not be reused.
+- [x] Exercise the second exact pushed joined attempt `m7refund-a5fe34b-a`.
+  The parsed-map fix removed all thirteen missing-key errors. The run again
+  passed cold builds, all five recursive guest tests, fresh LEZ deployment,
+  onboarding, official Monero Regtest, Stage A/B and Tag13, then stopped before
+  schema-3 registration at replay-safe effect-authority validation. Exact
+  cleanup passed. Source inspection against the retained identities and
+  manifest proved the authority was emitted by pretty-printing `jq -n`, while
+  the Rust boundary intentionally accepts only compact canonical JSON plus one
+  newline. A focused RED runner contract now requires canonical emission; the
+  minimal `jq -cn` fix is GREEN with the full runner contract, Bash syntax and
+  diff hygiene. This diagnostic ID must not be reused. The next gate is a fresh
+  exact-commit replay through registration, funding, send, external local
+  confirmation mining and restart-only terminal observation.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,

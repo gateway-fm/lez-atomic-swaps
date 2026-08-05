@@ -373,6 +373,8 @@ sidecar_line="${sidecar_line%%:*}"
 
 m7_provision_source="$(function_source provision_m7_maker_effect_application)"
 [[ -n "$m7_provision_source" ]] || fail "M7 Maker effect provisioning function is unavailable"
+rg -Fq 'jq -cn \' <<<"$m7_provision_source" ||
+  fail "M7 effect authority is not emitted as canonical compact JSON"
 for m7_provision_boundary in \
   'schema_version:3,pair:"monero",role:"maker"' \
   'abi:"lez_xmr_monero_refund_sweep_v3"' \
