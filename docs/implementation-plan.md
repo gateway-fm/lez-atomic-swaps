@@ -1,6 +1,6 @@
 # Living implementation plan
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 This file is the delivery control document. It must change whenever scope,
 architecture, sequencing, risks, or acceptance evidence changes.
@@ -6563,3 +6563,45 @@ honestly 14 hard requirements open, 4 submission groups open, and S12/S13 as
 the only two external-review items. ADR 0166 subsequently closes the
 semantic no-argument Maker Monero refund worker. The fresh joined actual-node corridor, semantic Taker claim sweep, and
 adverse crash/concurrency matrix remain the next repository-owned slices.
+
+## M7 joined Maker refund restart checkpoint (2026-08-05)
+
+Exact pushed run `m7refund-e7016d8-a` closed the ADR 0170 handoff uncertainty:
+the semantic sender submitted one real Maker-directed Monero refund, durable
+receipt detection survived queued, leased and backoff scheduler states, and the
+separate driver mined exactly ten official Monero 0.18.5.1 Regtest blocks. The
+wallet and daemon agreed on the exact incoming unlocked output and ten
+confirmations. No public RPC, faucet, peer, public funds or public deployment
+participated, and exact cleanup passed.
+
+The run then exposed the next restart defect before terminal observation. The
+schema-3 manifest treated the provisioning-time SHA-256 of the mutable SQLite
+role journal as a permanent runtime invariant. The sender's legitimate database
+open/checkpoint changed representation bytes without changing any validated
+session state, so every observer cycle failed during authority loading. A
+throwaway exact-FD diagnostic reproduced `role journal digest differs from
+provision manifest`; its 3.1 GB build directory was removed after diagnosis.
+
+RED adds a real refund-route regression that invokes once, rewrites the same
+valid journal with SQLite `VACUUM`, proves its bytes changed and requires the
+restart-only observer. GREEN retains the digest as provisioning provenance and
+uses the existing stable owner-only, sidecar-free, full semantic journal
+validation at restart. Immutable application inputs remain digest-pinned. The
+focused regression and complete XMR reference-actor suite are GREEN. ADR 0171
+records the component, sequence and atomicity decision.
+
+The real normal-supervisor regression then exposed stale process-fixture
+custody: the production refund route requires the finalized Tag16 signature on
+invocation-only FD 219, while the fixture still supplied only private-share FD
+218. Before the correction the actor failed closed before its worker and the
+supervisor recorded `actor_exit_failed`; no effect log existed. GREEN now
+supplies both invocation-only inputs, asserts both are absent from the observer,
+and completes Tag17 plus Monero Refund invoke/restart/reconcile in 302.10
+seconds without relaxing any supervisor assertion.
+
+The next PoC gate is one fresh pushed-commit exact replay producing
+`monero-refund-finalized.json`, workflow revision 2, a completed manual Refund
+action, terminal scheduler state and exact cleanup. Corrected ETA after the next
+push is 55 to 90 minutes for that local-functional replay; repository-controlled
+M7 candidate closure remains 1 to 2 focused days after the PoC, excluding the
+independent S12/S13 review and policy-deferred public deployment.

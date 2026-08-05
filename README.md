@@ -44,10 +44,14 @@ keeps the schema-3 byte-pinned adaptor journal immutable until activation.
 ADR
 [0170](docs/architecture/0170-drive-refund-confirmations-from-durable-submission.md)
 now starts the separate local confirmation driver from validated durable send
-evidence instead of a transient scheduler sample. The fourth exact joined
-replay passed activation and submitted one real Maker refund exactly once; it
-then exposed this runner-only handoff race before confirmation mining. The
-focused fix is contract-GREEN, and terminal replay remains the PoC gate.
+evidence instead of a transient scheduler sample. Exact run
+`m7refund-e7016d8-a` proved that fix with one real Maker refund and exactly ten
+local confirmation blocks, then exposed a restart rejection caused by treating
+mutable SQLite representation bytes as immutable. ADR
+[0171](docs/architecture/0171-validate-mutable-role-journals-semantically.md)
+keeps the raw digest as provisioning provenance and revalidates complete stable
+session semantics on restart. Its RED-to-GREEN physical-rewrite regression and
+complete XMR actor suite pass; one fresh terminal replay remains the PoC gate.
 Reproduce it with [manual Flow
 1ZF](docs/manual-user-flows.md#flow-1zf-repeat-the-joined-supervised-maker-refund).
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)

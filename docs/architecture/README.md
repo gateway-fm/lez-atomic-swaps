@@ -217,6 +217,10 @@ flowchart TB
     M7RecoveryBranch --> M7RefundCustody["0165 Sealed refund extraction"]
     M7RefundCustody --> M7RefundSender["0166 One shot Monero refund"]
     M7RefundSender --> M7RefundObserver["0167 Read only refund finality"]
+    M7RefundObserver --> M7RefundActivation["0168 Evidence driven activation"]
+    M7RefundActivation --> M7JournalCustody["0169 Preserve adaptor custody"]
+    M7JournalCustody --> M7DurableHandoff["0170 Durable submission handoff"]
+    M7DurableHandoff --> M7SemanticRestart["0171 Semantic journal restart"]
 ```
 
 | ADR | Decision | Status |
@@ -391,3 +395,4 @@ flowchart TB
 | [0168](0168-activate-maker-refund-from-finalized-evidence.md) | Select the Maker Refund branch only after exact funding and finalized role-local Tag-16 evidence | Accepted application checkpoint; schema-3 activation and the role-correct joined runner are contract-GREEN, while the first exact pushed-commit actual-node supervisor replay remains open |
 | [0169](0169-preserve-pinned-adaptor-journal-through-refund-activation.md) | Keep schema-3 finalized-signature custody from reopening the byte-pinned adaptor journal before activation | Accepted application checkpoint; focused custody, legacy-ingestion and effect-route gates are GREEN, while a fresh exact joined replay remains open |
 | [0170](0170-drive-refund-confirmations-from-durable-submission.md) | Start the separate Regtest confirmation driver from durable one-shot submission evidence, not a transient scheduler window | Accepted application checkpoint; focused durable-handoff contract is GREEN and the fourth exact run proves one real refund submission, while terminal replay remains open |
+| [0171](0171-validate-mutable-role-journals-semantically.md) | Keep the SQLite role-journal digest as provisioning provenance and validate stable protocol semantics on every restart | Accepted application checkpoint; the exact run proved one send and ten confirmations before exposing the representation-digest failure, and the focused physical-rewrite regression plus complete XMR actor suite are GREEN; terminal replay remains open |

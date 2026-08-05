@@ -151,6 +151,13 @@ fn provision_maker_recovery(
         .mode(0o700)
         .create(&evidence_root)
         .unwrap();
+    if kind == MakerRecoveryKind::Refund {
+        write(
+            &evidence_root.join("finalized-refund-signature.json"),
+            b"canonical-finalized-refund-signature\n",
+            0o600,
+        );
+    }
     let effect_log = effect_root.join("effect.log");
     let worker = effect_root.join("recovery-worker");
     let fd218_assertion = if kind == MakerRecoveryKind::Refund {
@@ -158,17 +165,23 @@ fn provision_maker_recovery(
     } else {
         "test ! -e /proc/self/fd/218"
     };
+    let fd219_assertion = if kind == MakerRecoveryKind::Refund {
+        "test -e /proc/self/fd/219"
+    } else {
+        "test ! -e /proc/self/fd/219"
+    };
     let observer_fd218_assertion = "test ! -e /proc/self/fd/218";
+    let observer_fd219_assertion = "test ! -e /proc/self/fd/219";
     let step_name = kind.step_name();
     let worker_script = format!(
-        "#!/bin/sh\nset -eu\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {fd218_assertion}\n         grep -Fq '\"step\":\"{step_name}\"' /proc/self/fd/217\n         if grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/217; then printf 'preflight\\n' >> '{}'; exit 0; fi\n         grep -Fq '\"mode\":\"invoke\"' /proc/self/fd/217\n         printf 'invoke\\n' >> '{}'\n",
+        "#!/bin/sh\nset -eu\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {fd218_assertion}\n         {fd219_assertion}\n         grep -Fq '\"step\":\"{step_name}\"' /proc/self/fd/217\n         if grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/217; then printf 'preflight\\n' >> '{}'; exit 0; fi\n         grep -Fq '\"mode\":\"invoke\"' /proc/self/fd/217\n         printf 'invoke\\n' >> '{}'\n",
         effect_log.display(),
         effect_log.display(),
     );
     write(&worker, worker_script.as_bytes(), 0o700);
     let observer = effect_root.join("observer");
     let observer_script = format!(
-        "#!/bin/sh\nset -eu\n         test \"$1\" = \"--xmr-workflow-step\"\n         test \"$2\" = \"{step_name}\"\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {observer_fd218_assertion}\n         grep -Fq '\"mode\":\"observe\"' /proc/self/fd/217\n         printf 'observe\\n' >> '{}'\n         printf '%s\\n' '{{\"schema_version\":1,\"step\":\"{step_name}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{}\"}}'\n",
+        "#!/bin/sh\nset -eu\n         test \"$1\" = \"--xmr-workflow-step\"\n         test \"$2\" = \"{step_name}\"\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {observer_fd218_assertion}\n         {observer_fd219_assertion}\n         grep -Fq '\"mode\":\"observe\"' /proc/self/fd/217\n         printf 'observe\\n' >> '{}'\n         printf '%s\\n' '{{\"schema_version\":1,\"step\":\"{step_name}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{}\"}}'\n",
         effect_log.display(),
         "ab".repeat(32),
     );

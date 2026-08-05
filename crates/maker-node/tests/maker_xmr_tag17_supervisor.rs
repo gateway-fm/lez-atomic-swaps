@@ -176,7 +176,10 @@ fn real_maker_actor_executes_both_recovery_branches_once_then_reconciles() {
     .unwrap();
     assert_eq!(
         refund_submitted.resolution(),
-        MakerActorSupervisorResolution::Requeued
+        MakerActorSupervisorResolution::Requeued,
+        "records={:?} effect_log={:?}",
+        refund_store.list_maker_actor_processes(),
+        fs::read_to_string(&refund.effect_log)
     );
     assert_eq!(fs::read_to_string(&refund.effect_log).unwrap(), "invoke\n");
 

@@ -1353,12 +1353,13 @@ fn load_validated_xmr_role_authority_bytes(
         "published Stage A differs from XMR actor manifest"
     );
 
+    // The digest records the exact provisioning snapshot, but a SQLite database
+    // is mutable representation: a checkpoint or VACUUM can change its bytes
+    // without changing the swap authority. Restarts therefore revalidate a
+    // stable owner-only snapshot and its complete protocol semantics instead of
+    // requiring the provisioning-time byte representation.
     let journal_snapshot =
         validate_role_journal_snapshot(role, &manifest.role_journal, &agreement, &activation)?;
-    ensure!(
-        sha256(&journal_snapshot) == super::decode_exact::<32>(&manifest.role_journal_sha256)?,
-        "role journal digest differs from provision manifest"
-    );
 
     revalidate_exact_private_source(
         &manifest.own_public_packet,

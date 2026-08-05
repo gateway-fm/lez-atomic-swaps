@@ -2293,3 +2293,34 @@ A leased or backoff scheduler state does not grant submission authority. It is
 accepted only for the driver handoff after the receipt exists and validates.
 The driver cannot access either wallet RPC, and the observer cannot access the
 private share or final-signature descriptor.
+
+### Mutable role journal across sender and observer processes
+
+ADR 0171 changes no RPC endpoint. It corrects the local restart boundary after
+the shared-wallet sender has opened the Maker role journal and SQLite has
+legitimately changed its representation bytes.
+
+```mermaid
+sequenceDiagram
+    participant Supervisor as Maker supervisor
+    participant RoleActor as Maker actor
+    participant Journal as Maker role journal
+    participant Shared as Shared wallet RPC
+    participant Observer as Finality observer
+    participant Daemon as Monero daemon RPC
+
+    Supervisor->>RoleActor: Start sender cycle with actor lock
+    RoleActor->>Journal: Validate exact session semantics
+    RoleActor->>Shared: Submit refund once
+    Note over Journal: SQLite pages may checkpoint
+    Supervisor->>RoleActor: Start observation cycle with actor lock
+    RoleActor->>Journal: Revalidate exact session semantics
+    RoleActor->>Observer: Observe without spend authority
+    Observer->>Daemon: Verify exact finalized transaction
+    Observer-->>Supervisor: Terminal evidence
+```
+
+The journal, wallet and daemon remain owner-local, isolated resources. The
+provisioning SHA-256 remains recorded but is not confused with an immutable
+database-file promise; Stage wires, role packets, private manifests, effect
+authority and executable identities remain byte-pinned.

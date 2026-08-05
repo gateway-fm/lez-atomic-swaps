@@ -1366,6 +1366,20 @@ fn maker_refund_route_receives_signature_and_share_only_for_invocation() {
         fixture.refund_signature_sha256.as_deref().unwrap()
     );
 
+    let journal_before = Sha256::digest(fs::read(&fixture.actor_state).unwrap());
+    {
+        let connection = rusqlite::Connection::open(&fixture.actor_state)
+            .expect("open Maker role journal for a semantic-preserving rewrite");
+        connection
+            .execute_batch("VACUUM;")
+            .expect("rewrite the same semantic Maker role journal");
+    }
+    let journal_after = Sha256::digest(fs::read(&fixture.actor_state).unwrap());
+    assert_ne!(
+        journal_after, journal_before,
+        "the regression must exercise changed SQLite representation bytes"
+    );
+
     let reopened = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
         &fixture.effect_bytes,

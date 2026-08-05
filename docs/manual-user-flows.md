@@ -8620,6 +8620,15 @@ durable Refund action, and the consumed attempt plus create-new receipt prevent
 a second send. The read-only observer must still prove the exact transaction
 and terminalize the supervisor.
 
+The role journal is a mutable SQLite database. Its manifest SHA-256 records the
+exact provisioning snapshot, while sender-to-observer restarts validate a
+stable owner-only snapshot and its complete Stage-A/Stage-B session semantics.
+A normal checkpoint or `VACUUM` may change page bytes without changing swap
+authority; a session, transcript, partial-signature, presignature, role, path,
+ownership, mode or sidecar mismatch still fails before any effect. This matters
+when diagnosing `actor_exit_failed`: a representation-only digest change must
+not be repaired by replacing the manifest or rearming the refund action.
+
 ```mermaid
 sequenceDiagram
     participant Taker as Taker role

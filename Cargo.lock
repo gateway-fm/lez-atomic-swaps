@@ -4257,6 +4257,7 @@ dependencies = [
  "lez-xmr-swap-sdk",
  "monero",
  "rand_chacha 0.3.1",
+ "rusqlite",
  "rustix",
  "secp256k1 0.29.1",
  "serde",

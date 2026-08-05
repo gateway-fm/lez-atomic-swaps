@@ -3659,3 +3659,30 @@ The gate accepts queued, leased or backoff only when the same Refund action and
 revision-1 Maker recovery remain active. It validates the receipt before the
 driver contacts the daemon. The consumed one-attempt CAS and create-new receipt
 prevent an overlapping leased replay from submitting again.
+
+## M7 semantic role-journal restart
+
+ADR 0171 distinguishes immutable application inputs from the mutable SQLite
+role journal. The manifest keeps the exact provisioning digest for provenance,
+while each restart validates a stable owner-only snapshot and the complete
+session identities, transcripts, partial signatures and presignature against
+Stage A and Stage B.
+
+```mermaid
+flowchart LR
+    Provision[Provisioning digest] --> Manifest[Schema 3 manifest]
+    Journal[(Mutable role journal)] --> Snapshot[Stable private snapshot]
+    ActorLock[Transferred actor lock] --> Snapshot
+    Snapshot --> Semantics[Protocol semantic validation]
+    StageA[Stage A] --> Semantics
+    StageB[Stage B] --> Semantics
+    Semantics --> Sender[One shot sender]
+    Semantics --> Observer[Restart observer]
+    Observer --> Terminal[Terminal refund]
+```
+
+A SQLite checkpoint or `VACUUM` may change page bytes without changing swap
+authority. Such a representation-only change cannot rearm the durable attempt,
+change the selected branch or replace evidence. Any semantic mismatch, unsafe
+file, sidecar, identity drift or immutable-input digest drift still fails
+before an effect.
