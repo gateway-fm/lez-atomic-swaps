@@ -569,7 +569,7 @@ fn run_claimed_attempt_with_lock(
             revision: status_revision,
         } = parsed_status;
         progress = Some(status_progress);
-        if matches!(status_decision, StatusDecision::Blocked) {
+        if matches!(status_decision, StatusDecision::Blocked) && manual_action.is_none() {
             return Ok(ClaimedAttempt::Blocked);
         }
         let command = match manual_action {
@@ -664,18 +664,25 @@ fn run_child(
     let actor_command = invocation.name();
     let artifacts =
         prepare_maker_actor(lease.record()).map_err(|error| classify_deployment(&error))?;
-    let mut command = artifacts
-        .into_command(held_lock)
-        .map_err(|error| classify_deployment(&error))?;
+    let transfers_lock =
+        lease.record().manifest().kind() == MakerActorKindV1::Monero && invocation.is_effect();
+    let mut command = if transfers_lock {
+        artifacts.into_effect_command(held_lock)
+    } else {
+        artifacts.into_command(held_lock)
+    }
+    .map_err(|error| classify_deployment(&error))?;
     ensure_invocation_admitted(invocation, config, cancellation)?;
     command
         .args(["--config-fd", "196", actor_command])
         .env_clear()
         .current_dir("/")
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0);
+    if !transfers_lock {
+        command.stdin(Stdio::null());
+    }
     #[cfg(feature = "test-crash-hooks")]
     if actor_command == "drive"
         && config
@@ -990,7 +997,10 @@ fn exact_absorbing_effect(
     phase: &str,
 ) -> bool {
     match kind {
-        MakerActorKindV1::Monero => false,
+        MakerActorKindV1::Monero => matches!(
+            (command, outcome, phase),
+            (ActorEffectCommand::Recover, "refunded", "refunded")
+        ),
         MakerActorKindV1::Zcash => matches!(
             (command, outcome, phase),
             (
@@ -1075,6 +1085,9 @@ fn known_effect_outcome(
                 | "projected"
                 | "refunded"
         ),
+        (MakerActorKindV1::Monero, ActorEffectCommand::Recover) => {
+            matches!(outcome, "awaiting_observation" | "refunded")
+        }
         (MakerActorKindV1::Monero, _) | (MakerActorKindV1::Bitcoin, ActorEffectCommand::Claim) => {
             false
         }
@@ -1102,7 +1115,7 @@ fn known_phase(phase: &str) -> bool {
 
 fn known_next_action(kind: MakerActorKindV1, next_action: &str) -> bool {
     match kind {
-        MakerActorKindV1::Monero => next_action == XMR_MAKER_ACTOR_NEXT_ACTION,
+        MakerActorKindV1::Monero => matches!(next_action, XMR_MAKER_ACTOR_NEXT_ACTION | "complete"),
         MakerActorKindV1::Zcash => matches!(
             next_action,
             "wait"
@@ -1285,6 +1298,60 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn xmr_recover_effect_is_exactly_nonterminal_until_finalized() {
+        let pending = effect(
+            "recover",
+            "awaiting_observation",
+            "maker_recovery_available",
+            1,
+            XMR_MAKER_ACTOR_NEXT_ACTION,
+        );
+        let pending = parse_effect(
+            &pending,
+            ActorEffectCommand::Recover,
+            MakerActorKindV1::Monero,
+        )
+        .expect("unreconciled Tag17 is retryable observation state");
+        assert!(!pending.terminal);
+        assert_eq!(
+            pending.progress,
+            MakerActorProgressObservationV1::active(
+                "maker_recovery_available",
+                1,
+                XMR_MAKER_ACTOR_NEXT_ACTION,
+            )
+            .unwrap()
+        );
+
+        let finalized = effect("recover", "refunded", "refunded", 2, "complete");
+        let finalized = parse_effect(
+            &finalized,
+            ActorEffectCommand::Recover,
+            MakerActorKindV1::Monero,
+        )
+        .expect("finalized Tag17 is an absorbing Maker recovery");
+        assert!(finalized.terminal);
+        assert_eq!(
+            finalized.progress,
+            MakerActorProgressObservationV1::active("refunded", 2, "complete").unwrap()
+        );
+
+        for crossed in [
+            effect("claim", "refunded", "refunded", 2, "complete"),
+            effect("recover", "completed", "completed", 2, "complete"),
+        ] {
+            assert!(
+                parse_effect(
+                    &crossed,
+                    ActorEffectCommand::Recover,
+                    MakerActorKindV1::Monero,
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

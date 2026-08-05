@@ -100,7 +100,7 @@ reorg conditions remains a release gate.
 
 ## Known limitations
 
-The project is currently certified only on isolated private local networks.
+The project is currently certified only on isolated private local networks. The normal Maker supervisor now composes schema-3 Tag17 recovery through durable pending and terminal states, but its focused process proof uses local descriptor probes; the joined LEZ and Monero abandonment corridor remains a release gate.
 No public RPC, faucet, public funds or public deployment is represented by that
 evidence. S12/S13 independent review is outstanding. Public-network timelock and
 fee calibration, durable rollback anchoring, cold reproducible Logos UI supply

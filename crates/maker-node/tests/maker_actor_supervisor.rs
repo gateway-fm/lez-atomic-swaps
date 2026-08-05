@@ -120,6 +120,99 @@ fn xmr_pre_effect_cycle_validates_real_authority_and_never_invokes_an_effect() {
 }
 
 #[test]
+fn queued_xmr_recover_overrides_typed_blocked_status_without_generic_effect() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let invocation_log = root.path().join("xmr-recover-invocations");
+    let actor_program = root.path().join("xmr-recover-actor");
+    let program = format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         printf \"%s\\n\" \"$3\" >> \"{}\"\n\
+         case \"$3\" in\n\
+           status) printf \"%s\\n\" \"{{\\\"schema_version\\\":1,\\\"actor_program\\\":\\\"xmr-maker-actor\\\",\\\"actor_abi\\\":\\\"lez_maker_xmr_pre_effect_v1\\\",\\\"role\\\":\\\"maker\\\",\\\"state\\\":\\\"active\\\",\\\"phase\\\":\\\"offered\\\",\\\"revision\\\":0,\\\"next_action\\\":\\\"xmr_chain_effects_not_yet_composed\\\",\\\"chain_effect_executed\\\":false}}\" ;;\n\
+           recover) printf \"%s\\n\" \"{{\\\"schema_version\\\":1,\\\"role\\\":\\\"maker\\\",\\\"command\\\":\\\"recover\\\",\\\"outcome\\\":\\\"awaiting_observation\\\",\\\"phase\\\":\\\"maker_recovery_available\\\",\\\"revision\\\":1,\\\"next_action\\\":\\\"xmr_chain_effects_not_yet_composed\\\"}}\" ;;\n\
+           *) exit 95 ;;\n\
+         esac\n",
+        invocation_log.display()
+    );
+    write_private(&actor_program, program.as_bytes(), 0o700);
+    let swap_bytes = [0x5b; 32];
+    let fixture = XmrChatFixture::new(root.path(), swap_bytes, 1_000_000, 25_000, &actor_program);
+    let config_bytes = fs::read(&fixture.maker_actor_config).unwrap();
+    let program_bytes = fs::read(&actor_program).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("xmr-maker.sqlite3")).unwrap();
+    let swap_id = hex::encode(swap_bytes);
+    store.save(&xmr_swap(&swap_id)).unwrap();
+    let id = SwapId::new(swap_id).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                id.clone(),
+                MakerActorKindV1::Monero,
+                fixture.maker_actor_config,
+                Sha256::digest(config_bytes).into(),
+                actor_program,
+                Sha256::digest(program_bytes).into(),
+                fixture.maker_actor_state,
+            )
+            .unwrap(),
+            10,
+        )
+        .unwrap();
+    store
+        .queue_maker_actor_manual_action(
+            &RequestId::new("m7-xmr-recover-001").unwrap(),
+            &id,
+            MakerActorManualAction::Refund,
+            0,
+            10,
+        )
+        .unwrap();
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+
+    let outcome = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x73; 16]).unwrap(),
+        10,
+        &config,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        outcome.resolution(),
+        MakerActorSupervisorResolution::Requeued
+    );
+    assert_eq!(
+        fs::read_to_string(invocation_log).unwrap(),
+        "status\nrecover\n"
+    );
+    assert_eq!(
+        store
+            .maker_actor_manual_action(&id)
+            .unwrap()
+            .unwrap()
+            .state(),
+        MakerActorManualActionState::Queued
+    );
+    assert_eq!(
+        store
+            .maker_actor_progress(&id)
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active(
+            "maker_recovery_available",
+            1,
+            "xmr_chain_effects_not_yet_composed",
+        )
+        .unwrap()
+    );
+}
+
+#[test]
 fn one_bounded_cycle_runs_exact_sealed_actor_and_durably_requeues() {
     let root = tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();

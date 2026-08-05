@@ -1120,7 +1120,10 @@ pub fn validate_maker_manifest_config_bytes(
         normalized_absolute(expected_state_database),
         "expected XMR actor state database path is invalid"
     );
-    let manifest = parse_maker_manifest_config_bytes(bytes)?;
+    let manifest = parse_maker_manifest_config_bytes(bytes).or_else(|_| {
+        parse_effect_manifest_config_bytes(bytes, ActorRole::Maker)
+            .map(|manifest| manifest.legacy())
+    })?;
     ensure!(
         super::decode_exact::<32>(&manifest.swap_id)? == expected_swap_id
             && manifest.role_journal == expected_state_database,
@@ -1184,6 +1187,34 @@ pub fn load_validated_xmr_maker_authority_fd(fd: i32) -> Result<ValidatedXmrMake
         stage_b_sha256: authority.stage_b_sha256,
         _role_journal_snapshot: authority.role_journal_snapshot,
     })
+}
+
+/// Loads a complete schema-v3 Maker effect execution from fixed sealed FD 196.
+///
+/// The sealed manifest is scheduler-pinned. Its exact run identity selects the
+/// canonical effect authority, which is securely read and semantically bound
+/// to the application plus initialized workflow before the result is returned.
+///
+/// # Errors
+///
+/// Rejects every sealed-config, role, schema, digest, application, effect, or
+/// workflow mismatch. Legacy schema-v2 manifests are intentionally rejected.
+pub fn load_validated_xmr_maker_effect_execution_fd(
+    fd: i32,
+) -> Result<ValidatedXmrEffectExecutionV3> {
+    let config = read_sealed_config_fd(fd)?;
+    let manifest = parse_effect_manifest_config_bytes(config.as_slice(), ActorRole::Maker)?;
+    let effect_bytes = read_private_source(
+        &manifest.effect_authority_file,
+        u64::try_from(MAX_AUTHORITY_BYTES).unwrap_or(u64::MAX),
+        "XMR Maker effect authority",
+    )?;
+    load_validated_xmr_effect_execution_v3_bytes(
+        config.as_slice(),
+        &effect_bytes,
+        ActorRole::Maker,
+        &manifest.run_id,
+    )
 }
 
 /// Loads and fully validates Taker authority from canonical manifest bytes.

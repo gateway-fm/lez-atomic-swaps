@@ -212,6 +212,7 @@ flowchart TB
     M7PunishWorkflow --> M7Tag17Authority["0160 Versioned Tag17 authority"]
     M7Tag17Authority --> M7Tag17Route["0161 Least privilege Tag17 route"]
     M7Tag17Route --> M7Tag17Worker["0162 Semantic sealed Tag17 worker"]
+    M7Tag17Worker --> M7Tag17Supervisor["0163 Supervised Tag17 recovery"]
 ```
 
 | ADR | Decision | Status |
@@ -378,3 +379,4 @@ flowchart TB
 | [0160](0160-version-maker-tag17-effect-authority.md) | Require an explicit schema-3 Maker tool before Tag17 can enter the effect router | Accepted prerequisite; canonical schema/role/ABI validation, route selection, and sealed execution are GREEN under ADRs 0161 and 0162 |
 | [0161](0161-route-tag17-with-least-privilege-descriptors.md) | Route Maker Tag17 through pin-before-CAS sealed inputs and finalized-only observation without the private Monero share | Accepted process checkpoint; real role material, locks, one attempt, restart and observer routing are GREEN; ADR 0162 closes the semantic child |
 | [0162](0162-run-tag17-through-a-semantic-sealed-worker.md) | Validate the exact Maker application and publish only the prepared Tag17 through a no-argument least-privilege worker | Accepted semantic-process checkpoint; preflight, exact one-attempt submission, bounded evidence and fail-closed FD 218 exclusion are GREEN |
+| [0163](0163-supervise-maker-tag17-recovery.md) | Transfer the existing actor lock into the schema-3 Maker role actor and drive Tag17 once then finalized-only reconciliation through the normal supervisor | Accepted application checkpoint; the real actor process reaches pending then terminal without resending, while the joined actual-node abandonment corridor remains open |

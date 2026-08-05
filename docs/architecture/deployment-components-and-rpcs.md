@@ -2038,3 +2038,38 @@ the application deployments from local nodes to a public environment remains a
 configuration plus deployment operation, but no public deployment is claimed.
 Semantic receipt-v2 XMR worker adapters and simultaneous accepted-application
 actual-chain overlap remain post-PoC hardening.
+
+## M7 schema-3 Maker Tag17 supervisor deployment
+
+```mermaid
+flowchart LR
+    MakerCLI[Maker CLI] --> OwnerSocket[Owner Unix RPC]
+    OwnerSocket --> Daemon[Maker daemon]
+    Daemon --> Store[(Maker SQLite)]
+    Store --> Supervisor[Maker supervisor]
+    Supervisor --> Actor[xmr maker actor]
+    Actor --> Workflow[(XMR workflow SQLite)]
+    Actor --> Sender[Tag17 sender]
+    Actor --> Observer[Finalized observer]
+    Sender --> LezSidecar[Maker LEZ sidecar]
+    Observer --> LezSidecar
+    LezSidecar --> LezRpc[LEZ sequencer and indexer RPC]
+    Actor -. authority only .-> XmrDaemon[Monero daemon RPC]
+    Actor -. authority only .-> XmrWallets[Funding shared and role wallet RPCs]
+```
+
+| Component | Production-shaped authority | Focused supervisor test |
+|---|---|---|
+| Maker daemon and store | Owner-only Unix RPC, durable action, fenced process lease | Real store and supervisor library |
+| XMR Maker role actor | Digest-pinned executable, sealed schema-3 FD 196, inherited actor lock, distinct workflow lock | Real xmr-maker-actor process |
+| Tag17 sender | Digest-pinned no-argument xmr-reference-tag17 using authenticated Maker sidecar | Strict local descriptor probe |
+| Finalized observer | Role-fixed classifier over original sending-plan identity | Strict local finalized result probe |
+| LEZ nodes | Run-owned Bedrock, sequencer and indexer on configured loopback or approved deployment endpoints | Not started and no RPC opened |
+| Monero nodes | Run-owned daemon plus funding, shared, and role wallet RPCs | Not started and no RPC opened |
+
+The process test proves the solid control-plane edges through the Actor and
+Workflow nodes. ADR 0158 separately proves Sender through LEZ finality on fresh
+local nodes. No evidence currently claims that the focused test opened the
+dashed RPC edges or joined the subsequent Monero recovery sweep. Local-to-public
+portability requires replacing configuration and deploying the reviewed LEZ
+program; it does not permit implicit endpoint fallback.

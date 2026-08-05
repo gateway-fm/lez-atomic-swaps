@@ -494,6 +494,15 @@ attestation so neither can be misreported as the other.
   tests including rejected preflight and forbidden-share zero-call cases. No
   Docker, node, public RPC, faucet, funds or external service is used by this
   process proof; ADR 0158 remains the separate actual-node finality proof.
+- [x] Join the normal Maker supervisor to the schema-3 Tag17 recovery route
+  through ADR 0163. An explicit queued Refund overrides only the typed Monero
+  pre-effect block; the supervisor transfers its existing actor lock without
+  reopening it, the actor acquires a distinct workflow lock, preflights before
+  CAS, submits once, and on the next cycle observes finalized evidence without
+  resending. The real actor process proof reaches durable pending revision 1 and
+  terminal refunded revision 2, completes the manual action, and terminalizes
+  the process. The proof is local and networkless; the fresh joined two-devnet
+  abandonment corridor and adverse recovery matrix remain open.
 - [ ] Close repository-controlled SDK, application, graceful-degradation,
   restart/concurrency, timelock/fee/reorg and demo gaps found by that audit.
 - [ ] Run the post-PoC QA RED-GREEN-REFACTOR matrix, bounded chaos/fault matrix,
@@ -524,10 +533,9 @@ attestation so neither can be misreported as the other.
    inputs, a canonical execution plan and least-privilege branch material. The
    real Tag16 child derives its signature from the Stage-B-matching live journal
    and submits through an authenticated local sidecar. Literal Tag14 and Tag16
-   CLI integration are process-GREEN; Tag17 is semantic-process and actual-node
-   GREEN. Complete
-   application-owned joined claim/refund/abandonment corridors, Monero sweep
-   semantics, and adverse restart/concurrency remain repository work.
+   CLI integration are process-GREEN; Tag17 is semantic-process, actual-node,
+   and normal Maker-supervisor GREEN through ADR 0163. Complete joined claim,
+   refund, and abandonment corridors plus Monero sweep semantics and adverse restart/concurrency remain repository work.
 
 The working ETA will be recalculated after the hard-requirement audit because
 the carried matrix mixes completed evidence with historical gaps. The initial

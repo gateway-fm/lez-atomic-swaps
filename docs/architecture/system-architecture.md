@@ -3317,3 +3317,76 @@ only at execution to the actor's semantic Drive command. XMR/ZEC Claim remain
 Claim; all pair refunds execute Recover. This pair-aware translation prevents a
 valid user intent from being rejected as JSON-RPC `-32602` without inventing a
 new Bitcoin actor verb.
+
+## M7 supervised Maker Tag17 recovery boundary
+
+The normal Maker process plane now consumes schema-3 XMR authority. A queued
+operator Refund action is the only route from the typed pre-effect status to
+Maker Tag17 recovery. The role actor receives the supervisor-held actor lock,
+acquires the separate workflow lock, and selects preflight, sender, or observer
+from durable workflow state. It never chooses a program, endpoint, branch, or
+evidence source from operator input.
+
+```mermaid
+flowchart TB
+    Operator[Maker operator] --> OwnerRpc[Owner RPC]
+    OwnerRpc --> MakerDb[(Maker SQLite)]
+    MakerDb --> Supervisor[Maker supervisor]
+    Supervisor --> RoleActor[xmr maker actor]
+    RoleActor --> Workflow[(XMR workflow SQLite)]
+    RoleActor --> Router[Schema 3 effect router]
+    Router --> Tag17[xmr reference tag17]
+    Router --> Finality[Finalized LEZ observer]
+    Tag17 --> Sidecar[Authenticated LEZ sidecar]
+    Finality --> Sidecar
+    Sidecar --> Bedrock[Local LEZ Bedrock RPC]
+    Bedrock --> Sequencer[Local LEZ sequencer]
+    Sequencer --> Indexer[Local LEZ indexer]
+    RoleActor -. pinned but unused by Tag17 .-> Monerod[Local Monero daemon RPC]
+    RoleActor -. pinned but unused by Tag17 .-> Wallets[Local Monero wallet RPCs]
+```
+
+The solid local-node route is the production-shaped target and was separately
+executed for actual Tag17 finality under ADR 0158. The focused supervisor test
+replaces Tag17 and its finalized observer with strict descriptor probes, so it
+opens none of the depicted RPCs. The schema-3 authority still pins literal
+loopback LEZ sidecar plus Monero daemon, funding-wallet, shared-wallet, and
+role-wallet origins; changing to approved public or self-hosted endpoints is a
+configuration and deployment change, not an actor-control-flow change.
+
+```mermaid
+sequenceDiagram
+    actor Maker
+    participant Owner as Owner RPC
+    participant Store as Maker SQLite
+    participant Supervisor
+    participant Actor as XMR Maker actor
+    participant Workflow as XMR workflow
+    participant Lez as LEZ sidecar and nodes
+
+    Maker->>Owner: Queue Refund for exact swap
+    Owner->>Store: Persist request and branch
+    Supervisor->>Store: Lease due process and action
+    Supervisor->>Actor: Status with sealed schema 3 config
+    Actor-->>Supervisor: Offered and no automatic effect
+    Supervisor->>Actor: Recover with inherited actor lock
+    Actor->>Workflow: Preflight then Prepared to Started
+    Actor->>Lez: Submit exact Tag17 once
+    Actor-->>Supervisor: Awaiting observation
+    Supervisor->>Store: Requeue same action
+    Supervisor->>Actor: Recover on later cycle
+    Actor->>Lez: Observe original plan only
+    Lez-->>Actor: Finalized nonzero evidence
+    Actor->>Workflow: Reconcile Succeeded
+    Actor-->>Supervisor: Refunded and complete
+    Supervisor->>Store: Complete action and process
+```
+
+The two local database commits are different atomicity domains. The XMR
+workflow CAS prevents effect resubmission, while the fenced Maker-store
+resolution keeps the user action queued until finalized evidence is durable and
+then completes the action and process together. Cross-chain atomicity remains
+conditional on the Stage A and B construction, mutually exclusive branch,
+canonical LEZ finality, Monero funding evidence, and recovery deadlines. This
+component proof does not replace the still-open joined two-devnet abandonment
+and adverse-race certificate.

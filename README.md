@@ -19,6 +19,15 @@ with checked evidence in
 F3/F6 still require the joined two-devnet abandonment economics and adverse
 recovery races; public deployment remains deliberately deferred.
 
+The application-owned Maker Tag17 recovery boundary is also GREEN under
+[ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the
+normal supervisor runs the real schema-3 role actor, transfers its existing
+actor lock safely, submits once, then observes and terminalizes on the next
+cycle without resending.
+[Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
+reproduces that networkless control-plane proof. It does not close the joined
+two-devnet F3/F6 corridor.
+
 ### M6 certified local-functional Basecamp mini-app PoC
 
 M5 is verified at the local-functional PoC boundary by tag

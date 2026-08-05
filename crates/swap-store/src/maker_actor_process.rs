@@ -33,6 +33,9 @@ const MAX_PROGRESS_LABEL_BYTES: usize = 64;
 const MAX_DUE_LIMIT: usize = 128;
 const MAX_ACTOR_CONFIG_BYTES: u64 = 4 * 1_024 * 1_024;
 const MAX_ACTOR_PROGRAM_BYTES: u64 = 512 * 1_024 * 1_024;
+/// Standard-input descriptor used only to transfer a safe owned duplicate of
+/// the supervisor lock into a nested semantic Maker effect process.
+pub const MAKER_ACTOR_LOCK_TRANSFER_FD: i32 = 0;
 /// Fixed child descriptor containing the sealed, verified actor config bytes.
 pub const MAKER_ACTOR_CONFIG_FD: i32 = 196;
 /// Fixed child descriptor used as the exact actor executable.
@@ -420,6 +423,46 @@ impl MakerActorHeldLock {
         })
     }
 
+    /// Accepts an owned duplicate of the supervisor lock transferred on stdin.
+    ///
+    /// The caller obtains the `File` through safe standard-input descriptor
+    /// ownership. This method revalidates the deterministic named inode and
+    /// asserts the exclusive `flock` on that same open-file description before
+    /// returning authority that can be passed to a nested semantic worker.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsafe lock paths or inodes and a descriptor that cannot hold
+    /// the exact exclusive lock.
+    pub fn accept_transferred_for(
+        swap_id: &SwapId,
+        state_database_path: &Path,
+        file: File,
+    ) -> Result<Self, MakerActorProcessError> {
+        let state_database_path = state_database_path.to_path_buf();
+        let parent = state_database_path
+            .parent()
+            .ok_or(MakerActorProcessError::UnsafeLock)?;
+        validate_lock_root(parent)?;
+        let lock_path = lock_file_path(&state_database_path);
+        validate_lock_file(&file, &lock_path)?;
+        flock(&file, FlockOperation::NonBlockingLockExclusive)
+            .map_err(|_| MakerActorProcessError::LockUnavailable)?;
+        validate_lock_root(parent)?;
+        validate_lock_file(&file, &lock_path)?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| MakerActorProcessError::UnsafeLock)?;
+        Ok(Self {
+            swap_id: swap_id.clone(),
+            state_database_path,
+            lock_path,
+            file,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
     /// Revalidates that this live lock guards one exact swap/state path.
     ///
     /// # Errors
@@ -460,7 +503,7 @@ impl MakerActorHeldLock {
     fn fd_mapping_to(&self, child_fd: i32) -> Result<FdMapping, MakerActorProcessError> {
         if !matches!(
             child_fd,
-            MAKER_ACTOR_LOCK_FD | PINNED_EXECUTABLE_WORKFLOW_LOCK_FD
+            MAKER_ACTOR_LOCK_TRANSFER_FD | MAKER_ACTOR_LOCK_FD | PINNED_EXECUTABLE_WORKFLOW_LOCK_FD
         ) {
             return Err(MakerActorProcessError::InvalidDescriptorMapping);
         }
@@ -850,6 +893,42 @@ impl MakerActorArtifacts {
                     child_fd: MAKER_ACTOR_CONFIG_FD,
                 },
                 lock_mapping,
+            ])
+            .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+        Ok(command)
+    }
+
+    /// Consumes the sealed snapshot into an effect child command that receives
+    /// the same actor lock on FD 198 and as a safe standard-input transfer.
+    ///
+    /// The role actor may safely clone stdin into an owned `File`, validate it,
+    /// and pass that same open-file-description lock to a nested semantic worker.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a changed state location, mismatched lock, or descriptor setup
+    /// failure.
+    pub fn into_effect_command(
+        self,
+        held_lock: &MakerActorHeldLock,
+    ) -> Result<Command, MakerActorProcessError> {
+        held_lock.validate_for(&self.record)?;
+        validate_actor_state(self.record.manifest().state_database_path(), &self.state)?;
+        let lock_mapping = held_lock.fd_mapping()?;
+        let transfer_mapping = held_lock.fd_mapping_to(MAKER_ACTOR_LOCK_TRANSFER_FD)?;
+        let mut command = Command::new(format!("/proc/self/fd/{MAKER_ACTOR_PROGRAM_FD}"));
+        command
+            .fd_mappings(vec![
+                FdMapping {
+                    parent_fd: self.program.into(),
+                    child_fd: MAKER_ACTOR_PROGRAM_FD,
+                },
+                FdMapping {
+                    parent_fd: self.config.into(),
+                    child_fd: MAKER_ACTOR_CONFIG_FD,
+                },
+                lock_mapping,
+                transfer_mapping,
             ])
             .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
         Ok(command)

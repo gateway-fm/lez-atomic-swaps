@@ -8360,3 +8360,70 @@ durable receipt/state rollback-incarnation fencing across restart, direct
 retained-byte draft/key handoff, exact use-time inode enforcement,
 least-authority admission-only configuration, spawned-service real-Chat E2E,
 and actor lifecycle, finality, and chaos coverage.
+
+## Flow 1ZC: Repeat the supervised Maker Tag17 recovery checkpoint
+
+This focused flow emulates the actual operator and daemon usage boundary. It
+creates a real signed XMR Stage A and Stage B application, provisions schema-3
+Maker effect authority, registers the real digest-pinned xmr-maker-actor in the
+Maker store, queues Refund through the durable operator-action API, and runs two
+normal supervisor cycles.
+
+From the repository root:
+
+```bash
+cargo test -p lez-maker-node --test maker_xmr_tag17_supervisor \
+  real_maker_actor_submits_tag17_once_then_reconciles_terminal_refund \
+  -- --exact --nocapture
+```
+
+The test is intentionally self-cleaning. A pass must prove all of the following:
+
+- the status child accepts the sealed schema-3 manifest but performs no effect;
+- the queued Refund is the only reason the supervisor invokes recover;
+- the first recover cycle runs one non-sending preflight and one Tag17 sender,
+  reports durable revision 1, leaves the action Queued, and requeues the process;
+- the second recover cycle runs only the finalized observer, reports durable
+  revision 2, completes the action, and terminalizes the process;
+- the exact effect trace is preflight, invoke, observe with no second send;
+- the nested sender and observer retain actor lock FD 198 and workflow lock FD
+  199, receive sealed FDs 200 through 217, and reject private-share FD 218.
+
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Store as Maker store
+    participant Supervisor
+    participant Actor as XMR Maker actor
+    participant Effect as Tag17 route
+
+    Operator->>Store: Queue Refund
+    Supervisor->>Actor: Status
+    Actor-->>Supervisor: Offered and blocked
+    Supervisor->>Actor: Recover
+    Actor->>Effect: Preflight then invoke once
+    Effect-->>Actor: Await finality
+    Actor-->>Supervisor: Awaiting observation
+    Supervisor->>Store: Keep action queued
+    Supervisor->>Actor: Recover on next cycle
+    Actor->>Effect: Observe only
+    Effect-->>Actor: Finalized evidence
+    Actor-->>Supervisor: Refunded and complete
+    Supervisor->>Store: Complete action and process
+```
+
+No Docker container, LEZ node, Monero node, wallet RPC, faucet, DNS, public
+funds, peer, or public deployment participates in this checkpoint. The Tag17
+sender and observer are strict local descriptor probes; they prove supervisor
+composition and restart semantics, not chain behavior. Flow 1ZB and its checked
+certificate separately prove actual local LEZ Tag17 submission and finality.
+The remaining joined corridor must combine the supervisor path with fresh local
+LEZ and Monero devnets and the recovery sweep.
+
+Warm execution is dominated by deterministic DLEQ and adaptor fixture
+construction plus repeated complete authority validation. Cold Cargo builds,
+CPU contention, filesystem synchronization, entropy scheduling, antivirus or
+indexer activity, and disk pressure can increase runtime. No network response
+can make the test pass or fail. Use a fresh repository worktree and do not run
+global Docker prune; this flow creates only temporary files and removes them on
+success or failure.

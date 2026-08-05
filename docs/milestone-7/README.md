@@ -28,6 +28,7 @@ materially affect safe reproduction.
 - [Machine-auditable submission-requirement inventory](submission-requirements.tsv)
 - [F1/R3 actual-node dependency-loss certificate](../evidence/m7-unaffected-pair-outage-2c63218-20260804.json)
 - [Tag-17 durable preparation and one-attempt release decision](../architecture/0158-prepare-and-release-tag17-once.md)
+- [Supervised Maker Tag17 recovery decision](../architecture/0163-supervise-maker-tag17-recovery.md)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

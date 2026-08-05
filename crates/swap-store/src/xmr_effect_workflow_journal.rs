@@ -818,6 +818,26 @@ impl SqliteXmrWorkflowJournal {
         Ok(snapshot.state == StepState::Prepared)
     }
 
+    /// Returns the exact durable revision for one validated workflow step.
+    ///
+    /// # Errors
+    ///
+    /// Missing, crossed, or corrupt durable state fails closed.
+    pub fn step_revision(
+        &self,
+        identity: &XmrWorkflowIdentityV1,
+        step: XmrWorkflowStep,
+    ) -> Result<u64, StoreError> {
+        ensure_step_role(identity, step)?;
+        self.revalidate_storage()?;
+        ensure_scope(&self.connection, identity, step.scope())?;
+        let snapshot =
+            load_step(&self.connection, step)?.ok_or(StoreError::MissingXmrWorkflowStep)?;
+        validate_step(identity, step, &snapshot)?;
+        self.revalidate_storage()?;
+        Ok(snapshot.revision)
+    }
+
     /// Reconciles Started or Unknown to Succeeded with exact durable evidence.
     ///
     /// # Errors
@@ -1434,5 +1454,95 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, 2, "opening schema-v2 must not migrate it");
+    }
+
+    #[test]
+    fn durable_step_revision_tracks_ambiguity_and_reconciliation() {
+        let root = tempdir().expect("isolated workflow revision root");
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.path().join("workflow.sqlite3");
+        let identity = XmrWorkflowIdentityV1::new(
+            SwapId::new("b7".repeat(32)).unwrap(),
+            Participant::Maker,
+            "durable-revision".into(),
+            [0xb8; 32],
+            [0xb9; 32],
+            [0xba; 32],
+        )
+        .unwrap();
+        let mut journal = SqliteXmrWorkflowJournal::create_new(&path).unwrap();
+        journal.initialize(&identity).unwrap();
+        journal
+            .prepare_step(&identity, XmrWorkflowStep::FundMonero)
+            .unwrap();
+        assert_eq!(
+            journal
+                .authorize_once(&identity, XmrWorkflowStep::FundMonero)
+                .unwrap(),
+            XmrWorkflowDecision::InvokeOnce
+        );
+        journal
+            .reconcile_succeeded(
+                &identity,
+                XmrWorkflowStep::FundMonero,
+                &XmrWorkflowReconciliationV2::new(
+                    [0xbb; 32],
+                    [0xbc; 32],
+                    XmrWorkflowReconciliationSource::MoneroWalletTransaction,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        journal
+            .select_branch(&identity, XmrWorkflowBranch::Punish)
+            .unwrap();
+        journal
+            .prepare_step(&identity, XmrWorkflowStep::PunishLezTag17)
+            .unwrap();
+        assert_eq!(
+            journal
+                .step_revision(&identity, XmrWorkflowStep::PunishLezTag17)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            journal
+                .authorize_once(&identity, XmrWorkflowStep::PunishLezTag17)
+                .unwrap(),
+            XmrWorkflowDecision::InvokeOnce
+        );
+        assert_eq!(
+            journal
+                .step_revision(&identity, XmrWorkflowStep::PunishLezTag17)
+                .unwrap(),
+            1
+        );
+        journal
+            .mark_unknown(&identity, XmrWorkflowStep::PunishLezTag17)
+            .unwrap();
+        assert_eq!(
+            journal
+                .step_revision(&identity, XmrWorkflowStep::PunishLezTag17)
+                .unwrap(),
+            2
+        );
+        journal
+            .reconcile_succeeded(
+                &identity,
+                XmrWorkflowStep::PunishLezTag17,
+                &XmrWorkflowReconciliationV2::new(
+                    [0xbd; 32],
+                    [0xbe; 32],
+                    XmrWorkflowReconciliationSource::LezFinalizedEvent,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            journal
+                .step_revision(&identity, XmrWorkflowStep::PunishLezTag17)
+                .unwrap(),
+            3
+        );
     }
 }
