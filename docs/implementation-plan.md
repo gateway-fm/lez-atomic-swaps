@@ -6804,3 +6804,8 @@ S12/S13 review and policy-deferred public deployment.
   one CRLF. Descriptor-native capability custody is capped at the exact
   128-byte bearer plus one CRLF (130 bytes); focused sealed-memfd tests cover
   raw/LF/CRLF, repeated/lone line endings, over-bound input, and invalid UTF-8.
+  Deterministic async cancellation now covers both post-CAS suspension seams:
+  waiting on the decisive finalized clock and waiting on the node submission.
+  Each simulated process loss durably retains PublicationStarted; restart opens
+  the exact transaction into Ambiguous and a fresh publication transport sees
+  zero clock and zero submission calls.

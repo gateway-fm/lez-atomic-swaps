@@ -381,7 +381,10 @@ impl ReleaseStore {
 mod tests {
     use super::*;
     use crate::{ReleasePlan, derive_activation_id};
-    use std::{collections::VecDeque, fs, os::unix::fs::PermissionsExt, path::PathBuf};
+    use std::{
+        collections::VecDeque, fs, future::pending, os::unix::fs::PermissionsExt, path::PathBuf,
+        time::Duration,
+    };
     use tempfile::{TempDir, tempdir};
     use zeroize::Zeroizing;
 
@@ -392,6 +395,45 @@ mod tests {
         admission: Result<PublicationAdmission, PublicationTransportError>,
         clock_calls: usize,
         submission_calls: usize,
+    }
+
+    #[derive(Clone, Copy)]
+    enum HangAt {
+        DecisiveClock,
+        Submission,
+    }
+
+    struct HangingTransport {
+        hang_at: HangAt,
+        clock_calls: usize,
+        submission_calls: usize,
+    }
+
+    #[async_trait]
+    impl XmrAuthorizationPublicationTransport for HangingTransport {
+        async fn finalized_lez_timestamp(
+            &mut self,
+            authenticated_target: &[u8],
+        ) -> Result<u64, PublicationTransportError> {
+            assert_eq!(authenticated_target, b"lez-authenticated-target");
+            self.clock_calls += 1;
+            if self.clock_calls == 2 && matches!(self.hang_at, HangAt::DecisiveClock) {
+                pending().await
+            } else {
+                Ok(150)
+            }
+        }
+
+        async fn submit_exact_authorization(
+            &mut self,
+            authenticated_target: &[u8],
+            exact_publication: &[u8],
+        ) -> Result<PublicationAdmission, PublicationTransportError> {
+            assert_eq!(authenticated_target, b"lez-authenticated-target");
+            assert_eq!(exact_publication, b"exact-xmr-claim-authorization");
+            self.submission_calls += 1;
+            pending().await
+        }
     }
 
     impl Transport {
@@ -686,5 +728,72 @@ mod tests {
                 .state(),
             ReleaseState::Admitted
         );
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_send_cas_restarts_as_exact_observation_without_resubmit() {
+        for hang_at in [HangAt::DecisiveClock, HangAt::Submission] {
+            let directory = directory();
+            let path = database_path(&directory);
+            let key = key();
+            let store = ReleaseStore::open(&path).unwrap();
+            let snapshot = store.prepare(plan(), &key).unwrap();
+            let activation = snapshot.activation();
+            let run_id = snapshot.run_id();
+            let mut transport = HangingTransport {
+                hang_at,
+                clock_calls: 0,
+                submission_calls: 0,
+            };
+
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(50),
+                    store.publish_or_observe(snapshot, &key, &mut transport),
+                )
+                .await
+                .is_err(),
+                "publication did not remain suspended at the selected crash seam"
+            );
+            assert_eq!(transport.clock_calls, 2);
+            assert_eq!(
+                transport.submission_calls,
+                usize::from(matches!(hang_at, HangAt::Submission))
+            );
+            assert_eq!(
+                store
+                    .load_by_activation_run(activation, run_id, &key)
+                    .unwrap()
+                    .state(),
+                ReleaseState::PublicationStarted
+            );
+            drop(store);
+
+            let reopened = ReleaseStore::open(&path).unwrap();
+            let started = reopened
+                .load_by_activation_run(activation, run_id, &key)
+                .unwrap();
+            assert!(reopened.exact_publication(&started, &key).is_ok());
+            let ambiguous = reopened
+                .load_by_activation_run(activation, run_id, &key)
+                .unwrap();
+            assert_eq!(ambiguous.state(), ReleaseState::Ambiguous);
+            let mut retry_transport =
+                Transport::successful(150, PublicationAdmissionStatus::Accepted);
+            assert_eq!(
+                reopened
+                    .publish_or_observe(ambiguous, &key, &mut retry_transport)
+                    .await
+                    .unwrap(),
+                ReleasePublicationOutcome::ObserveOnly
+            );
+            assert_eq!(
+                (
+                    retry_transport.clock_calls,
+                    retry_transport.submission_calls
+                ),
+                (0, 0)
+            );
+        }
     }
 }

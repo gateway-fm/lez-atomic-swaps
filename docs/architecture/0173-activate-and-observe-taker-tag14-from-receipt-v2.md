@@ -275,6 +275,15 @@ framing rule is enforced before the zeroizing bearer constructor. Sealed-memfd
 regressions cover both accepted line endings and fail-closed repeated, lone,
 oversized, and non-UTF-8 inputs; no pathname fallback is introduced.
 
+Cancellation tests suspend the real async publisher after its send CAS at two
+seams: the decisive finalized-clock await and the node-submission await. Dropping
+either future leaves the authenticated row PublicationStarted. A clean reopen
+then performs the same disclosure CAS to Ambiguous, returns the exact
+transaction for observation, and proves a fresh transport receives neither a
+clock query nor a submission. Thus process loss cannot rearm the signed action;
+the submission-seam case remains conservatively uncertain even when the node
+may have received bytes.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public
