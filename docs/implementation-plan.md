@@ -6788,3 +6788,9 @@ S12/S13 review and policy-deferred public deployment.
   rejects Taker discovery and Maker exact evidence, and proves a correctly
   sourced but unavailable result remains pending. Existing role-local discovery
   regressions continue to protect Tag15 and refund consumers.
+  A second RED proved that a stale PublicationStarted snapshot could still open
+  the encrypted transaction after another process durably recorded Suppressed.
+  `exact_publication` now authenticates and equality-pins the supplied snapshot
+  to the current durable row before its state gate or decryption. Focused tests
+  also prove descriptor-relative open-existing returns Missing without creating
+  a database.

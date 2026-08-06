@@ -249,6 +249,16 @@ foreign resource. This proves the reproducible successful-claim conditional
 atomicity path, not distributed-transaction semantics, future-reorg immunity,
 or the remaining adverse/concurrency and production-hardening cases.
 
+Post-PoC hardening found one stale-snapshot gap at the trusted parent boundary.
+An already authenticated PublicationStarted snapshot could outlive another
+process's durable transition to Suppressed and still open the encrypted exact
+transaction. Observation now reloads and authenticates the current journal row
+and requires byte-for-byte semantic equality with the supplied snapshot before
+checking the allowed states or decrypting. Thus Started, Admitted and Ambiguous
+remain observable, while Prepared, Suppressed and every stale-state handoff fail
+closed. Descriptor-relative open-existing also has a regression proving a
+missing journal is never created.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

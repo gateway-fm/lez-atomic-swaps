@@ -612,22 +612,32 @@ impl ReleaseStore {
     ) -> Result<PreparedTransaction, ReleaseError> {
         self.revalidate_storage()?;
         authenticate_snapshot(snapshot, key)?;
+        let connection = self.lock_connection()?;
+        validate_connection(&connection)?;
+        let current = select_record(&connection, &snapshot.activation)?
+            .ok_or(ReleaseError::Missing)?
+            .validate()?;
+        authenticate_snapshot(&current, key)?;
+        if &current != snapshot {
+            return Err(ReleaseError::BindingMismatch);
+        }
         if !matches!(
-            snapshot.state,
+            current.state,
             ReleaseState::PublicationStarted | ReleaseState::Admitted | ReleaseState::Ambiguous
         ) {
             return Err(ReleaseError::InvalidBinding);
         }
-        let exact_bytes = snapshot
+        let exact_bytes = current
             .intent
-            .decrypt(key, &snapshot.immutable_context)
+            .decrypt(key, &current.immutable_context)
             .map_err(|_| ReleaseError::Authentication)?;
         let exact_bytes = ExactTransactionBytes::new(exact_bytes.as_slice().to_vec())
             .map_err(|_| ReleaseError::CorruptRecord)?;
         let transaction = PreparedTransaction::new(
-            TransactionId::from_bytes(snapshot.publication_id),
+            TransactionId::from_bytes(current.publication_id),
             exact_bytes,
         );
+        drop(connection);
         self.revalidate_storage()?;
         Ok(transaction)
     }
@@ -2413,6 +2423,47 @@ mod tests {
             reopened.begin_publication(snapshot, &key).unwrap(),
             PublicationDecision::ObserveOnly
         );
+    }
+
+    #[test]
+    fn exact_publication_rejects_stale_started_snapshot_after_suppression() {
+        let key = protection_key(0x3b);
+        let directory = directory();
+        let path = database_path(&directory);
+        let bindings = binding(30, &key, b"suppressed publication must stay sealed");
+        let activation = bindings.activation;
+        let run = bindings.run_id;
+        let store = ReleaseStore::open(&path).unwrap();
+        let prepared = store.prepare(bindings, &key).unwrap();
+        let PublicationDecision::Send(attempt) = store.begin_publication(prepared, &key).unwrap()
+        else {
+            panic!("first process must win send");
+        };
+        let stale_started = store.load_by_activation_run(activation, run, &key).unwrap();
+        assert_eq!(stale_started.state(), ReleaseState::PublicationStarted);
+        store.mark_suppressed(*attempt, &key).unwrap();
+        let current = store.load_by_activation_run(activation, run, &key).unwrap();
+        assert_eq!(current.state(), ReleaseState::Suppressed);
+        assert_eq!(
+            store.exact_publication(&current, &key).unwrap_err(),
+            ReleaseError::InvalidBinding
+        );
+        assert_eq!(
+            store.exact_publication(&stale_started, &key).unwrap_err(),
+            ReleaseError::BindingMismatch
+        );
+    }
+
+    #[test]
+    fn descriptor_relative_open_existing_never_creates_missing_database() {
+        let directory = directory();
+        let path = database_path(&directory);
+        let descriptor = File::open(directory.path()).unwrap();
+        assert_eq!(
+            ReleaseStore::open_existing_in_directory(descriptor, "release.sqlite").unwrap_err(),
+            ReleaseError::Missing
+        );
+        assert!(!path.exists());
     }
 
     #[test]
