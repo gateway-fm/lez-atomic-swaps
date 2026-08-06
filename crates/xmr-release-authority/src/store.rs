@@ -416,7 +416,12 @@ impl ReleaseStore {
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(|_| ReleaseError::Store)?;
-        migrate(&mut connection)?;
+        match policy {
+            DatabaseOpenPolicy::OpenExisting => validate_schema(&connection)?,
+            DatabaseOpenPolicy::OpenOrCreate | DatabaseOpenPolicy::CreateNew => {
+                migrate(&mut connection)?;
+            }
+        }
         configure_connection(&connection)?;
         validate_connection(&connection)?;
         drop(creation_guard);
@@ -602,9 +607,13 @@ impl ReleaseStore {
     /// Authenticates and decrypts the exact transaction owned by a consumed
     /// publication attempt.
     ///
-    /// Prepared or suppressed records cannot authorize observation. The
-    /// returned transaction is public chain material; the protection key and
-    /// encrypted journal envelope remain confined to this trusted boundary.
+    /// Prepared or suppressed records cannot authorize observation. Opening a
+    /// started publication atomically makes it ambiguous before disclosure, so
+    /// a concurrent post-CAS suppressor cannot later claim that the exact
+    /// signed bytes remained private. Admitted and ambiguous records are
+    /// read-only. The returned transaction is public chain material; the
+    /// protection key and encrypted journal envelope remain confined to this
+    /// trusted boundary.
     pub fn exact_publication(
         &self,
         snapshot: &ReleaseSnapshot,
@@ -612,20 +621,54 @@ impl ReleaseStore {
     ) -> Result<PreparedTransaction, ReleaseError> {
         self.revalidate_storage()?;
         authenticate_snapshot(snapshot, key)?;
-        let connection = self.lock_connection()?;
+        let mut connection = self.lock_connection()?;
         validate_connection(&connection)?;
-        let current = select_record(&connection, &snapshot.activation)?
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| ReleaseError::Store)?;
+        validate_connection(&transaction)?;
+        let mut current = select_record(&transaction, &snapshot.activation)?
             .ok_or(ReleaseError::Missing)?
             .validate()?;
         authenticate_snapshot(&current, key)?;
         if &current != snapshot {
             return Err(ReleaseError::BindingMismatch);
         }
-        if !matches!(
-            current.state,
-            ReleaseState::PublicationStarted | ReleaseState::Admitted | ReleaseState::Ambiguous
-        ) {
-            return Err(ReleaseError::InvalidBinding);
+        match current.state {
+            ReleaseState::Prepared | ReleaseState::Suppressed => {
+                return Err(ReleaseError::InvalidBinding);
+            }
+            ReleaseState::PublicationStarted => {
+                let authenticator = release_state_authenticator(
+                    key,
+                    &current.immutable_context,
+                    &current.binding,
+                    AMBIGUOUS,
+                    2,
+                )
+                .map_err(|_| ReleaseError::Authentication)?;
+                let changed = transaction
+                    .execute(
+                        "UPDATE release SET state=?1, revision=2, state_authenticator=?2
+                         WHERE activation=?3 AND run_id=?4 AND binding=?5
+                           AND state=?6 AND revision=1",
+                        params![
+                            AMBIGUOUS,
+                            authenticator.as_slice(),
+                            current.activation.as_slice(),
+                            current.run_id.as_slice(),
+                            current.binding.as_slice(),
+                            STARTED,
+                        ],
+                    )
+                    .map_err(|_| ReleaseError::Store)?;
+                if changed != 1 {
+                    return Err(ReleaseError::BindingMismatch);
+                }
+                current.state = ReleaseState::Ambiguous;
+                current.state_authenticator = authenticator;
+            }
+            ReleaseState::Admitted | ReleaseState::Ambiguous => {}
         }
         let exact_bytes = current
             .intent
@@ -633,13 +676,15 @@ impl ReleaseStore {
             .map_err(|_| ReleaseError::Authentication)?;
         let exact_bytes = ExactTransactionBytes::new(exact_bytes.as_slice().to_vec())
             .map_err(|_| ReleaseError::CorruptRecord)?;
-        let transaction = PreparedTransaction::new(
+        let publication = PreparedTransaction::new(
             TransactionId::from_bytes(current.publication_id),
             exact_bytes,
         );
+        transaction.commit().map_err(|_| ReleaseError::Store)?;
+        validate_connection(&connection)?;
         drop(connection);
         self.revalidate_storage()?;
-        Ok(transaction)
+        Ok(publication)
     }
 
     /// Atomically grants one send attempt; every later caller observes only.
@@ -2455,6 +2500,90 @@ mod tests {
     }
 
     #[test]
+    fn exact_publication_makes_started_attempt_irreversibly_observe_only() {
+        let key = protection_key(0x3c);
+        let directory = directory();
+        let path = database_path(&directory);
+        let bindings = binding(31, &key, b"disclosed publication cannot be suppressed");
+        let activation = bindings.activation;
+        let run = bindings.run_id;
+        let publisher = ReleaseStore::open(&path).unwrap();
+        let observer = ReleaseStore::open(&path).unwrap();
+        let prepared = publisher.prepare(bindings, &key).unwrap();
+        let PublicationDecision::Send(attempt) =
+            publisher.begin_publication(prepared, &key).unwrap()
+        else {
+            panic!("first process must win send");
+        };
+        let started = observer
+            .load_by_activation_run(activation, run, &key)
+            .unwrap();
+        let exact = observer.exact_publication(&started, &key).unwrap();
+        assert_eq!(exact.transaction_id.as_bytes(), &[0x26; 32]);
+        assert_eq!(
+            publisher.mark_suppressed(*attempt, &key).unwrap_err(),
+            ReleaseError::BindingMismatch
+        );
+        let current = observer
+            .load_by_activation_run(activation, run, &key)
+            .unwrap();
+        assert_eq!(current.state(), ReleaseState::Ambiguous);
+        assert!(observer.exact_publication(&current, &key).is_ok());
+    }
+
+    #[test]
+    fn exact_publication_enforces_state_and_protection_key_matrix() {
+        let key = protection_key(0x3d);
+        let wrong_key = protection_key(0xee);
+        let directory = directory();
+        let store = ReleaseStore::open(database_path(&directory)).unwrap();
+
+        let prepared = store
+            .prepare(binding(32, &key, b"prepared stays sealed"), &key)
+            .unwrap();
+        assert_eq!(
+            store.exact_publication(&prepared, &key).unwrap_err(),
+            ReleaseError::InvalidBinding
+        );
+        assert_eq!(
+            store.exact_publication(&prepared, &wrong_key).unwrap_err(),
+            ReleaseError::Authentication
+        );
+
+        let admitted = store
+            .prepare(binding(33, &key, b"admitted is observable"), &key)
+            .unwrap();
+        let admitted_activation = admitted.activation;
+        let admitted_run = admitted.run_id;
+        let PublicationDecision::Send(attempt) = store.begin_publication(admitted, &key).unwrap()
+        else {
+            panic!("admitted fixture must win send");
+        };
+        store.mark_admitted(*attempt, &key).unwrap();
+        let admitted = store
+            .load_by_activation_run(admitted_activation, admitted_run, &key)
+            .unwrap();
+        assert_eq!(admitted.state(), ReleaseState::Admitted);
+        assert!(store.exact_publication(&admitted, &key).is_ok());
+
+        let ambiguous = store
+            .prepare(binding(34, &key, b"ambiguous is observable"), &key)
+            .unwrap();
+        let ambiguous_activation = ambiguous.activation;
+        let ambiguous_run = ambiguous.run_id;
+        let PublicationDecision::Send(attempt) = store.begin_publication(ambiguous, &key).unwrap()
+        else {
+            panic!("ambiguous fixture must win send");
+        };
+        store.mark_ambiguous(*attempt, &key).unwrap();
+        let ambiguous = store
+            .load_by_activation_run(ambiguous_activation, ambiguous_run, &key)
+            .unwrap();
+        assert_eq!(ambiguous.state(), ReleaseState::Ambiguous);
+        assert!(store.exact_publication(&ambiguous, &key).is_ok());
+    }
+
+    #[test]
     fn descriptor_relative_open_existing_never_creates_missing_database() {
         let directory = directory();
         let path = database_path(&directory);
@@ -2464,6 +2593,27 @@ mod tests {
             ReleaseError::Missing
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn descriptor_relative_open_existing_never_initializes_empty_file() {
+        let directory = directory();
+        let path = database_path(&directory);
+        drop(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .unwrap(),
+        );
+        let descriptor = File::open(directory.path()).unwrap();
+        assert_eq!(
+            ReleaseStore::open_existing_in_directory(descriptor, "release.sqlite").unwrap_err(),
+            ReleaseError::ForeignSchema
+        );
+        assert_eq!(fs::metadata(&path).unwrap().len(), 0);
     }
 
     #[test]

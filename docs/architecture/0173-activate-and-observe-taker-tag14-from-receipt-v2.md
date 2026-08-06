@@ -48,7 +48,8 @@ flowchart LR
     CLI --> Worker[Sealed release worker]
     Worker --> Sidecar[Taker LEZ sidecar]
     Sidecar --> LEZ[Local LEZ node]
-    Journal --> Parent[Trusted parent exact transaction gate]
+    Journal --> Disclosure[Authenticated disclosure CAS]
+    Disclosure --> Parent[Trusted parent exact transaction gate]
     Parent --> FD[Sealed exact transaction FD 224]
     FD --> Observer
     CLI --> Observer[Sealed finalized classifier]
@@ -80,7 +81,10 @@ sequenceDiagram
     CLI->>S: Invoke sealed release once
     S->>L: Submit exact Tag14 authorization
     User->>CLI: Repeat claim after process exit
-    CLI->>R: Authenticate consumed release snapshot
+    CLI->>R: Authenticate and pin current release snapshot
+    opt Current state is PublicationStarted
+        R->>R: Commit Ambiguous before disclosure
+    end
     R-->>CLI: Exact public prepared transaction only
     CLI->>O: Sealed FD 224 plus fresh read request
     O->>L: Owner-exact bounded classification
@@ -252,12 +256,24 @@ or the remaining adverse/concurrency and production-hardening cases.
 Post-PoC hardening found one stale-snapshot gap at the trusted parent boundary.
 An already authenticated PublicationStarted snapshot could outlive another
 process's durable transition to Suppressed and still open the encrypted exact
-transaction. Observation now reloads and authenticates the current journal row
-and requires byte-for-byte semantic equality with the supplied snapshot before
-checking the allowed states or decrypting. Thus Started, Admitted and Ambiguous
-remain observable, while Prepared, Suppressed and every stale-state handoff fail
-closed. Descriptor-relative open-existing also has a regression proving a
-missing journal is never created.
+transaction. Observation now starts an immediate transaction, reloads and
+authenticates the current journal row, and requires byte-for-byte semantic
+equality with the supplied snapshot before its state gate or decryption. If the
+current row is PublicationStarted, that same transaction commits Ambiguous
+before the exact signed bytes can leave the trusted boundary. This is the
+linearization point: later suppression loses, because disclosure itself makes
+the publication outcome conservatively uncertain and permanently observe-only.
+Admitted and Ambiguous remain readable; Prepared, Suppressed and every stale
+handoff fail closed. Descriptor-relative open-existing neither creates a
+missing journal nor initializes a pre-existing empty file.
+
+The sealed observer accepts the private view key only as exact 64-byte
+lowercase hex, optionally followed by one LF or one CRLF. It no longer strips
+an arbitrary trailing CR/LF run. The sidecar capability descriptor is bounded
+to the bearer's 128-byte protocol maximum plus one CRLF, and the same one-line
+framing rule is enforced before the zeroizing bearer constructor. Sealed-memfd
+regressions cover both accepted line endings and fail-closed repeated, lone,
+oversized, and non-UTF-8 inputs; no pathname fallback is introduced.
 
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,

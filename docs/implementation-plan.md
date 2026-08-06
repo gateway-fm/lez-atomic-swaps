@@ -6791,6 +6791,16 @@ S12/S13 review and policy-deferred public deployment.
   A second RED proved that a stale PublicationStarted snapshot could still open
   the encrypted transaction after another process durably recorded Suppressed.
   `exact_publication` now authenticates and equality-pins the supplied snapshot
-  to the current durable row before its state gate or decryption. Focused tests
-  also prove descriptor-relative open-existing returns Missing without creating
-  a database.
+  to the current durable row before its state gate or decryption. A follow-up
+  cross-connection RED proved suppression could still commit after that read.
+  Opening a Started publication now atomically commits Ambiguous before bytes
+  leave the boundary, making disclosure irreversibly observe-only; a later
+  suppressor fails its Started CAS. Prepared and Suppressed reject, while
+  Admitted and Ambiguous remain readable, and wrong keys authenticate-fail.
+  Descriptor-relative open-existing returns Missing without creating a database
+  and rejects a pre-existing empty file without initializing it.
+  A third RED proved the sealed Tag14 view-key parser accepted an unbounded run
+  of trailing CR/LF bytes. It now accepts only raw canonical hex, one LF, or
+  one CRLF. Descriptor-native capability custody is capped at the exact
+  128-byte bearer plus one CRLF (130 bytes); focused sealed-memfd tests cover
+  raw/LF/CRLF, repeated/lone line endings, over-bound input, and invalid UTF-8.

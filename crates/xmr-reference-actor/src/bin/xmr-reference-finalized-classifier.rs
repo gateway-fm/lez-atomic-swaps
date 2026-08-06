@@ -38,6 +38,7 @@ const ABI: &str = "lez_xmr_finalized_classifier_v1";
 const ACTIVATION_FILE: &str = "taker-claim-activation.json";
 const FINAL_EVIDENCE_FILE: &str = "tag14-finalized.json";
 const MAX_SECRET_BYTES: usize = 256;
+const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
 const MAX_EVIDENCE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SCAN_BLOCKS: u32 = 16;
@@ -215,11 +216,12 @@ fn validate_args() -> Result<()> {
 }
 
 fn parse_view_key(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {
-    let mut text =
-        Zeroizing::new(String::from_utf8(bytes.to_vec()).context("view key is not UTF-8")?);
-    while text.ends_with(['\n', '\r']) {
-        text.pop();
-    }
+    let logical = bytes
+        .strip_suffix(b"\r\n")
+        .or_else(|| bytes.strip_suffix(b"\n"))
+        .unwrap_or(bytes);
+    let text =
+        Zeroizing::new(String::from_utf8(logical.to_vec()).context("view key is not UTF-8")?);
     ensure!(
         text.len() == 64
             && text
@@ -264,7 +266,7 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
 fn read_sidecar_capability_fd(fd: i32) -> Result<SidecarCapability> {
     let mut bytes = Zeroizing::new(read_sealed_fd(
         fd,
-        MAX_SECRET_BYTES,
+        MAX_CAPABILITY_FILE_BYTES,
         "Taker sidecar capability",
     )?);
     if bytes.ends_with(b"\r\n") {
@@ -384,4 +386,79 @@ fn validate_existing_evidence(path: &Path, bytes: &[u8]) -> Result<()> {
         "durable Tag14 finality evidence changed"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{ffi::CString, fs::File, io::Write as _, os::fd::AsRawFd as _};
+
+    use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
+
+    use super::{MAX_CAPABILITY_FILE_BYTES, parse_view_key, read_sidecar_capability_fd};
+
+    const VIEW_KEY: &str = "0100000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn sealed_view_key_accepts_raw_lf_or_crlf_only() {
+        assert!(parse_view_key(VIEW_KEY.as_bytes()).is_ok());
+        assert!(parse_view_key(format!("{VIEW_KEY}\n").as_bytes()).is_ok());
+        assert!(parse_view_key(format!("{VIEW_KEY}\r\n").as_bytes()).is_ok());
+
+        for rejected in [
+            format!("{VIEW_KEY}\r"),
+            format!("{VIEW_KEY}\n\n"),
+            format!("{VIEW_KEY}\r\n\r\n"),
+            format!("{VIEW_KEY}\ntrailing"),
+        ] {
+            assert!(
+                parse_view_key(rejected.as_bytes()).is_err(),
+                "accepted noncanonical sealed view-key framing"
+            );
+        }
+    }
+
+    #[test]
+    fn sealed_capability_accepts_exact_grammar_and_one_optional_line_ending() {
+        let capability = "a".repeat(128);
+        for accepted in [
+            capability.as_bytes().to_vec(),
+            format!("{capability}\n").into_bytes(),
+            format!("{capability}\r\n").into_bytes(),
+        ] {
+            let descriptor = sealed_memfd(&accepted);
+            assert!(read_sidecar_capability_fd(descriptor.as_raw_fd()).is_ok());
+        }
+
+        for rejected in [
+            format!("{capability}\n\n").into_bytes(),
+            format!("{capability}\r").into_bytes(),
+            vec![b'a'; MAX_CAPABILITY_FILE_BYTES + 1],
+            vec![0xff; 32],
+        ] {
+            let descriptor = sealed_memfd(&rejected);
+            assert!(
+                read_sidecar_capability_fd(descriptor.as_raw_fd()).is_err(),
+                "accepted invalid sealed capability framing"
+            );
+        }
+    }
+
+    fn sealed_memfd(bytes: &[u8]) -> File {
+        let name = CString::new("m7-tag14-classifier-test").expect("memfd name");
+        let descriptor = memfd_create(
+            name.as_c_str(),
+            MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+        )
+        .expect("create capability memfd");
+        let mut file = File::from(descriptor);
+        fchmod(&file, Mode::RUSR | Mode::WUSR).expect("make capability writable");
+        file.write_all(bytes).expect("write capability");
+        fchmod(&file, Mode::RUSR).expect("make capability read-only");
+        fcntl_add_seals(
+            &file,
+            SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+        )
+        .expect("seal capability");
+        file
+    }
 }
