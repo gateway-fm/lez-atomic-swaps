@@ -6784,3 +6784,7 @@ S12/S13 review and policy-deferred public deployment.
   separation, release-store states, descriptor/newline bounds, restart and
   adverse concurrency. Then run the QA, chaos, information-security and
   production-readiness matrices before candidate closure.
+  The first focused regression now locks Tag14 to Taker owner-exact evidence,
+  rejects Taker discovery and Maker exact evidence, and proves a correctly
+  sourced but unavailable result remains pending. Existing role-local discovery
+  regressions continue to protect Tag15 and refund consumers.

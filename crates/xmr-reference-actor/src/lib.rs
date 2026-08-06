@@ -3336,6 +3336,57 @@ mod finalized_effect_gate_tests {
     }
 
     #[test]
+    fn finalized_tag14_owner_gate_requires_taker_exact_source() {
+        let taker_discovery = result(
+            BridgeParticipant::Taker,
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        );
+        let error = owner_exact_finalized_xmr_facts(
+            &taker_discovery,
+            "actor-finalized-gate",
+            &terms(),
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Taker,
+        )
+        .expect_err("owner-side Tag14 evidence must name an exact transaction");
+        assert!(format!("{error:#}").contains("not an owner-exact result"));
+
+        let maker_exact = result(
+            BridgeParticipant::Maker,
+            FinalizedNativeXmrTransactionTargetV3::exact(PreparedTransaction::new(
+                TransactionId::from_bytes([0x53; 32]),
+                ExactTransactionBytes::new(vec![0x54]).expect("exact transaction bytes"),
+            )),
+        );
+        let error = owner_exact_finalized_xmr_facts(
+            &maker_exact,
+            "actor-finalized-gate",
+            &terms(),
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Taker,
+        )
+        .expect_err("Maker-side exact evidence must not cross the Tag14 owner boundary");
+        assert!(format!("{error:#}").contains("wrong owner sidecar"));
+
+        let taker_exact = result(
+            BridgeParticipant::Taker,
+            FinalizedNativeXmrTransactionTargetV3::exact(PreparedTransaction::new(
+                TransactionId::from_bytes([0x55; 32]),
+                ExactTransactionBytes::new(vec![0x56]).expect("exact transaction bytes"),
+            )),
+        );
+        let error = owner_exact_finalized_xmr_facts(
+            &taker_exact,
+            "actor-finalized-gate",
+            &terms(),
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Taker,
+        )
+        .expect_err("well-sourced but unavailable Tag14 must remain pending");
+        assert!(format!("{error:#}").contains("not affirmative Found"));
+    }
+
+    #[test]
     fn maker_accepts_only_canonical_discovered_finalized_refund_signature() {
         let terms = terms();
         let signature = AggregateBip340Signature::from_bytes([0x65; 64]);
