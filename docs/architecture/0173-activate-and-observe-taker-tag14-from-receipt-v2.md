@@ -209,6 +209,23 @@ exact target. Prepared and suppressed journals fail closed. The nonproductive
 loop was interrupted and every exact run-labelled Docker resource was verified
 absent.
 
+The source-bound `95876e4` replay then proved the encrypted-release and exact
+transaction handoff: the journal reached `admitted` revision 2, sealed FD 224
+contained the canonical byte-identical transaction whose ID was
+`98207f30af27448a0dab397ab751cd2bb224addfed1be508dd3615a024fc885d`, and
+an authenticated read-only owner-exact request found it at finalized block 135
+inside scan window 125 through 140. The child nevertheless exited before RPC.
+Descriptor inspection established that FD 201 was a sealed owner-only 0400
+memfd, but the ordinary capability-file factory correctly applies pathname
+rules and rejects `/proc/self/fd/201` as a symlink. The correction keeps that
+factory strict. This short-lived classifier instead reads FD 201 through the
+same seal/owner/mode/size gate as its other fixed descriptors, removes at most
+one conventional line ending, zeroizes rejected bytes, and passes the validated
+`SidecarCapability` into the official `BridgeClient`. No pathname exception,
+capability copy, Maker authority, or secret-bearing argv/environment value is
+introduced. The exact replay was interrupted through its normal trap and its
+run-labelled containers were absent afterward.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

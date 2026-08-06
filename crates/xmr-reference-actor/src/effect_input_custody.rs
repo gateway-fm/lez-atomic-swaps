@@ -478,6 +478,10 @@ impl PinnedXmrEffectInputsV1 {
     /// Rejects invalid or aliased descriptor plans, changed/crossed locks, and
     /// any child mapping failure before spawn.
     #[cfg(feature = "sessions")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the complete fixed-FD mapping remains explicit for security review"
+    )]
     pub fn into_command(
         self,
         executable: PinnedExecutable,

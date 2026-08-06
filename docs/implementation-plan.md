@@ -6747,5 +6747,18 @@ S12/S13 review and policy-deferred public deployment.
   Prepared/suppressed records cannot expose observation material. Focused
   all-target compilation is GREEN; the interrupted replay's exact Docker
   containers, networks, volumes and images were verified absent.
+- [ ] Replay descriptor-native Tag14 capability custody. Exact run
+  `m7claim-95876e4-a` proved the release correction itself: the journal was
+  admitted once at revision 2, FD 224 contained canonical byte-identical exact
+  transaction `98207f30...c885d`, and an authenticated owner-exact diagnostic
+  found it at finalized block 135 inside the declared 125..140 window. The
+  sealed observer still failed before RPC because the ordinary pathname
+  capability factory correctly rejects `/proc/self/fd/201` as a symlink, even
+  though FD 201 was a sealed owner-only memfd. The classifier now validates FD
+  201 through its descriptor-native sealed-input reader, normalizes at most one
+  line ending, zeroizes rejected bytes, and constructs the official bridge
+  client directly. The regular-path factory and its symlink protections remain
+  unchanged. Focused formatting, all-target compilation, and diff hygiene are
+  GREEN; exact normal-trap cleanup left no run-labelled containers.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

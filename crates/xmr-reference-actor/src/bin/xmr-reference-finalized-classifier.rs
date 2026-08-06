@@ -11,9 +11,8 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, ensure};
-use lez_bridge_adapter::{
-    CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory as _, XmrLezBridgeBindingV3,
-};
+use lez_bridge_adapter::XmrLezBridgeBindingV3;
+use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     DiscoveryWindow, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
@@ -33,7 +32,7 @@ use xmr_reference_actor::{
     XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD,
     XmrEffectChildModeV1, load_xmr_effect_child_plan_fd,
 };
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
 
 const ABI: &str = "lez_xmr_finalized_classifier_v1";
 const ACTIVATION_FILE: &str = "taker-claim-activation.json";
@@ -155,15 +154,14 @@ async fn execute() -> Result<()> {
         .terms()
         .validate_runtime_binding(&context, &runtime)
         .context("Tag14 terms do not bind the selected Taker runtime")?;
-    let capability = format!("/proc/self/fd/{XMR_EFFECT_CAPABILITY_FD}");
-    let client = CapabilityFileBridgeClientFactory::new(
+    let capability = read_sidecar_capability_fd(XMR_EFFECT_CAPABILITY_FD)?;
+    let client = BridgeClient::connect(BridgeClientConfig::new(
         plan.lez_sidecar_url().as_str(),
         capability,
-        run_id,
+        run_id.clone(),
         runtime.clone(),
         REQUEST_TIMEOUT,
-    )
-    .fresh_transport()
+    ))
     .context("authenticated Taker sidecar client is unavailable")?;
     let exact_transaction_bytes = read_sealed_fd(
         XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD,
@@ -261,6 +259,27 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
         "{label} FD is oversized or changed"
     );
     Ok(bytes)
+}
+
+fn read_sidecar_capability_fd(fd: i32) -> Result<SidecarCapability> {
+    let mut bytes = Zeroizing::new(read_sealed_fd(
+        fd,
+        MAX_SECRET_BYTES,
+        "Taker sidecar capability",
+    )?);
+    if bytes.ends_with(b"\r\n") {
+        let content_length = bytes.len() - 2;
+        bytes.truncate(content_length);
+    } else if bytes.ends_with(b"\n") {
+        let content_length = bytes.len() - 1;
+        bytes.truncate(content_length);
+    }
+    let value = String::from_utf8(std::mem::take(&mut *bytes)).map_err(|error| {
+        let mut rejected = error.into_bytes();
+        rejected.zeroize();
+        anyhow::anyhow!("Taker sidecar capability is not UTF-8")
+    })?;
+    SidecarCapability::new(value).context("Taker sidecar capability is invalid")
 }
 
 fn validate_evidence_root(path: &Path) -> Result<()> {
