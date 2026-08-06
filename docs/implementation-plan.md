@@ -6669,45 +6669,45 @@ S12/S13 review and policy-deferred public deployment.
   0173. Focused provisioning tests, both existing runner contracts, formatting,
   compile checks and strict Clippy are GREEN.
 - [x] Commit and push the implementation checkpoint as `aae5c5c`.
-- [ ] Complete one clean commit-pinned actual LEZ/Monero replay. The first
+- [x] Complete one clean commit-pinned actual LEZ/Monero replay. The first
   replay reached the application handoff and preserved a RED caused by numeric
   jq truthiness before Tag13; exact cleanup passed. The follow-up emits a real
   JSON boolean and retains byte-identical safe activation/finality evidence;
   focused syntax, boolean-regression, M4 and M5 contract checks are GREEN.
   Until the fresh replay succeeds, Tag14 remains implementation-ready rather
   than actual-node certified.
-- [ ] Replay the direct effect-promotion correction. The `a204cca` replay
+- [x] Replay the direct effect-promotion correction. The `a204cca` replay
   proved the boolean fix, finalized Tag13, confirmed Monero funding and release
   preparation, then correctly rejected full actor reprovisioning after the
   role journal had advanced. The runner now reuses
   `provision-effect-application` on the accepted actor and composes canonical
   receipt v2 from the immutable receipt v1 plus digest-pinned effect provision;
   exact cleanup and focused runner contracts are GREEN.
-- [ ] Replay the typed Tag13 correction. Exact run `m7claim-2d3c859-a` proved
+- [x] Replay the typed Tag13 correction. Exact run `m7claim-2d3c859-a` proved
   the direct effect promotion and both chain prerequisites, then preserved a
   RED because the new activator decoded typed canonical producer bytes through
   an untyped JSON map before comparing them. Cleanup schema v2 passed. The
   activator now decodes the typed schema directly, and the full XMR
   reference-actor suite is GREEN.
-- [ ] Replay the complete-schema Tag13 correction. Exact run
+- [x] Replay the complete-schema Tag13 correction. Exact run
   `m7claim-987dd32-a` falsified the reduced typed decoder at the same boundary:
   it ignored producer-owned fields before canonical reserialization. Cleanup
   schema v2 again passed. The activator now mirrors the complete producer
   schema and nested field order, reuses the shared typed escrow terms, and
   denies unknown fields; focused library tests are GREEN.
-- [ ] Replay the producer-exact durable Tag13 reader. Exact run
+- [x] Replay the producer-exact durable Tag13 reader. Exact run
   `m7claim-7cd0d88-a` proved every prerequisite and the complete schema but
   exposed the final encoding distinction: the producer's stdout is compact,
   while its authoritative durable file is canonical pretty JSON plus newline.
   The activator now reproduces that exact producer encoding without changing
   the generic compact evidence reader; cleanup schema v2 passed.
-- [ ] Replay newline-free receipt-v2 composition. Exact run
+- [x] Replay newline-free receipt-v2 composition. Exact run
   `m7claim-0c88ec7-a` proved the durable Tag13 reader and completed Taker Claim
   activation, then the literal CLI rejected receipt ambiguity because jq had
   appended a newline to otherwise canonical bytes. The runner now uses
   join-output mode; Bash syntax and M4/M5 runner contracts are GREEN, and exact
   cleanup passed.
-- [ ] Replay newline-free sealed release-key composition. Exact run
+- [x] Replay newline-free sealed release-key composition. Exact run
   `m7claim-d297163-a` proved the receipt-v2 correction, completed Taker Claim
   activation, and entered the literal semantic Tag14 route. Its non-sending
   child then failed before eligibility because `openssl rand -hex` had appended
@@ -6715,7 +6715,7 @@ S12/S13 review and policy-deferred public deployment.
   tolerated that terminator, while the least-privilege sealed-descriptor worker
   correctly requires exactly 64 bytes. The runner now strips only that output
   terminator before the key is persisted; exact cleanup passed.
-- [ ] Replay newline-free sealed release-capability composition. Exact run
+- [x] Replay newline-free sealed release-capability composition. Exact run
   `m7claim-fa7e3ec-a` showed that the key correction was necessary but
   incomplete: it reached the same non-sending child, where the copied sidecar
   bearer also retained the launcher's line terminator. The ordinary pathname
@@ -6724,7 +6724,7 @@ S12/S13 review and policy-deferred public deployment.
   copy is now normalized into a distinct create-new inode and asserted to be
   exactly 64 bytes. The live sidecar credential and strict worker are unchanged;
   exact cleanup passed.
-- [ ] Replay the bounded Tag14 observer. Exact run `m7claim-5a6606f-a`
+- [x] Replay the bounded Tag14 observer. Exact run `m7claim-5a6606f-a`
   proved both sealed-input corrections, admitted the one semantic Tag14
   publication, and independently located its finalized transaction in block
   135 from scan start 123. The 64-block single-request classifier exceeded its
@@ -6733,7 +6733,7 @@ S12/S13 review and policy-deferred public deployment.
   16-block bound, which covers this deterministic 12-block interval. Durable
   multi-page cursoring remains explicit production hardening. The nonproductive
   loop was interrupted through its normal trap; cleanup schema v2 passed.
-- [ ] Replay exact owner-side Tag14 observation. Exact run
+- [x] Replay exact owner-side Tag14 observation. Exact run
   `m7claim-b8aa8a0-a` proved the 16-block bound, admitted one publication and
   retained workflow `attempt_count=1`; a read-only diagnostic found the exact
   transaction at block 136 from scan start 125 in about five seconds. The
@@ -6747,7 +6747,7 @@ S12/S13 review and policy-deferred public deployment.
   Prepared/suppressed records cannot expose observation material. Focused
   all-target compilation is GREEN; the interrupted replay's exact Docker
   containers, networks, volumes and images were verified absent.
-- [ ] Replay descriptor-native Tag14 capability custody. Exact run
+- [x] Replay descriptor-native Tag14 capability custody. Exact run
   `m7claim-95876e4-a` proved the release correction itself: the journal was
   admitted once at revision 2, FD 224 contained canonical byte-identical exact
   transaction `98207f30...c885d`, and an authenticated owner-exact diagnostic
@@ -6760,7 +6760,7 @@ S12/S13 review and policy-deferred public deployment.
   client directly. The regular-path factory and its symlink protections remain
   unchanged. Focused formatting, all-target compilation, and diff hygiene are
   GREEN; exact normal-trap cleanup left no run-labelled containers.
-- [ ] Replay owner-exact Tag14 consumption by the Maker actor. Exact run
+- [x] Replay owner-exact Tag14 consumption by the Maker actor. Exact run
   `m7claim-194b974-a` proved descriptor-native capability custody and produced
   canonical finalized owner-exact Tag14 evidence through the authenticated
   Taker sidecar: the exact transaction was finalized at block 131 inside the
@@ -6770,5 +6770,17 @@ S12/S13 review and policy-deferred public deployment.
   the Taker role plus an exact target only for Tag14 claim completion. Tag15,
   refund, and sweep consumers retain their role-local discovery checks. Exact
   cleanup passed and all run-labelled containers were removed.
-- [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
-  receipt-v2 Taker Monero claim sweep before adverse-case hardening.
+- [x] Join the receipt-v2 Taker Monero claim sweep. Exact pushed-commit run
+  `m7claim-2cff48d-a` completed with source status zero. Owner-exact Tag14
+  transaction `6697fb1d...c986b` finalized at block 136 in bounded window
+  126..141; role-local Tag15 transaction `3ff01f31...e09f` finalized at block
+  150 with custody zero; the extracted Maker share enabled Taker sweep
+  `e8209a8a...85f0`, confirmed ten times on official Monero 0.18.5.1 Regtest.
+  The owner-private binder checked the finalized signature, reconstructed key,
+  exact fee and receipt. No public RPC, peer, faucet, public funds or public
+  deployment participated. Cleanup schema v2 passed, preserved the foreign
+  sentinel and removed every exact run resource.
+- [ ] Post-PoC RED/GREEN contracts: owner-exact/counterparty-discovery source
+  separation, release-store states, descriptor/newline bounds, restart and
+  adverse concurrency. Then run the QA, chaos, information-security and
+  production-readiness matrices before candidate closure.

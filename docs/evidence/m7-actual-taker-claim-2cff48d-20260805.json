@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_taker_claim_poc",
+  "result": "passed",
+  "run_id": "m7claim-2cff48d-a",
+  "repository_commit": "2cff48d00ab7b1441046f726ab3f87c5d21f82dc",
+  "guest": {
+    "recursive_tests_passed": 5,
+    "recursive_tests_total": 5,
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "tag14": {
+    "owner_sidecar_role": "taker",
+    "classifier_target": "exact",
+    "transaction_id": "6697fb1dba86ce8f0122e623549c1f933d7aa74154c3d91dba601d1edd4c986b",
+    "containing_block_id": 136,
+    "scan_start_height": 126,
+    "scan_max_blocks": 16,
+    "finalized_clock_height": 141,
+    "automatic_retry": false
+  },
+  "tag15": {
+    "observer_sidecar_role": "taker",
+    "classifier_target": "discover_by_terms",
+    "transaction_id": "3ff01f31c81b3960e3bb423a08d6c8ec2e16abf7ba550a6feeb4eb708ab2e09f",
+    "containing_block_id": 150,
+    "finalized_clock_height": 152,
+    "metadata_state": "claimed",
+    "terminal_custody_balance": "0",
+    "automatic_retry": false
+  },
+  "monero": {
+    "version": "0.18.5.1",
+    "network": "Regtest",
+    "peer_count": 0,
+    "genesis_hash": "418015bb9ae982a1975da7d79277c2705727a56894ba0fb246adaabb1f4632e3",
+    "sweeping_role": "taker",
+    "transaction_id": "e8209a8aa02601fdaca790e01c5b57aca8d33a104d3c14ed764e2b550cef85f0",
+    "containing_block_height": 121,
+    "stable_tip_height": 130,
+    "confirmations": 10,
+    "funded_amount_piconero": 1000000000000,
+    "received_amount_piconero": 998191600000,
+    "fee_piconero": 1808400000
+  },
+  "atomicity": {
+    "proof_scope": "successful_claim_path_conditional_atomicity",
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorg_immunity_claimed": false,
+    "claim_sweep_binding_passed": true,
+    "argument": "Tag14 released only the precommitted Taker claim partial after finalized LEZ funding and confirmed exact Monero funding. The Maker's finalized Tag15 claim exposed the adaptor share needed by the Taker to reconstruct and sweep Monero; the binder checked both finalized effects, the extracted signature material, reconstructed key, exact fee and wallet receipt."
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "public_peer_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived_exact_cleanup": true,
+    "broad_cleanup_used": false,
+    "foreign_resources_targeted": false,
+    "tag13_no_retry_latch_preserved": true
+  }
+}

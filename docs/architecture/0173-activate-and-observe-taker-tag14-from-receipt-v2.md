@@ -1,6 +1,6 @@
 # ADR 0173: Activate and observe Taker Tag14 from receipt v2
 
-- Status: Implemented; fresh actual-node replay pending
+- Status: PoC verified on an exact pushed commit; hardening pending
 - Date: 2026-08-05
 
 ## Context
@@ -236,6 +236,18 @@ Taker-owned exact evidence without lending Maker credentials to the Taker
 process. Claim completion now requires the Taker sidecar and an exact target for
 Tag14. The distinct Tag15 and recovery consumers remain counterparty discovery
 routes, so their existing role-local checks are unchanged. Exact cleanup passed.
+
+Exact pushed-commit run `m7claim-2cff48d-a` closed the PoC gate. The owner-exact
+Taker Tag14 transaction `6697fb1d...c986b` finalized at block 136 inside scan
+window 126 through 141. The Maker consumed that evidence, published Tag15
+`3ff01f31...e09f`, and the Taker discovered it role-locally at finalized block
+150 with custody zero. Adaptor extraction then enabled Monero sweep
+`e8209a8a...85f0`, confirmed ten times at stable tip 130. The binder revalidated
+the finalized aggregate signature, reconstructed spend key, exact fee and
+receipt. Source status was zero and exact cleanup passed without targeting any
+foreign resource. This proves the reproducible successful-claim conditional
+atomicity path, not distributed-transaction semantics, future-reorg immunity,
+or the remaining adverse/concurrency and production-hardening cases.
 
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
