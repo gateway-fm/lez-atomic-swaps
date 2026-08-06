@@ -226,6 +226,17 @@ capability copy, Maker authority, or secret-bearing argv/environment value is
 introduced. The exact replay was interrupted through its normal trap and its
 run-labelled containers were absent afterward.
 
+The source-bound `194b974` replay proved the descriptor-native capability
+correction. The authenticated Taker observer returned canonical owner-exact
+Tag14 evidence for the exact transaction finalized at block 131 in scan window
+120 through 135, and the release workflow reached its complete state. The next
+RED was the downstream Maker actor's legacy source assertion: it still required
+Maker-side discovery evidence even though this route deliberately carries
+Taker-owned exact evidence without lending Maker credentials to the Taker
+process. Claim completion now requires the Taker sidecar and an exact target for
+Tag14. The distinct Tag15 and recovery consumers remain counterparty discovery
+routes, so their existing role-local checks are unchanged. Exact cleanup passed.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

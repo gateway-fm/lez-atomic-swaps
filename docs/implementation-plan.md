@@ -6760,5 +6760,15 @@ S12/S13 review and policy-deferred public deployment.
   client directly. The regular-path factory and its symlink protections remain
   unchanged. Focused formatting, all-target compilation, and diff hygiene are
   GREEN; exact normal-trap cleanup left no run-labelled containers.
+- [ ] Replay owner-exact Tag14 consumption by the Maker actor. Exact run
+  `m7claim-194b974-a` proved descriptor-native capability custody and produced
+  canonical finalized owner-exact Tag14 evidence through the authenticated
+  Taker sidecar: the exact transaction was finalized at block 131 inside the
+  bounded 120..135 scan. The release workflow completed, but the Maker actor
+  still applied its older counterparty-discovery assertion and rejected the
+  Taker-owned exact evidence as the wrong sidecar. The consumer now requires
+  the Taker role plus an exact target only for Tag14 claim completion. Tag15,
+  refund, and sweep consumers retain their role-local discovery checks. Exact
+  cleanup passed and all run-labelled containers were removed.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

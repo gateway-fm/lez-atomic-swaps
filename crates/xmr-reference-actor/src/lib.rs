@@ -1357,12 +1357,12 @@ fn complete_claim_from_finalized_authorization(
         activation_stage_b,
     )?;
     let result = read_finalized_xmr_effect(finalized_authorization)?;
-    let facts = discovered_finalized_xmr_facts(
+    let facts = owner_exact_finalized_xmr_facts(
         &result,
         run_id,
         &lifecycle.binding.terms(),
         XmrNativeEffectV3::AuthorizeClaim,
-        BridgeParticipant::Maker,
+        BridgeParticipant::Taker,
     )?;
     let partial = facts
         .instruction
@@ -1599,6 +1599,45 @@ fn discovered_finalized_xmr_facts<'result>(
             FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {}
         ),
         "finalized XMR effect is not a role-local discovery result"
+    );
+    let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = &result.outcome else {
+        return Err(anyhow!("finalized XMR effect is not affirmative Found"));
+    };
+    Ok(facts)
+}
+
+#[cfg(feature = "sessions")]
+fn owner_exact_finalized_xmr_facts<'result>(
+    result: &'result ClassifyFinalizedNativeXmrEffectV3Result,
+    expected_run_id: &str,
+    expected_terms: &XmrNativeEscrowTermsV3,
+    expected_effect: XmrNativeEffectV3,
+    expected_sidecar_role: BridgeParticipant,
+) -> Result<&'result FinalizedNativeXmrEffectFactsV3> {
+    let expected_run_id =
+        RunId::new(expected_run_id.to_owned()).context("invalid expected run ID")?;
+    ensure!(
+        result.context.run_id == expected_run_id,
+        "finalized XMR effect belongs to another run"
+    );
+    ensure!(
+        result.context.sidecar_role == expected_sidecar_role,
+        "finalized XMR effect came from the wrong owner sidecar"
+    );
+    ensure!(
+        &result.terms == expected_terms,
+        "finalized XMR effect differs from Stage B"
+    );
+    ensure!(
+        result.effect == expected_effect,
+        "finalized XMR effect has the wrong instruction"
+    );
+    ensure!(
+        matches!(
+            result.target,
+            FinalizedNativeXmrTransactionTargetV3::Exact { .. }
+        ),
+        "finalized XMR effect is not an owner-exact result"
     );
     let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = &result.outcome else {
         return Err(anyhow!("finalized XMR effect is not affirmative Found"));
