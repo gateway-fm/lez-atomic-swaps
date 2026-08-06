@@ -6724,5 +6724,14 @@ S12/S13 review and policy-deferred public deployment.
   copy is now normalized into a distinct create-new inode and asserted to be
   exactly 64 bytes. The live sidecar credential and strict worker are unchanged;
   exact cleanup passed.
+- [ ] Replay the bounded Tag14 observer. Exact run `m7claim-5a6606f-a`
+  proved both sealed-input corrections, admitted the one semantic Tag14
+  publication, and independently located its finalized transaction in block
+  135 from scan start 123. The 64-block single-request classifier exceeded its
+  20-second transport and 30-second parent bounds, so every observation-only
+  retry restarted the same scan. The PoC now uses the existing actual-runner
+  16-block bound, which covers this deterministic 12-block interval. Durable
+  multi-page cursoring remains explicit production hardening. The nonproductive
+  loop was interrupted through its normal trap; cleanup schema v2 passed.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

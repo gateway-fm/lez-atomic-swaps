@@ -171,6 +171,18 @@ dedicated release-capability copy, publishes it create-new on a distinct inode,
 and requires exactly 64 bytes. The live sidecar credential, authenticated value,
 and strict worker parser remain unchanged. Exact cleanup passed.
 
+The source-bound `5a6606f` replay proved both sealed-input corrections and
+crossed the former preflight boundary. The literal CLI admitted exactly one
+Tag14 publication, and independent finalized-block lookup located that exact
+transaction in block 135 from activation scan start 123. Observation did not
+complete because its 64-block single request exceeded the worker's 20-second
+transport bound and the parent's 30-second process bound; retries were
+observation-only but restarted the same page. For the reproducible local PoC,
+the observer now uses the established 16-block actual-runner bound, covering
+the deterministic 12-block interval. A durable, monotonic multi-page cursor is
+still required before production certification. The loop was interrupted via
+the normal trap and exact cleanup passed with source status 130.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

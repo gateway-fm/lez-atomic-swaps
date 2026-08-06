@@ -40,7 +40,7 @@ const FINAL_EVIDENCE_FILE: &str = "tag14-finalized.json";
 const MAX_SECRET_BYTES: usize = 256;
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
 const MAX_EVIDENCE_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_SCAN_BLOCKS: u32 = 64;
+const MAX_SCAN_BLOCKS: u32 = 16;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Deserialize, Serialize)]
