@@ -284,6 +284,14 @@ clock query nor a submission. Thus process loss cannot rearm the signed action;
 the submission-seam case remains conservatively uncertain even when the node
 may have received bytes.
 
+A barrier-synchronized two-connection regression exercises the disclosure CAS
+against suppression on the same PublicationStarted revision. The immediate
+transactions have exactly one winner. If disclosure wins, the row is Ambiguous
+and suppression fails; if suppression wins, the row is Suppressed and no exact
+transaction is returned. This is the journal-level atomicity argument for the
+handoff: there is no committed schedule in which bytes leave while the durable
+state still claims a known no-send outcome.
+
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public

@@ -2532,6 +2532,62 @@ mod tests {
     }
 
     #[test]
+    fn exact_disclosure_and_suppression_have_one_linearized_winner() {
+        let key = protection_key(0x3e);
+        let directory = directory();
+        let path = database_path(&directory);
+        let bindings = binding(35, &key, b"linearized disclosure or suppression");
+        let activation = bindings.activation;
+        let run = bindings.run_id;
+        let store = ReleaseStore::open(&path).unwrap();
+        let prepared = store.prepare(bindings, &key).unwrap();
+        let PublicationDecision::Send(attempt) = store.begin_publication(prepared, &key).unwrap()
+        else {
+            panic!("first process must win send");
+        };
+        let started = store.load_by_activation_run(activation, run, &key).unwrap();
+        drop(store);
+
+        let barrier = Arc::new(Barrier::new(3));
+        let disclosure_path = path.clone();
+        let disclosure_barrier = Arc::clone(&barrier);
+        let disclosure = thread::spawn(move || {
+            let store = ReleaseStore::open(disclosure_path).unwrap();
+            let key = protection_key(0x3e);
+            disclosure_barrier.wait();
+            store.exact_publication(&started, &key)
+        });
+        let suppression_path = path.clone();
+        let suppression_barrier = Arc::clone(&barrier);
+        let suppression = thread::spawn(move || {
+            let store = ReleaseStore::open(suppression_path).unwrap();
+            let key = protection_key(0x3e);
+            suppression_barrier.wait();
+            store.mark_suppressed(*attempt, &key)
+        });
+        barrier.wait();
+
+        let disclosure = disclosure.join().unwrap();
+        let suppression = suppression.join().unwrap();
+        let store = ReleaseStore::open(path).unwrap();
+        let current = store.load_by_activation_run(activation, run, &key).unwrap();
+        match (disclosure, suppression) {
+            (Ok(_), Err(error)) => {
+                assert_eq!(error, ReleaseError::BindingMismatch);
+                assert_eq!(current.state(), ReleaseState::Ambiguous);
+            }
+            (Err(error), Ok(())) => {
+                assert_eq!(error, ReleaseError::BindingMismatch);
+                assert_eq!(current.state(), ReleaseState::Suppressed);
+            }
+            (Ok(_), Ok(())) => panic!("disclosure and suppression both committed"),
+            (Err(disclosure), Err(suppression)) => {
+                panic!("disclosure and suppression both failed: {disclosure:?}; {suppression:?}")
+            }
+        }
+    }
+
+    #[test]
     fn exact_publication_enforces_state_and_protection_key_matrix() {
         let key = protection_key(0x3d);
         let wrong_key = protection_key(0xee);

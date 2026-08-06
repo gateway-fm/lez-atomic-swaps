@@ -6809,3 +6809,8 @@ S12/S13 review and policy-deferred public deployment.
   Each simulated process loss durably retains PublicationStarted; restart opens
   the exact transaction into Ambiguous and a fresh publication transport sees
   zero clock and zero submission calls.
+  A barrier-synchronized two-connection race now executes exact disclosure and
+  suppression against the same Started revision. SQLite admits exactly one:
+  disclosure yields Ambiguous and rejects suppression, or suppression yields
+  Suppressed and rejects disclosure. No schedule can both expose bytes and
+  retain a known-no-send state.
