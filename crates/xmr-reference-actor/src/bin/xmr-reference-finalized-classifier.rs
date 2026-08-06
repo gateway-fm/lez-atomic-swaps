@@ -17,7 +17,8 @@ use lez_bridge_adapter::{
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     DiscoveryWindow, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    MessageContext, Participant, RequestId, RunId, RuntimeDescriptor, XmrNativeEffectV3,
+    MessageContext, Participant, PreparedTransaction, RequestId, RunId, RuntimeDescriptor,
+    XmrNativeEffectV3,
 };
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_swap_sdk::{
@@ -29,8 +30,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
     ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_RUNTIME_FD,
-    XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, XmrEffectChildModeV1,
-    load_xmr_effect_child_plan_fd,
+    XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD,
+    XmrEffectChildModeV1, load_xmr_effect_child_plan_fd,
 };
 use zeroize::Zeroizing;
 
@@ -164,13 +165,25 @@ async fn execute() -> Result<()> {
     )
     .fresh_transport()
     .context("authenticated Taker sidecar client is unavailable")?;
+    let exact_transaction_bytes = read_sealed_fd(
+        XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD,
+        usize::try_from(MAX_EVIDENCE_BYTES).unwrap_or(usize::MAX),
+        "exact Tag14 transaction",
+    )?;
+    let exact_transaction: PreparedTransaction = serde_json::from_slice(&exact_transaction_bytes)
+        .context("exact Tag14 transaction is invalid")?;
+    ensure!(
+        serde_json::to_vec(&exact_transaction).context("re-encode exact Tag14 transaction")?
+            == exact_transaction_bytes,
+        "exact Tag14 transaction is not canonical JSON"
+    );
     let result = client
         .classify_finalized_native_xmr_effect_v3(ClassifyFinalizedNativeXmrEffectV3Request::new(
             context,
             runtime,
             binding.terms(),
             XmrNativeEffectV3::AuthorizeClaim,
-            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+            FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction),
             DiscoveryWindow::new(activation_evidence.tag14_scan_start_height, MAX_SCAN_BLOCKS)
                 .context("invalid Tag14 finalized scan window")?,
         ))

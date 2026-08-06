@@ -24,8 +24,12 @@ after the release journal is prepared from both-chain prerequisites. The real
 `lez-taker claim --receipt` command then preflights and invokes the existing
 release service once. Later invocations are read-only and use a sealed
 finalized classifier. The observer scans from the finalized Tag13 funding
-successor, publishes one owner-private canonical Tag14 receipt, and returns
-only its digest to workflow reconciliation.
+successor. Because the Taker is the Tag14 transaction owner, the trusted parent
+authenticates the consumed release snapshot, decrypts only the now-public exact
+prepared transaction, and seals its canonical JSON on fixed FD 224. The
+observer performs owner-exact classification, publishes one owner-private
+canonical Tag14 receipt, and returns only its digest to workflow reconciliation.
+It never receives the release protection key or a Maker capability.
 
 The opt-in switch is `M7_XMR_SEMANTIC_CLAIM=1`; it requires application mode
 and the Claim journey. Existing claim and refund defaults are unchanged.
@@ -40,10 +44,13 @@ flowchart LR
     Authority --> Gate
     Gate --> Workflow[(Taker workflow journal)]
     Workflow --> CLI[lez-taker claim]
-    Journal[(Prepared Tag14 release journal)] --> CLI
+    Journal[(Encrypted Tag14 release journal)] --> CLI
     CLI --> Worker[Sealed release worker]
     Worker --> Sidecar[Taker LEZ sidecar]
     Sidecar --> LEZ[Local LEZ node]
+    Journal --> Parent[Trusted parent exact transaction gate]
+    Parent --> FD[Sealed exact transaction FD 224]
+    FD --> Observer
     CLI --> Observer[Sealed finalized classifier]
     Observer --> Sidecar
     Observer --> Evidence[Finalized Tag14 evidence]
@@ -73,8 +80,10 @@ sequenceDiagram
     CLI->>S: Invoke sealed release once
     S->>L: Submit exact Tag14 authorization
     User->>CLI: Repeat claim after process exit
-    CLI->>O: Observe only with fresh read request
-    O->>L: Classify bounded finalized Tag14
+    CLI->>R: Authenticate consumed release snapshot
+    R-->>CLI: Exact public prepared transaction only
+    CLI->>O: Sealed FD 224 plus fresh read request
+    O->>L: Owner-exact bounded classification
     O->>Evidence: Publish canonical result once
     CLI->>W: Reconcile finalized evidence digest
 ```
@@ -86,7 +95,9 @@ its post-CAS clock gate and one-attempt publication rule. The outer workflow
 and inner release journal are monotonic nested authorities, not a distributed
 database transaction. A crash before either CAS is replayable; after the
 workflow CAS the release journal cannot rearm; after possible publication the
-Taker command is observation-only.
+Taker command is observation-only. Owner-side classification is exact by
+construction; discovery-by-terms remains a counterparty route, so no Maker
+credential crosses into the Taker process.
 
 This establishes conditional atomicity for authorization: the Maker can claim
 LEZ only after the Taker has locked LEZ and the Maker's exact Monero lock is
@@ -182,6 +193,21 @@ the observer now uses the established 16-block actual-runner bound, covering
 the deterministic 12-block interval. A durable, monotonic multi-page cursor is
 still required before production certification. The loop was interrupted via
 the normal trap and exact cleanup passed with source status 130.
+
+The source-bound `b8aa8a0` replay proved that the 16-block bound was sufficient:
+the release journal was admitted once at revision 2, the workflow remained
+started at attempt 1, and an independent read-only query found the identical
+publication in block 136 from scan start 125. The remaining RED was authority,
+not timing. The sealed observer asked the owner Taker sidecar to discover by
+terms, while the protocol deliberately permits owner-exact or
+counterparty-discovery. The Taker sidecar therefore returned
+`InvalidTransaction`; the Maker diagnostic succeeded but its credential is not
+an acceptable Taker input. The correction decrypts the authenticated release
+intent only in the trusted parent after the one-shot CAS, seals the exact public
+transaction on FD 224, and keeps the observer on the Taker sidecar using an
+exact target. Prepared and suppressed journals fail closed. The nonproductive
+loop was interrupted and every exact run-labelled Docker resource was verified
+absent.
 
 The planned replay uses only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,

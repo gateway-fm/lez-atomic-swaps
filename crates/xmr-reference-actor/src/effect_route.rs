@@ -437,7 +437,7 @@ impl ValidatedXmrEffectExecutionV3 {
         let executable = observer
             .verify_program_at_use()
             .context("pin role-fixed XMR effect observer")?;
-        let inputs = self
+        let mut inputs = self
             .effect_authority()
             .pin_effect_inputs_at_use()
             .context("pin role-fixed XMR effect observer inputs")?
@@ -445,6 +445,13 @@ impl ValidatedXmrEffectExecutionV3 {
             .context("pin validated XMR observer application inputs")?
             .with_child_plan(&child_plan)
             .context("pin XMR observer child plan")?;
+        if step == XmrWorkflowStep::AuthorizeLezTag14
+            && self.effect_authority().tag14_release().is_some()
+        {
+            inputs = inputs
+                .with_tag14_exact_transaction(self)
+                .context("pin exact Tag14 observation transaction")?;
+        }
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(

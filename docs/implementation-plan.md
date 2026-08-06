@@ -6733,5 +6733,19 @@ S12/S13 review and policy-deferred public deployment.
   16-block bound, which covers this deterministic 12-block interval. Durable
   multi-page cursoring remains explicit production hardening. The nonproductive
   loop was interrupted through its normal trap; cleanup schema v2 passed.
+- [ ] Replay exact owner-side Tag14 observation. Exact run
+  `m7claim-b8aa8a0-a` proved the 16-block bound, admitted one publication and
+  retained workflow `attempt_count=1`; a read-only diagnostic found the exact
+  transaction at block 136 from scan start 125 in about five seconds. The
+  sealed observer nevertheless used discovery-by-terms through the Taker
+  sidecar, which correctly rejected that owner route as `InvalidTransaction`:
+  contract tests permit owner-exact or counterparty-discovery, never
+  owner-discovery. The correction does not lend the Taker a Maker capability.
+  After the send CAS, the trusted parent authenticates the encrypted release
+  snapshot, decrypts only its now-public prepared transaction, seals canonical
+  JSON on fixed FD 224, and the Taker observer classifies that exact transaction.
+  Prepared/suppressed records cannot expose observation material. Focused
+  all-target compilation is GREEN; the interrupted replay's exact Docker
+  containers, networks, volumes and images were verified absent.
 - [ ] After the PoC is GREEN, add focused RED/GREEN contracts and join the
   receipt-v2 Taker Monero claim sweep before adverse-case hardening.

@@ -17,6 +17,7 @@ use super::{
     verify_observation_authenticator, verify_release_state_authenticator,
     verify_semantic_intent_authenticator,
 };
+use lez_bridge_protocol::{ExactTransactionBytes, PreparedTransaction, TransactionId};
 use rusqlite::{
     Connection, ErrorCode, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
 };
@@ -358,6 +359,26 @@ impl ReleaseStore {
         )
     }
 
+    /// Opens one existing journal relative to an already-open directory.
+    ///
+    /// Unlike [`Self::open_in_directory`], this entry point never creates a
+    /// missing database. Read-only reconciliation uses it after the durable
+    /// publication CAS has already been consumed.
+    pub fn open_existing_in_directory(
+        directory: File,
+        database_name: impl AsRef<OsStr>,
+    ) -> Result<Self, ReleaseError> {
+        let database_name = validate_database_name(database_name.as_ref())?;
+        let directory = SecureDirectory::from_descriptor(directory)?;
+        let path = directory.path.join(&database_name);
+        Self::open_prevalidated(
+            &path,
+            directory,
+            database_name,
+            DatabaseOpenPolicy::OpenExisting,
+        )
+    }
+
     /// Exclusively creates and initializes one owner-private release journal.
     ///
     /// Unlike [`Self::open`], this never opens or migrates an existing journal.
@@ -576,6 +597,39 @@ impl ReleaseStore {
         drop(connection);
         self.revalidate_storage()?;
         Ok(snapshot)
+    }
+
+    /// Authenticates and decrypts the exact transaction owned by a consumed
+    /// publication attempt.
+    ///
+    /// Prepared or suppressed records cannot authorize observation. The
+    /// returned transaction is public chain material; the protection key and
+    /// encrypted journal envelope remain confined to this trusted boundary.
+    pub fn exact_publication(
+        &self,
+        snapshot: &ReleaseSnapshot,
+        key: &PublicationProtectionKey,
+    ) -> Result<PreparedTransaction, ReleaseError> {
+        self.revalidate_storage()?;
+        authenticate_snapshot(snapshot, key)?;
+        if !matches!(
+            snapshot.state,
+            ReleaseState::PublicationStarted | ReleaseState::Admitted | ReleaseState::Ambiguous
+        ) {
+            return Err(ReleaseError::InvalidBinding);
+        }
+        let exact_bytes = snapshot
+            .intent
+            .decrypt(key, &snapshot.immutable_context)
+            .map_err(|_| ReleaseError::Authentication)?;
+        let exact_bytes = ExactTransactionBytes::new(exact_bytes.as_slice().to_vec())
+            .map_err(|_| ReleaseError::CorruptRecord)?;
+        let transaction = PreparedTransaction::new(
+            TransactionId::from_bytes(snapshot.publication_id),
+            exact_bytes,
+        );
+        self.revalidate_storage()?;
+        Ok(transaction)
     }
 
     /// Atomically grants one send attempt; every later caller observes only.
@@ -1224,6 +1278,7 @@ struct DatabaseIdentity {
 #[derive(Clone, Copy)]
 enum DatabaseOpenPolicy {
     OpenOrCreate,
+    OpenExisting,
     CreateNew,
 }
 
@@ -1250,6 +1305,15 @@ fn prepare_database_file(
                 Err(Errno::LOOP) => return Err(ReleaseError::UnsafeDatabaseFile),
                 Err(_) => return Err(ReleaseError::Store),
             }
+        }
+        DatabaseOpenPolicy::OpenExisting => {
+            openat(&directory.descriptor, name, existing_flags, Mode::empty()).map_err(|error| {
+                match error {
+                    Errno::NOENT => ReleaseError::Missing,
+                    Errno::LOOP => ReleaseError::UnsafeDatabaseFile,
+                    _ => ReleaseError::Store,
+                }
+            })?
         }
         DatabaseOpenPolicy::CreateNew => openat(
             &directory.descriptor,

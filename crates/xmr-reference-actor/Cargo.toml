@@ -20,6 +20,7 @@ sessions = [
     "dep:lez-bridge-protocol",
     "dep:lez-swap-core",
     "dep:lez-swap-store",
+    "dep:lez-xmr-release-authority",
     "dep:lez-xmr-monero-adapter",
     "dep:monero",
 ]
@@ -35,6 +36,7 @@ lez-bridge-client = { version = "=0.1.0", path = "../lez-bridge-client", optiona
 lez-bridge-protocol = { version = "=0.1.0", path = "../lez-bridge-protocol", optional = true }
 lez-swap-core = { version = "=0.1.0", path = "../swap-core", optional = true }
 lez-swap-store = { version = "=0.1.0", path = "../swap-store", optional = true }
+lez-xmr-release-authority = { version = "=0.1.0", path = "../xmr-release-authority", optional = true }
 lez-xmr-monero-adapter = { version = "=0.1.0", path = "../xmr-monero-adapter", optional = true }
 lez-xmr-swap-sdk = { version = "=0.1.0", path = "../xmr-swap-sdk" }
 monero = { version = "=0.22.0", default-features = false, optional = true }

@@ -4254,6 +4254,7 @@ dependencies = [
  "lez-swap-core",
  "lez-swap-store",
  "lez-xmr-monero-adapter",
+ "lez-xmr-release-authority",
  "lez-xmr-swap-sdk",
  "monero",
  "rand_chacha 0.3.1",

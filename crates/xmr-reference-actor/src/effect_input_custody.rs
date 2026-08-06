@@ -17,6 +17,8 @@ use lez_bridge_protocol::{
     MessageContext, Participant as BridgeParticipant, RequestId, RunId, RuntimeDescriptor,
     XmrNativeEscrowTermsV3,
 };
+#[cfg(feature = "sessions")]
+use lez_xmr_release_authority::{PublicationProtectionKey, ReleaseStore};
 use lez_xmr_swap_sdk::{MoneroPrivateViewKey, XmrActivatedAgreementV1, XmrAgreementV1};
 use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, memfd_create};
 use rustix::io::fcntl_dupfd_cloexec;
@@ -89,6 +91,10 @@ pub const XMR_TAG14_RELEASE_CAPABILITY_FD: i32 = 221;
 pub const XMR_TAG14_RELEASE_PROTECTION_KEY_FD: i32 = 222;
 /// Already-open owner-private release state directory.
 pub const XMR_TAG14_RELEASE_STATE_DIRECTORY_FD: i32 = 223;
+/// Exact authenticated Tag14 transaction for owner-side finality observation.
+pub const XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD: i32 = 224;
+
+const XMR_RELEASE_JOURNAL_NAME: &str = "xmr-release.sqlite3";
 
 struct PinnedXmrEffectApplicationInputsV1 {
     stage_a: File,
@@ -279,6 +285,7 @@ pub struct PinnedXmrEffectInputsV1 {
     child_plan: Option<File>,
     invocation_xmr_share: Option<File>,
     invocation_refund_signature: Option<File>,
+    tag14_exact_transaction: Option<File>,
 }
 
 impl fmt::Debug for PinnedXmrEffectInputsV1 {
@@ -307,6 +314,10 @@ impl fmt::Debug for PinnedXmrEffectInputsV1 {
                     .invocation_refund_signature
                     .as_ref()
                     .map(|_| "[SEALED]"),
+            )
+            .field(
+                "tag14_exact_transaction",
+                &self.tag14_exact_transaction.as_ref().map(|_| "[SEALED]"),
             )
             .finish_non_exhaustive()
     }
@@ -366,6 +377,50 @@ impl PinnedXmrEffectInputsV1 {
             "XMR effect child plan is already pinned"
         );
         self.child_plan = Some(seal_bytes("XMR effect child plan", bytes)?);
+        Ok(self)
+    }
+
+    #[cfg(feature = "sessions")]
+    pub(crate) fn with_tag14_exact_transaction(
+        mut self,
+        execution: &ValidatedXmrEffectExecutionV3,
+    ) -> Result<Self> {
+        ensure!(
+            self.tag14_exact_transaction.is_none(),
+            "Tag14 exact observation transaction is already pinned"
+        );
+        let authority = execution.effect_authority();
+        ensure!(
+            authority.role() == ActorRole::Taker && authority.schema_version() == 2,
+            "exact Tag14 observation requires schema-v2 Taker authority"
+        );
+        let release = authority
+            .tag14_release()
+            .context("Tag14 release authority is unavailable")?;
+        let protection_key = PublicationProtectionKey::from_owner_private_file(
+            release.protection_key_id(),
+            release.protection_key_file(),
+        )
+        .context("authenticate Tag14 release protection key")?;
+        let state_directory = open_private_directory(
+            release.state_directory(),
+            "XMR Tag14 release state directory",
+        )?;
+        let store =
+            ReleaseStore::open_existing_in_directory(state_directory, XMR_RELEASE_JOURNAL_NAME)
+                .context("open existing Tag14 release journal")?;
+        let run_id = RunId::new(authority.run_id().to_owned())
+            .context("invalid Tag14 observation run ID")?;
+        let snapshot = store
+            .load_xmr_claim_release(authority.swap_id(), &run_id, &protection_key)
+            .context("authenticate Tag14 release snapshot")?;
+        let transaction = store
+            .exact_publication(&snapshot, &protection_key)
+            .context("load exact Tag14 publication")?;
+        let bytes = serde_json::to_vec(&transaction)
+            .context("encode exact Tag14 observation transaction")?;
+        self.tag14_exact_transaction =
+            Some(seal_bytes("exact Tag14 observation transaction", &bytes)?);
         Ok(self)
     }
 
@@ -438,6 +493,7 @@ impl PinnedXmrEffectInputsV1 {
             child_plan,
             invocation_xmr_share,
             invocation_refund_signature,
+            tag14_exact_transaction,
         } = self;
         let PinnedXmrEffectMoneroCredentialsV1 {
             daemon,
@@ -524,6 +580,12 @@ impl PinnedXmrEffectInputsV1 {
                 XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD,
             ));
         }
+        if let Some(tag14_exact_transaction) = tag14_exact_transaction {
+            descriptors.push((
+                tag14_exact_transaction,
+                XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD,
+            ));
+        }
         let plan = PinnedChildFdPlan::new(descriptors)
             .context("validate XMR effect child descriptor plan")?;
         executable
@@ -595,6 +657,7 @@ impl ValidatedXmrEffectAuthorityV1 {
             child_plan: None,
             invocation_xmr_share: None,
             invocation_refund_signature: None,
+            tag14_exact_transaction: None,
         })
     }
 }
