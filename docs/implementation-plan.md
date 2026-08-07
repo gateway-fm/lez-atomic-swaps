@@ -6854,7 +6854,7 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Require joined abandonment, complete the existing valid Tag16 signature
   before Tag17, and leave every default journey unchanged.
 - [x] After finalized Tag17, invoke the existing Tag16 process exactly once;
-  record either immediate rejection or transport admission and permit no retry.
+  record exact `accepted` admission or admission `unknown` and permit no retry.
 - [x] RED then GREEN: bracket the losing process with finalized anchors, require
   its complete interval plus an eight-block finalized tail to contain no Refund,
   and byte-equivalently re-observe the exact winning Tag17 facts.
@@ -6869,8 +6869,15 @@ S12/S13 review and policy-deferred public deployment.
   finding that LEZ can return transport `accepted` before stateful execution,
   then verify exact cleanup passed.
 - [x] RED then GREEN: remove synchronous rejection as an atomicity oracle;
-  validate and retain either admission or rejection while requiring finalized
-  Refund absence over the complete dynamic window and unchanged exact Tag17.
+  validate exact accepted evidence or retain local failure as admission unknown
+  while requiring finalized Refund absence and unchanged exact Tag17.
+- [x] Interrupt exact run `m7lose16-8b91756-a` during build before node
+  provisioning after a source audit proved its requested scan-start comparison,
+  terminal-absence classifier, and post-attempt anchor were under-specified.
+- [x] RED then GREEN: bind the requested scan start, classify Refund absent only
+  from terminal Claimed/zero custody at candidate and window end, bracket the
+  attempt with authenticated actual finalized-tip clocks, and retain raw and
+  canonical evidence hashes plus exact request/transaction identities.
 - [ ] Push a clean checkpoint, run a fresh exact-commit two-devnet replay, and
   retain a checked secret-free certificate only after exact cleanup.
 - [ ] Follow with the opposite ordering, concurrent boundary schedules,

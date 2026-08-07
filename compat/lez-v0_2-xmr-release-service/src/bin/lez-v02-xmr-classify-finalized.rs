@@ -15,8 +15,8 @@ use clap::{Parser, ValueEnum};
 use lez_bridge_adapter::{CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory as _};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, DiscoveryWindow,
-    FinalizedNativeXmrTransactionTargetV3, MessageContext, Participant, RequestId, RunId,
-    RuntimeDescriptor, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    FinalizedNativeXmrTransactionTargetV3, MessageContext, ObserveFinalizedClockRequest,
+    Participant, RequestId, RunId, RuntimeDescriptor, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
 };
 
 const MAX_PUBLIC_JSON_BYTES: u64 = 2 * 1024 * 1024;
@@ -59,6 +59,9 @@ struct Arguments {
     /// Maximum block count in the bounded inclusive scan.
     #[arg(long)]
     max_blocks: u32,
+    /// Observe the authenticated actual finalized tip instead of classifying the supplied window.
+    #[arg(long)]
+    observe_finalized_clock: bool,
     /// New canonical result-only JSON file; never overwritten.
     #[arg(long)]
     output_result: PathBuf,
@@ -143,6 +146,18 @@ async fn execute(arguments: Arguments) -> Result<()> {
     )
     .fresh_transport()
     .context("authenticated sidecar client is unavailable")?;
+    if arguments.observe_finalized_clock {
+        let result = client
+            .observe_finalized_clock(ObserveFinalizedClockRequest::new(context, runtime))
+            .await
+            .context("typed finalized-clock observation failed")?;
+        write_result(&arguments.output_result, &result)?;
+        println!(
+            "{}",
+            serde_json::to_string(&result).context("encode finalized-clock result")?
+        );
+        return Ok(());
+    }
     let result = client
         .classify_finalized_native_xmr_effect_v3(ClassifyFinalizedNativeXmrEffectV3Request::new(
             context,

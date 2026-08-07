@@ -33,10 +33,12 @@ ADR [0175](docs/architecture/0175-reject-losing-tag16-after-finalized-tag17.md)
 defines the first post-PoC losing-branch slice: a valid Tag16 signature exists
 before Tag17 and one late Tag16 is attempted without retry. LEZ may admit that
 transaction asynchronously, so admission is recorded but never confused with
-execution or finality. The finalized Refund-absence window must cover the whole
-attempt interval plus eight blocks after its post-attempt anchor, and the exact
-Tag17 facts must remain unchanged. Its TDD runner contract is GREEN; the final
-corrected exact two-devnet replay is pending.
+execution or finality; a nonzero client exit is retained only as admission
+unknown. Authenticated official-indexer clocks bracket the attempt. The
+finalized Refund-absence window must cover the whole interval plus eight blocks
+after the actual post-attempt tip, terminal Claimed state with zero custody must
+exclude Refund, and the exact Tag17 facts must remain unchanged. Its TDD runner
+contract is GREEN; the corrected exact two-devnet replay is pending.
 
 The application-owned Maker Tag17 recovery boundary is also GREEN under
 [ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the

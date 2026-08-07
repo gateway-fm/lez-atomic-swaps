@@ -505,6 +505,24 @@ fn finalized_effect_indexer(
                 nonce: 0,
             }),
         ),
+        (
+            (*input.metadata_account_id.as_bytes(), FINALIZED_END),
+            HistoricalAccount::Present(IndexedAccount {
+                program_owner: IndexedProgramId(ESCROW_PROGRAM),
+                balance: 0,
+                data: IndexedData(to_vec(&metadata(xmr_terms, status)).expect("metadata encoding")),
+                nonce: 0,
+            }),
+        ),
+        (
+            (*input.custody_account_id.as_bytes(), FINALIZED_END),
+            HistoricalAccount::Present(IndexedAccount {
+                program_owner: IndexedProgramId(TRANSFER_PROGRAM),
+                balance: custody_balance,
+                data: IndexedData(Vec::new()),
+                nonce: 0,
+            }),
+        ),
     ]);
     Arc::new(FixtureIndexer {
         blocks: BTreeMap::from([
@@ -739,10 +757,9 @@ fn missing_fund_indexer(
     let start_block = finalized_block(FUNDING_BLOCK, Vec::new());
     let end_block = finalized_block(FINALIZED_END, Vec::new());
     let input = xmr_terms.to_input();
-    let balance = if status == EscrowStatus::Empty {
-        0
-    } else {
-        input.amount
+    let balance = match status {
+        EscrowStatus::Empty | EscrowStatus::Claimed | EscrowStatus::Refunded => 0,
+        EscrowStatus::Funded | EscrowStatus::XmrClaimAuthorized => input.amount,
     };
     let accounts = BTreeMap::from([
         (
@@ -2250,6 +2267,75 @@ async fn tag_14_through_tag_17_are_classified_by_owner_and_counterparty() {
         assert_eq!(facts.custody.balance.as_u128(), 0);
         bridge.stop().await.expect("tag-17 sidecar stops");
     }
+
+    let included_losing_refund_indexer = finalized_effect_indexer_at(
+        &refund,
+        &xmr_terms,
+        refund_authority,
+        EscrowStatus::Claimed,
+        0,
+        20_001,
+    );
+    let (included_losing_refund_client, included_losing_refund_bridge) = start_classifier_sidecar(
+        directory.path(),
+        "included-losing-refund-idempotency.json",
+        taker_runtime.clone(),
+        Arc::clone(&taker_planner),
+        &node_endpoint,
+        included_losing_refund_indexer,
+    )
+    .await;
+    let included_losing_refund = included_losing_refund_client
+        .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+            &taker_runtime,
+            &xmr_terms,
+            XmrNativeEffectV3::Refund,
+            &refund,
+            "included-losing-refund",
+        ))
+        .await
+        .expect("included losing Refund classifies from terminal Claimed state");
+    assert!(matches!(
+        included_losing_refund.outcome,
+        FinalizedNativeXmrScanOutcomeV3::Absent { .. }
+    ));
+    included_losing_refund_bridge
+        .stop()
+        .await
+        .expect("included-losing-Refund sidecar stops");
+
+    let terminal_claimed_indexer = missing_fund_indexer(&xmr_terms, EscrowStatus::Claimed);
+    let (terminal_claimed_client, terminal_claimed_bridge) = start_classifier_sidecar(
+        directory.path(),
+        "terminal-claimed-losing-refund-idempotency.json",
+        taker_runtime.clone(),
+        Arc::clone(&taker_planner),
+        &node_endpoint,
+        terminal_claimed_indexer,
+    )
+    .await;
+    let terminal_claimed_refund = terminal_claimed_client
+        .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+            &taker_runtime,
+            &xmr_terms,
+            XmrNativeEffectV3::Refund,
+            &refund,
+            "terminal-claimed-losing-refund",
+        ))
+        .await
+        .expect("terminal Claimed state classifies missing Refund");
+    assert!(matches!(
+        terminal_claimed_refund.outcome,
+        FinalizedNativeXmrScanOutcomeV3::Absent {
+            finalized_clock,
+            scanned_window,
+        } if finalized_clock.height == FINALIZED_END
+            && scanned_window == DiscoveryWindow::new(FUNDING_BLOCK, 2).unwrap()
+    ));
+    terminal_claimed_bridge
+        .stop()
+        .await
+        .expect("terminal-Claimed sidecar stops");
 
     for (timestamp, accepted) in [(19_999, false), (20_000, true), (20_001, true)] {
         let id = format!("tag17-boundary-{timestamp}");

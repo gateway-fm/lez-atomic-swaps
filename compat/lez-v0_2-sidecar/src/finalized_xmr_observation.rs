@@ -118,6 +118,7 @@ struct EffectCandidate {
     instruction: XmrNativeInstructionFactsV3,
     aggregate_signature: Option<AggregateBip340Signature>,
     block: BlockHeader,
+    effect_window_valid: bool,
 }
 
 enum Scan {
@@ -184,6 +185,59 @@ impl FinalizedNativeXmrEffectObserver {
         };
         match scan {
             Scan::Found(candidate, stable) => {
+                let terminal_claimed_excludes_refund =
+                    if request.effect == XmrNativeEffectV3::Refund {
+                        match self
+                            .terminal_claimed_at_candidate_and_end(
+                                &request.terms,
+                                candidate.block.block_id,
+                                stable.requested_end,
+                            )
+                            .await
+                        {
+                            Ok(excluded) => excluded,
+                            Err(ClassifiedFailure::Outcome(reason)) => {
+                                return Self::result(
+                                    request,
+                                    FinalizedNativeXmrScanOutcomeV3::unavailable(reason),
+                                );
+                            }
+                            Err(ClassifiedFailure::Runtime(error)) => return Err(error),
+                        }
+                    } else {
+                        false
+                    };
+                if terminal_claimed_excludes_refund {
+                    if let Err(failure) = stable.confirm_block(self, candidate.block.block_id).await
+                    {
+                        return match failure {
+                            ClassifiedFailure::Outcome(reason) => Self::result(
+                                request,
+                                FinalizedNativeXmrScanOutcomeV3::unavailable(reason),
+                            ),
+                            ClassifiedFailure::Runtime(error) => Err(error),
+                        };
+                    }
+                    if let Err(failure) = stable.confirm_finalized_coverage(self).await {
+                        return match failure {
+                            ClassifiedFailure::Outcome(reason) => Self::result(
+                                request,
+                                FinalizedNativeXmrScanOutcomeV3::unavailable(reason),
+                            ),
+                            ClassifiedFailure::Runtime(error) => Err(error),
+                        };
+                    }
+                    return Self::result(
+                        request,
+                        FinalizedNativeXmrScanOutcomeV3::absent(
+                            stable.finalized_clock,
+                            request.window,
+                        ),
+                    );
+                }
+                if !candidate.effect_window_valid {
+                    return Err(BridgeRuntimeError::InvalidObservation);
+                }
                 let (metadata, custody) = match self
                     .read_effect_state(&request.terms, request.effect, candidate.block.block_id)
                     .await
@@ -233,18 +287,21 @@ impl FinalizedNativeXmrEffectObserver {
                 )
             }
             Scan::Missing(stable) => {
-                if let Err(failure) = self
+                let state = match self
                     .validate_missing_state(&request.terms, stable.requested_end)
                     .await
                 {
-                    return match failure {
-                        ClassifiedFailure::Outcome(reason) => Self::result(
-                            request,
-                            FinalizedNativeXmrScanOutcomeV3::unavailable(reason),
-                        ),
-                        ClassifiedFailure::Runtime(error) => Err(error),
-                    };
-                }
+                    Ok(state) => state,
+                    Err(failure) => {
+                        return match failure {
+                            ClassifiedFailure::Outcome(reason) => Self::result(
+                                request,
+                                FinalizedNativeXmrScanOutcomeV3::unavailable(reason),
+                            ),
+                            ClassifiedFailure::Runtime(error) => Err(error),
+                        };
+                    }
+                };
                 if let Err(failure) = stable.confirm_finalized_coverage(self).await {
                     return match failure {
                         ClassifiedFailure::Outcome(reason) => Self::result(
@@ -256,10 +313,19 @@ impl FinalizedNativeXmrEffectObserver {
                 }
                 Self::result(
                     request,
-                    FinalizedNativeXmrScanOutcomeV3::uncertain(
-                        stable.finalized_clock,
-                        request.window,
-                    ),
+                    if request.effect == XmrNativeEffectV3::Refund
+                        && state == Some(XmrNativeEscrowStateV3::Claimed)
+                    {
+                        FinalizedNativeXmrScanOutcomeV3::absent(
+                            stable.finalized_clock,
+                            request.window,
+                        )
+                    } else {
+                        FinalizedNativeXmrScanOutcomeV3::uncertain(
+                            stable.finalized_clock,
+                            request.window,
+                        )
+                    },
                 )
             }
         }
@@ -400,14 +466,9 @@ impl FinalizedNativeXmrEffectObserver {
                 BridgeRuntimeError::InvalidObservation,
             ));
         }
-        if (effect == XmrNativeEffectV3::Refund
+        let effect_window_valid = !((effect == XmrNativeEffectV3::Refund
             && !(input.refund_at_ms..input.punish_at_ms).contains(&block.timestamp))
-            || (effect == XmrNativeEffectV3::Punish && block.timestamp < input.punish_at_ms)
-        {
-            return Err(ClassifiedFailure::Runtime(
-                BridgeRuntimeError::InvalidObservation,
-            ));
-        }
+            || (effect == XmrNativeEffectV3::Punish && block.timestamp < input.punish_at_ms));
         let observed_instruction = risc0_zkvm::serde::from_slice::<ZecEscrowInstruction, u32>(
             &public.message().instruction_data,
         )
@@ -613,6 +674,7 @@ impl FinalizedNativeXmrEffectObserver {
             instruction,
             aggregate_signature,
             block: block.clone(),
+            effect_window_valid,
         })
     }
 
@@ -761,7 +823,7 @@ impl FinalizedNativeXmrEffectObserver {
         &self,
         terms: &XmrNativeEscrowTermsV3,
         block_id: u64,
-    ) -> Classified<()> {
+    ) -> Classified<Option<XmrNativeEscrowStateV3>> {
         let input = terms.to_input();
         let (metadata, custody) = tokio::join!(
             self.indexer
@@ -772,7 +834,7 @@ impl FinalizedNativeXmrEffectObserver {
         let metadata = metadata.map_err(history_failure)?;
         let custody = custody.map_err(history_failure)?;
         match (metadata, custody) {
-            (HistoricalAccount::Absent, HistoricalAccount::Absent) => Ok(()),
+            (HistoricalAccount::Absent, HistoricalAccount::Absent) => Ok(None),
             (HistoricalAccount::Present(metadata), HistoricalAccount::Present(custody)) => {
                 let state = validate_metadata(terms, &metadata)?;
                 let balance = match state {
@@ -784,12 +846,32 @@ impl FinalizedNativeXmrEffectObserver {
                     }
                 };
                 validate_custody(terms, &custody, balance)?;
-                Ok(())
+                Ok(Some(state))
             }
             _ => Err(ClassifiedFailure::Runtime(
                 BridgeRuntimeError::InvalidObservation,
             )),
         }
+    }
+
+    async fn terminal_claimed_at_candidate_and_end(
+        &self,
+        terms: &XmrNativeEscrowTermsV3,
+        candidate_block_id: u64,
+        requested_end: u64,
+    ) -> Classified<bool> {
+        let candidate = self
+            .validate_missing_state(terms, candidate_block_id)
+            .await?;
+        if candidate != Some(XmrNativeEscrowStateV3::Claimed) {
+            return Ok(false);
+        }
+        let end = if candidate_block_id == requested_end {
+            candidate
+        } else {
+            self.validate_missing_state(terms, requested_end).await?
+        };
+        Ok(end == Some(XmrNativeEscrowStateV3::Claimed))
     }
 }
 

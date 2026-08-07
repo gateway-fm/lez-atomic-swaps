@@ -8797,7 +8797,7 @@ sequenceDiagram
     Runner->>LEZ: Finalize prepared Tag17
     Runner->>LEZ: Record pre-attempt finalized anchor
     Runner->>LEZ: Attempt Tag16 once
-    LEZ-->>Runner: Return admitted or rejected transport outcome
+    LEZ-->>Runner: Return accepted or local failure
     Runner->>LEZ: Record post-attempt finalized anchor
     Runner->>LEZ: Scan attempt interval plus eight-block tail
     LEZ-->>Runner: Refund absent and Tag17 unchanged
@@ -8805,14 +8805,19 @@ sequenceDiagram
 
 Before cleanup, `evidence/m7-losing-tag16-after-tag17.json` must report
 `passed`, `tag17_wins_over_late_tag16`, ordered Tag16 completion before
-Tag17 preparation, either a recorded transport admission or an immediate
-rejection, no automatic retry, an eight-block post-attempt tail with Refund
-absent, and equal post-attempt Tag17 facts. An admitted submission has exit zero
-and validated submission evidence; a rejected submission has nonzero exit and
-an empty reserved evidence file. Neither outcome is itself a finalized Refund.
-The scan start must equal the pre-attempt finalized anchor plus one; its end
-must equal the post-attempt anchor plus eight. The joined-abandonment packet
-from Flow 1ZG must also pass.
+Tag17 preparation, either exact `accepted` admission or admission `unknown`, no
+automatic retry, an eight-block post-attempt tail with Refund absent, and equal
+post-attempt Tag17 facts. Accepted admission has exit zero and binds the
+prepare, complete, submission, transaction, and message-hash evidence. A
+nonzero process exit has an empty reserved evidence file but does not prove
+chain rejection: it remains `unknown`. Neither outcome is itself a finalized
+Refund. Authenticated official-indexer clock results retain block hash, height,
+timestamp, and raw-evidence hash on both sides of the attempt. The scan starts
+at the pre-attempt tip plus one and reaches the post-attempt tip plus eight;
+`Absent` additionally requires terminal `Claimed` metadata and zero custody at
+the relevant candidate and window-end observations. The packet hashes both raw
+Tag17 observations and equal canonical fact documents. The joined-abandonment
+packet from Flow 1ZG must also pass.
 
 All endpoints and funds have the same local-only provenance as Flow 1ZG.
 Runtime flakiness sources are cold builds, CPU/disk pressure, Docker startup,

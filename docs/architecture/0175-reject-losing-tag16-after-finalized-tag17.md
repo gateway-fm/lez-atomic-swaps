@@ -1,8 +1,9 @@
 # ADR 0175: Exclude losing Tag16 after finalized Tag17
 
 - Status: Implemented behind an isolated M7 hardening flag; two exact
-  pushed-commit actual-node replays exposed and corrected staging-scope and
-  synchronous-admission assumptions; final corrected replay pending
+  pushed-commit actual-node replays exposed staging and admission assumptions;
+  a third was intentionally stopped before nodes after an oracle audit exposed
+  false-absence and pseudo-anchor gaps; corrected replay pending
 - Date: 2026-08-07
 
 ## Context
@@ -20,15 +21,19 @@ signature before Tag17 preparation, proving the losing branch is not absent
 merely because its witness was unavailable. After exact Tag17 finality it runs
 the existing Tag16 process once with new request IDs and no retry.
 
-Transport admission is not execution or finality. The hardening gate therefore
-accepts either an immediate pre-admission rejection or a successful sequencer
-admission, records that outcome without retry, and never treats admission as a
-successful Refund. The latest finalized height observed before that attempt is
-the start anchor. A second finalized anchor immediately after the process
-closes the attempt interval; the runner scans every block
+Transport admission is not execution or finality. The hardening gate records
+an exact successful sequencer `accepted` response, while any nonzero process
+exit remains admission `unknown`; it does not infer rejection from a local
+error, timeout, or crash. It never retries or treats admission as a successful
+Refund. Authenticated `observe_finalized_clock` calls through the Maker sidecar
+record full block identity, height, and timestamp immediately before and after
+the attempt. The runner scans every block
 after the start anchor through eight blocks after the second anchor for absence
-of any matching Refund. Finally it re-observes the exact Tag17 transaction and
-compares the complete finalized facts with the pre-attempt Maker observation.
+of any effective matching Refund. Missing Refund is final only when the window
+ends in exact `Claimed` metadata with zero custody; an included but statefully
+rejected Refund is likewise absent only when those terminal facts hold at its
+block and the window end. Finally it re-observes the exact Tag17 transaction,
+compares canonical complete facts, and retains hashes of every raw observation.
 
 ## Components and RPC flow
 
@@ -41,7 +46,7 @@ flowchart LR
     Tag17 --> Late16[One late Tag16 process]
     Tag17 --> Anchor[Record pre-attempt finalized anchor]
     Anchor --> Late16[One late Tag16 process]
-    Late16 --> Admission[Record admitted or rejected transport outcome]
+    Late16 --> Admission[Record accepted or admission unknown]
     Admission --> PostAnchor[Record post-attempt finalized anchor]
     PostAnchor --> RefundScan[Attempt interval plus eight-block tail show Refund absent]
     RefundScan --> Reobserve[Exact Tag17 facts re-observed equal]
@@ -68,7 +73,7 @@ sequenceDiagram
     L-->>M: Finalized Claimed state and zero custody
     M->>MS: Read pre-attempt finalized anchor
     T->>TS: Submit completed Tag16 once
-    TS-->>T: Return admitted or rejected transport outcome
+    TS-->>T: Return accepted or local failure
     M->>MS: Read post-attempt finalized anchor
     M->>MS: Scan attempt interval plus eight-block tail for Refund
     MS-->>M: Refund absent
@@ -80,7 +85,9 @@ The branch is atomic over the evidenced finalized window because the terminal
 Tag17 state consumes custody before the late refund attempt, no matching Refund
 finalizes in the full attempt interval or its eight-block finalized tail, and
 the exact winning facts remain unchanged. A transport-admitted transaction is
-not counted as a Refund effect. This is stronger than testing a malformed
+not counted as a Refund effect, and a process failure is not called a chain
+rejection. The anchors are actual authenticated finalized tips rather than
+classification-window endpoints. This is stronger than testing a malformed
 refund: the correct precommitted refund signature existed before Tag17. The
 dynamic window removes any assumption about how many LEZ blocks elapse while
 the Tag16 client exits.
@@ -105,5 +112,13 @@ staging scope. The second replay `m7lose16-4c891e9-a` reached the late attempt;
 LEZ admitted it and returned `accepted`, exposing the runner's incorrect
 assumption that the CLI must reject synchronously. Exact cleanup passed. The
 follow-up RED/GREEN cycle now judges only finalized exclusion and unchanged
-Tag17 while retaining the admission outcome. A fresh pushed-commit replay must
-still pass the complete finalized window before this ADR can be accepted.
+Tag17 while retaining the admission outcome. A third exact-commit run,
+`m7lose16-8b91756-a`, passed preflight and artifact checks but was stopped
+during build, before provisioning any nodes: an independent source audit proved
+that its scan compared the wrong start height, its classifier could not emit
+final `Absent` for terminal Claimed state, and its post-attempt anchor was only
+a one-block classification endpoint. RED/GREEN tests now bind the requested
+start, make terminal Claimed/zero custody the exact exclusion rule, use actual
+authenticated finalized-tip anchors, preserve `unknown` admission semantics,
+and hash the full evidence packet. A fresh pushed-commit replay must still pass
+the complete finalized window before this ADR can be accepted.

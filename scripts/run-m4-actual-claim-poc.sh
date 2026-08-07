@@ -116,7 +116,10 @@ emit_contract() {
         default_behavior_unchanged: true,
         tag16_completed_before_tag17: true,
         late_tag16_admission_may_succeed: true,
+        failed_tag16_process_means_admission_unknown: true,
+        authenticated_actual_tip_anchors: true,
         finalized_losing_effect_must_be_absent: true,
+        terminal_claimed_zero_excludes_refund: true,
         minimum_post_attempt_finalized_tail_blocks: 8,
         window_begins_after_pre_attempt_finalized_anchor: true,
         window_covers_complete_attempt_interval: true,
@@ -2740,14 +2743,17 @@ verify_losing_tag16_after_tag17() {
   readonly m7_losing_tag16_evidence="${evidence_root}/m7-losing-tag16-submission.json"
   readonly m7_losing_tag16_stdout="${log_root}/m7-losing-tag16.stdout"
   readonly m7_losing_tag16_stderr="${log_root}/m7-losing-tag16.stderr"
+  readonly m7_losing_tag16_pre_attempt_anchor="${evidence_root}/m7-losing-tag16-pre-attempt-anchor.json"
   readonly m7_losing_tag16_post_attempt_anchor="${evidence_root}/m7-losing-tag16-post-attempt-anchor.json"
   readonly m7_losing_tag16_absence="${evidence_root}/m7-losing-tag16-absence.json"
   readonly m7_tag17_reobservation="${evidence_root}/m7-tag17-after-losing-tag16.json"
+  readonly m7_tag17_before_facts="${evidence_root}/m7-tag17-before-losing-tag16-facts.json"
+  readonly m7_tag17_after_facts="${evidence_root}/m7-tag17-after-losing-tag16-facts.json"
   readonly m7_losing_branch_evidence="${evidence_root}/m7-losing-tag16-after-tag17.json"
   local maker_endpoint taker_endpoint tag16_status=0 tag16_phase tag17_phase
   local tag17_height pre_attempt_finalized_height post_attempt_finalized_height
   local scan_start_height scan_end_height scan_blocks attempt result_tmp
-  local tag16_admitted=false tag16_submission_outcome=""
+  local tag16_admission="unknown"
   maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
   taker_endpoint="$(jq -er '.endpoint' "$taker_sidecar_root/pid-manifest.json")"
   tag16_phase="$(jq -sr '
@@ -2761,10 +2767,19 @@ verify_losing_tag16_after_tag17() {
   [[ "$tag16_phase" =~ ^[1-9][0-9]*$ && "$tag17_phase" =~ ^[1-9][0-9]*$ ]] &&
     (( tag16_phase < tag17_phase )) ||
     fail "Tag16 completion was not durably ordered before Tag17 preparation"
+  "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
+    --capability-file "$maker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+    --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+    --request-id "${run_id}-m7-losing-tag16-pre-attempt-anchor-001" \
+    --role maker --effect refund --start-height 1 --max-blocks 1 \
+    --observe-finalized-clock \
+    --output-result "$m7_losing_tag16_pre_attempt_anchor" >/dev/null
+  require_owner_file "$m7_losing_tag16_pre_attempt_anchor" \
+    "losing Tag16 pre-attempt finalized anchor"
   pre_attempt_finalized_height="$(jq -er '
-    .outcome.finalized_clock.height
-    | select(type=="number" and .>=1)
-  ' "$tag17_taker_finality")"
+    .clock.height | select(type=="number" and .>=1)
+  ' "$m7_losing_tag16_pre_attempt_anchor")"
   scan_start_height="$((pre_attempt_finalized_height + 1))"
   scan_end_height="$((scan_start_height + tag17_finality_page_blocks - 1))"
 
@@ -2792,16 +2807,14 @@ verify_losing_tag16_after_tag17() {
     jq -e --arg run "$run_id" '
       .schema=="lez_v02_m5_actual_local_tag16_v1" and .role=="taker"
       and .run_id==$run and .submission_request_id==.transaction_id
-      and (.submission_outcome|type)=="string"
+      and .submission_outcome=="accepted"
       and .automatic_submission_retry==false and .public_rpc_used==false
     ' "$m7_losing_tag16_evidence" >/dev/null ||
       fail "admitted late Tag16 evidence is incomplete"
-    tag16_admitted=true
-    tag16_submission_outcome="$(jq -er '.submission_outcome' \
-      "$m7_losing_tag16_evidence")"
+    tag16_admission="accepted"
   else
     [[ ! -s "$m7_losing_tag16_evidence" && -s "$m7_losing_tag16_stderr" ]] ||
-      fail "rejected late Tag16 evidence/output shape is incomplete"
+      fail "ambiguous late Tag16 failure evidence/output shape is incomplete"
   fi
 
   "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
@@ -2809,19 +2822,14 @@ verify_losing_tag16_after_tag17() {
     --runtime-file "$tag13_handoff_root/maker-runtime.json" \
     --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
     --request-id "${run_id}-m7-losing-tag16-post-attempt-anchor-001" \
-    --role maker --effect refund --start-height "$scan_start_height" \
-    --max-blocks 1 --output-result "$m7_losing_tag16_post_attempt_anchor" \
-    >/dev/null 2>&1 || true
+    --role maker --effect refund --start-height 1 --max-blocks 1 \
+    --observe-finalized-clock \
+    --output-result "$m7_losing_tag16_post_attempt_anchor" >/dev/null
   require_owner_file "$m7_losing_tag16_post_attempt_anchor" \
     "losing Tag16 post-attempt finalized anchor"
-  if jq -e '.outcome.status=="found"' \
-      "$m7_losing_tag16_post_attempt_anchor" >/dev/null 2>&1; then
-    fail "late losing Tag16 produced a finalized refund during its attempt"
-  fi
   post_attempt_finalized_height="$(jq -er \
     --argjson before "$pre_attempt_finalized_height" '
-      select(.outcome.status=="absent" or .outcome.status=="uncertain")
-      | .outcome.finalized_clock.height
+      .clock.height
       | select(type=="number" and . >= $before)
     ' "$m7_losing_tag16_post_attempt_anchor")"
   scan_end_height="$((post_attempt_finalized_height + tag17_finality_page_blocks))"
@@ -2844,7 +2852,7 @@ verify_losing_tag16_after_tag17() {
       --role maker --effect refund --start-height "$scan_start_height" \
       --max-blocks "$scan_blocks" \
       --output-result "$result_tmp" >/dev/null 2>&1 || true
-    if jq -e --argjson start "$tag17_height" \
+    if jq -e --argjson start "$scan_start_height" \
         --argjson blocks "$scan_blocks" \
         --argjson end "$scan_end_height" '
       .outcome.status=="absent"
@@ -2879,73 +2887,139 @@ verify_losing_tag16_after_tag17() {
   cmp -- <(jq -S -c '.outcome.facts' "$tag17_maker_finality") \
     <(jq -S -c '.outcome.facts' "$m7_tag17_reobservation") ||
     fail "Tag17 facts changed after the losing Tag16 attempt"
+  jq -S -c '.outcome.facts' "$tag17_maker_finality" >"$m7_tag17_before_facts"
+  jq -S -c '.outcome.facts' "$m7_tag17_reobservation" >"$m7_tag17_after_facts"
+  chmod 0600 "$m7_tag17_before_facts" "$m7_tag17_after_facts"
+  require_owner_file "$m7_tag17_before_facts" "pre-attempt canonical Tag17 facts"
+  require_owner_file "$m7_tag17_after_facts" "post-attempt canonical Tag17 facts"
 
-  jq -n --slurpfile absence "$m7_losing_tag16_absence" \
-    --slurpfile tag17 "$m7_tag17_reobservation" \
+  jq -n --slurpfile pre_anchor "$m7_losing_tag16_pre_attempt_anchor" \
+    --slurpfile post_anchor "$m7_losing_tag16_post_attempt_anchor" \
+    --slurpfile submission "$m7_losing_tag16_evidence" \
+    --slurpfile absence "$m7_losing_tag16_absence" \
+    --slurpfile tag17_before "$tag17_maker_finality" \
+    --slurpfile tag17_after "$m7_tag17_reobservation" \
     --arg run "$run_id" --argjson status "$tag16_status" \
+    --arg admission "$tag16_admission" \
+    --arg submission_sha "$(sha256_file "$m7_losing_tag16_evidence")" \
     --arg stderr_sha "$(sha256_file "$m7_losing_tag16_stderr")" \
     --arg stdout_sha "$(sha256_file "$m7_losing_tag16_stdout")" \
-    --argjson admitted "$tag16_admitted" \
-    --arg submission_outcome "$tag16_submission_outcome" \
+    --arg pre_anchor_sha "$(sha256_file "$m7_losing_tag16_pre_attempt_anchor")" \
+    --arg post_anchor_sha "$(sha256_file "$m7_losing_tag16_post_attempt_anchor")" \
+    --arg absence_sha "$(sha256_file "$m7_losing_tag16_absence")" \
+    --arg tag17_before_sha "$(sha256_file "$tag17_maker_finality")" \
+    --arg tag17_after_sha "$(sha256_file "$m7_tag17_reobservation")" \
+    --arg tag17_before_facts_sha "$(sha256_file "$m7_tag17_before_facts")" \
+    --arg tag17_after_facts_sha "$(sha256_file "$m7_tag17_after_facts")" \
     --argjson before "$tag16_phase" --argjson after "$tag17_phase" \
-    --argjson anchor "$pre_attempt_finalized_height" \
-    --argjson post_anchor "$post_attempt_finalized_height" \
     --argjson tail "$tag17_finality_page_blocks" '
     {schema:"lez_v02_m7_losing_tag16_after_tag17_v1",result:"passed",run_id:$run,
      branch:"tag17_wins_over_late_tag16",
      ordering:{tag16_completed_phase_index:$before,tag17_prepared_phase_index:$after,
        tag16_completed_before_tag17:($before<$after),
-       pre_attempt_finalized_height:$anchor,
-       post_attempt_finalized_height:$post_anchor},
-     tag16:{process_exit_status:$status,transport_admitted:$admitted,
-       submission_outcome:(if $admitted then $submission_outcome else null end),
-       submission_evidence_reserved_empty:($admitted|not),
+       pre_attempt_finalized_clock:$pre_anchor[0].clock,
+       post_attempt_finalized_clock:$post_anchor[0].clock,
+       pre_attempt_anchor_evidence_sha256:$pre_anchor_sha,
+       post_attempt_anchor_evidence_sha256:$post_anchor_sha},
+     tag16:{process_exit_status:$status,transport_admission:$admission,
+       transaction_id:(if $admission=="accepted" then $submission[0].transaction_id else null end),
+       prepare_request_id:(if $admission=="accepted" then $submission[0].prepare_request_id else null end),
+       complete_request_id:(if $admission=="accepted" then $submission[0].complete_request_id else null end),
+       submission_request_id:(if $admission=="accepted" then $submission[0].submission_request_id else null end),
+       prepared_message_hash:(if $admission=="accepted" then $submission[0].prepared_message_hash else null end),
+       submission_outcome:(if $admission=="accepted" then $submission[0].submission_outcome else null end),
+       submission_evidence_reserved_empty:($submission|length==0),
+       submission_evidence_sha256:$submission_sha,
        stdout_sha256:$stdout_sha,stderr_sha256:$stderr_sha,automatic_retry:false,
-       finalized_refund_absence_start_height:$absence[0].outcome.scanned_window.start_height,
-       finalized_refund_absence_window_blocks:$absence[0].outcome.scanned_window.max_blocks,
+       finalized_refund_absence:{
+         result_evidence_sha256:$absence_sha,
+         start_height:$absence[0].outcome.scanned_window.start_height,
+         window_blocks:$absence[0].outcome.scanned_window.max_blocks,
+         finalized_clock:$absence[0].outcome.finalized_clock,
+         status:$absence[0].outcome.status,
+         terminal_rule:"refund_absent_only_when_claimed_zero_at_candidate_and_window_end"},
        minimum_post_attempt_finalized_tail_blocks:$tail,
        finalized_refund_absent:($absence[0].outcome.status=="absent")},
-     tag17:{facts_reobserved_equal:true,
-       effect:$tag17[0].outcome.facts.instruction.effect,
-       terminal_state:$tag17[0].outcome.facts.metadata.state,
-       terminal_custody_balance:$tag17[0].outcome.facts.custody.balance},
+     tag17:{transaction_id:$tag17_after[0].outcome.facts.transaction.transaction_id,
+       original_evidence_sha256:$tag17_before_sha,
+       reobserved_evidence_sha256:$tag17_after_sha,
+       original_facts_sha256:$tag17_before_facts_sha,
+       reobserved_facts_sha256:$tag17_after_facts_sha,
+       facts_reobserved_equal:($tag17_before_facts_sha==$tag17_after_facts_sha),
+       effect:$tag17_after[0].outcome.facts.instruction.effect,
+       terminal_state:$tag17_after[0].outcome.facts.metadata.state,
+       terminal_custody_balance:$tag17_after[0].outcome.facts.custody.balance},
      atomicity:{losing_refund_excluded_in_finalized_window:true,
        window_begins_after_pre_attempt_finalized_anchor:
-         ($absence[0].outcome.scanned_window.start_height==($anchor+1)),
+         ($absence[0].outcome.scanned_window.start_height==($pre_anchor[0].clock.height+1)),
        window_covers_complete_attempt_interval:
          (($absence[0].outcome.scanned_window.start_height
            + $absence[0].outcome.scanned_window.max_blocks - 1)
-          == ($post_anchor+$tail)),
+          == ($post_anchor[0].clock.height+$tail)),
        distributed_cross_chain_transaction_claimed:false,
        future_reorg_immunity_claimed:false},
      runtime_external_resources:[],public_deployment:false}
   ' >"$m7_losing_branch_evidence"
   chmod 0600 "$m7_losing_branch_evidence"
   require_owner_file "$m7_losing_branch_evidence" "losing Tag16 evidence"
-  jq -e --argjson tail "$tag17_finality_page_blocks" '
+  jq -e --argjson tail "$tag17_finality_page_blocks" --arg run "$run_id" '
     .schema=="lez_v02_m7_losing_tag16_after_tag17_v1" and .result=="passed"
     and .branch=="tag17_wins_over_late_tag16"
     and .ordering.tag16_completed_before_tag17==true
-    and ((.tag16.transport_admitted==true
+    and (.ordering.pre_attempt_finalized_clock.block_hash|test("^[0-9a-f]{64}$"))
+    and (.ordering.pre_attempt_finalized_clock.height|type)=="number"
+    and (.ordering.pre_attempt_finalized_clock.timestamp_ms|type)=="number"
+    and (.ordering.post_attempt_finalized_clock.block_hash|test("^[0-9a-f]{64}$"))
+    and (.ordering.post_attempt_finalized_clock.height|type)=="number"
+    and (.ordering.post_attempt_finalized_clock.timestamp_ms|type)=="number"
+    and (.ordering.pre_attempt_anchor_evidence_sha256|test("^[0-9a-f]{64}$"))
+    and (.ordering.post_attempt_anchor_evidence_sha256|test("^[0-9a-f]{64}$"))
+    and ((.tag16.transport_admission=="accepted"
           and .tag16.process_exit_status==0
-          and (.tag16.submission_outcome|type)=="string"
+          and .tag16.submission_outcome=="accepted"
+          and (.tag16.transaction_id|test("^[0-9a-f]{64}$"))
+          and .tag16.submission_request_id==.tag16.transaction_id
+          and .tag16.prepare_request_id==($run+"-m7-losing-tag16-prepare-001")
+          and .tag16.complete_request_id==($run+"-m7-losing-tag16-complete-001")
+          and (.tag16.prepared_message_hash|test("^[0-9a-f]{64}$"))
           and .tag16.submission_evidence_reserved_empty==false)
-      or (.tag16.transport_admitted==false
+      or (.tag16.transport_admission=="unknown"
           and .tag16.process_exit_status!=0
+          and .tag16.transaction_id==null
+          and .tag16.prepare_request_id==null
+          and .tag16.complete_request_id==null
+          and .tag16.submission_request_id==null
+          and .tag16.prepared_message_hash==null
           and .tag16.submission_outcome==null
           and .tag16.submission_evidence_reserved_empty==true))
     and .tag16.automatic_retry==false
+    and (.tag16.submission_evidence_sha256|test("^[0-9a-f]{64}$"))
     and (.tag16.stdout_sha256|test("^[0-9a-f]{64}$"))
-    and .tag16.finalized_refund_absence_start_height
-      == (.ordering.pre_attempt_finalized_height + 1)
-    and .ordering.post_attempt_finalized_height
-      >= .ordering.pre_attempt_finalized_height
-    and .tag16.finalized_refund_absence_window_blocks
-      == (.ordering.post_attempt_finalized_height
-          - .ordering.pre_attempt_finalized_height + $tail)
+    and .tag16.finalized_refund_absence.start_height
+      == (.ordering.pre_attempt_finalized_clock.height + 1)
+    and .ordering.post_attempt_finalized_clock.height
+      >= .ordering.pre_attempt_finalized_clock.height
+    and .tag16.finalized_refund_absence.window_blocks
+      == (.ordering.post_attempt_finalized_clock.height
+          - .ordering.pre_attempt_finalized_clock.height + $tail)
+    and .tag16.finalized_refund_absence.finalized_clock.height
+      >= (.ordering.post_attempt_finalized_clock.height + $tail)
+    and (.tag16.finalized_refund_absence.finalized_clock.block_hash
+      |test("^[0-9a-f]{64}$"))
+    and (.tag16.finalized_refund_absence.finalized_clock.timestamp_ms|type)=="number"
+    and (.tag16.finalized_refund_absence.result_evidence_sha256
+      |test("^[0-9a-f]{64}$"))
+    and .tag16.finalized_refund_absence.status=="absent"
+    and .tag16.finalized_refund_absence.terminal_rule
+      == "refund_absent_only_when_claimed_zero_at_candidate_and_window_end"
     and .tag16.minimum_post_attempt_finalized_tail_blocks==$tail
     and .tag16.finalized_refund_absent==true
     and (.tag16.stderr_sha256|test("^[0-9a-f]{64}$"))
+    and (.tag17.transaction_id|test("^[0-9a-f]{64}$"))
+    and (.tag17.original_evidence_sha256|test("^[0-9a-f]{64}$"))
+    and (.tag17.reobserved_evidence_sha256|test("^[0-9a-f]{64}$"))
+    and (.tag17.original_facts_sha256|test("^[0-9a-f]{64}$"))
+    and .tag17.original_facts_sha256==.tag17.reobserved_facts_sha256
     and .tag17.facts_reobserved_equal==true and .tag17.effect=="punish"
     and .tag17.terminal_state=="claimed"
     and .tag17.terminal_custody_balance=="0"

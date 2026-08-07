@@ -133,7 +133,10 @@ jq -e '
   and .m7_losing_tag16_after_tag17.default_behavior_unchanged == true
   and .m7_losing_tag16_after_tag17.tag16_completed_before_tag17 == true
   and .m7_losing_tag16_after_tag17.late_tag16_admission_may_succeed == true
+  and .m7_losing_tag16_after_tag17.failed_tag16_process_means_admission_unknown == true
+  and .m7_losing_tag16_after_tag17.authenticated_actual_tip_anchors == true
   and .m7_losing_tag16_after_tag17.finalized_losing_effect_must_be_absent == true
+  and .m7_losing_tag16_after_tag17.terminal_claimed_zero_excludes_refund == true
   and .m7_losing_tag16_after_tag17.minimum_post_attempt_finalized_tail_blocks == 8
   and .m7_losing_tag16_after_tag17.window_begins_after_pre_attempt_finalized_anchor == true
   and .m7_losing_tag16_after_tag17.window_covers_complete_attempt_interval == true
@@ -194,6 +197,25 @@ rg -Fq '"$m7_xmr_losing_tag16_after_tag17" == 1' <<<"$build_source" ||
   fail "losing-Tag16 mode does not build and stage its Tag16 binary"
 rg -Fq 'stage_executable "${workspace_target}/debug/xmr-reference-tag16"' \
   <<<"$build_source" || fail "Tag16 binary staging is unavailable"
+losing_source="$(function_source verify_losing_tag16_after_tag17)"
+[[ -n "$losing_source" ]] || fail "losing-Tag16 verifier is unavailable"
+rg -Fq 'if jq -e --argjson start "$scan_start_height"' \
+  <<<"$losing_source" ||
+  fail "losing-Tag16 absence result is not bound to its requested start height"
+for required in \
+  'local tag16_admission="unknown"' \
+  '.submission_outcome=="accepted"' \
+  'pre_attempt_finalized_clock:$pre_anchor[0].clock' \
+  'post_attempt_finalized_clock:$post_anchor[0].clock' \
+  'refund_absent_only_when_claimed_zero_at_candidate_and_window_end' \
+  'original_facts_sha256:$tag17_before_facts_sha' \
+  'reobserved_facts_sha256:$tag17_after_facts_sha'; do
+  rg -Fq -- "$required" <<<"$losing_source" ||
+    fail "losing-Tag16 verifier omits evidence boundary: ${required}"
+done
+if rg -Fq 'transport_admitted' <<<"$losing_source"; then
+  fail "losing-Tag16 verifier still claims transport rejection from process failure"
+fi
 
 ledger_fixture_root="${test_root}/resource-ledger"
 mkdir -m 0700 "$ledger_fixture_root"
@@ -281,6 +303,7 @@ for required in \
   lez_xmr_monero_refund_sweep_v3 lez_xmr_monero_verify_v2 M7_XMR_SUPERVISED_REFUND \
   M7_XMR_JOINED_ABANDONMENT verify_joined_abandonment_economics \
   M7_XMR_LOSING_TAG16_AFTER_TAG17 verify_losing_tag16_after_tag17 \
+  --observe-finalized-clock \
   bind-finalized-claim-sweep M4_EXPECTED_COMMIT MONERO_RUN_ID; do
   rg -Fq -- "$required" "$runner" || fail "runner omits required boundary: ${required}"
 done
