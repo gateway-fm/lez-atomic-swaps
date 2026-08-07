@@ -45,14 +45,13 @@ LEZ accepted the losing Tag16 transport once, no Refund effect finalized from
 height 168 through 175, and the canonical Tag17 facts remained identical.
 
 ADR [0176](docs/architecture/0176-exclude-losing-tag17-after-finalized-tag16.md)
-defines the symmetric Tag16-wins hardening route. Its focused RED/GREEN
-classifier and isolated runner contracts are GREEN: exact Tag17 bytes are
-prepared before Tag16, winning Tag16 finality is bound to its submitted
-transaction, one time-valid late Tag17 is attempted after the punishment
-boundary, and the complete interval plus eight finalized blocks must contain
-no Punish effect while canonical Tag16 facts remain identical. A fresh
-pushed-commit two-devnet replay is still required before retaining a
-certificate or calling this slice actual-node GREEN.
+defines the symmetric Tag16-wins hardening route. Exact pushed run
+`m7lose17-63a9496-b` prepared Tag17 before Tag16, finalized Tag16 as Refunded/0,
+then transport-accepted the late Tag17 once. No Punish effect finalized from
+height 219 through 226, and a retried read-only observation retained identical
+Tag16 facts. The checked
+[certificate](docs/evidence/m7-actual-losing-tag17-63a9496-20260807.json)
+also binds the local deployment, Monero 0.18.5.1 Regtest, and exact cleanup.
 
 The application-owned Maker Tag17 recovery boundary is also GREEN under
 [ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the

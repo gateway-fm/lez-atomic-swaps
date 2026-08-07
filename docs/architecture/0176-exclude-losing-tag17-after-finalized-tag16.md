@@ -1,7 +1,7 @@
 # ADR 0176: Exclude losing Tag17 after finalized Tag16
 
-- Status: Accepted; focused RED/GREEN implementation complete, exact pushed-commit
-  two-devnet replay pending
+- Status: Accepted and actual-node GREEN on `m7lose17-63a9496-b`; checked
+  certificate and exact cleanup retained
 - Date: 2026-08-07
 
 ## Context
@@ -91,6 +91,10 @@ The focused classifier test is
 tag_14_through_tag_17_are_classified_by_owner_and_counterparty; it was RED
 before terminal Refunded could exclude Punish and is now GREEN. The runner
 contract is ./scripts/test-m4-actual-claim-poc-contract.sh. Manual Flow 1ZI
-documents exact-commit reproduction. No certificate or milestone tag may be
-created until a fresh pushed-commit replay, evidence validation, exact cleanup,
-and foreign-sentinel preservation all pass.
+documents exact-commit reproduction. Exact pushed run `m7lose17-63a9496-b`
+accepted late Tag17 once at finalized anchor 218, proved Punish absent through
+226, and reobserved byte-identical Tag16 facts on the second bounded read-only
+attempt. Source exit status, exact cleanup, and foreign-sentinel preservation
+passed. The secret-free checked certificate is
+`docs/evidence/m7-actual-losing-tag17-63a9496-20260807.json`. Concurrent
+boundary, process-kill, fee, and reorg cases remain before an M7 tag.

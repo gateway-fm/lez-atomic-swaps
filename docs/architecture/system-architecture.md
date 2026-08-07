@@ -3737,6 +3737,13 @@ transaction exists before Tag16, but Tag16 reaches terminal Refunded state and
 zero custody first. One time-valid late Tag17 release is then judged only by
 authenticated finalized effects, never by its transport response.
 
+Exact pushed run `m7lose17-63a9496-b` exercised this diagram on isolated LEZ
+v0.2 and Monero 0.18.5.1 Regtest. Tag16 finalized at height 167; the late Tag17
+attempt was bracketed at finalized height 218; Punish remained absent through
+226; and complete Tag16 facts reobserved byte-identically after one transient
+read-only timeout. The checked certificate is
+`docs/evidence/m7-actual-losing-tag17-63a9496-20260807.json`.
+
 ```mermaid
 flowchart LR
     Prepared17[Exact Tag17 prepared] --> Final16[Tag16 finalized Refunded]

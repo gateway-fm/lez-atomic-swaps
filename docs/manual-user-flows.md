@@ -8892,3 +8892,10 @@ Rust/Risc0 compilation, Docker startup, CPU/disk pressure, SQLite sync, the
 intentional local timelock, and bounded finalized-tail polling. Use a unique
 RUN_ID and exact run-owned cleanup; do not prune or address foreign Docker
 projects.
+
+The exact pushed example is `m7lose17-63a9496-b`: Tag17 was accepted once at
+anchor 218, Punish was absent through height 226, and the bounded Tag16
+reobservation succeeded on attempt two with equal fact hashes. Verify the
+allowlisted packet offline with
+`./scripts/test-m7-losing-tag17-actual-certificate.sh`; its checked path is
+`docs/evidence/m7-actual-losing-tag17-63a9496-20260807.json`.
