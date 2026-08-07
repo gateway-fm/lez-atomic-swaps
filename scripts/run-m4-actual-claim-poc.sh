@@ -3226,13 +3226,32 @@ verify_losing_tag17_after_tag16() {
   tag16_height="$(jq -er '
     .outcome.facts.containing_block.block_id | select(type=="number" and .>=1)
   ' "$tag16_refund_finality_result")"
-  "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
-    --capability-file "$maker_sidecar_root/capability" \
-    --runtime-file "$tag13_handoff_root/maker-runtime.json" \
-    --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
-    --request-id "${run_id}-m7-tag16-reobserve-001" --role maker --effect refund \
-    --start-height "$tag16_height" --max-blocks "$tag17_finality_page_blocks" \
-    --output-result "$m7_tag16_reobservation" >/dev/null
+  result_tmp="${m7_tag16_reobservation}.attempt"
+  for attempt in {1..2400}; do
+    rm -f -- "$result_tmp"
+    "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
+      --capability-file "$maker_sidecar_root/capability" \
+      --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+      --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+      --request-id "${run_id}-m7-tag16-reobserve-${attempt}" \
+      --role maker --effect refund --start-height "$tag16_height" \
+      --max-blocks "$tag17_finality_page_blocks" \
+      --output-result "$result_tmp" >/dev/null 2>&1 || true
+    if jq -e --arg tx "$(jq -er '.transaction_id' "$tag16_submission")" '
+      .outcome.status=="found"
+      and .outcome.facts.transaction.transaction_id==$tx
+      and .outcome.facts.instruction.effect=="refund"
+      and .outcome.facts.metadata.state=="refunded"
+      and .outcome.facts.custody.balance=="0"
+    ' "$result_tmp" >/dev/null 2>&1; then
+      mv "$result_tmp" "$m7_tag16_reobservation"
+      break
+    fi
+    if jq -e '.outcome.status=="found"' "$result_tmp" >/dev/null 2>&1; then
+      fail "Tag16 reobservation returned inconsistent finalized facts"
+    fi
+    sleep .25
+  done
   require_owner_file "$m7_tag16_reobservation" "post-losing-Tag17 Tag16 evidence"
   jq -e --arg tx "$(jq -er '.transaction_id' "$tag16_submission")" '
     .outcome.status=="found"

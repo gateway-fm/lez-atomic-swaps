@@ -230,6 +230,17 @@ if rg -Fq 'transport_admitted' <<<"$losing_source"; then
   fail "losing-Tag16 verifier still claims transport rejection from process failure"
 fi
 
+losing_tag17_source="$(function_source verify_losing_tag17_after_tag16)"
+[[ -n "$losing_tag17_source" ]] || fail "losing-Tag17 verifier is unavailable"
+for required in \
+  'result_tmp="${m7_tag16_reobservation}.attempt"' \
+  'for attempt in {1..2400}; do' \
+  '--request-id "${run_id}-m7-tag16-reobserve-${attempt}"' \
+  'mv "$result_tmp" "$m7_tag16_reobservation"'; do
+  rg -Fq -- "$required" <<<"$losing_tag17_source" ||
+    fail "losing-Tag17 verifier does not retry the read-only Tag16 reobservation: ${required}"
+done
+
 ledger_fixture_root="${test_root}/resource-ledger"
 mkdir -m 0700 "$ledger_fixture_root"
 readonly ledger_fixture_root

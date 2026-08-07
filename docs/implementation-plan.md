@@ -6908,10 +6908,19 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Record components, local RPCs, sequence, bounded atomicity argument,
   residuals, and manual reproduction in ADR 0176 and Flow 1ZI.
 - [x] Run the full pinned CI-quality wrapper, push clean implementation
-  checkpoint 1b60283 to origin/main, and report the corrected replay ETA.
-- [ ] Replay from that exact pushed commit on isolated LEZ v0.2 and Monero
-  0.18.5.1 Regtest; validate source status, proof packet, exact cleanup, and
-  foreign-sentinel preservation.
+  checkpoints 1b60283 and 5b2bb71 to origin/main, and report the corrected
+  replay ETA.
+- [x] Retain bounded run m7lose17-5b2bb71-a: exact Tag16 finalized Refunded/0,
+  one late transport-accepted Tag17 produced no Punish effect through finalized
+  heights 221..228, then a single unguarded read-only Tag16 reobservation timed
+  out; exact cleanup passed and no foreign resource was targeted. This is
+  diagnostic evidence, not a milestone certificate.
+- [x] RED then GREEN: require bounded unique-request retries for the final
+  read-only Tag16 reobservation while failing immediately on inconsistent
+  Found facts.
+- [ ] Replay the retry fix from its exact pushed commit on isolated LEZ v0.2
+  and Monero 0.18.5.1 Regtest; validate source status, proof packet, exact
+  cleanup, and foreign-sentinel preservation.
 - [ ] RED then GREEN: add a checked secret-free certificate and wire it into
   the quality runner and CI hardening policy.
 - [ ] Continue with concurrent boundary schedules, process-kill recovery,
