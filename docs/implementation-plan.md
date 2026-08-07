@@ -6829,8 +6829,11 @@ S12/S13 review and policy-deferred public deployment.
   claiming independent unspent authority.
 - [x] Record the components, RPCs, sequence and conditional economic-safety
   argument in ADR 0174 and manual Flow 1ZG.
-- [ ] Push the clean implementation checkpoint, then execute one fresh isolated
-  LEZ v0.2 plus official Monero 0.18.5.1 Regtest replay from that exact commit.
+- [x] Push the clean implementation checkpoint as `3a25e22` after the full
+  pinned CI-quality wrapper passed, including ShellCheck, workflow/container
+  policy, milestone contracts, and focused Rust route tests.
+- [ ] Execute one fresh isolated LEZ v0.2 plus official Monero 0.18.5.1 Regtest
+  replay from the next exact plan-pinned commit.
   Retain a checked secret-free certificate only after source status zero and
   exact cleanup.
 - [ ] Post-PoC hardening: inject losing Tag14/Tag16 branches, process kills,
