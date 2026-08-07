@@ -6860,6 +6860,11 @@ S12/S13 review and policy-deferred public deployment.
   and byte-equivalently re-observe the exact winning Tag17 facts.
 - [x] Record components, RPCs, sequence, atomicity scope, residuals, and manual
   repetition in ADR 0175 and Flow 1ZH.
+- [x] Replay `m7lose16-a720b96-a` through finalized Tag17; preserve its RED
+  finding that protocol-only losing mode omitted the Tag16 binary from the
+  staged build, then verify exact cleanup passed.
+- [x] Add a focused RED build/staging assertion and make losing mode build,
+  declare, and stage the exact Tag16 driver independently of application mode.
 - [ ] Push a clean checkpoint, run a fresh exact-commit two-devnet replay, and
   retain a checked secret-free certificate only after exact cleanup.
 - [ ] Follow with the opposite ordering, concurrent boundary schedules,

@@ -1,7 +1,8 @@
 # ADR 0175: Reject losing Tag16 after finalized Tag17
 
 - Status: Implemented behind an isolated M7 hardening flag; exact pushed-commit
-  actual-node replay pending
+  actual-node replay reached finalized Tag17 and then exposed a Tag16 binary
+  staging-scope defect; corrected replay pending
 - Date: 2026-08-07
 
 ## Context
@@ -93,3 +94,9 @@ The fast runner contract is
 the exact-commit replay. A checked certificate may be retained only after
 source status zero, the losing-branch packet passes, and exact cleanup
 preserves the foreign sentinel.
+
+The first exact-commit replay `m7lose16-a720b96-a` finalized Tag17 but failed
+before the late Tag16 process because protocol-only losing mode had not staged
+that binary. Exact cleanup passed. The follow-up RED contract now requires the
+build/staging function to include the losing mode; the corrected implementation
+must be replayed from a new pushed commit before this ADR can be accepted.

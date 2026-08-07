@@ -187,6 +187,13 @@ jq -e '
     "tag15_finality","extraction","monero_sweep","evidence","cleanup"]
 ' <<<"$contract" >/dev/null || fail "runner does not expose the required phase/safety contract"
 
+build_source="$(function_source build_identity_and_artifact)"
+[[ -n "$build_source" ]] || fail "build/staging function is unavailable"
+rg -Fq '"$m7_xmr_losing_tag16_after_tag17" == 1' <<<"$build_source" ||
+  fail "losing-Tag16 mode does not build and stage its Tag16 binary"
+rg -Fq 'stage_executable "${workspace_target}/debug/xmr-reference-tag16"' \
+  <<<"$build_source" || fail "Tag16 binary staging is unavailable"
+
 ledger_fixture_root="${test_root}/resource-ledger"
 mkdir -m 0700 "$ledger_fixture_root"
 readonly ledger_fixture_root

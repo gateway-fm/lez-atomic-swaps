@@ -883,8 +883,9 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
       --bin xmr-reference-actor --bin xmr-reference-tag15
-  if [[ "$m5_xmr_application_mode" == 1 &&
-        ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ]]; then
+  if [[ ( "$m5_xmr_application_mode" == 1 &&
+          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ) ||
+        "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
         --bin xmr-reference-tag16 --bin xmr-reference-monero-verify
@@ -920,8 +921,9 @@ build_identity_and_artifact() {
   mkdir -m 0700 "$staged_binary_root"
   readonly agreement_actor_binary="${staged_binary_root}/xmr-reference-actor"
   readonly tag15_binary="${staged_binary_root}/xmr-reference-tag15"
-  if [[ "$m5_xmr_application_mode" == 1 &&
-        ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ]]; then
+  if [[ ( "$m5_xmr_application_mode" == 1 &&
+          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ) ||
+        "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
     readonly tag16_binary="${staged_binary_root}/xmr-reference-tag16"
     readonly m7_monero_observer_binary="${staged_binary_root}/xmr-reference-monero-verify"
   fi
@@ -966,8 +968,9 @@ build_identity_and_artifact() {
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/xmr-reference-tag15" "$tag15_binary" "Tag15 driver"
-  if [[ "$m5_xmr_application_mode" == 1 &&
-        ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ]]; then
+  if [[ ( "$m5_xmr_application_mode" == 1 &&
+          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ) ||
+        "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-tag16" \
       "$tag16_binary" "Tag16 refund driver"
     stage_executable "${workspace_target}/debug/xmr-reference-monero-verify" \
