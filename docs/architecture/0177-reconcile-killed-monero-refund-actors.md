@@ -31,6 +31,12 @@ then kills the separately grouped paused actor; only after both exact
 PID/start-tick/executable identities disappear may a fresh daemon reopen the
 same database and registry.
 
+The crash trigger is the conjunction of durable submission evidence, a leased
+manual Refund generation, and the authenticated post-send marker. It must not
+also require the daemon's revision-one projection: the actor emits that
+projection on stdout, and this fault deliberately pauses before stdout. The
+normal no-crash supervisor retains the stricter revision-one requirement.
+
 ## Components
 
 ```mermaid
@@ -95,6 +101,15 @@ implements full-daemon and actor kills, abandoned generation transfer, and
 actual Monero submission-identity preservation; those claims remain pending
 until an exact clean pushed-commit replay passes. Reorg safety, fee pressure,
 and concurrent accepted swaps remain separate gates.
+
+The first exact replay reached one accepted Tag16 refund and one durable Monero
+refund submission, then exposed an ordering error in the harness: it waited
+for the impossible pre-stdout revision-one projection, so the supervisor's
+120-second attempt timeout requeued the paused actor before the ordered kill.
+The RED/GREEN predicate fixture now proves crash mode accepts the leased
+revision-zero pre-stdout state while normal mode rejects it. The interrupted
+run cleaned only its exact resources and is diagnostic evidence, not a
+certificate.
 
 ## Verification
 

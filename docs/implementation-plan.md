@@ -6951,6 +6951,12 @@ S12/S13 review and policy-deferred public deployment.
   submitted marker, daemon-then-actor kill order, sealed-memfd actor identity,
   greater recovered generation, unchanged submission identity, restart before
   mining, and no public resources.
+- [x] First exact replay reached finalized Tag16 and a durable Monero refund
+  send, then proved the crash trigger incorrectly required the actor's
+  revision-one stdout projection before killing a process paused before
+  stdout. RED/GREEN fixture the submitted-state predicate so crash mode accepts
+  durable leased revision zero while normal mode still requires revision one;
+  exact run cleanup preserved the foreign Docker project.
 - [x] Add manual Flow 1ZJ and pin the actual-chain crash seam in the M5 service
   lifecycle policy gate.
 - [ ] Add the checked certificate and traceability/hard-requirement deltas;

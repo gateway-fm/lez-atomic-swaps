@@ -3860,6 +3860,23 @@ m7_refund_actor_is_owned() {
   [[ "$(sha256_file "/proc/${pid}/exe")" == "$binary_sha256" ]]
 }
 
+m7_refund_submission_is_ready() {
+  local monitor="$1" require_crash="$2"
+  [[ "$require_crash" == 0 || "$require_crash" == 1 ]] || return 1
+  jq -e --argjson require_crash "$require_crash" '
+    .manual_action.action=="refund"
+    and (if $require_crash==1 then
+      .schedule_state=="leased" and .manual_action.state=="leased"
+    else
+      (.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")
+      and (.manual_action.state=="queued" or .manual_action.state=="leased")
+      and .progress.observation.state=="active"
+      and .progress.observation.phase=="maker_recovery_available"
+      and .progress.observation.revision==1
+    end)
+  ' "$monitor" >/dev/null 2>&1
+}
+
 crash_and_restart_m7_refund_supervisor() {
   [[ "$m7_xmr_refund_process_kill" == 1 ]] ||
     fail "M7 refund process-kill recovery requires its isolated mode"
@@ -4104,18 +4121,8 @@ activate_and_supervise_m7_maker_refund() {
     if [[ -f "$m7_refund_submission" ]] &&
       "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
       --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
-      jq -e --argjson require_crash "$m7_xmr_refund_process_kill" '
-        (if $require_crash==1 then
-          .schedule_state=="leased" and .manual_action.state=="leased"
-        else
-          (.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")
-          and (.manual_action.state=="queued" or .manual_action.state=="leased")
-        end)
-        and .progress.observation.state=="active"
-        and .progress.observation.phase=="maker_recovery_available"
-        and .progress.observation.revision==1
-        and .manual_action.action=="refund"
-      ' "$current_monitor" >/dev/null 2>&1; then
+      m7_refund_submission_is_ready "$current_monitor" \
+        "$m7_xmr_refund_process_kill"; then
       if [[ "$m7_xmr_refund_process_kill" == 0 || -f "$m7_refund_pause_marker" ]]; then
         observed_submission=1
         break

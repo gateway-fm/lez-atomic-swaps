@@ -500,6 +500,7 @@ m7_supervisor_source="$(function_source activate_and_supervise_m7_maker_refund)"
 for m7_supervisor_boundary in \
   'activate-maker-refund-workflow' \
   '--expected-generation "$generation"' \
+  'm7_refund_submission_is_ready "$current_monitor"' \
   'mine_m7_refund_confirmations' \
   'retain_m7_refund_finality_evidence' \
   '.manual_action.action=="refund" and .manual_action.state=="completed"' \
@@ -509,9 +510,29 @@ for m7_supervisor_boundary in \
 done
 rg -Fq '[[ -f "$m7_refund_submission" ]] &&' <<<"$m7_supervisor_source" ||
   fail "M7 supervisor does not gate confirmation mining on durable submission evidence"
+m7_submission_ready_source="$(function_source m7_refund_submission_is_ready)"
+[[ -n "$m7_submission_ready_source" ]] ||
+  fail "M7 refund submitted-state predicate is unavailable"
 rg -Fq '(.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")' \
-  <<<"$m7_supervisor_source" ||
-  fail "M7 supervisor still depends on a transient queued-only handoff"
+  <<<"$m7_submission_ready_source" ||
+  fail "M7 normal supervisor still depends on a transient queued-only handoff"
+m7_pre_stdout_monitor="$test_root/m7-pre-stdout-monitor.json"
+jq -cn '
+  {
+    schedule_state:"leased",lease_generation:3,
+    manual_action:{action:"refund",state:"leased",lease_generation:3},
+    progress:{observation:{state:"active",phase:"offered",revision:0}}
+  }
+' >"$m7_pre_stdout_monitor"
+if ! M7_SUBMISSION_READY_SOURCE="$m7_submission_ready_source" \
+  M7_PRE_STDOUT_MONITOR="$m7_pre_stdout_monitor" bash -c '
+    set -euo pipefail
+    eval "$M7_SUBMISSION_READY_SOURCE"
+    m7_refund_submission_is_ready "$M7_PRE_STDOUT_MONITOR" 1
+    ! m7_refund_submission_is_ready "$M7_PRE_STDOUT_MONITOR" 0
+  '; then
+  fail "M7 process-kill mode still waits for the impossible pre-stdout revision-1 projection"
+fi
 m7_crash_source="$(function_source crash_and_restart_m7_refund_supervisor)"
 [[ -n "$m7_crash_source" ]] || fail "M7 refund process-kill helper is unavailable"
 m7_actor_identity_source="$(function_source m7_refund_actor_is_owned)"
