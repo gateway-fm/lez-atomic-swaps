@@ -1,6 +1,7 @@
 # ADR 0177: Reconcile killed Monero refund actors
 
-- Status: Accepted; real-actor component GREEN, joined actual-node restart pending
+- Status: Accepted; real-actor component and joined runner contracts GREEN,
+  exact pushed-commit actual-node replay pending
 - Date: 2026-08-07
 
 ## Context
@@ -24,7 +25,11 @@ After a killed actor, durable workflow state remains `Started`. The next
 generation must select `ObserveOnly`; it may complete from exact finalized
 evidence but cannot invoke the sender again. A joined actual-node phase will
 also kill the daemon, prove abandoned-generation transfer, preserve the
-submission inode and digest, and mine confirmations only after restart.
+submission inode and digest, and mine confirmations only after restart. The
+joined runner kills the daemon group first so it cannot resolve the attempt,
+then kills the separately grouped paused actor; only after both exact
+PID/start-tick/executable identities disappear may a fresh daemon reopen the
+same database and registry.
 
 ## Components
 
@@ -84,11 +89,12 @@ marker is written after sender success and before stdout, so killing at the
 marker exercises the ambiguous response boundary. The real-actor test proves
 the exact effect log is `invoke\nobserve\n`, never two invokes.
 
-This checkpoint proves process and durable-workflow behavior with the real
-role actor but fixture sender/observer processes. It does not yet claim a
-killed full daemon, actual Monero transaction preservation, reorg safety, fee
-pressure, or concurrent accepted swaps. Those remain explicit joined
-actual-node gates.
+The component checkpoint proves process and durable-workflow behavior with the
+real role actor but fixture sender/observer processes. The joined runner now
+implements full-daemon and actor kills, abandoned generation transfer, and
+actual Monero submission-identity preservation; those claims remain pending
+until an exact clean pushed-commit replay passes. Reorg safety, fee pressure,
+and concurrent accepted swaps remain separate gates.
 
 ## Verification
 
@@ -99,3 +105,8 @@ The RED/GREEN boundaries are the exact Monero-recover crash-hook test in
 `maker_xmr_tag17_supervisor.rs`. The feature-gated real-actor test sends
 `SIGKILL` to the exact actor process group and reaches terminal completion
 through one observation.
+
+The joined runner and its static RED/GREEN contract are
+`run-m4-actual-claim-poc.sh` and
+`test-m4-actual-claim-poc-contract.sh`. Manual Flow 1ZJ gives the exact
+two-devnet command and expected process evidence.

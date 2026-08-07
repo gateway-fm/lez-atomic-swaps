@@ -18,6 +18,8 @@ readonly manifest="crates/maker-node/Cargo.toml"
 readonly manual="docs/manual-user-flows.md"
 readonly decision="docs/architecture/0097-supervise-one-maker-daemon-lifecycle.md"
 readonly service_control_decision="docs/architecture/0117-control-the-fixed-maker-system-service.md"
+readonly actual_chain_crash_runner="scripts/run-m4-actual-claim-poc.sh"
+readonly actual_chain_crash_decision="docs/architecture/0177-reconcile-killed-monero-refund-actors.md"
 
 fail() {
   echo "M5 service lifecycle contract failed: $*" >&2
@@ -27,9 +29,24 @@ fail() {
 for path in \
   "$unit" "$installer" "$staged_rehearsal" "$transient_rehearsal" \
   "$lifecycle" "$service_control" "$operator_cli" "$service_cli_test" \
-  "$process_test" "$decision" "$service_control_decision"; do
+  "$process_test" "$decision" "$service_control_decision" \
+  "$actual_chain_crash_runner" "$actual_chain_crash_decision"; do
   test -f "$path" || fail "missing $path"
 done
+for token in \
+  'M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION' \
+  '--features test-crash-hooks' \
+  '--actor-test-pause-operation sweep_monero_refund' \
+  'kill -KILL -- "-${crashed_daemon_group}"' \
+  'kill -KILL -- "-${crashed_actor_group}"' \
+  'start_m5_xmr_application_daemon m7-refund-recovery 1' \
+  'recovered_generation > crashed_generation' \
+  'post_restart_route:"observe_only_pending"'; do
+  rg -Fq -- "$token" "$actual_chain_crash_runner" ||
+    fail "actual-chain refund crash recovery is missing $token"
+done
+rg -Fq 'Flow 1ZJ: Kill and restart the submitted Maker Monero refund' "$manual" ||
+  fail "manual actual-chain refund crash flow is missing"
 for script in "$installer" "$staged_rehearsal" "$transient_rehearsal"; do
   test -x "$script" || fail "$script is not executable"
   bash -n "$script"

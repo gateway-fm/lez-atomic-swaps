@@ -30,6 +30,7 @@ readonly m5_xmr_refund_delay_ms="${M5_XMR_REFUND_DELAY_MS:-900000}"
 readonly m5_xmr_refund_window_ms=600000
 readonly m7_xmr_punish_delay_ms="${M7_XMR_PUNISH_DELAY_MS:-180000}"
 readonly m7_xmr_supervised_refund="${M7_XMR_SUPERVISED_REFUND:-0}"
+readonly m7_xmr_refund_process_kill="${M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION:-0}"
 readonly m7_xmr_semantic_claim="${M7_XMR_SEMANTIC_CLAIM:-0}"
 readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
 readonly m7_xmr_losing_tag16_after_tag17="${M7_XMR_LOSING_TAG16_AFTER_TAG17:-0}"
@@ -99,6 +100,18 @@ emit_contract() {
         observer_abi: "lez_xmr_monero_verify_v2",
         external_confirmation_blocks: 10,
         confirmation_driver_outside_sender_and_observer: true,
+        runtime_external_resources: []
+      },
+      m7_xmr_refund_process_kill: {
+        mode_flag: "M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION",
+        requires_supervised_refund: true,
+        feature_gated_crash_hook: true,
+        kill_order: "daemon_then_actor",
+        restart_same_database_and_registry: true,
+        abandoned_generation_transfer_required: true,
+        submission_identity_preserved: true,
+        confirmations_mined_only_after_restart: true,
+        automatic_submission_retry: false,
         runtime_external_resources: []
       },
       m7_joined_abandonment: {
@@ -316,6 +329,8 @@ environment_preflight() {
   fi
   [[ "$m7_xmr_supervised_refund" == 0 || "$m7_xmr_supervised_refund" == 1 ]] ||
     fail "M7_XMR_SUPERVISED_REFUND must be unset, 0, or 1"
+  [[ "$m7_xmr_refund_process_kill" == 0 || "$m7_xmr_refund_process_kill" == 1 ]] ||
+    fail "M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION must be unset, 0, or 1"
   [[ "$m7_xmr_semantic_claim" == 0 || "$m7_xmr_semantic_claim" == 1 ]] ||
     fail "M7_XMR_SEMANTIC_CLAIM must be unset, 0, or 1"
   [[ "$m7_xmr_joined_abandonment" == 0 || "$m7_xmr_joined_abandonment" == 1 ]] ||
@@ -353,6 +368,10 @@ environment_preflight() {
     require_command curl
     [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == refund ]] ||
       fail "M7_XMR_SUPERVISED_REFUND=1 requires M5_XMR_APPLICATION_MODE=1 and M5_XMR_JOURNEY=refund"
+  fi
+  if [[ "$m7_xmr_refund_process_kill" == 1 ]]; then
+    [[ "$m7_xmr_supervised_refund" == 1 ]] ||
+      fail "M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION=1 requires M7_XMR_SUPERVISED_REFUND=1"
   fi
   case "$m5_xmr_journey" in
     claim)
@@ -932,9 +951,16 @@ build_identity_and_artifact() {
         --bin xmr-reference-tag17
   fi
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
-    CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
-      cargo +1.96.0 build --locked --offline -p lez-maker-node \
-        --bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor
+    if [[ "$m7_xmr_refund_process_kill" == 1 ]]; then
+      CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+        cargo +1.96.0 build --locked --offline -p lez-maker-node \
+          --features test-crash-hooks \
+          --bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor
+    else
+      CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+        cargo +1.96.0 build --locked --offline -p lez-maker-node \
+          --bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor
+    fi
   fi
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p lez-adaptor-role-runner \
@@ -1415,6 +1441,13 @@ start_m5_xmr_application_daemon() {
       --actor-failure-backoff-seconds 30
       --actor-max-output-bytes 8192
     )
+    if [[ "$m7_xmr_refund_process_kill" == 1 && "$instance" == m7-refund* ]]; then
+      arguments+=(
+        --actor-test-pause-swap-id "$m5_xmr_planned_swap_id"
+        --actor-test-pause-operation sweep_monero_refund
+        --actor-test-pause-marker "$m7_refund_pause_marker"
+      )
+    fi
   fi
   setsid "$m5_lez_maker_daemon_binary" "${arguments[@]}" >"$log_file" 2>&1 &
   m5_application_daemon_pid=$!
@@ -3818,6 +3851,205 @@ retain_m7_refund_finality_evidence() {
   cmp -s -- "$source" "$destination" || fail "M7 retained refund finality changed"
 }
 
+m7_refund_actor_is_owned() {
+  local pid="$1" start_ticks="$2" binary_sha256="$3" executable
+  [[ "$pid" =~ ^[1-9][0-9]*$ && -r "/proc/${pid}/stat" ]] || return 1
+  [[ "$(process_start_ticks "$pid")" == "$start_ticks" ]] || return 1
+  executable="$(readlink "/proc/${pid}/exe" 2>/dev/null)" || return 1
+  [[ "$executable" == "/memfd:lez-maker-actor-program (deleted)" ]] || return 1
+  [[ "$(sha256_file "/proc/${pid}/exe")" == "$binary_sha256" ]]
+}
+
+crash_and_restart_m7_refund_supervisor() {
+  [[ "$m7_xmr_refund_process_kill" == 1 ]] ||
+    fail "M7 refund process-kill recovery requires its isolated mode"
+  record_phase m7_refund_process_kill started
+  readonly m7_refund_process_kill_evidence="${evidence_root}/m7-refund-process-kill.json"
+  readonly m7_refund_recovered_monitor="${evidence_root}/m7-refund-recovered-monitor.json"
+  local crashed_actor_pid crashed_actor_start_ticks crashed_actor_group
+  local crashed_actor_binary_sha256 crashed_daemon_pid crashed_daemon_start_ticks
+  local crashed_daemon_group crashed_daemon_binary_sha256 crashed_daemon_ready
+  local crashed_generation recovered_generation="" crash_wait_status=0
+  local m7_refund_submission_identity_before m7_refund_submission_identity_after
+  local m7_refund_submission_sha256_before m7_refund_submission_sha256_after
+  local m7_refund_transaction_before m7_refund_transaction_after
+  local m7_refund_pause_sha256_before m7_refund_pause_sha256_after
+
+  require_owner_file "$m7_refund_pause_marker" "M7 refund submitted-effect pause marker"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    keys == ([
+      "operation", "process_id", "role", "schema_version", "state", "swap_id"
+    ] | sort)
+    and .schema_version==1 and .state=="paused_after_submitted_before_stdout"
+    and .swap_id==$swap and .role=="maker"
+    and .operation=="sweep_monero_refund"
+    and (.process_id|type=="number" and .>0)
+  ' "$m7_refund_pause_marker" >/dev/null ||
+    fail "M7 refund submitted-effect pause marker is invalid"
+  crashed_actor_pid="$(jq -er '.process_id' "$m7_refund_pause_marker")"
+  crashed_actor_start_ticks="$(process_start_ticks "$crashed_actor_pid")"
+  crashed_actor_binary_sha256="$(sha256_file "$m5_xmr_maker_actor_binary")"
+  [[ -n "$crashed_actor_start_ticks" ]] &&
+    m7_refund_actor_is_owned "$crashed_actor_pid" "$crashed_actor_start_ticks" \
+      "$crashed_actor_binary_sha256" ||
+    fail "M7 paused refund actor identity is unavailable"
+  crashed_actor_group="$(ps -o pgid= -p "$crashed_actor_pid" | tr -d " ")"
+  [[ "$crashed_actor_group" == "$crashed_actor_pid" ]] ||
+    fail "M7 paused refund actor does not own an exact process group"
+
+  crashed_generation="$(jq -er '.lease_generation | select(type=="number")' \
+    "$m7_refund_submitted_monitor")"
+  jq -e --argjson generation "$crashed_generation" '
+    .schedule_state=="leased" and .lease_generation==$generation
+    and .manual_action.action=="refund" and .manual_action.state=="leased"
+  ' "$m7_refund_submitted_monitor" >/dev/null ||
+    fail "M7 paused refund actor is not durably leased"
+  m7_refund_submission_identity_before="$(stat -c '%d:%i' "$m7_refund_submission")"
+  m7_refund_submission_sha256_before="$(sha256_file "$m7_refund_submission")"
+  m7_refund_transaction_before="$(jq -er '.transaction_id' "$m7_refund_submission")"
+  m7_refund_pause_sha256_before="$(sha256_file "$m7_refund_pause_marker")"
+
+  crashed_daemon_pid="$m5_application_daemon_pid"
+  crashed_daemon_start_ticks="$m5_application_daemon_start_ticks"
+  crashed_daemon_group="$m5_application_daemon_group"
+  crashed_daemon_binary_sha256="$m5_application_daemon_binary_sha256"
+  crashed_daemon_ready="$m5_application_daemon_ready"
+  process_is_owned "$crashed_daemon_pid" "$crashed_daemon_start_ticks" \
+    "$crashed_daemon_binary_sha256" ||
+    fail "M7 refund daemon identity drifted before crash"
+  [[ "$crashed_daemon_group" == "$crashed_daemon_pid" ]] ||
+    fail "M7 refund daemon process group drifted before crash"
+
+  kill -KILL -- "-${crashed_daemon_group}" ||
+    fail "M7 exact refund daemon SIGKILL failed"
+  for _ in {1..200}; do
+    process_is_owned "$crashed_daemon_pid" "$crashed_daemon_start_ticks" \
+      "$crashed_daemon_binary_sha256" || break
+    sleep 0.05
+  done
+  process_is_owned "$crashed_daemon_pid" "$crashed_daemon_start_ticks" \
+    "$crashed_daemon_binary_sha256" &&
+    fail "M7 old refund daemon survived SIGKILL"
+  if wait "$crashed_daemon_pid" 2>/dev/null; then
+    crash_wait_status=0
+  else
+    crash_wait_status=$?
+  fi
+  [[ "$crash_wait_status" == 137 ]] ||
+    fail "M7 refund daemon did not exit from exact SIGKILL"
+  m5_application_process_group_has_members "$crashed_daemon_group" &&
+    fail "M7 old refund daemon group still has live members"
+
+  m7_refund_actor_is_owned "$crashed_actor_pid" "$crashed_actor_start_ticks" \
+    "$crashed_actor_binary_sha256" ||
+    fail "M7 paused refund actor vanished before its exact kill"
+  kill -KILL -- "-${crashed_actor_group}" ||
+    fail "M7 exact paused refund actor SIGKILL failed"
+  for _ in {1..200}; do
+    m7_refund_actor_is_owned "$crashed_actor_pid" "$crashed_actor_start_ticks" \
+      "$crashed_actor_binary_sha256" || break
+    sleep 0.05
+  done
+  m7_refund_actor_is_owned "$crashed_actor_pid" "$crashed_actor_start_ticks" \
+    "$crashed_actor_binary_sha256" &&
+    fail "M7 old paused refund actor survived SIGKILL"
+  m5_application_process_group_has_members "$crashed_actor_group" &&
+    fail "M7 old paused refund actor group still has live members"
+
+  [[ -S "$m5_xmr_maker_socket" ]] &&
+    unlink -- "$m5_xmr_maker_socket"
+  [[ -S "$m5_xmr_chat_socket" ]] &&
+    unlink -- "$m5_xmr_chat_socket"
+  [[ -f "$crashed_daemon_ready" && ! -L "$crashed_daemon_ready" ]] &&
+    unlink -- "$crashed_daemon_ready"
+  [[ ! -e "$m5_xmr_maker_socket" && ! -L "$m5_xmr_maker_socket" &&
+     ! -e "$m5_xmr_chat_socket" && ! -L "$m5_xmr_chat_socket" &&
+     ! -e "$crashed_daemon_ready" && ! -L "$crashed_daemon_ready" ]] ||
+    fail "M7 exact crashed-daemon runtime cleanup is incomplete"
+  m5_application_daemon_pid=""
+  m5_application_daemon_start_ticks=""
+  m5_application_daemon_group=""
+  m5_application_daemon_binary_sha256=""
+  m5_application_daemon_ready=""
+  m5_application_daemon_had_chat=0
+
+  start_m5_xmr_application_daemon m7-refund-recovery 1
+  [[ "$m5_application_daemon_pid" != "$crashed_daemon_pid" ]] ||
+    fail "M7 restarted refund daemon reused the old PID"
+  local recovered=0
+  for _ in {1..3600}; do
+    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+      --id "$m5_xmr_planned_swap_id" >"$m7_refund_recovered_monitor" 2>/dev/null; then
+      recovered_generation="$(jq -er '.lease_generation | select(type=="number")' \
+        "$m7_refund_recovered_monitor")"
+      if (( recovered_generation > crashed_generation )) &&
+        jq -e '
+          (.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")
+          and .progress.observation.state=="active"
+          and .progress.observation.phase=="maker_recovery_available"
+          and .progress.observation.revision==1
+          and .manual_action.action=="refund"
+          and (.manual_action.state=="queued" or .manual_action.state=="leased")
+        ' "$m7_refund_recovered_monitor" >/dev/null 2>&1; then
+        recovered=1
+        break
+      fi
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M7 restarted refund daemon exited before observation-only recovery"
+    sleep 0.05
+  done
+  [[ "$recovered" == 1 ]] ||
+    fail "M7 refund daemon did not transfer and reobserve the abandoned lease"
+  chmod 0600 "$m7_refund_recovered_monitor"
+
+  m7_refund_submission_identity_after="$(stat -c '%d:%i' "$m7_refund_submission")"
+  m7_refund_submission_sha256_after="$(sha256_file "$m7_refund_submission")"
+  m7_refund_transaction_after="$(jq -er '.transaction_id' "$m7_refund_submission")"
+  m7_refund_pause_sha256_after="$(sha256_file "$m7_refund_pause_marker")"
+  [[ "$m7_refund_submission_identity_after" == "$m7_refund_submission_identity_before" &&
+     "$m7_refund_submission_sha256_after" == "$m7_refund_submission_sha256_before" &&
+     "$m7_refund_transaction_after" == "$m7_refund_transaction_before" &&
+     "$m7_refund_pause_sha256_after" == "$m7_refund_pause_sha256_before" ]] ||
+    fail "M7 refund restart changed durable one-shot submission identity"
+
+  jq -n --arg swap "$m5_xmr_planned_swap_id" \
+    --arg tx "$m7_refund_transaction_before" \
+    --arg submission_sha256 "$m7_refund_submission_sha256_before" \
+    --arg submission_identity "$m7_refund_submission_identity_before" \
+    --argjson crashed_generation "$crashed_generation" \
+    --argjson recovered_generation "$recovered_generation" \
+    --argjson crashed_daemon_pid "$crashed_daemon_pid" \
+    --arg crashed_daemon_start_ticks "$crashed_daemon_start_ticks" \
+    --argjson crashed_actor_pid "$crashed_actor_pid" \
+    --arg crashed_actor_start_ticks "$crashed_actor_start_ticks" \
+    --argjson restarted_daemon_pid "$m5_application_daemon_pid" \
+    --arg restarted_daemon_start_ticks "$m5_application_daemon_start_ticks" '
+      {
+        schema:"lez_v02_m7_monero_refund_process_kill_v1",
+        swap_id:$swap,transaction_id:$tx,
+        crash_boundary:"submitted_before_actor_stdout",
+        kill_order:"daemon_then_actor",
+        crashed_daemon:{process_id:$crashed_daemon_pid,start_ticks:$crashed_daemon_start_ticks},
+        crashed_actor:{process_id:$crashed_actor_pid,start_ticks:$crashed_actor_start_ticks},
+        restarted_daemon:{process_id:$restarted_daemon_pid,start_ticks:$restarted_daemon_start_ticks},
+        crashed_generation:$crashed_generation,recovered_generation:$recovered_generation,
+        abandoned_generation_transferred:($recovered_generation>$crashed_generation),
+        post_restart_route:"observe_only_pending",
+        submission:{filesystem_identity:$submission_identity,sha256:$submission_sha256,
+          transaction_id:$tx,unchanged_after_restart:true},
+        automatic_submission_retry:false,confirmations_mined_before_restart:0,
+        old_process_identities_absent:true,public_rpc_used:false,faucet_used:false,
+        runtime_external_resources:[]
+      }
+    ' >"$m7_refund_process_kill_evidence"
+  chmod 0600 "$m7_refund_process_kill_evidence"
+  require_owner_file "$m7_refund_process_kill_evidence" \
+    "M7 refund process-kill evidence"
+  record_phase m7_refund_process_kill completed
+}
+
 activate_and_supervise_m7_maker_refund() {
   [[ "$m7_xmr_supervised_refund" == 1 ]] ||
     fail "M7 supervised refund requires its isolated mode"
@@ -3850,6 +4082,7 @@ activate_and_supervise_m7_maker_refund() {
   readonly m7_refund_terminal_monitor="$evidence_root/m7-refund-terminal-monitor.json"
   readonly m7_refund_submission="$m7_maker_effect_evidence_root/monero-refund-submission.json"
   readonly m7_refund_finality="$m7_maker_effect_evidence_root/monero-refund-finalized.json"
+  readonly m7_refund_pause_marker="${m5_xmr_runtime_root}/m7-refund-paused.json"
   local current_monitor="$evidence_root/.m7-refund-current-monitor.json"
   local generation=""
   start_m5_xmr_application_daemon m7-refund 1
@@ -3871,16 +4104,22 @@ activate_and_supervise_m7_maker_refund() {
     if [[ -f "$m7_refund_submission" ]] &&
       "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
       --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
-      jq -e '
-        (.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")
+      jq -e --argjson require_crash "$m7_xmr_refund_process_kill" '
+        (if $require_crash==1 then
+          .schedule_state=="leased" and .manual_action.state=="leased"
+        else
+          (.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")
+          and (.manual_action.state=="queued" or .manual_action.state=="leased")
+        end)
         and .progress.observation.state=="active"
         and .progress.observation.phase=="maker_recovery_available"
         and .progress.observation.revision==1
         and .manual_action.action=="refund"
-        and (.manual_action.state=="queued" or .manual_action.state=="leased")
       ' "$current_monitor" >/dev/null 2>&1; then
-      observed_submission=1
-      break
+      if [[ "$m7_xmr_refund_process_kill" == 0 || -f "$m7_refund_pause_marker" ]]; then
+        observed_submission=1
+        break
+      fi
     fi
     process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
       "$m5_application_daemon_binary_sha256" ||
@@ -3902,6 +4141,9 @@ activate_and_supervise_m7_maker_refund() {
     fail "M7 semantic refund sender evidence is incomplete"
   record_phase m7_refund_supervisor submitted
 
+  if [[ "$m7_xmr_refund_process_kill" == 1 ]]; then
+    crash_and_restart_m7_refund_supervisor
+  fi
   mine_m7_refund_confirmations
 
   local observed_terminal=0

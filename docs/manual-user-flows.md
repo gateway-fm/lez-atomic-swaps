@@ -8899,3 +8899,77 @@ reobservation succeeded on attempt two with equal fact hashes. Verify the
 allowlisted packet offline with
 `./scripts/test-m7-losing-tag17-actual-certificate.sh`; its checked path is
 `docs/evidence/m7-actual-losing-tag17-63a9496-20260807.json`.
+
+## Flow 1ZJ: Kill and restart the submitted Maker Monero refund
+
+This opt-in hardening flow extends Flow 1ZF at the exact ambiguous response
+boundary. The sealed sender first publishes one actual Monero Regtest refund
+and its durable create-new receipt. A feature-gated real XMR Maker actor then
+writes an owner-private marker and pauses before stdout. The runner kills the
+exact Maker daemon process group first, kills the separately grouped actor
+second, and restarts the same database, registry, actor artifact, and workflow.
+
+```bash
+./scripts/test-m4-actual-claim-poc-contract.sh
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RUN_ID=m7refundkill-yyyymmdd-nonce
+export M5_XMR_APPLICATION_MODE=1
+export M5_XMR_JOURNEY=refund
+export M5_XMR_REFUND_DELAY_MS=600000
+export M7_XMR_SUPERVISED_REFUND=1
+export M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION=1
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+```mermaid
+sequenceDiagram
+    actor User as Local operator
+    participant D1 as Original Maker daemon
+    participant A1 as Paused XMR Maker actor
+    participant W as Durable workflow and submission
+    participant XMR as Local Monero RPCs
+    participant D2 as Restarted Maker daemon
+    participant O as Read only observer
+
+    User->>D1: Refund at current generation
+    D1->>A1: Recover with sealed authority
+    A1->>W: Persist Started
+    A1->>XMR: Submit exact refund once
+    A1->>W: Retain submission receipt
+    A1-->>User: Private submitted-before-stdout marker
+    User-xD1: SIGKILL exact daemon group
+    User-xA1: SIGKILL exact actor group
+    User->>D2: Restart same database and registry
+    D2->>W: Transfer abandoned generation
+    D2->>O: ObserveOnly
+    O->>XMR: Pending read with no spend authority
+    User->>XMR: Mine ten Regtest blocks
+    O->>XMR: Observe exact finalized transaction
+    D2-->>User: Terminal Refunded and action Completed
+```
+
+Before mining, `evidence/m7-refund-process-kill.json` must show
+`daemon_then_actor`, absent old identities, a recovered generation greater
+than the crashed generation, `observe_only_pending`, zero confirmations mined
+before restart, no automatic retry, and unchanged filesystem identity,
+SHA-256, and transaction ID for the submission receipt. The recovered monitor
+must still show revision-one Maker recovery and the same admitted Refund. The
+ordinary Flow 1ZF terminal and retained-finality assertions apply afterward.
+
+This crash seam is compile-time gated and is never enabled in default or
+production builds. Both chains still run as unique peerless literal-loopback
+devnets: pinned local LEZ v0.2 and official Monero 0.18.5.1 Regtest. Funds are
+deterministic local genesis/Regtest outputs. No public RPC, faucet, public
+funds, DNS, external finality service, or public deployment participates.
+Expected flakiness is limited to local CPU/disk pressure, cold locked builds,
+Docker/node readiness, process scheduling at the pause marker, SQLite/fsync,
+and bounded local RPC polling. Cleanup is exact run-ID/process-identity scoped;
+do not prune or stop foreign Docker projects.
+
+No retained exact-run certificate is claimed until a clean pushed commit has
+completed the flow and exact cleanup.

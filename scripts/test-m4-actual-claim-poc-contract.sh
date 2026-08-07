@@ -120,6 +120,16 @@ jq -e '
   and .m7_supervised_refund.external_confirmation_blocks == 10
   and .m7_supervised_refund.confirmation_driver_outside_sender_and_observer == true
   and .m7_supervised_refund.runtime_external_resources == []
+  and .m7_xmr_refund_process_kill.mode_flag == "M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION"
+  and .m7_xmr_refund_process_kill.requires_supervised_refund == true
+  and .m7_xmr_refund_process_kill.feature_gated_crash_hook == true
+  and .m7_xmr_refund_process_kill.kill_order == "daemon_then_actor"
+  and .m7_xmr_refund_process_kill.restart_same_database_and_registry == true
+  and .m7_xmr_refund_process_kill.abandoned_generation_transfer_required == true
+  and .m7_xmr_refund_process_kill.submission_identity_preserved == true
+  and .m7_xmr_refund_process_kill.confirmations_mined_only_after_restart == true
+  and .m7_xmr_refund_process_kill.automatic_submission_retry == false
+  and .m7_xmr_refund_process_kill.runtime_external_resources == []
   and .m7_joined_abandonment.mode_flag == "M7_XMR_JOINED_ABANDONMENT"
   and .m7_joined_abandonment.requires_protocol_punish_journey == true
   and .m7_joined_abandonment.default_behavior_unchanged == true
@@ -325,6 +335,9 @@ for required in \
   lez-adaptor-role-runner lez-v02-xmr-regtest-sweep \
   activate-maker-refund-workflow xmr-reference-monero-refund xmr-reference-monero-verify \
   lez_xmr_monero_refund_sweep_v3 lez_xmr_monero_verify_v2 M7_XMR_SUPERVISED_REFUND \
+  M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION sweep_monero_refund \
+  paused_after_submitted_before_stdout --features test-crash-hooks \
+  --actor-test-pause-operation \
   M7_XMR_JOINED_ABANDONMENT verify_joined_abandonment_economics \
   M7_XMR_LOSING_TAG16_AFTER_TAG17 verify_losing_tag16_after_tag17 \
   M7_XMR_LOSING_TAG17_AFTER_TAG16 verify_losing_tag17_after_tag16 \
@@ -499,6 +512,46 @@ rg -Fq '[[ -f "$m7_refund_submission" ]] &&' <<<"$m7_supervisor_source" ||
 rg -Fq '(.schedule_state=="queued" or .schedule_state=="leased" or .schedule_state=="backoff")' \
   <<<"$m7_supervisor_source" ||
   fail "M7 supervisor still depends on a transient queued-only handoff"
+m7_crash_source="$(function_source crash_and_restart_m7_refund_supervisor)"
+[[ -n "$m7_crash_source" ]] || fail "M7 refund process-kill helper is unavailable"
+m7_actor_identity_source="$(function_source m7_refund_actor_is_owned)"
+[[ -n "$m7_actor_identity_source" ]] ||
+  fail "M7 refund actor identity helper is unavailable"
+for m7_actor_identity_boundary in \
+  '/memfd:lez-maker-actor-program (deleted)' \
+  'process_start_ticks "$pid"' \
+  'sha256_file "/proc/${pid}/exe"'; do
+  rg -Fq -- "$m7_actor_identity_boundary" <<<"$m7_actor_identity_source" ||
+    fail "M7 refund actor identity omits boundary: ${m7_actor_identity_boundary}"
+done
+for m7_crash_boundary in \
+  '.state=="paused_after_submitted_before_stdout"' \
+  'kill -KILL -- "-${crashed_daemon_group}"' \
+  'kill -KILL -- "-${crashed_actor_group}"' \
+  'process_start_ticks "$crashed_actor_pid"' \
+  'start_m5_xmr_application_daemon m7-refund-recovery 1' \
+  'recovered_generation > crashed_generation' \
+  'm7_refund_submission_identity_before' \
+  'm7_refund_submission_identity_after' \
+  'm7_refund_submission_sha256_before' \
+  'm7_refund_submission_sha256_after'; do
+  rg -Fq -- "$m7_crash_boundary" <<<"$m7_crash_source" ||
+    fail "M7 process-kill recovery omits boundary: ${m7_crash_boundary}"
+done
+restart_line="$(rg -n -m1 -F 'start_m5_xmr_application_daemon m7-refund-recovery 1' \
+  <<<"$m7_crash_source")"
+restart_line="${restart_line%%:*}"
+[[ "$restart_line" =~ ^[0-9]+$ ]] ||
+  fail "M7 process-kill restart line is unavailable"
+crash_call_line="$(rg -n -m1 -F 'crash_and_restart_m7_refund_supervisor' \
+  <<<"$m7_supervisor_source")"
+crash_call_line="${crash_call_line%%:*}"
+mine_line="$(rg -n -m1 -F 'mine_m7_refund_confirmations' <<<"$m7_supervisor_source")"
+mine_line="${mine_line%%:*}"
+[[ "$crash_call_line" =~ ^[0-9]+$ && "$mine_line" =~ ^[0-9]+$ ]] ||
+  fail "M7 process-kill crash/mining order is unavailable"
+(( crash_call_line < mine_line )) ||
+  fail "M7 process-kill mode mines confirmations before restart recovery"
 
 m7_finality_retention_source="$(function_source retain_m7_refund_finality_evidence)"
 [[ -n "$m7_finality_retention_source" ]] ||

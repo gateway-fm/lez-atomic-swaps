@@ -6943,10 +6943,16 @@ S12/S13 review and policy-deferred public deployment.
   a completed manual Refund action.
 - [x] Record components, recovery sequence, conditional atomicity argument,
   and explicit evidence limits in ADR 0177.
-- [ ] Extend the isolated joined actual-node refund mode to kill the exact
+- [x] Extend the isolated joined actual-node refund mode to kill the exact
   daemon and actor identities at the marker, restart the same database and
   registry, prove abandoned lease-generation transfer and unchanged
   submission inode/digest/transaction, then mine ten confirmations.
-- [ ] Add runner/certificate contracts, manual reproduction, traceability and
-  hard-requirement deltas; run the full quality wrapper and exact pushed-commit
-  replay before claiming actual-node process-kill closure.
+- [x] RED then GREEN runner contract: require the feature-only hook build,
+  submitted marker, daemon-then-actor kill order, sealed-memfd actor identity,
+  greater recovered generation, unchanged submission identity, restart before
+  mining, and no public resources.
+- [x] Add manual Flow 1ZJ and pin the actual-chain crash seam in the M5 service
+  lifecycle policy gate.
+- [ ] Add the checked certificate and traceability/hard-requirement deltas;
+  run the full quality wrapper and exact pushed-commit replay before claiming
+  actual-node process-kill closure.
