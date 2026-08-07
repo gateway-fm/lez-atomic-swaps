@@ -8683,3 +8683,71 @@ pressure, filesystem synchronization, Docker startup, local-node readiness, or
 contention; Internet and faucet availability cannot affect the result. Cleanup
 is exact-label and process-identity scoped and must preserve the foreign
 sentinel. Never use a broad Docker prune as part of this flow.
+
+## Flow 1ZG: Repeat the joined Tag17 abandonment PoC
+
+This opt-in flow uses one fresh Stage-A agreement across isolated LEZ v0.2 and
+official Monero 0.18.5.1 Regtest. Unlike the earlier Tag17 component run, it
+funds the exact shared Monero output before punishment and re-observes that same
+output after terminal Tag17. It demonstrates the disclosed COMIT penalty
+fallback when the Taker abandons Tag16; it does not call that outcome literal
+both-leg refund conformance.
+
+First pass the fast contract and use a clean pushed commit:
+
+```bash
+./scripts/test-m4-actual-claim-poc-contract.sh
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RUN_ID=m7abandon-yyyymmdd-nonce
+export M5_XMR_APPLICATION_MODE=0
+export M5_XMR_JOURNEY=punish
+export M7_XMR_JOINED_ABANDONMENT=1
+export M7_XMR_PUNISH_DELAY_MS=600000
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+Use a unique lowercase run ID. The ten-minute local punishment delay leaves
+headroom for fresh Tag13 and ten-confirmation Monero funding; it is signed
+protocol time, not a public-network confirmation estimate. The runner owns one
+checkout lock and exact run-labelled Docker resources. It never removes an
+unlabelled or foreign resource, and its foreign sentinel must survive cleanup.
+
+```mermaid
+sequenceDiagram
+    actor User as Local operator
+    participant Runner as Isolated runner
+    participant LEZ as LEZ v0.2 nodes
+    participant XMR as Monero Regtest nodes
+    participant Binder as Evidence binder
+
+    User->>Runner: Execute exact pushed commit
+    Runner->>LEZ: Finalize Tag13 lock
+    Runner->>XMR: Fund and verify exact Stage A output
+    Runner->>LEZ: Prepare Tag17 before punish_at
+    Runner->>LEZ: Release Tag17 after punish_at
+    LEZ-->>Binder: Maker exact and Taker discovery finality
+    Runner->>XMR: Re-observe the same Stage A output
+    XMR-->>Binder: Same transaction, amount, destination, and block
+    Binder-->>User: Owner-private joined-abandonment packet
+```
+
+Before cleanup, `evidence/m7-joined-abandonment.json` must report `passed`, the
+`maker_penalty_after_taker_abandons_refund` branch, identical pre/post Stage-A
+output identity, Tag17 `punish`, terminal `claimed`, custody `0`, and equal
+Maker/Taker finalized facts. It must also report
+`composite_key_image_unspent_authority_present=false`,
+`literal_both_refund_claimed=false`, and no public resources. A view-only
+wallet's reported availability is deliberately not promoted into independent
+unspent authority.
+
+All RPCs are dynamically allocated literal-loopback endpoints. Funds are
+deterministic local genesis/Regtest outputs. There is no public RPC, peer,
+faucet, public money, DNS success dependency, or public deployment. Runtime can
+vary with cold Rust/Risc0 builds, CPU, disk, entropy, Docker startup, SQLite
+sync, and the bounded local finality loops. Losing Tag14/Tag16 injection,
+process-kill, concurrency, fees, and reorgs remain the next QA/chaos phase.

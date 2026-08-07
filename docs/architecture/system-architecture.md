@@ -2762,7 +2762,19 @@ sequenceDiagram
     end
 ```
 
-The signed Tag16 branch and the post-boundary Tag17 terminal LEZ transition are now separately actual-node GREEN. Run `m5xmrrefund45924caa` covers Tag16 plus the Maker Monero recovery sweep; run `m7tag17a23a314a` covers Tag17 publication, finality and identical Maker/Taker classification. The diagram remains the joined economic target: one fresh abandonment journey must connect the actual Monero output, the mutually exclusive deadline branches, losing-branch rejection and recovery under adverse process/concurrency cases.
+The signed Tag16 branch and the post-boundary Tag17 terminal LEZ transition are now separately actual-node GREEN. Run `m5xmrrefund45924caa` covers Tag16 plus the Maker Monero recovery sweep; run `m7tag17a23a314a` covers Tag17 publication, finality and identical Maker/Taker classification. ADR 0174 adds the opt-in joined runner that funds the exact Stage-A Monero output before Tag17 and re-observes it afterward; its pushed-commit replay is pending. Losing-branch rejection and recovery under adverse process/concurrency cases remain after that progressive PoC.
+
+```mermaid
+flowchart LR
+    Stage[Stage A and B] --> Locks[Tag13 and exact Monero funding]
+    Locks --> Abandon[Taker withholds Tag16]
+    Abandon --> Punish[Post-boundary Tag17]
+    Punish --> Terminal[LEZ Claimed and custody zero]
+    Locks --> Reobserve[Same Monero output re-observed]
+    Terminal --> Join[Joined penalty evidence]
+    Reobserve --> Join
+    Join --> Residual[No literal both-refund or key-image unspent claim]
+```
 
 <!-- atomicity-argument: lez-xmr/taker-sells-lez -->
 

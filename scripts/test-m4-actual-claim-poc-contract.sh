@@ -120,6 +120,14 @@ jq -e '
   and .m7_supervised_refund.external_confirmation_blocks == 10
   and .m7_supervised_refund.confirmation_driver_outside_sender_and_observer == true
   and .m7_supervised_refund.runtime_external_resources == []
+  and .m7_joined_abandonment.mode_flag == "M7_XMR_JOINED_ABANDONMENT"
+  and .m7_joined_abandonment.requires_protocol_punish_journey == true
+  and .m7_joined_abandonment.default_behavior_unchanged == true
+  and .m7_joined_abandonment.monero_funded_before_tag17 == true
+  and .m7_joined_abandonment.same_output_reobserved_after_tag17 == true
+  and .m7_joined_abandonment.literal_both_refund_claimed == false
+  and .m7_joined_abandonment.disclosed_penalty_model == true
+  and .m7_joined_abandonment.runtime_external_resources == []
   and .implemented_execute_through == "evidence"
   and .actor_onboarding_implemented == true
   and .successful_claim_tail_implemented == false
@@ -253,6 +261,7 @@ for required in \
   lez-adaptor-role-runner lez-v02-xmr-regtest-sweep \
   activate-maker-refund-workflow xmr-reference-monero-refund xmr-reference-monero-verify \
   lez_xmr_monero_refund_sweep_v3 lez_xmr_monero_verify_v2 M7_XMR_SUPERVISED_REFUND \
+  M7_XMR_JOINED_ABANDONMENT verify_joined_abandonment_economics \
   bind-finalized-claim-sweep M4_EXPECTED_COMMIT MONERO_RUN_ID; do
   rg -Fq -- "$required" "$runner" || fail "runner omits required boundary: ${required}"
 done

@@ -19,6 +19,14 @@ with checked evidence in
 F3/F6 still require the joined two-devnet abandonment economics and adverse
 recovery races; public deployment remains deliberately deferred.
 
+ADR [0174](docs/architecture/0174-join-tag17-to-the-funded-monero-output.md)
+now defines the isolated joined-abandonment runner checkpoint. Its opt-in mode
+funds the exact Stage-A Monero output before Tag17 and re-observes the same
+fresh output after the terminal LEZ punishment. The implementation contract is
+GREEN, while the exact pushed-commit two-devnet replay is pending. This is the
+disclosed COMIT penalty fallback, not literal both-leg refund conformance; the
+view-only observation is not composite-key-image unspent authority.
+
 The application-owned Maker Tag17 recovery boundary is also GREEN under
 [ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the
 normal supervisor runs the real schema-3 role actor, transfers its existing

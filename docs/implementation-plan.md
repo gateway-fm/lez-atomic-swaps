@@ -6814,3 +6814,25 @@ S12/S13 review and policy-deferred public deployment.
   disclosure yields Ambiguous and rejects suppression, or suppression yields
   Suppressed and rejects disclosure. No schedule can both expose bytes and
   retain a known-no-send state.
+
+## M7 joined abandonment progressive PoC (2026-08-07)
+
+- [x] Start with a RED runner contract requiring an isolated joined-abandonment
+  mode, actual Monero funding before Tag17, re-observation of the same Stage-A
+  output afterward, and explicit penalty-model rather than literal F6 claims.
+- [x] Add `M7_XMR_JOINED_ABANDONMENT=1` only for the protocol-only Punish
+  journey. Claim, Refund, ordinary Punish, semantic Claim and supervised Refund
+  defaults remain unchanged and mutually exclusive.
+- [x] Bind the pre/post observations by transaction, agreement, genesis,
+  destination, amount and containing block; require zero peers and no public
+  resources. Preserve the documented view-only key-image residual instead of
+  claiming independent unspent authority.
+- [x] Record the components, RPCs, sequence and conditional economic-safety
+  argument in ADR 0174 and manual Flow 1ZG.
+- [ ] Push the clean implementation checkpoint, then execute one fresh isolated
+  LEZ v0.2 plus official Monero 0.18.5.1 Regtest replay from that exact commit.
+  Retain a checked secret-free certificate only after source status zero and
+  exact cleanup.
+- [ ] Post-PoC hardening: inject losing Tag14/Tag16 branches, process kills,
+  concurrent recovery, fee pressure and reorgs. Do not mark F3/F6 GREEN or tag
+  M7 before those repository-owned cases and the remaining global gates close.

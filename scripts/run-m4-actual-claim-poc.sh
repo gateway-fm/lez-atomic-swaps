@@ -31,6 +31,7 @@ readonly m5_xmr_refund_window_ms=600000
 readonly m7_xmr_punish_delay_ms="${M7_XMR_PUNISH_DELAY_MS:-180000}"
 readonly m7_xmr_supervised_refund="${M7_XMR_SUPERVISED_REFUND:-0}"
 readonly m7_xmr_semantic_claim="${M7_XMR_SEMANTIC_CLAIM:-0}"
+readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
 readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : 3600))
 readonly tag17_finality_page_blocks=8
 
@@ -96,6 +97,16 @@ emit_contract() {
         observer_abi: "lez_xmr_monero_verify_v2",
         external_confirmation_blocks: 10,
         confirmation_driver_outside_sender_and_observer: true,
+        runtime_external_resources: []
+      },
+      m7_joined_abandonment: {
+        mode_flag: "M7_XMR_JOINED_ABANDONMENT",
+        requires_protocol_punish_journey: true,
+        default_behavior_unchanged: true,
+        monero_funded_before_tag17: true,
+        same_output_reobserved_after_tag17: true,
+        literal_both_refund_claimed: false,
+        disclosed_penalty_model: true,
         runtime_external_resources: []
       },
       available_unwired_launchers: [
@@ -274,6 +285,14 @@ environment_preflight() {
     fail "M7_XMR_SUPERVISED_REFUND must be unset, 0, or 1"
   [[ "$m7_xmr_semantic_claim" == 0 || "$m7_xmr_semantic_claim" == 1 ]] ||
     fail "M7_XMR_SEMANTIC_CLAIM must be unset, 0, or 1"
+  [[ "$m7_xmr_joined_abandonment" == 0 || "$m7_xmr_joined_abandonment" == 1 ]] ||
+    fail "M7_XMR_JOINED_ABANDONMENT must be unset, 0, or 1"
+  if [[ "$m7_xmr_joined_abandonment" == 1 ]]; then
+    [[ "$m5_xmr_application_mode" == 0 && "$m5_xmr_journey" == punish ]] ||
+      fail "M7_XMR_JOINED_ABANDONMENT=1 requires protocol-only M5_XMR_JOURNEY=punish"
+    [[ "$m7_xmr_supervised_refund" == 0 && "$m7_xmr_semantic_claim" == 0 ]] ||
+      fail "M7 joined abandonment is mutually exclusive with semantic claim and supervised refund"
+  fi
   if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
     [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == claim ]] ||
       fail "M7_XMR_SEMANTIC_CLAIM=1 requires M5_XMR_APPLICATION_MODE=1 and M5_XMR_JOURNEY=claim"
@@ -2603,6 +2622,92 @@ publish_and_classify_tag17_punishment() {
   record_phase tag17_finality completed
 }
 
+verify_joined_abandonment_economics() {
+  [[ "$m7_xmr_joined_abandonment" == 1 && "$m5_xmr_journey" == punish ]] ||
+    fail "joined abandonment verification requires its isolated punish mode"
+  record_phase m7_joined_abandonment started
+  readonly m7_abandonment_monero_verification="${evidence_root}/m7-abandonment-monero-verification.json"
+  readonly m7_joined_abandonment_evidence="${evidence_root}/m7-joined-abandonment.json"
+  local tx_id required_confirmations
+  tx_id="$(jq -er '.transaction_id' "$monero_funding_evidence")"
+  required_confirmations="$(jq -er '.required_confirmations | select(type == "number" and . >= 1)' \
+    "$monero_funding_evidence")"
+  "$monero_verify_binary" --agreement-wire-file "$agreement_stage_a" \
+    --monero-transaction-id "$tx_id" --run-id "$MONERO_RUN_ID" \
+    --daemon-url "${monero_env[MONERO_DAEMON_ENDPOINT]}" \
+    --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" \
+    --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" \
+    --target-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" \
+    --target-wallet-username-file "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" \
+    --target-wallet-password-file "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" \
+    --foreign-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" \
+    --foreign-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" \
+    --foreign-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" \
+    --output-evidence "$m7_abandonment_monero_verification" >/dev/null
+  require_owner_file "$m7_abandonment_monero_verification" \
+    "post-Tag17 Monero abandonment observation"
+  jq -e --slurpfile before "$monero_verification_evidence" \
+    --arg tx "$tx_id" --argjson required "$required_confirmations" '
+      .schema=="lez_v02_m4_actual_local_monero_verification_v2"
+      and .transaction_id==$tx and .run_id==$before[0].run_id
+      and .agreement_commitment==$before[0].agreement_commitment
+      and .monero_genesis_hash==$before[0].monero_genesis_hash
+      and .destination_address==$before[0].destination_address
+      and .amount_piconero==$before[0].amount_piconero
+      and .containing_block_hash==$before[0].containing_block_hash
+      and .containing_block_height==$before[0].containing_block_height
+      and .confirmations >= $required and .confirmations >= $before[0].confirmations
+      and .peer_count==0 and .network_scope=="isolated_official_monero_regtest"
+      and .public_rpc_used==false and .faucet_used==false
+    ' "$m7_abandonment_monero_verification" >/dev/null ||
+    fail "post-Tag17 Monero output observation changed or is incomplete"
+  jq -n --slurpfile before "$monero_verification_evidence" \
+    --slurpfile after "$m7_abandonment_monero_verification" \
+    --slurpfile maker "$tag17_maker_finality" --slurpfile taker "$tag17_taker_finality" \
+    --arg run "$run_id" --arg monero_run "$MONERO_RUN_ID" '
+      {schema:"lez_v02_m7_joined_abandonment_v1",result:"passed",
+       run_id:$run,monero_run_id:$monero_run,
+       branch:"maker_penalty_after_taker_abandons_refund",
+       monero:{transaction_id:$after[0].transaction_id,
+         same_stage_a_output_before_and_after_tag17:($before[0].transaction_id==$after[0].transaction_id
+           and $before[0].agreement_commitment==$after[0].agreement_commitment
+           and $before[0].containing_block_hash==$after[0].containing_block_hash
+           and $before[0].destination_address==$after[0].destination_address
+           and $before[0].amount_piconero==$after[0].amount_piconero),
+         wallet_reported_available_after_tag17:true,
+         composite_key_image_unspent_authority_present:false,
+         public_rpc_used:false,faucet_used:false,peer_count:$after[0].peer_count},
+       lez:{effect:$maker[0].outcome.facts.instruction.effect,
+         terminal_state:$maker[0].outcome.facts.metadata.state,
+         terminal_custody_balance:$maker[0].outcome.facts.custody.balance,
+         maker_taker_finalized_facts_equal:($maker[0].outcome.facts==$taker[0].outcome.facts)},
+       atomicity:{literal_both_refund_claimed:false,disclosed_penalty_model:true,
+         distributed_cross_chain_transaction_claimed:false,
+         losing_branch_injection_proven:false,future_reorg_immunity_claimed:false},
+       runtime_external_resources:[],public_deployment:false}
+    ' >"$m7_joined_abandonment_evidence"
+  chmod 0600 "$m7_joined_abandonment_evidence"
+  require_owner_file "$m7_joined_abandonment_evidence" "joined abandonment evidence"
+  jq -e '
+    .schema=="lez_v02_m7_joined_abandonment_v1" and .result=="passed"
+    and .branch=="maker_penalty_after_taker_abandons_refund"
+    and .monero.same_stage_a_output_before_and_after_tag17==true
+    and .monero.wallet_reported_available_after_tag17==true
+    and .monero.composite_key_image_unspent_authority_present==false
+    and .monero.peer_count==0 and .lez.effect=="punish"
+    and .lez.terminal_state=="claimed" and .lez.terminal_custody_balance=="0"
+    and .lez.maker_taker_finalized_facts_equal==true
+    and .atomicity.literal_both_refund_claimed==false
+    and .atomicity.disclosed_penalty_model==true
+    and .atomicity.distributed_cross_chain_transaction_claimed==false
+    and .atomicity.losing_branch_injection_proven==false
+    and .atomicity.future_reorg_immunity_claimed==false
+    and .runtime_external_resources==[] and .public_deployment==false
+  ' "$m7_joined_abandonment_evidence" >/dev/null ||
+    fail "joined abandonment evidence is incomplete"
+  record_phase m7_joined_abandonment completed
+}
+
 provision_m7_taker_claim_effect_application() {
   [[ "$m7_xmr_semantic_claim" == 1 ]] ||
     fail "M7 Taker effect provisioning requires semantic-claim mode"
@@ -3197,8 +3302,14 @@ execute_run() {
     complete_m5_xmr_application_handoff
   fi
   if [[ "$m5_xmr_journey" == punish ]]; then
+    if [[ "$m7_xmr_joined_abandonment" == 1 ]]; then
+      fund_and_verify_monero
+    fi
     prepare_tag17_punishment
     publish_and_classify_tag17_punishment
+    if [[ "$m7_xmr_joined_abandonment" == 1 ]]; then
+      verify_joined_abandonment_economics
+    fi
   else
     fund_and_verify_monero
   fi
