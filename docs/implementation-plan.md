@@ -6846,3 +6846,21 @@ S12/S13 review and policy-deferred public deployment.
 - [ ] Post-PoC hardening: inject losing Tag14/Tag16 branches, process kills,
   concurrent recovery, fee pressure and reorgs. Do not mark F3/F6 GREEN or tag
   M7 before those repository-owned cases and the remaining global gates close.
+
+## M7 losing Tag16 after Tag17 hardening (2026-08-07)
+
+- [x] Add a RED runner contract for an isolated
+  `M7_XMR_LOSING_TAG16_AFTER_TAG17=1` mode.
+- [x] Require joined abandonment, complete the existing valid Tag16 signature
+  before Tag17, and leave every default journey unchanged.
+- [x] After finalized Tag17, invoke the existing Tag16 process exactly once;
+  require nonzero exit, an empty create-new evidence reservation, and no retry.
+- [x] RED then GREEN: bracket the losing process with finalized anchors, require
+  its complete interval plus an eight-block finalized tail to contain no Refund,
+  and byte-equivalently re-observe the exact winning Tag17 facts.
+- [x] Record components, RPCs, sequence, atomicity scope, residuals, and manual
+  repetition in ADR 0175 and Flow 1ZH.
+- [ ] Push a clean checkpoint, run a fresh exact-commit two-devnet replay, and
+  retain a checked secret-free certificate only after exact cleanup.
+- [ ] Follow with the opposite ordering, concurrent boundary schedules,
+  process-kill recovery, fees, and reorg cases before changing F3/F6 state.

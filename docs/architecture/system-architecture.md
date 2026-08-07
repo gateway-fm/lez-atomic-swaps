@@ -2773,6 +2773,9 @@ flowchart LR
     Locks --> Reobserve[Same Monero output re-observed]
     Terminal --> Join[Joined penalty evidence]
     Reobserve --> Join
+    Terminal --> Late16[One late completed Tag16 attempt]
+    Late16 --> Exclude[Refund absent in finalized window]
+    Exclude --> Stable[Exact Tag17 facts unchanged]
     Join --> Residual[No literal both-refund or key-image unspent claim]
 ```
 

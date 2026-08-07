@@ -32,6 +32,7 @@ readonly m7_xmr_punish_delay_ms="${M7_XMR_PUNISH_DELAY_MS:-180000}"
 readonly m7_xmr_supervised_refund="${M7_XMR_SUPERVISED_REFUND:-0}"
 readonly m7_xmr_semantic_claim="${M7_XMR_SEMANTIC_CLAIM:-0}"
 readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
+readonly m7_xmr_losing_tag16_after_tag17="${M7_XMR_LOSING_TAG16_AFTER_TAG17:-0}"
 readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : 3600))
 readonly tag17_finality_page_blocks=8
 
@@ -107,6 +108,18 @@ emit_contract() {
         same_output_reobserved_after_tag17: true,
         literal_both_refund_claimed: false,
         disclosed_penalty_model: true,
+        runtime_external_resources: []
+      },
+      m7_losing_tag16_after_tag17: {
+        mode_flag: "M7_XMR_LOSING_TAG16_AFTER_TAG17",
+        requires_joined_abandonment: true,
+        default_behavior_unchanged: true,
+        tag16_completed_before_tag17: true,
+        late_tag16_must_fail: true,
+        minimum_post_attempt_finalized_tail_blocks: 8,
+        window_begins_after_pre_attempt_finalized_anchor: true,
+        window_covers_complete_attempt_interval: true,
+        tag17_facts_reobserved_equal: true,
         runtime_external_resources: []
       },
       available_unwired_launchers: [
@@ -287,6 +300,13 @@ environment_preflight() {
     fail "M7_XMR_SEMANTIC_CLAIM must be unset, 0, or 1"
   [[ "$m7_xmr_joined_abandonment" == 0 || "$m7_xmr_joined_abandonment" == 1 ]] ||
     fail "M7_XMR_JOINED_ABANDONMENT must be unset, 0, or 1"
+  [[ "$m7_xmr_losing_tag16_after_tag17" == 0 ||
+     "$m7_xmr_losing_tag16_after_tag17" == 1 ]] ||
+    fail "M7_XMR_LOSING_TAG16_AFTER_TAG17 must be unset, 0, or 1"
+  if [[ "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
+    [[ "$m7_xmr_joined_abandonment" == 1 ]] ||
+      fail "M7_XMR_LOSING_TAG16_AFTER_TAG17=1 requires M7_XMR_JOINED_ABANDONMENT=1"
+  fi
   if [[ "$m7_xmr_joined_abandonment" == 1 ]]; then
     [[ "$m5_xmr_application_mode" == 0 && "$m5_xmr_journey" == punish ]] ||
       fail "M7_XMR_JOINED_ABANDONMENT=1 requires protocol-only M5_XMR_JOURNEY=punish"
@@ -2708,6 +2728,207 @@ verify_joined_abandonment_economics() {
   record_phase m7_joined_abandonment completed
 }
 
+verify_losing_tag16_after_tag17() {
+  [[ "$m7_xmr_losing_tag16_after_tag17" == 1 &&
+     "$m7_xmr_joined_abandonment" == 1 && "$m5_xmr_journey" == punish ]] ||
+    fail "losing Tag16 verification requires isolated joined-abandonment mode"
+  record_phase m7_losing_tag16_after_tag17 started
+  readonly m7_losing_tag16_evidence="${evidence_root}/m7-losing-tag16-submission.json"
+  readonly m7_losing_tag16_stdout="${log_root}/m7-losing-tag16.stdout"
+  readonly m7_losing_tag16_stderr="${log_root}/m7-losing-tag16.stderr"
+  readonly m7_losing_tag16_post_attempt_anchor="${evidence_root}/m7-losing-tag16-post-attempt-anchor.json"
+  readonly m7_losing_tag16_absence="${evidence_root}/m7-losing-tag16-absence.json"
+  readonly m7_tag17_reobservation="${evidence_root}/m7-tag17-after-losing-tag16.json"
+  readonly m7_losing_branch_evidence="${evidence_root}/m7-losing-tag16-after-tag17.json"
+  local maker_endpoint taker_endpoint tag16_status=0 tag16_phase tag17_phase
+  local tag17_height pre_attempt_finalized_height post_attempt_finalized_height
+  local scan_start_height scan_end_height scan_blocks attempt result_tmp
+  maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
+  taker_endpoint="$(jq -er '.endpoint' "$taker_sidecar_root/pid-manifest.json")"
+  tag16_phase="$(jq -sr '
+    [.[] | select(.phase=="tag16_prepare" and .state=="completed") | .index]
+    | select(length==1) | .[0]
+  ' "$phase_ledger")"
+  tag17_phase="$(jq -sr '
+    [.[] | select(.phase=="tag17_prepare" and .state=="completed") | .index]
+    | select(length==1) | .[0]
+  ' "$phase_ledger")"
+  [[ "$tag16_phase" =~ ^[1-9][0-9]*$ && "$tag17_phase" =~ ^[1-9][0-9]*$ ]] &&
+    (( tag16_phase < tag17_phase )) ||
+    fail "Tag16 completion was not durably ordered before Tag17 preparation"
+  pre_attempt_finalized_height="$(jq -er '
+    .outcome.finalized_clock.height
+    | select(type=="number" and .>=1)
+  ' "$tag17_taker_finality")"
+  scan_start_height="$((pre_attempt_finalized_height + 1))"
+  scan_end_height="$((scan_start_height + tag17_finality_page_blocks - 1))"
+
+  set +e
+  "$tag16_binary" --sidecar-endpoint "$taker_endpoint" \
+    --capability-file "$taker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/taker-runtime.json" \
+    --agreement-wire-file "$agreement_stage_a" \
+    --activation-wire-file "$agreement_stage_b" \
+    --monero-view-key-file "${agreement_root}/material/taker/monero-view.key" \
+    --final-signature-file "$taker_refund_final_signature" --run-id "$run_id" \
+    --prepare-request-id "${run_id}-m7-losing-tag16-prepare-001" \
+    --complete-request-id "${run_id}-m7-losing-tag16-complete-001" \
+    --output-evidence "$m7_losing_tag16_evidence" \
+    >"$m7_losing_tag16_stdout" 2>"$m7_losing_tag16_stderr"
+  tag16_status=$?
+  set -e
+  (( tag16_status != 0 )) ||
+    fail "late losing Tag16 unexpectedly returned success after finalized Tag17"
+  require_owner_file "$m7_losing_tag16_evidence" "losing Tag16 reserved evidence"
+  require_owner_file "$m7_losing_tag16_stdout" "losing Tag16 stdout"
+  require_owner_file "$m7_losing_tag16_stderr" "losing Tag16 stderr"
+  [[ ! -s "$m7_losing_tag16_evidence" && -s "$m7_losing_tag16_stderr" ]] ||
+    fail "late losing Tag16 did not fail before evidence publication"
+
+  "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
+    --capability-file "$maker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+    --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+    --request-id "${run_id}-m7-losing-tag16-post-attempt-anchor-001" \
+    --role maker --effect refund --start-height "$scan_start_height" \
+    --max-blocks 1 --output-result "$m7_losing_tag16_post_attempt_anchor" \
+    >/dev/null 2>&1 || true
+  require_owner_file "$m7_losing_tag16_post_attempt_anchor" \
+    "losing Tag16 post-attempt finalized anchor"
+  if jq -e '.outcome.status=="found"' \
+      "$m7_losing_tag16_post_attempt_anchor" >/dev/null 2>&1; then
+    fail "late losing Tag16 produced a finalized refund during its attempt"
+  fi
+  post_attempt_finalized_height="$(jq -er \
+    --argjson before "$pre_attempt_finalized_height" '
+      select(.outcome.status=="absent" or .outcome.status=="uncertain")
+      | .outcome.finalized_clock.height
+      | select(type=="number" and . >= $before)
+    ' "$m7_losing_tag16_post_attempt_anchor")"
+  scan_end_height="$((post_attempt_finalized_height + tag17_finality_page_blocks))"
+  scan_blocks="$((scan_end_height - scan_start_height + 1))"
+  (( scan_blocks >= tag17_finality_page_blocks && scan_blocks <= 4096 )) ||
+    fail "losing Tag16 exclusion window exceeds the bounded classifier range"
+
+  tag17_height="$(jq -er '
+    .outcome.facts.containing_block.block_id
+    | select(type=="number" and .>=1)
+  ' "$tag17_maker_finality")"
+  result_tmp="${m7_losing_tag16_absence}.attempt"
+  for attempt in {1..2400}; do
+    rm -f -- "$result_tmp"
+    "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
+      --capability-file "$maker_sidecar_root/capability" \
+      --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+      --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+      --request-id "${run_id}-m7-losing-tag16-absence-${attempt}" \
+      --role maker --effect refund --start-height "$scan_start_height" \
+      --max-blocks "$scan_blocks" \
+      --output-result "$result_tmp" >/dev/null 2>&1 || true
+    if jq -e --argjson start "$tag17_height" \
+        --argjson blocks "$scan_blocks" \
+        --argjson end "$scan_end_height" '
+      .outcome.status=="absent"
+      and .outcome.scanned_window.start_height==$start
+      and .outcome.scanned_window.max_blocks==$blocks
+      and .outcome.finalized_clock.height >= $end
+    ' "$result_tmp" >/dev/null 2>&1; then
+      mv "$result_tmp" "$m7_losing_tag16_absence"
+      break
+    fi
+    if jq -e '.outcome.status=="found"' "$result_tmp" >/dev/null 2>&1; then
+      fail "late losing Tag16 produced a finalized refund effect"
+    fi
+    sleep .25
+  done
+  require_owner_file "$m7_losing_tag16_absence" \
+    "finalized losing Tag16 absence evidence"
+
+  "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
+    --capability-file "$maker_sidecar_root/capability" \
+    --runtime-file "$tag13_handoff_root/maker-runtime.json" \
+    --terms-file "$tag13_handoff_root/terms.json" --run-id "$run_id" \
+    --request-id "${run_id}-m7-tag17-reobserve-001" --role maker --effect punish \
+    --exact-transaction-file "$tag17_transaction" --start-height "$tag17_height" \
+    --max-blocks "$tag17_finality_page_blocks" \
+    --output-result "$m7_tag17_reobservation" >/dev/null
+  require_owner_file "$m7_tag17_reobservation" "post-losing-Tag16 Tag17 evidence"
+  jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="punish"
+    and .outcome.facts.metadata.state=="claimed"
+    and .outcome.facts.custody.balance=="0"' "$m7_tag17_reobservation" >/dev/null ||
+    fail "Tag17 terminal facts were not re-observed after losing Tag16"
+  cmp -- <(jq -S -c '.outcome.facts' "$tag17_maker_finality") \
+    <(jq -S -c '.outcome.facts' "$m7_tag17_reobservation") ||
+    fail "Tag17 facts changed after the losing Tag16 attempt"
+
+  jq -n --slurpfile absence "$m7_losing_tag16_absence" \
+    --slurpfile tag17 "$m7_tag17_reobservation" \
+    --arg run "$run_id" --argjson status "$tag16_status" \
+    --arg stderr_sha "$(sha256_file "$m7_losing_tag16_stderr")" \
+    --argjson before "$tag16_phase" --argjson after "$tag17_phase" \
+    --argjson anchor "$pre_attempt_finalized_height" \
+    --argjson post_anchor "$post_attempt_finalized_height" \
+    --argjson tail "$tag17_finality_page_blocks" '
+    {schema:"lez_v02_m7_losing_tag16_after_tag17_v1",result:"passed",run_id:$run,
+     branch:"tag17_wins_over_late_tag16",
+     ordering:{tag16_completed_phase_index:$before,tag17_prepared_phase_index:$after,
+       tag16_completed_before_tag17:($before<$after),
+       pre_attempt_finalized_height:$anchor,
+       post_attempt_finalized_height:$post_anchor},
+     tag16:{process_exit_status:$status,submission_evidence_reserved_empty:true,
+       stderr_sha256:$stderr_sha,automatic_retry:false,
+       finalized_refund_absence_start_height:$absence[0].outcome.scanned_window.start_height,
+       finalized_refund_absence_window_blocks:$absence[0].outcome.scanned_window.max_blocks,
+       minimum_post_attempt_finalized_tail_blocks:$tail,
+       finalized_refund_absent:($absence[0].outcome.status=="absent")},
+     tag17:{facts_reobserved_equal:true,
+       effect:$tag17[0].outcome.facts.instruction.effect,
+       terminal_state:$tag17[0].outcome.facts.metadata.state,
+       terminal_custody_balance:$tag17[0].outcome.facts.custody.balance},
+     atomicity:{losing_refund_excluded_in_finalized_window:true,
+       window_begins_after_pre_attempt_finalized_anchor:
+         ($absence[0].outcome.scanned_window.start_height==($anchor+1)),
+       window_covers_complete_attempt_interval:
+         (($absence[0].outcome.scanned_window.start_height
+           + $absence[0].outcome.scanned_window.max_blocks - 1)
+          == ($post_anchor+$tail)),
+       distributed_cross_chain_transaction_claimed:false,
+       future_reorg_immunity_claimed:false},
+     runtime_external_resources:[],public_deployment:false}
+  ' >"$m7_losing_branch_evidence"
+  chmod 0600 "$m7_losing_branch_evidence"
+  require_owner_file "$m7_losing_branch_evidence" "losing Tag16 evidence"
+  jq -e --argjson tail "$tag17_finality_page_blocks" '
+    .schema=="lez_v02_m7_losing_tag16_after_tag17_v1" and .result=="passed"
+    and .branch=="tag17_wins_over_late_tag16"
+    and .ordering.tag16_completed_before_tag17==true
+    and .tag16.process_exit_status!=0
+    and .tag16.submission_evidence_reserved_empty==true
+    and .tag16.automatic_retry==false
+    and .tag16.finalized_refund_absence_start_height
+      == (.ordering.pre_attempt_finalized_height + 1)
+    and .ordering.post_attempt_finalized_height
+      >= .ordering.pre_attempt_finalized_height
+    and .tag16.finalized_refund_absence_window_blocks
+      == (.ordering.post_attempt_finalized_height
+          - .ordering.pre_attempt_finalized_height + $tail)
+    and .tag16.minimum_post_attempt_finalized_tail_blocks==$tail
+    and .tag16.finalized_refund_absent==true
+    and (.tag16.stderr_sha256|test("^[0-9a-f]{64}$"))
+    and .tag17.facts_reobserved_equal==true and .tag17.effect=="punish"
+    and .tag17.terminal_state=="claimed"
+    and .tag17.terminal_custody_balance=="0"
+    and .atomicity.losing_refund_excluded_in_finalized_window==true
+    and .atomicity.window_begins_after_pre_attempt_finalized_anchor==true
+    and .atomicity.window_covers_complete_attempt_interval==true
+    and .atomicity.distributed_cross_chain_transaction_claimed==false
+    and .atomicity.future_reorg_immunity_claimed==false
+    and .runtime_external_resources==[] and .public_deployment==false
+  ' "$m7_losing_branch_evidence" >/dev/null ||
+    fail "losing Tag16 evidence is incomplete"
+  record_phase m7_losing_tag16_after_tag17 completed
+}
+
 provision_m7_taker_claim_effect_application() {
   [[ "$m7_xmr_semantic_claim" == 1 ]] ||
     fail "M7 Taker effect provisioning requires semantic-claim mode"
@@ -3305,8 +3526,14 @@ execute_run() {
     if [[ "$m7_xmr_joined_abandonment" == 1 ]]; then
       fund_and_verify_monero
     fi
+    if [[ "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
+      prepare_tag16_refund_signature
+    fi
     prepare_tag17_punishment
     publish_and_classify_tag17_punishment
+    if [[ "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
+      verify_losing_tag16_after_tag17
+    fi
     if [[ "$m7_xmr_joined_abandonment" == 1 ]]; then
       verify_joined_abandonment_economics
     fi

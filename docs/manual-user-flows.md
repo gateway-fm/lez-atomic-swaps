@@ -8759,3 +8759,60 @@ faucet, public money, DNS success dependency, or public deployment. Runtime can
 vary with cold Rust/Risc0 builds, CPU, disk, entropy, Docker startup, SQLite
 sync, and the bounded local finality loops. Losing Tag14/Tag16 injection,
 process-kill, concurrency, fees, and reorgs remain the next QA/chaos phase.
+
+## Flow 1ZH: Repeat late-Tag16 losing-branch exclusion
+
+This hardening flow extends Flow 1ZG. It completes a valid Tag16 refund
+signature before Tag17, finalizes Tag17, makes exactly one late Tag16 attempt,
+then proves Refund absent across the complete attempt interval plus an
+eight-block finalized tail and re-observes the unchanged exact Tag17 facts.
+
+```bash
+./scripts/test-m4-actual-claim-poc-contract.sh
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RUN_ID=m7lose16-yyyymmdd-nonce
+export M5_XMR_APPLICATION_MODE=0
+export M5_XMR_JOURNEY=punish
+export M7_XMR_JOINED_ABANDONMENT=1
+export M7_XMR_LOSING_TAG16_AFTER_TAG17=1
+export M7_XMR_PUNISH_DELAY_MS=600000
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+```mermaid
+sequenceDiagram
+    actor User as Local operator
+    participant Runner as Isolated runner
+    participant LEZ as LEZ v0.2 nodes
+    participant XMR as Monero Regtest nodes
+
+    User->>Runner: Execute exact pushed commit
+    Runner->>XMR: Fund and verify Stage A output
+    Runner->>Runner: Complete valid Tag16 signature
+    Runner->>LEZ: Finalize prepared Tag17
+    Runner->>LEZ: Record pre-attempt finalized anchor
+    Runner->>LEZ: Attempt Tag16 once
+    LEZ-->>Runner: Losing process fails
+    Runner->>LEZ: Record post-attempt finalized anchor
+    Runner->>LEZ: Scan attempt interval plus eight-block tail
+    LEZ-->>Runner: Refund absent and Tag17 unchanged
+```
+
+Before cleanup, `evidence/m7-losing-tag16-after-tag17.json` must report
+`passed`, `tag17_wins_over_late_tag16`, ordered Tag16 completion before
+Tag17 preparation, nonzero late-Tag16 status, empty submission evidence, no
+automatic retry, an eight-block post-attempt tail with Refund absent, and equal
+post-attempt Tag17 facts. The scan start must equal the pre-attempt finalized
+anchor plus one; its end must equal the post-attempt anchor plus eight. The
+joined-abandonment packet from Flow 1ZG must also pass.
+
+All endpoints and funds have the same local-only provenance as Flow 1ZG.
+Runtime flakiness sources are cold builds, CPU/disk pressure, Docker startup,
+SQLite synchronization, and bounded local finality scans; Internet, public RPC,
+faucet, and public-chain finality cannot affect the run. Use a unique run ID
+and never replace exact cleanup with a broad Docker prune.

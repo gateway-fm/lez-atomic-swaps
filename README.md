@@ -29,6 +29,13 @@ This is the disclosed COMIT penalty fallback, not literal both-leg refund
 conformance; the view-only observation is not composite-key-image unspent
 authority, and losing-branch/adverse hardening remains open.
 
+ADR [0175](docs/architecture/0175-reject-losing-tag16-after-finalized-tag17.md)
+defines the first post-PoC losing-branch slice: a valid Tag16 signature exists
+before Tag17, one late Tag16 must fail, and the finalized Refund-absence window
+must cover the whole attempt interval plus eight blocks after its post-attempt
+anchor. The exact Tag17 facts must remain unchanged. Its TDD
+runner contract is GREEN; the exact two-devnet replay is pending.
+
 The application-owned Maker Tag17 recovery boundary is also GREEN under
 [ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the
 normal supervisor runs the real schema-3 role actor, transfers its existing

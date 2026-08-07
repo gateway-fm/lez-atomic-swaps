@@ -128,6 +128,16 @@ jq -e '
   and .m7_joined_abandonment.literal_both_refund_claimed == false
   and .m7_joined_abandonment.disclosed_penalty_model == true
   and .m7_joined_abandonment.runtime_external_resources == []
+  and .m7_losing_tag16_after_tag17.mode_flag == "M7_XMR_LOSING_TAG16_AFTER_TAG17"
+  and .m7_losing_tag16_after_tag17.requires_joined_abandonment == true
+  and .m7_losing_tag16_after_tag17.default_behavior_unchanged == true
+  and .m7_losing_tag16_after_tag17.tag16_completed_before_tag17 == true
+  and .m7_losing_tag16_after_tag17.late_tag16_must_fail == true
+  and .m7_losing_tag16_after_tag17.minimum_post_attempt_finalized_tail_blocks == 8
+  and .m7_losing_tag16_after_tag17.window_begins_after_pre_attempt_finalized_anchor == true
+  and .m7_losing_tag16_after_tag17.window_covers_complete_attempt_interval == true
+  and .m7_losing_tag16_after_tag17.tag17_facts_reobserved_equal == true
+  and .m7_losing_tag16_after_tag17.runtime_external_resources == []
   and .implemented_execute_through == "evidence"
   and .actor_onboarding_implemented == true
   and .successful_claim_tail_implemented == false
@@ -262,6 +272,7 @@ for required in \
   activate-maker-refund-workflow xmr-reference-monero-refund xmr-reference-monero-verify \
   lez_xmr_monero_refund_sweep_v3 lez_xmr_monero_verify_v2 M7_XMR_SUPERVISED_REFUND \
   M7_XMR_JOINED_ABANDONMENT verify_joined_abandonment_economics \
+  M7_XMR_LOSING_TAG16_AFTER_TAG17 verify_losing_tag16_after_tag17 \
   bind-finalized-claim-sweep M4_EXPECTED_COMMIT MONERO_RUN_ID; do
   rg -Fq -- "$required" "$runner" || fail "runner omits required boundary: ${required}"
 done
