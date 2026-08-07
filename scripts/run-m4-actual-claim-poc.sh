@@ -115,7 +115,8 @@ emit_contract() {
         requires_joined_abandonment: true,
         default_behavior_unchanged: true,
         tag16_completed_before_tag17: true,
-        late_tag16_must_fail: true,
+        late_tag16_admission_may_succeed: true,
+        finalized_losing_effect_must_be_absent: true,
         minimum_post_attempt_finalized_tail_blocks: 8,
         window_begins_after_pre_attempt_finalized_anchor: true,
         window_covers_complete_attempt_interval: true,
@@ -2746,6 +2747,7 @@ verify_losing_tag16_after_tag17() {
   local maker_endpoint taker_endpoint tag16_status=0 tag16_phase tag17_phase
   local tag17_height pre_attempt_finalized_height post_attempt_finalized_height
   local scan_start_height scan_end_height scan_blocks attempt result_tmp
+  local tag16_admitted=false tag16_submission_outcome=""
   maker_endpoint="$(jq -er '.endpoint' "$maker_sidecar_root/pid-manifest.json")"
   taker_endpoint="$(jq -er '.endpoint' "$taker_sidecar_root/pid-manifest.json")"
   tag16_phase="$(jq -sr '
@@ -2780,13 +2782,27 @@ verify_losing_tag16_after_tag17() {
     >"$m7_losing_tag16_stdout" 2>"$m7_losing_tag16_stderr"
   tag16_status=$?
   set -e
-  (( tag16_status != 0 )) ||
-    fail "late losing Tag16 unexpectedly returned success after finalized Tag17"
   require_owner_file "$m7_losing_tag16_evidence" "losing Tag16 reserved evidence"
   require_owner_file "$m7_losing_tag16_stdout" "losing Tag16 stdout"
   require_owner_file "$m7_losing_tag16_stderr" "losing Tag16 stderr"
-  [[ ! -s "$m7_losing_tag16_evidence" && -s "$m7_losing_tag16_stderr" ]] ||
-    fail "late losing Tag16 did not fail before evidence publication"
+  if (( tag16_status == 0 )); then
+    [[ -s "$m7_losing_tag16_evidence" && -s "$m7_losing_tag16_stdout" &&
+       ! -s "$m7_losing_tag16_stderr" ]] ||
+      fail "admitted late Tag16 evidence/output shape is incomplete"
+    jq -e --arg run "$run_id" '
+      .schema=="lez_v02_m5_actual_local_tag16_v1" and .role=="taker"
+      and .run_id==$run and .submission_request_id==.transaction_id
+      and (.submission_outcome|type)=="string"
+      and .automatic_submission_retry==false and .public_rpc_used==false
+    ' "$m7_losing_tag16_evidence" >/dev/null ||
+      fail "admitted late Tag16 evidence is incomplete"
+    tag16_admitted=true
+    tag16_submission_outcome="$(jq -er '.submission_outcome' \
+      "$m7_losing_tag16_evidence")"
+  else
+    [[ ! -s "$m7_losing_tag16_evidence" && -s "$m7_losing_tag16_stderr" ]] ||
+      fail "rejected late Tag16 evidence/output shape is incomplete"
+  fi
 
   "$classifier_binary" --sidecar-endpoint "$maker_endpoint" \
     --capability-file "$maker_sidecar_root/capability" \
@@ -2868,6 +2884,9 @@ verify_losing_tag16_after_tag17() {
     --slurpfile tag17 "$m7_tag17_reobservation" \
     --arg run "$run_id" --argjson status "$tag16_status" \
     --arg stderr_sha "$(sha256_file "$m7_losing_tag16_stderr")" \
+    --arg stdout_sha "$(sha256_file "$m7_losing_tag16_stdout")" \
+    --argjson admitted "$tag16_admitted" \
+    --arg submission_outcome "$tag16_submission_outcome" \
     --argjson before "$tag16_phase" --argjson after "$tag17_phase" \
     --argjson anchor "$pre_attempt_finalized_height" \
     --argjson post_anchor "$post_attempt_finalized_height" \
@@ -2878,8 +2897,10 @@ verify_losing_tag16_after_tag17() {
        tag16_completed_before_tag17:($before<$after),
        pre_attempt_finalized_height:$anchor,
        post_attempt_finalized_height:$post_anchor},
-     tag16:{process_exit_status:$status,submission_evidence_reserved_empty:true,
-       stderr_sha256:$stderr_sha,automatic_retry:false,
+     tag16:{process_exit_status:$status,transport_admitted:$admitted,
+       submission_outcome:(if $admitted then $submission_outcome else null end),
+       submission_evidence_reserved_empty:($admitted|not),
+       stdout_sha256:$stdout_sha,stderr_sha256:$stderr_sha,automatic_retry:false,
        finalized_refund_absence_start_height:$absence[0].outcome.scanned_window.start_height,
        finalized_refund_absence_window_blocks:$absence[0].outcome.scanned_window.max_blocks,
        minimum_post_attempt_finalized_tail_blocks:$tail,
@@ -2905,9 +2926,16 @@ verify_losing_tag16_after_tag17() {
     .schema=="lez_v02_m7_losing_tag16_after_tag17_v1" and .result=="passed"
     and .branch=="tag17_wins_over_late_tag16"
     and .ordering.tag16_completed_before_tag17==true
-    and .tag16.process_exit_status!=0
-    and .tag16.submission_evidence_reserved_empty==true
+    and ((.tag16.transport_admitted==true
+          and .tag16.process_exit_status==0
+          and (.tag16.submission_outcome|type)=="string"
+          and .tag16.submission_evidence_reserved_empty==false)
+      or (.tag16.transport_admitted==false
+          and .tag16.process_exit_status!=0
+          and .tag16.submission_outcome==null
+          and .tag16.submission_evidence_reserved_empty==true))
     and .tag16.automatic_retry==false
+    and (.tag16.stdout_sha256|test("^[0-9a-f]{64}$"))
     and .tag16.finalized_refund_absence_start_height
       == (.ordering.pre_attempt_finalized_height + 1)
     and .ordering.post_attempt_finalized_height

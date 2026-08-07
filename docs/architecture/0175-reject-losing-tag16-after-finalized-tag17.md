@@ -1,8 +1,8 @@
-# ADR 0175: Reject losing Tag16 after finalized Tag17
+# ADR 0175: Exclude losing Tag16 after finalized Tag17
 
-- Status: Implemented behind an isolated M7 hardening flag; exact pushed-commit
-  actual-node replay reached finalized Tag17 and then exposed a Tag16 binary
-  staging-scope defect; corrected replay pending
+- Status: Implemented behind an isolated M7 hardening flag; two exact
+  pushed-commit actual-node replays exposed and corrected staging-scope and
+  synchronous-admission assumptions; final corrected replay pending
 - Date: 2026-08-07
 
 ## Context
@@ -20,10 +20,12 @@ signature before Tag17 preparation, proving the losing branch is not absent
 merely because its witness was unavailable. After exact Tag17 finality it runs
 the existing Tag16 process once with new request IDs and no retry.
 
-The hardening gate requires a nonzero Tag16 process exit and an empty
-create-new evidence reservation. The latest finalized height observed before
-that attempt is the start anchor. A second finalized anchor immediately after
-the failed process closes the attempt interval; the runner scans every block
+Transport admission is not execution or finality. The hardening gate therefore
+accepts either an immediate pre-admission rejection or a successful sequencer
+admission, records that outcome without retry, and never treats admission as a
+successful Refund. The latest finalized height observed before that attempt is
+the start anchor. A second finalized anchor immediately after the process
+closes the attempt interval; the runner scans every block
 after the start anchor through eight blocks after the second anchor for absence
 of any matching Refund. Finally it re-observes the exact Tag17 transaction and
 compares the complete finalized facts with the pre-attempt Maker observation.
@@ -39,8 +41,8 @@ flowchart LR
     Tag17 --> Late16[One late Tag16 process]
     Tag17 --> Anchor[Record pre-attempt finalized anchor]
     Anchor --> Late16[One late Tag16 process]
-    Late16 --> Reject[Submission process fails]
-    Reject --> PostAnchor[Record post-attempt finalized anchor]
+    Late16 --> Admission[Record admitted or rejected transport outcome]
+    Admission --> PostAnchor[Record post-attempt finalized anchor]
     PostAnchor --> RefundScan[Attempt interval plus eight-block tail show Refund absent]
     RefundScan --> Reobserve[Exact Tag17 facts re-observed equal]
 ```
@@ -66,7 +68,7 @@ sequenceDiagram
     L-->>M: Finalized Claimed state and zero custody
     M->>MS: Read pre-attempt finalized anchor
     T->>TS: Submit completed Tag16 once
-    TS-->>T: Reject terminal losing branch
+    TS-->>T: Return admitted or rejected transport outcome
     M->>MS: Read post-attempt finalized anchor
     M->>MS: Scan attempt interval plus eight-block tail for Refund
     MS-->>M: Refund absent
@@ -75,12 +77,13 @@ sequenceDiagram
 ```
 
 The branch is atomic over the evidenced finalized window because the terminal
-Tag17 state consumes custody before the late refund attempt, the losing process
-does not publish successful evidence, no matching Refund finalizes in the full
-attempt interval or its eight-block finalized tail, and the exact winning facts
-remain unchanged. This is stronger than testing a malformed refund: the correct
-precommitted refund signature existed before Tag17. The dynamic window removes
-any assumption about how many LEZ blocks elapse while the Tag16 client exits.
+Tag17 state consumes custody before the late refund attempt, no matching Refund
+finalizes in the full attempt interval or its eight-block finalized tail, and
+the exact winning facts remain unchanged. A transport-admitted transaction is
+not counted as a Refund effect. This is stronger than testing a malformed
+refund: the correct precommitted refund signature existed before Tag17. The
+dynamic window removes any assumption about how many LEZ blocks elapse while
+the Tag16 client exits.
 
 It is not a distributed transaction and does not establish future-reorg
 immunity, simultaneous pre-finality racing, process-kill recovery, or the
@@ -97,6 +100,10 @@ preserves the foreign sentinel.
 
 The first exact-commit replay `m7lose16-a720b96-a` finalized Tag17 but failed
 before the late Tag16 process because protocol-only losing mode had not staged
-that binary. Exact cleanup passed. The follow-up RED contract now requires the
-build/staging function to include the losing mode; the corrected implementation
-must be replayed from a new pushed commit before this ADR can be accepted.
+that binary. Exact cleanup passed. The focused RED/GREEN cycle corrected the
+staging scope. The second replay `m7lose16-4c891e9-a` reached the late attempt;
+LEZ admitted it and returned `accepted`, exposing the runner's incorrect
+assumption that the CLI must reject synchronously. Exact cleanup passed. The
+follow-up RED/GREEN cycle now judges only finalized exclusion and unchanged
+Tag17 while retaining the admission outcome. A fresh pushed-commit replay must
+still pass the complete finalized window before this ADR can be accepted.

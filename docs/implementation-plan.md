@@ -6854,7 +6854,7 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Require joined abandonment, complete the existing valid Tag16 signature
   before Tag17, and leave every default journey unchanged.
 - [x] After finalized Tag17, invoke the existing Tag16 process exactly once;
-  require nonzero exit, an empty create-new evidence reservation, and no retry.
+  record either immediate rejection or transport admission and permit no retry.
 - [x] RED then GREEN: bracket the losing process with finalized anchors, require
   its complete interval plus an eight-block finalized tail to contain no Refund,
   and byte-equivalently re-observe the exact winning Tag17 facts.
@@ -6865,6 +6865,12 @@ S12/S13 review and policy-deferred public deployment.
   staged build, then verify exact cleanup passed.
 - [x] Add a focused RED build/staging assertion and make losing mode build,
   declare, and stage the exact Tag16 driver independently of application mode.
+- [x] Replay `m7lose16-4c891e9-a` through the late attempt; preserve its RED
+  finding that LEZ can return transport `accepted` before stateful execution,
+  then verify exact cleanup passed.
+- [x] RED then GREEN: remove synchronous rejection as an atomicity oracle;
+  validate and retain either admission or rejection while requiring finalized
+  Refund absence over the complete dynamic window and unchanged exact Tag17.
 - [ ] Push a clean checkpoint, run a fresh exact-commit two-devnet replay, and
   retain a checked secret-free certificate only after exact cleanup.
 - [ ] Follow with the opposite ordering, concurrent boundary schedules,

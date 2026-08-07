@@ -2762,7 +2762,7 @@ sequenceDiagram
     end
 ```
 
-The signed Tag16 branch and the post-boundary Tag17 terminal LEZ transition are now separately actual-node GREEN. Run `m5xmrrefund45924caa` covers Tag16 plus the Maker Monero recovery sweep; run `m7tag17a23a314a` covers Tag17 publication, finality and identical Maker/Taker classification. ADR 0174 and run `m7abandon-a742c9f-a` join a fresh exact Stage-A Monero output to Tag17 in one actual-node replay and re-observe the byte-identical output receipt afterward. Losing-branch rejection and recovery under adverse process/concurrency cases remain after that progressive PoC.
+The signed Tag16 branch and the post-boundary Tag17 terminal LEZ transition are now separately actual-node GREEN. Run `m5xmrrefund45924caa` covers Tag16 plus the Maker Monero recovery sweep; run `m7tag17a23a314a` covers Tag17 publication, finality and identical Maker/Taker classification. ADR 0174 and run `m7abandon-a742c9f-a` join a fresh exact Stage-A Monero output to Tag17 in one actual-node replay and re-observe the byte-identical output receipt afterward. ADR 0175 brackets one late completed Tag16 attempt after finalized Tag17 and judges the losing branch only from finalized Refund absence plus unchanged winning facts; transport admission is explicitly not execution or finality. Its corrected exact replay and recovery under adverse process/concurrency cases remain after that progressive PoC.
 
 ```mermaid
 flowchart LR
@@ -2774,7 +2774,8 @@ flowchart LR
     Terminal --> Join[Joined penalty evidence]
     Reobserve --> Join
     Terminal --> Late16[One late completed Tag16 attempt]
-    Late16 --> Exclude[Refund absent in finalized window]
+    Late16 --> Outcome[Record admitted or rejected transport outcome]
+    Outcome --> Exclude[Refund absent in finalized window]
     Exclude --> Stable[Exact Tag17 facts unchanged]
     Join --> Residual[No literal both-refund or key-image unspent claim]
 ```

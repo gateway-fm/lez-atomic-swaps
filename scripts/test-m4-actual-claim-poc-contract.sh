@@ -132,7 +132,8 @@ jq -e '
   and .m7_losing_tag16_after_tag17.requires_joined_abandonment == true
   and .m7_losing_tag16_after_tag17.default_behavior_unchanged == true
   and .m7_losing_tag16_after_tag17.tag16_completed_before_tag17 == true
-  and .m7_losing_tag16_after_tag17.late_tag16_must_fail == true
+  and .m7_losing_tag16_after_tag17.late_tag16_admission_may_succeed == true
+  and .m7_losing_tag16_after_tag17.finalized_losing_effect_must_be_absent == true
   and .m7_losing_tag16_after_tag17.minimum_post_attempt_finalized_tail_blocks == 8
   and .m7_losing_tag16_after_tag17.window_begins_after_pre_attempt_finalized_anchor == true
   and .m7_losing_tag16_after_tag17.window_covers_complete_attempt_interval == true
