@@ -6993,8 +6993,9 @@ S12/S13 review and policy-deferred public deployment.
   fixes. Vulnerability/license policy, strict linting, CI/container policy,
   milestone contracts, certificate checks, documentation, and repository
   hygiene are GREEN.
-- [ ] Push the clean checkpoint and repeat the exact isolated two-devnet
-  process-kill flow.
+- [x] Push verified observer/watchdog checkpoint `0619be1` to `origin/main`.
+- [ ] Repeat the exact isolated two-devnet process-kill flow from a clean pushed
+  commit.
 - [ ] Only after source status zero and exact cleanup, add the checked
   certificate plus traceability/hard-requirement deltas and claim actual-node
   process-kill closure.
