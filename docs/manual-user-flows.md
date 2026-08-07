@@ -8908,6 +8908,10 @@ and its durable create-new receipt. A feature-gated real XMR Maker actor then
 writes an owner-private marker and pauses before stdout. The runner kills the
 exact Maker daemon process group first, kills the separately grouped actor
 second, and restarts the same database, registry, actor artifact, and workflow.
+Before Tag13, the application replay also waits for the restarted supervisor
+to commit its second typed Blocked observation: queued schedule, lease
+generation two, attempt two, and progress source generation two. A transient
+leased monitor is normal and is never accepted as the cutoff evidence.
 
 ```bash
 ./scripts/test-m4-actual-claim-poc-contract.sh

@@ -6962,6 +6962,12 @@ S12/S13 review and policy-deferred public deployment.
   member was still exiting. RED/GREEN require a bounded 200 x 50 ms wait for
   exact actor-group quiescence; the existing liveness helper continues to
   ignore only zombies and fails closed if a live member survives the bound.
+- [x] Third exact replay passed finalized deployment, fresh actor onboarding,
+  and Monero Regtest startup, then sampled the application replay while its
+  second generation was still leased. The typed Blocked payload was retained,
+  so RED/GREEN replace the immediate monitor read with a bounded state-aware
+  wait for queued lease generation two, attempt two, and progress source
+  generation two; daemon exit and timeout remain fail-closed.
 - [x] Add manual Flow 1ZJ and pin the actual-chain crash seam in the M5 service
   lifecycle policy gate.
 - [ ] Add the checked certificate and traceability/hard-requirement deltas;

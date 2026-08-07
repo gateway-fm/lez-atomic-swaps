@@ -177,6 +177,10 @@ for required in \
   'next_action:"xmr_chain_effects_not_yet_composed"' \
   'mv "$m5_xmr_delivery_root" "$m5_xmr_removed_delivery_root"' \
   'm5_delivery_offer_files_absent "$m5_xmr_delivery_root"' \
+  'wait_m5_xmr_replay_typed_blocked() {' \
+  '.schedule_state=="queued" and .lease_generation==2 and .attempt_count==2' \
+  '.progress.source_generation==2' \
+  'wait_m5_xmr_replay_typed_blocked' \
   'cmp -- "$m5_xmr_artifacts_before" "$m5_xmr_artifacts_after"' \
   'cmp -- "$m5_xmr_journals_before" "$m5_xmr_journals_after"' \
   'stop_m5_xmr_application_daemon || fail "M5 XMR replay daemon did not stop before legacy Tag 13"' \
@@ -246,11 +250,13 @@ replay_daemon_line="$(unique_line '^  start_m5_xmr_application_daemon replay 1$'
 reconciled_offer_line="$(unique_line '^  require_owner_file "\$\{m5_xmr_delivery_root\}/\$\{m5_xmr_offer_id\}\.offer\.json" \\$' 'M5 reconciled offer check')"
 reconciled_archive_line="$(unique_line '^  mv "\$m5_xmr_delivery_root" "\$m5_xmr_reconciled_delivery_root"$' 'M5 reconciled offer archive')"
 delivery_free_replay_line="$(unique_line '^  run_m5_xmr_taker_acceptance "\$m5_xmr_replay_acceptance" 0$' 'M5 Delivery-free replay')"
-readonly replay_daemon_line reconciled_offer_line reconciled_archive_line delivery_free_replay_line
+replay_quiescence_line="$(unique_line '^  wait_m5_xmr_replay_typed_blocked$' 'M5 replay typed-Blocked quiescence wait')"
+readonly replay_daemon_line reconciled_offer_line reconciled_archive_line delivery_free_replay_line replay_quiescence_line
 (( replay_daemon_line < reconciled_offer_line &&
    reconciled_offer_line < reconciled_archive_line &&
    reconciled_archive_line < delivery_free_replay_line &&
-   delivery_free_replay_line < cutoff_line &&
+   delivery_free_replay_line < replay_quiescence_line &&
+   replay_quiescence_line < cutoff_line &&
    cutoff_line < tag13_line )) ||
   fail 'M5 retry reconciliation/authentication/outage/replay does not precede cutoff and Tag13'
 

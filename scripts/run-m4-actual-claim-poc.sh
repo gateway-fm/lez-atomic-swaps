@@ -1879,6 +1879,39 @@ wait_m5_xmr_typed_blocked() {
   require_owner_file "$m5_xmr_blocked_monitor" "M5 XMR typed Blocked monitor"
 }
 
+wait_m5_xmr_replay_typed_blocked() {
+  local monitor_tmp="${evidence_root}/.m5-xmr-replay-monitor.tmp"
+  local replay_monitor="${evidence_root}/m5-xmr-replay-monitor.json"
+  for _ in {1..1200}; do
+    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+      --id "$m5_xmr_planned_swap_id" >"$monitor_tmp" 2>/dev/null &&
+      jq -e --arg swap "$m5_xmr_planned_swap_id" '
+        .schema_version==1 and .swap_id==$swap and .actor_kind=="monero"
+        and .schedule_state=="queued" and .lease_generation==2 and .attempt_count==2
+        and .progress.source_generation==2 and .progress.observation.state=="active"
+        and .progress.observation.phase=="offered" and .progress.observation.revision==0
+        and .progress.observation.next_action=="xmr_chain_effects_not_yet_composed"
+        and (.progress.observed_at|type)=="number" and .manual_action==null
+      ' "$monitor_tmp" >/dev/null 2>&1; then
+      break
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M5 XMR replay supervisor exited before the second typed Blocked projection"
+    sleep 0.05
+  done
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    .swap_id==$swap and .schedule_state=="queued" and .lease_generation==2
+    and .attempt_count==2 and .progress.source_generation==2
+    and .progress.observation=={state:"active",phase:"offered",revision:0,
+      next_action:"xmr_chain_effects_not_yet_composed"} and .manual_action==null
+  ' "$monitor_tmp" >/dev/null ||
+    fail "M5 XMR replay did not quiesce at the second typed Blocked projection"
+  mv "$monitor_tmp" "$replay_monitor"
+  chmod 0600 "$replay_monitor"
+  require_owner_file "$replay_monitor" "M5 XMR replay typed Blocked monitor"
+}
+
 provision_m7_maker_effect_application() {
   [[ "$m7_xmr_supervised_refund" == 1 ]] ||
     fail "M7 Maker effect provisioning requires the supervised-refund mode"
@@ -2118,16 +2151,7 @@ complete_m5_xmr_application_handoff() {
     "$m5_xmr_maker_role_journal" "$m5_xmr_taker_role_journal"
   cmp -- "$m5_xmr_journals_before" "$m5_xmr_journals_after" ||
     fail "M5 XMR role journal device/inode/size/hash changed through application replay"
-  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
-    --id "$m5_xmr_planned_swap_id" >"${evidence_root}/m5-xmr-replay-monitor.json"
-  jq -e --arg swap "$m5_xmr_planned_swap_id" '
-    .swap_id==$swap and .actor_kind=="monero" and .schedule_state=="queued"
-    and .attempt_count==1 and .progress.observation.state=="active"
-    and .progress.observation.phase=="offered" and .progress.observation.revision==0
-    and .progress.observation.next_action=="xmr_chain_effects_not_yet_composed"
-    and .manual_action==null
-  ' "${evidence_root}/m5-xmr-replay-monitor.json" >/dev/null ||
-    fail "M5 XMR replay lost the typed Blocked owner projection"
+  wait_m5_xmr_replay_typed_blocked
   stop_m5_xmr_application_daemon || fail "M5 XMR replay daemon did not stop before legacy Tag 13"
 
   readonly m5_xmr_cutoff_evidence="${evidence_root}/m5-xmr-application-cutoff.json"

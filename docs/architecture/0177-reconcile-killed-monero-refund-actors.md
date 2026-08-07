@@ -37,6 +37,13 @@ also require the daemon's revision-one projection: the actor emits that
 projection on stdout, and this fault deliberately pauses before stdout. The
 normal no-crash supervisor retains the stricter revision-one requirement.
 
+Before the joined crash phase, the application handoff deliberately restarts
+the supervisor and replays an already accepted agreement without Delivery.
+That restart must finish its second actor observation before the harness reads
+or stops it. Completion is proven from durable state -- queued schedule,
+lease generation two, attempt two, and progress source generation two -- not
+from a timing delay.
+
 ## Components
 
 ```mermaid
@@ -86,6 +93,26 @@ sequenceDiagram
     A-->>D: awaiting observation or refunded
 ```
 
+## Pre-chain replay quiescence
+
+```mermaid
+sequenceDiagram
+    participant H as Joined test harness
+    participant D as Restarted Maker supervisor
+    participant S as Durable process store
+    participant A as XMR Maker actor
+
+    H->>D: Start with same database and registry
+    D->>S: Lease generation two
+    D->>A: Observe accepted agreement again
+    Note over H,D: A monitor may transiently show leased
+    A-->>D: Typed Blocked observation
+    D->>S: Commit source generation two and queue
+    H->>D: Poll exact typed monitor
+    D-->>H: Queued, attempt two, generation two
+    H->>D: Stop only after quiescence
+```
+
 ## Atomicity argument and limits
 
 The workflow transaction chooses `InvokeOnce` before process creation. Once
@@ -118,6 +145,18 @@ the run. The crash path now waits a bounded 200 times at 50 milliseconds for
 that exact actor group to quiesce, using the existing helper that ignores only
 zombies; any live member after ten seconds still fails closed. This second run
 is also diagnostic rather than certificate evidence.
+
+The next exact pushed-commit replay passed finalized deployment, fresh actor
+onboarding, and Monero Regtest startup, then sampled the earlier application
+replay while generation two was still leased. Its monitor retained the exact
+typed Blocked payload from generation one, proving state was not lost, but the
+harness incorrectly required a queued projection immediately after replay.
+The runner now polls up to 1,200 times at 50 milliseconds for the second typed
+Blocked commit and asserts queued schedule, lease generation two, attempt two,
+and progress source generation two. It fails immediately if the exact daemon
+identity exits and otherwise fails closed at the bound. Cleanup again removed
+only exact run resources. This third run is diagnostic, not certificate
+evidence.
 
 ## Verification
 
