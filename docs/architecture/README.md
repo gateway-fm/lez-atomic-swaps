@@ -221,6 +221,7 @@ flowchart TB
     M7RefundActivation --> M7JournalCustody["0169 Preserve adaptor custody"]
     M7JournalCustody --> M7DurableHandoff["0170 Durable submission handoff"]
     M7DurableHandoff --> M7SemanticRestart["0171 Semantic journal restart"]
+    M7SemanticRestart --> M7RefundCrash["0177 Killed refund actor reconciliation"]
 ```
 
 | ADR | Decision | Status |
@@ -401,3 +402,4 @@ flowchart TB
 | [0174](0174-join-tag17-to-the-funded-monero-output.md) | Fund and re-observe the exact Stage-A Monero output around the terminal Tag17 LEZ punishment in one isolated run | Accepted and actual-node GREEN on `m7abandon-a742c9f-a`; checked certificate retained, while losing-branch/adverse hardening remains pending |
 | [0175](0175-reject-losing-tag16-after-finalized-tag17.md) | Complete valid Tag16 before Tag17, then prove one late Tag16 cannot replace finalized Tag17 | Accepted and actual-node GREEN on `m7lose16-930e3b4-a`; checked certificate and exact cleanup retained |
 | [0176](0176-exclude-losing-tag17-after-finalized-tag16.md) | Prepare valid Tag17 before Tag16, then prove one late Tag17 cannot replace finalized Tag16 | Accepted and actual-node GREEN on `m7lose17-63a9496-b`; checked certificate and exact cleanup retained |
+| [0177](0177-reconcile-killed-monero-refund-actors.md) | Pause only after one Monero refund send, then require a killed actor to resume through observation rather than resend | Accepted; feature-gated real-actor component GREEN, while full-daemon actual-node restart remains pending |

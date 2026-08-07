@@ -10,6 +10,13 @@ use std::{
 #[cfg(feature = "test-crash-hooks")]
 use tempfile::tempdir;
 
+#[cfg(feature = "test-crash-hooks")]
+use lez_maker_node::MakerActorSupervisorConfig;
+#[cfg(feature = "test-crash-hooks")]
+use lez_swap_core::SwapId;
+#[cfg(feature = "test-crash-hooks")]
+use std::time::Duration;
+
 #[test]
 fn test_crash_hook_flags_are_absent_from_operator_help() {
     let output = daemon().arg("--help").output().expect("daemon help");
@@ -38,6 +45,22 @@ fn feature_build_requires_the_complete_hook_group() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("required arguments"));
+}
+
+#[cfg(feature = "test-crash-hooks")]
+#[test]
+fn feature_build_admits_exact_monero_refund_pause_operation() {
+    let marker = std::path::PathBuf::from("/tmp/xmr-refund-paused.json");
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(10), 5, 30, 8_192).unwrap();
+    assert!(
+        config
+            .with_test_pause_after_submitted(
+                SwapId::new("swap-xmr").unwrap(),
+                "sweep_monero_refund",
+                marker,
+            )
+            .is_ok()
+    );
 }
 
 #[cfg(feature = "test-crash-hooks")]

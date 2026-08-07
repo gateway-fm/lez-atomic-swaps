@@ -22,6 +22,8 @@ use xmr_reference_actor::{
     XmrPreparedEffectInvocationV1, load_validated_xmr_maker_authority_fd,
     load_validated_xmr_maker_effect_execution_fd, parse_xmr_effect_observer_result_v1,
 };
+#[cfg(feature = "test-crash-hooks")]
+use zec_reference_actor::arm_test_crash_hook;
 
 const EFFECT_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug, clap::Parser)]
@@ -153,6 +155,8 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
                 mark_unknown(&execution, recovery_step)?;
                 return Err(anyhow!("XMR Maker recovery invocation is ambiguous"));
             }
+            #[cfg(feature = "test-crash-hooks")]
+            pause_after_submitted_refund_if_armed(&execution, recovery_step)?;
             false
         }
         XmrPreparedEffectInvocationV1::ObserveOnly {
@@ -190,6 +194,47 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
             next_action: XMR_MAKER_ACTOR_NEXT_ACTION,
         }
     })
+}
+
+#[cfg(feature = "test-crash-hooks")]
+fn pause_after_submitted_refund_if_armed(
+    execution: &ValidatedXmrEffectExecutionV3,
+    recovery_step: XmrWorkflowStep,
+) -> Result<()> {
+    if recovery_step != XmrWorkflowStep::SweepMoneroRefund {
+        return Ok(());
+    }
+    let (Some(operation), Some(marker)) = (
+        std::env::var_os("LEZ_ACTOR_TEST_PAUSE_AFTER_SUBMITTED"),
+        std::env::var_os("LEZ_ACTOR_TEST_PAUSE_MARKER"),
+    ) else {
+        return Ok(());
+    };
+    let operation = operation
+        .to_str()
+        .context("read XMR Maker test pause operation")?;
+    let submitted = serde_json::json!({
+        "schema_version": 1,
+        "role": "maker",
+        "command": "recover",
+        "outcome": "submitted",
+        "operation": recovery_step.name(),
+    })
+    .to_string();
+    if arm_test_crash_hook(
+        operation,
+        marker.as_ref(),
+        execution.workflow_identity().swap_id().as_str(),
+        "maker",
+        &submitted,
+    )
+    .context("arm XMR Maker submitted-refund test pause")?
+    {
+        loop {
+            std::thread::park();
+        }
+    }
+    Ok(())
 }
 
 fn execute_preflight(

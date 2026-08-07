@@ -134,6 +134,7 @@ impl MakerActorSupervisorConfig {
                 | "zcash_fund"
                 | "lez_revealing_claim"
                 | "zcash_followup_claim"
+                | "sweep_monero_refund"
         ) || !marker.is_absolute()
         {
             return Err(MakerActorSupervisorError::InvalidConfig);
@@ -684,12 +685,21 @@ fn run_child(
         command.stdin(Stdio::null());
     }
     #[cfg(feature = "test-crash-hooks")]
-    if actor_command == "drive"
-        && config
-            .test_pause
-            .as_ref()
-            .is_some_and(|pause| pause.swap_id == *lease.record().swap_id())
-    {
+    if config.test_pause.as_ref().is_some_and(|pause| {
+        pause.swap_id == *lease.record().swap_id()
+            && matches!(
+                (actor_command, pause.operation.as_ref()),
+                ("recover", "sweep_monero_refund")
+                    | (
+                        "drive",
+                        "lez_initialize"
+                            | "lez_fund"
+                            | "zcash_fund"
+                            | "lez_revealing_claim"
+                            | "zcash_followup_claim"
+                    )
+            )
+    }) {
         let pause = config.test_pause.as_ref().expect("matching test pause");
         command
             .env(

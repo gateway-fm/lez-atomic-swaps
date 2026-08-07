@@ -6,6 +6,7 @@ use tempfile::tempdir;
 use zec_reference_actor::{TestCrashHookError, arm_test_crash_hook};
 
 const SUBMITTED: &str = r#"{"schema_version":1,"role":"maker","command":"drive","outcome":"submitted","operation":"zcash_fund"}"#;
+const XMR_REFUND_SUBMITTED: &str = r#"{"schema_version":1,"role":"maker","command":"recover","outcome":"submitted","operation":"sweep_monero_refund"}"#;
 
 #[test]
 fn hook_arms_only_for_the_exact_submitted_operation_and_writes_private_marker() {
@@ -72,5 +73,39 @@ fn hook_rejects_unknown_malformed_or_unsafe_requests() {
             SUBMITTED,
         ),
         Err(TestCrashHookError::UnsafeMarker)
+    );
+}
+
+#[test]
+fn hook_arms_for_exact_monero_refund_recovery_only() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let marker = root.path().join("xmr-refund-paused.json");
+
+    assert!(
+        arm_test_crash_hook(
+            "sweep_monero_refund",
+            &marker,
+            "swap-xmr",
+            "maker",
+            XMR_REFUND_SUBMITTED,
+        )
+        .expect("exact submitted XMR recovery arms")
+    );
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&marker).unwrap()).unwrap();
+    assert_eq!(value["operation"], "sweep_monero_refund");
+    assert_eq!(value["state"], "paused_after_submitted_before_stdout");
+
+    let other_marker = root.path().join("wrong-command.json");
+    assert_eq!(
+        arm_test_crash_hook(
+            "sweep_monero_refund",
+            &other_marker,
+            "swap-xmr",
+            "maker",
+            r#"{"schema_version":1,"role":"maker","command":"drive","outcome":"submitted","operation":"sweep_monero_refund"}"#,
+        ),
+        Err(TestCrashHookError::InvalidRequest),
+        "the XMR refund hook must never arm for a drive command"
     );
 }

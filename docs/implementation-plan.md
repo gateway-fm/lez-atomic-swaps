@@ -6925,3 +6925,28 @@ S12/S13 review and policy-deferred public deployment.
   the quality runner and CI hardening policy.
 - [ ] Continue with concurrent boundary schedules, process-kill recovery,
   fees, and reorg cases before changing F3/F6 state or tagging M7.
+
+## M7 Monero refund process-kill recovery (2026-08-07)
+
+- [x] Audit the existing schema-3 Maker refund sender, durable workflow,
+  supervisor lease, feature-gated submitted-effect pause, and joined
+  actual-node refund runner before choosing the crash boundary.
+- [x] RED then GREEN: admit `sweep_monero_refund` only for XMR `recover`;
+  preserve the existing owner-private no-clobber marker and reject a `drive`
+  result for the same operation.
+- [x] Inject the hook only for the exact configured swap and matching Recover
+  child. Production builds remain unchanged because daemon flags, environment
+  injection, actor pause code, and helper exports are feature gated.
+- [x] RED/GREEN real-actor process test: pause after the sealed refund worker
+  succeeds, kill the exact actor process group before stdout, then prove the
+  next generation terminalizes with effect log exactly `invoke, observe` and
+  a completed manual Refund action.
+- [x] Record components, recovery sequence, conditional atomicity argument,
+  and explicit evidence limits in ADR 0177.
+- [ ] Extend the isolated joined actual-node refund mode to kill the exact
+  daemon and actor identities at the marker, restart the same database and
+  registry, prove abandoned lease-generation transfer and unchanged
+  submission inode/digest/transaction, then mine ten confirmations.
+- [ ] Add runner/certificate contracts, manual reproduction, traceability and
+  hard-requirement deltas; run the full quality wrapper and exact pushed-commit
+  replay before claiming actual-node process-kill closure.

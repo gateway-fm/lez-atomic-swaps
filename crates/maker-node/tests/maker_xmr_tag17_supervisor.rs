@@ -19,6 +19,8 @@ use lez_swap_store::{
     MakerActorManualActionState, MakerActorProgressObservationV1, MakerActorScheduleState,
     SqliteSwapStore,
 };
+#[cfg(feature = "test-crash-hooks")]
+use rustix::process::{Pid, Signal, kill_process_group};
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 
@@ -220,6 +222,140 @@ fn real_maker_actor_executes_both_recovery_branches_once_then_reconciles() {
             .unwrap()
             .observation(),
         &MakerActorProgressObservationV1::active("refunded", 2, "complete").unwrap()
+    );
+}
+
+#[cfg(feature = "test-crash-hooks")]
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one test keeps the crash boundary and no-resend proof visible"
+)]
+fn killed_refund_actor_reconciles_durable_submission_without_resend() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let actor_program = root.path().join("xmr-maker-actor");
+    fs::copy(
+        Path::new(env!("CARGO_BIN_EXE_xmr-maker-actor")),
+        &actor_program,
+    )
+    .unwrap();
+    fs::set_permissions(&actor_program, fs::Permissions::from_mode(0o700)).unwrap();
+    let fixture = XmrChatFixture::new(root.path(), [0x6d; 32], 1_000_000, 25_000, &actor_program);
+    let refund = provision_maker_refund(&fixture, root.path());
+    let database = root.path().join("maker-refund-crash.sqlite3");
+    let marker = root.path().join("refund-actor-paused.json");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    store.save(&xmr_swap(&fixture.swap_id)).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                fixture.swap_id.clone(),
+                MakerActorKindV1::Monero,
+                refund.config.clone(),
+                Sha256::digest(fs::read(&refund.config).unwrap()).into(),
+                actor_program.clone(),
+                Sha256::digest(fs::read(&actor_program).unwrap()).into(),
+                fixture.maker_actor_state.clone(),
+            )
+            .unwrap(),
+            10,
+        )
+        .unwrap();
+    store
+        .queue_maker_actor_manual_action(
+            &RequestId::new("m7-killed-monero-refund-001").unwrap(),
+            &fixture.swap_id,
+            MakerActorManualAction::Refund,
+            0,
+            10,
+        )
+        .unwrap();
+    let crash_config = MakerActorSupervisorConfig::new(Duration::from_mins(1), 5, 30, 8_192)
+        .unwrap()
+        .with_test_pause_after_submitted(
+            fixture.swap_id.clone(),
+            "sweep_monero_refund",
+            marker.clone(),
+        )
+        .unwrap();
+
+    let worker = std::thread::spawn(move || {
+        let outcome = supervise_one_due_maker_actor(
+            &mut store,
+            MakerActorLeaseOwner::new([0x78; 16]).unwrap(),
+            10,
+            &crash_config,
+        )
+        .unwrap()
+        .unwrap();
+        (outcome, store)
+    });
+    let marker_deadline = std::time::Instant::now() + Duration::from_mins(1);
+    while std::time::Instant::now() < marker_deadline {
+        if marker.exists() || worker.is_finished() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if !marker.exists() {
+        let (outcome, _) = worker.join().unwrap();
+        panic!(
+            "submitted-effect pause marker is absent; resolution={:?}, effect_log={:?}",
+            outcome.resolution(),
+            fs::read_to_string(&refund.effect_log)
+        );
+    }
+    let pause: serde_json::Value =
+        serde_json::from_slice(&fs::read(&marker).expect("submitted-effect pause marker")).unwrap();
+    assert_eq!(pause["state"], "paused_after_submitted_before_stdout");
+    assert_eq!(pause["swap_id"], fixture.swap_id.as_str());
+    assert_eq!(pause["operation"], "sweep_monero_refund");
+    let raw_pid = pause["process_id"].as_u64().unwrap();
+    let pid = Pid::from_raw(i32::try_from(raw_pid).unwrap()).unwrap();
+    kill_process_group(pid, Signal::KILL).unwrap();
+
+    let (crashed, mut store) = worker.join().unwrap();
+    assert_eq!(
+        crashed.resolution(),
+        MakerActorSupervisorResolution::Backoff
+    );
+    assert_eq!(fs::read_to_string(&refund.effect_log).unwrap(), "invoke\n");
+    assert_eq!(
+        store
+            .maker_actor_manual_action(&fixture.swap_id)
+            .unwrap()
+            .unwrap()
+            .state(),
+        MakerActorManualActionState::Queued
+    );
+
+    let reconcile_config =
+        MakerActorSupervisorConfig::new(Duration::from_mins(1), 5, 30, 8_192).unwrap();
+    let recovered = supervise_one_due_maker_actor(
+        &mut store,
+        MakerActorLeaseOwner::new([0x79; 16]).unwrap(),
+        40,
+        &reconcile_config,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        recovered.resolution(),
+        MakerActorSupervisorResolution::Terminal
+    );
+    assert_eq!(
+        fs::read_to_string(&refund.effect_log).unwrap(),
+        "invoke\nobserve\n",
+        "a killed submitted refund actor must resume with observation, not another send"
+    );
+    assert_eq!(
+        store
+            .maker_actor_manual_action(&fixture.swap_id)
+            .unwrap()
+            .unwrap()
+            .state(),
+        MakerActorManualActionState::Completed
     );
 }
 

@@ -45,15 +45,21 @@ pub fn arm_test_crash_hook(
             | "zcash_fund"
             | "lez_revealing_claim"
             | "zcash_followup_claim"
+            | "sweep_monero_refund"
     ) || !matches!(role, "maker" | "taker")
     {
         return Err(TestCrashHookError::InvalidRequest);
     }
     let value: Value =
         serde_json::from_str(output).map_err(|_| TestCrashHookError::InvalidRequest)?;
+    let expected_command = if operation == "sweep_monero_refund" {
+        "recover"
+    } else {
+        "drive"
+    };
     if value.get("schema_version") != Some(&Value::from(1))
         || value.get("role") != Some(&Value::from(role))
-        || value.get("command") != Some(&Value::from("drive"))
+        || value.get("command") != Some(&Value::from(expected_command))
     {
         return Err(TestCrashHookError::InvalidRequest);
     }
