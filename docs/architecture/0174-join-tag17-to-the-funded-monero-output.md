@@ -1,7 +1,7 @@
 # ADR 0174: Join Tag17 to the funded Monero output
 
-- Status: Accepted as an M7 progressive-PoC implementation checkpoint; exact
-  pushed-commit actual-node replay pending
+- Status: Accepted and actual-node GREEN as an M7 progressive PoC; losing-branch
+  and adverse hardening pending
 - Date: 2026-08-07
 
 ## Context
@@ -83,7 +83,19 @@ penalty outcome as two refunds.
 ## Verification and limits
 
 The fast contract is `./scripts/test-m4-actual-claim-poc-contract.sh`. The
-commit-pinned actual replay is documented in manual Flow 1ZG. M7 F3/F6 remain
-open until that replay is retained and the losing Tag14/Tag16 branches,
-process-kill, concurrency, fee, and reorg cases are exercised. Independent
-cryptographic review and GW-M4-003 disposition remain production gates.
+commit-pinned actual replay is documented in manual Flow 1ZG. Run
+`m7abandon-a742c9f-a` at repository commit `a742c9f` passed on isolated LEZ
+v0.2 and official Monero 0.18.5.1 Regtest. It funded and verified the exact
+Stage-A output, prepared Tag17 before the boundary, finalized the same
+transaction 6,268 ms after `punish_at`, re-observed a byte-identical Monero
+receipt, and completed exact cleanup with source status zero. The checked,
+secret-free certificate is
+`docs/evidence/m7-actual-joined-abandonment-a742c9f-20260807.json`.
+
+The replay took about 57 minutes from a cold run-owned build. Roughly 13
+minutes were spent in exhaustive finalized deployment-history validation even
+with one-second LEZ slots; batching or safely parallelizing those read-only
+checks is the next iteration-speed opportunity. M7 F3/F6 remain open until the
+losing Tag14/Tag16 branches, process-kill, concurrency, fee, and reorg cases are
+exercised. Independent cryptographic review and GW-M4-003 disposition remain
+production gates.

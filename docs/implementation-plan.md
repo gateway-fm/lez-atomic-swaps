@@ -6832,10 +6832,17 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Push the clean implementation checkpoint as `3a25e22` after the full
   pinned CI-quality wrapper passed, including ShellCheck, workflow/container
   policy, milestone contracts, and focused Rust route tests.
-- [ ] Execute one fresh isolated LEZ v0.2 plus official Monero 0.18.5.1 Regtest
-  replay from the next exact plan-pinned commit.
-  Retain a checked secret-free certificate only after source status zero and
-  exact cleanup.
+- [x] Execute fresh isolated replay `m7abandon-a742c9f-a` from exact pushed
+  commit `a742c9f` against LEZ v0.2 plus official Monero 0.18.5.1 Regtest.
+  Source status was zero, exact cleanup passed, the foreign sentinel survived,
+  and the checked secret-free certificate is
+  `docs/evidence/m7-actual-joined-abandonment-a742c9f-20260807.json`.
+- [x] After the PoC, add the certificate contract RED, then make it GREEN and
+  wire it into both the pinned quality runner and CI-hardening policy.
+- [x] Record measured iteration cost: the cold run took about 57 minutes and
+  exhaustive finalized deployment-history validation consumed about 13
+  minutes despite one-second LEZ slots. Preserve evidence depth; investigate
+  safe read batching or parallel validation during hardening.
 - [ ] Post-PoC hardening: inject losing Tag14/Tag16 branches, process kills,
   concurrent recovery, fee pressure and reorgs. Do not mark F3/F6 GREEN or tag
   M7 before those repository-owned cases and the remaining global gates close.

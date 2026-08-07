@@ -8745,6 +8745,14 @@ Maker/Taker finalized facts. It must also report
 wallet's reported availability is deliberately not promoted into independent
 unspent authority.
 
+Reference run `m7abandon-a742c9f-a` completed from exact pushed commit
+`a742c9f`. Its checked secret-free result is
+`docs/evidence/m7-actual-joined-abandonment-a742c9f-20260807.json`; verify it
+with `./scripts/test-m7-joined-abandonment-actual-certificate.sh`. The cold
+run took about 57 minutes. The largest non-build cost was about 13 minutes of
+exhaustive finalized deployment-history validation, not the one-second local
+slot time or public finality.
+
 All RPCs are dynamically allocated literal-loopback endpoints. Funds are
 deterministic local genesis/Regtest outputs. There is no public RPC, peer,
 faucet, public money, DNS success dependency, or public deployment. Runtime can

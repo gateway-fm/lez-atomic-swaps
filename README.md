@@ -22,10 +22,12 @@ recovery races; public deployment remains deliberately deferred.
 ADR [0174](docs/architecture/0174-join-tag17-to-the-funded-monero-output.md)
 now defines the isolated joined-abandonment runner checkpoint. Its opt-in mode
 funds the exact Stage-A Monero output before Tag17 and re-observes the same
-fresh output after the terminal LEZ punishment. The implementation contract is
-GREEN, while the exact pushed-commit two-devnet replay is pending. This is the
-disclosed COMIT penalty fallback, not literal both-leg refund conformance; the
-view-only observation is not composite-key-image unspent authority.
+fresh output after the terminal LEZ punishment. Exact pushed-commit run
+`m7abandon-a742c9f-a` is actual-node GREEN with a checked
+[certificate](docs/evidence/m7-actual-joined-abandonment-a742c9f-20260807.json).
+This is the disclosed COMIT penalty fallback, not literal both-leg refund
+conformance; the view-only observation is not composite-key-image unspent
+authority, and losing-branch/adverse hardening remains open.
 
 The application-owned Maker Tag17 recovery boundary is also GREEN under
 [ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the

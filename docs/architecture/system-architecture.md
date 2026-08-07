@@ -2739,7 +2739,7 @@ sequenceDiagram
     X-->>B: Independent receipt at block 121 under stable tip 130
     B-->>T: Owner-private conditional-atomicity snapshot
     Note over T,M: No canonical reveal before cutoff leaves only recovery branches
-    Note over T,M: Implementation status claim Tag16 and Tag17 are separately actual-node GREEN and joined abandonment remains open
+    Note over T,M: Tag16 and Tag17 are separately GREEN and the joined penalty branch is actual-node GREEN
 ```
 
 #### Recovery sequence and remaining joined proof
@@ -2762,7 +2762,7 @@ sequenceDiagram
     end
 ```
 
-The signed Tag16 branch and the post-boundary Tag17 terminal LEZ transition are now separately actual-node GREEN. Run `m5xmrrefund45924caa` covers Tag16 plus the Maker Monero recovery sweep; run `m7tag17a23a314a` covers Tag17 publication, finality and identical Maker/Taker classification. ADR 0174 adds the opt-in joined runner that funds the exact Stage-A Monero output before Tag17 and re-observes it afterward; its pushed-commit replay is pending. Losing-branch rejection and recovery under adverse process/concurrency cases remain after that progressive PoC.
+The signed Tag16 branch and the post-boundary Tag17 terminal LEZ transition are now separately actual-node GREEN. Run `m5xmrrefund45924caa` covers Tag16 plus the Maker Monero recovery sweep; run `m7tag17a23a314a` covers Tag17 publication, finality and identical Maker/Taker classification. ADR 0174 and run `m7abandon-a742c9f-a` join a fresh exact Stage-A Monero output to Tag17 in one actual-node replay and re-observe the byte-identical output receipt afterward. Losing-branch rejection and recovery under adverse process/concurrency cases remain after that progressive PoC.
 
 ```mermaid
 flowchart LR
@@ -2793,7 +2793,7 @@ The XMR construction does not create a single distributed transaction. Its safet
 
 The argument is conditional on the cryptography and finality assumptions, on the exact messages committed in Stage A/B, and on the one-host PoC custody boundary. The release journal and sidecar journal are separate SQLite databases and no transaction spans them. Quarantined failed preparation states, rollback of an older valid journal, same-UID file races, cancellation after the publication CAS, and definitive-absence recovery remain production hardening.
 
-**Economic safety:** in the executed claim branch, the Maker receives LEZ only by publishing the finalized aggregate signature that lets the Taker reconstruct and spend the exact Stage-A Monero output. Tag16 and Tag17 now have separate actual-node branch proofs, but the joined abandonment economics and adverse losing-branch races remain outside this claim proof.
+**Economic safety:** in the executed claim branch, the Maker receives LEZ only by publishing the finalized aggregate signature that lets the Taker reconstruct and spend the exact Stage-A Monero output. Tag16 and Tag17 have separate actual-node branch proofs, and run `m7abandon-a742c9f-a` joins Tag17 to a funded Stage-A Monero output for the disclosed penalty fallback. Literal both-refund, losing-branch races, key-image unspent authority, and reorg immunity remain outside that PoC.
 
 **Replay/idempotency:** create-new evidence, durable role journals, exclusive release preparation, and one-attempt submission prevent a replay from becoming a second authorized effect; they support the reveal construction but are not its cryptographic atomicity mechanism.
 
@@ -2803,8 +2803,9 @@ The argument is conditional on the cryptography and finality assumptions, on the
 at height 4208 under finalized tip 4220 and the matching Monero receipt at
 height 121 under stable tip 130. Later exact pushed runs separately close the
 role-correct claim, Tag16 refund plus Maker sweep, and Tag17 terminal LEZ
-transition. Joined abandonment economics and adverse survivor races remain;
-this historical section does not itself authorize a milestone tag.
+transition. The later joined penalty replay is also GREEN, while adverse
+survivor races and literal both-refund remain open; this historical section
+does not itself authorize a milestone tag.
 
 Official Monero 0.18.5.1 may omit `connections` for an empty list. The local compatibility decoder accepts omission only as empty while `get_info` independently requires zero incoming and zero outgoing peers. Two failed preparation states exposed this wire difference and remain quarantined; only fresh `release3` reached Prepared and Admitted.
 
