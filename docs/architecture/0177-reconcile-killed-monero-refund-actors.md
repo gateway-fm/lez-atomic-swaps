@@ -1,7 +1,7 @@
 # ADR 0177: Reconcile killed Monero refund actors
 
-- Status: Accepted; real-actor component and joined runner contracts GREEN,
-  exact pushed-commit actual-node replay pending
+- Status: Accepted; real-actor, prompt-pending observer, and joined runner
+  contracts GREEN; exact pushed-commit actual-node replay pending
 - Date: 2026-08-07
 
 ## Context
@@ -113,6 +113,42 @@ sequenceDiagram
     H->>D: Stop only after quiescence
 ```
 
+## Prompt pending observation and bounded recovery
+
+```mermaid
+sequenceDiagram
+    participant H as Joined test harness
+    participant D as Restarted Maker daemon
+    participant A as Observe-only Maker actor
+    participant O as Sealed Monero observer
+    participant N as Local monerod
+    participant W as Maker wallet RPC
+
+    H->>D: Prove executable hash once
+    D->>A: Recover durable Started effect
+    A->>O: Observe exact submitted transaction
+    O->>N: Read height-zero genesis
+    N-->>O: Pinned Regtest identity
+    O->>W: Read exact transaction in account zero
+    W-->>O: Not indexed yet or in pool
+    O-->>A: Pending with no finality authority
+    A-->>D: Revision one awaiting observation
+    H->>D: Poll PID and start ticks until 180-second deadline
+```
+
+Pending is deliberately non-authorizing. The observer therefore validates the
+pinned chain identity and, when a wallet transfer exists, its exact transaction,
+direction, destination, amount, and double-spend flag before returning Pending.
+It does not need daemon transaction, containing-block, available-output, or
+stable-tip reads until the wallet reports a confirmed candidate. Finalized
+results still execute and validate the complete observation graph.
+
+The joined recovery harness proves the restarted daemon's executable digest
+once. Steady-state polling compares the same PID and Linux start ticks, avoiding
+repeated hashing of the large staged executable. `SECONDS` supplies a real
+180-second recovery deadline; the deadline is no longer multiplied by the
+variable cost of each poll.
+
 ## Atomicity argument and limits
 
 The workflow transaction chooses `InvokeOnce` before process creation. Once
@@ -157,6 +193,21 @@ and progress source generation two. It fails immediately if the exact daemon
 identity exits and otherwise fails closed at the bound. Cleanup again removed
 only exact run resources. This third run is diagnostic, not certificate
 evidence.
+
+The fourth exact pushed-commit replay passed the earlier replay handoff,
+finalized Tag16, one durable Monero refund submission, the feature-gated pause,
+and ordered daemon/actor SIGKILL. After restart, generations advanced but every
+effect attempt retained the previous `offered` projection. The actual observer
+performed deep daemon reads before it could classify the expected immediate
+wallet miss as Pending, while the parent process budget expired. The harness's
+nominal 3,600 by 50-millisecond loop also stretched beyond twenty minutes
+because each poll rehashed the daemon binary. The run was interrupted through
+its normal trap; source status 130 and exact cleanup passed, with no foreign
+Docker resource targeted. RED/GREEN process coverage now requires the real
+sealed observer to return Pending after only pinned-genesis and missing-wallet
+reads. A separate runner RED/GREEN contract requires the one-time executable
+proof, hash-free same-instance polling, and the wall-clock deadline. This run is
+diagnostic evidence, not a certificate.
 
 ## Verification
 

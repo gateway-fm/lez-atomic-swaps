@@ -8965,6 +8965,22 @@ SHA-256, and transaction ID for the submission receipt. The recovered monitor
 must still show revision-one Maker recovery and the same admitted Refund. The
 ordinary Flow 1ZF terminal and retained-finality assertions apply afterward.
 
+The first restarted observation is intentionally a fast, non-authorizing
+Pending result. It reads the pinned height-zero genesis and the exact account-0
+wallet transaction. If the just-submitted transaction is not indexed yet, no
+daemon transaction, available-output, containing-block, or stable-tip query is
+needed. If the wallet already reports it in pool, the observer first validates
+the exact transaction ID, incoming direction, destination, amount, and
+double-spend flag. Only a confirmed candidate enters the complete finality
+query graph. This distinction speeds the pre-mining handoff without weakening
+the ten-confirmation finality predicate or granting submission authority.
+
+The restarted daemon's binary SHA-256 is checked once. The recovery monitor
+then admits only that PID and Linux start tick and stops at a real 180-second
+deadline. A timeout is a failed run, not evidence of absence or recovery. This
+avoids the earlier diagnostic behavior where hashing a large debug binary on
+every nominal 50-millisecond poll stretched the loop beyond twenty minutes.
+
 This crash seam is compile-time gated and is never enabled in default or
 production builds. Both chains still run as unique peerless literal-loopback
 devnets: pinned local LEZ v0.2 and official Monero 0.18.5.1 Regtest. Funds are
@@ -8977,3 +8993,10 @@ do not prune or stop foreign Docker projects.
 
 No retained exact-run certificate is claimed until a clean pushed commit has
 completed the flow and exact cleanup.
+
+Diagnostic run `m7refundkill-de29b72-a` reached the ordered kills and restarted
+without another submission, but its observer never published Pending and its
+work-count watchdog overran. The operator interrupted it through the normal
+trap; cleanup passed with source status 130 and no foreign resource targeted.
+It is not a certificate. The process regression and runner contract now cover
+both fixes; the next clean pushed-commit replay remains the certification gate.

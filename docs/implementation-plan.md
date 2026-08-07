@@ -6968,8 +6968,33 @@ S12/S13 review and policy-deferred public deployment.
   so RED/GREEN replace the immediate monitor read with a bounded state-aware
   wait for queued lease generation two, attempt two, and progress source
   generation two; daemon exit and timeout remain fail-closed.
+- [x] Fourth exact replay passed the corrected handoff, finalized Tag16, one
+  durable Monero refund submission, the post-send pause, and ordered daemon
+  then actor SIGKILL. Restart transferred the lease without resending, but the
+  actual observer repeatedly exhausted its parent budget before publishing the
+  expected Pending projection. The nominal recovery loop also exceeded twenty
+  minutes because every 50-millisecond poll rehashed the staged daemon binary.
+  The interrupted run exited 130 through its normal trap; exact cleanup passed
+  and did not target the foreign Docker project.
+- [x] RED then GREEN at the actual sealed-observer process boundary: after
+  validating the pinned genesis, a missing destination-wallet transaction
+  returns non-authorizing Pending before daemon transaction, block, output, or
+  stable-tip queries. An in-pool transfer first validates exact transaction,
+  direction, destination, amount, and double-spend status, then returns the
+  same Pending result. Finalized candidates retain the complete evidence path.
+- [x] RED then GREEN the joined watchdog: prove the restarted daemon hash once,
+  poll only the same PID/start-tick instance afterward, and enforce a true
+  180-second `SECONDS` deadline instead of 3,600 variable-cost iterations.
+  The 24-test adapter suite, 14-test sealed process suite, and focused runner
+  contract are GREEN.
 - [x] Add manual Flow 1ZJ and pin the actual-chain crash seam in the M5 service
   lifecycle policy gate.
-- [ ] Add the checked certificate and traceability/hard-requirement deltas;
-  run the full quality wrapper and exact pushed-commit replay before claiming
-  actual-node process-kill closure.
+- [x] Run the full pinned quality wrapper after the observer and watchdog
+  fixes. Vulnerability/license policy, strict linting, CI/container policy,
+  milestone contracts, certificate checks, documentation, and repository
+  hygiene are GREEN.
+- [ ] Push the clean checkpoint and repeat the exact isolated two-devnet
+  process-kill flow.
+- [ ] Only after source status zero and exact cleanup, add the checked
+  certificate plus traceability/hard-requirement deltas and claim actual-node
+  process-kill closure.

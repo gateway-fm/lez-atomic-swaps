@@ -139,6 +139,37 @@ struct MockWallet {
     _handle: jsonrpsee::server::ServerHandle,
 }
 
+struct MockPendingDaemon {
+    endpoint: String,
+    calls: Arc<Mutex<Vec<String>>>,
+    _handle: jsonrpsee::server::ServerHandle,
+}
+
+async fn spawn_pending_daemon(genesis_hash: [u8; 32]) -> MockPendingDaemon {
+    let calls = Arc::<Mutex<Vec<String>>>::default();
+    let server = jsonrpsee::server::ServerBuilder::default()
+        .build("127.0.0.1:0")
+        .await
+        .expect("mock pending daemon binds");
+    let address = server.local_addr().expect("mock pending daemon address");
+    let mut module = RpcModule::new(Arc::clone(&calls));
+    module
+        .register_method("on_get_block_hash", move |_params, calls, _| {
+            calls
+                .lock()
+                .expect("pending daemon calls")
+                .push("on_get_block_hash".to_owned());
+            json_value(hex::encode(genesis_hash))
+        })
+        .expect("register on_get_block_hash");
+    let handle = server.start(module);
+    MockPendingDaemon {
+        endpoint: format!("http://{address}"),
+        calls,
+        _handle: handle,
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one exact typed wallet-RPC fixture keeps the recorded call contract together"
@@ -173,6 +204,20 @@ async fn spawn_wallet(
             }))
         })
         .expect("register get_address");
+    module
+        .register_method("get_transfer_by_txid", |_params, fixture, _| {
+            fixture
+                .calls
+                .lock()
+                .expect("wallet calls")
+                .push("get_transfer_by_txid".to_owned());
+            Err::<Value, _>(jsonrpsee::types::ErrorObjectOwned::owned(
+                -8,
+                "transaction not found",
+                None::<Value>,
+            ))
+        })
+        .expect("register get_transfer_by_txid");
     module
         .register_method("close_wallet", |_params, fixture, _| {
             fixture
@@ -1315,6 +1360,67 @@ async fn sealed_maker_refund_reconstructs_and_submits_once_without_mining_or_fin
     assert_eq!(report["restore_height"], RESTORE_HEIGHT_FOR_ASSERTION);
     assert_eq!(report["finality_observer_required"], true);
     assert_eq!(report["automatic_submission_retry"], false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_maker_refund_observer_returns_pending_before_deep_chain_queries() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let shared_address = stage.agreement.shared_address().address_string();
+    let amount = stage.agreement.body().monero().amount_piconero();
+    let daemon = spawn_pending_daemon(stage.agreement.body().monero().genesis_hash()).await;
+    let shared = spawn_wallet(standard_monero_address(5), shared_address, amount).await;
+    let maker_destination = standard_monero_address(7);
+    let role = spawn_wallet(maker_destination.clone(), maker_destination, amount).await;
+    let (mut sender, submission) = maker_refund_effect_child_command(
+        &stage,
+        &inputs,
+        &daemon.endpoint,
+        &shared.endpoint,
+        &role.endpoint,
+    );
+    let output = sender.output().expect("spawn sealed Maker refund worker");
+    assert!(
+        output.status.success(),
+        "Maker refund worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(daemon.calls.lock().expect("daemon calls").is_empty());
+    role.calls.lock().expect("role calls").clear();
+
+    let mut observer = maker_refund_observer_command(
+        &stage,
+        submission.parent().expect("refund evidence root"),
+        &daemon.endpoint,
+        &role.endpoint,
+        false,
+    );
+    let output = observer.output().expect("spawn pending refund observer");
+    assert!(
+        output.status.success(),
+        "pending refund observer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\"schema_version\":1,\"step\":\"sweep_monero_refund\",\"state\":\"pending\"}\n"
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        *daemon.calls.lock().expect("daemon calls"),
+        ["on_get_block_hash"]
+    );
+    assert_eq!(
+        *role.calls.lock().expect("role calls"),
+        ["get_transfer_by_txid"]
+    );
+    assert!(
+        !submission
+            .parent()
+            .expect("refund evidence root")
+            .join("monero-refund-finalized.json")
+            .exists()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -565,6 +565,29 @@ m7_actor_group_wait='for _ in {1..200}; do
   done'
 rg -UFq -- "$m7_actor_group_wait" <<<"$m7_crash_source" ||
   fail "M7 process-kill recovery does not wait boundedly for actor-group quiescence"
+m7_same_instance_source="$(function_source process_is_same_instance)"
+[[ -n "$m7_same_instance_source" ]] ||
+  fail "M7 process-kill recovery lacks a stable process-instance liveness check"
+for m7_same_instance_boundary in \
+  'process_start_ticks "$pid"' \
+  '[[ "$(process_start_ticks "$pid")" == "$start_ticks" ]]'; do
+  rg -Fq -- "$m7_same_instance_boundary" <<<"$m7_same_instance_source" ||
+    fail "M7 process-instance liveness omits boundary: ${m7_same_instance_boundary}"
+done
+if rg -Fq 'sha256_file' <<<"$m7_same_instance_source"; then
+  fail "M7 steady-state process liveness rehashes a staged executable"
+fi
+for m7_recovery_watchdog_boundary in \
+  'process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks"' \
+  'local recovery_deadline=$((SECONDS + 180))' \
+  'while (( SECONDS < recovery_deadline )); do' \
+  'process_is_same_instance "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks"'; do
+  rg -Fq -- "$m7_recovery_watchdog_boundary" <<<"$m7_crash_source" ||
+    fail "M7 process-kill recovery watchdog omits boundary: ${m7_recovery_watchdog_boundary}"
+done
+if rg -Fq 'for _ in {1..3600}; do' <<<"$m7_crash_source"; then
+  fail "M7 process-kill recovery still uses a work-count rather than wall-clock deadline"
+fi
 restart_line="$(rg -n -m1 -F 'start_m5_xmr_application_daemon m7-refund-recovery 1' \
   <<<"$m7_crash_source")"
 restart_line="${restart_line%%:*}"

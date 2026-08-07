@@ -492,7 +492,7 @@ impl MoneroOutputVerifier {
         }
         Ok(Self {
             identity,
-            rpc: MoneroRpcPort::new(daemon, wallet)?,
+            rpc: MoneroRpcPort::new(identity, daemon, wallet)?,
         })
     }
 
@@ -818,6 +818,7 @@ trait ObservationPort: Send + Sync {
 }
 
 struct MoneroRpcPort {
+    identity: MoneroChainIdentity,
     daemon: DaemonJsonRpcClient,
     daemon_rpc: DaemonRpcClient,
     wallet: WalletClient,
@@ -827,6 +828,7 @@ struct MoneroRpcPort {
 
 impl MoneroRpcPort {
     fn new(
+        identity: MoneroChainIdentity,
         daemon_endpoint: &LoopbackRpcEndpoint,
         wallet_endpoint: &LoopbackRpcEndpoint,
     ) -> Result<Self, MoneroEvidenceError> {
@@ -852,6 +854,7 @@ impl MoneroRpcPort {
             })?
             .wallet();
         Ok(Self {
+            identity,
             daemon,
             daemon_rpc,
             wallet,
@@ -942,11 +945,9 @@ impl ObservationPort for MoneroRpcPort {
     ) -> Result<ObservationSnapshot, MoneroEvidenceError> {
         let genesis_hash =
             Self::rpc("on_get_block_hash(0)", self.daemon.on_get_block_hash(0)).await?;
-        let tip_before = Self::rpc(
-            "get_last_block_header(before)",
-            self.daemon.get_block_header(GetBlockHeaderSelector::Last),
-        )
-        .await?;
+        if hash_bytes(genesis_hash.as_ref()) != self.identity.genesis_hash() {
+            return Err(MoneroEvidenceError::GenesisMismatch);
+        }
         let wallet_transfer = Self::rpc(
             "get_transfer_by_txid",
             self.wallet
@@ -954,6 +955,18 @@ impl ObservationPort for MoneroRpcPort {
         )
         .await?
         .map(WalletTransferSnapshot::from);
+        let Some(transfer) = wallet_transfer.as_ref() else {
+            return Err(MoneroEvidenceError::MissingWalletTransfer);
+        };
+        validate_wallet_transfer_identity(transfer, expected)?;
+        if transfer.height.is_none() {
+            return Err(MoneroEvidenceError::WalletTransferInPool);
+        }
+        let tip_before = Self::rpc(
+            "get_last_block_header(before)",
+            self.daemon.get_block_header(GetBlockHeaderSelector::Last),
+        )
+        .await?;
         let available_outputs = self.available_outputs(wallet_transfer.as_ref()).await?;
         let transaction_response = Self::rpc(
             "get_transactions(pruned)",
@@ -1101,21 +1114,7 @@ fn validate_wallet<'a>(
         .wallet_transfer
         .as_ref()
         .ok_or(MoneroEvidenceError::MissingWalletTransfer)?;
-    if transfer.transaction_id.as_slice() != expected.transaction_id.as_ref() {
-        return Err(MoneroEvidenceError::TransactionIdMismatch);
-    }
-    if !transfer.incoming {
-        return Err(MoneroEvidenceError::TransferNotIncoming);
-    }
-    if transfer.destination != expected.destination {
-        return Err(MoneroEvidenceError::DestinationMismatch);
-    }
-    if transfer.amount_piconero != expected.amount_piconero.get() {
-        return Err(MoneroEvidenceError::AmountMismatch);
-    }
-    if transfer.double_spend_seen {
-        return Err(MoneroEvidenceError::DoubleSpendSeen);
-    }
+    validate_wallet_transfer_identity(transfer, expected)?;
     let wallet_height = transfer
         .height
         .ok_or(MoneroEvidenceError::WalletTransferInPool)?;
@@ -1146,6 +1145,28 @@ fn validate_wallet<'a>(
         return Err(MoneroEvidenceError::ContainingHeightMismatch);
     }
     Ok((transfer, wallet_height))
+}
+
+fn validate_wallet_transfer_identity(
+    transfer: &WalletTransferSnapshot,
+    expected: &ExpectedMoneroOutput,
+) -> Result<(), MoneroEvidenceError> {
+    if transfer.transaction_id.as_slice() != expected.transaction_id.as_ref() {
+        return Err(MoneroEvidenceError::TransactionIdMismatch);
+    }
+    if !transfer.incoming {
+        return Err(MoneroEvidenceError::TransferNotIncoming);
+    }
+    if transfer.destination != expected.destination {
+        return Err(MoneroEvidenceError::DestinationMismatch);
+    }
+    if transfer.amount_piconero != expected.amount_piconero.get() {
+        return Err(MoneroEvidenceError::AmountMismatch);
+    }
+    if transfer.double_spend_seen {
+        return Err(MoneroEvidenceError::DoubleSpendSeen);
+    }
+    Ok(())
 }
 
 fn validate_daemon(

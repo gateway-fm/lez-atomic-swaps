@@ -484,6 +484,12 @@ process_is_owned() {
   [[ -f "$executable" && "$(sha256_file "$executable")" == "$binary_sha256" ]]
 }
 
+process_is_same_instance() {
+  local pid="$1" start_ticks="$2"
+  [[ "$pid" =~ ^[1-9][0-9]*$ && -r "/proc/${pid}/stat" ]] || return 1
+  [[ "$(process_start_ticks "$pid")" == "$start_ticks" ]]
+}
+
 docker_resource_run_label_matches() {
   local kind="$1" identity="$2" expected="$3" actual
   [[ -n "$expected" ]] || return 1
@@ -4021,8 +4027,12 @@ crash_and_restart_m7_refund_supervisor() {
   start_m5_xmr_application_daemon m7-refund-recovery 1
   [[ "$m5_application_daemon_pid" != "$crashed_daemon_pid" ]] ||
     fail "M7 restarted refund daemon reused the old PID"
+  process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+    "$m5_application_daemon_binary_sha256" ||
+    fail "M7 restarted refund daemon identity is invalid"
   local recovered=0
-  for _ in {1..3600}; do
+  local recovery_deadline=$((SECONDS + 180))
+  while (( SECONDS < recovery_deadline )); do
     if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
       --id "$m5_xmr_planned_swap_id" >"$m7_refund_recovered_monitor" 2>/dev/null; then
       recovered_generation="$(jq -er '.lease_generation | select(type=="number")' \
@@ -4040,8 +4050,7 @@ crash_and_restart_m7_refund_supervisor() {
         break
       fi
     fi
-    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
-      "$m5_application_daemon_binary_sha256" ||
+    process_is_same_instance "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" ||
       fail "M7 restarted refund daemon exited before observation-only recovery"
     sleep 0.05
   done

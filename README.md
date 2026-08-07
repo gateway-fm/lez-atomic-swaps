@@ -102,6 +102,21 @@ packet is
 [`m7-actual-maker-refund-7cd3a9c-20260805.json`](docs/evidence/m7-actual-maker-refund-7cd3a9c-20260805.json).
 This run does not claim a daemon restart after submission. Reproduce it with [manual Flow
 1ZF](docs/manual-user-flows.md#flow-1zf-repeat-the-joined-supervised-maker-refund).
+
+ADR [0177](docs/architecture/0177-reconcile-killed-monero-refund-actors.md)
+adds that missing process-kill boundary. Its real-actor test proves one send
+followed only by observation after `SIGKILL`. Four isolated exact diagnostics
+have driven fixes for pre-stdout triggering, process-group quiescence,
+application replay quiescence, prompt non-authorizing Monero Pending
+observation, and a true 180-second hash-free recovery watchdog. The 24-test
+Monero adapter suite, 14-test sealed process suite, and joined runner contract
+are GREEN; a clean pushed-commit two-devnet replay and checked certificate are
+still required before actual-node closure. The flow uses only pinned local LEZ
+v0.2 and official Monero 0.18.5.1 Regtest services on run-owned literal-loopback
+endpoints, deterministic local funds, and exact cleanup; no public RPC, faucet,
+public funds, DNS dependency, or public deployment participates. Reproduce the
+pending certificate gate with [manual Flow 1ZJ](docs/manual-user-flows.md#flow-1zj-kill-and-restart-the-submitted-maker-monero-refund).
+
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined
 two-devnet F3/F6 corridor.
