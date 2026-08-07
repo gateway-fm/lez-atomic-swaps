@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_losing_tag16_after_tag17",
+  "result": "passed",
+  "run_id": "m7lose16-930e3b4-a",
+  "repository_commit": "930e3b4f5110c74959de8ec9aef92e8e3efbf8a0",
+  "swap_id": "e2a671e9b4b0a8ee509a904e43246ef50654ba82a7ef5bbb5d539036a0e751c2",
+  "agreement_commitment": "e985ad0a369acd4c7f8f1c52767958617afca96822d79c143ec7df018aa60ece",
+  "activation_commitment": "0ad326d692a67edb28d514d1a23437136e9b91ba5e66618369504a06d8b77eec",
+  "guest": {
+    "recursive_tests_passed": 5,
+    "recursive_tests_total": 5,
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "deployment": {
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_block_hash": "5cbaef6132f327812177ea5d7af1e3cf9bbf66e45ee367a6b6c69185954d57fb",
+    "exact_elf_pre_window_occurrences": 0,
+    "exact_elf_post_window_occurrences": 1,
+    "canonical_window_occurrences": 1,
+    "send_attempts": 1,
+    "bedrock_status": "Finalized"
+  },
+  "monero": {
+    "version": "0.18.5.1",
+    "network": "Regtest",
+    "transaction_id": "f9612837be2c3322e1cdbf66cfb757b5c0288e3c8abcc3752f7f132642009844",
+    "amount_piconero": 1000000000000,
+    "confirmations": 10,
+    "same_stage_a_output_before_and_after_tag17": true,
+    "wallet_reported_available_after_tag17": true,
+    "composite_key_image_unspent_authority_present": false,
+    "peer_count": 0
+  },
+  "tag17": {
+    "transaction_id": "14cdfc8e3b3183288d351c806c803f506edae280fbf6164f691fc8cf5c5562dd",
+    "transport_outcome": "accepted",
+    "automatic_retry": false,
+    "effect": "punish",
+    "terminal_state": "claimed",
+    "terminal_custody_balance": "0",
+    "original_facts_sha256": "d4c04ff795cbd5d4b073c6cabd463be12177ee353b5b20d25ee605788b74a9c4",
+    "reobserved_facts_sha256": "d4c04ff795cbd5d4b073c6cabd463be12177ee353b5b20d25ee605788b74a9c4",
+    "facts_reobserved_equal": true
+  },
+  "tag16": {
+    "completed_before_tag17_preparation": true,
+    "process_exit_status": 0,
+    "transport_admission": "accepted",
+    "transaction_id": "bf477091b8518bd53402cbe11b07d06ea0288e209d0a7440161cb5a7a544cc0e",
+    "prepare_request_id": "m7lose16-930e3b4-a-m7-losing-tag16-prepare-001",
+    "complete_request_id": "m7lose16-930e3b4-a-m7-losing-tag16-complete-001",
+    "submission_request_id": "bf477091b8518bd53402cbe11b07d06ea0288e209d0a7440161cb5a7a544cc0e",
+    "prepared_message_hash": "eac1f7b84cf07c56106cd6171586f4a3ac24f3964dce5f1512fa02fdb4872442",
+    "submission_outcome": "accepted",
+    "automatic_retry": false
+  },
+  "finalized_exclusion": {
+    "pre_attempt_clock": {
+      "block_hash": "f16ccc7fe288429b7032bf2af4b4197ce834dd67e6edbf85c7422fc7e40e111b",
+      "height": 167,
+      "timestamp_ms": 1786104403932
+    },
+    "post_attempt_clock": {
+      "block_hash": "f16ccc7fe288429b7032bf2af4b4197ce834dd67e6edbf85c7422fc7e40e111b",
+      "height": 167,
+      "timestamp_ms": 1786104403932
+    },
+    "scan_start_height": 168,
+    "scan_blocks": 8,
+    "finalized_clock": {
+      "block_hash": "d0c652f9770d33d3fc7a81576ca01f834ea5ec3634f01394ed4db9557e44aef4",
+      "height": 175,
+      "timestamp_ms": 1786104485176
+    },
+    "status": "absent",
+    "terminal_rule": "refund_absent_only_when_claimed_zero_at_candidate_and_window_end"
+  },
+  "atomicity": {
+    "proof_scope": "tag17_wins_over_late_tag16_in_finalized_window",
+    "losing_refund_excluded": true,
+    "complete_attempt_interval_covered": true,
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorg_immunity_claimed": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment": false,
+  "evidence_sha256": {
+    "losing_branch": "2a399189bd2b815524157cea6e21d423b4bac0b1c1fc0b922214c57e331e461a",
+    "tag16_submission": "95801371594f86c3dd03cb055df8a58c65a8640979995e1ff2886f9b728cbd0d",
+    "pre_attempt_anchor": "4771989c8be1b9226b2755d363607a3915130858e045338ade7118f0616f3254",
+    "post_attempt_anchor": "60fa0573ba4c703501b6ca8114758165c63ce8026b2715a2d4682c93c19be376",
+    "refund_absence": "af93aa66ac8e8a9a90b786cbb0189f59e94b2125528d9e89dc1e92677d43fef1",
+    "tag17_original_facts": "d4c04ff795cbd5d4b073c6cabd463be12177ee353b5b20d25ee605788b74a9c4",
+    "tag17_reobserved_facts": "d4c04ff795cbd5d4b073c6cabd463be12177ee353b5b20d25ee605788b74a9c4",
+    "tag17_original_observation": "c6b7c4d5ce0f612688a3be9c3384ff05b7910972794c0615de8cf1bd42a5fb5d",
+    "tag17_reobserved_observation": "d2031f0caeb082f4426e2f9711c9d0b3463e44e4643b1fbf2c711407e4da3f82",
+    "joined_abandonment": "1f5fa63c35f2a9bce2053b52505e6aff7a29ce7dbe15dda5d10a4d8961cd9e77",
+    "monero_funding": "fc65add2c9d93316428e1cacfb597b0b976a05cdc19175134025b8a8292caf25",
+    "monero_after": "e1f244e7a09695ce69a464189421f4bfd386af6fabf93278e5b587afbb731c58",
+    "deployment_bundle": "66e11c478a801605633f59d11845fc5530e557034c4e72d7289459db1e71b814",
+    "cleanup": "61c8ff16057d36ee675941715e9c34ceca182faf50d8079f586bf4e12a8a9581",
+    "phases": "eb682709daffd314b937be63161c462cf691d54f10cd1756ffce6637f8782c65"
+  }
+}

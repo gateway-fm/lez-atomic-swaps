@@ -8824,3 +8824,9 @@ Runtime flakiness sources are cold builds, CPU/disk pressure, Docker startup,
 SQLite synchronization, and bounded local finality scans; Internet, public RPC,
 faucet, and public-chain finality cannot affect the run. Use a unique run ID
 and never replace exact cleanup with a broad Docker prune.
+
+The exact pushed example `m7lose16-930e3b4-a` passed with checked public
+evidence at
+`docs/evidence/m7-actual-losing-tag16-930e3b4-20260807.json`. Verify it without
+Docker or live nodes using
+`./scripts/test-m7-losing-tag16-actual-certificate.sh`.

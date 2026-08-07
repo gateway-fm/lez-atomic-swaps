@@ -38,7 +38,11 @@ unknown. Authenticated official-indexer clocks bracket the attempt. The
 finalized Refund-absence window must cover the whole interval plus eight blocks
 after the actual post-attempt tip, terminal Claimed state with zero custody must
 exclude Refund, and the exact Tag17 facts must remain unchanged. Its TDD runner
-contract is GREEN; the corrected exact two-devnet replay is pending.
+contract and exact two-devnet replay are GREEN. Exact pushed-commit run
+`m7lose16-930e3b4-a` is actual-node GREEN with a
+checked [certificate](docs/evidence/m7-actual-losing-tag16-930e3b4-20260807.json):
+LEZ accepted the losing Tag16 transport once, no Refund effect finalized from
+height 168 through 175, and the canonical Tag17 facts remained identical.
 
 The application-owned Maker Tag17 recovery boundary is also GREEN under
 [ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the

@@ -1,9 +1,7 @@
 # ADR 0175: Exclude losing Tag16 after finalized Tag17
 
-- Status: Implemented behind an isolated M7 hardening flag; two exact
-  pushed-commit actual-node replays exposed staging and admission assumptions;
-  a third was intentionally stopped before nodes after an oracle audit exposed
-  false-absence and pseudo-anchor gaps; corrected replay pending
+- Status: Accepted and actual-node GREEN on exact pushed commit `930e3b4`;
+  checked secret-free certificate retained
 - Date: 2026-08-07
 
 ## Context
@@ -120,5 +118,11 @@ final `Absent` for terminal Claimed state, and its post-attempt anchor was only
 a one-block classification endpoint. RED/GREEN tests now bind the requested
 start, make terminal Claimed/zero custody the exact exclusion rule, use actual
 authenticated finalized-tip anchors, preserve `unknown` admission semantics,
-and hash the full evidence packet. A fresh pushed-commit replay must still pass
-the complete finalized window before this ADR can be accepted.
+and hash the full evidence packet. At that checkpoint, a fresh pushed-commit
+replay still had to pass the complete finalized window. Exact run
+`m7lose16-930e3b4-a` then passed: Tag16 was transport-accepted once, authenticated
+pre/post tips were both height 167, the scan proved Refund absent from 168
+through finalized height 175 under terminal Claimed/zero-custody semantics,
+canonical Tag17 facts remained hash-identical, and exact cleanup preserved the
+foreign sentinel. The checked certificate is
+`docs/evidence/m7-actual-losing-tag16-930e3b4-20260807.json`.

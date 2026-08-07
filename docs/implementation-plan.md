@@ -6878,7 +6878,11 @@ S12/S13 review and policy-deferred public deployment.
   from terminal Claimed/zero custody at candidate and window end, bracket the
   attempt with authenticated actual finalized-tip clocks, and retain raw and
   canonical evidence hashes plus exact request/transaction identities.
-- [ ] Push a clean checkpoint, run a fresh exact-commit two-devnet replay, and
-  retain a checked secret-free certificate only after exact cleanup.
+- [x] Push clean checkpoint `930e3b4`, run exact two-devnet replay
+  `m7lose16-930e3b4-a`, and retain a checked secret-free certificate only after
+  source status zero and exact cleanup passed without touching foreign Docker
+  activity.
+- [x] Add the certificate contract RED, then make it GREEN and wire it into the
+  pinned quality runner and CI-hardening policy.
 - [ ] Follow with the opposite ordering, concurrent boundary schedules,
   process-kill recovery, fees, and reorg cases before changing F3/F6 state.
