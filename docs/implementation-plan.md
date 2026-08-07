@@ -6907,8 +6907,8 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Re-observe canonical complete Tag16 facts and require byte-equal hashes.
 - [x] Record components, local RPCs, sequence, bounded atomicity argument,
   residuals, and manual reproduction in ADR 0176 and Flow 1ZI.
-- [ ] Run the full pinned CI-quality wrapper, push the clean implementation
-  checkpoint, and report the corrected replay ETA.
+- [x] Run the full pinned CI-quality wrapper, push clean implementation
+  checkpoint 1b60283 to origin/main, and report the corrected replay ETA.
 - [ ] Replay from that exact pushed commit on isolated LEZ v0.2 and Monero
   0.18.5.1 Regtest; validate source status, proof packet, exact cleanup, and
   foreign-sentinel preservation.
