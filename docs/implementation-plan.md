@@ -6886,3 +6886,33 @@ S12/S13 review and policy-deferred public deployment.
   pinned quality runner and CI-hardening policy.
 - [ ] Follow with the opposite ordering, concurrent boundary schedules,
   process-kill recovery, fees, and reorg cases before changing F3/F6 state.
+
+## M7 losing Tag17 after Tag16 hardening (2026-08-07)
+
+- [x] Add a focused RED classifier case for an included valid Punish under
+  terminal Refunded metadata and zero custody.
+- [x] Generalize finalized-effect exclusion so terminal Claimed excludes
+  Refund and terminal Refunded excludes Punish, while all other effects keep
+  fail-closed behavior.
+- [x] Add a RED runner contract for isolated
+  M7_XMR_LOSING_TAG17_AFTER_TAG16=1 and make the manifest contract GREEN.
+- [x] Restrict the mode to the application refund journey, make it mutually
+  exclusive with other M7 hardening modes, and preserve default behavior.
+- [x] Prepare exact Tag17 before Tag16; bind finalized Tag16 to the submitted
+  transaction; attempt Tag17 once after punish_at; treat exit failure only as
+  admission unknown.
+- [x] Bracket the attempt with authenticated actual finalized tips, scan the
+  exact Tag17 target through an eight-block tail, and require terminal
+  Refunded/zero-custody exclusion.
+- [x] Re-observe canonical complete Tag16 facts and require byte-equal hashes.
+- [x] Record components, local RPCs, sequence, bounded atomicity argument,
+  residuals, and manual reproduction in ADR 0176 and Flow 1ZI.
+- [ ] Run the full pinned CI-quality wrapper, push the clean implementation
+  checkpoint, and report the corrected replay ETA.
+- [ ] Replay from that exact pushed commit on isolated LEZ v0.2 and Monero
+  0.18.5.1 Regtest; validate source status, proof packet, exact cleanup, and
+  foreign-sentinel preservation.
+- [ ] RED then GREEN: add a checked secret-free certificate and wire it into
+  the quality runner and CI hardening policy.
+- [ ] Continue with concurrent boundary schedules, process-kill recovery,
+  fees, and reorg cases before changing F3/F6 state or tagging M7.

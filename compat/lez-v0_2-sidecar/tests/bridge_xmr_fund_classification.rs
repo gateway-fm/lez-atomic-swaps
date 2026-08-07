@@ -2268,6 +2268,75 @@ async fn tag_14_through_tag_17_are_classified_by_owner_and_counterparty() {
         bridge.stop().await.expect("tag-17 sidecar stops");
     }
 
+    let included_losing_punish_indexer = finalized_effect_indexer_at(
+        &punish,
+        &xmr_terms,
+        claimant,
+        EscrowStatus::Refunded,
+        0,
+        20_001,
+    );
+    let (included_losing_punish_client, included_losing_punish_bridge) = start_classifier_sidecar(
+        directory.path(),
+        "included-losing-punish-idempotency.json",
+        maker_runtime.clone(),
+        Arc::clone(&maker_planner),
+        &node_endpoint,
+        included_losing_punish_indexer,
+    )
+    .await;
+    let included_losing_punish = included_losing_punish_client
+        .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+            &maker_runtime,
+            &xmr_terms,
+            XmrNativeEffectV3::Punish,
+            &punish,
+            "included-losing-punish",
+        ))
+        .await
+        .expect("included losing Punish classifies from terminal Refunded state");
+    assert!(matches!(
+        included_losing_punish.outcome,
+        FinalizedNativeXmrScanOutcomeV3::Absent { .. }
+    ));
+    included_losing_punish_bridge
+        .stop()
+        .await
+        .expect("included-losing-Punish sidecar stops");
+
+    let terminal_refunded_indexer = missing_fund_indexer(&xmr_terms, EscrowStatus::Refunded);
+    let (terminal_refunded_client, terminal_refunded_bridge) = start_classifier_sidecar(
+        directory.path(),
+        "terminal-refunded-losing-punish-idempotency.json",
+        maker_runtime.clone(),
+        Arc::clone(&maker_planner),
+        &node_endpoint,
+        terminal_refunded_indexer,
+    )
+    .await;
+    let terminal_refunded_punish = terminal_refunded_client
+        .classify_finalized_native_xmr_effect_v3(classification_request_for_effect(
+            &maker_runtime,
+            &xmr_terms,
+            XmrNativeEffectV3::Punish,
+            &punish,
+            "terminal-refunded-losing-punish",
+        ))
+        .await
+        .expect("terminal Refunded state classifies missing Punish");
+    assert!(matches!(
+        terminal_refunded_punish.outcome,
+        FinalizedNativeXmrScanOutcomeV3::Absent {
+            finalized_clock,
+            scanned_window,
+        } if finalized_clock.height == FINALIZED_END
+            && scanned_window == DiscoveryWindow::new(FUNDING_BLOCK, 2).unwrap()
+    ));
+    terminal_refunded_bridge
+        .stop()
+        .await
+        .expect("terminal-Refunded sidecar stops");
+
     let included_losing_refund_indexer = finalized_effect_indexer_at(
         &refund,
         &xmr_terms,

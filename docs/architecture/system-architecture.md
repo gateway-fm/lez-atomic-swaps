@@ -3729,3 +3729,53 @@ packet is
 [`m7-actual-maker-refund-7cd3a9c-20260805.json`](../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json).
 The run proves same-daemon durable retry and read-only terminal observation,
 not a daemon restart after submission.
+
+## M7 Tag16-wins losing-Tag17 exclusion
+
+ADR 0176 adds the symmetric finalized ordering to ADR 0175. The exact Tag17
+transaction exists before Tag16, but Tag16 reaches terminal Refunded state and
+zero custody first. One time-valid late Tag17 release is then judged only by
+authenticated finalized effects, never by its transport response.
+
+```mermaid
+flowchart LR
+    Prepared17[Exact Tag17 prepared] --> Final16[Tag16 finalized Refunded]
+    TakerSidecar[Taker sidecar] --> Sequencer[Local LEZ sequencer]
+    Final16 --> PreTip[Authenticated pre attempt tip]
+    PreTip --> Attempt[One Tag17 release]
+    Attempt --> MakerSidecar[Maker sidecar]
+    MakerSidecar --> Sequencer
+    MakerSidecar --> Indexer[Official local LEZ indexer]
+    Attempt --> PostTip[Authenticated post attempt tip]
+    PostTip --> Tail[Exact target scan plus eight finalized blocks]
+    Tail --> Stable16[Canonical Tag16 facts unchanged]
+```
+
+```mermaid
+sequenceDiagram
+    participant R as Runner
+    participant T as Taker sidecar
+    participant L as LEZ sequencer and indexer
+    participant M as Maker sidecar
+
+    R->>M: Prepare exact Tag17
+    R->>T: Publish Tag16
+    T->>L: Submit Refund once
+    L-->>R: Finalized Refunded and zero custody
+    R->>M: Observe pre attempt finalized tip
+    R->>M: Release Tag17 once after punish_at
+    M-->>R: Accepted or local failure
+    R->>M: Observe post attempt finalized tip
+    R->>M: Scan exact Tag17 through post tip plus eight
+    M-->>R: Punish effect absent
+    R->>M: Reobserve Tag16
+    M-->>R: Canonical winning facts equal
+```
+
+The proof is bounded to the authenticated finalized window. Terminal
+Refunded/zero-custody state excludes an effective Punish at both a matching
+candidate and the window end; a missing exact target is final only under the
+same end state. The winning Tag16 transaction ID is bound to its submission
+and its complete canonical facts remain equal afterward. This does not claim a
+distributed transaction, future-reorg immunity, or all concurrent pre-finality
+schedules. All LEZ and Monero RPCs and funds remain run-owned and local.

@@ -8830,3 +8830,65 @@ evidence at
 `docs/evidence/m7-actual-losing-tag16-930e3b4-20260807.json`. Verify it without
 Docker or live nodes using
 `./scripts/test-m7-losing-tag16-actual-certificate.sh`.
+
+## Flow 1ZI: Repeat late-Tag17 losing-branch exclusion
+
+This hardening flow proves the opposite ordering from Flow 1ZH. It prepares a
+valid exact Tag17 before Tag16, finalizes the normal Tag16 refund, attempts
+Tag17 exactly once after the punishment boundary, scans the actual attempt
+interval plus eight finalized blocks for absence of a Punish effect, and
+re-observes unchanged canonical Tag16 facts.
+
+```bash
+./scripts/test-m4-actual-claim-poc-contract.sh
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RUN_ID=m7lose17-yyyymmdd-nonce
+export M5_XMR_APPLICATION_MODE=1
+export M5_XMR_JOURNEY=refund
+export M5_XMR_REFUND_DELAY_MS=600000
+export M7_XMR_LOSING_TAG17_AFTER_TAG16=1
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+```mermaid
+sequenceDiagram
+    actor User as Local operator
+    participant Runner as Isolated runner
+    participant LEZ as LEZ v0.2 nodes
+    participant XMR as Monero Regtest nodes
+
+    User->>Runner: Execute exact pushed commit
+    Runner->>XMR: Fund and verify Stage A output
+    Runner->>LEZ: Prepare exact Tag17
+    Runner->>LEZ: Submit and finalize Tag16
+    LEZ-->>Runner: Refunded state and zero custody
+    Runner->>LEZ: Record pre attempt finalized tip
+    Runner->>LEZ: Attempt exact Tag17 once after punish boundary
+    LEZ-->>Runner: Accepted or admission unknown
+    Runner->>LEZ: Record post attempt finalized tip
+    Runner->>LEZ: Scan through post tip plus eight blocks
+    LEZ-->>Runner: Punish absent and Tag16 unchanged
+```
+
+Before cleanup, evidence/m7-losing-tag17-after-tag16.json must report passed,
+tag16_wins_over_late_tag17, Tag17 preparation before Tag16 submission,
+finalized winning Tag16 bound to the submitted transaction ID, either exact
+accepted admission or admission unknown, no automatic retry, Punish absent
+from the pre-tip plus one through the post-tip plus eight, and equal canonical
+Tag16 fact hashes. Accepted transport is not execution; nonzero process exit
+is not chain rejection. Absent additionally requires terminal Refunded
+metadata and zero custody at the relevant authenticated observations.
+
+All endpoints are unique literal-loopback RPCs owned by the run. LEZ uses the
+pinned local v0.2 stack and Monero uses official 0.18.5.1 Regtest with
+deterministic local funds. There is no public RPC, faucet, public funds, DNS
+success dependency, or public deployment. Expected variability is cold
+Rust/Risc0 compilation, Docker startup, CPU/disk pressure, SQLite sync, the
+intentional local timelock, and bounded finalized-tail polling. Use a unique
+RUN_ID and exact run-owned cleanup; do not prune or address foreign Docker
+projects.

@@ -44,6 +44,16 @@ checked [certificate](docs/evidence/m7-actual-losing-tag16-930e3b4-20260807.json
 LEZ accepted the losing Tag16 transport once, no Refund effect finalized from
 height 168 through 175, and the canonical Tag17 facts remained identical.
 
+ADR [0176](docs/architecture/0176-exclude-losing-tag17-after-finalized-tag16.md)
+defines the symmetric Tag16-wins hardening route. Its focused RED/GREEN
+classifier and isolated runner contracts are GREEN: exact Tag17 bytes are
+prepared before Tag16, winning Tag16 finality is bound to its submitted
+transaction, one time-valid late Tag17 is attempted after the punishment
+boundary, and the complete interval plus eight finalized blocks must contain
+no Punish effect while canonical Tag16 facts remain identical. A fresh
+pushed-commit two-devnet replay is still required before retaining a
+certificate or calling this slice actual-node GREEN.
+
 The application-owned Maker Tag17 recovery boundary is also GREEN under
 [ADR 0163](docs/architecture/0163-supervise-maker-tag17-recovery.md): the
 normal supervisor runs the real schema-3 role actor, transfers its existing

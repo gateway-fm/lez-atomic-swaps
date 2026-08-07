@@ -185,13 +185,14 @@ impl FinalizedNativeXmrEffectObserver {
         };
         match scan {
             Scan::Found(candidate, stable) => {
-                let terminal_claimed_excludes_refund =
-                    if request.effect == XmrNativeEffectV3::Refund {
+                let terminal_state_excludes_effect =
+                    if let Some(excluding_state) = terminal_state_excluding(request.effect) {
                         match self
-                            .terminal_claimed_at_candidate_and_end(
+                            .terminal_state_at_candidate_and_end(
                                 &request.terms,
                                 candidate.block.block_id,
                                 stable.requested_end,
+                                excluding_state,
                             )
                             .await
                         {
@@ -207,7 +208,7 @@ impl FinalizedNativeXmrEffectObserver {
                     } else {
                         false
                     };
-                if terminal_claimed_excludes_refund {
+                if terminal_state_excludes_effect {
                     if let Err(failure) = stable.confirm_block(self, candidate.block.block_id).await
                     {
                         return match failure {
@@ -313,8 +314,8 @@ impl FinalizedNativeXmrEffectObserver {
                 }
                 Self::result(
                     request,
-                    if request.effect == XmrNativeEffectV3::Refund
-                        && state == Some(XmrNativeEscrowStateV3::Claimed)
+                    if terminal_state_excluding(request.effect).is_some()
+                        && terminal_state_excluding(request.effect) == state
                     {
                         FinalizedNativeXmrScanOutcomeV3::absent(
                             stable.finalized_clock,
@@ -854,16 +855,17 @@ impl FinalizedNativeXmrEffectObserver {
         }
     }
 
-    async fn terminal_claimed_at_candidate_and_end(
+    async fn terminal_state_at_candidate_and_end(
         &self,
         terms: &XmrNativeEscrowTermsV3,
         candidate_block_id: u64,
         requested_end: u64,
+        expected_state: XmrNativeEscrowStateV3,
     ) -> Classified<bool> {
         let candidate = self
             .validate_missing_state(terms, candidate_block_id)
             .await?;
-        if candidate != Some(XmrNativeEscrowStateV3::Claimed) {
+        if candidate != Some(expected_state) {
             return Ok(false);
         }
         let end = if candidate_block_id == requested_end {
@@ -871,7 +873,18 @@ impl FinalizedNativeXmrEffectObserver {
         } else {
             self.validate_missing_state(terms, requested_end).await?
         };
-        Ok(end == Some(XmrNativeEscrowStateV3::Claimed))
+        Ok(end == Some(expected_state))
+    }
+}
+
+const fn terminal_state_excluding(effect: XmrNativeEffectV3) -> Option<XmrNativeEscrowStateV3> {
+    match effect {
+        XmrNativeEffectV3::Refund => Some(XmrNativeEscrowStateV3::Claimed),
+        XmrNativeEffectV3::Punish => Some(XmrNativeEscrowStateV3::Refunded),
+        XmrNativeEffectV3::Initialize
+        | XmrNativeEffectV3::Fund
+        | XmrNativeEffectV3::AuthorizeClaim
+        | XmrNativeEffectV3::Claim => None,
     }
 }
 

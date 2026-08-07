@@ -142,6 +142,19 @@ jq -e '
   and .m7_losing_tag16_after_tag17.window_covers_complete_attempt_interval == true
   and .m7_losing_tag16_after_tag17.tag17_facts_reobserved_equal == true
   and .m7_losing_tag16_after_tag17.runtime_external_resources == []
+  and .m7_losing_tag17_after_tag16.mode_flag == "M7_XMR_LOSING_TAG17_AFTER_TAG16"
+  and .m7_losing_tag17_after_tag16.requires_refund_journey == true
+  and .m7_losing_tag17_after_tag16.default_behavior_unchanged == true
+  and .m7_losing_tag17_after_tag16.tag17_prepared_before_tag16 == true
+  and .m7_losing_tag17_after_tag16.tag16_finalized_before_late_tag17 == true
+  and .m7_losing_tag17_after_tag16.late_tag17_admission_may_succeed == true
+  and .m7_losing_tag17_after_tag16.failed_tag17_process_means_admission_unknown == true
+  and .m7_losing_tag17_after_tag16.authenticated_actual_tip_anchors == true
+  and .m7_losing_tag17_after_tag16.finalized_losing_effect_must_be_absent == true
+  and .m7_losing_tag17_after_tag16.terminal_refunded_zero_excludes_punish == true
+  and .m7_losing_tag17_after_tag16.minimum_post_attempt_finalized_tail_blocks == 8
+  and .m7_losing_tag17_after_tag16.tag16_facts_reobserved_equal == true
+  and .m7_losing_tag17_after_tag16.runtime_external_resources == []
   and .implemented_execute_through == "evidence"
   and .actor_onboarding_implemented == true
   and .successful_claim_tail_implemented == false
@@ -303,6 +316,7 @@ for required in \
   lez_xmr_monero_refund_sweep_v3 lez_xmr_monero_verify_v2 M7_XMR_SUPERVISED_REFUND \
   M7_XMR_JOINED_ABANDONMENT verify_joined_abandonment_economics \
   M7_XMR_LOSING_TAG16_AFTER_TAG17 verify_losing_tag16_after_tag17 \
+  M7_XMR_LOSING_TAG17_AFTER_TAG16 verify_losing_tag17_after_tag16 \
   --observe-finalized-clock \
   bind-finalized-claim-sweep M4_EXPECTED_COMMIT MONERO_RUN_ID; do
   rg -Fq -- "$required" "$runner" || fail "runner omits required boundary: ${required}"
