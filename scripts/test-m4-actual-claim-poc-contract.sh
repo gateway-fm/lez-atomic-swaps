@@ -559,6 +559,12 @@ for m7_crash_boundary in \
   rg -Fq -- "$m7_crash_boundary" <<<"$m7_crash_source" ||
     fail "M7 process-kill recovery omits boundary: ${m7_crash_boundary}"
 done
+m7_actor_group_wait='for _ in {1..200}; do
+    m5_application_process_group_has_members "$crashed_actor_group" || break
+    sleep 0.05
+  done'
+rg -UFq -- "$m7_actor_group_wait" <<<"$m7_crash_source" ||
+  fail "M7 process-kill recovery does not wait boundedly for actor-group quiescence"
 restart_line="$(rg -n -m1 -F 'start_m5_xmr_application_daemon m7-refund-recovery 1' \
   <<<"$m7_crash_source")"
 restart_line="${restart_line%%:*}"

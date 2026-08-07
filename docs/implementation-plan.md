@@ -6957,6 +6957,11 @@ S12/S13 review and policy-deferred public deployment.
   stdout. RED/GREEN fixture the submitted-state predicate so crash mode accepts
   durable leased revision zero while normal mode still requires revision one;
   exact run cleanup preserved the foreign Docker project.
+- [x] Corrected exact replay reached the daemon-then-actor SIGKILL boundary,
+  then exposed an instantaneous actor-group absence check while a non-zombie
+  member was still exiting. RED/GREEN require a bounded 200 x 50 ms wait for
+  exact actor-group quiescence; the existing liveness helper continues to
+  ignore only zombies and fails closed if a live member survives the bound.
 - [x] Add manual Flow 1ZJ and pin the actual-chain crash seam in the M5 service
   lifecycle policy gate.
 - [ ] Add the checked certificate and traceability/hard-requirement deltas;

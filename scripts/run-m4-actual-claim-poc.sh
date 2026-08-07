@@ -3970,6 +3970,10 @@ crash_and_restart_m7_refund_supervisor() {
   m7_refund_actor_is_owned "$crashed_actor_pid" "$crashed_actor_start_ticks" \
     "$crashed_actor_binary_sha256" &&
     fail "M7 old paused refund actor survived SIGKILL"
+  for _ in {1..200}; do
+    m5_application_process_group_has_members "$crashed_actor_group" || break
+    sleep 0.05
+  done
   m5_application_process_group_has_members "$crashed_actor_group" &&
     fail "M7 old paused refund actor group still has live members"
 

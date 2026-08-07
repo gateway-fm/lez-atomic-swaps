@@ -111,6 +111,14 @@ revision-zero pre-stdout state while normal mode rejects it. The interrupted
 run cleaned only its exact resources and is diagnostic evidence, not a
 certificate.
 
+The corrected pushed-commit replay then reached the ordered daemon and actor
+SIGKILL boundary. The actor executable identity disappeared, but an immediate
+process-group query still observed a non-zombie member during exit and failed
+the run. The crash path now waits a bounded 200 times at 50 milliseconds for
+that exact actor group to quiesce, using the existing helper that ignores only
+zombies; any live member after ten seconds still fails closed. This second run
+is also diagnostic rather than certificate evidence.
+
 ## Verification
 
 The RED/GREEN boundaries are the exact Monero-recover crash-hook test in
