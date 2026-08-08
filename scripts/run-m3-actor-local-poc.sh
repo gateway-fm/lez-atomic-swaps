@@ -3085,6 +3085,8 @@ run_overlapping_actor_flows() {
   for direction in "${directions[@]}"; do run_stage_two "$direction"; done
   for direction in "${directions[@]}"; do
     start_overlap_direction "$direction"
+  done
+  for direction in "${directions[@]}"; do
     wait_overlap_arrival "$direction" ready 0
   done
   for direction in "${directions[@]}"; do

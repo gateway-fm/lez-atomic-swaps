@@ -7227,6 +7227,11 @@ S12/S13 review and policy-deferred public deployment.
   referenced `owner_root` under `set -u`. Exact cleanup passed with no foreign
   resource targeted; the declaration is now dependency-ordered and the syntax
   plus M7 contract gates pass again.
+  Replay `m7btcconc-aeebff6-a` then exposed the first composition deadlock:
+  the outer loop waited for forward readiness before launching the reverse
+  controller, while forward correctly waited for reverse authority. Cleanup
+  again passed exactly. Both bounded controllers now launch before either
+  readiness wait; the existing lock and settlement barriers are unchanged.
 - [ ] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [ ] Admit both agreements through one Delivery/Chat daemon and SQLite
