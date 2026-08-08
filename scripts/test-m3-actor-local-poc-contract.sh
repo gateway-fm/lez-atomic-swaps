@@ -1041,6 +1041,18 @@ rg -q 'for attempt in \{1\.\.[0-9]+\}; do' <<<"$lez_retry_source" ||
 lez_submit_source="$(sed -n '/^submit_actor_lez_refund() {$/,/^}$/p' "$direction_driver")"
 rg -Fq 'actor_invoke_recovery_pending_retry' <<<"$lez_submit_source" ||
   fail "LEZ refund submitter does not use its bounded typed-error retry helper"
+lez_refund_baseline_line="$(rg -n -m1 -F 'refund_start="$(finalized_tip)"' \
+  <<<"$lez_submit_source" | cut -d: -f1 || true)"
+lez_refund_live_window_line="$(rg -n -m1 -F 'write_actor_configs "$refund_start" 1' \
+  <<<"$lez_submit_source" | cut -d: -f1 || true)"
+lez_refund_submit_line="$(rg -n -m1 -F 'actor_invoke_recovery_pending_retry' \
+  <<<"$lez_submit_source" | cut -d: -f1 || true)"
+[[ "$lez_refund_baseline_line" =~ ^[0-9]+$ &&
+   "$lez_refund_live_window_line" =~ ^[0-9]+$ &&
+   "$lez_refund_submit_line" =~ ^[0-9]+$ &&
+   "$lez_refund_baseline_line" -lt "$lez_refund_live_window_line" &&
+   "$lez_refund_live_window_line" -lt "$lez_refund_submit_line" ]] ||
+  fail "LEZ refund does not refresh a one-block live finalized window before submission"
 
 lez_retry_contract_root="$(mktemp -d /tmp/m3-lez-refund-retry-contract.XXXXXX)"
 cleanup_lez_retry_contract_root() {

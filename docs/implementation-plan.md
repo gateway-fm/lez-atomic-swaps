@@ -7070,7 +7070,17 @@ S12/S13 review and policy-deferred public deployment.
   `f3ead24b...c244e`, and the verified host deployer SHA-256
   `c594ea1e...f5cbd`. Rotate only the host-artifact pin under ADR 0179 because
   debug source-path metadata changed; the on-chain program identity did not.
-- [ ] Push the pin checkpoint, execute a fresh two-direction Bitcoin Regtest
+- [x] Push the verified pin checkpoint `0078df9` to `origin/main`.
+- [x] First fresh actual-node replay reached `BothLegsLocked` in both role
+  stores, crossed the signed LEZ deadline, and then failed closed because the
+  refund submitter retained the old pre-deadline lock-discovery window. Exact
+  cleanup passed without targeting foreign resources.
+- [x] RED then GREEN the refund baseline refresh: pin a one-block window at the
+  fresh post-deadline finalized tip before the owner invocation, retain the
+  durable submit-once journal, and require the complete post-baseline finalized
+  window before projection. Record the flow and atomicity consequences in ADR
+  0180; the focused orchestration contract passes.
+- [ ] Push the refund-window checkpoint, execute a fresh two-direction Bitcoin Regtest
   plus LEZ 0.2 custom-token refund journey, and retain a sanitized checked
   certificate with terminal replay and exact cleanup evidence.
 - [ ] Close F7 only after the actual-node certificate, quality wrapper, manual

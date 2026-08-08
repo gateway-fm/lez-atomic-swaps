@@ -3004,6 +3004,11 @@ submit_actor_lez_refund() {
   predecessor=$((expected_revision - 1))
   case "$owner" in maker) peer=taker ;; taker) peer=maker ;; *) fail "invalid LEZ refund owner" ;; esac
   refund_start="$(finalized_tip)"
+  # The lock/claim discovery window may end before the signed refund deadline.
+  # Pin the pre-submit reconciliation to the fresh finalized baseline: the
+  # exact refund cannot have been accepted before this post-deadline block,
+  # and the actor's durable one-attempt journal still guards submission.
+  write_actor_configs "$refund_start" 1
   before_count="$(lez_successful_submission_count)"
   if [[ "$asset_mode" == "custom_token" ]]; then
     expected_before=3
