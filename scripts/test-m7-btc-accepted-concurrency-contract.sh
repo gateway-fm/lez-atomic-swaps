@@ -80,7 +80,11 @@ for required in \
   '--maker-signing-key-file' \
   'assert_m7_shared_maker_identity' \
   'kind:"m7_shared_maker_identity"' \
-  'swap_specific_authority_distinct:true'; do
+  'swap_specific_authority_distinct:true' \
+  'prepare_m5_btc_delivery_plan "${directions[@]}"' \
+  '(map(.swap_id) | unique | length) == 2' \
+  '(map(.offer_id) | unique | length) == 2' \
+  '(map(.reservation_id) | unique | length) == 2'; do
   rg -Fq -- "$required" "$delegated_runner" ||
     fail "delegated runner is missing M7 stage-one invariant: $required"
 done

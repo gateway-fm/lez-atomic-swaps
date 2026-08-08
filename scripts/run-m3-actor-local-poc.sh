@@ -2685,30 +2685,39 @@ direction_command() {
 }
 
 prepare_m5_btc_delivery_plan() {
-  local direction="$1"
-  local direction_root="${directions_dir}/${direction}"
-  local fixture_root="${direction_root}/fixture"
-  local application_root="${direction_root}/application"
+  local -a planned_directions=("$@")
+  local primary_direction="${planned_directions[0]:-}"
+  local primary_root="${directions_dir}/${primary_direction}"
+  local application_root="${primary_root}/application"
+  if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+    application_root="${private_dir}/m7-application"
+  fi
   local socket="${secure_state_root}/m5-btc-maker.sock"
   local ready_file="${secure_state_root}/m5-btc-maker.ready"
   local database="${application_root}/maker.sqlite3"
   local delivery="${application_root}/delivery"
-  local delivery_key="${fixture_root}/private/maker-signing.key"
-  local plan_file="${application_root}/btc-plan.json"
+  local delivery_key="${primary_root}/fixture/private/maker-signing.key"
   local daemon_log="${application_root}/delivery-daemon.log"
-  local offer_id="m5btc-offer-${run_id:0:24}"
-  local reservation_id="m5btc-reservation-${run_id:0:24}"
-  local maker_public_key now swap_id
+  local maker_public_key
   local daemon_pid daemon_start="" daemon_ppid="" daemon_executable=""
   local daemon_pgid="" daemon_sid=""
 
-  [[ "$m5_btc_application_mode" == 1 && "$direction" == taker_sells_foreign ]] ||
-    fail "M5 BTC planning is restricted to taker_sells_foreign"
+  [[ "$m5_btc_application_mode" == 1 &&
+     "${#planned_directions[@]}" -ge 1 &&
+     "${#planned_directions[@]}" -le 2 ]] ||
+    fail "M5 BTC planning requires one or two bounded directions"
+  if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+    [[ "${planned_directions[*]}" == "taker_sells_foreign taker_sells_lez" ]] ||
+      fail "M7 BTC planning requires both fixed directions"
+  else
+    [[ "${planned_directions[*]}" == "taker_sells_foreign" ]] ||
+      fail "M5 BTC planning is restricted to taker_sells_foreign"
+  fi
   [[ ! -e "$application_root" && ! -L "$application_root" ]] ||
     fail "M5 BTC application root already exists"
   mkdir -m 0700 "$application_root"
   maker_public_key="$(jq -er '.maker.musig2_public_key' \
-    "${fixture_root}/public-spec.json")"
+    "${primary_root}/fixture/public-spec.json")"
   [[ "$maker_public_key" =~ ^0[23][0-9a-f]{64}$ ]] ||
     fail "stage-one Maker public key is invalid"
 
@@ -2737,40 +2746,88 @@ prepare_m5_btc_delivery_plan() {
   [[ -S "$socket" && -f "$ready_file" && "$(cat "$ready_file")" == "$socket" ]] ||
     fail "M5 BTC Delivery-only daemon readiness timed out"
 
-  "$maker_cli_bin" --socket "$socket" configure-pair --request-id \
-    "${run_id}-btc-pair-create" --pair bitcoin --direction taker-sells-foreign \
-    --enabled false --minimum-foreign-units 1 --maximum-foreign-units 100000000 \
-    --offer-ttl-seconds 7200 >"${application_root}/pair-create.json"
-  "$maker_cli_bin" --socket "$socket" set-local-price --request-id \
-    "${run_id}-btc-price" --pair bitcoin --direction taker-sells-foreign \
-    --lez-units-per-lot 1 --foreign-units-per-lot 1000 \
-    >"${application_root}/price.json"
-  "$maker_cli_bin" --socket "$socket" configure-pair --request-id \
-    "${run_id}-btc-pair-enable" --expected-revision 1 --pair bitcoin \
-    --direction taker-sells-foreign --enabled true --minimum-foreign-units 1 \
-    --maximum-foreign-units 100000000 --offer-ttl-seconds 7200 \
-    >"${application_root}/pair-enable.json"
-  "$maker_cli_bin" --socket "$socket" publish-offer --request-id \
-    "${run_id}-btc-offer" --offer-id "$offer_id" --pair bitcoin \
-    --direction taker-sells-foreign >"${application_root}/offer.json"
+  local direction direction_root direction_application cli_direction suffix
+  local offer_id reservation_id plan_file now swap_id direction_maker_public_key
+  for direction in "${planned_directions[@]}"; do
+    direction_root="${directions_dir}/${direction}"
+    direction_application="${direction_root}/application"
+    if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+      [[ ! -e "$direction_application" && ! -L "$direction_application" ]] ||
+        fail "M7 BTC direction application root already exists"
+      mkdir -m 0700 "$direction_application"
+    fi
+    direction_maker_public_key="$(jq -er '.maker.musig2_public_key' \
+      "${direction_root}/fixture/public-spec.json")"
+    [[ "$direction_maker_public_key" == "$maker_public_key" ]] ||
+      fail "M7 BTC plans do not share the exact Maker identity"
+    case "$direction" in
+      taker_sells_foreign)
+        cli_direction=taker-sells-foreign
+        suffix=foreign
+        ;;
+      taker_sells_lez)
+        cli_direction=taker-sells-lez
+        suffix=lez
+        ;;
+      *) fail "unsupported BTC application direction" ;;
+    esac
+    offer_id="m7btc-${suffix}-${run_id:0:20}"
+    reservation_id="m7btc-reserve-${suffix}-${run_id:0:20}"
+    if [[ "$m7_btc_accepted_concurrency" != 1 ]]; then
+      offer_id="m5btc-offer-${run_id:0:24}"
+      reservation_id="m5btc-reservation-${run_id:0:24}"
+    fi
+    "$maker_cli_bin" --socket "$socket" configure-pair --request-id \
+      "${run_id}-btc-${suffix}-pair-create" --pair bitcoin \
+      --direction "$cli_direction" --enabled false --minimum-foreign-units 1 \
+      --maximum-foreign-units 100000000 --offer-ttl-seconds 7200 \
+      >"${direction_application}/pair-create.json"
+    "$maker_cli_bin" --socket "$socket" set-local-price --request-id \
+      "${run_id}-btc-${suffix}-price" --pair bitcoin --direction "$cli_direction" \
+      --lez-units-per-lot 1 --foreign-units-per-lot 1000 \
+      >"${direction_application}/price.json"
+    "$maker_cli_bin" --socket "$socket" configure-pair --request-id \
+      "${run_id}-btc-${suffix}-pair-enable" --expected-revision 1 --pair bitcoin \
+      --direction "$cli_direction" --enabled true --minimum-foreign-units 1 \
+      --maximum-foreign-units 100000000 --offer-ttl-seconds 7200 \
+      >"${direction_application}/pair-enable.json"
+    "$maker_cli_bin" --socket "$socket" publish-offer --request-id \
+      "${run_id}-btc-${suffix}-offer" --offer-id "$offer_id" --pair bitcoin \
+      --direction "$cli_direction" >"${direction_application}/offer.json"
 
-  now="$(date -u +%s)"
-  "$taker_cli_bin" --delivery-directory "$delivery" \
-    --maker-public-key "$maker_public_key" --now-unix-seconds "$now" \
-    --pair bitcoin --direction taker-sells-foreign \
-    --plan-btc-offer "$offer_id" --reservation-id "$reservation_id" \
-    --foreign-units 1000000 >"$plan_file"
-  chmod 0600 "$plan_file" "$daemon_log" "${application_root}"/*.json
-  jq -e --arg offer "$offer_id" --arg reservation "$reservation_id" '
-    .schema_version == 1 and .offer_id == $offer and
-    .reservation_id == $reservation and
-    (.signed_envelope_sha256 | test("^[0-9a-f]{64}$")) and
-    (.swap_id | test("^[0-9a-f]{64}$")) and
-    .foreign_units == 1000000 and .lez_units == 1000 and
-    .private_material_disclosed == false
-  ' "$plan_file" >/dev/null || fail "M5 BTC Taker planning output is invalid"
-  swap_id="$(jq -er '.swap_id' "$plan_file")"
-  m5_btc_swap_ids["$direction"]="$swap_id"
+    plan_file="${direction_application}/btc-plan.json"
+    now="$(date -u +%s)"
+    "$taker_cli_bin" --delivery-directory "$delivery" \
+      --maker-public-key "$maker_public_key" --now-unix-seconds "$now" \
+      --pair bitcoin --direction "$cli_direction" \
+      --plan-btc-offer "$offer_id" --reservation-id "$reservation_id" \
+      --foreign-units 1000000 >"$plan_file"
+    chmod 0600 "$plan_file" "${direction_application}"/*.json
+    jq -e --arg offer "$offer_id" --arg reservation "$reservation_id" '
+      .schema_version == 1 and .offer_id == $offer and
+      .reservation_id == $reservation and
+      (.signed_envelope_sha256 | test("^[0-9a-f]{64}$")) and
+      (.swap_id | test("^[0-9a-f]{64}$")) and
+      .foreign_units == 1000000 and .lez_units == 1000 and
+      .private_material_disclosed == false
+    ' "$plan_file" >/dev/null || fail "M5 BTC Taker planning output is invalid"
+    swap_id="$(jq -er '.swap_id' "$plan_file")"
+    m5_btc_swap_ids["$direction"]="$swap_id"
+  done
+  chmod 0600 "$daemon_log"
+  if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+    jq -e -s '
+      length == 2
+      and (map(.swap_id) | unique | length) == 2
+      and (map(.offer_id) | unique | length) == 2
+      and (map(.reservation_id) | unique | length) == 2
+      and all(.[];
+        .private_material_disclosed == false
+        and (.signed_envelope_sha256 | test("^[0-9a-f]{64}$")))
+    ' "${directions_dir}/taker_sells_foreign/application/btc-plan.json" \
+      "${directions_dir}/taker_sells_lez/application/btc-plan.json" >/dev/null ||
+      fail "M7 BTC shared Delivery plans are not isolated"
+  fi
 
   stop_provisional_owned_process "$daemon_pid" "$daemon_start" "$daemon_ppid" \
     "$daemon_executable" "$daemon_pgid" "$daemon_sid" ||
@@ -4530,6 +4587,9 @@ fi
 # swaps have durably reached revision two.
 if [[ "$schedule" == "overlap" ]]; then
   phase_timing_begin directions_overlap || fail "overlap timing start failed"
+  if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+    prepare_m5_btc_delivery_plan "${directions[@]}"
+  fi
   reserve_bitcoin_funding_anchors overlap
   run_overlapping_actor_flows
   phase_timing_end directions_overlap || fail "overlap timing end failed"

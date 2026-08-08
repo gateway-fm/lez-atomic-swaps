@@ -47,6 +47,13 @@ generates every Taker, refund, claim, and adaptor secret freshly while rejecting
 collisions. Tests check both the library and literal CLI paths and ensure the
 secret or its hexadecimal form never enters stdout.
 
+The Delivery planner now retains its one-direction M5 default while the M7
+mode configures both fixed direction routes through one daemon and database.
+It requires the same public Maker identity, then produces two distinct signed
+offer commitments, reservation IDs, and authenticated swap IDs. This source
+composition and its legacy regressions are GREEN; the claims remain pending an
+exact-node execution certificate.
+
 ## Components
 
 ```mermaid

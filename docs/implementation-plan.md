@@ -7193,6 +7193,12 @@ S12/S13 review and policy-deferred public deployment.
   Taker/refund/claim/adaptor authority remains fresh. Both library and literal
   CLI tests pass inside the complete 15-test provisioner suite; strict package
   Clippy is warning-free.
+- [x] Generalize the existing Delivery planner without changing its M5 default.
+  The M7 path requires both fixed directions and one Maker identity, then
+  asserts two distinct signed offers, reservations, and authenticated swap IDs
+  while retaining one database and Delivery directory. M7, legacy M5 BTC, and
+  canonical M3 orchestration contracts are GREEN; actual execution remains the
+  next proof gate.
 - [ ] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [ ] Admit both agreements through one Delivery/Chat daemon and SQLite
