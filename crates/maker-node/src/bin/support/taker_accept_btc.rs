@@ -30,6 +30,7 @@ use super::taker_accept::{
 };
 
 pub(crate) struct BtcTakeInput<'a> {
+    pub(crate) direction: SwapDirection,
     pub(crate) delivery: Option<&'a RunLocalDelivery>,
     pub(crate) now_unix_seconds: u64,
     pub(crate) offer_id: &'a str,
@@ -92,7 +93,7 @@ pub(crate) async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAccep
         Err(error) => return Err(error).context("inspect persisted BTC agreement"),
     }
 
-    let route = MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsForeign)?;
+    let route = MakerRouteV1::new(Pair::Bitcoin, input.direction)?;
     let selected = input
         .delivery
         .context("fresh BTC acceptance requires Delivery")?
@@ -124,6 +125,7 @@ pub(crate) async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAccep
         input.foreign_units,
         expected_lez_units,
         &taker_public,
+        input.direction,
     )?;
 
     let proposal: BtcChatProposalV1 = call_local_rpc(
@@ -177,11 +179,12 @@ fn validate_fresh_draft(
     foreign_units: u64,
     lez_units: u128,
     taker_public: &PublicKey,
+    direction: SwapDirection,
 ) -> anyhow::Result<()> {
     let body = draft.body();
     ensure!(
         body.swap_id() == &maker_btc_chat_swap_id(&offer_commitment, reservation_id)
-            && body.direction() == SwapDirection::TakerSellsForeign
+            && body.direction() == direction
             && body.funding_terms().value_sat() == foreign_units
             && body.lez_terms().amount() == lez_units
             && body
@@ -273,7 +276,7 @@ async fn resume_persisted_btc(
     taker_secret.non_secure_erase();
     ensure!(
         agreement.body() == draft.body()
-            && agreement.direction() == SwapDirection::TakerSellsForeign
+            && agreement.direction() == input.direction
             && agreement.funding_terms().value_sat() == input.foreign_units
             && agreement
                 .participant(Participant::Taker)

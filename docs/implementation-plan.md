@@ -7205,6 +7205,15 @@ S12/S13 review and policy-deferred public deployment.
   rejection without either chain; GREEN selects either bounded BTC direction,
   authenticates the matching Delivery route, and retains the forward default.
   Both process journeys and strict warning-fatal package Clippy pass.
+- [x] Replay pushed commit `4c368c0` as `m7btcconc-4c368c0-a`. Both actual
+  chains, checked LEZ deployment/bootstrap, and both authenticated plans passed;
+  exact scoped cleanup passed without targeting foreign Docker resources. The
+  next RED was the later application-runtime forward-only guard. Focused
+  RED-GREEN now carries the selected typed direction through fresh discovery,
+  draft cross-binding, persisted retry, Chat countersigning, role-specific
+  refund/deadline validation, and daemon/Taker actor provisioning. Both real
+  process directions and strict package Clippy pass. This does not yet prove
+  the required shared-daemon admission.
 - [ ] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [ ] Admit both agreements through one Delivery/Chat daemon and SQLite

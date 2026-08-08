@@ -60,9 +60,18 @@ pub struct BtcAuthorityFixture {
 
 impl BtcAuthorityFixture {
     pub fn new(root: &Path, label: &str, swap_id: [u8; 32]) -> Self {
+        Self::new_with_direction(root, label, swap_id, SwapDirection::TakerSellsForeign)
+    }
+
+    pub fn new_with_direction(
+        root: &Path,
+        label: &str,
+        swap_id: [u8; 32],
+        direction: SwapDirection,
+    ) -> Self {
         let fixture_root = root.join(format!("btc-authority-{label}"));
         make_private_directory(&fixture_root);
-        let agreement = agreement(swap_id);
+        let agreement = agreement(swap_id, direction);
         let agreement_wire = agreement.encode_wire().expect("canonical source agreement");
         let unsigned_draft = fixture_root.join("unsigned-draft-v1.borsh");
         let draft = BtcAgreementDraftV1::validate(agreement.body().clone())
@@ -104,7 +113,7 @@ impl BtcAuthorityFixture {
     }
 }
 
-fn agreement(swap_id: [u8; 32]) -> BtcAgreementV1 {
+fn agreement(swap_id: [u8; 32], direction: SwapDirection) -> BtcAgreementV1 {
     let maker_signing = secret(MAKER_SIGNING_SECRET);
     let taker_signing = secret(TAKER_SIGNING_SECRET);
     let maker_refund = secret(MAKER_REFUND_SECRET);
@@ -135,13 +144,17 @@ fn agreement(swap_id: [u8; 32]) -> BtcAgreementV1 {
     )
     .expect("aggregate signing context")
     .output_key();
+    let refund_key = match direction {
+        SwapDirection::TakerSellsForeign => x_only_key(&taker_refund),
+        SwapDirection::TakerSellsLez => x_only_key(&maker_refund),
+    };
     let contract = lez_btc_swap_sdk::P2trSwapOutput::new(
         TwoPartyAggregateKey::from_bytes(aggregate_key).expect("aggregate key"),
-        RefundXOnlyKey::from_bytes(x_only_key(&taker_refund)).expect("Taker refund key"),
+        RefundXOnlyKey::from_bytes(refund_key).expect("Bitcoin depositor refund key"),
         CsvBlockDelay::new(144).expect("CSV delay"),
     )
     .expect("P2TR contract");
-    let body = agreement_body(swap_id, participants, adaptor_point, &contract);
+    let body = agreement_body(swap_id, direction, participants, adaptor_point, &contract);
     let commitment = body.commitment();
     BtcAgreementV1::validate(BtcAgreementRecordV1::from_parts(
         BTC_AGREEMENT_SCHEMA_V1,
@@ -155,6 +168,7 @@ fn agreement(swap_id: [u8; 32]) -> BtcAgreementV1 {
 
 fn agreement_body(
     swap_id: [u8; 32],
+    direction: SwapDirection,
     participants: BtcParticipantsV1,
     adaptor_point: [u8; 33],
     contract: &P2trSwapOutput,
@@ -165,6 +179,10 @@ fn agreement_body(
         1,
         FOREIGN_UNITS_SAT,
     );
+    let bitcoin_claimant = match direction {
+        SwapDirection::TakerSellsForeign => Participant::Maker,
+        SwapDirection::TakerSellsLez => Participant::Taker,
+    };
     let claim = lez_btc_swap_sdk::CooperativeKeyPathSpend::new(
         contract,
         OutPoint {
@@ -176,7 +194,7 @@ fn agreement_body(
             value: Amount::from_sat(99_000),
             script_pubkey: ScriptBuf::from_bytes(
                 participants
-                    .for_participant(Participant::Maker)
+                    .for_participant(bitcoin_claimant)
                     .claim_destination_script_pubkey()
                     .to_vec(),
             ),
@@ -191,9 +209,17 @@ fn agreement_body(
         .concat(),
     )
     .into();
+    let (lez_depositor, lez_claimant) = match direction {
+        SwapDirection::TakerSellsForeign => ([10; 32], [11; 32]),
+        SwapDirection::TakerSellsLez => ([11; 32], [10; 32]),
+    };
+    let lez_refund_at_ms = match direction {
+        SwapDirection::TakerSellsForeign => 4_102_444_500_000,
+        SwapDirection::TakerSellsLez => 4_102_444_800_000,
+    };
     BtcAgreementBodyV1::new(
         swap_id,
-        SwapDirection::TakerSellsForeign,
+        direction,
         BtcChainPolicyV1::new([8; 32], 6),
         participants,
         adaptor_point,
@@ -205,10 +231,10 @@ fn agreement_body(
             [12; 32],
             [13; 32],
             [14; 32],
-            [10; 32],
-            [11; 32],
+            lez_depositor,
+            lez_claimant,
             LEZ_UNITS,
-            4_102_444_500_000,
+            lez_refund_at_ms,
             prepared_message_hash,
         ),
         BtcP2trTermsV1::from_contract(contract),
@@ -264,15 +290,12 @@ fn role_config(
         [42; 32],
         &lez_journal,
     );
+    let bitcoin_funder_role = match agreement.direction() {
+        SwapDirection::TakerSellsForeign => ActorRole::Taker,
+        SwapDirection::TakerSellsLez => ActorRole::Maker,
+    };
+    seed_role_secrets(&adaptor_secret, &refund_secret, role, bitcoin_funder_role);
     let maker_lock = if role == ActorRole::Taker {
-        write_private(
-            &adaptor_secret,
-            hex::encode([ADAPTOR_SECRET; 32]).as_bytes(),
-        );
-        write_private(
-            &refund_secret,
-            hex::encode([TAKER_REFUND_SECRET; 32]).as_bytes(),
-        );
         None
     } else {
         Some(prepare_maker_lock(
@@ -316,7 +339,7 @@ fn role_config(
             "discovery_max_blocks": 10
         },
         "signing": signing,
-        "refund": if role == ActorRole::Taker {
+        "refund": if role == bitcoin_funder_role {
             json!({ "bitcoin_refund_key_file": refund_secret })
         } else {
             json!({})
@@ -331,6 +354,24 @@ fn role_config(
     );
     validate_role_config(&config_path, role, agreement);
     config_path
+}
+
+fn seed_role_secrets(
+    adaptor_secret: &Path,
+    refund_secret: &Path,
+    role: ActorRole,
+    bitcoin_funder_role: ActorRole,
+) {
+    if role == ActorRole::Taker {
+        write_private(adaptor_secret, hex::encode([ADAPTOR_SECRET; 32]).as_bytes());
+    }
+    if role == bitcoin_funder_role {
+        let secret = match role {
+            ActorRole::Maker => MAKER_REFUND_SECRET,
+            ActorRole::Taker => TAKER_REFUND_SECRET,
+        };
+        write_private(refund_secret, hex::encode([secret; 32]).as_bytes());
+    }
 }
 
 fn validate_role_config(path: &Path, role: ActorRole, agreement: &BtcAgreementV1) {
@@ -443,7 +484,11 @@ fn role_runtime(role: ActorRole) -> RuntimeDescriptor {
 fn seed_prepared_claim(path: &Path, run_id: &RunId, agreement: &BtcAgreementV1) {
     let request_id = RequestId::new("m5-btc-prepared-claim-001").unwrap();
     let prepared = PrepareWitnessedClaimResult::new(
-        MessageContext::new(run_id.clone(), request_id.clone(), BridgeParticipant::Taker),
+        MessageContext::new(
+            run_id.clone(),
+            request_id.clone(),
+            bridge_participant(agreement.lez_claimant()),
+        ),
         PreparedWitnessedClaim::new(
             request_id,
             Hex32::from_bytes(*agreement.lez_terms().claim_message_hash()),

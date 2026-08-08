@@ -1,7 +1,8 @@
 # ADR 0190: Compose accepted BTC overlap under one daemon
 
 Status: Accepted for implementation; contract, shared Maker identity, and both
-authenticated planning directions GREEN; actual-node execution pending
+authenticated planning and Chat-acceptance directions GREEN; shared-daemon
+actual-node execution pending
 
 ## Context
 
@@ -61,6 +62,15 @@ bounded direction enum and authenticates the offer under that exact route; it
 still rejects non-Bitcoin pairs and all Chat, signing, agreement, actor, and
 receipt authority. A separate-process reverse-route test reproduces the
 original failure without chain setup and proves the corrected Delivery path.
+
+The next pushed exact-node replay reached both authenticated plans and then
+exposed the same stale restriction at Chat acceptance. Acceptance now carries
+the selected typed direction through offer discovery, unsigned-draft binding,
+persisted retry, countersigning, and actor provisioning. A valid reverse
+process fixture derives the LEZ depositor/claimant, Bitcoin claimant/refund
+key, prepared-claim authority, and later timeout from the direction. This
+closes the product capability but not the M7 composition: the next gate must
+admit both already planned swaps through one restarted daemon and database.
 
 ## Components
 

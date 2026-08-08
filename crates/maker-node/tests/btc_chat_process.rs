@@ -102,7 +102,7 @@ async fn real_taker_and_daemon_handoff_exact_btc_agreement_to_role_fixed_actors(
     let mut daemon = start_daemon(&paths);
     wait_ready(&mut daemon, &paths);
 
-    let taker = TakerFiles::new(run.path(), &authority);
+    let taker = TakerFiles::new(run.path(), &authority, "taker-sells-foreign");
     stage_proposal(
         &chat_socket,
         &offer_id,
@@ -122,7 +122,7 @@ async fn real_taker_and_daemon_handoff_exact_btc_agreement_to_role_fixed_actors(
         &delivery_maker,
         accepted_at,
     );
-    assert_initial_acceptance(&accepted);
+    assert_initial_acceptance(&accepted, true);
 
     let final_wire = fs::read(&taker.final_agreement).expect("exact countersigned BTC agreement");
     assert_completed_handoff(
@@ -163,7 +163,7 @@ async fn real_taker_and_daemon_handoff_exact_btc_agreement_to_role_fixed_actors(
 }
 
 #[tokio::test]
-async fn real_taker_plans_authenticated_reverse_btc_offer() {
+async fn real_taker_plans_and_accepts_authenticated_reverse_btc_offer() {
     let run = tempdir().expect("isolated reverse BTC planning root");
     make_private_directory(run.path());
     let runtime = run.path().join("runtime");
@@ -176,7 +176,7 @@ async fn real_taker_plans_authenticated_reverse_btc_offer() {
     let delivery_key = run.path().join("delivery.key");
     let maker_agreement_key = run.path().join("maker-agreement.key");
     write_raw_key(&delivery_key, 18);
-    write_raw_key(&maker_agreement_key, 19);
+    write_raw_key(&maker_agreement_key, MAKER_AGREEMENT_KEY);
     let daemon_base = DaemonBase {
         socket: &socket,
         chat_socket: &chat_socket,
@@ -207,6 +207,35 @@ async fn real_taker_plans_authenticated_reverse_btc_offer() {
     .await;
     assert_eq!(authenticated.offer().route(), route);
     stop_delivery_only_daemon(&mut daemon, &daemon_base);
+
+    let authority = BtcAuthorityFixture::new_with_direction(
+        run.path(),
+        "reverse",
+        maker_btc_chat_swap_id(&authenticated.commitment(), &reservation_id),
+        SwapDirection::TakerSellsLez,
+    );
+    let paths = daemon_base.with_authority(&authority);
+    let mut daemon = start_daemon(&paths);
+    wait_ready(&mut daemon, &paths);
+    let taker = TakerFiles::new(run.path(), &authority, "taker-sells-lez");
+    let accepted = run_taker(
+        &taker,
+        &delivery,
+        &chat_socket,
+        &offer_id,
+        &reservation_id,
+        &delivery_maker,
+        now(),
+    );
+    assert_initial_acceptance(&accepted, false);
+    assert_eq!(
+        accepted["swap_id"],
+        hex::encode(maker_btc_chat_swap_id(
+            &authenticated.commitment(),
+            &reservation_id,
+        ))
+    );
+    stop_daemon(&mut daemon, &paths);
 }
 
 async fn stage_proposal(
@@ -249,10 +278,10 @@ async fn stage_proposal(
     assert!(!staged.proposal_wire.is_empty());
 }
 
-fn assert_initial_acceptance(accepted: &Value) {
+fn assert_initial_acceptance(accepted: &Value, proposal_was_replay: bool) {
     assert_eq!(accepted["schema_version"], 1);
     assert_eq!(accepted["offer_revision"], 3);
-    assert_eq!(accepted["replay"]["proposal"], true);
+    assert_eq!(accepted["replay"]["proposal"], proposal_was_replay);
     assert_eq!(accepted["replay"]["completion"], false);
     assert_eq!(accepted["replay"]["agreement_file"], false);
     assert_eq!(accepted["private_material_disclosed"], false);
@@ -462,6 +491,7 @@ fn assert_btc_plan(
 }
 
 struct TakerFiles {
+    direction: &'static str,
     unsigned_draft: PathBuf,
     signing_key: PathBuf,
     final_agreement: PathBuf,
@@ -471,10 +501,11 @@ struct TakerFiles {
 }
 
 impl TakerFiles {
-    fn new(run: &Path, authority: &BtcAuthorityFixture) -> Self {
+    fn new(run: &Path, authority: &BtcAuthorityFixture, direction: &'static str) -> Self {
         let root = run.join("taker");
         make_private_directory(&root);
         let files = Self {
+            direction,
             unsigned_draft: root.join("unsigned-draft-v1.borsh"),
             signing_key: root.join("agreement.key"),
             final_agreement: root.join("agreement-v1.borsh"),
@@ -510,7 +541,7 @@ fn run_taker(
         .arg("--pair")
         .arg("bitcoin")
         .arg("--direction")
-        .arg("taker-sells-foreign")
+        .arg(taker.direction)
         .arg("--accept-btc-offer")
         .arg(offer_id.as_str())
         .arg("--chat-socket")

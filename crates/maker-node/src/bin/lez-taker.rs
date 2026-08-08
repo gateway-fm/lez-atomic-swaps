@@ -446,12 +446,12 @@ async fn execute_btc_take(
     ensure!(
         arguments
             .pair
-            .is_none_or(|pair| matches!(pair, PairArgument::Bitcoin))
-            && arguments.direction.is_none_or(|direction| {
-                matches!(direction, DirectionArgument::TakerSellsForeign)
-            }),
-        "M5 BTC acceptance supports only bitcoin/taker-sells-foreign"
+            .is_none_or(|pair| matches!(pair, PairArgument::Bitcoin)),
+        "BTC acceptance supports only bitcoin"
     );
+    let direction = arguments
+        .direction
+        .unwrap_or(DirectionArgument::TakerSellsForeign);
     let agreement_output_file = required_btc_path(
         arguments.agreement_output_file.as_deref(),
         "--agreement-output-file",
@@ -470,6 +470,7 @@ async fn execute_btc_take(
         )?)
     };
     let output = take_btc(BtcTakeInput {
+        direction: direction.into(),
         delivery: delivery.as_ref(),
         now_unix_seconds,
         offer_id: arguments
