@@ -7155,7 +7155,14 @@ S12/S13 review and policy-deferred public deployment.
   envelopes, available Chat and an explicitly disabled route when that legacy
   fixture has no chain-health probe. The exact focused journey passes in 3.96
   seconds without a product-code change.
-- [ ] Update the operator/manual flows, global README, traceability, ADR
-  statuses, M7 packet map, hard-requirement inventory, and S4 open count; run
-  the complete quality, security, license, documentation, and repository
-  hygiene gates before the F7 closure push.
+- [x] Update the operator/manual flows, global README, traceability, ADR
+  statuses, M7 packet map, hard-requirement inventory, and S4 open count. The
+  closure checkpoint passes the complete CI quality wrapper; clean formatting;
+  strict all-target/all-feature Clippy; every workspace test; warnings-as-errors
+  Rustdoc; CI-pinned cargo-deny 0.19.9 advisories, bans, licenses, and sources;
+  npm audit with zero vulnerabilities; Node license policy; traceability; the
+  F7 certificate; CI hardening; repository hygiene; and real Chromium rendering
+  of all 555 Mermaid diagrams. The checked M7 inventories remain explicit:
+  28 hard rows with 13 repository-owned open and 2 deferred, plus 14 submission
+  rows with 4 repository-owned open, 2 external, and 1 deferred. F7 is GREEN;
+  those remaining rows still prevent an M7 completion tag.
