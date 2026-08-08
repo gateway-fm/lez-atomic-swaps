@@ -2208,6 +2208,7 @@ run_stage_one() {
   local direction_root="${directions_dir}/${direction}"
   local planning_file="${direction_root}/planning.json"
   local fixture_root="${direction_root}/fixture"
+  local -a shared_maker_arguments=()
   mkdir -m 0700 "$direction_root"
   jq -n \
     --arg maker "$(jq -er '.account_id_hex' "${evidence_dir}/maker-lez-identity.json")" \
@@ -2219,7 +2220,15 @@ run_stage_one() {
       refund_csv_blocks: 144
     }' >"$planning_file"
   chmod 0600 "$planning_file"
+  if [[ "$m7_btc_accepted_concurrency" == 1 &&
+        "$direction" == taker_sells_lez ]]; then
+    shared_maker_arguments=(
+      --maker-signing-key-file
+      "${directions_dir}/taker_sells_foreign/fixture/private/maker-signing.key"
+    )
+  fi
   "$provisioner_bin" generate --planning-file "$planning_file" --output-root "$fixture_root" \
+    "${shared_maker_arguments[@]}" \
     >"${evidence_dir}/${direction}-stage-one.json"
   chmod 0600 "${evidence_dir}/${direction}-stage-one.json"
   jq -e --arg root "$fixture_root" '
@@ -2230,6 +2239,49 @@ run_stage_one() {
     and .lez_authority_helper.example == "lez-v02-account-id"
     and .private_material_disclosed == false
   ' "${evidence_dir}/${direction}-stage-one.json" >/dev/null
+}
+
+assert_m7_shared_maker_identity() {
+  [[ "$m7_btc_accepted_concurrency" == 1 ]] || return 0
+  local left="${directions_dir}/taker_sells_foreign/fixture"
+  local right="${directions_dir}/taker_sells_lez/fixture"
+  local evidence="${evidence_dir}/m7-shared-maker-identity.json"
+  local left_key="${left}/private/maker-signing.key"
+  local right_key="${right}/private/maker-signing.key"
+  local left_key_sha right_key_sha
+  left_key_sha="$(sha256sum "$left_key" | sed 's/ .*//')"
+  right_key_sha="$(sha256sum "$right_key" | sed 's/ .*//')"
+  [[ "$left_key_sha" == "$right_key_sha" &&
+     "$(stat -c '%d:%i' "$left_key")" != "$(stat -c '%d:%i' "$right_key")" ]] ||
+    fail "M7 Maker signing identity is not a distinct-file exact copy"
+  jq -e -s '
+    .[0].maker.musig2_public_key == .[1].maker.musig2_public_key
+    and .[0].maker.bitcoin_refund_x_only_public_key !=
+      .[1].maker.bitcoin_refund_x_only_public_key
+    and .[0].maker.bitcoin_claim_destination_script_pubkey !=
+      .[1].maker.bitcoin_claim_destination_script_pubkey
+    and .[0].taker.musig2_public_key != .[1].taker.musig2_public_key
+    and .[0].aggregate_internal_key != .[1].aggregate_internal_key
+  ' "$left/public-spec.json" "$right/public-spec.json" >/dev/null ||
+    fail "M7 stage-one fixtures reused or crossed swap-specific authority"
+  jq -n \
+    --arg maker_public_key "$(jq -er '.maker.musig2_public_key' "$left/public-spec.json")" \
+    --arg left_public_sha256 "$(sha256sum "$left/public-spec.json" | sed 's/ .*//')" \
+    --arg right_public_sha256 "$(sha256sum "$right/public-spec.json" | sed 's/ .*//')" '
+    {
+      schema_version:1,
+      kind:"m7_shared_maker_identity",
+      result:"passed",
+      accepted_swap_count:2,
+      maker_public_key:$maker_public_key,
+      public_spec_sha256:[$left_public_sha256,$right_public_sha256],
+      shared_maker_signing_identity:true,
+      source_key_unchanged:true,
+      output_key_is_distinct_inode:true,
+      swap_specific_authority_distinct:true,
+      private_material_disclosed:false
+    }' >"$evidence"
+  chmod 0600 "$evidence"
 }
 
 run_official_nssa_mapping() {
@@ -4452,6 +4504,7 @@ for direction in "${directions[@]}"; do
   run_stage_one "$direction"
   run_official_nssa_mapping "$direction"
 done
+assert_m7_shared_maker_identity
 phase_timing_end identities_stage_one || fail "identity timing end failed"
 
 phase_timing_begin node_startup || fail "node-startup timing start failed"

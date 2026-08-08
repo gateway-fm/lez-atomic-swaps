@@ -451,6 +451,36 @@ struct Secrets {
 /// Rejects malformed planning JSON, invalid public accounts or CSV policy,
 /// unsafe/non-new output roots, unavailable randomness, or any failed write.
 pub fn generate_stage1(planning_file: &Path, output_root: &Path) -> Result<Stage1Summary> {
+    generate_stage1_inner(planning_file, output_root, None)
+}
+
+/// Creates fresh private material while retaining one explicitly pinned Maker
+/// signing identity.
+///
+/// The source key is read through the same stable owner-only input boundary as
+/// every other private input. The output receives a new single-link copy, while
+/// all Taker, refund, claim, and adaptor authority remains freshly generated
+/// and distinct from that key.
+///
+/// # Errors
+///
+/// Rejects an unsafe or invalid Maker key in addition to every
+/// `generate_stage1` error.
+pub fn generate_stage1_with_maker_signing_key(
+    planning_file: &Path,
+    output_root: &Path,
+    maker_signing_key_file: &Path,
+) -> Result<Stage1Summary> {
+    let maker_signing =
+        read_secret(maker_signing_key_file).context("read pinned Maker signing key")?;
+    generate_stage1_inner(planning_file, output_root, Some(maker_signing))
+}
+
+fn generate_stage1_inner(
+    planning_file: &Path,
+    output_root: &Path,
+    maker_signing: Option<Zeroizing<[u8; 32]>>,
+) -> Result<Stage1Summary> {
     validate_new_output_root(output_root)?;
     let planning: PlanningSpec = read_strict_json(planning_file)?;
     ensure!(
@@ -465,7 +495,7 @@ pub fn generate_stage1(planning_file: &Path, output_root: &Path) -> Result<Stage
     );
     let _ = CsvBlockDelay::new(planning.refund_csv_blocks).context("invalid refund CSV policy")?;
 
-    let secrets = Secrets::fresh()?;
+    let secrets = Secrets::fresh_with_maker_signing(maker_signing)?;
     let public = public_spec(
         &secrets,
         maker_account,
@@ -1171,8 +1201,11 @@ fn custom_token_from_spec(
 }
 
 impl Secrets {
-    fn fresh() -> Result<Self> {
+    fn fresh_with_maker_signing(maker_signing: Option<Zeroizing<[u8; 32]>>) -> Result<Self> {
         let mut generated: Vec<Zeroizing<[u8; 32]>> = Vec::with_capacity(7);
+        if let Some(maker_signing) = maker_signing {
+            generated.push(maker_signing);
+        }
         while generated.len() < 7 {
             let candidate = random_secret()?;
             if generated.iter().all(|existing| **existing != *candidate) {

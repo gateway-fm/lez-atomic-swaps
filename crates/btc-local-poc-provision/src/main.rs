@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use btc_local_poc_provision::{
-    export_draft, finalize_asset_extension, finalize_stage2, generate_stage1, prepare_funding,
+    export_draft, finalize_asset_extension, finalize_stage2, generate_stage1,
+    generate_stage1_with_maker_signing_key, prepare_funding,
 };
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -30,6 +31,9 @@ enum Action {
         /// New normalized absolute owner-private fixture root.
         #[arg(long)]
         output_root: PathBuf,
+        /// Existing owner-private 32-byte Maker signing key to retain.
+        #[arg(long)]
+        maker_signing_key_file: Option<PathBuf>,
     },
     /// Offline-sign an exact funding transaction from one actual rawtr service UTXO.
     PrepareFunding {
@@ -84,7 +88,15 @@ fn execute(arguments: Arguments) -> Result<()> {
         Action::Generate {
             planning_file,
             output_root,
-        } => print_json(&generate_stage1(&planning_file, &output_root)?),
+            maker_signing_key_file,
+        } => match maker_signing_key_file {
+            Some(key_file) => print_json(&generate_stage1_with_maker_signing_key(
+                &planning_file,
+                &output_root,
+                &key_file,
+            )?),
+            None => print_json(&generate_stage1(&planning_file, &output_root)?),
+        },
         Action::PrepareFunding {
             spec_file,
             output_root,

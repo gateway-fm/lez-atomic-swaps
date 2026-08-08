@@ -18,7 +18,8 @@ use bitcoin::{
     taproot, transaction,
 };
 use btc_local_poc_provision::{
-    finalize_asset_extension, finalize_stage2, generate_stage1, prepare_funding,
+    finalize_asset_extension, finalize_stage2, generate_stage1,
+    generate_stage1_with_maker_signing_key, prepare_funding,
 };
 use lez_btc_swap_sdk::{
     BtcAgreementDraftV1, BtcAgreementV1, BtcLezAssetExtensionV1, BtcLezAssetV1,
@@ -581,6 +582,58 @@ fn files_are_private_single_link_and_no_clobber() {
 }
 
 #[test]
+fn stage_one_can_reuse_only_the_maker_signing_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let planning_path = temp.path().join("planning.json");
+    write_private_json(&planning_path, &planning());
+    let first = temp.path().join("first");
+    let second = temp.path().join("second");
+    let first_summary = generate_stage1(&planning_path, &first).unwrap();
+    let source_key = first.join("private/maker-signing.key");
+    let source_before = fs::read(&source_key).unwrap();
+    let source_metadata_before = fs::metadata(&source_key).unwrap();
+
+    let second_summary =
+        generate_stage1_with_maker_signing_key(&planning_path, &second, &source_key).unwrap();
+    let copied_key = second.join("private/maker-signing.key");
+    assert_eq!(fs::read(&copied_key).unwrap(), source_before);
+    assert_ne!(
+        fs::metadata(&copied_key).unwrap().ino(),
+        source_metadata_before.ino()
+    );
+    assert_eq!(
+        fs::metadata(&source_key).unwrap().ino(),
+        source_metadata_before.ino()
+    );
+    assert_eq!(fs::read(&source_key).unwrap(), source_before);
+
+    let first_public: serde_json::Value =
+        serde_json::from_slice(&fs::read(first_summary.public_spec_file()).unwrap()).unwrap();
+    let second_public: serde_json::Value =
+        serde_json::from_slice(&fs::read(second_summary.public_spec_file()).unwrap()).unwrap();
+    assert_eq!(
+        first_public["maker"]["musig2_public_key"],
+        second_public["maker"]["musig2_public_key"]
+    );
+    assert_ne!(
+        first_public["maker"]["bitcoin_refund_x_only_public_key"],
+        second_public["maker"]["bitcoin_refund_x_only_public_key"]
+    );
+    assert_ne!(
+        first_public["maker"]["bitcoin_claim_destination_script_pubkey"],
+        second_public["maker"]["bitcoin_claim_destination_script_pubkey"]
+    );
+    assert_ne!(
+        first_public["taker"]["musig2_public_key"],
+        second_public["taker"]["musig2_public_key"]
+    );
+    assert_ne!(
+        first_public["aggregate_internal_key"],
+        second_public["aggregate_internal_key"]
+    );
+}
+
+#[test]
 fn strict_inputs_and_crosswired_public_material_fail_closed() {
     let temp = tempfile::tempdir().unwrap();
     let bad_planning = temp.path().join("bad-planning.json");
@@ -927,4 +980,67 @@ fn generate_cli_stdout_is_strict_secret_free_json() {
         );
         assert!(!String::from_utf8_lossy(&output.stdout).contains(&secret_hex));
     }
+}
+
+#[test]
+fn generate_cli_accepts_one_safe_maker_signing_key() {
+    let temp = tempfile::tempdir().unwrap();
+    let planning_path = temp.path().join("planning.json");
+    write_private_json(&planning_path, &planning());
+    let first = temp.path().join("first");
+    let second = temp.path().join("second");
+    let first_summary = generate_stage1(&planning_path, &first).unwrap();
+    let source_key = first.join("private/maker-signing.key");
+    let source_bytes = fs::read(&source_key).unwrap();
+    let source_inode = fs::metadata(&source_key).unwrap().ino();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_btc-local-poc-provision"))
+        .arg("generate")
+        .arg("--planning-file")
+        .arg(&planning_path)
+        .arg("--output-root")
+        .arg(&second)
+        .arg("--maker-signing-key-file")
+        .arg(&source_key)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["private_material_disclosed"], false);
+    assert!(
+        !output
+            .stdout
+            .windows(32)
+            .any(|window| window == source_bytes)
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(&hex::encode(&source_bytes)));
+    assert_eq!(fs::read(&source_key).unwrap(), source_bytes);
+    assert_eq!(fs::metadata(&source_key).unwrap().ino(), source_inode);
+    assert_eq!(
+        fs::read(second.join("private/maker-signing.key")).unwrap(),
+        source_bytes
+    );
+    assert_ne!(
+        fs::metadata(second.join("private/maker-signing.key"))
+            .unwrap()
+            .ino(),
+        source_inode
+    );
+    let first_public: serde_json::Value =
+        serde_json::from_slice(&fs::read(first_summary.public_spec_file()).unwrap()).unwrap();
+    let second_public: serde_json::Value =
+        serde_json::from_slice(&fs::read(second.join("public-spec.json")).unwrap()).unwrap();
+    assert_eq!(
+        first_public["maker"]["musig2_public_key"],
+        second_public["maker"]["musig2_public_key"]
+    );
+    assert_ne!(
+        first_public["taker"]["musig2_public_key"],
+        second_public["taker"]["musig2_public_key"]
+    );
 }

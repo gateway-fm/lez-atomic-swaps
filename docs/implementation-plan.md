@@ -7187,6 +7187,12 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Record ADR 0190 with current components, RPC/node placement, acceptance
   and overlap sequence, resource/flakiness limits, and the per-swap atomicity
   argument.
+- [x] RED then GREEN a narrow stage-one provisioner option for one safely
+  retained Maker signing identity. The stable owner-private source remains
+  unchanged, its output copy has a distinct inode, and all swap-specific
+  Taker/refund/claim/adaptor authority remains fresh. Both library and literal
+  CLI tests pass inside the complete 15-test provisioner suite; strict package
+  Clippy is warning-free.
 - [ ] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [ ] Admit both agreements through one Delivery/Chat daemon and SQLite

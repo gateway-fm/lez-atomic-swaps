@@ -1,6 +1,7 @@
 # ADR 0190: Compose accepted BTC overlap under one daemon
 
-Status: Accepted for implementation; contract GREEN, actual-node execution pending
+Status: Accepted for implementation; contract and shared Maker identity GREEN,
+actual-node execution pending
 
 ## Context
 
@@ -38,6 +39,13 @@ opposite-direction overlap schedule. The mode must:
 The default M3 overlap and single-application M5 BTC paths remain unchanged.
 The new contract is continuously checked, but this ADR does not mark U2 or S5
 GREEN until a clean pushed exact-node certificate validates the execution.
+
+The stage-one provisioner now accepts one explicitly pinned owner-private Maker
+signing key. It reads that key through the existing stable O_NOFOLLOW,
+single-link, mode-0600 boundary, writes a distinct-inode output copy, and
+generates every Taker, refund, claim, and adaptor secret freshly while rejecting
+collisions. Tests check both the library and literal CLI paths and ensure the
+secret or its hexadecimal form never enters stdout.
 
 ## Components
 

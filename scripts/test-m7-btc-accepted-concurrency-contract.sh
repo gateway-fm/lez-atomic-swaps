@@ -74,4 +74,15 @@ for required in \
     fail "M7 wrapper is missing fixed delegation: $required"
 done
 
+readonly delegated_runner="scripts/run-m3-actor-local-poc.sh"
+for required in \
+  'M7_BTC_ACCEPTED_CONCURRENCY=1 requires M5_BTC_APPLICATION_MODE=1' \
+  '--maker-signing-key-file' \
+  'assert_m7_shared_maker_identity' \
+  'kind:"m7_shared_maker_identity"' \
+  'swap_specific_authority_distinct:true'; do
+  rg -Fq -- "$required" "$delegated_runner" ||
+    fail "delegated runner is missing M7 stage-one invariant: $required"
+done
+
 echo "M7 BTC accepted-concurrency contract passed"
