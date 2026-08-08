@@ -413,3 +413,4 @@ flowchart TB
 | [0185](0185-resolve-patched-mermaid-core.md) | Keep the pinned CLI while resolving its patched Mermaid and DOMPurify core dependencies | Accepted; vulnerability and license gates GREEN, full patched render required for closure |
 | [0186](0186-rebind-current-bootstrap-source-boundary.md) | Rebind the checked M4 artifact boundary to the current verified F7 bootstrap without changing the guest or ProgramId | Accepted; executable source-boundary and SPEL ABI gates GREEN |
 | [0187](0187-keep-tag14-process-doubles-honest.md) | Keep the marker-only Tag14 fixture invocation-only and make its secure startup hash load-tolerant | Accepted; both focused XMR process journeys GREEN without fabricated finality |
+| [0188](0188-expect-expired-delivery-reconciliation.md) | Expect health sampling to reconcile expired consumed Delivery projections in the legacy ZEC process fixture | Accepted; focused ZEC process journey GREEN with no stale projection |

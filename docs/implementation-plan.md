@@ -7149,6 +7149,12 @@ S12/S13 review and policy-deferred public deployment.
   test readiness fail-safe to two minutes after shared load pushed secure
   hashing of its 233 MiB debug executable past the old 30-second ceiling; both
   focused XMR process journeys pass in 275.02 seconds.
+- [x] RED then GREEN the legacy ZEC health assertion under ADR 0188. M7 health
+  reconciliation already removes an expired consumed Delivery projection from
+  the durable retryable set; assert available/non-degraded Delivery, zero stale
+  envelopes, available Chat and an explicitly disabled route when that legacy
+  fixture has no chain-health probe. The exact focused journey passes in 3.96
+  seconds without a product-code change.
 - [ ] Update the operator/manual flows, global README, traceability, ADR
   statuses, M7 packet map, hard-requirement inventory, and S4 open count; run
   the complete quality, security, license, documentation, and repository

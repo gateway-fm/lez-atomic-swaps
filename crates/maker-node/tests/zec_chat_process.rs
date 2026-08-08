@@ -1226,15 +1226,16 @@ fn assert_completed_process(
     let socket = paths.socket;
     let completed_health = run_maker_health(socket);
     assert_eq!(completed_health["ready"], true);
-    // The short-TTL proof intentionally leaves the consumed envelope past expiry;
-    // health must expose that removable projection drift until reconciliation.
+    // Health reconciliation removes the short-TTL consumed envelope after
+    // expiry, so the durable offer set and Delivery projection agree again.
     assert_eq!(
-        completed_health["degraded"], true,
+        completed_health["degraded"], false,
         "unexpected completed health: {completed_health}"
     );
-    assert_eq!(completed_health["delivery"], "unavailable");
+    assert_eq!(completed_health["delivery"], "available");
     assert_eq!(completed_health["chat"], "available");
-    assert_eq!(fs::read_dir(paths.delivery).unwrap().count(), 1);
+    assert_eq!(completed_health["routes"][0]["state"], "disabled");
+    assert_eq!(fs::read_dir(paths.delivery).unwrap().count(), 0);
     stop_daemon_gracefully(daemon, paths);
     assert_completed_durable(
         database,
