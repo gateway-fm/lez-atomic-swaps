@@ -7169,7 +7169,7 @@ S12/S13 review and policy-deferred public deployment.
   npm audit with zero vulnerabilities; Node license policy; traceability; the
   F7 certificate; CI hardening; repository hygiene; and real Chromium rendering
   of all 555 Mermaid diagrams. The checked M7 inventories remain explicit:
-  28 hard rows with 13 repository-owned open and 2 deferred, plus 14 submission
+  28 hard rows with 12 repository-owned open and 2 deferred, plus 14 submission
   rows with 4 repository-owned open, 2 external, and 1 deferred. F7 is GREEN;
   those remaining rows still prevent an M7 completion tag.
 
@@ -7285,17 +7285,29 @@ S12/S13 review and policy-deferred public deployment.
   both stage-two hashes, both direction/effect entries, two-direction expected
   effects, and shared-daemon/database/restart application metadata. M7,
   canonical M3, and legacy M5 contract gates pass.
+- [x] Replay pushed commit `272788c` as `m7btcconc-272788c-a`. The exact run
+  published the complete two-direction packet after both accepted applications,
+  one shared-daemon restart, four isolated role stores, the shared revision-two
+  barrier, both terminal claim paths, and four zero-resubmission replays. Exact
+  cleanup removed every owned resource without broad or foreign cleanup.
+- [x] RED then GREEN ADR 0192 and the checked secret-safe certificate. The
+  contract pins source/run identity, public effect sets, both timing/effect
+  hashes, conditional atomicity limits, local services and funds, non-gating
+  Bedrock NTP attempts, and cleanup; the quality runner and CI-hardening policy
+  require it.
 - [x] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [x] Admit both agreements through one Delivery/Chat daemon and SQLite
   database, restart once, and prove two durable actor rows with zero replay.
   Exact-node execution is GREEN in `m7btcconc-b302925-a`.
-- [ ] Activate two workers and reuse the existing actual Bitcoin Core/LEZ
+- [x] Activate two workers and reuse the existing actual Bitcoin Core/LEZ
   revision-two overlap barrier through both terminal claims. Worker activation
   and both real locks are GREEN in `m7btcconc-abd1403-a`; the manifest-bound
   isolation packet is GREEN in `m7btcconc-ad77632-a`; both settlements and all
-  four terminal replays are actual-node GREEN in `m7btcconc-02ebd4a-a`. A clean
-  final packet publication remains.
-- [ ] Retain a secret-safe exact-node certificate, update U2/S5 only to the
-  evidence actually proved, run the complete milestone gate once at slice end,
-  commit, push, and update ETA. Do not mark U2/S5 GREEN from the contract alone.
+  four terminal replays are actual-node GREEN in `m7btcconc-02ebd4a-a`; the
+  clean final packet is GREEN in `m7btcconc-272788c-a`.
+- [x] Retain a secret-safe exact-node certificate and update the ledgers only
+  to the evidence actually proved. R5 is GREEN; U2 remains open for actual-chain
+  process-crash recovery and S5 remains open for the remaining daemon-owned
+  reference journeys and hardening. Focused certificate, CI-hardening,
+  traceability, hard/submission audit, architecture and hygiene gates pass.

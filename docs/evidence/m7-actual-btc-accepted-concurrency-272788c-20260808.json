@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_btc_accepted_concurrency_poc",
+  "result": "passed",
+  "run_id": "m7btcconc-272788c-a",
+  "repository_commit": "272788cbc83a8b7e839a4a2be1c1e3b5a0d8cdb4",
+  "completed_at": "2026-08-08T17:50:59Z",
+  "artifact": {
+    "packet_sha256": "d318f45eaf4beecf341803848ed442930a639555b5dca45f607a94978d985585",
+    "cleanup_sha256": "96d7ede168573ad918690664160aa8937b81e7c4c307c4079c27048d2a46554e",
+    "repository_clean_exact_head": true,
+    "origin_main_equals_head": true,
+    "executable_hashes_stable": true
+  },
+  "application": {
+    "pair": "bitcoin",
+    "directions": [
+      "taker_sells_foreign",
+      "taker_sells_lez"
+    ],
+    "accepted_swap_count": 2,
+    "shared_daemon": true,
+    "shared_database": true,
+    "post_acceptance_restart": true,
+    "no_acceptance_or_actor_replay": true
+  },
+  "services": {
+    "bitcoin_core": {
+      "version": "31.1",
+      "network": "regtest",
+      "public_peers": 0
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "network": "private_local",
+      "slot_duration_seconds": "1.0",
+      "deployment_profile": "m4_checked_local",
+      "guest_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+      "program_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433",
+      "deployer_sha256": "2bdf58775f4eb20c34cc695f3db0564be3059d533ad6a5a07b134c5334b3c08c"
+    }
+  },
+  "directions": [
+    {
+      "direction": "taker_sells_foreign",
+      "terminal_revision": 4,
+      "terminal_phase": "completed",
+      "expected_unique_effects": {
+        "bitcoin": 2,
+        "lez": 3
+      },
+      "maker_second_lock_effect_count": 1,
+      "stage_two_evidence_sha256": "962c63dc6a973946c23133f4f82ccbc16e252fe60db973d7e73933c30fa915fe",
+      "actor_timing_sha256": "5f44ec3b30d3ab8211f7b86ffa2a7b96fc41282e910b9e31a0d4b2930c27d857",
+      "actual_effects_sha256": "e8b8c51b612fd9204a7c09ad63cb5bb1611b11f6c4cdea6fa35899a8b3563919",
+      "bitcoin_effect_ids": [
+        "ba5fbb09d86e45bbe93f02f1fc30b851b7a20d579859cb9f0ba975bcd5c9f2a2",
+        "2a7f08027489698dcd52a26e26abeb787544a433d79be1ae8e8ca2f8a06d009a"
+      ],
+      "lez_effect_ids": [
+        "40364ce0ce3916943d1a91e5c8604afdd1122dcc60eb2769f8b675a0bf196e23",
+        "61a97a2aaa2a1e1a271a5e95025db90f025e853c88afa9030caedcfe03140d60",
+        "738f7c38c9fe8dbcfb9fc14fea30388bcfa3a5a79bea2b11c975f2f2a180c5a0"
+      ],
+      "actor_owned_claims": {
+        "bitcoin": "2a7f08027489698dcd52a26e26abeb787544a433d79be1ae8e8ca2f8a06d009a",
+        "lez": "738f7c38c9fe8dbcfb9fc14fea30388bcfa3a5a79bea2b11c975f2f2a180c5a0"
+      }
+    },
+    {
+      "direction": "taker_sells_lez",
+      "terminal_revision": 4,
+      "terminal_phase": "completed",
+      "expected_unique_effects": {
+        "bitcoin": 2,
+        "lez": 3
+      },
+      "maker_second_lock_effect_count": 1,
+      "stage_two_evidence_sha256": "3191c5195fde60de69e03f39d2b341e689a67424cf99447de863086c4a548dfe",
+      "actor_timing_sha256": "dc7426c8980c45020d26ddeacac6317f803a61c679d931d72ec10c4ea4dcd0dc",
+      "actual_effects_sha256": "1e8bfbe6aaceac7196c653dea00dd4eadb8d289a79ac323dfbeb63c30fe0cf54",
+      "bitcoin_effect_ids": [
+        "0df30893701e8505ad59ee98932470a8335e922038a6746f3f4f3ab69e9ae9bb",
+        "a830cc940cef574e15139e197c6772cf2450516558b1c719c70b8372c900d95f"
+      ],
+      "lez_effect_ids": [
+        "faf0d9758fd72efd6244704ee68f66cb8c2a2981ad64eebbb345442b0339d1b5",
+        "218e7a96167cb852eee2fd5b0db99cdf42553ab6b21fdabd6b13585b79c41902",
+        "42b3e893ef38a9cd90c833a7a82f7fb7b390d1f74f57c06310ba7ce0f13a396e"
+      ],
+      "actor_owned_claims": {
+        "bitcoin": "a830cc940cef574e15139e197c6772cf2450516558b1c719c70b8372c900d95f",
+        "lez": "42b3e893ef38a9cd90c833a7a82f7fb7b390d1f74f57c06310ba7ce0f13a396e"
+      }
+    }
+  ],
+  "concurrency": {
+    "simultaneous_in_flight": true,
+    "overlap_revision": 2,
+    "overlap_phase": "both_legs_locked",
+    "distinct_funding_outpoints": true,
+    "distinct_agreements": true,
+    "distinct_actor_state_dbs": true,
+    "distinct_signing_journals": true,
+    "distinct_signer_sessions_per_domain": true,
+    "distinct_escrows": true,
+    "distinct_deadlines": true,
+    "both_swaps_locked_before_settlement": true,
+    "chain_mutations_serialized_for_exact_observation": true,
+    "shared_local_nodes": true
+  },
+  "replay": {
+    "command": "drive",
+    "role_count": 4,
+    "resubmission_count": 0,
+    "terminal_state_unchanged": true
+  },
+  "performance": {
+    "total_duration_ms": 596940,
+    "overlap_duration_ms": 428580,
+    "phase_count": 8,
+    "direction_phase_count": 11,
+    "clock": "linux_proc_uptime_monotonic_ms"
+  },
+  "atomicity": {
+    "proof_scope": "two_independent_successful_claim_paths",
+    "each_swap_conditionally_atomic": true,
+    "two_swaps_atomic_with_each_other": false,
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorg_immunity_claimed": false,
+    "argument": "Each agreement remained conditionally atomic on its own: the taker first lock was finalized and independently projected before the maker second lock, neither revealing settlement began until the checked overlap packet proved both agreements at revision two, and each revealing claim exposed only the precommitted information needed for that same agreement's follow-up claim. Distinct agreements, funding outpoints, actor databases, signing journals, signer sessions, LEZ escrows, and deadlines prevented one swap from authorizing or replaying the other. All four terminal role replays left the exact Bitcoin and LEZ effect counts unchanged. The two swaps are deliberately not claimed to be atomic with each other, and this local certificate does not claim a distributed cross-chain transaction or immunity to future reorganizations."
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "public_peer_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false,
+    "test_funds": "deterministic_local_genesis_and_regtest_outputs",
+    "bedrock_ntp_attempted": true,
+    "bedrock_ntp_timeout_count": 39,
+    "bedrock_ntp_required": false,
+    "certification_success_depends_on_external_network": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "cleanup_scope": "captured_exact_ids_names_and_secure_state_root",
+    "all_exact_run_resources_absent": true,
+    "broad_cleanup_used": false,
+    "foreign_resources_targeted": false
+  },
+  "not_proven": {
+    "arbitrary_n_or_same_direction_scheduler": true,
+    "process_kill_or_crash_recovery": true,
+    "public_network_reliability": true,
+    "production_key_custody": true,
+    "fee_market_stress": true,
+    "future_reorganization_immunity": true
+  }
+}

@@ -1,8 +1,8 @@
 # ADR 0190: Compose accepted BTC overlap under one daemon
 
-Status: Accepted for implementation; contract, shared Maker identity, and both
-authenticated planning and Chat-acceptance directions GREEN; shared-daemon
-handoff exact-node execution GREEN; two-direction terminal overlap pending
+Status: accepted and checked exact-node GREEN for bounded opposite-direction
+BTC concurrency; arbitrary-N, same-direction and adverse process schedules
+remain
 
 ## Context
 
@@ -38,8 +38,9 @@ opposite-direction overlap schedule. The mode must:
    both independent swaps have actual locks.
 
 The default M3 overlap and single-application M5 BTC paths remain unchanged.
-The new contract is continuously checked, but this ADR does not mark U2 or S5
-GREEN until a clean pushed exact-node certificate validates the execution.
+The new contract is continuously checked. A clean pushed exact-node certificate
+closes the concurrency slice, but does not make all of U2 or S5 GREEN because
+their process-crash and remaining all-pair lifecycle criteria are separate.
 
 The stage-one provisioner now accepts one explicitly pinned owner-private Maker
 signing key. It reads that key through the existing stable O_NOFOLLOW,
@@ -101,7 +102,10 @@ builder exposed one remaining inherited M5 cardinality branch: it retained only
 the forward timing summary even though M7 had two immutable timing packets.
 Final evidence now distinguishes legacy single-application M5 from explicit
 two-application M7 in timing, stage-two, direction, effect, and application
-metadata. A fresh clean packet publication remains pending.
+metadata. Exact pushed run `m7btcconc-272788c-a` then published the complete
+two-direction packet, completed both claims and all four zero-resubmission
+terminal replays, and passed exact cleanup without targeting foreign resources.
+ADR 0192 pins the compact certificate in CI.
 
 ## Components
 

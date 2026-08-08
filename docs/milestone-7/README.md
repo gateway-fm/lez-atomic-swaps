@@ -28,6 +28,7 @@ materially affect safe reproduction.
 - [Machine-auditable submission-requirement inventory](submission-requirements.tsv)
 - [F1/R3 actual-node dependency-loss certificate](../evidence/m7-unaffected-pair-outage-2c63218-20260804.json)
 - [Actual-node Taker Tag14 and Monero claim-sweep certificate](../evidence/m7-actual-taker-claim-2cff48d-20260805.json)
+- [Two-application actual-node BTC concurrency certificate](../evidence/m7-actual-btc-accepted-concurrency-272788c-20260808.json)
 - [Joined actual-node Maker-refund certificate](../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json)
 - [Joined actual-node Maker-refund process-kill certificate](../evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json)
 - [Two-direction actual-node F7 custom-token refund certificate](../evidence/m7-actual-f7-custom-token-refund-062b6ba-20260808.json)

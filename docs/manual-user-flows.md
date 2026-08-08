@@ -672,6 +672,46 @@ the accepted opposite-direction concurrent journey are GREEN. Arbitrary-N,
 same-direction scheduling, process-kill, crash/chaos, and adversarial journeys
 remain later hardening.
 
+### Repeat the M7 accepted BTC application concurrency certificate
+
+Start from a clean checkout whose `HEAD` already equals `origin/main`, Docker
+with no colliding run ID, the verified LEZ v0.2 artifact target and R0VM, the
+verified rapidsnark v0.0.8 libraries, and the checked Logos circuit directory:
+
+```sh
+export RUN_ID=m7btcconc-manual-$(date -u +%m%d%H%M)
+export M5_LEZ_DEPLOYER_SHA256=replace-with-lowercase-64-hex-deployer-digest
+export LEZ_V02_ARTIFACT_TARGET_DIR=/absolute/path/to/verified/lez-artifact-target
+export LEZ_V02_R0VM=/absolute/path/to/verified/r0vm
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/absolute/path/to/gcc/include
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/checked/logos-blockchain-circuits
+./scripts/run-m7-btc-accepted-concurrency-poc.sh
+```
+
+Set `M5_LEZ_DEPLOYER_SHA256` to the digest itself, not a path. The wrapper fixes
+native BTC, the claim journey, overlap scheduling, M5 application mode and M7
+two-application mode. It builds the application binaries, starts one run-owned
+Bitcoin Core 31.1 Regtest node and one run-owned LEZ v0.2 sequencer/indexer/
+bedrock stack, prepares both authenticated directions, accepts them through one
+daemon/database, restarts once, proves both revision-two locks before either
+settlement, completes both claims, replays four terminal roles without effects,
+and performs exact cleanup. Inspect:
+
+```sh
+jq . ".e2e/$RUN_ID/m3-actor-poc/evidence/m3-actor-local-poc.json"
+jq . ".e2e/$RUN_ID/m3-actor-poc/evidence/cleanup-attestation.json"
+./scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh
+```
+
+Runtime uses literal loopback endpoints, no public peers/RPCs, no faucet, no
+public deployment and deterministic local genesis/Regtest funds. Pinned Bedrock
+still attempts `pool.ntp.org:123/udp`, but timeouts are counted and do not gate
+certification; cold tool/artifact preparation can require separately documented
+downloads. The run deliberately proves two opposite-direction BTC swaps, not
+arbitrary-N/same-direction scheduling, process-kill recovery, fee-market stress,
+public-provider reliability or future-reorganization immunity.
+
 The same guide now includes the
 [custom-token F7 pair and verified wallet-cache procedure](m3-local-poc-operator-guide.md#reproduce-the-custom-token-f7-happy-pair-with-the-verified-wallet-cache).
 It selects the real Maker/Taker roles, runs both economic directions through

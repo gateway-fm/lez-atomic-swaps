@@ -9,7 +9,7 @@ F7	green	./scripts/test-m7-f7-custom-token-refund-actual-certificate.sh	docs/evi
 F8	upstream-deferred	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	LOGOS-021 live Logos price-module ABI compatibility
 F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Actual-node Taker Claim and Maker Refund are certified; complete the remaining daemon-owned all-pair lifecycle and adverse process schedules
 U1	green	./scripts/test-m7-xmr-sdk-facade-contract.sh	docs/requirements-traceability.md	none
-U2	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Accepted-application actual-chain concurrency and process crash recovery
+U2	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/evidence/m7-actual-btc-accepted-concurrency-272788c-20260808.json	Accepted-application actual-chain concurrency is certified; complete actual-chain process crash recovery
 U3	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Complete semantic claim/refund daemon action matrix after branch-aware supervised Maker recovery
 U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Actual-node Taker Claim and Maker Refund are certified; complete abandoned-counterparty journeys and adverse lifecycle schedules for every supported pair
 U5	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
@@ -22,7 +22,7 @@ R1	open	./scripts/run-zebra-e2e.sh	docs/requirements-traceability.md	Actual-proc
 R2	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Different-UID isolation, adverse-node continuation, and other pair or branch crash seams
 R3	green	./scripts/test-m7-route-health-contract.sh	docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json	none
 R4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Claim unknown-outcome and corruption matrix plus claim-path actual-node restart
-R5	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	One daemon and database with distinct accepted agreements and actual-chain effects
+R5	green	./scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh	docs/evidence/m7-actual-btc-accepted-concurrency-272788c-20260808.json	none
 R6	open	./scripts/test-m3-direction-phase-timings-contract.sh	docs/requirements-traceability.md	Cutoff races, congestion model, public calibration, and actual reorg margins
 R7	open	./scripts/run-bitcoin-core-e2e.sh	docs/requirements-traceability.md	Maker-lock admission, fee stress, bounded RBF or CPFP, and reorg
 R8	green	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	none

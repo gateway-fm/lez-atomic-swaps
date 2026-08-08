@@ -30,6 +30,19 @@ enforced by the CI quality gate. No public RPC, peer, faucet, public funds, DNS
 dependency or public deployment participated; adverse concurrency and crash
 schedules remain open.
 
+Accepted-application BTC concurrency is actual-node GREEN on exact pushed run
+`m7btcconc-272788c-a`. Two opposite-direction agreements were authenticated by
+one Maker daemon/database, survived one post-acceptance daemon restart, reached
+the shared revision-two barrier with four distinct role stores and eight
+signing journals, then completed both Bitcoin Core Regtest and LEZ v0.2 claim
+paths. All four terminal replays submitted zero new effects and exact cleanup
+did not target foreign resources. The checked
+[certificate](docs/evidence/m7-actual-btc-accepted-concurrency-272788c-20260808.json),
+[ADR 0190](docs/architecture/0190-compose-accepted-btc-overlap-under-one-daemon.md),
+and [manual reproduction flow](docs/manual-user-flows.md#repeat-the-m7-accepted-btc-application-concurrency-certificate)
+are CI-pinned. This closes bounded opposite-direction BTC R5, not arbitrary-N,
+same-direction, process-kill, public-network, fee-stress, or reorg hardening.
+
 ADR [0174](docs/architecture/0174-join-tag17-to-the-funded-monero-output.md)
 now defines the isolated joined-abandonment runner checkpoint. Its opt-in mode
 funds the exact Stage-A Monero output before Tag17 and re-observes the same
@@ -944,8 +957,9 @@ invocation. The deterministic journey passed 10 of 10 repetitions in 0.49 to
 0.54 seconds. It uses only owner-private files, SQLite, Unix sockets, and local
 child processes: no chain RPC, Docker service, faucet, DNS, public network, or
 funds participate. ADR 0116 records the worker, sequence, and isolation model.
-Distinct accepted application agreements, escrows, deadlines, and actual-chain
-overlap remain before full R5 closure.
+The later checked `m7btcconc-272788c-a` run closes bounded opposite-direction
+BTC R5 with distinct accepted agreements, escrows, deadlines and actual-chain
+effects; arbitrary-N, same-direction and process-kill schedules remain.
 
 Exact pushed-tree run `m5appee8424520260724a` completed the earlier direct-actor local application
 corridor in
@@ -3195,7 +3209,7 @@ The literal accepted RFP-003 issue #112 deliverables are now composed as follows
 | Long-running Maker daemon | Retained hardened service and daemon-supervised ZEC actual-chain corridor |
 | Maker CLI | Real CLI/daemon all-pair claim/refund admission matrix, GREEN 1 of 1 in 0.64 seconds |
 | Taker CLI | Retained BTC/ZEC lifecycle corridors plus receipt-v2 XMR Tag14 claim and Tag16 refund process routes |
-| Coordinator persistence, crash, and concurrency | One daemon/database/worker pool runs three pair-correct rows; unavailable then failing XMR does not prevent BTC and ZEC Terminal, GREEN 1 of 1 in 16.31 seconds |
+| Coordinator persistence, crash, and concurrency | One daemon/database accepts and completes two opposite-direction BTC swaps on actual local chains with restart/no-replay and exact cleanup; three-pair process isolation also remains GREEN |
 | Price sources | Retained local and Logos-module C-API pricing evidence |
 | Delivery and Chat degradation | Retained post-lock transport removal, replay, and degraded-state evidence |
 | Coordinator fuzzing | Retained literal fuzz target, seeds, and smoke evidence |
@@ -3215,9 +3229,10 @@ M5 retains clean accepted-application BTC, ZEC, and XMR local-chain corridors.
 The new all-pair lifecycle and three-pair overlap tests use fixed marker actors:
 they prove real CLI, daemon, SQLite, scheduling, fencing, child custody,
 failure isolation, and restart/no-replay composition, but no new chain effect.
-Semantic receipt-v2 XMR worker adapters and a fresh simultaneous
-accepted-application actual-chain composite are post-PoC QA and production
-hardening. See [the manual closure-candidate flow](docs/manual-user-flows.md#m5-poc-closure-candidate-reproduction).
+Semantic receipt-v2 XMR worker adapters and adverse accepted-application
+process-kill/chaos schedules remain post-PoC QA and production hardening. The
+simultaneous opposite-direction BTC actual-chain composite is checked GREEN.
+See [the manual closure-candidate flow](docs/manual-user-flows.md#m5-poc-closure-candidate-reproduction).
 
 
 ## Licensing
