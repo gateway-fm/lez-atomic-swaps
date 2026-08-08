@@ -7172,3 +7172,27 @@ S12/S13 review and policy-deferred public deployment.
   28 hard rows with 13 repository-owned open and 2 deferred, plus 14 submission
   rows with 4 repository-owned open, 2 external, and 1 deferred. F7 is GREEN;
   those remaining rows still prevent an M7 completion tag.
+
+## M7 accepted-application BTC concurrency checkpoint (2026-08-08)
+
+- [x] Audit the existing M3 overlap and M5 BTC application paths before adding
+  code. M3 already owns the genuine two-swap actual-node barrier; the Maker
+  daemon already supports a bounded startup-pinned multi-authority registry.
+- [x] RED then GREEN an executable
+  `test-m7-btc-accepted-concurrency-contract.sh` and pin it in the complete
+  quality runner plus CI-hardening policy.
+- [x] Add the isolated `M7_BTC_ACCEPTED_CONCURRENCY=1` entry point, fixed to
+  native BTC, claim, and the opposite-direction overlap schedule. Preserve all
+  legacy runner defaults.
+- [x] Record ADR 0190 with current components, RPC/node placement, acceptance
+  and overlap sequence, resource/flakiness limits, and the per-swap atomicity
+  argument.
+- [ ] Prepare both authenticated Delivery plans and exact authority templates
+  before stage-two execution while retaining distinct swap IDs.
+- [ ] Admit both agreements through one Delivery/Chat daemon and SQLite
+  database, restart once, and prove two durable actor rows with zero replay.
+- [ ] Activate two workers and reuse the existing actual Bitcoin Core/LEZ
+  revision-two overlap barrier through both terminal claims.
+- [ ] Retain a secret-safe exact-node certificate, update U2/S5 only to the
+  evidence actually proved, run the complete milestone gate once at slice end,
+  commit, push, and update ETA. Do not mark U2/S5 GREEN from the contract alone.

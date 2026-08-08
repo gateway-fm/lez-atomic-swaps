@@ -8,8 +8,17 @@ umask 077
 
 readonly mode="${M3_ACTOR_POC_MODE:-execute}"
 readonly m5_btc_application_mode="${M5_BTC_APPLICATION_MODE:-0}"
+readonly m7_btc_accepted_concurrency="${M7_BTC_ACCEPTED_CONCURRENCY:-0}"
 if [[ "$m5_btc_application_mode" != 0 && "$m5_btc_application_mode" != 1 ]]; then
   echo 'M5_BTC_APPLICATION_MODE must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$m7_btc_accepted_concurrency" != 0 && "$m7_btc_accepted_concurrency" != 1 ]]; then
+  echo 'M7_BTC_ACCEPTED_CONCURRENCY must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$m7_btc_accepted_concurrency" == 1 && "$m5_btc_application_mode" != 1 ]]; then
+  echo 'M7_BTC_ACCEPTED_CONCURRENCY=1 requires M5_BTC_APPLICATION_MODE=1' >&2
   exit 2
 fi
 asset_mode="${M3_ACTOR_POC_ASSET_MODE:-native}"
@@ -55,8 +64,13 @@ if [[ "$m5_btc_application_mode" == 1 && "$asset_mode" != native ]]; then
   echo 'M5_BTC_APPLICATION_MODE=1 requires M3_ACTOR_POC_ASSET_MODE=native' >&2
   exit 2
 fi
-if [[ "$m5_btc_application_mode" == 1 && "$schedule" != sequential ]]; then
+if [[ "$m5_btc_application_mode" == 1 &&
+      "$m7_btc_accepted_concurrency" != 1 && "$schedule" != sequential ]]; then
   echo 'M5_BTC_APPLICATION_MODE=1 requires M3_ACTOR_POC_SCHEDULE=sequential' >&2
+  exit 2
+fi
+if [[ "$m7_btc_accepted_concurrency" == 1 && "$schedule" != overlap ]]; then
+  echo 'M7_BTC_ACCEPTED_CONCURRENCY=1 requires M3_ACTOR_POC_SCHEDULE=overlap' >&2
   exit 2
 fi
 if [[ "$m5_btc_application_mode" == 1 && "$journey" != claim ]]; then
@@ -68,7 +82,10 @@ case "$journey" in
     terminal_revision=4
     terminal_phase="completed"
     replay_command="drive"
-    if [[ "$m5_btc_application_mode" == 1 ]]; then
+    if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+      packet_kind="m7_btc_accepted_concurrency_local_poc"
+      success_label="M7 BTC accepted-application concurrency local PoC"
+    elif [[ "$m5_btc_application_mode" == 1 ]]; then
       packet_kind="m5_btc_application_local_poc"
       success_label="M5 BTC application local PoC"
     elif [[ "$asset_mode" == "custom_token" ]]; then
@@ -186,7 +203,7 @@ readonly expected_lez_guest_sha256 expected_lez_program_id
 readonly expected_lez_deployer_sha256 expected_lez_deployment_profile
 readonly lez_token_program_id="c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c"
 readonly lez_ata_program_id="95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
-if [[ "$m5_btc_application_mode" == 1 ]]; then
+if [[ "$m5_btc_application_mode" == 1 && "$m7_btc_accepted_concurrency" != 1 ]]; then
   readonly -a directions=(taker_sells_foreign)
 else
   readonly -a directions=(taker_sells_foreign taker_sells_lez)
@@ -217,6 +234,7 @@ emit_contract() {
     --arg schedule "$schedule" \
     --arg asset_mode "$asset_mode" \
     --arg m5_btc_application_mode "$m5_btc_application_mode" \
+    --arg m7_btc_accepted_concurrency "$m7_btc_accepted_concurrency" \
     --arg deployment_profile "$expected_lez_deployment_profile" \
     --arg token_program_id "$lez_token_program_id" \
     --arg ata_program_id "$lez_ata_program_id" \
@@ -230,6 +248,7 @@ emit_contract() {
       kind: "m3_actor_local_poc_contract",
       execution_performed: false,
       m5_btc_application_mode: ($m5_btc_application_mode == "1"),
+      m7_btc_accepted_concurrency: ($m7_btc_accepted_concurrency == "1"),
       asset_mode: $asset_mode,
       journey: $journey,
       schedule: $schedule,
@@ -247,11 +266,18 @@ emit_contract() {
         }
       },
       directions:
-        (if $m5_btc_application_mode == "1" then
+        (if $m5_btc_application_mode == "1" and
+            $m7_btc_accepted_concurrency != "1" then
            ["taker_sells_foreign"]
          else ["taker_sells_foreign", "taker_sells_lez"] end),
       application_route:
-        (if $m5_btc_application_mode == "1" then {
+        (if $m7_btc_accepted_concurrency == "1" then {
+          pair:"bitcoin", directions:["taker_sells_foreign","taker_sells_lez"],
+          accepted_swap_count:2, shared_daemon:true, shared_database:true,
+          delivery_before_stage_two:true, authenticated_swap_id:true,
+          real_maker_cli:true, real_taker_cli:true,
+          schema_6_role_provisioning:true, actor_worker_count:2
+        } elif $m5_btc_application_mode == "1" then {
           pair:"bitcoin", direction:"taker_sells_foreign",
           delivery_before_stage_two:true, authenticated_swap_id:true,
           real_maker_cli:true, real_taker_cli:true,
