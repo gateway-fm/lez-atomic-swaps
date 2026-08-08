@@ -7222,6 +7222,11 @@ S12/S13 review and policy-deferred public deployment.
   durable BTC actor rows, and atomically publishes the config handoff before
   either controller activates. The tightened M7 contract and canonical M3/M5
   runner contracts pass; fresh pushed exact-node execution is still required.
+  Pushed replay `m7btcconc-0c01992-a` reached the barrier and preserved a
+  bounded shell RED before admission: one same-statement `local` initializer
+  referenced `owner_root` under `set -u`. Exact cleanup passed with no foreign
+  resource targeted; the declaration is now dependency-ordered and the syntax
+  plus M7 contract gates pass again.
 - [ ] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [ ] Admit both agreements through one Delivery/Chat daemon and SQLite
