@@ -58,6 +58,88 @@ struct ActorFixture {
     agreement_wire: Vec<u8>,
 }
 
+#[test]
+fn schema5_asset_refund_effect_and_request_identity_bind_asset_role_and_target() {
+    for (direction, role, transition) in [
+        (
+            SwapDirection::TakerSellsForeign,
+            ActorRole::Maker,
+            RefundTransition::MakerLeg,
+        ),
+        (
+            SwapDirection::TakerSellsLez,
+            ActorRole::Taker,
+            RefundTransition::TakerLeg,
+        ),
+    ] {
+        let mut fixture = ActorFixture::for_direction(direction, role);
+        let extension = configure_schema5_asset_extension(&mut fixture);
+        let binding =
+            BtcLezAssetBridgeBindingV2::new(&fixture.agreement, &extension, extension.asset())
+                .expect("asset refund binding");
+        assert_eq!(binding.depositor(), transition.funded_participant());
+        let transaction = asset_claim_transaction();
+        let effect = prepared_lez_asset_refund_effect(
+            &fixture.config,
+            &fixture.agreement,
+            &extension,
+            transition,
+            transaction.clone(),
+        )
+        .expect("prepare asset refund effect");
+        assert_eq!(
+            effect.effect.agreement_commitment(),
+            *extension.asset_commitment()
+        );
+        assert_eq!(effect.effect.key().local_role(), role.sdk());
+        assert_eq!(
+            effect.effect.key().operation(),
+            PublicEffectOperation::Refund
+        );
+        assert_eq!(effect.transaction, transaction);
+
+        let state_id = lez_asset_refund_request_id(
+            &fixture.config,
+            &fixture.agreement,
+            &extension,
+            &binding,
+            transition,
+            "observe_witnessed_asset_refund",
+            Some(NativeRefundObservationTarget::StateOnly),
+            None,
+        )
+        .expect("state request identity");
+        let exact_id = lez_asset_refund_request_id(
+            &fixture.config,
+            &fixture.agreement,
+            &extension,
+            &binding,
+            transition,
+            "observe_witnessed_asset_refund",
+            Some(NativeRefundObservationTarget::Exact {
+                refund_transaction_id: transaction.transaction_id,
+                window: fixture.config.discovery_window().expect("window"),
+            }),
+            None,
+        )
+        .expect("exact request identity");
+        assert_ne!(state_id, exact_id);
+
+        let mut legacy = fixture.config.clone();
+        legacy.schema_version = CONFIG_SCHEMA_VERSION;
+        assert_eq!(
+            prepared_lez_asset_refund_effect(
+                &legacy,
+                &fixture.agreement,
+                &extension,
+                transition,
+                transaction,
+            ),
+            Err(ActorCommandError::AgreementBindingInvalid)
+        );
+    }
+}
+
 impl ActorFixture {
     fn new() -> Self {
         Self::with_agreement(

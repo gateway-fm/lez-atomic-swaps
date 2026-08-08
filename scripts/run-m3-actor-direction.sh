@@ -195,24 +195,34 @@ emit_effect_plan() {
       '
       ;;
     refund:taker_sells_foreign)
-      jq -n --arg direction "$direction" '
+      jq -n --arg direction "$direction" --arg asset_mode "$asset_mode" '
         {schema_version:1,journey:"refund",direction:$direction,
          before_first_effect:["finalize_agreement","prepare_exact_lez_claim",
            "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"],
-         public_effect_order:["bitcoin_lock_by_taker","lez_initialize_by_maker",
-           "lez_fund_by_maker","dual_lock_gate","lez_refund_by_maker",
-           "bitcoin_refund_by_taker"],
+         public_effect_order:
+           (if $asset_mode == "custom_token" then
+             ["bitcoin_lock_by_taker","lez_initialize_by_maker",
+              "lez_create_custody_ata_by_maker","lez_fund_by_maker","dual_lock_gate",
+              "lez_refund_by_maker","bitcoin_refund_by_taker"]
+            else ["bitcoin_lock_by_taker","lez_initialize_by_maker",
+              "lez_fund_by_maker","dual_lock_gate","lez_refund_by_maker",
+              "bitcoin_refund_by_taker"] end),
          terminal:{maker_revision:4,taker_revision:4,phase:"refunded"}}
       '
       ;;
     refund:taker_sells_lez)
-      jq -n --arg direction "$direction" '
+      jq -n --arg direction "$direction" --arg asset_mode "$asset_mode" '
         {schema_version:1,journey:"refund",direction:$direction,
          before_first_effect:["finalize_agreement","prepare_exact_lez_claim",
            "bitcoin_presignature_verified","lez_presignature_verified","activate_both_roles"],
-         public_effect_order:["lez_initialize_by_taker","lez_fund_by_taker",
-           "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_refund_by_maker",
-           "lez_refund_by_taker"],
+         public_effect_order:
+           (if $asset_mode == "custom_token" then
+             ["lez_initialize_by_taker","lez_create_custody_ata_by_taker",
+              "lez_fund_by_taker","bitcoin_lock_by_maker","dual_lock_gate",
+              "bitcoin_refund_by_maker","lez_refund_by_taker"]
+            else ["lez_initialize_by_taker","lez_fund_by_taker",
+              "bitcoin_lock_by_maker","dual_lock_gate","bitcoin_refund_by_maker",
+              "lez_refund_by_taker"] end),
          terminal:{maker_revision:4,taker_revision:4,phase:"refunded"}}
       '
       ;;
@@ -308,8 +318,9 @@ require_environment() {
     fail "unsupported actor journey"
   [[ "$asset_mode" == "native" || "$asset_mode" == "custom_token" ]] ||
     fail "M3_POC_ASSET_MODE must be native or custom_token"
-  [[ "$asset_mode" != "custom_token" || "$M3_POC_JOURNEY" == "claim" ]] ||
-    fail "custom_token currently requires the claim journey"
+  [[ "$asset_mode" != "custom_token" || "$M3_POC_JOURNEY" == "claim" ||
+     "$M3_POC_JOURNEY" == "refund" ]] ||
+    fail "custom_token currently requires the claim or refund journey"
   if [[ "$m5_btc_application_mode" == 1 ]]; then
     [[ "$asset_mode" == native && "$M3_POC_DIRECTION" == taker_sells_foreign &&
        "$M3_POC_JOURNEY" == claim ]] ||
@@ -2963,9 +2974,10 @@ assert_lez_first_lock_refund_preprojection_taker() {
 
 assert_lez_refund_preprojection_status_both() {
   local predecessor="$1" label="$2"
-  local role expected_phase expected_action
-  [[ "$(lez_successful_submission_count)" == 3 ]] ||
-    fail "LEZ preprojection proof requires exactly three durable submissions"
+  local role expected_phase expected_action expected_count=3
+  if [[ "$asset_mode" == "custom_token" ]]; then expected_count=4; fi
+  [[ "$(lez_successful_submission_count)" == "$expected_count" ]] ||
+    fail "LEZ preprojection proof has an unexpected durable submission count"
   case "$predecessor" in
     1) expected_phase=taker_lock_confirmed; expected_action=observe_maker_second_lock_or_recover_taker_leg ;;
     2) expected_phase=both_legs_locked; expected_action=observe_revealing_claim ;;
@@ -2981,19 +2993,24 @@ assert_lez_refund_preprojection_status_both() {
     ' "$actor_last_output" >/dev/null ||
       fail "${role} actor changed lifecycle state before LEZ refund finality"
   done
-  [[ "$(lez_successful_submission_count)" == 3 ]] ||
+  [[ "$(lez_successful_submission_count)" == "$expected_count" ]] ||
     fail "LEZ preprojection status proof changed the durable submission count"
 }
 
 submit_actor_lez_refund() {
   local owner="$1" expected_revision="$2" label="$3"
   local peer predecessor refund_start before_count after_count finality block_height block_file
-  local block_timestamp deadline window_blocks phase
+  local block_timestamp deadline window_blocks phase expected_before=2 expected_after=3
   predecessor=$((expected_revision - 1))
   case "$owner" in maker) peer=taker ;; taker) peer=maker ;; *) fail "invalid LEZ refund owner" ;; esac
   refund_start="$(finalized_tip)"
   before_count="$(lez_successful_submission_count)"
-  [[ "$before_count" == 2 ]] || fail "LEZ refund began with an unexpected submission count"
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    expected_before=3
+    expected_after=4
+  fi
+  [[ "$before_count" == "$expected_before" ]] ||
+    fail "LEZ refund began with an unexpected submission count"
 
   actor_invoke_recovery_pending_retry "$owner" "$predecessor" lez "${label}-submit"
   jq -e --arg role "$owner" --argjson revision "$predecessor" '
@@ -3004,7 +3021,8 @@ submit_actor_lez_refund() {
   lez_refund_tx="$(actor_lez_refund_transaction_id "$owner")"
   [[ "$lez_refund_tx" =~ ^[0-9a-f]{64}$ ]] || fail "actor-owned LEZ refund ID is invalid"
   after_count="$(lez_successful_submission_count)"
-  [[ "$after_count" == 3 ]] || fail "LEZ refund did not add exactly one durable submission"
+  [[ "$after_count" == "$expected_after" ]] ||
+    fail "LEZ refund did not add exactly one durable submission"
 
   if [[ "$expected_revision" == 2 ]]; then
     assert_lez_first_lock_refund_preprojection_taker "$label"
@@ -3612,13 +3630,23 @@ write_actual_effect_manifest() {
     refund)
       jq -n --arg direction "$M3_POC_DIRECTION" --arg bitcoin_lock "$bitcoin_lock_tx" \
         --arg bitcoin_refund "$bitcoin_refund_tx" --arg lez_initialization "$lez_initialization_tx" \
-        --arg lez_funding "$lez_funding_tx" --arg lez_refund "$lez_refund_tx" '
+        --arg lez_custody "$lez_custody_tx" --arg lez_funding "$lez_funding_tx" \
+        --arg lez_refund "$lez_refund_tx" --arg asset_mode "$asset_mode" \
+        --arg asset_commitment "$asset_commitment" '
         {schema_version:1,journey:"refund",direction:$direction,
          bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_refund],
-         lez_effect_ids:[$lez_initialization,$lez_funding,$lez_refund],
-         expected_unique_effects:{bitcoin:2,lez:3},
+         lez_effect_ids:
+           (if $asset_mode == "custom_token" then
+             [$lez_initialization,$lez_custody,$lez_funding,$lez_refund]
+            else [$lez_initialization,$lez_funding,$lez_refund] end),
+         expected_unique_effects:
+           {bitcoin:2,lez:(if $asset_mode == "custom_token" then 4 else 3 end)},
          actor_owned_refunds:{bitcoin:$bitcoin_refund,lez:$lez_refund},
          cooperative_claim_effects_present:false}
+        + (if $asset_mode == "custom_token" then
+          {asset:{kind:"custom_token",asset_commitment:$asset_commitment,
+            first_lock_order:["initialize_witnessed","create_custody_ata","fund"]}}
+          else {} end)
       ' >"$output"
       ;;
     first_lock_refund)
@@ -4051,14 +4079,18 @@ run_actor_survivor_claim_flow() {
 
 run_actor_refund_flow() {
   local spec="${M3_POC_DIRECTION_ROOT}/stage-two.json"
-  local deadline later_bound earlier_bound before_count now
+  local deadline later_bound earlier_bound before_count expected_pre_refund=2 now
+  if [[ "$asset_mode" == "custom_token" ]]; then
+    expected_pre_refund=3
+  fi
   deadline="$(jq -er '.lez_terms.refund_at_ms | numbers' "$spec")"
   later_bound="$(jq -er '.recovery.later_refund_earliest_unix_seconds | numbers' "$spec")"
   earlier_bound="$(jq -er '.recovery.earlier_refund_latest_unix_seconds | numbers' "$spec")"
   case "$M3_POC_DIRECTION" in
     taker_sells_foreign)
       before_count="$(lez_successful_submission_count)"
-      [[ "$before_count" == 2 ]] || fail "LEZ pre-refund submission count drifted"
+      [[ "$before_count" == "$expected_pre_refund" ]] ||
+        fail "LEZ pre-refund submission count drifted"
       assert_recovery_pending_both lez 2 lez-maker-refund-predeadline
       [[ "$(lez_successful_submission_count)" == "$before_count" ]] ||
         fail "pre-deadline LEZ recovery submitted an effect"
@@ -4084,7 +4116,8 @@ run_actor_refund_flow() {
       (( now <= earlier_bound )) || fail "Bitcoin first refund completed after the signed earlier bound"
 
       before_count="$(lez_successful_submission_count)"
-      [[ "$before_count" == 2 ]] || fail "LEZ pre-refund submission count drifted"
+      [[ "$before_count" == "$expected_pre_refund" ]] ||
+        fail "LEZ pre-refund submission count drifted"
       assert_recovery_pending_both lez 3 lez-taker-refund-predeadline
       [[ "$(lez_successful_submission_count)" == "$before_count" ]] ||
         fail "pre-deadline LEZ recovery submitted an effect"

@@ -30,6 +30,7 @@ materially affect safe reproduction.
 - [Joined actual-node Maker-refund certificate](../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json)
 - [Joined actual-node Maker-refund process-kill certificate](../evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json)
 - [Maker-refund process-kill recovery decision](../architecture/0177-reconcile-killed-monero-refund-actors.md)
+- [Custom-token refund routing decision](../architecture/0178-route-custom-token-refunds-through-asset-v2.md)
 - [Tag-17 durable preparation and one-attempt release decision](../architecture/0158-prepare-and-release-tag17-once.md)
 - [Supervised Maker Tag17 recovery decision](../architecture/0163-supervise-maker-tag17-recovery.md)
 - [Durable Maker recovery branch-selection decision](../architecture/0164-select-maker-recovery-from-durable-branch.md)

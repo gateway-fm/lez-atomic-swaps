@@ -1142,8 +1142,10 @@ rg -Fq '.revision == $revision' <<<"$lez_preprojection_source" ||
   fail "LEZ refund offline status does not retain the predecessor revision"
 rg -Fq 'lez_successful_submission_count' <<<"$lez_preprojection_source" ||
   fail "LEZ refund offline predecessor proof does not bind the durable submission count"
-rg -q '==[[:space:]]*"?3"?' <<<"$lez_preprojection_source" ||
-  fail "LEZ refund offline predecessor proof does not require exactly three durable submissions"
+for count_binding in 'expected_count=3' 'expected_count=4'; do
+  rg -Fq "$count_binding" <<<"$lez_preprojection_source" ||
+    fail "LEZ refund offline predecessor proof omits ${count_binding}"
+done
 
 lez_source_line() {
   local needle="$1" line
@@ -1151,7 +1153,7 @@ lez_source_line() {
   [[ "$line" =~ ^[0-9]+$ ]] || fail "LEZ refund source is missing ordered step: ${needle}"
   printf '%s\n' "$line"
 }
-lez_count_three_line="$(lez_source_line '[[ "$after_count" == 3 ]]')"
+lez_count_three_line="$(lez_source_line '[[ "$after_count" == "$expected_after" ]]')"
 lez_offline_line="$(lez_source_line 'assert_lez_refund_preprojection_status_both')"
 lez_finality_line="$(lez_source_line 'prove_lez_finalized_transaction "$label" "$lez_refund_tx" "$refund_start"')"
 lez_window_line="$(lez_source_line 'window_blocks=$((lez_proved_tip - refund_start))')"
@@ -1618,27 +1620,34 @@ fi
 [[ ! -e ".e2e/${invalid_asset_run_id}" && ! -L ".e2e/${invalid_asset_run_id}" ]] ||
   fail "invalid asset mode created run state"
 
-for invalid_combination in refund overlap; do
-  invalid_asset_combo_run_id="m3badassetcombo-$RANDOM-$$"
-  if [[ "$invalid_combination" == refund ]]; then
-    invalid_asset_combo_output="$(RUN_ID="$invalid_asset_combo_run_id" \
-      M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_JOURNEY=refund \
-      M3_ACTOR_POC_MODE=contract "$runner" 2>&1)" &&
-      fail "custom-token mode accepted the refund journey"
-    [[ "$invalid_asset_combo_output" == *"custom_token currently requires the claim journey"* ]] ||
-      fail "custom-token non-claim rejection was not explicit"
-  else
-    invalid_asset_combo_output="$(RUN_ID="$invalid_asset_combo_run_id" \
-      M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_SCHEDULE=overlap \
-      M3_ACTOR_POC_MODE=contract "$runner" 2>&1)" &&
-      fail "custom-token mode accepted the overlap schedule"
-    [[ "$invalid_asset_combo_output" == *"custom_token currently requires the sequential schedule"* ]] ||
-      fail "custom-token overlap rejection was not explicit"
-  fi
-  [[ ! -e ".e2e/${invalid_asset_combo_run_id}" && \
-     ! -L ".e2e/${invalid_asset_combo_run_id}" ]] ||
-    fail "invalid custom-token combination created run state"
-done
+custom_refund_run_id="m3tokenrefund-$RANDOM-$$"
+custom_refund_contract="$(RUN_ID="$custom_refund_run_id" \
+  M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_JOURNEY=refund \
+  M3_ACTOR_POC_MODE=contract "$runner")" ||
+  fail "custom-token refund contract mode failed"
+jq -e '
+  .execution_performed == false
+  and .asset_mode == "custom_token"
+  and .journey == "refund"
+  and .evidence_packet_kind == "m3_actor_two_direction_custom_token_refund_local_poc"
+  and .terminal == {required_revision:4,required_phase:"refunded",required_next_action:"complete"}
+  and .effect_semantics.expected_unique_effects_by_direction == {
+    taker_sells_foreign:{bitcoin:2,lez:4},taker_sells_lez:{bitcoin:2,lez:4}}
+' <<<"$custom_refund_contract" >/dev/null ||
+  fail "custom-token refund contract is incomplete"
+[[ ! -e ".e2e/${custom_refund_run_id}" && ! -L ".e2e/${custom_refund_run_id}" ]] ||
+  fail "custom-token refund contract mode created run state"
+
+invalid_asset_combo_run_id="m3badassetcombo-$RANDOM-$$"
+invalid_asset_combo_output="$(RUN_ID="$invalid_asset_combo_run_id" \
+  M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_SCHEDULE=overlap \
+  M3_ACTOR_POC_MODE=contract "$runner" 2>&1)" &&
+  fail "custom-token mode accepted the overlap schedule"
+[[ "$invalid_asset_combo_output" == *"custom_token currently requires the sequential schedule"* ]] ||
+  fail "custom-token overlap rejection was not explicit"
+[[ ! -e ".e2e/${invalid_asset_combo_run_id}" && \
+   ! -L ".e2e/${invalid_asset_combo_run_id}" ]] ||
+  fail "invalid custom-token combination created run state"
 
 contract_run_id="m3contract-$RANDOM-$$"
 contract_json="$(RUN_ID="$contract_run_id" M3_ACTOR_POC_MODE=contract "$runner")"
@@ -1771,8 +1780,10 @@ for required in \
   '.facts.metadata.custody_account_id == $custody' \
   '(.facts.metadata.amount | tostring) == $amount and $amount == "75"' \
   '.facts.custody.kind == "custom_token"' \
-  'same_atomic_snapshot_as_finalized_claim:false' \
-  'claim_transfer_atomicity:"single_on_chain_claim_transaction"' \
+  'same_atomic_snapshot_as_terminal_effect:false' \
+  'terminal_transfer_atomicity:' \
+  'single_on_chain_claim_transaction' \
+  'single_on_chain_refund_transaction' \
   'conservation_total:($maker_balance + $taker_balance + $custody_balance)' \
   'write_custom_token_terminal_balance_evidence "$direction"'; do
   rg -Fq "$required" "$runner" ||
@@ -1971,9 +1982,11 @@ for term in 'asset_mode: $asset_mode' 'f7_token_fixture_summary' \
   'custom_token_terminal_balances:$lez_terminal_balance' \
   '{maker:175,taker:75,custody:0}' \
   '{maker:75,taker:175,custody:0}' \
+  '{maker:250,taker:0,custody:0}' \
+  '{maker:0,taker:250,custody:0}' \
   'bindings:.bindings' \
   '.bindings.actor_submit.sha256' \
-  '.bindings.lez_claim_finality.sha256' \
+  '.bindings.lez_terminal_finality.sha256' \
   '.bindings.actual_effects.sha256' \
   'actual_effects_sha256:.bindings.actual_effects.sha256'; do
   rg -Fq -- "$term" <<<"$run_evidence_source" ||

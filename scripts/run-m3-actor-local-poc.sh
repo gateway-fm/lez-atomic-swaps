@@ -42,8 +42,9 @@ if [[ "$schedule" == "overlap" && "$journey" != "claim" ]]; then
   echo "M3_ACTOR_POC_SCHEDULE=overlap currently requires the claim journey" >&2
   exit 2
 fi
-if [[ "$asset_mode" == "custom_token" && "$journey" != "claim" ]]; then
-  echo "M3_ACTOR_POC_ASSET_MODE=custom_token currently requires the claim journey" >&2
+if [[ "$asset_mode" == "custom_token" &&
+      "$journey" != "claim" && "$journey" != "refund" ]]; then
+  echo "M3_ACTOR_POC_ASSET_MODE=custom_token currently requires the claim or refund journey" >&2
   exit 2
 fi
 if [[ "$asset_mode" == "custom_token" && "$schedule" != "sequential" ]]; then
@@ -98,9 +99,14 @@ case "$journey" in
     terminal_revision=4
     terminal_phase="refunded"
     replay_command="recover"
-    packet_kind="m3_actor_two_direction_refund_local_poc"
+    if [[ "$asset_mode" == "custom_token" ]]; then
+      packet_kind="m3_actor_two_direction_custom_token_refund_local_poc"
+      success_label="M3 actor two-direction custom-token refund local PoC"
+    else
+      packet_kind="m3_actor_two_direction_refund_local_poc"
+      success_label="M3 actor two-direction local refund PoC"
+    fi
     actor_owned_effect_semantics="refund"
-    success_label="M3 actor two-direction local refund PoC"
     lez_slot_duration_seconds="3.0"
     ;;
   first_lock_refund)
@@ -3120,7 +3126,7 @@ read_official_wallet_ata_balance() {
 
 write_custom_token_terminal_balance_evidence() {
   local direction="$1"
-  local asset lez_owner evidence_kind transition claim_label actor_revision
+  local asset lez_owner evidence_kind transition claim_label actor_revision terminal_state
   local expected_maker expected_taker definition maker_owner taker_owner maker_ata taker_ata
   local direction_root actor_db final_terms finality actor_submit actual_effects
   local actor_output output maker_log taker_log before_replay after_replay
@@ -3130,10 +3136,11 @@ write_custom_token_terminal_balance_evidence() {
   local actor_sha submit_sha finality_sha effects_sha terms_sha maker_log_sha taker_log_sha
   local before_replay_sha after_replay_sha
   local -a actor_rows=()
-  [[ "$asset_mode" == "custom_token" && "$journey" == "claim" ]] ||
-    fail "terminal custom-token balances require the custom-token claim journey"
-  case "$direction" in
-    taker_sells_foreign)
+  [[ "$asset_mode" == "custom_token" &&
+     ( "$journey" == "claim" || "$journey" == "refund" ) ]] ||
+    fail "terminal custom-token balances require the claim or refund journey"
+  case "$journey:$direction" in
+    claim:taker_sells_foreign)
       asset=M3F7A
       lez_owner=taker
       evidence_kind=revealing_claim
@@ -3142,8 +3149,9 @@ write_custom_token_terminal_balance_evidence() {
       actor_revision=3
       expected_maker=175
       expected_taker=75
+      terminal_state=claimed
       ;;
-    taker_sells_lez)
+    claim:taker_sells_lez)
       asset=M3F7B
       lez_owner=maker
       evidence_kind=followup_claim
@@ -3152,6 +3160,29 @@ write_custom_token_terminal_balance_evidence() {
       actor_revision=4
       expected_maker=75
       expected_taker=175
+      terminal_state=claimed
+      ;;
+    refund:taker_sells_foreign)
+      asset=M3F7A
+      lez_owner=maker
+      evidence_kind=maker_refund
+      transition=maker_refund
+      claim_label=lez-maker-refund
+      actor_revision=3
+      expected_maker=250
+      expected_taker=0
+      terminal_state=refunded
+      ;;
+    refund:taker_sells_lez)
+      asset=M3F7B
+      lez_owner=taker
+      evidence_kind=taker_refund
+      transition=taker_refund
+      claim_label=lez-taker-refund
+      actor_revision=4
+      expected_maker=0
+      expected_taker=250
+      terminal_state=refunded
       ;;
     *) fail "unsupported custom-token terminal-balance direction" ;;
   esac
@@ -3178,7 +3209,7 @@ write_custom_token_terminal_balance_evidence() {
   actual_effects="${evidence_dir}/${direction}-actual-effects.json"
   before_replay="${evidence_dir}/${direction}-submission-counts-before-replay.json"
   after_replay="${evidence_dir}/${direction}-submission-counts-after-replay.json"
-  actor_output="${evidence_dir}/${direction}-custom-token-finalized-actor-claim.json"
+  actor_output="${evidence_dir}/${direction}-custom-token-finalized-actor-terminal.json"
   output="${evidence_dir}/${direction}-custom-token-terminal-balances.json"
   for input in "$actor_db" "$final_terms" "$finality" "$actor_submit" "$actual_effects" \
     "$before_replay" "$after_replay"; do
@@ -3195,25 +3226,28 @@ write_custom_token_terminal_balance_evidence() {
       "SELECT payload_json FROM btc_actor_evidence WHERE local_role = '${lez_owner}' AND aggregate_revision = ${actor_revision} AND evidence_kind = '${evidence_kind}' ORDER BY aggregate_revision;"
   )
   [[ "${#actor_rows[@]}" == 1 ]] ||
-    fail "actor state does not contain exactly one finalized LEZ claim evidence row"
+    fail "actor state does not contain exactly one finalized LEZ terminal evidence row"
   actor_payload="${actor_rows[0]}"
   claim_transaction="$(jq -er '.transaction_id' "$finality")"
   jq -e --arg kind "$evidence_kind" --arg tx "$claim_transaction" '
     .kind == $kind and .chain == "Lez" and .proof.transaction_id == $tx
     and (.chain_evidence | type) == "array" and (.chain_evidence | length) > 0
   ' <<<"$actor_payload" >/dev/null ||
-    fail "actor lifecycle row does not bind the expected finalized LEZ claim"
-  jq -e --arg role "$lez_owner" --argjson revision "$((actor_revision - 1))" '
-    .schema_version == 1 and .role == $role and .command == "drive"
+    fail "actor lifecycle row does not bind the expected finalized LEZ terminal effect"
+  jq -e --arg role "$lez_owner" --arg journey "$journey" \
+    --argjson revision "$((actor_revision - 1))" '
+    .schema_version == 1 and .role == $role
+    and .command == (if $journey == "claim" then "drive" else "recover" end)
     and .outcome == "awaiting_observation" and .chain == "lez"
     and .revision == $revision
   ' "$actor_submit" >/dev/null ||
-    fail "actor submit output does not prove the role-owned LEZ claim"
-  jq -e --arg tx "$claim_transaction" '
-    .actor_owned_claims.lez == $tx
+    fail "actor submit output does not prove the role-owned LEZ terminal effect"
+  jq -e --arg tx "$claim_transaction" --arg journey "$journey" '
+    (if $journey == "claim" then .actor_owned_claims.lez
+     else .actor_owned_refunds.lez end) == $tx
     and .lez_effect_ids[-1] == $tx
   ' "$actual_effects" >/dev/null ||
-    fail "actual-effect manifest does not bind the actor-owned LEZ claim"
+    fail "actual-effect manifest does not bind the actor-owned LEZ terminal effect"
   jq -c '.chain_evidence | implode | fromjson' <<<"$actor_payload" >"$actor_output"
   chmod 0600 "$actor_output"
 
@@ -3245,6 +3279,7 @@ write_custom_token_terminal_balance_evidence() {
   ' "$final_terms" >/dev/null ||
     fail "official account-codec ATA mappings differ from the signed asset terms"
   jq -e --arg transition "$transition" --arg tx "$claim_transaction" \
+    --arg journey "$journey" \
     --arg role "$lez_owner" \
     --arg asset_commitment "$(jq -er '.asset_commitment' \
       "${evidence_dir}/${direction}-asset-extension.json")" \
@@ -3254,28 +3289,49 @@ write_custom_token_terminal_balance_evidence() {
     --arg token_program "$(jq -er '.asset.terms.token_program_id' "$final_terms")" \
     --argjson block "$(jq -er '.containing_block_id | numbers' "$finality")" \
     --arg block_hash "$(jq -er '.containing_block_hash' "$finality")" '
-    .schema_version == 2 and .transition == $transition
-    and .runtime.sidecar_role == $role
-    and .asset_commitment == $asset_commitment
-    and .facts.transaction.transaction_id == $tx
-    and .facts.containing_block.block_id == $block
-    and .facts.containing_block.block_hash == $block_hash
-    and .finalized_clock.height >= $block
-    and .scanned_window.start_height <= $block
-    and (.scanned_window.start_height + .scanned_window.max_blocks - 1) >= $block
-    and .facts.metadata.status == "claimed"
-    and .facts.metadata.claimant_asset_account_id == $claimant_ata
-    and .facts.metadata.asset_definition == $definition
-    and .facts.metadata.custody_account_id == $custody
-    and (.facts.metadata.amount | tostring) == $amount and $amount == "75"
-    and .facts.custody.kind == "custom_token"
-    and .facts.custody.facts.account_id == $custody
-    and .facts.custody.facts.token_definition_account_id == $definition
-    and .facts.custody.facts.owner_program_id == $token_program
-    and (.facts.custody.facts.balance | tostring) == "0"
+    if $journey == "claim" then
+      .schema_version == 2 and .transition == $transition
+      and .runtime.sidecar_role == $role
+      and .asset_commitment == $asset_commitment
+      and .facts.transaction.transaction_id == $tx
+      and .facts.containing_block.block_id == $block
+      and .facts.containing_block.block_hash == $block_hash
+      and .finalized_clock.height >= $block
+      and .scanned_window.start_height <= $block
+      and (.scanned_window.start_height + .scanned_window.max_blocks - 1) >= $block
+      and .facts.metadata.status == "claimed"
+      and .facts.metadata.claimant_asset_account_id == $claimant_ata
+      and .facts.metadata.asset_definition == $definition
+      and .facts.metadata.custody_account_id == $custody
+      and (.facts.metadata.amount | tostring) == $amount and $amount == "75"
+      and .facts.custody.kind == "custom_token"
+      and .facts.custody.facts.account_id == $custody
+      and .facts.custody.facts.token_definition_account_id == $definition
+      and .facts.custody.facts.owner_program_id == $token_program
+      and (.facts.custody.facts.balance | tostring) == "0"
+    else
+      .schema_version == 1 and .transition == $transition
+      and .asset_commitment == $asset_commitment
+      and .response.context.sidecar_role == $role
+      and .response.metadata.status == "refunded"
+      and .response.metadata.asset_definition == $definition
+      and .response.metadata.custody_account_id == $custody
+      and (.response.metadata.amount | tostring) == $amount and $amount == "75"
+      and .response.custody.kind == "custom_token"
+      and .response.custody.facts.account_id == $custody
+      and .response.custody.facts.token_definition_account_id == $definition
+      and .response.custody.facts.owner_program_id == $token_program
+      and (.response.custody.facts.balance | tostring) == "0"
+      and .response.refund.status == "found"
+      and .response.refund.facts.transaction.transaction_id == $tx
+      and .response.refund.facts.transaction.position.height == $block
+      and .response.refund.facts.transaction.position.block_hash == $block_hash
+    end
   ' "$actor_output" >/dev/null ||
     fail "typed finalized actor evidence does not prove the exact empty custody ATA"
-  custody_balance="$(jq -er '.facts.custody.facts.balance | tonumber' "$actor_output")"
+  custody_balance="$(jq -er --arg journey "$journey" \
+    'if $journey == "claim" then .facts.custody.facts.balance
+     else .response.custody.facts.balance end | tonumber' "$actor_output")"
   [[ "$maker_balance" == "$expected_maker" && "$taker_balance" == "$expected_taker" &&
      "$custody_balance" == 0 ]] ||
     fail "custom-token terminal balances differ from the exact direction outcome"
@@ -3291,7 +3347,8 @@ write_custom_token_terminal_balance_evidence() {
   after_replay_sha="$(sha256sum "$after_replay" | sed 's/ .*//')"
   jq -n --arg direction "$direction" --arg asset "$asset" --arg definition "$definition" \
     --arg maker_ata "$maker_ata" --arg taker_ata "$taker_ata" \
-    --arg custody_ata "$custody_base58" --arg claim_transaction "$claim_transaction" \
+    --arg custody_ata "$custody_base58" --arg terminal_transaction "$claim_transaction" \
+    --arg terminal_state "$terminal_state" --arg journey "$journey" \
     --arg actor_file "$(basename "$actor_output")" --arg actor_sha "$actor_sha" \
     --arg submit_file "$(basename "$actor_submit")" --arg submit_sha "$submit_sha" \
     --arg finality_file "$(basename "$finality")" --arg finality_sha "$finality_sha" \
@@ -3305,7 +3362,7 @@ write_custom_token_terminal_balance_evidence() {
     --argjson custody_balance "$custody_balance" '
     {schema_version:1,kind:"m3_f7_terminal_custom_token_balances",
      direction:$direction,asset:$asset,token_definition:$definition,
-     claim_transaction_id:$claim_transaction,
+     journey:$journey,terminal_transaction_id:$terminal_transaction,
      balances:{maker:$maker_balance,taker:$taker_balance,custody:$custody_balance},
      conservation_total:($maker_balance + $taker_balance + $custody_balance),
      expected_total:250,exact_direction_balances:true,
@@ -3313,8 +3370,8 @@ write_custom_token_terminal_balance_evidence() {
      owner_balance_source:{
        reader:"official_lez_v0_2_wallet",
        scope:"post_finality_quiescent_sequencer_account_read",
-       finalized_claim_proved_before_read:true,
-       same_atomic_snapshot_as_finalized_claim:false,
+       finalized_terminal_effect_proved_before_read:true,
+       same_atomic_snapshot_as_terminal_effect:false,
        maker_and_taker_reads_share_one_atomic_snapshot:false,
        wallet_operations_read_only:true,
        isolated_run_quiescent_after_terminal_replay:true,
@@ -3324,19 +3381,22 @@ write_custom_token_terminal_balance_evidence() {
        taker_log:{file:$taker_log,sha256:$taker_log_sha}},
      custody_balance_source:{
        reader:"finalized_actor_chain_evidence",
-       finalized:true,metadata_status:"claimed",
-       claim_transfer_atomicity:"single_on_chain_claim_transaction",
+       finalized:true,metadata_status:$terminal_state,
+       terminal_transfer_atomicity:
+         (if $journey == "claim" then "single_on_chain_claim_transaction"
+          else "single_on_chain_refund_transaction" end),
        file:$actor_file,sha256:$actor_sha},
      bindings:{
        actor_submit:{file:$submit_file,sha256:$submit_sha},
-       lez_claim_finality:{file:$finality_file,sha256:$finality_sha},
+       lez_terminal_finality:{file:$finality_file,sha256:$finality_sha},
        actual_effects:{file:$effects_file,sha256:$effects_sha},
        signed_asset_terms:{file:$terms_file,sha256:$terms_sha},
        replay_before:{file:$before_replay,sha256:$before_replay_sha},
        replay_after:{file:$after_replay,sha256:$after_replay_sha}}}
   ' >"$output"
   chmod 0600 "$output"
-  jq -e --arg direction "$direction" \
+  jq -e --arg direction "$direction" --arg journey "$journey" \
+    --arg terminal_state "$terminal_state" \
     --argjson maker "$expected_maker" --argjson taker "$expected_taker" '
     .schema_version == 1 and .direction == $direction
     and .balances == {maker:$maker,taker:$taker,custody:0}
@@ -3344,22 +3404,23 @@ write_custom_token_terminal_balance_evidence() {
     and .exact_direction_balances == true
     and .owner_balance_source.reader == "official_lez_v0_2_wallet"
     and .owner_balance_source.scope == "post_finality_quiescent_sequencer_account_read"
-    and .owner_balance_source.same_atomic_snapshot_as_finalized_claim == false
+    and .owner_balance_source.same_atomic_snapshot_as_terminal_effect == false
     and .owner_balance_source.maker_and_taker_reads_share_one_atomic_snapshot == false
     and .owner_balance_source.wallet_operations_read_only == true
     and .owner_balance_source.isolated_run_quiescent_after_terminal_replay == true
     and .owner_balance_source.no_later_asset_mutation_command_executed == true
     and .custody_balance_source.reader == "finalized_actor_chain_evidence"
     and .custody_balance_source.finalized == true
-    and .custody_balance_source.metadata_status == "claimed"
-    and .custody_balance_source.claim_transfer_atomicity ==
-      "single_on_chain_claim_transaction"
+    and .custody_balance_source.metadata_status == $terminal_state
+    and .custody_balance_source.terminal_transfer_atomicity ==
+      (if $journey == "claim" then "single_on_chain_claim_transaction"
+       else "single_on_chain_refund_transaction" end)
     and all([
       .owner_balance_source.maker_log.sha256,
       .owner_balance_source.taker_log.sha256,
       .custody_balance_source.sha256,
       .bindings.actor_submit.sha256,
-      .bindings.lez_claim_finality.sha256,
+      .bindings.lez_terminal_finality.sha256,
       .bindings.actual_effects.sha256,
       .bindings.signed_asset_terms.sha256,
       .bindings.replay_before.sha256,
@@ -4177,25 +4238,28 @@ write_run_evidence() {
       and .directions[0].custom_token_terminal_balances.direction == "taker_sells_foreign"
       and .directions[0].custom_token_terminal_balances.asset == "M3F7A"
       and .directions[0].custom_token_terminal_balances.balances ==
-        {maker:175,taker:75,custody:0}
+        (if $journey == "claim" then {maker:175,taker:75,custody:0}
+         else {maker:250,taker:0,custody:0} end)
       and .directions[1].direction == "taker_sells_lez"
       and .directions[1].custom_token_terminal_balances.direction == "taker_sells_lez"
       and .directions[1].custom_token_terminal_balances.asset == "M3F7B"
       and .directions[1].custom_token_terminal_balances.balances ==
-        {maker:75,taker:175,custody:0}
+        (if $journey == "claim" then {maker:75,taker:175,custody:0}
+         else {maker:0,taker:250,custody:0} end)
       and all(.directions[].custom_token_terminal_balances;
         .conservation_total == 250 and .exact_direction_balances == true
         and .owner_balance_source.reader == "official_lez_v0_2_wallet"
-        and .owner_balance_source.same_atomic_snapshot_as_finalized_claim == false
+        and .owner_balance_source.same_atomic_snapshot_as_terminal_effect == false
         and .owner_balance_source.isolated_run_quiescent_after_terminal_replay == true
         and .custody_balance_source.reader == "finalized_actor_chain_evidence"
         and .custody_balance_source.finalized == true
-        and .custody_balance_source.claim_transfer_atomicity ==
-          "single_on_chain_claim_transaction"
+        and .custody_balance_source.terminal_transfer_atomicity ==
+          (if $journey == "claim" then "single_on_chain_claim_transaction"
+           else "single_on_chain_refund_transaction" end)
         and (.evidence_path | startswith(".e2e/"))
         and (.evidence_sha256 | test("^[0-9a-f]{64}$"))
         and (.bindings.actor_submit.sha256 | test("^[0-9a-f]{64}$"))
-        and (.bindings.lez_claim_finality.sha256 | test("^[0-9a-f]{64}$"))
+        and (.bindings.lez_terminal_finality.sha256 | test("^[0-9a-f]{64}$"))
         and (.bindings.actual_effects.sha256 | test("^[0-9a-f]{64}$"))
         and .actual_effects_sha256 == .bindings.actual_effects.sha256)
     else all(.directions[]; has("custom_token_terminal_balances") | not) end)

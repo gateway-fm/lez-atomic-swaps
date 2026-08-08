@@ -2569,6 +2569,27 @@ Active M3 refund critical path:
   finalized lock/claim windows dominate; every other child phase is below one
   second. Unrelated host contention makes the 22-second Run-AE wall-time
   difference non-certifiable as a speedup;
+- [x] connect schema-5 two-lock timeout recovery to the existing witnessed
+  asset v2 refund protocol/client/adapter instead of adding another wire or
+  dependency. The actor now binds preparation, observation, and generic
+  submission request identities to the base agreement, asset commitment,
+  transition, role, runtime, full terms, target, and exact transaction. The
+  existing durable public-effect journal remains the sole submit-once
+  authority; schema-4 native recovery is unchanged. The locked actor compile,
+  all 91 pre-existing actor tests, the focused asset/refund identity test, both
+  shell parsers, custom-token refund contract mode, and the complete
+  source-only actor orchestration contract are GREEN;
+- [x] extend the sequential local runner and secret-safe evidence model for
+  two distinct custom-token refunds. Each direction requires three token lock
+  effects followed by exactly one v2 refund, terminal revision four
+  `Refunded`, zero custody, no replay submission, and direction-correct return
+  balances: forward Maker 250/Taker 0 and reverse Maker 0/Taker 250. Claim
+  packets retain their prior 175/75 and 75/175 outcomes under generic terminal
+  evidence field names;
+- [ ] commit and push this component-GREEN slice, then execute the exact clean
+  pushed-source two-devnet refund pair. Retain the certificate only after both
+  directions, terminal replay, exact cleanup, and foreign-resource isolation
+  pass; until then F7 remains open and no actual-node refund claim is made;
 - [ ] map those five dominant waits to their exact finalized-observation and
   confirmation policies, then write the next RED around the lowest-risk
   development-only acceleration. Preserve production defaults, chain
