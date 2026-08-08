@@ -2853,6 +2853,7 @@ with_direction_environment() {
     fail "captured Bitcoin container ownership identity drifted at actor handoff"
   M3_POC_RUN_ID="$run_id" \
   M5_BTC_APPLICATION_MODE="$m5_btc_application_mode" \
+  M7_BTC_ACCEPTED_CONCURRENCY="$m7_btc_accepted_concurrency" \
   M3_POC_SWAP_ID="$m5_swap_id" \
   M3_POC_JOURNEY="$journey" \
   M3_POC_DIRECTION="$direction" \
@@ -2863,6 +2864,7 @@ with_direction_environment() {
   M3_POC_ACTOR_BIN="$actor_bin" \
   M3_POC_PROVISIONER_BIN="$provisioner_bin" \
   M3_POC_M5_APPLICATION_ROOT="${direction_root}/application" \
+  M3_POC_M7_APPLICATION_ROOT="${private_dir}/m7-application" \
   M3_POC_M5_RUNTIME_ROOT="${secure_state_root}/c" \
   M3_POC_MAKER_DAEMON_BIN="$maker_daemon_bin" \
   M3_POC_TAKER_CLI_BIN="$taker_cli_bin" \

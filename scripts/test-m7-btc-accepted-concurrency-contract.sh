@@ -84,9 +84,23 @@ for required in \
   'prepare_m5_btc_delivery_plan "${directions[@]}"' \
   '(map(.swap_id) | unique | length) == 2' \
   '(map(.offer_id) | unique | length) == 2' \
-  '(map(.reservation_id) | unique | length) == 2'; do
+  '(map(.reservation_id) | unique | length) == 2' \
+  'M3_POC_M7_APPLICATION_ROOT="${private_dir}/m7-application"' \
+  'M7_BTC_ACCEPTED_CONCURRENCY="$m7_btc_accepted_concurrency"'; do
   rg -Fq -- "$required" "$delegated_runner" ||
     fail "delegated runner is missing M7 stage-one invariant: $required"
+done
+
+readonly direction_runner="scripts/run-m3-actor-direction.sh"
+for required in \
+  'complete_m7_btc_application_handoff' \
+  'M3_POC_M7_APPLICATION_ROOT' \
+  '--btc-source-maker-config' \
+  'm7-application-handoff.json' \
+  'post_acceptance_restart:true' \
+  'accepted_swap_count:2'; do
+  rg -Fq -- "$required" "$direction_runner" ||
+    fail "direction runner is missing shared M7 handoff invariant: $required"
 done
 
 echo "M7 BTC accepted-concurrency contract passed"

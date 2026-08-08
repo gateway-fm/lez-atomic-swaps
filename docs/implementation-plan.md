@@ -7214,10 +7214,19 @@ S12/S13 review and policy-deferred public deployment.
   refund/deadline validation, and daemon/Taker actor provisioning. Both real
   process directions and strict package Clippy pass. This does not yet prove
   the required shared-daemon admission.
+- [x] RED then GREEN the shared-admission orchestration contract. Both overlap
+  controllers now stop at a finalized-authority barrier. One coordinator
+  restarts the existing shared planning database/Delivery boundary with two
+  repeated swap-keyed Maker templates, accepts both direction-bound agreements
+  with no replay, restarts the same daemon boundary once, verifies exactly two
+  durable BTC actor rows, and atomically publishes the config handoff before
+  either controller activates. The tightened M7 contract and canonical M3/M5
+  runner contracts pass; fresh pushed exact-node execution is still required.
 - [ ] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [ ] Admit both agreements through one Delivery/Chat daemon and SQLite
   database, restart once, and prove two durable actor rows with zero replay.
+  Source composition is GREEN; keep this open until exact-node evidence passes.
 - [ ] Activate two workers and reuse the existing actual Bitcoin Core/LEZ
   revision-two overlap barrier through both terminal claims.
 - [ ] Retain a secret-safe exact-node certificate, update U2/S5 only to the

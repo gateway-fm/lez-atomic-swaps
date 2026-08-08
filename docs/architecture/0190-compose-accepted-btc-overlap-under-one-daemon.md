@@ -2,7 +2,7 @@
 
 Status: Accepted for implementation; contract, shared Maker identity, and both
 authenticated planning and Chat-acceptance directions GREEN; shared-daemon
-actual-node execution pending
+handoff source GREEN and actual-node execution pending
 
 ## Context
 
@@ -71,6 +71,16 @@ process fixture derives the LEZ depositor/claimant, Bitcoin claimant/refund
 key, prepared-claim authority, and later timeout from the direction. This
 closes the product capability but not the M7 composition: the next gate must
 admit both already planned swaps through one restarted daemon and database.
+
+The composed runner now uses a finalized-authority barrier between stage two
+and activation. Both direction controllers publish their exact source-config
+hashes; one coordinator starts a single Chat boundary over the already shared
+planning database and Delivery directory with both swap-keyed Maker templates.
+It accepts both applications without replay, stops and restarts that boundary,
+requires exactly two durable BTC actor rows, and atomically publishes the two
+role-config pairs. Both controllers remain blocked until this manifest exists,
+so neither actor can create a chain effect from a singly admitted batch. This
+source path remains non-certifying until a clean pushed exact-node replay.
 
 ## Components
 

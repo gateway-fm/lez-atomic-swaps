@@ -13,8 +13,17 @@ readonly pda_probe_secret_digest="2222222222222222222222222222222222222222222222
 readonly actor_lez_bridge_request_timeout_millis=120000
 readonly asset_mode="${M3_POC_ASSET_MODE:-native}"
 readonly m5_btc_application_mode="${M5_BTC_APPLICATION_MODE:-0}"
+readonly m7_btc_accepted_concurrency="${M7_BTC_ACCEPTED_CONCURRENCY:-0}"
 if [[ "$m5_btc_application_mode" != 0 && "$m5_btc_application_mode" != 1 ]]; then
   echo 'M5_BTC_APPLICATION_MODE must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$m7_btc_accepted_concurrency" != 0 && "$m7_btc_accepted_concurrency" != 1 ]]; then
+  echo 'M7_BTC_ACCEPTED_CONCURRENCY must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$m7_btc_accepted_concurrency" == 1 && "$m5_btc_application_mode" != 1 ]]; then
+  echo 'M7_BTC_ACCEPTED_CONCURRENCY=1 requires M5_BTC_APPLICATION_MODE=1' >&2
   exit 2
 fi
 direction_timing_execution_mode=""
@@ -322,9 +331,11 @@ require_environment() {
      "$M3_POC_JOURNEY" == "refund" ]] ||
     fail "custom_token currently requires the claim or refund journey"
   if [[ "$m5_btc_application_mode" == 1 ]]; then
-    [[ "$asset_mode" == native && "$M3_POC_DIRECTION" == taker_sells_foreign &&
-       "$M3_POC_JOURNEY" == claim ]] ||
-      fail "M5 BTC application runtime requires native taker_sells_foreign claim"
+    [[ "$asset_mode" == native && "$M3_POC_JOURNEY" == claim &&
+       ( "$M3_POC_DIRECTION" == taker_sells_foreign ||
+         ( "$m7_btc_accepted_concurrency" == 1 &&
+           "$M3_POC_DIRECTION" == taker_sells_lez ) ) ]] ||
+      fail "BTC application runtime requires its bounded native claim route"
     value="${M3_POC_SWAP_ID:-}"
     [[ -n "$value" ]] ||
       fail "required M5 BTC environment is missing: M3_POC_SWAP_ID"
@@ -335,6 +346,11 @@ require_environment() {
       value="${!variable:-}"
       [[ -n "$value" ]] || fail "required M5 BTC environment is missing: ${variable}"
     done
+    if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+      value="${M3_POC_M7_APPLICATION_ROOT:-}"
+      [[ -n "$value" ]] ||
+        fail "required M7 BTC environment is missing: M3_POC_M7_APPLICATION_ROOT"
+    fi
   elif [[ -n "${M3_POC_SWAP_ID:-}" ]]; then
     fail "M3_POC_SWAP_ID is reserved for M5 BTC application mode"
   fi
@@ -368,6 +384,10 @@ require_environment() {
     [[ -x "$M3_POC_MAKER_DAEMON_BIN" && ! -L "$M3_POC_MAKER_DAEMON_BIN" &&
        -x "$M3_POC_TAKER_CLI_BIN" && ! -L "$M3_POC_TAKER_CLI_BIN" ]] ||
       fail "M5 BTC application binaries are unavailable or unsafe"
+    if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+      [[ "$M3_POC_M7_APPLICATION_ROOT" == /* ]] ||
+        fail "M7 BTC application root must be absolute"
+    fi
   fi
   if [[ "$asset_mode" == "custom_token" ]]; then
     for variable in M3_POC_LEZ_ACCOUNT_CODEC_BIN M3_POC_F7_FIXTURE_ROOT \
@@ -4132,6 +4152,214 @@ run_actor_refund_flow() {
   esac
 }
 
+load_m7_btc_application_handoff() {
+  local handoff="${M3_POC_M7_APPLICATION_ROOT}/m7-application-handoff.json"
+  local maker_config taker_config
+  [[ -f "$handoff" && ! -L "$handoff" && "$(stat -c '%a' "$handoff")" == 600 ]] ||
+    fail "M7 BTC shared application handoff is unavailable or unsafe"
+  maker_config="$(jq -er --arg direction "$M3_POC_DIRECTION" '
+    .directions[] | select(.direction == $direction) | .maker_actor_config
+  ' "$handoff")"
+  taker_config="$(jq -er --arg direction "$M3_POC_DIRECTION" '
+    .directions[] | select(.direction == $direction) | .taker_actor_config
+  ' "$handoff")"
+  for config in "$maker_config" "$taker_config"; do
+    [[ "$config" == /* && -f "$config" && ! -L "$config" ]] ||
+      fail "M7 BTC provisioned actor config is unavailable or unsafe"
+  done
+  m5_btc_actor_configs[maker]="$maker_config"
+  m5_btc_actor_configs[taker]="$taker_config"
+}
+
+complete_m7_btc_application_handoff() {
+  local shared_root="$M3_POC_M7_APPLICATION_ROOT"
+  local authority_root="${shared_root}/authority-ready"
+  local marker="${authority_root}/${M3_POC_DIRECTION}.json"
+  local handoff="${shared_root}/m7-application-handoff.json"
+  local handoff_partial="${handoff}.partial"
+  local source_maker="${M3_POC_DIRECTION_ROOT}/actors/maker/actor-config.json"
+  local source_taker="${M3_POC_DIRECTION_ROOT}/actors/taker/actor-config.json"
+  local plan_file="${M3_POC_M5_APPLICATION_ROOT}/btc-plan.json"
+  local runtime_root="$M3_POC_M5_RUNTIME_ROOT"
+  local socket="${runtime_root}/m.sock" chat_socket="${runtime_root}/c.sock"
+  local ready_file="${runtime_root}/m.ready"
+  local database="${shared_root}/maker.sqlite3" delivery="${shared_root}/delivery"
+  local owner_root="${shared_root}/owner" maker_actor_root="${owner_root}/maker-actors"
+  local actor_program_root="${shared_root}/actor-program"
+  local actor_program="${actor_program_root}/btc-reference-actor"
+  local actor_sha daemon_log="${shared_root}/chat-daemon.log"
+  local delivery_key maker_signing_key maker_public_key
+  local daemon_pid direction direction_root direction_application fixture_root direction_owner
+  local cli_direction offer_id reservation_id now acceptance_file receipt_file agreement_file
+  local draft_file draft_evidence taker_actor_root taker_signing_key maker_config taker_config
+  local daemon_start="" daemon_executable="" daemon_pgid="" daemon_sid=""
+  local rows="${shared_root}/accepted-directions.ndjson"
+  local -a daemon_command=()
+
+  [[ "$m7_btc_accepted_concurrency" == 1 && "$asset_mode" == native &&
+     "$M3_POC_JOURNEY" == claim ]] ||
+    fail "M7 BTC shared handoff requires the bounded native claim profile"
+  [[ "$shared_root" == /* && -d "$shared_root" && ! -L "$shared_root" &&
+     "$(stat -c '%u:%a' "$shared_root")" == "$(id -u):700" ]] ||
+    fail "M7 BTC shared application root is unavailable or unsafe"
+  for input in "$source_maker" "$source_taker" "$plan_file"; do
+    [[ -f "$input" && ! -L "$input" ]] ||
+      fail "M7 BTC authority input is unavailable or unsafe: ${input##*/}"
+  done
+  mkdir -p -m 0700 "$authority_root"
+  chmod 0700 "$authority_root"
+  [[ ! -e "$marker" && ! -L "$marker" ]] ||
+    fail "M7 BTC authority-ready marker already exists"
+  jq -n --arg direction "$M3_POC_DIRECTION" --arg swap "$M3_POC_SWAP_ID" \
+    --arg maker "$source_maker" --arg taker "$source_taker" \
+    --arg maker_sha "$(sha256sum "$source_maker" | sed 's/ .*//')" \
+    --arg taker_sha "$(sha256sum "$source_taker" | sed 's/ .*//')" '
+    {schema_version:1,direction:$direction,swap_id:$swap,
+     maker_source_config:$maker,maker_source_sha256:$maker_sha,
+     taker_source_config:$taker,taker_source_sha256:$taker_sha}
+  ' >"${marker}.partial"
+  chmod 0600 "${marker}.partial"
+  mv "${marker}.partial" "$marker"
+
+  if [[ "$M3_POC_DIRECTION" == taker_sells_lez ]]; then
+    for _ in {1..2400}; do
+      [[ -f "$handoff" && ! -L "$handoff" ]] && break
+      sleep 0.05
+    done
+    load_m7_btc_application_handoff
+    return
+  fi
+
+  for _ in {1..2400}; do
+    [[ -f "${authority_root}/taker_sells_lez.json" &&
+       ! -L "${authority_root}/taker_sells_lez.json" ]] && break
+    sleep 0.05
+  done
+  [[ -f "${authority_root}/taker_sells_lez.json" ]] ||
+    fail "M7 BTC reverse authority did not reach the shared admission barrier"
+  [[ ! -e "$owner_root" && ! -L "$owner_root" &&
+     ! -e "$runtime_root" && ! -L "$runtime_root" &&
+     ! -e "$handoff" && ! -L "$handoff" &&
+     ! -e "$handoff_partial" && ! -L "$handoff_partial" ]] ||
+    fail "M7 BTC shared handoff output already exists"
+  mkdir -m 0700 "$runtime_root" "$owner_root" "$maker_actor_root" "$actor_program_root"
+  actor_sha="$(sha256sum "$M3_POC_ACTOR_BIN" | sed 's/ .*//')"
+  cp --reflink=auto -- "$M3_POC_ACTOR_BIN" "$actor_program"
+  chmod 0700 "$actor_program"
+  [[ "$(stat -c '%u:%a:%h' "$actor_program")" == "$(id -u):700:1" &&
+     "$(sha256sum "$actor_program" | sed 's/ .*//')" == "$actor_sha" ]] ||
+    fail "M7 BTC staged actor program is unsafe or changed"
+  delivery_key="${M3_POC_DIRECTION_ROOT}/fixture/private/maker-signing.key"
+  maker_signing_key="$delivery_key"
+  maker_public_key="$(jq -er '.maker.musig2_public_key' \
+    "${M3_POC_DIRECTION_ROOT}/fixture/public-spec.json")"
+  daemon_command=("$M3_POC_MAKER_DAEMON_BIN" --socket "$socket" --chat-socket "$chat_socket"
+    --database "$database" --ready-file "$ready_file" --delivery-directory "$delivery"
+    --delivery-signing-key-file "$delivery_key" --btc-maker-signing-key-file "$maker_signing_key"
+    --btc-source-maker-config "${M3_POC_DIRECTION_ROOT}/actors/maker/actor-config.json"
+    --btc-source-maker-config "$(dirname "$M3_POC_DIRECTION_ROOT")/taker_sells_lez/actors/maker/actor-config.json"
+    --btc-maker-actor-root "$maker_actor_root" --btc-actor-program "$actor_program"
+    --btc-actor-program-sha256 "$actor_sha")
+
+  setsid "${daemon_command[@]}" >"$daemon_log" 2>&1 &
+  daemon_pid=$!
+  register_m5_application_process chat "$daemon_pid" "$M3_POC_MAKER_DAEMON_BIN" ||
+    fail "M7 BTC shared Chat daemon registration failed"
+  for _ in {1..1200}; do
+    [[ -f "$ready_file" && "$(cat "$ready_file")" == "$socket" &&
+       -S "$socket" && -S "$chat_socket" ]] && break
+    kill -0 "$daemon_pid" 2>/dev/null || fail "M7 BTC shared Chat daemon exited early"
+    sleep 0.05
+  done
+  [[ -S "$socket" && -S "$chat_socket" ]] || fail "M7 BTC shared Chat readiness timed out"
+  : >"$rows"
+  chmod 0600 "$rows"
+
+  for direction in taker_sells_foreign taker_sells_lez; do
+    direction_root="$(dirname "$M3_POC_DIRECTION_ROOT")/${direction}"
+    direction_application="${direction_root}/application"
+    fixture_root="${direction_root}/fixture"
+    direction_owner="${owner_root}/${direction}"
+    mkdir -m 0700 "$direction_owner"
+    case "$direction" in
+      taker_sells_foreign) cli_direction=taker-sells-foreign ;;
+      taker_sells_lez) cli_direction=taker-sells-lez ;;
+    esac
+    offer_id="$(jq -er '.offer_id' "${direction_application}/btc-plan.json")"
+    reservation_id="$(jq -er '.reservation_id' "${direction_application}/btc-plan.json")"
+    draft_file="${direction_owner}/unsigned-draft-v1.borsh"
+    draft_evidence="${direction_owner}/draft-export.json"
+    agreement_file="${direction_owner}/agreement-v1.borsh"
+    receipt_file="${direction_owner}/acceptance-receipt.json"
+    acceptance_file="${direction_owner}/acceptance.json"
+    taker_actor_root="${direction_owner}/taker-actor"
+    taker_signing_key="${fixture_root}/private/taker-signing.key"
+    "$M3_POC_PROVISIONER_BIN" export-draft --agreement-file "${fixture_root}/agreement.borsh" \
+      --output-file "$draft_file" >"$draft_evidence"
+    now="$(date -u +%s)"
+    "$M3_POC_TAKER_CLI_BIN" --delivery-directory "$delivery" \
+      --maker-public-key "$maker_public_key" --now-unix-seconds "$now" \
+      --pair bitcoin --direction "$cli_direction" --accept-btc-offer "$offer_id" \
+      --chat-socket "$chat_socket" --reservation-id "$reservation_id" --foreign-units 1000000 \
+      --unsigned-draft-file "$draft_file" --taker-signing-key-file "$taker_signing_key" \
+      --agreement-output-file "$agreement_file" \
+      --btc-source-taker-config "${direction_root}/actors/taker/actor-config.json" \
+      --btc-taker-actor-root "$taker_actor_root" --btc-acceptance-receipt "$receipt_file" \
+      >"$acceptance_file"
+    chmod 0600 "$draft_evidence" "$acceptance_file"
+    jq -e --arg swap "$(jq -er '.swap_id' "${direction_application}/btc-plan.json")" '
+      .schema_version == 1 and .offer_revision == 3 and .swap_id == $swap
+      and .replay == {proposal:false,completion:false,agreement_file:false}
+      and .actor == (.actor + {role:"taker",provisioning_replay:false,receipt_replay:false})
+      and .private_material_disclosed == false
+    ' "$acceptance_file" >/dev/null || fail "M7 BTC acceptance output is invalid for ${direction}"
+    maker_config="$(sqlite3 -batch -noheader -readonly "$database" \
+      "SELECT manifest_path FROM maker_actor_processes WHERE swap_id = '$(jq -er '.swap_id' "${direction_application}/btc-plan.json")' AND actor_kind = 'bitcoin';")"
+    taker_config="$(jq -er '.actor_config_file' "$receipt_file")"
+    for config in "$maker_config" "$taker_config"; do
+      [[ "$config" == /* && -f "$config" && ! -L "$config" ]] ||
+        fail "M7 BTC accepted actor config is unavailable"
+    done
+    jq -nc --arg direction "$direction" \
+      --arg swap_id "$(jq -er '.swap_id' "${direction_application}/btc-plan.json")" \
+      --arg maker_actor_config "$maker_config" --arg taker_actor_config "$taker_config" \
+      --arg acceptance_file "$acceptance_file" \
+      '{direction:$direction,swap_id:$swap_id,maker_actor_config:$maker_actor_config,
+        taker_actor_config:$taker_actor_config,acceptance_file:$acceptance_file}' >>"$rows"
+  done
+  stop_m5_application_process || fail "M7 BTC shared Chat daemon shutdown failed"
+  [[ ! -e "$socket" && ! -e "$chat_socket" && ! -e "$ready_file" ]] ||
+    fail "M7 BTC shared Chat daemon left live endpoints"
+
+  setsid "${daemon_command[@]}" >>"$daemon_log" 2>&1 &
+  daemon_pid=$!
+  register_m5_application_process chat "$daemon_pid" "$M3_POC_MAKER_DAEMON_BIN" ||
+    fail "M7 BTC post-acceptance restart registration failed"
+  for _ in {1..1200}; do
+    [[ -f "$ready_file" && "$(cat "$ready_file")" == "$socket" &&
+       -S "$socket" && -S "$chat_socket" ]] && break
+    kill -0 "$daemon_pid" 2>/dev/null || fail "M7 BTC restarted daemon exited early"
+    sleep 0.05
+  done
+  [[ "$(sqlite3 -batch -noheader -readonly "$database" \
+    'SELECT count(*) FROM maker_actor_processes WHERE actor_kind = '\''bitcoin'\'';')" == 2 ]] ||
+    fail "M7 BTC restart did not retain exactly two actor rows"
+  stop_m5_application_process || fail "M7 BTC restarted daemon shutdown failed"
+  jq -s --arg database "$database" --arg delivery "$delivery" '
+    {schema_version:1,kind:"m7_btc_application_handoff",accepted_swap_count:2,
+     maker_daemon_count:1,maker_database:$database,delivery_directory:$delivery,
+     post_acceptance_restart:true,no_acceptance_or_actor_replay:true,directions:.}
+  ' "$rows" >"$handoff_partial"
+  chmod 0600 "$handoff_partial" "$daemon_log"
+  jq -e '
+    .accepted_swap_count == 2 and .post_acceptance_restart == true
+    and .no_acceptance_or_actor_replay == true and (.directions | length) == 2
+    and ([.directions[].swap_id] | unique | length) == 2
+  ' "$handoff_partial" >/dev/null || fail "M7 BTC shared handoff manifest is inconsistent"
+  mv "$handoff_partial" "$handoff"
+  load_m7_btc_application_handoff
+}
+
 complete_m5_btc_application_handoff() {
   local application_root="$M3_POC_M5_APPLICATION_ROOT"
   local fixture_root="${M3_POC_DIRECTION_ROOT}/fixture"
@@ -4338,7 +4566,11 @@ prepare_actor_flow_runtime() {
   actor_prelock_lez_tip="$initial_tip"
   if [[ "$m5_btc_application_mode" == "1" ]]; then
     write_actor_configs "$initial_tip" 4096
-    complete_m5_btc_application_handoff
+    if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+      complete_m7_btc_application_handoff
+    else
+      complete_m5_btc_application_handoff
+    fi
   else
     write_actor_configs "$initial_tip" 1
   fi
