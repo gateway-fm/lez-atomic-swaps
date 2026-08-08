@@ -7274,6 +7274,17 @@ S12/S13 review and policy-deferred public deployment.
   the receipt, and requires equality with the already validated handoff config.
   All four preserved exact-run authorities pass the resolver checks; M7,
   canonical M3, and legacy M5 contracts remain GREEN.
+- [x] Replay pushed commit `02ebd4a` as `m7btcconc-02ebd4a-a`. Both swaps
+  reached revision two behind the isolation barrier, both direction settlements
+  finalized and projected, and all four terminal actor replays left submission
+  counts unchanged. The final packet builder then rejected its own one-direction
+  timing summary because it inherited M5's single-application cardinality.
+  Exact cleanup passed without broad cleanup or any foreign resource target.
+- [x] RED then GREEN final M7 evidence cardinality. Legacy M5 truncates only
+  when `M5=1` and `M7!=1`; M7 now retains both immutable actor timing packets,
+  both stage-two hashes, both direction/effect entries, two-direction expected
+  effects, and shared-daemon/database/restart application metadata. M7,
+  canonical M3, and legacy M5 contract gates pass.
 - [x] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [x] Admit both agreements through one Delivery/Chat daemon and SQLite
@@ -7282,8 +7293,9 @@ S12/S13 review and policy-deferred public deployment.
 - [ ] Activate two workers and reuse the existing actual Bitcoin Core/LEZ
   revision-two overlap barrier through both terminal claims. Worker activation
   and both real locks are GREEN in `m7btcconc-abd1403-a`; the manifest-bound
-  isolation packet is GREEN in `m7btcconc-ad77632-a`. Terminal settlements and
-  replay still require a clean run.
+  isolation packet is GREEN in `m7btcconc-ad77632-a`; both settlements and all
+  four terminal replays are actual-node GREEN in `m7btcconc-02ebd4a-a`. A clean
+  final packet publication remains.
 - [ ] Retain a secret-safe exact-node certificate, update U2/S5 only to the
   evidence actually proved, run the complete milestone gate once at slice end,
   commit, push, and update ETA. Do not mark U2/S5 GREEN from the contract alone.

@@ -86,6 +86,8 @@ for required in \
   'config="$(overlap_actor_config "$direction" "$role")"' \
   'handoff_config="$(overlap_actor_config "$direction" "$role")"' \
   'M7 terminal replay acceptance escaped shared authority' \
+  'M7 terminal evidence must retain both actor timing packets' \
+  '$m7_btc_accepted_concurrency != "1" then .[0:1] else . end' \
   '(map(.swap_id) | unique | length) == 2' \
   '(map(.offer_id) | unique | length) == 2' \
   '(map(.reservation_id) | unique | length) == 2' \

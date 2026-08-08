@@ -95,6 +95,13 @@ then finalized the forward revealing claim before a second legacy-only guard
 looked for the single M5 application root during terminal replay. Terminal
 replay now resolves the exact direction/swap acceptance, agreement, receipt,
 database row, and role config from the same shared authority boundary.
+Exact run `m7btcconc-02ebd4a-a` then completed both direction settlements,
+both role projections, and zero-resubmission terminal replay. The final packet
+builder exposed one remaining inherited M5 cardinality branch: it retained only
+the forward timing summary even though M7 had two immutable timing packets.
+Final evidence now distinguishes legacy single-application M5 from explicit
+two-application M7 in timing, stage-two, direction, effect, and application
+metadata. A fresh clean packet publication remains pending.
 
 ## Components
 

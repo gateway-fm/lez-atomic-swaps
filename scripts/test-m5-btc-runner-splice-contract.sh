@@ -96,8 +96,8 @@ jq -e '
 
 for required in 'm5_btc_application_local_poc' \
   'if [[ "$m5_btc_application_mode" != 1 ]]; then' \
-  'if $m5_btc_application_mode == "1" then .[0:1] else . end' \
-  'if $m5_btc_application_mode == "1" then 1 else 2 end'; do
+  '$m7_btc_accepted_concurrency != "1" then .[0:1] else . end' \
+  '$m7_btc_accepted_concurrency != "1" then 1 else 2 end'; do
   rg -Fq -- "$required" "$runner" ||
     fail "M5 final evidence remains two-direction-only: ${required}"
 done
