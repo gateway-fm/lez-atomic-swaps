@@ -19,6 +19,17 @@ with checked evidence in
 F3/F6 still require the joined two-devnet abandonment economics and adverse
 recovery races; public deployment remains deliberately deferred.
 
+The successful Taker claim corridor is also actual-node GREEN on exact pushed
+run `m7claim-2cff48d-a`. Receipt-v2 Claim published owner-exact Tag14, observed
+finalized Tag15, reconstructed the committed spend authority and swept the
+funded Monero output to the Taker with ten official 0.18.5.1 Regtest
+confirmations. The checked
+[certificate](docs/evidence/m7-actual-taker-claim-2cff48d-20260805.json) and
+[ADR 0189](docs/architecture/0189-pin-taker-claim-certificate-in-ci.md) are now
+enforced by the CI quality gate. No public RPC, peer, faucet, public funds, DNS
+dependency or public deployment participated; adverse concurrency and crash
+schedules remain open.
+
 ADR [0174](docs/architecture/0174-join-tag17-to-the-funded-monero-output.md)
 now defines the isolated joined-abandonment runner checkpoint. Its opt-in mode
 funds the exact Stage-A Monero output before Tag17 and re-observes the same

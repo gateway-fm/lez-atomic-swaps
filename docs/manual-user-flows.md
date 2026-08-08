@@ -6987,6 +6987,44 @@ DNS, faucet, peer, or funding call. Cold compilation and the full role-generated
 Stage A/B process flow dominate timing. ADRs 0156 and 0157 give the authority,
 component, publication sequence, and conditional-atomicity arguments.
 
+### Repeat or verify the actual Taker claim certificate
+
+To repeat the complete local-node journey, start from a clean pushed commit and
+the pinned prerequisites from Flow 1W, then select the semantic Claim mode:
+
+```bash
+export RUN_ID=m7claim-yyyymmdd-nonce
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export M5_XMR_APPLICATION_MODE=1
+export M5_XMR_JOURNEY=claim
+export M7_XMR_SEMANTIC_CLAIM=1
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+The full replay owns isolated LEZ v0.2 and official Monero 0.18.5.1 Regtest
+services on ephemeral literal-loopback endpoints and deterministic local funds.
+It uses no public RPC, peer, faucet, public funds, DNS dependency or public
+deployment. Cold pinned builds, local finality, ten Monero confirmations and
+host load affect duration. The runner removes only exact ledgered resources and
+must preserve its foreign sentinel.
+
+For a fast offline verification of the already retained secret-free packet:
+
+```bash
+./scripts/test-m7-taker-claim-actual-certificate.sh
+```
+
+This command validates evidence; it does not rerun nodes or move funds. The
+conditional atomicity argument is in ADR 0189: finalized Tag14 releases only
+the committed Taker claim partial, and finalized Tag15 exposes the adaptor
+information needed to sweep the already funded Monero output. It claims
+neither a distributed transaction nor immunity to future reorganization.
+
 
 ## Flow 1W: run the role-correct XMR application refund locally
 

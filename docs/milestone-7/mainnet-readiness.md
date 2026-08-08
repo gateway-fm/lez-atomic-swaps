@@ -106,9 +106,12 @@ Punish branch. Exact pushed-commit run `m7refund-7cd3a9c-a` joins finalized
 Tag16, one role-correct Monero refund submission, ten local confirmations,
 spend-authority-free observation, terminal scheduler state, retained finality
 and exact cleanup. Its checked packet is
-`../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`. A daemon restart
-after submission is not claimed; the semantic Claim journey, full abandonment
-economics and adverse matrix remain release gates.
+`../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`. The separate checked
+`../evidence/m7-actual-taker-claim-2cff48d-20260805.json` packet binds semantic
+Tag14, finalized Tag15 and the confirmed Taker Monero sweep. A daemon restart
+after submission is not claimed; full abandonment economics, accepted-
+application concurrency and the adverse crash/reorg/fee matrix remain release
+gates.
 No public RPC, faucet, public funds or public deployment is represented by that
 evidence. S12/S13 independent review is outstanding. Public-network timelock and
 fee calibration, durable rollback anchoring, cold reproducible Logos UI supply

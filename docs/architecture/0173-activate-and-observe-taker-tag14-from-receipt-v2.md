@@ -1,6 +1,6 @@
 # ADR 0173: Activate and observe Taker Tag14 from receipt v2
 
-- Status: PoC verified on an exact pushed commit; hardening pending
+- Status: actual-node PoC and checked certificate GREEN; hardening pending
 - Date: 2026-08-05
 
 ## Context
@@ -112,9 +112,9 @@ joined actual-node replay and later hardening evidence.
 ## Verification and resources
 
 Focused provisioning tests, both existing actual-runner contracts, formatting,
-compile checks, and strict Clippy are GREEN. The new mode has not yet completed
-a clean commit-pinned actual-node replay, so this ADR records implementation,
-not milestone certification.
+compile checks, and strict Clippy are GREEN. Exact pushed run
+`m7claim-2cff48d-a` subsequently completed the clean actual-node replay; ADR
+0189 pins its certificate into the quality and CI-hardening gates.
 
 The first source-bound replay of commit `aae5c5c` proved the checked LEZ
 deployment, both finalized actor claims, the Monero 0.18.5.1 topology, and the
@@ -292,7 +292,7 @@ transaction is returned. This is the journal-level atomicity argument for the
 handoff: there is no committed schedule in which bytes leave while the durable
 state still claims a known no-send outcome.
 
-The planned replay uses only dynamically allocated literal-loopback endpoints,
+The certified replay used only dynamically allocated literal-loopback endpoints,
 the repository-pinned local LEZ v0.2 stack, official Monero 0.18.5.1 Regtest,
 deterministic local funds, and exact run-labelled cleanup. It uses no public
 RPC, faucet, peer, public funds, DNS dependency, or public deployment.

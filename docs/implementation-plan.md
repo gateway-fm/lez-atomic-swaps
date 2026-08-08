@@ -6801,6 +6801,12 @@ S12/S13 review and policy-deferred public deployment.
   exact fee and receipt. No public RPC, peer, faucet, public funds or public
   deployment participated. Cleanup schema v2 passed, preserved the foreign
   sentinel and removed every exact run resource.
+- [x] RED then GREEN the retained Taker-claim certificate contract under ADR
+  0189. The verifier binds the exact source/guest identities, bounded owner-
+  exact Tag14, finalized Tag15, ten-confirmation Taker Monero sweep, amount
+  conservation, conservative atomicity scope, absence of public dependencies,
+  exact cleanup and secret-field denylist; the pinned quality runner and CI
+  hardening policy now execute it on every default gate.
 - [ ] Post-PoC RED/GREEN contracts: owner-exact/counterparty-discovery source
   separation, release-store states, descriptor/newline bounds, restart and
   adverse concurrency. Then run the QA, chaos, information-security and
