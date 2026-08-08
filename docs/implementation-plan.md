@@ -7199,6 +7199,12 @@ S12/S13 review and policy-deferred public deployment.
   while retaining one database and Delivery directory. M7, legacy M5 BTC, and
   canonical M3 orchestration contracts are GREEN; actual execution remains the
   next proof gate.
+- [x] Preserve the first exact-node composition RED: both actual chains and the
+  forward authenticated plan became ready, but the reverse Taker planner still
+  rejected `taker-sells-lez`. A separate-process RED reproduces that exact
+  rejection without either chain; GREEN selects either bounded BTC direction,
+  authenticates the matching Delivery route, and retains the forward default.
+  Both process journeys and strict warning-fatal package Clippy pass.
 - [ ] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [ ] Admit both agreements through one Delivery/Chat daemon and SQLite

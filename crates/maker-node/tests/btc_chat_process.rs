@@ -83,10 +83,11 @@ async fn real_taker_and_daemon_handoff_exact_btc_agreement_to_role_fixed_actors(
     let mut bootstrap_daemon = start_delivery_only_daemon(&daemon_base);
     wait_delivery_only_ready(&mut bootstrap_daemon, &daemon_base);
     configure_live_route(&socket, route).await;
-    publish_offer(&socket, &offer_id);
+    publish_offer(&socket, &offer_id, "taker-sells-foreign");
     let delivery_maker = public_key(&key(8));
     let authenticated =
-        plan_and_discover(&delivery, &offer_id, &reservation_id, delivery_maker, route).await;
+        plan_forward_and_discover(&delivery, &offer_id, &reservation_id, delivery_maker, route)
+            .await;
     stop_delivery_only_daemon(&mut bootstrap_daemon, &daemon_base);
 
     // These are explicit per-role authority inputs, not authority copied out of
@@ -159,6 +160,53 @@ async fn real_taker_and_daemon_handoff_exact_btc_agreement_to_role_fixed_actors(
         &authenticated,
         &final_wire,
     );
+}
+
+#[tokio::test]
+async fn real_taker_plans_authenticated_reverse_btc_offer() {
+    let run = tempdir().expect("isolated reverse BTC planning root");
+    make_private_directory(run.path());
+    let runtime = run.path().join("runtime");
+    make_private_directory(&runtime);
+    let delivery = run.path().join("delivery");
+    let socket = runtime.join("maker.sock");
+    let chat_socket = runtime.join("chat.sock");
+    let ready = runtime.join("ready");
+    let database = run.path().join("maker.sqlite3");
+    let delivery_key = run.path().join("delivery.key");
+    let maker_agreement_key = run.path().join("maker-agreement.key");
+    write_raw_key(&delivery_key, 18);
+    write_raw_key(&maker_agreement_key, 19);
+    let daemon_base = DaemonBase {
+        socket: &socket,
+        chat_socket: &chat_socket,
+        ready: &ready,
+        database: &database,
+        delivery: &delivery,
+        delivery_key: &delivery_key,
+        maker_agreement_key: &maker_agreement_key,
+    };
+    let route =
+        MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsLez).expect("reverse BTC route");
+    let offer_id = MakerOfferId::new("m7-btc-reverse-plan-offer-001").unwrap();
+    let reservation_id = request("m7-btc-reverse-plan-reservation-001");
+
+    let mut daemon = start_delivery_only_daemon(&daemon_base);
+    wait_delivery_only_ready(&mut daemon, &daemon_base);
+    configure_live_route(&socket, route).await;
+    publish_offer(&socket, &offer_id, "taker-sells-lez");
+    let delivery_maker = public_key(&key(18));
+    let authenticated = plan_and_discover(
+        &delivery,
+        &offer_id,
+        &reservation_id,
+        delivery_maker,
+        route,
+        "taker-sells-lez",
+    )
+    .await;
+    assert_eq!(authenticated.offer().route(), route);
+    stop_delivery_only_daemon(&mut daemon, &daemon_base);
 }
 
 async fn stage_proposal(
@@ -242,11 +290,37 @@ async fn plan_and_discover(
     reservation_id: &RequestId,
     maker_key: PublicKey,
     route: MakerRouteV1,
+    direction: &str,
 ) -> AuthenticatedOfferRefV1 {
-    let planned = plan_btc_offer(delivery, offer_id, reservation_id, &maker_key, now());
+    let planned = plan_btc_offer(
+        delivery,
+        offer_id,
+        reservation_id,
+        &maker_key,
+        now(),
+        direction,
+    );
     let authenticated = discover_exact_offer(delivery, maker_key, route).await;
     assert_btc_plan(&planned, offer_id, reservation_id, &authenticated);
     authenticated
+}
+
+async fn plan_forward_and_discover(
+    delivery: &Path,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    maker_key: PublicKey,
+    route: MakerRouteV1,
+) -> AuthenticatedOfferRefV1 {
+    plan_and_discover(
+        delivery,
+        offer_id,
+        reservation_id,
+        maker_key,
+        route,
+        "taker-sells-foreign",
+    )
+    .await
 }
 
 async fn configure_live_route(socket: &Path, route: MakerRouteV1) {
@@ -303,7 +377,7 @@ async fn configure_live_route(socket: &Path, route: MakerRouteV1) {
     .unwrap();
 }
 
-fn publish_offer(socket: &Path, offer_id: &MakerOfferId) {
+fn publish_offer(socket: &Path, offer_id: &MakerOfferId, direction: &str) {
     let output = Command::new(env!("CARGO_BIN_EXE_lez-maker"))
         .arg("--socket")
         .arg(socket)
@@ -315,7 +389,7 @@ fn publish_offer(socket: &Path, offer_id: &MakerOfferId) {
         .arg("--pair")
         .arg("bitcoin")
         .arg("--direction")
-        .arg("taker-sells-foreign")
+        .arg(direction)
         .output()
         .expect("run real Maker CLI");
     assert!(
@@ -332,6 +406,7 @@ fn plan_btc_offer(
     reservation_id: &RequestId,
     maker_key: &PublicKey,
     planned_at: u64,
+    direction: &str,
 ) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
         .arg("--delivery-directory")
@@ -343,7 +418,7 @@ fn plan_btc_offer(
         .arg("--pair")
         .arg("bitcoin")
         .arg("--direction")
-        .arg("taker-sells-foreign")
+        .arg(direction)
         .arg("--plan-btc-offer")
         .arg(offer_id.as_str())
         .arg("--reservation-id")

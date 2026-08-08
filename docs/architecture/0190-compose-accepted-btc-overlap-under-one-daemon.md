@@ -1,7 +1,7 @@
 # ADR 0190: Compose accepted BTC overlap under one daemon
 
-Status: Accepted for implementation; contract and shared Maker identity GREEN,
-actual-node execution pending
+Status: Accepted for implementation; contract, shared Maker identity, and both
+authenticated planning directions GREEN; actual-node execution pending
 
 ## Context
 
@@ -53,6 +53,14 @@ It requires the same public Maker identity, then produces two distinct signed
 offer commitments, reservation IDs, and authenticated swap IDs. This source
 composition and its legacy regressions are GREEN; the claims remain pending an
 exact-node execution certificate.
+
+The first exact-node composition attempt reached both local chains and the
+forward authenticated plan before exposing a stale Taker-side restriction to
+`taker-sells-foreign`. Planning now selects either value from the existing
+bounded direction enum and authenticates the offer under that exact route; it
+still rejects non-Bitcoin pairs and all Chat, signing, agreement, actor, and
+receipt authority. A separate-process reverse-route test reproduces the
+original failure without chain setup and proves the corrected Delivery path.
 
 ## Components
 

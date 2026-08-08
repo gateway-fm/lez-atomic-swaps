@@ -629,11 +629,8 @@ async fn execute_btc_plan(
     ensure!(
         arguments
             .pair
-            .is_none_or(|pair| matches!(pair, PairArgument::Bitcoin))
-            && arguments.direction.is_none_or(|direction| {
-                matches!(direction, DirectionArgument::TakerSellsForeign)
-            }),
-        "M5 BTC planning supports only bitcoin/taker-sells-foreign"
+            .is_none_or(|pair| matches!(pair, PairArgument::Bitcoin)),
+        "BTC planning supports only bitcoin"
     );
     ensure!(
         arguments.chat_socket.is_none()
@@ -662,7 +659,10 @@ async fn execute_btc_plan(
         .foreign_units
         .context("BTC planning requires --foreign-units")?;
     ensure!(foreign_units > 0, "BTC principal must be nonzero");
-    let route = MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsForeign)?;
+    let direction = arguments
+        .direction
+        .unwrap_or(DirectionArgument::TakerSellsForeign);
+    let route = MakerRouteV1::new(Pair::Bitcoin, direction.into())?;
     let delivery =
         RunLocalDelivery::subscriber(delivery_directory.to_path_buf(), expected_maker.to_owned())?;
     let selected = delivery
