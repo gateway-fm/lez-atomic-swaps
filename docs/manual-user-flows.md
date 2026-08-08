@@ -9013,3 +9013,12 @@ debug-profile actor deployment was a large avoidable cost in that same path.
 The run failed closed with source status one and exact cleanup. The
 release-artifact contract above is GREEN; a fresh pushed-commit replay remains
 mandatory before retaining a certificate.
+
+Diagnostic run `m7refundkill-8399c00-c` used those release artifacts and again
+passed every phase through the ordered kills. The restarted supervisor reclaimed
+the abandoned lease through generation eleven but each effect exited before a
+revision-one projection. The remaining wire mismatch was an incoming mempool
+wallet transfer reported as `type:"pool"`; accepting only `type:"in"` rejected
+it before the height-zero Pending branch. The adapter and sealed-process tests
+now require exact `pool` identity validation followed by Pending, with only the
+pinned-genesis and destination-wallet calls. Exact replay remains mandatory.

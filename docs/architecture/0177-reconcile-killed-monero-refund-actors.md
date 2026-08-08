@@ -134,7 +134,8 @@ sequenceDiagram
     O->>N: Read height-zero genesis
     N-->>O: Pinned Regtest identity
     O->>W: Read exact transaction in account zero
-    W-->>O: Not indexed yet or in pool
+    W-->>O: Not indexed yet or category pool at height zero
+    O->>O: Validate transaction, destination, amount and no double spend
     O-->>A: Pending with no finality authority
     A-->>D: Revision one awaiting observation
     H->>D: Poll PID and start ticks until 180-second deadline
@@ -233,6 +234,20 @@ application artifacts to be built and staged from the release profile. This is
 a diagnostic correction, not a certificate; the next clean pushed-commit
 replay must still prove prompt Pending and terminal recovery.
 
+The sixth exact pushed-commit replay `m7refundkill-8399c00-c` used the release
+artifacts and passed the checked guest, finalized deployment/onboarding/Tag16,
+one durable Monero send, the post-send marker, and ordered daemon/actor
+`SIGKILL`. The restarted supervisor reclaimed the abandoned lease through
+generation eleven, but every effect attempt exited before revision one. Exact
+cleanup passed with source status one, no run resources remaining, and the
+foreign sentinel untouched. The remaining protocol mismatch was the wallet
+wire category: Monero reports an incoming mempool transfer as `pool`, whereas
+the adapter required `in` before checking height zero. RED/GREEN now accepts an
+exact `pool` transfer only as Pending after transaction, destination, amount,
+and double-spend validation. A `pool` record cannot reach confirmed-output or
+finality validation. The next pushed-source replay remains the certificate
+gate.
+
 ## Verification
 
 The RED/GREEN boundaries are the exact Monero-recover crash-hook test in
@@ -242,6 +257,11 @@ The RED/GREEN boundaries are the exact Monero-recover crash-hook test in
 `maker_xmr_tag17_supervisor.rs`. The feature-gated real-actor test sends
 `SIGKILL` to the exact actor process group and reaches terminal completion
 through one observation.
+
+The adapter regression `incoming_pool_transfer_is_a_pending_candidate` models
+the pinned `get_transfer_by_txid` wire shape. The sealed-process regression
+`sealed_maker_refund_observer_treats_exact_pool_transfer_as_pending` additionally
+proves only genesis and wallet-transfer RPCs run before Pending.
 
 The joined runner and its static RED/GREEN contract are
 `run-m4-actual-claim-poc.sh` and

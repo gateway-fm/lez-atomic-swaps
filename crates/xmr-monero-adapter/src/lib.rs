@@ -723,6 +723,7 @@ struct WalletTransferSnapshot {
     double_spend_seen: bool,
     height: Option<u64>,
     incoming: bool,
+    in_pool: bool,
     subaddress: SubaddressIndex,
     unlock_distance: u64,
 }
@@ -739,7 +740,11 @@ impl From<GotTransfer> for WalletTransferSnapshot {
                 TransferHeight::Confirmed(height) => Some(height.get()),
                 TransferHeight::InPool => None,
             },
-            incoming: transfer.transfer_type == GetTransfersCategory::In,
+            incoming: matches!(
+                transfer.transfer_type,
+                GetTransfersCategory::In | GetTransfersCategory::Pool
+            ),
+            in_pool: transfer.transfer_type == GetTransfersCategory::Pool,
             subaddress: transfer.subaddr_index,
             unlock_distance: transfer.unlock_time,
         }
@@ -959,7 +964,7 @@ impl ObservationPort for MoneroRpcPort {
             return Err(MoneroEvidenceError::MissingWalletTransfer);
         };
         validate_wallet_transfer_identity(transfer, expected)?;
-        if transfer.height.is_none() {
+        if transfer.in_pool || transfer.height.is_none() {
             return Err(MoneroEvidenceError::WalletTransferInPool);
         }
         let tip_before = Self::rpc(
@@ -1115,6 +1120,9 @@ fn validate_wallet<'a>(
         .as_ref()
         .ok_or(MoneroEvidenceError::MissingWalletTransfer)?;
     validate_wallet_transfer_identity(transfer, expected)?;
+    if transfer.in_pool {
+        return Err(MoneroEvidenceError::WalletTransferInPool);
+    }
     let wallet_height = transfer
         .height
         .ok_or(MoneroEvidenceError::WalletTransferInPool)?;
@@ -1337,6 +1345,7 @@ mod tests {
                 double_spend_seen: false,
                 height: Some(111),
                 incoming: true,
+                in_pool: false,
                 subaddress,
                 unlock_distance: 0,
             }),
@@ -1364,6 +1373,37 @@ mod tests {
             tip_after: tip,
         };
         (identity, expected, snapshot)
+    }
+
+    #[test]
+    fn incoming_pool_transfer_is_a_pending_candidate() {
+        let (_, expected, _) = fixture();
+        let transfer: GotTransfer = serde_json::from_value(serde_json::json!({
+            "address": expected.destination.to_string(),
+            "amount": expected.amount_piconero.get(),
+            "confirmations": 0,
+            "double_spend_seen": false,
+            "fee": 0,
+            "height": 0,
+            "note": "",
+            "destinations": [],
+            "payment_id": "0000000000000000",
+            "subaddr_index": {"major": 0, "minor": 0},
+            "suggested_confirmations_threshold": 10,
+            "timestamp": 1_700_000_000,
+            "txid": "02".repeat(32),
+            "type": "pool",
+            "unlock_time": 0
+        }))
+        .expect("Monero wallet pool transfer");
+        let transfer = WalletTransferSnapshot::from(transfer);
+
+        assert!(
+            validate_wallet_transfer_identity(&transfer, &expected).is_ok(),
+            "an exact incoming pool transfer is pending, not a wrong-direction transfer"
+        );
+        assert!(transfer.in_pool);
+        assert!(transfer.height.is_none());
     }
 
     #[tokio::test]

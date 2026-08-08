@@ -105,14 +105,18 @@ This run does not claim a daemon restart after submission. Reproduce it with [ma
 
 ADR [0177](docs/architecture/0177-reconcile-killed-monero-refund-actors.md)
 adds that missing process-kill boundary. Its real-actor test proves one send
-followed only by observation after `SIGKILL`. Five isolated exact diagnostics
+followed only by observation after `SIGKILL`. Six isolated exact diagnostics
 have driven fixes for pre-stdout triggering, process-group quiescence,
 application replay quiescence, prompt non-authorizing Monero Pending
 observation, a true 180-second hash-free recovery watchdog, and release-profile
-staging of the repeatedly authenticated Maker application binaries. The 24-test
-Monero adapter suite, 14-test sealed process suite, and joined runner contract
-are GREEN; a clean pushed-commit two-devnet replay and checked certificate are
-still required before actual-node closure. The flow uses only pinned local LEZ
+staging of the repeatedly authenticated Maker application binaries. The sixth
+run proved release staging was not the complete correction: the pinned wallet
+wire category for an incoming mempool transfer is `pool`, while the observer
+accepted only `in` before its Pending check. Exact identity checks now admit
+`pool` only as non-final Pending. The 25-test Monero adapter suite, 15-test
+sealed process suite, and joined runner contract are GREEN; a clean
+pushed-commit two-devnet replay and checked certificate are still required
+before actual-node closure. The flow uses only pinned local LEZ
 v0.2 and official Monero 0.18.5.1 Regtest services on run-owned literal-loopback
 endpoints, deterministic local funds, and exact cleanup; no public RPC, faucet,
 public funds, DNS dependency, or public deployment participates. Reproduce the

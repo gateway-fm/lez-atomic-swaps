@@ -130,7 +130,15 @@ struct WalletFixture {
     address: String,
     restored_address: String,
     amount_piconero: u64,
+    pool_transfer: Option<PoolTransferFixture>,
     calls: Arc<Mutex<Vec<String>>>,
+}
+
+#[derive(Clone)]
+struct PoolTransferFixture {
+    transaction_id: String,
+    destination: String,
+    amount_piconero: u64,
 }
 
 struct MockWallet {
@@ -170,19 +178,29 @@ async fn spawn_pending_daemon(genesis_hash: [u8; 32]) -> MockPendingDaemon {
     }
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "one exact typed wallet-RPC fixture keeps the recorded call contract together"
-)]
 async fn spawn_wallet(
     address: String,
     restored_address: String,
     amount_piconero: u64,
 ) -> MockWallet {
+    spawn_wallet_with_pool(address, restored_address, amount_piconero, None).await
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one exact typed wallet-RPC fixture keeps the recorded call contract together"
+)]
+async fn spawn_wallet_with_pool(
+    address: String,
+    restored_address: String,
+    amount_piconero: u64,
+    pool_transfer: Option<PoolTransferFixture>,
+) -> MockWallet {
     let fixture = WalletFixture {
         address,
         restored_address,
         amount_piconero,
+        pool_transfer,
         calls: Arc::default(),
     };
     let server = jsonrpsee::server::ServerBuilder::default()
@@ -211,6 +229,27 @@ async fn spawn_wallet(
                 .lock()
                 .expect("wallet calls")
                 .push("get_transfer_by_txid".to_owned());
+            if let Some(transfer) = fixture.pool_transfer.as_ref() {
+                return json_value(serde_json::json!({
+                    "transfer": {
+                        "address": transfer.destination,
+                        "amount": transfer.amount_piconero,
+                        "confirmations": 0,
+                        "double_spend_seen": false,
+                        "fee": 0,
+                        "height": 0,
+                        "note": "",
+                        "destinations": [],
+                        "payment_id": "0000000000000000",
+                        "subaddr_index": {"major": 0, "minor": 0},
+                        "suggested_confirmations_threshold": 10,
+                        "timestamp": 1_700_000_000,
+                        "txid": transfer.transaction_id,
+                        "type": "pool",
+                        "unlock_time": 0
+                    }
+                }));
+            }
             Err::<Value, _>(jsonrpsee::types::ErrorObjectOwned::owned(
                 -8,
                 "transaction not found",
@@ -1420,6 +1459,69 @@ async fn sealed_maker_refund_observer_returns_pending_before_deep_chain_queries(
             .expect("refund evidence root")
             .join("monero-refund-finalized.json")
             .exists()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sealed_maker_refund_observer_treats_exact_pool_transfer_as_pending() {
+    let stage = build_stage_b();
+    let inputs = Inputs::new(&stage);
+    let shared_address = stage.agreement.shared_address().address_string();
+    let amount = stage.agreement.body().monero().amount_piconero();
+    let daemon = spawn_pending_daemon(stage.agreement.body().monero().genesis_hash()).await;
+    let shared = spawn_wallet(standard_monero_address(5), shared_address, amount).await;
+    let maker_destination = standard_monero_address(7);
+    let role = spawn_wallet_with_pool(
+        maker_destination.clone(),
+        maker_destination.clone(),
+        amount,
+        Some(PoolTransferFixture {
+            transaction_id: "77".repeat(32),
+            destination: maker_destination,
+            amount_piconero: amount - 2_000_000_000,
+        }),
+    )
+    .await;
+    let (mut sender, submission) = maker_refund_effect_child_command(
+        &stage,
+        &inputs,
+        &daemon.endpoint,
+        &shared.endpoint,
+        &role.endpoint,
+    );
+    let output = sender.output().expect("spawn sealed Maker refund worker");
+    assert!(
+        output.status.success(),
+        "Maker refund worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    role.calls.lock().expect("role calls").clear();
+
+    let mut observer = maker_refund_observer_command(
+        &stage,
+        submission.parent().expect("refund evidence root"),
+        &daemon.endpoint,
+        &role.endpoint,
+        false,
+    );
+    let output = observer.output().expect("spawn pool refund observer");
+    assert!(
+        output.status.success(),
+        "pool refund observer failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\"schema_version\":1,\"step\":\"sweep_monero_refund\",\"state\":\"pending\"}\n"
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        *daemon.calls.lock().expect("daemon calls"),
+        ["on_get_block_hash"]
+    );
+    assert_eq!(
+        *role.calls.lock().expect("role calls"),
+        ["get_transfer_by_txid"]
     );
 }
 

@@ -7005,6 +7005,18 @@ S12/S13 review and policy-deferred public deployment.
   from Cargo release output. The exact crash-hook release build passes; the
   actor is 9,280,096 bytes instead of the 184,025,168-byte debug artifact while
   owner/mode/link, SHA-256, and sealed-memfd verification remain unchanged.
+- [x] Sixth exact replay `m7refundkill-8399c00-c` proved all release artifacts,
+  finalized deployment/onboarding/Tag16, one durable send, ordered daemon and
+  actor SIGKILL, and abandoned-lease transfer through generation eleven, but
+  every recovered effect still exited before revision one. Source status one
+  and exact cleanup removed only run-owned resources; the foreign sentinel and
+  clean worktree survived.
+- [x] RED then GREEN the actual Monero wallet wire shape: an exact incoming
+  mempool transfer is category `pool`, not `in`. Validate its transaction,
+  destination, amount, and double-spend fields, then classify it only as
+  non-authorizing Pending before every deep daemon/output/finality query.
+  Confirmed `pool` can never finalize. The 25-test adapter and 15-test sealed
+  process suites are GREEN.
 - [ ] Repeat the exact isolated two-devnet process-kill flow from a clean pushed
   commit.
 - [ ] Only after source status zero and exact cleanup, add the checked
