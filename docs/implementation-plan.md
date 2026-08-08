@@ -7052,3 +7052,27 @@ S12/S13 review and policy-deferred public deployment.
 - [ ] Continue with accepted-application concurrency, the other process-kill
   seams, fee stress, and reorg cases. This certificate closes only the joined
   Maker Monero refund crash boundary and does not close F3/F6/R2/R4 wholesale.
+
+## M7 terminal custom-token refund checkpoint (2026-08-08)
+
+- [x] RED then GREEN the schema-5 actor route for witnessed custom-token
+  refunds while preserving the schema-4 native route and submit-once journal
+  authority; 92 actor tests and strict Clippy pass.
+- [x] Extend the two-direction actual-node runner and its source contract to
+  admit only sequential custom-token refund journeys, require exactly one
+  terminal refund effect per direction, bind the asset commitment, and prove
+  terminal owner/custody balances.
+- [x] Run the exact LEZ 0.2 verifier from clean commit `0b54ab68` in the
+  deterministic `/tmp/lez-f7-artifact-src-0b54ab68` worktree. Root, guest,
+  methods, recursive token/refund, deployer, Clippy, Rustdoc, dependency, and
+  advisory-policy checks pass.
+- [x] Independently retain guest SHA-256 `bc2ea18e...67fd7`, ProgramId
+  `f3ead24b...c244e`, and the verified host deployer SHA-256
+  `c594ea1e...f5cbd`. Rotate only the host-artifact pin under ADR 0179 because
+  debug source-path metadata changed; the on-chain program identity did not.
+- [ ] Push the pin checkpoint, execute a fresh two-direction Bitcoin Regtest
+  plus LEZ 0.2 custom-token refund journey, and retain a sanitized checked
+  certificate with terminal replay and exact cleanup evidence.
+- [ ] Close F7 only after the actual-node certificate, quality wrapper, manual
+  flow, traceability, and hard-requirement inventory all pass from the same
+  pushed commit.

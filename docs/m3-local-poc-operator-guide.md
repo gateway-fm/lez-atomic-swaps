@@ -1145,14 +1145,22 @@ transaction, port, and evidence path remains run-private.
 
 The F7 flow requires the witnessed-token guest ELF
 `bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7`
-and deployer `a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c`.
+and deployer `c594ea1ec34fc0227e8e1b6ced9917ad4df5c5e4dfac7616565aae830d3f5cbd`.
+The deployer was rebuilt by the full pinned verifier from clean commit
+`0b54ab68f766ff016741dd6ba2eacade4a1c1e31` in the deterministic worktree
+`/tmp/lez-f7-artifact-src-0b54ab68`. Its host-debug bytes include absolute
+source-path metadata, so use that exact worktree path when rebuilding this
+hash. The Docker-built guest and its ProgramId remain path-independent and
+unchanged. ADR 0179 records the bounded host-artifact rotation and why it does
+not change the on-chain program identity.
 Do not reuse the older native-only `a199c5be...` artifact target shown in
 historical audit commands. Run Y demonstrated that the independent bootstrap
 check rejects that stale target before deployment and still performs exact
 cleanup. The current outer runner rejects the exact mismatch even earlier,
 before prebuild or node startup; bootstrap still revalidates the guest and the
 deployer through point of use and evidence publication. Supply a target
-produced by the current pinned verifier; retained Run Z used
+produced by the F7 pinned verifier at the commit and deterministic path above;
+retained Run Z used
 `/tmp/lez-v02-provisional-artifact-m3f7artifact20260717a` only as an audited
 example, not as a portable path.
 

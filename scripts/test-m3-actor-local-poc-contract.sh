@@ -1522,7 +1522,7 @@ bootstrap_contract="$($bootstrap_driver contract)"
 "$bootstrap_driver" self-test-finality-selector
 readonly expected_f7_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
 readonly expected_f7_program_id="f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
-readonly expected_f7_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
+readonly expected_f7_deployer_sha256="c594ea1ec34fc0227e8e1b6ced9917ad4df5c5e4dfac7616565aae830d3f5cbd"
 jq -e --arg guest "$expected_f7_guest_sha256" \
   --arg program "$expected_f7_program_id" '
   .schema_version == 1
@@ -1573,7 +1573,7 @@ done
 rg -Fq '[[ "$guest_elf_sha256" == "$expected_guest_sha256" ]]' "$bootstrap_driver" ||
   fail "bootstrap no longer revalidates the independently hashed F7 guest"
 for deployer_stability_check in \
-  'readonly expected_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"' \
+  'readonly expected_deployer_sha256="c594ea1ec34fc0227e8e1b6ced9917ad4df5c5e4dfac7616565aae830d3f5cbd"' \
   '[[ "$deployer_sha256_at_start" == "$expected_deployer_sha256" ]]' \
   '[[ "$(sha256sum "$deployer" | sed '\''s/ .*//'\'')" == "$deployer_sha256_at_start" ]]' \
   '[[ "$deployer_sha" == "$deployer_sha256_at_start" ]]'; do

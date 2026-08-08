@@ -170,7 +170,7 @@ readonly official_wallet_cache_root="${M3_OFFICIAL_WALLET_CACHE_ROOT:-/tmp/lez-a
 readonly lez_v02_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
 readonly m3_f7_lez_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7"
 readonly m3_f7_lez_program_id="f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
-readonly m3_f7_lez_deployer_sha256="a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c"
+readonly m3_f7_lez_deployer_sha256="c594ea1ec34fc0227e8e1b6ced9917ad4df5c5e4dfac7616565aae830d3f5cbd"
 if [[ "$m5_btc_application_mode" == 1 ]]; then
   expected_lez_guest_sha256="ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
   expected_lez_program_id="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
