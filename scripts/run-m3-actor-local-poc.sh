@@ -3003,6 +3003,53 @@ wait_overlap_driver_exit() {
   fi
 }
 
+overlap_actor_config() {
+  local direction="$1" role="$2"
+  local direction_root="${directions_dir}/${direction}"
+  local handoff="${private_dir}/m7-application/m7-application-handoff.json"
+  local swap_id="${m5_btc_swap_ids[$direction]:-}"
+  local config="" state_db=""
+
+  if [[ "$m7_btc_accepted_concurrency" != 1 ]]; then
+    printf '%s\n' "${direction_root}/actors/${role}/actor-config.json"
+    return
+  fi
+  [[ "$direction" =~ ^taker_sells_(foreign|lez)$ && "$role" =~ ^(maker|taker)$ &&
+     "$swap_id" =~ ^[0-9a-f]{64}$ && -f "$handoff" && ! -L "$handoff" ]] ||
+    fail "M7 overlap actor handoff authority is unavailable"
+  case "$role" in
+    maker)
+      config="$(jq -er --arg direction "$direction" --arg swap "$swap_id" '
+        select(.schema_version == 1 and .kind == "m7_btc_application_handoff")
+        | [.directions[] | select(.direction == $direction and .swap_id == $swap)]
+        | select(length == 1) | .[0].maker_actor_config | strings
+      ' "$handoff")" || fail "M7 overlap Maker config is unavailable"
+      [[ "$config" == "${private_dir}/m7-application/owner/maker-actors/"*/maker/actor-config.json ]] ||
+        fail "M7 overlap Maker config escaped shared authority"
+      ;;
+    taker)
+      config="$(jq -er --arg direction "$direction" --arg swap "$swap_id" '
+        select(.schema_version == 1 and .kind == "m7_btc_application_handoff")
+        | [.directions[] | select(.direction == $direction and .swap_id == $swap)]
+        | select(length == 1) | .[0].taker_actor_config | strings
+      ' "$handoff")" || fail "M7 overlap Taker config is unavailable"
+      [[ "$config" == "${private_dir}/m7-application/owner/${direction}/taker-actor/taker/actor-config.json" ]] ||
+        fail "M7 overlap Taker config escaped shared authority"
+      ;;
+  esac
+  [[ "$config" == /* && -f "$config" && ! -L "$config" &&
+     "$(readlink -f "$config")" == "$config" ]] ||
+    fail "M7 overlap actor config is unsafe or changed"
+  state_db="$(jq -er --arg role "$role" '
+    select(.schema_version == 6 and .role == $role) | .state_db | strings
+  ' "$config")" || fail "M7 overlap actor config binding is invalid"
+  [[ "$state_db" == "$(dirname "$config")/state/actor.sqlite3" &&
+     -f "$state_db" && ! -L "$state_db" &&
+     "$(readlink -f "$state_db")" == "$state_db" ]] ||
+    fail "M7 overlap actor state is unsafe or changed"
+  printf '%s\n' "$config"
+}
+
 assert_overlap_revision_two_window() {
   local direction role status config
   local inventory="${evidence_dir}/overlap-isolation-inventory.ndjson"
@@ -3011,7 +3058,7 @@ assert_overlap_revision_two_window() {
   for direction in "${directions[@]}"; do
     for role in maker taker; do
       status="${evidence_dir}/${direction}-overlap-locked-status-${role}.json"
-      config="${directions_dir}/${direction}/actors/${role}/actor-config.json"
+      config="$(overlap_actor_config "$direction" "$role")"
       jq -e --arg role "$role" '
         .schema_version == 1 and .role == $role and .state == "active"
         and .revision == 2 and .phase == "both_legs_locked"

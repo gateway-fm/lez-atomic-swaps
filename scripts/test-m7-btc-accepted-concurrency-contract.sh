@@ -82,6 +82,8 @@ for required in \
   'kind:"m7_shared_maker_identity"' \
   'swap_specific_authority_distinct:true' \
   'prepare_m5_btc_delivery_plan "${directions[@]}"' \
+  'overlap_actor_config()' \
+  'config="$(overlap_actor_config "$direction" "$role")"' \
   '(map(.swap_id) | unique | length) == 2' \
   '(map(.offer_id) | unique | length) == 2' \
   '(map(.reservation_id) | unique | length) == 2' \

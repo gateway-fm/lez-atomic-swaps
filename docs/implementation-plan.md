@@ -7246,14 +7246,30 @@ S12/S13 review and policy-deferred public deployment.
   non-authorizing; the separate stable-current pair and exact bytes/position
   cross-binding remain mandatory. A shifted-prefix regression fails closed,
   the complete first-lock test target passes 9/9, and strict package Clippy is
-  warning-free. Fresh exact-node replay remains required.
+  warning-free. The next exact-node replay was `m7btcconc-abd1403-a` below.
+- [x] Replay pushed commit `abd1403` as `m7btcconc-abd1403-a`. Both shared
+  application actors activated, the forward swap reached revision two, reverse
+  LEZ funding finalized, and the fixed adapter authorized the reverse Maker
+  Bitcoin lock on attempt one. Both real-node swaps reached revision two while
+  settlement remained withheld. The isolation aggregator then failed before
+  settlement because it read the legacy per-direction `actor-state.sqlite`
+  instead of the shared daemon-provisioned state. Exact cleanup passed without
+  broad cleanup or any foreign resource target.
+- [x] RED then GREEN the shared-authority overlap inventory resolver. In M7 it
+  selects exactly one direction-and-swap row from the atomic handoff manifest,
+  requires the role-specific owner-root path, schema-6 role binding, canonical
+  regular files, and the colocated application state database before reading
+  inode evidence. M7, canonical M3, and both legacy M5 BTC contracts pass;
+  fresh exact-node replay remains required.
 - [x] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [x] Admit both agreements through one Delivery/Chat daemon and SQLite
   database, restart once, and prove two durable actor rows with zero replay.
   Exact-node execution is GREEN in `m7btcconc-b302925-a`.
 - [ ] Activate two workers and reuse the existing actual Bitcoin Core/LEZ
-  revision-two overlap barrier through both terminal claims.
+  revision-two overlap barrier through both terminal claims. Worker activation
+  and both real locks are GREEN in `m7btcconc-abd1403-a`; the manifest-bound
+  isolation packet and terminal settlements still require a clean replay.
 - [ ] Retain a secret-safe exact-node certificate, update U2/S5 only to the
   evidence actually proved, run the complete milestone gate once at slice end,
   commit, push, and update ETA. Do not mark U2/S5 GREEN from the contract alone.

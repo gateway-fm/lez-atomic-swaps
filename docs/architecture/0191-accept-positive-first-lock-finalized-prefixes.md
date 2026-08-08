@@ -1,7 +1,7 @@
 # ADR 0191: Accept positive first-lock finalized prefixes
 
-Status: accepted; focused adapter regressions and strict package Clippy GREEN,
-fresh exact-node replay pending
+Status: accepted; focused adapter regressions, strict package Clippy, and the
+exact-node reverse second-lock decision GREEN
 
 ## Context
 
@@ -86,7 +86,9 @@ no longer scale with unused authorization-window capacity.
 - Focused tests prove a strict positive prefix succeeds and a shifted prefix
   fails closed; the full first-lock target is GREEN 9/9.
 - Strict all-target package Clippy is warning-free.
-- The next exact M7 replay must prove that the reverse Bitcoin effect now
-  occurs and that the existing two-swap settlement barrier remains intact.
+- Exact run `m7btcconc-abd1403-a` proved the reverse Bitcoin effect on the first
+  attempt after finalized LEZ funding. Both swaps reached revision two with
+  settlement withheld. A later stale evidence-path RED prevents this run from
+  certifying the terminal two-swap journey.
 - This does not claim public-provider reliability or future-reorganization
   immunity; the exact run continues to use isolated literal-loopback nodes.

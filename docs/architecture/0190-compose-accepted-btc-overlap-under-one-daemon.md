@@ -85,7 +85,11 @@ accepted, the daemon restarted, exactly two durable BTC actor rows remained,
 and the atomic manifest released both controllers without replay. The forward
 swap reached revision two with settlement withheld. The reverse swap projected
 its LEZ first lock but then exposed the positive-prefix finality defect resolved
-by ADR 0191; terminal two-direction overlap therefore remains pending replay.
+by ADR 0191. Exact run `m7btcconc-abd1403-a` then proved the reverse Bitcoin
+second lock on attempt one and held both swaps at revision two before exposing
+a stale legacy path in the isolation-evidence aggregator. The aggregator now
+resolves exact application authority from the shared handoff manifest; terminal
+two-direction overlap remains pending replay.
 
 ## Components
 
