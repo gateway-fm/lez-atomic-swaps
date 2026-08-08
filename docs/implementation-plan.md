@@ -7232,11 +7232,26 @@ S12/S13 review and policy-deferred public deployment.
   controller, while forward correctly waited for reverse authority. Cleanup
   again passed exactly. Both bounded controllers now launch before either
   readiness wait; the existing lock and settlement barriers are unchanged.
-- [ ] Prepare both authenticated Delivery plans and exact authority templates
+- [x] Replay pushed commit `b302925` as `m7btcconc-b302925-a`. Both actual nodes,
+  both authority-ready markers, both accepted agreements and receipts, the
+  shared manifest, exactly two durable actor rows, and the post-acceptance
+  daemon restart passed. Forward reached revision two and settlement remained
+  withheld. Reverse projected its LEZ first lock for both roles, then exhausted
+  120 second-lock retries because the adapter required all unused future
+  heights in a 4,096-block authorization window. Bitcoin remained effect-free,
+  cleanup passed exactly, and no foreign resource was targeted.
+- [x] RED then GREEN ADR 0191: a positive finalized funding proof may use only
+  a strict prefix anchored at the authorization start, bounded by that window,
+  and ending at the reported finalized height. Absence and uncertainty remain
+  non-authorizing; the separate stable-current pair and exact bytes/position
+  cross-binding remain mandatory. A shifted-prefix regression fails closed,
+  the complete first-lock test target passes 9/9, and strict package Clippy is
+  warning-free. Fresh exact-node replay remains required.
+- [x] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
-- [ ] Admit both agreements through one Delivery/Chat daemon and SQLite
+- [x] Admit both agreements through one Delivery/Chat daemon and SQLite
   database, restart once, and prove two durable actor rows with zero replay.
-  Source composition is GREEN; keep this open until exact-node evidence passes.
+  Exact-node execution is GREEN in `m7btcconc-b302925-a`.
 - [ ] Activate two workers and reuse the existing actual Bitcoin Core/LEZ
   revision-two overlap barrier through both terminal claims.
 - [ ] Retain a secret-safe exact-node certificate, update U2/S5 only to the

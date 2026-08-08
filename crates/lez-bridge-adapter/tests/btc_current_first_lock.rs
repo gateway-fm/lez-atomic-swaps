@@ -559,6 +559,8 @@ const FUNDING_BYTES: &[u8] = b"exact-witnessed-funding";
 #[derive(Clone, Copy, Debug)]
 enum ProofMutation {
     None,
+    FinalizedFoundPrefix,
+    FinalizedFoundShiftedPrefix,
     FinalizedAbsent,
     FinalizedUncertain,
     FinalizedInstruction,
@@ -659,7 +661,19 @@ impl LezBridgeBtcFirstLockProofTransport for BtcFirstLockProofTransport {
             .lock()
             .expect("finalized requests")
             .push(request.clone());
-        let finalized_clock = ChainClock::new(Hex32::from_bytes([0x70; 32]), 20, 1_700_000_200_000);
+        let finalized_height = if matches!(
+            self.mutation,
+            ProofMutation::FinalizedFoundPrefix | ProofMutation::FinalizedFoundShiftedPrefix
+        ) {
+            10
+        } else {
+            20
+        };
+        let finalized_clock = ChainClock::new(
+            Hex32::from_bytes([0x70; 32]),
+            finalized_height,
+            1_700_000_200_000,
+        );
         if matches!(self.mutation, ProofMutation::FinalizedAbsent) {
             return Ok(FinalizedWitnessedFundingPresence::Absent {
                 context: request.context,
@@ -697,7 +711,17 @@ impl LezBridgeBtcFirstLockProofTransport for BtcFirstLockProofTransport {
         Ok(FinalizedWitnessedFundingPresence::Found {
             context: request.context,
             finalized_clock,
-            scanned_window: request.window,
+            scanned_window: match self.mutation {
+                ProofMutation::FinalizedFoundPrefix => {
+                    DiscoveryWindow::new(request.window.start_height(), 10)
+                        .expect("found finalized prefix")
+                }
+                ProofMutation::FinalizedFoundShiftedPrefix => {
+                    DiscoveryWindow::new(request.window.start_height() + 1, 9)
+                        .expect("shifted finalized prefix")
+                }
+                _ => request.window,
+            },
             funding: Box::new(funding),
         })
     }
@@ -877,6 +901,28 @@ async fn maker_proves_finalized_and_current_lez_first_lock_in_that_order() {
 }
 
 #[tokio::test]
+async fn maker_accepts_found_first_lock_from_strict_finalized_prefix() {
+    let agreement = agreement(SwapDirection::TakerSellsLez);
+    let transport = BtcFirstLockProofTransport::new(ProofMutation::FinalizedFoundPrefix);
+    let proof = proof_adapter(transport.clone(), Participant::Maker)
+        .prove_btc_lez_first_lock(
+            &agreement,
+            RequestId::new("btc-first-lock-prefix-finalized").expect("request ID"),
+            RequestId::new("btc-first-lock-prefix-current").expect("request ID"),
+            proof_window(),
+        )
+        .await
+        .expect("a positive prefix is sufficient without proving future absence");
+
+    assert_eq!(proof.finalized_clock().height, 10);
+    assert_eq!(proof.current_tip().height, 21);
+    assert_eq!(
+        transport.order.lock().expect("order log").as_slice(),
+        ["finalized", "current"]
+    );
+}
+
+#[tokio::test]
 async fn proof_rejects_wrong_direction_and_non_claimant_before_transport() {
     for (direction, role, expected) in [
         (
@@ -924,6 +970,10 @@ async fn proof_rejects_wrong_direction_and_non_claimant_before_transport() {
 #[tokio::test]
 async fn proof_fails_closed_on_finality_current_state_pair_and_cross_binding_drift() {
     for (mutation, expected) in [
+        (
+            ProofMutation::FinalizedFoundShiftedPrefix,
+            "response context or window differs",
+        ),
         (
             ProofMutation::FinalizedAbsent,
             "finalized funding is unavailable",

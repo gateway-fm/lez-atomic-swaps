@@ -2,7 +2,7 @@
 
 Status: Accepted for implementation; contract, shared Maker identity, and both
 authenticated planning and Chat-acceptance directions GREEN; shared-daemon
-handoff source GREEN and actual-node execution pending
+handoff exact-node execution GREEN; two-direction terminal overlap pending
 
 ## Context
 
@@ -80,7 +80,12 @@ It accepts both applications without replay, stops and restarts that boundary,
 requires exactly two durable BTC actor rows, and atomically publishes the two
 role-config pairs. Both controllers remain blocked until this manifest exists,
 so neither actor can create a chain effect from a singly admitted batch. This
-source path remains non-certifying until a clean pushed exact-node replay.
+source path is exact-node GREEN in `m7btcconc-b302925-a`: both agreements were
+accepted, the daemon restarted, exactly two durable BTC actor rows remained,
+and the atomic manifest released both controllers without replay. The forward
+swap reached revision two with settlement withheld. The reverse swap projected
+its LEZ first lock but then exposed the positive-prefix finality defect resolved
+by ADR 0191; terminal two-direction overlap therefore remains pending replay.
 
 ## Components
 

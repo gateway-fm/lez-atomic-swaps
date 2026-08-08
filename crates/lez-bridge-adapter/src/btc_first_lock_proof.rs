@@ -132,8 +132,8 @@ pub enum BtcLezFirstLockProofError<E: std::error::Error + 'static> {
     /// A response did not echo the exact caller-owned context or bounded window.
     #[error("LEZ first-lock proof response context or window differs")]
     ResponseEnvelopeMismatch,
-    /// The bounded scan was not completely covered by the reported tip.
-    #[error("LEZ first-lock proof window is not completely covered")]
+    /// A reported scan prefix could not form a bounded inclusive height range.
+    #[error("LEZ first-lock proof window is invalid")]
     IncompleteWindow,
     /// Finalized funding facts differ from the runtime, terms, accounts, or custody.
     #[error("finalized funding differs from the signed LEZ first lock")]
@@ -178,7 +178,7 @@ where
     ///
     /// Fails before transport for direction, role, runtime, signer, or terms
     /// drift. Fails closed on missing finality, moving current tip, incomplete
-    /// windows, malformed instructions, account/custody drift, pair reordering,
+    /// scan prefixes, malformed instructions, account/custody drift, pair reordering,
     /// or any finalized/current funding substitution.
     pub async fn prove_btc_lez_first_lock(
         &self,
@@ -256,7 +256,6 @@ where
         if current.tip_before != current.tip_after {
             return Err(BtcLezFirstLockProofError::UnstableCurrentTip);
         }
-        require_window_covered(window, current.tip_after.height)?;
         let (
             WitnessedInitializationObservation::Found(initialization),
             WitnessedFundingObservation::Found(funding),
@@ -380,25 +379,18 @@ fn validate_finalized_envelope<E: std::error::Error + 'static>(
     scanned_window: DiscoveryWindow,
     finalized_clock: ChainClock,
 ) -> Result<(), BtcLezFirstLockProofError<E>> {
-    if actual_context != expected_context || scanned_window != expected_window {
+    if actual_context != expected_context
+        || scanned_window.start_height() != expected_window.start_height()
+        || scanned_window.max_blocks() > expected_window.max_blocks()
+    {
         return Err(BtcLezFirstLockProofError::ResponseEnvelopeMismatch);
     }
-    if finalized_clock.timestamp_ms == 0 {
-        return Err(BtcLezFirstLockProofError::FinalizedFundingMismatch);
-    }
-    require_window_covered(expected_window, finalized_clock.height)
-}
-
-fn require_window_covered<E: std::error::Error + 'static>(
-    window: DiscoveryWindow,
-    tip_height: u64,
-) -> Result<(), BtcLezFirstLockProofError<E>> {
-    let end = window
+    let scanned_end = scanned_window
         .start_height()
-        .checked_add(u64::from(window.max_blocks() - 1))
+        .checked_add(u64::from(scanned_window.max_blocks() - 1))
         .ok_or(BtcLezFirstLockProofError::IncompleteWindow)?;
-    if end > tip_height {
-        return Err(BtcLezFirstLockProofError::IncompleteWindow);
+    if finalized_clock.timestamp_ms == 0 || scanned_end != finalized_clock.height {
+        return Err(BtcLezFirstLockProofError::FinalizedFundingMismatch);
     }
     Ok(())
 }
