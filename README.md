@@ -105,10 +105,11 @@ This run does not claim a daemon restart after submission. Reproduce it with [ma
 
 ADR [0177](docs/architecture/0177-reconcile-killed-monero-refund-actors.md)
 adds that missing process-kill boundary. Its real-actor test proves one send
-followed only by observation after `SIGKILL`. Four isolated exact diagnostics
+followed only by observation after `SIGKILL`. Five isolated exact diagnostics
 have driven fixes for pre-stdout triggering, process-group quiescence,
 application replay quiescence, prompt non-authorizing Monero Pending
-observation, and a true 180-second hash-free recovery watchdog. The 24-test
+observation, a true 180-second hash-free recovery watchdog, and release-profile
+staging of the repeatedly authenticated Maker application binaries. The 24-test
 Monero adapter suite, 14-test sealed process suite, and joined runner contract
 are GREEN; a clean pushed-commit two-devnet replay and checked certificate are
 still required before actual-node closure. The flow uses only pinned local LEZ

@@ -216,6 +216,12 @@ jq -e '
 
 build_source="$(function_source build_identity_and_artifact)"
 [[ -n "$build_source" ]] || fail "build/staging function is unavailable"
+rg -Fq 'cargo +1.96.0 build --release --locked --offline -p lez-maker-node' \
+  <<<"$build_source" || fail "Maker application artifacts are not built in release mode"
+for release_binary in lez-maker lez-maker-daemon lez-taker xmr-maker-actor; do
+  rg -Fq '"${workspace_target}/release/'"${release_binary}"'"' \
+    <<<"$build_source" || fail "${release_binary} is not staged from the release profile"
+done
 rg -Fq '"$m7_xmr_losing_tag16_after_tag17" == 1' <<<"$build_source" ||
   fail "losing-Tag16 mode does not build and stage its Tag16 binary"
 rg -Fq 'stage_executable "${workspace_target}/debug/xmr-reference-tag16"' \

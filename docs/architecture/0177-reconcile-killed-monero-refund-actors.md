@@ -1,7 +1,8 @@
 # ADR 0177: Reconcile killed Monero refund actors
 
-- Status: Accepted; real-actor, prompt-pending observer, and joined runner
-  contracts GREEN; exact pushed-commit actual-node replay pending
+- Status: Accepted; real-actor, prompt-pending observer, bounded watchdog, and
+  release-artifact runner contracts GREEN; exact pushed-commit actual-node
+  replay pending
 - Date: 2026-08-07
 
 ## Context
@@ -48,6 +49,9 @@ from a timing delay.
 
 ```mermaid
 flowchart LR
+    Build[Release profile build] --> Stage[Owner only staged binaries]
+    Stage --> Daemon
+    Stage --> Actor
     Owner[Maker owner CLI] --> Daemon[Maker daemon and supervisor]
     Daemon --> Store[SQLite process and manual action state]
     Daemon --> Actor[XMR Maker recover actor]
@@ -149,6 +153,12 @@ repeated hashing of the large staged executable. `SECONDS` supplies a real
 180-second recovery deadline; the deadline is no longer multiplied by the
 variable cost of each poll.
 
+The joined runner also builds and stages the Maker CLI, daemon, Taker CLI, and
+XMR Maker actor from Cargo's release profile. Owner, mode, link-count, and
+SHA-256 checks are unchanged, and the supervisor still authenticates and seals
+the actor into a private memfd for every generation. This removes debug-symbol
+bulk from the authenticated process boundary without skipping that boundary.
+
 ## Atomicity argument and limits
 
 The workflow transaction chooses `InvokeOnce` before process creation. Once
@@ -208,6 +218,20 @@ sealed observer to return Pending after only pinned-genesis and missing-wallet
 reads. A separate runner RED/GREEN contract requires the one-time executable
 proof, hash-free same-instance polling, and the wall-clock deadline. This run is
 diagnostic evidence, not a certificate.
+
+The fifth exact pushed-commit replay `m7refundkill-e2702ef-b` passed the checked
+guest, finalized deployment, fresh actor onboarding, Monero 0.18.5.1 Regtest,
+finalized Tag16, one durable Monero refund submission, the post-send pause, and
+ordered daemon/actor SIGKILL. Restart preserved the prior revision-zero
+projection while generations advanced, but no revision-one Pending projection
+arrived inside the real 180-second watchdog; the run failed closed and exact
+cleanup removed only its own resources. Profiling then identified an avoidable
+cost at the security boundary: the debug XMR Maker actor was 184,025,168 bytes,
+while the freshly compiled release actor with the same crash-hook feature is
+9,280,096 bytes. RED/GREEN runner coverage now requires all four Maker
+application artifacts to be built and staged from the release profile. This is
+a diagnostic correction, not a certificate; the next clean pushed-commit
+replay must still prove prompt Pending and terminal recovery.
 
 ## Verification
 

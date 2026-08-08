@@ -8980,6 +8980,11 @@ then admits only that PID and Linux start tick and stops at a real 180-second
 deadline. A timeout is a failed run, not evidence of absence or recovery. This
 avoids the earlier diagnostic behavior where hashing a large debug binary on
 every nominal 50-millisecond poll stretched the loop beyond twenty minutes.
+The runner stages the Maker CLI, daemon, Taker CLI, and XMR Maker actor from
+Cargo release output; it retains the same owner-only staging, SHA-256, and
+sealed-memfd checks. The measured crash-hook actor is 9,280,096 bytes rather
+than the 184,025,168-byte debug artifact, reducing authenticated generation
+startup without weakening process identity.
 
 This crash seam is compile-time gated and is never enabled in default or
 production builds. Both chains still run as unique peerless literal-loopback
@@ -9000,3 +9005,11 @@ work-count watchdog overran. The operator interrupted it through the normal
 trap; cleanup passed with source status 130 and no foreign resource targeted.
 It is not a certificate. The process regression and runner contract now cover
 both fixes; the next clean pushed-commit replay remains the certification gate.
+
+Diagnostic run `m7refundkill-e2702ef-b` then proved the corrected observer and
+wall-clock runner through the same ordered-kill boundary, but revision one did
+not arrive inside the 180-second recovery budget. Profiling also found repeated
+debug-profile actor deployment was a large avoidable cost in that same path.
+The run failed closed with source status one and exact cleanup. The
+release-artifact contract above is GREEN; a fresh pushed-commit replay remains
+mandatory before retaining a certificate.

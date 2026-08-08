@@ -6994,6 +6994,17 @@ S12/S13 review and policy-deferred public deployment.
   milestone contracts, certificate checks, documentation, and repository
   hygiene are GREEN.
 - [x] Push verified observer/watchdog checkpoint `0619be1` to `origin/main`.
+- [x] Fifth exact replay `m7refundkill-e2702ef-b` passed finalized deployment,
+  actor onboarding, Regtest funding, finalized Tag16, one durable refund send,
+  the feature-gated pause, and ordered daemon/actor SIGKILL. The restarted
+  supervisor advanced through generation seven but retained revision zero and
+  failed closed at the real 180-second Pending watchdog. Source status one and
+  exact cleanup removed all run-owned resources without touching `wt-016w`.
+- [x] RED then GREEN the composed artifact profile: require `lez-maker`,
+  `lez-maker-daemon`, `lez-taker`, and `xmr-maker-actor` to be built and staged
+  from Cargo release output. The exact crash-hook release build passes; the
+  actor is 9,280,096 bytes instead of the 184,025,168-byte debug artifact while
+  owner/mode/link, SHA-256, and sealed-memfd verification remain unchanged.
 - [ ] Repeat the exact isolated two-devnet process-kill flow from a clean pushed
   commit.
 - [ ] Only after source status zero and exact cleanup, add the checked

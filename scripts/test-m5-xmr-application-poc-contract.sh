@@ -153,12 +153,12 @@ for required in \
   'readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : 3600))' \
   'M5_XMR_APPLICATION_MODE must be unset, 0, or 1' \
   'RUN_ID="$artifact_run_id" "$artifact_runner" verify-source' \
-  'cargo +1.96.0 build --locked --offline -p lez-maker-node' \
+  'cargo +1.96.0 build --release --locked --offline -p lez-maker-node' \
   '--bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor' \
-  'stage_executable "${workspace_target}/debug/lez-maker" "$m5_lez_maker_binary"' \
-  'stage_executable "${workspace_target}/debug/lez-maker-daemon"' \
-  'stage_executable "${workspace_target}/debug/lez-taker" "$m5_lez_taker_binary"' \
-  'stage_executable "${workspace_target}/debug/xmr-maker-actor"' \
+  'stage_executable "${workspace_target}/release/lez-maker" "$m5_lez_maker_binary"' \
+  'stage_executable "${workspace_target}/release/lez-maker-daemon"' \
+  'stage_executable "${workspace_target}/release/lez-taker" "$m5_lez_taker_binary"' \
+  'stage_executable "${workspace_target}/release/xmr-maker-actor"' \
   '.binary_sha256 += {m5_lez_maker:$maker,m5_lez_maker_daemon:$daemon,m5_lez_taker:$taker,m5_xmr_maker_actor:$xmr_actor}' \
   'prepare_m5_xmr_delivery_plan() {' \
   'delivery-identity --signing-key-file "$m5_xmr_delivery_key"' \
