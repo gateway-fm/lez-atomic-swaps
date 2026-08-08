@@ -1,8 +1,7 @@
 # ADR 0177: Reconcile killed Monero refund actors
 
-- Status: Accepted; real-actor, prompt-pending observer, bounded watchdog, and
-  release-artifact runner contracts GREEN; exact pushed-commit actual-node
-  replay pending
+- Status: Accepted and actual-node GREEN on pushed-source run
+  `m7refundkill-f8bee63-d`; checked secret-free certificate retained
 - Date: 2026-08-07
 
 ## Context
@@ -170,11 +169,11 @@ marker exercises the ambiguous response boundary. The real-actor test proves
 the exact effect log is `invoke\nobserve\n`, never two invokes.
 
 The component checkpoint proves process and durable-workflow behavior with the
-real role actor but fixture sender/observer processes. The joined runner now
-implements full-daemon and actor kills, abandoned generation transfer, and
-actual Monero submission-identity preservation; those claims remain pending
-until an exact clean pushed-commit replay passes. Reorg safety, fee pressure,
-and concurrent accepted swaps remain separate gates.
+real role actor but fixture sender/observer processes. The joined runner proves
+full-daemon and actor kills, abandoned generation transfer, and actual Monero
+submission-identity preservation on the exact successful replay below. Reorg
+safety, fee pressure, other kill timings, and concurrent accepted swaps remain
+separate gates.
 
 The first exact replay reached one accepted Tag16 refund and one durable Monero
 refund submission, then exposed an ordering error in the harness: it waited
@@ -245,8 +244,20 @@ wire category: Monero reports an incoming mempool transfer as `pool`, whereas
 the adapter required `in` before checking height zero. RED/GREEN now accepts an
 exact `pool` transfer only as Pending after transaction, destination, amount,
 and double-spend validation. A `pool` record cannot reach confirmed-output or
-finality validation. The next pushed-source replay remains the certificate
+finality validation. The next pushed-source replay remained the certificate
 gate.
+
+Exact pushed-source run `m7refundkill-f8bee63-d` at
+`f8bee63f0279e0362713bb6af752c5595a6a98e0` passed that gate. It finalized
+Tag16, submitted Monero transaction `30a7926e...f51ce7` once, retained its
+exact digest, and killed the daemon then actor before stdout. The restarted
+supervisor transferred generation four to generation six and published
+`maker_recovery_available` revision one through ObserveOnly while the
+transaction was still in the pool. Only then did the harness mine ten blocks;
+generation seven reached terminal Refunded revision two and completed the
+manual action. Source status zero and exact cleanup passed, with no public
+resource and the foreign sentinel intact. The checked packet is
+[`m7-actual-maker-refund-process-kill-f8bee63-20260808.json`](../evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json).
 
 ## Verification
 

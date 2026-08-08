@@ -3730,6 +3730,48 @@ packet is
 The run proves same-daemon durable retry and read-only terminal observation,
 not a daemon restart after submission.
 
+## M7 Maker-refund process-kill recovery
+
+ADR 0177 closes that specific restart gap. Exact pushed-source run
+`m7refundkill-f8bee63-d` killed the Maker daemon and paused actor after one
+durable Monero refund submission but before actor stdout. Restart transferred
+the abandoned lease, classified the exact in-pool transfer as non-authorizing
+Pending, and never re-entered the sender. Ten confirmations were mined only
+after revision-one recovery; revision two then terminalized Refunded.
+
+```mermaid
+sequenceDiagram
+    participant LEZ as Finalized local LEZ
+    participant D1 as Original Maker daemon
+    participant A1 as Paused refund actor
+    participant J as Durable workflow
+    participant XMR as Local Monero Regtest
+    participant D2 as Restarted Maker daemon
+    participant O as Read only observer
+
+    LEZ-->>D1: Tag16 Refunded and custody zero
+    D1->>A1: Invoke refund generation four
+    A1->>J: Persist Started and exact submission identity
+    A1->>XMR: Submit refund once
+    A1-->>A1: Pause before stdout
+    D1--xD1: Ordered SIGKILL
+    A1--xA1: Ordered SIGKILL
+    D2->>J: Transfer abandoned generation to six
+    D2->>O: ObserveOnly exact transaction
+    O->>XMR: Validate pool transfer identity
+    O-->>D2: Pending revision one
+    XMR-->>XMR: Mine exactly ten blocks
+    O->>XMR: Reprove finality without spend authority
+    O-->>D2: Refunded revision two
+```
+
+The unchanged transaction and submission digest, zero confirmations before
+restart, one semantic send, terminal action completion, source-status-zero
+cleanup, and foreign-sentinel preservation are checked by
+[`m7-actual-maker-refund-process-kill-f8bee63-20260808.json`](../evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json).
+This is a conditional refund atomicity argument, not a distributed transaction
+or proof against future reorganization, fees, concurrency, or every crash seam.
+
 ## M7 Tag16-wins losing-Tag17 exclusion
 
 ADR 0176 adds the symmetric finalized ordering to ADR 0175. The exact Tag17

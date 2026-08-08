@@ -7017,8 +7017,17 @@ S12/S13 review and policy-deferred public deployment.
   non-authorizing Pending before every deep daemon/output/finality query.
   Confirmed `pool` can never finalize. The 25-test adapter and 15-test sealed
   process suites are GREEN.
-- [ ] Repeat the exact isolated two-devnet process-kill flow from a clean pushed
-  commit.
-- [ ] Only after source status zero and exact cleanup, add the checked
-  certificate plus traceability/hard-requirement deltas and claim actual-node
-  process-kill closure.
+- [x] Repeat the exact isolated two-devnet process-kill flow from clean pushed
+  commit `f8bee63`. Run `m7refundkill-f8bee63-d` transferred abandoned
+  generation four to generation six, published revision-one observe-only
+  Pending before mining, reused the unchanged transaction without resending,
+  then reached Refunded revision two after exactly ten confirmations.
+- [x] Source status zero and exact cleanup passed; every run-owned container,
+  volume, network, port, and sidecar disappeared while the foreign sentinel
+  survived. The checked secret-free certificate is
+  `docs/evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json`;
+  its RED/GREEN verifier is pinned into the quality runner and CI hardening
+  policy.
+- [ ] Continue with accepted-application concurrency, the other process-kill
+  seams, fee stress, and reorg cases. This certificate closes only the joined
+  Maker Monero refund crash boundary and does not close F3/F6/R2/R4 wholesale.

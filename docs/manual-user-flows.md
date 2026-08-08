@@ -8996,8 +8996,10 @@ Docker/node readiness, process scheduling at the pause marker, SQLite/fsync,
 and bounded local RPC polling. Cleanup is exact run-ID/process-identity scoped;
 do not prune or stop foreign Docker projects.
 
-No retained exact-run certificate is claimed until a clean pushed commit has
-completed the flow and exact cleanup.
+The checked secret-free certificate for the successful pushed-source replay is
+`docs/evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json`.
+Verify it offline with
+`./scripts/test-m7-maker-refund-process-kill-actual-certificate.sh`.
 
 Diagnostic run `m7refundkill-de29b72-a` reached the ordered kills and restarted
 without another submission, but its observer never published Pending and its
@@ -9021,4 +9023,15 @@ revision-one projection. The remaining wire mismatch was an incoming mempool
 wallet transfer reported as `type:"pool"`; accepting only `type:"in"` rejected
 it before the height-zero Pending branch. The adapter and sealed-process tests
 now require exact `pool` identity validation followed by Pending, with only the
-pinned-genesis and destination-wallet calls. Exact replay remains mandatory.
+pinned-genesis and destination-wallet calls. At that diagnostic checkpoint,
+exact replay remained mandatory.
+
+Exact run `m7refundkill-f8bee63-d` at pushed commit `f8bee63` completed that
+replay. It killed the daemon and actor after one durable Monero transaction and
+before actor stdout, transferred lease generation four to generation six,
+published `maker_recovery_available` revision one through ObserveOnly before
+mining, then mined exactly ten Regtest blocks and reached terminal Refunded
+revision two with the manual Refund action Completed. The submission hash and
+transaction ID were unchanged, automatic retry remained false, and the
+observer sent no transaction. Source status zero and exact scoped cleanup
+passed; the foreign sentinel survived.

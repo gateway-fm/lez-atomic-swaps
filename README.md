@@ -114,13 +114,20 @@ run proved release staging was not the complete correction: the pinned wallet
 wire category for an incoming mempool transfer is `pool`, while the observer
 accepted only `in` before its Pending check. Exact identity checks now admit
 `pool` only as non-final Pending. The 25-test Monero adapter suite, 15-test
-sealed process suite, and joined runner contract are GREEN; a clean
-pushed-commit two-devnet replay and checked certificate are still required
-before actual-node closure. The flow uses only pinned local LEZ
+sealed process suite, and joined runner contract are GREEN. Exact pushed-source
+run `m7refundkill-f8bee63-d` then closed the actual-node seam: after one
+durable Monero submission, the daemon and actor were killed before actor
+stdout; restart transferred generation 4 to generation 6, emitted revision-1
+observe-only Pending without resending, and reached terminal Refunded revision
+2 after exactly ten locally mined confirmations. Source status zero and exact
+cleanup passed while the foreign sentinel survived. The checked secret-free
+packet is
+[`m7-actual-maker-refund-process-kill-f8bee63-20260808.json`](docs/evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json).
+The flow uses only pinned local LEZ
 v0.2 and official Monero 0.18.5.1 Regtest services on run-owned literal-loopback
 endpoints, deterministic local funds, and exact cleanup; no public RPC, faucet,
 public funds, DNS dependency, or public deployment participates. Reproduce the
-pending certificate gate with [manual Flow 1ZJ](docs/manual-user-flows.md#flow-1zj-kill-and-restart-the-submitted-maker-monero-refund).
+certificate with [manual Flow 1ZJ](docs/manual-user-flows.md#flow-1zj-kill-and-restart-the-submitted-maker-monero-refund).
 
 [Manual Flow 1ZC](docs/manual-user-flows.md#flow-1zc-repeat-the-supervised-maker-tag17-recovery-checkpoint)
 reproduces that networkless control-plane proof. It does not close the joined

@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_maker_refund_process_kill",
+  "result": "passed",
+  "run_id": "m7refundkill-f8bee63-d",
+  "repository_commit": "f8bee63f0279e0362713bb6af752c5595a6a98e0",
+  "swap_id": "cee3575262030c34a43819c8c24ddc5c2ed4e1ad70571b7a38116278b26ca176",
+  "agreement_commitment": "86e6c6f49b03f8a9d59fa49cdaeee79913cf20abcc86c49d0c75bc6f236c6ac4",
+  "activation_commitment": "155f2f9276d016559f2044e19cb637530b8ddf5f6aebd8265f2fae33921f2df2",
+  "guest": {
+    "recursive_tests_passed": 5,
+    "recursive_tests_total": 5,
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "deployment": {
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_block_hash": "2a10c609c46d2381bd099455683262e397f5b7c723918c0ce84d66967e036c44",
+    "transaction_id": "f5f4e7a15c1c87333cc69be9392e0fa576bdb25ca0fad45c127fa16e51cd0b5c",
+    "containing_block_id": 83,
+    "containing_block_hash": "6d69efe141b529f592b1e8bafcaf7dea78f3eb39f2289495fe0fc7c053843943",
+    "pre_finalized_tip": 80,
+    "exact_elf_pre_window_occurrences": 0,
+    "exact_elf_post_window_occurrences": 1,
+    "canonical_window_occurrences": 1,
+    "send_attempts": 1,
+    "bedrock_status": "Finalized",
+    "program_id_is_current_guest_image_id": true
+  },
+  "tag13": {
+    "effect": "fund",
+    "transaction_id": "9dffe743ebb537e0507bb9d9300f7ae2df51eb425320c46a90ce53755a066beb",
+    "containing_block_id": 113,
+    "containing_block_hash": "1844746bd42ee52a296a58b1435c3f29f2dc302f6ce078f022dada874c706449",
+    "finalized_timestamp_ms": 1786157486498,
+    "submission_outcome": "accepted",
+    "automatic_retry": false
+  },
+  "tag16": {
+    "effect": "refund",
+    "transaction_id": "b4f765ff5762080c89b74d39a5c89a09fdfbd51ed04761ed50bbf2cfa384187e",
+    "refund_at_ms": 1786158005000,
+    "finalized_transaction_block_id": 169,
+    "finalized_transaction_block_hash": "10b9696d05a86cbed2b9b2a7380ee69dd608686ba18c6a5c6c2549d9ca0452e5",
+    "finalized_timestamp_ms": 1786158054668,
+    "finalized_tip_id": 181,
+    "boundary_margin_ms": 49668,
+    "submission_outcome": "accepted",
+    "automatic_retry": false,
+    "refund_authority_only_signature": true,
+    "aggregate_signature_present": true,
+    "terminal_metadata_state": "refunded",
+    "terminal_custody_balance": "0"
+  },
+  "monero": {
+    "version": "0.18.5.1",
+    "network": "Regtest",
+    "peer_count": 0,
+    "genesis_hash": "418015bb9ae982a1975da7d79277c2705727a56894ba0fb246adaabb1f4632e3",
+    "funding": {
+      "role": "maker",
+      "amount_piconero": 1000000000000,
+      "transaction_id": "552521ea60b059a084c627bfe9b1fc778add3f4da29d26d82626799c547b2475",
+      "containing_block_height": 111,
+      "stable_tip_height": 120,
+      "confirmations": 10,
+      "automatic_retry": false
+    },
+    "refund": {
+      "role": "maker",
+      "semantic_send_count": 1,
+      "transaction_id": "30a7926eff9cc1aba3a660781cb233aaec6b2147c17ebbfcfa9f925d04f51ce7",
+      "containing_block_height": 121,
+      "containing_block_hash": "2a41694967ea09f06744ee0c5d5366291ebabbf4c8f0a93550ff8c117894789d",
+      "stable_tip_height": 130,
+      "stable_tip_hash": "67bc3251fc1e1a6f8f4fbbdece9ba70e28cb2835456c1588f5544ca2817cef6f",
+      "confirmations": 10,
+      "required_confirmations": 10,
+      "confirmation_blocks_mined": 10,
+      "received_amount_piconero": 998191600000,
+      "finality_observer_sent_transaction": false,
+      "automatic_retry": false
+    }
+  },
+  "process_kill": {
+    "schema": "lez_v02_m7_monero_refund_process_kill_v1",
+    "crash_boundary": "submitted_before_actor_stdout",
+    "kill_order": "daemon_then_actor",
+    "crashed_generation": 4,
+    "recovered_generation": 6,
+    "abandoned_generation_transferred": true,
+    "post_restart_route": "observe_only_pending",
+    "submission": {
+      "sha256": "3e3857e9e7117f5aefd966837c2e0807a11bdb405c8a9ee61e1853d7a0adf4da",
+      "transaction_id": "30a7926eff9cc1aba3a660781cb233aaec6b2147c17ebbfcfa9f925d04f51ce7",
+      "unchanged_after_restart": true
+    },
+    "automatic_submission_retry": false,
+    "confirmations_mined_before_restart": 0,
+    "old_process_identities_absent": true
+  },
+  "supervisor": {
+    "submitted": {
+      "attempt_count": 4,
+      "lease_generation": 4,
+      "manual_action_state": "leased",
+      "observation_phase": "offered",
+      "observation_revision": 0
+    },
+    "recovered": {
+      "attempt_count": 6,
+      "lease_generation": 6,
+      "manual_action_state": "leased",
+      "observation_phase": "maker_recovery_available",
+      "observation_revision": 1
+    },
+    "terminal": {
+      "attempt_count": 7,
+      "lease_generation": 7,
+      "schedule_state": "terminal",
+      "manual_action_state": "completed",
+      "observation_phase": "refunded",
+      "observation_revision": 2,
+      "next_action": "complete"
+    }
+  },
+  "ordering": {
+    "tag16_finality_phase_index": 39,
+    "process_kill_started_phase_index": 44,
+    "process_kill_completed_phase_index": 45,
+    "supervisor_completed_phase_index": 46,
+    "confirmations_mined_only_after_restart": true
+  },
+  "atomicity": {
+    "proof_scope": "joined_refund_branch_after_ordered_process_kill",
+    "finalized_lez_refund_precedes_monero_refund_send": true,
+    "taker_lez_returned": true,
+    "maker_monero_returned": true,
+    "double_collection_observed": false,
+    "argument": "The Taker's LEZ escrow finalized as Refunded before one semantic Maker Monero refund submission. The daemon and actor were killed after durable submission but before actor stdout. Restart transferred the abandoned generation, selected observe-only Pending without a resend, and mined confirmations only afterward; terminal revision 2 therefore returned both principals without permitting either actor to collect both assets."
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived": true,
+    "tag13_no_retry_latch_preserved": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "evidence_sha256": {
+    "build_manifest": "46fe6a9fa2075d6d1d24ba089ec2c68a8864bb9dad0e77b72f20178df1de991d",
+    "artifact": "7331ce62fa40fb975e339acc7d6f5a504f49f02fb86efdeb5da141336fc08f45",
+    "deployment_bundle": "95dfbace1e544910a43f42b533022f7bb8fe1084540b4057eef4f18b9382b6aa",
+    "actor_onboarding": "2388ecc7a82db93afa20a9d15ef2549baf0e1002b84f8313c9e6dd80ce205a76",
+    "xmr_agreement_receipt": "bbc4f34f3fd10bcd5c44a01645cfa957d19e936a223b4f713c1de13b4313bc0a",
+    "tag13": "a93e76cb040180e79dfc0a9b021dafc4ed3e7f19109850e05b8a4a7b3ce2f355",
+    "tag16_submission": "cdd29f152a43f21e77dfd266d32ae29f249c5f100f7d9bce98fbaf7f94e007de",
+    "tag16_finalized": "872c104177856574d4a508206e3979a70f067fdc7c21528d414b808f3a71f30f",
+    "monero_funding": "9e0bafe1ac49e50b143c6ed7e9641f388d4451b69325832b7de5016764ab5446",
+    "monero_funding_verification": "63a59c5586382480fcad973b4d7413a7dd36e230b194421f984446d2e6c577e3",
+    "refund_activation": "5c6f4ca6ef3e6893b241577c44a7609b893dd56458ccbfedece2a145b332440f",
+    "maker_effect_provision": "8e700770bcda7885c1c968b781be55438952699363c8f22cd63e54a3a838fc18",
+    "refund_action": "6fec29cdafb2a7380976f4e7521e03965156974b46c05a4ef749efd24ab704bc",
+    "refund_submitted_monitor": "543ec13e63afa49bf7f1deb427465a0251ed3fef580d2b0a3897ece47744154e",
+    "process_kill": "ef4c15085e629b9d9658a112fb69e3e45f482f152a828276ae0adf235e03d0e6",
+    "refund_recovered_monitor": "0029e95bee848871597d7ba4d941e0c51cd2c53c31157dcebc1cba7376cfa802",
+    "monero_refund_submission_projected": "3e3857e9e7117f5aefd966837c2e0807a11bdb405c8a9ee61e1853d7a0adf4da",
+    "refund_confirmation_blocks": "e00020cded5b535c0f8795ad7a3a134e3dc20d12153cc11c4dffcf87b4ba75a0",
+    "refund_terminal_monitor": "88faa166f76d918f53ccd50507c43137b43ac324245e5803e2707fdffde145aa",
+    "refund_finalized": "c647f856633a93b3b478948ca7775b6500b6f138ce672ad507d4e3c23dd8fc0d",
+    "phases": "696d0febeef8872434a46f7d8293d00cfd1712ebcc03a0b52513d603a37eccca",
+    "cleanup": "61c8ff16057d36ee675941715e9c34ceca182faf50d8079f586bf4e12a8a9581"
+  },
+  "not_proven_by_this_certificate": [
+    "other process-kill timing seams",
+    "claim-path unknown-submission recovery",
+    "concurrent accepted swaps",
+    "reorganization and fee-stress matrices",
+    "public-network deployment"
+  ],
+  "cold_setup_external_resources": [
+    "pinned package, Git, and release endpoints when local caches are cold"
+  ],
+  "cold_setup_flakiness": "Cold-cache DNS, registry, package, Git, or release availability can block setup; the measured replay itself used only isolated local nodes and deterministic local funds.",
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment": false
+}
