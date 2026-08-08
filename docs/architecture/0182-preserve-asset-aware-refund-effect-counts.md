@@ -1,6 +1,6 @@
 # ADR 0182: Preserve asset-aware refund effect counts after projection
 
-Status: accepted; component GREEN, fresh actual-node replay pending
+Status: accepted; actual post-projection gate GREEN, full replay pending
 
 ## Context
 

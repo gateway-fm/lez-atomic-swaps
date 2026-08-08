@@ -3166,7 +3166,7 @@ write_custom_token_terminal_balance_evidence() {
       asset=M3F7A
       lez_owner=maker
       evidence_kind=maker_refund
-      transition=maker_refund
+      transition=maker_leg
       claim_label=lez-maker-refund
       actor_revision=3
       expected_maker=250
@@ -3177,7 +3177,7 @@ write_custom_token_terminal_balance_evidence() {
       asset=M3F7B
       lez_owner=taker
       evidence_kind=taker_refund
-      transition=taker_refund
+      transition=taker_leg
       claim_label=lez-taker-refund
       actor_revision=4
       expected_maker=0

@@ -7100,10 +7100,23 @@ S12/S13 review and policy-deferred public deployment.
 - [x] RED then GREEN the post-projection effect invariant under ADR 0182: use
   asset-aware `expected_after` for both native and custom-token refunds and
   reject a return to the native literal in the orchestration contract.
-- [ ] Push the asset-aware effect-count checkpoint, execute a fresh
-  two-direction Bitcoin Regtest plus LEZ 0.2 custom-token refund journey, and
-  retain a sanitized checked certificate with terminal replay and exact
-  cleanup evidence.
+- [x] Push asset-aware effect-count checkpoint `f279734` to `origin/main`.
+- [x] Fresh exact run `m7f7refund-f279734-f` crossed the corrected count gate,
+  finalized both ordered refunds in `taker_sells_foreign`, reached revision
+  four in both role stores, and replayed with zero resubmission. The terminal
+  balance wrapper then rejected canonical actor transition `maker_leg` because
+  it expected the noncanonical alias `maker_refund`; every other exact actor
+  evidence predicate passed individually. Balance sampling and the reverse
+  direction did not follow. Exact cleanup passed without targeting a foreign
+  resource, so this is bounded RED evidence rather than a certificate.
+- [x] RED then GREEN the terminal-evidence vocabulary under ADR 0183: map the
+  forward and reverse refund evidence to canonical `maker_leg` and `taker_leg`
+  while retaining all exact asset, role, custody, transaction, and finality
+  predicates.
+- [ ] Push the canonical-evidence checkpoint, execute a fresh two-direction
+  Bitcoin Regtest plus LEZ 0.2 custom-token refund journey, and retain a
+  sanitized checked certificate with terminal replay and exact cleanup
+  evidence.
 - [ ] Close F7 only after the actual-node certificate, quality wrapper, manual
   flow, traceability, and hard-requirement inventory all pass from the same
   pushed commit.

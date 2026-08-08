@@ -1657,6 +1657,17 @@ refund_submission_source="$(sed -n '/^submit_actor_lez_refund() {$/,/^}$/p' \
 [[ "$refund_submission_source" != *'[[ "$(lez_successful_submission_count)" == 3 ]]'* ]] ||
   fail "LEZ refund projection still hard-codes the native durable submission count"
 
+terminal_balance_source="$(sed -n \
+  '/^write_custom_token_terminal_balance_evidence() {$/,/^}$/p' "$runner")"
+for transition in maker_leg taker_leg; do
+  [[ "$terminal_balance_source" == *"transition=${transition}"* ]] ||
+    fail "custom-token terminal evidence omits canonical ${transition} transition"
+done
+for stale_transition in maker_refund taker_refund; do
+  [[ "$terminal_balance_source" != *"transition=${stale_transition}"* ]] ||
+    fail "custom-token terminal evidence retains noncanonical ${stale_transition} transition"
+done
+
 invalid_asset_combo_run_id="m3badassetcombo-$RANDOM-$$"
 invalid_asset_combo_output="$(RUN_ID="$invalid_asset_combo_run_id" \
   M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_SCHEDULE=overlap \
