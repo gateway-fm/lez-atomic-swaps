@@ -7089,9 +7089,21 @@ S12/S13 review and policy-deferred public deployment.
   avoids a moving-latest account read and reaches its durable CAS only from the
   configured exact baseline. All 93 actor tests, 31 sidecar library tests,
   strict actor/sidecar Clippy, and the orchestration contract pass.
-- [ ] Push the exact-miss checkpoint, execute a fresh two-direction Bitcoin Regtest
-  plus LEZ 0.2 custom-token refund journey, and retain a sanitized checked
-  certificate with terminal replay and exact cleanup evidence.
+- [x] Push exact-miss checkpoint `d8515ea` to `origin/main`.
+- [x] Fresh exact run `m7f7refund-d8515ea-e` finalized one Maker-owned LEZ
+  custom-token refund on attempt one and projected revision three to both role
+  stores. It then failed closed because the post-projection guard still
+  required native count three instead of the already-derived custom-token
+  count four. No Bitcoin recovery attempt followed; exact cleanup passed and
+  targeted no foreign resource. This is bounded RED evidence, not a completed
+  swap.
+- [x] RED then GREEN the post-projection effect invariant under ADR 0182: use
+  asset-aware `expected_after` for both native and custom-token refunds and
+  reject a return to the native literal in the orchestration contract.
+- [ ] Push the asset-aware effect-count checkpoint, execute a fresh
+  two-direction Bitcoin Regtest plus LEZ 0.2 custom-token refund journey, and
+  retain a sanitized checked certificate with terminal replay and exact
+  cleanup evidence.
 - [ ] Close F7 only after the actual-node certificate, quality wrapper, manual
   flow, traceability, and hard-requirement inventory all pass from the same
   pushed commit.

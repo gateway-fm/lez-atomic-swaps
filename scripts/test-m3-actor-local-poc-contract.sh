@@ -1650,6 +1650,13 @@ jq -e '
 [[ ! -e ".e2e/${custom_refund_run_id}" && ! -L ".e2e/${custom_refund_run_id}" ]] ||
   fail "custom-token refund contract mode created run state"
 
+refund_submission_source="$(sed -n '/^submit_actor_lez_refund() {$/,/^}$/p' \
+  "$direction_driver")"
+[[ "$refund_submission_source" == *'[[ "$(lez_successful_submission_count)" == "$expected_after" ]]'* ]] ||
+  fail "LEZ refund projection does not preserve the asset-aware durable submission count"
+[[ "$refund_submission_source" != *'[[ "$(lez_successful_submission_count)" == 3 ]]'* ]] ||
+  fail "LEZ refund projection still hard-codes the native durable submission count"
+
 invalid_asset_combo_run_id="m3badassetcombo-$RANDOM-$$"
 invalid_asset_combo_output="$(RUN_ID="$invalid_asset_combo_run_id" \
   M3_ACTOR_POC_ASSET_MODE=custom_token M3_ACTOR_POC_SCHEDULE=overlap \

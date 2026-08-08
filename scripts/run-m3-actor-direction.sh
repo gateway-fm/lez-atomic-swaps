@@ -3059,7 +3059,7 @@ submit_actor_lez_refund() {
   else
     project_both_refunds_to_revision "$expected_revision" lez "$phase" "$label"
   fi
-  [[ "$(lez_successful_submission_count)" == 3 ]] ||
+  [[ "$(lez_successful_submission_count)" == "$expected_after" ]] ||
     fail "LEZ finalized refund projection changed the durable submission count"
   jq -n --arg direction "$M3_POC_DIRECTION" --arg owner "$owner" --arg tx "$lez_refund_tx" \
     --argjson block "$block_height" --argjson timestamp "$block_timestamp" \
