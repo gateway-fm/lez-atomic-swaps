@@ -3471,7 +3471,8 @@ validate_actual_effect_manifests() {
         else (has("survivor_evidence_file") | not) end)
       elif $journey == "refund" then
         .actor_owned_refunds == {
-          bitcoin:.bitcoin_effect_ids[1], lez:.lez_effect_ids[2]
+          bitcoin:.bitcoin_effect_ids[1],
+          lez:.lez_effect_ids[(if $asset_mode == "custom_token" then 3 else 2 end)]
         }
         and .cooperative_claim_effects_present == false
         and (has("actor_owned_claims") | not)

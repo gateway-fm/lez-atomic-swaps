@@ -7113,10 +7113,22 @@ S12/S13 review and policy-deferred public deployment.
   forward and reverse refund evidence to canonical `maker_leg` and `taker_leg`
   while retaining all exact asset, role, custody, transaction, and finality
   predicates.
-- [ ] Push the canonical-evidence checkpoint, execute a fresh two-direction
-  Bitcoin Regtest plus LEZ 0.2 custom-token refund journey, and retain a
-  sanitized checked certificate with terminal replay and exact cleanup
-  evidence.
+- [x] Push canonical-evidence checkpoint `2eb2f9c` and execute fresh exact run
+  `m7f7refund-2eb2f9c-g`. Both directions finalized their two ordered refunds,
+  all four role stores reached revision four, terminal balances were sampled,
+  and replay added zero effects. Final publication then exposed one remaining
+  native-only LEZ terminal index in the aggregate manifest validator; source
+  status was nonzero, exact cleanup passed, and no foreign resource was
+  targeted, so the run is bounded RED evidence rather than a certificate.
+- [x] RED then GREEN the aggregate refund manifest under ADR 0184: require
+  complete four-effect custom-token fixtures, select terminal LEZ index three
+  for custom tokens and index two for native value, and retain the exact count,
+  uniqueness, ownership, no-cooperative-claim, and cross-direction isolation
+  checks.
+- [ ] Push the asset-aware terminal-index checkpoint, execute a fresh
+  two-direction Bitcoin Regtest plus LEZ 0.2 custom-token refund journey, and
+  retain a sanitized checked certificate with terminal replay and exact
+  cleanup evidence.
 - [ ] Close F7 only after the actual-node certificate, quality wrapper, manual
   flow, traceability, and hard-requirement inventory all pass from the same
   pushed commit.

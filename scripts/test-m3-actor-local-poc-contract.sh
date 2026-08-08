@@ -2330,6 +2330,19 @@ write_effect_manifest_fixture() {
          cooperative_claim_effects_present:false}
       ' >"$output"
       ;;
+    custom_token_refund)
+      jq -n --arg direction "$direction" --arg bitcoin_lock "$btc_lock" \
+        --arg bitcoin_refund "$btc_terminal" --arg lez_initialization "$lez_initialization" \
+        --arg lez_custody "$lez_custody" --arg lez_funding "$lez_funding" \
+        --arg lez_refund "$lez_terminal" '
+        {schema_version:1,journey:"refund",direction:$direction,
+         bitcoin_effect_ids:[$bitcoin_lock,$bitcoin_refund],
+         lez_effect_ids:[$lez_initialization,$lez_custody,$lez_funding,$lez_refund],
+         expected_unique_effects:{bitcoin:2,lez:4},
+         actor_owned_refunds:{bitcoin:$bitcoin_refund,lez:$lez_refund},
+         cooperative_claim_effects_present:false}
+      ' >"$output"
+      ;;
     first_lock_refund)
       case "$direction" in
         taker_sells_foreign)
@@ -2418,6 +2431,13 @@ validate_effect_manifest_pair refund >/dev/null ||
   fail "outer runner rejected two refund-shaped manifests for the refund journey"
 if validate_effect_manifest_pair claim >/dev/null 2>&1; then
   fail "outer runner accepted refund-shaped manifests for the claim journey"
+fi
+
+write_effect_manifest_pair custom_token_refund
+validate_effect_manifest_pair refund custom_token >/dev/null ||
+  fail "outer runner rejected two custom-token refund manifests"
+if validate_effect_manifest_pair refund native >/dev/null 2>&1; then
+  fail "outer runner accepted custom-token effect counts as native refund evidence"
 fi
 
 write_effect_manifest_pair refund claim
