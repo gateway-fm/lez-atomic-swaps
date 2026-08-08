@@ -1,6 +1,6 @@
 # ADR 0181: Preserve uncertainty for an exact refund miss
 
-Status: accepted
+Status: accepted; actual-node GREEN on m7f7refund-062b6ba-h
 
 ## Context
 
@@ -59,4 +59,7 @@ Preparation creates no public effect, and the checked guest remains the final
 deadline enforcer. Removing the moving-latest owner read therefore removes a
 liveness dependency without weakening chain truth. A non-owner still uses a
 complete terms scan to discover the permissionless terminal effect, so both
-roles project only finalized exact facts.
+roles project only finalized exact facts. Exact pushed-source run
+m7f7refund-062b6ba-h crossed this boundary twice: each owner obtained one
+submit-once authority from the fixed baseline, while each peer discovered and
+projected only the finalized exact refund.

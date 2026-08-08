@@ -1,6 +1,6 @@
 # ADR 0184: Index terminal effects by asset shape
 
-Status: accepted; component GREEN, fresh actual-node replay pending
+Status: accepted; actual-node GREEN on m7f7refund-062b6ba-h
 
 ## Context
 
@@ -48,3 +48,8 @@ accepts them.
 Run `m7f7refund-2eb2f9c-g` is bounded RED evidence, not a certificate. It
 proves both economic refund directions through terminal state but cannot be
 used as milestone evidence because the aggregate publisher exited nonzero.
+
+Exact pushed-source run m7f7refund-062b6ba-h supplies the GREEN: the aggregate
+publisher selected index three in both four-effect token histories, bound each
+actor-owned refund to the final LEZ effect, proved cross-direction effect IDs
+disjoint, and published the terminal packet before exact cleanup.

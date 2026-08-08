@@ -1,6 +1,6 @@
 # ADR 0182: Preserve asset-aware refund effect counts after projection
 
-Status: accepted; actual post-projection gate GREEN, full replay pending
+Status: accepted; full actual-node replay GREEN on m7f7refund-062b6ba-h
 
 ## Context
 
@@ -46,3 +46,9 @@ asset mode instead of rejecting the valid custom-token count. Exact run
 three after one finalized LEZ refund, the stale literal rejected count four,
 and exact cleanup targeted no foreign resource. It is not a completed swap or
 certificate.
+
+Exact pushed-source run m7f7refund-062b6ba-h supplies the completed GREEN:
+both directions retained four LEZ effects through both role projections,
+reached revision four after the opposite Bitcoin refund, replayed without a
+new effect, and passed exact cleanup. The checked F7 certificate binds those
+counts and terminal balances.

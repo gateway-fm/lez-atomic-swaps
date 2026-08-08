@@ -250,12 +250,17 @@ was unavailable and neither this row nor the tag claims remote CI green.
 Current M7 Tag14 update for F3/F9/U4: ADRs 0156 and 0157 preserve the schema-1
 marker while schema 2 selects the real release ABI, authenticates the journal
 and binding before workflow CAS, rederives the invocation from validated Stage
-A/B, and grants only release FDs 220..223. Real worker preflight/invoke/restart,
-the eight-case actor route, and literal claim rejected-preflight/invoke/observe/
-Complete are GREEN. The real worker and literal CLI proofs remain separately
-composed: a joined actual-node CLI replay, semantic finalized Tag14 observer,
-Monero claim sweep, and adverse concurrency still remain and are not represented
-as complete. Tag17 is separately actual-node GREEN under ADR 0158, and both Maker recovery branch routes are normal-supervisor process GREEN under ADRs 0163 and 0164.
+A/B, and grants only release FDs 220..223. ADR 0187 narrows the marker-only
+process fixture honestly: it proves rejected preflight and exactly one sealed
+invocation, then fails closed on every observation replay because it has no
+protected release journal or chain RPC. Semantic completion comes from exact
+pushed run `m7claim-2cff48d-a`: the literal receipt-v2 CLI published and
+owner-exactly observed finalized Tag14, Maker finalized Tag15, Taker extracted
+the adaptor share, and the reconstructed Monero sweep reached ten confirmations.
+Accepted-application concurrency, adverse recovery and the remaining
+daemon-owned lifecycle still remain. Tag17 is separately actual-node GREEN
+under ADR 0158, and both Maker recovery branch routes are normal-supervisor
+process GREEN under ADRs 0163 and 0164.
 
 Current M7 refund update for F3/F6/F9/U4: clean exact-commit Run
 `m7refund-7cd3a9c-a` certifies the joined Maker refund path. Finalized Tag16
@@ -295,6 +300,23 @@ fourth complete pair and the measured concurrent-startup result. Failed-closed
 Runs Y, AB, and AC count as no repetition. This closes the reproducible private
 local F7 functional and repeatability checkpoint; it does not claim public
 execution, production hardening, or an M3 completion tag.
+
+Current F7 refund update: exact run `m7f7refund-062b6ba-h` at clean pushed
+commit `062b6ba` completed both role-correct custom-token refund directions
+against Core 31.1 Regtest and a freshly deployed local LEZ v0.2 guest. Forward
+finalized the Maker LEZ refund before the later Taker Bitcoin refund; reverse
+finalized the Maker Bitcoin refund before the later Taker LEZ refund. Every
+direction retained two Bitcoin and four LEZ effects, both role stores reached
+revision four `refunded`, replay submitted nothing, and official-wallet
+terminal balances were `250/0/0` and `0/250/0` with zero custody. Exact
+cleanup removed every run-owned resource without foreign targeting. The
+checked certificate is
+`docs/evidence/m7-actual-f7-custom-token-refund-062b6ba-20260808.json`;
+its CI-pinned verifier makes F7 local-functional GREEN. This does not claim
+public deployment, fee/reorg immunity, concurrent accepted swaps, or broader
+production hardening. Bedrock NTP attempts timed out but were non-authorizing
+and were not required for certification; no public chain RPC, faucet, or public
+funds participated.
 
 ## Usability
 

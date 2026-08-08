@@ -684,6 +684,16 @@ measured hardened hit saves 192.07 seconds versus cold preparation without
 weakening source, toolchain, native/runtime-library, expected-output, policy,
 or private-copy checks.
 
+The role-correct terminal F7 refund path is separately documented in
+[the certified custom-token refund procedure](m3-local-poc-operator-guide.md#reproduce-the-certified-custom-token-f7-refund-pair).
+It runs both actual user directions: Maker refunds LEZ before Taker refunds
+Bitcoin when the Taker sells Bitcoin, while Maker refunds Bitcoin before Taker
+refunds LEZ when the Taker sells LEZ. Each direction requires exact four-effect
+token history, revision-four terminal role stores, zero replay submission, and
+zero custody. The sequence and conditional atomicity argument are bound by the
+checked m7f7refund-062b6ba-h certificate; no public endpoint, faucet, public
+funds, or deployment is required.
+
 ## Repeat the M3 SDK, vector, route, and recording gates
 
 The fast application-facing closure checks need no Docker, chain node, public

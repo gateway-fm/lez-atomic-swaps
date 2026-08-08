@@ -2524,6 +2524,41 @@ jq -e '.journey == "refund" and .result == "passed" and
   "$M3_EVIDENCE/cleanup-attestation.json"
 ```
 
+For the complete F7 custom-token refund pair, keep the verified F7 artifact and
+official-wallet prerequisites from the
+[M3 operator guide](docs/m3-local-poc-operator-guide.md#reproduce-the-certified-custom-token-f7-refund-pair),
+then select both modes:
+
+```sh
+export RUN_ID=m3f7-refund-manual-001
+export M3_ACTOR_POC_ASSET_MODE=custom_token
+export M3_ACTOR_POC_JOURNEY=refund
+./scripts/run-m3-actor-local-poc.sh
+
+export M3_EVIDENCE=".e2e/$RUN_ID/m3-actor-poc/evidence"
+jq -e '
+  .kind == "m3_actor_two_direction_custom_token_refund_local_poc"
+  and .result == "passed"
+  and all(.directions[];
+    .terminal_revision == 4
+    and .terminal_phase == "refunded"
+    and .expected_unique_effects == {bitcoin:2,lez:4})
+  and .directions[0].custom_token_terminal_balances.balances ==
+    {maker:250,taker:0,custody:0}
+  and .directions[1].custom_token_terminal_balances.balances ==
+    {maker:0,taker:250,custody:0}
+  and .replay_resubmission_count == 0
+  and .external_resources.certification_success_depends_on_external_network == false
+' "$M3_EVIDENCE/m3-actor-local-poc.json"
+```
+
+Exact pushed run m7f7refund-062b6ba-h is retained as the checked
+[F7 refund certificate](docs/evidence/m7-actual-f7-custom-token-refund-062b6ba-20260808.json).
+It used isolated Core 31.1 Regtest and LEZ v0.2 nodes, deterministic local
+funds, and no public chain RPC, faucet, or deployment. Bedrock attempted NTP
+and timed out 244 times; certification did not depend on an NTP response.
+Cold package, Git, and release inputs can still make uncached setup flaky.
+
 The refund runner waits for the countersigned deadlines and executes the two
 directions sequentially. Run H's retained evidence-to-cleanup span was 54
 minutes 5 seconds with 3.0-second LEZ slots; local load, finality progress, and
@@ -3098,9 +3133,9 @@ acceptance.
 
 `npm run test:mermaid` scans every tracked Markdown Mermaid block, rejects
 GitHub-host-sensitive configuration, beta/new-shape, and interactive syntax,
-then renders every diagram with the exact Mermaid CLI 11.16.0 pin. GitHub's
-live Viewscreen renderer also reported 11.16.0 on 2026-07-12; the exact asset
-and SHA-256 are recorded in
+then renders every diagram with the exact Mermaid CLI 11.16.0 pin and patched
+resolved Mermaid core 11.16.1. GitHub's live Viewscreen renderer reported
+11.16.0 on 2026-07-12; the exact observed asset and SHA-256 are recorded in
 [`docs/evidence/github-mermaid-renderer.json`](docs/evidence/github-mermaid-renderer.json).
 GitHub controls that renderer, so the repository deliberately retains a
 conservative syntax subset and requires a visual check after documentation is

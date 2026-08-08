@@ -1,6 +1,6 @@
 # ADR 0178: Route custom-token refunds through the asset v2 bridge
 
-Status: accepted; component GREEN, actual-node replay pending
+Status: accepted; actual-node GREEN on m7f7refund-062b6ba-h
 
 ## Context
 
@@ -64,4 +64,8 @@ or every crash boundary.
 
 The checked component contract covers both role/direction shapes and distinct
 asset definitions. Exact local-node execution, terminal balances, replay, and
-scoped cleanup remain the certificate gate.
+scoped cleanup remain the certificate gate. Exact pushed-source run
+m7f7refund-062b6ba-h passed that gate in both directions with four LEZ effects,
+revision-four refunded role stores, zero custody, zero replay submission, and
+exact non-foreign cleanup. Its checked certificate is
+docs/evidence/m7-actual-f7-custom-token-refund-062b6ba-20260808.json.

@@ -2739,6 +2739,7 @@ sequenceDiagram
     X-->>B: Independent receipt at block 121 under stable tip 130
     B-->>T: Owner-private conditional-atomicity snapshot
     Note over T,M: No canonical reveal before cutoff leaves only recovery branches
+    Note over T,M: Implementation status role-correct claim refund and penalty branches are GREEN while adverse survivor races remain open
     Note over T,M: Tag16 and Tag17 are separately GREEN and the joined penalty branch is actual-node GREEN
 ```
 

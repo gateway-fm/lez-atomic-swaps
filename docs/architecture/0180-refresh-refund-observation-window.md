@@ -1,6 +1,6 @@
 # ADR 0180: Refresh the LEZ refund observation window
 
-Status: accepted
+Status: accepted; actual-node GREEN on m7f7refund-062b6ba-h
 
 ## Context
 
@@ -61,4 +61,6 @@ runner proves the exact transaction in a finalized block, reconstructs the
 complete post-baseline window, and the actor verifies refunded metadata, zero
 custody, and immutable depositor facts. Thus the correction restores liveness
 without weakening conditional atomicity or turning uncertain observation into
-authority.
+authority. Exact pushed-source run m7f7refund-062b6ba-h exercised the refreshed
+window for the Maker-owned forward refund and Taker-owned reverse refund; both
+finalized once, projected to both roles, and retained four durable LEZ effects.

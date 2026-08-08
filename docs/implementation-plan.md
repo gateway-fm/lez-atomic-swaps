@@ -7125,10 +7125,31 @@ S12/S13 review and policy-deferred public deployment.
   for custom tokens and index two for native value, and retain the exact count,
   uniqueness, ownership, no-cooperative-claim, and cross-direction isolation
   checks.
-- [ ] Push the asset-aware terminal-index checkpoint, execute a fresh
-  two-direction Bitcoin Regtest plus LEZ 0.2 custom-token refund journey, and
-  retain a sanitized checked certificate with terminal replay and exact
-  cleanup evidence.
-- [ ] Close F7 only after the actual-node certificate, quality wrapper, manual
-  flow, traceability, and hard-requirement inventory all pass from the same
-  pushed commit.
+- [x] Push asset-aware terminal-index checkpoint `062b6ba` and execute fresh
+  exact run `m7f7refund-062b6ba-h`. Both directions reached revision four,
+  retained exact `2 Bitcoin + 4 LEZ` effects, returned token balances
+  `250/0/0` and `0/250/0`, replayed with zero resubmission, published the
+  aggregate packet, exited zero, and removed only exact run-owned resources.
+- [x] RED then GREEN a sanitized certificate verifier; retain
+  `docs/evidence/m7-actual-f7-custom-token-refund-062b6ba-20260808.json`,
+  pin its executable contract into the quality runner and CI hardening policy,
+  and push certificate checkpoint `802e1e9` to `origin/main`.
+- [x] Treat the 2026-08-08 npm advisory result as a closure RED. Under ADR
+  0185, retain CLI 11.16.0 but resolve patched Mermaid 11.16.1 and DOMPurify
+  3.4.13 through the existing supported range; vulnerability and license
+  gates return GREEN with no runtime dependency change.
+- [x] Treat the stale checked-bootstrap digest as a fail-closed source-boundary
+  RED. Under ADR 0186, bind the M4 runner and manifest to the current F7-proven
+  bootstrap while preserving every guest, ProgramId, SPEL, IDL, client, and
+  recursive-artifact digest; source-boundary and SPEL contracts return GREEN.
+- [x] RED then GREEN the stale Tag14 process double under ADR 0187. A fixture
+  with no protected release journal or chain RPC now proves one sealed
+  invocation followed by repeated fail-closed observation, while actual-node
+  run `m7claim-2cff48d-a` retains semantic completion evidence. Raise only the
+  test readiness fail-safe to two minutes after shared load pushed secure
+  hashing of its 233 MiB debug executable past the old 30-second ceiling; both
+  focused XMR process journeys pass in 275.02 seconds.
+- [ ] Update the operator/manual flows, global README, traceability, ADR
+  statuses, M7 packet map, hard-requirement inventory, and S4 open count; run
+  the complete quality, security, license, documentation, and repository
+  hygiene gates before the F7 closure push.

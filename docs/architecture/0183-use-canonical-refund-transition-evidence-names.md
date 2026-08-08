@@ -1,6 +1,6 @@
 # ADR 0183: Use canonical refund transition evidence names
 
-Status: accepted; component GREEN, fresh actual-node replay pending
+Status: accepted; actual-node GREEN on m7f7refund-062b6ba-h
 
 ## Context
 
@@ -42,3 +42,8 @@ refunds in the forward direction finalized in their signed order, both actors
 reached revision four, terminal replay added no effect, the stale alias alone
 rejected the actor packet, and exact cleanup targeted no foreign resource. It
 is not a two-direction certificate.
+
+Exact pushed-source run m7f7refund-062b6ba-h supplies the GREEN: maker_leg
+validated the forward finalized refund and taker_leg validated the reverse
+finalized refund before official-wallet balance sampling. The resulting
+250/0/0 and 0/250/0 balances both conserved 250 with zero custody.

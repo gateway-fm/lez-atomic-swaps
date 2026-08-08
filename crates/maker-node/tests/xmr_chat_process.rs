@@ -321,45 +321,25 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
     );
     assert!(fs::read(&effect.observer_marker).unwrap().is_empty());
 
-    let replayed_claim = run_taker_lifecycle("claim", &effect.receipt);
-    assert!(
-        replayed_claim.status.success(),
-        "replayed receipt-v2 claim failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&replayed_claim.stdout),
-        String::from_utf8_lossy(&replayed_claim.stderr)
-    );
-    assert!(replayed_claim.stderr.is_empty());
-    let replayed_claim: Value = serde_json::from_slice(&replayed_claim.stdout).unwrap();
-    assert_eq!(replayed_claim["state"], "complete");
-    assert_eq!(replayed_claim["step"], "authorize_lez_tag14");
-    assert_eq!(replayed_claim["tool_plan_identity_sha256"], plan_identity);
-    assert_eq!(replayed_claim["chain_effect_finalized"], true);
-    assert_eq!(
-        fs::read(&effect.invocation_marker).unwrap(),
-        b"preflight\ninvoked\n"
-    );
-    assert_eq!(fs::read(&effect.observer_marker).unwrap(), b"observed\n");
-    assert_taker_tag14_reconciliation(&effect, &plan_identity);
-
-    let completed_claim = run_taker_lifecycle("claim", &effect.receipt);
-    assert!(
-        completed_claim.status.success(),
-        "completed receipt-v2 claim failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&completed_claim.stdout),
-        String::from_utf8_lossy(&completed_claim.stderr)
-    );
-    assert!(completed_claim.stderr.is_empty());
-    let completed_claim: Value = serde_json::from_slice(&completed_claim.stdout).unwrap();
-    assert_eq!(completed_claim["state"], "complete");
-    assert_eq!(completed_claim["step"], "authorize_lez_tag14");
-    assert_eq!(completed_claim["tool_plan_identity_sha256"], plan_identity);
-    assert_eq!(completed_claim["chain_effect_finalized"], true);
-    assert_eq!(
-        fs::read(&effect.invocation_marker).unwrap(),
-        b"preflight\ninvoked\n"
-    );
-    assert_eq!(fs::read(&effect.observer_marker).unwrap(), b"observed\n");
-    assert_taker_tag14_reconciliation(&effect, &plan_identity);
+    // This process fixture proves sealed invocation but deliberately has no
+    // prepared release journal or chain RPC. Since exact Tag14 observation was
+    // hardened to authenticate and disclose only the current protected release
+    // transaction, its marker-only sender can no longer fabricate finality.
+    // The actual-node corridor supplies the separate semantic completion proof.
+    for _ in 0..2 {
+        let replayed_claim = run_taker_lifecycle("claim", &effect.receipt);
+        assert!(!replayed_claim.status.success());
+        assert!(replayed_claim.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(replayed_claim.stderr).unwrap(),
+            "XMR Taker effect observation is unavailable or unsafe\n"
+        );
+        assert_eq!(
+            fs::read(&effect.invocation_marker).unwrap(),
+            b"preflight\ninvoked\n"
+        );
+        assert!(fs::read(&effect.observer_marker).unwrap().is_empty());
+    }
 
     // The claim branch is now durable, so the losing refund branch fails
     // before it can invoke its tool or change accepted effect authority.
@@ -997,15 +977,6 @@ fn prepare_taker_terminal_workflow(
     workflow.prepare_step(identity, terminal_step).unwrap();
 }
 
-fn assert_taker_tag14_reconciliation(effect: &XmrTakerEffectFixture, plan_identity: &str) {
-    assert_taker_reconciliation(
-        effect,
-        XmrWorkflowStep::AuthorizeLezTag14,
-        FINALIZED_TAG14_EVIDENCE_SHA256,
-        plan_identity,
-    );
-}
-
 fn assert_taker_refund_reconciliation(effect: &XmrTakerEffectFixture, plan_identity: &str) {
     assert_taker_reconciliation(
         effect,
@@ -1414,7 +1385,7 @@ fn start_xmr_daemon(paths: &DaemonPaths<'_>, authority: &XmrDaemonAuthority<'_>)
 fn wait_ready(daemon: &mut Child, paths: &DaemonPaths<'_>, expect_chat: bool) {
     // The role-generated fixture pins a single-link copy of a large debug actor
     // binary, so startup includes secure full-file hashing before readiness.
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_mins(2);
     loop {
         if let Ok(published) = fs::read_to_string(paths.ready) {
             assert_eq!(published.trim(), paths.socket.to_str().unwrap());
