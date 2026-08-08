@@ -36,7 +36,7 @@ sequenceDiagram
     S-->>A: Finalized clock at or after deadline
     A->>J: Record exact prepared refund
     A->>S: Reconcile exact refund at B
-    S-->>A: Absent at baseline
+    S-->>A: Exact ID not found and uncertainty retained
     A->>J: Begin the one permitted attempt
     A->>S: Submit exact transaction
     S-->>A: Accepted or already known

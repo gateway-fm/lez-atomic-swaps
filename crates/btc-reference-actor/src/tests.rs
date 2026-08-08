@@ -140,6 +140,124 @@ fn schema5_asset_refund_effect_and_request_identity_bind_asset_role_and_target()
     }
 }
 
+#[derive(Clone)]
+struct ExactBaselineLezAssetRefundPort {
+    run_id: RunId,
+    role: BridgeParticipant,
+    escrow_program_id: Hex32,
+    transaction: PreparedTransaction,
+    state_only_calls: Arc<AtomicUsize>,
+    exact_calls: Arc<AtomicUsize>,
+    prepare_calls: Arc<AtomicUsize>,
+    submit_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl LezAssetRefundChainPort for ExactBaselineLezAssetRefundPort {
+    async fn prepare_asset_refund(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+    ) -> Result<PrepareWitnessedAssetRefundV2Result, ActorCommandError> {
+        self.prepare_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(PrepareWitnessedAssetRefundV2Result::new(
+            MessageContext::new(self.run_id.clone(), request_id, self.role),
+            binding.terms().clone(),
+            self.transaction.clone(),
+        ))
+    }
+
+    async fn observe_asset_refund(
+        &self,
+        binding: &BtcLezAssetBridgeBindingV2,
+        request_id: RequestId,
+        target: NativeRefundObservationTarget,
+    ) -> Result<ObserveWitnessedAssetRefundV2Result, ActorCommandError> {
+        let window = match target {
+            NativeRefundObservationTarget::StateOnly => {
+                self.state_only_calls.fetch_add(1, Ordering::SeqCst);
+                return Err(ActorCommandError::ObservationUnavailable);
+            }
+            NativeRefundObservationTarget::Exact { window, .. } => {
+                self.exact_calls.fetch_add(1, Ordering::SeqCst);
+                window
+            }
+            NativeRefundObservationTarget::DiscoverByTerms { .. } => {
+                return Err(ActorCommandError::AgreementBindingInvalid);
+            }
+        };
+        let WitnessedLezAssetV2::CustomToken(token) = binding.terms().asset() else {
+            return Err(ActorCommandError::AgreementBindingInvalid);
+        };
+        let clock = finalized_asset_clock(window);
+        ObserveWitnessedAssetRefundV2Result::new(
+            MessageContext::new(self.run_id.clone(), request_id, self.role),
+            binding.terms().clone(),
+            clock,
+            WitnessedEscrowMetadataFacts::from_witnessed_token_terms(
+                Hex32::from_bytes(*binding.metadata_account_id()),
+                self.escrow_program_id,
+                token,
+                EscrowState::Funded,
+            ),
+            WitnessedAssetCustodyFactsV2::CustomToken(TokenHoldingFactsV2::new(
+                token.custody_ata_account_id(),
+                token.token_program_id(),
+                token.token_definition_account_id(),
+                token.amount().as_u128(),
+            )),
+            WitnessedAssetRefundObservationV2::UnknownOrPending,
+            clock,
+        )
+        .map_err(|_| ActorCommandError::AgreementBindingInvalid)
+    }
+
+    async fn submit_transaction(
+        &self,
+        request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError> {
+        self.submit_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(SubmitTransactionResult::new(
+            request.context,
+            request.transaction.transaction_id,
+            SubmissionOutcome::Accepted,
+        ))
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn schema5_asset_refund_owner_uses_exact_finalized_baseline_not_moving_latest_state() {
+    let mut fixture =
+        ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    let _ = configure_schema5_asset_extension(&mut fixture);
+    let port = ExactBaselineLezAssetRefundPort {
+        run_id: fixture.config.lez_bridge.run_id.clone(),
+        role: fixture.config.role.bridge(),
+        escrow_program_id: fixture.config.lez_bridge.runtime.escrow_program_id,
+        transaction: asset_claim_transaction(),
+        state_only_calls: Arc::new(AtomicUsize::new(0)),
+        exact_calls: Arc::new(AtomicUsize::new(0)),
+        prepare_calls: Arc::new(AtomicUsize::new(0)),
+        submit_calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let observer = LezAssetRefundObserver {
+        config: &fixture.config,
+        chain: port.clone(),
+        state_db: fixture.config.state_db.clone(),
+    };
+
+    assert_eq!(
+        observer
+            .observe(&fixture.agreement, RefundTransition::MakerLeg)
+            .await,
+        Ok(ActorRefundObservation::Pending { chain: Chain::Lez })
+    );
+    assert_eq!(port.state_only_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(port.prepare_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(port.exact_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(port.submit_calls.load(Ordering::SeqCst), 1);
+}
+
 impl ActorFixture {
     fn new() -> Self {
         Self::with_agreement(

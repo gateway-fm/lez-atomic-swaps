@@ -586,9 +586,18 @@ impl FinalizedAssetObserver {
         };
         let (refund, stable) = match scanned {
             None => (WitnessedAssetRefundObservationV2::NotRequested, None),
-            Some(Scan::Missing(stable)) => {
-                (WitnessedAssetRefundObservationV2::Absent, Some(stable))
-            }
+            Some(Scan::Missing(stable)) => (
+                if matches!(request.target, NativeRefundObservationTarget::Exact { .. }) {
+                    // A bounded exact-ID miss cannot prove that no matching
+                    // terms-based refund exists outside this window. Preserve
+                    // uncertainty while still returning its stable state and
+                    // clock for deadline-gated owner reconciliation.
+                    WitnessedAssetRefundObservationV2::UnknownOrPending
+                } else {
+                    WitnessedAssetRefundObservationV2::Absent
+                },
+                Some(stable),
+            ),
             Some(Scan::Unavailable(_)) => {
                 (WitnessedAssetRefundObservationV2::UnknownOrPending, None)
             }
@@ -2959,6 +2968,33 @@ mod tests {
         assert!(matches!(
             outcome.refund,
             WitnessedAssetRefundObservationV2::NotRequested
+        ));
+    }
+
+    #[tokio::test]
+    async fn exact_missing_refund_is_pending_not_definitively_absent() {
+        let definition = token_fixture(EscrowStatus::Funded, HistoricalAccount::Absent);
+        let fixture = token_fixture(EscrowStatus::Funded, holding(definition.definition_id, 75));
+        let service = empty_scan_observer(&fixture);
+        let outcome = service
+            .observe_refund(&ObserveWitnessedAssetRefundV2Request::new(
+                MessageContext::new(
+                    RunId::new("asset-refund-missing-run-0001").unwrap(),
+                    RequestId::new("asset-refund-missing-observe-0001").unwrap(),
+                    Participant::Maker,
+                ),
+                fixture.runtime,
+                fixture.terms,
+                NativeRefundObservationTarget::Exact {
+                    refund_transaction_id: lez_bridge_protocol::TransactionId::from_bytes([99; 32]),
+                    window: DiscoveryWindow::new(10, 1).unwrap(),
+                },
+            ))
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome.refund,
+            WitnessedAssetRefundObservationV2::UnknownOrPending
         ));
     }
 }

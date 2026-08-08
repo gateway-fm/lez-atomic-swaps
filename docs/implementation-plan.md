@@ -7080,7 +7080,16 @@ S12/S13 review and policy-deferred public deployment.
   durable submit-once journal, and require the complete post-baseline finalized
   window before projection. Record the flow and atomicity consequences in ADR
   0180; the focused orchestration contract passes.
-- [ ] Push the refund-window checkpoint, execute a fresh two-direction Bitcoin Regtest
+- [x] Second fresh replay proved the baseline refresh active, then captured the
+  remaining protocol mismatch directly: the sidecar returned definitive
+  `Absent` for an exact-ID miss, which the bridge client and actor correctly
+  rejected. Exact cleanup again passed without targeting foreign resources.
+- [x] RED then GREEN exact-miss semantics under ADR 0181: the sidecar now
+  returns `UnknownOrPending` with stable state/clock facts, while the owner
+  avoids a moving-latest account read and reaches its durable CAS only from the
+  configured exact baseline. All 93 actor tests, 31 sidecar library tests,
+  strict actor/sidecar Clippy, and the orchestration contract pass.
+- [ ] Push the exact-miss checkpoint, execute a fresh two-direction Bitcoin Regtest
   plus LEZ 0.2 custom-token refund journey, and retain a sanitized checked
   certificate with terminal replay and exact cleanup evidence.
 - [ ] Close F7 only after the actual-node certificate, quality wrapper, manual

@@ -5707,43 +5707,11 @@ where
             );
         }
 
-        let state_target = NativeRefundObservationTarget::StateOnly;
-        let state_request_id = lez_asset_refund_request_id(
-            self.config,
-            agreement,
-            &extension,
-            &binding,
-            transition,
-            "observe_witnessed_asset_refund",
-            Some(state_target),
-            None,
-        )?;
-        let state_response = self
-            .chain
-            .observe_asset_refund(&binding, state_request_id, state_target)
-            .await?;
-        validate_lez_asset_refund_response(
-            self.config,
-            agreement,
-            &extension,
-            transition,
-            state_target,
-            &state_response,
-        )?;
-        if state_response.refund != WitnessedAssetRefundObservationV2::NotRequested {
-            return Err(ActorCommandError::AgreementBindingInvalid);
-        }
-        if state_response.metadata.status != EscrowState::Funded
-            && state_response.metadata.status != EscrowState::Refunded
-        {
-            return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
-        }
-        if state_response.metadata.status == EscrowState::Funded
-            && state_response.clock_after.timestamp_ms < agreement.lez_terms().refund_at_ms()
-        {
-            return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
-        }
-
+        // Owner authority comes only from the caller-pinned exact finalized
+        // window below. Reading the continually advancing latest state here
+        // can outrun LEZ 0.2 historical account material and never converge.
+        // Preparing is non-public; the exact response still validates funded
+        // state and the signed deadline before the journal can authorize send.
         let prepare_request_id = lez_asset_refund_request_id(
             self.config,
             agreement,
@@ -5793,7 +5761,6 @@ where
             .chain
             .observe_asset_refund(&binding, request_id.clone(), target)
             .await?;
-        validate_monotonic_lez_clocks(state_response.clock_after, response.clock_after)?;
         self.reconcile_and_maybe_submit(
             agreement, &extension, &binding, transition, &effect, &response,
         )
