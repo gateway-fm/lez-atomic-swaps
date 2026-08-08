@@ -84,6 +84,8 @@ for required in \
   'prepare_m5_btc_delivery_plan "${directions[@]}"' \
   'overlap_actor_config()' \
   'config="$(overlap_actor_config "$direction" "$role")"' \
+  'handoff_config="$(overlap_actor_config "$direction" "$role")"' \
+  'M7 terminal replay acceptance escaped shared authority' \
   '(map(.swap_id) | unique | length) == 2' \
   '(map(.offer_id) | unique | length) == 2' \
   '(map(.reservation_id) | unique | length) == 2' \

@@ -89,7 +89,12 @@ by ADR 0191. Exact run `m7btcconc-abd1403-a` then proved the reverse Bitcoin
 second lock on attempt one and held both swaps at revision two before exposing
 a stale legacy path in the isolation-evidence aggregator. The aggregator now
 resolves exact application authority from the shared handoff manifest; terminal
-two-direction overlap remains pending replay.
+two-direction overlap remains pending replay. Exact run
+`m7btcconc-ad77632-a` proved that manifest-bound four-actor isolation packet,
+then finalized the forward revealing claim before a second legacy-only guard
+looked for the single M5 application root during terminal replay. Terminal
+replay now resolves the exact direction/swap acceptance, agreement, receipt,
+database row, and role config from the same shared authority boundary.
 
 ## Components
 

@@ -7260,7 +7260,20 @@ S12/S13 review and policy-deferred public deployment.
   requires the role-specific owner-root path, schema-6 role binding, canonical
   regular files, and the colocated application state database before reading
   inode evidence. M7, canonical M3, and both legacy M5 BTC contracts pass;
-  fresh exact-node replay remains required.
+  the next exact-node replay was `m7btcconc-ad77632-a` below.
+- [x] Replay pushed commit `ad77632` as `m7btcconc-ad77632-a`. Both swaps again
+  reached revision two, the new manifest-bound packet proved four distinct
+  actor states and signing journals, and only then did settlement start. The
+  forward revealing LEZ claim finalized and projected before terminal replay
+  hit a second single-M5-root guard. Exact cleanup passed without broad cleanup
+  or any foreign resource target.
+- [x] RED then GREEN terminal replay against the same shared application
+  authority. For each direction and role it selects the exact handoff row,
+  validates the no-replay acceptance, agreement and receipt paths/digests,
+  binds Maker authority to the one SQLite registry row or Taker authority to
+  the receipt, and requires equality with the already validated handoff config.
+  All four preserved exact-run authorities pass the resolver checks; M7,
+  canonical M3, and legacy M5 contracts remain GREEN.
 - [x] Prepare both authenticated Delivery plans and exact authority templates
   before stage-two execution while retaining distinct swap IDs.
 - [x] Admit both agreements through one Delivery/Chat daemon and SQLite
@@ -7269,7 +7282,8 @@ S12/S13 review and policy-deferred public deployment.
 - [ ] Activate two workers and reuse the existing actual Bitcoin Core/LEZ
   revision-two overlap barrier through both terminal claims. Worker activation
   and both real locks are GREEN in `m7btcconc-abd1403-a`; the manifest-bound
-  isolation packet and terminal settlements still require a clean replay.
+  isolation packet is GREEN in `m7btcconc-ad77632-a`. Terminal settlements and
+  replay still require a clean run.
 - [ ] Retain a secret-safe exact-node certificate, update U2/S5 only to the
   evidence actually proved, run the complete milestone gate once at slice end,
   commit, push, and update ETA. Do not mark U2/S5 GREEN from the contract alone.

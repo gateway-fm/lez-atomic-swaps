@@ -3157,7 +3157,9 @@ terminal_replay_actor_config() {
   local database="${application_root}/maker.sqlite3"
   local receipt="${application_root}/owner/acceptance-receipt.json"
   local agreement_file="${owner_root}/agreement-v1.borsh"
+  local maker_owner_root="$owner_root"
   local swap_id="${m5_btc_swap_ids[$direction]:-}"
+  local acceptance="" handoff="" handoff_config=""
   local config config_sha state_db agreement_sha receipt_agreement_sha row
   local -a rows=()
 
@@ -3166,7 +3168,40 @@ terminal_replay_actor_config() {
     printf '%s\n' "$config"
     return
   fi
-  [[ "$direction" == taker_sells_foreign && "$role" =~ ^(maker|taker)$ &&
+  if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
+    application_root="${private_dir}/m7-application"
+    owner_root="${application_root}/owner/${direction}"
+    maker_owner_root="${application_root}/owner"
+    database="${application_root}/maker.sqlite3"
+    handoff="${application_root}/m7-application-handoff.json"
+    [[ -f "$handoff" && ! -L "$handoff" ]] ||
+      fail "M7 terminal replay handoff is unavailable"
+    acceptance="$(jq -er --arg direction "$direction" --arg swap "$swap_id" '
+      select(.schema_version == 1 and .kind == "m7_btc_application_handoff")
+      | [.directions[] | select(.direction == $direction and .swap_id == $swap)]
+      | select(length == 1) | .[0].acceptance_file | strings
+    ' "$handoff")" || fail "M7 terminal replay acceptance is unavailable"
+    [[ "$acceptance" == "${owner_root}/acceptance.json" &&
+       -f "$acceptance" && ! -L "$acceptance" ]] ||
+      fail "M7 terminal replay acceptance escaped shared authority"
+    agreement_file="$(jq -er --arg swap "$swap_id" '
+      select(.schema_version == 1 and .swap_id == $swap
+        and .private_material_disclosed == false
+        and .replay.proposal == false and .replay.completion == false
+        and .replay.agreement_file == false)
+      | .agreement_file | strings
+    ' "$acceptance")" || fail "M7 terminal replay agreement is unavailable"
+    receipt="$(jq -er '.actor.receipt_file | strings' "$acceptance")" ||
+      fail "M7 terminal replay receipt is unavailable"
+    [[ "$agreement_file" == "${owner_root}/agreement-v1.borsh" &&
+       "$receipt" == "${owner_root}/acceptance-receipt.json" ]] ||
+      fail "M7 terminal replay agreement or receipt escaped shared authority"
+    handoff_config="$(overlap_actor_config "$direction" "$role")"
+  else
+    [[ "$direction" == taker_sells_foreign ]] ||
+      fail "M5 terminal replay supports only the accepted forward application"
+  fi
+  [[ "$role" =~ ^(maker|taker)$ &&
      "$swap_id" =~ ^[0-9a-f]{64}$ && -d "$owner_root" && ! -L "$owner_root" &&
      -f "$receipt" && ! -L "$receipt" && -f "$agreement_file" &&
      ! -L "$agreement_file" ]] ||
@@ -3192,7 +3227,7 @@ terminal_replay_actor_config() {
         fail "M5 terminal replay Maker manifest is ambiguous"
       row="${rows[0]}"
       IFS=$'\t' read -r config config_sha state_db <<<"$row"
-      [[ "$config" == "${owner_root}/maker-actors/"*/maker/actor-config.json ]] ||
+      [[ "$config" == "${maker_owner_root}/maker-actors/"*/maker/actor-config.json ]] ||
         fail "M5 terminal replay Maker manifest escaped its owner root"
       ;;
     taker)
@@ -3206,6 +3241,9 @@ terminal_replay_actor_config() {
         fail "M5 terminal replay Taker manifest escaped its owner root"
       ;;
   esac
+  if [[ "$m7_btc_accepted_concurrency" == 1 && "$config" != "$handoff_config" ]]; then
+    fail "M7 terminal replay config differs from the atomic handoff"
+  fi
 
   [[ "$config" == /* && -f "$config" && ! -L "$config" ]] ||
     fail "M5 terminal replay role artifact is unsafe or changed"
