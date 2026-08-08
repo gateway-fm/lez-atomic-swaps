@@ -1,0 +1,284 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_f7_custom_token_refund",
+  "result": "passed",
+  "run_id": "m7f7refund-062b6ba-h",
+  "repository_commit": "062b6ba0db97afddc3cf3d2b4a522089752cb38f",
+  "duration_ms": 3699310,
+  "artifact": {
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "guest_elf_sha256": "bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7",
+    "program_id": "f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e",
+    "deployer_sha256": "c594ea1ec34fc0227e8e1b6ced9917ad4df5c5e4dfac7616565aae830d3f5cbd",
+    "independently_hashed": true
+  },
+  "deployment": {
+    "profile": "m3_f7_checked_local",
+    "genesis_block_hash": "661fb88b083397366200f7fd80318950908c74463bb6047e74b68d4bfb285d98",
+    "transaction_id": "efc6cbfd3aaebeb771688678d6f042c9846f2124c50237b7212b37497453b4cf",
+    "finalized_block_id": 11,
+    "submission_count": 1,
+    "maker_vault_claim_count": 1,
+    "taker_vault_claim_count": 1,
+    "both_vault_claims_finalized": true
+  },
+  "services": {
+    "bitcoin": {
+      "version": "31.1",
+      "network": "regtest"
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "network": "private_local",
+      "slot_duration_seconds": "3.0"
+    }
+  },
+  "directions": [
+    {
+      "direction": "taker_sells_foreign",
+      "asset": {
+        "name": "M3F7A",
+        "kind": "custom_token",
+        "asset_commitment": "eab6a06c0b72758e6b217bd681140ff834170b9e97e8c0bb32ef38d1a9254e84",
+        "first_lock_order": [
+          "initialize_witnessed",
+          "create_custody_ata",
+          "fund"
+        ]
+      },
+      "expected_unique_effects": {
+        "bitcoin": 2,
+        "lez": 4
+      },
+      "bitcoin_effect_ids": [
+        "a7901b7e45ca57e17c624c15981cf57980f72a0e7247230bc8912042367626c3",
+        "c287cd2edffeedcb190df6d99dcc1955e8bdff76be38835bb2a87687dca553fe"
+      ],
+      "lez_effect_ids": [
+        "2f8e7a59902961bff2abc11fd3f9e28af0a126c228e4db684c11e08daa94bd85",
+        "a0603cf6f18192c0d91d556a6b831d3399c771de7192f9d61a87ef636c0e6a83",
+        "ff2bea4641a98066d32e428cec21e1114a3697c504df8a0112c6e9bcede196cf",
+        "9f607f1af37ffd97e1f38bda97731fc4e57b2a64a1232023aa638ea83cf195c6"
+      ],
+      "actor_owned_refunds": {
+        "bitcoin": "c287cd2edffeedcb190df6d99dcc1955e8bdff76be38835bb2a87687dca553fe",
+        "lez": "9f607f1af37ffd97e1f38bda97731fc4e57b2a64a1232023aa638ea83cf195c6"
+      },
+      "cooperative_claim_effects_present": false,
+      "refund_order": [
+        "lez_maker",
+        "bitcoin_taker"
+      ],
+      "lez_refund": {
+        "owner": "maker",
+        "transaction_id": "9f607f1af37ffd97e1f38bda97731fc4e57b2a64a1232023aa638ea83cf195c6",
+        "containing_block_id": 143,
+        "containing_timestamp_ms": 1786184669067,
+        "signed_refund_at_ms": 1786184576000,
+        "deadline_satisfied": true,
+        "durable_total_lez_submissions": 4,
+        "exact_finalized_projection": true,
+        "actor_validated_refunded_metadata_zero_custody_and_immutable_depositor": true
+      },
+      "bitcoin_refund": {
+        "owner": "taker",
+        "transaction_id": "c287cd2edffeedcb190df6d99dcc1955e8bdff76be38835bb2a87687dca553fe",
+        "witness_transaction_id": "c82de6455e9a67fb691ed73fbfdb1b7d8f3016fee23c27d193fa45befab8ce3a",
+        "containing_block_hash": "44f45f9cdd71a330f377fbeaa03ce857dac98966c77c64f3062a8405da8e48d8",
+        "containing_block_height": 247,
+        "signed_refund_height": 247,
+        "signed_csv_sequence": 144,
+        "projected_revision": 4,
+        "exact_countersigned_transaction": true,
+        "canonical_three_item_witness": true
+      },
+      "terminal_roles": {
+        "maker": {
+          "state": "active",
+          "phase": "refunded",
+          "revision": 4,
+          "next_action": "complete"
+        },
+        "taker": {
+          "state": "active",
+          "phase": "refunded",
+          "revision": 4,
+          "next_action": "complete"
+        }
+      },
+      "terminal_balances": {
+        "balances": {
+          "maker": 250,
+          "taker": 0,
+          "custody": 0
+        },
+        "conservation_total": 250,
+        "expected_total": 250,
+        "exact_direction_balances": true,
+        "owner_reader": "official_lez_v0_2_wallet",
+        "finalized_before_read": true,
+        "wallet_operations_read_only": true,
+        "custody_finalized": true,
+        "custody_metadata_status": "refunded",
+        "terminal_transfer_atomicity": "single_on_chain_refund_transaction"
+      },
+      "replay_resubmission_count": 0
+    },
+    {
+      "direction": "taker_sells_lez",
+      "asset": {
+        "name": "M3F7B",
+        "kind": "custom_token",
+        "asset_commitment": "a7f11bf6be935a6006509c9e1f5c39b6d457f60d34f867ebb1bd78ac6031499e",
+        "first_lock_order": [
+          "initialize_witnessed",
+          "create_custody_ata",
+          "fund"
+        ]
+      },
+      "expected_unique_effects": {
+        "bitcoin": 2,
+        "lez": 4
+      },
+      "bitcoin_effect_ids": [
+        "33b99a8c2d9ae0b7ca7df50155fc26c324c12868d148f867e0f89ebddd33abae",
+        "2fbc0c762024402168972ce5387877db7076f5221e137a4de046f5245774805e"
+      ],
+      "lez_effect_ids": [
+        "22ba1630a375618764bc0d573a720d151d8a70a01ced02e3eff6e6f723fe6775",
+        "250056c56401dccba63ecee41acd59e2e6bac0cd905d4d0e65bfebd967740bd1",
+        "ec01f0c737e8a7f7f7023a78545e37067f3ec9a475469a4508ce6f50261c9160",
+        "71eba17372576554b4a0695e11b2c62f78819a54ca97a7cc453f7cdbe99d710e"
+      ],
+      "actor_owned_refunds": {
+        "bitcoin": "2fbc0c762024402168972ce5387877db7076f5221e137a4de046f5245774805e",
+        "lez": "71eba17372576554b4a0695e11b2c62f78819a54ca97a7cc453f7cdbe99d710e"
+      },
+      "cooperative_claim_effects_present": false,
+      "refund_order": [
+        "bitcoin_maker",
+        "lez_taker"
+      ],
+      "bitcoin_refund": {
+        "owner": "maker",
+        "transaction_id": "2fbc0c762024402168972ce5387877db7076f5221e137a4de046f5245774805e",
+        "witness_transaction_id": "4928696d8931383b3b41abb5f37cf8d3f80fd4e6d2887ad1a9d86df24d639dc9",
+        "containing_block_hash": "4c4a84d82d326d027de0a37f500c6c6155c1fd508f4966913c9c4857adc9ad85",
+        "containing_block_height": 392,
+        "signed_refund_height": 392,
+        "signed_csv_sequence": 144,
+        "projected_revision": 3,
+        "exact_countersigned_transaction": true,
+        "canonical_three_item_witness": true
+      },
+      "lez_refund": {
+        "owner": "taker",
+        "transaction_id": "71eba17372576554b4a0695e11b2c62f78819a54ca97a7cc453f7cdbe99d710e",
+        "containing_block_id": 350,
+        "containing_timestamp_ms": 1786186767986,
+        "signed_refund_at_ms": 1786186681000,
+        "deadline_satisfied": true,
+        "durable_total_lez_submissions": 4,
+        "exact_finalized_projection": true,
+        "actor_validated_refunded_metadata_zero_custody_and_immutable_depositor": true
+      },
+      "terminal_roles": {
+        "maker": {
+          "state": "active",
+          "phase": "refunded",
+          "revision": 4,
+          "next_action": "complete"
+        },
+        "taker": {
+          "state": "active",
+          "phase": "refunded",
+          "revision": 4,
+          "next_action": "complete"
+        }
+      },
+      "terminal_balances": {
+        "balances": {
+          "maker": 0,
+          "taker": 250,
+          "custody": 0
+        },
+        "conservation_total": 250,
+        "expected_total": 250,
+        "exact_direction_balances": true,
+        "owner_reader": "official_lez_v0_2_wallet",
+        "finalized_before_read": true,
+        "wallet_operations_read_only": true,
+        "custody_finalized": true,
+        "custody_metadata_status": "refunded",
+        "terminal_transfer_atomicity": "single_on_chain_refund_transaction"
+      },
+      "replay_resubmission_count": 0
+    }
+  ],
+  "atomicity": {
+    "proof_scope": "two_independent_ordered_refund_directions",
+    "forward_finalized_lez_refund_precedes_bitcoin_refund": true,
+    "reverse_bitcoin_refund_precedes_finalized_lez_refund": true,
+    "both_principals_returned": true,
+    "double_collection_observed": false,
+    "distributed_transaction_claimed": false,
+    "future_reorganization_immunity_claimed": false,
+    "argument": "In the forward direction, the Maker-owned LEZ refund finalized and projected before the later signed Bitcoin Taker refund. In the reverse direction, the signed Bitcoin Maker refund finalized before the later Taker-owned LEZ refund. Each chain admitted one terminal refund, both role stores reached revision four, custody ended at zero, owner balances returned the full 250-token principal, and replay added no effect. This is conditional atomicity for these two fresh local-node executions, not a distributed transaction or future-reorganization guarantee."
+  },
+  "cleanup": {
+    "result": "passed",
+    "scope": "captured_exact_ids_names_and_secure_state_root",
+    "all_exact_run_resources_absent": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "evidence_sha256": {
+    "main_packet": "c142b910364029a1223456c57963d579c3cdb00399de1acfdd0c1b5efbf00637",
+    "cleanup": "d191bfacd89fbcef28c7a1c06bfd989864f77e0ff3d6ac6dd0dc3a3598f63996",
+    "node_startup": "1b55d5d0208bc95acf81140e9c353d9a1ae89ef4d022657f1bb475e2f50ff0c4",
+    "lez_bootstrap": "3f169b0b15e400fadf0017bd8cc2435052b02ea96082dafa2c139ccfcb75e334",
+    "phase_timings": "9549f438837810e0bbe1f7b3977e924f8d20d870cf9c22a6ca6e8cd95f1a49c7",
+    "forward_actor_timings": "eed11abc5684368c16103c9a96b218c8504c8119c74b8367448ed1da483a6a7a",
+    "reverse_actor_timings": "8355f1fd7737dd48e74348970ed069cf9c6cbe9c5de98973051d738ccf0f0a29",
+    "forward_effects": "2b71705349527440e0c1d1740d86f8cb08d862be910659bee07a62d327cfc0eb",
+    "forward_lez_refund": "f96e71d222645b176a77959207f98275625d2d965029da82ec25bf588b317d1c",
+    "forward_bitcoin_refund": "9b657f0cb5187cbcbd6624d00710d6de2d9023dcdf07af0846bb41c9df03301a",
+    "forward_terminal_balances": "446ac3f7e83c0a454c2f1cd0d11cdf9aec347eb6940e90285483256256517766",
+    "forward_later_bound": "1929139ed37c6608a7a5b20f807cd3247f4c38da4aa1e033d0e5b2582a9948d7",
+    "forward_replay_before": "3c3ca36f8d526767087bce678ce32275adcb101c02e375aadcf7b4c6b326c1b3",
+    "forward_replay_after": "3c3ca36f8d526767087bce678ce32275adcb101c02e375aadcf7b4c6b326c1b3",
+    "reverse_effects": "c782eb24ca3408293c4805983a5eec3e80c63393bd5ade851380a3b757bff02d",
+    "reverse_bitcoin_refund": "41a33572e4944ef66c3214130a0ae9ebdfac5c5582c1567a5fa839ff6d41041d",
+    "reverse_lez_refund": "4ab1697d1caf54180579d590934048e918ffd07bf8e8d6b6b36de1b7c45d2d34",
+    "reverse_terminal_balances": "357b1212364101e8276daa88ef8cf4b973db960d040fa64b6a4e8fd2e7f249ea",
+    "reverse_lez_deadline": "965cbee1565743bf1aa7bdd77193f7391921aa77df50052ae7d871d8f899d67a",
+    "reverse_replay_before": "a555de7391b25bd860303226d1c13381f51c9c15a5cd5ceaae88e00681fbe711",
+    "reverse_replay_after": "a555de7391b25bd860303226d1c13381f51c9c15a5cd5ceaae88e00681fbe711"
+  },
+  "not_proven_by_this_certificate": [
+    "public-network deployment",
+    "future reorganization immunity",
+    "fee-stress or replacement policy",
+    "concurrent accepted swaps",
+    "other process-kill timing seams"
+  ],
+  "cold_setup_external_resources": [
+    "pinned package, Git, and release endpoints when immutable local caches are cold"
+  ],
+  "cold_setup_flakiness": "Cold-cache DNS, registry, package, Git, or release availability can block setup. Certification itself requires locked offline build inputs and uses isolated local chain services.",
+  "runtime_external_resources": [
+    {
+      "name": "Bedrock NTP",
+      "endpoint": "pool.ntp.org:123/udp",
+      "attempted": true,
+      "required": false,
+      "success_required": false,
+      "observed_timeout_count": 244
+    }
+  ],
+  "runtime_external_flakiness": "The pinned Bedrock component attempted NTP and observed timeouts, but local finality and certification did not depend on a response. No public chain RPC, faucet, or public funds participated.",
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment": false
+}
