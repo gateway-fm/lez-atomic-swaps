@@ -9123,3 +9123,76 @@ revision two with the manual Refund action Completed. The submission hash and
 transaction ID were unchanged, automatic retry remained false, and the
 observer sent no transaction. Source status zero and exact scoped cleanup
 passed; the foreign sentinel survived.
+
+## Flow 1ZK: Recover an accepted ZEC application after process kill
+
+This flow emulates the actual roles: a Maker operator publishes through the
+daemon, a separate Taker accepts through `lez-taker`, the daemon supervisor
+owns Maker effects, and the Taker claim stays bound to its acceptance receipt.
+The injected fault occurs only after the real local Zebra node accepts Maker
+funding and before the actor can return stdout.
+
+First run the zero-effect contract:
+
+```bash
+./scripts/test-m7-zec-accepted-process-kill-contract.sh
+```
+
+Follow Flow 1B to generate fresh Maker and Taker LEZ identities, start a unique
+retained LEZ v0.2 stack and primary-only Zebra Regtest node, create exactly 104
+Zebra maturity blocks, deploy the pinned escrow, and finalize one Vault Claim
+per role. Export the same literal-loopback endpoints, chain/program identities,
+current deployment/finality/onboarding evidence, actor accounts, and private
+signer-file paths described there. Do not reuse a partially affected Zebra
+node after a failed effect-bearing attempt.
+
+An optional project-private cache makes retries fast without touching shared
+Cargo targets. It must be a canonical owner-owned mode-0700 directory:
+
+```bash
+export M7_ZEC_CRASH_BUILD_CACHE_ROOT=/tmp/lez-m7-zec-crash-cache-unique
+install -d -m 0700 "$M7_ZEC_CRASH_BUILD_CACHE_ROOT"
+export RUN_ID=m7-zec-kill-$(date -u +%Y%m%d%H%M%S)
+./scripts/run-m7-zec-accepted-process-kill-poc.sh
+```
+
+The runner fixes application mode, `taker_sells_lez`, Claim, and the
+compile-time-only fault seam. It refuses public or non-literal-loopback RPCs,
+reused output roots, unsafe evidence/signer files, a nonprivate cache, or a
+production/default actor build. Inspect only secret-safe outputs:
+
+```bash
+EVIDENCE=/tmp/lez-atomic-swaps-${RUN_ID}/evidence
+jq '{run_id,result,zebra_tip,atomic_order_observed,application_plane}' \
+  "$EVIDENCE/result.json"
+jq '{crash_boundary,kill_order,exact_funding_transaction_id,
+  confirmations_mined_before_restart,mempool_identity_preserved,tip_unchanged,
+  abandoned_generation_transferred,old_process_identities_absent,
+  automatic_resubmission_observed,
+  production_binary_exposes_crash_hook,terminal}' \
+  "$EVIDENCE/m7-zec-accepted-process-kill.json"
+```
+
+Required facts are `daemon_then_actor`, zero confirmations before restart, the
+same singleton transaction and tip before/after restart, a recovered generation
+greater than the crashed generation, both exact old PID/start-tick identities
+absent, no observed automatic resend, no production crash hook, both roles
+`completed`, terminal scheduler state, Zebra height 104 to 107, and the atomic
+order funding-confirmed then LEZ reveal then ZEC claim-confirmed. A shell
+`Killed` diagnostic for the old daemon is expected; the runner itself must exit
+zero.
+
+Runtime external resources are empty: pinned local LEZ v0.2 Bedrock,
+sequencer, indexer and sidecar plus official Zebra Regtest use dynamic
+literal-loopback RPCs and deterministic local genesis/Regtest funds. There is
+no public peer, RPC, faucet, public fund, external finality source, or public
+deployment. Pinned Bedrock may attempt non-gating NTP. Cold caches can require
+the pinned Cargo/Git/Docker/Risc0/Logos artifacts; runtime flakiness is limited
+to local CPU/disk pressure, node readiness/finality, process scheduling at the
+marker, SQLite/fsync, and bounded local RPC polling.
+
+Use only the exact cleanup commands printed by the LEZ and Zebra launchers.
+They contain run-owned container, network, image and directory identities.
+Never use broad Docker pruning while other projects are active. Prototype run
+`m7zecpk999e287d` proved the flow from working-tree source; a clean pushed-source
+replay and checked certificate remain the certification gate.

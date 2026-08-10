@@ -24,6 +24,8 @@ readonly POC_DIRECTION="${POC_DIRECTION:-taker_sells_lez}"
 readonly M5_APPLICATION_MODE="${M5_APPLICATION_MODE:-0}"
 readonly M6_TAKER_SERVICE_MODE="${M6_TAKER_SERVICE_MODE:-0}"
 readonly M6_ZEC_JOURNEY="${M6_ZEC_JOURNEY:-claim}"
+readonly M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION="${M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION:-0}"
+readonly M7_ZEC_CRASH_BUILD_CACHE_ROOT="${M7_ZEC_CRASH_BUILD_CACHE_ROOT:-}"
 readonly M7_ROUTE_HEALTH_CONFIG="${M7_ROUTE_HEALTH_CONFIG:-}"
 readonly M7_ROUTE_HEALTH_POLL_MILLISECONDS="${M7_ROUTE_HEALTH_POLL_MILLISECONDS:-100}"
 readonly DISCOVERY_BLOCKS=256
@@ -72,6 +74,17 @@ if [[ "$M5_APPLICATION_MODE" != 0 && "$M5_APPLICATION_MODE" != 1 ]]; then
 fi
 if [[ "$M6_TAKER_SERVICE_MODE" != 0 && "$M6_TAKER_SERVICE_MODE" != 1 ]]; then
   echo 'M6_TAKER_SERVICE_MODE must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" != 0 \
+  && "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" != 1 ]]; then
+  echo 'M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION must be 0 or 1' >&2
+  exit 2
+fi
+if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 \
+  && ( "$M5_APPLICATION_MODE" != 1 || "$M6_TAKER_SERVICE_MODE" != 0 \
+    || "$M6_ZEC_JOURNEY" != claim ) ]]; then
+  echo 'M7 accepted-ZEC process-kill mode requires M5 application Claim without the M6 service' >&2
   exit 2
 fi
 if [[ "$M6_TAKER_SERVICE_MODE" == 1 && "$M5_APPLICATION_MODE" != 1 ]]; then
@@ -229,6 +242,8 @@ m5_maker_state_dir=''
 m5_expected_funding_txid=''
 m5_maker_phase='not_activated'
 m5_transport_cutover_complete=0
+m7_zec_process_kill_injected=0
+m7_zec_process_kill_recovered=0
 m6_service_pid=''
 m6_service_start_ticks=''
 m6_service_bin=''
@@ -261,12 +276,18 @@ process_start_ticks() {
   awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null
 }
 
+process_start_identity_matches() {
+  local pid="$1"
+  local start_ticks="$2"
+  [[ -n "$pid" && -n "$start_ticks" && -r "/proc/${pid}/stat" ]] || return 1
+  [[ "$(process_start_ticks "$pid")" == "$start_ticks" ]]
+}
+
 process_is_owned() {
   local pid="$1"
   local start_ticks="$2"
   local expected_exe="$3"
-  [[ -n "$pid" && -n "$start_ticks" && -r "/proc/${pid}/stat" ]] || return 1
-  [[ "$(process_start_ticks "$pid")" == "$start_ticks" ]] || return 1
+  process_start_identity_matches "$pid" "$start_ticks" || return 1
   [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" == "$expected_exe" ]]
 }
 
@@ -370,8 +391,30 @@ capture_m5_supervised_maker_status() {
 }
 
 start_m5_full_supervised_daemon() {
-  local ready_file="${application_root}/runtime/ready-supervised"
-  local log="${evidence_dir}/m5-maker-daemon-supervised.log"
+  local instance="${1:-initial}"
+  local ready_file log actor_attempt_timeout_ms=20000
+  local -a test_pause_arguments=()
+  case "$instance" in
+    initial)
+      ready_file="${application_root}/runtime/ready-supervised"
+      log="${evidence_dir}/m5-maker-daemon-supervised.log"
+      ;;
+    recovery)
+      ready_file="${application_root}/runtime/ready-supervised-recovery"
+      log="${evidence_dir}/m7-zec-maker-daemon-recovery.log"
+      ;;
+    *) return 1 ;;
+  esac
+  if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+    # Give the external feature-only crash coordinator enough time to observe
+    # the accepted marker under host contention. Production retains 20s.
+    actor_attempt_timeout_ms=120000
+    test_pause_arguments=(
+      --actor-test-pause-swap-id "$m5_swap_id"
+      --actor-test-pause-operation zcash_fund
+      --actor-test-pause-marker "${application_root}/runtime/m7-zec-funding-submitted.json"
+    )
+  fi
   [[ ! -e "$ready_file" && ! -e "$m5_maker_socket" && ! -e "$m5_chat_socket" ]] || {
     echo 'M5 full supervised daemon endpoints already exist' >&2
     return 1
@@ -391,12 +434,13 @@ start_m5_full_supervised_daemon() {
     --zec-actor-program "$m5_actor_program" \
     --zec-actor-program-sha256 "$m5_actor_program_sha256" \
     --actor-supervisor \
-    --actor-attempt-timeout-milliseconds 20000 \
+    --actor-attempt-timeout-milliseconds "$actor_attempt_timeout_ms" \
     --actor-effect-cutoff-boottime-milliseconds "$corridor_deadline_monotonic_ms" \
     --actor-poll-milliseconds 10 \
     --actor-requeue-delay-seconds 1 \
     --actor-failure-backoff-seconds 1 \
     --actor-max-output-bytes 8192 \
+    "${test_pause_arguments[@]}" \
     >"$log" 2>&1 &
   m5_daemon_pid=$!
   m5_daemon_start_ticks="$(process_start_ticks "$m5_daemon_pid")"
@@ -604,6 +648,9 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   require_command install
   require_command strip
 fi
+if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+  require_command rm
+fi
 
 # A retained local node tuple may service only one effect-bearing corridor at a
 # time. The lock is scoped to the exact endpoints and does not touch unrelated
@@ -695,18 +742,63 @@ verify_native_library libfq.a 797b5d24bb8e8b088f811bddfff35f33973af9c797fb381248
 verify_native_library libfr.a 40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82
 
 echo 'Prebuilding the provisioner, actor, and exact v0.2 bridge before provisioning'
-if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+workspace_target_root=''
+sidecar_target_root=''
+if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+  mkdir -m 0700 "$private_base"
+  if [[ -n "$M7_ZEC_CRASH_BUILD_CACHE_ROOT" ]]; then
+    if [[ "$M7_ZEC_CRASH_BUILD_CACHE_ROOT" != /* \
+      || ! -d "$M7_ZEC_CRASH_BUILD_CACHE_ROOT" \
+      || -L "$M7_ZEC_CRASH_BUILD_CACHE_ROOT" \
+      || "$(readlink -f -- "$M7_ZEC_CRASH_BUILD_CACHE_ROOT")" != "$M7_ZEC_CRASH_BUILD_CACHE_ROOT" \
+      || "$(stat -c %a -- "$M7_ZEC_CRASH_BUILD_CACHE_ROOT")" != 700 \
+      || "$(stat -c %u -- "$M7_ZEC_CRASH_BUILD_CACHE_ROOT")" != "$EUID" ]]; then
+      echo 'M7 crash build cache must be an existing canonical owner-private directory' >&2
+      exit 2
+    fi
+    workspace_target_root="${M7_ZEC_CRASH_BUILD_CACHE_ROOT}/workspace-target"
+    sidecar_target_root="${M7_ZEC_CRASH_BUILD_CACHE_ROOT}/sidecar-target"
+  else
+    workspace_target_root="${private_base}/workspace-target"
+    sidecar_target_root="${private_base}/sidecar-target"
+  fi
+  mkdir -p -m 0700 "$workspace_target_root" "$sidecar_target_root"
+  for target_root in "$workspace_target_root" "$sidecar_target_root"; do
+    if [[ ! -d "$target_root" || -L "$target_root" \
+      || "$(readlink -f -- "$target_root")" != "$target_root" \
+      || "$(stat -c %a -- "$target_root")" != 700 \
+      || "$(stat -c %u -- "$target_root")" != "$EUID" ]]; then
+      echo 'M7 crash build target must be a canonical owner-private directory' >&2
+      exit 2
+    fi
+  done
+  CARGO_TARGET_DIR="$workspace_target_root" cargo +1.96.0 build --locked --offline \
+    --release -p zec-reference-actor --features test-crash-hooks --bins
+elif [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   cargo +1.96.0 build --locked --offline --release -p zec-reference-actor --bins
 else
   cargo +1.96.0 build --locked --offline -p zec-reference-actor --bins
 fi
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
-  cargo +1.96.0 build --locked --offline --release -p lez-maker-node --bins
-  cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-actor-inspect
-  cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-zec-lock-intent-inspect
-  cargo +1.96.0 build \
-    --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-    --locked --offline --release --bin lez-v02-bridge-poc
+  if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+    CARGO_TARGET_DIR="$workspace_target_root" cargo +1.96.0 build --locked --offline \
+      --release -p lez-maker-node --features test-crash-hooks --bins
+    CARGO_TARGET_DIR="$workspace_target_root" cargo +1.96.0 build --locked --offline \
+      --release -p lez-maker-node --features test-crash-hooks --example maker-actor-inspect
+    CARGO_TARGET_DIR="$workspace_target_root" cargo +1.96.0 build --locked --offline \
+      --release -p lez-maker-node --features test-crash-hooks \
+      --example maker-zec-lock-intent-inspect
+    CARGO_TARGET_DIR="$sidecar_target_root" cargo +1.96.0 build \
+      --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+      --locked --offline --release --bin lez-v02-bridge-poc
+  else
+    cargo +1.96.0 build --locked --offline --release -p lez-maker-node --bins
+    cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-actor-inspect
+    cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-zec-lock-intent-inspect
+    cargo +1.96.0 build \
+      --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+      --locked --offline --release --bin lez-v02-bridge-poc
+  fi
 else
   cargo +1.96.0 build \
     --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
@@ -714,9 +806,15 @@ else
 fi
 
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
-  actor_bin="$(readlink -f target/release/zec-reference-actor)"
-  provisioner_bin="$(readlink -f target/release/zec-local-poc-provision)"
-  sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/release/lez-v02-bridge-poc)"
+  if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+    actor_bin="$(readlink -f "${workspace_target_root}/release/zec-reference-actor")"
+    provisioner_bin="$(readlink -f "${workspace_target_root}/release/zec-local-poc-provision")"
+    sidecar_bin="$(readlink -f "${sidecar_target_root}/release/lez-v02-bridge-poc")"
+  else
+    actor_bin="$(readlink -f target/release/zec-reference-actor)"
+    provisioner_bin="$(readlink -f target/release/zec-local-poc-provision)"
+    sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/release/lez-v02-bridge-poc)"
+  fi
 else
   actor_bin="$(readlink -f target/debug/zec-reference-actor)"
   provisioner_bin="$(readlink -f target/debug/zec-local-poc-provision)"
@@ -725,14 +823,25 @@ fi
 readonly actor_bin provisioner_bin sidecar_bin
 required_binaries=("$actor_bin" "$provisioner_bin" "$sidecar_bin")
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
-  maker_daemon_bin="$(readlink -f target/release/lez-maker-daemon)"
-  maker_cli_bin="$(readlink -f target/release/lez-maker)"
-  taker_bin="$(readlink -f target/release/lez-taker)"
-  chat_draft_bin="$(readlink -f target/release/zec-local-poc-chat-draft)"
-  chat_finalize_bin="$(readlink -f target/release/zec-local-poc-chat-finalize)"
-  actor_inspector_bin="$(readlink -f target/release/examples/maker-actor-inspect)"
-  m5_pair_inspector_bin="$(readlink -f target/release/zec-actor-pair-inspect)"
-  m5_intent_inspector_bin="$(readlink -f target/release/examples/maker-zec-lock-intent-inspect)"
+  if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+    maker_daemon_bin="$(readlink -f "${workspace_target_root}/release/lez-maker-daemon")"
+    maker_cli_bin="$(readlink -f "${workspace_target_root}/release/lez-maker")"
+    taker_bin="$(readlink -f "${workspace_target_root}/release/lez-taker")"
+    chat_draft_bin="$(readlink -f "${workspace_target_root}/release/zec-local-poc-chat-draft")"
+    chat_finalize_bin="$(readlink -f "${workspace_target_root}/release/zec-local-poc-chat-finalize")"
+    actor_inspector_bin="$(readlink -f "${workspace_target_root}/release/examples/maker-actor-inspect")"
+    m5_pair_inspector_bin="$(readlink -f "${workspace_target_root}/release/zec-actor-pair-inspect")"
+    m5_intent_inspector_bin="$(readlink -f "${workspace_target_root}/release/examples/maker-zec-lock-intent-inspect")"
+  else
+    maker_daemon_bin="$(readlink -f target/release/lez-maker-daemon)"
+    maker_cli_bin="$(readlink -f target/release/lez-maker)"
+    taker_bin="$(readlink -f target/release/lez-taker)"
+    chat_draft_bin="$(readlink -f target/release/zec-local-poc-chat-draft)"
+    chat_finalize_bin="$(readlink -f target/release/zec-local-poc-chat-finalize)"
+    actor_inspector_bin="$(readlink -f target/release/examples/maker-actor-inspect)"
+    m5_pair_inspector_bin="$(readlink -f target/release/zec-actor-pair-inspect)"
+    m5_intent_inspector_bin="$(readlink -f target/release/examples/maker-zec-lock-intent-inspect)"
+  fi
   readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin
   readonly actor_inspector_bin m5_pair_inspector_bin m5_intent_inspector_bin
   if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
@@ -976,7 +1085,11 @@ zebra_tip="$(jq -er 'select(.error == null) | .result | numbers' \
   exit 2
 }
 
-mkdir -m 0700 "$private_base" "$evidence_dir"
+if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+  mkdir -m 0700 "$evidence_dir"
+else
+  mkdir -m 0700 "$private_base" "$evidence_dir"
+fi
 m5_actor_program=''
 m5_actor_program_sha256=''
 m5_lez_deployment_receipt_sha256=''
@@ -2726,12 +2839,218 @@ cut_over_m5_negotiation_transports() {
   fi
 }
 
+inject_m7_zec_accepted_process_kill_if_ready() {
+  [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]] || return 0
+  (( m7_zec_process_kill_injected == 0 )) || return 0
+  local marker="${application_root}/runtime/m7-zec-funding-submitted.json"
+  [[ -f "$marker" && ! -L "$marker" ]] || return 0
+  [[ "$(stat -c %a -- "$marker")" == 600 \
+    && "$(stat -c %u -- "$marker")" == "$(id -u)" \
+    && "$(stat -c %h -- "$marker")" == 1 ]] || {
+    echo 'M7 accepted-ZEC crash marker is unsafe' >&2
+    return 1
+  }
+
+  local before_scheduler="${evidence_dir}/m7-zec-process-kill-scheduler-before.json"
+  local after_scheduler="${evidence_dir}/m7-zec-process-kill-scheduler-after.json"
+  local before_mempool="${evidence_dir}/m7-zec-process-kill-mempool-before.json"
+  local after_mempool="${evidence_dir}/m7-zec-process-kill-mempool-after.json"
+  local before_tip="${evidence_dir}/m7-zec-process-kill-tip-before.json"
+  local after_tip="${evidence_dir}/m7-zec-process-kill-tip-after.json"
+  local intent_candidate="${evidence_dir}/m5-maker-lock-intent-candidate.json"
+  local crashed_actor_pid crashed_actor_start_ticks crashed_generation
+  local crashed_daemon_pid="$m5_daemon_pid"
+  local crashed_daemon_start_ticks="$m5_daemon_start_ticks"
+  local recovered_generation=''
+
+  "$actor_inspector_bin" --database "$m5_application_database" >"$before_scheduler"
+  crashed_actor_pid="$(jq -er --arg swap "$m5_swap_id" '
+    .[] | select(.swap_id == $swap and .schedule_state == "leased")
+    | .child_identity.pid | numbers
+  ' "$before_scheduler")"
+  crashed_actor_start_ticks="$(jq -er --arg swap "$m5_swap_id" '
+    .[] | select(.swap_id == $swap and .schedule_state == "leased")
+    | .child_identity.start_ticks | numbers
+  ' "$before_scheduler")"
+  crashed_generation="$(jq -er --arg swap "$m5_swap_id" '
+    .[] | select(.swap_id == $swap and .schedule_state == "leased")
+    | .lease_generation | numbers
+  ' "$before_scheduler")"
+  jq -e --arg swap "$m5_swap_id" --arg program "$m5_actor_program" \
+    --arg program_sha256 "$m5_actor_program_sha256" --argjson pid "$crashed_actor_pid" \
+    --argjson start_ticks "$crashed_actor_start_ticks" '
+    length == 1 and .[0].swap_id == $swap and .[0].actor_kind == "zcash"
+    and .[0].schedule_state == "leased"
+    and .[0].actor_program_path == $program
+    and .[0].actor_program_sha256 == $program_sha256
+    and .[0].child_identity == {pid:$pid,start_ticks:$start_ticks}
+  ' "$before_scheduler" >/dev/null || {
+    echo 'M7 accepted-ZEC scheduler does not bind the exact leased actor identity' >&2
+    return 1
+  }
+  jq -e --arg swap "$m5_swap_id" --argjson pid "$crashed_actor_pid" '
+    .schema_version == 1 and .state == "paused_after_submitted_before_stdout"
+    and .swap_id == $swap and .role == "maker" and .operation == "zcash_fund"
+    and .process_id == $pid
+  ' "$marker" >/dev/null || {
+    echo 'M7 accepted-ZEC crash marker does not bind the leased Maker actor' >&2
+    return 1
+  }
+  process_start_identity_matches "$crashed_actor_pid" "$crashed_actor_start_ticks" || {
+    echo 'M7 accepted-ZEC paused actor identity changed before SIGKILL' >&2
+    return 1
+  }
+  process_is_owned "$crashed_daemon_pid" "$crashed_daemon_start_ticks" "$m5_daemon_bin" || {
+    echo 'M7 accepted-ZEC daemon identity changed before SIGKILL' >&2
+    return 1
+  }
+
+  if [[ -z "$m5_expected_funding_txid" ]]; then
+    "$m5_intent_inspector_bin" --config "$maker_config" --taker-config "$taker_config" \
+      >"$intent_candidate" 2>"${evidence_dir}/m5-maker-lock-intent-candidate.stderr"
+    jq -e --arg swap "$m5_swap_id" '
+      .schema_version == 1 and .swap_id == $swap and .role == "maker"
+      and .operation == "zcash_fund" and (.staged_revision | numbers) >= 0
+      and (.expected_submission_id_internal_hex | test("^[0-9a-f]{64}$"))
+      and (.expected_zebra_txid | test("^[0-9a-f]{64}$"))
+      and .actor_pair_validated == true and .exact_submission_disclosed == false
+    ' "$intent_candidate" >/dev/null || return 1
+    mv -- "$intent_candidate" "${evidence_dir}/m5-maker-lock-intent.json"
+    m5_expected_funding_txid="$(jq -er '.expected_zebra_txid' \
+      "${evidence_dir}/m5-maker-lock-intent.json")"
+  fi
+
+  rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m7-crash-before-mempool","method":"getrawmempool","params":[]}' \
+    >"$before_mempool"
+  rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m7-crash-before-tip","method":"getblockcount","params":[]}' \
+    >"$before_tip"
+  jq -e --arg tx "$m5_expected_funding_txid" '
+    .error == null and .result == [$tx]
+  ' "$before_mempool" >/dev/null || {
+    echo 'M7 accepted-ZEC crash boundary lacks the exact singleton funding transaction' >&2
+    return 1
+  }
+  jq -e '.error == null and (.result | numbers) >= 104' "$before_tip" >/dev/null || return 1
+
+  kill -KILL "$crashed_daemon_pid" || return 1
+  for _ in {1..200}; do
+    process_start_identity_matches "$crashed_daemon_pid" "$crashed_daemon_start_ticks" || break
+    sleep 0.05
+  done
+  process_start_identity_matches "$crashed_daemon_pid" "$crashed_daemon_start_ticks" && {
+    echo 'M7 accepted-ZEC daemon survived exact SIGKILL' >&2
+    return 1
+  }
+  wait "$crashed_daemon_pid" 2>/dev/null || true
+
+  kill -KILL -- "-${crashed_actor_pid}" || return 1
+  for _ in {1..200}; do
+    process_start_identity_matches "$crashed_actor_pid" "$crashed_actor_start_ticks" || break
+    sleep 0.05
+  done
+  process_start_identity_matches "$crashed_actor_pid" "$crashed_actor_start_ticks" && {
+    echo 'M7 accepted-ZEC actor survived exact process-group SIGKILL' >&2
+    return 1
+  }
+
+  m5_daemon_pid=''
+  m5_daemon_start_ticks=''
+  for stale_path in \
+    "${application_root}/runtime/ready-supervised" "$m5_maker_socket" "$m5_chat_socket"; do
+    [[ ! -e "$stale_path" && ! -S "$stale_path" ]] || rm -f -- "$stale_path"
+  done
+  [[ -d "$m5_delivery_directory" && ! -e "$m5_delivery_offline" ]] || {
+    echo 'M7 accepted-ZEC crash changed Delivery before the first-lock cutover' >&2
+    return 1
+  }
+
+  m7_zec_process_kill_injected=1
+  start_m5_full_supervised_daemon recovery
+  for _ in {1..200}; do
+    "$actor_inspector_bin" --database "$m5_application_database" >"$after_scheduler"
+    recovered_generation="$(jq -r --arg swap "$m5_swap_id" \
+      --argjson crashed "$crashed_generation" '
+      first(.[] | select(.swap_id == $swap and .lease_generation > $crashed)
+        | .lease_generation) // empty
+    ' "$after_scheduler" || true)"
+    [[ -n "$recovered_generation" ]] && break
+    process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || return 1
+    sleep 0.05
+  done
+  [[ -n "$recovered_generation" ]] || {
+    echo 'M7 accepted-ZEC restart did not transfer the abandoned actor lease' >&2
+    return 1
+  }
+
+  rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m7-crash-after-mempool","method":"getrawmempool","params":[]}' \
+    >"$after_mempool"
+  rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m7-crash-after-tip","method":"getblockcount","params":[]}' \
+    >"$after_tip"
+  jq -e --arg tx "$m5_expected_funding_txid" '.error == null and .result == [$tx]' \
+    "$after_mempool" >/dev/null || return 1
+  jq -e --slurpfile before "$before_tip" '
+    .error == null and .result == $before[0].result
+  ' "$after_tip" >/dev/null || return 1
+
+  jq -n --slurpfile marker "$marker" --slurpfile before_scheduler "$before_scheduler" \
+    --slurpfile after_scheduler "$after_scheduler" --slurpfile before_mempool "$before_mempool" \
+    --slurpfile after_mempool "$after_mempool" --slurpfile before_tip "$before_tip" \
+    --slurpfile after_tip "$after_tip" --arg swap "$m5_swap_id" \
+    --arg tx "$m5_expected_funding_txid" --argjson crashed_daemon_pid "$crashed_daemon_pid" \
+    --arg crashed_daemon_start_ticks "$crashed_daemon_start_ticks" \
+    --argjson crashed_actor_pid "$crashed_actor_pid" \
+    --arg crashed_actor_start_ticks "$crashed_actor_start_ticks" \
+    --argjson crashed_generation "$crashed_generation" \
+    --argjson recovered_daemon_pid "$m5_daemon_pid" \
+    --arg recovered_daemon_start_ticks "$m5_daemon_start_ticks" \
+    --argjson recovered_generation "$recovered_generation" '
+    {
+      schema_version:1,
+      kind:"m7_accepted_zec_process_kill_recovery",
+      result:"passed",
+      swap_id:$swap,
+      crash_boundary:"zcash_fund_submitted_before_actor_stdout",
+      kill_order:"daemon_then_actor",
+      exact_funding_transaction_id:$tx,
+      pause_marker:$marker[0],
+      crashed:{
+        daemon:{pid:$crashed_daemon_pid,start_ticks:$crashed_daemon_start_ticks},
+        actor:{pid:$crashed_actor_pid,start_ticks:$crashed_actor_start_ticks},
+        lease_generation:$crashed_generation,
+        scheduler:$before_scheduler[0][0]
+      },
+      recovered:{
+        daemon:{pid:$recovered_daemon_pid,start_ticks:$recovered_daemon_start_ticks},
+        lease_generation:$recovered_generation,
+        scheduler:$after_scheduler[0][0]
+      },
+      chain_before:{tip:$before_tip[0],mempool:$before_mempool[0]},
+      chain_after_restart:{tip:$after_tip[0],mempool:$after_mempool[0]},
+      confirmations_mined_before_restart:0,
+      mempool_identity_preserved:($before_mempool[0].result == [$tx]
+        and $after_mempool[0].result == [$tx]),
+      tip_unchanged:($before_tip[0].result == $after_tip[0].result),
+      abandoned_generation_transferred:($recovered_generation > $crashed_generation),
+      old_process_identities_absent:true,
+      automatic_resubmission_observed:false,
+      production_binary_exposes_crash_hook:false
+    }
+  ' >"${evidence_dir}/m7-zec-accepted-process-kill.json"
+  chmod 0600 "${evidence_dir}/m7-zec-accepted-process-kill.json"
+  m7_zec_process_kill_recovered=1
+}
+
 observe_m5_supervised_maker() {
   local round="$1"
   local status_file="${evidence_dir}/m5-maker-supervisor-status-current.json"
   local scheduler_file="${evidence_dir}/m5-maker-supervisor-scheduler-current.json"
   local intent_candidate="${evidence_dir}/m5-maker-lock-intent-candidate.json"
   local mempool_file="${evidence_dir}/m5-zebra-mempool-current.json"
+  inject_m7_zec_accepted_process_kill_if_ready || return
   process_is_owned "$m5_daemon_pid" "$m5_daemon_start_ticks" "$m5_daemon_bin" || {
     echo 'M5 Maker supervisor daemon exited before terminal state' >&2
     return 1
@@ -2780,6 +3099,9 @@ observe_m5_supervised_maker() {
   fi
 
   if [[ -n "$m5_expected_funding_txid" && "$zcash_fund_mined" == 0 ]]; then
+    # The actor can submit while the status/intent snapshots above are being
+    # captured. Recheck the exact crash boundary immediately before mining.
+    inject_m7_zec_accepted_process_kill_if_ready || return
     rpc "$ZEBRA_RPC_URL" \
       '{"jsonrpc":"2.0","id":1,"method":"getrawmempool","params":[]}' >"$mempool_file"
     if jq -e '.error == null and (.result | arrays) and (.result | length) == 0' \
@@ -3064,6 +3386,27 @@ else
     exit 1
   }
 fi
+if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+  (( m7_zec_process_kill_injected == 1 && m7_zec_process_kill_recovered == 1 )) || {
+    echo 'M7 accepted-ZEC corridor completed without the required process-kill recovery' >&2
+    exit 1
+  }
+  jq -e --arg swap "$m5_swap_id" --arg tx "$m5_expected_funding_txid" '
+    .schema_version == 1 and .kind == "m7_accepted_zec_process_kill_recovery"
+    and .result == "passed" and .swap_id == $swap
+    and .crash_boundary == "zcash_fund_submitted_before_actor_stdout"
+    and .kill_order == "daemon_then_actor"
+    and .exact_funding_transaction_id == $tx
+    and .confirmations_mined_before_restart == 0
+    and .mempool_identity_preserved == true and .tip_unchanged == true
+    and .abandoned_generation_transferred == true
+    and .old_process_identities_absent == true
+    and .recovered.lease_generation > .crashed.lease_generation
+  ' "${evidence_dir}/m7-zec-accepted-process-kill.json" >/dev/null || {
+    echo 'M7 accepted-ZEC process-kill evidence is incomplete' >&2
+    exit 1
+  }
+fi
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   (( m5_transport_cutover_complete == 1 )) || {
     echo 'M5 corridor completed without the required post-first-lock cutover' >&2
@@ -3307,6 +3650,24 @@ expected_zebra_advance=3
   echo "Zebra advanced by an unexpected count: initial=${zebra_tip}, final=${final_zebra_tip}, expected_advance=${expected_zebra_advance}" >&2
   exit 1
 }
+if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
+  m7_process_kill_tmp="${evidence_dir}/m7-zec-accepted-process-kill.tmp"
+  jq --argjson final_tip "$final_zebra_tip" \
+    --slurpfile terminal_scheduler "${evidence_dir}/m5-maker-supervisor-final.json" '
+    . + {
+      terminal:{
+        maker_phase:"completed",
+        taker_phase:"completed",
+        scheduler:$terminal_scheduler[0][0],
+        exact_funding_transaction_stayed_single:true,
+        crash_hook_marker_remained_no_clobber:true
+      },
+      final_zebra_tip:$final_tip
+    }
+  ' "${evidence_dir}/m7-zec-accepted-process-kill.json" >"$m7_process_kill_tmp"
+  chmod 0600 "$m7_process_kill_tmp"
+  mv -- "$m7_process_kill_tmp" "${evidence_dir}/m7-zec-accepted-process-kill.json"
+fi
 
 jq -n \
   --arg run_id "$run_id" \
@@ -3322,6 +3683,7 @@ jq -n \
   --argjson drive_retry_count "$(jq -s 'length' "${evidence_dir}/drive-retries.ndjson")" \
   --argjson m5_application_mode "$M5_APPLICATION_MODE" \
   --argjson m6_taker_service_mode "$M6_TAKER_SERVICE_MODE" \
+  --argjson m7_zec_process_kill_mode "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" \
   --arg application_handoff_sha256 "$application_handoff_sha256" \
   --arg application_cutover_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-post-lock-cutover.json" | cut -d ' ' -f1; fi)" \
@@ -3342,6 +3704,8 @@ jq -n \
   --arg taker_monitor_trace_sha256 \
     "$(if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m6-taker-service-monitor.ndjson" | cut -d ' ' -f1; elif [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-taker-receipt-monitor.ndjson" | cut -d ' ' -f1; fi)" \
   --arg expected_zebra_funding_txid "$m5_expected_funding_txid" \
+  --arg m7_zec_process_kill_sha256 \
+    "$(if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then sha256sum "${evidence_dir}/m7-zec-accepted-process-kill.json" | cut -d ' ' -f1; fi)" \
   --arg lez_escrow_program_id "$ESCROW_PROGRAM_ID" \
   --arg lez_escrow_guest_sha256 "$M5_LEZ_GUEST_SHA256" \
   --arg lez_deployment_receipt_sha256 "$m5_lez_deployment_receipt_sha256" \
@@ -3499,7 +3863,17 @@ jq -n \
         ($m5_application_mode == 1 and $journey == "claim"),
       fresh_operator_restart_reports_terminal: ($m5_application_mode == 1),
       transports_removed_after_first_lock: ($m5_application_mode == 1),
-      transports_absent_through_terminal_state: ($m5_application_mode == 1)
+      transports_absent_through_terminal_state: ($m5_application_mode == 1),
+      accepted_zec_process_kill_recovery:
+        (if $m7_zec_process_kill_mode == 1 then {
+          enabled:true,
+          crash_boundary:"zcash_fund_submitted_before_actor_stdout",
+          kill_order:"daemon_then_actor",
+          evidence_sha256:$m7_zec_process_kill_sha256,
+          same_database:true,
+          abandoned_generation_transferred:true,
+          terminal_completion:true
+        } else null end)
     },
     lez_escrow: {
       program_id:

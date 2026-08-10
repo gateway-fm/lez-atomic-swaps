@@ -7311,3 +7311,35 @@ S12/S13 review and policy-deferred public deployment.
   process-crash recovery and S5 remains open for the remaining daemon-owned
   reference journeys and hardening. Focused certificate, CI-hardening,
   traceability, hard/submission audit, architecture and hygiene gates pass.
+
+## M7 accepted-ZEC process-crash recovery (2026-08-08)
+
+- [x] Select the lowest-risk progressive-PoC seam: the existing accepted ZEC
+  application, daemon supervisor, schema-4 actor store, durable funding intent,
+  and compile-time-only submitted-effect pause. The fault boundary is the real
+  Maker Zcash funding submission after persistence and before actor stdout.
+- [x] Add an isolated opt-in wrapper and build root. The default/production
+  binaries still expose no crash flags; only the unique private run builds the
+  actor and daemon with `test-crash-hooks`, so it cannot overwrite another
+  activity's Cargo artifacts.
+- [x] Complete one exact local-devnet PoC: prove the singleton funding
+  transaction in Zebra's mempool, kill the exact daemon then actor identities,
+  restart the same database, transfer the abandoned generation, preserve the
+  same unmined transaction, then complete both chain legs and terminal replay.
+  Working-tree PoC `m7zecpk999e287d` retained the same transaction and tip 104
+  across generation 24 to 26, then completed both roles at tip 107 and terminal
+  generation 37. This is prototype evidence, not a pushed-source certificate.
+- [x] RED then GREEN the zero-effect wrapper contract and canonical CI wiring.
+  The test pins the exact accepted-before-stdout boundary, daemon-then-actor
+  kill order, exact old PID/start-tick absence without `/proc/PID/exe`
+  dependence, singleton mempool, unchanged tip, same database, generation
+  transfer, observe-before-resend, terminal roles, compile-time-only seam,
+  literal-loopback isolation, and empty runtime external resources.
+- [x] Record ADR 0193 with current components/RPCs, sequence and atomicity
+  diagrams; add manual Flow 1ZK, README status, external-resource boundaries,
+  and measured flakiness/iteration findings. A reusable canonical mode-0700
+  build cache reduced the unchanged sidecar rebuild from 17m34s to 3.29s on
+  the successful run without touching shared Cargo targets.
+- [ ] Commit and push the implementation, repeat on clean devnets from that
+  exact pushed commit, retain a compact secret-safe certificate, then update
+  U2/S5 and the M7 hard/submission inventories only to what it proves.

@@ -18,6 +18,12 @@ struct Arguments {
 }
 
 #[derive(Serialize)]
+struct ChildIdentity {
+    pid: u32,
+    start_ticks: u64,
+}
+
+#[derive(Serialize)]
 struct ActorRecord {
     schema_version: u16,
     swap_id: Box<str>,
@@ -30,6 +36,7 @@ struct ActorRecord {
     schedule_state: &'static str,
     lease_generation: u64,
     attempt_count: u64,
+    child_identity: Option<ChildIdentity>,
     child_identity_absent: bool,
 }
 
@@ -48,6 +55,9 @@ fn main() -> Result<()> {
 
 fn project(record: &MakerActorProcessRecordV1) -> Result<ActorRecord> {
     let manifest = record.manifest();
+    let child_identity = record
+        .child_identity()
+        .map(|(pid, start_ticks)| ChildIdentity { pid, start_ticks });
     Ok(ActorRecord {
         schema_version: 1,
         swap_id: record.swap_id().as_str().into(),
@@ -70,7 +80,8 @@ fn project(record: &MakerActorProcessRecordV1) -> Result<ActorRecord> {
         },
         lease_generation: record.lease_generation(),
         attempt_count: record.attempt_count(),
-        child_identity_absent: record.child_identity().is_none(),
+        child_identity_absent: child_identity.is_none(),
+        child_identity,
     })
 }
 
