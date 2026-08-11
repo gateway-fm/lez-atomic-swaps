@@ -46,6 +46,8 @@ done
 for observer in "$tag14_observer" "$tag15_observer"; do
   for binding in \
     'MAX_SCAN_PAGES: u32 = MAX_DISCOVERY_BLOCKS / MAX_SCAN_BLOCKS' \
+    'ObserveFinalizedClockRequest' \
+    'scan_page_blocks' \
     'next_scan_start_height'; do
     rg -Fq "$binding" "$observer" ||
       fail "finalized observer ${observer} omits ${binding}"
@@ -55,6 +57,10 @@ rg -Fq 'finalized_observation_advances_past_a_complete_page_boundary' "$tag14_ob
   fail "Tag14 prerequisite observer omits its page-boundary regression"
 rg -Fq 'finalized_tag15_observation_advances_past_a_complete_page_boundary' "$tag15_observer" ||
   fail "Tag15 observer omits its page-boundary regression"
+rg -Fq 'finalized_observation_scans_the_available_tail_without_waiting_for_a_full_page' "$tag14_observer" ||
+  fail "Tag14 prerequisite observer omits its finalized-tail regression"
+rg -Fq 'finalized_tag15_observation_scans_the_available_tail_without_waiting_for_a_full_page' "$tag15_observer" ||
+  fail "Tag15 observer omits its finalized-tail regression"
 
 rg -Fq 'ActivateMakerClaimWorkflow' "$activation" ||
   fail "Maker Claim branch lacks evidence-driven Tag15 activation"

@@ -16,8 +16,8 @@ use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     DiscoveryWindow, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    MAX_DISCOVERY_BLOCKS, MessageContext, Participant, PreparedTransaction, RequestId, RunId,
-    RuntimeDescriptor, XmrNativeEffectV3,
+    MAX_DISCOVERY_BLOCKS, MessageContext, ObserveFinalizedClockRequest, Participant,
+    PreparedTransaction, RequestId, RunId, RuntimeDescriptor, XmrNativeEffectV3,
 };
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_swap_sdk::{
@@ -170,6 +170,24 @@ async fn execute() -> Result<()> {
     let mut scan_start_height = activation_evidence.tag14_scan_start_height;
     let mut finalized_result = None;
     for page_index in 0..MAX_SCAN_PAGES {
+        let clock_request_id = RequestId::new(format!(
+            "m7-tag14-clock-{observation_nonce}-{}-{page_index}",
+            std::process::id()
+        ))
+        .context("invalid Tag14 clock request ID")?;
+        let clock_context =
+            MessageContext::new(run_id.clone(), clock_request_id, Participant::Taker);
+        let finalized_clock = client
+            .observe_finalized_clock(ObserveFinalizedClockRequest::new(
+                clock_context,
+                runtime.clone(),
+            ))
+            .await
+            .context("typed finalized Tag14 clock observation failed")?
+            .clock;
+        let Some(page_blocks) = scan_page_blocks(scan_start_height, finalized_clock.height)? else {
+            break;
+        };
         let request_id = RequestId::new(format!(
             "m7-tag14-observe-{observation_nonce}-{}-{page_index}",
             std::process::id()
@@ -180,7 +198,7 @@ async fn execute() -> Result<()> {
             .terms()
             .validate_runtime_binding(&context, &runtime)
             .context("Tag14 terms do not bind the selected Taker runtime")?;
-        let window = DiscoveryWindow::new(scan_start_height, MAX_SCAN_BLOCKS)
+        let window = DiscoveryWindow::new(scan_start_height, page_blocks)
             .context("invalid Tag14 finalized scan window")?;
         let result = client
             .classify_finalized_native_xmr_effect_v3(
@@ -210,14 +228,11 @@ async fn execute() -> Result<()> {
             } => {
                 ensure!(
                     scanned_window.start_height() == scan_start_height
-                        && scanned_window.max_blocks() == MAX_SCAN_BLOCKS,
+                        && scanned_window.max_blocks() == page_blocks,
                     "Tag14 classifier returned a different scan page"
                 );
-                let Some(next_height) = next_scan_start_height(
-                    scan_start_height,
-                    MAX_SCAN_BLOCKS,
-                    finalized_clock.height,
-                )?
+                let Some(next_height) =
+                    next_scan_start_height(scan_start_height, page_blocks, finalized_clock.height)?
                 else {
                     break;
                 };
@@ -240,6 +255,19 @@ async fn execute() -> Result<()> {
         hex::encode(Sha256::digest(&evidence_bytes))
     );
     Ok(())
+}
+
+fn scan_page_blocks(start_height: u64, finalized_height: u64) -> Result<Option<u32>> {
+    if finalized_height < start_height {
+        return Ok(None);
+    }
+    let available = finalized_height
+        .checked_sub(start_height)
+        .and_then(|distance| distance.checked_add(1))
+        .context("Tag14 finalized tail length overflow")?;
+    Ok(Some(u32::try_from(
+        available.min(u64::from(MAX_SCAN_BLOCKS)),
+    )?))
 }
 
 fn next_scan_start_height(
@@ -453,7 +481,7 @@ mod tests {
 
     use super::{
         MAX_CAPABILITY_FILE_BYTES, next_scan_start_height, parse_view_key,
-        read_sidecar_capability_fd,
+        read_sidecar_capability_fd, scan_page_blocks,
     };
 
     const VIEW_KEY: &str = "0100000000000000000000000000000000000000000000000000000000000000";
@@ -507,6 +535,13 @@ mod tests {
     fn finalized_observation_advances_past_a_complete_page_boundary() {
         assert_eq!(next_scan_start_height(115, 16, 130).unwrap(), Some(131));
         assert_eq!(next_scan_start_height(115, 16, 129).unwrap(), None);
+    }
+
+    #[test]
+    fn finalized_observation_scans_the_available_tail_without_waiting_for_a_full_page() {
+        assert_eq!(scan_page_blocks(115, 114).unwrap(), None);
+        assert_eq!(scan_page_blocks(115, 119).unwrap(), Some(5));
+        assert_eq!(scan_page_blocks(115, 200).unwrap(), Some(16));
     }
 
     fn sealed_memfd(bytes: &[u8]) -> File {

@@ -636,6 +636,9 @@ jq -cn '
     transaction_id:("7"*64),containing_block_hash:("8"*64),
     containing_block_height:121,confirmations:10,stable_tip_hash:("9"*64),
     stable_tip_height:130,required_confirmations:10,
+    daemon_version:"0.18.5.1-release",target_wallet_version:65567,
+    foreign_wallet_version:65567,peer_count:0,
+    network_scope:"isolated_official_monero_regtest",
     finality_observer_sent_transaction:false,public_rpc_used:false,faucet_used:false
   }
 ' >"$m7_retention_source"
@@ -660,7 +663,7 @@ if (
   fail "M7 retained refund finality replay replaced an existing receipt"
 fi
 
-m7_mining_source="$(function_source mine_m7_refund_confirmations)"
+m7_mining_source="$(function_source mine_m7_settlement_confirmations)"
 [[ -n "$m7_mining_source" ]] || fail "M7 external confirmation driver is unavailable"
 rg -Fq 'params:{amount_of_blocks:10' <<<"$m7_mining_source" ||
   fail "M7 confirmation driver does not request exactly ten blocks"

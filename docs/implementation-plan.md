@@ -7541,6 +7541,25 @@ S12/S13 review and policy-deferred public deployment.
   15-test Tag16 process suite is GREEN after repairing its stale sealed
   foreign-wallet credential fixture and generalized error assertion, and
   strict all-target Clippy is GREEN.
+- [x] Use exact pushed-source replay `m7tag15kill34642a4a` at `34642a4` as the
+  next runtime QA RED. It passed deployment, role onboarding, official Monero
+  0.18.5.1 Regtest, funding, Tag14 finality, and the accepted-before-stdout
+  Tag15 kill boundary. After restart the action stayed observation-only and
+  made no second send, but 35 lease generations remained pending until the
+  six-minute ceiling because the next 16-block page was not yet completely
+  finalized. Source status was 1; cleanup itself passed with exact resources
+  absent, role-sidecar processes and ports absent, the foreign sentinel intact,
+  and no broad cleanup or foreign targeting. This is not certificate evidence.
+- [x] RED then GREEN authenticated finalized-tail sizing on both observers.
+  Each page first observes the role-local finalized clock and scans exactly the
+  available 1--16 block tail; it never asks the classifier for an unfinalized
+  suffix. Complete-page advancement and the 4,096-block invocation ceiling are
+  preserved. Both new tail regressions, the full XMR actor suite, strict
+  all-target/all-feature Clippy, strict Rustdoc, and the focused M7 contract are
+  GREEN. The broad actual-claim runner contract is GREEN after aligning its
+  stale refund-finality fixture with the canonical topology/version fields and
+  inspecting the generalized ten-block confirmation helper rather than its
+  thin refund wrapper. No sender, retry, or spend authority was added.
 - [ ] Push the pagination correction, execute a fresh isolated exact-node
   replay from that pushed source, sanitize/pin its certificate, and close R4
   only if every unchanged-identity, no-resend, role-separation, cleanup, and

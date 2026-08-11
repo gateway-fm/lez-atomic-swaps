@@ -16,8 +16,8 @@ use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     DiscoveryWindow, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    MAX_DISCOVERY_BLOCKS, MessageContext, Participant, RequestId, RunId, RuntimeDescriptor,
-    XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    MAX_DISCOVERY_BLOCKS, MessageContext, ObserveFinalizedClockRequest, Participant, RequestId,
+    RunId, RuntimeDescriptor, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
 };
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_swap_sdk::{
@@ -167,6 +167,24 @@ async fn classify_finalized_tag15_pages(
 ) -> Result<Option<ClassifyFinalizedNativeXmrEffectV3Result>> {
     let mut scan_start_height = initial_scan_height;
     for page_index in 0..MAX_SCAN_PAGES {
+        let clock_request_id = RequestId::new(format!(
+            "m7-tag15-clock-{nonce}-{}-{page_index}",
+            std::process::id()
+        ))
+        .context("invalid Tag15 clock request ID")?;
+        let clock_context =
+            MessageContext::new(run_id.clone(), clock_request_id, Participant::Maker);
+        let finalized_clock = client
+            .observe_finalized_clock(ObserveFinalizedClockRequest::new(
+                clock_context,
+                runtime.clone(),
+            ))
+            .await
+            .context("typed finalized Tag15 clock observation failed")?
+            .clock;
+        let Some(page_blocks) = scan_page_blocks(scan_start_height, finalized_clock.height)? else {
+            break;
+        };
         let request_id = RequestId::new(format!(
             "m7-tag15-observe-{nonce}-{}-{page_index}",
             std::process::id()
@@ -176,7 +194,7 @@ async fn classify_finalized_tag15_pages(
         terms
             .validate_runtime_binding(&context, runtime)
             .context("Tag15 terms do not bind the selected Maker runtime")?;
-        let window = DiscoveryWindow::new(scan_start_height, MAX_SCAN_BLOCKS)
+        let window = DiscoveryWindow::new(scan_start_height, page_blocks)
             .context("invalid Tag15 finalized scan window")?;
         let result = client
             .classify_finalized_native_xmr_effect_v3(
@@ -205,14 +223,11 @@ async fn classify_finalized_tag15_pages(
             } => {
                 ensure!(
                     scanned_window.start_height() == scan_start_height
-                        && scanned_window.max_blocks() == MAX_SCAN_BLOCKS,
+                        && scanned_window.max_blocks() == page_blocks,
                     "Tag15 classifier returned a different scan page"
                 );
-                let Some(next_height) = next_scan_start_height(
-                    scan_start_height,
-                    MAX_SCAN_BLOCKS,
-                    finalized_clock.height,
-                )?
+                let Some(next_height) =
+                    next_scan_start_height(scan_start_height, page_blocks, finalized_clock.height)?
                 else {
                     break;
                 };
@@ -222,6 +237,19 @@ async fn classify_finalized_tag15_pages(
         }
     }
     Ok(None)
+}
+
+fn scan_page_blocks(start_height: u64, finalized_height: u64) -> Result<Option<u32>> {
+    if finalized_height < start_height {
+        return Ok(None);
+    }
+    let available = finalized_height
+        .checked_sub(start_height)
+        .and_then(|distance| distance.checked_add(1))
+        .context("Tag15 finalized tail length overflow")?;
+    Ok(Some(u32::try_from(
+        available.min(u64::from(MAX_SCAN_BLOCKS)),
+    )?))
 }
 
 fn next_scan_start_height(
@@ -456,7 +484,14 @@ fn validate_existing_evidence(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::next_scan_start_height;
+    use super::{next_scan_start_height, scan_page_blocks};
+
+    #[test]
+    fn finalized_tag15_observation_scans_the_available_tail_without_waiting_for_a_full_page() {
+        assert_eq!(scan_page_blocks(131, 130).unwrap(), None);
+        assert_eq!(scan_page_blocks(131, 135).unwrap(), Some(5));
+        assert_eq!(scan_page_blocks(131, 200).unwrap(), Some(16));
+    }
 
     #[test]
     fn finalized_tag15_observation_advances_past_a_complete_page_boundary() {
