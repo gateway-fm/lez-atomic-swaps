@@ -3,7 +3,7 @@ use xmr_reference_actor::{Cli, execute};
 
 fn main() {
     if let Err(error) = execute(Cli::parse()) {
-        eprintln!("{error}");
+        eprintln!("{error:#}");
         std::process::exit(2);
     }
 }

@@ -10,6 +10,10 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow, ensure};
 use lez_adaptor_role_runner::{Role as RunnerRole, ValidatedSession};
+use lez_adaptor_signature::{
+    AdaptorSessionContext, SigningRole, aggregate_adaptor_presignature,
+    verify_adaptor_partial_signature,
+};
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{
     AdaptorSessionPhase, AdaptorSessionSnapshot, MAKER_ACTOR_CONFIG_FD,
@@ -956,13 +960,12 @@ fn validate_role_journal(
     agreement: &XmrAgreementV1,
     activation: &XmrActivatedAgreementV1,
 ) -> Result<()> {
-    let claim = ValidatedSession::from_untweaked_context(
-        agreement
-            .claim_session_descriptor()
-            .context()
-            .context("claim descriptor is invalid")?,
-    )
-    .context("claim session is invalid")?;
+    let claim_context = agreement
+        .claim_session_descriptor()
+        .context()
+        .context("claim descriptor is invalid")?;
+    let claim = ValidatedSession::from_untweaked_context(claim_context.clone())
+        .context("claim session is invalid")?;
     let refund = ValidatedSession::from_untweaked_context(
         agreement
             .refund_session_descriptor()
@@ -1007,13 +1010,11 @@ fn validate_role_journal(
         "refund",
     )?;
     match role {
-        ActorRole::Maker => ensure!(
-            claim_snapshot.phase() == AdaptorSessionPhase::PartialPersisted
-                && claim_snapshot.own_partial().is_some_and(|partial| {
-                    *partial.bytes() == activation.body().maker_claim_partial()
-                }),
-            "Maker claim journal differs from Stage B"
-        ),
+        ActorRole::Maker => validate_maker_claim_snapshot(
+            &claim_snapshot,
+            &claim_context,
+            activation.body().maker_claim_partial(),
+        )?,
         ActorRole::Taker => {
             let partial = claim_snapshot
                 .own_partial()
@@ -1052,6 +1053,88 @@ fn validate_role_journal(
                 .peer_partial()
                 .is_some_and(|value| *value.bytes() == expected_peer),
         "role refund journal partials differ from Stage B"
+    );
+    Ok(())
+}
+
+fn maker_claim_phase_allows_application_reload(phase: AdaptorSessionPhase) -> bool {
+    matches!(
+        phase,
+        AdaptorSessionPhase::PartialPersisted
+            | AdaptorSessionPhase::PeerPartialVerified
+            | AdaptorSessionPhase::PresignatureVerified
+    )
+}
+
+fn validate_maker_claim_snapshot(
+    snapshot: &AdaptorSessionSnapshot,
+    context: &AdaptorSessionContext,
+    expected_maker_partial: [u8; 32],
+) -> Result<()> {
+    ensure!(
+        maker_claim_phase_allows_application_reload(snapshot.phase()),
+        "Maker claim journal has not reached a reload-safe phase"
+    );
+    let maker_nonce = snapshot
+        .own_public_nonce()
+        .context("Maker claim journal omits its nonce")?;
+    let taker_nonce = snapshot
+        .peer_public_nonce()
+        .context("Maker claim journal omits the Taker nonce")?;
+    let maker_partial = snapshot
+        .own_partial()
+        .context("Maker claim journal omits its partial")?;
+    ensure!(
+        *maker_partial.bytes() == expected_maker_partial,
+        "Maker claim journal differs from Stage B"
+    );
+    verify_adaptor_partial_signature(
+        context,
+        SigningRole::Maker,
+        *maker_nonce.bytes(),
+        *taker_nonce.bytes(),
+        *maker_partial.bytes(),
+    )
+    .context("Maker claim journal contains an invalid Maker partial")?;
+
+    if snapshot.phase() == AdaptorSessionPhase::PartialPersisted {
+        ensure!(
+            snapshot.peer_partial().is_none() && snapshot.presignature().is_none(),
+            "Maker claim journal exposes advanced material in its initial phase"
+        );
+        return Ok(());
+    }
+    let taker_partial = snapshot
+        .peer_partial()
+        .context("advanced Maker claim journal omits the Taker partial")?;
+    verify_adaptor_partial_signature(
+        context,
+        SigningRole::Taker,
+        *maker_nonce.bytes(),
+        *taker_nonce.bytes(),
+        *taker_partial.bytes(),
+    )
+    .context("Maker claim journal contains an invalid Taker partial")?;
+    if snapshot.phase() == AdaptorSessionPhase::PeerPartialVerified {
+        ensure!(
+            snapshot.presignature().is_none(),
+            "Maker claim journal exposes a presignature before its durable phase"
+        );
+        return Ok(());
+    }
+    let expected = aggregate_adaptor_presignature(
+        context,
+        *maker_nonce.bytes(),
+        *taker_nonce.bytes(),
+        *maker_partial.bytes(),
+        *taker_partial.bytes(),
+    )
+    .context("reconstruct Maker claim presignature")?;
+    ensure!(
+        snapshot
+            .presignature()
+            .is_some_and(|value| *value.bytes() == expected),
+        "Maker claim journal contains an invalid presignature"
     );
     Ok(())
 }
@@ -2286,6 +2369,24 @@ mod tests {
         assert!(debug.contains("/application/shared/stage-a-v1.borsh"));
         assert!(debug.contains("/application/shared/stage-b-v1.borsh"));
         assert!(!debug.contains("private-journal-snapshot"));
+    }
+
+    #[test]
+    fn maker_claim_application_reload_accepts_only_monotonic_signing_phases() {
+        for phase in [
+            AdaptorSessionPhase::Reserved,
+            AdaptorSessionPhase::CommitmentExchanged,
+            AdaptorSessionPhase::NoncesExchanged,
+        ] {
+            assert!(!maker_claim_phase_allows_application_reload(phase));
+        }
+        for phase in [
+            AdaptorSessionPhase::PartialPersisted,
+            AdaptorSessionPhase::PeerPartialVerified,
+            AdaptorSessionPhase::PresignatureVerified,
+        ] {
+            assert!(maker_claim_phase_allows_application_reload(phase));
+        }
     }
 
     #[test]

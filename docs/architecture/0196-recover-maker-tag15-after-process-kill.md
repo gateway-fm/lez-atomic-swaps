@@ -24,6 +24,10 @@ the normal Maker application path.
 - Add the real XMR Maker actor `claim` command. It consumes
   `InvokeOnce` or, after any ambiguous prior attempt, can only invoke the
   existing finalized LEZ observer with the unchanged sending-plan digest.
+- Treat the adaptor journal as monotonic protocol state. Reload accepts the
+  Stage-B Maker partial and its two legitimate advanced phases only after
+  cryptographically reverifying both partials and reconstructing the exact
+  durable presignature; earlier or inconsistent phases remain rejected.
 - Keep finality production outside the sender and observer. The isolated QA
   runner kills the exact actor group only after durable Tag15 submission and
   before actor stdout, cleanly restarts the daemon over the same database and
@@ -117,6 +121,9 @@ trust context.
   Tag15; the standalone driver remains only as a compatibility/debug surface.
 - Submission evidence is durable before the fault marker and is never treated
   as finality evidence.
+- The first exact replay exposed and fixed a pre-Tag15 validator that rejected
+  the legitimate post-Tag14 Maker signing phase; that failed run completed
+  exact cleanup but is not certification evidence.
 - R4 can close only after the focused process test and a clean pushed-source
   exact-node replay prove unchanged identity, zero second send, and exact
   cleanup.

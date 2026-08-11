@@ -7506,6 +7506,18 @@ S12/S13 review and policy-deferred public deployment.
   Maker reconciliation remains private to the Maker-sidecar observation; the
   downstream signature extractor receives a separate Taker-sidecar finalized
   discovery, preserving the established role-local evidence gate.
+- [x] Use the first clean pushed-source replay as RED runtime QA. Run
+  `m7tag15killa62d41aa` at `a62d41a` passed artifact 5/5, deployment,
+  onboarding, official Monero Regtest, funding, and semantic Tag14, then
+  correctly failed before Tag15 because schema-3 reload allowed only the
+  pre-authorization Maker claim journal phase. Exact cleanup passed with
+  source status 2 and no retained run resources, so this is not a certificate.
+- [x] GREEN the discovered mutable-state boundary. Schema-3 reload now accepts
+  only the monotonic Maker claim phases from partial persistence through
+  verified presignature, revalidates the Stage-B Maker partial, verifies both
+  role partials against the exact session/nonces, and reconstructs the durable
+  presignature. A focused phase regression, the 18-test XMR library suite, and
+  strict all-target Clippy are GREEN; CLI errors now retain their source chain.
 - [ ] Run focused Rust/process QA, push the implementation, execute one isolated
   exact-node replay, sanitize/pin its certificate, and close R4 only if every
   unchanged-identity, no-resend, cleanup, and external-resource assertion
