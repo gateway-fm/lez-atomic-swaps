@@ -7418,12 +7418,16 @@ S12/S13 review and policy-deferred public deployment.
   was bounded to 60 seconds. The monitor correctly remained generation one;
   no claim submission occurred and exact cleanup passed without targeting the
   foreign Docker stack.
-- [ ] RED then GREEN an explicit semantic-claim-only one-second supervisor
+- [x] RED then GREEN an explicit semantic-claim-only one-second supervisor
   reobservation delay, retain the ordinary M5 production default of 3,600
   seconds, and record both the default and test acceleration in evidence.
-  Replay fresh isolated LEZ v0.2 and Monero Regtest services through Tag14,
-  Tag15, the Taker Monero sweep, and scoped cleanup.
-- [ ] RED then GREEN a secret-safe actual-run certificate, wire it into the
+  Exact pushed-commit replay `m7claimkill507a38ba` passed the generation-two
+  projection, killed the real Taker after its sealed Tag14 sender succeeded,
+  recovered observe-only without resubmission, finalized Tag14 and Tag15,
+  swept 998191600000 piconero to the Taker with 10 confirmations, and passed
+  exact cleanup while the foreign Docker stack survived.
+- [x] RED then GREEN a secret-safe actual-run certificate, wire it into the
   canonical quality and CI-hardening gates, update manual reproduction and the
-  M7 ledgers only to the evidence proved, commit, push, and report the revised
-  ETA.
+  M7 ledgers only to the evidence proved. The certificate intentionally omits
+  process identities, filesystem identities, exact transaction bytes, paths,
+  credentials, and private material.

@@ -48,6 +48,8 @@ for function_name in expected_actor_direction_phase_ids_json \
 done
 # shellcheck source=/dev/null
 source "$outer_extracted"
+# shellcheck disable=SC2034 # Production runner default read by extracted validators.
+m7_btc_accepted_concurrency=0
 
 parsed_ms=""
 parse_direction_proc_uptime_ms "123.45" parsed_ms ||

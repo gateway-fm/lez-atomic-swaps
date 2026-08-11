@@ -21,7 +21,7 @@ U10	green	./scripts/test-zcash-testnet-guide-contract.sh	docs/requirements-trace
 R1	open	./scripts/run-zebra-e2e.sh	docs/requirements-traceability.md	Actual-process reorg/replacement and refund-order hardening
 R2	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Different-UID isolation, adverse-node continuation, and other pair or branch crash seams
 R3	green	./scripts/test-m7-route-health-contract.sh	docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json	none
-R4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Claim unknown-outcome and corruption matrix plus claim-path actual-node restart
+R4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Remaining claim unknown-outcome and corruption matrix
 R5	green	./scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh	docs/evidence/m7-actual-btc-accepted-concurrency-272788c-20260808.json	none
 R6	open	./scripts/test-m3-direction-phase-timings-contract.sh	docs/requirements-traceability.md	Cutoff races, congestion model, public calibration, and actual reorg margins
 R7	open	./scripts/run-bitcoin-core-e2e.sh	docs/requirements-traceability.md	Maker-lock admission, fee stress, bounded RBF or CPFP, and reorg

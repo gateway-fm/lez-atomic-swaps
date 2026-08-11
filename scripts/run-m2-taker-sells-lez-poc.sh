@@ -782,7 +782,8 @@ if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
     workspace_target_root="${private_base}/workspace-target"
     sidecar_target_root="${private_base}/sidecar-target"
   fi
-  mkdir -p -m 0700 "$workspace_target_root" "$sidecar_target_root"
+  mkdir -p "$workspace_target_root" "$sidecar_target_root"
+  chmod 0700 "$workspace_target_root" "$sidecar_target_root"
   for target_root in "$workspace_target_root" "$sidecar_target_root"; do
     if [[ ! -d "$target_root" || -L "$target_root" \
       || "$(readlink -f -- "$target_root")" != "$target_root" \

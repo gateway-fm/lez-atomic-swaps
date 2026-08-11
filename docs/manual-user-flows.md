@@ -7065,6 +7065,45 @@ the committed Taker claim partial, and finalized Tag15 exposes the adaptor
 information needed to sweep the already funded Monero output. It claims
 neither a distributed transaction nor immunity to future reorganization.
 
+### Repeat the M7 Taker claim process-kill recovery
+
+Use the same prerequisites and clean pushed-commit checks as the actual Taker
+claim flow above, add a new run ID, enable the explicit QA seam, and optionally
+provide an existing owner-only build-cache directory:
+
+```bash
+export RUN_ID=m7claimkill-yyyymmdd-nonce
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export M5_XMR_APPLICATION_MODE=1
+export M5_XMR_JOURNEY=claim
+export M7_XMR_SEMANTIC_CLAIM=1
+export M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION=1
+export M7_XMR_BUILD_CACHE_ROOT=/absolute/path/to/existing-mode-0700-cache
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/exact-v0.2-runtime/release
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+The runner launches the real `lez-taker claim` command, kills only its exact
+process group after the sealed Tag14 sender succeeds but before stdout, repeats
+the same user command, and requires observe-only recovery with no automatic
+submission retry. It then completes Tag15 and the Taker Monero sweep. Both
+chains are fresh literal-loopback services; funds are deterministic local
+Regtest outputs. Runtime uses no public RPC, peer, faucet, public funds, DNS,
+or public deployment. LEZ finality, the 80-block absence window, ten Monero
+confirmations, cold pinned builds, and host load affect duration. The
+one-second actor reobservation delay is test-only and the 3,600-second
+production default is retained and recorded.
+
+Verify the retained secret-safe packet without starting nodes:
+
+```bash
+./scripts/test-m7-taker-claim-process-kill-actual-certificate.sh
+```
+
+ADR 0194 contains the component, sequence, and conditional-atomicity diagrams.
+
 
 ## Flow 1W: run the role-correct XMR application refund locally
 

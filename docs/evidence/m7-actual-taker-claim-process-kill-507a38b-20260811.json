@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_taker_claim_process_kill",
+  "result": "passed",
+  "run_id": "m7claimkill507a38ba",
+  "repository_commit": "507a38b16b591742cc9a9aa2a25561fd3b05f74b",
+  "guest": {
+    "recursive_tests_passed": 5,
+    "recursive_tests_total": 5,
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "application_replay": {
+    "second_typed_blocked_projection": true,
+    "production_default_reobservation_seconds": 3600,
+    "configured_reobservation_seconds": 1,
+    "test_acceleration_used": true
+  },
+  "crash_recovery": {
+    "boundary": "invoked_before_cli_stdout",
+    "killed_process": "taker_cli",
+    "old_process_identity_absent": true,
+    "post_restart_route": "observe_only",
+    "first_recovered_state": "observe_only",
+    "release_journal_unchanged_after_restart": true,
+    "automatic_submission_retry": false
+  },
+  "tag14": {
+    "owner_sidecar_role": "taker",
+    "classifier_target": "exact",
+    "transaction_id": "7bc2c4c5edf1bd7a45c2528bd4b699c46cc82594423951e2ba6e9e152dad0b6e",
+    "containing_block_id": 127,
+    "scan_start_height": 120,
+    "scan_max_blocks": 16,
+    "finalized_clock_height": 135,
+    "automatic_retry": false
+  },
+  "tag15": {
+    "observer_sidecar_role": "taker",
+    "classifier_target": "discover_by_terms",
+    "transaction_id": "8d0009968760b822b969f378d576e085ed930d14956a0e1900ca7e60536d9746",
+    "containing_block_id": 139,
+    "finalized_clock_height": 143,
+    "metadata_state": "claimed",
+    "terminal_custody_balance": "0",
+    "automatic_retry": false
+  },
+  "monero": {
+    "version": "0.18.5.1",
+    "network": "Regtest",
+    "peer_count": 0,
+    "genesis_hash": "418015bb9ae982a1975da7d79277c2705727a56894ba0fb246adaabb1f4632e3",
+    "sweeping_role": "taker",
+    "transaction_id": "b1a2e9c5985eb4e031e0e9100a6f13e8223df99c54cd4fc340ac449b0e66636c",
+    "containing_block_height": 121,
+    "stable_tip_height": 130,
+    "confirmations": 10,
+    "funded_amount_piconero": 1000000000000,
+    "received_amount_piconero": 998191600000,
+    "fee_piconero": 1808400000
+  },
+  "atomicity": {
+    "proof_scope": "successful_claim_path_conditional_atomicity_with_ambiguous_tag14_result",
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorg_immunity_claimed": false,
+    "claim_sweep_binding_passed": true,
+    "argument": "The Taker workflow durably selected the sole Tag14 sender before invocation. The process was killed after that sender returned but before CLI stdout; restart observed the existing Started workflow and never invoked another sender, while the one-shot release journal remained unchanged. Finalized Tag14 exposed only the precommitted claim partial, finalized Tag15 exposed the complementary adaptor material, and the binding then proved the Taker sweep of the already funded Monero output."
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "public_peer_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived_exact_cleanup": true,
+    "broad_cleanup_used": false,
+    "foreign_resources_targeted": false,
+    "tag13_no_retry_latch_preserved": true
+  }
+}

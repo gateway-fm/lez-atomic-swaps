@@ -4193,7 +4193,6 @@ complete_m7_btc_application_handoff() {
   local daemon_pid direction direction_root direction_application fixture_root direction_owner
   local cli_direction offer_id reservation_id now acceptance_file receipt_file agreement_file
   local draft_file draft_evidence taker_actor_root taker_signing_key maker_config taker_config
-  local daemon_start="" daemon_executable="" daemon_pgid="" daemon_sid=""
   local rows="${shared_root}/accepted-directions.ndjson"
   local -a daemon_command=()
 
@@ -4207,7 +4206,7 @@ complete_m7_btc_application_handoff() {
     [[ -f "$input" && ! -L "$input" ]] ||
       fail "M7 BTC authority input is unavailable or unsafe: ${input##*/}"
   done
-  mkdir -p -m 0700 "$authority_root"
+  mkdir -p "$authority_root"
   chmod 0700 "$authority_root"
   [[ ! -e "$marker" && ! -L "$marker" ]] ||
     fail "M7 BTC authority-ready marker already exists"

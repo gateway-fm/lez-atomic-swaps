@@ -1,7 +1,7 @@
 # ADR 0194: Recover Taker Tag14 after a process kill
 
-Status: Accepted for the feature-gated QA seam; exact pushed-source local-node
-certification is pending.
+Status: Accepted and certified on exact pushed commit `507a38b` with local
+LEZ v0.2 and Monero 0.18.5.1 Regtest.
 
 ## Context
 
@@ -108,5 +108,6 @@ ordering because `Started` can only observe, never invoke again.
   credential, node state, transaction, or retained certificate evidence.
 - The one-second supervisor reobservation delay is confined to the explicit
   semantic-claim QA mode and is disclosed in run evidence.
-- Exact local-node replay and a secret-safe CI certificate are required before
-  this closes the R4 claim-path restart gap.
+- Exact local-node replay and its secret-safe CI certificate close this
+  specific R4 claim-side ambiguous-result restart seam. Other R4 matrix rows
+  remain tracked separately.
