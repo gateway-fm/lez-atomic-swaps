@@ -1,7 +1,7 @@
 # ADR 0196: Recover Maker Tag15 after a process kill
 
-Status: Accepted and focused implementation GREEN. The exact pushed-source
-local-devnet replay and sanitized certificate remain required before R4 closes.
+Status: Accepted and actual-node GREEN on exact pushed-source run
+`m7tag15kille455deca`; the sanitized certificate closes R4.
 
 ## Context
 
@@ -166,6 +166,11 @@ trust context.
   on FD 225 for the read-only Maker observer, and accepts either the original
   queued generation or a later live lease as durable handoff. The independent
   Taker discovery path is unchanged.
-- R4 can close only after the focused process test and a clean pushed-source
-  exact-node replay prove unchanged identity, zero second send, and exact
-  cleanup.
+- Exact pushed-source run `m7tag15kille455deca` at `e455dec` passed all prior
+  phases, killed the Maker actor after one durable Tag15 acceptance, transferred
+  generation 4 through observation-only recovery to terminal generation 7,
+  and retained the unchanged transaction identity with no retry. Tag15 finalized
+  at LEZ block 137 under tip 143; the independent Taker path swept Monero with
+  ten confirmations. Source exit 0 and exact cleanup passed with the foreign
+  sentinel intact. The secret-safe checked certificate is
+  `docs/evidence/m7-actual-maker-tag15-process-kill-e455dec-20260811.json`.

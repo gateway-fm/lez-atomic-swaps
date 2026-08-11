@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_maker_tag15_process_kill",
+  "result": "passed",
+  "run_id": "m7tag15kille455deca",
+  "repository_commit": "e455dec18a1d67d6339d172140d8a11331a15e5e",
+  "guest": {
+    "recursive_tests_passed": 5,
+    "recursive_tests_total": 5,
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "crash_recovery": {
+    "boundary": "submitted_before_actor_stdout",
+    "killed_process": "maker_xmr_actor",
+    "old_process_identity_absent": true,
+    "crashed_generation": 4,
+    "recovered_generation": 7,
+    "abandoned_generation_transferred": true,
+    "post_restart_route": "observe_only_then_terminal",
+    "submission_sha256": "bc01d0884590708e1ed2fda9676a4c90c532b08ffb35350aa6024186f5cf42fc",
+    "submission_unchanged_after_restart": true,
+    "transaction_id": "23710ca80a71a3b6210fadea20e4cdbc6d7e4e3694979438886c1e3faf1dac30",
+    "maker_observer_target": "exact",
+    "owner_replay_was_idempotent": true,
+    "automatic_submission_retry": false
+  },
+  "tag14": {
+    "owner_sidecar_role": "taker",
+    "classifier_target": "exact",
+    "transaction_id": "3843063e8e23f60ad559369622dc3f76fef62449c76eed92f03c5080d529699e",
+    "containing_block_id": 127,
+    "scan_start_height": 114,
+    "scan_max_blocks": 14,
+    "finalized_clock_height": 127,
+    "metadata_state": "claim_authorized",
+    "custody_balance": "700",
+    "automatic_retry": false
+  },
+  "tag15": {
+    "downstream_observer_sidecar_role": "taker",
+    "downstream_classifier_target": "discover_by_terms",
+    "transaction_id": "23710ca80a71a3b6210fadea20e4cdbc6d7e4e3694979438886c1e3faf1dac30",
+    "containing_block_id": 137,
+    "scan_start_height": 128,
+    "scan_max_blocks": 16,
+    "finalized_clock_height": 143,
+    "metadata_state": "claimed",
+    "terminal_custody_balance": "0",
+    "automatic_retry": false
+  },
+  "monero": {
+    "version": "0.18.5.1",
+    "network": "Regtest",
+    "peer_count": 0,
+    "genesis_hash": "418015bb9ae982a1975da7d79277c2705727a56894ba0fb246adaabb1f4632e3",
+    "sweeping_role": "taker",
+    "transaction_id": "58910f39d6bc5be93a61d777a2643f65dcdfc52bc04359b8b3f6b362d355c25b",
+    "containing_block_height": 121,
+    "stable_tip_height": 130,
+    "confirmations": 10,
+    "funded_amount_piconero": 1000000000000,
+    "received_amount_piconero": 998191600000,
+    "fee_piconero": 1808400000,
+    "unreceived_remainder_piconero": 1808400000
+  },
+  "atomicity": {
+    "proof_scope": "successful_claim_path_conditional_atomicity_with_ambiguous_tag15_result",
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorg_immunity_claimed": false,
+    "claim_sweep_binding_passed": true,
+    "argument": "Finalized Tag14 released only the precommitted Taker claim partial after the exact Monero output was funded. The Maker workflow durably consumed its sole Tag15 invocation authority before submitting the exact claim. The Maker actor was killed after acceptance but before stdout; restart validated the unchanged owner-private submission, sealed only its exact transaction to a spend-authority-free observer, and terminalized without another send. The independent Taker classifier then discovered the same finalized Tag15 through its own role-local capability, extracted the complementary adaptor material, and swept the already funded Monero output with ten confirmations and exact accounting."
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "public_peer_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived_exact_cleanup": true,
+    "broad_cleanup_used": false,
+    "foreign_resources_targeted": false,
+    "tag13_no_retry_latch_preserved": true
+  }
+}

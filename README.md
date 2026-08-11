@@ -38,13 +38,14 @@ state with the identical transaction and no mined confirmation, then reached
 ten local Regtest confirmations without a second send. The
 [checked certificate](docs/evidence/m7-actual-taker-claim-sweep-process-kill-997bd6b-20260811.json)
 is pinned in CI and the R4 baseline; [manual Flow 1ZL](docs/manual-user-flows.md#flow-1zl-recover-a-taker-monero-claim-sweep-after-process-kill)
-repeats the role-correct flow. Tag15 accepted-before-stdout recovery remains
-the final R4 seam. Its component path is now GREEN: the accepted Maker
+repeats the role-correct flow. The final Tag15 accepted-before-stdout seam is
+now actual-node GREEN on exact run `m7tag15kille455deca`: the accepted Maker
 transaction is retained in canonical owner-private evidence, only its exact
 transaction is sealed to the read-only recovery classifier, a killed sender
 restarts observation-only, and the independent Taker extraction classifier
-retains terms discovery. Exact pushed-source local-devnet replay and a
-sanitized certificate remain before R4 can close.
+retains terms discovery. The [sanitized certificate](docs/evidence/m7-actual-maker-tag15-process-kill-e455dec-20260811.json)
+is pinned in CI and the R4 baseline; [manual Flow 1ZM](docs/manual-user-flows.md#flow-1zm-recover-a-maker-tag15-claim-after-process-kill)
+repeats it. R4 is GREEN.
 
 Accepted-application BTC concurrency is actual-node GREEN on exact pushed run
 `m7btcconc-272788c-a`. Two opposite-direction agreements were authenticated by

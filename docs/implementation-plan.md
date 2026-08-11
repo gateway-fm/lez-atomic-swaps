@@ -7577,7 +7577,14 @@ S12/S13 review and policy-deferred public deployment.
   queued/backoff or a later-generation live lease. The focused contract, full
   XMR actor suite, and exact process-kill regression are GREEN; the latter
   proves `invoke` then `observe` in 143.37 seconds.
-- [ ] Push the owner-exact correction, execute a fresh isolated exact-node
-  replay from that pushed source, sanitize/pin its certificate, and close R4
-  only if every unchanged-identity, no-resend, role-separation, cleanup, and
-  external-resource assertion passes.
+- [x] Push the owner-exact correction as `e455dec`, then certify exact run
+  `m7tag15kille455deca`. The Maker actor submitted Tag15 once at generation 4,
+  was killed before stdout, and terminalized at generation 7 only through the
+  owner-exact observer over unchanged evidence. The independent Taker
+  classifier found the same Tag15 at block 137 under finalized tip 143, and
+  the Monero sweep reached ten confirmations with exact accounting. Source
+  exit 0, exact resource absence, closed sidecar processes/ports, no broad or
+  foreign targeting, and the foreign sentinel all passed. The sanitized
+  certificate, quality/CI gates, R4 baseline, manual flow, and ledgers close
+  R4; the hard inventory is now 28 rows with 10 repository-owned open and 2
+  deferred.

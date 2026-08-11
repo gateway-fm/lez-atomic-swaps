@@ -9324,3 +9324,99 @@ foreign Docker project. Exact run `m7claimsweep997bd6bb` at pushed commit
 `997bd6b` passed the complete flow and exact cleanup; its secret-safe checked
 packet is
 `docs/evidence/m7-actual-taker-claim-sweep-process-kill-997bd6b-20260811.json`.
+
+## Flow 1ZM: Recover a Maker Tag15 claim after process kill
+
+This opt-in QA flow exercises the actual Maker role after a user accepts a
+claim journey. The runner pauses only after the Maker sidecar has accepted the
+canonical Tag15 transaction and the actor has durably recorded it, but before
+the actor reports success. It then kills that actor process, allows the daemon
+to transfer the durable action to a later generation, and requires recovery by
+read-only observation of the exact transaction. A second send is forbidden.
+
+Run the fast source and checked-certificate contracts first:
+
+```bash
+./scripts/test-m7-maker-tag15-process-kill-contract.sh
+./scripts/test-m7-maker-tag15-process-kill-actual-certificate.sh
+```
+
+For a fresh effect-bearing replay, use the pinned inputs described by Flow 1R,
+absolute paths on the local host, and a unique run ID:
+
+```bash
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RUN_ID=m7-maker-tag15-kill-$(date -u +%Y%m%d%H%M%S)
+export M7_XMR_BUILD_CACHE_ROOT=/absolute/path/to/run-private-xmr-build-cache
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/pinned/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/pinned/lez-v0.2-release-services
+export M5_XMR_APPLICATION_MODE=1
+export M5_XMR_JOURNEY=claim
+export M7_XMR_SEMANTIC_CLAIM=1
+export M7_XMR_TAG15_PROCESS_KILL_AFTER_SUBMISSION=1
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+```mermaid
+sequenceDiagram
+    actor U as Maker user
+    participant D as Maker daemon
+    participant A1 as Original Tag15 actor
+    participant J as Durable workflow journal
+    participant S as Maker claim sidecar
+    participant A2 as Recovered Tag15 actor
+    participant L as Local LEZ node
+    participant T as Taker observer
+    participant M as Local Monero Regtest
+
+    U->>D: Continue accepted claim journey
+    D->>A1: Lease Claim action generation 4
+    A1->>J: Persist exact transaction and Started state
+    A1->>S: Submit Tag15 exactly once
+    S->>L: Send canonical claim transaction
+    L-->>S: Accepted transaction identity
+    S-->>A1: Durable accepted evidence
+    U-xA1: QA process kill before actor output
+    D->>J: Recover unfinished durable action
+    J-->>D: Transfer lease to later generation
+    D->>A2: Resume as ObserveOnly
+    A2->>L: Observe exact owner transaction
+    L-->>A2: Finalized claimed state
+    T->>L: Independently classify Tag15 by terms
+    T->>M: Sweep reconstructed Monero claim output
+    M-->>T: Ten-confirmation finality and accounting
+```
+
+The process-kill evidence must show an accepted-before-output boundary, one
+original submission, a later recovered generation, absence of the killed
+identity, `observe_only_then_terminal`, and unchanged transaction and
+submission SHA-256 values. It must also say that automatic retry is false and
+the handoff occurred. Final semantic evidence must bind the independent Taker
+classifier to that same Tag15 transaction and show the Monero funded amount as
+received amount plus fee after ten confirmations. These checks preserve
+atomicity at this crash seam: the Maker cannot duplicate the LEZ claim, while
+the Taker learns the precommitted claim material only from the finalized
+canonical Tag15 and spends only the corresponding Monero output.
+
+All runtime endpoints are fresh dynamic literal-loopback services: pinned LEZ
+v0.2 Bedrock, sequencer, indexer, and role sidecars plus official Monero
+0.18.5.1 Regtest wallets and daemon with zero peers. Test funds are local
+genesis and deterministic Regtest outputs. No public RPC, faucet, peer, public
+deployment, DNS success, external finality service, or external funds take
+part. Cold caches may need the pinned Cargo, Git, Docker, Risc0, and Logos
+artifacts; runtime variability comes from CPU or disk pressure, Docker
+readiness, the local 80-block LEZ finality window, SQLite and filesystem
+syncing, process scheduling at the kill boundary, and bounded node polling.
+These can change duration, not the acceptance criteria.
+
+Cleanup is scoped to the exact run ID, process identity, and dynamic ports.
+Never perform a broad Docker prune or stop another project. Exact run
+`m7tag15kille455deca` at pushed source `e455dec` completed both local-chain
+legs, exact recovery, finality, accounting, and cleanup with the foreign
+sentinel intact. Its secret-safe checked packet is
+`docs/evidence/m7-actual-maker-tag15-process-kill-e455dec-20260811.json`.
