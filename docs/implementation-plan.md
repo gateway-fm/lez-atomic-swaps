@@ -7375,3 +7375,31 @@ S12/S13 review and policy-deferred public deployment.
   11 repository-owned open, and 2 deferred. S5 remains open because this
   certificate does not prove the remaining all-pair daemon journeys or adverse
   schedules.
+
+## M7 Taker-claim unknown-outcome recovery (2026-08-11)
+
+- [x] Select the complementary claim-side seam: receipt-v2 Tag14 was accepted
+  by its sealed one-shot sender, but the user-facing `lez-taker claim` process
+  disappears before stdout. Repeating the same command must observe the
+  durable `Started` workflow and must not invoke another sender.
+- [x] RED then GREEN a focused source contract. Add a compile-time-only pause
+  after successful child completion, require a canonical owner-private marker
+  parent and create-new mode-0600 marker, and keep the default build behavior
+  unchanged.
+- [x] Compose the isolated runner fault: launch the real user command in its
+  own process group, verify the post-invocation marker and release journal,
+  SIGKILL the exact process, repeat against the same receipt/workflow, require
+  observation-only recovery to terminal finality, and prove the release
+  journal identity and digest are unchanged.
+- [x] Run the existing receipt-v2 claim/refund process journeys, feature-gated
+  daemon-hook tests, strict all-target/all-feature Clippy, warning-fatal
+  Rustdoc, formatting, shell syntax, and the new contract. ADR 0194 records the
+  components, RPCs, user sequence, and conditional atomicity argument.
+- [ ] Commit and push this verified implementation checkpoint, then provision
+  fresh isolated LEZ v0.2 and Monero Regtest services and replay the exact
+  pushed source through Tag14, Tag15, the Taker Monero sweep, and scoped
+  cleanup.
+- [ ] RED then GREEN a secret-safe actual-run certificate, wire it into the
+  canonical quality and CI-hardening gates, update manual reproduction and the
+  M7 ledgers only to the evidence proved, commit, push, and report the revised
+  ETA.

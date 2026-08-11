@@ -1,5 +1,14 @@
 use std::{io::Read as _, path::PathBuf, process::Stdio, str::FromStr as _, time::Duration};
 
+#[cfg(feature = "test-crash-hooks")]
+use std::{
+    env, fs,
+    fs::OpenOptions,
+    io::Write as _,
+    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    thread,
+};
+
 use anyhow::{Context as _, ensure};
 use btc_reference_actor::{
     ActorCommand as BtcActorCommand, ActorConfig as BtcActorConfig, ActorRole as BtcActorRole,
@@ -1025,6 +1034,7 @@ fn execute_xmr_taker_effect(
                 mark_xmr_effect_unknown(execution, step)?;
                 return Err(anyhow::anyhow!("XMR Taker effect invocation is ambiguous"));
             }
+            pause_xmr_taker_after_invoked(step)?;
             ("invoked_unreconciled", tool_plan_identity_sha256, false)
         }
         XmrPreparedEffectInvocationV1::ObserveOnly {
@@ -1055,6 +1065,63 @@ fn execute_xmr_taker_effect(
         })?
     );
     Ok(())
+}
+
+#[cfg(not(feature = "test-crash-hooks"))]
+fn pause_xmr_taker_after_invoked(_step: XmrWorkflowStep) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(feature = "test-crash-hooks")]
+fn pause_xmr_taker_after_invoked(step: XmrWorkflowStep) -> anyhow::Result<()> {
+    let Some(expected_step) = env::var_os("LEZ_TAKER_TEST_PAUSE_AFTER_INVOKED_STEP") else {
+        return Ok(());
+    };
+    ensure!(
+        expected_step == step.name(),
+        "Taker test pause selected a different workflow step"
+    );
+    let marker = PathBuf::from(
+        env::var_os("LEZ_TAKER_TEST_PAUSE_MARKER")
+            .ok_or_else(|| anyhow::anyhow!("Taker test pause marker is unavailable"))?,
+    );
+    ensure!(marker.is_absolute(), "Taker test pause marker is unsafe");
+    let parent = marker
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Taker test pause marker is unsafe"))?;
+    let parent_metadata = fs::symlink_metadata(parent)
+        .map_err(|_| anyhow::anyhow!("Taker test pause marker parent is unavailable"))?;
+    ensure!(
+        parent_metadata.is_dir()
+            && parent_metadata.permissions().mode().trailing_zeros() >= 6
+            && parent_metadata.uid() == rustix::process::geteuid().as_raw()
+            && fs::canonicalize(parent).ok().as_deref() == Some(parent),
+        "Taker test pause marker parent is unsafe"
+    );
+    ensure!(
+        matches!(fs::symlink_metadata(&marker), Err(error) if error.kind() == std::io::ErrorKind::NotFound),
+        "Taker test pause marker is not create-new"
+    );
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&marker)
+        .map_err(|_| anyhow::anyhow!("Taker test pause marker could not be created"))?;
+    serde_json::to_writer(
+        &mut file,
+        &serde_json::json!({
+            "schema_version": 1,
+            "state": "paused_after_invoked_before_stdout",
+            "step": step.name(),
+            "process_id": std::process::id()
+        }),
+    )?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    loop {
+        thread::park();
+    }
 }
 
 fn execute_xmr_taker_preflight(

@@ -32,6 +32,7 @@ readonly m7_xmr_punish_delay_ms="${M7_XMR_PUNISH_DELAY_MS:-180000}"
 readonly m7_xmr_supervised_refund="${M7_XMR_SUPERVISED_REFUND:-0}"
 readonly m7_xmr_refund_process_kill="${M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION:-0}"
 readonly m7_xmr_semantic_claim="${M7_XMR_SEMANTIC_CLAIM:-0}"
+readonly m7_xmr_claim_process_kill="${M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION:-0}"
 readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
 readonly m7_xmr_losing_tag16_after_tag17="${M7_XMR_LOSING_TAG16_AFTER_TAG17:-0}"
 readonly m7_xmr_losing_tag17_after_tag16="${M7_XMR_LOSING_TAG17_AFTER_TAG16:-0}"
@@ -111,6 +112,17 @@ emit_contract() {
         abandoned_generation_transfer_required: true,
         submission_identity_preserved: true,
         confirmations_mined_only_after_restart: true,
+        automatic_submission_retry: false,
+        runtime_external_resources: []
+      },
+      m7_xmr_claim_process_kill: {
+        mode_flag: "M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION",
+        requires_semantic_claim: true,
+        feature_gated_crash_hook: true,
+        crash_boundary: "invoked_before_cli_stdout",
+        restart_same_receipt_and_workflow: true,
+        post_restart_route: "observe_only",
+        release_journal_identity_preserved: true,
         automatic_submission_retry: false,
         runtime_external_resources: []
       },
@@ -333,6 +345,8 @@ environment_preflight() {
     fail "M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION must be unset, 0, or 1"
   [[ "$m7_xmr_semantic_claim" == 0 || "$m7_xmr_semantic_claim" == 1 ]] ||
     fail "M7_XMR_SEMANTIC_CLAIM must be unset, 0, or 1"
+  [[ "$m7_xmr_claim_process_kill" == 0 || "$m7_xmr_claim_process_kill" == 1 ]] ||
+    fail "M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION must be unset, 0, or 1"
   [[ "$m7_xmr_joined_abandonment" == 0 || "$m7_xmr_joined_abandonment" == 1 ]] ||
     fail "M7_XMR_JOINED_ABANDONMENT must be unset, 0, or 1"
   [[ "$m7_xmr_losing_tag16_after_tag17" == 0 ||
@@ -363,6 +377,12 @@ environment_preflight() {
       fail "M7_XMR_SEMANTIC_CLAIM=1 requires M5_XMR_APPLICATION_MODE=1 and M5_XMR_JOURNEY=claim"
     [[ "$m7_xmr_supervised_refund" == 0 ]] ||
       fail "M7 semantic claim and supervised refund modes are mutually exclusive"
+  fi
+  if [[ "$m7_xmr_claim_process_kill" == 1 ]]; then
+    [[ "$m7_xmr_semantic_claim" == 1 ]] ||
+      fail "M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION=1 requires M7_XMR_SEMANTIC_CLAIM=1"
+    [[ "$m7_xmr_refund_process_kill" == 0 ]] ||
+      fail "M7 claim and refund process-kill modes are mutually exclusive"
   fi
   if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     require_command curl
@@ -957,7 +977,7 @@ build_identity_and_artifact() {
         --bin xmr-reference-tag17
   fi
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
-    if [[ "$m7_xmr_refund_process_kill" == 1 ]]; then
+    if [[ "$m7_xmr_refund_process_kill" == 1 || "$m7_xmr_claim_process_kill" == 1 ]]; then
       CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
         cargo +1.96.0 build --release --locked --offline -p lez-maker-node \
           --features test-crash-hooks \
@@ -3595,6 +3615,127 @@ provision_m7_taker_claim_effect_application() {
     fail "M7 Taker receipt-v2 is incomplete"
 }
 
+run_m7_taker_tag14_process_kill() {
+  [[ "$m7_xmr_claim_process_kill" == 1 ]] ||
+    fail "M7 Taker-claim process-kill recovery requires its isolated mode"
+  record_phase m7_claim_process_kill started
+  readonly m7_taker_claim_pause_marker="${m5_xmr_runtime_root}/m7-claim-paused.json"
+  readonly m7_taker_claim_process_evidence="${evidence_root}/m7-claim-process-kill.json"
+  readonly m7_taker_tag14_recovered="${evidence_root}/m7-taker-tag14-recovered.json"
+  readonly m7_taker_tag14_crash_stderr="${evidence_root}/m7-taker-tag14-crashed.stderr"
+  local release_journal="${release_state_root}/xmr-release.sqlite3"
+  local crashed_taker_pid crashed_taker_start crashed_taker_group crashed_taker_sha
+  local release_identity_before release_identity_after release_sha_before release_sha_after
+  local marker_sha_before marker_sha_after crash_status=0 first_state="" observed_marker=0
+  local current="${evidence_root}/.m7-taker-tag14-restart-current.json"
+
+  LEZ_TAKER_TEST_PAUSE_AFTER_INVOKED_STEP=authorize_lez_tag14 \
+    LEZ_TAKER_TEST_PAUSE_MARKER="$m7_taker_claim_pause_marker" \
+    setsid "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+      >"$m7_taker_tag14_invocation" 2>"$m7_taker_tag14_crash_stderr" &
+  crashed_taker_pid=$!
+  crashed_taker_sha="$(sha256_file "$m5_lez_taker_binary")"
+  for _ in {1..100}; do
+    crashed_taker_start="$(process_start_ticks "$crashed_taker_pid")"
+    if [[ -n "$crashed_taker_start" ]] &&
+      process_is_owned "$crashed_taker_pid" "$crashed_taker_start" "$crashed_taker_sha"; then
+      break
+    fi
+    sleep 0.01
+  done
+  [[ -n "$crashed_taker_start" ]] || fail "M7 Taker claim process identity is unavailable"
+  crashed_taker_group="$(ps -o pgid= -p "$crashed_taker_pid" | tr -d " ")"
+  [[ "$crashed_taker_group" == "$crashed_taker_pid" ]] ||
+    fail "M7 Taker claim process does not own an exact process group"
+  for _ in {1..3600}; do
+    if [[ -f "$m7_taker_claim_pause_marker" ]]; then
+      observed_marker=1
+      break
+    fi
+    process_is_owned "$crashed_taker_pid" "$crashed_taker_start" "$crashed_taker_sha" ||
+      fail "M7 Taker claim process exited before its post-invocation pause"
+    sleep 0.05
+  done
+  [[ "$observed_marker" == 1 ]] || fail "M7 Taker claim pause marker was not published"
+  require_owner_file "$m7_taker_claim_pause_marker" "M7 Taker claim pause marker"
+  jq -e --argjson pid "$crashed_taker_pid" '
+    keys == (["process_id","schema_version","state","step"] | sort)
+    and .schema_version==1 and .state=="paused_after_invoked_before_stdout"
+    and .step=="authorize_lez_tag14" and .process_id==$pid
+  ' "$m7_taker_claim_pause_marker" >/dev/null || fail "M7 Taker claim pause marker is invalid"
+  require_owner_file "$release_journal" "M7 Tag14 release journal"
+  release_identity_before="$(stat -c '%d:%i' "$release_journal")"
+  release_sha_before="$(sha256_file "$release_journal")"
+  marker_sha_before="$(sha256_file "$m7_taker_claim_pause_marker")"
+
+  kill -KILL -- "-${crashed_taker_group}" || fail "M7 exact Taker claim SIGKILL failed"
+  if wait "$crashed_taker_pid" 2>/dev/null; then
+    crash_status=0
+  else
+    crash_status=$?
+  fi
+  [[ "$crash_status" == 137 ]] || fail "M7 Taker claim did not exit from exact SIGKILL"
+  process_is_owned "$crashed_taker_pid" "$crashed_taker_start" "$crashed_taker_sha" &&
+    fail "M7 old Taker claim process survived SIGKILL"
+  m5_application_process_group_has_members "$crashed_taker_group" &&
+    fail "M7 old Taker claim process group still has live members"
+  [[ ! -s "$m7_taker_tag14_invocation" ]] ||
+    fail "M7 crashed Taker unexpectedly returned operator output"
+
+  local attempt
+  for attempt in {1..600}; do
+    rm -f -- "$current"
+    if "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+      >"$current" 2>/dev/null; then
+      jq -e --arg run "$run_id" '
+        .schema_version==3 and .pair=="monero" and .role=="taker"
+        and .action=="claim" and .step=="authorize_lez_tag14" and .run_id==$run
+        and (.state=="observe_only" or .state=="complete")
+      ' "$current" >/dev/null || fail "M7 restarted Taker claim returned invalid state"
+      if [[ -z "$first_state" ]]; then
+        first_state="$(jq -er .state "$current")"
+        install -m 0600 -- "$current" "$m7_taker_tag14_recovered"
+      fi
+      if jq -e '.state=="complete" and .chain_effect_finalized==true' "$current" >/dev/null; then
+        mv "$current" "$m7_taker_tag14_terminal"
+        break
+      fi
+    fi
+    sleep 0.25
+  done
+  require_owner_file "$m7_taker_tag14_recovered" "M7 recovered Taker claim output"
+  require_owner_file "$m7_taker_tag14_terminal" "M7 terminal Taker claim output"
+  [[ "$first_state" == observe_only || "$first_state" == complete ]] ||
+    fail "M7 restarted Taker claim did not use observation-only recovery"
+
+  release_identity_after="$(stat -c '%d:%i' "$release_journal")"
+  release_sha_after="$(sha256_file "$release_journal")"
+  marker_sha_after="$(sha256_file "$m7_taker_claim_pause_marker")"
+  [[ "$release_identity_after" == "$release_identity_before" &&
+     "$release_sha_after" == "$release_sha_before" &&
+     "$marker_sha_after" == "$marker_sha_before" ]] ||
+    fail "M7 Taker claim restart changed the one-shot release journal"
+
+  jq -n --argjson crashed_taker_pid "$crashed_taker_pid" \
+    --arg crashed_taker_start "$crashed_taker_start" \
+    --arg release_identity "$release_identity_before" \
+    --arg release_sha256 "$release_sha_before" --arg first_state "$first_state" '
+      {
+        schema:"lez_v02_m7_taker_claim_process_kill_v1",
+        crash_boundary:"invoked_before_cli_stdout",kill_order:"taker_cli",
+        crashed_taker:{process_id:$crashed_taker_pid,start_ticks:$crashed_taker_start},
+        old_process_identity_absent:true,post_restart_route:"observe_only",
+        first_recovered_state:$first_state,
+        release_journal:{filesystem_identity:$release_identity,sha256:$release_sha256},
+        release_journal_unchanged_after_restart:true,automatic_submission_retry:false,
+        runtime_external_resources:[],public_rpc_used:false,faucet_used:false
+      }
+    ' >"$m7_taker_claim_process_evidence"
+  chmod 0600 "$m7_taker_claim_process_evidence"
+  require_owner_file "$m7_taker_claim_process_evidence" "M7 Taker claim process-kill evidence"
+  record_phase m7_claim_process_kill completed
+}
+
 activate_and_run_m7_taker_tag14() {
   readonly m7_taker_claim_activation="$m7_taker_effect_evidence_root/taker-claim-activation.json"
   readonly m7_taker_claim_activation_retained="$evidence_root/m7-taker-claim-activation.json"
@@ -3625,36 +3766,41 @@ activate_and_run_m7_taker_tag14() {
     fail "retained M7 Taker claim activation differs"
 
   record_phase tag14_publication started
-  "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
-    >"$m7_taker_tag14_invocation"
-  chmod 0600 "$m7_taker_tag14_invocation"
-  jq -e --arg run "$run_id" '
-    .schema_version==3 and .pair=="monero" and .role=="taker"
-    and .action=="claim" and .step=="authorize_lez_tag14"
-    and .state=="invoked_unreconciled" and .run_id==$run
-    and (.tool_plan_identity_sha256|test("^[0-9a-f]{64}$"))
-    and .chain_effect_finalized==false
-  ' "$m7_taker_tag14_invocation" >/dev/null ||
-    fail "M7 Taker Tag14 invocation did not consume exactly one semantic route"
-  record_phase tag14_publication completed
-
-  record_phase tag14_finality started
-  local attempt current
-  current="$evidence_root/.m7-taker-tag14-current.json"
-  for attempt in {1..600}; do
-    rm -f -- "$current"
-    if "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" >"$current" 2>/dev/null &&
-      jq -e --arg run "$run_id" '
-        .schema_version==3 and .pair=="monero" and .role=="taker"
-        and .action=="claim" and .step=="authorize_lez_tag14"
-        and .state=="complete" and .run_id==$run
-        and .chain_effect_finalized==true
-      ' "$current" >/dev/null 2>&1; then
-      mv "$current" "$m7_taker_tag14_terminal"
-      break
-    fi
-    sleep 0.25
-  done
+  if [[ "$m7_xmr_claim_process_kill" == 1 ]]; then
+    run_m7_taker_tag14_process_kill
+    record_phase tag14_publication completed
+    record_phase tag14_finality started
+  else
+    "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+      >"$m7_taker_tag14_invocation"
+    chmod 0600 "$m7_taker_tag14_invocation"
+    jq -e --arg run "$run_id" '
+      .schema_version==3 and .pair=="monero" and .role=="taker"
+      and .action=="claim" and .step=="authorize_lez_tag14"
+      and .state=="invoked_unreconciled" and .run_id==$run
+      and (.tool_plan_identity_sha256|test("^[0-9a-f]{64}$"))
+      and .chain_effect_finalized==false
+    ' "$m7_taker_tag14_invocation" >/dev/null ||
+      fail "M7 Taker Tag14 invocation did not consume exactly one semantic route"
+    record_phase tag14_publication completed
+    record_phase tag14_finality started
+    local attempt current
+    current="$evidence_root/.m7-taker-tag14-current.json"
+    for attempt in {1..600}; do
+      rm -f -- "$current"
+      if "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" >"$current" 2>/dev/null &&
+        jq -e --arg run "$run_id" '
+          .schema_version==3 and .pair=="monero" and .role=="taker"
+          and .action=="claim" and .step=="authorize_lez_tag14"
+          and .state=="complete" and .run_id==$run
+          and .chain_effect_finalized==true
+        ' "$current" >/dev/null 2>&1; then
+        mv "$current" "$m7_taker_tag14_terminal"
+        break
+      fi
+      sleep 0.25
+    done
+  fi
   require_owner_file "$m7_taker_tag14_terminal" "M7 Taker Tag14 terminal action"
   readonly tag14_finality_result="$m7_taker_effect_evidence_root/tag14-finalized.json"
   require_owner_file "$tag14_finality_result" "M7 semantic Tag14 finality"
