@@ -113,6 +113,7 @@ require_fixed './scripts/test-m7-taker-claim-process-kill-contract.sh' "$quality
 require_fixed './scripts/test-m7-taker-claim-process-kill-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-taker-claim-sweep-process-kill-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-taker-claim-sweep-process-kill-actual-certificate.sh' "$quality_runner"
+require_fixed './scripts/test-m7-maker-tag15-process-kill-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-btc-accepted-concurrency-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-zec-accepted-process-kill-contract.sh' "$quality_runner"

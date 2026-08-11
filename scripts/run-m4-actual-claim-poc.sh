@@ -34,11 +34,13 @@ readonly m7_xmr_refund_process_kill="${M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSI
 readonly m7_xmr_semantic_claim="${M7_XMR_SEMANTIC_CLAIM:-0}"
 readonly m7_xmr_claim_process_kill="${M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION:-0}"
 readonly m7_xmr_claim_sweep_process_kill="${M7_XMR_CLAIM_SWEEP_PROCESS_KILL_AFTER_SUBMISSION:-0}"
+readonly m7_xmr_tag15_process_kill="${M7_XMR_TAG15_PROCESS_KILL_AFTER_SUBMISSION:-0}"
 readonly m7_xmr_build_cache_root="${M7_XMR_BUILD_CACHE_ROOT:-}"
 readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
 readonly m7_xmr_losing_tag16_after_tag17="${M7_XMR_LOSING_TAG16_AFTER_TAG17:-0}"
 readonly m7_xmr_losing_tag17_after_tag16="${M7_XMR_LOSING_TAG17_AFTER_TAG16:-0}"
-readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : (m7_xmr_semantic_claim == 1 ? 1 : 3600)))
+readonly m5_actor_requeue_delay_seconds=$(((m7_xmr_supervised_refund == 1 || m7_xmr_tag15_process_kill == 1) ? 1 : (m7_xmr_semantic_claim == 1 ? 1 : 3600)))
+readonly m5_actor_failure_backoff_seconds=$((m7_xmr_tag15_process_kill == 1 ? 1 : 30))
 readonly tag17_finality_page_blocks=8
 
 fail() {
@@ -137,6 +139,18 @@ emit_contract() {
         post_restart_route: "observe_only",
         submission_identity_preserved: true,
         confirmations_mined_only_after_restart: true,
+        automatic_submission_retry: false,
+        runtime_external_resources: []
+      },
+      m7_xmr_tag15_process_kill: {
+        mode_flag: "M7_XMR_TAG15_PROCESS_KILL_AFTER_SUBMISSION",
+        requires_semantic_claim: true,
+        owner_action: "lez-maker claim",
+        feature_gated_crash_hook: true,
+        crash_boundary: "submitted_before_actor_stdout",
+        restart_same_database_and_registry: true,
+        post_restart_route: "observe_only",
+        submission_identity_preserved: true,
         automatic_submission_retry: false,
         runtime_external_resources: []
       },
@@ -373,6 +387,8 @@ environment_preflight() {
   [[ "$m7_xmr_claim_sweep_process_kill" == 0 ||
      "$m7_xmr_claim_sweep_process_kill" == 1 ]] ||
     fail "M7_XMR_CLAIM_SWEEP_PROCESS_KILL_AFTER_SUBMISSION must be unset, 0, or 1"
+  [[ "$m7_xmr_tag15_process_kill" == 0 || "$m7_xmr_tag15_process_kill" == 1 ]] ||
+    fail "M7_XMR_TAG15_PROCESS_KILL_AFTER_SUBMISSION must be unset, 0, or 1"
   if [[ -n "$m7_xmr_build_cache_root" ]]; then
     [[ "$m7_xmr_build_cache_root" == /* ]] ||
       fail "M7 XMR build cache must be an existing canonical owner-private directory"
@@ -422,6 +438,13 @@ environment_preflight() {
       fail "M7_XMR_CLAIM_SWEEP_PROCESS_KILL_AFTER_SUBMISSION=1 requires M7_XMR_SEMANTIC_CLAIM=1"
     [[ "$m7_xmr_refund_process_kill" == 0 ]] ||
       fail "M7 claim-sweep and refund process-kill modes are mutually exclusive"
+  fi
+  if [[ "$m7_xmr_tag15_process_kill" == 1 ]]; then
+    [[ "$m7_xmr_semantic_claim" == 1 ]] ||
+      fail "M7_XMR_TAG15_PROCESS_KILL_AFTER_SUBMISSION=1 requires M7_XMR_SEMANTIC_CLAIM=1"
+    [[ "$m7_xmr_refund_process_kill" == 0 && "$m7_xmr_claim_process_kill" == 0 &&
+       "$m7_xmr_claim_sweep_process_kill" == 0 ]] ||
+      fail "M7 Tag15 process-kill mode is mutually exclusive with other process-kill modes"
   fi
   if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     require_command curl
@@ -1017,7 +1040,8 @@ build_identity_and_artifact() {
     cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
       --bin xmr-reference-actor --bin xmr-reference-tag15
   if [[ ( "$m5_xmr_application_mode" == 1 &&
-          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ) ||
+          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ||
+            "$m7_xmr_tag15_process_kill" == 1 ) ) ||
         "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
@@ -1028,19 +1052,25 @@ build_identity_and_artifact() {
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
         --bin xmr-reference-finalized-classifier
   fi
-  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ]]; then
+  if [[ "$m7_xmr_tag15_process_kill" == 1 ]]; then
+    CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+      cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
+        --bin xmr-reference-tag15-finalized
+  fi
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ||
+        "$m7_xmr_tag15_process_kill" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
         --bin xmr-reference-monero-refund --bin xmr-reference-monero-verify
   fi
-  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
         --bin xmr-reference-tag17
   fi
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
     if [[ "$m7_xmr_refund_process_kill" == 1 || "$m7_xmr_claim_process_kill" == 1 ||
-          "$m7_xmr_claim_sweep_process_kill" == 1 ]]; then
+          "$m7_xmr_claim_sweep_process_kill" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]]; then
       CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
         cargo +1.96.0 build --release --locked --offline -p lez-maker-node \
           --features test-crash-hooks \
@@ -1065,7 +1095,8 @@ build_identity_and_artifact() {
   readonly agreement_actor_binary="${staged_binary_root}/xmr-reference-actor"
   readonly tag15_binary="${staged_binary_root}/xmr-reference-tag15"
   if [[ ( "$m5_xmr_application_mode" == 1 &&
-          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ) ||
+          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ||
+            "$m7_xmr_tag15_process_kill" == 1 ) ) ||
         "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
     readonly tag16_binary="${staged_binary_root}/xmr-reference-tag16"
     readonly m7_monero_observer_binary="${staged_binary_root}/xmr-reference-monero-verify"
@@ -1076,10 +1107,14 @@ build_identity_and_artifact() {
   if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
     readonly m7_finalized_classifier_binary="${staged_binary_root}/xmr-reference-finalized-classifier"
   fi
-  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ]]; then
+  if [[ "$m7_xmr_tag15_process_kill" == 1 ]]; then
+    readonly m7_tag15_finalized_binary="${staged_binary_root}/xmr-reference-tag15-finalized"
+  fi
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ||
+        "$m7_xmr_tag15_process_kill" == 1 ]]; then
     readonly m7_monero_refund_binary="${staged_binary_root}/xmr-reference-monero-refund"
   fi
-  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]]; then
     readonly m7_tag17_binary="${staged_binary_root}/xmr-reference-tag17"
   fi
   readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
@@ -1114,7 +1149,8 @@ build_identity_and_artifact() {
     "$agreement_actor_binary" "agreement actor"
   stage_executable "${workspace_target}/debug/xmr-reference-tag15" "$tag15_binary" "Tag15 driver"
   if [[ ( "$m5_xmr_application_mode" == 1 &&
-          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ) ) ||
+          ( "$m5_xmr_journey" == refund || "$m7_xmr_semantic_claim" == 1 ||
+            "$m7_xmr_tag15_process_kill" == 1 ) ) ||
         "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-tag16" \
       "$tag16_binary" "Tag16 refund driver"
@@ -1129,11 +1165,16 @@ build_identity_and_artifact() {
     stage_executable "${workspace_target}/debug/xmr-reference-finalized-classifier" \
       "$m7_finalized_classifier_binary" "M7 finalized Tag14 observer"
   fi
-  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ]]; then
+  if [[ "$m7_xmr_tag15_process_kill" == 1 ]]; then
+    stage_executable "${workspace_target}/debug/xmr-reference-tag15-finalized" \
+      "$m7_tag15_finalized_binary" "M7 finalized Tag15 observer"
+  fi
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ||
+        "$m7_xmr_tag15_process_kill" == 1 ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-monero-refund" \
       "$m7_monero_refund_binary" "M7 Monero settlement sender"
   fi
-  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-tag17" \
       "$m7_tag17_binary" "M7 Tag17 effect worker"
   fi
@@ -1529,7 +1570,7 @@ start_m5_xmr_application_daemon() {
       --actor-attempt-timeout-milliseconds 120000
       --actor-poll-milliseconds 20
       --actor-requeue-delay-seconds "$m5_actor_requeue_delay_seconds"
-      --actor-failure-backoff-seconds 30
+      --actor-failure-backoff-seconds "$m5_actor_failure_backoff_seconds"
       --actor-max-output-bytes 8192
     )
     if [[ "$m7_xmr_refund_process_kill" == 1 && "$instance" == m7-refund* ]]; then
@@ -1537,6 +1578,12 @@ start_m5_xmr_application_daemon() {
         --actor-test-pause-swap-id "$m5_xmr_planned_swap_id"
         --actor-test-pause-operation sweep_monero_refund
         --actor-test-pause-marker "$m7_refund_pause_marker"
+      )
+    elif [[ "$m7_xmr_tag15_process_kill" == 1 && "$instance" == m7-tag15* ]]; then
+      arguments+=(
+        --actor-test-pause-swap-id "$m5_xmr_planned_swap_id"
+        --actor-test-pause-operation claim_lez_tag15
+        --actor-test-pause-marker "$m7_tag15_pause_marker"
       )
     fi
   fi
@@ -2004,8 +2051,8 @@ wait_m5_xmr_replay_typed_blocked() {
 }
 
 provision_m7_maker_effect_application() {
-  [[ "$m7_xmr_supervised_refund" == 1 ]] ||
-    fail "M7 Maker effect provisioning requires the supervised-refund mode"
+  [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]] ||
+    fail "M7 Maker effect provisioning requires a supervised Maker-effect mode"
   readonly m7_maker_effect_root="$m5_xmr_application_root/maker-effects"
   readonly m7_maker_effect_evidence_root="$m7_maker_effect_root/evidence"
   readonly m7_maker_effect_authority="$m7_maker_effect_root/effect-authority.json"
@@ -2048,7 +2095,8 @@ provision_m7_maker_effect_application() {
     --arg shared_file_password "${monero_env[MONERO_FUNDING_WALLET_PASSWORD_FILE]}" \
     --arg fund_program "$monero_fund_binary" --arg fund_sha "$(sha256_file "$monero_fund_binary")" \
     --arg claim_program "$tag15_binary" --arg claim_sha "$(sha256_file "$tag15_binary")" \
-    --arg classifier_program "$classifier_binary" --arg classifier_sha "$(sha256_file "$classifier_binary")" \
+    --arg classifier_program "${m7_tag15_finalized_binary:-$classifier_binary}" \
+    --arg classifier_sha "$(sha256_file "${m7_tag15_finalized_binary:-$classifier_binary}")" \
     --arg refund_program "$m7_monero_refund_binary" --arg refund_sha "$(sha256_file "$m7_monero_refund_binary")" \
     --arg verify_program "$m7_monero_observer_binary" --arg verify_sha "$(sha256_file "$m7_monero_observer_binary")" \
     --arg punish_program "$m7_tag17_binary" --arg punish_sha "$(sha256_file "$m7_tag17_binary")" '
@@ -2134,7 +2182,7 @@ complete_m5_xmr_application_handoff() {
   m5_xmr_decoded_stage_a_swap_id="$(jq -er .swap_id "$m5_xmr_maker_provision")"
   m5_xmr_actor_config="$(jq -er .config_path "$m5_xmr_maker_provision")"
   m5_xmr_actor_state="$(jq -er .state_database_path "$m5_xmr_maker_provision")"
-  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]]; then
     provision_m7_maker_effect_application
   fi
   readonly m5_xmr_decoded_stage_a_swap_id m5_xmr_actor_config m5_xmr_actor_state
@@ -4673,6 +4721,227 @@ activate_and_supervise_m7_maker_refund() {
   record_phase m7_refund_supervisor completed
 }
 
+run_m7_maker_tag15_process_kill() {
+  [[ "$m7_xmr_tag15_process_kill" == 1 ]] ||
+    fail "M7 Maker Tag15 process-kill recovery requires its isolated mode"
+  record_phase m7_tag15_process_kill started
+  readonly m7_tag15_activation="${m7_maker_effect_evidence_root}/maker-claim-activation.json"
+  readonly m7_tag15_action="${evidence_root}/m7-tag15-action.json"
+  readonly m7_tag15_submitted_monitor="${evidence_root}/m7-tag15-submitted-monitor.json"
+  readonly m7_tag15_backoff_monitor="${evidence_root}/m7-tag15-backoff-monitor.json"
+  readonly m7_tag15_terminal_monitor="${evidence_root}/m7-tag15-terminal-monitor.json"
+  readonly m7_tag15_replay_action="${evidence_root}/m7-tag15-replay-action.json"
+  readonly m7_tag15_process_kill_evidence="${evidence_root}/m7-tag15-process-kill.json"
+  readonly m7_tag15_pause_marker="${m5_xmr_runtime_root}/m7-tag15-paused.json"
+  readonly tag15_submission="${m7_maker_effect_evidence_root}/tag15-claim-submission.json"
+  readonly m7_tag15_maker_finality="${m7_maker_effect_evidence_root}/tag15-finalized.json"
+  local current_monitor="${evidence_root}/.m7-tag15-current-monitor.json"
+  local generation crashed_generation recovered_generation
+  local actor_pid actor_start_ticks actor_group actor_binary_sha256
+  local submission_identity_before submission_identity_after
+  local submission_sha256_before submission_sha256_after
+  local transaction_before transaction_after marker_sha256_before marker_sha256_after
+
+  "$agreement_actor_binary" activate-maker-claim-workflow \
+    --effect-manifest "$m7_maker_effect_manifest" \
+    --effect-authority "$m7_maker_effect_authority" \
+    --run-id "$run_id" --monero-run-id "$MONERO_RUN_ID" \
+    --monero-funding-evidence "$monero_funding_evidence" \
+    --monero-funding-receipt "$monero_verification_evidence" \
+    --finalized-authorization "$tag14_finality_result" \
+    --maker-final-signature "$maker_final_signature" >"$m7_tag15_activation"
+  chmod 0600 "$m7_tag15_activation"
+  require_owner_file "$m7_tag15_activation" "M7 Maker claim activation"
+  jq -e --arg run "$run_id" --arg monero_run "$MONERO_RUN_ID" \
+    --arg swap "$m5_xmr_planned_swap_id" '
+      .schema=="lez_v02_m7_maker_claim_activation_v1" and .role=="maker"
+      and .run_id==$run and .monero_run_id==$monero_run and .swap_id==$swap
+      and .selected_branch=="claim" and .prepared_step=="claim_lez_tag15"
+      and (.tag15_scan_start_height|type)=="number"
+      and .private_material_disclosed==false
+    ' "$m7_tag15_activation" >/dev/null ||
+    fail "M7 Maker claim activation output is incomplete"
+
+  start_m5_xmr_application_daemon m7-tag15 1
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+    --id "$m5_xmr_planned_swap_id" >"$current_monitor"
+  generation="$(jq -er '.lease_generation | select(type=="number")' "$current_monitor")"
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" claim --id "$m5_xmr_planned_swap_id" \
+    --request-id "$run_id-m7-tag15-001" --expected-generation "$generation" \
+    >"$m7_tag15_action"
+  chmod 0600 "$m7_tag15_action"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" --argjson generation "$generation" '
+    .schema_version==1 and .swap_id==$swap and .action=="claim"
+    and .requested_after_generation==$generation and .was_replay==false
+  ' "$m7_tag15_action" >/dev/null || fail "M7 owner Tag15 claim was not admitted exactly"
+
+  local observed_pause=0
+  for _ in {1..3600}; do
+    if [[ -f "$tag15_submission" && -f "$m7_tag15_pause_marker" ]] &&
+      "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+        --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
+      jq -e '
+        .schedule_state=="leased" and .manual_action.action=="claim"
+        and .manual_action.state=="leased"
+      ' "$current_monitor" >/dev/null 2>&1; then
+      observed_pause=1
+      break
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M7 Maker daemon exited before the Tag15 crash boundary"
+    sleep 0.05
+  done
+  [[ "$observed_pause" == 1 ]] || fail "M7 Tag15 sender did not reach its exact pause boundary"
+  mv "$current_monitor" "$m7_tag15_submitted_monitor"
+  chmod 0600 "$m7_tag15_submitted_monitor"
+  crashed_generation="$(jq -er '.lease_generation | select(type=="number")' \
+    "$m7_tag15_submitted_monitor")"
+  require_owner_file "$tag15_submission" "M7 Maker Tag15 one-shot submission"
+  jq -e --arg run "$run_id" '
+    .schema=="lez_v02_m4_actual_local_tag15_v1" and .role=="maker"
+    and .run_id==$run and (.transaction_id|type)=="string"
+    and .submission_outcome!=null and .automatic_submission_retry==false
+    and .public_rpc_used==false
+  ' "$tag15_submission" >/dev/null || fail "M7 Tag15 sender evidence is incomplete"
+  require_owner_file "$m7_tag15_pause_marker" "M7 Tag15 submitted-effect pause marker"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+    keys == (["operation","process_id","role","schema_version","state","swap_id"]|sort)
+    and .schema_version==1 and .state=="paused_after_submitted_before_stdout"
+    and .swap_id==$swap and .role=="maker" and .operation=="claim_lez_tag15"
+    and (.process_id|type)=="number" and .process_id>0
+  ' "$m7_tag15_pause_marker" >/dev/null || fail "M7 Tag15 pause marker is invalid"
+
+  actor_pid="$(jq -er .process_id "$m7_tag15_pause_marker")"
+  actor_start_ticks="$(process_start_ticks "$actor_pid")"
+  actor_binary_sha256="$(sha256_file "$m5_xmr_maker_actor_binary")"
+  [[ -n "$actor_start_ticks" ]] &&
+    m7_refund_actor_is_owned "$actor_pid" "$actor_start_ticks" "$actor_binary_sha256" ||
+    fail "M7 paused Tag15 actor identity is unavailable"
+  actor_group="$(ps -o pgid= -p "$actor_pid" | tr -d " ")"
+  [[ "$actor_group" == "$actor_pid" ]] ||
+    fail "M7 paused Tag15 actor does not own an exact process group"
+  submission_identity_before="$(stat -c '%d:%i' "$tag15_submission")"
+  submission_sha256_before="$(sha256_file "$tag15_submission")"
+  transaction_before="$(jq -er .transaction_id "$tag15_submission")"
+  marker_sha256_before="$(sha256_file "$m7_tag15_pause_marker")"
+
+  kill -KILL -- "-${actor_group}" || fail "M7 exact paused Tag15 actor SIGKILL failed"
+  for _ in {1..200}; do
+    m7_refund_actor_is_owned "$actor_pid" "$actor_start_ticks" "$actor_binary_sha256" || break
+    sleep 0.05
+  done
+  m7_refund_actor_is_owned "$actor_pid" "$actor_start_ticks" "$actor_binary_sha256" &&
+    fail "M7 old paused Tag15 actor survived SIGKILL"
+  for _ in {1..200}; do
+    m5_application_process_group_has_members "$actor_group" || break
+    sleep 0.05
+  done
+  m5_application_process_group_has_members "$actor_group" &&
+    fail "M7 old paused Tag15 actor group still has live members"
+
+  local observed_backoff=0
+  for _ in {1..1200}; do
+    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+      --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
+      jq -e --argjson generation "$crashed_generation" '
+        (.schedule_state=="backoff" or .schedule_state=="queued")
+        and .lease_generation==$generation and .manual_action.action=="claim"
+        and .manual_action.state=="queued"
+      ' "$current_monitor" >/dev/null 2>&1; then
+      observed_backoff=1
+      break
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M7 Maker daemon exited before retaining the killed Tag15 lease"
+    sleep 0.05
+  done
+  [[ "$observed_backoff" == 1 ]] || fail "M7 killed Tag15 lease did not return to durable queue"
+  mv "$current_monitor" "$m7_tag15_backoff_monitor"
+  chmod 0600 "$m7_tag15_backoff_monitor"
+  stop_m5_xmr_application_daemon || fail "M7 Maker daemon did not stop before Tag15 restart"
+  start_m5_xmr_application_daemon m7-tag15-recovery 1
+
+  local observed_terminal=0
+  for _ in {1..7200}; do
+    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+      --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
+      jq -e --argjson crashed "$crashed_generation" '
+        .schedule_state=="terminal" and .lease_generation>$crashed
+        and .progress.observation.state=="active"
+        and .progress.observation.phase=="completed"
+        and .progress.observation.revision==2
+        and .progress.observation.next_action=="complete"
+        and .manual_action.action=="claim" and .manual_action.state=="completed"
+      ' "$current_monitor" >/dev/null 2>&1; then
+      observed_terminal=1
+      break
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M7 restarted Maker daemon exited before Tag15 finality"
+    sleep 0.05
+  done
+  [[ "$observed_terminal" == 1 ]] || fail "M7 Tag15 observer did not terminalize the claim"
+  mv "$current_monitor" "$m7_tag15_terminal_monitor"
+  chmod 0600 "$m7_tag15_terminal_monitor"
+  recovered_generation="$(jq -er '.lease_generation' "$m7_tag15_terminal_monitor")"
+  require_owner_file "$m7_tag15_maker_finality" "M7 Maker-observed finalized Tag15 evidence"
+  jq -e '
+    .context.sidecar_role=="maker" and .outcome.status=="found"
+    and .outcome.facts.instruction.effect=="claim"
+    and .outcome.facts.metadata.state=="claimed" and .outcome.facts.custody.balance=="0"
+  ' "$m7_tag15_maker_finality" >/dev/null ||
+    fail "M7 Maker-observed finalized Tag15 evidence is incomplete"
+
+  submission_identity_after="$(stat -c '%d:%i' "$tag15_submission")"
+  submission_sha256_after="$(sha256_file "$tag15_submission")"
+  transaction_after="$(jq -er .transaction_id "$tag15_submission")"
+  marker_sha256_after="$(sha256_file "$m7_tag15_pause_marker")"
+  [[ "$submission_identity_after" == "$submission_identity_before" &&
+     "$submission_sha256_after" == "$submission_sha256_before" &&
+     "$transaction_after" == "$transaction_before" &&
+     "$marker_sha256_after" == "$marker_sha256_before" ]] ||
+    fail "M7 Tag15 restart changed durable one-shot submission identity"
+
+  "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" claim --id "$m5_xmr_planned_swap_id" \
+    --request-id "$run_id-m7-tag15-001" --expected-generation "$generation" \
+    >"$m7_tag15_replay_action"
+  chmod 0600 "$m7_tag15_replay_action"
+  jq -e --arg swap "$m5_xmr_planned_swap_id" --argjson generation "$generation" '
+    .swap_id==$swap and .action=="claim" and .requested_after_generation==$generation
+    and .was_replay==true
+  ' "$m7_tag15_replay_action" >/dev/null || fail "M7 owner Tag15 replay was not idempotent"
+
+  jq -n --arg swap "$m5_xmr_planned_swap_id" --arg tx "$transaction_before" \
+    --arg submission_sha256 "$submission_sha256_before" \
+    --arg submission_identity "$submission_identity_before" \
+    --argjson crashed_generation "$crashed_generation" \
+    --argjson recovered_generation "$recovered_generation" \
+    --argjson crashed_actor_pid "$actor_pid" --arg crashed_actor_start_ticks "$actor_start_ticks" '
+      {
+        schema:"lez_v02_m7_tag15_process_kill_v1",swap_id:$swap,transaction_id:$tx,
+        crash_boundary:"submitted_before_actor_stdout",kill_order:"actor_only",
+        crashed_actor:{process_id:$crashed_actor_pid,start_ticks:$crashed_actor_start_ticks},
+        crashed_generation:$crashed_generation,recovered_generation:$recovered_generation,
+        abandoned_generation_transferred:($recovered_generation>$crashed_generation),
+        post_restart_route:"observe_only_then_terminal",
+        submission:{filesystem_identity:$submission_identity,sha256:$submission_sha256,
+          transaction_id:$tx,unchanged_after_restart:true},
+        owner_replay_was_idempotent:true,automatic_submission_retry:false,
+        old_process_identities_absent:true,public_rpc_used:false,faucet_used:false,
+        runtime_external_resources:[]
+      }
+    ' >"$m7_tag15_process_kill_evidence"
+  chmod 0600 "$m7_tag15_process_kill_evidence"
+  require_owner_file "$m7_tag15_process_kill_evidence" "M7 Tag15 process-kill evidence"
+  stop_m5_xmr_application_daemon || fail "M7 Maker daemon did not stop after Tag15 terminal"
+  record_phase m7_tag15_process_kill completed
+  record_phase tag15 completed
+  classify_tag15_finality
+}
+
 
 execute_run() {
   run_preflight
@@ -4693,14 +4962,15 @@ execute_run() {
     prepare_m5_xmr_delivery_plan
   fi
   compose_xmr_agreement
-  if [[ "$m5_xmr_application_mode" == 1 && "$m7_xmr_supervised_refund" == 0 ]]; then
+  if [[ "$m5_xmr_application_mode" == 1 && "$m7_xmr_supervised_refund" == 0 &&
+        "$m7_xmr_tag15_process_kill" == 0 ]]; then
     complete_m5_xmr_application_handoff
     verify_m5_xmr_application_cutoff
   fi
   submit_tag13
   export_tag13_handoff
   start_role_sidecars
-  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]]; then
     complete_m5_xmr_application_handoff
   fi
   if [[ "$m5_xmr_journey" == punish ]]; then
@@ -4753,8 +5023,12 @@ execute_run() {
       classify_tag14_finality
     fi
     prepare_tag15_signature
-    publish_tag15
-    classify_tag15_finality
+    if [[ "$m7_xmr_tag15_process_kill" == 1 ]]; then
+      run_m7_maker_tag15_process_kill
+    else
+      publish_tag15
+      classify_tag15_finality
+    fi
     extract_claim_signature
     if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
       activate_and_run_m7_taker_claim_sweep

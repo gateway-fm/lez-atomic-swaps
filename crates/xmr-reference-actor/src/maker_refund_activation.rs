@@ -7,6 +7,7 @@ use std::{io::Write as _, path::Path};
 
 use anyhow::{Context as _, Result, anyhow, ensure};
 use lez_adaptor_role_runner::{ValidatedSession, read_final_signature_packet};
+use lez_adaptor_signature::verify_final_signature;
 use lez_bridge_adapter::XmrLezBridgeBindingV3;
 use lez_bridge_protocol::{
     Participant as BridgeParticipant, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
@@ -27,14 +28,16 @@ use crate::{
     discovered_finalized_xmr_facts,
     effect_input_custody::{
         XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE, XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE,
-        parse_private_view_key_bytes,
+        XMR_EFFECT_MAKER_CLAIM_SIGNATURE_FILE, parse_private_view_key_bytes,
     },
-    load_validated_xmr_effect_execution_v3_bytes, read_canonical_private_json,
-    read_finalized_xmr_effect, read_private_input, write_bounded_public_new,
+    load_validated_xmr_effect_execution_v3_bytes, owner_exact_finalized_xmr_facts,
+    read_canonical_private_json, read_finalized_xmr_effect, read_private_input,
+    write_bounded_public_new,
 };
 
 const FUNDING_SCHEMA: &str = "lez_v02_m4_actual_local_monero_funding_v2";
 const ACTIVATION_SCHEMA: &str = "lez_v02_m7_maker_refund_activation_v1";
+const MAKER_CLAIM_ACTIVATION_SCHEMA: &str = "lez_v02_m7_maker_claim_activation_v1";
 const TAKER_CLAIM_ACTIVATION_SCHEMA: &str = "lez_v02_m7_taker_claim_activation_v1";
 const TAKER_CLAIM_SWEEP_ACTIVATION_SCHEMA: &str = "lez_v02_m7_taker_claim_sweep_activation_v1";
 const TAG13_SCHEMA: &str = "lez_v02_m4_xmr_stage_a_tag13_poc_v2";
@@ -254,6 +257,23 @@ struct ActivationSummaryV1 {
     funding_tool_plan_identity_sha256: String,
     finalized_refund_sha256: String,
     finalized_refund_signature_sha256: String,
+    prepared_step: &'static str,
+    private_material_disclosed: bool,
+}
+
+#[derive(Serialize)]
+struct MakerClaimActivationSummaryV1 {
+    schema: &'static str,
+    role: &'static str,
+    run_id: String,
+    monero_run_id: String,
+    swap_id: String,
+    selected_branch: &'static str,
+    funding_effect_evidence_sha256: String,
+    funding_tool_plan_identity_sha256: String,
+    finalized_authorization_sha256: String,
+    maker_claim_signature_sha256: String,
+    tag15_scan_start_height: u64,
     prepared_step: &'static str,
     private_material_disclosed: bool,
 }
@@ -611,6 +631,211 @@ fn validate_tag13_effect(effect: &Tag13EffectV1, expected: &str) -> Result<()> {
         "Tag-13 {expected} effect contains a zero chain identity"
     );
     Ok(())
+}
+
+/// Validates exact funding and finalized Tag14 evidence, then prepares only the
+/// Maker Tag15 Claim step. No operator-provided branch selector is accepted.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(crate) fn activate_maker_claim_workflow(
+    effect_manifest: &Path,
+    effect_authority: &Path,
+    run_id: &str,
+    monero_run_id: &str,
+    monero_funding_evidence: &Path,
+    monero_funding_receipt: &Path,
+    finalized_authorization: &Path,
+    maker_final_signature: &Path,
+) -> Result<()> {
+    let manifest_bytes = read_private_input(
+        effect_manifest,
+        XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+        "schema-3 Maker effect manifest",
+    )?;
+    let authority_bytes = read_private_input(
+        effect_authority,
+        XMR_EFFECT_AUTHORITY_MAX_BYTES,
+        "Maker effect authority",
+    )?;
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &manifest_bytes,
+        &authority_bytes,
+        ActorRole::Maker,
+        run_id,
+    )
+    .context("validate Maker effect application before claim activation")?;
+    let authority = execution.effect_authority();
+    ensure!(
+        authority.schema_version() == 3
+            && authority.role() == ActorRole::Maker
+            && authority.run_id() == run_id,
+        "claim activation requires the exact schema-3 Maker authority"
+    );
+
+    let agreement = XmrAgreementV1::from_wire(&execution.application.stage_a_wire)
+        .context("effect application Stage A is invalid")?;
+    ensure!(
+        agreement.body().monero().network() == MoneroAddressNetworkV1::Regtest,
+        "M7 local claim activation requires Monero Regtest"
+    );
+    let view_key = parse_private_view_key_bytes(&execution.application.private_view_key)?;
+    let activation = XmrActivatedAgreementV1::from_wire(
+        &agreement,
+        &execution.application.stage_b_wire,
+        &view_key,
+    )
+    .context("effect application Stage B is invalid")?;
+    ensure!(
+        agreement.body().swap_id() == authority.swap_id()
+            && agreement.agreement_commitment() == authority.agreement_commitment()
+            && activation.activation_commitment() == authority.activation_commitment(),
+        "claim activation application identity changed"
+    );
+
+    let (funding, funding_bytes) = read_canonical_private_json::<FundingEvidenceV2>(
+        monero_funding_evidence,
+        "Monero funding evidence v2",
+    )?;
+    let (receipt, receipt_bytes) = read_canonical_private_json::<MoneroReceiptEvidenceV2>(
+        monero_funding_receipt,
+        "Monero funding receipt v2",
+    )?;
+    validate_funding_pair(&agreement, monero_run_id, &funding, &receipt)?;
+
+    let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
+        .context("derive finalized authorization terms from Stage B")?;
+    let finalized_result = read_finalized_xmr_effect(finalized_authorization)?;
+    let facts = owner_exact_finalized_xmr_facts(
+        &finalized_result,
+        run_id,
+        &binding.terms(),
+        XmrNativeEffectV3::AuthorizeClaim,
+        BridgeParticipant::Taker,
+    )?;
+    let partial = facts
+        .instruction
+        .published_claim_partial
+        .ok_or_else(|| anyhow!("finalized Tag-14 facts omit the published partial"))?;
+    activation
+        .verify_published_taker_claim_partial(&agreement, *partial.as_bytes())
+        .context("finalized Tag-14 partial differs from Stage B")?;
+
+    let signature_before = read_private_input(
+        maker_final_signature,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
+        "Maker claim final-signature packet",
+    )?;
+    let claim_context = agreement
+        .claim_session_descriptor()
+        .context()
+        .context("claim session descriptor is invalid")?;
+    let claim_session = ValidatedSession::from_untweaked_context(claim_context.clone())
+        .context("claim runner session is invalid")?;
+    let signature = read_final_signature_packet(maker_final_signature, &claim_session)
+        .context("validate Maker claim final-signature packet")?;
+    verify_final_signature(&claim_context, signature)
+        .context("Maker claim final signature is cryptographically invalid")?;
+    let signature_after = read_private_input(
+        maker_final_signature,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
+        "Maker claim final-signature packet",
+    )?;
+    ensure!(
+        signature_before == signature_after,
+        "Maker claim final-signature packet changed while read"
+    );
+
+    let funding_evidence_sha256: [u8; 32] = Sha256::digest(&funding_bytes).into();
+    let funding_receipt_sha256: [u8; 32] = Sha256::digest(&receipt_bytes).into();
+    let effect_evidence_sha256 = domain_digest(
+        b"lez-xmr-m7-imported-funding-evidence-v1",
+        &[&funding_bytes, &receipt_bytes],
+    );
+    let maker_tools = authority
+        .maker_tools()
+        .ok_or_else(|| anyhow!("Maker effect tool profile is unavailable"))?;
+    let imported_plan = ImportedFundingPlanV1 {
+        schema_version: 1,
+        step: XmrWorkflowStep::FundMonero.name(),
+        role: "maker",
+        run_id: run_id.to_owned(),
+        swap_id: hex::encode(authority.swap_id()),
+        agreement_commitment: hex::encode(authority.agreement_commitment()),
+        activation_commitment: hex::encode(authority.activation_commitment()),
+        effect_authority_sha256: hex::encode(execution.effect_authority_sha256()),
+        funding_tool_program_sha256: hex::encode(maker_tools.monero_fund().program_sha256()),
+        funding_tool_abi: maker_tools.monero_fund().abi().to_owned(),
+        funding_evidence_sha256: hex::encode(funding_evidence_sha256),
+        funding_receipt_sha256: hex::encode(funding_receipt_sha256),
+    };
+    let imported_plan_bytes = canonical_json_bytes(&imported_plan, "encode imported funding plan")?;
+    let tool_plan_identity_sha256: [u8; 32] = Sha256::digest(&imported_plan_bytes).into();
+    let reconciliation = XmrWorkflowReconciliationV2::new(
+        effect_evidence_sha256,
+        tool_plan_identity_sha256,
+        XmrWorkflowReconciliationSource::MoneroWalletTransaction,
+    )
+    .context("construct exact imported funding reconciliation")?;
+
+    persist_or_validate_private(
+        &authority
+            .evidence_root()
+            .join(XMR_EFFECT_MAKER_CLAIM_SIGNATURE_FILE),
+        &signature_after,
+    )?;
+
+    let mut workflow = SqliteXmrWorkflowJournal::open_existing(authority.workflow_journal())
+        .context("open Maker effect workflow for claim activation")?;
+    let identity = execution.workflow_identity();
+    workflow
+        .prepare_step(identity, XmrWorkflowStep::FundMonero)
+        .context("prepare imported Maker Monero funding")?;
+    let _ = workflow
+        .authorize_once(identity, XmrWorkflowStep::FundMonero)
+        .context("consume imported Maker funding authority")?;
+    workflow
+        .reconcile_succeeded(identity, XmrWorkflowStep::FundMonero, &reconciliation)
+        .context("reconcile exact imported Maker funding evidence")?;
+    workflow
+        .select_branch(identity, XmrWorkflowBranch::Claim)
+        .context("select claim branch from finalized Tag-14 evidence")?;
+    workflow
+        .prepare_step(identity, XmrWorkflowStep::ClaimLezTag15)
+        .context("prepare Maker Tag15 claim")?;
+    ensure!(
+        workflow.selected_branch(identity)? == Some(XmrWorkflowBranch::Claim)
+            && workflow.load_reconciliation(identity, XmrWorkflowStep::FundMonero)?
+                == Some(reconciliation)
+            && workflow.step_revision(identity, XmrWorkflowStep::ClaimLezTag15)? == 0,
+        "durable Maker claim activation did not replay exactly"
+    );
+
+    let finalized_bytes =
+        canonical_json_bytes(&finalized_result, "encode finalized authorization")?;
+    let summary = MakerClaimActivationSummaryV1 {
+        schema: MAKER_CLAIM_ACTIVATION_SCHEMA,
+        role: "maker",
+        run_id: run_id.to_owned(),
+        monero_run_id: monero_run_id.to_owned(),
+        swap_id: hex::encode(authority.swap_id()),
+        selected_branch: "claim",
+        funding_effect_evidence_sha256: hex::encode(effect_evidence_sha256),
+        funding_tool_plan_identity_sha256: hex::encode(tool_plan_identity_sha256),
+        finalized_authorization_sha256: hex::encode(Sha256::digest(&finalized_bytes)),
+        maker_claim_signature_sha256: hex::encode(Sha256::digest(&signature_after)),
+        tag15_scan_start_height: facts
+            .containing_block
+            .block_id
+            .checked_add(1)
+            .context("Tag-14 containing height overflow")?,
+        prepared_step: XmrWorkflowStep::ClaimLezTag15.name(),
+        private_material_disclosed: false,
+    };
+    std::io::stdout()
+        .write_all(&canonical_json_bytes(
+            &summary,
+            "encode Maker claim activation summary",
+        )?)
+        .context("write Maker claim activation summary")
 }
 
 /// Validates external evidence and advances one Maker workflow to the prepared

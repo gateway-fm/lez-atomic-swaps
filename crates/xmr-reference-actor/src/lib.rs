@@ -54,12 +54,13 @@ pub use effect_input_custody::{
     XMR_EFFECT_DAEMON_PASSWORD_FD, XMR_EFFECT_DAEMON_USERNAME_FD,
     XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE, XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD,
     XMR_EFFECT_FINALIZED_SIGNATURE_FD, XMR_EFFECT_FUNDING_PASSWORD_FD,
-    XMR_EFFECT_FUNDING_USERNAME_FD, XMR_EFFECT_OWN_PUBLIC_PACKET_FD,
-    XMR_EFFECT_PEER_PUBLIC_PACKET_FD, XMR_EFFECT_PRIVATE_MANIFEST_FD,
-    XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_ROLE_PASSWORD_FD,
-    XMR_EFFECT_ROLE_USERNAME_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_SHARED_PASSWORD_FD,
-    XMR_EFFECT_SHARED_USERNAME_FD, XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD,
-    XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD,
+    XMR_EFFECT_FUNDING_USERNAME_FD, XMR_EFFECT_MAKER_CLAIM_SIGNATURE_FILE,
+    XMR_EFFECT_OWN_PUBLIC_PACKET_FD, XMR_EFFECT_PEER_PUBLIC_PACKET_FD,
+    XMR_EFFECT_PRIVATE_MANIFEST_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+    XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD,
+    XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_SHARED_PASSWORD_FD, XMR_EFFECT_SHARED_USERNAME_FD,
+    XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD, XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD,
+    XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD,
 };
 #[cfg(feature = "sessions")]
 pub use effect_route::{
@@ -107,8 +108,8 @@ use lez_xmr_swap_sdk::{
 };
 #[cfg(feature = "sessions")]
 use maker_refund_activation::{
-    activate_maker_refund_workflow, activate_taker_claim_sweep_workflow,
-    activate_taker_claim_workflow,
+    activate_maker_claim_workflow, activate_maker_refund_workflow,
+    activate_taker_claim_sweep_workflow, activate_taker_claim_workflow,
 };
 #[cfg(feature = "sessions")]
 use monero::Address as MoneroAddress;
@@ -515,6 +516,27 @@ pub enum Action {
         /// New owner-private canonical final-signature packet for extraction/reconstruction.
         #[arg(long, value_name = "NEW_PRIVATE_JSON")]
         output_final_signature: PathBuf,
+    },
+    /// Activate only the Maker Claim branch from exact finalized Tag14 and
+    /// independently verified Monero funding evidence.
+    #[cfg(feature = "sessions")]
+    ActivateMakerClaimWorkflow {
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        effect_manifest: PathBuf,
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        effect_authority: PathBuf,
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        monero_run_id: String,
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        monero_funding_evidence: PathBuf,
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        monero_funding_receipt: PathBuf,
+        #[arg(long, value_name = "FINALIZED_JSON")]
+        finalized_authorization: PathBuf,
+        #[arg(long, value_name = "PRIVATE_JSON")]
+        maker_final_signature: PathBuf,
     },
     /// Activate only the Maker refund branch from exact finalized Tag-16 and
     /// independently verified Monero funding evidence.
@@ -1303,6 +1325,26 @@ pub fn execute(cli: Cli) -> Result<()> {
             &run_id,
             &finalized_refund,
             &output_final_signature,
+        ),
+        #[cfg(feature = "sessions")]
+        Action::ActivateMakerClaimWorkflow {
+            effect_manifest,
+            effect_authority,
+            run_id,
+            monero_run_id,
+            monero_funding_evidence,
+            monero_funding_receipt,
+            finalized_authorization,
+            maker_final_signature,
+        } => activate_maker_claim_workflow(
+            &effect_manifest,
+            &effect_authority,
+            &run_id,
+            &monero_run_id,
+            &monero_funding_evidence,
+            &monero_funding_receipt,
+            &finalized_authorization,
+            &maker_final_signature,
         ),
         #[cfg(feature = "sessions")]
         Action::ActivateMakerRefundWorkflow {

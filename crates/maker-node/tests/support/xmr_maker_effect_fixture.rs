@@ -19,9 +19,11 @@ use super::xmr_chat_fixture::XmrChatFixture;
 
 const TAG17_RUN_ID: &str = "m7-maker-tag17-supervisor-e2e";
 const REFUND_RUN_ID: &str = "m7-maker-refund-supervisor-e2e";
+const CLAIM_RUN_ID: &str = "m7-maker-claim-supervisor-e2e";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum MakerRecoveryKind {
+    Claim,
     Refund,
     Tag17,
 }
@@ -29,6 +31,7 @@ enum MakerRecoveryKind {
 impl MakerRecoveryKind {
     const fn directory(self) -> &'static str {
         match self {
+            Self::Claim => "maker-claim-effect",
             Self::Refund => "maker-refund-effect",
             Self::Tag17 => "maker-tag17-effect",
         }
@@ -36,6 +39,7 @@ impl MakerRecoveryKind {
 
     const fn run_id(self) -> &'static str {
         match self {
+            Self::Claim => CLAIM_RUN_ID,
             Self::Refund => REFUND_RUN_ID,
             Self::Tag17 => TAG17_RUN_ID,
         }
@@ -43,6 +47,7 @@ impl MakerRecoveryKind {
 
     const fn branch(self) -> XmrWorkflowBranch {
         match self {
+            Self::Claim => XmrWorkflowBranch::Claim,
             Self::Refund => XmrWorkflowBranch::Refund,
             Self::Tag17 => XmrWorkflowBranch::Punish,
         }
@@ -50,6 +55,7 @@ impl MakerRecoveryKind {
 
     const fn step(self) -> XmrWorkflowStep {
         match self {
+            Self::Claim => XmrWorkflowStep::ClaimLezTag15,
             Self::Refund => XmrWorkflowStep::SweepMoneroRefund,
             Self::Tag17 => XmrWorkflowStep::PunishLezTag17,
         }
@@ -57,6 +63,7 @@ impl MakerRecoveryKind {
 
     const fn step_name(self) -> &'static str {
         match self {
+            Self::Claim => "claim_lez_tag15",
             Self::Refund => "sweep_monero_refund",
             Self::Tag17 => "punish_lez_tag17",
         }
@@ -131,6 +138,10 @@ pub fn provision_maker_tag17(fixture: &XmrChatFixture, root: &Path) -> MakerReco
     provision_maker_recovery(fixture, root, MakerRecoveryKind::Tag17)
 }
 
+pub fn provision_maker_claim(fixture: &XmrChatFixture, root: &Path) -> MakerRecoveryEffectFixture {
+    provision_maker_recovery(fixture, root, MakerRecoveryKind::Claim)
+}
+
 pub fn provision_maker_refund(fixture: &XmrChatFixture, root: &Path) -> MakerRecoveryEffectFixture {
     provision_maker_recovery(fixture, root, MakerRecoveryKind::Refund)
 }
@@ -158,6 +169,13 @@ fn provision_maker_recovery(
             0o600,
         );
     }
+    if kind == MakerRecoveryKind::Claim {
+        write(
+            &evidence_root.join("maker-claim-signature.json"),
+            b"canonical-maker-claim-signature\n",
+            0o600,
+        );
+    }
     let effect_log = effect_root.join("effect.log");
     let worker = effect_root.join("recovery-worker");
     let fd218_assertion = if kind == MakerRecoveryKind::Refund {
@@ -165,7 +183,7 @@ fn provision_maker_recovery(
     } else {
         "test ! -e /proc/self/fd/218"
     };
-    let fd219_assertion = if kind == MakerRecoveryKind::Refund {
+    let fd219_assertion = if matches!(kind, MakerRecoveryKind::Claim | MakerRecoveryKind::Refund) {
         "test -e /proc/self/fd/219"
     } else {
         "test ! -e /proc/self/fd/219"
@@ -234,6 +252,11 @@ fn provision_maker_recovery(
     } else {
         &unused
     };
+    let claim_worker = if kind == MakerRecoveryKind::Claim {
+        &worker
+    } else {
+        &unused
+    };
     let punish_worker = if kind == MakerRecoveryKind::Tag17 {
         &worker
     } else {
@@ -265,7 +288,7 @@ fn provision_maker_recovery(
         },
         maker_tools: MakerTools {
             monero_fund: tool(&unused, "lez_xmr_monero_fund_v2"),
-            lez_claim: tool(&unused, "lez_xmr_tag15_claim_v1"),
+            lez_claim: tool(claim_worker, "lez_xmr_tag15_claim_v1"),
             finalized_classifier: tool(&observer, "lez_xmr_finalized_classifier_v1"),
             monero_refund: tool(refund_worker, "lez_xmr_monero_refund_sweep_v3"),
             monero_verify: tool(&observer, "lez_xmr_monero_verify_v2"),
@@ -347,5 +370,6 @@ mod tests {
     fn recovery_fixture_routes_have_canonical_step_names() {
         assert_eq!(MakerRecoveryKind::Refund.step_name(), "sweep_monero_refund");
         assert_eq!(MakerRecoveryKind::Tag17.step_name(), "punish_lez_tag17");
+        assert_eq!(MakerRecoveryKind::Claim.step_name(), "claim_lez_tag15");
     }
 }

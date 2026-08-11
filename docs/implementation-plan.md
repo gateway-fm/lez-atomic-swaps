@@ -7474,6 +7474,39 @@ S12/S13 review and policy-deferred public deployment.
   binder. Exact cleanup passed and retained no public/external dependency.
   The sanitized certificate, manual flow, source contract, CI-hardening gate,
   and R4 baseline are updated.
-- [ ] Establish RED-to-GREEN coverage for the independent real Tag15
+- [x] Establish RED-to-GREEN coverage for the independent real Tag15
   accepted-before-stdout process-kill seam, preserving the exact effect
-  identity and proving zero second send before closing R4.
+  identity. The focused real-process regression proves one invocation followed
+  by observation, while exact-node replay remains required before closing R4.
+
+## M7 Maker Tag15 unknown-outcome recovery (2026-08-11)
+
+- [x] Audit the existing path. The journal, role-fixed sender slot, finalized
+  classifier, daemon owner-action mapping, and supervisor lock transfer exist.
+  The real XMR Maker actor lacks `claim`, the Tag15 binary lacks the sealed
+  child ABI, and no evidence-driven Maker Claim activation prepares the step.
+- [x] Record ADR 0196 with the local component/RPC topology, actual
+  operator/daemon/actor crash sequence, conditional atomicity argument, and
+  explicit limits.
+- [x] Establish the focused RED contract
+  `scripts/test-m7-maker-tag15-process-kill-contract.sh`. It currently fails
+  first because the isolated runner had no Tag15 process-kill mode; the same
+  contract requires the sealed sender, real actor Claim route, supervisor
+  hook/output grammar, and real-process no-resend regression.
+- [x] GREEN the sealed Tag15 sender and evidence-driven Maker Claim activation,
+  then compose the real actor/supervisor `InvokeOnce -> ObserveOnly` route.
+  The focused real-process test kills the exact actor group after sender
+  acceptance and proves its application log remains `invoke` then `observe`.
+- [x] Compose the isolated exact-node runner: the Maker owner uses `claim` at
+  the current generation, the actor pauses after durable Tag15 submission but
+  before stdout, the runner validates PID/start-time/memfd hash and kills only
+  that process group, and a clean daemon restart must terminalize through the
+  dedicated sealed read-only Tag15 observer. Submission inode, bytes,
+  transaction identity, pause evidence, and owner replay are all checked.
+  Maker reconciliation remains private to the Maker-sidecar observation; the
+  downstream signature extractor receives a separate Taker-sidecar finalized
+  discovery, preserving the established role-local evidence gate.
+- [ ] Run focused Rust/process QA, push the implementation, execute one isolated
+  exact-node replay, sanitize/pin its certificate, and close R4 only if every
+  unchanged-identity, no-resend, cleanup, and external-resource assertion
+  passes.

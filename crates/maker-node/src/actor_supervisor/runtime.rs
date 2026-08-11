@@ -134,6 +134,7 @@ impl MakerActorSupervisorConfig {
                 | "zcash_fund"
                 | "lez_revealing_claim"
                 | "zcash_followup_claim"
+                | "claim_lez_tag15"
                 | "sweep_monero_refund"
         ) || !marker.is_absolute()
         {
@@ -689,7 +690,8 @@ fn run_child(
         pause.swap_id == *lease.record().swap_id()
             && matches!(
                 (actor_command, pause.operation.as_ref()),
-                ("recover", "sweep_monero_refund")
+                ("claim", "claim_lez_tag15")
+                    | ("recover", "sweep_monero_refund")
                     | (
                         "drive",
                         "lez_initialize"
@@ -1009,7 +1011,8 @@ fn exact_absorbing_effect(
     match kind {
         MakerActorKindV1::Monero => matches!(
             (command, outcome, phase),
-            (ActorEffectCommand::Recover, "refunded", "refunded")
+            (ActorEffectCommand::Claim, "completed", "completed")
+                | (ActorEffectCommand::Recover, "refunded", "refunded")
         ),
         MakerActorKindV1::Zcash => matches!(
             (command, outcome, phase),
@@ -1098,9 +1101,11 @@ fn known_effect_outcome(
         (MakerActorKindV1::Monero, ActorEffectCommand::Recover) => {
             matches!(outcome, "awaiting_observation" | "refunded")
         }
-        (MakerActorKindV1::Monero, _) | (MakerActorKindV1::Bitcoin, ActorEffectCommand::Claim) => {
-            false
+        (MakerActorKindV1::Monero, ActorEffectCommand::Claim) => {
+            matches!(outcome, "awaiting_observation" | "completed")
         }
+        (MakerActorKindV1::Monero, ActorEffectCommand::Activate | ActorEffectCommand::Drive)
+        | (MakerActorKindV1::Bitcoin, ActorEffectCommand::Claim) => false,
     }
 }
 

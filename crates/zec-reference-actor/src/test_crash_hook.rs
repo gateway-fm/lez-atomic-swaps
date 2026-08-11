@@ -45,6 +45,7 @@ pub fn arm_test_crash_hook(
             | "zcash_fund"
             | "lez_revealing_claim"
             | "zcash_followup_claim"
+            | "claim_lez_tag15"
             | "sweep_monero_refund"
     ) || !matches!(role, "maker" | "taker")
     {
@@ -52,10 +53,10 @@ pub fn arm_test_crash_hook(
     }
     let value: Value =
         serde_json::from_str(output).map_err(|_| TestCrashHookError::InvalidRequest)?;
-    let expected_command = if operation == "sweep_monero_refund" {
-        "recover"
-    } else {
-        "drive"
+    let expected_command = match operation {
+        "claim_lez_tag15" => "claim",
+        "sweep_monero_refund" => "recover",
+        _ => "drive",
     };
     if value.get("schema_version") != Some(&Value::from(1))
         || value.get("role") != Some(&Value::from(role))

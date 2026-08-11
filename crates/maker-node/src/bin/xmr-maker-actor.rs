@@ -39,6 +39,8 @@ struct Arguments {
 enum Command {
     /// Validate the complete immutable authority and report its current state.
     Status,
+    /// Execute or reconcile the role-fixed Maker Tag15 Claim route.
+    Claim,
     /// Execute or reconcile the role-fixed Maker Tag17 recovery route.
     Recover,
 }
@@ -47,6 +49,7 @@ enum Command {
 #[serde(untagged)]
 enum ActorOutput {
     Status(StatusOutput),
+    Claim(ClaimOutput),
     Recover(RecoverOutput),
 }
 
@@ -74,10 +77,33 @@ struct RecoverOutput {
     next_action: &'static str,
 }
 
+#[derive(Serialize)]
+struct ClaimOutput {
+    schema_version: u16,
+    role: &'static str,
+    command: &'static str,
+    outcome: &'static str,
+    phase: &'static str,
+    revision: u64,
+    next_action: &'static str,
+}
+
+#[derive(Clone, Copy)]
+enum RequestedEffect {
+    Claim,
+    Recover,
+}
+
+struct EffectRun {
+    finalized: bool,
+    revision: u64,
+}
+
 fn main() {
     let arguments = Arguments::parse();
     let result = match arguments.command {
         Command::Status => status(arguments.config_fd).map(ActorOutput::Status),
+        Command::Claim => claim(arguments.config_fd).map(ActorOutput::Claim),
         Command::Recover => recover(arguments.config_fd).map(ActorOutput::Recover),
     };
     match result {
@@ -118,7 +144,57 @@ fn status(config_fd: i32) -> Result<StatusOutput> {
     })
 }
 
+fn claim(config_fd: i32) -> Result<ClaimOutput> {
+    let result = execute_effect(config_fd, RequestedEffect::Claim)?;
+    Ok(if result.finalized {
+        ClaimOutput {
+            schema_version: 1,
+            role: "maker",
+            command: "claim",
+            outcome: "completed",
+            phase: "completed",
+            revision: result.revision,
+            next_action: "complete",
+        }
+    } else {
+        ClaimOutput {
+            schema_version: 1,
+            role: "maker",
+            command: "claim",
+            outcome: "awaiting_observation",
+            phase: "claim_evidence_available",
+            revision: result.revision,
+            next_action: XMR_MAKER_ACTOR_NEXT_ACTION,
+        }
+    })
+}
+
 fn recover(config_fd: i32) -> Result<RecoverOutput> {
+    let result = execute_effect(config_fd, RequestedEffect::Recover)?;
+    Ok(if result.finalized {
+        RecoverOutput {
+            schema_version: 1,
+            role: "maker",
+            command: "recover",
+            outcome: "refunded",
+            phase: "refunded",
+            revision: result.revision,
+            next_action: "complete",
+        }
+    } else {
+        RecoverOutput {
+            schema_version: 1,
+            role: "maker",
+            command: "recover",
+            outcome: "awaiting_observation",
+            phase: "maker_recovery_available",
+            revision: result.revision,
+            next_action: XMR_MAKER_ACTOR_NEXT_ACTION,
+        }
+    })
+}
+
+fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectRun> {
     let execution = load_validated_xmr_maker_effect_execution_fd(config_fd)
         .context("validate XMR Maker effect execution")?;
     let identity = execution.workflow_identity();
@@ -138,7 +214,7 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
         MakerActorHeldLock::acquire_for(identity.swap_id(), authority.workflow_journal())
             .context("acquire XMR Maker workflow lock")?;
 
-    let recovery_step = selected_recovery_step(&execution)?;
+    let recovery_step = selected_effect_step(&execution, requested)?;
 
     if recovery_requires_preflight(recovery_step) {
         execute_preflight(&execution, recovery_step, &actor_lock, &workflow_lock)?;
@@ -156,7 +232,7 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
                 return Err(anyhow!("XMR Maker recovery invocation is ambiguous"));
             }
             #[cfg(feature = "test-crash-hooks")]
-            pause_after_submitted_refund_if_armed(&execution, recovery_step)?;
+            pause_after_submitted_if_armed(&execution, recovery_step, requested)?;
             false
         }
         XmrPreparedEffectInvocationV1::ObserveOnly {
@@ -173,35 +249,22 @@ fn recover(config_fd: i32) -> Result<RecoverOutput> {
         } => true,
     };
     let revision = workflow_revision(&execution, recovery_step)?;
-    Ok(if finalized {
-        RecoverOutput {
-            schema_version: 1,
-            role: "maker",
-            command: "recover",
-            outcome: "refunded",
-            phase: "refunded",
-            revision,
-            next_action: "complete",
-        }
-    } else {
-        RecoverOutput {
-            schema_version: 1,
-            role: "maker",
-            command: "recover",
-            outcome: "awaiting_observation",
-            phase: "maker_recovery_available",
-            revision,
-            next_action: XMR_MAKER_ACTOR_NEXT_ACTION,
-        }
+    Ok(EffectRun {
+        finalized,
+        revision,
     })
 }
 
 #[cfg(feature = "test-crash-hooks")]
-fn pause_after_submitted_refund_if_armed(
+fn pause_after_submitted_if_armed(
     execution: &ValidatedXmrEffectExecutionV3,
     recovery_step: XmrWorkflowStep,
+    requested: RequestedEffect,
 ) -> Result<()> {
-    if recovery_step != XmrWorkflowStep::SweepMoneroRefund {
+    if !matches!(
+        recovery_step,
+        XmrWorkflowStep::ClaimLezTag15 | XmrWorkflowStep::SweepMoneroRefund
+    ) {
         return Ok(());
     }
     let (Some(operation), Some(marker)) = (
@@ -216,7 +279,10 @@ fn pause_after_submitted_refund_if_armed(
     let submitted = serde_json::json!({
         "schema_version": 1,
         "role": "maker",
-        "command": "recover",
+        "command": match requested {
+            RequestedEffect::Claim => "claim",
+            RequestedEffect::Recover => "recover",
+        },
         "outcome": "submitted",
         "operation": recovery_step.name(),
     })
@@ -228,7 +294,7 @@ fn pause_after_submitted_refund_if_armed(
         "maker",
         &submitted,
     )
-    .context("arm XMR Maker submitted-refund test pause")?
+    .context("arm XMR Maker submitted-effect test pause")?
     {
         loop {
             std::thread::park();
@@ -380,7 +446,10 @@ fn mark_unknown(
         .context("mark XMR Maker recovery ambiguous")
 }
 
-fn selected_recovery_step(execution: &ValidatedXmrEffectExecutionV3) -> Result<XmrWorkflowStep> {
+fn selected_effect_step(
+    execution: &ValidatedXmrEffectExecutionV3,
+    requested: RequestedEffect,
+) -> Result<XmrWorkflowStep> {
     let workflow =
         SqliteXmrWorkflowJournal::open_existing(execution.effect_authority().workflow_journal())
             .context("open XMR Maker recovery workflow branch")?;
@@ -391,7 +460,15 @@ fn selected_recovery_step(execution: &ValidatedXmrEffectExecutionV3) -> Result<X
         .selected_branch(execution.workflow_identity())
         .context("load XMR Maker recovery branch")?
         .context("XMR Maker recovery branch is not selected")?;
-    recovery_step_for_branch(branch)
+    match requested {
+        RequestedEffect::Claim => match branch {
+            XmrWorkflowBranch::Claim => Ok(XmrWorkflowStep::ClaimLezTag15),
+            XmrWorkflowBranch::Refund | XmrWorkflowBranch::Punish => Err(anyhow!(
+                "Maker Claim command requires the durable Claim branch"
+            )),
+        },
+        RequestedEffect::Recover => recovery_step_for_branch(branch),
+    }
 }
 
 fn recovery_requires_preflight(step: XmrWorkflowStep) -> bool {
@@ -441,5 +518,13 @@ mod tests {
         assert!(!recovery_requires_preflight(
             XmrWorkflowStep::SweepMoneroRefund
         ));
+        assert_eq!(
+            match XmrWorkflowBranch::Claim {
+                XmrWorkflowBranch::Claim => XmrWorkflowStep::ClaimLezTag15,
+                XmrWorkflowBranch::Refund | XmrWorkflowBranch::Punish => unreachable!(),
+            },
+            XmrWorkflowStep::ClaimLezTag15
+        );
+        assert_eq!(XmrWorkflowStep::ClaimLezTag15.name(), "claim_lez_tag15");
     }
 }

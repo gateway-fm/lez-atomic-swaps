@@ -7,6 +7,7 @@ use zec_reference_actor::{TestCrashHookError, arm_test_crash_hook};
 
 const SUBMITTED: &str = r#"{"schema_version":1,"role":"maker","command":"drive","outcome":"submitted","operation":"zcash_fund"}"#;
 const XMR_REFUND_SUBMITTED: &str = r#"{"schema_version":1,"role":"maker","command":"recover","outcome":"submitted","operation":"sweep_monero_refund"}"#;
+const XMR_TAG15_SUBMITTED: &str = r#"{"schema_version":1,"role":"maker","command":"claim","outcome":"submitted","operation":"claim_lez_tag15"}"#;
 
 #[test]
 fn hook_arms_only_for_the_exact_submitted_operation_and_writes_private_marker() {
@@ -108,4 +109,25 @@ fn hook_arms_for_exact_monero_refund_recovery_only() {
         Err(TestCrashHookError::InvalidRequest),
         "the XMR refund hook must never arm for a drive command"
     );
+}
+
+#[test]
+fn hook_arms_for_exact_monero_tag15_claim_only() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let marker = root.path().join("xmr-tag15-paused.json");
+
+    assert!(
+        arm_test_crash_hook(
+            "claim_lez_tag15",
+            &marker,
+            "swap-claim",
+            "maker",
+            XMR_TAG15_SUBMITTED,
+        )
+        .expect("exact submitted Tag15 Claim arms")
+    );
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&marker).unwrap()).unwrap();
+    assert_eq!(value["operation"], "claim_lez_tag15");
+    assert_eq!(value["state"], "paused_after_submitted_before_stdout");
 }

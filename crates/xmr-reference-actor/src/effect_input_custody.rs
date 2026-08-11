@@ -85,6 +85,8 @@ pub const XMR_EFFECT_FINALIZED_SIGNATURE_FD: i32 = 219;
 pub const XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD: i32 = XMR_EFFECT_FINALIZED_SIGNATURE_FD;
 /// Fixed owner-private artifact name ingested from finalized Tag15 evidence.
 pub const XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE: &str = "finalized-claim-signature.json";
+/// Fixed owner-private Maker signature produced from finalized Tag14.
+pub const XMR_EFFECT_MAKER_CLAIM_SIGNATURE_FILE: &str = "maker-claim-signature.json";
 /// Fixed owner-private artifact name ingested from finalized Tag16 evidence.
 pub const XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE: &str = "finalized-refund-signature.json";
 /// Typed schema-v2 Tag14 release invocation.
@@ -475,6 +477,15 @@ impl PinnedXmrEffectInputsV1 {
                 label,
             )?;
             self.invocation_refund_signature = Some(seal_bytes(label, &signature.bytes)?);
+        }
+        if step == XmrWorkflowStep::ClaimLezTag15 {
+            let signature = read_stable_private_source(
+                &evidence_root.join(XMR_EFFECT_MAKER_CLAIM_SIGNATURE_FILE),
+                MAX_FINAL_SIGNATURE_PACKET_BYTES,
+                "Maker claim final signature",
+            )?;
+            self.invocation_refund_signature =
+                Some(seal_bytes("Maker claim final signature", &signature.bytes)?);
         }
         Ok(self)
     }
