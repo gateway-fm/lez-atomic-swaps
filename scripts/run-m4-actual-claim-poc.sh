@@ -33,6 +33,7 @@ readonly m7_xmr_supervised_refund="${M7_XMR_SUPERVISED_REFUND:-0}"
 readonly m7_xmr_refund_process_kill="${M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION:-0}"
 readonly m7_xmr_semantic_claim="${M7_XMR_SEMANTIC_CLAIM:-0}"
 readonly m7_xmr_claim_process_kill="${M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION:-0}"
+readonly m7_xmr_build_cache_root="${M7_XMR_BUILD_CACHE_ROOT:-}"
 readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
 readonly m7_xmr_losing_tag16_after_tag17="${M7_XMR_LOSING_TAG16_AFTER_TAG17:-0}"
 readonly m7_xmr_losing_tag17_after_tag16="${M7_XMR_LOSING_TAG17_AFTER_TAG16:-0}"
@@ -125,6 +126,15 @@ emit_contract() {
         release_journal_identity_preserved: true,
         automatic_submission_retry: false,
         runtime_external_resources: []
+      },
+      m7_xmr_build_cache: {
+        mode_flag: "M7_XMR_BUILD_CACHE_ROOT",
+        optional: true,
+        canonical_owner_private_root: true,
+        exclusive_lock: true,
+        cargo_revalidates_source_fingerprints: true,
+        staged_binaries_rehashed_at_use: true,
+        excluded_from_run_cleanup: true
       },
       m7_joined_abandonment: {
         mode_flag: "M7_XMR_JOINED_ABANDONMENT",
@@ -347,6 +357,13 @@ environment_preflight() {
     fail "M7_XMR_SEMANTIC_CLAIM must be unset, 0, or 1"
   [[ "$m7_xmr_claim_process_kill" == 0 || "$m7_xmr_claim_process_kill" == 1 ]] ||
     fail "M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION must be unset, 0, or 1"
+  if [[ -n "$m7_xmr_build_cache_root" ]]; then
+    [[ "$m7_xmr_build_cache_root" == /* ]] ||
+      fail "M7 XMR build cache must be an existing canonical owner-private directory"
+    require_safe_parent "$m7_xmr_build_cache_root" "M7 XMR build cache"
+    [[ "$(stat -c '%a' "$m7_xmr_build_cache_root")" == 700 ]] ||
+      fail "M7 XMR build cache must be an existing canonical owner-private directory"
+  fi
   [[ "$m7_xmr_joined_abandonment" == 0 || "$m7_xmr_joined_abandonment" == 1 ]] ||
     fail "M7_XMR_JOINED_ABANDONMENT must be unset, 0, or 1"
   [[ "$m7_xmr_losing_tag16_after_tag17" == 0 ||
@@ -936,8 +953,29 @@ stage_executable() {
 build_identity_and_artifact() {
   record_phase build started
   export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
-  readonly sidecar_target="${build_root}/sidecar-target"
-  record_resource ephemeral_path "$sidecar_target" "$sidecar_target"
+  local sidecar_target workspace_target release_target m7_xmr_build_cache_lock_fd
+  if [[ -z "$m7_xmr_build_cache_root" ]]; then
+    sidecar_target="${build_root}/sidecar-target"
+    workspace_target="${build_root}/workspace-target"
+    release_target="${build_root}/release-target"
+    record_resource ephemeral_path "$sidecar_target" "$sidecar_target"
+    record_resource ephemeral_path "$workspace_target" "$workspace_target"
+    record_resource ephemeral_path "$release_target" "$release_target"
+  else
+    exec {m7_xmr_build_cache_lock_fd}>"${m7_xmr_build_cache_root}/build.lock"
+    flock -n "$m7_xmr_build_cache_lock_fd" ||
+      fail "M7 XMR build cache is already in use"
+    sidecar_target="${m7_xmr_build_cache_root}/sidecar-target"
+    workspace_target="${m7_xmr_build_cache_root}/workspace-target"
+    release_target="${m7_xmr_build_cache_root}/release-target"
+    local target
+    for target in "$sidecar_target" "$workspace_target" "$release_target"; do
+      if [[ ! -e "$target" && ! -L "$target" ]]; then
+        mkdir -m 0700 "$target"
+      fi
+      require_safe_parent "$target" "M7 XMR Cargo target cache"
+    done
+  fi
   CARGO_TARGET_DIR="$sidecar_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline --manifest-path "$sidecar_manifest" \
       --bin lez-v02-vault-claim-poc --bin lez-v02-xmr-stage-a-compose \
@@ -953,8 +991,6 @@ build_identity_and_artifact() {
   readonly vault_claim_binary="${sidecar_target}/debug/lez-v02-vault-claim-poc"
   [[ -x "$vault_claim_binary" && ! -L "$vault_claim_binary" ]] || fail "Vault Claim binary build is unavailable"
 
-  readonly workspace_target="${build_root}/workspace-target"
-  record_resource ephemeral_path "$workspace_target" "$workspace_target"
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
       --bin xmr-reference-actor --bin xmr-reference-tag15
@@ -991,8 +1027,6 @@ build_identity_and_artifact() {
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline -p lez-adaptor-role-runner \
       --bin lez-adaptor-role-runner
-  readonly release_target="${build_root}/release-target"
-  record_resource ephemeral_path "$release_target" "$release_target"
   CARGO_TARGET_DIR="$release_target" CARGO_NET_OFFLINE=true \
     cargo +1.96.0 build --locked --offline \
       --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml \

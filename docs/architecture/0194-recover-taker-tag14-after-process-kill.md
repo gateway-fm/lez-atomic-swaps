@@ -23,6 +23,13 @@ receipt and workflow journal, and requires the next user command to reconcile
 through the existing observation route. The authenticated one-shot release
 journal must retain the same filesystem identity and SHA-256 through restart.
 
+For repeat QA builds, an optional canonical mode-0700 owner-only cache holds
+only Cargo target directories. One nonblocking lock excludes concurrent users;
+the cache is never entered into the run resource ledger or cleanup. Cargo
+revalidates source fingerprints, every staged executable is copied create-new
+and rehashed at use, and the guest artifact remains independently rebuilt and
+tested into run-owned evidence.
+
 ```mermaid
 flowchart LR
     User["Taker user"] --> CLI["lez-taker claim"]
@@ -33,6 +40,8 @@ flowchart LR
     Sidecar --> Lez["Local LEZ v0.2 node RPC"]
     CLI --> Observer["Finalized Tag14 observer"]
     Observer --> Sidecar
+    Cache["Locked owner-only Cargo cache"] -. build only .-> CLI
+    Cache -. build only .-> Sender
 ```
 
 ```mermaid
@@ -88,5 +97,7 @@ ordering because `Started` can only observe, never invoke again.
 - Runtime evidence uses isolated loopback LEZ and Monero services and
   deterministic local funds; no public RPC, faucet, peer, or public deployment
   is needed.
+- The cache can change build latency only. It owns no receipt, workflow,
+  credential, node state, transaction, or retained certificate evidence.
 - Exact local-node replay and a secret-safe CI certificate are required before
   this closes the R4 claim-path restart gap.

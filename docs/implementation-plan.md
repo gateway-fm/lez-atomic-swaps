@@ -7395,6 +7395,20 @@ S12/S13 review and policy-deferred public deployment.
   daemon-hook tests, strict all-target/all-feature Clippy, warning-fatal
   Rustdoc, formatting, shell syntax, and the new contract. ADR 0194 records the
   components, RPCs, user sequence, and conditional atomicity argument.
+- [x] Push implementation checkpoint `0abf679` and start exact run
+  `m7claimkill0abf679a`. The build proved the source boundary, then measured
+  cold targets at 8m37s sidecar, 2m51s workspace debug, 9m38s workspace
+  release, 54.73s release service, 3m00s guest test, and 5m41s deployer. All
+  five recursive guest cases and the pinned `ade4af...bbcee` ELF passed. Node
+  startup then failed closed because an inherited host `LEZ_V02_SOURCE_DIR`
+  named a stale investigation checkout. No node or swap effect existed; exact
+  cleanup passed with zero foreign resource target.
+- [x] RED then GREEN an optional reusable XMR Cargo cache for the measured
+  build bottleneck. It requires an existing canonical owner-owned mode-0700
+  root, takes a nonblocking exclusive lock, keeps sidecar/debug/release targets
+  outside the run resource ledger, and still relies on Cargo source
+  fingerprints plus create-new staged-binary hashing. Guest artifact evidence
+  remains run-owned and independently verified.
 - [ ] Commit and push this verified implementation checkpoint, then provision
   fresh isolated LEZ v0.2 and Monero Regtest services and replay the exact
   pushed source through Tag14, Tag15, the Taker Monero sweep, and scoped

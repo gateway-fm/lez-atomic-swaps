@@ -17,6 +17,12 @@ done
 
 for token in \
   'M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION' \
+  'M7_XMR_BUILD_CACHE_ROOT' \
+  'M7 XMR build cache must be an existing canonical owner-private directory' \
+  'flock -n "$m7_xmr_build_cache_lock_fd"' \
+  'sidecar-target' \
+  'workspace-target' \
+  'release-target' \
   'm7_xmr_claim_process_kill' \
   '--features test-crash-hooks' \
   'LEZ_TAKER_TEST_PAUSE_AFTER_INVOKED_STEP' \
@@ -29,6 +35,11 @@ for token in \
   'release_journal_unchanged_after_restart:true'; do
   rg -Fq -- "$token" "$runner" "$taker" || fail "missing claim crash invariant: $token"
 done
+
+if rg -Fq 'record_resource ephemeral_path "$sidecar_target"' "$runner" &&
+  ! rg -Fq 'if [[ -z "$m7_xmr_build_cache_root" ]]' "$runner"; then
+  fail "reusable target cache is still unconditionally entered into run cleanup"
+fi
 
 rg -Fq 'M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION=1 requires M7_XMR_SEMANTIC_CLAIM=1' "$runner" ||
   fail "claim crash mode is not bound to semantic-claim mode"
