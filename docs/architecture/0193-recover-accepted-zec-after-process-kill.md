@@ -50,6 +50,14 @@ stdout, and one of two exact byte-length-checked messages: configuration not
 yet published or status material temporarily unavailable. Every other status
 failure remains fatal, and each accepted retry class is written to evidence.
 
+For this exact fault mode, a second ordering rule closes the narrower marker
+race: until the submitted marker exists, the coordinator must not begin a new
+supervised status read. It retains the already-validated activation projection,
+records a marker-wait event, and polls again. This prevents a status-material
+wait from outliving the parked lease and turning the no-clobber marker into a
+reference to an abandoned generation. The branch is compile-time-test-mode
+coordination only and does not alter production supervision.
+
 ## Components and RPCs
 
 ```mermaid
@@ -94,6 +102,9 @@ sequenceDiagram
     D1->>A1: Drive Maker funding
     A1->>Z: Submit exact funding transaction once
     A1->>A1: Write private marker before stdout
+    loop Until exact marker exists
+        User->>User: Poll marker without actor status read
+    end
     User->>DB: Verify leased actor identity and generation
     User->>Z: Verify singleton mempool and current tip
     User-xD1: SIGKILL exact daemon
@@ -146,6 +157,11 @@ or every adverse refund race.
   regression now permits only that exact transient and the already recognized
   configuration-publication transient; Zebra remained at tip 104 with an empty
   mempool after the failed replay.
+- The second pushed-source replay reached the exact accepted-funding seam but
+  failed closed when a status read delayed marker inspection until its actor
+  lease had advanced from generation 18 to 20. The new contract-first M7-only
+  marker fast path defers status reads until the exact marker is bound; the
+  fresh replay and certificate remain pending.
 - Runtime external resources are empty. Cold dependency acquisition can depend
   on registries, while pinned Bedrock can attempt non-gating NTP; local CPU,
   disk, Docker readiness, finality, process scheduling, fsync, and RPC polling

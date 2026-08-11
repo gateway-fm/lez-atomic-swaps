@@ -79,6 +79,8 @@ for required in \
   'inject_m7_zec_accepted_process_kill_if_ready' \
   'M7 accepted-ZEC scheduler does not bind the exact leased actor identity' \
   'M7 accepted-ZEC crash marker does not bind the leased Maker actor' \
+  'marker_wait_without_status_poll' \
+  'm7-zec-marker-wait.ndjson' \
   'M7 accepted-ZEC crash boundary lacks the exact singleton funding transaction' \
   'kill -KILL "$crashed_daemon_pid"' \
   'kill -KILL -- "-${crashed_actor_pid}"' \

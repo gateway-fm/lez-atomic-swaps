@@ -7353,6 +7353,17 @@ S12/S13 review and policy-deferred public deployment.
   configuration is unavailable` or `actor status material is unavailable`)
   may retry while the exact daemon identity remains alive; every other result
   stays fatal and the selected class is recorded in evidence.
-- [ ] Push the contention fix, repeat from fresh application and chain state,
-  retain a compact secret-safe certificate, then update U2/S5 and the M7
-  hard/submission inventories only to what the replay proves.
+- [x] Push the exact contention classifier as `63db59d` and repeat from fresh
+  application state against fresh exact-commit LEZ/Zebra nodes. The replay
+  reached the accepted funding seam without mining, then failed closed because
+  its no-clobber marker named lease generation 18 while the delayed scheduler
+  snapshot named generation 20. No certificate claim was made.
+- [x] RED then GREEN the observed coordinator race. While the M7-only marker is
+  absent, the coordinator now records `marker_wait_without_status_poll` and
+  reuses the already-proven activation projection instead of entering a status
+  read that can outwait the parked actor's private-material lease. Once the
+  marker exists, the existing exact PID/start-tick/generation checks remain
+  mandatory. Production supervision does not enter this branch.
+- [ ] Commit and push the marker-wait fix, repeat from discarded application
+  and chain state, retain a compact secret-safe certificate, then update U2/S5
+  and the M7 hard/submission inventories only to what the replay proves.

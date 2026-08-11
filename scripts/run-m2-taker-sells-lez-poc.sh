@@ -3075,6 +3075,25 @@ observe_m5_supervised_maker() {
     echo 'M5 Maker supervisor daemon exited before terminal state' >&2
     return 1
   }
+  if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 \
+    && "$m7_zec_process_kill_injected" == 0 ]]; then
+    # The feature-only actor owns its status material while it submits and
+    # parks. A direct status read here can outwait that exact lease and leave
+    # the no-clobber marker referring to an abandoned generation. Keep this
+    # M7-only coordinator on the marker fast path until it can bind and kill
+    # the actor; production supervision never enters this branch.
+    m5_maker_phase="$(jq -er '.phase | strings' \
+      "${evidence_dir}/m5-maker-supervised-activation-status.json")"
+    jq -nc --argjson round "$round" '
+      {
+        schema_version:1,
+        event:"marker_wait_without_status_poll",
+        round:$round,
+        marker_observed:false,
+        status_polled:false
+      }' >>"${evidence_dir}/m7-zec-marker-wait.ndjson"
+    return 0
+  fi
   capture_m5_supervised_maker_status "$status_file" \
     "${evidence_dir}/m5-maker-supervisor-status-current.stderr" \
     "m5-maker-supervisor-round-${round}"
