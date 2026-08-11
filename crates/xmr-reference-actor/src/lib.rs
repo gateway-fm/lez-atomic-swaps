@@ -3657,12 +3657,14 @@ fn bind_finalized_claim_sweep(
     .context("reconstruct exact Stage-A Monero spend authority")?;
     let reconstructed_public_spend_key = reconstructed.public_key();
 
-    let (sweep_value, sweep_bytes) = read_canonical_private_json::<serde_json::Value>(
+    let sweep_bytes = read_private_input(
         monero_sweep_evidence,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
         "Monero sweep evidence",
     )?;
-    let (receipt_value, receipt_bytes) = read_canonical_private_json::<serde_json::Value>(
+    let receipt_bytes = read_private_input(
         monero_receipt_evidence,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
         "Monero receipt evidence",
     )?;
     let agreement_commitment = hex::encode(lifecycle.agreement.agreement_commitment());
@@ -3678,15 +3680,17 @@ fn bind_finalized_claim_sweep(
             lifecycle.agreement.body().monero().required_confirmations(),
         ),
     };
+    let sweep_value: serde_json::Value =
+        serde_json::from_slice(&sweep_bytes).context("Monero sweep evidence is malformed")?;
     let semantic_claim = sweep_value
         .get("schema")
         .and_then(serde_json::Value::as_str)
         == Some(M7_MONERO_CLAIM_SUBMISSION_SCHEMA);
     let (receipt, accounting) = if semantic_claim {
-        let sweep: MoneroClaimSubmissionEvidenceV1 = serde_json::from_value(sweep_value)
-            .context("M7 semantic Monero claim submission is malformed")?;
-        let finality: MoneroClaimFinalityEvidenceV1 = serde_json::from_value(receipt_value)
-            .context("M7 semantic Monero claim finality is malformed")?;
+        let sweep: MoneroClaimSubmissionEvidenceV1 =
+            decode_canonical_private_json(&sweep_bytes, "M7 semantic Monero claim submission")?;
+        let finality: MoneroClaimFinalityEvidenceV1 =
+            decode_canonical_private_json(&receipt_bytes, "M7 semantic Monero claim finality")?;
         validate_semantic_monero_claim_pair(
             &sweep,
             &sweep_bytes,
@@ -3697,9 +3701,9 @@ fn bind_finalized_claim_sweep(
         )?
     } else {
         let sweep: MoneroSweepEvidence =
-            serde_json::from_value(sweep_value).context("Monero sweep evidence is malformed")?;
-        let receipt: MoneroReceiptEvidenceV2 = serde_json::from_value(receipt_value)
-            .context("Monero receipt evidence v2 is malformed")?;
+            decode_canonical_private_json(&sweep_bytes, "Monero sweep evidence")?;
+        let receipt: MoneroReceiptEvidenceV2 =
+            decode_canonical_private_json(&receipt_bytes, "Monero receipt evidence v2")?;
         let accounting = validate_monero_evidence_pair(&sweep, &receipt, &expected)?;
         (receipt, accounting)
     };
@@ -4246,12 +4250,21 @@ where
     T: DeserializeOwned + Serialize,
 {
     let bytes = read_private_input(path, M4_MONERO_EVIDENCE_MAX_BYTES, label)?;
-    let value = serde_json::from_slice(&bytes).with_context(|| format!("{label} is malformed"))?;
+    let value = decode_canonical_private_json(&bytes, label)?;
+    Ok((value, bytes))
+}
+
+#[cfg(feature = "sessions")]
+fn decode_canonical_private_json<T>(bytes: &[u8], label: &'static str) -> Result<T>
+where
+    T: DeserializeOwned + Serialize,
+{
+    let value = serde_json::from_slice(bytes).with_context(|| format!("{label} is malformed"))?;
     ensure!(
         canonical_json_bytes(&value, "encode private Monero evidence")? == bytes,
         "{label} is noncanonical"
     );
-    Ok((value, bytes))
+    Ok(value)
 }
 
 #[cfg(feature = "sessions")]
@@ -4917,6 +4930,39 @@ mod claim_sweep_binding_tests {
                 &expected(),
                 &submission.swap_id,
                 &submission.activation_commitment,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn semantic_claim_typed_wire_is_canonical_at_the_binder_boundary() {
+        let submission = semantic_submission();
+        let bytes = canonical_json_bytes(&submission, "semantic submission").unwrap();
+        let decoded: MoneroClaimSubmissionEvidenceV1 =
+            decode_canonical_private_json(&bytes, "semantic submission").unwrap();
+        assert_eq!(decoded, submission);
+
+        let mut missing_newline = bytes.clone();
+        missing_newline.pop();
+        assert!(
+            decode_canonical_private_json::<MoneroClaimSubmissionEvidenceV1>(
+                &missing_newline,
+                "semantic submission",
+            )
+            .is_err()
+        );
+
+        let mut unknown: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        unknown
+            .as_object_mut()
+            .unwrap()
+            .insert("unknown".to_owned(), serde_json::Value::Bool(true));
+        let unknown = canonical_json_bytes(&unknown, "unknown semantic submission").unwrap();
+        assert!(
+            decode_canonical_private_json::<MoneroClaimSubmissionEvidenceV1>(
+                &unknown,
+                "semantic submission",
             )
             .is_err()
         );

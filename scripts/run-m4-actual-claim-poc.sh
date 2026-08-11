@@ -4137,7 +4137,7 @@ run_m7_taker_claim_sweep_process_kill() {
       }
     ' >"$m7_taker_claim_sweep_process_evidence"
   chmod 0600 "$m7_taker_claim_sweep_process_evidence"
-  require_owner_file "$m7_taker_claim_sweep_process_evidence" +    "M7 claim-sweep process-kill evidence"
+  require_owner_file "$m7_taker_claim_sweep_process_evidence" "M7 claim-sweep process-kill evidence"
   record_phase m7_claim_sweep_process_kill completed
 }
 

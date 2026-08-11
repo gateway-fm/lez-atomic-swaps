@@ -7457,6 +7457,14 @@ S12/S13 review and policy-deferred public deployment.
   The source contract, all-target actor compile, crash-hook Taker compile,
   observer atomic-publication tests, claim sender/observer FD route, and
   semantic hash/topology/depth/accounting tests are green.
+- [x] Execute the first fresh exact replay at pushed commit `f3c2a05`. The
+  one-shot claim sweep, exact Taker SIGKILL before stdout, observation-only
+  restart, unchanged submission identity, ten-confirmation finality, and
+  exact scoped cleanup all passed. The final binder then produced the intended
+  RED result: it decoded the typed sender packet through a generic JSON map and
+  compared the packet against map-ordered bytes. Replace that boundary with a
+  typed, unknown-field-denying canonical decoder and pin the sender-shaped
+  byte regression; focused tests are GREEN.
 - [ ] Compose and certify a fresh exact-pushed-source LEZ v0.2 plus Monero
-  0.18.5.1 Regtest replay, update manual flows and R4 evidence, then continue
-  with the independent Tag15 process-kill seam.
+  0.18.5.1 Regtest replay from the typed-canonical fix, update manual flows and
+  R4 evidence, then continue with the independent Tag15 process-kill seam.

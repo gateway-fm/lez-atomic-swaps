@@ -1,7 +1,10 @@
 # ADR 0195: Recover a Taker Monero claim sweep after a process kill
 
-Status: Accepted for implementation; focused GREEN gates pass and exact-node
-certification is pending.
+Status: Accepted for implementation. Focused GREEN gates pass. Exact run
+`m7claimsweepf3c2a05a` proved the crash/recovery sequence and scoped cleanup,
+then correctly failed certification at a generic-map versus typed-field JSON
+canonicalization mismatch in the final binder. The typed regression fix is
+GREEN; a fresh exact-node certification replay is pending.
 
 ## Context
 
