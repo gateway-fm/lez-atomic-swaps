@@ -26,7 +26,8 @@ use crate::{
     XMR_EFFECT_AUTHORITY_MAX_BYTES, canonical_json_bytes, decode_exact,
     discovered_finalized_xmr_facts,
     effect_input_custody::{
-        XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE, parse_private_view_key_bytes,
+        XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE, XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE,
+        parse_private_view_key_bytes,
     },
     load_validated_xmr_effect_execution_v3_bytes, read_canonical_private_json,
     read_finalized_xmr_effect, read_private_input, write_bounded_public_new,
@@ -35,6 +36,7 @@ use crate::{
 const FUNDING_SCHEMA: &str = "lez_v02_m4_actual_local_monero_funding_v2";
 const ACTIVATION_SCHEMA: &str = "lez_v02_m7_maker_refund_activation_v1";
 const TAKER_CLAIM_ACTIVATION_SCHEMA: &str = "lez_v02_m7_taker_claim_activation_v1";
+const TAKER_CLAIM_SWEEP_ACTIVATION_SCHEMA: &str = "lez_v02_m7_taker_claim_sweep_activation_v1";
 const TAG13_SCHEMA: &str = "lez_v02_m4_xmr_stage_a_tag13_poc_v2";
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -207,6 +209,19 @@ struct TakerClaimActivationSummaryV1 {
     monero_funding_evidence_sha256: String,
     monero_funding_receipt_sha256: String,
     tag14_scan_start_height: u64,
+    prepared_step: &'static str,
+    private_material_disclosed: bool,
+}
+
+#[derive(Serialize)]
+struct TakerClaimSweepActivationSummaryV1 {
+    schema: &'static str,
+    role: &'static str,
+    run_id: String,
+    swap_id: String,
+    selected_branch: &'static str,
+    finalized_claim_sha256: String,
+    finalized_claim_signature_sha256: String,
     prepared_step: &'static str,
     private_material_disclosed: bool,
 }
@@ -407,6 +422,132 @@ pub(crate) fn activate_taker_claim_workflow(
             "encode Taker claim activation summary",
         )?)
         .context("write Taker claim activation summary")?;
+    Ok(())
+}
+
+/// Advances an already finalized Tag-14 workflow to the Taker Monero claim
+/// sweep only from exact finalized Tag-15 evidence and its validated signature.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the finalized-signature and durable-workflow checks remain linear for auditability"
+)]
+pub(crate) fn activate_taker_claim_sweep_workflow(
+    effect_manifest: &Path,
+    effect_authority: &Path,
+    run_id: &str,
+    finalized_claim: &Path,
+    observed_final_signature: &Path,
+) -> Result<()> {
+    let manifest_bytes = read_private_input(
+        effect_manifest,
+        XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
+        "schema-3 Taker effect manifest",
+    )?;
+    let authority_bytes = read_private_input(
+        effect_authority,
+        XMR_EFFECT_AUTHORITY_MAX_BYTES,
+        "Taker effect authority",
+    )?;
+    let execution = load_validated_xmr_effect_execution_v3_bytes(
+        &manifest_bytes,
+        &authority_bytes,
+        ActorRole::Taker,
+        run_id,
+    )
+    .context("validate Taker effect application before claim-sweep activation")?;
+    let authority = execution.effect_authority();
+    ensure!(
+        authority.role() == ActorRole::Taker && authority.run_id() == run_id,
+        "claim-sweep activation requires the exact Taker authority"
+    );
+    let agreement = XmrAgreementV1::from_wire(&execution.application.stage_a_wire)
+        .context("effect application Stage A is invalid")?;
+    let view_key = parse_private_view_key_bytes(&execution.application.private_view_key)?;
+    let activation = XmrActivatedAgreementV1::from_wire(
+        &agreement,
+        &execution.application.stage_b_wire,
+        &view_key,
+    )
+    .context("effect application Stage B is invalid")?;
+    let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
+        .context("derive finalized claim terms from Stage B")?;
+    let finalized_result = read_finalized_xmr_effect(finalized_claim)?;
+    let facts = discovered_finalized_xmr_facts(
+        &finalized_result,
+        run_id,
+        &binding.terms(),
+        XmrNativeEffectV3::Claim,
+        BridgeParticipant::Taker,
+    )?;
+    let aggregate_signature = facts
+        .aggregate_signature
+        .ok_or_else(|| anyhow!("finalized Tag-15 facts omit the aggregate signature"))?;
+    let observed_before = read_private_input(
+        observed_final_signature,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
+        "observed claim final-signature packet",
+    )?;
+    let claim_session = ValidatedSession::from_untweaked_context(
+        agreement
+            .claim_session_descriptor()
+            .context()
+            .context("claim session descriptor is invalid")?,
+    )
+    .context("claim runner session is invalid")?;
+    let observed_signature = read_final_signature_packet(observed_final_signature, &claim_session)
+        .context("validate observed finalized Tag-15 signature packet")?;
+    let observed_after = read_private_input(
+        observed_final_signature,
+        M4_MONERO_EVIDENCE_MAX_BYTES,
+        "observed claim final-signature packet",
+    )?;
+    ensure!(
+        observed_before == observed_after && aggregate_signature.as_bytes() == &observed_signature,
+        "finalized Tag-15 signature differs from the stable observed packet"
+    );
+    persist_or_validate_private(
+        &authority
+            .evidence_root()
+            .join(XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE),
+        &observed_after,
+    )?;
+
+    let identity = execution.workflow_identity();
+    let mut workflow = SqliteXmrWorkflowJournal::open_existing(authority.workflow_journal())
+        .context("open Taker effect workflow for claim-sweep activation")?;
+    ensure!(
+        workflow.selected_branch(identity)? == Some(XmrWorkflowBranch::Claim)
+            && workflow
+                .load_reconciliation(identity, XmrWorkflowStep::AuthorizeLezTag14)?
+                .is_some(),
+        "claim-sweep activation requires finalized durable Tag-14 evidence"
+    );
+    workflow
+        .prepare_step(identity, XmrWorkflowStep::SweepMoneroClaim)
+        .context("prepare Taker Monero claim sweep")?;
+    ensure!(
+        workflow.step_revision(identity, XmrWorkflowStep::SweepMoneroClaim)? == 0,
+        "durable Taker claim-sweep activation did not replay exactly"
+    );
+
+    let finalized_bytes = canonical_json_bytes(&finalized_result, "encode finalized claim")?;
+    let summary = TakerClaimSweepActivationSummaryV1 {
+        schema: TAKER_CLAIM_SWEEP_ACTIVATION_SCHEMA,
+        role: "taker",
+        run_id: run_id.to_owned(),
+        swap_id: hex::encode(authority.swap_id()),
+        selected_branch: "claim",
+        finalized_claim_sha256: hex::encode(Sha256::digest(&finalized_bytes)),
+        finalized_claim_signature_sha256: hex::encode(Sha256::digest(&observed_after)),
+        prepared_step: XmrWorkflowStep::SweepMoneroClaim.name(),
+        private_material_disclosed: false,
+    };
+    std::io::stdout()
+        .write_all(&canonical_json_bytes(
+            &summary,
+            "encode Taker claim-sweep activation summary",
+        )?)
+        .context("write Taker claim-sweep activation summary")?;
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-//! Sealed no-argument Maker Monero refund-sweep worker.
+//! Sealed no-argument role-correct Monero settlement-sweep worker.
 
 #![forbid(unsafe_code)]
 
@@ -26,7 +26,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
     ActorRole, XMR_EFFECT_DAEMON_PASSWORD_FD, XMR_EFFECT_DAEMON_USERNAME_FD,
-    XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+    XMR_EFFECT_FINALIZED_SIGNATURE_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
     XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD,
     XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_SHARED_PASSWORD_FD, XMR_EFFECT_SHARED_USERNAME_FD,
     XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD, XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD,
@@ -34,13 +34,15 @@ use xmr_reference_actor::{
 };
 use zeroize::{Zeroize as _, Zeroizing};
 
-const ABI: &str = "lez_xmr_monero_refund_sweep_v3";
+const CLAIM_ABI: &str = "lez_xmr_monero_claim_sweep_v2";
+const REFUND_ABI: &str = "lez_xmr_monero_refund_sweep_v3";
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
 const MAX_SECRET_BYTES: usize = 256;
 const MAX_FINAL_SIGNATURE_PACKET_BYTES: usize = 4 * 1024;
 const RESTORE_HEIGHT: u64 = 0;
 
 struct ValidatedInputs {
+    route: SettlementRoute,
     plan: XmrEffectChildPlanV1,
     agreement: XmrAgreementV1,
     view_key: MoneroPrivateViewKey,
@@ -54,7 +56,7 @@ struct ValidatedInputs {
 }
 
 #[derive(Debug, Serialize)]
-struct RefundSubmissionEvidence {
+struct SubmissionEvidence {
     schema: &'static str,
     role: &'static str,
     run_id: String,
@@ -89,10 +91,75 @@ struct ResourceUse {
     faucet_used: bool,
 }
 
+#[derive(Clone, Copy)]
+enum SettlementRoute {
+    Claim,
+    Refund,
+}
+
+impl SettlementRoute {
+    fn from_plan(plan: &XmrEffectChildPlanV1) -> Result<Self> {
+        match (plan.role(), plan.step(), plan.executable_abi()) {
+            (ActorRole::Taker, XmrWorkflowStep::SweepMoneroClaim, CLAIM_ABI) => Ok(Self::Claim),
+            (ActorRole::Maker, XmrWorkflowStep::SweepMoneroRefund, REFUND_ABI) => Ok(Self::Refund),
+            _ => bail!("XMR effect child plan differs from the compiled Monero sweep routes"),
+        }
+    }
+
+    const fn actor_role(self) -> ActorRole {
+        match self {
+            Self::Claim => ActorRole::Taker,
+            Self::Refund => ActorRole::Maker,
+        }
+    }
+
+    const fn participant(self) -> Participant {
+        match self {
+            Self::Claim => Participant::Taker,
+            Self::Refund => Participant::Maker,
+        }
+    }
+
+    const fn signer_role(self) -> Role {
+        match self {
+            Self::Claim => Role::Taker,
+            Self::Refund => Role::Maker,
+        }
+    }
+
+    const fn role_name(self) -> &'static str {
+        match self {
+            Self::Claim => "taker",
+            Self::Refund => "maker",
+        }
+    }
+
+    const fn schema(self) -> &'static str {
+        match self {
+            Self::Claim => "lez_v02_m7_monero_claim_submission_v1",
+            Self::Refund => "lez_v02_m7_monero_refund_submission_v1",
+        }
+    }
+
+    const fn evidence_file(self) -> &'static str {
+        match self {
+            Self::Claim => "monero-claim-submission.json",
+            Self::Refund => "monero-refund-submission.json",
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Claim => "claim",
+            Self::Refund => "refund",
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = execute().await {
-        eprintln!("M7 Maker Monero refund worker failed: {error:#}");
+        eprintln!("M7 Monero settlement worker failed: {error:#}");
         std::process::exit(1);
     }
 }
@@ -100,15 +167,15 @@ async fn main() {
 async fn execute() -> Result<()> {
     ensure!(
         std::env::args_os().len() == 1,
-        "Monero refund worker accepts no arguments"
+        "Monero settlement worker accepts no arguments"
     );
     let inputs = validate_inputs()?;
     let destination_effects = MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.role_wallet)
-        .context("Maker destination-wallet boundary is invalid")?;
+        .context("role destination-wallet boundary is invalid")?;
     let destination = destination_effects
         .primary_standard_address()
         .await
-        .context("Maker destination address is unavailable")?;
+        .context("role destination address is unavailable")?;
     let destination_address = destination.to_string();
     let mut evidence_file = reserve_evidence(&inputs.evidence_path)?;
     let wallet_filename = wallet_filename(inputs.plan.run_id());
@@ -126,10 +193,10 @@ async fn execute() -> Result<()> {
             destination,
         )
         .await
-        .context("official reconstructed-wallet refund sweep failed")?;
-    let evidence = RefundSubmissionEvidence {
-        schema: "lez_v02_m7_monero_refund_submission_v1",
-        role: "maker",
+        .context("official reconstructed-wallet settlement sweep failed")?;
+    let evidence = SubmissionEvidence {
+        schema: inputs.route.schema(),
+        role: inputs.route.role_name(),
         run_id: inputs.plan.run_id().to_owned(),
         swap_id: hex::encode(inputs.plan.swap_id()),
         agreement_commitment: hex::encode(inputs.plan.agreement_commitment()),
@@ -158,24 +225,22 @@ async fn execute() -> Result<()> {
 
 #[allow(clippy::too_many_lines)]
 fn validate_inputs() -> Result<ValidatedInputs> {
-    let plan = load_xmr_effect_child_plan_fd().context("load Monero refund child plan")?;
+    let plan = load_xmr_effect_child_plan_fd().context("load Monero sweep child plan")?;
+    let route = SettlementRoute::from_plan(&plan)?;
     ensure!(
-        plan.role() == ActorRole::Maker
-            && plan.mode() == XmrEffectChildModeV1::Invoke
-            && plan.step() == XmrWorkflowStep::SweepMoneroRefund
-            && plan.executable_abi() == ABI,
-        "XMR effect child plan differs from the compiled Monero refund route"
+        plan.role() == route.actor_role() && plan.mode() == XmrEffectChildModeV1::Invoke,
+        "XMR effect child plan differs from the selected Monero sweep route"
     );
     validate_evidence_root(plan.evidence_root())?;
     let runtime: RuntimeDescriptor = serde_json::from_slice(&read_sealed_fd(
         XMR_EFFECT_RUNTIME_FD,
         MAX_RUNTIME_BYTES,
-        "Maker runtime",
+        "role runtime",
     )?)
-    .context("Maker runtime JSON is invalid")?;
+    .context("role runtime JSON is invalid")?;
     ensure!(
-        runtime.sidecar_role == Participant::Maker,
-        "Monero refund requires the Maker runtime"
+        runtime.sidecar_role == route.participant(),
+        "Monero sweep requires the role-correct runtime"
     );
     let agreement = XmrAgreementV1::from_wire(&read_sealed_fd(
         XMR_EFFECT_STAGE_A_FD,
@@ -203,63 +268,70 @@ fn validate_inputs() -> Result<ValidatedInputs> {
         agreement.body().swap_id() == plan.swap_id()
             && agreement.agreement_commitment() == plan.agreement_commitment()
             && activation.activation_commitment() == plan.activation_commitment(),
-        "Monero refund effect-child application identity changed"
+        "Monero sweep effect-child application identity changed"
     );
     validate_runtime_binding(&plan, &agreement, &activation, &runtime)?;
 
-    let session = ValidatedSession::from_untweaked_context(
-        agreement
-            .refund_session_descriptor()
-            .context()
-            .context("refund session descriptor is invalid")?,
-    )
-    .context("refund session is invalid")?;
-    let identity = session.identity(Role::Maker);
+    let session_context = match route {
+        SettlementRoute::Claim => agreement.claim_session_descriptor().context(),
+        SettlementRoute::Refund => agreement.refund_session_descriptor().context(),
+    }
+    .context("settlement session descriptor is invalid")?;
+    let session = ValidatedSession::from_untweaked_context(session_context)
+        .context("settlement session is invalid")?;
+    let signer_role = route.signer_role();
+    let identity = session.identity(signer_role);
     let journal = SqliteAdaptorSessionJournal::open_existing(plan.adaptor_journal())
-        .context("open locked Maker adaptor journal")?;
+        .context("open locked role adaptor journal")?;
     let snapshot = journal
         .load(identity.session_id())
-        .context("load durable Maker refund session")?
-        .context("durable Maker refund session is absent")?;
+        .context("load durable settlement session")?
+        .context("durable settlement session is absent")?;
     ensure!(
         snapshot.identity() == &identity
             && snapshot.phase() == AdaptorSessionPhase::PresignatureVerified
-            && snapshot
-                .presignature()
-                .is_some_and(|value| *value.bytes() == activation.body().refund_presignature()),
-        "durable Maker refund session differs from Stage B or is incomplete"
+            && snapshot.presignature().is_some()
+            && (matches!(route, SettlementRoute::Claim)
+                || snapshot
+                    .presignature()
+                    .is_some_and(|value| *value.bytes() == activation.body().refund_presignature())),
+        "durable settlement session differs from Stage B or is incomplete"
     );
     let final_signature_packet = read_sealed_fd(
-        XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD,
+        XMR_EFFECT_FINALIZED_SIGNATURE_FD,
         MAX_FINAL_SIGNATURE_PACKET_BYTES,
-        "finalized refund signature",
+        "finalized settlement signature",
     )?;
     let final_signature = read_final_signature_packet_bytes(&final_signature_packet, &session)
-        .context("finalized refund signature packet is invalid")?;
+        .context("finalized settlement signature packet is invalid")?;
     let extracted = extract_verified_adaptor_secret(
         plan.adaptor_journal(),
         &session,
-        Role::Maker,
+        signer_role,
         final_signature,
     )
-    .context("extract refund adaptor scalar from durable Maker transcript")?;
-    let maker_share = CrossCurveScalar::from_monero_little_endian(
+    .context("extract adaptor scalar from durable settlement transcript")?;
+    let retained_share = CrossCurveScalar::from_monero_little_endian(
         read_sealed_fd(
             XMR_EFFECT_PRIVATE_XMR_SHARE_FD,
             32,
-            "Maker private XMR share",
+            "role private XMR share",
         )?
         .try_into()
-        .map_err(|_| anyhow::anyhow!("Maker private XMR share has the wrong length"))?,
+        .map_err(|_| anyhow::anyhow!("role private XMR share has the wrong length"))?,
     )
-    .context("Maker private XMR share is invalid")?;
+    .context("role private XMR share is invalid")?;
+    let counterparty_proof = match route {
+        SettlementRoute::Claim => agreement.maker_proof(),
+        SettlementRoute::Refund => agreement.taker_proof(),
+    };
     let reconstructed = ReconstructedMoneroSpendKey::reconstruct(
         agreement.shared_address(),
-        agreement.taker_proof(),
-        maker_share,
+        counterparty_proof,
+        retained_share,
         extracted.into_big_endian_bytes(),
     )
-    .context("reconstruct Maker refund spend key")?;
+    .context("reconstruct role settlement spend key")?;
     let reconstructed_public_spend_key = reconstructed.public_key();
 
     let daemon = endpoint_from_fds(
@@ -278,14 +350,15 @@ fn validate_inputs() -> Result<ValidatedInputs> {
         plan.monero_role_wallet_url().as_str(),
         XMR_EFFECT_ROLE_USERNAME_FD,
         XMR_EFFECT_ROLE_PASSWORD_FD,
-        "Maker role wallet",
+        "role wallet",
     )?;
     let wallet_password = read_secret_text_fd(
         XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD,
         "shared-wallet file password",
     )?;
-    let evidence_path = plan.evidence_root().join("monero-refund-submission.json");
+    let evidence_path = plan.evidence_root().join(route.evidence_file());
     Ok(ValidatedInputs {
+        route,
         plan,
         agreement,
         view_key,
@@ -308,16 +381,21 @@ fn validate_runtime_binding(
     let binding =
         XmrLezBridgeBindingV3::new(agreement, activation).context("Stage-B binding is invalid")?;
     let digest = Sha256::digest(plan.run_id().as_bytes());
-    let request_id = RequestId::new(format!("m7-refund-{}", hex::encode(&digest[..12])))
-        .context("refund runtime request ID is invalid")?;
+    let route = SettlementRoute::from_plan(plan)?;
+    let request_id = RequestId::new(format!(
+        "m7-{}-{}",
+        route.label(),
+        hex::encode(&digest[..12])
+    ))
+    .context("settlement runtime request ID is invalid")?;
     let run_id = RunId::new(plan.run_id().to_owned()).context("run ID is invalid")?;
     binding
         .terms()
         .validate_runtime_binding(
-            &MessageContext::new(run_id, request_id, Participant::Maker),
+            &MessageContext::new(run_id, request_id, route.participant()),
             runtime,
         )
-        .context("Maker runtime is not bound by Stage B")
+        .context("role runtime is not bound by Stage B")
 }
 
 fn endpoint_from_fds(
@@ -417,7 +495,7 @@ fn reserve_evidence(path: &Path) -> Result<File> {
         .context("reserve refund submission evidence")
 }
 
-fn write_evidence(file: &mut File, evidence: &RefundSubmissionEvidence) -> Result<()> {
+fn write_evidence(file: &mut File, evidence: &SubmissionEvidence) -> Result<()> {
     let mut bytes = serde_json::to_vec(evidence).context("encode refund submission evidence")?;
     bytes.push(b'\n');
     file.write_all(&bytes)

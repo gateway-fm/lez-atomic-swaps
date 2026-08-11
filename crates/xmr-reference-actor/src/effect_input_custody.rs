@@ -79,8 +79,12 @@ pub const XMR_EFFECT_PRIVATE_VIEW_KEY_FD: i32 = 216;
 pub const XMR_EFFECT_CHILD_PLAN_FD: i32 = 217;
 /// Invocation-only private XMR spend share for Tag16 and Monero sweep senders.
 pub const XMR_EFFECT_PRIVATE_XMR_SHARE_FD: i32 = 218;
-/// Invocation-only finalized Tag16 signature packet for Maker refund extraction.
-pub const XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD: i32 = 219;
+/// Invocation-only finalized claim/refund signature packet for adaptor extraction.
+pub const XMR_EFFECT_FINALIZED_SIGNATURE_FD: i32 = 219;
+/// Backward-compatible name for the finalized-signature descriptor.
+pub const XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD: i32 = XMR_EFFECT_FINALIZED_SIGNATURE_FD;
+/// Fixed owner-private artifact name ingested from finalized Tag15 evidence.
+pub const XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE: &str = "finalized-claim-signature.json";
 /// Fixed owner-private artifact name ingested from finalized Tag16 evidence.
 pub const XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE: &str = "finalized-refund-signature.json";
 /// Typed schema-v2 Tag14 release invocation.
@@ -437,7 +441,7 @@ impl PinnedXmrEffectInputsV1 {
         );
         ensure!(
             self.invocation_refund_signature.is_none(),
-            "XMR refund signature material is already pinned"
+            "XMR finalized signature material is already pinned"
         );
         if matches!(
             step,
@@ -450,16 +454,27 @@ impl PinnedXmrEffectInputsV1 {
                 application.private_xmr_share.as_ref(),
             )?);
         }
-        if step == XmrWorkflowStep::SweepMoneroRefund {
+        if matches!(
+            step,
+            XmrWorkflowStep::SweepMoneroClaim | XmrWorkflowStep::SweepMoneroRefund
+        ) {
+            let (filename, label) = if step == XmrWorkflowStep::SweepMoneroClaim {
+                (
+                    XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE,
+                    "finalized XMR claim signature",
+                )
+            } else {
+                (
+                    XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE,
+                    "finalized XMR refund signature",
+                )
+            };
             let signature = read_stable_private_source(
-                &evidence_root.join(XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE),
+                &evidence_root.join(filename),
                 MAX_FINAL_SIGNATURE_PACKET_BYTES,
-                "finalized XMR refund signature",
+                label,
             )?;
-            self.invocation_refund_signature = Some(seal_bytes(
-                "finalized XMR refund signature",
-                &signature.bytes,
-            )?);
+            self.invocation_refund_signature = Some(seal_bytes(label, &signature.bytes)?);
         }
         Ok(self)
     }
@@ -581,7 +596,7 @@ impl PinnedXmrEffectInputsV1 {
         if let Some(invocation_refund_signature) = invocation_refund_signature {
             descriptors.push((
                 invocation_refund_signature,
-                XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD,
+                XMR_EFFECT_FINALIZED_SIGNATURE_FD,
             ));
         }
         if let Some(tag14_exact_transaction) = tag14_exact_transaction {

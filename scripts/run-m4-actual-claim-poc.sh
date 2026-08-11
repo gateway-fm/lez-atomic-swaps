@@ -33,6 +33,7 @@ readonly m7_xmr_supervised_refund="${M7_XMR_SUPERVISED_REFUND:-0}"
 readonly m7_xmr_refund_process_kill="${M7_XMR_REFUND_PROCESS_KILL_AFTER_SUBMISSION:-0}"
 readonly m7_xmr_semantic_claim="${M7_XMR_SEMANTIC_CLAIM:-0}"
 readonly m7_xmr_claim_process_kill="${M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION:-0}"
+readonly m7_xmr_claim_sweep_process_kill="${M7_XMR_CLAIM_SWEEP_PROCESS_KILL_AFTER_SUBMISSION:-0}"
 readonly m7_xmr_build_cache_root="${M7_XMR_BUILD_CACHE_ROOT:-}"
 readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
 readonly m7_xmr_losing_tag16_after_tag17="${M7_XMR_LOSING_TAG16_AFTER_TAG17:-0}"
@@ -124,6 +125,18 @@ emit_contract() {
         restart_same_receipt_and_workflow: true,
         post_restart_route: "observe_only",
         release_journal_identity_preserved: true,
+        automatic_submission_retry: false,
+        runtime_external_resources: []
+      },
+      m7_xmr_claim_sweep_process_kill: {
+        mode_flag: "M7_XMR_CLAIM_SWEEP_PROCESS_KILL_AFTER_SUBMISSION",
+        requires_semantic_claim: true,
+        feature_gated_crash_hook: true,
+        crash_boundary: "submitted_before_cli_stdout",
+        restart_same_receipt_and_workflow: true,
+        post_restart_route: "observe_only",
+        submission_identity_preserved: true,
+        confirmations_mined_only_after_restart: true,
         automatic_submission_retry: false,
         runtime_external_resources: []
       },
@@ -357,6 +370,9 @@ environment_preflight() {
     fail "M7_XMR_SEMANTIC_CLAIM must be unset, 0, or 1"
   [[ "$m7_xmr_claim_process_kill" == 0 || "$m7_xmr_claim_process_kill" == 1 ]] ||
     fail "M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION must be unset, 0, or 1"
+  [[ "$m7_xmr_claim_sweep_process_kill" == 0 ||
+     "$m7_xmr_claim_sweep_process_kill" == 1 ]] ||
+    fail "M7_XMR_CLAIM_SWEEP_PROCESS_KILL_AFTER_SUBMISSION must be unset, 0, or 1"
   if [[ -n "$m7_xmr_build_cache_root" ]]; then
     [[ "$m7_xmr_build_cache_root" == /* ]] ||
       fail "M7 XMR build cache must be an existing canonical owner-private directory"
@@ -400,6 +416,12 @@ environment_preflight() {
       fail "M7_XMR_CLAIM_PROCESS_KILL_AFTER_SUBMISSION=1 requires M7_XMR_SEMANTIC_CLAIM=1"
     [[ "$m7_xmr_refund_process_kill" == 0 ]] ||
       fail "M7 claim and refund process-kill modes are mutually exclusive"
+  fi
+  if [[ "$m7_xmr_claim_sweep_process_kill" == 1 ]]; then
+    [[ "$m7_xmr_semantic_claim" == 1 ]] ||
+      fail "M7_XMR_CLAIM_SWEEP_PROCESS_KILL_AFTER_SUBMISSION=1 requires M7_XMR_SEMANTIC_CLAIM=1"
+    [[ "$m7_xmr_refund_process_kill" == 0 ]] ||
+      fail "M7 claim-sweep and refund process-kill modes are mutually exclusive"
   fi
   if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     require_command curl
@@ -1006,14 +1028,19 @@ build_identity_and_artifact() {
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
         --bin xmr-reference-finalized-classifier
   fi
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ]]; then
+    CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+      cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
+        --bin xmr-reference-monero-refund --bin xmr-reference-monero-verify
+  fi
   if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
       cargo +1.96.0 build --locked --offline -p xmr-reference-actor --features sessions \
-        --bin xmr-reference-monero-refund --bin xmr-reference-monero-verify \
         --bin xmr-reference-tag17
   fi
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
-    if [[ "$m7_xmr_refund_process_kill" == 1 || "$m7_xmr_claim_process_kill" == 1 ]]; then
+    if [[ "$m7_xmr_refund_process_kill" == 1 || "$m7_xmr_claim_process_kill" == 1 ||
+          "$m7_xmr_claim_sweep_process_kill" == 1 ]]; then
       CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
         cargo +1.96.0 build --release --locked --offline -p lez-maker-node \
           --features test-crash-hooks \
@@ -1049,8 +1076,10 @@ build_identity_and_artifact() {
   if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
     readonly m7_finalized_classifier_binary="${staged_binary_root}/xmr-reference-finalized-classifier"
   fi
-  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ]]; then
     readonly m7_monero_refund_binary="${staged_binary_root}/xmr-reference-monero-refund"
+  fi
+  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     readonly m7_tag17_binary="${staged_binary_root}/xmr-reference-tag17"
   fi
   readonly agreement_role_runner_binary="${staged_binary_root}/lez-adaptor-role-runner"
@@ -1100,9 +1129,11 @@ build_identity_and_artifact() {
     stage_executable "${workspace_target}/debug/xmr-reference-finalized-classifier" \
       "$m7_finalized_classifier_binary" "M7 finalized Tag14 observer"
   fi
-  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
+  if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_semantic_claim" == 1 ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-monero-refund" \
-      "$m7_monero_refund_binary" "M7 Monero refund sender"
+      "$m7_monero_refund_binary" "M7 Monero settlement sender"
+  fi
+  if [[ "$m7_xmr_supervised_refund" == 1 ]]; then
     stage_executable "${workspace_target}/debug/xmr-reference-tag17" \
       "$m7_tag17_binary" "M7 Tag17 effect worker"
   fi
@@ -3568,8 +3599,8 @@ provision_m7_taker_claim_effect_application() {
     --arg tag14_sha "$(sha256_file "$release_service_binary")" \
     --arg classifier_program "$m7_finalized_classifier_binary" \
     --arg classifier_sha "$(sha256_file "$m7_finalized_classifier_binary")" \
-    --arg claim_program "$monero_sweep_binary" \
-    --arg claim_sha "$(sha256_file "$monero_sweep_binary")" \
+    --arg claim_program "$m7_monero_refund_binary" \
+    --arg claim_sha "$(sha256_file "$m7_monero_refund_binary")" \
     --arg verify_program "$m7_monero_observer_binary" \
     --arg verify_sha "$(sha256_file "$m7_monero_observer_binary")" \
     --arg refund_program "$tag16_binary" \
@@ -3979,10 +4010,227 @@ sweep_monero_claim() {
   record_phase monero_sweep completed
 }
 
+run_m7_taker_claim_sweep_process_kill() {
+  [[ "$m7_xmr_claim_sweep_process_kill" == 1 ]] ||
+    fail "M7 Taker claim-sweep process-kill recovery requires its isolated mode"
+  record_phase m7_claim_sweep_process_kill started
+  readonly m7_taker_claim_sweep_pause_marker="${m5_xmr_runtime_root}/m7-claim-sweep-paused.json"
+  readonly m7_taker_claim_sweep_process_evidence="$evidence_root/m7-claim-sweep-process-kill.json"
+  readonly m7_taker_claim_sweep_crash_stdout="$evidence_root/m7-taker-claim-sweep-crashed.json"
+  readonly m7_taker_claim_sweep_crash_stderr="$evidence_root/m7-taker-claim-sweep-crashed.stderr"
+  readonly m7_taker_claim_sweep_recovered="$evidence_root/m7-taker-claim-sweep-recovered.json"
+  local crashed_pid crashed_start crashed_group crashed_sha crash_status=0 observed=0
+  local submission_identity submission_sha transaction_id first_state current
+  current="$evidence_root/.m7-taker-claim-sweep-current.json"
+
+  LEZ_TAKER_TEST_PAUSE_AFTER_INVOKED_STEP=sweep_monero_claim \
+    LEZ_TAKER_TEST_PAUSE_MARKER="$m7_taker_claim_sweep_pause_marker" \
+    setsid "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+      >"$m7_taker_claim_sweep_crash_stdout" 2>"$m7_taker_claim_sweep_crash_stderr" &
+  crashed_pid=$!
+  crashed_sha="$(sha256_file "$m5_lez_taker_binary")"
+  for _ in {1..100}; do
+    crashed_start="$(process_start_ticks "$crashed_pid")"
+    if [[ -n "$crashed_start" ]] &&
+      process_is_owned "$crashed_pid" "$crashed_start" "$crashed_sha"; then
+      break
+    fi
+    sleep 0.01
+  done
+  [[ -n "$crashed_start" ]] || fail "M7 claim-sweep Taker process identity is unavailable"
+  crashed_group="$(ps -o pgid= -p "$crashed_pid" | tr -d " ")"
+  [[ "$crashed_group" == "$crashed_pid" ]] ||
+    fail "M7 claim-sweep Taker process does not own an exact process group"
+  for _ in {1..3600}; do
+    if [[ -f "$m7_taker_claim_sweep_pause_marker" &&
+          -f "$m7_taker_claim_sweep_submission" ]]; then
+      observed=1
+      break
+    fi
+    process_is_owned "$crashed_pid" "$crashed_start" "$crashed_sha" ||
+      fail "M7 claim-sweep Taker exited before its post-submission pause"
+    sleep 0.05
+  done
+  [[ "$observed" == 1 ]] || fail "M7 claim-sweep pause and submission were not retained"
+  require_owner_file "$m7_taker_claim_sweep_pause_marker" "M7 claim-sweep pause marker"
+  require_owner_file "$m7_taker_claim_sweep_submission" "M7 claim submission"
+  jq -e --argjson pid "$crashed_pid" '
+    keys == (["process_id","schema_version","state","step"] | sort)
+    and .schema_version==1 and .state=="paused_after_invoked_before_stdout"
+    and .step=="sweep_monero_claim" and .process_id==$pid
+  ' "$m7_taker_claim_sweep_pause_marker" >/dev/null ||
+    fail "M7 claim-sweep pause marker is invalid"
+  jq -e --arg run "$run_id" --arg swap "$m5_xmr_planned_swap_id" '
+    .schema=="lez_v02_m7_monero_claim_submission_v1" and .role=="taker"
+    and .run_id==$run and .swap_id==$swap and .finality_observer_required==true
+    and .automatic_submission_retry==false and .public_rpc_used==false
+    and .faucet_used==false
+  ' "$m7_taker_claim_sweep_submission" >/dev/null ||
+    fail "M7 semantic claim submission is incomplete"
+  submission_identity="$(stat -c '%d:%i:%s' "$m7_taker_claim_sweep_submission")"
+  submission_sha="$(sha256_file "$m7_taker_claim_sweep_submission")"
+  transaction_id="$(jq -er .transaction_id "$m7_taker_claim_sweep_submission")"
+
+  kill -KILL -- "-${crashed_group}" || fail "M7 exact claim-sweep Taker SIGKILL failed"
+  if wait "$crashed_pid" 2>/dev/null; then
+    crash_status=0
+  else
+    crash_status=$?
+  fi
+  [[ "$crash_status" == 137 ]] || fail "M7 claim-sweep Taker did not exit from exact SIGKILL"
+  process_is_owned "$crashed_pid" "$crashed_start" "$crashed_sha" &&
+    fail "M7 old claim-sweep Taker process survived SIGKILL"
+  m5_application_process_group_has_members "$crashed_group" &&
+    fail "M7 old claim-sweep Taker process group still has live members"
+  [[ ! -s "$m7_taker_claim_sweep_crash_stdout" ]] ||
+    fail "M7 crashed claim-sweep Taker unexpectedly returned operator output"
+
+  "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+    >"$m7_taker_claim_sweep_recovered"
+  chmod 0600 "$m7_taker_claim_sweep_recovered"
+  require_owner_file "$m7_taker_claim_sweep_recovered" "M7 recovered claim-sweep output"
+  first_state="$(jq -er --arg run "$run_id" '
+    select(.schema_version==3 and .pair=="monero" and .role=="taker"
+      and .action=="claim" and .step=="sweep_monero_claim" and .run_id==$run
+      and .state=="observe_only" and .chain_effect_finalized==false) | .state
+  ' "$m7_taker_claim_sweep_recovered")"
+  [[ "$first_state" == observe_only ]] ||
+    fail "M7 restarted claim sweep did not enter observation-only recovery"
+  [[ "$(stat -c '%d:%i:%s' "$m7_taker_claim_sweep_submission")" == "$submission_identity" &&
+     "$(sha256_file "$m7_taker_claim_sweep_submission")" == "$submission_sha" &&
+     "$(jq -er .transaction_id "$m7_taker_claim_sweep_submission")" == "$transaction_id" ]] ||
+    fail "M7 restarted claim sweep changed the one-shot submission"
+
+  mine_m7_claim_confirmations
+  for _ in {1..600}; do
+    rm -f -- "$current"
+    if "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+      >"$current" 2>/dev/null &&
+      jq -e --arg run "$run_id" '
+        .schema_version==3 and .pair=="monero" and .role=="taker"
+        and .action=="claim" and .step=="sweep_monero_claim" and .run_id==$run
+        and .state=="complete" and .chain_effect_finalized==true
+      ' "$current" >/dev/null 2>&1; then
+      mv "$current" "$m7_taker_claim_sweep_terminal"
+      break
+    fi
+    sleep 0.25
+  done
+  require_owner_file "$m7_taker_claim_sweep_terminal" "M7 terminal claim-sweep output"
+  [[ "$(stat -c '%d:%i:%s' "$m7_taker_claim_sweep_submission")" == "$submission_identity" &&
+     "$(sha256_file "$m7_taker_claim_sweep_submission")" == "$submission_sha" ]] ||
+    fail "M7 terminal claim observation changed the one-shot submission"
+
+  jq -n --argjson crashed_pid "$crashed_pid" --arg crashed_start "$crashed_start" \
+    --arg submission_identity "$submission_identity" --arg submission_sha "$submission_sha" \
+    --arg transaction_id "$transaction_id" --arg first_state "$first_state" '
+      {
+        schema:"lez_v02_m7_taker_claim_sweep_process_kill_v1",
+        crash_boundary:"submitted_before_cli_stdout",kill_order:"taker_cli",
+        crashed_taker:{process_id:$crashed_pid,start_ticks:$crashed_start},
+        old_process_identity_absent:true,post_restart_route:"observe_only",
+        first_recovered_state:$first_state,
+        submission:{filesystem_identity:$submission_identity,sha256:$submission_sha,
+          transaction_id:$transaction_id,unchanged_after_restart:true},
+        confirmations_mined_before_restart:0,automatic_submission_retry:false,
+        runtime_external_resources:[],public_rpc_used:false,faucet_used:false
+      }
+    ' >"$m7_taker_claim_sweep_process_evidence"
+  chmod 0600 "$m7_taker_claim_sweep_process_evidence"
+  require_owner_file "$m7_taker_claim_sweep_process_evidence" +    "M7 claim-sweep process-kill evidence"
+  record_phase m7_claim_sweep_process_kill completed
+}
+
+activate_and_run_m7_taker_claim_sweep() {
+  [[ "$m7_xmr_semantic_claim" == 1 ]] ||
+    fail "M7 semantic claim sweep requires its isolated mode"
+  record_phase m7_claim_sweep_activation started
+  readonly m7_taker_claim_sweep_activation="$evidence_root/m7-taker-claim-sweep-activation.json"
+  readonly m7_taker_claim_sweep_invocation="$evidence_root/m7-taker-claim-sweep-invocation.json"
+  readonly m7_taker_claim_sweep_terminal="$evidence_root/m7-taker-claim-sweep-terminal.json"
+  readonly m7_taker_claim_sweep_submission="$m7_taker_effect_evidence_root/monero-claim-submission.json"
+  readonly m7_taker_claim_sweep_finality="$m7_taker_effect_evidence_root/monero-claim-finalized.json"
+  "$agreement_actor_binary" activate-taker-claim-sweep-workflow \
+    --effect-manifest "$m7_taker_effect_manifest" \
+    --effect-authority "$m7_taker_effect_authority" \
+    --run-id "$run_id" --finalized-claim "$tag15_finality_result" \
+    --observed-final-signature "$observed_final_signature" \
+    >"$m7_taker_claim_sweep_activation"
+  chmod 0600 "$m7_taker_claim_sweep_activation"
+  require_owner_file "$m7_taker_claim_sweep_activation" "M7 Taker claim-sweep activation"
+  jq -e --arg run "$run_id" --arg swap "$m5_xmr_planned_swap_id" '
+    .schema=="lez_v02_m7_taker_claim_sweep_activation_v1" and .role=="taker"
+    and .run_id==$run and .swap_id==$swap and .selected_branch=="claim"
+    and .prepared_step=="sweep_monero_claim" and .private_material_disclosed==false
+  ' "$m7_taker_claim_sweep_activation" >/dev/null ||
+    fail "M7 Taker claim-sweep activation is incomplete"
+  record_phase m7_claim_sweep_activation completed
+  record_phase monero_sweep started
+
+  if [[ "$m7_xmr_claim_sweep_process_kill" == 1 ]]; then
+    run_m7_taker_claim_sweep_process_kill
+  else
+    "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+      >"$m7_taker_claim_sweep_invocation"
+    chmod 0600 "$m7_taker_claim_sweep_invocation"
+    jq -e --arg run "$run_id" '
+      .schema_version==3 and .pair=="monero" and .role=="taker"
+      and .action=="claim" and .step=="sweep_monero_claim" and .run_id==$run
+      and .state=="invoked_unreconciled" and .chain_effect_finalized==false
+    ' "$m7_taker_claim_sweep_invocation" >/dev/null ||
+      fail "M7 Taker claim sweep did not consume exactly one semantic route"
+    require_owner_file "$m7_taker_claim_sweep_submission" "M7 semantic claim submission"
+    mine_m7_claim_confirmations
+    local current="$evidence_root/.m7-taker-claim-sweep-current.json"
+    for _ in {1..600}; do
+      rm -f -- "$current"
+      if "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" \
+        >"$current" 2>/dev/null &&
+        jq -e --arg run "$run_id" '
+          .schema_version==3 and .pair=="monero" and .role=="taker"
+          and .action=="claim" and .step=="sweep_monero_claim" and .run_id==$run
+          and .state=="complete" and .chain_effect_finalized==true
+        ' "$current" >/dev/null 2>&1; then
+        mv "$current" "$m7_taker_claim_sweep_terminal"
+        break
+      fi
+      sleep 0.25
+    done
+    require_owner_file "$m7_taker_claim_sweep_terminal" "M7 terminal claim-sweep output"
+  fi
+  require_owner_file "$m7_taker_claim_sweep_submission" "M7 semantic claim submission"
+  require_owner_file "$m7_taker_claim_sweep_finality" "M7 semantic claim finality"
+  jq -e --arg run "$run_id" --arg swap "$m5_xmr_planned_swap_id" '
+    .schema=="lez_v02_m7_monero_claim_submission_v1" and .role=="taker"
+    and .run_id==$run and .swap_id==$swap and .finality_observer_required==true
+    and .automatic_submission_retry==false and .public_rpc_used==false and .faucet_used==false
+  ' "$m7_taker_claim_sweep_submission" >/dev/null ||
+    fail "M7 semantic claim submission is incomplete"
+  jq -e --arg tx "$(jq -er .transaction_id "$m7_taker_claim_sweep_submission")" '
+    .schema=="lez_v02_m7_monero_claim_finality_v1" and .role=="taker"
+    and .transaction_id==$tx and .confirmations>=.required_confirmations
+    and .peer_count==0 and .network_scope=="isolated_official_monero_regtest"
+    and .finality_observer_sent_transaction==false
+    and .public_rpc_used==false and .faucet_used==false
+  ' "$m7_taker_claim_sweep_finality" >/dev/null ||
+    fail "M7 semantic claim finality is incomplete"
+  record_phase monero_sweep completed
+}
+
 bind_claim_sweep() {
   record_phase evidence started
   readonly claim_sweep_binding="${evidence_root}/claim-sweep-binding.json"
-  "$agreement_actor_binary" bind-finalized-claim-sweep --private-root "${agreement_root}/material/taker" --own-public-packet "${agreement_root}/exchange/taker.json" --peer-public-packet "${agreement_root}/exchange/maker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/taker.sqlite" --run-id "$MONERO_RUN_ID" --claim-run-id "$run_id" --finalized-claim "$tag15_finality_result" --observed-final-signature "$observed_final_signature" --extracted-maker-adaptor-scalar "$extracted_maker_scalar" --monero-sweep-evidence "$monero_sweep_evidence" --monero-receipt-evidence "$monero_verification_evidence" --output-binding-evidence "$claim_sweep_binding"
+  local binding_run_id binding_sweep binding_receipt
+  if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
+    binding_run_id="$run_id"
+    binding_sweep="$m7_taker_claim_sweep_submission"
+    binding_receipt="$m7_taker_claim_sweep_finality"
+  else
+    binding_run_id="$MONERO_RUN_ID"
+    binding_sweep="$monero_sweep_evidence"
+    binding_receipt="$monero_verification_evidence"
+  fi
+  "$agreement_actor_binary" bind-finalized-claim-sweep --private-root "${agreement_root}/material/taker" --own-public-packet "${agreement_root}/exchange/taker.json" --peer-public-packet "${agreement_root}/exchange/maker.json" --agreement-stage-a "$agreement_stage_a" --activation-stage-b "$agreement_stage_b" --journal "${agreement_root}/stage-b/private/taker.sqlite" --run-id "$binding_run_id" --claim-run-id "$run_id" --finalized-claim "$tag15_finality_result" --observed-final-signature "$observed_final_signature" --extracted-maker-adaptor-scalar "$extracted_maker_scalar" --monero-sweep-evidence "$binding_sweep" --monero-receipt-evidence "$binding_receipt" --output-binding-evidence "$claim_sweep_binding"
   require_owner_file "$claim_sweep_binding" "claim/sweep binding evidence"
   jq -e '.schema=="lez_v02_m4_claim_cross_chain_binding_v1" and .distributed_cross_chain_transaction_claimed==false and .lez_effect=="claim" and .lez_sidecar_role=="taker"' "$claim_sweep_binding" >/dev/null || fail "claim/sweep binding evidence is incomplete"
   record_phase evidence completed
@@ -3996,35 +4244,45 @@ m7_monero_rpc() {
     curl --config "$credentials" --data-binary @- "$endpoint/json_rpc"
 }
 
-mine_m7_refund_confirmations() {
-  readonly m7_maker_address_evidence="$evidence_root/m7-maker-wallet-address.json"
-  readonly m7_refund_mining_evidence="$evidence_root/m7-refund-confirmation-blocks.json"
-  local maker_credentials maker_endpoint daemon_credentials daemon_endpoint
-  local address_response maker_address mine_request
-  maker_credentials="${monero_env[MONERO_MAKER_CREDENTIAL_FILE]}"
-  maker_endpoint="${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"
+mine_m7_settlement_confirmations() {
+  local journey="$1" wallet_credentials="$2" wallet_endpoint="$3"
+  local address_evidence="$evidence_root/m7-${journey}-wallet-address.json"
+  local mining_evidence="$evidence_root/m7-${journey}-confirmation-blocks.json"
+  local daemon_credentials daemon_endpoint address_response wallet_address mine_request
   daemon_credentials="${monero_env[MONERO_DAEMON_CREDENTIAL_FILE]}"
   daemon_endpoint="${monero_env[MONERO_DAEMON_ENDPOINT]}"
 
-  address_response="$(m7_monero_rpc "$maker_credentials" "$maker_endpoint" \
-    '{"jsonrpc":"2.0","id":"m7-refund","method":"get_address","params":{"account_index":0}}')"
-  printf '%s\n' "$address_response" >"$m7_maker_address_evidence"
-  chmod 0600 "$m7_maker_address_evidence"
-  require_owner_file "$m7_maker_address_evidence" "M7 Maker wallet address evidence"
-  maker_address="$(jq -er 'if (.error==null and (.result.address|type=="string")) then .result.address else error("missing Maker address") end' \
-    "$m7_maker_address_evidence")"
+  address_response="$(m7_monero_rpc "$wallet_credentials" "$wallet_endpoint" \
+    '{"jsonrpc":"2.0","id":"m7-settlement","method":"get_address","params":{"account_index":0}}')"
+  printf '%s\n' "$address_response" >"$address_evidence"
+  chmod 0600 "$address_evidence"
+  require_owner_file "$address_evidence" "M7 settlement wallet address evidence"
+  wallet_address="$(jq -er 'if (.error==null and (.result.address|type=="string")) then .result.address else error("missing settlement address") end' \
+    "$address_evidence")"
 
-  mine_request="$(jq -cn --arg address "$maker_address" '{
-    jsonrpc:"2.0",id:"m7-refund",method:"generateblocks",
+  mine_request="$(jq -cn --arg address "$wallet_address" '{
+    jsonrpc:"2.0",id:"m7-settlement",method:"generateblocks",
     params:{amount_of_blocks:10,wallet_address:$address,starting_nonce:1000}
   }')"
   m7_monero_rpc "$daemon_credentials" "$daemon_endpoint" "$mine_request" \
-    >"$m7_refund_mining_evidence"
-  chmod 0600 "$m7_refund_mining_evidence"
-  require_owner_file "$m7_refund_mining_evidence" "M7 refund confirmation mining evidence"
+    >"$mining_evidence"
+  chmod 0600 "$mining_evidence"
+  require_owner_file "$mining_evidence" "M7 settlement confirmation mining evidence"
   jq -e '.error==null and .result.status=="OK" and (.result.blocks|length)==10' \
-    "$m7_refund_mining_evidence" >/dev/null ||
+    "$mining_evidence" >/dev/null ||
     fail "M7 external confirmation driver did not mine exactly ten blocks"
+}
+
+mine_m7_refund_confirmations() {
+  mine_m7_settlement_confirmations refund \
+    "${monero_env[MONERO_MAKER_CREDENTIAL_FILE]}" \
+    "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"
+}
+
+mine_m7_claim_confirmations() {
+  mine_m7_settlement_confirmations claim \
+    "${monero_env[MONERO_TAKER_CREDENTIAL_FILE]}" \
+    "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"
 }
 
 retain_m7_refund_finality_evidence() {
@@ -4036,15 +4294,18 @@ retain_m7_refund_finality_evidence() {
     fail "M7 retained refund finality path already exists"
   jq -e '
     keys == ([
-      "activation_commitment", "agreement_commitment", "confirmations",
+      "activation_commitment", "agreement_commitment", "confirmations", "daemon_version",
       "containing_block_hash", "containing_block_height", "destination_address",
-      "faucet_used", "finality_observer_sent_transaction", "monero_genesis_hash",
-      "public_rpc_used", "received_amount_piconero", "required_confirmations",
+      "faucet_used", "finality_observer_sent_transaction", "foreign_wallet_version",
+      "monero_genesis_hash", "network_scope", "peer_count", "public_rpc_used",
+      "received_amount_piconero", "required_confirmations",
       "role", "run_id", "schema", "sending_tool_plan_sha256", "stable_tip_hash",
-      "stable_tip_height", "submission_sha256", "swap_id", "transaction_id"
+      "stable_tip_height", "submission_sha256", "swap_id", "target_wallet_version",
+      "transaction_id"
     ] | sort)
     and .schema=="lez_v02_m7_monero_refund_finality_v1" and .role=="maker"
     and .finality_observer_sent_transaction==false
+    and .peer_count==0 and .network_scope=="isolated_official_monero_regtest"
     and .public_rpc_used==false and .faucet_used==false
   ' "$source" >/dev/null || fail "M7 private refund finality is not secret-free"
   (umask 077; dd if="$source" of="$temporary" bs=65536 iflag=fullblock \
@@ -4495,8 +4756,13 @@ execute_run() {
     publish_tag15
     classify_tag15_finality
     extract_claim_signature
-    extract_adaptor_scalar
-    sweep_monero_claim
+    if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
+      activate_and_run_m7_taker_claim_sweep
+      extract_adaptor_scalar
+    else
+      extract_adaptor_scalar
+      sweep_monero_claim
+    fi
     bind_claim_sweep
   fi
   return 0

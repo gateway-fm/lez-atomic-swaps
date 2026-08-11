@@ -1,4 +1,4 @@
-//! Sealed read-only observer for Maker Monero refund finality.
+//! Sealed read-only observer for role-correct Monero settlement finality.
 
 #![forbid(unsafe_code)]
 
@@ -10,11 +10,12 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail, ensure};
+use lez_bridge_protocol::RunId;
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity,
-    MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier, MoneroTransactionId,
-    REQUIRED_MONERO_CONFIRMATIONS, VerifiedMoneroOutputObservation,
+    MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier, MoneroTopologyVerifier,
+    MoneroTransactionId, REQUIRED_MONERO_CONFIRMATIONS, VerifiedMoneroOutputObservation,
 };
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroAddressNetworkV1,
@@ -25,8 +26,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
     ActorRole, XMR_EFFECT_DAEMON_PASSWORD_FD, XMR_EFFECT_DAEMON_USERNAME_FD,
-    XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD,
-    XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, XmrEffectChildModeV1, XmrEffectChildPlanV1,
+    XMR_EFFECT_FUNDING_PASSWORD_FD, XMR_EFFECT_FUNDING_USERNAME_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+    XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD, XMR_EFFECT_STAGE_A_FD,
+    XMR_EFFECT_STAGE_B_FD, XmrEffectChildModeV1, XmrEffectChildPlanV1,
     load_xmr_effect_child_plan_fd,
 };
 use zeroize::Zeroizing;
@@ -34,8 +36,6 @@ use zeroize::Zeroizing;
 const ABI: &str = "lez_xmr_monero_verify_v2";
 const MAX_SECRET_BYTES: usize = 256;
 const MAX_EVIDENCE_BYTES: u64 = 16 * 1024;
-const SUBMISSION_FILE: &str = "monero-refund-submission.json";
-const FINAL_EVIDENCE_FILE: &str = "monero-refund-finalized.json";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -97,26 +97,91 @@ struct RefundFinalityEvidence {
     stable_tip_hash: String,
     stable_tip_height: u64,
     required_confirmations: u64,
+    peer_count: u64,
+    daemon_version: String,
+    target_wallet_version: u32,
+    foreign_wallet_version: u32,
+    network_scope: String,
     finality_observer_sent_transaction: bool,
     public_rpc_used: bool,
     faucet_used: bool,
 }
 
 struct ValidatedInputs {
+    route: SettlementRoute,
     plan: XmrEffectChildPlanV1,
     agreement: XmrAgreementV1,
     daemon: LoopbackRpcEndpoint,
     role_wallet: LoopbackRpcEndpoint,
+    foreign_wallet: LoopbackRpcEndpoint,
     submission: RefundSubmissionEvidence,
     submission_bytes: Vec<u8>,
     destination: MoneroAddress,
     transaction_id: MoneroTransactionId,
 }
 
+#[derive(Clone, Copy)]
+enum SettlementRoute {
+    Claim,
+    Refund,
+}
+
+impl SettlementRoute {
+    fn from_plan(plan: &XmrEffectChildPlanV1) -> Result<Self> {
+        match (plan.role(), plan.step(), plan.executable_abi()) {
+            (ActorRole::Taker, XmrWorkflowStep::SweepMoneroClaim, ABI) => Ok(Self::Claim),
+            (ActorRole::Maker, XmrWorkflowStep::SweepMoneroRefund, ABI) => Ok(Self::Refund),
+            _ => bail!("XMR effect child plan differs from the compiled Monero observer routes"),
+        }
+    }
+
+    const fn step(self) -> XmrWorkflowStep {
+        match self {
+            Self::Claim => XmrWorkflowStep::SweepMoneroClaim,
+            Self::Refund => XmrWorkflowStep::SweepMoneroRefund,
+        }
+    }
+
+    const fn role(self) -> &'static str {
+        match self {
+            Self::Claim => "taker",
+            Self::Refund => "maker",
+        }
+    }
+
+    const fn submission_file(self) -> &'static str {
+        match self {
+            Self::Claim => "monero-claim-submission.json",
+            Self::Refund => "monero-refund-submission.json",
+        }
+    }
+
+    const fn final_file(self) -> &'static str {
+        match self {
+            Self::Claim => "monero-claim-finalized.json",
+            Self::Refund => "monero-refund-finalized.json",
+        }
+    }
+
+    const fn submission_schema(self) -> &'static str {
+        match self {
+            Self::Claim => "lez_v02_m7_monero_claim_submission_v1",
+            Self::Refund => "lez_v02_m7_monero_refund_submission_v1",
+        }
+    }
+
+    const fn final_schema(self) -> &'static str {
+        match self {
+            Self::Claim => "lez_v02_m7_monero_claim_finality_v1",
+            Self::Refund => "lez_v02_m7_monero_refund_finality_v1",
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = execute().await {
-        eprintln!("M7 Maker Monero finality observer failed: {error:#}");
+        eprintln!("M7 Monero settlement finality observer failed: {error:#}");
         std::process::exit(1);
     }
 }
@@ -141,19 +206,37 @@ async fn execute() -> Result<()> {
     let observation = match verifier.verify(&expected).await {
         Ok(observation) => observation,
         Err(error) if is_pending(&error) => {
-            write_pending();
+            write_pending(inputs.route);
             return Ok(());
         }
-        Err(error) => return Err(error).context("Maker refund finality proof failed closed"),
+        Err(error) => return Err(error).context("settlement finality proof failed closed"),
     };
-    let evidence_bytes = canonical_line(&final_evidence(&inputs, &observation))
+    let topology = MoneroTopologyVerifier::new(
+        RunId::new(inputs.plan.run_id()).context("settlement run ID is invalid")?,
+        identity,
+        &inputs.daemon,
+        &inputs.role_wallet,
+        &inputs.foreign_wallet,
+    )
+    .context("construct settlement topology verifier")?
+    .verify()
+    .await
+    .context("verify authenticated peerless settlement topology")?;
+    topology
+        .validate_observation(
+            &RunId::new(inputs.plan.run_id()).context("settlement run ID is invalid")?,
+            &observation,
+        )
+        .context("cross-bind settlement topology and output")?;
+    let evidence_bytes = canonical_line(&final_evidence(&inputs, &observation, &topology))
         .context("encode refund finality evidence")?;
     persist_or_validate(
-        &inputs.plan.evidence_root().join(FINAL_EVIDENCE_FILE),
+        &inputs.plan.evidence_root().join(inputs.route.final_file()),
         &evidence_bytes,
     )?;
     println!(
-        "{{\"schema_version\":1,\"step\":\"sweep_monero_refund\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{}\"}}",
+        "{{\"schema_version\":1,\"step\":\"{}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{}\"}}",
+        inputs.route.step().name(),
         hex::encode(Sha256::digest(&evidence_bytes))
     );
     Ok(())
@@ -164,8 +247,9 @@ fn validate_args() -> Result<()> {
     ensure!(
         args.len() == 3
             && args[1] == "--xmr-workflow-step"
-            && args[2] == XmrWorkflowStep::SweepMoneroRefund.name(),
-        "Monero finality observer requires the parent-selected refund step"
+            && (args[2] == XmrWorkflowStep::SweepMoneroClaim.name()
+                || args[2] == XmrWorkflowStep::SweepMoneroRefund.name()),
+        "Monero finality observer requires one parent-selected settlement step"
     );
     Ok(())
 }
@@ -185,12 +269,10 @@ fn reject_forbidden_invocation_secrets() -> Result<()> {
 
 fn validate_inputs() -> Result<ValidatedInputs> {
     let plan = load_xmr_effect_child_plan_fd().context("load Monero observer child plan")?;
+    let route = SettlementRoute::from_plan(&plan)?;
     ensure!(
-        plan.role() == ActorRole::Maker
-            && plan.mode() == XmrEffectChildModeV1::Observe
-            && plan.step() == XmrWorkflowStep::SweepMoneroRefund
-            && plan.executable_abi() == ABI,
-        "XMR effect child plan differs from the compiled Monero observer route"
+        plan.mode() == XmrEffectChildModeV1::Observe,
+        "XMR effect child plan differs from the selected Monero observer route"
     );
     validate_evidence_root(plan.evidence_root())?;
     let agreement = XmrAgreementV1::from_wire(&read_sealed_fd(
@@ -230,23 +312,31 @@ fn validate_inputs() -> Result<ValidatedInputs> {
         plan.monero_role_wallet_url().as_str(),
         XMR_EFFECT_ROLE_USERNAME_FD,
         XMR_EFFECT_ROLE_PASSWORD_FD,
-        "Maker role wallet",
+        "role wallet",
+    )?;
+    let foreign_wallet = endpoint_from_fds(
+        plan.monero_funding_wallet_url().as_str(),
+        XMR_EFFECT_FUNDING_USERNAME_FD,
+        XMR_EFFECT_FUNDING_PASSWORD_FD,
+        "foreign wallet",
     )?;
     let (submission, submission_bytes) = read_canonical_private_json(
-        &plan.evidence_root().join(SUBMISSION_FILE),
-        "refund submission evidence",
+        &plan.evidence_root().join(route.submission_file()),
+        "settlement submission evidence",
     )?;
-    validate_submission(&plan, &agreement, &activation, &submission)?;
+    validate_submission(route, &plan, &agreement, &activation, &submission)?;
     let destination = parse_canonical_address(&submission.destination_address)?;
     let transaction_id = MoneroTransactionId(decode_nonzero_hex32(
         &submission.transaction_id,
         "refund transaction ID",
     )?);
     Ok(ValidatedInputs {
+        route,
         plan,
         agreement,
         daemon,
         role_wallet,
+        foreign_wallet,
         submission,
         submission_bytes,
         destination,
@@ -255,14 +345,15 @@ fn validate_inputs() -> Result<ValidatedInputs> {
 }
 
 fn validate_submission(
+    route: SettlementRoute,
     plan: &XmrEffectChildPlanV1,
     agreement: &XmrAgreementV1,
     activation: &XmrActivatedAgreementV1,
     submission: &RefundSubmissionEvidence,
 ) -> Result<()> {
     ensure!(
-        submission.schema == "lez_v02_m7_monero_refund_submission_v1"
-            && submission.role == "maker"
+        submission.schema == route.submission_schema()
+            && submission.role == route.role()
             && submission.run_id == plan.run_id()
             && submission.swap_id == hex::encode(plan.swap_id())
             && submission.agreement_commitment == hex::encode(plan.agreement_commitment())
@@ -282,7 +373,7 @@ fn validate_submission(
             && !submission.resources.public_rpc_used
             && !submission.resources.faucet_used
             && activation.activation_commitment() == plan.activation_commitment(),
-        "refund submission evidence differs from the sealed application and sending plan"
+        "settlement submission evidence differs from the sealed application and sending plan"
     );
     decode_nonzero_hex32(
         &submission.reconstructed_public_spend_key,
@@ -290,7 +381,7 @@ fn validate_submission(
     )?;
     ensure!(
         submission.restore_height == 0,
-        "refund restore height changed"
+        "settlement restore height changed"
     );
     Ok(())
 }
@@ -298,10 +389,11 @@ fn validate_submission(
 fn final_evidence(
     inputs: &ValidatedInputs,
     observation: &VerifiedMoneroOutputObservation,
+    topology: &lez_xmr_monero_adapter::VerifiedMoneroTopologyAttestation,
 ) -> RefundFinalityEvidence {
     RefundFinalityEvidence {
-        schema: "lez_v02_m7_monero_refund_finality_v1".to_owned(),
-        role: "maker".to_owned(),
+        schema: inputs.route.final_schema().to_owned(),
+        role: inputs.route.role().to_owned(),
         run_id: inputs.plan.run_id().to_owned(),
         swap_id: hex::encode(inputs.plan.swap_id()),
         agreement_commitment: hex::encode(inputs.plan.agreement_commitment()),
@@ -318,6 +410,11 @@ fn final_evidence(
         stable_tip_hash: hex::encode(observation.stable_tip_hash()),
         stable_tip_height: observation.stable_tip_height(),
         required_confirmations: REQUIRED_MONERO_CONFIRMATIONS,
+        peer_count: topology.peer_count(),
+        daemon_version: topology.daemon_version().to_owned(),
+        target_wallet_version: topology.target_wallet_version(),
+        foreign_wallet_version: topology.foreign_wallet_version(),
+        network_scope: "isolated_official_monero_regtest".to_owned(),
         finality_observer_sent_transaction: false,
         public_rpc_used: false,
         faucet_used: false,
@@ -337,8 +434,11 @@ fn is_pending(error: &MoneroEvidenceError) -> bool {
     )
 }
 
-fn write_pending() {
-    println!("{{\"schema_version\":1,\"step\":\"sweep_monero_refund\",\"state\":\"pending\"}}");
+fn write_pending(route: SettlementRoute) {
+    println!(
+        "{{\"schema_version\":1,\"step\":\"{}\",\"state\":\"pending\"}}",
+        route.step().name()
+    );
 }
 
 fn monero_network(network: MoneroAddressNetworkV1) -> MoneroNetwork {
@@ -435,12 +535,12 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
 }
 
 fn validate_evidence_root(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path).context("inspect refund evidence root")?;
+    let metadata = fs::symlink_metadata(path).context("inspect settlement evidence root")?;
     ensure!(
         metadata.file_type().is_dir()
             && metadata.uid() == rustix::process::getuid().as_raw()
             && metadata.permissions().mode() & 0o7777 == 0o700,
-        "refund evidence root is unsafe"
+        "settlement evidence root is unsafe"
     );
     Ok(())
 }
@@ -492,28 +592,28 @@ fn persist_or_validate(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     let parent = path
         .parent()
-        .context("refund finality evidence has no parent")?;
+        .context("settlement finality evidence has no parent")?;
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
-        .context("refund finality evidence name is invalid")?;
+        .context("settlement finality evidence name is invalid")?;
     let staging = parent.join(format!(".{name}.tmp-{}", std::process::id()));
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&staging)
-        .context("reserve refund finality staging evidence")?;
+        .context("reserve settlement finality staging evidence")?;
     file.write_all(bytes)
-        .context("write refund finality staging evidence")?;
+        .context("write settlement finality staging evidence")?;
     file.sync_all()
-        .context("sync refund finality staging evidence")?;
+        .context("sync settlement finality staging evidence")?;
     drop(file);
     match renameat_with(CWD, &staging, CWD, path, RenameFlags::NOREPLACE) {
         Ok(()) => File::open(parent)
-            .context("open refund evidence directory")?
+            .context("open settlement evidence directory")?
             .sync_all()
-            .context("sync refund evidence directory"),
+            .context("sync settlement evidence directory"),
         Err(rustix::io::Errno::EXIST) => {
             fs::remove_file(&staging).context("remove redundant finality staging evidence")?;
             validate_existing_evidence(path, bytes)
@@ -528,10 +628,7 @@ fn persist_or_validate(path: &Path, bytes: &[u8]) -> Result<()> {
 fn validate_existing_evidence(path: &Path, bytes: &[u8]) -> Result<()> {
     let (_existing, existing_bytes): (RefundFinalityEvidence, Vec<u8>) =
         read_canonical_private_json(path, "refund finality evidence")?;
-    ensure!(
-        existing_bytes == bytes,
-        "durable refund finality evidence changed"
-    );
+    ensure!(existing_bytes == bytes, "durable finality evidence changed");
     Ok(())
 }
 
@@ -552,7 +649,7 @@ mod tests {
     #[test]
     fn finality_evidence_publication_is_atomic_idempotent_and_immutable() {
         let root = tempfile::tempdir().expect("finality evidence root");
-        let path = root.path().join(FINAL_EVIDENCE_FILE);
+        let path = root.path().join("monero-refund-finalized.json");
         let evidence = RefundFinalityEvidence {
             schema: "lez_v02_m7_monero_refund_finality_v1".to_owned(),
             role: "maker".to_owned(),
@@ -572,6 +669,11 @@ mod tests {
             stable_tip_hash: "99".repeat(32),
             stable_tip_height: 18,
             required_confirmations: REQUIRED_MONERO_CONFIRMATIONS,
+            peer_count: 0,
+            daemon_version: "0.18.5.1-release".to_owned(),
+            target_wallet_version: 65_567,
+            foreign_wallet_version: 65_567,
+            network_scope: "isolated_official_monero_regtest".to_owned(),
             finality_observer_sent_transaction: false,
             public_rpc_used: false,
             faucet_used: false,

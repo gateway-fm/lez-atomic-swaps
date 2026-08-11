@@ -52,13 +52,13 @@ fi
 "#;
 const MONERO_WORKER: &[u8] = br#"#!/bin/sh
 set -eu
-for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218; do
+for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219; do
     test -e "/proc/self/fd/$fd"
 done
-test ! -e /proc/self/fd/219
 grep -Fq '"mode":"invoke"' /proc/self/fd/217
 grep -Fq '"step":"sweep_monero_claim"' /proc/self/fd/217
 grep -Fq '"executable_abi":"lez_xmr_monero_claim_sweep_v2"' /proc/self/fd/217
+grep -Fq 'canonical-finalized-claim-signature' /proc/self/fd/219
 "#;
 const REFUND_WORKER: &[u8] = br#"#!/bin/sh
 set -eu
@@ -1242,6 +1242,12 @@ fn route_fixture_for_mode(
         taker_actor.agreement_commitment(),
         taker_actor.activation_commitment(),
         semantic_tag14,
+    );
+    let evidence = owner_directory(&effect_root, "evidence");
+    write_private(
+        &evidence.join("finalized-claim-signature.json"),
+        b"canonical-finalized-claim-signature\n",
+        0o600,
     );
     let authority_digest: [u8; 32] = Sha256::digest(&effect_bytes).into();
     let identity = XmrWorkflowIdentityV1::new(

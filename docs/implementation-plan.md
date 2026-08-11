@@ -7439,3 +7439,24 @@ S12/S13 review and policy-deferred public deployment.
   process-kill certificates. Replace the stale generic-matrix wording while
   keeping R4 open at 11 repository-owned rows for the real Taker Monero
   claim-sweep and Tag15 accepted-before-stdout recovery seams.
+
+## M7 Taker Monero claim-sweep unknown-outcome recovery (2026-08-11)
+
+- [x] Audit the current route. The wallet adapter already exposes a no-mining
+  one-shot sweep, and the workflow journal already enforces
+  `Prepared -> Started -> ObserveOnly -> Succeeded`; the missing work is user
+  path composition.
+- [x] Record ADR 0195 with the component/RPC flow, crash sequence, conditional
+  atomicity argument, and explicit separation from the later Tag15 crash seam.
+- [x] Establish a RED source contract for evidence-driven sweep activation,
+  sealed Taker sender inputs, dual-role read-only observation, real CLI step
+  selection, and the exact post-send/pre-stdout runner hook.
+- [x] GREEN the role-correct sender, topology-bound observer, finalized-Tag15
+  activation, real Taker CLI selection, semantic submission/finality binder,
+  and focused Rust/process contracts without changing the Maker refund route.
+  The source contract, all-target actor compile, crash-hook Taker compile,
+  observer atomic-publication tests, claim sender/observer FD route, and
+  semantic hash/topology/depth/accounting tests are green.
+- [ ] Compose and certify a fresh exact-pushed-source LEZ v0.2 plus Monero
+  0.18.5.1 Regtest replay, update manual flows and R4 evidence, then continue
+  with the independent Tag15 process-kill seam.

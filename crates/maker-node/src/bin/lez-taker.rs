@@ -20,8 +20,8 @@ use lez_maker_node::{DeliveryOfferQueryV1, RunLocalDelivery};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    MakerActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, XmrWorkflowReconciliationV2,
-    XmrWorkflowStep, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
+    MakerActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, StoreError,
+    XmrWorkflowReconciliationV2, XmrWorkflowStep, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
 };
 use secp256k1::PublicKey;
 use serde::Serialize;
@@ -963,13 +963,16 @@ fn execute_xmr_effect_lifecycle(
                 effect_authority: "validated",
             })?
         ),
-        LifecycleAction::Claim => execute_xmr_taker_effect(
-            selector.run_id(),
-            &execution,
-            XmrWorkflowStep::AuthorizeLezTag14,
-            &state_lock,
-            &workflow_lock,
-        )?,
+        LifecycleAction::Claim => {
+            let step = select_xmr_taker_claim_step(&execution)?;
+            execute_xmr_taker_effect(
+                selector.run_id(),
+                &execution,
+                step,
+                &state_lock,
+                &workflow_lock,
+            )?;
+        }
         LifecycleAction::Refund => execute_xmr_taker_effect(
             selector.run_id(),
             &execution,
@@ -981,6 +984,24 @@ fn execute_xmr_effect_lifecycle(
     Ok(())
 }
 
+fn select_xmr_taker_claim_step(
+    execution: &ValidatedXmrEffectExecutionV3,
+) -> anyhow::Result<XmrWorkflowStep> {
+    let workflow =
+        SqliteXmrWorkflowJournal::open_existing(execution.effect_authority().workflow_journal())
+            .map_err(|_| anyhow::anyhow!("XMR Taker workflow is unavailable or unsafe"))?;
+    match workflow.step_revision(
+        execution.workflow_identity(),
+        XmrWorkflowStep::SweepMoneroClaim,
+    ) {
+        Ok(_) => Ok(XmrWorkflowStep::SweepMoneroClaim),
+        Err(StoreError::MissingXmrWorkflowStep) => Ok(XmrWorkflowStep::AuthorizeLezTag14),
+        Err(_) => Err(anyhow::anyhow!(
+            "XMR Taker claim workflow step is unavailable or unsafe"
+        )),
+    }
+}
+
 fn execute_xmr_taker_effect(
     run_id: &str,
     execution: &ValidatedXmrEffectExecutionV3,
@@ -990,6 +1011,7 @@ fn execute_xmr_taker_effect(
 ) -> anyhow::Result<()> {
     let (action, step_name) = match step {
         XmrWorkflowStep::AuthorizeLezTag14 => ("claim", "authorize_lez_tag14"),
+        XmrWorkflowStep::SweepMoneroClaim => ("claim", "sweep_monero_claim"),
         XmrWorkflowStep::RefundLezTag16 => ("refund", "refund_lez_tag16"),
         _ => return Err(anyhow::anyhow!("XMR Taker effect step is unsupported")),
     };
