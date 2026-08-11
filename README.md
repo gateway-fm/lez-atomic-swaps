@@ -30,6 +30,17 @@ enforced by the CI quality gate. No public RPC, peer, faucet, public funds, DNS
 dependency or public deployment participated; adverse concurrency and crash
 schedules remain open.
 
+The corridor's Taker Monero sweep now also has exact unknown-outcome recovery
+evidence under [ADR 0195](docs/architecture/0195-recover-taker-monero-claim-sweep-after-process-kill.md).
+Run `m7claimsweep997bd6bb` submitted one sweep, killed the real Taker CLI
+after wallet acceptance but before stdout, restarted into observation-only
+state with the identical transaction and no mined confirmation, then reached
+ten local Regtest confirmations without a second send. The
+[checked certificate](docs/evidence/m7-actual-taker-claim-sweep-process-kill-997bd6b-20260811.json)
+is pinned in CI and the R4 baseline; [manual Flow 1ZL](docs/manual-user-flows.md#flow-1zl-recover-a-taker-monero-claim-sweep-after-process-kill)
+repeats the role-correct flow. Tag15 accepted-before-stdout recovery remains
+the final R4 seam.
+
 Accepted-application BTC concurrency is actual-node GREEN on exact pushed run
 `m7btcconc-272788c-a`. Two opposite-direction agreements were authenticated by
 one Maker daemon/database, survived one post-acceptance daemon restart, reached

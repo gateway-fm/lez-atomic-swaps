@@ -7465,6 +7465,15 @@ S12/S13 review and policy-deferred public deployment.
   compared the packet against map-ordered bytes. Replace that boundary with a
   typed, unknown-field-denying canonical decoder and pin the sender-shaped
   byte regression; focused tests are GREEN.
-- [ ] Compose and certify a fresh exact-pushed-source LEZ v0.2 plus Monero
-  0.18.5.1 Regtest replay from the typed-canonical fix, update manual flows and
-  R4 evidence, then continue with the independent Tag15 process-kill seam.
+- [x] Compose and certify fresh exact-pushed-source run
+  `m7claimsweep997bd6bb` at `997bd6b`. The LEZ v0.2 plus official Monero
+  0.18.5.1 Regtest replay submitted the Taker sweep once, killed the Taker
+  after wallet acceptance and before stdout, recovered first through
+  `ObserveOnly` with the identical transaction and zero pre-restart mined
+  confirmations, then reached ten confirmations and passed the typed semantic
+  binder. Exact cleanup passed and retained no public/external dependency.
+  The sanitized certificate, manual flow, source contract, CI-hardening gate,
+  and R4 baseline are updated.
+- [ ] Establish RED-to-GREEN coverage for the independent real Tag15
+  accepted-before-stdout process-kill seam, preserving the exact effect
+  identity and proving zero second send before closing R4.

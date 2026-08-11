@@ -1,10 +1,9 @@
 # ADR 0195: Recover a Taker Monero claim sweep after a process kill
 
-Status: Accepted for implementation. Focused GREEN gates pass. Exact run
-`m7claimsweepf3c2a05a` proved the crash/recovery sequence and scoped cleanup,
-then correctly failed certification at a generic-map versus typed-field JSON
-canonicalization mismatch in the final binder. The typed regression fix is
-GREEN; a fresh exact-node certification replay is pending.
+Status: Accepted and exact pushed-source local-devnet GREEN. Exact run
+`m7claimsweep997bd6bb` at `997bd6b` proved the one-shot submission,
+post-acceptance Taker SIGKILL, observation-only restart, unchanged evidence,
+ten-confirmation finality, semantic cross-chain binding, and exact cleanup.
 
 ## Context
 
@@ -112,5 +111,9 @@ crash recovery.
 - The all-in-one local sweep remains available only for historical PoC
   compatibility; the durable user path separates send, mine, and observe.
 - Sender output is submission evidence, never finality evidence.
-- R4 remains open until this slice and the independent Tag15 process-kill seam
-  are exact-node certified.
+- The secret-safe exact-run certificate is enforced by the canonical quality,
+  CI-hardening, and R4 baseline gates. It intentionally omits process and
+  filesystem identities, exact transaction bytes, paths, credentials, and
+  private material.
+- R4 remains open only for the independent Tag15 accepted-before-stdout
+  process-kill seam; this evidence does not claim to cover that sender.

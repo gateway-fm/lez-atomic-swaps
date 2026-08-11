@@ -9238,3 +9238,89 @@ retained as the secret-safe checked certificate
 `docs/evidence/m7-actual-zec-accepted-process-kill-820001b-20260811.json`.
 Verify it offline with
 `./scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh`.
+
+## Flow 1ZL: Recover a Taker Monero claim sweep after process kill
+
+This opt-in QA flow uses the actual Taker role and the same receipt-bound Claim
+command a user repeats after an ambiguous result. Finalized Tag14 and Tag15
+first make the precommitted Monero claim spend available. The feature-gated
+runner then pauses the Taker only after the authenticated shared-wallet RPC
+accepts one sweep and its submission packet is durable, but before CLI stdout;
+it sends `SIGKILL`, restarts the same receipt and workflow database, and
+requires the first recovered route to be `ObserveOnly`.
+
+Run the fast source and certificate contracts first:
+
+```bash
+./scripts/test-m7-taker-claim-sweep-process-kill-contract.sh
+./scripts/test-m7-taker-claim-sweep-process-kill-actual-certificate.sh
+```
+
+For a fresh effect-bearing replay, provide the same pinned build inputs used by
+Flow 1R and use a unique run ID:
+
+```bash
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RUN_ID=m7-claim-sweep-kill-$(date -u +%Y%m%d%H%M%S)
+export M5_XMR_APPLICATION_MODE=1
+export M5_XMR_JOURNEY=claim
+export M7_XMR_SEMANTIC_CLAIM=1
+export M7_XMR_CLAIM_SWEEP_PROCESS_KILL_AFTER_SUBMISSION=1
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8-libraries
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+./scripts/run-m4-actual-claim-poc.sh preflight
+./scripts/run-m4-actual-claim-poc.sh execute
+```
+
+```mermaid
+sequenceDiagram
+    actor T as Taker user
+    participant C1 as Original lez-taker claim
+    participant J as Durable workflow journal
+    participant W as Shared Monero wallet RPC
+    participant C2 as Restarted lez-taker claim
+    participant O as Read-only Monero observer
+    participant M as Local monerod Regtest
+
+    T->>C1: Claim using accepted receipt
+    C1->>J: Persist SweepMoneroClaim Started
+    C1->>W: Submit exact sweep once
+    W-->>C1: Accepted transaction and durable evidence
+    T-xC1: QA SIGKILL before stdout
+    T->>C2: Repeat the same Claim command
+    C2->>J: Load unchanged Started effect
+    J-->>C2: ObserveOnly
+    C2->>O: Observe the exact transaction
+    O->>M: Read pending state
+    T->>M: External QA driver mines ten blocks
+    O->>M: Re-observe exact finality
+    O-->>C2: Finalized without another send
+```
+
+Before any confirmation mining,
+`evidence/m7-claim-sweep-process-kill.json` must report
+`submitted_before_cli_stdout`, the old Taker identity absent, first state
+`observe_only`, an unchanged submission SHA-256 and transaction ID, zero
+pre-restart confirmations, and no automatic retry. The final semantic binder
+must use the typed submission and finality schemas, match the same transaction
+and submission hash, account for the funded amount as received amount plus
+fee, and require ten confirmations.
+
+All runtime endpoints are fresh dynamic literal-loopback services: pinned LEZ
+v0.2 Bedrock/sequencer/indexer/role sidecars and official Monero 0.18.5.1
+Regtest with three authenticated wallets and zero peers. Funds come only from
+deterministic local genesis and Regtest outputs. No public RPC, peer, faucet,
+funds, DNS success, external finality service, or public deployment
+participates. A cold replay is dominated by pinned guest/deployer compilation
+and the 80-block LEZ finality window; warm actor rebuilds are seconds. Local
+CPU/disk pressure, Docker readiness, SQLite/fsync, process scheduling at the
+pause marker, and bounded node polling can affect duration but not acceptance
+criteria.
+
+Cleanup is exact run-ID and process-identity scoped. Never prune or stop a
+foreign Docker project. Exact run `m7claimsweep997bd6bb` at pushed commit
+`997bd6b` passed the complete flow and exact cleanup; its secret-safe checked
+packet is
+`docs/evidence/m7-actual-taker-claim-sweep-process-kill-997bd6b-20260811.json`.

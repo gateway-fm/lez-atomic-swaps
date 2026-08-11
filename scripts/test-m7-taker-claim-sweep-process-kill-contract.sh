@@ -35,7 +35,12 @@ done
 for binding in 'MoneroTopologyVerifier' 'peer_count' 'foreign_wallet_version'; do
   rg -Fq "$binding" "$observer" || fail "read-only observer omits topology proof ${binding}"
 done
-for binding in 'validate_semantic_monero_claim_pair' +  'M7_MONERO_CLAIM_SUBMISSION_SCHEMA' 'M7_MONERO_CLAIM_FINALITY_SCHEMA' +  'finality.submission_sha256 == sha256_hex(sweep_bytes)'; do
+for binding in \
+  'validate_semantic_monero_claim_pair' \
+  'decode_canonical_private_json' \
+  'M7_MONERO_CLAIM_SUBMISSION_SCHEMA' \
+  'M7_MONERO_CLAIM_FINALITY_SCHEMA' \
+  'finality.submission_sha256 == sha256_hex(sweep_bytes)'; do
   rg -Fq "$binding" "$actor" || fail "claim binder omits semantic pair check ${binding}"
 done
 rg -Fq 'LEZ_TAKER_TEST_PAUSE_AFTER_INVOKED_STEP=sweep_monero_claim' "$runner" ||

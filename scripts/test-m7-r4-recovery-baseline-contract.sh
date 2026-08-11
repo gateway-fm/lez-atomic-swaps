@@ -19,5 +19,6 @@ done
 
 ./scripts/test-m7-maker-refund-process-kill-actual-certificate.sh
 ./scripts/test-m7-taker-claim-process-kill-actual-certificate.sh
+./scripts/test-m7-taker-claim-sweep-process-kill-actual-certificate.sh
 
 echo "M7 R4 recovery baseline contract passed"

@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_taker_claim_sweep_process_kill",
+  "result": "passed",
+  "run_id": "m7claimsweep997bd6bb",
+  "repository_commit": "997bd6b090718f71ddb617a987d5c0a8138df4d3",
+  "guest": {
+    "recursive_tests_passed": 5,
+    "recursive_tests_total": 5,
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "crash_recovery": {
+    "boundary": "submitted_before_cli_stdout",
+    "killed_process": "taker_cli",
+    "old_process_identity_absent": true,
+    "post_restart_route": "observe_only",
+    "first_recovered_state": "observe_only",
+    "submission_sha256": "624d4f48dfe2ce2523a2927b49c4889be9fa36206954c00138f5b36ae9a7bb69",
+    "submission_unchanged_after_restart": true,
+    "confirmations_mined_before_restart": 0,
+    "automatic_submission_retry": false
+  },
+  "tag14": {
+    "owner_sidecar_role": "taker",
+    "classifier_target": "exact",
+    "transaction_id": "c5b4ac16d9ce13e2781b1f24d3542ea955bf662359ecd8ac228b704dea11cc55",
+    "containing_block_id": 130,
+    "scan_start_height": 123,
+    "scan_max_blocks": 16,
+    "finalized_clock_height": 138,
+    "automatic_retry": false
+  },
+  "tag15": {
+    "observer_sidecar_role": "taker",
+    "classifier_target": "discover_by_terms",
+    "transaction_id": "72e2311edfadd12142bc4cc879e3f1d2cc4fbee6cb726beea733c8bc638605a9",
+    "containing_block_id": 142,
+    "scan_start_height": 131,
+    "scan_max_blocks": 16,
+    "finalized_clock_height": 146,
+    "metadata_state": "claimed",
+    "terminal_custody_balance": "0",
+    "automatic_retry": false
+  },
+  "monero": {
+    "version": "0.18.5.1",
+    "network": "Regtest",
+    "peer_count": 0,
+    "genesis_hash": "418015bb9ae982a1975da7d79277c2705727a56894ba0fb246adaabb1f4632e3",
+    "sweeping_role": "taker",
+    "transaction_id": "9e59904c2e0dab8d5ef2c3b612bff3847c2b80d212d4133d9f16f8ff85659dd7",
+    "containing_block_height": 121,
+    "stable_tip_height": 130,
+    "confirmations": 10,
+    "funded_amount_piconero": 1000000000000,
+    "received_amount_piconero": 998191600000,
+    "fee_piconero": 1808400000,
+    "unreceived_remainder_piconero": 1808400000
+  },
+  "binding": {
+    "schema": "lez_v02_m4_claim_cross_chain_binding_v1",
+    "submission_schema": "lez_v02_m7_monero_claim_submission_v1",
+    "finality_schema": "lez_v02_m7_monero_claim_finality_v1",
+    "submission_sha256_matches_crash_evidence": true,
+    "transaction_id_matches_crash_evidence": true,
+    "topology_and_accounting_passed": true
+  },
+  "atomicity": {
+    "proof_scope": "successful_claim_path_conditional_atomicity_with_ambiguous_monero_sweep_result",
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorg_immunity_claimed": false,
+    "claim_sweep_binding_passed": true,
+    "argument": "Finalized Tag14 released only the precommitted Taker claim partial, and finalized Maker Tag15 exposed the complementary adaptor material required to reconstruct the already funded Monero output's spend authority. Before the single wallet call, the Taker journal durably consumed invocation authority. The process was killed after the wallet accepted that exact transaction but before CLI stdout; restart could only observe the byte-identical submission, and no confirmation block was mined until that observe-only handoff was proven. Ten later local confirmations and the semantic cross-chain binder tied the unchanged transaction, amounts, fee, topology, and finalized LEZ effects together without a second send."
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "public_peer_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived_exact_cleanup": true,
+    "broad_cleanup_used": false,
+    "foreign_resources_targeted": false,
+    "tag13_no_retry_latch_preserved": true
+  }
+}
