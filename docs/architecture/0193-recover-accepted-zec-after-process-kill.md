@@ -42,6 +42,14 @@ pause arguments nor the marker hook. The feature-only run uses 120 seconds so
 host contention cannot replace the parked generation before the external test
 coordinator validates it.
 
+The coordinator's read-only status observation may overlap the daemon-owned
+actor's short private-material lease. That is a transient observation race,
+not authority to repeat an effect. A bounded retry is allowed only when the
+exact daemon identity remains live and the actor returns exit status 2, empty
+stdout, and one of two exact byte-length-checked messages: configuration not
+yet published or status material temporarily unavailable. Every other status
+failure remains fatal, and each accepted retry class is written to evidence.
+
 ## Components and RPCs
 
 ```mermaid
@@ -133,6 +141,11 @@ or every adverse refund race.
   clean replay from the pushed implementation commit remains mandatory.
 - Warm owner-private cache measurements reduced the unchanged sidecar build
   from 17 minutes 34 seconds to 3.29 seconds on the successful run.
+- The first pushed-source replay exposed and safely stopped on the supervised
+  status/material-lease overlap before any swap-chain effect. A contract-first
+  regression now permits only that exact transient and the already recognized
+  configuration-publication transient; Zebra remained at tip 104 with an empty
+  mempool after the failed replay.
 - Runtime external resources are empty. Cold dependency acquisition can depend
   on registries, while pinned Bedrock can attempt non-gating NTP; local CPU,
   disk, Docker readiness, finality, process scheduling, fsync, and RPC polling

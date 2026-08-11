@@ -323,6 +323,29 @@ trap 'rm -rf -- "$status_retry_test_root"' EXIT
   fake_actor_calls=0
   fake_actor() {
     fake_actor_calls=$((fake_actor_calls + 1))
+    if (( fake_actor_calls == 1 )); then
+      printf '%s\n' 'actor status material is unavailable' >&2
+      return 2
+    fi
+    printf '%s\n' \
+      '{"schema_version":1,"role":"maker","state":"active","phase":"offered","revision":0}'
+  }
+  capture_m5_supervised_maker_status \
+    "$status_retry_test_root/material.json" \
+    "$status_retry_test_root/material.stderr" material
+  [[ "$fake_actor_calls" == 2 && ! -s "$status_retry_test_root/material.stderr" ]] ||
+    exit 1
+  jq -e '.role == "maker" and .state == "active" and .revision == 0' \
+    "$status_retry_test_root/material.json" >/dev/null
+  jq -s -e '
+    length == 2 and .[1].event == "supervised_maker_status_retry"
+    and .[1].label == "material" and .[1].attempt == 1
+    and .[1].error_class == "actor_status_material_unavailable"
+  ' "$status_retry_test_root/m5-maker-status-retries.ndjson" >/dev/null
+
+  fake_actor_calls=0
+  fake_actor() {
+    fake_actor_calls=$((fake_actor_calls + 1))
     printf '%s\n' 'actor status is unavailable' >&2
     return 2
   }

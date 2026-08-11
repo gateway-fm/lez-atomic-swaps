@@ -7340,6 +7340,19 @@ S12/S13 review and policy-deferred public deployment.
   and measured flakiness/iteration findings. A reusable canonical mode-0700
   build cache reduced the unchanged sidecar rebuild from 17m34s to 3.29s on
   the successful run without touching shared Cargo targets.
-- [ ] Commit and push the implementation, repeat on clean devnets from that
-  exact pushed commit, retain a compact secret-safe certificate, then update
-  U2/S5 and the M7 hard/submission inventories only to what it proves.
+- [x] Commit and push the crash implementation as `400aac9`, provision fresh
+  exact-version LEZ v0.2 and Zebra services, rebuild and prove the pinned guest
+  artifact, finalize its deployment, and finalize both fresh actor Vault
+  Claims. The first exact-source application replay stopped before either swap
+  chain effect: supervised status overlapped the daemon-owned actor's private
+  status-material lease, while the harness only classified the adjacent
+  configuration-publication race as retriable. Zebra remained at tip 104 with
+  an empty mempool.
+- [x] RED then GREEN that observed contention seam. Only exit status 2 with an
+  empty stdout and one of the two exact byte-length-checked messages (`actor
+  configuration is unavailable` or `actor status material is unavailable`)
+  may retry while the exact daemon identity remains alive; every other result
+  stays fatal and the selected class is recorded in evidence.
+- [ ] Push the contention fix, repeat from fresh application and chain state,
+  retain a compact secret-safe certificate, then update U2/S5 and the M7
+  hard/submission inventories only to what the replay proves.

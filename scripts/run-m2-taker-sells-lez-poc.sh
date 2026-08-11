@@ -353,7 +353,8 @@ capture_m5_supervised_maker_status() {
   local output_file="$1"
   local stderr_file="$2"
   local label="$3"
-  local attempt=1 actor_status=0
+  local attempt=1 actor_status=0 stderr_message='' error_class=''
+  local expected_stderr_size=0
   while true; do
     actor_status=0
     if "$actor_bin" --config "$maker_config" status >"$output_file" 2>"$stderr_file"; then
@@ -370,19 +371,38 @@ capture_m5_supervised_maker_status() {
       return 1
     }
     if (( actor_status != 2 || attempt > MAX_SUPERVISED_STATUS_RETRIES )) \
-      || [[ -s "$output_file" || ! -f "$stderr_file" || -L "$stderr_file" ]] \
-      || [[ "$(stat -c %s -- "$stderr_file")" != 35 ]] \
-      || [[ "$(<"$stderr_file")" != 'actor configuration is unavailable' ]]; then
+      || [[ -s "$output_file" || ! -f "$stderr_file" || -L "$stderr_file" ]]; then
       echo 'M5 supervised Maker status failed outside the exact retriable class' >&2
       return 1
     fi
-    jq -nc --arg label "$label" --argjson attempt "$attempt" '
+
+    stderr_message="$(<"$stderr_file")"
+    case "$stderr_message" in
+      'actor configuration is unavailable')
+        error_class='actor_configuration_unavailable'
+        expected_stderr_size=35
+        ;;
+      'actor status material is unavailable')
+        error_class='actor_status_material_unavailable'
+        expected_stderr_size=37
+        ;;
+      *)
+        echo 'M5 supervised Maker status failed outside the exact retriable class' >&2
+        return 1
+        ;;
+    esac
+    if [[ "$(stat -c %s -- "$stderr_file")" != "$expected_stderr_size" ]]; then
+      echo 'M5 supervised Maker status failed outside the exact retriable class' >&2
+      return 1
+    fi
+    jq -nc --arg label "$label" --argjson attempt "$attempt" \
+      --arg error_class "$error_class" '
       {
         schema_version: 1,
         event: "supervised_maker_status_retry",
         label: $label,
         attempt: $attempt,
-        error_class: "actor_configuration_unavailable"
+        error_class: $error_class
       }' >>"${evidence_dir}/m5-maker-status-retries.ndjson"
     remaining_budget_milliseconds "${label}-config-retry-${attempt}" >/dev/null || return
     sleep "$SUPERVISED_STATUS_RETRY_DELAY_SECONDS"
