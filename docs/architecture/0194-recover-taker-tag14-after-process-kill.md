@@ -30,6 +30,13 @@ revalidates source fingerprints, every staged executable is copied create-new
 and rehashed at use, and the guest artifact remains independently rebuilt and
 tested into run-owned evidence.
 
+The semantic-claim QA mode also reduces only the actor supervisor's
+reobservation delay from the production default of 3,600 seconds to one
+second. The actor state transition, typed projection, durable database, and
+restart sequence are unchanged; emitted evidence records both values and that
+test acceleration was used. Ordinary M5 and production-default runs retain
+3,600 seconds.
+
 ```mermaid
 flowchart LR
     User["Taker user"] --> CLI["lez-taker claim"]
@@ -99,5 +106,7 @@ ordering because `Started` can only observe, never invoke again.
   is needed.
 - The cache can change build latency only. It owns no receipt, workflow,
   credential, node state, transaction, or retained certificate evidence.
+- The one-second supervisor reobservation delay is confined to the explicit
+  semantic-claim QA mode and is disclosed in run evidence.
 - Exact local-node replay and a secret-safe CI certificate are required before
   this closes the R4 claim-path restart gap.

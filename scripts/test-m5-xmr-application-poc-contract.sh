@@ -150,7 +150,7 @@ unique_line() {
 
 for required in \
   'readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"' \
-  'readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : 3600))' \
+  'readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : (m7_xmr_semantic_claim == 1 ? 1 : 3600)))' \
   'M5_XMR_APPLICATION_MODE must be unset, 0, or 1' \
   'RUN_ID="$artifact_run_id" "$artifact_runner" verify-source' \
   'cargo +1.96.0 build --release --locked --offline -p lez-maker-node' \
@@ -186,7 +186,9 @@ for required in \
   'stop_m5_xmr_application_daemon || fail "M5 XMR replay daemon did not stop before legacy Tag 13"' \
   'verify_m5_xmr_application_cutoff() {' \
   '--argjson requeue_delay "$m5_actor_requeue_delay_seconds"' \
+  'production_default_reobservation_seconds:3600' \
   'configured_reobservation_seconds:$requeue_delay' \
+  'test_acceleration_used:($requeue_delay != 3600)' \
   'ps -eo pgid=,stat=' \
   '$2 !~ /^Z/' \
   'readonly m5_xmr_reconciled_delivery_root=' \

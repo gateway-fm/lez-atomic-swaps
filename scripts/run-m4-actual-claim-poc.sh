@@ -37,7 +37,7 @@ readonly m7_xmr_build_cache_root="${M7_XMR_BUILD_CACHE_ROOT:-}"
 readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
 readonly m7_xmr_losing_tag16_after_tag17="${M7_XMR_LOSING_TAG16_AFTER_TAG17:-0}"
 readonly m7_xmr_losing_tag17_after_tag16="${M7_XMR_LOSING_TAG17_AFTER_TAG16:-0}"
-readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : 3600))
+readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : (m7_xmr_semantic_claim == 1 ? 1 : 3600)))
 readonly tag17_finality_page_blocks=8
 
 fail() {
@@ -2233,7 +2233,9 @@ complete_m5_xmr_application_handoff() {
        supervisor:{resolution:"blocked",schedule_state:"queued",attempt_count:1,
          child_process:null,manual_action:null,chain_effect_executed:false,
          phase:"offered",revision:0,next_action:"xmr_chain_effects_not_yet_composed",
-         minimum_reobservation_seconds:60,configured_reobservation_seconds:$requeue_delay},
+         production_default_reobservation_seconds:3600,
+         configured_reobservation_seconds:$requeue_delay,
+         test_acceleration_used:($requeue_delay != 3600)},
        replay:{original_delivery_root_removed:true,
          publisher_reconciled_consumed_offer_before_outage:true,
          reconciled_offer_authenticated:true,reconciled_offer_swap_id:$reconciled_swap,
@@ -2266,13 +2268,15 @@ verify_m5_xmr_application_cutoff() {
     "archived authenticated M5 XMR reconciled Delivery offer"
   m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
     fail "M5 XMR replacement Delivery root gained an offer before Tag 13"
-  jq -e --arg swap "$m5_xmr_planned_swap_id" '
+  jq -e --arg swap "$m5_xmr_planned_swap_id" \
+    --argjson requeue_delay "$m5_actor_requeue_delay_seconds" '
     .result=="passed" and .plan_swap_id==$swap and .agreement_receipt_swap_id==$swap
     and .decoded_stage_a_swap_id==$swap and .initial_acceptance_swap_id==$swap
     and .replay_acceptance_swap_id==$swap and .supervisor.resolution=="blocked"
     and .supervisor.chain_effect_executed==false and .supervisor.child_process==null
-    and .supervisor.minimum_reobservation_seconds==60
-    and .supervisor.configured_reobservation_seconds==3600
+    and .supervisor.production_default_reobservation_seconds==3600
+    and .supervisor.configured_reobservation_seconds==$requeue_delay
+    and .supervisor.test_acceleration_used==($requeue_delay != 3600)
     and .replay.original_delivery_root_removed==true
     and .replay.publisher_reconciled_consumed_offer_before_outage==true
     and .replay.reconciled_offer_authenticated==true

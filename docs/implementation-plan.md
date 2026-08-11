@@ -7409,10 +7409,20 @@ S12/S13 review and policy-deferred public deployment.
   outside the run resource ledger, and still relies on Cargo source
   fingerprints plus create-new staged-binary hashing. Guest artifact evidence
   remains run-owned and independently verified.
-- [ ] Commit and push this verified implementation checkpoint, then provision
-  fresh isolated LEZ v0.2 and Monero Regtest services and replay the exact
-  pushed source through Tag14, Tag15, the Taker Monero sweep, and scoped
-  cleanup.
+- [x] Commit and push implementation checkpoint `87256f5`. Exact replay
+  `m7claimkill87256f5b` then passed source identity, all five recursive
+  escrow cases, finalized single-send deployment, fresh actor onboarding,
+  Monero 0.18.5.1 Regtest startup, and the authenticated agreement. It exposed
+  a bounded RED before Tag13: semantic-claim QA inherited the production
+  3,600-second actor requeue delay while its generation-two typed-Blocked wait
+  was bounded to 60 seconds. The monitor correctly remained generation one;
+  no claim submission occurred and exact cleanup passed without targeting the
+  foreign Docker stack.
+- [ ] RED then GREEN an explicit semantic-claim-only one-second supervisor
+  reobservation delay, retain the ordinary M5 production default of 3,600
+  seconds, and record both the default and test acceleration in evidence.
+  Replay fresh isolated LEZ v0.2 and Monero Regtest services through Tag14,
+  Tag15, the Taker Monero sweep, and scoped cleanup.
 - [ ] RED then GREEN a secret-safe actual-run certificate, wire it into the
   canonical quality and CI-hardening gates, update manual reproduction and the
   M7 ledgers only to the evidence proved, commit, push, and report the revised

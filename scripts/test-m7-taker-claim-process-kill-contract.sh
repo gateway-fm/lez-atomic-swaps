@@ -23,6 +23,9 @@ for token in \
   'sidecar-target' \
   'workspace-target' \
   'release-target' \
+  'm7_xmr_semantic_claim == 1 ? 1 : 3600' \
+  'production_default_reobservation_seconds:3600' \
+  'test_acceleration_used:($requeue_delay != 3600)' \
   'm7_xmr_claim_process_kill' \
   '--features test-crash-hooks' \
   'LEZ_TAKER_TEST_PAUSE_AFTER_INVOKED_STEP' \
