@@ -43,7 +43,7 @@ and [manual reproduction flow](docs/manual-user-flows.md#repeat-the-m7-accepted-
 are CI-pinned. This closes bounded opposite-direction BTC R5, not arbitrary-N,
 same-direction, process-kill, public-network, fee-stress, or reorg hardening.
 
-Accepted-ZEC process-crash recovery is local-devnet PoC GREEN under
+Accepted-ZEC process-crash recovery is exact pushed-source actual-node GREEN under
 [ADR 0193](docs/architecture/0193-recover-accepted-zec-after-process-kill.md).
 After Zebra accepted one exact Maker funding transaction and before actor
 stdout, the run killed the owning daemon and actor process group, restarted the
@@ -55,8 +55,11 @@ is compile-time-only and absent from production binaries; all runtime RPCs were
 dynamic literal-loopback endpoints on isolated LEZ v0.2 and Zebra Regtest
 services, with no public RPC, faucet, public funds, or public deployment.
 [Manual Flow 1ZK](docs/manual-user-flows.md#flow-1zk-recover-an-accepted-zec-application-after-process-kill)
-reproduces it. A clean replay from the pushed implementation commit and its
-checked certificate remain before U2 can be marked GREEN.
+reproduces it. Exact run `m7zecpk820001ba` from pushed commit `820001b`
+transferred lease generation 15 to 16, completed at terminal generation 27,
+and advanced Zebra only from 104 to 107. Its checked
+[certificate](docs/evidence/m7-actual-zec-accepted-process-kill-820001b-20260811.json)
+is CI-pinned and closes U2.
 
 ADR [0174](docs/architecture/0174-join-tag17-to-the-funded-monero-output.md)
 now defines the isolated joined-abandonment runner checkpoint. Its opt-in mode

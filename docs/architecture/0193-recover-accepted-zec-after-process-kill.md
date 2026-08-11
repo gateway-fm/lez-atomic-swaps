@@ -1,7 +1,7 @@
 # ADR 0193: Recover accepted ZEC after an ordered process kill
 
-Status: accepted; local-devnet PoC and CI contract GREEN, pushed-source
-certificate pending
+Status: accepted; exact pushed-source local-devnet replay and checked
+certificate GREEN
 
 ## Context
 
@@ -148,8 +148,10 @@ or every adverse refund race.
 - Actual local PoC `m7zecpk999e287d` transferred generation 24 to 26 while the
   same singleton funding transaction and Zebra tip 104 survived; terminal
   generation 37 completed both roles at tip 107.
-- The PoC is not the final certificate because it used uncommitted source. A
-  clean replay from the pushed implementation commit remains mandatory.
+- Exact pushed-source run `m7zecpk820001ba` at `820001b` preserved the same
+  singleton funding transaction and Zebra tip 104 across an ordered daemon and
+  actor kill, transferred lease generation 15 to 16, completed both roles at
+  tip 107 and terminal generation 27, and left the final mempool empty.
 - Warm owner-private cache measurements reduced the unchanged sidecar build
   from 17 minutes 34 seconds to 3.29 seconds on the successful run.
 - The first pushed-source replay exposed and safely stopped on the supervised
@@ -159,12 +161,15 @@ or every adverse refund race.
   mempool after the failed replay.
 - The second pushed-source replay reached the exact accepted-funding seam but
   failed closed when a status read delayed marker inspection until its actor
-  lease had advanced from generation 18 to 20. The new contract-first M7-only
-  marker fast path defers status reads until the exact marker is bound; the
-  fresh replay and certificate remain pending.
+  lease had advanced from generation 18 to 20. The contract-first M7-only
+  marker fast path then deferred 30 status reads until the exact marker was
+  bound, with zero status poll in that window; the exact replay above proved
+  the correction.
 - Runtime external resources are empty. Cold dependency acquisition can depend
   on registries, while pinned Bedrock can attempt non-gating NTP; local CPU,
   disk, Docker readiness, finality, process scheduling, fsync, and RPC polling
   remain bounded flakiness sources.
-- U2 remains open until the pushed-source certificate is checked into CI. S5
-  remains open for other daemon-owned all-pair journeys and hardening.
+- The checked certificate is
+  `docs/evidence/m7-actual-zec-accepted-process-kill-820001b-20260811.json`.
+  U2 is GREEN. S5 remains open for other daemon-owned all-pair journeys and
+  hardening.

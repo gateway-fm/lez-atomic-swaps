@@ -9193,6 +9193,9 @@ marker, SQLite/fsync, and bounded local RPC polling.
 
 Use only the exact cleanup commands printed by the LEZ and Zebra launchers.
 They contain run-owned container, network, image and directory identities.
-Never use broad Docker pruning while other projects are active. Prototype run
-`m7zecpk999e287d` proved the flow from working-tree source; a clean pushed-source
-replay and checked certificate remain the certification gate.
+Never use broad Docker pruning while other projects are active. Exact
+pushed-source run `m7zecpk820001ba` at `820001b` completed the flow and is
+retained as the secret-safe checked certificate
+`docs/evidence/m7-actual-zec-accepted-process-kill-820001b-20260811.json`.
+Verify it offline with
+`./scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh`.

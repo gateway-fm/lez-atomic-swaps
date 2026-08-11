@@ -64,7 +64,8 @@ remain explicitly unclaimed.
 ## Consequences
 
 - Bounded opposite-direction accepted BTC concurrency closes R5.
-- U2 remains open for actual-chain process-crash recovery.
+- U2 was subsequently closed by ADR 0193's exact accepted-ZEC process-crash
+  replay and checked certificate.
 - S5 remains open for the other daemon-owned reference journeys and hardening.
 - Runtime certification uses no public RPC, peer, faucet, funds or deployment.
   Pinned Bedrock NTP attempts are measured but non-gating.

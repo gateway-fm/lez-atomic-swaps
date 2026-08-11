@@ -7169,7 +7169,7 @@ S12/S13 review and policy-deferred public deployment.
   npm audit with zero vulnerabilities; Node license policy; traceability; the
   F7 certificate; CI hardening; repository hygiene; and real Chromium rendering
   of all 555 Mermaid diagrams. The checked M7 inventories remain explicit:
-  28 hard rows with 12 repository-owned open and 2 deferred, plus 14 submission
+  28 hard rows with 11 repository-owned open and 2 deferred, plus 14 submission
   rows with 4 repository-owned open, 2 external, and 1 deferred. F7 is GREEN;
   those remaining rows still prevent an M7 completion tag.
 
@@ -7307,9 +7307,8 @@ S12/S13 review and policy-deferred public deployment.
   four terminal replays are actual-node GREEN in `m7btcconc-02ebd4a-a`; the
   clean final packet is GREEN in `m7btcconc-272788c-a`.
 - [x] Retain a secret-safe exact-node certificate and update the ledgers only
-  to the evidence actually proved. R5 is GREEN; U2 remains open for actual-chain
-  process-crash recovery and S5 remains open for the remaining daemon-owned
-  reference journeys and hardening. Focused certificate, CI-hardening,
+  to the evidence actually proved. R5 and U2 are GREEN; S5 remains open for the
+  remaining daemon-owned reference journeys and hardening. Focused certificate, CI-hardening,
   traceability, hard/submission audit, architecture and hygiene gates pass.
 
 ## M7 accepted-ZEC process-crash recovery (2026-08-08)
@@ -7364,6 +7363,15 @@ S12/S13 review and policy-deferred public deployment.
   read that can outwait the parked actor's private-material lease. Once the
   marker exists, the existing exact PID/start-tick/generation checks remain
   mandatory. Production supervision does not enter this branch.
-- [ ] Commit and push the marker-wait fix, repeat from discarded application
-  and chain state, retain a compact secret-safe certificate, then update U2/S5
-  and the M7 hard/submission inventories only to what the replay proves.
+- [x] Commit and push the marker-wait fix as `820001b`; discard the affected
+  application and chain state; provision fresh role identities, pinned LEZ
+  v0.2 and Zebra 5.2.0 nodes; prove one escrow deployment and two finalized
+  Vault Claims; and repeat the actual user journey. Exact run
+  `m7zecpk820001ba` preserved the same unmined funding transaction and Zebra
+  tip 104 across generation 15 to 16, completed both roles and terminal
+  generation 27 at tip 107, and left the mempool empty.
+- [x] RED then GREEN the compact secret-safe certificate contract, pin it in
+  canonical CI, mark U2 GREEN, and reconcile the hard inventory to 15 GREEN,
+  11 repository-owned open, and 2 deferred. S5 remains open because this
+  certificate does not prove the remaining all-pair daemon journeys or adverse
+  schedules.

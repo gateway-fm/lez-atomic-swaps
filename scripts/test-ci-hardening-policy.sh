@@ -112,6 +112,7 @@ require_fixed './scripts/test-m7-taker-claim-actual-certificate.sh' "$quality_ru
 require_fixed './scripts/test-m7-btc-accepted-concurrency-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-zec-accepted-process-kill-contract.sh' "$quality_runner"
+require_fixed './scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-maker-refund-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-maker-refund-process-kill-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-f7-custom-token-refund-actual-certificate.sh' "$quality_runner"

@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_accepted_zec_process_kill",
+  "result": "passed",
+  "run_id": "m7zecpk820001ba",
+  "repository_commit": "820001b0813b30568267725a6913c0d8b4cd5351",
+  "swap_id": "m7zecpk820001ba-swap",
+  "guest": {
+    "recursive_tests_passed": 5,
+    "recursive_tests_total": 5,
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "deployment": {
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_block_hash": "56799436438b5e984ba095983312c86184144910b5e84fb29f95c1f9987602cd",
+    "transaction_id": "f5f4e7a15c1c87333cc69be9392e0fa576bdb25ca0fad45c127fa16e51cd0b5c",
+    "containing_block_id": 84,
+    "containing_block_hash": "f4c87527a45420c0972b8fb6754bf0a95afe720d224d5ea18b1b354d6e3a1a9a",
+    "pre_finalized_tip": 80,
+    "exact_elf_pre_window_occurrences": 0,
+    "exact_elf_post_window_occurrences": 1,
+    "canonical_window_occurrences": 1,
+    "send_attempts": 1,
+    "bedrock_status": "Finalized"
+  },
+  "onboarding": {
+    "roles": [
+      "maker",
+      "taker"
+    ],
+    "fresh_role_identities": true,
+    "finalized_claims": 2,
+    "submission_count": 2,
+    "automatic_submission_retry": false,
+    "swap_effects_started": false,
+    "maker_claim_transaction_id": "020945b3e126514472ad072e824dea7ae4a4ac868efd3c6d111119bacaa99139",
+    "taker_claim_transaction_id": "9e8df314c1c4a7abd0a0761e83ef5e01724181a4e83cdb6bc6c1080e8f5a14fb"
+  },
+  "zcash": {
+    "version": "5.2.0",
+    "source_revision": "62e4a43879c9c86d23ecfcf5a02335eec8a1517d",
+    "network": "Regtest",
+    "peer_count": 0,
+    "initial_tip": 104,
+    "crash_boundary_tip": 104,
+    "restart_tip": 104,
+    "final_tip": 107,
+    "funding_transaction_id": "f4111a1f7fb614ac4e7d760e9eccb39b7d5a6ba1fd7db1aa25da555172888db0",
+    "funding_transaction_stayed_single": true,
+    "final_mempool_empty": true
+  },
+  "process_kill": {
+    "crash_boundary": "zcash_fund_submitted_before_actor_stdout",
+    "kill_order": "daemon_then_actor",
+    "crashed_generation": 15,
+    "recovered_generation": 16,
+    "terminal_generation": 27,
+    "abandoned_generation_transferred": true,
+    "confirmations_mined_before_restart": 0,
+    "mempool_identity_preserved": true,
+    "tip_unchanged": true,
+    "old_process_identities_absent": true,
+    "automatic_resubmission_observed": false,
+    "production_binary_exposes_crash_hook": false,
+    "marker_wait_events": 30,
+    "marker_wait_status_polls": 0
+  },
+  "application": {
+    "direction": "taker_sells_lez",
+    "maker_role": "daemon_supervisor",
+    "taker_role": "receipt_bound_cli",
+    "concurrent_direct_maker_effects": false,
+    "direct_taker_claim_effects": false,
+    "transports_absent_after_first_lock": true,
+    "fresh_operator_replay_completed": true
+  },
+  "terminal": {
+    "maker_phase": "completed",
+    "taker_phase": "completed",
+    "scheduler_state": "terminal",
+    "child_identity_absent": true
+  },
+  "ordering": [
+    "zcash_funded_and_confirmed",
+    "lez_revealing_claim_submitted",
+    "zcash_followup_claim_submitted_and_confirmed"
+  ],
+  "atomicity": {
+    "proof_scope": "successful_claim_after_accepted_zec_process_kill",
+    "zcash_funding_confirmed_before_lez_reveal": true,
+    "lez_reveal_precedes_zcash_claim": true,
+    "both_roles_terminal": true,
+    "double_collection_observed": false,
+    "argument": "The Maker funding transaction was accepted before both owning processes were killed. Restart transferred the abandoned generation and preserved the same unmined singleton without observed resubmission. Two Zcash confirmations then preceded the revealing LEZ claim, and that reveal preceded the receipt-bound Taker Zcash claim; both roles and the scheduler ended terminal."
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "application_processes_absent": true,
+    "sidecar_processes_absent": true,
+    "exact_chain_resources_absent": true,
+    "private_run_material_removed": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "evidence_sha256": {
+    "artifact_proof": "e598d51a43aa6850cd054f74409b64e96f1edc12c5789bed85c70e9b0673a9cc",
+    "deployment_bundle": "0eb6e6612239231563051630737e16c8d80ffc5804aae621406de974be104c02",
+    "actor_onboarding": "b80aee4ff5ad4f156423ec290dbc5c0481047c6cd79f0351f3a863b2b7ef2375",
+    "result": "f1306ca02af36fb96af9dbca915f9a9c78e49e06d47c48be01ffe2f4954d707f",
+    "process_kill": "e8c8a46c0d11ec3d8a61f2235677cc93af3f6e004c8b27467e21a32d09a3377b",
+    "marker_wait": "eb64c2461e705635290c12389dce6cc075bb80007248bd0d805bc1e1fc09b57b",
+    "post_lock_cutover": "b103b3621076725b625aa99edba40c020791b5c430e11de6ae1115c8b21b7cc5",
+    "terminal_operator_projection": "8b05fda46956dbb1d0319103fa344de59d1b434e0257693765c0381a3fc0314d",
+    "actor_pair": "02850deb55ce787eda7df2985f1c1d2aef0645bb727d3ffe596923547659f7a0",
+    "taker_claim_trace": "36feaa5306d89282cb76441ce6c73c52f9c9e55f852d509f31d3af1bc72bd058"
+  },
+  "not_proven_by_this_certificate": [
+    "other process-kill timing seams",
+    "claim-spend unknown-outcome recovery",
+    "reorganization and fee-stress matrices",
+    "public-network deployment"
+  ],
+  "cold_setup_external_resources": [
+    "pinned package, Git, image, and release endpoints when local caches are cold"
+  ],
+  "cold_setup_flakiness": "Cold-cache network availability can block setup; the measured replay itself used only isolated local nodes, zero peers, and deterministic local funds.",
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment": false
+}
