@@ -7431,3 +7431,11 @@ S12/S13 review and policy-deferred public deployment.
   M7 ledgers only to the evidence proved. The certificate intentionally omits
   process identities, filesystem identities, exact transaction bytes, paths,
   credentials, and private material.
+- [x] Audit the remaining R4 wording against executable coverage. The five
+  exact claim-hardening tests already prove wrong-key/material rejection,
+  protected-payload and journal corruption rejection, coupled-SQL rollback,
+  and accepted-before-transport-failure observation without rebroadcast. Add a
+  dedicated baseline gate that runs those tests with both actual-node
+  process-kill certificates. Replace the stale generic-matrix wording while
+  keeping R4 open at 11 repository-owned rows for the real Taker Monero
+  claim-sweep and Tag15 accepted-before-stdout recovery seams.

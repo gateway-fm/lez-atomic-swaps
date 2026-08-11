@@ -117,6 +117,7 @@ require_fixed './scripts/test-m7-zec-accepted-process-kill-contract.sh' "$qualit
 require_fixed './scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-maker-refund-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-maker-refund-process-kill-actual-certificate.sh' "$quality_runner"
+require_fixed './scripts/test-m7-r4-recovery-baseline-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-f7-custom-token-refund-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-joined-abandonment-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-losing-tag16-actual-certificate.sh' "$quality_runner"

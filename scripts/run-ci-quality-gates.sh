@@ -97,6 +97,7 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh
 ./scripts/test-m7-maker-refund-actual-certificate.sh
 ./scripts/test-m7-maker-refund-process-kill-actual-certificate.sh
+./scripts/test-m7-r4-recovery-baseline-contract.sh
 ./scripts/test-m7-f7-custom-token-refund-actual-certificate.sh
 ./scripts/test-m7-joined-abandonment-actual-certificate.sh
 ./scripts/test-m7-losing-tag16-actual-certificate.sh

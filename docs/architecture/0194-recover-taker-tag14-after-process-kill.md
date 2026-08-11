@@ -108,6 +108,10 @@ ordering because `Started` can only observe, never invoke again.
   credential, node state, transaction, or retained certificate evidence.
 - The one-second supervisor reobservation delay is confined to the explicit
   semantic-claim QA mode and is disclosed in run evidence.
-- Exact local-node replay and its secret-safe CI certificate close this
-  specific R4 claim-side ambiguous-result restart seam. Other R4 matrix rows
-  remain tracked separately.
+- Exact local-node replay and its secret-safe CI certificate close this R4
+  Tag14 ambiguous-result restart seam. The dedicated R4 baseline gate also
+  runs the existing exact claim corruption, rollback, wrong-key,
+  future-version, orphan-journal, and unknown-submission tests plus the Maker
+  refund process-kill certificate. R4 remains open for downstream
+  accepted-before-stdout recovery of the real Taker Monero claim sweep and
+  Tag15 paths.
