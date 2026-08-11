@@ -21,8 +21,8 @@ use lez_bridge_adapter::{
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     AggregateBip340Signature, CompleteNativeXmrClaimV3Request, MessageContext, Participant,
-    PrepareNativeXmrClaimV3Request, RequestId, RunId, RuntimeDescriptor, SubmissionOutcome,
-    SubmitTransactionRequest,
+    PrepareNativeXmrClaimV3Request, PreparedTransaction, RequestId, RunId, RuntimeDescriptor,
+    SubmissionOutcome, SubmitTransactionRequest,
 };
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_swap_sdk::{
@@ -75,10 +75,12 @@ struct Tag15Evidence {
     schema: &'static str,
     role: Participant,
     run_id: RunId,
+    swap_id: String,
     prepare_request_id: RequestId,
     complete_request_id: RequestId,
     submission_request_id: RequestId,
     transaction_id: String,
+    exact_transaction: PreparedTransaction,
     submission_outcome: SubmissionOutcome,
     prepared_message_hash: String,
     automatic_submission_retry: bool,
@@ -92,6 +94,7 @@ struct ValidatedInputs {
     run_id: RunId,
     prepare_request_id: RequestId,
     complete_request_id: RequestId,
+    swap_id: String,
     binding: XmrLezBridgeBindingV3,
     signature: [u8; 64],
 }
@@ -215,6 +218,7 @@ fn validate_effect_child_inputs() -> Result<(ValidatedInputs, PathBuf)> {
             run_id,
             prepare_request_id,
             complete_request_id,
+            swap_id: hex::encode(plan.swap_id()),
             binding,
             signature,
         },
@@ -275,6 +279,7 @@ fn validate_inputs(arguments: Arguments) -> Result<ValidatedInputs> {
         &view_key,
     )
     .context("Stage-B activation is invalid")?;
+    let swap_id = hex::encode(agreement.body().swap_id());
     let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
         .context("Stage-B LEZ binding is invalid")?;
     let session = ValidatedSession::from_untweaked_context(
@@ -303,6 +308,7 @@ fn validate_inputs(arguments: Arguments) -> Result<ValidatedInputs> {
         run_id,
         prepare_request_id,
         complete_request_id,
+        swap_id,
         binding,
         signature,
     })
@@ -316,6 +322,7 @@ async fn publish_tag15(inputs: ValidatedInputs) -> Result<Tag15Evidence> {
         run_id,
         prepare_request_id,
         complete_request_id,
+        swap_id,
         binding,
         signature,
     } = inputs;
@@ -391,10 +398,12 @@ async fn publish_tag15(inputs: ValidatedInputs) -> Result<Tag15Evidence> {
         schema: "lez_v02_m4_actual_local_tag15_v1",
         role: Participant::Maker,
         run_id,
+        swap_id,
         prepare_request_id,
         complete_request_id,
         submission_request_id,
         transaction_id: hex::encode(submitted.transaction_id.as_bytes()),
+        exact_transaction: completed.claim,
         submission_outcome: submitted.outcome,
         prepared_message_hash: hex::encode(prepared.claim.message_hash.as_bytes()),
         automatic_submission_retry: false,

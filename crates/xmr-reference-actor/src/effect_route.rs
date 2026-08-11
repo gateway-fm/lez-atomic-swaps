@@ -452,6 +452,11 @@ impl ValidatedXmrEffectExecutionV3 {
                 .with_tag14_exact_transaction(self)
                 .context("pin exact Tag14 observation transaction")?;
         }
+        if step == XmrWorkflowStep::ClaimLezTag15 {
+            inputs = inputs
+                .with_tag15_exact_transaction(self)
+                .context("pin exact Tag15 observation transaction")?;
+        }
         let identity = self.workflow_identity();
         actor_lock
             .validate_for_state(

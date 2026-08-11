@@ -9,6 +9,7 @@ readonly supervisor="crates/maker-node/src/actor_supervisor/runtime.rs"
 readonly tag15="crates/xmr-reference-actor/src/bin/xmr-reference-tag15.rs"
 readonly tag14_observer="crates/xmr-reference-actor/src/bin/xmr-reference-finalized-classifier.rs"
 readonly tag15_observer="crates/xmr-reference-actor/src/bin/xmr-reference-tag15-finalized.rs"
+readonly input_custody="crates/xmr-reference-actor/src/effect_input_custody.rs"
 readonly activation="crates/xmr-reference-actor/src/lib.rs"
 readonly process_test="crates/maker-node/tests/maker_xmr_tag17_supervisor.rs"
 
@@ -39,8 +40,21 @@ for binding in \
   'execute_effect_child' \
   'load_xmr_effect_child_plan_fd_for' \
   'XMR_EFFECT_FINALIZED_SIGNATURE_FD' \
+  'exact_transaction' \
   'lez_xmr_tag15_claim_v1'; do
   rg -Fq "$binding" "$tag15" || fail "sealed Tag15 sender omits ${binding}"
+done
+for binding in \
+  'XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD' \
+  'with_tag15_exact_transaction'; do
+  rg -Fq "$binding" "$input_custody" ||
+    fail "effect input custody omits ${binding}"
+done
+for binding in \
+  'XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD' \
+  'FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction.clone())'; do
+  rg -Fq "$binding" "$tag15_observer" ||
+    fail "Tag15 owner observer omits ${binding}"
 done
 
 for observer in "$tag14_observer" "$tag15_observer"; do
@@ -61,6 +75,9 @@ rg -Fq 'finalized_observation_scans_the_available_tail_without_waiting_for_a_ful
   fail "Tag14 prerequisite observer omits its finalized-tail regression"
 rg -Fq 'finalized_tag15_observation_scans_the_available_tail_without_waiting_for_a_full_page' "$tag15_observer" ||
   fail "Tag15 observer omits its finalized-tail regression"
+
+rg -Fq '.lease_generation>$generation' "$runner" ||
+  fail "runner cannot recognize a durable post-crash lease transfer"
 
 rg -Fq 'ActivateMakerClaimWorkflow' "$activation" ||
   fail "Maker Claim branch lacks evidence-driven Tag15 activation"

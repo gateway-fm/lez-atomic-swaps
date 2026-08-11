@@ -7531,9 +7531,10 @@ S12/S13 review and policy-deferred public deployment.
   is bounded RED evidence, not a certificate.
 - [x] RED then GREEN finalized-only Tag14 and Tag15 observation pagination.
   The focused regressions require a complete page to advance exactly to its
-  successor and forbid advancement before complete coverage. Tag14 retains the
-  exact persisted transaction target; Tag15 retains terms-based discovery.
-  Both retain their role-local read-only capabilities, scan consecutive
+  successor and forbid advancement before complete coverage. Both owner-side
+  observers retain their exact persisted transaction targets; the independent
+  downstream Taker Tag15 classifier retains terms discovery. All retain their
+  role-local read-only capabilities and scan consecutive
   16-block pages, and cap one invocation at the protocol's 4,096-block
   discovery bound; no submission authority is introduced. The Tag14
   classifier suite is 3/3 GREEN, the Tag15 boundary regression is 1/1 GREEN,
@@ -7560,7 +7561,23 @@ S12/S13 review and policy-deferred public deployment.
   stale refund-finality fixture with the canonical topology/version fields and
   inspecting the generalized ten-block confirmation helper rather than its
   thin refund wrapper. No sender, retry, or spend authority was added.
-- [ ] Push the pagination correction, execute a fresh isolated exact-node
+- [x] Use exact pushed-source replay `m7tag15kill530164ea` at `530164e` as the
+  next runtime QA RED. It passed both local nodes, deployment, onboarding,
+  funding, Tag14, and the accepted-before-stdout Tag15 kill with one send. The
+  Maker observer then failed closed because Claim terms discovery is not
+  authorized for the submitting role, while the harness could miss a durable
+  queue state after an immediate later-generation lease. Exact cleanup passed
+  with source status 1 and the foreign sentinel intact.
+- [x] RED then GREEN owner-exact Tag15 recovery and fast durable handoff. The
+  sender persists the canonical exact accepted transaction in owner-private
+  evidence. Input custody revalidates run, swap, transaction, request, retry,
+  and public-RPC fields and exposes only the exact transaction on sealed FD
+  225 to the read-only Maker observer. The Taker extraction observer remains
+  an independent terms discovery. The harness accepts either same-generation
+  queued/backoff or a later-generation live lease. The focused contract, full
+  XMR actor suite, and exact process-kill regression are GREEN; the latter
+  proves `invoke` then `observe` in 143.37 seconds.
+- [ ] Push the owner-exact correction, execute a fresh isolated exact-node
   replay from that pushed source, sanitize/pin its certificate, and close R4
   only if every unchanged-identity, no-resend, role-separation, cleanup, and
   external-resource assertion passes.

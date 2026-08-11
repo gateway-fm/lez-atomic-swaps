@@ -5,6 +5,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use lez_bridge_protocol::{
+    ExactTransactionBytes, Participant as BridgeParticipant, PreparedTransaction, RequestId, RunId,
+    SubmissionOutcome, TransactionId,
+};
 use lez_swap_core::Participant;
 use lez_swap_store::{
     SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowDecision, XmrWorkflowIdentityV1,
@@ -134,6 +138,23 @@ struct EffectAuthority {
     maker_tools: MakerTools,
 }
 
+#[derive(Serialize)]
+struct Tag15SubmissionEvidence {
+    schema: &'static str,
+    role: BridgeParticipant,
+    run_id: RunId,
+    swap_id: String,
+    prepare_request_id: RequestId,
+    complete_request_id: RequestId,
+    submission_request_id: RequestId,
+    transaction_id: String,
+    exact_transaction: PreparedTransaction,
+    submission_outcome: SubmissionOutcome,
+    prepared_message_hash: String,
+    automatic_submission_retry: bool,
+    public_rpc_used: bool,
+}
+
 pub fn provision_maker_tag17(fixture: &XmrChatFixture, root: &Path) -> MakerRecoveryEffectFixture {
     provision_maker_recovery(fixture, root, MakerRecoveryKind::Tag17)
 }
@@ -176,6 +197,31 @@ fn provision_maker_recovery(
             0o600,
         );
     }
+    let tag15_staged_evidence = effect_root.join("tag15-claim-submission.staged.json");
+    if kind == MakerRecoveryKind::Claim {
+        let exact_transaction = PreparedTransaction::new(
+            TransactionId::from_bytes([0x15; 32]),
+            ExactTransactionBytes::new(vec![0x15; 128]).unwrap(),
+        );
+        let evidence = Tag15SubmissionEvidence {
+            schema: "lez_v02_m4_actual_local_tag15_v1",
+            role: BridgeParticipant::Maker,
+            run_id: RunId::new(kind.run_id().to_owned()).unwrap(),
+            swap_id: fixture.swap_id.as_str().to_owned(),
+            prepare_request_id: RequestId::new("m7-tag15-prepare-001").unwrap(),
+            complete_request_id: RequestId::new("m7-tag15-complete-001").unwrap(),
+            submission_request_id: exact_transaction.transaction_id.submission_request_id(),
+            transaction_id: hex::encode(exact_transaction.transaction_id.as_bytes()),
+            exact_transaction,
+            submission_outcome: SubmissionOutcome::Accepted,
+            prepared_message_hash: "16".repeat(32),
+            automatic_submission_retry: false,
+            public_rpc_used: false,
+        };
+        let mut evidence_bytes = serde_json::to_vec(&evidence).unwrap();
+        evidence_bytes.push(b'\n');
+        write(&tag15_staged_evidence, &evidence_bytes, 0o600);
+    }
     let effect_log = effect_root.join("effect.log");
     let worker = effect_root.join("recovery-worker");
     let fd218_assertion = if kind == MakerRecoveryKind::Refund {
@@ -190,16 +236,31 @@ fn provision_maker_recovery(
     };
     let observer_fd218_assertion = "test ! -e /proc/self/fd/218";
     let observer_fd219_assertion = "test ! -e /proc/self/fd/219";
+    let observer_fd225_assertion = if kind == MakerRecoveryKind::Claim {
+        "test -e /proc/self/fd/225; grep -Fq '\"transaction_id\":\"1515151515151515151515151515151515151515151515151515151515151515\"' /proc/self/fd/225"
+    } else {
+        "test ! -e /proc/self/fd/225"
+    };
+    let publish_tag15_evidence = if kind == MakerRecoveryKind::Claim {
+        format!(
+            "mv '{}' '{}/tag15-claim-submission.json'; chmod 0600 '{}/tag15-claim-submission.json'",
+            tag15_staged_evidence.display(),
+            evidence_root.display(),
+            evidence_root.display(),
+        )
+    } else {
+        ":".to_owned()
+    };
     let step_name = kind.step_name();
     let worker_script = format!(
-        "#!/bin/sh\nset -eu\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {fd218_assertion}\n         {fd219_assertion}\n         grep -Fq '\"step\":\"{step_name}\"' /proc/self/fd/217\n         if grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/217; then printf 'preflight\\n' >> '{}'; exit 0; fi\n         grep -Fq '\"mode\":\"invoke\"' /proc/self/fd/217\n         printf 'invoke\\n' >> '{}'\n",
+        "#!/bin/sh\nset -eu\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {fd218_assertion}\n         {fd219_assertion}\n         grep -Fq '\"step\":\"{step_name}\"' /proc/self/fd/217\n         if grep -Fq '\"mode\":\"preflight\"' /proc/self/fd/217; then printf 'preflight\\n' >> '{}'; exit 0; fi\n         grep -Fq '\"mode\":\"invoke\"' /proc/self/fd/217\n         {publish_tag15_evidence}\n         printf 'invoke\\n' >> '{}'\n",
         effect_log.display(),
         effect_log.display(),
     );
     write(&worker, worker_script.as_bytes(), 0o700);
     let observer = effect_root.join("observer");
     let observer_script = format!(
-        "#!/bin/sh\nset -eu\n         test \"$1\" = \"--xmr-workflow-step\"\n         test \"$2\" = \"{step_name}\"\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {observer_fd218_assertion}\n         {observer_fd219_assertion}\n         grep -Fq '\"mode\":\"observe\"' /proc/self/fd/217\n         printf 'observe\\n' >> '{}'\n         printf '%s\\n' '{{\"schema_version\":1,\"step\":\"{step_name}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{}\"}}'\n",
+        "#!/bin/sh\nset -eu\n         test \"$1\" = \"--xmr-workflow-step\"\n         test \"$2\" = \"{step_name}\"\n         for fd in 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217; do test -e \"/proc/self/fd/$fd\"; done\n         {observer_fd218_assertion}\n         {observer_fd219_assertion}\n         {observer_fd225_assertion}\n         grep -Fq '\"mode\":\"observe\"' /proc/self/fd/217\n         printf 'observe\\n' >> '{}'\n         printf '%s\\n' '{{\"schema_version\":1,\"step\":\"{step_name}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{}\"}}'\n",
         effect_log.display(),
         "ab".repeat(32),
     );

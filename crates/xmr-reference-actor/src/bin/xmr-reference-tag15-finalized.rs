@@ -16,8 +16,9 @@ use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     DiscoveryWindow, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    MAX_DISCOVERY_BLOCKS, MessageContext, ObserveFinalizedClockRequest, Participant, RequestId,
-    RunId, RuntimeDescriptor, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    MAX_DISCOVERY_BLOCKS, MessageContext, ObserveFinalizedClockRequest, Participant,
+    PreparedTransaction, RequestId, RunId, RuntimeDescriptor, XmrNativeEffectV3,
+    XmrNativeEscrowTermsV3,
 };
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_swap_sdk::{
@@ -29,8 +30,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
     ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_RUNTIME_FD,
-    XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, XmrEffectChildModeV1, XmrEffectChildPlanV1,
-    load_xmr_effect_child_plan_fd_for,
+    XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
+    XmrEffectChildModeV1, XmrEffectChildPlanV1, load_xmr_effect_child_plan_fd_for,
 };
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -120,6 +121,18 @@ async fn execute() -> Result<()> {
     );
     let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
         .context("derive Tag15 observer terms")?;
+    let exact_transaction_bytes = read_sealed_fd(
+        XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
+        usize::try_from(MAX_EVIDENCE_BYTES).unwrap_or(usize::MAX),
+        "exact Tag15 transaction",
+    )?;
+    let exact_transaction: PreparedTransaction = serde_json::from_slice(&exact_transaction_bytes)
+        .context("exact Tag15 transaction is malformed")?;
+    ensure!(
+        serde_json::to_vec(&exact_transaction).context("re-encode exact Tag15 transaction")?
+            == exact_transaction_bytes,
+        "exact Tag15 transaction is noncanonical"
+    );
     let activation_evidence = load_activation_evidence(&plan)?;
     let run_id = RunId::new(plan.run_id().to_owned()).context("invalid Tag15 observer run ID")?;
     let nonce = SystemTime::now()
@@ -141,6 +154,7 @@ async fn execute() -> Result<()> {
         &run_id,
         &runtime,
         &terms,
+        &exact_transaction,
         activation_evidence.tag15_scan_start_height,
         nonce,
     )
@@ -162,6 +176,7 @@ async fn classify_finalized_tag15_pages(
     run_id: &RunId,
     runtime: &RuntimeDescriptor,
     terms: &XmrNativeEscrowTermsV3,
+    exact_transaction: &PreparedTransaction,
     initial_scan_height: u64,
     nonce: u128,
 ) -> Result<Option<ClassifyFinalizedNativeXmrEffectV3Result>> {
@@ -203,7 +218,7 @@ async fn classify_finalized_tag15_pages(
                     runtime.clone(),
                     *terms,
                     XmrNativeEffectV3::Claim,
-                    FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+                    FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction.clone()),
                     window,
                 ),
             )

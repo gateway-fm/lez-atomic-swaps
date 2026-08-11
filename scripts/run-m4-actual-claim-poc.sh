@@ -4798,10 +4798,15 @@ run_m7_maker_tag15_process_kill() {
   crashed_generation="$(jq -er '.lease_generation | select(type=="number")' \
     "$m7_tag15_submitted_monitor")"
   require_owner_file "$tag15_submission" "M7 Maker Tag15 one-shot submission"
-  jq -e --arg run "$run_id" '
+  jq -e --arg run "$run_id" --arg swap "$m5_xmr_planned_swap_id" '
     .schema=="lez_v02_m4_actual_local_tag15_v1" and .role=="maker"
-    and .run_id==$run and (.transaction_id|type)=="string"
-    and .submission_outcome!=null and .automatic_submission_retry==false
+    and .run_id==$run and .swap_id==$swap
+    and (.transaction_id|type)=="string" and (.transaction_id|length)==64
+    and .exact_transaction.transaction_id==.transaction_id
+    and (.exact_transaction.exact_bytes|type)=="string"
+    and (.exact_transaction.exact_bytes|length)>0
+    and (.submission_outcome=="accepted" or .submission_outcome=="already_known")
+    and .automatic_submission_retry==false
     and .public_rpc_used==false
   ' "$tag15_submission" >/dev/null || fail "M7 Tag15 sender evidence is incomplete"
   require_owner_file "$m7_tag15_pause_marker" "M7 Tag15 submitted-effect pause marker"
@@ -4840,16 +4845,22 @@ run_m7_maker_tag15_process_kill() {
   m5_application_process_group_has_members "$actor_group" &&
     fail "M7 old paused Tag15 actor group still has live members"
 
-  local observed_backoff=0
+  local observed_handoff=0
   for _ in {1..1200}; do
     if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
       --id "$m5_xmr_planned_swap_id" >"$current_monitor" 2>/dev/null &&
       jq -e --argjson generation "$crashed_generation" '
-        (.schedule_state=="backoff" or .schedule_state=="queued")
-        and .lease_generation==$generation and .manual_action.action=="claim"
-        and .manual_action.state=="queued"
+        .manual_action.action=="claim" and (
+          ((.schedule_state=="backoff" or .schedule_state=="queued")
+           and .lease_generation==$generation
+           and .manual_action.state=="queued")
+          or
+          (.schedule_state=="leased"
+           and .lease_generation>$generation
+           and .manual_action.state=="leased")
+        )
       ' "$current_monitor" >/dev/null 2>&1; then
-      observed_backoff=1
+      observed_handoff=1
       break
     fi
     process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
@@ -4857,7 +4868,7 @@ run_m7_maker_tag15_process_kill() {
       fail "M7 Maker daemon exited before retaining the killed Tag15 lease"
     sleep 0.05
   done
-  [[ "$observed_backoff" == 1 ]] || fail "M7 killed Tag15 lease did not return to durable queue"
+  [[ "$observed_handoff" == 1 ]] || fail "M7 killed Tag15 lease did not transfer durably"
   mv "$current_monitor" "$m7_tag15_backoff_monitor"
   chmod 0600 "$m7_tag15_backoff_monitor"
   stop_m5_xmr_application_daemon || fail "M7 Maker daemon did not stop before Tag15 restart"

@@ -14,8 +14,8 @@ use std::{
 use anyhow::{Context as _, Result, ensure};
 use lez_bridge_adapter::XmrLezBridgeBindingV3;
 use lez_bridge_protocol::{
-    MessageContext, Participant as BridgeParticipant, RequestId, RunId, RuntimeDescriptor,
-    XmrNativeEscrowTermsV3,
+    MessageContext, Participant as BridgeParticipant, PreparedTransaction, RequestId, RunId,
+    RuntimeDescriptor, SubmissionOutcome, XmrNativeEscrowTermsV3,
 };
 #[cfg(feature = "sessions")]
 use lez_xmr_release_authority::{PublicationProtectionKey, ReleaseStore};
@@ -40,6 +40,7 @@ use lez_swap_store::XmrWorkflowStep;
 const MAX_RUNTIME_BYTES: u64 = 16 * 1024;
 const MAX_SECRET_BYTES: u64 = 256;
 const MAX_FINAL_SIGNATURE_PACKET_BYTES: u64 = 4 * 1024;
+const MAX_EFFECT_EVIDENCE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Fixed child descriptor containing exact LEZ runtime bytes.
 pub const XMR_EFFECT_RUNTIME_FD: i32 = 200;
@@ -99,8 +100,28 @@ pub const XMR_TAG14_RELEASE_PROTECTION_KEY_FD: i32 = 222;
 pub const XMR_TAG14_RELEASE_STATE_DIRECTORY_FD: i32 = 223;
 /// Exact authenticated Tag14 transaction for owner-side finality observation.
 pub const XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD: i32 = 224;
+/// Exact authenticated Tag15 transaction for owner-side finality observation.
+pub const XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD: i32 = 225;
 
 const XMR_RELEASE_JOURNAL_NAME: &str = "xmr-release.sqlite3";
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct Tag15SubmissionEvidenceV1 {
+    schema: String,
+    role: BridgeParticipant,
+    run_id: RunId,
+    swap_id: String,
+    prepare_request_id: RequestId,
+    complete_request_id: RequestId,
+    submission_request_id: RequestId,
+    transaction_id: String,
+    exact_transaction: PreparedTransaction,
+    submission_outcome: SubmissionOutcome,
+    prepared_message_hash: String,
+    automatic_submission_retry: bool,
+    public_rpc_used: bool,
+}
 
 struct PinnedXmrEffectApplicationInputsV1 {
     stage_a: File,
@@ -292,6 +313,7 @@ pub struct PinnedXmrEffectInputsV1 {
     invocation_xmr_share: Option<File>,
     invocation_refund_signature: Option<File>,
     tag14_exact_transaction: Option<File>,
+    tag15_exact_transaction: Option<File>,
 }
 
 impl fmt::Debug for PinnedXmrEffectInputsV1 {
@@ -324,6 +346,10 @@ impl fmt::Debug for PinnedXmrEffectInputsV1 {
             .field(
                 "tag14_exact_transaction",
                 &self.tag14_exact_transaction.as_ref().map(|_| "[SEALED]"),
+            )
+            .field(
+                "tag15_exact_transaction",
+                &self.tag15_exact_transaction.as_ref().map(|_| "[SEALED]"),
             )
             .finish_non_exhaustive()
     }
@@ -431,6 +457,58 @@ impl PinnedXmrEffectInputsV1 {
     }
 
     #[cfg(feature = "sessions")]
+    pub(crate) fn with_tag15_exact_transaction(
+        mut self,
+        execution: &ValidatedXmrEffectExecutionV3,
+    ) -> Result<Self> {
+        ensure!(
+            self.tag15_exact_transaction.is_none(),
+            "Tag15 exact observation transaction is already pinned"
+        );
+        let authority = execution.effect_authority();
+        ensure!(
+            authority.role() == ActorRole::Maker && authority.schema_version() == 3,
+            "exact Tag15 observation requires schema-v3 Maker authority"
+        );
+        let source = read_stable_private_source(
+            &authority
+                .evidence_root()
+                .join("tag15-claim-submission.json"),
+            MAX_EFFECT_EVIDENCE_BYTES,
+            "Tag15 submission evidence",
+        )?;
+        let evidence: Tag15SubmissionEvidenceV1 = serde_json::from_slice(&source.bytes)
+            .context("Tag15 submission evidence is malformed")?;
+        let mut canonical =
+            serde_json::to_vec(&evidence).context("re-encode Tag15 submission evidence")?;
+        canonical.push(b'\n');
+        ensure!(
+            canonical == source.bytes.as_slice()
+                && evidence.schema == "lez_v02_m4_actual_local_tag15_v1"
+                && evidence.role == BridgeParticipant::Maker
+                && evidence.run_id.as_str() == authority.run_id()
+                && evidence.swap_id == hex::encode(authority.swap_id())
+                && evidence.transaction_id
+                    == hex::encode(evidence.exact_transaction.transaction_id.as_bytes())
+                && evidence.submission_request_id
+                    == evidence
+                        .exact_transaction
+                        .transaction_id
+                        .submission_request_id()
+                && !evidence.automatic_submission_retry
+                && !evidence.public_rpc_used,
+            "Tag15 submission evidence differs from the exact Maker application"
+        );
+        let transaction = serde_json::to_vec(&evidence.exact_transaction)
+            .context("encode exact Tag15 observation transaction")?;
+        self.tag15_exact_transaction = Some(seal_bytes(
+            "exact Tag15 observation transaction",
+            &transaction,
+        )?);
+        Ok(self)
+    }
+
+    #[cfg(feature = "sessions")]
     pub(crate) fn with_invocation_material(
         mut self,
         application: &ValidatedXmrEffectApplicationV1,
@@ -524,6 +602,7 @@ impl PinnedXmrEffectInputsV1 {
             invocation_xmr_share,
             invocation_refund_signature,
             tag14_exact_transaction,
+            tag15_exact_transaction,
         } = self;
         let PinnedXmrEffectMoneroCredentialsV1 {
             daemon,
@@ -616,6 +695,12 @@ impl PinnedXmrEffectInputsV1 {
                 XMR_EFFECT_TAG14_EXACT_TRANSACTION_FD,
             ));
         }
+        if let Some(tag15_exact_transaction) = tag15_exact_transaction {
+            descriptors.push((
+                tag15_exact_transaction,
+                XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
+            ));
+        }
         let plan = PinnedChildFdPlan::new(descriptors)
             .context("validate XMR effect child descriptor plan")?;
         executable
@@ -688,6 +773,7 @@ impl ValidatedXmrEffectAuthorityV1 {
             invocation_xmr_share: None,
             invocation_refund_signature: None,
             tag14_exact_transaction: None,
+            tag15_exact_transaction: None,
         })
     }
 }

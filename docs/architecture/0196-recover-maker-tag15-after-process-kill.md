@@ -32,9 +32,10 @@ the normal Maker application path.
   prerequisite and Tag15 recovery observers first read the authenticated
   finalized clock, scan consecutive pages of up to 16 already-finalized
   blocks, advance only after typed finalized coverage of the complete prior
-  page, and cap one invocation at the protocol's 4,096-block discovery bound. Tag14
-  retains the exact persisted transaction target; Tag15 retains terms-based
-  discovery. Neither has submission authority. The isolated QA
+  page, and cap one invocation at the protocol's 4,096-block discovery bound.
+  Both owner-side recovery observers retain their exact persisted transaction
+  target. The independent Taker-side Tag15 classifier continues terms-based
+  discovery for signature extraction. None has submission authority. The isolated QA
   runner kills the exact actor group only after durable Tag15 submission and
   before actor stdout, cleanly restarts the daemon over the same database and
   workflow, and requires finalized observation with zero second send.
@@ -87,14 +88,15 @@ sequenceDiagram
     A1->>S: Invoke sealed application inputs
     S->>L: Prepare, complete, submit Tag15 once
     L-->>S: Accepted exact transaction
-    S-->>A1: Durable submission evidence
+    S-->>A1: Durable exact-transaction evidence
     Note over A1: QA pause before actor stdout
     U-xA1: SIGKILL exact actor group
     U->>D1: Stop daemon after durable Backoff
     U->>D2: Restart same database and registry
     D2->>J: Reopen same Claim step
     J-->>D2: ObserveOnly
-    D2->>O: Classify exact terms with original plan
+    D2->>O: Seal accepted transaction from durable evidence
+    O->>O: Validate canonical transaction and original identity
     O->>L: Read authenticated finalized clock
     L-->>O: Stable finalized height
     O->>L: Scan bounded available finalized page
@@ -116,11 +118,12 @@ custody to the Maker while revealing the final signature from which the Taker
 can derive the complementary adaptor scalar and sweep the already funded
 Monero output. Persisting `Started` before the one Tag15 transport call means
 an ambiguous process result cannot rearm publication authority; restart has
-only the spend-authority-free finalized classifier. The unchanged effect-plan
-identity binds observation to the original application and terms. This
-classifier may advance across consecutive finalized pages, but Tag14 retains
-the persisted exact transaction target while Tag15 retains terms-based
-discovery. Every request uses the Taker or Maker role-local read-only
+  only the spend-authority-free finalized classifier. The unchanged effect-plan
+  identity and canonical owner-private submission evidence bind observation to
+  the original application, terms, transaction ID, and exact accepted bytes.
+  Both owner recovery classifiers use the persisted exact transaction target;
+  the separate Taker classifier uses terms discovery because it did not submit
+  the Maker transaction. Every request uses the Taker or Maker role-local read-only
 capability; page movement therefore changes liveness, not who can spend or
 submit. This preserves the successful-claim conditional atomicity argument and removes the
 double-send hazard, but it is not a distributed transaction and does not claim
@@ -153,6 +156,16 @@ trust context.
   status was 1; exact cleanup passed, every run resource was absent, the
   foreign sentinel survived, and no broad cleanup occurred. This
   non-certificate run drove finalized-clock-bounded 1--16 block tail pages.
+- The fourth exact replay at pushed commit `530164e` passed both local nodes,
+  deployment, role onboarding, funding, Tag14, and the accepted-before-stdout
+  Tag15 kill. It exposed two QA defects after the one send: Maker-side terms
+  discovery was rejected because the submitting role must observe its exact
+  transaction, and the harness could miss a queued state after an immediate
+  later-generation lease. Exact cleanup passed. The correction validates the
+  canonical owner-private submission evidence, seals only its exact transaction
+  on FD 225 for the read-only Maker observer, and accepts either the original
+  queued generation or a later live lease as durable handoff. The independent
+  Taker discovery path is unchanged.
 - R4 can close only after the focused process test and a clean pushed-source
   exact-node replay prove unchanged identity, zero second send, and exact
   cleanup.
