@@ -28,7 +28,12 @@ the normal Maker application path.
   Stage-B Maker partial and its two legitimate advanced phases only after
   cryptographically reverifying both partials and reconstructing the exact
   durable presignature; earlier or inconsistent phases remain rejected.
-- Keep finality production outside the sender and observer. The isolated QA
+- Keep finality production outside the sender and observer. The Tag14
+  prerequisite and Tag15 recovery observers scan consecutive 16-block pages,
+  advance only after typed finalized coverage of the complete prior page, and
+  cap one invocation at the protocol's 4,096-block discovery bound. Tag14
+  retains the exact persisted transaction target; Tag15 retains terms-based
+  discovery. Neither has submission authority. The isolated QA
   runner kills the exact actor group only after durable Tag15 submission and
   before actor stdout, cleanly restarts the daemon over the same database and
   workflow, and requires finalized observation with zero second send.
@@ -46,7 +51,7 @@ flowchart LR
     Actor --> Sender[Sealed Tag15 sender]
     Sender --> MakerSidecar[Maker LEZ sidecar RPC]
     MakerSidecar --> Sequencer[Local LEZ sequencer]
-    Actor --> Observer[Finalized LEZ classifier]
+    Actor --> Observer[Bounded finalized LEZ classifier]
     Observer --> MakerSidecar
     TakerObserver[Taker finalized classifier] --> TakerSidecar[Taker LEZ sidecar RPC]
     TakerSidecar --> Sequencer
@@ -89,7 +94,9 @@ sequenceDiagram
     D2->>J: Reopen same Claim step
     J-->>D2: ObserveOnly
     D2->>O: Classify exact terms with original plan
-    O->>L: Read finalized chain state
+    O->>L: Scan exact bounded finalized page
+    L-->>O: Complete page has no match
+    O->>L: Advance only to the next page
     L-->>O: Finalized Tag15
     O-->>J: Reconcile exact evidence
     J-->>D2: Succeeded without another send
@@ -108,6 +115,10 @@ Monero output. Persisting `Started` before the one Tag15 transport call means
 an ambiguous process result cannot rearm publication authority; restart has
 only the spend-authority-free finalized classifier. The unchanged effect-plan
 identity binds observation to the original application and terms. This
+classifier may advance across consecutive finalized pages, but each request
+retains the exact persisted transaction target and the Taker or Maker
+role-local read-only capability; page movement therefore changes liveness, not
+who can spend or submit. This
 preserves the successful-claim conditional atomicity argument and removes the
 double-send hazard, but it is not a distributed transaction and does not claim
 future-reorganization immunity. Maker reconciliation evidence and Taker
@@ -124,6 +135,13 @@ trust context.
 - The first exact replay exposed and fixed a pre-Tag15 validator that rejected
   the legitimate post-Tag14 Maker signing phase; that failed run completed
   exact cleanup but is not certification evidence.
+- The second exact replay at pushed commit `160f129` exposed a finalized
+  observation boundary: Tag14 landed at height 131, exactly beyond the fixed
+  115--130 page. The observer stayed `ObserveOnly` and never re-sent, while
+  the chain advanced to height 200. Interrupt cleanup passed with source status
+  130, every exact resource absent, and the foreign sentinel intact. Bounded
+  finalized pagination on both observers fixes the liveness defect without
+  adding send authority; the interrupted run is not certification evidence.
 - R4 can close only after the focused process test and a clean pushed-source
   exact-node replay prove unchanged identity, zero second send, and exact
   cleanup.

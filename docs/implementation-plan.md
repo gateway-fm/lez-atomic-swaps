@@ -7518,7 +7518,30 @@ S12/S13 review and policy-deferred public deployment.
   role partials against the exact session/nonces, and reconstructs the durable
   presignature. A focused phase regression, the 18-test XMR library suite, and
   strict all-target Clippy are GREEN; CLI errors now retain their source chain.
-- [ ] Run focused Rust/process QA, push the implementation, execute one isolated
-  exact-node replay, sanitize/pin its certificate, and close R4 only if every
-  unchanged-identity, no-resend, cleanup, and external-resource assertion
-  passes.
+- [x] Run focused Rust/process QA and push the first correction as `160f129`.
+  The second exact pushed-source replay `m7tag15kill160f129a` passed artifact
+  5/5, the exact deployment uniqueness scan, actor onboarding, official Monero
+  0.18.5.1 Regtest, application handoff, funding, and one Tag14 submission.
+  It then exposed a deterministic observation-page boundary: activation
+  started at height 115, the fixed 16-block observer page ended at 130, and
+  the accepted Tag14 finalized at height 131. The observer correctly remained
+  `ObserveOnly` with no resend while the chain advanced to height 200.
+  Operator interruption ran exact cleanup with source status 130; every
+  run-owned resource was absent and the foreign sentinel survived. This run
+  is bounded RED evidence, not a certificate.
+- [x] RED then GREEN finalized-only Tag14 and Tag15 observation pagination.
+  The focused regressions require a complete page to advance exactly to its
+  successor and forbid advancement before complete coverage. Tag14 retains the
+  exact persisted transaction target; Tag15 retains terms-based discovery.
+  Both retain their role-local read-only capabilities, scan consecutive
+  16-block pages, and cap one invocation at the protocol's 4,096-block
+  discovery bound; no submission authority is introduced. The Tag14
+  classifier suite is 3/3 GREEN, the Tag15 boundary regression is 1/1 GREEN,
+  the XMR library is 18/18 GREEN, the full
+  15-test Tag16 process suite is GREEN after repairing its stale sealed
+  foreign-wallet credential fixture and generalized error assertion, and
+  strict all-target Clippy is GREEN.
+- [ ] Push the pagination correction, execute a fresh isolated exact-node
+  replay from that pushed source, sanitize/pin its certificate, and close R4
+  only if every unchanged-identity, no-resend, role-separation, cleanup, and
+  external-resource assertion passes.

@@ -16,8 +16,8 @@ use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     DiscoveryWindow, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    MessageContext, Participant, PreparedTransaction, RequestId, RunId, RuntimeDescriptor,
-    XmrNativeEffectV3,
+    MAX_DISCOVERY_BLOCKS, MessageContext, Participant, PreparedTransaction, RequestId, RunId,
+    RuntimeDescriptor, XmrNativeEffectV3,
 };
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_swap_sdk::{
@@ -42,6 +42,7 @@ const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
 const MAX_EVIDENCE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SCAN_BLOCKS: u32 = 16;
+const MAX_SCAN_PAGES: u32 = MAX_DISCOVERY_BLOCKS / MAX_SCAN_BLOCKS;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -145,16 +146,6 @@ async fn execute() -> Result<()> {
         .duration_since(UNIX_EPOCH)
         .context("system clock predates the Unix epoch")?
         .as_nanos();
-    let request_id = RequestId::new(format!(
-        "m7-tag14-observe-{observation_nonce}-{}",
-        std::process::id()
-    ))
-    .context("invalid Tag14 observer request ID")?;
-    let context = MessageContext::new(run_id.clone(), request_id, Participant::Taker);
-    binding
-        .terms()
-        .validate_runtime_binding(&context, &runtime)
-        .context("Tag14 terms do not bind the selected Taker runtime")?;
     let capability = read_sidecar_capability_fd(XMR_EFFECT_CAPABILITY_FD)?;
     let client = BridgeClient::connect(BridgeClientConfig::new(
         plan.lez_sidecar_url().as_str(),
@@ -176,19 +167,66 @@ async fn execute() -> Result<()> {
             == exact_transaction_bytes,
         "exact Tag14 transaction is not canonical JSON"
     );
-    let result = client
-        .classify_finalized_native_xmr_effect_v3(ClassifyFinalizedNativeXmrEffectV3Request::new(
-            context,
-            runtime,
-            binding.terms(),
-            XmrNativeEffectV3::AuthorizeClaim,
-            FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction),
-            DiscoveryWindow::new(activation_evidence.tag14_scan_start_height, MAX_SCAN_BLOCKS)
-                .context("invalid Tag14 finalized scan window")?,
+    let mut scan_start_height = activation_evidence.tag14_scan_start_height;
+    let mut finalized_result = None;
+    for page_index in 0..MAX_SCAN_PAGES {
+        let request_id = RequestId::new(format!(
+            "m7-tag14-observe-{observation_nonce}-{}-{page_index}",
+            std::process::id()
         ))
-        .await
-        .context("typed finalized Tag14 classification failed")?;
-    let FinalizedNativeXmrScanOutcomeV3::Found { .. } = &result.outcome else {
+        .context("invalid Tag14 observer request ID")?;
+        let context = MessageContext::new(run_id.clone(), request_id, Participant::Taker);
+        binding
+            .terms()
+            .validate_runtime_binding(&context, &runtime)
+            .context("Tag14 terms do not bind the selected Taker runtime")?;
+        let window = DiscoveryWindow::new(scan_start_height, MAX_SCAN_BLOCKS)
+            .context("invalid Tag14 finalized scan window")?;
+        let result = client
+            .classify_finalized_native_xmr_effect_v3(
+                ClassifyFinalizedNativeXmrEffectV3Request::new(
+                    context,
+                    runtime.clone(),
+                    binding.terms(),
+                    XmrNativeEffectV3::AuthorizeClaim,
+                    FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction.clone()),
+                    window,
+                ),
+            )
+            .await
+            .context("typed finalized Tag14 classification failed")?;
+        match &result.outcome {
+            FinalizedNativeXmrScanOutcomeV3::Found { .. } => {
+                finalized_result = Some(result);
+                break;
+            }
+            FinalizedNativeXmrScanOutcomeV3::Absent {
+                finalized_clock,
+                scanned_window,
+            }
+            | FinalizedNativeXmrScanOutcomeV3::Uncertain {
+                finalized_clock,
+                scanned_window,
+            } => {
+                ensure!(
+                    scanned_window.start_height() == scan_start_height
+                        && scanned_window.max_blocks() == MAX_SCAN_BLOCKS,
+                    "Tag14 classifier returned a different scan page"
+                );
+                let Some(next_height) = next_scan_start_height(
+                    scan_start_height,
+                    MAX_SCAN_BLOCKS,
+                    finalized_clock.height,
+                )?
+                else {
+                    break;
+                };
+                scan_start_height = next_height;
+            }
+            FinalizedNativeXmrScanOutcomeV3::Unavailable { .. } => break,
+        }
+    }
+    let Some(result) = finalized_result else {
         println!("{{\"schema_version\":1,\"step\":\"authorize_lez_tag14\",\"state\":\"pending\"}}");
         return Ok(());
     };
@@ -202,6 +240,25 @@ async fn execute() -> Result<()> {
         hex::encode(Sha256::digest(&evidence_bytes))
     );
     Ok(())
+}
+
+fn next_scan_start_height(
+    start_height: u64,
+    page_blocks: u32,
+    finalized_height: u64,
+) -> Result<Option<u64>> {
+    ensure!(page_blocks > 0, "Tag14 scan page is empty");
+    let page_end = start_height
+        .checked_add(u64::from(page_blocks - 1))
+        .context("Tag14 scan page height overflow")?;
+    if finalized_height < page_end {
+        return Ok(None);
+    }
+    Ok(Some(
+        page_end
+            .checked_add(1)
+            .context("Tag14 next scan page height overflow")?,
+    ))
 }
 
 fn validate_args() -> Result<()> {
@@ -394,7 +451,10 @@ mod tests {
 
     use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 
-    use super::{MAX_CAPABILITY_FILE_BYTES, parse_view_key, read_sidecar_capability_fd};
+    use super::{
+        MAX_CAPABILITY_FILE_BYTES, next_scan_start_height, parse_view_key,
+        read_sidecar_capability_fd,
+    };
 
     const VIEW_KEY: &str = "0100000000000000000000000000000000000000000000000000000000000000";
 
@@ -441,6 +501,12 @@ mod tests {
                 "accepted invalid sealed capability framing"
             );
         }
+    }
+
+    #[test]
+    fn finalized_observation_advances_past_a_complete_page_boundary() {
+        assert_eq!(next_scan_start_height(115, 16, 130).unwrap(), Some(131));
+        assert_eq!(next_scan_start_height(115, 16, 129).unwrap(), None);
     }
 
     fn sealed_memfd(bytes: &[u8]) -> File {

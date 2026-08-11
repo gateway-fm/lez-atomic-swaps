@@ -7,6 +7,8 @@ readonly runner="scripts/run-m4-actual-claim-poc.sh"
 readonly actor="crates/maker-node/src/bin/xmr-maker-actor.rs"
 readonly supervisor="crates/maker-node/src/actor_supervisor/runtime.rs"
 readonly tag15="crates/xmr-reference-actor/src/bin/xmr-reference-tag15.rs"
+readonly tag14_observer="crates/xmr-reference-actor/src/bin/xmr-reference-finalized-classifier.rs"
+readonly tag15_observer="crates/xmr-reference-actor/src/bin/xmr-reference-tag15-finalized.rs"
 readonly activation="crates/xmr-reference-actor/src/lib.rs"
 readonly process_test="crates/maker-node/tests/maker_xmr_tag17_supervisor.rs"
 
@@ -40,6 +42,19 @@ for binding in \
   'lez_xmr_tag15_claim_v1'; do
   rg -Fq "$binding" "$tag15" || fail "sealed Tag15 sender omits ${binding}"
 done
+
+for observer in "$tag14_observer" "$tag15_observer"; do
+  for binding in \
+    'MAX_SCAN_PAGES: u32 = MAX_DISCOVERY_BLOCKS / MAX_SCAN_BLOCKS' \
+    'next_scan_start_height'; do
+    rg -Fq "$binding" "$observer" ||
+      fail "finalized observer ${observer} omits ${binding}"
+  done
+done
+rg -Fq 'finalized_observation_advances_past_a_complete_page_boundary' "$tag14_observer" ||
+  fail "Tag14 prerequisite observer omits its page-boundary regression"
+rg -Fq 'finalized_tag15_observation_advances_past_a_complete_page_boundary' "$tag15_observer" ||
+  fail "Tag15 observer omits its page-boundary regression"
 
 rg -Fq 'ActivateMakerClaimWorkflow' "$activation" ||
   fail "Maker Claim branch lacks evidence-driven Tag15 activation"

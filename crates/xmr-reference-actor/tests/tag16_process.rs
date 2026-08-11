@@ -55,10 +55,11 @@ use tower_http::validate_request::ValidateRequestHeaderLayer;
 use xmr_reference_actor::{
     ActorRole, XMR_EFFECT_CAPABILITY_FD, XMR_EFFECT_CHILD_PLAN_FD, XMR_EFFECT_DAEMON_PASSWORD_FD,
     XMR_EFFECT_DAEMON_USERNAME_FD, XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FD,
-    XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_ROLE_PASSWORD_FD,
-    XMR_EFFECT_ROLE_USERNAME_FD, XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_SHARED_PASSWORD_FD,
-    XMR_EFFECT_SHARED_USERNAME_FD, XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD,
-    XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD, parse_xmr_effect_child_plan_v1,
+    XMR_EFFECT_FUNDING_PASSWORD_FD, XMR_EFFECT_FUNDING_USERNAME_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+    XMR_EFFECT_PRIVATE_XMR_SHARE_FD, XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD,
+    XMR_EFFECT_RUNTIME_FD, XMR_EFFECT_SHARED_PASSWORD_FD, XMR_EFFECT_SHARED_USERNAME_FD,
+    XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD, XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD,
+    parse_xmr_effect_child_plan_v1,
 };
 
 const CAPABILITY: &str = "m5-xmr-tag16-process-capability-00000001";
@@ -1185,6 +1186,14 @@ fn maker_refund_observer_command(
             XMR_EFFECT_ROLE_PASSWORD_FD,
         ),
         (
+            sealed_memfd("observer-foreign-user", b"foreign-user"),
+            XMR_EFFECT_FUNDING_USERNAME_FD,
+        ),
+        (
+            sealed_memfd("observer-foreign-password", b"foreign-password"),
+            XMR_EFFECT_FUNDING_PASSWORD_FD,
+        ),
+        (
             sealed_memfd(
                 "observer-stage-a",
                 &stage.agreement.encode_wire().expect("Stage-A wire"),
@@ -1551,8 +1560,12 @@ async fn sealed_maker_refund_rejects_invalid_final_signature_before_any_rpc() {
         .expect("spawn invalid-signature Maker refund worker");
     assert_failure(&output, "invalid-signature Maker refund worker");
     assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "extract adaptor scalar from durable settlement transcript: \
+                 cryptographic transcript validation failed"
+        ),
+        "invalid-signature worker failed at an unexpected boundary: {}",
         String::from_utf8_lossy(&output.stderr)
-            .contains("extract refund adaptor scalar from durable Maker transcript")
     );
     assert!(!evidence.exists());
     assert!(daemon.calls.lock().expect("daemon calls").is_empty());

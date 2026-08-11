@@ -16,7 +16,8 @@ use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
 use lez_bridge_protocol::{
     ClassifyFinalizedNativeXmrEffectV3Request, ClassifyFinalizedNativeXmrEffectV3Result,
     DiscoveryWindow, FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    MessageContext, Participant, RequestId, RunId, RuntimeDescriptor, XmrNativeEffectV3,
+    MAX_DISCOVERY_BLOCKS, MessageContext, Participant, RequestId, RunId, RuntimeDescriptor,
+    XmrNativeEffectV3, XmrNativeEscrowTermsV3,
 };
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_swap_sdk::{
@@ -41,6 +42,7 @@ const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
 const MAX_EVIDENCE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SCAN_BLOCKS: u32 = 16;
+const MAX_SCAN_PAGES: u32 = MAX_DISCOVERY_BLOCKS / MAX_SCAN_BLOCKS;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -124,42 +126,121 @@ async fn execute() -> Result<()> {
         .duration_since(UNIX_EPOCH)
         .context("system clock predates the Unix epoch")?
         .as_nanos();
-    let request_id = RequestId::new(format!("m7-tag15-observe-{nonce}-{}", std::process::id()))
-        .context("invalid Tag15 observer request ID")?;
-    let context = MessageContext::new(run_id.clone(), request_id, Participant::Maker);
-    binding
-        .terms()
-        .validate_runtime_binding(&context, &runtime)
-        .context("Tag15 terms do not bind the selected Maker runtime")?;
     let capability = read_sidecar_capability_fd(XMR_EFFECT_CAPABILITY_FD)?;
     let client = BridgeClient::connect(BridgeClientConfig::new(
         plan.lez_sidecar_url().as_str(),
         capability,
-        run_id,
+        run_id.clone(),
         runtime.clone(),
         REQUEST_TIMEOUT,
     ))
     .context("authenticated Maker sidecar client is unavailable")?;
-    let result = client
-        .classify_finalized_native_xmr_effect_v3(ClassifyFinalizedNativeXmrEffectV3Request::new(
-            context,
-            runtime,
-            binding.terms(),
-            XmrNativeEffectV3::Claim,
-            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
-            DiscoveryWindow::new(activation_evidence.tag15_scan_start_height, MAX_SCAN_BLOCKS)
-                .context("invalid Tag15 finalized scan window")?,
-        ))
-        .await
-        .context("typed finalized Tag15 classification failed")?;
-    let Some(evidence_sha256) = persist_finalized_result(&result, plan.evidence_root())? else {
+    let terms = binding.terms();
+    let Some(result) = classify_finalized_tag15_pages(
+        &client,
+        &run_id,
+        &runtime,
+        &terms,
+        activation_evidence.tag15_scan_start_height,
+        nonce,
+    )
+    .await?
+    else {
         println!("{{\"schema_version\":1,\"step\":\"claim_lez_tag15\",\"state\":\"pending\"}}");
         return Ok(());
     };
+    let evidence_sha256 = persist_finalized_result(&result, plan.evidence_root())?
+        .context("found Tag15 result did not produce finality evidence")?;
     println!(
         "{{\"schema_version\":1,\"step\":\"claim_lez_tag15\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{evidence_sha256}\"}}"
     );
     Ok(())
+}
+
+async fn classify_finalized_tag15_pages(
+    client: &BridgeClient,
+    run_id: &RunId,
+    runtime: &RuntimeDescriptor,
+    terms: &XmrNativeEscrowTermsV3,
+    initial_scan_height: u64,
+    nonce: u128,
+) -> Result<Option<ClassifyFinalizedNativeXmrEffectV3Result>> {
+    let mut scan_start_height = initial_scan_height;
+    for page_index in 0..MAX_SCAN_PAGES {
+        let request_id = RequestId::new(format!(
+            "m7-tag15-observe-{nonce}-{}-{page_index}",
+            std::process::id()
+        ))
+        .context("invalid Tag15 observer request ID")?;
+        let context = MessageContext::new(run_id.clone(), request_id, Participant::Maker);
+        terms
+            .validate_runtime_binding(&context, runtime)
+            .context("Tag15 terms do not bind the selected Maker runtime")?;
+        let window = DiscoveryWindow::new(scan_start_height, MAX_SCAN_BLOCKS)
+            .context("invalid Tag15 finalized scan window")?;
+        let result = client
+            .classify_finalized_native_xmr_effect_v3(
+                ClassifyFinalizedNativeXmrEffectV3Request::new(
+                    context,
+                    runtime.clone(),
+                    *terms,
+                    XmrNativeEffectV3::Claim,
+                    FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+                    window,
+                ),
+            )
+            .await
+            .context("typed finalized Tag15 classification failed")?;
+        match &result.outcome {
+            FinalizedNativeXmrScanOutcomeV3::Found { .. } => {
+                return Ok(Some(result));
+            }
+            FinalizedNativeXmrScanOutcomeV3::Absent {
+                finalized_clock,
+                scanned_window,
+            }
+            | FinalizedNativeXmrScanOutcomeV3::Uncertain {
+                finalized_clock,
+                scanned_window,
+            } => {
+                ensure!(
+                    scanned_window.start_height() == scan_start_height
+                        && scanned_window.max_blocks() == MAX_SCAN_BLOCKS,
+                    "Tag15 classifier returned a different scan page"
+                );
+                let Some(next_height) = next_scan_start_height(
+                    scan_start_height,
+                    MAX_SCAN_BLOCKS,
+                    finalized_clock.height,
+                )?
+                else {
+                    break;
+                };
+                scan_start_height = next_height;
+            }
+            FinalizedNativeXmrScanOutcomeV3::Unavailable { .. } => break,
+        }
+    }
+    Ok(None)
+}
+
+fn next_scan_start_height(
+    start_height: u64,
+    page_blocks: u32,
+    finalized_height: u64,
+) -> Result<Option<u64>> {
+    ensure!(page_blocks > 0, "Tag15 scan page is empty");
+    let page_end = start_height
+        .checked_add(u64::from(page_blocks - 1))
+        .context("Tag15 scan page height overflow")?;
+    if finalized_height < page_end {
+        return Ok(None);
+    }
+    Ok(Some(
+        page_end
+            .checked_add(1)
+            .context("Tag15 next scan page height overflow")?,
+    ))
 }
 
 fn load_activation_evidence(plan: &XmrEffectChildPlanV1) -> Result<ActivationEvidenceV1> {
@@ -371,4 +452,15 @@ fn validate_existing_evidence(path: &Path, bytes: &[u8]) -> Result<()> {
         "durable Tag15 finality evidence changed"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_scan_start_height;
+
+    #[test]
+    fn finalized_tag15_observation_advances_past_a_complete_page_boundary() {
+        assert_eq!(next_scan_start_height(131, 16, 146).unwrap(), Some(147));
+        assert_eq!(next_scan_start_height(131, 16, 145).unwrap(), None);
+    }
 }
