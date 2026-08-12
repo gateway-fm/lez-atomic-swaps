@@ -9,12 +9,16 @@ dockerfile="${fixture_dir}/Dockerfile"
 cryptarchia_policy="${fixture_dir}/cryptarchia-advanced.jq"
 readiness_test="${fixture_dir}/test-readiness-policy.sh"
 channel_test="${fixture_dir}/test-channel-compatibility.sh"
+channel_source_fixture="${fixture_dir}/upstream-v0.2-config-contract"
 bootstrap_test="${fixture_dir}/test-channel-bootstrap-contract.sh"
 missing_channel_policy="${fixture_dir}/missing-channel-response.sh"
 missing_channel_test="${fixture_dir}/test-missing-channel-response.sh"
 runner="scripts/run-lez-v02-stack.sh"
 
-for required_file in "$compose_file" "$dockerfile" "$cryptarchia_policy" "$readiness_test" "$channel_test" "$bootstrap_test" "$missing_channel_policy" "$missing_channel_test" "$runner"; do
+for required_file in "$compose_file" "$dockerfile" "$cryptarchia_policy" "$readiness_test" "$channel_test" "$bootstrap_test" "$missing_channel_policy" "$missing_channel_test" "$runner" \
+  "${channel_source_fixture}/lez/sequencer/service/configs/docker/sequencer_config.json" \
+  "${channel_source_fixture}/lez/indexer/service/configs/docker/indexer_config.json" \
+  "${channel_source_fixture}/bedrock/deployment-settings.yaml"; do
   if [[ ! -f "$required_file" ]]; then
     echo "missing isolated LEZ v0.2 fixture: ${required_file}" >&2
     exit 1
@@ -151,7 +155,7 @@ if rg -q 'docker (system|container|network|volume) prune|docker rm|docker stop|d
 fi
 
 bash "$readiness_test"
-bash "$channel_test"
+LEZ_V02_SOURCE_DIR="$channel_source_fixture" bash "$channel_test"
 bash "$bootstrap_test"
 bash "$missing_channel_test"
 

@@ -1,0 +1,4 @@
+# Minimal contract fixture copied from the source-locked LEZ v0.2.0 checkout.
+# The full local-stack verifier still requires and validates that checkout.
+channel_id: '0000000000000000000000000000000000000000000000000000000000000000'
+genesis_time_hex: '2c04626900000000'
