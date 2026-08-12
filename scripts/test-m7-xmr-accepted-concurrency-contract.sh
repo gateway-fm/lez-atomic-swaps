@@ -79,7 +79,17 @@ for required in \
   'shared_daemon: true' \
   'shared_lez_stack: true' \
   'shared_monerod: true' \
-  'both_accepted_before_activation: true'; do
+  'both_accepted_before_activation: true' \
+  '--actor-worker-count "$((m7_xmr_accepted_concurrency == 1 ? 2 : 1))"' \
+  'm7_xmr_second_offer_id="m7-xmr-application-offer-002"' \
+  'compose_m7_second_xmr_agreement() {' \
+  '--shared-view-key-source "${agreement_root}/material/taker/monero-view.key"' \
+  '--maker-agreement-key-source "${agreement_root}/material/maker/agreement.key"' \
+  'run_m7_second_xmr_taker_acceptance() {' \
+  'wait_m7_second_xmr_typed_blocked() {' \
+  'accepted_swap_count:2,shared_daemon:true,shared_database:true,shared_chat:true' \
+  'second_replay_acceptance_swap_id:$second_replay' \
+  'M7 accepted XMR Maker actor authority aliases'; do
   rg -Fq -- "$required" "$delegated_runner" ||
     fail "delegated runner is missing accepted-concurrency invariant: $required"
 done

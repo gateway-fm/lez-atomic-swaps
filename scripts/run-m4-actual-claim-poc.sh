@@ -1598,6 +1598,7 @@ start_m5_xmr_application_daemon() {
       --xmr-private-view-key-file "$m5_xmr_maker_private_view_key"
       --xmr-actor-manifest-registry-file "$m5_xmr_actor_registry"
       --actor-supervisor
+      --actor-worker-count "$((m7_xmr_accepted_concurrency == 1 ? 2 : 1))"
       --actor-attempt-timeout-milliseconds 120000
       --actor-poll-milliseconds 20
       --actor-requeue-delay-seconds "$m5_actor_requeue_delay_seconds"
@@ -1790,6 +1791,34 @@ prepare_m5_xmr_delivery_plan() {
     ' "$m5_xmr_plan_receipt" >/dev/null || fail "M5 XMR plan changed authenticated terms"
   m5_xmr_planned_swap_id="$(jq -er .swap_id "$m5_xmr_plan_receipt")"
   readonly m5_xmr_planned_swap_id
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    readonly m7_xmr_second_offer_id="m7-xmr-application-offer-002"
+    readonly m7_xmr_second_reservation_id="m7-xmr-application-reservation-002"
+    readonly m7_xmr_second_plan_receipt="${evidence_root}/m7-xmr-second-plan.json"
+    "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" publish-offer \
+      --request-id m7-xmr-publish-002 --offer-id "$m7_xmr_second_offer_id" \
+      --pair monero --direction taker-sells-lez \
+      >"${evidence_root}/m7-xmr-second-offer-published.json"
+    "$m5_lez_taker_binary" --delivery-directory "$m5_xmr_delivery_root" \
+      --maker-public-key "$m5_xmr_delivery_public_key" --now-unix-seconds "$(date -u +%s)" \
+      --pair monero --direction taker-sells-lez --plan-xmr-offer "$m7_xmr_second_offer_id" \
+      --reservation-id "$m7_xmr_second_reservation_id" --foreign-units "$m5_xmr_foreign_units" \
+      >"$m7_xmr_second_plan_receipt"
+    chmod 0600 "$m7_xmr_second_plan_receipt"
+    require_owner_file "$m7_xmr_second_plan_receipt" "M7 second authenticated XMR plan"
+    jq -e --arg offer "$m7_xmr_second_offer_id" --arg reservation "$m7_xmr_second_reservation_id" \
+      --argjson foreign "$m5_xmr_foreign_units" --argjson lez "$m5_xmr_lez_units" '
+        .schema_version==1 and .offer_id==$offer and .reservation_id==$reservation
+        and (.signed_envelope_sha256|test("^[0-9a-f]{64}$"))
+        and (.swap_id|test("^[0-9a-f]{64}$")) and .foreign_units==$foreign
+        and .lez_units==$lez and .private_material_disclosed==false
+      ' "$m7_xmr_second_plan_receipt" >/dev/null ||
+      fail "M7 second XMR plan changed authenticated terms"
+    m7_xmr_second_swap_id="$(jq -er .swap_id "$m7_xmr_second_plan_receipt")"
+    readonly m7_xmr_second_swap_id
+    [[ "$m7_xmr_second_swap_id" != "$m5_xmr_planned_swap_id" ]] ||
+      fail "M7 accepted XMR plans alias one swap ID"
+  fi
   stop_m5_xmr_application_daemon || fail "M5 XMR Delivery-only daemon did not stop exactly"
   record_phase m5_xmr_application_plan completed
 }
@@ -1916,6 +1945,68 @@ compose_xmr_agreement() {
   record_phase agreement completed
 }
 
+compose_m7_second_xmr_agreement() {
+  [[ "$m7_xmr_accepted_concurrency" == 1 ]] || return 0
+  record_phase m7_xmr_second_agreement started
+  readonly m7_xmr_second_agreement_root="${private_root}/xmr-agreement-b"
+  readonly m7_xmr_second_agreement_stdout="${evidence_root}/xmr-agreement-b-receipt.json"
+  local taker_owner maker_owner sequencer_url indexer_url second_cutoff second_refund second_punish
+  taker_owner="$(jq -er '.account_id_hex' "${evidence_root}/taker-lez-identity.json")"
+  maker_owner="$(jq -er '.account_id_hex' "${evidence_root}/maker-lez-identity.json")"
+  sequencer_url="$(manifest_value LEZ_SEQUENCER_RPC_URL "$lez_stack_manifest")"
+  indexer_url="$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")"
+  second_cutoff="$((maker_xmr_funding_cutoff_ms + 60000))"
+  second_refund="$((refund_at_ms + 60000))"
+  second_punish="$((punish_at_ms + 60000))"
+
+  "$agreement_runner" execute --run-id "m7xmr2-${run_id:0:39}" \
+    --swap-id "$m7_xmr_second_swap_id" --output-root "$m7_xmr_second_agreement_root" \
+    --taker-lez-owner "$taker_owner" --maker-lez-owner "$maker_owner" \
+    --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" \
+    --monero-daemon-url "$monero_daemon_endpoint" \
+    --monero-rpc-username-file "$monero_daemon_username_file" \
+    --monero-rpc-password-file "$monero_daemon_password_file" \
+    --monero-amount-piconero "$agreement_monero_amount_piconero" \
+    --lez-amount "$agreement_lez_amount" \
+    --maker-xmr-funding-cutoff-ms "$second_cutoff" \
+    --refund-at-ms "$second_refund" --punish-at-ms "$second_punish" \
+    --shared-view-key-source "${agreement_root}/material/taker/monero-view.key" \
+    --maker-agreement-key-source "${agreement_root}/material/maker/agreement.key" \
+    --actor-bin "$agreement_actor_binary" --role-runner-bin "$agreement_role_runner_binary" \
+    --composer-bin "$agreement_composer_binary" >"$m7_xmr_second_agreement_stdout"
+  chmod 0600 "$m7_xmr_second_agreement_stdout"
+
+  readonly m7_xmr_second_agreement_receipt="${m7_xmr_second_agreement_root}/agreement-receipt.json"
+  readonly m7_xmr_second_stage_a="${m7_xmr_second_agreement_root}/exchange/agreement-stage-a.bin"
+  readonly m7_xmr_second_stage_b="${m7_xmr_second_agreement_root}/stage-b/stage-b.bin"
+  require_owner_file "$m7_xmr_second_agreement_receipt" "M7 second agreement receipt"
+  require_owner_file "$m7_xmr_second_stage_a" "M7 second Stage A"
+  require_owner_file "$m7_xmr_second_stage_b" "M7 second Stage B"
+  cmp -- "$m7_xmr_second_agreement_stdout" "$m7_xmr_second_agreement_receipt" ||
+    fail "M7 second agreement stdout differs from its durable receipt"
+  jq -e --arg swap "$m7_xmr_second_swap_id" --arg stage_a "$(sha256_file "$m7_xmr_second_stage_a")" \
+    --arg stage_b "$(sha256_file "$m7_xmr_second_stage_b")" '
+      .schema_version==1 and .kind=="m4_xmr_agreement_receipt" and .result=="passed"
+      and .swap_id==$swap and .stage_a_sha256==$stage_a and .stage_b_sha256==$stage_b
+      and .sessions_equal_across_roles==true and .taker_claim_material_private==true
+      and .refund_presignatures_equal==true and .stage_b_countersigned==true
+    ' "$m7_xmr_second_agreement_receipt" >/dev/null ||
+    fail "M7 second agreement receipt is incomplete"
+  jq -e -s '
+    .[0].agreement_public_key == .[1].agreement_public_key
+    and .[0].public_view_key == .[1].public_view_key
+    and .[0].claim_session_public_key != .[1].claim_session_public_key
+    and .[0].refund_session_public_key != .[1].refund_session_public_key
+    and .[0].dleq_proof_wire != .[1].dleq_proof_wire
+  ' "${agreement_root}/exchange/maker.json" \
+    "${m7_xmr_second_agreement_root}/exchange/maker.json" >/dev/null ||
+    fail "M7 second agreement did not preserve only the shared Maker identity"
+  [[ "$(sha256_file "$agreement_stage_a")" != "$(sha256_file "$m7_xmr_second_stage_a")" &&
+     "$(sha256_file "$agreement_stage_b")" != "$(sha256_file "$m7_xmr_second_stage_b")" ]] ||
+    fail "M7 accepted XMR agreements alias Stage material"
+  record_phase m7_xmr_second_agreement completed
+}
+
 m5_delivery_offer_files_absent() {
   local directory="$1"
   [[ -d "$directory" && ! -L "$directory" ]] || return 1
@@ -1956,11 +2047,19 @@ write_m5_journal_snapshot() {
 
 write_m5_application_artifact_snapshot() {
   local output="$1" path
+  local -a actor_roots=("$m5_xmr_maker_actor_root" "$m5_xmr_taker_actor_root")
+  local -a immutable_files=("$m5_xmr_taker_receipt" "$m5_xmr_maker_role_journal"
+    "$m5_xmr_taker_role_journal")
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    actor_roots+=("$m7_xmr_second_maker_actor_root" "$m7_xmr_second_taker_actor_root")
+    immutable_files+=("$m7_xmr_second_taker_receipt" "$m7_xmr_second_maker_role_journal"
+      "$m7_xmr_second_taker_role_journal")
+  fi
   [[ ! -e "$output" && ! -L "$output" ]] || fail "M5 XMR artifact snapshot exists"
-  [[ -z "$(find "$m5_xmr_maker_actor_root" "$m5_xmr_taker_actor_root" -type l -print -quit)" ]] ||
+  [[ -z "$(find "${actor_roots[@]}" -type l -print -quit)" ]] ||
     fail "M5 XMR actor tree contains a symlink"
   {
-    for path in "$m5_xmr_taker_receipt" "$m5_xmr_maker_role_journal" "$m5_xmr_taker_role_journal"; do
+    for path in "${immutable_files[@]}"; do
       require_owner_file "$path" "M5 XMR immutable application artifact"
       printf "%s\t%s\t%s\t%s\t%s\n" "$(stat -c %d "$path")" "$(stat -c %i "$path")" \
         "$(stat -c %s "$path")" "$(sha256_file "$path")" "$path"
@@ -1969,7 +2068,7 @@ write_m5_application_artifact_snapshot() {
       require_owner_file "$path" "M5 XMR immutable actor artifact"
       printf "%s\t%s\t%s\t%s\t%s\n" "$(stat -c %d "$path")" "$(stat -c %i "$path")" \
         "$(stat -c %s "$path")" "$(sha256_file "$path")" "$path"
-    done < <(find "$m5_xmr_maker_actor_root" "$m5_xmr_taker_actor_root" -type f -print0 | sort -z)
+    done < <(find "${actor_roots[@]}" -type f -print0 | sort -z)
   } | sort >"$output"
   chmod 0600 "$output"
   require_owner_file "$output" "M5 XMR application artifact snapshot"
@@ -2014,6 +2113,66 @@ run_m5_xmr_taker_acceptance() {
   "$m5_lez_taker_binary" "${arguments[@]}" >"$output"
   chmod 0600 "$output"
   require_owner_file "$output" "M5 XMR Taker acceptance output"
+}
+
+run_m7_second_xmr_taker_acceptance() {
+  local output="$1" use_delivery="$2"
+  local -a arguments=(
+    --maker-public-key "$m5_xmr_delivery_public_key"
+    --now-unix-seconds "$(date -u +%s)"
+    --pair monero
+    --direction taker-sells-lez
+    --accept-xmr-offer "$m7_xmr_second_offer_id"
+    --chat-socket "$m5_xmr_chat_socket"
+    --reservation-id "$m7_xmr_second_reservation_id"
+    --foreign-units "$m5_xmr_foreign_units"
+    --xmr-stage-a-file "$m7_xmr_second_stage_a"
+    --xmr-activation-file "$m7_xmr_second_stage_b"
+    --xmr-source-taker-root "${m7_xmr_second_agreement_root}/material/taker"
+    --xmr-taker-public-packet "${m7_xmr_second_agreement_root}/exchange/taker.json"
+    --xmr-maker-public-packet "${m7_xmr_second_agreement_root}/exchange/maker.json"
+    --xmr-taker-role-journal "$m7_xmr_second_taker_role_journal"
+    --xmr-taker-actor-root "$m7_xmr_second_taker_actor_root"
+    --xmr-acceptance-receipt "$m7_xmr_second_taker_receipt"
+  )
+  if [[ "$use_delivery" == 1 ]]; then
+    arguments=(--delivery-directory "$m5_xmr_delivery_root" "${arguments[@]}")
+  fi
+  "$m5_lez_taker_binary" "${arguments[@]}" >"$output"
+  chmod 0600 "$output"
+  require_owner_file "$output" "M7 second XMR Taker acceptance output"
+}
+
+wait_m7_second_xmr_typed_blocked() {
+  local minimum_generation="$1" output="$2" monitor_tmp="${evidence_root}/.m7-xmr-second-monitor.tmp"
+  for _ in {1..1200}; do
+    if "$m5_lez_maker_binary" --socket "$m5_xmr_maker_socket" monitor \
+      --id "$m7_xmr_second_swap_id" >"$monitor_tmp" 2>/dev/null &&
+      jq -e --arg swap "$m7_xmr_second_swap_id" --argjson minimum "$minimum_generation" '
+        .schema_version==1 and .swap_id==$swap and .actor_kind=="monero"
+        and .schedule_state=="queued" and .lease_generation >= $minimum
+        and .attempt_count >= $minimum and .progress.source_generation >= $minimum
+        and .progress.observation.state=="active"
+        and .progress.observation.phase=="offered" and .progress.observation.revision==0
+        and .progress.observation.next_action=="xmr_chain_effects_not_yet_composed"
+        and .manual_action==null
+      ' "$monitor_tmp" >/dev/null 2>&1; then
+      break
+    fi
+    process_is_owned "$m5_application_daemon_pid" "$m5_application_daemon_start_ticks" \
+      "$m5_application_daemon_binary_sha256" ||
+      fail "M7 second XMR supervisor exited before typed Blocked"
+    sleep 0.05
+  done
+  jq -e --arg swap "$m7_xmr_second_swap_id" --argjson minimum "$minimum_generation" '
+    .swap_id==$swap and .schedule_state=="queued" and .lease_generation >= $minimum
+    and .attempt_count >= $minimum and .progress.source_generation >= $minimum
+    and .progress.observation=={state:"active",phase:"offered",revision:0,
+      next_action:"xmr_chain_effects_not_yet_composed"} and .manual_action==null
+  ' "$monitor_tmp" >/dev/null || fail "M7 second XMR application did not quiesce at Blocked"
+  mv "$monitor_tmp" "$output"
+  chmod 0600 "$output"
+  require_owner_file "$output" "M7 second XMR typed Blocked monitor"
 }
 
 wait_m5_xmr_typed_blocked() {
@@ -2187,6 +2346,14 @@ complete_m5_xmr_application_handoff() {
   record_phase m5_xmr_application started
   readonly m5_xmr_maker_role_journal="${agreement_root}/stage-b/private/maker.sqlite"
   readonly m5_xmr_taker_role_journal="${agreement_root}/stage-b/private/taker.sqlite"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    readonly m7_xmr_second_maker_role_journal="${m7_xmr_second_agreement_root}/stage-b/private/maker.sqlite"
+    readonly m7_xmr_second_taker_role_journal="${m7_xmr_second_agreement_root}/stage-b/private/taker.sqlite"
+    readonly m7_xmr_second_journals_before="${evidence_root}/m7-xmr-second-journals-before.json"
+    readonly m7_xmr_second_journals_after="${evidence_root}/m7-xmr-second-journals-after.json"
+    write_m5_journal_snapshot "$m7_xmr_second_journals_before" \
+      "$m7_xmr_second_maker_role_journal" "$m7_xmr_second_taker_role_journal"
+  fi
   readonly m5_xmr_journals_before="${evidence_root}/m5-xmr-journals-before.json"
   readonly m5_xmr_journals_after="${evidence_root}/m5-xmr-journals-after.json"
   write_m5_journal_snapshot "$m5_xmr_journals_before" \
@@ -2213,6 +2380,34 @@ complete_m5_xmr_application_handoff() {
   m5_xmr_decoded_stage_a_swap_id="$(jq -er .swap_id "$m5_xmr_maker_provision")"
   m5_xmr_actor_config="$(jq -er .config_path "$m5_xmr_maker_provision")"
   m5_xmr_actor_state="$(jq -er .state_database_path "$m5_xmr_maker_provision")"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    readonly m7_xmr_second_maker_actor_root="${m5_xmr_application_root}/maker-actor-b"
+    readonly m7_xmr_second_maker_provision="${evidence_root}/m7-xmr-second-maker-provision.json"
+    "$agreement_actor_binary" provision-application maker \
+      --private-root "${m7_xmr_second_agreement_root}/material/maker" \
+      --own-public-packet "${m7_xmr_second_agreement_root}/exchange/maker.json" \
+      --peer-public-packet "${m7_xmr_second_agreement_root}/exchange/taker.json" \
+      --agreement-stage-a "$m7_xmr_second_stage_a" --activation-stage-b "$m7_xmr_second_stage_b" \
+      --role-journal "$m7_xmr_second_maker_role_journal" \
+      --output-root "$m7_xmr_second_maker_actor_root" >"$m7_xmr_second_maker_provision"
+    chmod 0600 "$m7_xmr_second_maker_provision"
+    require_owner_file "$m7_xmr_second_maker_provision" "M7 second Maker application provision"
+    jq -e --arg swap "$m7_xmr_second_swap_id" --arg stage_a "$(sha256_file "$m7_xmr_second_stage_a")" \
+      --arg stage_b "$(sha256_file "$m7_xmr_second_stage_b")" '
+        .schema_version==1 and .role=="maker" and .was_replay==false and .swap_id==$swap
+        and .stage_a_sha256==$stage_a and .stage_b_sha256==$stage_b
+        and .private_material_disclosed==false
+      ' "$m7_xmr_second_maker_provision" >/dev/null ||
+      fail "M7 second decoded Stage A did not retain authenticated terms"
+    m7_xmr_second_actor_config="$(jq -er .config_path "$m7_xmr_second_maker_provision")"
+    m7_xmr_second_actor_state="$(jq -er .state_database_path "$m7_xmr_second_maker_provision")"
+    readonly m7_xmr_second_actor_config m7_xmr_second_actor_state
+    require_owner_file "$m7_xmr_second_actor_config" "M7 second Maker actor manifest"
+    require_owner_file "$m7_xmr_second_actor_state" "M7 second Maker actor state"
+    [[ "$m7_xmr_second_actor_config" != "$m5_xmr_actor_config" &&
+       "$m7_xmr_second_actor_state" != "$m5_xmr_actor_state" ]] ||
+      fail "M7 accepted XMR Maker actor authority aliases"
+  fi
   if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]]; then
     provision_m7_maker_effect_application
   fi
@@ -2234,15 +2429,31 @@ complete_m5_xmr_application_handoff() {
     fail "M5 XMR Maker public agreement key width drift"
   [[ "$(stat -c %s "$m5_xmr_maker_private_view_key")" == 32 ]] ||
     fail "M5 XMR Maker private view key width drift"
-  jq -n --arg swap "$m5_xmr_planned_swap_id" --arg config "$m5_xmr_actor_config" \
-    --arg config_sha "$(sha256_file "$m5_xmr_actor_config")" \
-    --arg program "$m5_xmr_maker_actor_binary" \
-    --arg program_sha "$(sha256_file "$m5_xmr_maker_actor_binary")" \
-    --arg state "$m5_xmr_actor_state" '
-      {schema_version:1,actors:[{swap_id:$swap,config_path:$config,
-       config_sha256:$config_sha,program_path:$program,program_sha256:$program_sha,
-       state_database_path:$state}]}
-    ' >"$m5_xmr_actor_registry"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    jq -n --arg swap_a "$m5_xmr_planned_swap_id" --arg config_a "$m5_xmr_actor_config" \
+      --arg config_a_sha "$(sha256_file "$m5_xmr_actor_config")" \
+      --arg state_a "$m5_xmr_actor_state" --arg swap_b "$m7_xmr_second_swap_id" \
+      --arg config_b "$m7_xmr_second_actor_config" \
+      --arg config_b_sha "$(sha256_file "$m7_xmr_second_actor_config")" \
+      --arg state_b "$m7_xmr_second_actor_state" --arg program "$m5_xmr_maker_actor_binary" \
+      --arg program_sha "$(sha256_file "$m5_xmr_maker_actor_binary")" '
+        {schema_version:1,actors:[
+          {swap_id:$swap_a,config_path:$config_a,config_sha256:$config_a_sha,
+           program_path:$program,program_sha256:$program_sha,state_database_path:$state_a},
+          {swap_id:$swap_b,config_path:$config_b,config_sha256:$config_b_sha,
+           program_path:$program,program_sha256:$program_sha,state_database_path:$state_b}]}
+      ' >"$m5_xmr_actor_registry"
+  else
+    jq -n --arg swap "$m5_xmr_planned_swap_id" --arg config "$m5_xmr_actor_config" \
+      --arg config_sha "$(sha256_file "$m5_xmr_actor_config")" \
+      --arg program "$m5_xmr_maker_actor_binary" \
+      --arg program_sha "$(sha256_file "$m5_xmr_maker_actor_binary")" \
+      --arg state "$m5_xmr_actor_state" '
+        {schema_version:1,actors:[{swap_id:$swap,config_path:$config,
+         config_sha256:$config_sha,program_path:$program,program_sha256:$program_sha,
+         state_database_path:$state}]}
+      ' >"$m5_xmr_actor_registry"
+  fi
   chmod 0600 "$m5_xmr_actor_registry"
   require_owner_file "$m5_xmr_actor_registry" "M5 XMR strict actor registry"
 
@@ -2251,6 +2462,14 @@ complete_m5_xmr_application_handoff() {
   readonly m5_xmr_initial_acceptance="${evidence_root}/m5-xmr-initial-acceptance.json"
   readonly m5_xmr_replay_acceptance="${evidence_root}/m5-xmr-replay-acceptance.json"
   readonly m5_xmr_blocked_monitor="${evidence_root}/m5-xmr-blocked-monitor.json"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    readonly m7_xmr_second_taker_actor_root="${m5_xmr_application_root}/taker-actor-b"
+    readonly m7_xmr_second_taker_receipt="${m5_xmr_application_root}/taker-receipt-b.json"
+    readonly m7_xmr_second_initial_acceptance="${evidence_root}/m7-xmr-second-initial-acceptance.json"
+    readonly m7_xmr_second_replay_acceptance="${evidence_root}/m7-xmr-second-replay-acceptance.json"
+    readonly m7_xmr_second_blocked_monitor="${evidence_root}/m7-xmr-second-blocked-monitor.json"
+    readonly m7_xmr_second_replay_monitor="${evidence_root}/m7-xmr-second-replay-monitor.json"
+  fi
   start_m5_xmr_application_daemon authority 1
   run_m5_xmr_taker_acceptance "$m5_xmr_initial_acceptance" 1
   jq -e --arg swap "$m5_xmr_planned_swap_id" '
@@ -2263,8 +2482,26 @@ complete_m5_xmr_application_handoff() {
     --arg reservation "$m5_xmr_reservation_id" '
       .schema_version==1 and .pair=="monero" and .role=="taker"
       and .swap_id==$swap and .offer_id==$offer and .reservation_id==$reservation
-    ' "$m5_xmr_taker_receipt" >/dev/null || fail "M5 XMR Taker receipt drift"
+  ' "$m5_xmr_taker_receipt" >/dev/null || fail "M5 XMR Taker receipt drift"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    run_m7_second_xmr_taker_acceptance "$m7_xmr_second_initial_acceptance" 1
+    jq -e --arg swap "$m7_xmr_second_swap_id" '
+      .schema_version==1 and .offer_revision==3 and .swap_id==$swap
+      and .replay=={stage_a:false,activation:false} and .private_material_disclosed==false
+      and .actor.role=="taker" and .actor.provisioning_replay==false
+      and .actor.receipt_replay==false
+    ' "$m7_xmr_second_initial_acceptance" >/dev/null ||
+      fail "M7 second XMR fresh application acceptance drift"
+    jq -e --arg swap "$m7_xmr_second_swap_id" --arg offer "$m7_xmr_second_offer_id" \
+      --arg reservation "$m7_xmr_second_reservation_id" '
+        .schema_version==1 and .pair=="monero" and .role=="taker"
+        and .swap_id==$swap and .offer_id==$offer and .reservation_id==$reservation
+      ' "$m7_xmr_second_taker_receipt" >/dev/null || fail "M7 second XMR Taker receipt drift"
+  fi
   wait_m5_xmr_typed_blocked
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    wait_m7_second_xmr_typed_blocked 1 "$m7_xmr_second_blocked_monitor"
+  fi
 
   readonly m5_xmr_artifacts_before="${evidence_root}/m5-xmr-artifacts-before.tsv"
   readonly m5_xmr_artifacts_after="${evidence_root}/m5-xmr-artifacts-after.tsv"
@@ -2274,6 +2511,10 @@ complete_m5_xmr_application_handoff() {
     fail "M5 XMR removed Delivery destination exists"
   mv "$m5_xmr_delivery_root" "$m5_xmr_removed_delivery_root"
   require_owner_file "${m5_xmr_removed_delivery_root}/${m5_xmr_offer_id}.offer.json" "removed original M5 XMR Delivery offer"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    require_owner_file "${m5_xmr_removed_delivery_root}/${m7_xmr_second_offer_id}.offer.json" \
+      "removed second M7 XMR Delivery offer"
+  fi
   mkdir -m 0700 "$m5_xmr_delivery_root"
   [[ -z "$(find "$m5_xmr_delivery_root" -mindepth 1 -print -quit)" ]] ||
     fail "replacement M5 XMR Delivery root was not created empty"
@@ -2281,6 +2522,10 @@ complete_m5_xmr_application_handoff() {
   start_m5_xmr_application_daemon replay 1
   require_owner_file "${m5_xmr_delivery_root}/${m5_xmr_offer_id}.offer.json" \
     "reconciled M5 XMR Delivery offer"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    require_owner_file "${m5_xmr_delivery_root}/${m7_xmr_second_offer_id}.offer.json" \
+      "reconciled second M7 XMR Delivery offer"
+  fi
   readonly m5_xmr_reconciled_delivery_plan="${evidence_root}/m5-xmr-reconciled-delivery-plan.json"
   "$m5_lez_taker_binary" --delivery-directory "$m5_xmr_delivery_root" \
     --maker-public-key "$m5_xmr_delivery_public_key" --now-unix-seconds "$(date -u +%s)" \
@@ -2299,6 +2544,26 @@ complete_m5_xmr_application_handoff() {
       and .private_material_disclosed==false
     ' "$m5_xmr_reconciled_delivery_plan" >/dev/null ||
     fail "reconciled M5 XMR Delivery offer changed authenticated terms"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    readonly m7_xmr_second_reconciled_delivery_plan="${evidence_root}/m7-xmr-second-reconciled-delivery-plan.json"
+    "$m5_lez_taker_binary" --delivery-directory "$m5_xmr_delivery_root" \
+      --maker-public-key "$m5_xmr_delivery_public_key" --now-unix-seconds "$(date -u +%s)" \
+      --pair monero --direction taker-sells-lez --plan-xmr-offer "$m7_xmr_second_offer_id" \
+      --reservation-id "$m7_xmr_second_reservation_id" --foreign-units "$m5_xmr_foreign_units" \
+      >"$m7_xmr_second_reconciled_delivery_plan"
+    chmod 0600 "$m7_xmr_second_reconciled_delivery_plan"
+    require_owner_file "$m7_xmr_second_reconciled_delivery_plan" \
+      "authenticated reconciled second M7 XMR plan"
+    jq -e --arg offer "$m7_xmr_second_offer_id" --arg reservation "$m7_xmr_second_reservation_id" \
+      --arg swap "$m7_xmr_second_swap_id" --argjson foreign "$m5_xmr_foreign_units" \
+      --argjson lez "$m5_xmr_lez_units" '
+        .schema_version==1 and .offer_id==$offer and .reservation_id==$reservation
+        and .swap_id==$swap and .foreign_units==$foreign and .lez_units==$lez
+        and (.signed_envelope_sha256|test("^[0-9a-f]{64}$"))
+        and .private_material_disclosed==false
+      ' "$m7_xmr_second_reconciled_delivery_plan" >/dev/null ||
+      fail "reconciled second M7 XMR offer changed authenticated terms"
+  fi
   [[ ! -e "$m5_xmr_reconciled_delivery_root" && ! -L "$m5_xmr_reconciled_delivery_root" ]] ||
     fail "M5 XMR reconciled Delivery archive exists"
   mv "$m5_xmr_delivery_root" "$m5_xmr_reconciled_delivery_root"
@@ -2306,6 +2571,9 @@ complete_m5_xmr_application_handoff() {
   [[ -z "$(find "$m5_xmr_delivery_root" -mindepth 1 -print -quit)" ]] ||
     fail "M5 XMR Delivery outage root was not created empty"
   run_m5_xmr_taker_acceptance "$m5_xmr_replay_acceptance" 0
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    run_m7_second_xmr_taker_acceptance "$m7_xmr_second_replay_acceptance" 0
+  fi
   m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
     fail "Delivery-free M5 XMR replay observed or created an offer file"
   jq -e --arg swap "$m5_xmr_planned_swap_id" '
@@ -2314,6 +2582,15 @@ complete_m5_xmr_application_handoff() {
     and .actor.role=="taker" and .actor.provisioning_replay==true
     and .actor.receipt_replay==true
   ' "$m5_xmr_replay_acceptance" >/dev/null || fail "M5 XMR Delivery-free exact replay drift"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    jq -e --arg swap "$m7_xmr_second_swap_id" '
+      .schema_version==1 and .offer_revision==3 and .swap_id==$swap
+      and .replay=={stage_a:true,activation:true} and .private_material_disclosed==false
+      and .actor.role=="taker" and .actor.provisioning_replay==true
+      and .actor.receipt_replay==true
+    ' "$m7_xmr_second_replay_acceptance" >/dev/null ||
+      fail "M7 second XMR Delivery-free exact replay drift"
+  fi
   write_m5_application_artifact_snapshot "$m5_xmr_artifacts_after"
   cmp -- "$m5_xmr_artifacts_before" "$m5_xmr_artifacts_after" ||
     fail "M5 XMR receipt, actor, or journal bytes/inodes changed through replay"
@@ -2321,7 +2598,16 @@ complete_m5_xmr_application_handoff() {
     "$m5_xmr_maker_role_journal" "$m5_xmr_taker_role_journal"
   cmp -- "$m5_xmr_journals_before" "$m5_xmr_journals_after" ||
     fail "M5 XMR role journal device/inode/size/hash changed through application replay"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    write_m5_journal_snapshot "$m7_xmr_second_journals_after" \
+      "$m7_xmr_second_maker_role_journal" "$m7_xmr_second_taker_role_journal"
+    cmp -- "$m7_xmr_second_journals_before" "$m7_xmr_second_journals_after" ||
+      fail "M7 second XMR role journals changed through application replay"
+  fi
   wait_m5_xmr_replay_typed_blocked
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    wait_m7_second_xmr_typed_blocked 2 "$m7_xmr_second_replay_monitor"
+  fi
   stop_m5_xmr_application_daemon || fail "M5 XMR replay daemon did not stop before legacy Tag 13"
 
   readonly m5_xmr_cutoff_evidence="${evidence_root}/m5-xmr-application-cutoff.json"
@@ -2334,6 +2620,10 @@ complete_m5_xmr_application_handoff() {
     --argjson daemon_pid "$m5_last_stopped_daemon_pid" \
     --argjson tag13_started "$([[ "$m7_xmr_supervised_refund" == 1 ]] && printf true || printf false)" \
     --argjson requeue_delay "$m5_actor_requeue_delay_seconds" \
+    --argjson concurrent "$m7_xmr_accepted_concurrency" \
+    --arg second_swap "${m7_xmr_second_swap_id:-}" \
+    --arg second_initial "$([[ "$m7_xmr_accepted_concurrency" == 1 ]] && jq -er .swap_id "$m7_xmr_second_initial_acceptance" || true)" \
+    --arg second_replay "$([[ "$m7_xmr_accepted_concurrency" == 1 ]] && jq -er .swap_id "$m7_xmr_second_replay_acceptance" || true)" \
     --argjson process_group "$m5_last_stopped_daemon_group" '
       {schema_version:1,kind:(if $tag13_started then "m7_xmr_post_tag13_application_handoff" else "m5_xmr_application_pre_tag13_cutoff" end),result:"passed",
        plan_swap_id:$swap,agreement_receipt_swap_id:$receipt_swap,
@@ -2354,7 +2644,15 @@ complete_m5_xmr_application_handoff() {
          journal_device_inode_size_hash_unchanged:true,sqlite_sidecars_present:false},
        cutoff:{daemon_pid:$daemon_pid,process_group:$process_group,pid_absent:true,
          process_group_absent:true,owner_socket_absent:true,chat_socket_absent:true,
-         ready_files_absent:true},legacy_tag13_started:$tag13_started}
+         ready_files_absent:true},
+       concurrency:(if $concurrent == 1 then {
+         accepted_swap_count:2,shared_daemon:true,shared_database:true,shared_chat:true,
+         actor_worker_count:2,first_swap_id:$swap,second_swap_id:$second_swap,
+         second_initial_acceptance_swap_id:$second_initial,
+         second_replay_acceptance_swap_id:$second_replay,
+         distinct_swap_ids:($swap != $second_swap),both_accepted_before_activation:true,
+         immutable_artifacts_replayed:true} else null end),
+       legacy_tag13_started:$tag13_started}
     ' >"$m5_xmr_cutoff_evidence"
   chmod 0600 "$m5_xmr_cutoff_evidence"
   require_owner_file "$m5_xmr_cutoff_evidence" "M5 XMR pre-Tag13 cutoff evidence"
@@ -2374,8 +2672,29 @@ verify_m5_xmr_application_cutoff() {
     fail "M5 XMR readiness evidence survived daemon cutoff"
   require_no_sqlite_sidecars "$m5_xmr_maker_role_journal" "M5 XMR Maker role journal at cutoff"
   require_no_sqlite_sidecars "$m5_xmr_taker_role_journal" "M5 XMR Taker role journal at cutoff"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    require_no_sqlite_sidecars "$m7_xmr_second_maker_role_journal" \
+      "M7 second XMR Maker role journal at cutoff"
+    require_no_sqlite_sidecars "$m7_xmr_second_taker_role_journal" \
+      "M7 second XMR Taker role journal at cutoff"
+  fi
   require_owner_file "${m5_xmr_reconciled_delivery_root}/${m5_xmr_offer_id}.offer.json" \
     "archived authenticated M5 XMR reconciled Delivery offer"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    require_owner_file "${m5_xmr_reconciled_delivery_root}/${m7_xmr_second_offer_id}.offer.json" \
+      "archived authenticated second M7 XMR reconciled Delivery offer"
+    jq -e --arg first "$m5_xmr_planned_swap_id" --arg second "$m7_xmr_second_swap_id" '
+      .concurrency.accepted_swap_count==2 and .concurrency.shared_daemon==true
+      and .concurrency.shared_database==true and .concurrency.shared_chat==true
+      and .concurrency.actor_worker_count==2 and .concurrency.first_swap_id==$first
+      and .concurrency.second_swap_id==$second and .concurrency.distinct_swap_ids==true
+      and .concurrency.second_initial_acceptance_swap_id==$second
+      and .concurrency.second_replay_acceptance_swap_id==$second
+      and .concurrency.both_accepted_before_activation==true
+      and .concurrency.immutable_artifacts_replayed==true
+    ' "$m5_xmr_cutoff_evidence" >/dev/null ||
+      fail "M7 two-application cutoff evidence drift"
+  fi
   m5_delivery_offer_files_absent "$m5_xmr_delivery_root" ||
     fail "M5 XMR replacement Delivery root gained an offer before Tag 13"
   jq -e --arg swap "$m5_xmr_planned_swap_id" \
@@ -5004,6 +5323,7 @@ execute_run() {
     prepare_m5_xmr_delivery_plan
   fi
   compose_xmr_agreement
+  compose_m7_second_xmr_agreement
   if [[ "$m5_xmr_application_mode" == 1 && "$m7_xmr_supervised_refund" == 0 &&
         "$m7_xmr_tag15_process_kill" == 0 ]]; then
     complete_m5_xmr_application_handoff

@@ -150,7 +150,7 @@ unique_line() {
 
 for required in \
   'readonly m5_xmr_application_mode="${M5_XMR_APPLICATION_MODE:-0}"' \
-  'readonly m5_actor_requeue_delay_seconds=$((m7_xmr_supervised_refund == 1 ? 1 : (m7_xmr_semantic_claim == 1 ? 1 : 3600)))' \
+  'readonly m5_actor_requeue_delay_seconds=$(((m7_xmr_supervised_refund == 1 || m7_xmr_tag15_process_kill == 1) ? 1 : (m7_xmr_semantic_claim == 1 ? 1 : 3600)))' \
   'M5_XMR_APPLICATION_MODE must be unset, 0, or 1' \
   'RUN_ID="$artifact_run_id" "$artifact_runner" verify-source' \
   'cargo +1.96.0 build --release --locked --offline -p lez-maker-node' \

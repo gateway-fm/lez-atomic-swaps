@@ -90,6 +90,14 @@ before output creation when only one is supplied. Strict Clippy, all eight
 provisioning tests, the helper contract, and the shared-daemon process
 regression are GREEN.
 
+The second source slice now creates offer/reservation/agreement B, validates a
+distinct swap and Stage A/B, provisions two Maker actor rows in one registry,
+starts two daemon workers, and accepts both Taker applications through the one
+Chat socket. One restart reconciles both Delivery offers; Delivery-free exact
+replay must preserve both receipts, four role journals, four actor roots, and
+both typed Blocked projections before Tag13 activation. Existing M4/M5 source
+contracts remain GREEN. This is not yet the actual-node F3 certificate.
+
 Runtime external resources are empty: only isolated literal-loopback LEZ v0.2
 and official Monero 0.18.5.1 Regtest services with deterministic local funds
 participate. No public RPC, peer, faucet, public funds, or public deployment is

@@ -7960,10 +7960,16 @@ S12/S13 review and policy-deferred public deployment.
   actor stores, and journals remain fresh. Unpaired inputs create no output.
   Strict Clippy, eight actor tests, the helper contract, and the 39.91-second
   shared-daemon regression pass.
-- [ ] Parameterize offer, reservation, agreement, role journals, actor stores,
-  and evidence into two isolated swap contexts under the shared daemon.
-- [ ] Accept both applications before activation, restart once, and prove both
-  leases/effects overlap without cross-authority or replay.
+- [x] Parameterize offer, reservation, agreement, role journals, actor stores,
+  and admission evidence into two isolated swap contexts under the shared
+  daemon. Agreement and Stage hashes, swap IDs, actor configs, and state
+  databases must differ.
+- [x] Accept both applications before activation through one Chat socket and a
+  two-worker registry, restart once, reconcile both Delivery offers, remove
+  Delivery, and exact-replay both receipts without mutating four role journals
+  or four actor roots. Existing M4/M5 source contracts remain GREEN.
+- [ ] Activate both semantic Claim applications, prove both actual swaps are
+  in flight before either settlement, and terminal-replay without resubmission.
 - [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
   and official Monero Regtest topology; sanitize and CI-pin the certificate,
   update manual reproduction, clean exact resources, and close F3.
