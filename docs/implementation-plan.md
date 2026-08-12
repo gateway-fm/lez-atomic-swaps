@@ -7790,7 +7790,18 @@ S12/S13 review and policy-deferred public deployment.
   the mined flag is false. Parent replacement checks cover all three fields,
   preserving the later exact canonical-block assertion. Focused M6/M7
   contracts and shell syntax are GREEN.
-- [ ] Push the canonical-inclusion handoff, retire only the affected Zebra run,
-  provision a fresh isolated node and height-104 prehistory, and repeat the
-  exact journey. Only an exact GREEN result may produce a certificate or close
-  F9/U4/S5.
+- [x] Push the canonical-inclusion handoff as `49d1633`, provision fresh
+  primary-only Zebra run `m7frzec49d1633a` and height-104 prehistory, and
+  repeat as `m7zecfirstrefund49d1633a`. The exact run passed the canonical
+  inclusion handoff, both terminal roles, and no-effect replay at height 110.
+  A duplicate post-replay assertion still required `operation = zcash_refund`
+  on the absorbing Maker output and failed before operator projection.
+- [x] RED then GREEN the duplicate terminal assertion. The focused contract
+  pins the two direct-drive terminal-boundary guards plus the sole in-progress
+  Maker observation binding and rejects a fourth operation requirement. The
+  terminal revision-2 check remains explicit. Focused M6/M7 contracts and
+  shell syntax are GREEN.
+- [ ] Push the duplicate-assertion correction, retire only the affected Zebra
+  run, provision a fresh isolated node and height-104 prehistory, and repeat
+  the exact journey. Only an exact GREEN result may produce a certificate or
+  close F9/U4/S5.

@@ -55,6 +55,8 @@ The Maker observer binds `operation = zcash_refund` while observation is still
 pending or projected. Its absorbing `refunded` revision-2 output is terminal
 and intentionally needs no operation field; accepting that shape does not
 broaden effect authority.
+That distinction is enforced both at observation time and again in the final
+evidence checks; the final check does not reintroduce an in-progress-only field.
 
 Before mining, a read-only role-aware inspector opens the Taker's durable
 first-lock journal, validates the rebound Maker/Taker config pair, converts the

@@ -3983,7 +3983,6 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
     jq -e '
       .schema_version == 1 and .role == "maker" and .command == "recover"
       and .phase == "refunded" and .revision == 2
-      and .operation == "zcash_refund"
     ' "${evidence_dir}/m7-maker-first-lock-refund-terminal.json" >/dev/null
   fi
   stop_owned_process "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin"

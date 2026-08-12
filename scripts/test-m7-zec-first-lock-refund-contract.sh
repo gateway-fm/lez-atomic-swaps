@@ -45,6 +45,8 @@ for required in \
   'm7-maker-first-lock-refund-terminal.json'; do
   rg -Fq -- "$required" "$runner" || fail "runner is missing: ${required}"
 done
+[[ "$(rg -Fc '.operation == "zcash_refund"' "$runner")" == 3 ]] ||
+  fail 'terminal refunded output still requires the in-progress operation field'
 
 for required in \
   '.outcome == "refunded" and .phase == "refunded" and .revision == 2' \
