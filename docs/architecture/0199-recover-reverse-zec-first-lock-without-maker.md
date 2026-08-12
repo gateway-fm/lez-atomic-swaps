@@ -29,6 +29,11 @@ directly. It retains an independent read-only Maker observation of the
 confirmed first lock, takes two stable `taker_swap_monitor_v1` samples from the
 owner service, and brackets those samples with both role-local LEZ submission
 journals empty. This is the same ownership boundary a real Taker user sees.
+The generic direct-actor readiness precheck remains on the existing forward
+second-lock Refund path, but this service-owned first-lock route admits Refund
+from the service's already-validated `refund_available` state and exact
+progress generation. It does not attempt a second owner through either
+`status` or `drive`.
 
 Before mining, a read-only role-aware inspector opens the Taker's durable
 first-lock journal, validates the rebound Maker/Taker config pair, converts the

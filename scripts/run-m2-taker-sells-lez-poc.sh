@@ -2403,12 +2403,11 @@ drive_m6_taker_refund() {
       return 0
       ;;
     awaiting_first_lock|awaiting_second_lock|both_legs_locked|refund_available)
-      if (( m6_refund_admitted == 0 )); then
+      if (( m6_refund_admitted == 0 && m7_zec_first_lock_refund == 0 )); then
         "$actor_bin" --config "$taker_config" status >"$status_file"
-        if ! jq -e --argjson first_lock "$m7_zec_first_lock_refund" '
+        if ! jq -e '
           .role == "taker" and .state == "active"
-          and (($first_lock == 0 and .phase == "both_legs_locked")
-            or ($first_lock == 1 and .phase == "taker_lock_confirmed"))
+          and .phase == "both_legs_locked"
         ' "$status_file" >/dev/null; then
           output="$(drive_actor taker "$taker_config" "$round")" || return
           if jq -e '

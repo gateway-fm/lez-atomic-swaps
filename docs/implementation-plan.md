@@ -7706,7 +7706,24 @@ S12/S13 review and policy-deferred public deployment.
   two stable `taker_swap_monitor_v1` samples from the actual owner service and
   rechecks that both role-local LEZ submission sets stayed empty. The service
   RPC, not a lease-bypassing helper, is the user-facing source of Taker state.
-- [ ] Push the owner-service correction, retire only the affected Zebra run,
-  provision a fresh isolated Zebra stack and height-104 prehistory, and repeat
-  the complete exact journey from a new application root. Only an exact GREEN
-  result may produce a certificate or close F9/U4/S5.
+- [x] Push the owner-service correction as `7f1a45e`, retire only the affected
+  Zebra run, provision fresh primary-only Zebra run `m7frzec7f1a45ea` and its
+  height-104 prehistory, and repeat as `m7zecfirstrefund7f1a45ea`. The run
+  again confirmed only the Taker first lock and reached `refund_available` at
+  Zebra height 106 with no LEZ submission. A second service-ownership RED was
+  then isolated: before entering the corrected absence proof, the generic
+  refund helper still ran a direct Taker actor `status` readiness precheck.
+  Because the Taker service correctly held the lease, refund admission could
+  not begin and the bounded run expired without a refund submission. This
+  affected Zebra run will not be reused for certification.
+- [x] RED then GREEN the remaining direct-precheck seam. The focused contract
+  requires the generic actor readiness precheck to be guarded to the existing
+  forward second-lock Refund journey. The reverse first-lock journey instead
+  relies on the already-validated owner service state and generation before
+  the independent Maker observation, stable service samples, empty LEZ
+  journals, signed-height advance, and generation-fenced Refund request.
+  Focused M6/M7 runner contracts and shell syntax are GREEN.
+- [ ] Push the precheck correction, retire only the affected Zebra run,
+  provision another fresh isolated Zebra stack and height-104 prehistory, and
+  repeat the exact journey. Only an exact GREEN result may produce a
+  certificate or close F9/U4/S5.

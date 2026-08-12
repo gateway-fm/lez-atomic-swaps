@@ -67,6 +67,12 @@ if rg -Fq '"$actor_bin" --config "$taker_config" drive' <<<"$absence_helper"; th
   fail 'Maker-absence proof bypasses the owner Taker service lease'
 fi
 
+refund_helper="$(sed -n '/^drive_m6_taker_refund() {/,/^}/p' "$runner")"
+rg -Fq -- \
+  'if (( m6_refund_admitted == 0 && m7_zec_first_lock_refund == 0 )); then' \
+  <<<"$refund_helper" ||
+  fail 'first-lock refund still enters the direct Taker actor precheck'
+
 for required in \
   '--direction DIRECTION' \
   '--direction) direction=' \
