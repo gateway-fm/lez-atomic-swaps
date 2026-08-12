@@ -7723,7 +7723,19 @@ S12/S13 review and policy-deferred public deployment.
   the independent Maker observation, stable service samples, empty LEZ
   journals, signed-height advance, and generation-fenced Refund request.
   Focused M6/M7 runner contracts and shell syntax are GREEN.
-- [ ] Push the precheck correction, retire only the affected Zebra run,
+- [x] Push the precheck correction as `bc5115a`, retire only the affected
+  Zebra run, provision fresh primary-only Zebra run `m7frzecbc5115aa` and its
+  height-104 prehistory, and repeat as `m7zecfirstrefundbc5115aa`. The exact
+  run again confirmed only the Taker first lock, kept LEZ effect-free, and
+  reached `refund_available` at Zebra height 106. It exposed the actual next
+  dispatcher RED: `drive_m6_taker` called the refund driver only for the
+  literal `refund` journey, so `first_lock_refund` fell into the Claim branch
+  on every round and expired without refund submission.
+- [x] RED then GREEN the journey dispatcher. The focused contract now requires
+  both `refund` and `first_lock_refund` to enter the same generation-fenced
+  refund driver; the Claim journey remains separate. Focused source behavior
+  is GREEN and no protocol deadline or actor authority changed.
+- [ ] Push the dispatcher correction, retire only the affected Zebra run,
   provision another fresh isolated Zebra stack and height-104 prehistory, and
   repeat the exact journey. Only an exact GREEN result may produce a
   certificate or close F9/U4/S5.

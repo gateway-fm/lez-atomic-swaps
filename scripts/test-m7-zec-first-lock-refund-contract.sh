@@ -73,6 +73,12 @@ rg -Fq -- \
   <<<"$refund_helper" ||
   fail 'first-lock refund still enters the direct Taker actor precheck'
 
+service_driver="$(sed -n '/^drive_m6_taker() {/,/^}/p' "$runner")"
+rg -Fq -- \
+  'if [[ "$M6_ZEC_JOURNEY" == refund || "$M6_ZEC_JOURNEY" == first_lock_refund ]]; then' \
+  <<<"$service_driver" ||
+  fail 'first-lock refund falls through into the claim dispatcher'
+
 for required in \
   '--direction DIRECTION' \
   '--direction) direction=' \

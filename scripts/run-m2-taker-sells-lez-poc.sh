@@ -2726,7 +2726,7 @@ drive_m6_taker() {
     '{schema_version:1,round:$round,response:$response}' \
     >>"${evidence_dir}/m6-taker-service-monitor.ndjson"
   state="$(jq -er '.result.state' <<<"$monitor_response")"
-  if [[ "$M6_ZEC_JOURNEY" == refund ]]; then
+  if [[ "$M6_ZEC_JOURNEY" == refund || "$M6_ZEC_JOURNEY" == first_lock_refund ]]; then
     drive_m6_taker_refund "$round" "$monitor_response" "$state"
     return
   fi

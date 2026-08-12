@@ -34,6 +34,9 @@ second-lock Refund path, but this service-owned first-lock route admits Refund
 from the service's already-validated `refund_available` state and exact
 progress generation. It does not attempt a second owner through either
 `status` or `drive`.
+Both the forward second-lock Refund journey and this reverse first-lock Refund
+journey enter the same service refund dispatcher. Claim remains a separate
+branch; the journey label cannot silently fall through into it.
 
 Before mining, a read-only role-aware inspector opens the Taker's durable
 first-lock journal, validates the rebound Maker/Taker config pair, converts the
