@@ -675,9 +675,11 @@ async fn receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once() {
     let rejected_claim = run_taker_lifecycle("claim", &effect.receipt);
     assert!(!rejected_claim.status.success());
     assert!(rejected_claim.stdout.is_empty());
+    // The terminal Refund branch is rejected while selecting the next Claim
+    // workflow step, before any effect route can be prepared or invoked.
     assert_eq!(
         String::from_utf8(rejected_claim.stderr).unwrap(),
-        "XMR Taker effect route is unavailable or unsafe\n"
+        "XMR Taker claim workflow step is unavailable or unsafe\n"
     );
     completed_snapshot.assert_unchanged(&effect);
 }
