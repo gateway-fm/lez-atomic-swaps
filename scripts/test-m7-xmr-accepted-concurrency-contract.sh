@@ -16,13 +16,18 @@ fail() {
 
 for required in \
   'fn daemon_leases_two_accepted_xmr_applications_concurrently_across_restart()' \
-  'two accepted XMR applications must hold concurrent leases' \
+  'fn wait_for_concurrent_leases(' \
+  'two accepted XMR applications to hold concurrent leases' \
+  'restarted accepted XMR applications to hold concurrent leases' \
   'distinct XMR actor configurations' \
   'distinct XMR actor state databases' \
   'accepted XMR restart must preserve terminal isolation'; do
   rg -Fq -- "$required" "$process_test" ||
     fail "process test is missing invariant: $required"
 done
+
+[[ "$(rg -Fc -- 'wait_for_concurrent_leases(' "$process_test")" == 3 ]] ||
+  fail "bounded concurrent-lease helper must be called before and after restart"
 
 [[ -x "$wrapper" ]] || fail "actual-node concurrency wrapper is absent or not executable"
 contract="$($wrapper contract)" || fail "actual-node concurrency contract command failed"
