@@ -7968,8 +7968,13 @@ S12/S13 review and policy-deferred public deployment.
   two-worker registry, restart once, reconcile both Delivery offers, remove
   Delivery, and exact-replay both receipts without mutating four role journals
   or four actor roots. Existing M4/M5 source contracts remain GREEN.
-- [ ] Activate both semantic Claim applications, prove both actual swaps are
-  in flight before either settlement, and terminal-replay without resubmission.
+- [x] RED then GREEN the dual semantic source path. Agreement B now owns a
+  distinct Tag13 state/handoff, role sidecars, confirmed Monero output,
+  receipt-v2 Taker authority, Tag14/Tag15, semantic claim sweep, cross-chain
+  binding, and terminal replay. Both Tag13 escrows and both confirmed Monero
+  outputs are ordered before the first settlement; replay preserves the exact
+  one-shot submission hashes. The focused shared-daemon regression passed in
+  39.73 seconds, and existing M4/M5 compatibility contracts remain GREEN.
 - [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
   and official Monero Regtest topology; sanitize and CI-pin the certificate,
   update manual reproduction, clean exact resources, and close F3.

@@ -300,8 +300,8 @@ for required_edge in command-fds lez-btc-swap-sdk lez-xmr-swap-sdk rustix; do
     fail "release lock omits swap-store runtime edge: ${required_edge}"
 done
 
-[[ "$(rg -Fo -- '--shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' "$runner" | wc -l)" == 3 ]] ||
-  fail 'runner must restore the shared XMR wallet only on the neutral provisioner RPC for funding and both role-correct sweeps'
+[[ "$(rg -Fo -- '--shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' "$runner" | wc -l)" == 4 ]] ||
+  fail 'runner must restore the shared XMR wallet only on the neutral provisioner RPC for two-swap funding and both role-correct sweeps'
 require_runner_source '--funding-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' 'Maker funding and claim-mining wallet role'
 rg -Fq -- '--taker-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"' "$runner" ||
   fail 'runner must sweep reconstructed XMR only to the Taker wallet RPC'

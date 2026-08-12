@@ -87,12 +87,28 @@ for required in \
   '--maker-agreement-key-source "${agreement_root}/material/maker/agreement.key"' \
   'run_m7_second_xmr_taker_acceptance() {' \
   'wait_m7_second_xmr_typed_blocked() {' \
+  'submit_m7_second_xmr_tag13() {' \
+  'fund_and_verify_m7_second_monero() {' \
+  'provision_m7_second_taker_claim_effect_application() {' \
+  'activate_and_run_m7_second_taker_tag14() {' \
+  'activate_and_run_m7_second_taker_claim_sweep() {' \
+  'verify_m7_xmr_accepted_concurrency_terminal_replay() {' \
   'accepted_swap_count:2,shared_daemon:true,shared_database:true,shared_chat:true' \
   'second_replay_acceptance_swap_id:$second_replay' \
   'M7 accepted XMR Maker actor authority aliases'; do
   rg -Fq -- "$required" "$delegated_runner" ||
     fail "delegated runner is missing accepted-concurrency invariant: $required"
 done
+
+first_funding_line="$(rg -n '^[[:space:]]+fund_and_verify_monero$' "$delegated_runner" | tail -n 1 | cut -d: -f1)"
+second_funding_line="$(rg -n '^[[:space:]]+fund_and_verify_m7_second_monero$' "$delegated_runner" | cut -d: -f1)"
+first_settlement_line="$(rg -n '^[[:space:]]+prepare_tag14_release$' "$delegated_runner" | tail -n 1 | cut -d: -f1)"
+[[ "$first_funding_line" =~ ^[1-9][0-9]*$ &&
+   "$second_funding_line" =~ ^[1-9][0-9]*$ &&
+   "$first_settlement_line" =~ ^[1-9][0-9]*$ &&
+   "$first_funding_line" -lt "$first_settlement_line" &&
+   "$second_funding_line" -lt "$first_settlement_line" ]] ||
+  fail "both XMR swaps are not durably in flight before settlement"
 
 cargo +1.96.0 test --locked --offline -p lez-maker-node \
   --test daemon_actor_supervisor_process \

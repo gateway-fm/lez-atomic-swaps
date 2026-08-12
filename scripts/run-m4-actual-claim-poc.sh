@@ -1948,6 +1948,8 @@ compose_xmr_agreement() {
 compose_m7_second_xmr_agreement() {
   [[ "$m7_xmr_accepted_concurrency" == 1 ]] || return 0
   record_phase m7_xmr_second_agreement started
+  readonly m7_xmr_second_run_id="m7xmr2-${run_id:0:39}"
+  readonly m7_xmr_second_monero_run_id="m7xmr2-${MONERO_RUN_ID:0:39}"
   readonly m7_xmr_second_agreement_root="${private_root}/xmr-agreement-b"
   readonly m7_xmr_second_agreement_stdout="${evidence_root}/xmr-agreement-b-receipt.json"
   local taker_owner maker_owner sequencer_url indexer_url second_cutoff second_refund second_punish
@@ -1959,7 +1961,7 @@ compose_m7_second_xmr_agreement() {
   second_refund="$((refund_at_ms + 60000))"
   second_punish="$((punish_at_ms + 60000))"
 
-  "$agreement_runner" execute --run-id "m7xmr2-${run_id:0:39}" \
+  "$agreement_runner" execute --run-id "$m7_xmr_second_run_id" \
     --swap-id "$m7_xmr_second_swap_id" --output-root "$m7_xmr_second_agreement_root" \
     --taker-lez-owner "$taker_owner" --maker-lez-owner "$maker_owner" \
     --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" \
@@ -2849,6 +2851,159 @@ fund_and_verify_monero() {
   required_confirmations=$(jq -er '.required_confirmations | select(type == "number" and . >= 1)' "$monero_funding_evidence") || fail "Monero funding evidence lacks required confirmations"
   jq -e --arg run_id "$MONERO_RUN_ID" --arg tx "$tx_id" --argjson required "$required_confirmations" '.schema=="lez_v02_m4_actual_local_monero_verification_v2" and .run_id==$run_id and .transaction_id==$tx and .confirmations >= $required and .public_rpc_used==false and .faucet_used==false and .network_scope=="isolated_official_monero_regtest"' "$monero_verification_evidence" >/dev/null || fail "Monero verification evidence is incomplete"
   record_phase monero_verification completed
+}
+
+submit_m7_second_xmr_tag13() {
+  [[ "$m7_xmr_accepted_concurrency" == 1 ]] ||
+    fail "second Tag13 requires M7 XMR accepted concurrency"
+  record_phase m7_xmr_second_tag13 started
+  readonly m7_xmr_second_chain_private_root="${private_root}/m7-xmr-second-chain"
+  readonly m7_xmr_second_chain_evidence_root="${evidence_root}/m7-xmr-second-chain"
+  readonly m7_xmr_second_tag13_state="${m7_xmr_second_chain_private_root}/tag13-state"
+  readonly m7_xmr_second_tag13_stdout="${m7_xmr_second_chain_evidence_root}/tag13-stdout.json"
+  readonly m7_xmr_second_tag13_internal="${m7_xmr_second_tag13_state}/m4-xmr-stage-a-tag13-evidence.v2.json"
+  readonly m7_xmr_second_tag13_latch="${manifest_root}/m7-xmr-second-tag13-no-retry.latch"
+  readonly m7_xmr_second_tag13_prepare_request_id="${m7_xmr_second_run_id}-tag13-prepare-001"
+  mkdir -m 0700 "$m7_xmr_second_chain_private_root" \
+    "$m7_xmr_second_chain_evidence_root" "$m7_xmr_second_tag13_state"
+  [[ ! -e "$m7_xmr_second_tag13_latch" && ! -L "$m7_xmr_second_tag13_latch" ]] ||
+    fail "second Tag13 no-retry latch already exists"
+  local temporary
+  temporary="$(mktemp "${manifest_root}/.m7-xmr-second-tag13-no-retry.XXXXXX")"
+  printf '%s\n' 'tag13_submission_may_have_occurred' >"$temporary"
+  chmod 0600 "$temporary"
+  sync -f "$temporary"
+  ln -- "$temporary" "$m7_xmr_second_tag13_latch"
+  unlink "$temporary"
+  sync -f "$m7_xmr_second_tag13_latch"
+  sync -d "$manifest_root"
+
+  "$tag13_binary" --state-directory "$m7_xmr_second_tag13_state" \
+    --private-key-file "${private_root}/lez-identities/taker/lez-signer.key" \
+    --sequencer-url "$(manifest_value LEZ_SEQUENCER_RPC_URL "$lez_stack_manifest")" \
+    --indexer-url "$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")" \
+    --agreement-wire-file "$m7_xmr_second_stage_a" \
+    --activation-wire-file "$m7_xmr_second_stage_b" \
+    --monero-view-key-file "${m7_xmr_second_agreement_root}/material/taker/monero-view.key" \
+    --run-id "$m7_xmr_second_run_id" \
+    --prepare-request-id "$m7_xmr_second_tag13_prepare_request_id" \
+    >"$m7_xmr_second_tag13_stdout"
+  chmod 0600 "$m7_xmr_second_tag13_stdout"
+  require_owner_file "$m7_xmr_second_tag13_stdout" "second Tag13 stdout evidence"
+  require_owner_file "$m7_xmr_second_tag13_internal" "second Tag13 durable evidence"
+  [[ "$(jq -S -c . "$m7_xmr_second_tag13_stdout")" == \
+     "$(jq -S -c . "$m7_xmr_second_tag13_internal")" ]] ||
+    fail "second Tag13 stdout and durable evidence differ"
+  jq -e --arg run "$m7_xmr_second_run_id" --arg swap "$m7_xmr_second_swap_id" \
+    --arg stage_a "$(sha256_file "$m7_xmr_second_stage_a")" \
+    --arg stage_b "$(sha256_file "$m7_xmr_second_stage_b")" '
+      .schema=="lez_v02_m4_xmr_stage_a_tag13_poc_v2" and .role=="taker"
+      and .run_id==$run and .terms.swap_id==$swap
+      and .stage_a_agreement_wire_sha256==$stage_a
+      and .stage_b_activation_wire_sha256==$stage_b
+      and .initialization.effect=="initialize" and .funding.effect=="fund"
+      and .initialization.finalized_clock.height < .funding.finalized_clock.height
+      and .public_rpc_used==false and .automatic_submission_retry==false
+      and .monero_lock_observed==false and .swap_completed==false
+    ' "$m7_xmr_second_tag13_internal" >/dev/null ||
+    fail "second Tag13 evidence violates the local one-shot boundary"
+  record_phase m7_xmr_second_tag13 completed
+}
+
+start_m7_second_xmr_role_sidecars() {
+  record_phase m7_xmr_second_sidecars started
+  readonly m7_xmr_second_tag13_handoff_root="${m7_xmr_second_chain_private_root}/tag13-handoff"
+  mkdir -m 0700 "$m7_xmr_second_tag13_handoff_root"
+  "$tag13_export_binary" --state-directory "$m7_xmr_second_tag13_state" \
+    --output-directory "$m7_xmr_second_tag13_handoff_root" \
+    --run-id "$m7_xmr_second_run_id" \
+    --stage-a-agreement-wire-sha256 "$(sha256_file "$m7_xmr_second_stage_a")" \
+    --stage-b-activation-wire-sha256 "$(sha256_file "$m7_xmr_second_stage_b")" \
+    --authenticated-transfer-program-id \
+      "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71"
+  readonly m7_xmr_second_sidecar_parent="${m7_xmr_second_chain_private_root}/role-sidecars"
+  readonly m7_xmr_second_taker_sidecar_root="${m7_xmr_second_sidecar_parent}/taker"
+  readonly m7_xmr_second_maker_sidecar_root="${m7_xmr_second_sidecar_parent}/maker"
+  mkdir -m 0700 "$m7_xmr_second_sidecar_parent"
+  local sequencer indexer root manifest pid start binary_sha
+  sequencer="$(manifest_value LEZ_SEQUENCER_RPC_URL "$lez_stack_manifest")"
+  indexer="$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")"
+  "$repo_root/scripts/run-m4-lez-sidecar.sh" start \
+    --root "$m7_xmr_second_taker_sidecar_root" --role taker \
+    --run-id "$m7_xmr_second_run_id" --sidecar-bin "$bridge_binary" \
+    --sequencer-url "$sequencer" --indexer-url "$indexer" \
+    --runtime-file "$m7_xmr_second_tag13_handoff_root/taker-runtime.json" \
+    --terms-file "$m7_xmr_second_tag13_handoff_root/terms.json" \
+    --private-key-file "${private_root}/lez-identities/taker/lez-signer.key" \
+    --authenticated-transfer-program-id \
+      "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71" \
+    --adopt-state-directory "$m7_xmr_second_tag13_state" \
+    --tag13-handoff-receipt \
+      "$m7_xmr_second_tag13_handoff_root/tag13-handoff-receipt.json" >/dev/null
+  "$repo_root/scripts/run-m4-lez-sidecar.sh" start \
+    --root "$m7_xmr_second_maker_sidecar_root" --role maker \
+    --run-id "$m7_xmr_second_run_id" --sidecar-bin "$bridge_binary" \
+    --sequencer-url "$sequencer" --indexer-url "$indexer" \
+    --runtime-file "$m7_xmr_second_tag13_handoff_root/maker-runtime.json" \
+    --terms-file "$m7_xmr_second_tag13_handoff_root/terms.json" \
+    --private-key-file "${private_root}/lez-identities/maker/lez-signer.key" \
+    --authenticated-transfer-program-id \
+      "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71" >/dev/null
+  for root in "$m7_xmr_second_taker_sidecar_root" "$m7_xmr_second_maker_sidecar_root"; do
+    manifest="$root/pid-manifest.json"
+    require_owner_file "$manifest" "second sidecar PID manifest"
+    pid="$(jq -er .pid "$manifest")"
+    start="$(jq -er .start_ticks "$manifest")"
+    binary_sha="$(jq -er .binary_sha256 "$manifest")"
+    record_resource process "$pid" "$root" "$start" "$binary_sha"
+  done
+  record_phase m7_xmr_second_sidecars completed
+}
+
+fund_and_verify_m7_second_monero() {
+  record_phase m7_xmr_second_monero_funding started
+  readonly m7_xmr_second_monero_funding_evidence="${m7_xmr_second_chain_evidence_root}/monero-funding.json"
+  readonly m7_xmr_second_monero_verification_evidence="${m7_xmr_second_chain_evidence_root}/monero-verification.json"
+  "$monero_fund_binary" --agreement-wire-file "$m7_xmr_second_stage_a" \
+    --monero-view-key-file "${m7_xmr_second_agreement_root}/material/taker/monero-view.key" \
+    --daemon-url "${monero_env[MONERO_DAEMON_ENDPOINT]}" \
+    --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" \
+    --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" \
+    --funding-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}" \
+    --funding-wallet-username-file "${monero_env[MONERO_MAKER_RPC_USERNAME_FILE]}" \
+    --funding-wallet-password-file "${monero_env[MONERO_MAKER_RPC_PASSWORD_FILE]}" \
+    --shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" \
+    --shared-wallet-username-file "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" \
+    --shared-wallet-password-file "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" \
+    --shared-wallet-file-password-file "${monero_env[MONERO_FUNDING_WALLET_PASSWORD_FILE]}" \
+    --shared-wallet-filename "m7-${m7_xmr_second_monero_run_id}-shared" \
+    --output-evidence "$m7_xmr_second_monero_funding_evidence" >/dev/null
+  require_owner_file "$m7_xmr_second_monero_funding_evidence" "second Monero funding evidence"
+  local tx required
+  tx="$(jq -er 'select(.attempt_state=="confirmed" and .public_rpc_used==false and .faucet_used==false) | .transaction_id' \
+    "$m7_xmr_second_monero_funding_evidence")"
+  "$monero_verify_binary" --agreement-wire-file "$m7_xmr_second_stage_a" \
+    --monero-transaction-id "$tx" --run-id "$m7_xmr_second_monero_run_id" \
+    --daemon-url "${monero_env[MONERO_DAEMON_ENDPOINT]}" \
+    --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" \
+    --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" \
+    --target-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" \
+    --target-wallet-username-file "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" \
+    --target-wallet-password-file "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" \
+    --foreign-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" \
+    --foreign-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" \
+    --foreign-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" \
+    --output-evidence "$m7_xmr_second_monero_verification_evidence" >/dev/null
+  required="$(jq -er '.required_confirmations | select(.>=1)' \
+    "$m7_xmr_second_monero_funding_evidence")"
+  jq -e --arg run "$m7_xmr_second_monero_run_id" --arg tx "$tx" --argjson required "$required" '
+    .schema=="lez_v02_m4_actual_local_monero_verification_v2"
+    and .run_id==$run and .transaction_id==$tx and .confirmations >= $required
+    and .public_rpc_used==false and .faucet_used==false
+    and .network_scope=="isolated_official_monero_regtest"
+  ' "$m7_xmr_second_monero_verification_evidence" >/dev/null ||
+    fail "second Monero verification evidence is incomplete"
+  record_phase m7_xmr_second_monero_funding completed
 }
 
 drive_m5_xmr_local_finality_clock() {
@@ -4082,6 +4237,146 @@ provision_m7_taker_claim_effect_application() {
     fail "M7 Taker receipt-v2 is incomplete"
 }
 
+prepare_m7_second_xmr_tag14_release() {
+  [[ "$m7_xmr_accepted_concurrency" == 1 ]] ||
+    fail "second Tag14 preparation requires M7 XMR accepted concurrency"
+  record_phase m7_xmr_second_release started
+  readonly m7_xmr_second_release_root="${m7_xmr_second_chain_private_root}/tag14-release"
+  readonly m7_xmr_second_release_config_root="${m7_xmr_second_release_root}/config"
+  readonly m7_xmr_second_release_state_root="${m7_xmr_second_release_root}/state"
+  readonly m7_xmr_second_release_public_config="${m7_xmr_second_release_config_root}/release.json"
+  readonly m7_xmr_second_release_preparation_config="${m7_xmr_second_release_config_root}/preparation.json"
+  readonly m7_xmr_second_release_protection_key="${m7_xmr_second_release_root}/protection.key"
+  mkdir -m 0700 "$m7_xmr_second_release_root" \
+    "$m7_xmr_second_release_config_root" "$m7_xmr_second_release_state_root"
+  openssl rand -hex 32 | tr -d '\n' >"$m7_xmr_second_release_protection_key"
+  chmod 0600 "$m7_xmr_second_release_protection_key"
+  local taker_endpoint
+  taker_endpoint="$(jq -er .endpoint "$m7_xmr_second_taker_sidecar_root/pid-manifest.json")"
+  jq -n --slurpfile evidence "$m7_xmr_second_tag13_internal" \
+    --arg sidecar "$taker_endpoint" \
+    --arg indexer "$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")" '
+      {schema_version:1,sidecar_endpoint:$sidecar,indexer_endpoint:$indexer,
+       node_profile:"local",run_id:$evidence[0].run_id,runtime:$evidence[0].runtime,
+       terms:$evidence[0].terms,protection_key_id:"m7-local-release-key-002"}
+    ' >"$m7_xmr_second_release_public_config"
+  jq -n --slurpfile evidence "$m7_xmr_second_tag13_internal" \
+    --arg fund_id "m7-${m7_xmr_second_run_id}-fund-finality" \
+    --arg authorization_id "m7-${m7_xmr_second_run_id}-authorization-prepare" \
+    --arg txid "$(jq -er .transaction_id "$m7_xmr_second_monero_funding_evidence")" \
+    --arg daemon "${monero_env[MONERO_DAEMON_ENDPOINT]}" \
+    --arg target "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}" \
+    --arg foreign "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}" '
+      {schema_version:1,escrow_prepare_request_id:$evidence[0].prepare_request_id,
+       fund_finality_request_id:$fund_id,authorization_prepare_request_id:$authorization_id,
+       fund_finality_window:$evidence[0].funding.scanned_window,
+       monero_funding_transaction_id:$txid,monero_daemon_endpoint:$daemon,
+       monero_target_wallet_endpoint:$target,monero_foreign_wallet_endpoint:$foreign}
+    ' >"$m7_xmr_second_release_preparation_config"
+  chmod 0600 "$m7_xmr_second_release_public_config" \
+    "$m7_xmr_second_release_preparation_config"
+  "$release_prepare_binary" \
+    --public-config-file "$m7_xmr_second_release_public_config" \
+    --preparation-config-file "$m7_xmr_second_release_preparation_config" \
+    --agreement-wire-file "$m7_xmr_second_stage_a" \
+    --activation-wire-file "$m7_xmr_second_stage_b" \
+    --monero-view-key-file "${m7_xmr_second_agreement_root}/material/taker/monero-view.key" \
+    --taker-claim-journal "$m7_xmr_second_taker_role_journal" \
+    --bridge-capability-file "$m7_xmr_second_taker_sidecar_root/capability" \
+    --protection-key-file "$m7_xmr_second_release_protection_key" \
+    --state-directory "$m7_xmr_second_release_state_root" \
+    --daemon-username-file "${monero_env[MONERO_DAEMON_USERNAME_FILE]}" \
+    --daemon-password-file "${monero_env[MONERO_DAEMON_PASSWORD_FILE]}" \
+    --target-wallet-username-file "${monero_env[MONERO_FUNDING_RPC_USERNAME_FILE]}" \
+    --target-wallet-password-file "${monero_env[MONERO_FUNDING_RPC_PASSWORD_FILE]}" \
+    --foreign-wallet-username-file "${monero_env[MONERO_TAKER_RPC_USERNAME_FILE]}" \
+    --foreign-wallet-password-file "${monero_env[MONERO_TAKER_RPC_PASSWORD_FILE]}" \
+    >"${m7_xmr_second_release_root}/preparation-result.json"
+  jq -e '.schema_version==1 and .event=="xmr_claim_authorization_preparation"
+    and .durable_state=="prepared" and .node_profile=="local"' \
+    "${m7_xmr_second_release_root}/preparation-result.json" >/dev/null ||
+    fail "second Tag14 preparation result is incomplete"
+  record_phase m7_xmr_second_release completed
+}
+
+provision_m7_second_taker_claim_effect_application() {
+  [[ "$m7_xmr_accepted_concurrency" == 1 && "$m7_xmr_semantic_claim" == 1 ]] ||
+    fail "second Taker effect application requires accepted semantic Claim mode"
+  readonly m7_xmr_second_taker_effect_root="${m5_xmr_application_root}/taker-claim-effects-b"
+  readonly m7_xmr_second_taker_effect_evidence_root="${m7_xmr_second_taker_effect_root}/evidence"
+  readonly m7_xmr_second_taker_effect_authority="${m7_xmr_second_taker_effect_root}/effect-authority.json"
+  readonly m7_xmr_second_taker_effect_workflow="${m7_xmr_second_taker_effect_root}/workflow.sqlite"
+  readonly m7_xmr_second_taker_effect_manifest="${m7_xmr_second_taker_effect_root}/actor-provision-v3.json"
+  readonly m7_xmr_second_taker_effect_receipt="${m7_xmr_second_taker_effect_root}/acceptance-receipt-v2.json"
+  readonly m7_xmr_second_taker_effect_acceptance="${m7_xmr_second_chain_evidence_root}/taker-effect-acceptance.json"
+  readonly m7_xmr_second_taker_release_capability="${m7_xmr_second_taker_effect_root}/tag14-release.capability"
+  mkdir -m 0700 "$m7_xmr_second_taker_effect_root" \
+    "$m7_xmr_second_taker_effect_evidence_root"
+  tr -d '\r\n' <"$m7_xmr_second_taker_sidecar_root/capability" \
+    >"$m7_xmr_second_taker_release_capability"
+  chmod 0600 "$m7_xmr_second_taker_release_capability"
+  [[ "$(wc -c <"$m7_xmr_second_taker_release_capability")" -eq 64 ]] ||
+    fail "second Taker release capability width drift"
+
+  local taker_endpoint taker_runtime taker_application_manifest taker_adaptor_journal
+  taker_endpoint="$(jq -er .endpoint "$m7_xmr_second_taker_sidecar_root/pid-manifest.json")"
+  taker_runtime="$m7_xmr_second_tag13_handoff_root/taker-runtime.json"
+  taker_application_manifest="$(jq -er .actor_manifest_file "$m7_xmr_second_taker_receipt")"
+  taker_adaptor_journal="$(jq -er .actor_state_database "$m7_xmr_second_taker_receipt")"
+  jq -c \
+    --arg swap "$m7_xmr_second_swap_id" \
+    --arg agreement "$(jq -er .agreement_commitment "$m7_xmr_second_maker_provision")" \
+    --arg activation "$(jq -er .activation_commitment "$m7_xmr_second_maker_provision")" \
+    --arg run "$m7_xmr_second_run_id" \
+    --arg workflow "$m7_xmr_second_taker_effect_workflow" \
+    --arg adaptor "$taker_adaptor_journal" \
+    --arg evidence "$m7_xmr_second_taker_effect_evidence_root" \
+    --arg lez_url "$taker_endpoint" --arg runtime "$taker_runtime" \
+    --arg runtime_sha "$(sha256_file "$taker_runtime")" \
+    --arg capability "$m7_xmr_second_taker_sidecar_root/capability" \
+    --arg release_state "$m7_xmr_second_release_state_root" \
+    --arg release_capability "$m7_xmr_second_taker_release_capability" \
+    --arg release_key "$m7_xmr_second_release_protection_key" '
+      .swap_id=$swap | .agreement_commitment=$agreement | .activation_commitment=$activation
+      | .run_id=$run | .workflow_journal=$workflow | .adaptor_journal=$adaptor
+      | .evidence_root=$evidence
+      | .lez.sidecar_url=$lez_url | .lez.runtime_file=$runtime
+      | .lez.runtime_sha256=$runtime_sha | .lez.capability_file=$capability
+      | .tag14_release.sidecar_url=$lez_url
+      | .tag14_release.state_directory=$release_state
+      | .tag14_release.capability_file=$release_capability
+      | .tag14_release.protection_key_file=$release_key
+      | .tag14_release.protection_key_id="m7-local-release-key-002"
+    ' "$m7_taker_effect_authority" >"$m7_xmr_second_taker_effect_authority"
+  chmod 0600 "$m7_xmr_second_taker_effect_authority"
+  "$agreement_actor_binary" provision-effect-application taker \
+    --application-manifest "$taker_application_manifest" \
+    --effect-authority "$m7_xmr_second_taker_effect_authority" \
+    --workflow-journal "$m7_xmr_second_taker_effect_workflow" \
+    --run-id "$m7_xmr_second_run_id" \
+    --output-manifest "$m7_xmr_second_taker_effect_manifest" \
+    >"$m7_xmr_second_taker_effect_acceptance"
+  chmod 0600 "$m7_xmr_second_taker_effect_acceptance"
+  jq -jcS --arg authority "$m7_xmr_second_taker_effect_authority" \
+    --arg authority_sha "$(sha256_file "$m7_xmr_second_taker_effect_authority")" \
+    --arg manifest "$m7_xmr_second_taker_effect_manifest" \
+    --arg manifest_sha "$(sha256_file "$m7_xmr_second_taker_effect_manifest")" \
+    --arg workflow "$m7_xmr_second_taker_effect_workflow" \
+    --arg run "$m7_xmr_second_run_id" '
+      . + {schema_version:2,run_id:$run,effect_authority_file:$authority,
+        effect_authority_sha256:$authority_sha,effect_manifest_file:$manifest,
+        effect_manifest_sha256:$manifest_sha,workflow_journal:$workflow}
+    ' "$m7_xmr_second_taker_receipt" >"$m7_xmr_second_taker_effect_receipt"
+  chmod 0600 "$m7_xmr_second_taker_effect_receipt"
+  jq -e --arg run "$m7_xmr_second_run_id" --arg swap "$m7_xmr_second_swap_id" '
+    .schema_version==2 and .pair=="monero" and .role=="taker"
+    and .run_id==$run and .swap_id==$swap
+    and (.effect_authority_sha256|test("^[0-9a-f]{64}$"))
+    and (.effect_manifest_sha256|test("^[0-9a-f]{64}$"))
+  ' "$m7_xmr_second_taker_effect_receipt" >/dev/null ||
+    fail "second Taker receipt-v2 is incomplete"
+}
+
 run_m7_taker_tag14_process_kill() {
   [[ "$m7_xmr_claim_process_kill" == 1 ]] ||
     fail "M7 Taker-claim process-kill recovery requires its isolated mode"
@@ -4632,6 +4927,261 @@ bind_claim_sweep() {
   require_owner_file "$claim_sweep_binding" "claim/sweep binding evidence"
   jq -e '.schema=="lez_v02_m4_claim_cross_chain_binding_v1" and .distributed_cross_chain_transaction_claimed==false and .lez_effect=="claim" and .lez_sidecar_role=="taker"' "$claim_sweep_binding" >/dev/null || fail "claim/sweep binding evidence is incomplete"
   record_phase evidence completed
+}
+
+activate_and_run_m7_second_taker_tag14() {
+  record_phase m7_xmr_second_tag14 started
+  readonly m7_xmr_second_claim_activation="${m7_xmr_second_taker_effect_evidence_root}/taker-claim-activation.json"
+  readonly m7_xmr_second_tag14_invocation="${m7_xmr_second_chain_evidence_root}/taker-tag14-invocation.json"
+  readonly m7_xmr_second_tag14_terminal="${m7_xmr_second_chain_evidence_root}/taker-tag14-terminal.json"
+  readonly m7_xmr_second_tag14_finality="${m7_xmr_second_taker_effect_evidence_root}/tag14-finalized.json"
+  "$agreement_actor_binary" activate-taker-claim-workflow \
+    --effect-manifest "$m7_xmr_second_taker_effect_manifest" \
+    --effect-authority "$m7_xmr_second_taker_effect_authority" \
+    --run-id "$m7_xmr_second_run_id" \
+    --monero-run-id "$m7_xmr_second_monero_run_id" \
+    --tag13-evidence "$m7_xmr_second_tag13_internal" \
+    --monero-funding-evidence "$m7_xmr_second_monero_funding_evidence" \
+    --monero-funding-receipt "$m7_xmr_second_monero_verification_evidence" \
+    >"$m7_xmr_second_claim_activation"
+  jq -e --arg run "$m7_xmr_second_run_id" --arg swap "$m7_xmr_second_swap_id" '
+    .schema=="lez_v02_m7_taker_claim_activation_v1" and .role=="taker"
+    and .run_id==$run and .swap_id==$swap and .selected_branch=="claim"
+    and .prepared_step=="authorize_lez_tag14" and .private_material_disclosed==false
+  ' "$m7_xmr_second_claim_activation" >/dev/null ||
+    fail "second Taker claim activation is incomplete"
+  "$m5_lez_taker_binary" claim --receipt "$m7_xmr_second_taker_effect_receipt" \
+    >"$m7_xmr_second_tag14_invocation"
+  chmod 0600 "$m7_xmr_second_tag14_invocation"
+  jq -e --arg run "$m7_xmr_second_run_id" '
+    .schema_version==3 and .pair=="monero" and .role=="taker"
+    and .action=="claim" and .step=="authorize_lez_tag14"
+    and .state=="invoked_unreconciled" and .run_id==$run
+    and .chain_effect_finalized==false
+  ' "$m7_xmr_second_tag14_invocation" >/dev/null ||
+    fail "second Taker Tag14 did not use exactly one semantic route"
+  local current="${m7_xmr_second_chain_evidence_root}/.taker-tag14-current.json"
+  for _ in {1..600}; do
+    rm -f -- "$current"
+    if "$m5_lez_taker_binary" claim --receipt "$m7_xmr_second_taker_effect_receipt" \
+      >"$current" 2>/dev/null &&
+      jq -e --arg run "$m7_xmr_second_run_id" '
+        .schema_version==3 and .pair=="monero" and .role=="taker"
+        and .action=="claim" and .step=="authorize_lez_tag14"
+        and .state=="complete" and .run_id==$run and .chain_effect_finalized==true
+      ' "$current" >/dev/null 2>&1; then
+      mv "$current" "$m7_xmr_second_tag14_terminal"
+      break
+    fi
+    sleep 0.25
+  done
+  require_owner_file "$m7_xmr_second_tag14_terminal" "second Taker Tag14 terminal action"
+  jq -e '.effect=="authorize_claim" and .outcome.status=="found"
+    and .outcome.facts.instruction.effect=="authorize_claim"' \
+    "$m7_xmr_second_tag14_finality" >/dev/null ||
+    fail "second semantic Tag14 finality is incomplete"
+  record_phase m7_xmr_second_tag14 completed
+}
+
+complete_m7_second_xmr_lez_claim() {
+  record_phase m7_xmr_second_tag15 started
+  readonly m7_xmr_second_maker_final_signature="${m7_xmr_second_release_root}/maker-final-signature.json"
+  readonly m7_xmr_second_tag15_submission="${m7_xmr_second_chain_evidence_root}/tag15-submission.json"
+  readonly m7_xmr_second_tag15_finality="${m7_xmr_second_chain_evidence_root}/tag15-finalized.json"
+  readonly m7_xmr_second_observed_final_signature="${m7_xmr_second_release_root}/taker-observed-final-signature.json"
+  "$agreement_actor_binary" complete-claim-from-finalized-authorization \
+    --private-root "${m7_xmr_second_agreement_root}/material/maker" \
+    --own-public-packet "${m7_xmr_second_agreement_root}/exchange/maker.json" \
+    --peer-public-packet "${m7_xmr_second_agreement_root}/exchange/taker.json" \
+    --agreement-stage-a "$m7_xmr_second_stage_a" \
+    --activation-stage-b "$m7_xmr_second_stage_b" \
+    --journal "$m7_xmr_second_maker_role_journal" \
+    --run-id "$m7_xmr_second_run_id" \
+    --finalized-authorization "$m7_xmr_second_tag14_finality" \
+    --output-final-signature "$m7_xmr_second_maker_final_signature"
+  local maker_endpoint taker_endpoint start_height attempt current
+  maker_endpoint="$(jq -er .endpoint "$m7_xmr_second_maker_sidecar_root/pid-manifest.json")"
+  taker_endpoint="$(jq -er .endpoint "$m7_xmr_second_taker_sidecar_root/pid-manifest.json")"
+  "$tag15_binary" --sidecar-endpoint "$maker_endpoint" \
+    --capability-file "$m7_xmr_second_maker_sidecar_root/capability" \
+    --runtime-file "$m7_xmr_second_tag13_handoff_root/maker-runtime.json" \
+    --agreement-wire-file "$m7_xmr_second_stage_a" \
+    --activation-wire-file "$m7_xmr_second_stage_b" \
+    --monero-view-key-file "${m7_xmr_second_agreement_root}/material/taker/monero-view.key" \
+    --final-signature-file "$m7_xmr_second_maker_final_signature" \
+    --run-id "$m7_xmr_second_run_id" \
+    --prepare-request-id "${m7_xmr_second_run_id}-tag15-prepare-001" \
+    --complete-request-id "${m7_xmr_second_run_id}-tag15-complete-001" \
+    --output-evidence "$m7_xmr_second_tag15_submission"
+  start_height="$(jq -er '.outcome.facts.containing_block.block_id + 1' \
+    "$m7_xmr_second_tag14_finality")"
+  current="${m7_xmr_second_tag15_finality}.attempt"
+  for attempt in {1..600}; do
+    rm -f -- "$current"
+    "$classifier_binary" --sidecar-endpoint "$taker_endpoint" \
+      --capability-file "$m7_xmr_second_taker_sidecar_root/capability" \
+      --runtime-file "$m7_xmr_second_tag13_handoff_root/taker-runtime.json" \
+      --terms-file "$m7_xmr_second_tag13_handoff_root/terms.json" \
+      --run-id "$m7_xmr_second_run_id" \
+      --request-id "${m7_xmr_second_run_id}-tag15-finality-${attempt}" \
+      --role taker --effect claim --start-height "$start_height" --max-blocks 16 \
+      --output-result "$current" || true
+    if jq -e '.outcome.status=="found" and .outcome.facts.instruction.effect=="claim"
+      and .outcome.facts.metadata.state=="claimed" and .outcome.facts.custody.balance=="0"' \
+      "$current" >/dev/null 2>&1; then
+      mv "$current" "$m7_xmr_second_tag15_finality"
+      break
+    fi
+    sleep 0.25
+  done
+  require_owner_file "$m7_xmr_second_tag15_finality" "second finalized Tag15"
+  "$agreement_actor_binary" ingest-finalized-claim-signature \
+    --private-root "${m7_xmr_second_agreement_root}/material/taker" \
+    --own-public-packet "${m7_xmr_second_agreement_root}/exchange/taker.json" \
+    --peer-public-packet "${m7_xmr_second_agreement_root}/exchange/maker.json" \
+    --agreement-stage-a "$m7_xmr_second_stage_a" \
+    --activation-stage-b "$m7_xmr_second_stage_b" \
+    --journal "$m7_xmr_second_taker_role_journal" \
+    --run-id "$m7_xmr_second_run_id" --finalized-claim "$m7_xmr_second_tag15_finality" \
+    --output-final-signature "$m7_xmr_second_observed_final_signature"
+  record_phase m7_xmr_second_tag15 completed
+}
+
+mine_m7_second_xmr_claim_confirmations() {
+  local credentials="${monero_env[MONERO_TAKER_CREDENTIAL_FILE]}"
+  local endpoint="${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"
+  local address_evidence="${m7_xmr_second_chain_evidence_root}/claim-wallet-address.json"
+  local mining_evidence="${m7_xmr_second_chain_evidence_root}/claim-confirmation-blocks.json"
+  local response address request
+  response="$(m7_monero_rpc "$credentials" "$endpoint" \
+    '{"jsonrpc":"2.0","id":"m7-xmr-second","method":"get_address","params":{"account_index":0}}')"
+  printf '%s\n' "$response" >"$address_evidence"
+  chmod 0600 "$address_evidence"
+  address="$(jq -er 'if (.error==null and (.result.address|type=="string"))
+    then .result.address else error("missing settlement address") end' "$address_evidence")"
+  request="$(jq -cn --arg address "$address" '{jsonrpc:"2.0",id:"m7-xmr-second",
+    method:"generateblocks",params:{amount_of_blocks:10,wallet_address:$address,
+    starting_nonce:2000}}')"
+  m7_monero_rpc "${monero_env[MONERO_DAEMON_CREDENTIAL_FILE]}" \
+    "${monero_env[MONERO_DAEMON_ENDPOINT]}" "$request" >"$mining_evidence"
+  chmod 0600 "$mining_evidence"
+  jq -e '.error==null and .result.status=="OK" and (.result.blocks|length)==10' \
+    "$mining_evidence" >/dev/null ||
+    fail "second XMR confirmation driver did not mine exactly ten blocks"
+}
+
+activate_and_run_m7_second_taker_claim_sweep() {
+  record_phase m7_xmr_second_claim_sweep started
+  readonly m7_xmr_second_claim_sweep_activation="${m7_xmr_second_chain_evidence_root}/claim-sweep-activation.json"
+  readonly m7_xmr_second_claim_sweep_invocation="${m7_xmr_second_chain_evidence_root}/claim-sweep-invocation.json"
+  readonly m7_xmr_second_claim_sweep_terminal="${m7_xmr_second_chain_evidence_root}/claim-sweep-terminal.json"
+  readonly m7_xmr_second_claim_sweep_submission="${m7_xmr_second_taker_effect_evidence_root}/monero-claim-submission.json"
+  readonly m7_xmr_second_claim_sweep_finality="${m7_xmr_second_taker_effect_evidence_root}/monero-claim-finalized.json"
+  readonly m7_xmr_second_extracted_maker_scalar="${m7_xmr_second_release_root}/extracted-maker-adaptor.key"
+  readonly m7_xmr_second_claim_binding="${m7_xmr_second_chain_evidence_root}/claim-sweep-binding.json"
+  "$agreement_actor_binary" activate-taker-claim-sweep-workflow \
+    --effect-manifest "$m7_xmr_second_taker_effect_manifest" \
+    --effect-authority "$m7_xmr_second_taker_effect_authority" \
+    --run-id "$m7_xmr_second_run_id" --finalized-claim "$m7_xmr_second_tag15_finality" \
+    --observed-final-signature "$m7_xmr_second_observed_final_signature" \
+    >"$m7_xmr_second_claim_sweep_activation"
+  "$m5_lez_taker_binary" claim --receipt "$m7_xmr_second_taker_effect_receipt" \
+    >"$m7_xmr_second_claim_sweep_invocation"
+  chmod 0600 "$m7_xmr_second_claim_sweep_invocation"
+  jq -e --arg run "$m7_xmr_second_run_id" '
+    .schema_version==3 and .pair=="monero" and .role=="taker"
+    and .action=="claim" and .step=="sweep_monero_claim" and .run_id==$run
+    and .state=="invoked_unreconciled" and .chain_effect_finalized==false
+  ' "$m7_xmr_second_claim_sweep_invocation" >/dev/null ||
+    fail "second Taker claim sweep did not use exactly one semantic route"
+  require_owner_file "$m7_xmr_second_claim_sweep_submission" "second semantic claim submission"
+  mine_m7_second_xmr_claim_confirmations
+  local current="${m7_xmr_second_chain_evidence_root}/.claim-sweep-current.json"
+  for _ in {1..600}; do
+    rm -f -- "$current"
+    if "$m5_lez_taker_binary" claim --receipt "$m7_xmr_second_taker_effect_receipt" \
+      >"$current" 2>/dev/null &&
+      jq -e --arg run "$m7_xmr_second_run_id" '
+        .schema_version==3 and .pair=="monero" and .role=="taker"
+        and .action=="claim" and .step=="sweep_monero_claim" and .run_id==$run
+        and .state=="complete" and .chain_effect_finalized==true
+      ' "$current" >/dev/null 2>&1; then
+      mv "$current" "$m7_xmr_second_claim_sweep_terminal"
+      break
+    fi
+    sleep 0.25
+  done
+  require_owner_file "$m7_xmr_second_claim_sweep_terminal" "second terminal claim sweep"
+  require_owner_file "$m7_xmr_second_claim_sweep_finality" "second claim-sweep finality"
+  "$agreement_role_runner_binary" taker --journal "$m7_xmr_second_taker_role_journal" \
+    --session "${m7_xmr_second_agreement_root}/material/taker-sessions/claim.json" \
+    extract-adaptor-secret \
+    --presignature "${m7_xmr_second_agreement_root}/stage-b/private/taker-outbox/claim-presignature.json" \
+    --final-signature "$m7_xmr_second_observed_final_signature" \
+    --output "$m7_xmr_second_extracted_maker_scalar"
+  "$agreement_actor_binary" bind-finalized-claim-sweep \
+    --private-root "${m7_xmr_second_agreement_root}/material/taker" \
+    --own-public-packet "${m7_xmr_second_agreement_root}/exchange/taker.json" \
+    --peer-public-packet "${m7_xmr_second_agreement_root}/exchange/maker.json" \
+    --agreement-stage-a "$m7_xmr_second_stage_a" \
+    --activation-stage-b "$m7_xmr_second_stage_b" \
+    --journal "$m7_xmr_second_taker_role_journal" \
+    --run-id "$m7_xmr_second_run_id" --claim-run-id "$m7_xmr_second_run_id" \
+    --finalized-claim "$m7_xmr_second_tag15_finality" \
+    --observed-final-signature "$m7_xmr_second_observed_final_signature" \
+    --extracted-maker-adaptor-scalar "$m7_xmr_second_extracted_maker_scalar" \
+    --monero-sweep-evidence "$m7_xmr_second_claim_sweep_submission" \
+    --monero-receipt-evidence "$m7_xmr_second_claim_sweep_finality" \
+    --output-binding-evidence "$m7_xmr_second_claim_binding"
+  jq -e '.schema=="lez_v02_m4_claim_cross_chain_binding_v1"
+    and .distributed_cross_chain_transaction_claimed==false
+    and .lez_effect=="claim" and .lez_sidecar_role=="taker"' \
+    "$m7_xmr_second_claim_binding" >/dev/null ||
+    fail "second claim/sweep binding evidence is incomplete"
+  record_phase m7_xmr_second_claim_sweep completed
+}
+
+verify_m7_xmr_accepted_concurrency_terminal_replay() {
+  [[ "$m7_xmr_accepted_concurrency" == 1 ]] || return 0
+  record_phase m7_xmr_concurrency_terminal_replay started
+  readonly m7_xmr_concurrency_terminal_replay_evidence="${evidence_root}/m7-xmr-concurrency-terminal-replay.json"
+  local first_submission_sha second_submission_sha first_tag15_sha second_tag15_sha
+  local first_replay="${evidence_root}/m7-xmr-first-terminal-replay.json"
+  local second_replay="${m7_xmr_second_chain_evidence_root}/terminal-replay.json"
+  first_submission_sha="$(sha256_file "$m7_taker_claim_sweep_submission")"
+  second_submission_sha="$(sha256_file "$m7_xmr_second_claim_sweep_submission")"
+  first_tag15_sha="$(sha256_file "$tag15_submission")"
+  second_tag15_sha="$(sha256_file "$m7_xmr_second_tag15_submission")"
+  "$m5_lez_taker_binary" claim --receipt "$m7_taker_effect_receipt" >"$first_replay"
+  "$m5_lez_taker_binary" claim --receipt "$m7_xmr_second_taker_effect_receipt" >"$second_replay"
+  chmod 0600 "$first_replay" "$second_replay"
+  jq -e '.schema_version==3 and .action=="claim" and .state=="complete"
+    and .chain_effect_finalized==true' "$first_replay" >/dev/null ||
+    fail "first terminal Claim replay drift"
+  jq -e '.schema_version==3 and .action=="claim" and .state=="complete"
+    and .chain_effect_finalized==true' "$second_replay" >/dev/null ||
+    fail "second terminal Claim replay drift"
+  [[ "$(sha256_file "$m7_taker_claim_sweep_submission")" == "$first_submission_sha" &&
+     "$(sha256_file "$m7_xmr_second_claim_sweep_submission")" == "$second_submission_sha" &&
+     "$(sha256_file "$tag15_submission")" == "$first_tag15_sha" &&
+     "$(sha256_file "$m7_xmr_second_tag15_submission")" == "$second_tag15_sha" ]] ||
+    fail "terminal XMR replay changed one-shot submission evidence"
+  jq -n --arg swap_a "$m5_xmr_planned_swap_id" --arg swap_b "$m7_xmr_second_swap_id" \
+    --arg first_submission "$first_submission_sha" --arg second_submission "$second_submission_sha" \
+    --arg first_tag15 "$first_tag15_sha" --arg second_tag15 "$second_tag15_sha" '
+      {schema:"lez_v02_m7_xmr_accepted_concurrency_terminal_replay_v1",
+       swaps:[{swap_id:$swap_a,claim_submission_sha256:$first_submission,
+               tag15_submission_sha256:$first_tag15,terminal_replay:true},
+              {swap_id:$swap_b,claim_submission_sha256:$second_submission,
+               tag15_submission_sha256:$second_tag15,terminal_replay:true}],
+       accepted_swap_count:2,shared_daemon:true,shared_lez_stack:true,shared_monerod:true,
+       both_in_flight_before_settlement:true,terminal_resubmission_count:0,
+       distributed_cross_chain_transaction_claimed:false,
+       future_reorganization_immunity_claimed:false,
+       public_rpc_used:false,faucet_used:false,runtime_external_resources:[]}
+    ' >"$m7_xmr_concurrency_terminal_replay_evidence"
+  chmod 0600 "$m7_xmr_concurrency_terminal_replay_evidence"
+  record_phase m7_xmr_concurrency_terminal_replay completed
 }
 
 
@@ -5332,6 +5882,10 @@ execute_run() {
   submit_tag13
   export_tag13_handoff
   start_role_sidecars
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    submit_m7_second_xmr_tag13
+    start_m7_second_xmr_role_sidecars
+  fi
   if [[ "$m7_xmr_supervised_refund" == 1 || "$m7_xmr_tag15_process_kill" == 1 ]]; then
     complete_m5_xmr_application_handoff
   fi
@@ -5352,6 +5906,9 @@ execute_run() {
     fi
   else
     fund_and_verify_monero
+    if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+      fund_and_verify_m7_second_monero
+    fi
   fi
   if [[ "$m5_xmr_journey" == punish ]]; then
     :
@@ -5379,6 +5936,10 @@ execute_run() {
     prepare_tag14_release
     if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
       provision_m7_taker_claim_effect_application
+      if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+        prepare_m7_second_xmr_tag14_release
+        provision_m7_second_taker_claim_effect_application
+      fi
       activate_and_run_m7_taker_tag14
     else
       publish_tag14_release
@@ -5400,6 +5961,12 @@ execute_run() {
       sweep_monero_claim
     fi
     bind_claim_sweep
+    if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+      activate_and_run_m7_second_taker_tag14
+      complete_m7_second_xmr_lez_claim
+      activate_and_run_m7_second_taker_claim_sweep
+      verify_m7_xmr_accepted_concurrency_terminal_replay
+    fi
   fi
   return 0
 }

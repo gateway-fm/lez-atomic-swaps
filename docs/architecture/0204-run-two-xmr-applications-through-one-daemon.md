@@ -1,6 +1,6 @@
 # ADR 0204: Run two XMR applications through one daemon
 
-Status: Accepted for implementation; shared-identity prerequisite GREEN
+Status: Accepted for implementation; dual semantic source path GREEN
 
 ## Context
 
@@ -97,6 +97,40 @@ Chat socket. One restart reconciles both Delivery offers; Delivery-free exact
 replay must preserve both receipts, four role journals, four actor roots, and
 both typed Blocked projections before Tag13 activation. Existing M4/M5 source
 contracts remain GREEN. This is not yet the actual-node F3 certificate.
+
+The third source slice gives agreement B its own Tag13 state and typed handoff,
+two role-bound sidecars, neutral-wallet funding/verification receipt, prepared
+Tag14 state, receipt-v2 Taker effect authority, finalized Tag14 and Tag15,
+Monero claim sweep, cross-chain binding, and terminal replay. These components
+share the same LEZ sequencer/indexer/program and the same official Monero
+daemon/wallet RPC topology as agreement A. The runner orders both finalized
+LEZ escrows and both confirmed Monero outputs before invoking either Tag14.
+It then settles A and B independently and verifies that terminal receipt
+replay leaves all four one-shot Tag15/Monero submission files byte-identical.
+The focused source contract and the pre-existing M4/M5 compatibility contracts
+are GREEN. A clean pushed-source Docker replay is still required before F3 is
+closed.
+
+```mermaid
+sequenceDiagram
+    participant A as Accepted application A
+    participant B as Accepted application B
+    participant L as Shared LEZ v0.2 nodes
+    participant M as Shared Monero Regtest RPCs
+    A->>L: Finalize initialize and fund A
+    B->>L: Finalize initialize and fund B
+    A->>M: Fund distinct shared output A
+    M-->>A: Ten-confirmation receipt A
+    B->>M: Fund distinct shared output B
+    M-->>B: Ten-confirmation receipt B
+    Note over A,B: Both swaps are in flight before settlement
+    A->>L: Finalize Tag14 and Tag15 A
+    A->>M: Sweep output A
+    B->>L: Finalize Tag14 and Tag15 B
+    B->>M: Sweep output B
+    A->>A: Terminal replay without resubmission
+    B->>B: Terminal replay without resubmission
+```
 
 Runtime external resources are empty: only isolated literal-loopback LEZ v0.2
 and official Monero 0.18.5.1 Regtest services with deterministic local funds
