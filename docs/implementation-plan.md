@@ -7920,3 +7920,23 @@ S12/S13 review and policy-deferred public deployment.
   re-mined at height 107, resumed revision 3, and restart replay retained three
   events. Both Zebra containers, network, image, processes, and private run
   material were removed before publishing the checked certificate.
+
+## M7 functional-versus-reliability ledger reconciliation (2026-08-12)
+
+- [x] Re-read the literal F/U acceptance rows and the independently enumerated
+  R1/R2/R6/R7 hardening requirements rather than inheriting duplicated plan
+  prose.
+- [x] Record ADR 0203 with component/flow diagrams, conditional atomicity
+  reasoning, external-resource disclosure, and exact ownership for every
+  remaining adverse case.
+- [x] Mark F4, F6, F9, U4, and S5 GREEN at the local-functional boundary from
+  retained actual-node and role-correct CLI evidence. This removes no test and
+  makes no public-network or future-reorg claim.
+- [x] Keep F3 open for its literal two-XMR accepted-application concurrency
+  E2E. Keep R1, R2, R6, and R7 open for reorg, restart/node independence,
+  timing/congestion, and Bitcoin fee/replacement work respectively.
+- [x] Run the focused non-security inventory, traceability, documentation, and
+  Mermaid compatibility gates. The hard inventory reports 28 rows, 5 open and
+  2 deferred; the submission inventory reports 14 rows, 3 open, 2 external and
+  1 deferred. Traceability, whitespace, and both new Mermaid diagrams pass.
+- [ ] Push the reconciled ledger before continuing the F3 actual-node flow.

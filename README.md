@@ -16,8 +16,10 @@ on the canonical terminal state, and exact cleanup passed. Reproduction and
 resource details are in [manual Flow 1ZB](docs/manual-user-flows.md#flow-1zb-repeat-the-actual-local-tag17-punishment-poc),
 with checked evidence in
 [`m7-actual-tag17-a23a314-20260804.json`](docs/evidence/m7-actual-tag17-a23a314-20260804.json).
-F3/F6 still require the joined two-devnet abandonment economics and adverse
-recovery races; public deployment remains deliberately deferred.
+F3 still requires the accepted-application two-XMR devnet concurrency run.
+F6 is GREEN at the conditional-atomicity boundary under ADR 0203; reorg, fee,
+timing, and adverse recovery work remains visible under R1/R2/R6/R7. Public
+deployment remains deliberately deferred.
 
 Zcash competing-fork behavior is actual-node GREEN at the consensus/SDK
 boundary on exact pushed run `m7reorg087c37fa`. Two isolated Zebra 5.2.0
@@ -28,8 +30,8 @@ while an unrelated Refund stayed canonical. The checked
 [ADR 0201](docs/architecture/0201-retain-zebra-competing-fork-evidence.md), and
 [manual flow](docs/manual-user-flows.md#flow-m7-zec-2-repeat-the-two-zebra-competing-fork-certificate)
 are CI-pinned. Runtime uses no external RPC, peer, faucet, public funds, or
-public deployment. R1/F6 remain open for application-level continuation and
-the other adverse pair/timing cases.
+public deployment. R1 remains open for the other application-level and
+pair-specific reorganization cases.
 
 The pre-dependent ZEC application continuation is also exact-node GREEN on run
 `m7appreorg297f09aa`. After a real longer-fork removal, the restarted Maker
@@ -120,8 +122,10 @@ and replayed without a new chain effect. Its checked
 uses only isolated LEZ v0.2 and Zebra 5.2.0 Regtest services with deterministic
 local funds, zero peers, no public RPC/faucet/funds/deployment, and no runtime
 external resource. [Manual Flow M7-ZEC-1](docs/manual-user-flows.md#flow-m7-zec-1-reverse-first-lock-refund-after-maker-absence)
-documents a fresh reproduction and exact scoped cleanup. This closes that
-reverse-ZEC sub-gap; broader all-pair adverse schedules remain open.
+documents a fresh reproduction and exact scoped cleanup. Together with the
+retained all-pair journeys this closes U4/F9/S5 at the local-functional
+boundary under ADR 0203; broader adverse schedules remain open only in their
+applicable Reliability rows.
 
 ADR [0174](docs/architecture/0174-join-tag17-to-the-funded-monero-output.md)
 now defines the isolated joined-abandonment runner checkpoint. Its opt-in mode

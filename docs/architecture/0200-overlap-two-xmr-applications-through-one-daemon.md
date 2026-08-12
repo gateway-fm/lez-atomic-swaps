@@ -5,7 +5,7 @@ Status: Accepted and functional process-GREEN
 ## Context
 
 M7 has exact local-node XMR claim, refund, losing-branch, and process-recovery
-certificates, but its remaining F3/F6 work includes accepted-application
+certificates, but F3 still literally requires accepted-application
 concurrency. Before paying the cost of another two-devnet run, the shared Maker
 application boundary must prove that two XMR rows can hold independent leases,
 survive one daemon interruption, and terminalize without sharing authority.
@@ -84,8 +84,9 @@ effect.
 
 This is application/process atomicity only. Marker actors deliberately contact
 no LEZ or Monero node and do not claim cross-chain completion, finality, fees,
-or reorganization behavior. F3/F6 remain open until the corresponding actual-
-node concurrency and remaining boundary evidence are checked.
+or reorganization behavior. F3 remains open until the corresponding actual-
+node concurrency evidence is checked. ADR 0203 assigns fee, reorganization,
+and adverse continuation to their literal Reliability rows rather than F6.
 
 ## Consequences
 
