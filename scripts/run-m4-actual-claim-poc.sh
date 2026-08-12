@@ -39,6 +39,7 @@ readonly m7_xmr_build_cache_root="${M7_XMR_BUILD_CACHE_ROOT:-}"
 readonly m7_xmr_joined_abandonment="${M7_XMR_JOINED_ABANDONMENT:-0}"
 readonly m7_xmr_losing_tag16_after_tag17="${M7_XMR_LOSING_TAG16_AFTER_TAG17:-0}"
 readonly m7_xmr_losing_tag17_after_tag16="${M7_XMR_LOSING_TAG17_AFTER_TAG16:-0}"
+readonly m7_xmr_accepted_concurrency="${M7_XMR_ACCEPTED_CONCURRENCY:-0}"
 readonly m5_actor_requeue_delay_seconds=$(((m7_xmr_supervised_refund == 1 || m7_xmr_tag15_process_kill == 1) ? 1 : (m7_xmr_semantic_claim == 1 ? 1 : 3600)))
 readonly m5_actor_failure_backoff_seconds=$((m7_xmr_tag15_process_kill == 1 ? 1 : 30))
 readonly tag17_finality_page_blocks=8
@@ -202,6 +203,23 @@ emit_contract() {
         terminal_refunded_zero_excludes_punish: true,
         minimum_post_attempt_finalized_tail_blocks: 8,
         tag16_facts_reobserved_equal: true,
+        runtime_external_resources: []
+      },
+      m7_xmr_accepted_concurrency: {
+        mode_flag: "M7_XMR_ACCEPTED_CONCURRENCY",
+        requires_application_mode: true,
+        requires_claim_journey: true,
+        requires_semantic_claim: true,
+        accepted_swap_count: 2,
+        shared_daemon: true,
+        shared_database: true,
+        shared_chat: true,
+        shared_lez_stack: true,
+        shared_monerod: true,
+        distinct_agreements: true,
+        distinct_role_journals: true,
+        both_accepted_before_activation: true,
+        terminal_resubmission_count: 0,
         runtime_external_resources: []
       },
       available_unwired_launchers: [
@@ -404,6 +422,19 @@ environment_preflight() {
   [[ "$m7_xmr_losing_tag17_after_tag16" == 0 ||
      "$m7_xmr_losing_tag17_after_tag16" == 1 ]] ||
     fail "M7_XMR_LOSING_TAG17_AFTER_TAG16 must be unset, 0, or 1"
+  [[ "$m7_xmr_accepted_concurrency" == 0 || "$m7_xmr_accepted_concurrency" == 1 ]] ||
+    fail "M7_XMR_ACCEPTED_CONCURRENCY must be unset, 0, or 1"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    [[ "$m5_xmr_application_mode" == 1 && "$m5_xmr_journey" == claim &&
+       "$m7_xmr_semantic_claim" == 1 ]] ||
+      fail "M7_XMR_ACCEPTED_CONCURRENCY=1 requires application semantic-claim mode"
+    [[ "$m7_xmr_supervised_refund" == 0 && "$m7_xmr_refund_process_kill" == 0 &&
+       "$m7_xmr_claim_process_kill" == 0 && "$m7_xmr_claim_sweep_process_kill" == 0 &&
+       "$m7_xmr_tag15_process_kill" == 0 && "$m7_xmr_joined_abandonment" == 0 &&
+       "$m7_xmr_losing_tag16_after_tag17" == 0 &&
+       "$m7_xmr_losing_tag17_after_tag16" == 0 ]] ||
+      fail "M7 XMR accepted concurrency is exclusive with adverse single-swap modes"
+  fi
   if [[ "$m7_xmr_losing_tag16_after_tag17" == 1 ]]; then
     [[ "$m7_xmr_joined_abandonment" == 1 ]] ||
       fail "M7_XMR_LOSING_TAG16_AFTER_TAG17=1 requires M7_XMR_JOINED_ABANDONMENT=1"

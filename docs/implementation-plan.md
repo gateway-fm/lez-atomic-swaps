@@ -7939,4 +7939,25 @@ S12/S13 review and policy-deferred public deployment.
   Mermaid compatibility gates. The hard inventory reports 28 rows, 5 open and
   2 deferred; the submission inventory reports 14 rows, 3 open, 2 external and
   1 deferred. Traceability, whitespace, and both new Mermaid diagrams pass.
-- [ ] Push the reconciled ledger before continuing the F3 actual-node flow.
+- [x] Push the reconciled ledger as `b79ed30` before continuing the F3
+  actual-node flow. Corrected ETA after that push was 8–12 focused hours.
+
+## M7 actual XMR accepted-concurrency flow (2026-08-12)
+
+- [x] Reject the tempting two-independent-harness shortcut: F3 must cross one
+  Maker daemon/database/Chat boundary and one LEZ/Monero node topology.
+- [x] RED then GREEN a fixed wrapper contract for two same-direction semantic
+  Claim applications. Conflicting application, journey, or semantic-mode
+  overrides fail before execution.
+- [x] Add the runner mode contract and exclusivity matrix; retain the existing
+  33.66-second shared-daemon two-row restart regression as a prerequisite.
+- [x] Record component and sequence diagrams, conditional-atomicity limits,
+  node/RPC topology, external-resource disclosure, and exact closure rule in
+  ADR 0204.
+- [ ] Parameterize offer, reservation, agreement, role journals, actor stores,
+  and evidence into two isolated swap contexts under the shared daemon.
+- [ ] Accept both applications before activation, restart once, and prove both
+  leases/effects overlap without cross-authority or replay.
+- [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
+  and official Monero Regtest topology; sanitize and CI-pin the certificate,
+  update manual reproduction, clean exact resources, and close F3.

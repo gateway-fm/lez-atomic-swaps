@@ -21,6 +21,12 @@ F6 is GREEN at the conditional-atomicity boundary under ADR 0203; reorg, fee,
 timing, and adverse recovery work remains visible under R1/R2/R6/R7. Public
 deployment remains deliberately deferred.
 
+The F3 join is now in implementation under
+[ADR 0204](docs/architecture/0204-run-two-xmr-applications-through-one-daemon.md).
+Its GREEN source contract fixes two authenticated semantic-Claim applications
+to one Maker daemon/database/Chat boundary and one local LEZ/Monero topology;
+F3 remains open until the clean actual-node certificate and replay exist.
+
 Zcash competing-fork behavior is actual-node GREEN at the consensus/SDK
 boundary on exact pushed run `m7reorg087c37fa`. Two isolated Zebra 5.2.0
 Regtest nodes built a common prefix, a three-block Claim branch, and a

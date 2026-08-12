@@ -1,0 +1,88 @@
+# ADR 0204: Run two XMR applications through one daemon
+
+Status: Accepted for implementation; source contract GREEN
+
+## Context
+
+F3 literally requires an XMR concurrency role E2E. ADR 0200 proves that two
+accepted XMR rows can overlap, restart, and terminalize independently in one
+real Maker daemon and SQLite database, but deliberately uses non-chain marker
+actors. Separate actual-node XMR certificates prove Claim, Refund, Punish, and
+restart paths one swap at a time. Neither result alone proves the required
+joined boundary.
+
+Running two independent top-level harnesses would not exercise the shared
+application or chain topology users actually encounter. The concurrency mode
+therefore belongs inside the existing actual XMR runner.
+
+## Decision
+
+Add a fail-closed `M7_XMR_ACCEPTED_CONCURRENCY=1` mode selected only by
+`run-m7-xmr-accepted-concurrency-poc.sh`. It fixes application mode, the
+LEZ-first direction, semantic Claim, and two accepted swaps. It is mutually
+exclusive with the single-swap crash, losing-branch, Refund, and Punish modes.
+
+The implementation will retain one Maker daemon, database, Delivery
+directory, Chat socket, LEZ v0.2 topology, deployed program, and official
+Monero Regtest daemon. Each swap retains a distinct authenticated offer,
+reservation, agreement, Stage A/B material, Maker/Taker journal, actor store,
+Monero output, LEZ escrow, and terminal evidence packet. Both applications
+must be accepted before either actor is activated, and both swaps must be in
+flight before settlement begins.
+
+```mermaid
+flowchart TB
+    T1[Taker application A] --> C[Shared Chat socket]
+    T2[Taker application B] --> C
+    C --> D[One Maker daemon]
+    D --> DB[One Maker SQLite database]
+    DB --> A[Maker actor A]
+    DB --> B[Maker actor B]
+    A --> L[One LEZ v0.2 stack]
+    B --> L
+    A --> M[One official monerod Regtest]
+    B --> M
+```
+
+```mermaid
+sequenceDiagram
+    actor T1 as Taker A
+    actor T2 as Taker B
+    participant D as Maker daemon
+    participant DB as Maker SQLite
+    participant L as LEZ v0.2
+    participant M as Monero Regtest
+    T1->>D: Accept signed offer A and Stage A B
+    D->>DB: Commit application A
+    T2->>D: Accept signed offer B and Stage A B
+    D->>DB: Commit application B
+    D->>DB: Restart and lease A and B
+    par Independent swap A
+        D->>L: One attempt escrow and claim effects A
+        D->>M: One attempt funding and sweep A
+    and Independent swap B
+        D->>L: One attempt escrow and claim effects B
+        D->>M: One attempt funding and sweep B
+    end
+    D->>DB: Commit two terminal rows
+    D->>DB: Replay with zero resubmission
+```
+
+## Atomicity and evidence scope
+
+Each swap is conditionally atomic on its own immutable terms and ordered
+claim/recovery paths; the two swaps are not atomic with each other. Distinct
+authority and journals prevent one application from spending or replaying the
+other. Persist-before-effect and observe-before-resend rules remain per swap.
+The concurrency certificate must not claim a distributed transaction or
+future-reorganization immunity.
+
+The source contract is GREEN. F3 remains open until a clean pushed-source run
+retains two authenticated acceptances, actual effects on the one shared node
+topology, terminal replay, sanitized evidence, and exact scoped cleanup.
+
+Runtime external resources are empty: only isolated literal-loopback LEZ v0.2
+and official Monero 0.18.5.1 Regtest services with deterministic local funds
+participate. No public RPC, peer, faucet, public funds, or public deployment is
+used. No external security review or security-completion claim is part of this
+decision.
