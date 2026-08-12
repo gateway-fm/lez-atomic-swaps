@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_zebra_competing_fork",
+  "result": "passed",
+  "run_id": "m7reorg087c37fa",
+  "repository_commit": "087c37fc68b5863814f5a8c8edb8b69ec9e2d79d",
+  "source_evidence_sha256": "895d403a0607905a9318b0d1e1f42eba3865c13c2a1579360dbaa18df0db3343",
+  "zebra": {
+    "version": "5.2.0",
+    "image": "docker.io/zfnd/zebra:5.2.0@sha256:477e65add4dacf52074ba04da8d763c89c26cc57f911dba2127401f8e1da597d",
+    "network": "Regtest",
+    "node_count": 2,
+    "common_height": 116,
+    "automatic_submission_retry": false
+  },
+  "old_branch": {
+    "block_count": 3,
+    "first_height": 117,
+    "first_hash": "17eca4e03cb0e8c7a5de14320d980e2012c4a27b62db5074b2f03b844323dea3",
+    "tip_height": 119,
+    "tip_hash": "8edf46af7debd8ebe220bd20f4e05acc643ed571bf669f3f50d8afb9adf3c259"
+  },
+  "replacement_branch": {
+    "block_count": 4,
+    "first_height": 117,
+    "first_hash": "0d3c414b0d5804022235c692193e7d9fa0f499a711f8aa68e1bb42c257dc0e21",
+    "tip_height": 120,
+    "tip_hash": "8b70aafbae295e3d3968392ab7aeb3442ced51340c1c89933e9a0993bf9e2700"
+  },
+  "transactions": {
+    "detached_claim": "4e6e5ed111bd19ce66563c20d6624140fdd32e80e4d3a6e45934f88202b64fe4",
+    "detached_claim_lookup": "indexed_detached",
+    "canonical_conflicting_refund": "6140dd2ce68969f7bb78d611f2b3efbc548200b17410e6705348ceb4a2f45230",
+    "canonical_shared_refund": "a280ea15a72963aa6e9a2417e515828cd39acbf6670dc6235d671e666f3811fc"
+  },
+  "outcome": {
+    "old_branch_detached": true,
+    "detached_claim_is_not_active": true,
+    "replacement_branch_canonical": true,
+    "shared_refund_survived_reorg": true,
+    "conflicting_refund_replaced_claim": true
+  },
+  "restart_prerequisite": {
+    "canonical_funding_requeried_after_real_removal": true,
+    "elapsed_seconds": 69.94
+  },
+  "competing_fork_test": {
+    "elapsed_seconds": 11.45,
+    "raw_blocks_relayed_over_loopback_rpc": true
+  },
+  "atomicity": {
+    "proof_scope": "zcash_htlc_canonical_outcome_under_competing_fork_replacement",
+    "claim_and_conflicting_refund_coexisted_on_canonical_chain": false,
+    "independent_refund_remained_canonical": true,
+    "automatic_resubmission_observed": false,
+    "future_reorganization_immunity_claimed": false,
+    "argument": "The old branch canonically contained a Claim for one HTLC and a Refund for an independent HTLC. A longer valid branch spent the first HTLC through its mutually exclusive Refund while retaining the independent Refund. After the replacement, every fork height matched the longer branch, the Claim was explicitly outside the active chain, and both Refunds were canonical. This proves the Zcash consensus and SDK outcome used by recovery logic; it does not prove that the cross-chain application supervisor resumes after the replacement."
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_containers_absent": true,
+    "exact_network_absent": true,
+    "exact_image_absent": true,
+    "exact_processes_absent": true,
+    "private_run_material_removed": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "not_proven_by_this_certificate": [
+    "application-level cross-chain continuation after the replacement",
+    "LEZ reorganization behavior",
+    "public-network behavior or organic peer propagation",
+    "fee-market or congestion behavior",
+    "future reorganization immunity"
+  ],
+  "cold_setup_external_resources": [
+    "pinned image and package endpoints when local caches are cold"
+  ],
+  "cold_setup_flakiness": "Cold-cache registry or package availability can block setup; the measured replay itself used only two isolated loopback Zebra Regtest nodes and deterministic local outputs.",
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment": false
+}

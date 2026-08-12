@@ -19,6 +19,18 @@ with checked evidence in
 F3/F6 still require the joined two-devnet abandonment economics and adverse
 recovery races; public deployment remains deliberately deferred.
 
+Zcash competing-fork behavior is actual-node GREEN at the consensus/SDK
+boundary on exact pushed run `m7reorg087c37fa`. Two isolated Zebra 5.2.0
+Regtest nodes built a common prefix, a three-block Claim branch, and a
+four-block conflicting-Refund replacement; the old Claim became non-active
+while an unrelated Refund stayed canonical. The checked
+[certificate](docs/evidence/m7-actual-zebra-competing-fork-087c37f-20260812.json),
+[ADR 0201](docs/architecture/0201-retain-zebra-competing-fork-evidence.md), and
+[manual flow](docs/manual-user-flows.md#flow-m7-zec-2-repeat-the-two-zebra-competing-fork-certificate)
+are CI-pinned. Runtime uses no external RPC, peer, faucet, public funds, or
+public deployment. R1/F6 remain open for application-level continuation and
+the other adverse pair/timing cases.
+
 The successful Taker claim corridor is also actual-node GREEN on exact pushed
 run `m7claim-2cff48d-a`. Receipt-v2 Claim published owner-exact Tag14, observed
 finalized Tag15, reconstructed the committed spend authority and swept the

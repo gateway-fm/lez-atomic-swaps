@@ -300,6 +300,16 @@ therefore does not itself prove concurrent LEZ/Monero effects, finality, fees,
 or reorganization. F3/F6 remain open for that actual-node packet and the other
 listed boundary work.
 
+ADR 0201 and checked run `m7reorg087c37fa` add actual Zebra 5.2.0
+competing-fork evidence for R1/F6. A three-block branch containing a Claim and
+an independent Refund was replaced by a four-block branch containing the
+conflicting Refund and the same independent Refund. Every replacement height
+became canonical, the old Claim was explicitly outside the active chain, and
+the independent Refund survived. The preceding real-removal restart audit
+also re-queried canonical funding. This closes the Zcash consensus/SDK fork
+checkpoint; R1/F6 remain open for application-level cross-chain continuation,
+the other pairs, fees, and timing races.
+
 Current F7 execution update: clean pushed Runs X (`422c72e`), Z (`1555749`),
 AA (`df7ed86`), and AD (`0826dd5`) each completed both actual-node custom-token
 directions at the one-second local cadence. Every direction reached revision

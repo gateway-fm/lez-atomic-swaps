@@ -59,6 +59,7 @@ materially affect safe reproduction.
 - [Reverse-ZEC first-lock refund certificate](../evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json)
 - [Two-XMR application overlap decision](../architecture/0200-overlap-two-xmr-applications-through-one-daemon.md)
 - [Two-Zebra competing-fork evidence decision](../architecture/0201-retain-zebra-competing-fork-evidence.md)
+- [Checked actual Zebra competing-fork certificate](../evidence/m7-actual-zebra-competing-fork-087c37f-20260812.json)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

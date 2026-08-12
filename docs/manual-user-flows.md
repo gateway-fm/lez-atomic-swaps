@@ -9602,3 +9602,51 @@ participate. Host compilation, process scheduling, and disk pressure can vary
 runtime, but there is no RPC/faucet/peer/public-funds flakiness. It proves the
 application scheduler prerequisite in ADR 0200, not actual Monero/LEZ effects;
 the later actual-node concurrency flow must be used for F3/F6 closure.
+
+## Flow M7-ZEC-2: repeat the two-Zebra competing-fork certificate
+
+This ordinary functional QA flow runs two isolated Zebra 5.2.0 Regtest nodes.
+It first proves canonical funding is re-queried after real node removal and
+restart. It then creates a common chain prefix, mines a Claim and an unrelated
+Refund into a three-block branch, independently mines the conflicting Refund
+and the same unrelated Refund into a four-block branch, and relays the longer
+branch's raw blocks over loopback RPC.
+
+Use a fresh lowercase run ID and an owner-private evidence path:
+
+```bash
+export RUN_ID=m7reorg-$(date -u +%Y%m%d%H%M%S)
+export M7_ZEBRA_REORG_EVIDENCE=/tmp/${RUN_ID}-zebra-reorg.json
+./scripts/run-zebra-e2e.sh
+jq . "$M7_ZEBRA_REORG_EVIDENCE"
+```
+
+A valid result reports a three-block old branch ending at height 119, a
+four-block replacement ending at height 120, `old_branch_detached`,
+`detached_claim_is_not_active`, `replacement_branch_canonical`,
+`shared_refund_survived_reorg`, and `conflicting_refund_replaced_claim` all
+true. The old Claim lookup may be `unavailable` or `indexed_detached`; an
+indexed result must have been verified as `in_active_chain = false`.
+
+Verify the retained pushed-source example without starting Docker:
+
+```bash
+./scripts/test-m7-zebra-reorg-actual-certificate.sh
+```
+
+The exact component and sequence diagrams and the conditional-atomicity
+argument are in ADR 0201. The Claim and conflicting Refund spend the same HTLC
+and therefore cannot coexist on the canonical branch; the unrelated Refund
+remaining canonical proves the test did not mistake total node rollback for
+selective replacement. This is consensus/SDK evidence, not proof that the
+cross-chain application supervisor continues after the replacement.
+
+Runtime external resources are empty. Both RPC endpoints are dynamic
+loopback-only ports, both nodes have no public peers, funds are deterministic
+local Regtest outputs, and no faucet, DNS service, public funds, or public
+deployment participates. A cold setup may need the pinned Zebra image and Rust
+dependencies from their registries. Host CPU/disk pressure, cold downloads,
+port exhaustion, or Docker startup latency can make setup flaky; public-chain
+finality, reorgs, quotas, and provider behavior cannot affect the measured
+run. The runner removes only its exact Compose project, volumes, network, and
+owned image; never broad-prune concurrent workloads.

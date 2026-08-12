@@ -28,6 +28,13 @@ replacement branch. Raw
 transactions, keys, endpoints, process identities, and filesystem locations
 are excluded.
 
+Exact pushed-source run `m7reorg087c37fa` is GREEN. The checked certificate at
+`docs/evidence/m7-actual-zebra-competing-fork-087c37f-20260812.json` binds the
+three-block detached branch, four-block canonical replacement, transaction
+classification, restart prerequisite, and exact cleanup to commit `087c37f`.
+The retained lookup shape was `indexed_detached`; Zebra explicitly reported
+the old Claim outside the active chain.
+
 ```mermaid
 flowchart LR
     T[ZEC SDK consensus test] --> P[Primary Zebra Regtest]
@@ -72,8 +79,8 @@ not prior inclusion, controls which spend is authoritative.
 
 It is an SDK/consensus test, not yet the full Maker/Taker application recovery
 after reorg. It does not prove LEZ rollback, daemon rescheduling, fee pressure,
-or public-network behavior, so R1/F6 remain open until the pushed-source replay
-is certified and the application-level continuation is completed.
+or public-network behavior. The exact pushed-source replay is certified, but
+R1/F6 remain open until application-level continuation is completed.
 
 ## Consequences
 

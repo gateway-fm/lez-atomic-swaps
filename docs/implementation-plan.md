@@ -7855,7 +7855,8 @@ S12/S13 review and policy-deferred public deployment.
   evidence boundary and exact outcome fields.
 - [x] Add create-once mode-`0600` JSON evidence after every detached height is
   replaced, the conflicting Refund is canonical, and the unrelated Refund
-  remains confirmed. Also require the old Claim lookup to fail after the reorg.
+  remains confirmed. Also require the old Claim to be unavailable or explicitly
+  indexed outside the active chain after the reorg.
   Raw transactions, keys, endpoints, process IDs, and paths are excluded.
 - [x] Record components, RPC flow, conditional atomicity relevance, external
   resources, flakiness, and evidence limits in ADR 0201; pin the offline source
@@ -7884,4 +7885,14 @@ S12/S13 review and policy-deferred public deployment.
   unavailable lookup or require an indexed response to be explicitly outside
   the active chain; record which shape Zebra returned and keep the stronger
   `detached_claim_is_not_active` outcome.
-- [ ] Push and repeat from a fresh exact run ID.
+- [x] Push correction `087c37f` and repeat from fresh exact run
+  `m7reorg087c37fa`. The restart/removal prerequisite passed in 69.94 seconds;
+  the competing-fork case passed in 11.45 seconds. The three-block Claim
+  branch detached, the four-block conflicting Refund branch became canonical,
+  the independent Refund survived, and Zebra classified the old Claim as
+  indexed but outside the active chain.
+- [x] Verify exact containers, network, image, and processes absent; remove the
+  exact run directory; publish the sanitized checked certificate
+  `docs/evidence/m7-actual-zebra-competing-fork-087c37f-20260812.json` and pin
+  its contract in the quality runner. This closes the Zebra consensus/SDK
+  checkpoint, not the remaining application-level R1/F6 continuation.
