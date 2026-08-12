@@ -47,6 +47,14 @@ for required in \
 done
 
 for required in \
+  '.outcome == "refunded" and .phase == "refunded" and .revision == 2' \
+  '(.outcome == "awaiting_observation" or .outcome == "projected")' \
+  '.operation == "zcash_refund"'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "Maker terminal refund observer assertion is incomplete: ${required}"
+done
+
+for required in \
   'm7-taker-first-lock-intent.json' \
   '--config "$taker_config" --peer-config "$maker_config"' \
   'm5_expected_funding_txid="$(jq -er '\''.expected_zebra_txid'\'' "$taker_intent")"'; do

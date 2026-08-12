@@ -3663,9 +3663,9 @@ while true; do
           "$actor_bin" --config "$maker_config" recover)"
         jq -e '
           .schema_version == 1 and .role == "maker" and .command == "recover"
-          and .operation == "zcash_refund"
-          and (.outcome == "awaiting_observation" or .outcome == "projected"
-            or .outcome == "refunded")
+          and ((.outcome == "refunded" and .phase == "refunded" and .revision == 2)
+            or ((.outcome == "awaiting_observation" or .outcome == "projected")
+              and .operation == "zcash_refund"))
         ' <<<"$maker_output" >/dev/null
         printf '%s\n' "$maker_output" \
           >>"${evidence_dir}/m7-maker-first-lock-refund-observer.ndjson"

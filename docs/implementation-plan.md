@@ -7764,7 +7764,19 @@ S12/S13 review and policy-deferred public deployment.
   ID, rejects replacement after the parent accepts it, and defaults the new
   fields only for legacy imported M6 fixtures. The parent gains observation
   state, not submission authority. Focused M6/M7 contracts are GREEN.
-- [ ] Push the Zcash-refund handoff correction, retire only the affected Zebra
+- [x] Push the Zcash-refund handoff correction as `e8d1963`, provision fresh
+  primary-only Zebra run `m7frzece8d1963a` and height-104 prehistory, and
+  repeat as `m7zecfirstrefunde8d1963a`. The run rapidly reproduced all chain
+  facts through exactly one confirmed refund and empty mempool at height 110.
+  The typed handoff activated the Maker observer, which returned terminal
+  `refunded` revision 2. The harness rejected that valid terminal shape because
+  it required the in-progress `operation` field even on an absorbing output.
+- [x] RED then GREEN the terminal Maker observer assertion. A terminal output
+  must be `refunded` at revision 2 and may omit `operation`; awaiting/projected
+  outputs still require `operation = zcash_refund`. The retained exact actor
+  state reproduced the terminal response read-only. Focused M6/M7 contracts
+  and shell syntax are GREEN.
+- [ ] Push the terminal assertion correction, retire only the affected Zebra
   run, provision a fresh isolated node and height-104 prehistory, and repeat
   the exact journey. Only an exact GREEN result may produce a certificate or
   close F9/U4/S5.

@@ -47,6 +47,10 @@ parent handoff carries the immutable Zcash-refund mined flag and exact
 transaction ID in addition to the existing LEZ-refund fields. The parent
 validates and freezes that identity, then enables only the independent Maker
 terminal observer; it receives no refund submission authority.
+The Maker observer binds `operation = zcash_refund` while observation is still
+pending or projected. Its absorbing `refunded` revision-2 output is terminal
+and intentionally needs no operation field; accepting that shape does not
+broaden effect authority.
 
 Before mining, a read-only role-aware inspector opens the Taker's durable
 first-lock journal, validates the rebound Maker/Taker config pair, converts the
