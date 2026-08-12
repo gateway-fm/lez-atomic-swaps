@@ -1,6 +1,6 @@
 # ADR 0206: Give concurrent Takers distinct LEZ identities
 
-Status: Accepted for M7 functional replay; source contracts GREEN
+Status: Accepted and actual-node certified for M7 functional F3
 
 ## Context
 
@@ -91,6 +91,6 @@ The focused contract began RED because the second identity, genesis actor,
 Vault Claim, agreement owner, Tag13 signer, and Taker sidecar binding were
 absent. It is GREEN only when each primary and secondary function is checked
 individually, preventing a swapped-authority false positive. Existing default
-two-actor stack and onboarding contracts remain GREEN. F3 stays open until one
-fresh pushed-source actual-node run completes both swaps, terminal replay,
-sanitized evidence, and exact cleanup.
+two-actor stack and onboarding contracts remain GREEN. Exact pushed run
+`m7xmrconc-d8efb7ca` completed both swaps, terminal replay, sanitized evidence,
+and exact cleanup; its checked certificate closes F3.

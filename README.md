@@ -16,20 +16,28 @@ on the canonical terminal state, and exact cleanup passed. Reproduction and
 resource details are in [manual Flow 1ZB](docs/manual-user-flows.md#flow-1zb-repeat-the-actual-local-tag17-punishment-poc),
 with checked evidence in
 [`m7-actual-tag17-a23a314-20260804.json`](docs/evidence/m7-actual-tag17-a23a314-20260804.json).
-F3 still requires the accepted-application two-XMR devnet concurrency run.
+F3 is GREEN on exact pushed run `m7xmrconc-d8efb7ca`: two authenticated XMR
+applications shared one Maker daemon/database, one official Monero 0.18.5.1
+Regtest daemon, and one local LEZ v0.2 stack while retaining distinct Taker
+signers, escrows, outputs, stores, and journals. Both finalized LEZ claims,
+both ten-confirmation Monero locks, both Monero sweeps, zero-submission terminal
+replay, and exact cleanup passed. The checked
+[certificate](docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json)
+is pinned in the ordinary quality gates.
 F6 is GREEN at the conditional-atomicity boundary under ADR 0203; reorg, fee,
 timing, and adverse recovery work remains visible under R1/R2/R6/R7. Public
 deployment remains deliberately deferred.
 
-The F3 join is now in implementation under
+The F3 join is implemented under
 [ADR 0204](docs/architecture/0204-run-two-xmr-applications-through-one-daemon.md).
 Its GREEN source contract fixes two authenticated semantic-Claim applications
 to one Maker daemon/database/Chat boundary and one local LEZ/Monero topology.
 [ADR 0206](docs/architecture/0206-give-concurrent-takers-distinct-lez-identities.md)
 also gives the two real Takers separate LEZ signers, genesis Vaults, finalized
 Vault Claims, and nonce domains after replay `m7xmrconc-6567322a` proved a
-shared signer could admit but lose an effect before inclusion. F3 remains open
-until the corrected clean actual-node certificate and replay exist.
+shared signer could admit but lose an effect before inclusion. Corrected run
+`m7xmrconc-d8efb7ca` then completed both independent claim corridors and exact
+cleanup from pushed source.
 
 Zcash competing-fork behavior is actual-node GREEN at the consensus/SDK
 boundary on exact pushed run `m7reorg087c37fa`. Two isolated Zebra 5.2.0

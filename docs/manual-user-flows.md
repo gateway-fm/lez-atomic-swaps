@@ -9623,6 +9623,14 @@ export LEZ_V02_SERVICES_DIR=/absolute/path/to/pinned/lez-v0.2-release-services
 The wrapper accepts only `contract` or `execute`; `execute` performs the
 fail-closed build and runtime preflight before creating chain resources.
 
+The retained pushed-source example is run `m7xmrconc-d8efb7ca` from commit
+`d8efb7c68fdd95932dcbea3a9f84524e069e2546`. Verify its sanitized certificate
+without starting nodes or reading owner-private run material:
+
+```bash
+./scripts/test-m7-xmr-accepted-concurrency-actual-certificate.sh
+```
+
 The runner creates one Maker and two Taker LEZ identities, gives all three
 distinct genesis Vaults and finalized Vault Claims, accepts both applications
 through one Maker daemon, and uses one LEZ stack plus one official Monero
@@ -9632,6 +9640,12 @@ both swaps with no resubmission. Inspect the secret-free result and phase log
 under `/tmp/lez-atomic-swaps-${RUN_ID}/evidence` and the exact cleanup packet
 under `.e2e/${RUN_ID}/m4-actual-claim/evidence/cleanup.json`. A failed or
 interrupted run is diagnostic only and must not be resumed as evidence.
+
+For the retained run, LEZ claims finalized at heights 161 and 189 with
+`claimed` metadata and zero custody; both Monero funding outputs reached ten
+confirmations, both claim sweeps reached finalized terminal state, the replay
+submitted zero additional effects, and exact cleanup preserved the foreign
+sentinel.
 
 All runtime RPCs are dynamically published on literal loopback. Funds come
 only from fresh LEZ genesis allocations and locally mined Monero Regtest

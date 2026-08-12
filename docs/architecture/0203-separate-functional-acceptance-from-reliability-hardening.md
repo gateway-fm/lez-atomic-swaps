@@ -28,9 +28,10 @@ continuation only in the corresponding Reliability row:
 | U4 | Taker discovery, initiation, receipt-bound monitoring, Claim/Refund services, and actual BTC/XMR/ZEC journeys | R1, R2, R6, and R7 |
 | S5 | A runnable reference integration exists for BTC, XMR, and ZEC through the same application surface | The still-open F, R, and D rows |
 
-F3 remains open because its acceptance text literally requires an XMR
-concurrency role E2E. Process-level two-application overlap is already GREEN,
-but the corresponding two-devnet run is not yet retained.
+F3 is now GREEN because exact pushed run `m7xmrconc-d8efb7ca` retains the
+literal XMR concurrency role E2E. It composes the process-level two-application
+overlap with one private LEZ v0.2 and official Monero Regtest topology; ADRs
+0204 and 0206 bind the checked evidence and distinct Taker authority.
 
 ```mermaid
 flowchart LR

@@ -106,6 +106,8 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m7-maker-tag15-process-kill-actual-certificate.sh
 ./scripts/test-m7-btc-accepted-concurrency-contract.sh
 ./scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh
+./scripts/test-m7-xmr-accepted-concurrency-contract.sh
+./scripts/test-m7-xmr-accepted-concurrency-actual-certificate.sh
 ./scripts/test-m7-zec-accepted-process-kill-contract.sh
 ./scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh
 ./scripts/test-m7-maker-refund-actual-certificate.sh

@@ -1,6 +1,6 @@
 # Milestone delivery metrics
 
-Last updated: 2026-08-04
+Last updated: 2026-08-12
 
 This is the live evidence scorecard for ADR 0027's progressive milestone
 delivery. It tracks measurements and explicit unknowns; it does not infer a
@@ -26,6 +26,16 @@ Status vocabulary:
 | M5 | Verified local-functional PoC | All seven literal outputs are reproducibly GREEN. Retained actual-node BTC, XMR, and ZEC application corridors are deliberately layered with the final role-lifecycle and coordinator control-plane matrices; marker evidence is never presented as fresh chain evidence | `m5-poc-complete` at `8586cce` | Owner entered M6 on 2026-08-03; public deployment, semantic receipt-v2 XMR workers, simultaneous actual-chain composition, and production hardening remain explicit later work |
 | M6 | Certified local-functional PoC | The signed-off Maker/Taker prototypes are GREEN 6/6 in the sandboxed networkless browser. Both consumer-locked Basecamp `ui_qml` packages build module, LGX, installer, and official integration outputs; load in pinned Basecamp 0.2.0-RC3; fail closed without their owner service; and exercise real role services through typed process-isolated backends. Maker health, atomic route save, and history are product-GREEN. Taker health, offer browse, prepared initiation, exact UI replay, list, monitor, and the post-product registry assertion are product-GREEN. Layered fresh actual-node certificates retain one LEZ/Zcash Claim with no-effect replay in 33.330 seconds and one LEZ/Zcash Refund excluding Claim with no-effect replay in 211.530 seconds; they are not misrepresented as UI-emitted chain effects. Locked workspace tests, crash seams, warning-fatal formatting/Clippy/Rustdoc, dependency and Node vulnerability/license policy, CI hardening and quality, traceability/isolation, package contract, and 429/429 GitHub-compatible isolated Mermaid renders are GREEN. Exact M6 temp/build paths, volume, and unused pinned images were removed without global prune. No public RPC, faucet, public funds, public deployment, or remote-Actions-green claim is involved. Cross-restart rollback anchoring plus LOGOS-024/025 remain production hardening, not issue-#112 PoC blockers | `m6-poc-complete` | Owner approved the prototype and M6 certification; M7 entered separately on 2026-08-04 |
 | M7 | Repository-controlled review readiness active; Claim and Refund PoCs GREEN | Live authority and independent-attestation boundaries are pinned. Review packets, public guides, XMR SDK/control plane, route health, Tag17, sealed Tag14/Tag16 workers, joined Maker Refund and joined Taker Claim are GREEN on exact pushed commits. `m7refund-7cd3a9c-a` retained one semantic Monero refund at ten confirmations; `m7refundkill-f8bee63-d` additionally killed the daemon/actor after that send and recovered ObserveOnly to terminal without resubmission. `m7claim-2cff48d-a` finalized owner-exact Tag14 at block 136, role-local Tag15 at block 150 with custody zero, and a ten-confirmation Taker Monero sweep; its cross-chain binder and exact cleanup passed. Adverse concurrency, remaining crash seams, post-PoC RED/GREEN contracts, hard-requirement remediation, QA/chaos/security/production gates and immutable handoff remain | None; formal review is deliberately deferred until all self-owned work is exhausted | Current repository-controlled ETA is maintained after each pushed slice; external review calendar and policy-deferred public deployment excluded |
+
+M7 F3 checkpoint (2026-08-12): exact pushed run `m7xmrconc-d8efb7ca`
+completed two accepted XMR applications across one Maker daemon/database, one
+local LEZ v0.2 stack, and one official Monero 0.18.5.1 Regtest daemon. Measured
+outcomes are two distinct ten-confirmation Monero locks, finalized LEZ claims
+at heights 161 and 189 with zero custody, two finalized Monero sweeps, zero
+terminal replay submissions, and exact cleanup. The hard inventory is now 28
+rows with four open Reliability rows and two explicit deferrals. Checked
+certificate:
+`docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json`.
 
 M7 F1/R3 checkpoint (2026-08-04): clean pushed run
 `m7outage-2c63218-a` completed one role-correct actual-node Zcash claim while

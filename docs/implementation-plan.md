@@ -8010,7 +8010,7 @@ S12/S13 review and policy-deferred public deployment.
   completed but the admitted transaction was absent from both node views; the
   true defect was the shared Taker nonce domain. Restore the 120-second
   read-only bound and record the correction in ADRs 0205 and 0206.
-- [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
+- [x] Replay from one clean pushed source commit against one isolated LEZ v0.2
   and official Monero Regtest topology; sanitize and CI-pin the certificate,
   update manual reproduction, clean exact resources, and close F3.
 - [x] Replay pushed commit `6567322` as `m7xmrconc-6567322a`. Both applications,
@@ -8023,6 +8023,16 @@ S12/S13 review and policy-deferred public deployment.
   Tag13, and Taker sidecar to its signer and nonce domain. Swap A remains bound
   to Taker A. Default two-actor stack/onboarding compatibility stays unchanged;
   the observer bound returns to 120 seconds.
-- [ ] Push the ADR-0206 source checkpoint, replay that exact clean commit,
+- [x] Push the ADR-0206 source checkpoint, replay that exact clean commit,
   retain two terminal swaps with zero replay submissions, sanitize and pin the
   certificate, update F3 ledgers, and perform exact run-scoped cleanup.
+- [x] Push ADR-0206 as `7d59d66`, correct the manual command in `d8efb7c`, and
+  execute fresh run `m7xmrconc-d8efb7ca` from that exact `origin/main` source.
+  Both accepted applications shared one daemon/database, one LEZ v0.2 stack,
+  and one official Monero 0.18.5.1 Regtest daemon. Their separate Taker nonce
+  domains admitted both Tag14 effects; LEZ claims finalized at heights 161 and
+  189 with claimed metadata and zero custody, both Monero sweeps completed,
+  terminal replay submitted no effect, and exact cleanup passed. Retain the
+  sanitized certificate as
+  `docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json` and
+  mark F3 GREEN.

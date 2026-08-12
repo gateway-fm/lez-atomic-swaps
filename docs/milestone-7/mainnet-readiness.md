@@ -109,9 +109,9 @@ and exact cleanup. Its checked packet is
 `../evidence/m7-actual-maker-refund-7cd3a9c-20260805.json`. The separate checked
 `../evidence/m7-actual-taker-claim-2cff48d-20260805.json` packet binds semantic
 Tag14, finalized Tag15 and the confirmed Taker Monero sweep. A daemon restart
-after submission is not claimed; full abandonment economics, accepted-
-application concurrency and the adverse crash/reorg/fee matrix remain release
-gates.
+after submission is covered by separate exact process-kill certificates. The
+accepted-application concurrency gate is now covered by exact run
+`m7xmrconc-d8efb7ca`; the adverse crash/reorg/fee matrix remains a release gate.
 No public RPC, faucet, public funds or public deployment is represented by that
 evidence. S12/S13 independent review is outstanding. Public-network timelock and
 fee calibration, durable rollback anchoring, cold reproducible Logos UI supply

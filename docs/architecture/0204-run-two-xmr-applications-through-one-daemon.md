@@ -78,9 +78,11 @@ other. Persist-before-effect and observe-before-resend rules remain per swap.
 The concurrency certificate must not claim a distributed transaction or
 future-reorganization immunity.
 
-The source contract is GREEN. F3 remains open until a clean pushed-source run
-retains two authenticated acceptances, actual effects on the one shared node
-topology, terminal replay, sanitized evidence, and exact scoped cleanup.
+The source contract and actual-node certificate are GREEN. Exact pushed run
+`m7xmrconc-d8efb7ca` retained two authenticated acceptances, actual effects on
+the one shared node topology, two completed Monero sweeps, zero-submission
+terminal replay, sanitized evidence, and exact scoped cleanup. The checked
+packet is `docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json`.
 
 The first implementation slice adds paired owner-private inputs to the existing
 agreement helper. Agreement B copies the exact Maker agreement key and Monero
@@ -109,8 +111,8 @@ LEZ escrows and both confirmed Monero outputs before invoking either Tag14.
 It then settles A and B independently and verifies that terminal receipt
 replay leaves all four one-shot Tag15/Monero submission files byte-identical.
 The focused source contract and the pre-existing M4/M5 compatibility contracts
-are GREEN. A clean pushed-source Docker replay is still required before F3 is
-closed.
+are GREEN. The corrected pushed-source Docker replay described above closes
+the literal local F3 concurrency gate.
 
 The first clean replay from `b57891a` proved both authenticated applications,
 both finalized LEZ Tag13 escrows, and swap A's confirmed Monero output. Swap B

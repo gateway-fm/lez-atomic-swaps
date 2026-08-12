@@ -1,7 +1,7 @@
 id	state	gate_script	evidence	remaining
 F1	green	./scripts/test-m7-route-health-contract.sh	docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json	none
 F2	green	./scripts/check-m3-cryptographic-vectors.sh	docs/requirements-traceability.md	none
-F3	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Joined claim/refund/abandonment receipts and two-XMR daemon overlap are GREEN; complete actual-node accepted-application concurrency
+F3	green	./scripts/test-m7-xmr-accepted-concurrency-actual-certificate.sh	docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json	none
 F4	green	./scripts/run-zebra-e2e.sh	docs/requirements-traceability.md	none
 F5	green	./scripts/test-m7-tag17-actual-certificate.sh	docs/evidence/m7-actual-tag17-a23a314-20260804.json	none
 F6	green	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	none

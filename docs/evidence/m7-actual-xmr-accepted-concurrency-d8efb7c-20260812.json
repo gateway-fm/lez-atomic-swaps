@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_xmr_accepted_concurrency_poc",
+  "result": "passed",
+  "run_id": "m7xmrconc-d8efb7ca",
+  "repository_commit": "d8efb7c68fdd95932dcbea3a9f84524e069e2546",
+  "completed_at": "2026-08-12T19:05:28Z",
+  "artifact": {
+    "phase_ledger_sha256": "276b6bdd24f76baf291247b727e2da24823aa7bcc11c9d3aa74a5e2455bc4468",
+    "terminal_replay_sha256": "e67a663a78914362ee95a146c143beb2f0d305b942e54c7c2855247d53ca90d4",
+    "cleanup_sha256": "61c8ff16057d36ee675941715e9c34ceca182faf50d8079f586bf4e12a8a9581",
+    "repository_clean_exact_head": true,
+    "origin_main_equals_head": true
+  },
+  "application": {
+    "pair": "monero",
+    "direction": "taker_sells_lez",
+    "journey": "claim",
+    "accepted_swap_count": 2,
+    "shared_daemon": true,
+    "shared_database": true,
+    "shared_delivery_directory": true,
+    "post_acceptance_restart": true,
+    "no_acceptance_replay": true
+  },
+  "services": {
+    "monero": {
+      "version": "0.18.5.1-release",
+      "network": "isolated_regtest",
+      "daemon_count": 1,
+      "public_peers": 0,
+      "genesis_hash": "418015bb9ae982a1975da7d79277c2705727a56894ba0fb246adaabb1f4632e3"
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "network": "private_local",
+      "stack_count": 1,
+      "guest_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+      "program_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+    }
+  },
+  "swaps": [
+    {
+      "swap_id": "a857ba192727620f96af691a93ea89350e8372a0470fa87278faa8d1cfd1a6ed",
+      "agreement_commitment": "c4276e8014a347534df5b2ae7c6c69a6a195e5810246617292e8080f01070c28",
+      "taker_identity": "taker-a",
+      "lez_claim_transaction_id": "d3df96db57de8166ddc712a8e986309839822a2f73b13c957a6d08a2d74c3776",
+      "lez_claim_height": 161,
+      "lez_metadata_state": "claimed",
+      "lez_custody_balance": "0",
+      "monero_funding_transaction_id": "f91449417d5d70a703adb482bbeb7d5160a6402d9e58df53be7d969cf497a795",
+      "monero_funding_confirmations": 10,
+      "monero_sweep_finalized": true,
+      "terminal_replay": true
+    },
+    {
+      "swap_id": "eaa3af1bd0d9932aa9b8012c9c5d6c27ed584fdd86d3d4d0392517cc253c8e60",
+      "agreement_commitment": "c124156838e9e73d3b4dabeabd8c204951c441da52a31261d59fc09346f84680",
+      "taker_identity": "taker-b",
+      "lez_claim_transaction_id": "65c93aa5fa8534b5f893ece386ef79982b8dcdd21f4c7e039ad65af65baf24e4",
+      "lez_claim_height": 189,
+      "lez_metadata_state": "claimed",
+      "lez_custody_balance": "0",
+      "monero_funding_transaction_id": "4e655020d86250e24901f3a0ce0d6814460dd41cbfe400c545a3d5a68fcc9f91",
+      "monero_funding_confirmations": 10,
+      "monero_sweep_finalized": true,
+      "terminal_replay": true
+    }
+  ],
+  "concurrency": {
+    "both_applications_accepted_before_actor_activation": true,
+    "both_swaps_in_flight_before_settlement": true,
+    "distinct_swap_ids": true,
+    "distinct_agreements": true,
+    "distinct_actor_stores": true,
+    "distinct_role_journals": true,
+    "distinct_taker_lez_identities": true,
+    "distinct_monero_outputs": true,
+    "distinct_lez_escrows": true,
+    "terminal_resubmission_count": 0
+  },
+  "atomicity": {
+    "proof_scope": "two_independent_successful_xmr_claim_paths",
+    "each_swap_conditionally_atomic": true,
+    "two_swaps_atomic_with_each_other": false,
+    "distributed_cross_chain_transaction_claimed": false,
+    "future_reorganization_immunity_claimed": false,
+    "argument": "Each accepted agreement remains conditionally atomic on its own. Its exact Monero output is confirmed before its LEZ claim path can reveal the precommitted recovery share; the finalized LEZ claim then authorizes only the matching Monero sweep. Distinct swap and agreement commitments, actor stores, role journals, LEZ escrows, Monero outputs, and Taker LEZ signer identities keep one application from authorizing or consuming the other. Both finalized LEZ claims have claimed metadata and zero custody, both Monero sweeps reached finalized terminal state, and replay produced zero additional submissions. The two swaps are intentionally not claimed to form one transaction with each other, and local-devnet evidence does not claim immunity to future reorganizations."
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "public_peer_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false,
+    "test_funds": "deterministic_private_lez_genesis_and_monero_regtest_outputs",
+    "certification_success_depends_on_external_network": false
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "all_exact_run_resources_absent": true,
+    "sidecar_processes_absent": true,
+    "sidecar_ports_closed": true,
+    "foreign_sentinel_survived_exact_cleanup": true,
+    "broad_cleanup_used": false,
+    "foreign_resources_targeted": false
+  },
+  "not_proven": {
+    "arbitrary_n_scheduler": true,
+    "public_network_reliability": true,
+    "future_reorganization_immunity": true
+  }
+}
