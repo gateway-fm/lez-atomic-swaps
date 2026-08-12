@@ -7986,6 +7986,16 @@ S12/S13 review and policy-deferred public deployment.
   change to a subsequent accepted application without adding a retry. The
   funding binary's two tests, the 36.91-second shared-daemon regression,
   formatting, whitespace, and M4/M5 compatibility contracts pass.
+- [x] Push `f2a4869` and replay as `m7xmrconc-f2a4869a`. The refresh fix
+  succeeded: both distinct Monero outputs reached ten confirmations after both
+  finalized Tag13 escrows. Swap A release preparation then failed before
+  Tag14 because the neutral view-wallet RPC had swap B open. Exact cleanup
+  passed and no settlement began.
+- [x] RED then GREEN the view-wallet/preparation order: prepare A immediately
+  after observing A, then fund/verify and prepare B, while keeping both Tag14
+  activations after both confirmed outputs. Preparation is local-only and
+  effect-free. The 37.96-second shared-daemon regression, syntax, whitespace,
+  and M4/M5 compatibility gates pass.
 - [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
   and official Monero Regtest topology; sanitize and CI-pin the certificate,
   update manual reproduction, clean exact resources, and close F3.

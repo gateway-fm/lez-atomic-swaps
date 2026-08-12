@@ -5907,6 +5907,10 @@ execute_run() {
   else
     fund_and_verify_monero
     if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+      # Preparation only observes the confirmed output and writes local state.
+      # Do it while swap A's view wallet is open; settlement remains gated
+      # until swap B is also funded and verified below.
+      prepare_tag14_release
       fund_and_verify_m7_second_monero
     fi
   fi
@@ -5933,7 +5937,9 @@ execute_run() {
       bind_refund_sweep
     fi
   else
-    prepare_tag14_release
+    if [[ "$m7_xmr_accepted_concurrency" == 0 ]]; then
+      prepare_tag14_release
+    fi
     if [[ "$m7_xmr_semantic_claim" == 1 ]]; then
       provision_m7_taker_claim_effect_application
       if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then

@@ -121,6 +121,17 @@ one-shot transfer. Refresh is observation-only: it neither submits nor retries
 a transaction. The focused RED ordering contract, both funding-binary tests,
 formatting, and M4/M5 compatibility gates are GREEN.
 
+Replay `m7xmrconc-f2a4869a` then proved both finalized Tag13 escrows and both
+distinct ten-confirmation Monero outputs. It failed before Tag14 because the
+neutral view-wallet RPC had swap B open when swap A's release preparation
+observed its output. Exact cleanup again passed. Release preparation is now
+ordered beside the matching open view wallet: observe and prepare A after A's
+confirmed output, then fund/verify and prepare B. Preparation writes only
+local durable state and submits no chain effect. Both Tag14 activations remain
+strictly after both confirmed outputs, preserving the in-flight-before-
+settlement requirement. The focused ordering/daemon regression and existing
+M4/M5 contracts are GREEN.
+
 ```mermaid
 sequenceDiagram
     participant A as Accepted application A

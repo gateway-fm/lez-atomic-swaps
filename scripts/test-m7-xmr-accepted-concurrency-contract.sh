@@ -103,13 +103,17 @@ done
 
 first_funding_line="$(rg -n '^[[:space:]]+fund_and_verify_monero$' "$delegated_runner" | tail -n 1 | cut -d: -f1)"
 second_funding_line="$(rg -n '^[[:space:]]+fund_and_verify_m7_second_monero$' "$delegated_runner" | cut -d: -f1)"
-first_settlement_line="$(rg -n '^[[:space:]]+prepare_tag14_release$' "$delegated_runner" | tail -n 1 | cut -d: -f1)"
+first_preparation_line="$(rg -n '^[[:space:]]+prepare_tag14_release$' "$delegated_runner" | head -n 1 | cut -d: -f1)"
+first_settlement_line="$(rg -n '^[[:space:]]+activate_and_run_m7_taker_tag14$' "$delegated_runner" | tail -n 1 | cut -d: -f1)"
 [[ "$first_funding_line" =~ ^[1-9][0-9]*$ &&
    "$second_funding_line" =~ ^[1-9][0-9]*$ &&
+   "$first_preparation_line" =~ ^[1-9][0-9]*$ &&
    "$first_settlement_line" =~ ^[1-9][0-9]*$ &&
+   "$first_funding_line" -lt "$first_preparation_line" &&
+   "$first_preparation_line" -lt "$second_funding_line" &&
    "$first_funding_line" -lt "$first_settlement_line" &&
    "$second_funding_line" -lt "$first_settlement_line" ]] ||
-  fail "both XMR swaps are not durably in flight before settlement"
+  fail "XMR output preparation or both-in-flight settlement ordering drifted"
 
 refresh_line="$(rg -n '\.refresh_from_height\(arguments\.restore_height\)' "$funding_source" | head -n 1 | cut -d: -f1)"
 fund_line="$(rg -n '\.fund_shared_exact_and_confirm\(' "$funding_source" | head -n 1 | cut -d: -f1)"
