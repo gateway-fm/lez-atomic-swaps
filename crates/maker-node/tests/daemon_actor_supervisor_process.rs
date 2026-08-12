@@ -18,12 +18,14 @@ use std::{
 
 use btc_fixture::BtcAuthorityFixture;
 use btc_reference_actor::ActorConfig as BtcActorConfig;
+use lez_bridge_protocol::RequestId;
 use lez_swap_core::{
     Chain, ChainPosition, ConfirmationPolicy, Pair, RecoverySchedule, SwapCoordinator,
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    MakerActorKindV1, MakerActorManifestV1, MakerActorScheduleState, SqliteSwapStore,
+    MakerActorKindV1, MakerActorManifestV1, MakerActorManualAction, MakerActorScheduleState,
+    SqliteSwapStore,
 };
 use rustix::process::{Pid, Signal, kill_process};
 use serde_json::Value;
@@ -484,6 +486,248 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
         "status\n"
     );
     assert!(restarted.terminate(Duration::from_secs(2)).success());
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // The lease/restart/terminal barriers are one concurrency proof.
+fn daemon_leases_two_accepted_xmr_applications_concurrently_across_restart() {
+    let _process_test_guard = DAEMON_SUPERVISOR_PROCESS_TEST_LOCK
+        .lock()
+        .expect("daemon-supervisor process test lock");
+    let root = tempdir().expect("isolated two-XMR daemon root");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
+        .expect("owner-only test root");
+
+    let application_specs = [
+        ("accepted-xmr-a", [0x61; 32], 1_000_000, 25_000),
+        ("accepted-xmr-b", [0x62; 32], 2_000_000, 26_000),
+    ];
+    let mut manifests = Vec::new();
+    let mut swap_ids = Vec::new();
+    let mut pid_files = Vec::new();
+    let mut release_files = Vec::new();
+    let mut invocation_files = Vec::new();
+    let mut config_paths = Vec::new();
+    let mut state_paths = Vec::new();
+
+    for (label, swap_bytes, foreign_units, lez_units) in application_specs {
+        let fixture_root = root.path().join(label);
+        fs::create_dir(&fixture_root).expect("create accepted XMR fixture root");
+        fs::set_permissions(&fixture_root, fs::Permissions::from_mode(0o700))
+            .expect("owner-only accepted XMR fixture root");
+        let pid_file = root.path().join(format!("{label}.pid"));
+        let release_file = root.path().join(format!("{label}.release"));
+        let invocation_file = root.path().join(format!("{label}.invocations"));
+        let program_path = root.path().join(format!("{label}-actor"));
+        let program = format!(
+            "#!/bin/sh\n\
+             test \"$1\" = \"--config-fd\" || exit 91\n\
+             test \"$2\" = \"196\" || exit 92\n\
+             test -r /proc/self/fd/196 || exit 93\n\
+             test -r /proc/self/fd/198 || exit 94\n\
+             printf '%s\\n' \"$3\" >> \"{}\"\n\
+             case \"$3\" in\n\
+               status) printf '%s\\n' \"$$\" > \"{}\"; while test ! -f \"{}\"; do /usr/bin/sleep 0.01; done; printf '%s\\n' '{{\"schema_version\":1,\"actor_program\":\"xmr-maker-actor\",\"actor_abi\":\"lez_maker_xmr_pre_effect_v1\",\"role\":\"maker\",\"state\":\"active\",\"phase\":\"offered\",\"revision\":0,\"next_action\":\"xmr_chain_effects_not_yet_composed\",\"chain_effect_executed\":false}}' ;;\n\
+               claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}' ;;\n\
+               *) exit 95 ;;\n\
+             esac\n",
+            invocation_file.display(),
+            pid_file.display(),
+            release_file.display()
+        );
+        write_private(&program_path, program.as_bytes(), 0o700);
+        let fixture = XmrChatFixture::new(
+            &fixture_root,
+            swap_bytes,
+            foreign_units,
+            lez_units,
+            &program_path,
+        );
+        let swap_id = hex::encode(swap_bytes);
+        let manifest = MakerActorManifestV1::new(
+            SwapId::new(swap_id.clone()).unwrap(),
+            MakerActorKindV1::Monero,
+            fixture.maker_actor_config.clone(),
+            Sha256::digest(fs::read(&fixture.maker_actor_config).unwrap()).into(),
+            program_path,
+            Sha256::digest(program.as_bytes()).into(),
+            fixture.maker_actor_state.clone(),
+        )
+        .expect("valid accepted XMR actor manifest");
+        config_paths.push(fixture.maker_actor_config);
+        state_paths.push(fixture.maker_actor_state);
+        manifests.push(manifest);
+        swap_ids.push(swap_id);
+        pid_files.push(pid_file);
+        release_files.push(release_file);
+        invocation_files.push(invocation_file);
+    }
+
+    assert_ne!(
+        config_paths[0], config_paths[1],
+        "distinct XMR actor configurations"
+    );
+    assert_ne!(
+        state_paths[0], state_paths[1],
+        "distinct XMR actor state databases"
+    );
+
+    let database = root.path().join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).expect("open shared Maker database");
+    for (index, (swap_id, manifest)) in swap_ids.iter().zip(&manifests).enumerate() {
+        let id = SwapId::new(swap_id.clone()).unwrap();
+        store
+            .save(&xmr_swap(swap_id))
+            .expect("save authenticated XMR application row");
+        store
+            .register_maker_actor(manifest, 0)
+            .expect("register isolated XMR actor row");
+        store
+            .queue_maker_actor_manual_action(
+                &RequestId::new(format!("m7-xmr-concurrency-{index}")).unwrap(),
+                &id,
+                MakerActorManualAction::Claim,
+                0,
+                0,
+            )
+            .expect("queue owner XMR Claim action");
+    }
+    drop(store);
+
+    let runtime = root.path().join("runtime");
+    fs::create_dir(&runtime).expect("create runtime directory");
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).expect("owner-only runtime");
+    let socket = runtime.join("maker.sock");
+    let ready = runtime.join("ready");
+    let mut daemon = TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 1, 2);
+    wait_for_file(
+        &mut daemon,
+        &ready,
+        Duration::from_secs(10),
+        "two-XMR daemon readiness",
+    );
+    for pid_file in &pid_files {
+        wait_for_file(
+            &mut daemon,
+            pid_file,
+            Duration::from_secs(10),
+            "accepted XMR actor identity",
+        );
+    }
+    let first_pids: Vec<u32> = pid_files
+        .iter()
+        .map(|path| fs::read_to_string(path).unwrap().trim().parse().unwrap())
+        .collect();
+    let first_rows = SqliteSwapStore::open(&database)
+        .expect("open first concurrent observer")
+        .list_maker_actor_processes()
+        .expect("inspect first concurrent leases");
+    assert_eq!(first_rows.len(), 2);
+    assert!(
+        first_rows.iter().all(|record| {
+            record.schedule_state() == MakerActorScheduleState::Leased
+                && record.child_identity().is_some()
+        }),
+        "two accepted XMR applications must hold concurrent leases"
+    );
+
+    assert!(daemon.terminate(Duration::from_secs(2)).success());
+    for (pid_file, pid) in pid_files.iter().zip(&first_pids) {
+        assert!(!Path::new("/proc").join(pid.to_string()).exists());
+        fs::remove_file(pid_file).expect("remove first-generation actor identity");
+    }
+    let interrupted = SqliteSwapStore::open(&database)
+        .expect("reopen interrupted XMR rows")
+        .list_maker_actor_processes()
+        .expect("inspect interrupted XMR rows");
+    assert!(interrupted.iter().all(|record| {
+        record.schedule_state() != MakerActorScheduleState::Leased
+            && record.child_identity().is_none()
+    }));
+
+    let mut restarted = TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 1, 2);
+    wait_for_file(
+        &mut restarted,
+        &ready,
+        Duration::from_secs(10),
+        "restarted two-XMR daemon readiness",
+    );
+    for pid_file in &pid_files {
+        wait_for_file(
+            &mut restarted,
+            pid_file,
+            Duration::from_secs(10),
+            "restarted accepted XMR actor identity",
+        );
+    }
+    let second_pids: Vec<u32> = pid_files
+        .iter()
+        .map(|path| fs::read_to_string(path).unwrap().trim().parse().unwrap())
+        .collect();
+    assert_ne!(first_pids, second_pids);
+    let restarted_rows = SqliteSwapStore::open(&database)
+        .expect("open restarted concurrent observer")
+        .list_maker_actor_processes()
+        .expect("inspect restarted concurrent leases");
+    assert_eq!(restarted_rows.len(), 2);
+    assert!(restarted_rows.iter().all(|record| {
+        record.schedule_state() == MakerActorScheduleState::Leased
+            && record.child_identity().is_some()
+    }));
+
+    for release_file in &release_files {
+        write_private(release_file, b"release\n", 0o600);
+    }
+    let terminal_deadline = Instant::now() + Duration::from_secs(10);
+    let terminal_rows = loop {
+        let rows = SqliteSwapStore::open(&database)
+            .expect("open terminal concurrency observer")
+            .list_maker_actor_processes()
+            .expect("inspect terminal XMR rows");
+        if rows.iter().all(|record| {
+            record.schedule_state() == MakerActorScheduleState::Terminal
+                && record.child_identity().is_none()
+        }) {
+            break rows;
+        }
+        assert!(
+            Instant::now() < terminal_deadline,
+            "accepted XMR actors did not terminalize independently: {rows:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert!(restarted.terminate(Duration::from_secs(2)).success());
+    for invocation_file in &invocation_files {
+        assert_eq!(
+            fs::read_to_string(invocation_file).unwrap(),
+            "status\nstatus\nclaim\n"
+        );
+    }
+
+    let mut terminal_restart =
+        TestDaemon::spawn_with_workers(&database, &socket, &ready, 30_000, 1, 2);
+    wait_for_file(
+        &mut terminal_restart,
+        &ready,
+        Duration::from_secs(10),
+        "terminal two-XMR daemon readiness",
+    );
+    thread::sleep(Duration::from_millis(300));
+    let reopened = SqliteSwapStore::open(&database)
+        .expect("reopen terminal XMR database")
+        .list_maker_actor_processes()
+        .expect("inspect terminal XMR isolation");
+    assert_eq!(
+        reopened, terminal_rows,
+        "accepted XMR restart must preserve terminal isolation"
+    );
+    for invocation_file in &invocation_files {
+        assert_eq!(
+            fs::read_to_string(invocation_file).unwrap(),
+            "status\nstatus\nclaim\n"
+        );
+    }
+    assert!(terminal_restart.terminate(Duration::from_secs(2)).success());
 }
 
 fn xmr_swap(id: &str) -> SwapCoordinator {

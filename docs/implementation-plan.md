@@ -7820,3 +7820,27 @@ S12/S13 review and policy-deferred public deployment.
   run root are absent; the shared effect-free LEZ v0.2 stack is retained for
   the next M7 actual-node slice. This closes the reverse-ZEC absence sub-gap in
   F9/U4/S5, not those broader all-pair rows.
+
+## M7 XMR accepted-application concurrency checkpoint (2026-08-12)
+
+- [x] Start with a focused RED contract requiring two XMR application rows to
+  hold concurrent daemon leases, retain distinct configurations and state
+  databases, survive restart, and preserve terminal isolation.
+- [x] Compose two real XMR actor processes under one `lez-maker-daemon`, one
+  SQLite database, two workers, distinct manifests/journals, and distinct owner
+  Claim requests. The first RED exposed the correct 600-second production
+  retry backoff; the isolated test now explicitly uses one second without
+  changing production defaults.
+- [x] RED then GREEN the exact XMR ABI boundary: terminal state cannot be
+  fabricated by Status. Both actors hold their leases inside valid pre-effect
+  Status calls, then after restart execute canonical Claim responses from their
+  already-queued owner actions.
+- [x] Prove both generation-one children are reaped, both generation-two leases
+  coexist, both rows terminalize independently, and a third daemon start adds
+  no actor invocation. Focused runtime was 35.86 seconds.
+- [x] Record components, restart flow, application atomicity, and evidence
+  limits in ADR 0200; pin the functional contract in the quality runner and CI
+  policy. Runtime external resources are empty.
+- [ ] Extend this process prerequisite into a reproducible actual local LEZ
+  v0.2 plus Monero Regtest concurrency packet with two authenticated Chat
+  acceptances and two distinct chain outcomes before closing F3/F6.

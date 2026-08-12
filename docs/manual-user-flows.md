@@ -9580,3 +9580,25 @@ rebuild was 5m41s for the ZEC actor, 7m40s for application binaries, and
 16m07s for the LEZ sidecar. Keep those source-keyed target directories when
 disk pressure permits; clean completed run roots and exact run-owned Docker
 resources first. This affects iteration time only, not chain finality.
+
+## Flow M7-XMR-2: two XMR application workers across daemon restart
+
+Run the process-level prerequisite from a normal development checkout:
+
+```bash
+./scripts/test-m7-xmr-accepted-concurrency-contract.sh
+```
+
+It builds the existing Maker binaries offline, creates two owner-private XMR
+application fixtures, queues separate owner Claim actions in one database, and
+starts one daemon with two workers. Both actors must be leased concurrently;
+the test then stops the daemon, proves both old child identities absent,
+restarts the same database, observes two new leases, releases both actions, and
+checks that a terminal restart adds no invocation.
+
+This flow uses no Docker or chain endpoint. Its external-resource list is
+empty: only temporary local files, Unix sockets, SQLite, and child processes
+participate. Host compilation, process scheduling, and disk pressure can vary
+runtime, but there is no RPC/faucet/peer/public-funds flakiness. It proves the
+application scheduler prerequisite in ADR 0200, not actual Monero/LEZ effects;
+the later actual-node concurrency flow must be used for F3/F6 closure.

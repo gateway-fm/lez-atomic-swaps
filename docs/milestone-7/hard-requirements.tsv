@@ -1,10 +1,10 @@
 id	state	gate_script	evidence	remaining
 F1	green	./scripts/test-m7-route-health-contract.sh	docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json	none
 F2	green	./scripts/check-m3-cryptographic-vectors.sh	docs/requirements-traceability.md	none
-F3	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Joined claim/refund/abandonment receipts plus adverse concurrency
+F3	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Joined claim/refund/abandonment receipts and two-XMR daemon overlap are GREEN; complete actual-node accepted-application concurrency
 F4	open	./scripts/run-zebra-e2e.sh	docs/requirements-traceability.md	Composed actual-node recovery and post-lock margin matrix
 F5	green	./scripts/test-m7-tag17-actual-certificate.sh	docs/evidence/m7-actual-tag17-a23a314-20260804.json	none
-F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Other adversarial boundary races, reorg, fee, and concurrent outcomes
+F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Two-XMR lease/restart/terminal overlap is process-GREEN; complete actual-node concurrent outcomes plus fee and reorg boundaries
 F7	green	./scripts/test-m7-f7-custom-token-refund-actual-certificate.sh	docs/evidence/m7-actual-f7-custom-token-refund-062b6ba-20260808.json	none
 F8	upstream-deferred	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	LOGOS-021 live Logos price-module ABI compatibility
 F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	ADR 0199 exact-node certifies the reverse ZEC absent-Maker refund; complete the remaining daemon-owned all-pair adverse schedules

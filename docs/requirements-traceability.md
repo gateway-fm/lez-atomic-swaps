@@ -289,6 +289,17 @@ This is partial hardening evidence: it does not close other kill seams,
 accepted-application concurrency, claim unknown outcomes/corruption,
 different-UID isolation, adverse-node continuation, fees, or reorganization.
 
+ADR 0200 adds the process prerequisite for F3/F6 accepted-application
+concurrency. Two distinct XMR agreement/application rows, actor configs, role
+journals, state databases, swap IDs, and owner Claim requests hold simultaneous
+leases under one real daemon and SQLite database. Daemon interruption reaps
+both generation-one children; restart leases both generation-two actors, both
+canonical Claim actions terminalize independently, and a terminal restart adds
+no invocation. The focused 35.86-second test uses no chain RPC or Docker and
+therefore does not itself prove concurrent LEZ/Monero effects, finality, fees,
+or reorganization. F3/F6 remain open for that actual-node packet and the other
+listed boundary work.
+
 Current F7 execution update: clean pushed Runs X (`422c72e`), Z (`1555749`),
 AA (`df7ed86`), and AD (`0826dd5`) each completed both actual-node custom-token
 directions at the one-second local cadence. Every direction reached revision

@@ -85,6 +85,7 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m7-hard-requirements-audit.sh
 ./scripts/test-m7-submission-requirements-audit.sh
 ./scripts/test-m7-xmr-sdk-facade-contract.sh
+./scripts/test-m7-xmr-accepted-concurrency-contract.sh
 ./scripts/test-m7-route-health-contract.sh
 ./scripts/test-m7-maker-all-pair-action-matrix.sh
 ./scripts/test-m7-zec-taker-direction-process.sh

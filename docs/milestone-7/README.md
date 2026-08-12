@@ -57,6 +57,7 @@ materially affect safe reproduction.
 - [Maker all-pair action composition decision](../architecture/0197-compose-maker-all-pair-actions.md)
 - [Reverse-ZEC absent-Maker recovery decision](../architecture/0199-recover-reverse-zec-first-lock-without-maker.md)
 - [Reverse-ZEC first-lock refund certificate](../evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json)
+- [Two-XMR application overlap decision](../architecture/0200-overlap-two-xmr-applications-through-one-daemon.md)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)
