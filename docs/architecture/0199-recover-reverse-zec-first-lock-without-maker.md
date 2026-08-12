@@ -47,6 +47,10 @@ parent handoff carries the immutable Zcash-refund mined flag and exact
 transaction ID in addition to the existing LEZ-refund fields. The parent
 validates and freezes that identity, then enables only the independent Maker
 terminal observer; it receives no refund submission authority.
+The mined-refund handoff is one fact containing the transaction ID, canonical
+block hash, and canonical block height. All three become immutable together so
+the final certificate can re-read the exact height and prove the refund remains
+in the canonical block rather than merely trusting a prior transaction ID.
 The Maker observer binds `operation = zcash_refund` while observation is still
 pending or projected. Its absorbing `refunded` revision-2 output is terminal
 and intentionally needs no operation field; accepting that shape does not

@@ -96,8 +96,12 @@ rg -Fq -- \
 for required in \
   'm6_zcash_refund_mined:($zcash_mined == 1)' \
   'm6_zcash_refund_txid:$zcash_txid' \
+  'm6_zcash_refund_block_hash:$zcash_block_hash' \
+  'm6_zcash_refund_block_height:' \
   'zcash_mined="$(jq -r '\''.m6_zcash_refund_mined // false'\'' <<<"$output")"' \
-  'm6_zcash_refund_mined=1'; do
+  'm6_zcash_refund_mined=1' \
+  'm6_zcash_refund_block_hash="$zcash_block_hash"' \
+  'm6_zcash_refund_block_height="$zcash_block_height"'; do
   rg -Fq -- "$required" "$runner" ||
     fail "first-lock Zcash refund state is not handed back to the parent: ${required}"
 done

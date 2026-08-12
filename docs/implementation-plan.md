@@ -7776,7 +7776,21 @@ S12/S13 review and policy-deferred public deployment.
   outputs still require `operation = zcash_refund`. The retained exact actor
   state reproduced the terminal response read-only. Focused M6/M7 contracts
   and shell syntax are GREEN.
-- [ ] Push the terminal assertion correction, retire only the affected Zebra
-  run, provision a fresh isolated node and height-104 prehistory, and repeat
-  the exact journey. Only an exact GREEN result may produce a certificate or
-  close F9/U4/S5.
+- [x] Push the terminal assertion correction as `95a5eaf`, provision fresh
+  primary-only Zebra run `m7frzec95a5eafa` and height-104 prehistory, and
+  repeat as `m7zecfirstrefund95a5eafa`. The exact run completed both terminal
+  role states and exact no-effect replay at Zebra height 110. Final evidence
+  construction then failed because the typed child-to-parent handoff carried
+  the refund transaction ID but not its canonical block hash and height; the
+  inclusion assertion therefore received an empty JSON height. This is not a
+  certificate, and the affected Zebra run will not be reused.
+- [x] RED then GREEN the canonical inclusion handoff. The immutable typed
+  handoff now carries transaction ID, canonical block hash, and numeric height
+  as one mined-refund fact; absent legacy M6 fixture fields default only when
+  the mined flag is false. Parent replacement checks cover all three fields,
+  preserving the later exact canonical-block assertion. Focused M6/M7
+  contracts and shell syntax are GREEN.
+- [ ] Push the canonical-inclusion handoff, retire only the affected Zebra run,
+  provision a fresh isolated node and height-104 prehistory, and repeat the
+  exact journey. Only an exact GREEN result may produce a certificate or close
+  F9/U4/S5.
