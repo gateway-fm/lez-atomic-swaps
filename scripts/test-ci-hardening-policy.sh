@@ -132,6 +132,7 @@ require_fixed './scripts/test-m7-r1-taker-first-actual-baseline.sh' "$quality_ru
 require_fixed './scripts/test-m7-r2-on-chain-only-actual-baseline.sh' "$quality_runner"
 require_fixed './scripts/test-m7-r6-timelock-rationale-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-r7-bitcoin-refund-justification-contract.sh' "$quality_runner"
+require_fixed './scripts/test-m7-private-demo-video-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-zec-accepted-process-kill-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-maker-refund-actual-certificate.sh' "$quality_runner"

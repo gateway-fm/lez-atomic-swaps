@@ -8064,3 +8064,25 @@ S12/S13 review and policy-deferred public deployment.
   opens, and two disclosed deferrals. All four aggregate gates and the CI pin
   policy pass; mark S4 GREEN. Cybersecurity assessment is not part of this
   functional checkpoint.
+
+## M7 private XMR/ZEC D1 demo bundle (2026-08-12)
+
+- [x] Inventory exactly six D1 scenarios: XMR and ZEC happy, refund/timeout,
+  and concurrent demonstrations.
+- [x] Bind every presentation source to checked evidence hashes and executable
+  certificate gates. Five scenarios use joined actual-node evidence. ZEC
+  concurrency explicitly layers the real one-daemon overlap regression with
+  separately verified actual-node Claim and Refund effects; it is not labeled
+  as one joined concurrent chain run.
+- [x] RED then GREEN a reusable renderer and bundle contract. It enforces
+  private modes, exact pair/scenario cardinality, proof regeneration, hash and
+  size binding, duplicate rejection, tamper rejection, a digest-pinned
+  networkless renderer, and zero public RPC/peer/faucet/funds/deployment use.
+- [x] Record component and sequence diagrams, atomicity limits, local-node
+  topology, external-resource behavior, and the layered ZEC limitation in ADR
+  0208; pin the functional contract in ordinary CI.
+- [ ] Push the clean renderer checkpoint, render all six MP4s from that exact
+  commit, decode-probe and seal the private bundle, then retain a sanitized
+  checked certificate.
+- [ ] Mark D1 GREEN, update manual reproduction and packet indexes, and run
+  exact-candidate non-security QA before the functional M7 tag.

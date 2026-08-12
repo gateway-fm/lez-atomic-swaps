@@ -65,6 +65,7 @@ materially affect safe reproduction.
 - [Checked ZEC application reorg certificate](../evidence/m7-actual-zec-application-reorg-297f09a-20260812.json)
 - [Functional versus reliability acceptance decision](../architecture/0203-separate-functional-acceptance-from-reliability-hardening.md)
 - [Literal R1/R2/R6/R7 certification decision](../architecture/0207-certify-literal-reliability-acceptance.md)
+- [Private M7 demo evidence-binding decision](../architecture/0208-bind-private-m7-demos-to-actual-node-evidence.md)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

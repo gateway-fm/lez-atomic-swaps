@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "kind": "m7_private_demo_source_map",
+  "privacy": "private_local_stealth",
+  "entries": [
+    {
+      "pair": "xmr",
+      "scenario": "happy",
+      "run_id": "m7claim-2cff48d-a",
+      "evidence_model": "joined_actual_nodes",
+      "source_files": [
+        {"path": "docs/evidence/m7-actual-taker-claim-2cff48d-20260805.json", "sha256": "404473d78ba0b78ec0810c1f3e55f5a0c77b13a4f6c6d211955efd5c1fa6bc67"}
+      ],
+      "network_lines": ["Official Monero 0.18.5.1 Regtest, zero peers", "Private local LEZ v0.2 Bedrock, sequencer, and indexer"],
+      "flow_lines": ["Taker LEZ lock finalized before Maker Monero funding", "Monero output reached 10 confirmations", "Taker Tag14 then Maker Tag15 finalized", "Taker reconstructed authority and swept Monero", "Terminal replay submitted no second effect"],
+      "atomicity": "The finalized LEZ claim reveals only the precommitted share for the already confirmed Monero output; the matching sweep completes the follower leg."
+    },
+    {
+      "pair": "xmr",
+      "scenario": "refund",
+      "run_id": "m7refundkill-f8bee63-d",
+      "evidence_model": "joined_actual_nodes",
+      "source_files": [
+        {"path": "docs/evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json", "sha256": "da3bc1c5ddd2a0e9c07cb29866b42baddd318fca2884f6f5e12004a785f41c23"}
+      ],
+      "network_lines": ["Official Monero 0.18.5.1 Regtest, zero peers", "Private local LEZ v0.2 Bedrock, sequencer, and indexer"],
+      "flow_lines": ["Taker signed LEZ refund finalized first", "Maker Monero refund was submitted exactly once", "Daemon and actor were killed before stdout", "Restart selected observation only", "Both principals returned; terminal replay did not resend"],
+      "atomicity": "The finalized LEZ refund discloses the committed recovery share before the Maker spends the funded Monero output; restart can observe but cannot authorize another send."
+    },
+    {
+      "pair": "xmr",
+      "scenario": "concurrent",
+      "run_id": "m7xmrconc-d8efb7ca",
+      "evidence_model": "joined_actual_nodes",
+      "source_files": [
+        {"path": "docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json", "sha256": "9c5a80ac823c0f8a7c92575c84204f8e475e47d4584299c8b36c7b363ba63081"}
+      ],
+      "network_lines": ["One official Monero 0.18.5.1 Regtest daemon", "One private local LEZ v0.2 stack and one Maker daemon/database"],
+      "flow_lines": ["Two authenticated applications accepted before activation", "Distinct Taker LEZ signer and nonce domains", "Two Tag13 escrows and two confirmed Monero outputs", "Both independent LEZ claims and Monero sweeps completed", "Terminal replay resubmission count was zero"],
+      "atomicity": "Each swap is conditionally atomic under its own agreement and authority; the two swaps are isolated from, but are not atomic with, each other."
+    },
+    {
+      "pair": "zec",
+      "scenario": "happy",
+      "run_id": "m7zecpk820001ba",
+      "evidence_model": "joined_actual_nodes",
+      "source_files": [
+        {"path": "docs/evidence/m7-actual-zec-accepted-process-kill-820001b-20260811.json", "sha256": "cfc16a9fc16fc8c5b1ad8e50bcaee650b218bf821e46fed682fce7100ef74996"}
+      ],
+      "network_lines": ["Zebra 5.2.0 Regtest on literal loopback", "Private local LEZ v0.2 Bedrock, sequencer, and indexer"],
+      "flow_lines": ["Maker Zcash lock accepted once", "Owning daemon and actor were killed before stdout", "Restart preserved the singleton transaction", "Two Zcash confirmations preceded the LEZ reveal", "The reveal preceded the Taker Zcash claim; both roles terminal"],
+      "atomicity": "The confirmed Zcash lock gates the revealing LEZ claim, and only that reveal authorizes the exact Zcash HTLC claim."
+    },
+    {
+      "pair": "zec",
+      "scenario": "refund",
+      "run_id": "m7zecfirstrefund8981e32a",
+      "evidence_model": "joined_actual_nodes",
+      "source_files": [
+        {"path": "docs/evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json", "sha256": "ee6a3b45f9bd52803b00192ac9529b3de988c5b5dc6698fbb417f384606f751d"}
+      ],
+      "network_lines": ["Zebra 5.2.0 Regtest on literal loopback", "Private local LEZ v0.2 stack observed with zero swap effects"],
+      "flow_lines": ["Taker alone submitted the reverse Zcash first lock", "Maker disappeared before its LEZ lock", "Signed CLTV deadline remained unchanged", "Owner Taker service submitted one canonical refund", "Both roles terminal; replay changed neither chain"],
+      "atomicity": "With no dependent Maker lock, the only funded leg remains owned by the Taker and returns through its signed consensus refund path."
+    },
+    {
+      "pair": "zec",
+      "scenario": "concurrent",
+      "run_id": "m7-zec-layered-concurrency",
+      "evidence_model": "layered_process_concurrency_plus_actual_node_pair_effects",
+      "source_files": [
+        {"path": "docs/evidence/m7-actual-zec-accepted-process-kill-820001b-20260811.json", "sha256": "cfc16a9fc16fc8c5b1ad8e50bcaee650b218bf821e46fed682fce7100ef74996"},
+        {"path": "docs/evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json", "sha256": "ee6a3b45f9bd52803b00192ac9529b3de988c5b5dc6698fbb417f384606f751d"}
+      ],
+      "network_lines": ["Actual ZEC Claim and Refund layers use Zebra 5.2.0 Regtest", "Concurrent application layer uses one Maker daemon and three isolated pair actors"],
+      "flow_lines": ["ZEC actor terminalized while an XMR peer remained leased", "BTC peer terminalized independently in the same daemon", "Daemon health remained responsive during overlap", "Restart retained independent terminal and backoff rows", "Actual-node ZEC Claim and Refund identities are separately certificate-bound"],
+      "atomicity": "The concurrency layer proves scheduler and state isolation; separate actual-node certificates prove ZEC effect semantics. It is not represented as one joined concurrent chain run."
+    }
+  ],
+  "runtime_external_resources": {
+    "public_rpc": false,
+    "public_peer": false,
+    "faucet": false,
+    "public_funds": false,
+    "public_deployment": false
+  }
+}
