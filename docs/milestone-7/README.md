@@ -61,6 +61,7 @@ materially affect safe reproduction.
 - [Two-Zebra competing-fork evidence decision](../architecture/0201-retain-zebra-competing-fork-evidence.md)
 - [Checked actual Zebra competing-fork certificate](../evidence/m7-actual-zebra-competing-fork-087c37f-20260812.json)
 - [ZEC application reorg continuation decision](../architecture/0202-resume-zec-application-after-canonical-reappearance.md)
+- [Checked ZEC application reorg certificate](../evidence/m7-actual-zec-application-reorg-297f09a-20260812.json)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

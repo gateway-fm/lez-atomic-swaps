@@ -310,6 +310,15 @@ also re-queried canonical funding. This closes the Zcash consensus/SDK fork
 checkpoint; R1/F6 remain open for application-level cross-chain continuation,
 the other pairs, fees, and timing races.
 
+ADR 0202 and exact run `m7appreorg297f09aa` close the pre-dependent ZEC
+application-continuation slice. The real Maker store committed canonical
+funding at revision 1, a longer-fork removal and `Offered` projection at
+revision 2, then identical-byte re-mining and `TakerLockConfirmed` restoration
+at revision 3. Because Zebra's mempool did not retain the detached transaction,
+the run exercised explicit byte-identical rebroadcast. A further restart
+replayed without a fourth event. R1 remains open for post-dependent behavior,
+Bitcoin and LEZ reorganization cases, fees, and refund-order timing.
+
 Current F7 execution update: clean pushed Runs X (`422c72e`), Z (`1555749`),
 AA (`df7ed86`), and AD (`0826dd5`) each completed both actual-node custom-token
 directions at the one-second local cadence. Every direction reached revision

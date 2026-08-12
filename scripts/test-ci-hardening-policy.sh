@@ -114,6 +114,7 @@ require_fixed './scripts/test-m7-zec-first-lock-refund-actual-certificate.sh' "$
 require_fixed './scripts/test-m7-zebra-reorg-evidence-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-zebra-reorg-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-zebra-application-reorg-contract.sh' "$quality_runner"
+require_fixed './scripts/test-m7-zebra-application-reorg-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-tag17-actual-poc-contract.sh' "$quality_runner"
 require_fixed './scripts/test-m7-tag17-actual-certificate.sh' "$quality_runner"
 require_fixed './scripts/test-m7-taker-claim-actual-certificate.sh' "$quality_runner"

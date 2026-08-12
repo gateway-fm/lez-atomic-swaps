@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_zec_application_reorg_continuation",
+  "result": "passed",
+  "run_id": "m7appreorg297f09aa",
+  "repository_commit": "297f09a43895d8970cd2d686290ee6f92484760b",
+  "source_evidence_sha256": "dc79c28a432c443dd5a841f45a9ec52ab3e28a99ef34026d9e81754913b9bfd4",
+  "zebra": {
+    "version": "5.2.0",
+    "image": "docker.io/zfnd/zebra:5.2.0@sha256:477e65add4dacf52074ba04da8d763c89c26cc57f911dba2127401f8e1da597d",
+    "network": "Regtest",
+    "node_count": 2,
+    "initial_inclusion_height": 105,
+    "replacement_tip_before_remine": 106,
+    "remined_height": 107
+  },
+  "application": {
+    "transaction_id": "c85fce04f4df1ffed2c6c6b3d663940128bb68304ef3215e5be4c78265e9b3e7",
+    "funding_removed": true,
+    "mempool_survived_detach": false,
+    "rebroadcast_used": true,
+    "exact_transaction_reused": true,
+    "funding_remined": true,
+    "swap_resumed": true,
+    "phase_after_removal": "offered",
+    "phase_after_restore": "taker_lock_confirmed",
+    "removal_revision": 2,
+    "restored_revision": 3,
+    "journal_events": 3,
+    "restart_replay_was_replay": true,
+    "restart_replay_appended_event": false,
+    "automatic_submission_retry": false
+  },
+  "timing": {
+    "application_restart_reorg_test_seconds": 67.44,
+    "competing_fork_regression_seconds": 14.96
+  },
+  "atomicity": {
+    "proof_scope": "pre_dependent_zec_funding_reorg_and_exact_reappearance",
+    "observation_and_projection_committed_together": true,
+    "revision_sequence": [1, 2, 3],
+    "different_funding_identity_accepted": false,
+    "dependent_maker_lock_existed": false,
+    "duplicate_journal_event_observed": false,
+    "future_reorganization_immunity_claimed": false,
+    "argument": "Canonical funding and phase projection share one SQLite transaction. The longer fork atomically moved the application to Offered at revision two before any dependent Maker lock existed. Because Zebra did not retain the detached funding in its mempool, the runtime reused the exact agreement-pinned signed transaction rather than constructing a substitute, validated its new canonical inclusion, and atomically restored TakerLockConfirmed at revision three. A fresh restart replay added no event."
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "exact_containers_absent": true,
+    "exact_network_absent": true,
+    "exact_image_absent": true,
+    "exact_processes_absent": true,
+    "private_run_material_removed": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "not_proven_by_this_certificate": [
+    "post-dependent-lock replacement continuation",
+    "full Maker daemon Chat and Delivery journey",
+    "LEZ or other-pair reorganization behavior",
+    "fee-market or congestion behavior",
+    "public-network behavior",
+    "future reorganization immunity"
+  ],
+  "cold_setup_external_resources": [
+    "pinned image and package endpoints when local caches are cold"
+  ],
+  "cold_setup_flakiness": "Cold-cache registry or package availability can block setup; the measured replay itself used isolated loopback nodes, a run-owned SQLite store, and deterministic local outputs.",
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment": false
+}

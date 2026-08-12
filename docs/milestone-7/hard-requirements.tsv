@@ -18,7 +18,7 @@ U7	green	./scripts/verify-lez-v02-provisional.sh	docs/requirements-traceability.
 U8	green	./scripts/test-bitcoin-testnet4-route-contract.sh	docs/requirements-traceability.md	none
 U9	green	./scripts/test-monero-stagenet-guide-contract.sh	docs/requirements-traceability.md	none
 U10	green	./scripts/test-zcash-testnet-guide-contract.sh	docs/requirements-traceability.md	none
-R1	open	./scripts/test-m7-zebra-reorg-actual-certificate.sh	docs/requirements-traceability.md	Zebra consensus/SDK replacement is actual-node GREEN; application continuation and other-pair reorg/refund-order hardening remain
+R1	open	./scripts/test-m7-zebra-application-reorg-actual-certificate.sh	docs/requirements-traceability.md	Zebra consensus/SDK replacement and pre-dependent application continuation are actual-node GREEN; post-dependent and other-pair reorg/refund-order hardening remain
 R2	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Different-UID isolation, adverse-node continuation, and other pair or branch crash seams
 R3	green	./scripts/test-m7-route-health-contract.sh	docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json	none
 R4	green	./scripts/test-m7-r4-recovery-baseline-contract.sh	docs/evidence/m7-actual-maker-tag15-process-kill-e455dec-20260811.json	none

@@ -28,6 +28,12 @@ selected by `M7_ZEBRA_APPLICATION_REORG_EVIDENCE`, created once with mode
 `0600`, and excludes endpoints, raw bytes, credentials, paths, and process
 identities.
 
+Exact pushed-source run `m7appreorg297f09aa` is GREEN. Zebra did not retain the
+detached funding in its mempool, so the run exercised identical-byte
+rebroadcast, re-mined the transaction at height 107, and resumed the
+application at revision 3. The checked certificate is
+`docs/evidence/m7-actual-zec-application-reorg-297f09a-20260812.json`.
+
 ```mermaid
 flowchart LR
     T[Application reorg test] --> P[Primary Zebra Regtest]

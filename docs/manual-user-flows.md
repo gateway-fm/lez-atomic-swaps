@@ -9617,8 +9617,10 @@ Use a fresh lowercase run ID and an owner-private evidence path:
 ```bash
 export RUN_ID=m7reorg-$(date -u +%Y%m%d%H%M%S)
 export M7_ZEBRA_REORG_EVIDENCE=/tmp/${RUN_ID}-zebra-reorg.json
+export M7_ZEBRA_APPLICATION_REORG_EVIDENCE=/tmp/${RUN_ID}-application-reorg.json
 ./scripts/run-zebra-e2e.sh
 jq . "$M7_ZEBRA_REORG_EVIDENCE"
+jq . "$M7_ZEBRA_APPLICATION_REORG_EVIDENCE"
 ```
 
 A valid result reports a three-block old branch ending at height 119, a
@@ -9632,6 +9634,7 @@ Verify the retained pushed-source example without starting Docker:
 
 ```bash
 ./scripts/test-m7-zebra-reorg-actual-certificate.sh
+./scripts/test-m7-zebra-application-reorg-actual-certificate.sh
 ```
 
 The exact component and sequence diagrams and the conditional-atomicity
@@ -9640,6 +9643,13 @@ and therefore cannot coexist on the canonical branch; the unrelated Refund
 remaining canonical proves the test did not mistake total node rollback for
 selective replacement. This is consensus/SDK evidence, not proof that the
 cross-chain application supervisor continues after the replacement.
+
+The application packet must additionally report removal revision 2 in
+`offered`, restoration revision 3 in `taker_lock_confirmed`, the same 64-digit
+transaction ID, three total journal events, and a restart replay that appended
+nothing. Either mempool retention or byte-identical rebroadcast is valid; the
+checked run exercised rebroadcast because Zebra did not retain the detached
+transaction.
 
 Runtime external resources are empty. Both RPC endpoints are dynamic
 loopback-only ports, both nodes have no public peers, funds are deterministic

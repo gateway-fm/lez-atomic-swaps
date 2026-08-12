@@ -7914,4 +7914,9 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Document its component/sequence flow, atomic store semantics, exact
   identity requirement, runtime resources, flakiness, and evidence limits in
   ADR 0202; pin the offline compile contract in the quality runner and policy.
-- [ ] Push source, then certify one fresh exact replay.
+- [x] Push source `297f09a` and replay fresh exact run
+  `m7appreorg297f09aa`. Zebra did not retain the detached transaction in its
+  mempool, so the harder identical-byte rebroadcast path ran; the exact funding
+  re-mined at height 107, resumed revision 3, and restart replay retained three
+  events. Both Zebra containers, network, image, processes, and private run
+  material were removed before publishing the checked certificate.

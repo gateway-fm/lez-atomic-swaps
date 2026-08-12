@@ -31,6 +31,16 @@ are CI-pinned. Runtime uses no external RPC, peer, faucet, public funds, or
 public deployment. R1/F6 remain open for application-level continuation and
 the other adverse pair/timing cases.
 
+The pre-dependent ZEC application continuation is also exact-node GREEN on run
+`m7appreorg297f09aa`. After a real longer-fork removal, the restarted Maker
+store projected `Offered` at revision 2; Zebra had dropped the detached
+transaction from its mempool, so the runtime rebroadcast the identical signed
+funding, re-mined it at height 107, and atomically resumed
+`TakerLockConfirmed` at revision 3. The checked
+[certificate](docs/evidence/m7-actual-zec-application-reorg-297f09a-20260812.json)
+and [ADR 0202](docs/architecture/0202-resume-zec-application-after-canonical-reappearance.md)
+are CI-pinned. This does not close post-dependent or other-pair reorg work.
+
 The successful Taker claim corridor is also actual-node GREEN on exact pushed
 run `m7claim-2cff48d-a`. Receipt-v2 Claim published owner-exact Tag14, observed
 finalized Tag15, reconstructed the committed spend authority and swept the
