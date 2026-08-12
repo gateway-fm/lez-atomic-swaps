@@ -9617,9 +9617,11 @@ export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
 export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
 export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
 export LEZ_V02_SERVICES_DIR=/absolute/path/to/pinned/lez-v0.2-release-services
-./scripts/run-m7-xmr-accepted-concurrency-poc.sh preflight
 ./scripts/run-m7-xmr-accepted-concurrency-poc.sh execute
 ```
+
+The wrapper accepts only `contract` or `execute`; `execute` performs the
+fail-closed build and runtime preflight before creating chain resources.
 
 The runner creates one Maker and two Taker LEZ identities, gives all three
 distinct genesis Vaults and finalized Vault Claims, accepts both applications
