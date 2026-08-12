@@ -7844,3 +7844,23 @@ S12/S13 review and policy-deferred public deployment.
 - [ ] Extend this process prerequisite into a reproducible actual local LEZ
   v0.2 plus Monero Regtest concurrency packet with two authenticated Chat
   acceptances and two distinct chain outcomes before closing F3/F6.
+
+## M7 Zebra competing-fork evidence checkpoint (2026-08-12)
+
+- [x] Reuse the existing pinned two-Zebra Regtest consensus scenario rather
+  than introduce another fork simulator. It already confirms a Claim and
+  unrelated Refund on a three-block branch, then a conflicting Refund plus the
+  same unrelated Refund on a four-block replacement branch.
+- [x] Start with a RED contract requiring an optional owner-private retained
+  evidence boundary and exact outcome fields.
+- [x] Add create-once mode-`0600` JSON evidence after every detached height is
+  replaced, the conflicting Refund is canonical, and the unrelated Refund
+  remains confirmed. Also require the old Claim lookup to fail after the reorg.
+  Raw transactions, keys, endpoints, process IDs, and paths are excluded.
+- [x] Record components, RPC flow, conditional atomicity relevance, external
+  resources, flakiness, and evidence limits in ADR 0201; pin the offline source
+  contract in the quality runner and CI policy.
+- [ ] Push the clean source checkpoint, run the exact isolated two-Zebra
+  replay with a fresh run ID, verify exact cleanup, then publish a checked
+  sanitized certificate. This SDK/consensus packet alone does not close the
+  remaining application-level R1/F6 continuation.

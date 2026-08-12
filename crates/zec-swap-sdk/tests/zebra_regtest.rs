@@ -1,6 +1,9 @@
 //! Actor-keyed consensus acceptance against the pinned isolated Zebra node.
 
-use std::{fmt::Write as _, time::Duration};
+use std::{
+    fmt::Write as _, fs::OpenOptions, io::Write as _, os::unix::fs::OpenOptionsExt as _,
+    path::Path, time::Duration,
+};
 
 use jsonrpsee::{core::client::ClientT, rpc_params};
 use jsonrpsee_http_client::{HttpClient, HttpClientBuilder};
@@ -505,6 +508,116 @@ async fn prove_accepted_competing_fork(
             >= 4
     );
     assert_confirmed(client, &refund_txid, refund).await;
+
+    assert_and_record_reorg_outcome(
+        client,
+        common_height,
+        old_first_hash,
+        &old_tip_hash,
+        &replacement_first_hash,
+        &replacement_tip_hash,
+        &claim_txid,
+        &conflicting_refund_txid,
+        &refund_txid,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn assert_and_record_reorg_outcome(
+    client: &HttpClient,
+    common_height: u32,
+    old_first_hash: &str,
+    old_tip_hash: &str,
+    replacement_first_hash: &str,
+    replacement_tip_hash: &str,
+    detached_claim_transaction_id: &str,
+    replacement_refund_transaction_id: &str,
+    shared_refund_transaction_id: &str,
+) {
+    let detached_claim = client
+        .request::<Value, _>(
+            "getrawtransaction",
+            rpc_params![detached_claim_transaction_id, 1],
+        )
+        .await;
+    assert!(
+        detached_claim.is_err(),
+        "the conflicting canonical refund must evict the detached claim"
+    );
+    if let Ok(evidence_path) = std::env::var("M7_ZEBRA_REORG_EVIDENCE") {
+        write_reorg_evidence(
+            Path::new(&evidence_path),
+            common_height,
+            old_first_hash,
+            old_tip_hash,
+            replacement_first_hash,
+            replacement_tip_hash,
+            detached_claim_transaction_id,
+            replacement_refund_transaction_id,
+            shared_refund_transaction_id,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_reorg_evidence(
+    path: &Path,
+    common_height: u32,
+    old_first_hash: &str,
+    old_tip_hash: &str,
+    replacement_first_hash: &str,
+    replacement_tip_hash: &str,
+    detached_claim_transaction_id: &str,
+    replacement_refund_transaction_id: &str,
+    shared_refund_transaction_id: &str,
+) {
+    assert!(!path.exists(), "refusing to overwrite M7 reorg evidence");
+    let evidence = json!({
+        "schema_version": 1,
+        "kind": "m7_actual_zebra_competing_fork",
+        "result": "passed",
+        "network": "Regtest",
+        "common_height": common_height,
+        "old_branch": {
+            "first_height": common_height + 1,
+            "first_hash": old_first_hash,
+            "tip_height": common_height + 3,
+            "tip_hash": old_tip_hash,
+            "block_count": 3
+        },
+        "replacement_branch": {
+            "first_height": common_height + 1,
+            "first_hash": replacement_first_hash,
+            "tip_height": common_height + 4,
+            "tip_hash": replacement_tip_hash,
+            "block_count": 4
+        },
+        "transactions": {
+            "detached_claim": detached_claim_transaction_id,
+            "canonical_conflicting_refund": replacement_refund_transaction_id,
+            "canonical_shared_refund": shared_refund_transaction_id
+        },
+        "old_branch_detached": true,
+        "replacement_branch_canonical": true,
+        "shared_refund_survived_reorg": true,
+        "conflicting_refund_replaced_claim": true,
+        "automatic_submission_retry": false,
+        "runtime_external_resources": [],
+        "public_rpc_used": false,
+        "faucet_used": false,
+        "public_funds_used": false,
+        "public_deployment": false
+    });
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .expect("create owner-private M7 reorg evidence");
+    serde_json::to_writer_pretty(&mut file, &evidence).expect("write M7 reorg evidence JSON");
+    file.write_all(b"\n").expect("terminate M7 reorg evidence");
+    file.sync_all().expect("sync M7 reorg evidence");
 }
 
 async fn prove_concurrent_claim_refund_and_tip_reorg(
