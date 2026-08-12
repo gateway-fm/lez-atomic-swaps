@@ -56,6 +56,25 @@ fn existing_registry_and_named_source_build_one_static_prepared_zec_entry() {
 }
 
 #[test]
+fn prepared_zec_entry_derives_either_direction_from_the_authenticated_offer() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let fixture = Fixture::new_with_direction(direction);
+        let context = load_taker_service_context(&fixture.config).unwrap();
+        let prepared = context
+            .initiation()
+            .unwrap()
+            .prepared_zec_for_offer(&MakerOfferId::new("m6-zec-offer-001").unwrap())
+            .unwrap();
+
+        assert_eq!(prepared.facts().route().pair(), Pair::Zcash);
+        assert_eq!(prepared.facts().route().direction(), direction);
+    }
+}
+
+#[test]
 fn legacy_read_configuration_remains_compatible_without_source_id() {
     let fixture = Fixture::new();
     let mut legacy = fixture.value.clone();
@@ -241,6 +260,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::new_with_direction(SwapDirection::TakerSellsLez)
+    }
+
+    fn new_with_direction(direction: SwapDirection) -> Self {
         let run = tempfile::tempdir().unwrap();
         let root = private_directory(run.path().join("fixture"));
         let delivery = private_directory(root.join("delivery"));
@@ -251,7 +274,10 @@ impl Fixture {
             PublicKey::from_secret_key(&Secp256k1::signing_only(), &maker_secret).serialize();
         let publisher = RunLocalDelivery::publisher(delivery.clone(), maker_secret).unwrap();
         let authenticated = publisher
-            .publish_or_verify(&DeliveryPublicationV1::new(prepared_offer(&root), 1_000))
+            .publish_or_verify(&DeliveryPublicationV1::new(
+                prepared_offer(&root, direction),
+                1_000,
+            ))
             .unwrap();
         let signed = private_file(root.join("signed.json"), authenticated.signed_envelope());
         let draft = private_file(root.join("draft.json"), br#"{"unsigned":"draft"}"#);
@@ -308,8 +334,8 @@ impl Fixture {
     }
 }
 
-fn prepared_offer(root: &Path) -> lez_swap_store::MakerOfferV1 {
-    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+fn prepared_offer(root: &Path, direction: SwapDirection) -> lez_swap_store::MakerOfferV1 {
+    let route = MakerRouteV1::new(Pair::Zcash, direction).unwrap();
     let mut store = SqliteSwapStore::open(root.join("offer.sqlite3")).unwrap();
     let disabled =
         MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 1, 10_000, 300)

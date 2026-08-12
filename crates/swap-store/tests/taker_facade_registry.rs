@@ -136,6 +136,31 @@ fn maker_identity_must_be_a_real_secp256k1_public_key() {
 }
 
 #[test]
+fn zec_initiation_facts_preserve_both_swap_directions() {
+    for (label, direction) in [
+        ("foreign", SwapDirection::TakerSellsForeign),
+        ("lez", SwapDirection::TakerSellsLez),
+    ] {
+        let route = MakerRouteV1::new(Pair::Zcash, direction).unwrap();
+        let facts = TakerInitiationFactsV1::new(
+            SwapId::new(format!("m7-zec-{label}-swap")).unwrap(),
+            MakerOfferId::new(format!("m7-zec-{label}-offer")).unwrap(),
+            route,
+            maker_identity(17),
+            [0x51; 32],
+            200_000_000,
+            1_820,
+        )
+        .expect("both role-correct ZEC directions are application routes");
+
+        assert_eq!(facts.route(), route);
+        let encoded = serde_json::to_vec(&facts).unwrap();
+        let decoded: TakerInitiationFactsV1 = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, facts);
+    }
+}
+
+#[test]
 fn initiation_is_atomic_and_exactly_replays_after_restart() {
     let root = private_root();
     let database = root.path().join("registry.sqlite3");

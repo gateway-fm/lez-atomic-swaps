@@ -7602,3 +7602,11 @@ S12/S13 review and policy-deferred public deployment.
   The CI-pinned gate closes U3 without claiming marker actors made chain
   effects. The hard inventory is now 28 rows with 9 repository-owned open and
   2 deferred; F9/U4/S5 remain open for Taker and adverse actual-node journeys.
+- [x] Begin the corrective ZEC first-lock absent-Maker application path with
+  ADR 0198. Focused REDs proved the Taker registry and prepared-service catalog
+  rejected `TakerSellsForeign`. GREEN now preserves either typed ZEC direction
+  from the authenticated signed offer into the exact durable initiation facts;
+  non-ZEC pairs remain rejected and the existing configuration schema is
+  unchanged. Registry 21/21 and prepared startup 6/6 pass. Acceptance, Maker
+  Chat completion, role execution, and actual local-node evidence remain before
+  this journey can close U4/F9/S5.

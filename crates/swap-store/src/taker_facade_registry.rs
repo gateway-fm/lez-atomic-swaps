@@ -12,7 +12,7 @@ use std::{
 };
 
 use lez_bridge_protocol::RequestId;
-use lez_swap_core::{Pair, SwapDirection, SwapId};
+use lez_swap_core::{Pair, SwapId};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension as _, Transaction, TransactionBehavior, params,
 };
@@ -113,11 +113,11 @@ pub struct TakerInitiationFactsV1 {
 }
 
 impl TakerInitiationFactsV1 {
-    /// Constructs exact public facts for the current ZEC Taker vertical.
+    /// Constructs exact public facts for either role-correct ZEC Taker direction.
     ///
     /// # Errors
     ///
-    /// Rejects another route, a non-compressed identity, or zero amounts.
+    /// Rejects another pair, a non-compressed identity, or zero amounts.
     pub fn new(
         swap_id: SwapId,
         offer_id: MakerOfferId,
@@ -186,7 +186,6 @@ impl TakerInitiationFactsV1 {
     fn validate(&self) -> Result<(), TakerFacadeStoreError> {
         if self.schema_version != 1
             || self.route.pair() != Pair::Zcash
-            || self.route.direction() != SwapDirection::TakerSellsLez
             || PublicKey::from_slice(&self.maker_identity).is_err()
             || self.foreign_units == 0
             || self.lez_units == 0

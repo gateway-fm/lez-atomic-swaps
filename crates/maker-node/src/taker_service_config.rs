@@ -9,10 +9,10 @@ use std::{
 };
 
 use lez_bridge_protocol::RequestId;
-use lez_swap_core::{Pair, SwapDirection, SwapId};
+use lez_swap_core::{Pair, SwapId};
 use lez_swap_store::{
-    MakerOfferId, MakerRouteV1, SqliteTakerFacadeStore, TakerInitiationAuthorityV1,
-    TakerInitiationFactsV1, TakerPrivateFileBindingV1,
+    MakerOfferId, SqliteTakerFacadeStore, TakerInitiationAuthorityV1, TakerInitiationFactsV1,
+    TakerPrivateFileBindingV1,
 };
 use secp256k1::{PublicKey, SecretKey};
 use serde::Deserialize;
@@ -615,8 +615,6 @@ fn build_initiation_context(
 ) -> Result<ConfiguredTakerInitiationContext, TakerServiceStartupError> {
     let registry = SqliteTakerFacadeStore::open_existing(&configuration.registry_database)
         .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?;
-    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez)
-        .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
     let mut prepared_zec_by_offer = BTreeMap::new();
 
     for configured in &configuration.prepared_zec {
@@ -633,9 +631,10 @@ fn build_initiation_context(
             .ok_or(TakerServiceStartupError::InvalidConfiguration)?
             .authenticate_envelope(signed_snapshot.bytes())
             .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
+        let route = authenticated.offer().route();
         if authenticated.maker_identity() != &maker_identity
             || authenticated.offer().id() != &configured.offer_id
-            || authenticated.offer().route() != route
+            || route.pair() != Pair::Zcash
             || authenticated
                 .offer()
                 .quote_foreign_amount(configured.foreign_units)
