@@ -7864,3 +7864,13 @@ S12/S13 review and policy-deferred public deployment.
   replay with a fresh run ID, verify exact cleanup, then publish a checked
   sanitized certificate. This SDK/consensus packet alone does not close the
   remaining application-level R1/F6 continuation.
+- [x] Push source checkpoint `ce15408` and start exact run
+  `m7reorgce15408a`. The prerequisite maker restart test reached its real
+  removal/restart audit but failed before the competing-fork case because its
+  explicit schema audit still expected version 12 while the current store is
+  version 22. The exact Compose project/image were cleaned and no reorg
+  evidence was produced.
+- [x] RED then GREEN the stale audit literal to the current migration inventory
+  version 22. This changes no schema or runtime behavior; it restores the
+  test's stated requirement to be updated whenever migrations advance.
+- [ ] Push the audit correction and repeat with a fresh exact run ID.
