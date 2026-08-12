@@ -30,6 +30,11 @@ Agreement completion requires that optional preimage exactly when the signed
 agreement makes Maker the LEZ claimant. This prevents a reverse-flow shortcut
 from copying Taker custody into the Maker process.
 
+The Taker facade advertises capabilities per route rather than only per pair.
+Its stable table therefore contains four entries: BTC reverse, XMR forward,
+ZEC forward, and ZEC reverse. Offer browsing rejects routes outside that table
+but admits either composed ZEC direction before consulting Delivery.
+
 ```mermaid
 flowchart LR
     U[Taker user] --> C[lez taker CLI]

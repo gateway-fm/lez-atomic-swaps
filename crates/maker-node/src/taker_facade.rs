@@ -561,13 +561,13 @@ impl TakerPairCapabilityV1 {
     }
 }
 
-/// Returns the exact current pair capabilities in stable pair order.
+/// Returns the exact current route capabilities in stable pair/direction order.
 ///
 /// Bitcoin and Zcash expose complete receipt-bound lifecycle commands. Monero
 /// currently exposes only role-fixed tag-14/tag-16 effect checkpoints; neither
 /// checkpoint alone is represented as terminal cross-chain completion.
 #[must_use]
-pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 3] {
+pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 4] {
     [
         TakerPairCapabilityV1 {
             pair: Pair::Bitcoin,
@@ -596,6 +596,15 @@ pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 3] {
             claim: TakerTerminalActionCapabilityV1::FullLifecycle,
             refund: TakerTerminalActionCapabilityV1::FullLifecycle,
         },
+        TakerPairCapabilityV1 {
+            pair: Pair::Zcash,
+            supported_direction: SwapDirection::TakerSellsForeign,
+            authenticated_offer_browsing: true,
+            initiation: TakerInitiationCapabilityV1::PreparedPrivateMaterial,
+            monitoring: TakerMonitoringCapabilityV1::ReceiptBound,
+            claim: TakerTerminalActionCapabilityV1::FullLifecycle,
+            refund: TakerTerminalActionCapabilityV1::FullLifecycle,
+        },
     ]
 }
 
@@ -608,7 +617,7 @@ pub struct TakerHealthV1 {
     degraded: bool,
     delivery: TakerDependencyStateV1,
     chat: TakerDependencyStateV1,
-    pair_capabilities: [TakerPairCapabilityV1; 3],
+    pair_capabilities: [TakerPairCapabilityV1; 4],
     registered_methods: TakerRegisteredMethodsV1,
 }
 
@@ -684,7 +693,7 @@ impl TakerHealthV1 {
 
     /// Returns all current pair capabilities in stable order.
     #[must_use]
-    pub const fn pair_capabilities(&self) -> &[TakerPairCapabilityV1; 3] {
+    pub const fn pair_capabilities(&self) -> &[TakerPairCapabilityV1; 4] {
         &self.pair_capabilities
     }
 }

@@ -9524,6 +9524,12 @@ own recovery key, Zcash key, signer, and actor-provisioning inputs. The forward
 direction continues to provide Maker's own preimage because the signed roles
 require it there.
 
+The Taker health response lists route capabilities, not merely pair names. A
+current application build reports four entries: Bitcoin
+`TakerSellsForeign`, Monero `TakerSellsLez`, and both Zcash directions. If the
+reverse Zcash entry is absent, stop before initiation; that binary predates
+this flow even if the prepared receipt itself contains the signed direction.
+
 Inspect only the secret-free evidence:
 
 ```bash

@@ -100,7 +100,7 @@ fn every_untrusted_request_is_versioned_strict_and_contains_no_authority_field()
 #[test]
 fn pair_capabilities_report_only_current_role_fixed_semantics() {
     let capabilities = taker_pair_capabilities_v1();
-    assert_eq!(capabilities.len(), 3);
+    assert_eq!(capabilities.len(), 4);
     assert_capability(
         &capabilities[0],
         Pair::Bitcoin,
@@ -117,6 +117,12 @@ fn pair_capabilities_report_only_current_role_fixed_semantics() {
         &capabilities[2],
         Pair::Zcash,
         SwapDirection::TakerSellsLez,
+        TakerTerminalActionCapabilityV1::FullLifecycle,
+    );
+    assert_capability(
+        &capabilities[3],
+        Pair::Zcash,
+        SwapDirection::TakerSellsForeign,
         TakerTerminalActionCapabilityV1::FullLifecycle,
     );
 

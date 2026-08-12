@@ -7,6 +7,7 @@ export LC_ALL=C
 readonly runner="scripts/run-m2-taker-sells-lez-poc.sh"
 readonly handoff="scripts/run-m5-zec-chat-handoff.sh"
 readonly wrapper="scripts/run-m7-zec-taker-first-lock-refund-poc.sh"
+readonly facade="crates/maker-node/src/taker_facade.rs"
 
 fail() {
   echo "M7 ZEC first-lock refund contract failed: $*" >&2
@@ -22,6 +23,9 @@ for required in \
   'export M6_ZEC_JOURNEY=first_lock_refund'; do
   rg -Fq -- "$required" "$wrapper" || fail "wrapper is missing: ${required}"
 done
+
+[[ "$(rg -Fc 'supported_direction: SwapDirection::TakerSellsForeign' "$facade")" == 2 ]] ||
+  fail 'Taker service capability table does not expose BTC plus reverse ZEC routes'
 
 for required in \
   '--direction "$POC_DIRECTION"' \

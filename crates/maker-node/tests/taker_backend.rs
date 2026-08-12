@@ -144,6 +144,17 @@ async fn schema_and_route_validation_fail_before_dependency_access() {
         backend
             .offer_list(&TakerOfferListRequestV1 {
                 schema_version: 1,
+                route: Some(
+                    MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsForeign).unwrap(),
+                ),
+            })
+            .await,
+        Err(TakerBackendError::TrustedTimeUnavailable)
+    );
+    assert_eq!(
+        backend
+            .offer_list(&TakerOfferListRequestV1 {
+                schema_version: 1,
                 route: None,
             })
             .await,

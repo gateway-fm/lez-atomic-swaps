@@ -7646,7 +7646,21 @@ S12/S13 review and policy-deferred public deployment.
   preimage if and only if Maker is its LEZ claimant. Both handoff and later
   supervised-daemon startup omit the preimage in `TakerSellsForeign`; no
   Taker secret is copied across roles.
-- [ ] Push the role-custody correction and repeat the complete first-lock,
+- [x] Push the role-custody correction as `23f0bea` and repeat the complete first-lock,
   signed-height refund, terminal observation, and no-effect replay against the
   already-fresh untouched nodes. Only a GREEN exact pushed-source result may
   close F9/U4/S5 or produce the sanitized certificate.
+- [x] Use pushed-source replay `m7zecfirstrefund23f0beaa` as the next bounded
+  RED. Direction-aware Chat completed, application state restarted, and the
+  prepared Taker service became healthy; its offer-list RPC then rejected the
+  signed reverse ZEC route because the public capability table still listed
+  only forward ZEC. Zebra remained at height 104 with an empty mempool, so no
+  swap chain effect or ambiguous send occurred.
+- [x] RED then GREEN a four-route Taker capability table. Health and backend
+  validation now expose BTC reverse, XMR forward, ZEC forward, and ZEC reverse
+  in stable order. A direct backend regression proves reverse ZEC passes route
+  validation before dependency access, while the existing unsupported BTC
+  direction remains rejected. The prepared registry and Chat semantics are
+  unchanged.
+- [ ] Push the capability correction and rerun the exact journey from a new
+  private application root on the still-effect-free fresh chains.
