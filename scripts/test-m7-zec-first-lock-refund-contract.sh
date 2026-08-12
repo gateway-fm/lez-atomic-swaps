@@ -24,6 +24,12 @@ for required in \
   rg -Fq -- "$required" "$wrapper" || fail "wrapper is missing: ${required}"
 done
 
+receipt_helper_line="$(rg -n '^assert_m5_taker_receipt_unchanged\(\) \{' "$runner" | cut -d: -f1)"
+first_service_call_line="$(rg -n '^  start_m6_taker_service$' "$runner" | sed -n '1s/:.*//p')"
+[[ -n "$receipt_helper_line" && -n "$first_service_call_line" \
+  && "$receipt_helper_line" -lt "$first_service_call_line" ]] ||
+  fail 'receipt invariant helper is defined after the first service call'
+
 [[ "$(rg -Fc 'supported_direction: SwapDirection::TakerSellsForeign' "$facade")" == 2 ]] ||
   fail 'Taker service capability table does not expose BTC plus reverse ZEC routes'
 

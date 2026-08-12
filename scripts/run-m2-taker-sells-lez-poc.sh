@@ -929,6 +929,25 @@ rpc() {
 }
 
 
+assert_m5_taker_receipt_unchanged() {
+  [[ "$m5_taker_acceptance_receipt" == \
+      "$application_root/taker-acceptance-receipt.json" \
+    && -f "$m5_taker_acceptance_receipt" \
+    && ! -L "$m5_taker_acceptance_receipt" \
+    && "$(stat -c %a -- "$m5_taker_acceptance_receipt")" == 600 \
+    && "$(stat -c %u -- "$m5_taker_acceptance_receipt")" == "$(id -u)" \
+    && "$(stat -c %h -- "$m5_taker_acceptance_receipt")" == 1 \
+    && "$(stat -c %s -- "$m5_taker_acceptance_receipt")" -gt 0 \
+    && "$(stat -c %s -- "$m5_taker_acceptance_receipt")" -le 65536 \
+    && "$(stat -c %d:%i -- "$m5_taker_acceptance_receipt")" == \
+      "$m5_taker_acceptance_receipt_identity" \
+    && "$(sha256sum "$m5_taker_acceptance_receipt" | cut -d ' ' -f1)" == \
+      "$m5_taker_acceptance_receipt_sha256" ]] || {
+    echo 'M5 Taker acceptance receipt identity or bytes changed at point of use' >&2
+    return 1
+  }
+}
+
 m6_service_rpc() {
   local label="$1"
   local request="$2"
@@ -1957,26 +1976,6 @@ drive_actor() {
   remaining_budget_milliseconds "${role}-drive-${round}-after" >/dev/null || return
   printf '%s\n' "$output"
 }
-
-assert_m5_taker_receipt_unchanged() {
-  [[ "$m5_taker_acceptance_receipt" == \
-      "$application_root/taker-acceptance-receipt.json" \
-    && -f "$m5_taker_acceptance_receipt" \
-    && ! -L "$m5_taker_acceptance_receipt" \
-    && "$(stat -c %a -- "$m5_taker_acceptance_receipt")" == 600 \
-    && "$(stat -c %u -- "$m5_taker_acceptance_receipt")" == "$(id -u)" \
-    && "$(stat -c %h -- "$m5_taker_acceptance_receipt")" == 1 \
-    && "$(stat -c %s -- "$m5_taker_acceptance_receipt")" -gt 0 \
-    && "$(stat -c %s -- "$m5_taker_acceptance_receipt")" -le 65536 \
-    && "$(stat -c %d:%i -- "$m5_taker_acceptance_receipt")" == \
-      "$m5_taker_acceptance_receipt_identity" \
-    && "$(sha256sum "$m5_taker_acceptance_receipt" | cut -d ' ' -f1)" == \
-      "$m5_taker_acceptance_receipt_sha256" ]] || {
-    echo 'M5 Taker acceptance receipt identity or bytes changed at point of use' >&2
-    return 1
-  }
-}
-
 
 m6_taker_lez_submission_set() {
   local journal="${taker_sidecar_state_dir}/bridge-requests.v1.json"

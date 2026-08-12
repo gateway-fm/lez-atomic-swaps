@@ -7662,5 +7662,15 @@ S12/S13 review and policy-deferred public deployment.
   validation before dependency access, while the existing unsupported BTC
   direction remains rejected. The prepared registry and Chat semantics are
   unchanged.
-- [ ] Push the capability correction and rerun the exact journey from a new
-  private application root on the still-effect-free fresh chains.
+- [x] Push the capability correction as `5ee474b` and rerun the exact journey
+  from a new private application root on the still-effect-free fresh chains.
+  The service advertised and admitted reverse ZEC, then exposed a third
+  bounded pre-effect RED: its early first-lock branch called the acceptance-
+  receipt invariant helper before Bash had executed that later definition.
+  Zebra again remained at height 104 with an empty mempool.
+- [x] RED then GREEN the shell execution-order invariant. The focused contract
+  requires the receipt helper definition to precede the first Taker-service
+  call, and the unchanged inode/bytes check now runs for the early first-lock
+  branch as intended. No receipt semantics or effect authority changed.
+- [ ] Push the ordering correction and repeat from a new private application
+  root; only exact GREEN evidence can close the journey.
