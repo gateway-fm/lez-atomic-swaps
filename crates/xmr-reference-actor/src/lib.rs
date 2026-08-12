@@ -219,6 +219,9 @@ pub enum Action {
         /// Existing owner-private shared view-key handoff; required only by Maker.
         #[arg(long, value_name = "PRIVATE_VIEW_KEY")]
         shared_view_key_file: Option<PathBuf>,
+        /// Existing owner-private Maker agreement key reused by one daemon identity.
+        #[arg(long, value_name = "PRIVATE_AGREEMENT_KEY")]
+        agreement_key_file: Option<PathBuf>,
         /// New canonical public role packet under an exact owner-only parent.
         #[arg(long, value_name = "NEW_PUBLIC_JSON")]
         public_packet: PathBuf,
@@ -1114,12 +1117,14 @@ pub fn execute(cli: Cli) -> Result<()> {
             private_root,
             lez_owner_account,
             shared_view_key_file,
+            agreement_key_file,
             public_packet,
         } => provision(
             role,
             &private_root,
             &lez_owner_account,
             shared_view_key_file.as_deref(),
+            agreement_key_file.as_deref(),
             &public_packet,
         ),
         #[cfg(feature = "sessions")]
@@ -2253,14 +2258,16 @@ fn provision(
     private_root: &Path,
     lez_owner_account: &str,
     shared_view_key_file: Option<&Path>,
+    agreement_key_file: Option<&Path>,
     public_packet: &Path,
 ) -> Result<()> {
     ensure!(
-        matches!(
-            (role, shared_view_key_file),
-            (ActorRole::Maker, Some(_)) | (ActorRole::Taker, None)
-        ),
-        "Maker must import and Taker must generate the shared view key"
+        role != ActorRole::Maker || shared_view_key_file.is_some(),
+        "Maker must import the shared view key"
+    );
+    ensure!(
+        role == ActorRole::Maker || agreement_key_file.is_none(),
+        "only Maker may import an agreement key"
     );
     let lez_owner_account: [u8; 32] = decode_exact(lez_owner_account)?;
     ensure!(lez_owner_account != [0; 32], "LEZ owner account is invalid");
@@ -2275,7 +2282,10 @@ fn provision(
         None => MoneroPrivateViewKey::generate().context("generate private Monero view key")?,
     };
     let mut rng = fallible_seeded_rng()?;
-    let agreement = GeneratedSecpKey::generate(&mut rng);
+    let agreement = match agreement_key_file {
+        Some(path) => GeneratedSecpKey::read_private(path, "Maker agreement key")?,
+        None => GeneratedSecpKey::generate(&mut rng),
+    };
     let claim = GeneratedSecpKey::generate(&mut rng);
     let refund = GeneratedSecpKey::generate(&mut rng);
     let share = CrossCurveScalar::generate().context("generate private Monero share")?;
@@ -2971,6 +2981,24 @@ impl GeneratedSecpKey {
                 return Self { key, bytes };
             }
         }
+    }
+
+    fn read_private(path: &Path, label: &'static str) -> Result<Self> {
+        let file = open_path_no_symlinks(path, label)?;
+        let encoded = Zeroizing::new(read_bounded_file(
+            file,
+            PRIVATE_KEY_MAX_BYTES,
+            FilePolicy::Private,
+            label,
+        )?);
+        let trimmed = encoded
+            .strip_suffix(b"\r\n")
+            .or_else(|| encoded.strip_suffix(b"\n"))
+            .unwrap_or(&encoded);
+        let bytes = decode_secret_exact(trimmed)?;
+        let key = SecretKey::from_slice(bytes.as_ref())
+            .with_context(|| format!("private {label} is invalid"))?;
+        Ok(Self { key, bytes })
     }
 
     fn secret_bytes(&self) -> &[u8; 32] {

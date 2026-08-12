@@ -7954,6 +7954,12 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Record component and sequence diagrams, conditional-atomicity limits,
   node/RPC topology, external-resource disclosure, and exact closure rule in
   ADR 0204.
+- [x] RED then GREEN paired owner-private agreement-helper inputs so agreement
+  B copies only the daemon-authenticated Maker agreement key and shared Monero
+  view key. Maker claim/refund keys, DLEQ share, Taker identity, role roots,
+  actor stores, and journals remain fresh. Unpaired inputs create no output.
+  Strict Clippy, eight actor tests, the helper contract, and the 39.91-second
+  shared-daemon regression pass.
 - [ ] Parameterize offer, reservation, agreement, role journals, actor stores,
   and evidence into two isolated swap contexts under the shared daemon.
 - [ ] Accept both applications before activation, restart once, and prove both

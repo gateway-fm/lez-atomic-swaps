@@ -1,6 +1,6 @@
 # ADR 0204: Run two XMR applications through one daemon
 
-Status: Accepted for implementation; source contract GREEN
+Status: Accepted for implementation; shared-identity prerequisite GREEN
 
 ## Context
 
@@ -80,6 +80,15 @@ future-reorganization immunity.
 The source contract is GREEN. F3 remains open until a clean pushed-source run
 retains two authenticated acceptances, actual effects on the one shared node
 topology, terminal replay, sanitized evidence, and exact scoped cleanup.
+
+The first implementation slice adds paired owner-private inputs to the existing
+agreement helper. Agreement B copies the exact Maker agreement key and Monero
+view key used by agreement A, which is the identity the one Chat daemon
+authenticates. Fresh entropy still produces agreement B's Maker claim/refund
+keys, DLEQ share, Taker identity, and all role journals. The paired inputs fail
+before output creation when only one is supplied. Strict Clippy, all eight
+provisioning tests, the helper contract, and the shared-daemon process
+regression are GREEN.
 
 Runtime external resources are empty: only isolated literal-loopback LEZ v0.2
 and official Monero 0.18.5.1 Regtest services with deterministic local funds

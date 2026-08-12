@@ -34,6 +34,13 @@ jq -e '
   and .dynamic_literal_loopback_endpoints == true
   and .independent_role_roots == ["taker", "maker"]
   and .owner_private_view_key_handoff == true
+  and .optional_shared_identity_inputs == {
+    view_key:"--shared-view-key-source",
+    maker_agreement_key:"--maker-agreement-key-source",
+    owner_private_regular_files:true,
+    copied_into_new_role_roots:true,
+    per_swap_session_and_dleq_keys_remain_fresh:true
+  }
   and .view_key_publication == "same_directory_temp_atomic_link_create_new"
   and .trusted_binaries.owner_owned == true
   and .trusted_binaries.single_link == true
@@ -110,15 +117,20 @@ case "$action" in
     owner="$(value_after --lez-owner-account "$@")"
     public_packet="$(value_after --public-packet "$@")"
     mkdir -m 0700 "$private_root"
-    write_new "${private_root}/agreement.key" "${role}-agreement-secret"
+    agreement_source="$(value_after --agreement-key-file "$@" 2>/dev/null || true)"
+    if [[ -n "$agreement_source" ]]; then
+      install -m 0600 -- "$agreement_source" "${private_root}/agreement.key"
+    else
+      write_new "${private_root}/agreement.key" "${role}-agreement-secret"
+    fi
     write_new "${private_root}/claim.key" "${role}-claim-secret"
     write_new "${private_root}/refund.key" "${role}-refund-secret"
     write_new "${private_root}/xmr-share.key" "${role}-share-secret"
     write_new "${private_root}/manifest.json" '{"fake":"manifest"}'
-    if [[ "$role" == taker ]]; then
+    if [[ "$role" == taker ]] && ! shared="$(value_after --shared-view-key-file "$@" 2>/dev/null)"; then
       write_new "${private_root}/monero-view.key" "shared-view-secret"
     else
-      shared="$(value_after --shared-view-key-file "$@")"
+      shared="${shared:-$(value_after --shared-view-key-file "$@")}"
       install -m 0600 -- "$shared" "${private_root}/monero-view.key"
     fi
     agreement_key="${role}-agreement-public"
@@ -308,8 +320,13 @@ run_fixture() {
   local destination="$1"
   local selected_actor="${2:-$fake_actor}"
   local explicit_swap_id="${3:-}"
-  local swap_id_args=()
+  local shared_view_source="${4:-}" maker_agreement_source="${5:-}"
+  local swap_id_args=() shared_identity_args=()
   [[ -z "$explicit_swap_id" ]] || swap_id_args=(--swap-id "$explicit_swap_id")
+  if [[ -n "$shared_view_source" || -n "$maker_agreement_source" ]]; then
+    shared_identity_args=(--shared-view-key-source "$shared_view_source"
+      --maker-agreement-key-source "$maker_agreement_source")
+  fi
   "$helper" execute \
     --run-id "$run_id" \
     "${swap_id_args[@]}" \
@@ -326,6 +343,7 @@ run_fixture() {
     --maker-xmr-funding-cutoff-ms 2000000000000 \
     --refund-at-ms 2000000010000 \
     --punish-at-ms 2000000020000 \
+    "${shared_identity_args[@]}" \
     --actor-bin "$selected_actor" \
     --role-runner-bin "$fake_runner" \
     --composer-bin "$fake_composer"
@@ -454,6 +472,44 @@ maker_provision="$(rg '^actor_full\|provision\|maker\|' "$FAKE_LOG")"
   fail "Taker provisioning owner binding drifted"
 [[ "$maker_provision" == *"|--lez-owner-account|${maker_owner}"* ]] ||
   fail "Maker provisioning owner binding drifted"
+
+readonly imported_root="${test_root}/imported-identity"
+readonly imported_receipt="${test_root}/imported-identity.stdout.json"
+run_fixture "$imported_root" "$fake_actor" \
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  "${happy_root}/material/taker/monero-view.key" \
+  "${happy_root}/material/maker/agreement.key" >"$imported_receipt"
+cmp -- "${happy_root}/material/taker/monero-view.key" \
+  "${imported_root}/material/taker/monero-view.key" ||
+  fail "imported Taker view key changed"
+cmp -- "${happy_root}/material/maker/agreement.key" \
+  "${imported_root}/material/maker/agreement.key" ||
+  fail "imported Maker agreement key changed"
+imported_taker_provision="$(rg '^actor_full\|provision\|taker\|' "$FAKE_LOG" | tail -n 1)"
+imported_maker_provision="$(rg '^actor_full\|provision\|maker\|' "$FAKE_LOG" | tail -n 1)"
+[[ "$imported_taker_provision" == *"|--shared-view-key-file|${happy_root}/material/taker/monero-view.key"* ]] ||
+  fail "second Taker did not consume the shared view-key source"
+[[ "$imported_maker_provision" == *"|--agreement-key-file|${happy_root}/material/maker/agreement.key"* ]] ||
+  fail "second Maker did not consume the shared agreement-key source"
+
+if "$helper" execute --run-id "$run_id" --output-root "${test_root}/unpaired-identity" \
+    --taker-lez-owner "$taker_owner" --maker-lez-owner "$maker_owner" \
+    --sequencer-url http://127.0.0.1:31001 --indexer-url http://127.0.0.1:31002 \
+    --monero-daemon-url http://127.0.0.1:31003 \
+    --monero-rpc-username-file "$username_file" --monero-rpc-password-file "$password_file" \
+    --monero-amount-piconero 1000000000000 --lez-amount 700 \
+    --maker-xmr-funding-cutoff-ms 2000000000000 --refund-at-ms 2000000010000 \
+    --punish-at-ms 2000000020000 \
+    --shared-view-key-source "${happy_root}/material/taker/monero-view.key" \
+    --actor-bin "$fake_actor" --role-runner-bin "$fake_runner" --composer-bin "$fake_composer" \
+    >"${test_root}/unpaired.stdout" 2>"${test_root}/unpaired.stderr"; then
+  fail "unpaired shared-identity input unexpectedly succeeded"
+fi
+rg -F 'shared view and Maker agreement key sources must be supplied together' \
+  "${test_root}/unpaired.stderr" >/dev/null ||
+  fail "unpaired shared identity did not fail at argument validation"
+[[ ! -e "${test_root}/unpaired-identity" ]] ||
+  fail "unpaired shared identity created an output root"
 
 if rg '^runner_full\|maker\|.*taker-sessions' "$FAKE_LOG" >/dev/null; then
   fail "Maker journal invocation consumed a Taker session path"

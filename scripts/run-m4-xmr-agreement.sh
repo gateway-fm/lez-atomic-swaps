@@ -32,6 +32,13 @@ emit_contract() {
       dynamic_literal_loopback_endpoints: true,
       independent_role_roots: ["taker", "maker"],
       owner_private_view_key_handoff: true,
+      optional_shared_identity_inputs: {
+        view_key: "--shared-view-key-source",
+        maker_agreement_key: "--maker-agreement-key-source",
+        owner_private_regular_files: true,
+        copied_into_new_role_roots: true,
+        per_swap_session_and_dleq_keys_remain_fresh: true
+      },
       view_key_publication: "same_directory_temp_atomic_link_create_new",
       purpose_sessions: ["claim", "refund"],
       trusted_binaries: {
@@ -227,6 +234,8 @@ parse_execute_arguments() {
   maker_xmr_funding_cutoff_ms=""
   refund_at_ms=""
   punish_at_ms=""
+  shared_view_key_source=""
+  maker_agreement_key_source=""
   actor_bin="${repo_root}/target/debug/xmr-reference-actor"
   role_runner_bin="${repo_root}/target/debug/lez-adaptor-role-runner"
   composer_bin="${repo_root}/compat/lez-v0_2-sidecar/target/debug/lez-v02-xmr-stage-a-compose"
@@ -239,7 +248,8 @@ parse_execute_arguments() {
       --run-id|--swap-id|--output-root|--taker-lez-owner|--maker-lez-owner|--sequencer-url|--indexer-url|\
       --monero-daemon-url|--monero-rpc-username-file|--monero-rpc-password-file|\
       --monero-amount-piconero|--lez-amount|--maker-xmr-funding-cutoff-ms|\
-      --refund-at-ms|--punish-at-ms|--actor-bin|--role-runner-bin|--composer-bin)
+      --refund-at-ms|--punish-at-ms|--shared-view-key-source|\
+      --maker-agreement-key-source|--actor-bin|--role-runner-bin|--composer-bin)
         (( $# > 0 )) || fail "missing value for ${option}"
         [[ -z "${seen[$option]+present}" ]] || fail "duplicate option: ${option}"
         seen[$option]=1
@@ -262,6 +272,8 @@ parse_execute_arguments() {
       --maker-xmr-funding-cutoff-ms) maker_xmr_funding_cutoff_ms="$1" ;;
       --refund-at-ms) refund_at_ms="$1" ;;
       --punish-at-ms) punish_at_ms="$1" ;;
+      --shared-view-key-source) shared_view_key_source="$1" ;;
+      --maker-agreement-key-source) maker_agreement_key_source="$1" ;;
       --actor-bin) actor_bin="$1" ;;
       --role-runner-bin) role_runner_bin="$1" ;;
       --composer-bin) composer_bin="$1" ;;
@@ -276,6 +288,9 @@ parse_execute_arguments() {
     [[ -n "${!required}" ]] || fail "missing required execute option for ${required}"
   done
   [[ -z "$explicit_swap_id" ]] || require_hex32 "$explicit_swap_id" "explicit swap ID"
+  [[ -n "$shared_view_key_source" && -n "$maker_agreement_key_source" ]] ||
+    [[ -z "$shared_view_key_source" && -z "$maker_agreement_key_source" ]] ||
+    fail "shared view and Maker agreement key sources must be supplied together"
 }
 
 validate_execute_arguments() {
@@ -302,6 +317,12 @@ validate_execute_arguments() {
   require_private_file "$monero_rpc_password_file" "Monero RPC password file"
   [[ "$monero_rpc_username_file" != "$monero_rpc_password_file" ]] ||
     fail "Monero RPC username and password files must differ"
+  if [[ -n "$shared_view_key_source" ]]; then
+    require_private_file "$shared_view_key_source" "shared view-key source"
+    require_private_file "$maker_agreement_key_source" "Maker agreement-key source"
+    [[ "$shared_view_key_source" != "$maker_agreement_key_source" ]] ||
+      fail "shared identity source files must differ"
+  fi
 
   require_bounded_decimal "$monero_amount_piconero" 18446744073709551615 \
     "Monero amount"
@@ -457,8 +478,14 @@ run_execute() {
   readonly maker_public_packet="${exchange_root}/maker.json"
   readonly shared_view_handoff="${handoff_root}/monero-view.key"
 
+  local -a taker_identity_args=() maker_identity_args=()
+  if [[ -n "$shared_view_key_source" ]]; then
+    taker_identity_args=(--shared-view-key-file "$shared_view_key_source")
+    maker_identity_args=(--agreement-key-file "$maker_agreement_key_source")
+  fi
   "$actor_bin" provision taker --private-root "$taker_private_root" \
-    --lez-owner-account "$taker_lez_owner" --public-packet "$taker_public_packet"
+    --lez-owner-account "$taker_lez_owner" "${taker_identity_args[@]}" \
+    --public-packet "$taker_public_packet"
   verify_role_bundle taker "$taker_private_root" "$taker_public_packet" "$taker_lez_owner"
 
   publish_private_copy_new "${taker_private_root}/monero-view.key" \
@@ -466,6 +493,7 @@ run_execute() {
 
   "$actor_bin" provision maker --private-root "$maker_private_root" \
     --lez-owner-account "$maker_lez_owner" --shared-view-key-file "$shared_view_handoff" \
+    "${maker_identity_args[@]}" \
     --public-packet "$maker_public_packet"
   verify_role_bundle maker "$maker_private_root" "$maker_public_packet" "$maker_lez_owner"
   cmp -- "${maker_private_root}/monero-view.key" "$shared_view_handoff" ||

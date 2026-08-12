@@ -88,6 +88,7 @@ fn provision_taker(private_root: PathBuf, public_packet: PathBuf) -> anyhow::Res
             private_root,
             lez_owner_account: TAKER_OWNER.to_owned(),
             shared_view_key_file: None,
+            agreement_key_file: None,
             public_packet,
         },
     })
@@ -119,6 +120,7 @@ fn separate_role_provisioning_atomically_emits_bound_roots_and_validated_packets
             private_root: maker_root.clone(),
             lez_owner_account: MAKER_OWNER.to_owned(),
             shared_view_key_file: Some(taker_root.join("monero-view.key")),
+            agreement_key_file: None,
             public_packet: maker_packet.clone(),
         },
     })
@@ -159,6 +161,7 @@ fn separate_role_provisioning_atomically_emits_bound_roots_and_validated_packets
             private_root: material.join("maker-from-link"),
             lez_owner_account: MAKER_OWNER.to_owned(),
             shared_view_key_file: Some(linked_view),
+            agreement_key_file: None,
             public_packet: exchange.join("maker-from-link.json"),
         },
     })
@@ -170,6 +173,98 @@ fn separate_role_provisioning_atomically_emits_bound_roots_and_validated_packets
     let linked_packet = exchange.join("linked-packet.json");
     symlink(&taker_packet, &linked_packet).expect("packet symlink");
     assert!(ValidatedRolePacket::read(&linked_packet).is_err());
+}
+
+#[test]
+#[allow(clippy::similar_names)] // Paired first/second Maker/Taker names make identity comparisons explicit.
+fn second_swap_reuses_only_the_daemon_maker_identity() {
+    let directory = TempDir::new().expect("temporary root");
+    let (material, exchange) = owner_parents(&directory);
+    let first_taker_root = material.join("first-taker");
+    let first_maker_root = material.join("first-maker");
+    let first_taker_packet = exchange.join("first-taker.json");
+    let first_maker_packet = exchange.join("first-maker.json");
+
+    provision_taker(first_taker_root.clone(), first_taker_packet.clone())
+        .expect("first Taker provision");
+    execute(Cli {
+        action: Action::Provision {
+            role: ActorRole::Maker,
+            private_root: first_maker_root.clone(),
+            lez_owner_account: MAKER_OWNER.to_owned(),
+            shared_view_key_file: Some(first_taker_root.join("monero-view.key")),
+            agreement_key_file: None,
+            public_packet: first_maker_packet.clone(),
+        },
+    })
+    .expect("first Maker provision");
+
+    let second_taker_root = material.join("second-taker");
+    let second_maker_root = material.join("second-maker");
+    let second_taker_packet = exchange.join("second-taker.json");
+    let second_maker_packet = exchange.join("second-maker.json");
+    execute(Cli {
+        action: Action::Provision {
+            role: ActorRole::Taker,
+            private_root: second_taker_root.clone(),
+            lez_owner_account: TAKER_OWNER.to_owned(),
+            shared_view_key_file: Some(first_taker_root.join("monero-view.key")),
+            agreement_key_file: None,
+            public_packet: second_taker_packet.clone(),
+        },
+    })
+    .expect("second Taker imports shared view key");
+    execute(Cli {
+        action: Action::Provision {
+            role: ActorRole::Maker,
+            private_root: second_maker_root.clone(),
+            lez_owner_account: MAKER_OWNER.to_owned(),
+            shared_view_key_file: Some(first_taker_root.join("monero-view.key")),
+            agreement_key_file: Some(first_maker_root.join("agreement.key")),
+            public_packet: second_maker_packet.clone(),
+        },
+    })
+    .expect("second Maker imports daemon identity");
+
+    let first_taker = ValidatedRolePacket::read(&first_taker_packet).expect("first Taker packet");
+    let first_maker = ValidatedRolePacket::read(&first_maker_packet).expect("first Maker packet");
+    let second_taker =
+        ValidatedRolePacket::read(&second_taker_packet).expect("second Taker packet");
+    let second_maker =
+        ValidatedRolePacket::read(&second_maker_packet).expect("second Maker packet");
+
+    assert_eq!(
+        first_taker.public_view_key(),
+        second_taker.public_view_key()
+    );
+    assert_eq!(
+        first_maker.public_view_key(),
+        second_maker.public_view_key()
+    );
+    assert_eq!(
+        first_maker.identity().agreement_public_key(),
+        second_maker.identity().agreement_public_key()
+    );
+    assert_ne!(
+        first_maker.identity().claim_session_public_key(),
+        second_maker.identity().claim_session_public_key()
+    );
+    assert_ne!(
+        first_maker.identity().refund_session_public_key(),
+        second_maker.identity().refund_session_public_key()
+    );
+    assert_ne!(first_maker.proof(), second_maker.proof());
+    assert_ne!(first_taker.identity(), second_taker.identity());
+    assert_eq!(
+        fs::read(first_maker_root.join("agreement.key")).expect("first agreement key"),
+        fs::read(second_maker_root.join("agreement.key")).expect("second agreement key")
+    );
+    for name in ["claim.key", "refund.key", "xmr-share.key"] {
+        assert_ne!(
+            fs::read(first_maker_root.join(name)).expect("first per-swap key"),
+            fs::read(second_maker_root.join(name)).expect("second per-swap key")
+        );
+    }
 }
 
 #[test]
@@ -241,6 +336,7 @@ fn invalid_policy_owner_and_destination_collisions_publish_nothing_partial() {
             private_root: missing_view_root.clone(),
             lez_owner_account: MAKER_OWNER.to_owned(),
             shared_view_key_file: None,
+            agreement_key_file: None,
             public_packet: missing_view_packet.clone(),
         },
     })
@@ -257,6 +353,7 @@ fn invalid_policy_owner_and_destination_collisions_publish_nothing_partial() {
             private_root: zero_root.clone(),
             lez_owner_account: "00".repeat(32),
             shared_view_key_file: None,
+            agreement_key_file: None,
             public_packet: zero_packet.clone(),
         },
     })
