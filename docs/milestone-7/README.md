@@ -19,6 +19,21 @@ The required `logos-co/logos-docs` `doc-packet.yml` was captured from commit
 Each packet below contains every required field and all optional fields that
 materially affect safe reproduction.
 
+## Functional development and QA closure
+
+The repository-controlled functional M7 scope is complete and is tagged
+separately from formal production/security completion. The exact closure record
+is [m7-functional-qa-closure-20260812.json](../evidence/m7-functional-qa-closure-20260812.json).
+It covers the locked Rust workspace, strict lint and documentation builds,
+role-correct browser flows, all functional requirement/certificate gates,
+Docker isolation, and successful rendering of all 600 Mermaid diagrams.
+
+This functional closure does **not** claim S1 public deployment, S3
+default-branch/security-job observation, S12/S13 independent review, a
+cybersecurity assessment, or production release readiness. Those rows remain
+visible in the submission ledger and require their separately authorized
+owners; they do not reopen completed functional development or normal QA.
+
 ## Packet map
 
 - [Mainnet-readiness write-up](mainnet-readiness.md)
@@ -68,6 +83,7 @@ materially affect safe reproduction.
 - [Private M7 demo evidence-binding decision](../architecture/0208-bind-private-m7-demos-to-actual-node-evidence.md)
 - [Private M7 demo operator guide](../m7-private-demo-operator-guide.md)
 - [Checked six-video XMR/ZEC bundle certificate](../evidence/m7-private-demo-video-bundle-1b47a15-20260812.json)
+- [Functional M7 QA closure](../evidence/m7-functional-qa-closure-20260812.json)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

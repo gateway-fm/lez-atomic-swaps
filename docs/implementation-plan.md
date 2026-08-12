@@ -8090,5 +8090,11 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Mark D1 GREEN and update manual reproduction, packet indexes, root
   summary, traceability, resource/flakiness disclosure, and CI certificate
   pins.
-- [ ] Run
-  exact-candidate non-security QA before the functional M7 tag.
+- [x] Run exact-candidate non-security QA before the functional M7 tag. The
+  locked workspace suite, strict formatting/Clippy/Rustdoc, role-correct
+  isolated browser journeys, functional quality runner, traceability,
+  hard-requirement closure, Docker isolation, and all 600 Mermaid renders are
+  green. The exact command/commit split is retained in
+  `docs/evidence/m7-functional-qa-closure-20260812.json`; security assessment,
+  default-branch security jobs, public deployment, and independent review are
+  explicitly outside this functional tag.

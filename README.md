@@ -41,6 +41,14 @@ Runtime uses only private local nodes and deterministic local funds; no public
 RPC, peer, faucet, funds, or deployment can make it flaky. A cold renderer
 image pull is the only external resource needed to recreate the MP4s.
 
+M7 functional development and normal QA are complete. The
+[exact closure record](docs/evidence/m7-functional-qa-closure-20260812.json)
+binds the pushed source, locked workspace tests, strict lint/Rustdoc, isolated
+role-correct browser flows, functional certificates, Docker isolation, and all
+600 rendered Mermaid diagrams. The functional tag deliberately excludes
+public deployment, cybersecurity assessment/default-branch security jobs, and
+independent S12/S13 review; those remain separate production/review scope.
+
 The F3 join is implemented under
 [ADR 0204](docs/architecture/0204-run-two-xmr-applications-through-one-daemon.md).
 Its GREEN source contract fixes two authenticated semantic-Claim applications

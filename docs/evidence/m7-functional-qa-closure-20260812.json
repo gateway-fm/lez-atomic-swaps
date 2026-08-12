@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "kind": "m7_functional_qa_closure",
+  "result": "passed",
+  "scope": "repository_controlled_functional_development_and_normal_qa",
+  "recorded_at": "2026-08-12T21:26:46Z",
+  "workspace_source_commit": "cdf6c2fc02a6b512909b118642814971e9033122",
+  "functional_quality_commit": "1de5759bd138fbca5cee91e39a8e8906020c7b71",
+  "checks": [
+    {
+      "command": "cargo test --locked --workspace --all-targets",
+      "result": "passed",
+      "commit": "cdf6c2fc02a6b512909b118642814971e9033122",
+      "note": "All runnable workspace tests passed; tests explicitly requiring external pinned Docker drivers remained ignored by design."
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "RUSTDOCFLAGS=-Dwarnings cargo doc --locked --workspace --all-features --no-deps",
+      "result": "passed"
+    },
+    {
+      "command": "./scripts/run-m6-prototype-e2e-isolated.sh",
+      "result": "passed",
+      "assertions": 6,
+      "runtime_network": "none",
+      "roles": ["maker", "taker"]
+    },
+    {
+      "command": "npm run test:m6:basecamp:contract",
+      "result": "passed"
+    },
+    {
+      "command": "./scripts/run-ci-quality-gates.sh",
+      "result": "passed",
+      "commit": "1de5759bd138fbca5cee91e39a8e8906020c7b71"
+    },
+    {
+      "command": "M7_REQUIRE_CLOSED=1 ./scripts/test-m7-hard-requirements-audit.sh",
+      "result": "passed",
+      "rows": 28,
+      "open": 0,
+      "deferred": 2
+    },
+    {
+      "command": "./scripts/check-lez-v02-docker-isolation.sh",
+      "result": "passed",
+      "commit": "f7b49e5"
+    },
+    {
+      "command": "MERMAID_ALLOW_NO_SANDBOX=1 ./scripts/check-architecture-diagrams.sh",
+      "result": "passed",
+      "github_compatibility_blocks": 600,
+      "rendered_blocks": 600
+    }
+  ],
+  "runtime_external_resources": {
+    "public_rpc": false,
+    "public_peer": false,
+    "faucet": false,
+    "public_funds": false,
+    "public_deployment": false
+  },
+  "explicitly_excluded": [
+    "S1 public deployment",
+    "S3 default-branch security-job observation",
+    "S12 independent on-chain review",
+    "S13 independent protocol review",
+    "cybersecurity assessment",
+    "production release readiness"
+  ],
+  "security_assessment_claimed": false,
+  "independent_review_claimed": false,
+  "production_readiness_claimed": false
+}
