@@ -42,6 +42,11 @@ non-terminal Taker drive that creates that lock and returns its typed output to
 the common exact-submission handler. That narrow transition rejects any Claim
 or Refund operation. Once the first lock is confirmed, direct Taker calls stop
 and the owner service alone admits the terminal Refund.
+Because the service driver executes under command substitution, its typed
+parent handoff carries the immutable Zcash-refund mined flag and exact
+transaction ID in addition to the existing LEZ-refund fields. The parent
+validates and freezes that identity, then enables only the independent Maker
+terminal observer; it receives no refund submission authority.
 
 Before mining, a read-only role-aware inspector opens the Taker's durable
 first-lock journal, validates the rebound Maker/Taker config pair, converts the

@@ -2206,7 +2206,7 @@ start_m6_refund_maker_supervisor() {
 
 apply_m6_refund_parent_handoff() {
   local output="$1"
-  local generation finalized transaction_id start_tip
+  local generation finalized transaction_id start_tip zcash_mined zcash_transaction_id
   jq -e 'type == "object"' <<<"$output" >/dev/null || {
     echo 'M6 Refund child returned malformed service output' >&2
     return 1
@@ -2226,11 +2226,19 @@ apply_m6_refund_parent_handoff() {
     and .m6_lez_refund_start_tip >= 0
     and .m6_lez_refund_start_tip <= 9007199254740991
     and .m6_lez_refund_start_tip == (.m6_lez_refund_start_tip | floor)
+    and ((.m6_zcash_refund_mined // false) | type) == "boolean"
     and (
       (.m6_lez_refund_finalized == false and .m6_lez_refund_txid == "")
       or
       (.m6_lez_refund_finalized == true
         and (.m6_lez_refund_txid | strings | test("^[0-9a-f]{64}$")))
+    )
+    and (
+      ((.m6_zcash_refund_mined // false) == false
+        and (.m6_zcash_refund_txid // "") == "")
+      or
+      (.m6_zcash_refund_mined == true
+        and (.m6_zcash_refund_txid | strings | test("^[0-9a-f]{64}$")))
     )
   ' <<<"$output" >/dev/null || {
     echo 'M6 Refund child returned an invalid parent handoff' >&2
@@ -2240,6 +2248,8 @@ apply_m6_refund_parent_handoff() {
   finalized="$(jq -r '.m6_lez_refund_finalized' <<<"$output")"
   transaction_id="$(jq -er '.m6_lez_refund_txid | strings' <<<"$output")"
   start_tip="$(jq -er '.m6_lez_refund_start_tip | numbers' <<<"$output")"
+  zcash_mined="$(jq -r '.m6_zcash_refund_mined // false' <<<"$output")"
+  zcash_transaction_id="$(jq -er '(.m6_zcash_refund_txid // "") | strings' <<<"$output")"
   if (( m6_refund_admitted == 1 )); then
     [[ "$m6_refund_generation" == "$generation"
       && "$m6_lez_refund_start_tip" == "$start_tip" ]] || {
@@ -2253,11 +2263,22 @@ apply_m6_refund_parent_handoff() {
       return 1
     }
   fi
+  if (( ${m6_zcash_refund_mined:-0} == 1 )); then
+    [[ "$zcash_mined" == true
+      && "$m6_zcash_refund_txid" == "$zcash_transaction_id" ]] || {
+      echo 'M6 Refund child attempted to replace mined Zcash refund state' >&2
+      return 1
+    }
+  fi
   m6_refund_admitted=1
   m6_refund_generation="$generation"
   m6_lez_refund_txid="$transaction_id"
   m6_lez_refund_start_tip="$start_tip"
   [[ "$finalized" == true ]] && m6_lez_refund_finalized=1
+  if [[ "$zcash_mined" == true ]]; then
+    m6_zcash_refund_mined=1
+    m6_zcash_refund_txid="$zcash_transaction_id"
+  fi
   if (( m6_lez_refund_finalized == 1 && m6_maker_supervisor_suppressed == 1
     && m6_maker_supervisor_restarted == 0 )); then
     start_m6_refund_maker_supervisor
@@ -2383,11 +2404,15 @@ emit_m6_refund_parent_handoff() {
   jq -c --argjson generation "$m6_refund_generation" \
     --arg txid "$m6_lez_refund_txid" \
     --argjson finalized "$m6_lez_refund_finalized" \
-    --argjson start_tip "$m6_lez_refund_start_tip" '
+    --argjson start_tip "$m6_lez_refund_start_tip" \
+    --arg zcash_txid "${m6_zcash_refund_txid:-}" \
+    --argjson zcash_mined "${m6_zcash_refund_mined:-0}" '
     (.result // {}) + {m6_refund_parent_handoff:true,m6_refund_admitted:true,
       m6_refund_generation:$generation,m6_lez_refund_txid:$txid,
       m6_lez_refund_finalized:($finalized == 1),
-      m6_lez_refund_start_tip:$start_tip}
+      m6_lez_refund_start_tip:$start_tip,
+      m6_zcash_refund_mined:($zcash_mined == 1),
+      m6_zcash_refund_txid:$zcash_txid}
   ' <<<"$response"
 }
 

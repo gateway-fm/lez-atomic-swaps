@@ -7749,6 +7749,22 @@ S12/S13 review and policy-deferred public deployment.
   any follow-up Claim, LEZ Refund, or Zcash Refund operation; after the lock is
   confirmed, all terminal authority remains exclusively in the owner service's
   generation-fenced Refund RPC. Focused M6/M7 contracts are GREEN.
-- [ ] Push the initial-drive correction and repeat against the still-pristine
-  isolated Zebra node from a new private application root. Only an exact GREEN
-  result may produce a certificate or close F9/U4/S5.
+- [x] Push the initial-drive correction as `9f4d48d` and repeat against the
+  still-pristine Zebra node from application run
+  `m7zecfirstrefund9f4d48da`. This exact run crossed every prior seam: it
+  confirmed the Taker first lock, proved the Maker second lock absent with two
+  owner-service samples and empty LEZ submission sets, advanced to the signed
+  Zcash height, submitted and confirmed exactly one refund at Zebra height 110,
+  and reached owner-service `refunded` generation 2. The parent loop then
+  expired because command substitution discarded the child driver's local
+  `m6_zcash_refund_mined` state, so the independent Maker terminal observer
+  never started. The affected Zebra run will not be reused for certification.
+- [x] RED then GREEN the typed Zcash-refund parent handoff. The existing Refund
+  handoff now emits and validates a boolean mined flag plus exact transaction
+  ID, rejects replacement after the parent accepts it, and defaults the new
+  fields only for legacy imported M6 fixtures. The parent gains observation
+  state, not submission authority. Focused M6/M7 contracts are GREEN.
+- [ ] Push the Zcash-refund handoff correction, retire only the affected Zebra
+  run, provision a fresh isolated node and height-104 prehistory, and repeat
+  the exact journey. Only an exact GREEN result may produce a certificate or
+  close F9/U4/S5.
