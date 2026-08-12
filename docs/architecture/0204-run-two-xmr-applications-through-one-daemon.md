@@ -25,15 +25,16 @@ exclusive with the single-swap crash, losing-branch, Refund, and Punish modes.
 The implementation will retain one Maker daemon, database, Delivery
 directory, Chat socket, LEZ v0.2 topology, deployed program, and official
 Monero Regtest daemon. Each swap retains a distinct authenticated offer,
-reservation, agreement, Stage A/B material, Maker/Taker journal, actor store,
-Monero output, LEZ escrow, and terminal evidence packet. Both applications
+reservation, agreement, Stage A/B material, Taker LEZ identity and nonce
+domain, Maker/Taker journal, actor store, Monero output, LEZ escrow, and
+terminal evidence packet. Both applications
 must be accepted before either actor is activated, and both swaps must be in
 flight before settlement begins.
 
 ```mermaid
 flowchart TB
-    T1[Taker application A] --> C[Shared Chat socket]
-    T2[Taker application B] --> C
+    T1[Taker A with LEZ signer A] --> C[Shared Chat socket]
+    T2[Taker B with LEZ signer B] --> C
     C --> D[One Maker daemon]
     D --> DB[One Maker SQLite database]
     DB --> A[Maker actor A]
@@ -165,8 +166,10 @@ outputs, both matching release preparations, and admitted Tag14 A. Its
 read-only exact-finality child then repeatedly exceeded the generic 30-second
 process bound while still verifying local finalized blocks. No submission was
 retried. The run was stopped at that bounded observation seam and exact cleanup
-passed. Replay `m7xmrconc-8c579fca` then proved the first 120-second observer
-bound was still shorter than the real proof computation; it was stopped at
-the same read-only seam and exact cleanup passed. ADR 0205 now gives only this
-observer a measured 300-second bound; mutation and preflight remain at 30
-seconds. Fresh pushed-source replay is required.
+passed. Later replay `m7xmrconc-6567322a` disproved the timeout diagnosis: the
+read-only observer completed its attempts, but the exact admitted Tag14 A
+transaction was absent from both sequencer and indexer after finality advanced
+well beyond its scan start. Two independent Taker sidecars had shared one LEZ
+account and nonce domain. ADR 0206 assigns a fresh genesis identity and Vault
+Claim to Taker B; ADR 0205 restores the 120-second observer bound. Fresh
+pushed-source replay is required.

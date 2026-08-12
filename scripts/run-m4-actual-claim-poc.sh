@@ -1306,7 +1306,8 @@ provision_identities() {
   readonly identity_root="${private_root}/lez-identities"
   mkdir -m 0700 "$identity_root"
   local role output
-  for role in maker taker; do
+  for role in maker taker taker-b; do
+    [[ "$role" != taker-b || "$m7_xmr_accepted_concurrency" == 1 ]] || continue
     output="${evidence_root}/${role}-lez-identity.json"
     "$identity_binary" --output-directory "${identity_root}/${role}" >"$output"
     chmod 0600 "$output"
@@ -1319,6 +1320,13 @@ provision_identities() {
   [[ "$(jq -r '.account_id_hex' "${evidence_root}/maker-lez-identity.json")" != \
      "$(jq -r '.account_id_hex' "${evidence_root}/taker-lez-identity.json")" ]] ||
     fail "fresh Maker and Taker identities collided"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    [[ "$(jq -r '.account_id_hex' "${evidence_root}/taker-b-lez-identity.json")" != \
+       "$(jq -r '.account_id_hex' "${evidence_root}/taker-lez-identity.json")" &&
+       "$(jq -r '.account_id_hex' "${evidence_root}/taker-b-lez-identity.json")" != \
+       "$(jq -r '.account_id_hex' "${evidence_root}/maker-lez-identity.json")" ]] ||
+      fail "fresh Taker B identity collided"
+  fi
   record_phase identity completed
 }
 
@@ -1351,15 +1359,20 @@ capture_lez_resources() {
 
 start_lez_stack() {
   record_phase lez_stack started
-  local maker_account maker_vault taker_account taker_vault
+  local maker_account maker_vault taker_account taker_vault taker_b_account="" taker_b_vault=""
   maker_account="$(jq -er '.account_id' "${evidence_root}/maker-lez-identity.json")"
   maker_vault="$(jq -er '.vault_account_id' "${evidence_root}/maker-lez-identity.json")"
   taker_account="$(jq -er '.account_id' "${evidence_root}/taker-lez-identity.json")"
   taker_vault="$(jq -er '.vault_account_id' "${evidence_root}/taker-lez-identity.json")"
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    taker_b_account="$(jq -er '.account_id' "${evidence_root}/taker-b-lez-identity.json")"
+    taker_b_vault="$(jq -er '.vault_account_id' "${evidence_root}/taker-b-lez-identity.json")"
+  fi
   RUN_ID="$run_id" LEZ_V02_KEEP_RUNNING=1 LEZ_V02_SLOT_DURATION_SECONDS=1.0 \
     LEZ_V02_R0VM="$RISC0_SERVER_PATH" \
     LEZ_V02_MAKER_ACCOUNT_ID="$maker_account" LEZ_V02_MAKER_VAULT_ACCOUNT_ID="$maker_vault" \
     LEZ_V02_TAKER_ACCOUNT_ID="$taker_account" LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$taker_vault" \
+    LEZ_V02_TAKER_B_ACCOUNT_ID="$taker_b_account" LEZ_V02_TAKER_B_VAULT_ACCOUNT_ID="$taker_b_vault" \
     "$lez_stack_runner"
   readonly lez_stack_manifest="${repo_root}/.e2e/${run_id}/lez-v02/run.env"
   require_owner_file "$lez_stack_manifest" "LEZ stack manifest"
@@ -1386,6 +1399,11 @@ deploy_m4_program() {
 actor_onboarding() {
   record_phase actor_onboarding started
   readonly actor_onboarding_evidence="${evidence_root}/lez-actor-onboarding"
+  local taker_b_identity="" taker_b_private_key=""
+  if [[ "$m7_xmr_accepted_concurrency" == 1 ]]; then
+    taker_b_identity="${evidence_root}/taker-b-lez-identity.json"
+    taker_b_private_key="${private_root}/lez-identities/taker-b/lez-signer.key"
+  fi
   M4_ONBOARD_RUN_ID="$run_id" \
     M4_ONBOARD_STACK_MANIFEST="$lez_stack_manifest" \
     M4_ONBOARD_DEPLOYMENT_FINALITY="${deployment_evidence}/finality.json" \
@@ -1393,14 +1411,18 @@ actor_onboarding() {
     M4_ONBOARD_PRIVATE_ROOT="$private_root" \
     M4_ONBOARD_MAKER_IDENTITY="${evidence_root}/maker-lez-identity.json" \
     M4_ONBOARD_TAKER_IDENTITY="${evidence_root}/taker-lez-identity.json" \
+    M4_ONBOARD_TAKER_B_IDENTITY="$taker_b_identity" \
     M4_ONBOARD_MAKER_PRIVATE_KEY="${private_root}/lez-identities/maker/lez-signer.key" \
     M4_ONBOARD_TAKER_PRIVATE_KEY="${private_root}/lez-identities/taker/lez-signer.key" \
+    M4_ONBOARD_TAKER_B_PRIVATE_KEY="$taker_b_private_key" \
     M4_ONBOARD_VAULT_CLAIM_BIN="$vault_claim_staged_binary" \
     M4_ONBOARD_EXPECTED_VAULT_CLAIM_SHA256="$(sha256_file "$vault_claim_staged_binary")" \
     "$onboarding_runner" execute
   require_owner_file "${actor_onboarding_evidence}/summary.json" "actor-onboarding summary"
-  jq -e '.result=="passed" and .total_submission_count==2
+  jq -e --argjson concurrency "$m7_xmr_accepted_concurrency" '.result=="passed"
+    and .total_submission_count==(if $concurrency == 1 then 3 else 2 end)
     and .actors.maker.submission_count==1 and .actors.taker.submission_count==1
+    and (if $concurrency == 1 then .actors["taker-b"].submission_count==1 else .actors["taker-b"]==null end)
     and .monero_or_swap_effects_started==false and .runtime_external_resources==[]
     and .public_rpc_used==false and .faucet_used==false' \
     "${actor_onboarding_evidence}/summary.json" >/dev/null || fail "actor-onboarding evidence is incomplete"
@@ -1953,7 +1975,7 @@ compose_m7_second_xmr_agreement() {
   readonly m7_xmr_second_agreement_root="${private_root}/xmr-agreement-b"
   readonly m7_xmr_second_agreement_stdout="${evidence_root}/xmr-agreement-b-receipt.json"
   local taker_owner maker_owner sequencer_url indexer_url second_cutoff second_refund second_punish
-  taker_owner="$(jq -er '.account_id_hex' "${evidence_root}/taker-lez-identity.json")"
+  taker_owner="$(jq -er '.account_id_hex' "${evidence_root}/taker-b-lez-identity.json")"
   maker_owner="$(jq -er '.account_id_hex' "${evidence_root}/maker-lez-identity.json")"
   sequencer_url="$(manifest_value LEZ_SEQUENCER_RPC_URL "$lez_stack_manifest")"
   indexer_url="$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")"
@@ -2879,7 +2901,7 @@ submit_m7_second_xmr_tag13() {
   sync -d "$manifest_root"
 
   "$tag13_binary" --state-directory "$m7_xmr_second_tag13_state" \
-    --private-key-file "${private_root}/lez-identities/taker/lez-signer.key" \
+    --private-key-file "${private_root}/lez-identities/taker-b/lez-signer.key" \
     --sequencer-url "$(manifest_value LEZ_SEQUENCER_RPC_URL "$lez_stack_manifest")" \
     --indexer-url "$(manifest_value LEZ_INDEXER_RPC_URL "$lez_stack_manifest")" \
     --agreement-wire-file "$m7_xmr_second_stage_a" \
@@ -2934,7 +2956,7 @@ start_m7_second_xmr_role_sidecars() {
     --sequencer-url "$sequencer" --indexer-url "$indexer" \
     --runtime-file "$m7_xmr_second_tag13_handoff_root/taker-runtime.json" \
     --terms-file "$m7_xmr_second_tag13_handoff_root/terms.json" \
-    --private-key-file "${private_root}/lez-identities/taker/lez-signer.key" \
+    --private-key-file "${private_root}/lez-identities/taker-b/lez-signer.key" \
     --authenticated-transfer-program-id \
       "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71" \
     --adopt-state-directory "$m7_xmr_second_tag13_state" \

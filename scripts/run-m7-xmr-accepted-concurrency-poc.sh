@@ -47,6 +47,7 @@ emit_contract() {
         distinct_agreements: true,
         distinct_actor_stores: true,
         distinct_role_journals: true,
+        distinct_taker_lez_identities: true,
         distinct_monero_outputs: true,
         distinct_lez_escrows: true
       },

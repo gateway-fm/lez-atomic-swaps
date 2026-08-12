@@ -1,6 +1,6 @@
 # ADR 0205: Bound exact XMR finality observation separately
 
-Status: Accepted; focused regression GREEN, actual-node replay pending
+Status: Corrected after actual-node diagnosis; 120-second bound retained
 
 ## Context
 
@@ -16,21 +16,26 @@ The exact cleanup trap then removed every run-owned process, port, container,
 network, volume, image, and ephemeral path; the foreign sentinel survived and
 no broad cleanup ran.
 
+Replay `m7xmrconc-6567322a` later gave the observer five minutes and proved
+that duration was not the root cause. Individual read-only attempts completed,
+the finalized tip advanced, and the exact admitted Tag14 transaction remained
+absent from both sequencer and indexer. The two concurrent Taker sidecars had
+shared one signer and stale nonce domain; ADR 0206 corrects that topology.
+
 ## Decision
 
 Keep mutation and preflight children at 30 seconds. Give only the read-only
-exact-finality observer a named 300-second completion bound. The real
-receipt-v2 process regression completed in 162.98 seconds, while clean replay
-`m7xmrconc-8c579fca` proved that the earlier 120-second guess still killed the
-observer before completion. Five minutes preserves a finite watchdog with
-roughly 1.8 times the measured regression duration; an expiry still fails
-closed and does not change the workflow journal or authorize a resend.
+exact-finality observer a named 120-second completion bound. Earlier clean
+single-effect evidence completes inside this bound. The longer dual-swap waits
+were caused by an effect that never entered the chain, not by a valid proof
+computation. An expiry fails closed and does not change the workflow journal or
+authorize a resend.
 
 ```mermaid
 flowchart LR
     CLI[Taker receipt-v2 CLI] --> J[Durable workflow journal]
     J -->|invoke once; 30 s| S[Tag14 sender]
-    J -->|observe only; 300 s| O[Exact LEZ finality observer]
+    J -->|observe only; 120 s| O[Exact LEZ finality observer]
     O --> I[Local LEZ v0.2 indexer]
     O -->|finalized proof| J
 ```
@@ -42,7 +47,7 @@ sequenceDiagram
     participant O as Read-only observer
     participant L as Local LEZ indexer
     C->>J: Load admitted Tag14 identity
-    C->>O: Observe with 300-second bound
+    C->>O: Observe with 120-second bound
     O->>L: Read and verify finalized blocks
     L-->>O: Exact Tag14 proof
     O-->>C: Finalized evidence digest
@@ -63,9 +68,10 @@ public deployment participates. This is functional QA, not a security review.
 
 ## Verification
 
-`test-m7-xmr-accepted-concurrency-contract.sh` first failed because the named
-bound was absent, then passed after the implementation changed only the
-read-only observer. It failed RED again when the measured bound changed from
-120 to 300 seconds. The shared-daemon process regression completed two
-accepted XMR applications across restart in 38.97 seconds. A fresh clean
-actual-node replay is still required before F3 closure.
+`test-m7-xmr-accepted-concurrency-contract.sh` fails if the named bound differs
+from 120 seconds or affects anything except the read-only observer. The
+shared-daemon process regression completes two accepted XMR applications
+across restart. Replay `m7xmrconc-6567322a` is retained as diagnostic evidence,
+not a certificate: it proved one admitted transaction was never included and
+exact cleanup passed. A fresh clean ADR-0206 replay is required before F3
+closure.

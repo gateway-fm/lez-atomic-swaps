@@ -9603,6 +9603,43 @@ runtime, but there is no RPC/faucet/peer/public-funds flakiness. It proves the
 application scheduler prerequisite in ADR 0200, not actual Monero/LEZ effects;
 the later actual-node concurrency flow must be used for F3/F6 closure.
 
+To repeat that actual-node flow, first provision the pinned inputs in Flow 0B2
+and the Risc0 and rapidsnark inputs used by Flow 1ZM. Use a clean pushed
+checkout, fresh owner-private cache, and unique run ID:
+
+```bash
+export M4_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+export RUN_ID=m7xmrconc-$(git rev-parse --short=7 HEAD)-manual
+export M7_XMR_BUILD_CACHE_ROOT=/absolute/path/to/fresh-mode-0700-cache
+export RAPIDSNARK_LIB_DIR=/absolute/path/to/verified/rapidsnark-v0.0.8/lib
+export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include
+export LEZ_M4_TOOL_DIR=/absolute/path/to/pinned/risc0-3.0.5-tools
+export LOGOS_BLOCKCHAIN_CIRCUITS=/absolute/path/to/logos-blockchain-circuits-v0.4.2
+export LEZ_V02_SOURCE_DIR=/absolute/path/to/clean/logos-execution-zone-v0.2.0
+export LEZ_V02_SERVICES_DIR=/absolute/path/to/pinned/lez-v0.2-release-services
+./scripts/run-m7-xmr-accepted-concurrency-poc.sh preflight
+./scripts/run-m7-xmr-accepted-concurrency-poc.sh execute
+```
+
+The runner creates one Maker and two Taker LEZ identities, gives all three
+distinct genesis Vaults and finalized Vault Claims, accepts both applications
+through one Maker daemon, and uses one LEZ stack plus one official Monero
+0.18.5.1 Regtest topology. It requires both Tag13 escrows and both distinct
+ten-confirmation outputs before either settlement, then completes and replays
+both swaps with no resubmission. Inspect the secret-free result and phase log
+under `/tmp/lez-atomic-swaps-${RUN_ID}/evidence` and the exact cleanup packet
+under `.e2e/${RUN_ID}/m4-actual-claim/evidence/cleanup.json`. A failed or
+interrupted run is diagnostic only and must not be resumed as evidence.
+
+All runtime RPCs are dynamically published on literal loopback. Funds come
+only from fresh LEZ genesis allocations and locally mined Monero Regtest
+outputs. There is no public RPC, peer, faucet, public fund, DNS dependency, or
+public deployment. Cold provisioning may contact pinned Git, Cargo, or image
+registries; runtime flakiness is limited to host CPU/disk pressure, Docker
+readiness, local finality lag, process scheduling, dynamic-port collision, or
+stale state. Cleanup is exact to the recorded run resources; never broad-prune
+while another project is active.
+
 ## Flow M7-ZEC-2: repeat the two-Zebra competing-fork certificate
 
 This ordinary functional QA flow runs two isolated Zebra 5.2.0 Regtest nodes.

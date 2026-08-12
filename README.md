@@ -24,8 +24,12 @@ deployment remains deliberately deferred.
 The F3 join is now in implementation under
 [ADR 0204](docs/architecture/0204-run-two-xmr-applications-through-one-daemon.md).
 Its GREEN source contract fixes two authenticated semantic-Claim applications
-to one Maker daemon/database/Chat boundary and one local LEZ/Monero topology;
-F3 remains open until the clean actual-node certificate and replay exist.
+to one Maker daemon/database/Chat boundary and one local LEZ/Monero topology.
+[ADR 0206](docs/architecture/0206-give-concurrent-takers-distinct-lez-identities.md)
+also gives the two real Takers separate LEZ signers, genesis Vaults, finalized
+Vault Claims, and nonce domains after replay `m7xmrconc-6567322a` proved a
+shared signer could admit but lose an effect before inclusion. F3 remains open
+until the corrected clean actual-node certificate and replay exist.
 
 Zcash competing-fork behavior is actual-node GREEN at the consensus/SDK
 boundary on exact pushed run `m7reorg087c37fa`. Two isolated Zebra 5.2.0

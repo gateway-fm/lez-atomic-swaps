@@ -29,6 +29,7 @@ readonly maker_genesis_allocation="100000"
 readonly default_taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
 readonly default_taker_vault_account_id="AXLjVw4tKTgieQoGRgXMVLVVaB4c5YnL1YTogZdX1cpH"
 readonly taker_genesis_allocation="200000"
+readonly taker_b_genesis_allocation="300000"
 
 if [[ "${LEZ_V02_MAKER_ACCOUNT_ID+x}" != \
       "${LEZ_V02_MAKER_VAULT_ACCOUNT_ID+x}" ]]; then
@@ -40,11 +41,25 @@ if [[ "${LEZ_V02_TAKER_ACCOUNT_ID+x}" != \
   echo "taker owner and Vault overrides must be supplied together" >&2
   exit 1
 fi
+if [[ "${LEZ_V02_TAKER_B_ACCOUNT_ID+x}" != \
+      "${LEZ_V02_TAKER_B_VAULT_ACCOUNT_ID+x}" ]]; then
+  echo "taker B owner and Vault overrides must be supplied together" >&2
+  exit 1
+fi
 maker_account_id="${LEZ_V02_MAKER_ACCOUNT_ID:-$default_maker_account_id}"
 maker_vault_account_id="${LEZ_V02_MAKER_VAULT_ACCOUNT_ID:-$default_maker_vault_account_id}"
 taker_account_id="${LEZ_V02_TAKER_ACCOUNT_ID:-$default_taker_account_id}"
 taker_vault_account_id="${LEZ_V02_TAKER_VAULT_ACCOUNT_ID:-$default_taker_vault_account_id}"
+taker_b_enabled=0
+taker_b_account_id=""
+taker_b_vault_account_id=""
+if [[ -n "${LEZ_V02_TAKER_B_ACCOUNT_ID:-}" ]]; then
+  taker_b_enabled=1
+  taker_b_account_id="$LEZ_V02_TAKER_B_ACCOUNT_ID"
+  taker_b_vault_account_id="$LEZ_V02_TAKER_B_VAULT_ACCOUNT_ID"
+fi
 readonly maker_account_id maker_vault_account_id taker_account_id taker_vault_account_id
+readonly taker_b_enabled taker_b_account_id taker_b_vault_account_id
 
 validate_actor_account_id() {
   local account_id="$1"
@@ -59,6 +74,10 @@ validate_actor_account_id "$maker_account_id" "maker"
 validate_actor_account_id "$maker_vault_account_id" "maker Vault"
 validate_actor_account_id "$taker_account_id" "taker"
 validate_actor_account_id "$taker_vault_account_id" "taker Vault"
+if [[ "$taker_b_enabled" == 1 ]]; then
+  validate_actor_account_id "$taker_b_account_id" "taker B"
+  validate_actor_account_id "$taker_b_vault_account_id" "taker B Vault"
+fi
 
 run_id="${RUN_ID:-local-$$}"
 if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
@@ -74,6 +93,15 @@ if [[ "$maker_account_id" == "$taker_account_id" ||
       "$maker_genesis_allocation" == "$taker_genesis_allocation" ]]; then
   echo "maker and taker genesis identities, Vaults, and allocations must remain distinct" >&2
   exit 1
+fi
+if [[ "$taker_b_enabled" == 1 ]]; then
+  actor_ids="$(printf '%s\n' "$maker_account_id" "$maker_vault_account_id" \
+    "$taker_account_id" "$taker_vault_account_id" \
+    "$taker_b_account_id" "$taker_b_vault_account_id" | sort -u)"
+  [[ "$(wc -l <<<"$actor_ids" | tr -d '[:space:]')" == 6 ]] || {
+    echo "maker, taker, and taker B genesis identities and Vaults must remain distinct" >&2
+    exit 1
+  }
 fi
 
 project="lez-atomic-swaps-lez-v02-${run_id}"
@@ -244,6 +272,9 @@ jq --arg channel "$channel_id" \
   --arg maker_amount "$maker_genesis_allocation" \
   --arg taker "$taker_account_id" \
   --arg taker_amount "$taker_genesis_allocation" \
+  --arg taker_b "$taker_b_account_id" \
+  --arg taker_b_amount "$taker_b_genesis_allocation" \
+  --argjson taker_b_enabled "$taker_b_enabled" \
   '.home = "/var/lib/sequencer_service"
     | .bedrock_config.node_url = "http://bedrock:18080"
     | .bedrock_config.channel_id = $channel
@@ -251,7 +282,9 @@ jq --arg channel "$channel_id" \
     | .genesis = [
         {"supply_account": {"account_id": $maker, "balance": ($maker_amount | tonumber)}},
         {"supply_account": {"account_id": $taker, "balance": ($taker_amount | tonumber)}}
-      ]' \
+      ] + (if $taker_b_enabled == 1 then [
+        {"supply_account": {"account_id": $taker_b, "balance": ($taker_b_amount | tonumber)}}
+      ] else [] end)' \
   "${source_dir}/lez/sequencer/service/configs/docker/sequencer_config.json" \
   >"${run_dir}/config/sequencer_config.json"
 jq -e --arg channel "$channel_id" '.channel_id == $channel' \
@@ -260,13 +293,18 @@ jq -e --arg channel "$channel_id" '.bedrock_config.channel_id == $channel' \
   "${run_dir}/config/sequencer_config.json" >/dev/null
 generated_actor_genesis_entries="$(jq -r '.genesis | length' \
   "${run_dir}/config/sequencer_config.json")"
-if [[ "$generated_actor_genesis_entries" != "2" ]] ||
+expected_actor_genesis_entries=$((2 + taker_b_enabled))
+if [[ "$generated_actor_genesis_entries" != "$expected_actor_genesis_entries" ]] ||
    ! jq -e \
      --arg maker "$maker_account_id" \
      --argjson maker_amount "$maker_genesis_allocation" \
      --arg taker "$taker_account_id" \
      --argjson taker_amount "$taker_genesis_allocation" \
-     '(.genesis | length) == 2
+     --arg taker_b "$taker_b_account_id" \
+     --argjson taker_b_amount "$taker_b_genesis_allocation" \
+     --argjson taker_b_enabled "$taker_b_enabled" \
+     --argjson expected_count "$expected_actor_genesis_entries" \
+     '(.genesis | length) == $expected_count
       and ([.genesis[] | select(
         .supply_account.account_id == $maker
         and .supply_account.balance == $maker_amount
@@ -276,9 +314,17 @@ if [[ "$generated_actor_genesis_entries" != "2" ]] ||
         and .supply_account.balance == $taker_amount
       )] | length) == 1
       and $maker != $taker
-      and $maker_amount != $taker_amount' \
+      and $maker_amount != $taker_amount
+      and (if $taker_b_enabled == 1 then
+        ([.genesis[] | select(
+          .supply_account.account_id == $taker_b
+          and .supply_account.balance == $taker_b_amount
+        )] | length) == 1
+        and $taker_b != $maker and $taker_b != $taker
+        and $taker_b_amount != $maker_amount and $taker_b_amount != $taker_amount
+      else true end)' \
      "${run_dir}/config/sequencer_config.json" >/dev/null; then
-  echo "generated sequencer genesis must contain exactly the two distinct actor allocations" >&2
+  echo "generated sequencer genesis must contain exactly the enabled distinct actor allocations" >&2
   exit 1
 fi
 chmod 0400 "${run_dir}/config/"*
@@ -305,6 +351,11 @@ printf "LEZ_V02_MAKER_GENESIS_ALLOCATION=%s\n" "$maker_genesis_allocation" >>"$m
 printf "LEZ_V02_TAKER_ACCOUNT_ID=%s\n" "$taker_account_id" >>"$manifest"
 printf "LEZ_V02_TAKER_VAULT_ACCOUNT_ID=%s\n" "$taker_vault_account_id" >>"$manifest"
 printf "LEZ_V02_TAKER_GENESIS_ALLOCATION=%s\n" "$taker_genesis_allocation" >>"$manifest"
+if [[ "$taker_b_enabled" == 1 ]]; then
+  printf "LEZ_V02_TAKER_B_ACCOUNT_ID=%s\n" "$taker_b_account_id" >>"$manifest"
+  printf "LEZ_V02_TAKER_B_VAULT_ACCOUNT_ID=%s\n" "$taker_b_vault_account_id" >>"$manifest"
+  printf "LEZ_V02_TAKER_B_GENESIS_ALLOCATION=%s\n" "$taker_b_genesis_allocation" >>"$manifest"
+fi
 chmod 0600 "$manifest"
 
 docker compose --project-name "$project" --file "$compose_file" config --quiet
@@ -723,6 +774,10 @@ assert_actor_preclaim_state "$sequencer_url" "sequencer" "maker" \
   "$maker_account_id" "$maker_vault_account_id" "$maker_genesis_allocation"
 assert_actor_preclaim_state "$sequencer_url" "sequencer" "taker" \
   "$taker_account_id" "$taker_vault_account_id" "$taker_genesis_allocation"
+if [[ "$taker_b_enabled" == 1 ]]; then
+  assert_actor_preclaim_state "$sequencer_url" "sequencer" "taker-b" \
+    "$taker_b_account_id" "$taker_b_vault_account_id" "$taker_b_genesis_allocation"
+fi
 
 docker start "${containers[indexer]}" >/dev/null
 indexer_url="$(published_url indexer 8779)"
@@ -769,6 +824,10 @@ assert_actor_preclaim_state "$indexer_url" "indexer" "maker" \
   "$maker_account_id" "$maker_vault_account_id" "$maker_genesis_allocation" "$finalized_id"
 assert_actor_preclaim_state "$indexer_url" "indexer" "taker" \
   "$taker_account_id" "$taker_vault_account_id" "$taker_genesis_allocation" "$finalized_id"
+if [[ "$taker_b_enabled" == 1 ]]; then
+  assert_actor_preclaim_state "$indexer_url" "indexer" "taker-b" \
+    "$taker_b_account_id" "$taker_b_vault_account_id" "$taker_b_genesis_allocation" "$finalized_id"
+fi
 
 indexer_block_payload="$(printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBlockById\",\"params\":[%s]}' "$finalized_id")"
 sequencer_block_payload="$(printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBlock\",\"params\":[%s]}' "$finalized_id")"

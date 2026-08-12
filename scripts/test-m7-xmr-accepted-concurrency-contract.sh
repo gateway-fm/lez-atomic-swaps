@@ -41,6 +41,7 @@ jq -e '
   and .shared_chain_boundary == {
     lez_v0_2_stack_count:1,monerod_regtest_count:1,program_deployment_count:1
   }
+  and .isolation.distinct_taker_lez_identities == true
   and all(.isolation[]; . == true)
   and .ordering.both_applications_accepted_before_actor_activation == true
   and .ordering.both_swaps_in_flight_before_settlement == true
@@ -84,7 +85,12 @@ for required in \
   'both_accepted_before_activation: true' \
   '--actor-worker-count "$((m7_xmr_accepted_concurrency == 1 ? 2 : 1))"' \
   'm7_xmr_second_offer_id="m7-xmr-application-offer-002"' \
+  'for role in maker taker taker-b' \
+  'LEZ_V02_TAKER_B_ACCOUNT_ID="$taker_b_account"' \
+  'taker_b_identity="${evidence_root}/taker-b-lez-identity.json"' \
+  'M4_ONBOARD_TAKER_B_IDENTITY="$taker_b_identity"' \
   'compose_m7_second_xmr_agreement() {' \
+  'taker_owner="$(jq -er '\''.account_id_hex'\'' "${evidence_root}/taker-b-lez-identity.json")"' \
   '--shared-view-key-source "${agreement_root}/material/taker/monero-view.key"' \
   '--maker-agreement-key-source "${agreement_root}/material/maker/agreement.key"' \
   'run_m7_second_xmr_taker_acceptance() {' \
@@ -101,6 +107,32 @@ for required in \
   rg -Fq -- "$required" "$delegated_runner" ||
     fail "delegated runner is missing accepted-concurrency invariant: $required"
 done
+
+[[ "$(rg -Fc -- '--private-key-file "${private_root}/lez-identities/taker-b/lez-signer.key"' \
+  "$delegated_runner")" == 2 ]] ||
+  fail "second Tag13 and second Taker sidecar do not share the distinct Taker B signer"
+[[ "$(rg -Fc -- '--private-key-file "${private_root}/lez-identities/taker/lez-signer.key"' \
+  "$delegated_runner")" == 2 ]] ||
+  fail "primary Taker mutations no longer use only the primary Taker signer"
+
+primary_agreement="$(sed -n '/^compose_xmr_agreement() {/,/^}/p' "$delegated_runner")"
+secondary_agreement="$(sed -n '/^compose_m7_second_xmr_agreement() {/,/^}/p' "$delegated_runner")"
+primary_tag13="$(sed -n '/^submit_tag13() {/,/^}/p' "$delegated_runner")"
+secondary_tag13="$(sed -n '/^submit_m7_second_xmr_tag13() {/,/^}/p' "$delegated_runner")"
+primary_sidecars="$(sed -n '/^start_role_sidecars() {/,/^}/p' "$delegated_runner")"
+secondary_sidecars="$(sed -n '/^start_m7_second_xmr_role_sidecars() {/,/^}/p' "$delegated_runner")"
+rg -Fq -- 'taker-lez-identity.json' <<<"$primary_agreement" &&
+  ! rg -Fq -- 'taker-b-lez-identity.json' <<<"$primary_agreement" &&
+  rg -Fq -- 'taker-b-lez-identity.json' <<<"$secondary_agreement" ||
+  fail "agreement A/B Taker authority binding crossed"
+rg -Fq -- 'lez-identities/taker/lez-signer.key' <<<"$primary_tag13" &&
+  ! rg -Fq -- 'lez-identities/taker-b/lez-signer.key' <<<"$primary_tag13" &&
+  rg -Fq -- 'lez-identities/taker-b/lez-signer.key' <<<"$secondary_tag13" ||
+  fail "Tag13 A/B signer binding crossed"
+rg -Fq -- 'lez-identities/taker/lez-signer.key' <<<"$primary_sidecars" &&
+  ! rg -Fq -- 'lez-identities/taker-b/lez-signer.key' <<<"$primary_sidecars" &&
+  rg -Fq -- 'lez-identities/taker-b/lez-signer.key' <<<"$secondary_sidecars" ||
+  fail "sidecar A/B signer binding crossed"
 
 first_funding_line="$(rg -n '^[[:space:]]+fund_and_verify_monero$' "$delegated_runner" | tail -n 1 | cut -d: -f1)"
 second_funding_line="$(rg -n '^[[:space:]]+fund_and_verify_m7_second_monero$' "$delegated_runner" | cut -d: -f1)"
@@ -122,9 +154,9 @@ fund_line="$(rg -n '\.fund_shared_exact_and_confirm\(' "$funding_source" | head 
    "$refresh_line" -lt "$fund_line" ]] ||
   fail "sequential XMR funding does not refresh the Maker wallet before transfer"
 
-rg -Fq 'const XMR_EFFECT_OBSERVATION_TIMEOUT: Duration = Duration::from_mins(5);' \
+rg -Fq 'const XMR_EFFECT_OBSERVATION_TIMEOUT: Duration = Duration::from_mins(2);' \
   "$taker_cli_source" ||
-  fail "exact LEZ finality observation lacks the measured 300-second completion bound"
+  fail "exact LEZ finality observation lacks the measured 120-second completion bound"
 [[ "$(rg -Fc 'child.wait_timeout(XMR_EFFECT_OBSERVATION_TIMEOUT)' "$taker_cli_source")" == 1 ]] ||
   fail "the measured XMR observation bound is not limited to the read-only observer"
 observer_function_line="$(rg -n '^fn observe_xmr_taker_effect\(' "$taker_cli_source" | cut -d: -f1)"

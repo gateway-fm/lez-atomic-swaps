@@ -29,6 +29,13 @@ required_runner_terms=(
   'validate_actor_account_id "$taker_vault_account_id" "taker Vault"'
   'maker owner and Vault overrides must be supplied together'
   'taker owner and Vault overrides must be supplied together'
+  'taker B owner and Vault overrides must be supplied together'
+  'readonly taker_b_genesis_allocation="300000"'
+  'LEZ_V02_TAKER_B_ACCOUNT_ID='
+  'LEZ_V02_TAKER_B_VAULT_ACCOUNT_ID='
+  'LEZ_V02_TAKER_B_GENESIS_ALLOCATION='
+  'assert_actor_preclaim_state "$sequencer_url" "sequencer" "taker-b"'
+  'assert_actor_preclaim_state "$indexer_url" "indexer" "taker-b"'
   'must be a canonical base58 public AccountId'
   '.genesis = ['
   '{"supply_account": {"account_id": $maker, "balance": ($maker_amount | tonumber)}},'
@@ -109,6 +116,27 @@ fi
 if ! rg -Fq 'taker owner and Vault overrides must be supplied together' \
   "$validation_log"; then
   echo "runner did not reject an unpaired taker owner override before stack setup" >&2
+  exit 1
+fi
+if LEZ_V02_TAKER_B_ACCOUNT_ID="$taker_account" \
+  RUN_ID='actor-taker-b-owner-without-vault' "$runner" >"$validation_log" 2>&1; then
+  echo "runner accepted a Taker B owner override without its derived Vault ID" >&2
+  exit 1
+fi
+if ! rg -Fq 'taker B owner and Vault overrides must be supplied together' \
+  "$validation_log"; then
+  echo "runner did not reject an unpaired Taker B owner before stack setup" >&2
+  exit 1
+fi
+if LEZ_V02_TAKER_B_ACCOUNT_ID="$maker_account" \
+  LEZ_V02_TAKER_B_VAULT_ACCOUNT_ID="$taker_vault" \
+  RUN_ID='actor-taker-b-collision' "$runner" >"$validation_log" 2>&1; then
+  echo "runner accepted a colliding Taker B identity" >&2
+  exit 1
+fi
+if ! rg -Fq 'maker, taker, and taker B genesis identities and Vaults must remain distinct' \
+  "$validation_log"; then
+  echo "runner did not reject a colliding Taker B identity before stack setup" >&2
   exit 1
 fi
 if LEZ_V02_TAKER_VAULT_ACCOUNT_ID="$taker_vault" \

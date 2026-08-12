@@ -8004,14 +8004,25 @@ S12/S13 review and policy-deferred public deployment.
   verify exact cleanup passed with source status 143, every run resource
   absent, ports closed, foreign sentinel preserved, and no broad cleanup.
 - [x] RED then GREEN a named completion bound only for exact XMR finality
-  observation. Keep invocation and preflight children at 30 seconds. The real
-  receipt-v2 process regression measured 162.98 seconds; replay
-  `m7xmrconc-8c579fca` showed the initial 120-second estimate was still too
-  short, stopped at the read-only seam, and passed exact cleanup. RED then
-  GREEN the corrected 300-second bound, which remains exclusive to the
-  observation child. Record component and sequence diagrams plus the unchanged
-  conditional-atomicity argument in ADR 0205. The focused shared-daemon
-  regression passes in 38.97 seconds.
+  observation. Keep invocation and preflight children at 30 seconds. The first
+  replay was provisionally interpreted as a slow proof, so the bound moved
+  from 120 to 300 seconds. Replay `m7xmrconc-6567322a` later showed observers
+  completed but the admitted transaction was absent from both node views; the
+  true defect was the shared Taker nonce domain. Restore the 120-second
+  read-only bound and record the correction in ADRs 0205 and 0206.
 - [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
   and official Monero Regtest topology; sanitize and CI-pin the certificate,
   update manual reproduction, clean exact resources, and close F3.
+- [x] Replay pushed commit `6567322` as `m7xmrconc-6567322a`. Both applications,
+  Tag13 escrows, distinct Monero outputs, and release preparations completed,
+  but admitted Tag14 A never appeared in sequencer or indexer while finalized
+  height advanced through its bounded search. Observer attempts completed.
+  Exact cleanup passed. This disproved the 300-second-timeout diagnosis.
+- [x] RED then GREEN ADR 0206: accepted-concurrency mode provisions and
+  finalizes a third genesis actor, Taker B, then binds only swap B agreement,
+  Tag13, and Taker sidecar to its signer and nonce domain. Swap A remains bound
+  to Taker A. Default two-actor stack/onboarding compatibility stays unchanged;
+  the observer bound returns to 120 seconds.
+- [ ] Push the ADR-0206 source checkpoint, replay that exact clean commit,
+  retain two terminal swaps with zero replay submissions, sanitize and pin the
+  certificate, update F3 ledgers, and perform exact run-scoped cleanup.
