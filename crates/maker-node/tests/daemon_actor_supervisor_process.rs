@@ -618,17 +618,11 @@ fn daemon_leases_two_accepted_xmr_applications_concurrently_across_restart() {
         .iter()
         .map(|path| fs::read_to_string(path).unwrap().trim().parse().unwrap())
         .collect();
-    let first_rows = SqliteSwapStore::open(&database)
-        .expect("open first concurrent observer")
-        .list_maker_actor_processes()
-        .expect("inspect first concurrent leases");
-    assert_eq!(first_rows.len(), 2);
-    assert!(
-        first_rows.iter().all(|record| {
-            record.schedule_state() == MakerActorScheduleState::Leased
-                && record.child_identity().is_some()
-        }),
-        "two accepted XMR applications must hold concurrent leases"
+    wait_for_concurrent_leases(
+        &mut daemon,
+        &database,
+        Duration::from_secs(10),
+        "two accepted XMR applications to hold concurrent leases",
     );
 
     assert!(daemon.terminate(Duration::from_secs(2)).success());
@@ -665,15 +659,12 @@ fn daemon_leases_two_accepted_xmr_applications_concurrently_across_restart() {
         .map(|path| fs::read_to_string(path).unwrap().trim().parse().unwrap())
         .collect();
     assert_ne!(first_pids, second_pids);
-    let restarted_rows = SqliteSwapStore::open(&database)
-        .expect("open restarted concurrent observer")
-        .list_maker_actor_processes()
-        .expect("inspect restarted concurrent leases");
-    assert_eq!(restarted_rows.len(), 2);
-    assert!(restarted_rows.iter().all(|record| {
-        record.schedule_state() == MakerActorScheduleState::Leased
-            && record.child_identity().is_some()
-    }));
+    wait_for_concurrent_leases(
+        &mut restarted,
+        &database,
+        Duration::from_secs(10),
+        "restarted accepted XMR applications to hold concurrent leases",
+    );
 
     for release_file in &release_files {
         write_private(release_file, b"release\n", 0o600);
@@ -873,6 +864,37 @@ fn wait_for_file(daemon: &mut TestDaemon, path: &Path, timeout: Duration, descri
         assert!(
             Instant::now() < deadline,
             "timed out waiting for {description}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_concurrent_leases(
+    daemon: &mut TestDaemon,
+    database: &Path,
+    timeout: Duration,
+    description: &str,
+) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let rows = SqliteSwapStore::open(database)
+            .expect("open concurrent lease observer")
+            .list_maker_actor_processes()
+            .expect("inspect concurrent actor leases");
+        if rows.len() == 2
+            && rows.iter().all(|record| {
+                record.schedule_state() == MakerActorScheduleState::Leased
+                    && record.child_identity().is_some()
+            })
+        {
+            return;
+        }
+        if let Some(status) = daemon.child_mut().try_wait().expect("poll maker daemon") {
+            panic!("maker daemon exited before {description}: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {description}: {rows:?}"
         );
         thread::sleep(Duration::from_millis(10));
     }
