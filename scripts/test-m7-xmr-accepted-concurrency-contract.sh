@@ -6,6 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 readonly process_test="crates/maker-node/tests/daemon_actor_supervisor_process.rs"
 readonly wrapper="scripts/run-m7-xmr-accepted-concurrency-poc.sh"
 readonly delegated_runner="scripts/run-m4-actual-claim-poc.sh"
+readonly funding_source="compat/lez-v0_2-sidecar/src/bin/lez-v02-xmr-regtest-fund.rs"
 
 fail() {
   echo "M7 XMR accepted-concurrency contract failed: $*" >&2
@@ -109,6 +110,12 @@ first_settlement_line="$(rg -n '^[[:space:]]+prepare_tag14_release$' "$delegated
    "$first_funding_line" -lt "$first_settlement_line" &&
    "$second_funding_line" -lt "$first_settlement_line" ]] ||
   fail "both XMR swaps are not durably in flight before settlement"
+
+refresh_line="$(rg -n '\.refresh_from_height\(arguments\.restore_height\)' "$funding_source" | head -n 1 | cut -d: -f1)"
+fund_line="$(rg -n '\.fund_shared_exact_and_confirm\(' "$funding_source" | head -n 1 | cut -d: -f1)"
+[[ "$refresh_line" =~ ^[1-9][0-9]*$ && "$fund_line" =~ ^[1-9][0-9]*$ &&
+   "$refresh_line" -lt "$fund_line" ]] ||
+  fail "sequential XMR funding does not refresh the Maker wallet before transfer"
 
 cargo +1.96.0 test --locked --offline -p lez-maker-node \
   --test daemon_actor_supervisor_process \

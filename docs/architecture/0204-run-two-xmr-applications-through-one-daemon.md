@@ -111,6 +111,16 @@ The focused source contract and the pre-existing M4/M5 compatibility contracts
 are GREEN. A clean pushed-source Docker replay is still required before F3 is
 closed.
 
+The first clean replay from `b57891a` proved both authenticated applications,
+both finalized LEZ Tag13 escrows, and swap A's confirmed Monero output. Swap B
+then failed before transaction identity because the shared Maker wallet RPC
+had not refreshed after swap A mined ten confirmation blocks; its spendable
+change view was stale. Exact cleanup passed and no settlement began. The fix
+refreshes that funding wallet from the configured restore height before each
+one-shot transfer. Refresh is observation-only: it neither submits nor retries
+a transaction. The focused RED ordering contract, both funding-binary tests,
+formatting, and M4/M5 compatibility gates are GREEN.
+
 ```mermaid
 sequenceDiagram
     participant A as Accepted application A

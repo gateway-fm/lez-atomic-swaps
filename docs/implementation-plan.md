@@ -7975,6 +7975,17 @@ S12/S13 review and policy-deferred public deployment.
   outputs are ordered before the first settlement; replay preserves the exact
   one-shot submission hashes. The focused shared-daemon regression passed in
   39.73 seconds, and existing M4/M5 compatibility contracts remain GREEN.
+- [x] Push `b57891a` and replay as `m7xmrconc-b57891aa`. Both accepted rows,
+  actual Tag13 escrows, and swap A's confirmed Monero output succeeded. Swap B
+  failed before transaction identity because the Maker wallet had not
+  refreshed after swap A's ten locally mined confirmation blocks. Exact
+  cleanup passed: all run resources and sidecar ports were absent, the foreign
+  sentinel survived, and no broad cleanup ran.
+- [x] RED then GREEN a funding-order regression and add one observation-only
+  Maker-wallet refresh before each one-shot transfer. This exposes unlocked
+  change to a subsequent accepted application without adding a retry. The
+  funding binary's two tests, the 36.91-second shared-daemon regression,
+  formatting, whitespace, and M4/M5 compatibility contracts pass.
 - [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
   and official Monero Regtest topology; sanitize and CI-pin the certificate,
   update manual reproduction, clean exact resources, and close F3.

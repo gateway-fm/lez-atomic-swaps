@@ -195,6 +195,13 @@ async fn execute(arguments: Arguments) -> Result<FundingEvidence> {
 
     let funder = MoneroRegtestWalletEffects::new(&daemon, &funding_wallet)
         .context("funding-wallet effect boundary is invalid")?;
+    // A prior accepted application may have mined confirmations after spending
+    // from this same Maker wallet. Refresh is observation-only and makes the
+    // unlocked change visible before the next one-shot transfer.
+    funder
+        .refresh_from_height(arguments.restore_height)
+        .await
+        .context("funding wallet refresh before transfer failed")?;
     let funding = funder
         .fund_shared_exact_and_confirm(
             agreement.shared_address(),
