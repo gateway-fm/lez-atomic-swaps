@@ -49,6 +49,11 @@ use taker_accept_xmr::{
 
 use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
 
+// Exact LEZ observation verifies finalized block proofs locally. The dual-XMR
+// actual-node run measured valid observations exceeding the generic 30-second
+// effect-invocation bound, so observation gets its own bounded allowance.
+const XMR_EFFECT_OBSERVATION_TIMEOUT: Duration = Duration::from_mins(2);
+
 #[derive(Parser)]
 #[command(about = "LEZ atomic-swap taker CLI")]
 struct Arguments {
@@ -1219,7 +1224,7 @@ fn observe_xmr_taker_effect(
             "XMR Taker effect observer output is unavailable"
         ));
     };
-    let status = match child.wait_timeout(Duration::from_secs(30)) {
+    let status = match child.wait_timeout(XMR_EFFECT_OBSERVATION_TIMEOUT) {
         Ok(Some(status)) => status,
         Ok(None) => {
             let _ = child.kill();

@@ -158,3 +158,12 @@ and official Monero 0.18.5.1 Regtest services with deterministic local funds
 participate. No public RPC, peer, faucet, public funds, or public deployment is
 used. No external security review or security-completion claim is part of this
 decision.
+
+Replay `m7xmrconc-4d4f13aa` proved the corrected ordering through two accepted
+applications, two finalized Tag13 escrows, both distinct confirmed Monero
+outputs, both matching release preparations, and admitted Tag14 A. Its
+read-only exact-finality child then repeatedly exceeded the generic 30-second
+process bound while still verifying local finalized blocks. No submission was
+retried. The run was stopped at that bounded observation seam and exact cleanup
+passed. ADR 0205 gives only this observer a 120-second bound; mutation and
+preflight remain at 30 seconds. Fresh pushed-source replay is required.

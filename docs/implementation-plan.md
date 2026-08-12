@@ -7996,6 +7996,18 @@ S12/S13 review and policy-deferred public deployment.
   activations after both confirmed outputs. Preparation is local-only and
   effect-free. The 37.96-second shared-daemon regression, syntax, whitespace,
   and M4/M5 compatibility gates pass.
+- [x] Replay `m7xmrconc-4d4f13aa` through both accepted applications, both
+  finalized Tag13 escrows, both distinct confirmed Monero outputs, both
+  matching release preparations, and admitted Tag14 A. The exact read-only
+  finality child repeatedly exceeded its generic 30-second process bound while
+  still verifying local blocks; no chain effect was retried. Stop the run and
+  verify exact cleanup passed with source status 143, every run resource
+  absent, ports closed, foreign sentinel preserved, and no broad cleanup.
+- [x] RED then GREEN a named 120-second completion bound only for exact XMR
+  finality observation. Keep invocation and preflight children at 30 seconds.
+  Record component and sequence diagrams plus the unchanged conditional-
+  atomicity argument in ADR 0205. The focused shared-daemon regression passes
+  in 38.97 seconds.
 - [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
   and official Monero Regtest topology; sanitize and CI-pin the certificate,
   update manual reproduction, clean exact resources, and close F3.

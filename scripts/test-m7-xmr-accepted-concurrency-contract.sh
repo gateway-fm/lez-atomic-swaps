@@ -7,6 +7,7 @@ readonly process_test="crates/maker-node/tests/daemon_actor_supervisor_process.r
 readonly wrapper="scripts/run-m7-xmr-accepted-concurrency-poc.sh"
 readonly delegated_runner="scripts/run-m4-actual-claim-poc.sh"
 readonly funding_source="compat/lez-v0_2-sidecar/src/bin/lez-v02-xmr-regtest-fund.rs"
+readonly taker_cli_source="crates/maker-node/src/bin/lez-taker.rs"
 
 fail() {
   echo "M7 XMR accepted-concurrency contract failed: $*" >&2
@@ -120,6 +121,19 @@ fund_line="$(rg -n '\.fund_shared_exact_and_confirm\(' "$funding_source" | head 
 [[ "$refresh_line" =~ ^[1-9][0-9]*$ && "$fund_line" =~ ^[1-9][0-9]*$ &&
    "$refresh_line" -lt "$fund_line" ]] ||
   fail "sequential XMR funding does not refresh the Maker wallet before transfer"
+
+rg -Fq 'const XMR_EFFECT_OBSERVATION_TIMEOUT: Duration = Duration::from_mins(2);' \
+  "$taker_cli_source" ||
+  fail "exact LEZ finality observation lacks the measured 120-second completion bound"
+[[ "$(rg -Fc 'child.wait_timeout(XMR_EFFECT_OBSERVATION_TIMEOUT)' "$taker_cli_source")" == 1 ]] ||
+  fail "the measured XMR observation bound is not limited to the read-only observer"
+observer_function_line="$(rg -n '^fn observe_xmr_taker_effect\(' "$taker_cli_source" | cut -d: -f1)"
+observer_timeout_line="$(rg -n 'child\.wait_timeout\(XMR_EFFECT_OBSERVATION_TIMEOUT\)' \
+  "$taker_cli_source" | cut -d: -f1)"
+[[ "$observer_function_line" =~ ^[1-9][0-9]*$ &&
+   "$observer_timeout_line" =~ ^[1-9][0-9]*$ &&
+   "$observer_function_line" -lt "$observer_timeout_line" ]] ||
+  fail "the measured completion bound does not belong to read-only observation"
 
 cargo +1.96.0 test --locked --offline -p lez-maker-node \
   --test daemon_actor_supervisor_process \
