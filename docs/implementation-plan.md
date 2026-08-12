@@ -8003,11 +8003,15 @@ S12/S13 review and policy-deferred public deployment.
   still verifying local blocks; no chain effect was retried. Stop the run and
   verify exact cleanup passed with source status 143, every run resource
   absent, ports closed, foreign sentinel preserved, and no broad cleanup.
-- [x] RED then GREEN a named 120-second completion bound only for exact XMR
-  finality observation. Keep invocation and preflight children at 30 seconds.
-  Record component and sequence diagrams plus the unchanged conditional-
-  atomicity argument in ADR 0205. The focused shared-daemon regression passes
-  in 38.97 seconds.
+- [x] RED then GREEN a named completion bound only for exact XMR finality
+  observation. Keep invocation and preflight children at 30 seconds. The real
+  receipt-v2 process regression measured 162.98 seconds; replay
+  `m7xmrconc-8c579fca` showed the initial 120-second estimate was still too
+  short, stopped at the read-only seam, and passed exact cleanup. RED then
+  GREEN the corrected 300-second bound, which remains exclusive to the
+  observation child. Record component and sequence diagrams plus the unchanged
+  conditional-atomicity argument in ADR 0205. The focused shared-daemon
+  regression passes in 38.97 seconds.
 - [ ] Replay from one clean pushed source commit against one isolated LEZ v0.2
   and official Monero Regtest topology; sanitize and CI-pin the certificate,
   update manual reproduction, clean exact resources, and close F3.

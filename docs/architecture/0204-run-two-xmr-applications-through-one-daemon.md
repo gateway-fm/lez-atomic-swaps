@@ -165,5 +165,8 @@ outputs, both matching release preparations, and admitted Tag14 A. Its
 read-only exact-finality child then repeatedly exceeded the generic 30-second
 process bound while still verifying local finalized blocks. No submission was
 retried. The run was stopped at that bounded observation seam and exact cleanup
-passed. ADR 0205 gives only this observer a 120-second bound; mutation and
-preflight remain at 30 seconds. Fresh pushed-source replay is required.
+passed. Replay `m7xmrconc-8c579fca` then proved the first 120-second observer
+bound was still shorter than the real proof computation; it was stopped at
+the same read-only seam and exact cleanup passed. ADR 0205 now gives only this
+observer a measured 300-second bound; mutation and preflight remain at 30
+seconds. Fresh pushed-source replay is required.

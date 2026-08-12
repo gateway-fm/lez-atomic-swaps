@@ -122,9 +122,9 @@ fund_line="$(rg -n '\.fund_shared_exact_and_confirm\(' "$funding_source" | head 
    "$refresh_line" -lt "$fund_line" ]] ||
   fail "sequential XMR funding does not refresh the Maker wallet before transfer"
 
-rg -Fq 'const XMR_EFFECT_OBSERVATION_TIMEOUT: Duration = Duration::from_mins(2);' \
+rg -Fq 'const XMR_EFFECT_OBSERVATION_TIMEOUT: Duration = Duration::from_mins(5);' \
   "$taker_cli_source" ||
-  fail "exact LEZ finality observation lacks the measured 120-second completion bound"
+  fail "exact LEZ finality observation lacks the measured 300-second completion bound"
 [[ "$(rg -Fc 'child.wait_timeout(XMR_EFFECT_OBSERVATION_TIMEOUT)' "$taker_cli_source")" == 1 ]] ||
   fail "the measured XMR observation bound is not limited to the read-only observer"
 observer_function_line="$(rg -n '^fn observe_xmr_taker_effect\(' "$taker_cli_source" | cut -d: -f1)"
