@@ -12,4 +12,4 @@ S10	green	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/README
 S11	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
 S12	external-review	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/review-scope.md	Mutually agreed independent on-chain review report and remediation closure
 S13	external-review	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/review-scope.md	Mutually agreed independent protocol review report and remediation closure
-D1	open	./scripts/test-m3-private-demo-video-contract.sh	docs/requirements-traceability.md	Generate and verify happy refund and concurrent videos for XMR and ZEC
+D1	green	./scripts/test-m7-private-demo-video-actual-certificate.sh	docs/evidence/m7-private-demo-video-bundle-1b47a15-20260812.json	none

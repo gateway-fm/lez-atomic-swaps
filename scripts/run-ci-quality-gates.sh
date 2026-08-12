@@ -113,6 +113,7 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m7-r6-timelock-rationale-contract.sh
 ./scripts/test-m7-r7-bitcoin-refund-justification-contract.sh
 ./scripts/test-m7-private-demo-video-contract.sh
+./scripts/test-m7-private-demo-video-actual-certificate.sh
 ./scripts/test-m7-zec-accepted-process-kill-contract.sh
 ./scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh
 ./scripts/test-m7-maker-refund-actual-certificate.sh

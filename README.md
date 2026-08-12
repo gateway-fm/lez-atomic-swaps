@@ -29,6 +29,18 @@ closes literal R1/R2/R6/R7 private-local acceptance while retaining public
 calibration, operational fee policy, and broader adverse schedules as explicit
 production work. Public deployment remains deliberately deferred.
 
+D1 is functionally GREEN across all nine required videos: the three BTC
+videos retained from M3 plus XMR and ZEC happy, refund/timeout, and concurrent
+videos rendered from exact pushed commit `1b47a15`. The six-video M7
+bundle was fully H.264 decode-probed and hash-sealed; ZEC concurrency is
+honestly labeled as a real one-daemon scheduler/state overlap plus separately
+bound actual-node Claim and Refund effects, not one joined concurrent chain
+run. See the [M7 private demo operator guide](docs/m7-private-demo-operator-guide.md)
+and [checked certificate](docs/evidence/m7-private-demo-video-bundle-1b47a15-20260812.json).
+Runtime uses only private local nodes and deterministic local funds; no public
+RPC, peer, faucet, funds, or deployment can make it flaky. A cold renderer
+image pull is the only external resource needed to recreate the MP4s.
+
 The F3 join is implemented under
 [ADR 0204](docs/architecture/0204-run-two-xmr-applications-through-one-daemon.md).
 Its GREEN source contract fixes two authenticated semantic-Claim applications

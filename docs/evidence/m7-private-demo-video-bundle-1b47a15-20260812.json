@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "kind": "m7_private_demo_video_certificate",
+  "result": "passed",
+  "privacy": "private_local_stealth",
+  "source_repository_commit": "1b47a158140c3336f8d5e0ac2e2b3e7a8ce12876",
+  "renderer_repository_commit": "1b47a158140c3336f8d5e0ac2e2b3e7a8ce12876",
+  "verifier_repository_commit": "1b47a158140c3336f8d5e0ac2e2b3e7a8ce12876",
+  "source_map_sha256": "2a2d1892f62681778ebb954a81629262c9326be21c623664cc708b7c45943d15",
+  "private_bundle_sha256": "a23b7d32b11ce91a44875750c82bccc470659cac380de90d61c9e7b2e743bf5b",
+  "renderer_image": "ghcr.io/charmbracelet/vhs@sha256:9d5fc3dc0c160b0fb1d2212baff07e6bdf3fa9438c504a3237484567302fcf93",
+  "recorded_at": "2026-08-12T20:03:17Z",
+  "pairs": [
+    "xmr",
+    "zec"
+  ],
+  "scenarios": [
+    "happy",
+    "refund",
+    "concurrent"
+  ],
+  "videos": [
+    {
+      "pair": "xmr",
+      "scenario": "concurrent",
+      "run_id": "m7xmrconc-d8efb7ca",
+      "evidence_model": "joined_actual_nodes",
+      "joined_actual_node_concurrency": true,
+      "manifest_sha256": "1b6f2916f05ca83ce3dfe673e8af5eb4124e90cf168a19470b7d0491acf58301",
+      "video_sha256": "fa8186446ab567391809b353ac54c2263db6374f5304dd376e5af791a69777e3",
+      "duration_seconds": "23.640000",
+      "size_bytes": 132539
+    },
+    {
+      "pair": "xmr",
+      "scenario": "happy",
+      "run_id": "m7claim-2cff48d-a",
+      "evidence_model": "joined_actual_nodes",
+      "joined_actual_node_concurrency": true,
+      "manifest_sha256": "10b11a94a42a70818b617adcbd4492cd2d279a42a86e2970aa3db209b614f357",
+      "video_sha256": "f30ad348ad12fe3c98239a1557902c355be91709e3da9f82398a78d114d96a7d",
+      "duration_seconds": "23.680000",
+      "size_bytes": 128827
+    },
+    {
+      "pair": "xmr",
+      "scenario": "refund",
+      "run_id": "m7refundkill-f8bee63-d",
+      "evidence_model": "joined_actual_nodes",
+      "joined_actual_node_concurrency": true,
+      "manifest_sha256": "4a8868c3ba0a1ae3e1f92752ae8344deda037189b601596a7064b6034abc11fc",
+      "video_sha256": "38301feb60cafdb00fe707e010c82491e614fc32bb1e9bd272be55ade6176608",
+      "duration_seconds": "23.680000",
+      "size_bytes": 132282
+    },
+    {
+      "pair": "zec",
+      "scenario": "concurrent",
+      "run_id": "m7-zec-layered-concurrency",
+      "evidence_model": "layered_process_concurrency_plus_actual_node_pair_effects",
+      "joined_actual_node_concurrency": false,
+      "manifest_sha256": "f34d6ddbd25ecb309a7a3306cdef68bbe372138d6d87693d031ec8dd4e087ff9",
+      "video_sha256": "29272f445aa0fb31501322259df84a52c344e0255782de6bef5352c8db589a11",
+      "duration_seconds": "23.480000",
+      "size_bytes": 145807
+    },
+    {
+      "pair": "zec",
+      "scenario": "happy",
+      "run_id": "m7zecpk820001ba",
+      "evidence_model": "joined_actual_nodes",
+      "joined_actual_node_concurrency": true,
+      "manifest_sha256": "8e7edd1741e43f71f8b76c7b08417aa532073ec02fcc9593f8cbc2f9615b9679",
+      "video_sha256": "5309b9c63ad22f19a3c28b895f403725910722d3ec14961c748eeace035ee793",
+      "duration_seconds": "23.640000",
+      "size_bytes": 133417
+    },
+    {
+      "pair": "zec",
+      "scenario": "refund",
+      "run_id": "m7zecfirstrefund8981e32a",
+      "evidence_model": "joined_actual_nodes",
+      "joined_actual_node_concurrency": true,
+      "manifest_sha256": "2fe94e0a9ec512a956d3ef2dd696caeed85da02fb7c1bef030e759d586196811",
+      "video_sha256": "1e3200354d06358547fc165377c101afe928e727e6b74a1b857caf4e116e3b62",
+      "duration_seconds": "23.560000",
+      "size_bytes": 129153
+    }
+  ],
+  "zec_concurrent_evidence_model": "layered_process_concurrency_plus_actual_node_pair_effects",
+  "zec_concurrent_joined_actual_node_run": false,
+  "public_rpc_used": false,
+  "public_peer_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment_used": false,
+  "certification_success_depends_on_external_network": false,
+  "private_video_bytes_checked_into_git": false,
+  "security_assessment_claimed": false
+}

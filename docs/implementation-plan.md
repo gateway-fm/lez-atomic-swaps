@@ -8081,8 +8081,14 @@ S12/S13 review and policy-deferred public deployment.
 - [x] Record component and sequence diagrams, atomicity limits, local-node
   topology, external-resource behavior, and the layered ZEC limitation in ADR
   0208; pin the functional contract in ordinary CI.
-- [ ] Push the clean renderer checkpoint, render all six MP4s from that exact
+- [x] Push the clean renderer checkpoint, render all six MP4s from that exact
   commit, decode-probe and seal the private bundle, then retain a sanitized
-  checked certificate.
-- [ ] Mark D1 GREEN, update manual reproduction and packet indexes, and run
+  checked certificate. Commit `1b47a15` produced six H.264 1280x720 videos,
+  a passed mode-0600 bundle with SHA-256
+  `a23b7d32b11ce91a44875750c82bccc470659cac380de90d61c9e7b2e743bf5b`,
+  and no leftover renderer container.
+- [x] Mark D1 GREEN and update manual reproduction, packet indexes, root
+  summary, traceability, resource/flakiness disclosure, and CI certificate
+  pins.
+- [ ] Run
   exact-candidate non-security QA before the functional M7 tag.
