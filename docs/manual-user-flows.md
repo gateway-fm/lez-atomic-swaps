@@ -9535,6 +9535,7 @@ Inspect only the secret-free evidence:
 ```bash
 EVIDENCE=/tmp/lez-atomic-swaps-${RUN_ID}/evidence
 jq . "$EVIDENCE/m7-maker-second-lock-absence.json"
+jq . "$EVIDENCE/m7-taker-first-lock-intent.json"
 jq . "$EVIDENCE/m7-zcash-first-lock-refund-window.json"
 jq . "$EVIDENCE/m7-zebra-first-lock-refund-inclusion.json"
 jq . "$EVIDENCE/m7-maker-first-lock-refund-terminal.json"
@@ -9547,6 +9548,12 @@ submission sets, one canonical Zcash refund, both actors at `refunded` revision
 two, and an identical service replay with unchanged Zebra tip/mempool and LEZ
 journals. The component and sequence diagrams plus the atomicity argument are
 in ADR 0199.
+
+Before funding is mined, `m7-taker-first-lock-intent.json` must identify role
+`taker`, operation `zcash_fund`, one durable Zebra transaction ID, a validated
+actor pair, and no disclosed submission bytes. That ID must equal the isolated
+singleton mempool entry. A mismatch is a failed run; never infer the expected
+ID from the mempool alone.
 
 Runtime external resources are exactly the operator-owned loopback LEZ v0.2
 Bedrock/sequencer/indexer stack and Zebra Regtest RPC. Funds are fresh local

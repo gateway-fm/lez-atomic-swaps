@@ -23,6 +23,13 @@ generation-fenced `taker_swap_refund_v1` method invokes the existing actor
 `recover` command. The Maker actor is used afterwards only to observe the
 Taker-owned refund and reach the same terminal revision.
 
+Before mining, a read-only role-aware inspector opens the Taker's durable
+first-lock journal, validates the rebound Maker/Taker config pair, converts the
+stored internal submission ID to the Zebra display transaction ID, and
+requires the isolated singleton mempool entry to match it exactly. The
+forward Maker-funded path uses the same inspector over Maker's second-lock
+journal. Raw transaction bytes remain undisclosed.
+
 Chat authority is also direction-aware. `TakerSellsForeign` leaves the claim
 preimage only in the Taker actor inputs; the Maker daemon retains its own
 recovery key and actor-provisioning authority but starts without a preimage.
@@ -62,6 +69,8 @@ sequenceDiagram
     Note over S,M: Maker daemon stopped before first chain effect
     Note over T,M: Taker alone holds the reverse-flow claim preimage
     T->>Z: Submit signed Zcash first lock
+    T->>T: Reopen durable first-lock intent
+    T->>Z: Match singleton mempool ID before mining
     Z-->>T: Two canonical confirmations
     M->>Z: Observe exact Taker first lock
     T->>L: Observe Maker LEZ lock absence

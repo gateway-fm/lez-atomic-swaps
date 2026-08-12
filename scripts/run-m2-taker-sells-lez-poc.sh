@@ -3486,6 +3486,17 @@ handle_zcash_submission() {
     zcash_fund_submitter="$role"
     zcash_fund_mined=2
     if (( m7_zec_first_lock_refund == 1 )); then
+      local taker_intent="${evidence_dir}/m7-taker-first-lock-intent.json"
+      "$m5_intent_inspector_bin" --config "$taker_config" --peer-config "$maker_config" \
+        >"$taker_intent"
+      jq -e --arg swap "$m5_swap_id" '
+        .schema_version == 1 and .swap_id == $swap and .role == "taker"
+        and .operation == "zcash_fund" and (.staged_revision | numbers) >= 0
+        and (.expected_submission_id_internal_hex | test("^[0-9a-f]{64}$"))
+        and (.expected_zebra_txid | test("^[0-9a-f]{64}$"))
+        and .actor_pair_validated == true and .exact_submission_disclosed == false
+      ' "$taker_intent" >/dev/null || return 1
+      m5_expected_funding_txid="$(jq -er '.expected_zebra_txid' "$taker_intent")"
       rpc "$ZEBRA_RPC_URL" \
         '{"jsonrpc":"2.0","id":"m7-exact-funding","method":"getrawmempool","params":[]}' \
         >"${evidence_dir}/m5-zebra-mempool-exact-funding.json"

@@ -47,6 +47,14 @@ for required in \
 done
 
 for required in \
+  'm7-taker-first-lock-intent.json' \
+  '--config "$taker_config" --peer-config "$maker_config"' \
+  'm5_expected_funding_txid="$(jq -er '\''.expected_zebra_txid'\'' "$taker_intent")"'; do
+  rg -Fq -- "$required" "$runner" ||
+    fail "runner omits durable Taker funding identity: ${required}"
+done
+
+for required in \
   '--direction DIRECTION' \
   '--direction) direction=' \
   'taker_sells_foreign)' \

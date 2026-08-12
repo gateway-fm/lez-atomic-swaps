@@ -7674,3 +7674,21 @@ S12/S13 review and policy-deferred public deployment.
   branch as intended. No receipt semantics or effect authority changed.
 - [ ] Push the ordering correction and repeat from a new private application
   root; only exact GREEN evidence can close the journey.
+- [x] Push the ordering correction as `d734007` and repeat from a new private
+  root. The run passed four-route health, reverse offer browsing/initiation,
+  role activation, and absent-Maker cutover, then submitted the exact Taker
+  Zcash funding transaction. It stopped before mining because the harness
+  compared that singleton mempool ID to the still-empty Maker-only expected-
+  funding variable. Zebra remained at height 104 with the one unmined
+  transaction; this chain is retained as bounded RED evidence and will not be
+  reused for certification.
+- [x] RED then GREEN a role-aware durable funding inspector. The existing
+  secret-free utility now validates the exact rebound pair and reads Maker's
+  second-lock journal or Taker's first-lock journal according to the funding
+  config. Against the retained RED state it derived
+  `f4111a...88db0`, exactly matching the singleton Zebra mempool entry, without
+  disclosing transaction bytes. The first-lock runner must bind this durable
+  ID before mining.
+- [ ] Push the role-aware inspector, retire only the exact spent Zebra run,
+  provision a fresh primary-only Zebra stack and height-104 prehistory, then
+  repeat the complete exact journey from a new application root.
