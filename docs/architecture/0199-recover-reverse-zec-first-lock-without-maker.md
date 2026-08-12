@@ -23,6 +23,13 @@ generation-fenced `taker_swap_refund_v1` method invokes the existing actor
 `recover` command. The Maker actor is used afterwards only to observe the
 Taker-owned refund and reach the same terminal revision.
 
+The Taker service owns the Taker actor lease for the whole application
+journey. Consequently the adverse absence proof never invokes that actor
+directly. It retains an independent read-only Maker observation of the
+confirmed first lock, takes two stable `taker_swap_monitor_v1` samples from the
+owner service, and brackets those samples with both role-local LEZ submission
+journals empty. This is the same ownership boundary a real Taker user sees.
+
 Before mining, a read-only role-aware inspector opens the Taker's durable
 first-lock journal, validates the rebound Maker/Taker config pair, converts the
 stored internal submission ID to the Zebra display transaction ID, and
@@ -73,10 +80,11 @@ sequenceDiagram
     T->>Z: Match singleton mempool ID before mining
     Z-->>T: Two canonical confirmations
     M->>Z: Observe exact Taker first lock
-    T->>L: Observe Maker LEZ lock absence
-    L-->>T: Fresh stable absence sample one
-    T->>L: Observe Maker LEZ lock absence
-    L-->>T: Fresh stable absence sample two
+    U->>S: Monitor through owner service
+    S-->>U: Refund available, sample one
+    U->>S: Monitor through owner service
+    S-->>U: Refund available, sample two
+    Note over S,L: Maker and Taker LEZ submission journals stay empty
     Note over Z: Mine local blocks to signed CLTV height
     U->>S: Refund with swap ID and generation
     S->>T: Invoke existing Recover command
@@ -94,8 +102,9 @@ sequenceDiagram
 This is conditional cross-chain atomicity, not one distributed transaction.
 Before the signed cutoff, a Maker second lock could still make the claim path
 possible. In this adverse journey the sole Maker effect authority is stopped,
-both LEZ sidecar journals remain empty, and two fresh Taker observations find
-no Maker lock. At and after the signed Zcash CLTV height, only the Zcash funder
+both LEZ sidecar journals remain empty, and two fresh owner-service samples
+keep the Taker at Refund Available with no Maker lock. At and after the signed
+Zcash CLTV height, only the Zcash funder
 can sign the refund. The Taker service durably selects Refund under the swap
 lock before invoking the actor, the actor persists exact bytes before send,
 and identical retries only reconcile that intent. The Maker observer has no

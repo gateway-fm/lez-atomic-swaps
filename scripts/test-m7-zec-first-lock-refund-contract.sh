@@ -54,6 +54,19 @@ for required in \
     fail "runner omits durable Taker funding identity: ${required}"
 done
 
+absence_helper="$(sed -n '/^prove_m7_maker_second_lock_absence() {/,/^}/p' "$runner")"
+for required in \
+  'method:"taker_swap_monitor_v1"' \
+  'm6_service_rpc "m7-maker-absence-${sample}"' \
+  '.result.state == "refund_available"' \
+  '.result.available_action == "refund"'; do
+  rg -Fq -- "$required" <<<"$absence_helper" ||
+    fail "Maker-absence proof does not sample the owner Taker service: ${required}"
+done
+if rg -Fq '"$actor_bin" --config "$taker_config" drive' <<<"$absence_helper"; then
+  fail 'Maker-absence proof bypasses the owner Taker service lease'
+fi
+
 for required in \
   '--direction DIRECTION' \
   '--direction) direction=' \

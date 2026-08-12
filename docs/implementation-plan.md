@@ -7672,8 +7672,9 @@ S12/S13 review and policy-deferred public deployment.
   requires the receipt helper definition to precede the first Taker-service
   call, and the unchanged inode/bytes check now runs for the early first-lock
   branch as intended. No receipt semantics or effect authority changed.
-- [ ] Push the ordering correction and repeat from a new private application
-  root; only exact GREEN evidence can close the journey.
+- [x] Push the ordering correction and repeat from a new private application
+  root; exact run `m7zecfirstrefundd734007a` produced the bounded funding-ID
+  RED recorded below rather than a certificate.
 - [x] Push the ordering correction as `d734007` and repeat from a new private
   root. The run passed four-route health, reverse offer browsing/initiation,
   role activation, and absent-Maker cutover, then submitted the exact Taker
@@ -7689,6 +7690,23 @@ S12/S13 review and policy-deferred public deployment.
   `f4111a...88db0`, exactly matching the singleton Zebra mempool entry, without
   disclosing transaction bytes. The first-lock runner must bind this durable
   ID before mining.
-- [ ] Push the role-aware inspector, retire only the exact spent Zebra run,
-  provision a fresh primary-only Zebra stack and height-104 prehistory, then
-  repeat the complete exact journey from a new application root.
+- [x] Push the role-aware inspector as `3c19eb2`, retire only the exact spent
+  Zebra run, provision fresh primary-only Zebra run `m7frzec3c19eb2a` with
+  height-104 prehistory, and repeat from private application run
+  `m7zecfirstrefund3c19eb2a`. The exact run mined and confirmed only the Taker
+  first lock, kept both LEZ submission journals empty, kept the Maker effect
+  authority absent, and reached the owner Taker service's `refund_available`
+  state. The harness nevertheless exhausted its 180-second bound because its
+  Maker-absence helper bypassed the service and attempted a direct Taker actor
+  `drive` while the service correctly retained the actor lease. No refund was
+  submitted and this affected Zebra run will not be reused for certification.
+- [x] RED then GREEN the service-ownership regression. The focused contract
+  now rejects a direct Taker actor call inside the Maker-absence proof. That
+  proof retains the independent read-only Maker first-lock observer, then takes
+  two stable `taker_swap_monitor_v1` samples from the actual owner service and
+  rechecks that both role-local LEZ submission sets stayed empty. The service
+  RPC, not a lease-bypassing helper, is the user-facing source of Taker state.
+- [ ] Push the owner-service correction, retire only the affected Zebra run,
+  provision a fresh isolated Zebra stack and height-104 prehistory, and repeat
+  the complete exact journey from a new application root. Only an exact GREEN
+  result may produce a certificate or close F9/U4/S5.

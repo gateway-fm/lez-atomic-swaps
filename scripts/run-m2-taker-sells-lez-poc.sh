@@ -2299,6 +2299,7 @@ m7_lez_submission_set() {
 
 prove_m7_maker_second_lock_absence() {
   local maker_before taker_before maker_after taker_after output timeout_seconds
+  local monitor_request
   local maker_projected=0
   maker_before="$(m7_lez_submission_set "$maker_sidecar_state_dir")"
   taker_before="$(m7_lez_submission_set "$taker_sidecar_state_dir")"
@@ -2321,17 +2322,21 @@ prove_m7_maker_second_lock_absence() {
   (( maker_projected == 1 )) || return 1
 
   : >"${evidence_dir}/m7-taker-maker-lock-absence.ndjson"
+  monitor_request="$(jq -nc --arg swap "$m5_swap_id" '
+    {jsonrpc:"2.0",id:"m7-maker-absence",method:"taker_swap_monitor_v1",
+      params:[{schema_version:1,swap_id:$swap}]}
+  ')"
   for sample in 1 2; do
-    timeout_seconds="$(bounded_actor_timeout "m7-taker-maker-absence-${sample}")"
-    output="$(timeout --signal=KILL "${timeout_seconds}s" \
-      "$actor_bin" --config "$taker_config" drive)"
-    jq -e '
-      .schema_version == 1 and .role == "taker" and .command == "drive"
-      and .outcome == "awaiting_observation" and .operation == "maker_lock"
-      and .phase == "taker_lock_confirmed" and .revision == 1
-      and .next_action == "wait"
+    output="$(m6_service_rpc "m7-maker-absence-${sample}" "$monitor_request")"
+    jq -e --arg swap "$m5_swap_id" '
+      .error == null and .result.schema_version == 1
+      and .result.swap_id == $swap and .result.route.pair == "Zcash"
+      and .result.route.direction == "TakerSellsForeign"
+      and .result.progress_generation == 1
+      and .result.state == "refund_available"
+      and .result.available_action == "refund"
     ' <<<"$output" >/dev/null || return 1
-    jq -c --argjson sample "$sample" '. + {absence_sample:$sample}' \
+    jq -c --argjson sample "$sample" '.result + {absence_sample:$sample}' \
       <<<"$output" >>"${evidence_dir}/m7-taker-maker-lock-absence.ndjson"
   done
   maker_after="$(m7_lez_submission_set "$maker_sidecar_state_dir")"
