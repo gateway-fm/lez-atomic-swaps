@@ -47,7 +47,7 @@ use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use support::actor_deployment;
+use support::{actor_deployment, actor_deployment_with_direction};
 use tempfile::tempdir;
 use zcash_protocol::{
     consensus::{BranchId, NetworkType},
@@ -63,6 +63,7 @@ const TAKER_ACTION_UNAVAILABLE: i64 = -32_016;
 const TAKER_ACTION_CONFLICT: i64 = -32_017;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn separate_taker_countersigns_and_maker_atomically_accepts_before_response() {
     let run = tempdir().expect("isolated Chat process root");
     let runtime = run.path().join("runtime");
@@ -81,7 +82,11 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     write_raw_key(&key_file, 8);
     write_raw_key(&claim_key_file, 0x7a);
     write_raw_key(&claim_preimage_file, CLAIM_PREIMAGE[0]);
-    let actor = actor_deployment(run.path(), "m5-chat-swap-001");
+    let actor = actor_deployment_with_direction(
+        run.path(),
+        "m5-chat-swap-001",
+        SwapDirection::TakerSellsForeign,
+    );
     let daemon_paths = DaemonPaths {
         socket: &socket,
         chat_socket: &chat_socket,
@@ -99,7 +104,13 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     assert_duplicate_actor_authority_is_rejected(&daemon_paths);
     let mut daemon = start_daemon(&daemon_paths);
     wait_ready(&mut daemon, &ready, &socket);
-    let (route, offer_id) = prepare_live_offer(&socket, &database, &delivery).await;
+    let (route, offer_id) = prepare_live_offer_for_direction(
+        &socket,
+        &database,
+        &delivery,
+        SwapDirection::TakerSellsForeign,
+    )
+    .await;
 
     let maker_secret = key(8);
     let maker_key = public_key(&maker_secret);
@@ -119,7 +130,12 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         &key(2),
         actor.agreement_basis_time,
     );
-    let taker_files = prepare_taker_files(run.path(), &draft_wire, &actor.source_config);
+    let taker_files = prepare_taker_files(
+        run.path(),
+        &draft_wire,
+        &actor.source_config,
+        route.direction(),
+    );
     let proposal_request = ZecChatProposeRequestV1 {
         schema_version: 1,
         request_id: derived_chat_request(&reservation_id, b"propose"),
@@ -136,6 +152,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
     assert_eq!(staged.offer_revision, 2);
     let accepted_at = now();
     let taker = TakerProcess {
+        direction: route.direction(),
         delivery: &delivery,
         chat_socket: &chat_socket,
         offer_id: &offer_id,
@@ -226,7 +243,12 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         &key(2),
         actor.agreement_basis_time,
     );
-    let taker_files = prepare_taker_files(run.path(), &draft_wire, &actor.source_config);
+    let taker_files = prepare_taker_files(
+        run.path(),
+        &draft_wire,
+        &actor.source_config,
+        route.direction(),
+    );
     let signed_envelope = taker_files
         .draft
         .with_file_name("prepared-signed-offer.json");
@@ -1171,7 +1193,16 @@ async fn prepare_live_offer(
     database: &Path,
     delivery: &Path,
 ) -> (MakerRouteV1, MakerOfferId) {
-    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+    prepare_live_offer_for_direction(socket, database, delivery, SwapDirection::TakerSellsLez).await
+}
+
+async fn prepare_live_offer_for_direction(
+    socket: &Path,
+    database: &Path,
+    delivery: &Path,
+    direction: SwapDirection,
+) -> (MakerRouteV1, MakerOfferId) {
+    let route = MakerRouteV1::new(Pair::Zcash, direction).unwrap();
     configure_live_route(socket, route).await;
     let offer_id = MakerOfferId::new("m5-chat-offer-001").unwrap();
     assert_delivery_outage_is_visible_and_exact_retry_recovers(
@@ -1295,7 +1326,17 @@ fn assert_delivery_outage_is_visible_and_exact_retry_recovers(
 ) {
     fs::set_permissions(delivery, fs::Permissions::from_mode(0o755))
         .expect("make Delivery projection insecure");
-    let failed = maker_publish_command(socket, offer_id)
+    let pair_store = SqliteSwapStore::open(database)
+        .expect("open Maker store for exact publish route")
+        .list_maker_pairs()
+        .expect("list configured ZEC routes");
+    let route = pair_store
+        .iter()
+        .find(|record| record.value().route().pair() == Pair::Zcash)
+        .expect("configured ZEC route")
+        .value()
+        .route();
+    let failed = maker_publish_command(socket, offer_id, route.direction())
         .output()
         .expect("run real maker during Delivery outage");
     assert!(
@@ -1324,7 +1365,7 @@ fn assert_delivery_outage_is_visible_and_exact_retry_recovers(
 
     fs::set_permissions(delivery, fs::Permissions::from_mode(0o700))
         .expect("restore owner-private Delivery projection");
-    let replay = maker_publish_command(socket, offer_id)
+    let replay = maker_publish_command(socket, offer_id, route.direction())
         .output()
         .expect("retry exact real maker request");
     assert!(
@@ -1343,7 +1384,11 @@ fn assert_delivery_outage_is_visible_and_exact_retry_recovers(
     assert_eq!(healthy["chat"], "available");
 }
 
-fn maker_publish_command(socket: &std::path::Path, offer_id: &MakerOfferId) -> Command {
+fn maker_publish_command(
+    socket: &std::path::Path,
+    offer_id: &MakerOfferId,
+    direction: SwapDirection,
+) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker"));
     command
         .arg("--socket")
@@ -1356,7 +1401,10 @@ fn maker_publish_command(socket: &std::path::Path, offer_id: &MakerOfferId) -> C
         .arg("--pair")
         .arg("zcash")
         .arg("--direction")
-        .arg("taker-sells-lez");
+        .arg(match direction {
+            SwapDirection::TakerSellsForeign => "taker-sells-foreign",
+            SwapDirection::TakerSellsLez => "taker-sells-lez",
+        });
     command
 }
 
@@ -1380,7 +1428,12 @@ struct TakerFiles {
     receipt: PathBuf,
 }
 
-fn prepare_taker_files(run_root: &Path, draft_wire: &[u8], maker_source: &Path) -> TakerFiles {
+fn prepare_taker_files(
+    run_root: &Path,
+    draft_wire: &[u8],
+    maker_source: &Path,
+    direction: SwapDirection,
+) -> TakerFiles {
     let root = run_root.join("taker");
     fs::DirBuilder::new()
         .mode(0o700)
@@ -1396,16 +1449,25 @@ fn prepare_taker_files(run_root: &Path, draft_wire: &[u8], maker_source: &Path) 
     };
     write_private(&files.draft, draft_wire);
     write_raw_key(&files.key, 2);
-    prepare_taker_actor_source(&root, maker_source, &files.source_actor_config);
+    prepare_taker_actor_source(&root, maker_source, &files.source_actor_config, direction);
     files
 }
 
-fn prepare_taker_actor_source(root: &Path, maker_source: &Path, output: &Path) {
+fn prepare_taker_actor_source(
+    root: &Path,
+    maker_source: &Path,
+    output: &Path,
+    direction: SwapDirection,
+) {
     let claim_key = root.join("actor-claim-recovery.key");
     let zcash_key = root.join("actor-zcash.key");
     let capability = root.join("actor-bridge.capability");
+    let preimage = root.join("actor-claim-preimage.key");
     write_raw_key(&claim_key, 0x7b);
     write_raw_key(&zcash_key, 2);
+    if direction == SwapDirection::TakerSellsForeign {
+        write_raw_key(&preimage, CLAIM_PREIMAGE[0]);
+    }
     write_private(&capability, b"m5_taker_actor_capability_0123456789");
 
     let mut config: Value =
@@ -1414,14 +1476,22 @@ fn prepare_taker_actor_source(root: &Path, maker_source: &Path, output: &Path) {
     config["role_state_db"] = json!(root.join("unused-taker-source-state.sqlite3"));
     config["claim_recovery"]["key_id"] = json!("m5-chat-taker-claim-v1");
     config["claim_recovery"]["key_file"] = json!(claim_key);
-    config["claim_preimage_file"] = Value::Null;
+    config["claim_preimage_file"] = if direction == SwapDirection::TakerSellsForeign {
+        json!(preimage)
+    } else {
+        Value::Null
+    };
     config["zcash_key_file"] = json!(zcash_key);
     config["bridge"]["endpoint"] = json!("http://127.0.0.1:19002");
     config["bridge"]["journal_db"] = json!(root.join("unused-taker-source-bridge.sqlite3"));
     config["bridge"]["capability_file"] = json!(capability);
     config["bridge"]["runtime"]["sidecar_role"] = json!("taker");
     config["bridge"]["runtime"]["signer_account_id"] = json!("04".repeat(32));
-    config["zcash_funding_outpoints"] = json!([]);
+    config["zcash_funding_outpoints"] = if direction == SwapDirection::TakerSellsForeign {
+        json!([{"transaction_id":"bb".repeat(32),"output_index":0}])
+    } else {
+        json!([])
+    };
     write_private(output, &serde_json::to_vec_pretty(&config).unwrap());
 
     let config = ActorConfig::load_private(output).expect("valid source Taker config");
@@ -1432,6 +1502,7 @@ fn prepare_taker_actor_source(root: &Path, maker_source: &Path, output: &Path) {
 }
 
 struct TakerProcess<'a> {
+    direction: SwapDirection,
     delivery: &'a std::path::Path,
     chat_socket: &'a std::path::Path,
     offer_id: &'a MakerOfferId,
@@ -1481,6 +1552,10 @@ fn assert_fresh_taker_artifacts(
     let config = ActorConfig::load_private(&config_path).unwrap();
     assert_eq!(config.role(), ActorRole::Taker);
     assert_eq!(config.swap_id().as_str(), "m5-chat-swap-001");
+    assert_eq!(
+        config.is_local_zcash_funder(),
+        taker.direction == SwapDirection::TakerSellsForeign
+    );
     let config_inode = fs::symlink_metadata(&config_path).unwrap().ino();
     let config_bytes = fs::read(&config_path).unwrap();
     let agreement_inode = fs::symlink_metadata(&agreement_path).unwrap().ino();
@@ -1650,7 +1725,10 @@ fn proxy_completion_response_loss(listener: &UnixListener, upstream_path: &Path)
         upstream.flush().unwrap();
         let response = read_bounded_http_message(&mut upstream);
         let response_json: Value = serde_json::from_slice(http_body(&response)).unwrap();
-        assert!(response_json.get("error").is_none());
+        assert!(
+            response_json.get("error").is_none(),
+            "fault proxy upstream error: {response_json}"
+        );
         if drop_response {
             assert_eq!(response_json["result"]["was_replay"], false);
             assert_eq!(response_json["result"]["swap_id"], "m5-chat-swap-001");
@@ -1880,7 +1958,10 @@ fn taker_command_with_overrides(
         .arg("--pair")
         .arg("zcash")
         .arg("--direction")
-        .arg("taker-sells-lez")
+        .arg(match taker.direction {
+            SwapDirection::TakerSellsForeign => "taker-sells-foreign",
+            SwapDirection::TakerSellsLez => "taker-sells-lez",
+        })
         .arg("--accept-zec-offer")
         .arg(taker.offer_id.as_str())
         .arg("--chat-socket")
@@ -1948,6 +2029,20 @@ fn assert_completed_durable(
     assert_eq!(durable.offer_commitment(), &authenticated.commitment());
     assert_eq!(durable.final_agreement_wire(), Some(final_wire));
     assert_eq!(durable.swap_id(), Some("m5-chat-swap-001"));
+    let actor = store.list_maker_actor_processes().unwrap();
+    assert_eq!(actor.len(), 1);
+    let maker_config = ActorConfig::load_private(actor[0].manifest().config_path()).unwrap();
+    assert_eq!(maker_config.role(), ActorRole::Maker);
+    assert!(!maker_config.is_local_zcash_funder());
+    let connection = Connection::open(database).unwrap();
+    let maker_claim_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM zec_sdk_claim_materials WHERE local_role = 'maker'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(maker_claim_rows, 0);
     assert!(
         !fs::read(database)
             .unwrap()
@@ -2035,7 +2130,12 @@ fn unsigned_draft(
     let metadata = derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id);
     let custody = derive_lez_native_custody_account_v1(&escrow_program, &onchain_swap_id);
     let secret_digest: [u8; 32] = Sha256::digest(CLAIM_PREIMAGE).into();
-    let contract = Bip199Contract::new(120, maker_hash, secret_digest, taker_hash);
+    let direction = authenticated.offer().route().direction();
+    let (zcash_funder_hash, zcash_claimant_hash) = match direction {
+        SwapDirection::TakerSellsForeign => (taker_hash, maker_hash),
+        SwapDirection::TakerSellsLez => (maker_hash, taker_hash),
+    };
+    let contract = Bip199Contract::new(120, zcash_funder_hash, secret_digest, zcash_claimant_hash);
     let output = ExpectedBip199Output::new(
         NetworkType::Regtest,
         BranchId::Nu6_2,
@@ -2045,7 +2145,7 @@ fn unsigned_draft(
     let binding = ZecSwapBinding::new(ZecProfileId::DeterministicLocalV1, output).unwrap();
     let body = ZecAgreementBodyV1::new(
         application_swap_id.to_owned(),
-        SwapDirection::TakerSellsLez,
+        direction,
         ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_public.serialize()),
@@ -2065,12 +2165,12 @@ fn unsigned_draft(
         ZecSwapBindingRecordV1::from_binding(&binding),
         ZecTransactionPolicyV1::new(
             [12; 32],
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_funder_hash),
             1,
             1,
-            ZcashTransparentDestinationV1::p2pkh(taker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_claimant_hash),
             1,
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_funder_hash),
             1,
             40,
         ),

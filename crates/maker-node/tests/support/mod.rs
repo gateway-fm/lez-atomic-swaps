@@ -40,6 +40,14 @@ pub struct ActorDeployment {
 }
 
 pub fn actor_deployment(run_root: &Path, swap_id: &str) -> ActorDeployment {
+    actor_deployment_with_direction(run_root, swap_id, SwapDirection::TakerSellsLez)
+}
+
+pub fn actor_deployment_with_direction(
+    run_root: &Path,
+    swap_id: &str,
+    direction: SwapDirection,
+) -> ActorDeployment {
     let source_root = run_root.join("actor-source");
     let root = run_root.join("maker-actors");
     let source_config = source_root.join("actor-config.json");
@@ -53,7 +61,7 @@ pub fn actor_deployment(run_root: &Path, swap_id: &str) -> ActorDeployment {
         for directory in [&source_root, &root] {
             fs::DirBuilder::new().mode(0o700).create(directory).unwrap();
         }
-        let agreement = agreement_wire(agreement_basis_time, swap_id);
+        let agreement = agreement_wire(agreement_basis_time, swap_id, direction);
         let agreement_file = source_root.join("agreement-v2.borsh");
         let claim_key = source_root.join("claim-recovery.key");
         let preimage = source_root.join("claim-preimage.key");
@@ -61,7 +69,9 @@ pub fn actor_deployment(run_root: &Path, swap_id: &str) -> ActorDeployment {
         let capability = source_root.join("bridge.capability");
         write_private(&agreement_file, &agreement);
         write_raw_key(&claim_key, 0x7a);
-        write_raw_key(&preimage, CLAIM_PREIMAGE[0]);
+        if direction == SwapDirection::TakerSellsLez {
+            write_raw_key(&preimage, CLAIM_PREIMAGE[0]);
+        }
         write_raw_key(&zcash_key, 8);
         write_private(&capability, b"m5_actor_capability_0123456789abcdef");
         let config = json!({
@@ -76,7 +86,11 @@ pub fn actor_deployment(run_root: &Path, swap_id: &str) -> ActorDeployment {
                 "key_id": "m5-integration-authority-claim-v1",
                 "key_file": claim_key
             },
-            "claim_preimage_file": preimage,
+            "claim_preimage_file": if direction == SwapDirection::TakerSellsLez {
+                json!(preimage)
+            } else {
+                serde_json::Value::Null
+            },
             "zcash_key_file": zcash_key,
             "bridge": {
                 "endpoint": "http://127.0.0.1:19001",
@@ -108,10 +122,14 @@ pub fn actor_deployment(run_root: &Path, swap_id: &str) -> ActorDeployment {
                 "counterparty_scan_blocks": 1000
             },
             "lez_discovery_window": {"start_height": 1, "max_blocks": 256},
-            "zcash_funding_outpoints": [{
-                "transaction_id": "aa".repeat(32),
-                "output_index": 0
-            }]
+            "zcash_funding_outpoints": if direction == SwapDirection::TakerSellsLez {
+                json!([{
+                    "transaction_id": "aa".repeat(32),
+                    "output_index": 0
+                }])
+            } else {
+                json!([])
+            }
         });
         write_private(&source_config, &serde_json::to_vec_pretty(&config).unwrap());
     }
@@ -132,7 +150,7 @@ pub fn actor_deployment(run_root: &Path, swap_id: &str) -> ActorDeployment {
     }
 }
 
-fn agreement_wire(basis_time: u64, swap_id: &str) -> Vec<u8> {
+fn agreement_wire(basis_time: u64, swap_id: &str, direction: SwapDirection) -> Vec<u8> {
     let maker_secret = SecretKey::from_slice(&[8; 32]).unwrap();
     let taker_secret = SecretKey::from_slice(&[2; 32]).unwrap();
     let maker_public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &maker_secret);
@@ -142,19 +160,23 @@ fn agreement_wire(basis_time: u64, swap_id: &str) -> Vec<u8> {
     let escrow_program = [1; 8];
     let onchain_swap_id = derive_lez_swap_id_v1(swap_id.as_bytes());
     let secret_digest: [u8; 32] = Sha256::digest(CLAIM_PREIMAGE).into();
+    let (zcash_funder_hash, zcash_claimant_hash) = match direction {
+        SwapDirection::TakerSellsForeign => (taker_hash, maker_hash),
+        SwapDirection::TakerSellsLez => (maker_hash, taker_hash),
+    };
     let binding = ZecSwapBinding::new(
         ZecProfileId::DeterministicLocalV1,
         ExpectedBip199Output::new(
             NetworkType::Regtest,
             BranchId::Nu6_2,
             Zatoshis::from_u64(10_000).unwrap(),
-            Bip199Contract::new(120, maker_hash, secret_digest, taker_hash),
+            Bip199Contract::new(120, zcash_funder_hash, secret_digest, zcash_claimant_hash),
         ),
     )
     .unwrap();
     let body = ZecAgreementBodyV1::new(
         swap_id.to_owned(),
-        SwapDirection::TakerSellsLez,
+        direction,
         ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_public.serialize()),
@@ -174,12 +196,12 @@ fn agreement_wire(basis_time: u64, swap_id: &str) -> Vec<u8> {
         ZecSwapBindingRecordV1::from_binding(&binding),
         ZecTransactionPolicyV1::new(
             [12; 32],
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_funder_hash),
             1,
             1,
-            ZcashTransparentDestinationV1::p2pkh(taker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_claimant_hash),
             1,
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            ZcashTransparentDestinationV1::p2pkh(zcash_funder_hash),
             1,
             40,
         ),

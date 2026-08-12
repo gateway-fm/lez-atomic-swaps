@@ -38,6 +38,7 @@ pub struct ZecTakeInput<'a> {
     pub delivery: Option<&'a RunLocalDelivery>,
     pub expected_maker: &'a PublicKey,
     pub now_unix_seconds: u64,
+    pub direction: SwapDirection,
     pub offer_id: &'a str,
     pub chat_socket: &'a Path,
     pub reservation_id: &'a str,
@@ -171,7 +172,7 @@ async fn take_zec_inner(
         .await;
     }
 
-    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez)?;
+    let route = selected_zec_route(&input, authenticated_offer)?;
     let discovered = if authenticated_offer.is_none() {
         Some(
             input
@@ -256,6 +257,21 @@ async fn take_zec_inner(
     .await
 }
 
+fn selected_zec_route(
+    input: &ZecTakeInput<'_>,
+    authenticated_offer: Option<&AuthenticatedOfferRefV1>,
+) -> anyhow::Result<MakerRouteV1> {
+    let route = authenticated_offer.map_or_else(
+        || MakerRouteV1::new(Pair::Zcash, input.direction),
+        |selected| Ok(selected.offer().route()),
+    )?;
+    ensure!(
+        route.pair() == Pair::Zcash && route.direction() == input.direction,
+        "authenticated ZEC offer is unavailable"
+    );
+    Ok(route)
+}
+
 fn persisted_agreement_exists(path: &Path) -> anyhow::Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -301,7 +317,11 @@ async fn resume_persisted_zec(
         "persisted agreement does not match the local taker, pinned maker, or executable draft"
     );
     if let Some(selected) = authenticated_offer {
-        let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez)?;
+        let route = selected.offer().route();
+        ensure!(
+            route.pair() == Pair::Zcash,
+            "authenticated ZEC offer is unavailable"
+        );
         let expected_lez_units = validate_authenticated_offer(input, &offer_id, route, selected)?;
         validate_draft_offer_bindings(
             input,
@@ -546,7 +566,8 @@ fn validate_draft_offer_bindings(
         draft.taker_zcash_key() == taker_public
             && draft.maker_zcash_key() == input.expected_maker
             && draft.zcash_amount_zatoshis() == input.foreign_units
-            && body.direction() == SwapDirection::TakerSellsLez
+            && body.direction() == selected.offer().route().direction()
+            && body.direction() == input.direction
             && body.lez_terms().amount() == expected_lez_units
             && transcript.session_id() == &maker_zec_chat_session_id(reservation_id)
             && transcript.offer_commitment() == &selected.commitment()

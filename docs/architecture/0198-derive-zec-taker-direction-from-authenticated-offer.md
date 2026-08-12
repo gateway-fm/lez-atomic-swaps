@@ -1,8 +1,7 @@
 # ADR 0198: Derive the ZEC Taker direction from the authenticated offer
 
-Status: Accepted as the application prerequisite for the M7 ZEC first-lock
-absent-Maker journey. Registry and startup-configuration layers are GREEN;
-acceptance, Chat, actor execution, and actual-node evidence remain in progress.
+Status: Accepted and process-GREEN through both application directions.
+Actual-node first-lock absent-Maker execution remains in progress.
 
 ## Context
 
@@ -70,6 +69,16 @@ not claimed complete by this decision.
 - Existing `TakerSellsLez` configurations remain compatible.
 - Acceptance, Maker Chat completion, actor execution, and the exact local-node
   absent-Maker certificate must carry the authenticated direction before U4,
-  F9, or S5 can close.
+  F9, or S5 can close. The process proof now closes the first three clauses;
+  exact local-node execution remains.
 - These tests use temporary files and SQLite only. No node, RPC, Docker
   service, faucet, public endpoint, deployment, or funds participate.
+
+The checked process matrix uses the real `lez-taker` CLI and Maker Chat. In
+`TakerSellsForeign`, the Taker source and accepted actor alone retain the
+preimage and Zcash funding candidate, the Maker actor retains neither, and the
+Maker SQLite transaction contains zero Maker claim-material rows. Completion
+survives a deliberately lost response and exact replays without replacing role
+authority. The original `TakerSellsLez` prepared-service initiation remains
+GREEN with Maker-owned claim material. This is application process evidence,
+not an on-chain first-lock/refund certificate.

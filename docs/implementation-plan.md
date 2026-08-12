@@ -7610,3 +7610,13 @@ S12/S13 review and policy-deferred public deployment.
   unchanged. Registry 21/21 and prepared startup 6/6 pass. Acceptance, Maker
   Chat completion, role execution, and actual local-node evidence remain before
   this journey can close U4/F9/S5.
+- [x] Continue ADR 0198 through the real process boundary. The reverse REDs
+  successively exposed CLI discovery, BIP-199 role mapping, Taker source
+  custody, Maker source custody, and the forward-only atomic completion store.
+  GREEN binds CLI/service acceptance and Chat to the signed offer direction;
+  gives first-claim material and Zcash funding authority only to the signed
+  first claimant; and records whether Maker claim authority participates in
+  the same immediate SQLite acceptance transaction. The reverse real-CLI run
+  survives a lost completion response and exact replay with zero Maker claim
+  rows. The original forward prepared-service process remains GREEN. Exact
+  local-node first-lock/refund execution remains before U4/F9/S5 close.

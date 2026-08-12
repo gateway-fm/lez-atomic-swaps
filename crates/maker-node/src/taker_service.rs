@@ -1349,6 +1349,7 @@ async fn execute_prepared_zec(
             delivery: None,
             expected_maker: &maker,
             now_unix_seconds: admitted_at,
+            direction: prepared.facts().route().direction(),
             offer_id: prepared.offer_id().as_str(),
             chat_socket: execution.chat_socket(),
             reservation_id: prepared.reservation_id().as_str(),

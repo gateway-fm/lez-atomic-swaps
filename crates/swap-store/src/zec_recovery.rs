@@ -7,7 +7,7 @@ use std::{
 
 use async_trait::async_trait;
 use lez_bridge_protocol::RequestId;
-use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapDirection, SwapId, UnixSeconds};
+use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapId, UnixSeconds};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementEnvelopeV1, AcceptedZecAgreementV1, CLAIM_RECORD_SCHEMA_V1,
     CLAIM_RECORD_SCHEMA_V2, ClaimIntentRecordV1, ClaimIntentV1, ClaimMaterialContext,
@@ -91,6 +91,7 @@ struct CompleteMakerZecRequest<'a> {
     reservation_id: &'a RequestId,
     agreement_wire_sha256: [u8; 32],
     secret_digest: [u8; 32],
+    maker_claim_authority: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor: Option<&'a MakerActorManifestV1>,
 }
@@ -102,7 +103,13 @@ struct StoredCompleteMakerZecRequest {
     reservation_id: RequestId,
     agreement_wire_sha256: [u8; 32],
     secret_digest: [u8; 32],
+    #[serde(default = "default_true")]
+    maker_claim_authority: bool,
     actor: Option<StoredMakerActorManifest>,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -262,9 +269,34 @@ impl SqliteZecRecoveryStore {
         final_agreement_wire: &[u8],
         preimage: &ClaimPreimage,
     ) -> Result<Option<MakerZecAcceptanceReplay>, StoreError> {
+        self.preflight_maker_zec_scheduled_completion_replay_for_role(
+            request_id,
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            final_agreement_wire,
+            Some(preimage),
+        )
+    }
+
+    /// Replays one exact scheduled acceptance with direction-derived Maker claim custody.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on changed request identity, claim ownership, actor state,
+    /// negotiation state, or corrupt storage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preflight_maker_zec_scheduled_completion_replay_for_role(
+        &self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        final_agreement_wire: &[u8],
+        maker_preimage: Option<&ClaimPreimage>,
+    ) -> Result<Option<MakerZecAcceptanceReplay>, StoreError> {
         self.require_role(Participant::Maker)?;
         let agreement_wire_sha256: [u8; 32] = Sha256::digest(final_agreement_wire).into();
-        let secret_digest: [u8; 32] = Sha256::digest(preimage.expose_secret()).into();
         let committed_revision = expected_offer_revision
             .checked_add(1)
             .ok_or(StoreError::RevisionOverflow)?;
@@ -293,11 +325,14 @@ impl SqliteZecRecoveryStore {
             return Err(StoreError::MakerOfferRequestConflict);
         }
         let stored: StoredCompleteMakerZecRequest = serde_json::from_str(&stored_request)?;
+        let supplied_secret_digest =
+            maker_preimage.map(|preimage| Sha256::digest(preimage.expose_secret()).into());
         if &stored.offer_id != offer_id
             || stored.expected_offer_revision != expected_offer_revision
             || &stored.reservation_id != reservation_id
             || stored.agreement_wire_sha256 != agreement_wire_sha256
-            || stored.secret_digest != secret_digest
+            || (stored.maker_claim_authority
+                && supplied_secret_digest != Some(stored.secret_digest))
         {
             return Err(StoreError::MakerOfferRequestConflict);
         }
@@ -371,7 +406,7 @@ impl SqliteZecRecoveryStore {
             expected_offer_revision,
             reservation_id,
             accepted,
-            preimage,
+            Some(preimage),
             None,
         )
     }
@@ -405,7 +440,39 @@ impl SqliteZecRecoveryStore {
             expected_offer_revision,
             reservation_id,
             accepted,
-            preimage,
+            Some(preimage),
+            Some((actor, actor_not_before)),
+        )
+    }
+
+    /// Atomically accepts either ZEC direction and schedules the Maker actor.
+    ///
+    /// Maker claim material is required exactly when the signed direction makes
+    /// the Maker the first claimant; the reverse direction must pass `None`.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on any agreement/offer mismatch, incorrect direction-derived
+    /// claim custody, actor registration conflict, replay conflict, or storage error.
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_maker_zec_negotiation_and_register_actor_for_role(
+        &self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        accepted: &AcceptedZecAgreementV1,
+        maker_preimage: Option<&ClaimPreimage>,
+        actor: &MakerActorManifestV1,
+        actor_not_before: u64,
+    ) -> Result<MakerZecAcceptanceCommit, StoreError> {
+        self.complete_maker_zec_negotiation_inner(
+            request_id,
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            accepted,
+            maker_preimage,
             Some((actor, actor_not_before)),
         )
     }
@@ -422,16 +489,16 @@ impl SqliteZecRecoveryStore {
         expected_offer_revision: u64,
         reservation_id: &RequestId,
         accepted: &AcceptedZecAgreementV1,
-        preimage: &ClaimPreimage,
+        maker_preimage: Option<&ClaimPreimage>,
         actor: Option<(&MakerActorManifestV1, u64)>,
     ) -> Result<MakerZecAcceptanceCommit, StoreError> {
         self.require_role(Participant::Maker)?;
         self.require_role(accepted.local_participant())?;
         let agreement = accepted.agreement();
+        let maker_claim_authority = agreement.lez_claimant() == Participant::Maker;
         if accepted.revision() != 0
-            || agreement.lez_claimant() != Participant::Maker
-            || agreement.direction() != SwapDirection::TakerSellsLez
             || agreement.coordinator().pair() != Pair::Zcash
+            || maker_claim_authority != maker_preimage.is_some()
             || actor.is_some_and(|(manifest, _)| {
                 manifest.swap_id() != agreement.coordinator().id()
                     || manifest.kind() != MakerActorKindV1::Zcash
@@ -439,8 +506,10 @@ impl SqliteZecRecoveryStore {
         {
             return Err(StoreError::InvalidZecRecoveryState);
         }
-        let actual_secret_digest: [u8; 32] = Sha256::digest(preimage.expose_secret()).into();
-        if actual_secret_digest != *agreement.secret_digest() {
+        let actual_secret_digest = *agreement.secret_digest();
+        if maker_preimage.is_some_and(|preimage| {
+            <[u8; 32]>::from(Sha256::digest(preimage.expose_secret())) != actual_secret_digest
+        }) {
             return Err(StoreError::InvalidZecRecoveryState);
         }
         let agreement_wire = agreement.encode_wire()?;
@@ -454,6 +523,7 @@ impl SqliteZecRecoveryStore {
             reservation_id,
             agreement_wire_sha256,
             secret_digest: actual_secret_digest,
+            maker_claim_authority,
             actor: actor.map(|(manifest, _)| manifest),
         })?;
 
@@ -612,7 +682,7 @@ impl SqliteZecRecoveryStore {
             || agreement.zcash_key(Participant::Maker).serialize() != durable_maker_identity
             || agreement.zcash_key(Participant::Taker).serialize() != durable_taker_identity
             || offer.route().pair() != Pair::Zcash
-            || offer.route().direction() != SwapDirection::TakerSellsLez
+            || offer.route().direction() != agreement.direction()
             || agreement.zcash_amount_zatoshis() != durable_foreign_units
             || agreement.lez_amount() != durable_lez_units
             || offer.quote_foreign_amount(durable_foreign_units)? != durable_lez_units
@@ -625,12 +695,16 @@ impl SqliteZecRecoveryStore {
         let binding_record = ZecSwapBindingRecordV1::from_binding(agreement.binding());
         binding_record.validate()?;
         let binding_json = serde_json::to_string(&binding_record)?;
-        let protected = ProtectedClaimEnvelope::encrypt(
-            preimage,
-            self.claim_key()?,
-            fresh_claim_nonce()?,
-            claim_material_context(accepted, ClaimMaterialPurpose::LocalFirstClaim),
-        )?;
+        let protected = if let Some(preimage) = maker_preimage {
+            Some(ProtectedClaimEnvelope::encrypt(
+                preimage,
+                self.claim_key()?,
+                fresh_claim_nonce()?,
+                claim_material_context(accepted, ClaimMaterialPurpose::LocalFirstClaim),
+            )?)
+        } else {
+            None
+        };
         transaction.execute(
             "INSERT INTO swaps (id, schema_version, state_json, revision)
              VALUES (?1, ?2, ?3, 0)",
@@ -661,14 +735,16 @@ impl SqliteZecRecoveryStore {
                 sql_u64(accepted.accepted_at().value())?,
             ],
         )?;
-        insert_claim_material(
-            &transaction,
-            "maker",
-            coordinator.id(),
-            ClaimMaterialPurpose::LocalFirstClaim,
-            0,
-            &protected,
-        )?;
+        if let Some(protected) = &protected {
+            insert_claim_material(
+                &transaction,
+                "maker",
+                coordinator.id(),
+                ClaimMaterialPurpose::LocalFirstClaim,
+                0,
+                protected,
+            )?;
+        }
         let completed_negotiation = transaction.execute(
             "UPDATE maker_zec_negotiations
                 SET state = 'completed', final_agreement_wire = ?1,

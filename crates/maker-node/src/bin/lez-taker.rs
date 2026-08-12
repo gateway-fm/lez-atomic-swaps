@@ -380,12 +380,13 @@ async fn execute_zec_take(
     ensure!(
         arguments
             .pair
-            .is_none_or(|pair| matches!(pair, PairArgument::Zcash))
-            && arguments
-                .direction
-                .is_none_or(|direction| matches!(direction, DirectionArgument::TakerSellsLez)),
-        "M5 ZEC acceptance supports only zcash/taker-sells-lez"
+            .is_none_or(|pair| matches!(pair, PairArgument::Zcash)),
+        "ZEC acceptance supports only zcash"
     );
+    let direction: SwapDirection = arguments
+        .direction
+        .unwrap_or(DirectionArgument::TakerSellsLez)
+        .into();
     let agreement_output_file = required_path(
         arguments.agreement_output_file.as_deref(),
         "--agreement-output-file",
@@ -407,6 +408,7 @@ async fn execute_zec_take(
         delivery: delivery.as_ref(),
         expected_maker,
         now_unix_seconds,
+        direction,
         offer_id: arguments
             .accept_zec_offer
             .as_deref()

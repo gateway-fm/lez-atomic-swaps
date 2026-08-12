@@ -3,7 +3,7 @@ S1	policy-deferred	./scripts/verify-lez-v02-local-stack-contract.sh	docs/require
 S2	green	./scripts/test-m4-lez-local-deployment-contract.sh	docs/requirements-traceability.md	none
 S3	open	./scripts/test-ci-hardening-policy.sh	docs/requirements-traceability.md	Observe or reproduce every required default-branch job on the exact review-candidate commit
 S4	open	./scripts/test-m7-hard-requirements-audit.sh	docs/milestone-7/hard-requirements.tsv	Close all 9 currently open repository-owned F U R P rows and run strict mode
-S5	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Actual-node Maker Refund and accepted BTC concurrency are certified; complete the remaining daemon-owned reference journeys and hardening
+S5	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	ADR 0198 closes both-direction ZEC CLI/Chat process integration; complete its reverse actual-node absent-Maker certificate and remaining daemon-owned reference journeys/hardening
 S6	green	./scripts/check-requirements-traceability.sh	docs/requirements-traceability.md	none
 S7	green	./scripts/test-m7-review-readiness-contract.sh	docs/milestone-7/mainnet-readiness.md	none
 S8	green	./scripts/test-m7-xmr-sdk-facade-contract.sh	docs/requirements-traceability.md	none

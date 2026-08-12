@@ -2034,7 +2034,6 @@ fn register_zec_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result
             let offer = authenticated.offer();
             if offer.id() != &request.offer_id
                 || offer.route().pair() != Pair::Zcash
-                || offer.route().direction() != SwapDirection::TakerSellsLez
                 || offer.created_at_unix_seconds() > now_unix_seconds
                 || now_unix_seconds >= offer.expires_at_unix_seconds()
             {
@@ -2138,18 +2137,14 @@ fn complete_zec_chat(
         .zec_completion_store
         .as_ref()
         .ok_or_else(|| invalid_request("maker ZEC completion store is unavailable"))?;
-    let preimage = context
-        .maker_claim_preimage
-        .as_ref()
-        .ok_or_else(|| invalid_request("maker claim authority is unavailable"))?;
     if let Some(replay) = completion_store
-        .preflight_maker_zec_scheduled_completion_replay(
+        .preflight_maker_zec_scheduled_completion_replay_for_role(
             &request.request_id,
             &request.offer_id,
             request.expected_offer_revision,
             &request.reservation_id,
             &request.final_agreement_wire,
-            preimage,
+            context.maker_claim_preimage.as_deref(),
         )
         .map_err(application_store_error)?
     {
@@ -2172,18 +2167,28 @@ fn complete_zec_chat(
         0,
     )
     .map_err(invalid_request)?;
+    let maker_preimage = if accepted.agreement().lez_claimant() == Participant::Maker {
+        Some(
+            context
+                .maker_claim_preimage
+                .as_deref()
+                .ok_or_else(|| invalid_request("maker claim authority is unavailable"))?,
+        )
+    } else {
+        None
+    };
     let actor = provisioner
         .provision(&request.final_agreement_wire, now_unix_seconds)
         .map_err(|_| rpc_error(INTERNAL_ERROR, "maker actor provisioning failed"))?;
     let swap_id: Box<str> = accepted.agreement().coordinator().id().as_str().into();
     let commit = completion_store
-        .complete_maker_zec_negotiation_and_register_actor(
+        .complete_maker_zec_negotiation_and_register_actor_for_role(
             &request.request_id,
             &request.offer_id,
             request.expected_offer_revision,
             &request.reservation_id,
             &accepted,
-            preimage,
+            maker_preimage,
             &actor,
             now_unix_seconds,
         )
@@ -2361,7 +2366,8 @@ fn zec_draft_matches_offer(
     let transcript = validated.body().transcript();
     validated.maker_zcash_key() == maker_key
         && authenticated.maker_identity() == &maker_key.serialize()
-        && validated.body().direction() == SwapDirection::TakerSellsLez
+        && offer.route().pair() == Pair::Zcash
+        && validated.body().direction() == offer.route().direction()
         && validated.zcash_amount_zatoshis() == foreign_units
         && validated.body().lez_terms().amount() == lez_units
         && transcript.session_id() == &maker_zec_chat_session_id(reservation_id)
