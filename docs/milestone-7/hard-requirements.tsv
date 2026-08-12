@@ -18,12 +18,12 @@ U7	green	./scripts/verify-lez-v02-provisional.sh	docs/requirements-traceability.
 U8	green	./scripts/test-bitcoin-testnet4-route-contract.sh	docs/requirements-traceability.md	none
 U9	green	./scripts/test-monero-stagenet-guide-contract.sh	docs/requirements-traceability.md	none
 U10	green	./scripts/test-zcash-testnet-guide-contract.sh	docs/requirements-traceability.md	none
-R1	open	./scripts/test-m7-zebra-application-reorg-actual-certificate.sh	docs/requirements-traceability.md	Zebra consensus/SDK replacement and pre-dependent application continuation are actual-node GREEN; post-dependent and other-pair reorg/refund-order hardening remain
-R2	open	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	Different-UID isolation, adverse-node continuation, and other pair or branch crash seams
+R1	green	./scripts/test-m7-r1-taker-first-actual-baseline.sh	docs/architecture/0207-certify-literal-reliability-acceptance.md	none
+R2	green	./scripts/test-m7-r2-on-chain-only-actual-baseline.sh	docs/architecture/0207-certify-literal-reliability-acceptance.md	none
 R3	green	./scripts/test-m7-route-health-contract.sh	docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json	none
 R4	green	./scripts/test-m7-r4-recovery-baseline-contract.sh	docs/evidence/m7-actual-maker-tag15-process-kill-e455dec-20260811.json	none
 R5	green	./scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh	docs/evidence/m7-actual-btc-accepted-concurrency-272788c-20260808.json	none
-R6	open	./scripts/test-m3-direction-phase-timings-contract.sh	docs/requirements-traceability.md	Cutoff races, congestion model, public calibration, and actual reorg margins
-R7	open	./scripts/run-bitcoin-core-e2e.sh	docs/requirements-traceability.md	Maker-lock admission, fee stress, bounded RBF or CPFP, and reorg
+R6	green	./scripts/test-m7-r6-timelock-rationale-contract.sh	docs/architecture/0207-certify-literal-reliability-acceptance.md	none
+R7	green	./scripts/test-m7-r7-bitcoin-refund-justification-contract.sh	docs/architecture/0207-certify-literal-reliability-acceptance.md	none
 R8	green	./scripts/test-m5-application-contract.sh	docs/requirements-traceability.md	none
 P1	policy-deferred	./scripts/test-lez-cost-evidence.sh	docs/requirements-traceability.md	ADR-0023 defers named public-testnet v0.2 compute evidence while exact local version budgets remain enforced

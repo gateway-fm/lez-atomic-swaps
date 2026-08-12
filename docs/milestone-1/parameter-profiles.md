@@ -22,6 +22,9 @@ flowchart LR
 ## Scope and safety statement
 
 These named profiles make Milestone 1 assumptions executable and reviewable.
+Their confirmation depths and recovery margins explicitly account for block
+time variance, network congestion, and clock drift on each chain; the detailed
+budgets and limitations follow below.
 `public-testnet-v1` targets LEZ testnet 0.2, Bitcoin testnet, Monero stagenet,
 and Zcash testnet. It is deliberately conservative for integration and demos,
 but is not a mainnet security recommendation. Mainnet profiles require measured

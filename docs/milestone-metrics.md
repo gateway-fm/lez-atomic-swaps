@@ -37,6 +37,14 @@ rows with four open Reliability rows and two explicit deferrals. Checked
 certificate:
 `docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json`.
 
+M7 Reliability checkpoint (2026-08-12): ADR 0207 binds the live RFP's literal
+R1/R2/R6/R7 criteria to four executable aggregate gates. The strict hard
+inventory passes with 28 rows, zero repository-owned opens, and two explicit
+public/upstream deferrals. This closes private-local ordering, post-lock
+on-chain-only continuation, timelock rationale, and selected Bitcoin-refund
+justification; it does not claim public calibration, unbounded reorg/fee-market
+behavior, mainnet readiness, cybersecurity assessment, or external review.
+
 M7 F1/R3 checkpoint (2026-08-04): clean pushed run
 `m7outage-2c63218-a` completed one role-correct actual-node Zcash claim while
 its separately provisioned real Bitcoin Core 31.1 Regtest node was stopped.

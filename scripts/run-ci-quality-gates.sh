@@ -108,6 +108,10 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh
 ./scripts/test-m7-xmr-accepted-concurrency-contract.sh
 ./scripts/test-m7-xmr-accepted-concurrency-actual-certificate.sh
+./scripts/test-m7-r1-taker-first-actual-baseline.sh
+./scripts/test-m7-r2-on-chain-only-actual-baseline.sh
+./scripts/test-m7-r6-timelock-rationale-contract.sh
+./scripts/test-m7-r7-bitcoin-refund-justification-contract.sh
 ./scripts/test-m7-zec-accepted-process-kill-contract.sh
 ./scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh
 ./scripts/test-m7-maker-refund-actual-certificate.sh

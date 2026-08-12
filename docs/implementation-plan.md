@@ -8036,3 +8036,31 @@ S12/S13 review and policy-deferred public deployment.
   sanitized certificate as
   `docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json` and
   mark F3 GREEN.
+
+## M7 literal reliability closure (2026-08-12)
+
+- [x] Re-read live RFP-003 and accepted issue #112. Separate the literal R1,
+  R2, R6, and R7 acceptance text from broader production calibration that had
+  accumulated in their `remaining` cells.
+- [x] RED four aggregate gates on the missing ADR and two wrapped prose anchors.
+  The underlying nine first-lock regressions and retained R2 evidence already
+  passed; no new chain simulator or replacement library was needed.
+- [x] Add ADR 0207 with current component/sequence Mermaid diagrams,
+  conditional-atomicity limits, local RPC/resource disclosure, and explicit
+  separation of public calibration and external review.
+- [x] GREEN R1 against actual BTC/XMR/ZEC ordering plus ZEC canonical
+  reappearance; GREEN R2 against persisted BTC, killed XMR Claim/Refund, and
+  absent-transport ZEC Claim/Refund journeys.
+- [x] GREEN R6 against the documented per-chain variance, congestion, drift,
+  reorg, inclusion, and reaction budgets plus typed boundary tests and actual
+  signed-deadline refunds.
+- [x] GREEN R7 for the selected consensus-enforced Taproot CSV script path,
+  its explicit privacy/trade-off analysis, both actual Core refund directions,
+  paired LEZ refunds, and zero-effect replay. Do not impose the RFP's
+  conditional pre-signed-transaction mitigation list on the unselected design.
+- [x] Pin all four gates in CI, run strict hard-requirement closure, update the
+  M7 ledgers, commit, and push before beginning D1 recordings.
+- [x] Strict closure reports 28 hard-requirement rows, zero repository-owned
+  opens, and two disclosed deferrals. All four aggregate gates and the CI pin
+  policy pass; mark S4 GREEN. Cybersecurity assessment is not part of this
+  functional checkpoint.

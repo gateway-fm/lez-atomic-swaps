@@ -24,9 +24,10 @@ both ten-confirmation Monero locks, both Monero sweeps, zero-submission terminal
 replay, and exact cleanup passed. The checked
 [certificate](docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json)
 is pinned in the ordinary quality gates.
-F6 is GREEN at the conditional-atomicity boundary under ADR 0203; reorg, fee,
-timing, and adverse recovery work remains visible under R1/R2/R6/R7. Public
-deployment remains deliberately deferred.
+F6 is GREEN at the conditional-atomicity boundary under ADR 0203. ADR 0207
+closes literal R1/R2/R6/R7 private-local acceptance while retaining public
+calibration, operational fee policy, and broader adverse schedules as explicit
+production work. Public deployment remains deliberately deferred.
 
 The F3 join is implemented under
 [ADR 0204](docs/architecture/0204-run-two-xmr-applications-through-one-daemon.md).
