@@ -469,7 +469,7 @@ required_markers=(
   'readonly M6_SERVICE_QUERY_TIMEOUT_MS=15000'
   'readonly M6_SERVICE_ACTION_TIMEOUT_MS=90000'
   'readonly M6_REFUND_SUPERVISOR_ATTEMPT_TIMEOUT_MS=75000'
-  'M6_ZEC_JOURNEY must be claim or refund'
+  'M6_ZEC_JOURNEY must be claim, refund, or first_lock_refund'
   'MAX_CORRIDOR_SECONDS=300'
   'm6_claim_generation:$generation'
   'm6_zcash_claim_txid:$txid'

@@ -12,7 +12,7 @@ fail() {
 usage() {
   printf '%s\n' \
     'usage: run-m5-zec-chat-handoff.sh' \
-    '  --run-id ID --source-actors-root DIR --source-provision-summary FILE' \
+    '  --run-id ID --direction DIRECTION --source-actors-root DIR --source-provision-summary FILE' \
     '  --output-actors-root NEW_DIR --application-root NEW_DIR --evidence-dir DIR' \
     '  --maker-daemon-bin FILE --maker-cli-bin FILE --taker-bin FILE' \
     '  --draft-bin FILE --finalize-bin FILE' \
@@ -22,6 +22,7 @@ usage() {
 }
 
 run_id=''
+direction=''
 source_actors_root=''
 source_provision_summary=''
 output_actors_root=''
@@ -41,6 +42,7 @@ route_health_poll_milliseconds='100'
 while (( $# > 0 )); do
   case "$1" in
     --run-id) run_id="${2:-}"; shift 2 ;;
+    --direction) direction="${2:-}"; shift 2 ;;
     --source-actors-root) source_actors_root="${2:-}"; shift 2 ;;
     --source-provision-summary) source_provision_summary="${2:-}"; shift 2 ;;
     --output-actors-root) output_actors_root="${2:-}"; shift 2 ;;
@@ -62,13 +64,25 @@ while (( $# > 0 )); do
   esac
 done
 
-for value in run_id source_actors_root source_provision_summary output_actors_root \
+for value in run_id direction source_actors_root source_provision_summary output_actors_root \
   application_root evidence_dir maker_daemon_bin maker_cli_bin taker_bin draft_bin \
   finalize_bin actor_program actor_program_sha256 actor_inspector_bin \
   pair_inspector_bin; do
   [[ -n "${!value}" ]] || fail "missing --${value//_/-}"
 done
 [[ "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]] || fail 'run ID is unsafe'
+case "$direction" in
+  taker_sells_lez)
+    direction_cli='taker-sells-lez'
+    direction_json='TakerSellsLez'
+    ;;
+  taker_sells_foreign)
+    direction_cli='taker-sells-foreign'
+    direction_json='TakerSellsForeign'
+    ;;
+  *) fail 'direction must be taker_sells_lez or taker_sells_foreign' ;;
+esac
+readonly direction_cli direction_json
 for path in "$source_actors_root" "$source_provision_summary" \
   "$output_actors_root" "$application_root" "$evidence_dir" \
   "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
@@ -303,8 +317,11 @@ maker_public_key="$(jq -er '.maker_zcash_public_key | strings | select(test("^[0
   "$source_provision_summary")"
 taker_public_key="$(jq -er '.taker_zcash_public_key | strings | select(test("^[0-9a-f]{66}$"))' \
   "$source_provision_summary")"
-source_swap_id="$(jq -er '.agreement_file as $agreement | .signed_agreement_sha256 as $sha | .direction as $direction | select($agreement | strings) | select($sha | test("^[0-9a-f]{64}$")) | select($direction == "taker_sells_lez") | $agreement' \
-  "$source_provision_summary")"
+source_swap_id="$(jq -er --arg direction "$direction" '
+  .agreement_file as $agreement | .signed_agreement_sha256 as $sha
+  | select($agreement | strings) | select($sha | test("^[0-9a-f]{64}$"))
+  | select(.direction == $direction) | $agreement
+' "$source_provision_summary")"
 [[ "$source_swap_id" == "$source_actors_root/shared/agreement-v2.borsh" ]] || \
   fail 'source agreement path or direction mismatch'
 [[ "$maker_public_key" != "$taker_public_key" ]] || fail 'role public keys are not distinct'
@@ -312,23 +329,23 @@ source_swap_id="$(jq -er '.agreement_file as $agreement | .signed_agreement_sha2
 start_daemon "$ready_file" "$daemon_log"
 
 "$maker_cli_bin" --socket "$maker_socket" configure-pair \
-  --request-id "m5-config-off-${token}" --pair zcash --direction taker-sells-lez \
+  --request-id "m5-config-off-${token}" --pair zcash --direction "$direction_cli" \
   --enabled false --price-source local --minimum-foreign-units "$foreign_units" \
   --maximum-foreign-units "$foreign_units" --offer-ttl-seconds "$offer_ttl_seconds" \
   >"$evidence_dir/m5-configure-disabled.json"
 "$maker_cli_bin" --socket "$maker_socket" set-local-price \
-  --request-id "m5-price-${token}" --pair zcash --direction taker-sells-lez \
+  --request-id "m5-price-${token}" --pair zcash --direction "$direction_cli" \
   --lez-units-per-lot 1 --foreign-units-per-lot 2000 \
   >"$evidence_dir/m5-set-price.json"
 "$maker_cli_bin" --socket "$maker_socket" configure-pair \
   --request-id "m5-config-on-${token}" --expected-revision 1 --pair zcash \
-  --direction taker-sells-lez --enabled true --price-source local \
+  --direction "$direction_cli" --enabled true --price-source local \
   --minimum-foreign-units "$foreign_units" --maximum-foreign-units "$foreign_units" \
   --offer-ttl-seconds "$offer_ttl_seconds" \
   >"$evidence_dir/m5-configure-enabled.json"
 "$maker_cli_bin" --socket "$maker_socket" publish-offer \
   --request-id "m5-publish-${token}" --offer-id "$offer_id" --pair zcash \
-  --direction taker-sells-lez >"$evidence_dir/m5-publish-offer.json"
+  --direction "$direction_cli" >"$evidence_dir/m5-publish-offer.json"
 
 if [[ -n "$route_health_config" ]]; then
   "$maker_cli_bin" --socket "$maker_socket" configure-pair \
@@ -339,10 +356,10 @@ if [[ -n "$route_health_config" ]]; then
     >"$evidence_dir/m7-configure-bitcoin-disabled.json"
   "$maker_cli_bin" --socket "$maker_socket" health \
     >"$evidence_dir/m7-route-health-before-swap.json"
-  jq -e '
+  jq -e --arg direction "$direction_json" '
     .schema_version == 1 and .ready == true and .degraded == true
     and any(.routes[];
-      .route == {pair:"Zcash",direction:"TakerSellsLez"}
+      .route == {pair:"Zcash",direction:$direction}
       and .state == "available")
     and any(.routes[];
       .route == {pair:"Bitcoin",direction:"TakerSellsForeign"}
@@ -363,14 +380,15 @@ fi
 accepted_at="$(date -u +%s)"
 "$taker_bin" --delivery-directory "$delivery_directory" \
   --maker-public-key "$maker_public_key" --now-unix-seconds "$accepted_at" \
-  --pair zcash --direction taker-sells-lez >"$discovery_receipt"
-jq -e --arg offer "$offer_id" --arg maker "$maker_public_key" '
+  --pair zcash --direction "$direction_cli" >"$discovery_receipt"
+jq -e --arg offer "$offer_id" --arg maker "$maker_public_key" \
+  --arg direction "$direction_json" '
   .schema_version == 1 and (.offers | length) == 1
   and .offers[0].offer.id == $offer
   and .offers[0].maker_public_key == $maker
   and (.offers[0].signed_envelope_sha256 | test("^[0-9a-f]{64}$"))
   and .offers[0].offer.pair_configuration.route.pair == "Zcash"
-  and .offers[0].offer.pair_configuration.route.direction == "TakerSellsLez"
+  and .offers[0].offer.pair_configuration.route.direction == $direction
 ' "$discovery_receipt" >/dev/null
 offer_commitment="$(jq -er '.offers[0].signed_envelope_sha256' "$discovery_receipt")"
 offer_expires="$(jq -er '.offers[0].offer.expires_at_unix_seconds | numbers' "$discovery_receipt")"
@@ -389,7 +407,7 @@ jq -e --arg maker "$maker_public_key" --arg reservation "$reservation_id" \
 
 "$taker_bin" --delivery-directory "$delivery_directory" \
   --maker-public-key "$maker_public_key" --now-unix-seconds "$accepted_at" \
-  --pair zcash --direction taker-sells-lez --accept-zec-offer "$offer_id" \
+  --pair zcash --direction "$direction_cli" --accept-zec-offer "$offer_id" \
   --chat-socket "$chat_socket" --reservation-id "$reservation_id" \
   --foreign-units "$foreign_units" --unsigned-draft-file "$draft_file" \
   --taker-signing-key-file "$source_actors_root/taker/zcash.key" \
@@ -535,10 +553,10 @@ start_daemon "$restart_ready_file" "$daemon_restart_log"
 if [[ -n "$route_health_config" ]]; then
   "$maker_cli_bin" --socket "$maker_socket" health \
     >"$evidence_dir/m7-route-health-after-restart.json"
-  jq -e '
+  jq -e --arg direction "$direction_json" '
     .schema_version == 1 and .ready == true and .degraded == true
     and any(.routes[];
-      .route == {pair:"Zcash",direction:"TakerSellsLez"}
+      .route == {pair:"Zcash",direction:$direction}
       and .state == "available")
     and any(.routes[];
       .route == {pair:"Bitcoin",direction:"TakerSellsForeign"}
@@ -547,25 +565,25 @@ if [[ -n "$route_health_config" ]]; then
     fail 'route-health isolation did not survive Maker restart'
 fi
 if [[ -n "$route_health_config" ]]; then
-  jq -e '
+  jq -e --arg direction "$direction_json" '
     length == 2 and any(.[];
       .value.route.pair == "Bitcoin" and .value.enabled == false
       and .value.route.direction == "TakerSellsForeign" and .revision == 1)
     and any(.[];
       .value.route.pair == "Zcash" and .value.enabled == true
-      and .value.route.direction == "TakerSellsLez" and .revision == 2)
+      and .value.route.direction == $direction and .revision == 2)
   ' "$evidence_dir/m5-pairs-after-restart.json" >/dev/null
 else
-  jq -e '
+  jq -e --arg direction "$direction_json" '
     length == 1 and .[0].revision == 2 and .[0].value.enabled == true
     and .[0].value.route.pair == "Zcash"
-    and .[0].value.route.direction == "TakerSellsLez"
+    and .[0].value.route.direction == $direction
   ' "$evidence_dir/m5-pairs-after-restart.json" >/dev/null
 fi
-jq -e '
+jq -e --arg direction "$direction_json" '
   length == 1 and .[0].revision == 1
   and .[0].value.route.pair == "Zcash"
-  and .[0].value.route.direction == "TakerSellsLez"
+  and .[0].value.route.direction == $direction
   and .[0].value.lez_units_per_lot == 1
   and .[0].value.foreign_units_per_lot == 2000
 ' "$evidence_dir/m5-prices-after-restart.json" >/dev/null

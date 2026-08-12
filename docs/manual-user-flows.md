@@ -1,6 +1,6 @@
 # Manual reproduction guide
 
-Last updated: 2026-08-04
+Last updated: 2026-08-12
 
 This is the living operator guide for the user-visible flows that the repository
 currently proves. Update it in the same change whenever a runner, prerequisite,
@@ -9490,3 +9490,58 @@ public deployment, and uses no funds. Runtime variance is limited to local
 compilation, process scheduling, SQLite/fsync, and CPU/disk pressure. Temporary
 resources are owned by the test process and removed on completion; no global
 Docker cleanup or foreign-resource selector is used.
+
+## Flow M7-ZEC-1: reverse first-lock refund after Maker absence
+
+This is the reproducible adverse user flow for ZEC `TakerSellsForeign`: the
+Taker accepts through Delivery and Chat, funds Zcash first, the Maker daemon is
+absent before any LEZ lock, and the Taker uses the normal service Refund action.
+
+Start wholly fresh Flow 0B2 LEZ v0.2 and Flow 1B primary-only Zebra Regtest
+stacks. Deploy the checked escrow, onboard fresh Maker/Taker accounts, mature
+the deterministic Zebra output, and export the same endpoint, chain, program,
+deployment/finality/onboarding, account, and private signer variables listed in
+the service-driven M6 Claim subsection. Use a new run ID, then run:
+
+```bash
+export RUN_ID=m7zecfirstrefund-$(date -u +%Y%m%d%H%M%S)
+./scripts/run-m7-zec-taker-first-lock-refund-poc.sh
+```
+
+The wrapper fixes application mode, Taker service mode,
+`POC_DIRECTION=taker_sells_foreign`, and
+`M6_ZEC_JOURNEY=first_lock_refund`. Do not override those values. The runner
+stops its own Maker daemon before the first chain effect, removes its own Chat
+and Delivery transports, and never starts a Maker effect supervisor. It mines
+only the isolated Zebra chain from the confirmed funding height to the refund
+height carried by the signed agreement. That accelerates Regtest time for the
+test; it does not change the CLTV or production policy.
+
+Inspect only the secret-free evidence:
+
+```bash
+EVIDENCE=/tmp/lez-atomic-swaps-${RUN_ID}/evidence
+jq . "$EVIDENCE/m7-maker-second-lock-absence.json"
+jq . "$EVIDENCE/m7-zcash-first-lock-refund-window.json"
+jq . "$EVIDENCE/m7-zebra-first-lock-refund-inclusion.json"
+jq . "$EVIDENCE/m7-maker-first-lock-refund-terminal.json"
+jq . "$EVIDENCE/m7-taker-first-lock-refund-terminal-replay.json"
+jq . "$EVIDENCE/result.json"
+```
+
+A passing result has two absent-Maker observations, empty Maker and Taker LEZ
+submission sets, one canonical Zcash refund, both actors at `refunded` revision
+two, and an identical service replay with unchanged Zebra tip/mempool and LEZ
+journals. The component and sequence diagrams plus the atomicity argument are
+in ADR 0199.
+
+Runtime external resources are exactly the operator-owned loopback LEZ v0.2
+Bedrock/sequencer/indexer stack and Zebra Regtest RPC. Funds are fresh local
+genesis/Vault allocations and deterministic Regtest outputs. No public RPC,
+faucet, DNS, price feed, or public funds are used. Cold image or dependency
+acquisition can depend on pinned upstream registries; runtime flakiness can
+come from host CPU/disk pressure, local finality lag, port collisions, stale
+manifests, or partially reused chain state. Any such failure invalidates the
+run; start fresh rather than treating it as evidence. Stop only the exact
+containers, networks, and processes named by the two run manifests, and never
+broad-prune while another activity exists.

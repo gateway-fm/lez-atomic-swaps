@@ -270,8 +270,8 @@ status_capture_function="$(sed -n \
   fail "supervised Maker status helper is missing"
 [[ "$(rg -Fc 'capture_m5_supervised_maker_status' "$runner")" == 3 ]] ||
   fail "supervised Maker status helper must have exactly two call sites"
-[[ "$(rg -Fc '"$actor_bin" --config "$maker_config" status' "$runner")" == 4 ]] ||
-  fail "only pre/final status, the supervised helper, and the constrained M6 suppressed-authority observation may invoke direct Maker status"
+[[ "$(rg -Fc '"$actor_bin" --config "$maker_config" status' "$runner")" == 5 ]] ||
+  fail "only pre/final status, the supervised helper, and the constrained M6/M7 observation-only branches may invoke direct Maker status"
 
 status_retry_test_root="$(mktemp -d "${TMPDIR:-/tmp}/lez-m5-status-contract.XXXXXX")" ||
   fail "could not create supervised status contract root"

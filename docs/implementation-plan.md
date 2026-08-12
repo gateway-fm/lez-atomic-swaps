@@ -7620,3 +7620,13 @@ S12/S13 review and policy-deferred public deployment.
   survives a lost completion response and exact replay with zero Maker claim
   rows. The original forward prepared-service process remains GREEN. Exact
   local-node first-lock/refund execution remains before U4/F9/S5 close.
+- [x] RED then GREEN ADR 0199 source composition for the absent-Maker reverse
+  ZEC journey. A one-command wrapper fixes `TakerSellsForeign`, application,
+  Taker-service, and first-lock-refund modes. Chat and Delivery preserve the
+  authenticated direction; the Maker daemon is stopped before chain effects;
+  Zebra advances to the signed CLTV height without changing it; the existing
+  generation-fenced Refund RPC invokes actor recovery; and both role-local
+  actors must terminate at revision two with empty LEZ submission journals and
+  exact no-effect replay. The focused M5, M6, route, and new M7 contracts plus
+  all 53 ZEC actor tests are GREEN. F9/U4/S5 remain open until the exact pushed
+  source completes on fresh isolated LEZ v0.2 and Zebra Regtest nodes.

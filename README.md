@@ -1247,6 +1247,14 @@ M5_LEZ_TAKER_SIGNER_KEY_FILE=/absolute/private/taker/lez-signer.key \
 
 See [Flow 1B](docs/manual-user-flows.md#flow-1b-composed-m5-zec-application-poc)
 for prerequisites, evidence, and cleanup.
+The M7 reverse first-lock adverse journey reuses those exact fresh local-node
+prerequisites and runs with
+`./scripts/run-m7-zec-taker-first-lock-refund-poc.sh`; see
+[Flow M7-ZEC-1](docs/manual-user-flows.md#flow-m7-zec-1-reverse-first-lock-refund-after-maker-absence).
+It uses only operator-owned loopback LEZ v0.2 and Zebra Regtest RPCs and local
+deterministic funds. No public RPC or faucet participates. Host pressure,
+local-finality lag, port collisions, stale manifests, or cold pinned-image
+acquisition can fail a run and require a fresh isolated retry.
 These component flows use only owner-private local Unix sockets, SQLite,
 Delivery, signing, raw claim-recovery and preimage files; they use no chain RPC, Docker, faucet,
 public funds, public price feed, or external network at runtime. The composed

@@ -185,6 +185,7 @@ pub struct LocalPocProvisionSummary {
     maker: RolePaths,
     taker: RolePaths,
     zebra_tip_height: u32,
+    zcash_refund_height: u32,
     zcash_candidate_owner: &'static str,
     lez_native_amount: u128,
     lez_depositor_role: &'static str,
@@ -247,6 +248,7 @@ struct AgreementFixture {
     taker_zcash_key: Zeroizing<[u8; 32]>,
     preimage: Zeroizing<[u8; 32]>,
     zcash_candidate: CandidateOutpoint,
+    zcash_refund_height: u32,
 }
 
 /// Provisions a shared countersigned agreement and two isolated actor inputs.
@@ -478,6 +480,7 @@ pub async fn provision_local_v0_2_corridor_with_signers(
         maker: role_summary(&maker_paths),
         taker: role_summary(&taker_paths),
         zebra_tip_height: tip_height,
+        zcash_refund_height: fixture.zcash_refund_height,
         zcash_candidate_owner: match spec.direction.zcash_funder() {
             ActorRole::Maker => "maker",
             ActorRole::Taker => "taker",
@@ -1261,6 +1264,7 @@ fn build_agreement(
             candidate.rpc_transaction_id,
             candidate.outpoint.n(),
         ),
+        zcash_refund_height,
     })
 }
 

@@ -52,7 +52,11 @@ case "$M6_ZEC_JOURNEY" in
     # terminal no-effect replay. It does not change any protocol deadline.
     MAX_CORRIDOR_SECONDS=300
     ;;
-  *) echo 'M6_ZEC_JOURNEY must be claim or refund' >&2; exit 2 ;;
+  first_lock_refund)
+    # Local Zebra blocks advance the signed Zcash CLTV without wall-clock sleep.
+    MAX_CORRIDOR_SECONDS=180
+    ;;
+  *) echo 'M6_ZEC_JOURNEY must be claim, refund, or first_lock_refund' >&2; exit 2 ;;
 esac
 readonly MAX_CORRIDOR_SECONDS
 export RAPIDSNARK_LIB_DIR BINDGEN_EXTRA_CLANG_ARGS
@@ -91,16 +95,18 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 && "$M5_APPLICATION_MODE" != 1 ]]; then
   echo 'M6 Taker service mode requires M5_APPLICATION_MODE=1' >&2
   exit 2
 fi
-if [[ "$M6_ZEC_JOURNEY" == refund && "$M6_TAKER_SERVICE_MODE" != 1 ]]; then
-  echo 'M6 refund journey requires M6_TAKER_SERVICE_MODE=1' >&2
+if [[ "$M6_ZEC_JOURNEY" != claim && "$M6_TAKER_SERVICE_MODE" != 1 ]]; then
+  echo 'M6 refund journeys require M6_TAKER_SERVICE_MODE=1' >&2
   exit 2
 fi
 if [[ "$M5_APPLICATION_MODE" == 1 && ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]]; then
   echo 'M5 application RUN_ID must be 8..=48 safe characters' >&2
   exit 2
 fi
-if [[ "$M5_APPLICATION_MODE" == 1 && "$POC_DIRECTION" != taker_sells_lez ]]; then
-  echo 'M5 application composition currently requires POC_DIRECTION=taker_sells_lez' >&2
+if [[ "$M6_ZEC_JOURNEY" == first_lock_refund \
+  && ( "$M5_APPLICATION_MODE" != 1 || "$M6_TAKER_SERVICE_MODE" != 1 \
+    || "$POC_DIRECTION" != taker_sells_foreign ) ]]; then
+  echo 'first_lock_refund requires the reverse ZEC application and Taker service' >&2
   exit 2
 fi
 readonly private_base="${POC_OUTPUT_ROOT:-/tmp/lez-atomic-swaps-${run_id}}"
@@ -154,12 +160,14 @@ if [[ "$MAKER_ACCOUNT_BASE58" == "$TAKER_ACCOUNT_BASE58" ]]; then
 fi
 case "$POC_DIRECTION" in
   taker_sells_lez)
+    direction_json='TakerSellsLez'
     expected_zcash_funder_role='maker'
     expected_zcash_claimant_role='taker'
     expected_lez_depositor_role='taker'
     expected_lez_depositor_account="$TAKER_ACCOUNT_BASE58"
     ;;
   taker_sells_foreign)
+    direction_json='TakerSellsForeign'
     expected_zcash_funder_role='taker'
     expected_zcash_claimant_role='maker'
     expected_lez_depositor_role='maker'
@@ -171,6 +179,7 @@ case "$POC_DIRECTION" in
     ;;
 esac
 readonly expected_zcash_funder_role expected_zcash_claimant_role
+readonly direction_json
 readonly expected_lez_depositor_role expected_lez_depositor_account
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   for deployment_evidence_file in \
@@ -269,6 +278,8 @@ m6_zcash_refund_mined=0
 m6_maker_supervisor_suppressed=0
 m6_maker_supervisor_restarted=0
 m6_lez_refund_start_tip=""
+m7_zec_first_lock_refund=0
+[[ "$M6_ZEC_JOURNEY" == first_lock_refund ]] && m7_zec_first_lock_refund=1
 corridor_deadline_monotonic_ms=''
 
 process_start_ticks() {
@@ -535,6 +546,9 @@ prove_m5_terminal_operator_projection() {
   status_file="${evidence_dir}/m5-status-after-terminal-restart.json"
   terminal_receipt="${evidence_dir}/m5-terminal-operator-projection.json"
   if [[ "$M6_ZEC_JOURNEY" == refund ]]; then
+    expected_phase=Refunded
+    expected_phase_lower=refunded
+  elif [[ "$M6_ZEC_JOURNEY" == first_lock_refund ]]; then
     expected_phase=Refunded
     expected_phase_lower=refunded
   else
@@ -977,10 +991,11 @@ start_m6_taker_service() {
   m6_service_socket="${application_root}/runtime/taker-service.sock"
   m6_service_log="${evidence_dir}/m6-taker-service.log"
 
-  jq -e --arg offer "$offer_id" --arg maker "$maker_key" '
+  jq -e --arg offer "$offer_id" --arg maker "$maker_key" \
+    --arg direction "$direction_json" '
     .schema_version == 1 and (.offers | length) == 1
     and .offers[0].offer.id == $offer and .offers[0].maker_public_key == $maker
-    and .offers[0].offer.pair_configuration.route == {pair:"Zcash",direction:"TakerSellsLez"}
+    and .offers[0].offer.pair_configuration.route == {pair:"Zcash",direction:$direction}
     and .offers[0].offer.pair_configuration.minimum_foreign_units == 100000000
     and .offers[0].offer.pair_configuration.maximum_foreign_units == 100000000
     and .offers[0].offer.price.lez_units_per_lot == 1
@@ -1034,7 +1049,10 @@ start_m6_taker_service() {
   [[ -n "$m6_service_start_ticks" ]] || return 1
   wait_for_m6_service_ready
 
-  offer_request='{"jsonrpc":"2.0","id":"m6-offers","method":"taker_offer_list_v1","params":[{"schema_version":1,"route":{"pair":"Zcash","direction":"TakerSellsLez"}}]}'
+  offer_request="$(jq -nc --arg direction "$direction_json" '
+    {jsonrpc:"2.0",id:"m6-offers",method:"taker_offer_list_v1",params:[{
+      schema_version:1,route:{pair:"Zcash",direction:$direction}}]}
+  ')"
   offer_response="$(m6_service_rpc 'm6-offers' "$offer_request")"
   printf '%s\n' "$offer_response" >"${evidence_dir}/m6-taker-service-offers.json"
   jq -e --arg offer "$offer_id" --arg maker "$maker_key" '
@@ -1044,10 +1062,11 @@ start_m6_taker_service() {
   ' <<<"$offer_response" >/dev/null
 
   initiate_request="$(jq -nc --arg request_id "$m6_initiate_request_id" \
-    --arg offer "$offer_id" --argjson selected "$(jq -c '.result.offers[0]' <<<"$offer_response")" '
+    --arg offer "$offer_id" --arg direction "$direction_json" \
+    --argjson selected "$(jq -c '.result.offers[0]' <<<"$offer_response")" '
     {jsonrpc:"2.0",id:"m6-initiate",method:"taker_swap_initiate_v1",params:[{
       schema_version:1,request_id:$request_id,offer_id:$offer,
-      route:{pair:"Zcash",direction:"TakerSellsLez"},maker_identity:$selected.maker_identity,
+      route:{pair:"Zcash",direction:$direction},maker_identity:$selected.maker_identity,
       signed_envelope_sha256:$selected.signed_envelope_sha256,foreign_units:100000000,
       expected_lez_units:50000}]}
   ')"
@@ -1339,6 +1358,13 @@ jq -e \
   and .private_material_disclosed == false
   and .actor_pair_validated == true
 ' "${evidence_dir}/provision-summary.json" >/dev/null
+zcash_refund_height="$(jq -er '.zcash_refund_height | numbers' \
+  "${evidence_dir}/provision-summary.json")"
+(( zcash_refund_height > zebra_tip )) || {
+  echo 'provisioned signed Zcash refund height is not after the bound tip' >&2
+  exit 2
+}
+readonly zcash_refund_height
 jq -e \
   --arg depositor "$expected_lez_depositor_account" \
   --arg authenticated_transfer "$AUTHENTICATED_TRANSFER_PROGRAM_HEX" '
@@ -1356,6 +1382,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   fi
   "$m5_handoff_driver" \
     --run-id "$run_id" \
+    --direction "$POC_DIRECTION" \
     --source-actors-root "$provision_actors_root" \
     --source-provision-summary "${evidence_dir}/provision-summary.json" \
     --output-actors-root "$actors_root" \
@@ -1765,6 +1792,10 @@ jq -n \
     actor_outputs_secret_free: true
   }' >"${evidence_dir}/run-identity.json"
 
+if (( m7_zec_first_lock_refund == 1 )); then
+  start_m6_taker_service
+fi
+
 if [[ "$M5_APPLICATION_MODE" != 1 ]]; then
   maker_activate_timeout="$(bounded_actor_timeout 'maker-activate')"
   timeout --signal=KILL "${maker_activate_timeout}s" \
@@ -1800,7 +1831,32 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     echo 'M5 unsupervised handoff daemon did not stop cleanly before supervision' >&2
     exit 2
   }
-  start_m5_full_supervised_daemon
+  if (( m7_zec_first_lock_refund == 1 )); then
+    mv -- "$m5_delivery_directory" "$m5_delivery_offline"
+    [[ ! -e "$m5_delivery_directory" && -d "$m5_delivery_offline" ]] || {
+      echo 'M7 Delivery transport survived Maker-absence cutover' >&2
+      exit 2
+    }
+    m6_maker_supervisor_suppressed=1
+    m5_transport_cutover_complete=1
+    maker_activate_timeout="$(bounded_actor_timeout 'm7-maker-observer-activate')"
+    timeout --signal=KILL "${maker_activate_timeout}s" \
+      "$actor_bin" --config "$maker_config" activate \
+      >"${evidence_dir}/maker-activate.json" \
+      2>"${evidence_dir}/maker-activate.stderr"
+    jq -e '.role == "maker" and .outcome == "activated" and .phase == "offered"' \
+      "${evidence_dir}/maker-activate.json" >/dev/null
+    jq -n --arg first_lock_role taker '
+      {schema_version:1,result:"passed",cutover_before_first_lock:true,
+       first_lock:"zcash_funding",first_lock_submitter:$first_lock_role,
+       maker_effect_authority:"absent",maker_daemon_alive:false,
+       supervisor_suppressed_for_refund:true,supervisor_socket:null,
+       maker_socket_absent:true,chat_socket_absent:true,
+       delivery_path_absent:true,concurrent_direct_maker_effects:false}
+    ' >"${evidence_dir}/m5-post-lock-cutover.json"
+    chmod 0600 "${evidence_dir}/m5-post-lock-cutover.json"
+  else
+    start_m5_full_supervised_daemon
   maker_supervised_active=0
   for _ in {1..200}; do
     remaining_budget_milliseconds 'm5-maker-supervised-activation' >/dev/null
@@ -1836,6 +1892,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
       maker_daemon_alive: true,
       actor_status: $status[0]
     }' >"${evidence_dir}/maker-activate.json"
+  fi
 fi
 
 : >"${evidence_dir}/actor-drive.ndjson"
@@ -2219,6 +2276,99 @@ m6_refund_waits_for_maker_recovery() {
     && m6_maker_supervisor_restarted == 1 && m6_zcash_refund_mined == 0 ))
 }
 
+m7_lez_submission_set() {
+  local state_directory="$1"
+  local journal="${state_directory}/bridge-requests.v1.json"
+  if [[ ! -f "$journal" ]]; then
+    printf '%s\n' '[]'
+    return 0
+  fi
+  [[ ! -L "$journal" ]] || return 1
+  jq -c --arg run_id "$run_id" '
+    select(.schema_version == 1 and .run_id == $run_id)
+    | [.entries[] | select(.method == "lez_bridge.v1.submit_transaction"
+        and .outcome.kind == "success")
+      | .outcome.value.transaction_id | strings]
+    | unique
+  ' "$journal"
+}
+
+prove_m7_maker_second_lock_absence() {
+  local maker_before taker_before maker_after taker_after output timeout_seconds
+  local maker_projected=0
+  maker_before="$(m7_lez_submission_set "$maker_sidecar_state_dir")"
+  taker_before="$(m7_lez_submission_set "$taker_sidecar_state_dir")"
+  for attempt in 1 2 3 4; do
+    timeout_seconds="$(bounded_actor_timeout "m7-maker-first-lock-observe-${attempt}")"
+    output="$(timeout --signal=KILL "${timeout_seconds}s" \
+      "$actor_bin" --config "$maker_config" drive)"
+    jq -e '
+      .schema_version == 1 and .role == "maker" and .command == "drive"
+      and .operation == "taker_first_lock"
+      and (.outcome == "awaiting_observation" or .outcome == "projected")
+    ' <<<"$output" >/dev/null || return 1
+    printf '%s\n' "$output" >>"${evidence_dir}/m7-maker-first-lock-observer.ndjson"
+    if jq -e '.phase == "taker_lock_confirmed" and .revision == 1' \
+      <<<"$output" >/dev/null; then
+      maker_projected=1
+      break
+    fi
+  done
+  (( maker_projected == 1 )) || return 1
+
+  : >"${evidence_dir}/m7-taker-maker-lock-absence.ndjson"
+  for sample in 1 2; do
+    timeout_seconds="$(bounded_actor_timeout "m7-taker-maker-absence-${sample}")"
+    output="$(timeout --signal=KILL "${timeout_seconds}s" \
+      "$actor_bin" --config "$taker_config" drive)"
+    jq -e '
+      .schema_version == 1 and .role == "taker" and .command == "drive"
+      and .outcome == "awaiting_observation" and .operation == "maker_lock"
+      and .phase == "taker_lock_confirmed" and .revision == 1
+      and .next_action == "wait"
+    ' <<<"$output" >/dev/null || return 1
+    jq -c --argjson sample "$sample" '. + {absence_sample:$sample}' \
+      <<<"$output" >>"${evidence_dir}/m7-taker-maker-lock-absence.ndjson"
+  done
+  maker_after="$(m7_lez_submission_set "$maker_sidecar_state_dir")"
+  taker_after="$(m7_lez_submission_set "$taker_sidecar_state_dir")"
+  [[ "$maker_before" == '[]' && "$taker_before" == '[]' \
+    && "$maker_after" == '[]' && "$taker_after" == '[]' ]] || return 1
+  jq -n --argjson maker_before "$maker_before" --argjson maker_after "$maker_after" \
+    --argjson taker_before "$taker_before" --argjson taker_after "$taker_after" \
+    --slurpfile absence "${evidence_dir}/m7-taker-maker-lock-absence.ndjson" '
+    {schema_version:1,result:"passed",maker_supervisor_absent:true,
+      maker_effect_authority:"absent",maker_observer_effect_authority:false,
+      stable_absence_samples:$absence,
+      lez_submission_sets:{maker_before:$maker_before,maker_after:$maker_after,
+        taker_before:$taker_before,taker_after:$taker_after},
+      maker_second_lock_submitted:false}
+  ' >"${evidence_dir}/m7-maker-second-lock-absence.json"
+  chmod 0600 "${evidence_dir}/m7-maker-second-lock-absence.json"
+}
+
+wait_for_m7_zcash_first_lock_refund_window() {
+  local current blocks
+  current="$(jq -er '.result | numbers' <<<"$(rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m7-refund-tip","method":"getblockcount","params":[]}')")"
+  (( current >= zebra_tip + 2 && current <= zcash_refund_height )) || return 1
+  blocks=$((zcash_refund_height - current))
+  if (( blocks > 0 )); then
+    mine_blocks m7-first-lock-refund-eligibility "$blocks"
+  fi
+  current="$(jq -er '.result | numbers' <<<"$(rpc "$ZEBRA_RPC_URL" \
+    '{"jsonrpc":"2.0","id":"m7-refund-tip-after","method":"getblockcount","params":[]}')")"
+  (( current == zcash_refund_height )) || return 1
+  jq -n --argjson initial_tip "$zebra_tip" --argjson signed_refund_height "$zcash_refund_height" \
+    --argjson eligible_tip "$current" --argjson accelerated_blocks "$blocks" '
+    {schema_version:1,result:"passed",chain:"Zcash",clock:"regtest_block_height",
+      initial_tip:$initial_tip,signed_refund_height:$signed_refund_height,
+      eligible_tip:$eligible_tip,accelerated_blocks:$accelerated_blocks,
+      protocol_deadline_changed:false,wall_clock_sleep_used:false}
+  ' >"${evidence_dir}/m7-zcash-first-lock-refund-window.json"
+  chmod 0600 "${evidence_dir}/m7-zcash-first-lock-refund-window.json"
+}
+
 emit_m6_refund_parent_handoff() {
   local response="$1"
   jq -c --argjson generation "$m6_refund_generation" \
@@ -2246,8 +2396,10 @@ drive_m6_taker_refund() {
     awaiting_first_lock|awaiting_second_lock|both_legs_locked|refund_available)
       if (( m6_refund_admitted == 0 )); then
         "$actor_bin" --config "$taker_config" status >"$status_file"
-        if ! jq -e '
-          .role == "taker" and .state == "active" and .phase == "both_legs_locked"
+        if ! jq -e --argjson first_lock "$m7_zec_first_lock_refund" '
+          .role == "taker" and .state == "active"
+          and (($first_lock == 0 and .phase == "both_legs_locked")
+            or ($first_lock == 1 and .phase == "taker_lock_confirmed"))
         ' "$status_file" >/dev/null; then
           output="$(drive_actor taker "$taker_config" "$round")" || return
           if jq -e '
@@ -2288,8 +2440,14 @@ drive_m6_taker_refund() {
     [[ "$state" == refund_available
       && "$(jq -er '.result.available_action' <<<"$monitor_response")" == refund ]] || return 1
     m6_refund_generation="$(jq -er '.result.progress_generation | numbers' <<<"$monitor_response")"
-    wait_for_m6_lez_refund_window
-    m6_lez_refund_start_tip="$(m6_finalized_tip)"
+    if (( m7_zec_first_lock_refund == 1 )); then
+      prove_m7_maker_second_lock_absence
+      wait_for_m7_zcash_first_lock_refund_window
+      m6_lez_refund_start_tip=0
+    else
+      wait_for_m6_lez_refund_window
+      m6_lez_refund_start_tip="$(m6_finalized_tip)"
+    fi
     before_set="$(m6_taker_lez_submission_set)"
     printf '%s\n' "$before_set" >"${evidence_dir}/m6-taker-lez-submissions-before-refund.json"
     refund_request="$(jq -nc --arg request_id "$m6_refund_request_id"       --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
@@ -2344,6 +2502,22 @@ drive_m6_taker_refund() {
       and .error.data.category == "taker_action_conflict"
     ' <<<"$claim_response" >/dev/null || return 1
     m6_refund_admitted=1
+    if (( m7_zec_first_lock_refund == 1 )); then
+      local mempool_file="${evidence_dir}/m7-zebra-mempool-first-lock-refund.json"
+      rpc "$ZEBRA_RPC_URL" \
+        '{"jsonrpc":"2.0","id":"m7-refund-mempool","method":"getrawmempool","params":[]}' \
+        >"$mempool_file"
+      jq -e --arg funding "$m5_expected_funding_txid" '
+        .error == null and (.result | arrays) and (.result | length) == 1
+        and .result[0] != $funding
+      ' "$mempool_file" >/dev/null || return 1
+      m6_zcash_refund_txid="$(jq -er '.result[0] | strings | test("^[0-9a-f]{64}$") as $ok | select($ok)' "$mempool_file")"
+      mine_blocks zcash-refund 1
+      prove_m6_zcash_refund_inclusion
+      install -m 0600 "${evidence_dir}/m6-zebra-zcash-refund-inclusion.json" \
+        "${evidence_dir}/m7-zebra-first-lock-refund-inclusion.json"
+      m6_zcash_refund_mined=1
+    fi
   fi
 
   refund_request="$(jq -nc --arg request_id "$m6_refund_request_id"     --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
@@ -2368,7 +2542,7 @@ drive_m6_taker_refund() {
     return 1
   fi
 
-  if (( m6_lez_refund_finalized == 0 )); then
+  if (( m7_zec_first_lock_refund == 0 && m6_lez_refund_finalized == 0 )); then
     before_set="$(jq -c . "${evidence_dir}/m6-taker-lez-submissions-before-refund.json")"
     after_set="$(m6_taker_lez_submission_set)"
     new_set="$(jq -nc --argjson before "$before_set" --argjson after "$after_set"       '$after - $before')"
@@ -2473,6 +2647,52 @@ prove_m6_terminal_refund_replay() {
       replay_sha256:$replay_sha,lez_trace_sha256:$trace_sha,
       zebra_before_sha256:$zebra_before_sha,zebra_after_sha256:$zebra_after_sha}
   ' >"${evidence_dir}/m6-taker-service-refund-terminal-no-effect.json"
+}
+
+prove_m7_first_lock_terminal_refund_replay() {
+  local lez_before lez_after zebra_before zebra_after request response
+  lez_before="$(jq -nc --argjson maker "$(m7_lez_submission_set "$maker_sidecar_state_dir")" \
+    --argjson taker "$(m7_lez_submission_set "$taker_sidecar_state_dir")" \
+    '{maker:$maker,taker:$taker}')"
+  zebra_before="$(jq -nc \
+    --argjson tip "$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":"m7-replay-before-tip","method":"getblockcount","params":[]}')" \
+    --argjson mempool "$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":"m7-replay-before-mempool","method":"getrawmempool","params":[]}')" \
+    '{tip:$tip,mempool:$mempool}')"
+  request="$(jq -nc --arg request_id "$m6_refund_request_id" \
+    --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+    {jsonrpc:"2.0",id:"m7-first-lock-refund-terminal-replay",
+      method:"taker_swap_refund_v1",params:[{schema_version:1,
+        request_id:$request_id,swap_id:$swap,expected_generation:$generation}]}
+  ')"
+  response="$(m6_service_rpc 'm7-first-lock-refund-terminal-replay' \
+    "$request" "$M6_SERVICE_ACTION_TIMEOUT_MS")"
+  jq -e --arg swap "$m5_swap_id" --argjson generation "$m6_refund_generation" '
+    .error == null and .result == {schema_version:1,swap_id:$swap,action:"refund",
+      requested_after_generation:$generation,was_replay:true}
+  ' <<<"$response" >/dev/null
+  lez_after="$(jq -nc --argjson maker "$(m7_lez_submission_set "$maker_sidecar_state_dir")" \
+    --argjson taker "$(m7_lez_submission_set "$taker_sidecar_state_dir")" \
+    '{maker:$maker,taker:$taker}')"
+  zebra_after="$(jq -nc \
+    --argjson tip "$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":"m7-replay-after-tip","method":"getblockcount","params":[]}')" \
+    --argjson mempool "$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":"m7-replay-after-mempool","method":"getrawmempool","params":[]}')" \
+    '{tip:$tip,mempool:$mempool}')"
+  jq -n --argjson response "$response" --argjson lez_before "$lez_before" \
+    --argjson lez_after "$lez_after" --argjson zebra_before "$zebra_before" \
+    --argjson zebra_after "$zebra_after" '
+    {schema_version:1,result:"passed",response:$response,
+      terminal_revision:2,lez_before:$lez_before,lez_after:$lez_after,
+      zebra_before:$zebra_before,zebra_after:$zebra_after,
+      exact_terminal_replay_has_no_new_chain_effect:
+        ($lez_before == $lez_after and $lez_after == {maker:[],taker:[]}
+          and $zebra_before.tip.result == $zebra_after.tip.result
+          and $zebra_before.mempool.result == []
+          and $zebra_after.mempool.result == [])}
+  ' >"${evidence_dir}/m7-taker-first-lock-refund-terminal-replay.json"
+  jq -e '.result == "passed" and .terminal_revision == 2
+    and .exact_terminal_replay_has_no_new_chain_effect == true' \
+    "${evidence_dir}/m7-taker-first-lock-refund-terminal-replay.json" >/dev/null
+  chmod 0600 "${evidence_dir}/m7-taker-first-lock-refund-terminal-replay.json"
 }
 
 drive_m6_taker() {
@@ -3261,8 +3481,16 @@ handle_zcash_submission() {
     }
     zcash_fund_submitter="$role"
     zcash_fund_mined=2
+    if (( m7_zec_first_lock_refund == 1 )); then
+      rpc "$ZEBRA_RPC_URL" \
+        '{"jsonrpc":"2.0","id":"m7-exact-funding","method":"getrawmempool","params":[]}' \
+        >"${evidence_dir}/m5-zebra-mempool-exact-funding.json"
+      jq -e --arg tx "$m5_expected_funding_txid" '
+        .error == null and .result == [$tx]
+      ' "${evidence_dir}/m5-zebra-mempool-exact-funding.json" >/dev/null || return 1
+    fi
     mine_blocks funding 2
-    if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+    if [[ "$M5_APPLICATION_MODE" == 1 && "$M6_ZEC_JOURNEY" != first_lock_refund ]]; then
       stop_owned_m5_daemon
       m5_daemon_pid=''
       m5_daemon_start_ticks=''
@@ -3292,6 +3520,16 @@ handle_zcash_submission() {
         }' >"${evidence_dir}/m5-post-lock-cutover.json"
       chmod 0600 "${evidence_dir}/m5-post-lock-cutover.json"
       m5_transport_cutover_complete=1
+    elif (( m7_zec_first_lock_refund == 1 )); then
+      local cutover_tmp="${evidence_dir}/m5-post-lock-cutover.funded.tmp"
+      jq --arg txid "$m5_expected_funding_txid" \
+        --argjson confirmations_mined \
+          "$(jq -er '.result | length' "${evidence_dir}/zebra-generate-funding.json")" '
+        . + {cutover_after_first_lock:true,expected_zebra_txid:$txid,
+          confirmations_mined:$confirmations_mined}
+      ' "${evidence_dir}/m5-post-lock-cutover.json" >"$cutover_tmp"
+      chmod 0600 "$cutover_tmp"
+      mv -- "$cutover_tmp" "${evidence_dir}/m5-post-lock-cutover.json"
     fi
   fi
   if jq -e '.outcome == "submitted" and .operation == "zcash_followup_claim"' \
@@ -3337,7 +3575,7 @@ handle_lez_revealing_claim() {
   lez_revealing_claim_submitter="$role"
 }
 
-if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
+if [[ "$M6_TAKER_SERVICE_MODE" == 1 && "$M6_ZEC_JOURNEY" != first_lock_refund ]]; then
   start_m6_taker_service
 fi
 
@@ -3348,7 +3586,7 @@ while true; do
   remaining_budget_milliseconds "round-${round}-before" >/dev/null
 
   taker_output="$(drive_m5_taker "$round")"
-  if [[ "$M6_TAKER_SERVICE_MODE" == 1 && "$M6_ZEC_JOURNEY" == refund ]]; then
+  if [[ "$M6_TAKER_SERVICE_MODE" == 1 && "$M6_ZEC_JOURNEY" != claim ]]; then
     apply_m6_refund_parent_handoff "$taker_output"
   fi
   if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]] && \
@@ -3361,7 +3599,31 @@ while true; do
   handle_zcash_submission taker "$taker_output"
 
   if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
-    if [[ "$M6_ZEC_JOURNEY" == refund && "$m6_maker_supervisor_suppressed" == 1 ]]; then
+    if (( m7_zec_first_lock_refund == 1 )); then
+      if (( m6_zcash_refund_mined == 1 )); then
+        maker_recover_timeout="$(bounded_actor_timeout "m7-maker-refund-observe-${round}")"
+        maker_output="$(timeout --signal=KILL "${maker_recover_timeout}s" \
+          "$actor_bin" --config "$maker_config" recover)"
+        jq -e '
+          .schema_version == 1 and .role == "maker" and .command == "recover"
+          and .operation == "zcash_refund"
+          and (.outcome == "awaiting_observation" or .outcome == "projected"
+            or .outcome == "refunded")
+        ' <<<"$maker_output" >/dev/null
+        printf '%s\n' "$maker_output" \
+          >>"${evidence_dir}/m7-maker-first-lock-refund-observer.ndjson"
+        maker_phase="$(jq -er '.phase | strings' <<<"$maker_output")"
+        if [[ "$maker_phase" == refunded ]]; then
+          printf '%s\n' "$maker_output" \
+            >"${evidence_dir}/m7-maker-first-lock-refund-terminal.json"
+        fi
+      else
+        "$actor_bin" --config "$maker_config" status \
+          >"${evidence_dir}/m7-maker-suppressed-status.json"
+        maker_phase="$(jq -er '.phase | strings' \
+          "${evidence_dir}/m7-maker-suppressed-status.json")"
+      fi
+    elif [[ "$M6_ZEC_JOURNEY" == refund && "$m6_maker_supervisor_suppressed" == 1 ]]; then
       "$actor_bin" --config "$maker_config" status >"${evidence_dir}/m6-maker-suppressed-status.json"
       maker_phase="$(jq -er '.phase | strings' "${evidence_dir}/m6-maker-suppressed-status.json")"
     else
@@ -3381,7 +3643,7 @@ while true; do
     taker_phase="$(jq -r '.phase' <<<"$taker_output")"
   fi
   if [[ ("$M6_ZEC_JOURNEY" == claim && "$maker_phase" == completed && "$taker_phase" == completed)
-    || ("$M6_ZEC_JOURNEY" == refund && "$maker_phase" == refunded && "$taker_phase" == refunded) ]]; then
+    || ("$M6_ZEC_JOURNEY" != claim && "$maker_phase" == refunded && "$taker_phase" == refunded) ]]; then
     completed=1
     break
   fi
@@ -3395,7 +3657,7 @@ if [[ "$M6_ZEC_JOURNEY" == claim ]]; then
     echo "corridor did not complete atomically: completed=${completed}, funding_blocks=${zcash_fund_mined}, lez_reveal=${lez_revealing_claim_seen}, claim_blocks=${zcash_claim_mined}" >&2
     exit 1
   }
-else
+elif [[ "$M6_ZEC_JOURNEY" == refund ]]; then
   (( completed == 1 && zcash_fund_mined == 2 && lez_revealing_claim_seen == 0 \
     && zcash_claim_mined == 0 && m6_refund_admitted == 1 \
     && m6_lez_refund_finalized == 1 && m6_zcash_refund_mined == 1 \
@@ -3425,6 +3687,22 @@ else
     echo 'M6 Refund lacks valid no-effect Maker-lock reconciliation evidence' >&2
     exit 1
   }
+else
+  (( completed == 1 && zcash_fund_mined == 2 && lez_revealing_claim_seen == 0 \
+    && zcash_claim_mined == 0 && m6_refund_admitted == 1 \
+    && m6_zcash_refund_mined == 1 && m6_maker_supervisor_suppressed == 1 \
+    && m6_maker_supervisor_restarted == 0 )) || {
+    echo 'M7 first-lock refund violated direction, effect, or authority invariants' >&2
+    exit 1
+  }
+  jq -e '
+    .schema_version == 1 and .result == "passed"
+    and .maker_supervisor_absent == true and .maker_effect_authority == "absent"
+    and .maker_observer_effect_authority == false
+    and (.stable_absence_samples | length) == 2
+    and .maker_second_lock_submitted == false
+    and all(.lez_submission_sets[]; . == [])
+  ' "${evidence_dir}/m7-maker-second-lock-absence.json" >/dev/null
 fi
 if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
   (( m7_zec_process_kill_injected == 1 && m7_zec_process_kill_recovered == 1 )) || {
@@ -3456,7 +3734,8 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     .result == "passed" and .cutover_after_first_lock == true
     and .first_lock == "zcash_funding" and .confirmations_mined == 2
     and .expected_zebra_txid == $expected
-    and .maker_effect_authority == "daemon_supervisor"
+    and .maker_effect_authority ==
+      (if $journey == "first_lock_refund" then "absent" else "daemon_supervisor" end)
     and (if $journey == "claim" then
       .maker_daemon_alive == true and .supervisor_suppressed_for_refund == false
     else
@@ -3469,7 +3748,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     "${evidence_dir}/m5-post-lock-cutover.json" >/dev/null
 fi
 
-if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
+if [[ "$M5_APPLICATION_MODE" == 1 && "$M6_ZEC_JOURNEY" != first_lock_refund ]]; then
   wait_for_m5_supervisor_terminal
   stop_owned_m5_daemon
   m5_daemon_pid=''
@@ -3483,7 +3762,7 @@ fi
 "$actor_bin" --config "$maker_config" status >"${evidence_dir}/maker-status-final.json"
 "$actor_bin" --config "$taker_config" status >"${evidence_dir}/taker-status-final.json"
 expected_terminal_phase=completed
-[[ "$M6_ZEC_JOURNEY" == refund ]] && expected_terminal_phase=refunded
+[[ "$M6_ZEC_JOURNEY" != claim ]] && expected_terminal_phase=refunded
 jq -e --arg phase "$expected_terminal_phase" '
   .role == "maker" and .state == "active" and .phase == $phase
 ' "${evidence_dir}/maker-status-final.json" >/dev/null
@@ -3498,7 +3777,7 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
   m6_terminal_response="$(m6_service_rpc 'm6-terminal-monitor' "$m6_terminal_request")"
   printf '%s\n' "$m6_terminal_response" >"${evidence_dir}/m6-taker-service-terminal.json"
   m6_terminal_generation="$m6_claim_generation"
-  [[ "$M6_ZEC_JOURNEY" == refund ]] && m6_terminal_generation="$m6_refund_generation"
+  [[ "$M6_ZEC_JOURNEY" != claim ]] && m6_terminal_generation="$m6_refund_generation"
   jq -e --arg swap "$m5_swap_id" --arg journey "$M6_ZEC_JOURNEY" \
     --argjson generation "$m6_terminal_generation" '
     .error == null and .result.schema_version == 1 and .result.swap_id == $swap
@@ -3534,7 +3813,7 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
     and .[0].mempool_after_first.result == [$txid]
     and .[0].mempool_after_replay.result == [$txid]
   ' "${evidence_dir}/m6-taker-service-claim.ndjson" >/dev/null
-  else
+  elif [[ "$M6_ZEC_JOURNEY" == refund ]]; then
     (( m6_refund_admitted == 1 && m6_lez_refund_finalized == 1 \
       && m6_zcash_refund_mined == 1 && m6_maker_supervisor_restarted == 1 ))
     prove_m6_terminal_refund_replay
@@ -3615,6 +3894,23 @@ if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
       and .canonical_lez_refund_revalidated == true
       and .canonical_zcash_refund_revalidated == true
     ' "${evidence_dir}/m6-taker-service-refund-terminal-no-effect.json" >/dev/null
+  else
+    (( m6_refund_admitted == 1 && m6_zcash_refund_mined == 1 \
+      && m6_lez_refund_finalized == 0 && m6_maker_supervisor_restarted == 0 ))
+    prove_m7_first_lock_terminal_refund_replay
+    jq -e --arg tx "$m6_zcash_refund_txid" \
+      --arg hash "$m6_zcash_refund_block_hash" \
+      --argjson height "$m6_zcash_refund_block_height" '
+      .schema_version == 1 and .transaction_id == $tx
+      and .block_hash == $hash and .height == $height and .occurrences == 1
+      and .canonical_hash_response.result == $hash
+      and ([.block_response.result.tx[] | select(. == $tx)] | length) == 1
+    ' "${evidence_dir}/m7-zebra-first-lock-refund-inclusion.json" >/dev/null
+    jq -e '
+      .schema_version == 1 and .role == "maker" and .command == "recover"
+      and .phase == "refunded" and .revision == 2
+      and .operation == "zcash_refund"
+    ' "${evidence_dir}/m7-maker-first-lock-refund-terminal.json" >/dev/null
   fi
   stop_owned_process "$m6_service_pid" "$m6_service_start_ticks" "$m6_service_bin"
   m6_service_pid=''
@@ -3685,7 +3981,7 @@ fi
 final_zebra_tip_response="$(rpc "$ZEBRA_RPC_URL" '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}')"
 final_zebra_tip="$(jq -er '.result | numbers' <<<"$final_zebra_tip_response")"
 expected_zebra_advance=3
-[[ "$M6_ZEC_JOURNEY" == refund ]] && expected_zebra_advance=6
+[[ "$M6_ZEC_JOURNEY" != claim ]] && expected_zebra_advance=6
 (( final_zebra_tip == zebra_tip + expected_zebra_advance )) || {
   echo "Zebra advanced by an unexpected count: initial=${zebra_tip}, final=${final_zebra_tip}, expected_advance=${expected_zebra_advance}" >&2
   exit 1
@@ -3730,13 +4026,13 @@ jq -n \
   --arg terminal_projection_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-terminal-operator-projection.json" | cut -d ' ' -f1; fi)" \
   --arg maker_lock_intent_sha256 \
-    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-lock-intent.json" | cut -d ' ' -f1; fi)" \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 && "$M6_ZEC_JOURNEY" != first_lock_refund ]]; then sha256sum "${evidence_dir}/m5-maker-lock-intent.json" | cut -d ' ' -f1; fi)" \
   --arg exact_funding_mempool_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-zebra-mempool-exact-funding.json" | cut -d ' ' -f1; fi)" \
   --arg maker_supervisor_trace_sha256 \
-    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-status.ndjson" | cut -d ' ' -f1; fi)" \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 && "$M6_ZEC_JOURNEY" != first_lock_refund ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-status.ndjson" | cut -d ' ' -f1; fi)" \
   --arg maker_supervisor_final_sha256 \
-    "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-final.json" | cut -d ' ' -f1; fi)" \
+    "$(if [[ "$M5_APPLICATION_MODE" == 1 && "$M6_ZEC_JOURNEY" != first_lock_refund ]]; then sha256sum "${evidence_dir}/m5-maker-supervisor-final.json" | cut -d ' ' -f1; fi)" \
   --arg taker_acceptance_receipt_sha256 \
     "$(if [[ "$M5_APPLICATION_MODE" == 1 ]]; then printf '%s' "$m5_taker_acceptance_receipt_sha256"; fi)" \
   --arg taker_claim_trace_sha256 \
@@ -3780,6 +4076,16 @@ jq -n \
     "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-service-refund-terminal-replay.json" | cut -d ' ' -f1; fi)" \
   --arg taker_refund_terminal_no_effect_sha256 \
     "$(if [[ "$M6_ZEC_JOURNEY" == refund ]]; then sha256sum "${evidence_dir}/m6-taker-service-refund-terminal-no-effect.json" | cut -d ' ' -f1; fi)" \
+  --arg m7_maker_absence_sha256 \
+    "$(if (( m7_zec_first_lock_refund == 1 )); then sha256sum "${evidence_dir}/m7-maker-second-lock-absence.json" | cut -d ' ' -f1; fi)" \
+  --arg m7_refund_window_sha256 \
+    "$(if (( m7_zec_first_lock_refund == 1 )); then sha256sum "${evidence_dir}/m7-zcash-first-lock-refund-window.json" | cut -d ' ' -f1; fi)" \
+  --arg m7_refund_inclusion_sha256 \
+    "$(if (( m7_zec_first_lock_refund == 1 )); then sha256sum "${evidence_dir}/m7-zebra-first-lock-refund-inclusion.json" | cut -d ' ' -f1; fi)" \
+  --arg m7_taker_terminal_replay_sha256 \
+    "$(if (( m7_zec_first_lock_refund == 1 )); then sha256sum "${evidence_dir}/m7-taker-first-lock-refund-terminal-replay.json" | cut -d ' ' -f1; fi)" \
+  --arg m7_maker_terminal_sha256 \
+    "$(if (( m7_zec_first_lock_refund == 1 )); then sha256sum "${evidence_dir}/m7-maker-first-lock-refund-terminal.json" | cut -d ' ' -f1; fi)" \
   --argjson elapsed_ms "$((MAX_CORRIDOR_SECONDS * 1000 - $(remaining_budget_milliseconds 'result-before')))" '
   {
     schema_version: 1,
@@ -3818,20 +4124,28 @@ jq -n \
         zcash_funder: $zcash_fund_submitter,
         lez_claimant: $lez_revealing_claim_submitter,
         zcash_claimant: $zcash_claim_submitter
-      } else {
+      } elif $journey == "refund" then {
         zcash_funder: $zcash_fund_submitter,
         lez_refunder: "taker",
         zcash_refunder: "maker"
+      } else {
+        zcash_funder: $zcash_fund_submitter,
+        lez_refunder: null,
+        zcash_refunder: "taker"
       } end),
     atomic_order_observed:
       (if $journey == "claim" then [
         "zcash_funded_and_confirmed",
         "lez_revealing_claim_submitted",
         "zcash_followup_claim_submitted_and_confirmed"
-      ] else [
+      ] elif $journey == "refund" then [
         "zcash_funded_and_confirmed",
         "lez_refund_finalized",
         "zcash_refund_submitted_and_confirmed"
+      ] else [
+        "zcash_funded_and_confirmed",
+        "maker_lez_second_lock_absent",
+        "zcash_first_lock_refund_submitted_and_confirmed"
       ] end),
     refund_path:
       (if $journey == "refund" then {
@@ -3853,6 +4167,20 @@ jq -n \
         maker_supervisor_restarted_after_lez_refund_finality: true,
         deterministic_local_chain_funds: true
       } else null end),
+    first_lock_refund_path:
+      (if $journey == "first_lock_refund" then {
+        zcash_refund_transaction_id: $zcash_refund_txid,
+        maker_second_lock_absence_sha256: $m7_maker_absence_sha256,
+        zcash_refund_window_sha256: $m7_refund_window_sha256,
+        zcash_refund_inclusion_sha256: $m7_refund_inclusion_sha256,
+        taker_terminal_replay_sha256: $m7_taker_terminal_replay_sha256,
+        maker_terminal_sha256: $m7_maker_terminal_sha256,
+        signed_deadline_unchanged: true,
+        maker_supervisor_absent_before_effects: true,
+        maker_second_lock_submitted: false,
+        exact_terminal_replay_has_no_new_chain_effect: true,
+        deterministic_local_chain_funds: true
+      } else null end),
     drive_rounds: $drive_rounds,
     same_run_drive_retries: $drive_retry_count,
     elapsed_milliseconds_from_provisioning: $elapsed_ms,
@@ -3865,13 +4193,16 @@ jq -n \
       terminal_projection_receipt_sha256:
         (if $m5_application_mode == 1 then $terminal_projection_sha256 else null end),
       maker_lock_intent_sha256:
-        (if $m5_application_mode == 1 then $maker_lock_intent_sha256 else null end),
+        (if $m5_application_mode == 1 and $journey != "first_lock_refund"
+         then $maker_lock_intent_sha256 else null end),
       exact_funding_mempool_sha256:
         (if $m5_application_mode == 1 then $exact_funding_mempool_sha256 else null end),
       maker_supervisor_trace_sha256:
-        (if $m5_application_mode == 1 then $maker_supervisor_trace_sha256 else null end),
+        (if $m5_application_mode == 1 and $journey != "first_lock_refund"
+         then $maker_supervisor_trace_sha256 else null end),
       maker_supervisor_final_sha256:
-        (if $m5_application_mode == 1 then $maker_supervisor_final_sha256 else null end),
+        (if $m5_application_mode == 1 and $journey != "first_lock_refund"
+         then $maker_supervisor_final_sha256 else null end),
       taker_acceptance_receipt_sha256:
         (if $m5_application_mode == 1 then $taker_acceptance_receipt_sha256 else null end),
       taker_claim_trace_sha256:
@@ -3895,8 +4226,11 @@ jq -n \
       expected_zebra_funding_txid:
         (if $m5_application_mode == 1 then $expected_zebra_funding_txid else null end),
       maker_effect_authority:
-        (if $m5_application_mode == 1 then "daemon_supervisor" else null end),
-      maker_daemon_owned_at_terminal_observation: ($m5_application_mode == 1),
+        (if $m5_application_mode != 1 then null
+         elif $journey == "first_lock_refund" then "absent"
+         else "daemon_supervisor" end),
+      maker_daemon_owned_at_terminal_observation:
+        ($m5_application_mode == 1 and $journey != "first_lock_refund"),
       concurrent_direct_maker_effects:
         (if $m5_application_mode == 1 then false else null end),
       fresh_operator_restart_reports_completed:
