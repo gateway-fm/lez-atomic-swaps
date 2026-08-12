@@ -37,6 +37,11 @@ progress generation. It does not attempt a second owner through either
 Both the forward second-lock Refund journey and this reverse first-lock Refund
 journey enter the same service refund dispatcher. Claim remains a separate
 branch; the journey label cannot silently fall through into it.
+Before a first lock exists, the reverse Refund driver performs the ordinary
+non-terminal Taker drive that creates that lock and returns its typed output to
+the common exact-submission handler. That narrow transition rejects any Claim
+or Refund operation. Once the first lock is confirmed, direct Taker calls stop
+and the owner service alone admits the terminal Refund.
 
 Before mining, a read-only role-aware inspector opens the Taker's durable
 first-lock journal, validates the rebound Maker/Taker config pair, converts the

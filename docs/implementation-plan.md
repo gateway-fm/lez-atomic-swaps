@@ -7735,7 +7735,20 @@ S12/S13 review and policy-deferred public deployment.
   both `refund` and `first_lock_refund` to enter the same generation-fenced
   refund driver; the Claim journey remains separate. Focused source behavior
   is GREEN and no protocol deadline or actor authority changed.
-- [ ] Push the dispatcher correction, retire only the affected Zebra run,
-  provision another fresh isolated Zebra stack and height-104 prehistory, and
-  repeat the exact journey. Only an exact GREEN result may produce a
-  certificate or close F9/U4/S5.
+- [x] Push the dispatcher correction as `f473928`, provision fresh primary-only
+  Zebra run `m7frzecf473928a` and its height-104 prehistory, and repeat as
+  `m7zecfirstrefundf473928a`. The route entered the correct Refund driver but
+  exposed a pre-effect RED: in `awaiting_first_lock` that driver only monitored
+  and never performed the ordinary non-terminal Taker drive needed to create
+  the Taker-funded Zcash lock. Zebra remained height 104, no intent or chain
+  submission existed, and the node remains eligible for an exact rerun from a
+  new private application root.
+- [x] RED then GREEN the first-lock transition. In this reverse journey only,
+  `awaiting_first_lock` performs the existing Taker drive and immediately
+  returns its output to the common exact-submission handler. The branch rejects
+  any follow-up Claim, LEZ Refund, or Zcash Refund operation; after the lock is
+  confirmed, all terminal authority remains exclusively in the owner service's
+  generation-fenced Refund RPC. Focused M6/M7 contracts are GREEN.
+- [ ] Push the initial-drive correction and repeat against the still-pristine
+  isolated Zebra node from a new private application root. Only an exact GREEN
+  result may produce a certificate or close F9/U4/S5.

@@ -68,8 +68,14 @@ if rg -Fq '"$actor_bin" --config "$taker_config" drive' <<<"$absence_helper"; th
 fi
 
 refund_helper="$(sed -n '/^drive_m6_taker_refund() {/,/^}/p' "$runner")"
+for required in \
+  'if (( ${m7_zec_first_lock_refund:-0} == 1 )) && [[ "$state" == awaiting_first_lock ]]; then' \
+  'output="$(drive_actor taker "$taker_config" "$round")"'; do
+  rg -Fq -- "$required" <<<"$refund_helper" ||
+    fail "first-lock refund cannot create its non-terminal Taker lock: ${required}"
+done
 rg -Fq -- \
-  'if (( m6_refund_admitted == 0 && m7_zec_first_lock_refund == 0 )); then' \
+  'if (( m6_refund_admitted == 0 && ${m7_zec_first_lock_refund:-0} == 0 )); then' \
   <<<"$refund_helper" ||
   fail 'first-lock refund still enters the direct Taker actor precheck'
 

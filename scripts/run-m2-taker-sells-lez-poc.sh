@@ -2397,13 +2397,26 @@ drive_m6_taker_refund() {
   local refund_request first_response replay_response claim_response
   local before_set after_set new_set output admission_attempt
 
+  if (( ${m7_zec_first_lock_refund:-0} == 1 )) && [[ "$state" == awaiting_first_lock ]]; then
+    output="$(drive_actor taker "$taker_config" "$round")" || return
+    if jq -e '
+      .operation == "zcash_followup_claim"
+      or .operation == "lez_refund" or .operation == "zcash_refund"
+    ' <<<"$output" >/dev/null; then
+      echo 'direct Taker drive crossed the M7 first-lock-only boundary' >&2
+      return 1
+    fi
+    printf '%s\n' "$output"
+    return 0
+  fi
+
   case "$state" in
     refunded)
       jq -c '.result' <<<"$monitor_response"
       return 0
       ;;
     awaiting_first_lock|awaiting_second_lock|both_legs_locked|refund_available)
-      if (( m6_refund_admitted == 0 && m7_zec_first_lock_refund == 0 )); then
+      if (( m6_refund_admitted == 0 && ${m7_zec_first_lock_refund:-0} == 0 )); then
         "$actor_bin" --config "$taker_config" status >"$status_file"
         if ! jq -e '
           .role == "taker" and .state == "active"
