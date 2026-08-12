@@ -44,7 +44,8 @@ cleanup() {
   rm -rf -- "$test_root"
 }
 trap cleanup EXIT
-readonly expected_commit="$(git rev-parse --verify HEAD)"
+expected_commit="$(git rev-parse --verify HEAD)"
+readonly expected_commit
 manifests=()
 
 for pair in xmr zec; do
