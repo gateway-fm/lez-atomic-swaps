@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "kind": "m7_actual_local_zec_first_lock_refund",
+  "result": "passed",
+  "run_id": "m7zecfirstrefund8981e32a",
+  "repository_commit": "8981e324b300038401cec93844c60f659ab87901",
+  "swap_id": "m7zecfirstrefund8981e32a-swap",
+  "guest": {
+    "elf_sha256": "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee",
+    "image_id": "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  },
+  "deployment": {
+    "lez_source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+    "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+    "genesis_block_hash": "99dbead360267a60d233a07a11fc347a067a1c9ffbd5b96397fc882e82d642e4",
+    "transaction_id": "f5f4e7a15c1c87333cc69be9392e0fa576bdb25ca0fad45c127fa16e51cd0b5c",
+    "containing_block_id": 85,
+    "containing_block_hash": "9807313a07815a5f8138ab0ed6676fc0d12fea196290698781bd87954441ac16",
+    "exact_elf_pre_window_occurrences": 0,
+    "exact_elf_post_window_occurrences": 1,
+    "canonical_window_occurrences": 1,
+    "send_attempts": 1,
+    "bedrock_status": "Finalized"
+  },
+  "onboarding": {
+    "roles": [
+      "maker",
+      "taker"
+    ],
+    "fresh_role_identities": true,
+    "finalized_claims": 2,
+    "submission_count": 2,
+    "automatic_submission_retry": false,
+    "swap_effects_started": false,
+    "maker_claim_transaction_id": "03a6a400cbd820421aab8367a6edda14cc8494c6cd26df97ea7e1482719a8673",
+    "maker_claim_finalized_block_id": 100,
+    "taker_claim_transaction_id": "5cefcfbfec953ce06cf9a9af534b018d471ce1afea51ebabab0e575cdcdbd11e",
+    "taker_claim_finalized_block_id": 106
+  },
+  "zcash": {
+    "version": "5.2.0",
+    "source_revision": "62e4a43879c9c86d23ecfcf5a02335eec8a1517d",
+    "network": "Regtest",
+    "peer_count": 0,
+    "initial_tip": 104,
+    "funding_confirmation_tip": 106,
+    "signed_refund_height": 109,
+    "eligible_tip": 109,
+    "final_tip": 110,
+    "funding_transaction_id": "f4111a1f7fb614ac4e7d760e9eccb39b7d5a6ba1fd7db1aa25da555172888db0",
+    "refund_transaction_id": "db066a94221e19dd4de8dd0de1377f51c394fa43d915991e0ce76255715ab470",
+    "refund_block_hash": "b5645d497f67d39e510d081d66472ac830e90aa15bf3270cfcbfdc298740f55e",
+    "refund_block_height": 110,
+    "refund_occurrences": 1,
+    "final_mempool_empty": true,
+    "generate_calls": 3,
+    "generated_blocks": 6
+  },
+  "deadline": {
+    "clock": "regtest_block_height",
+    "accelerated_blocks_after_funding": 3,
+    "protocol_deadline_changed": false,
+    "wall_clock_sleep_used": false
+  },
+  "absence": {
+    "maker_supervisor_absent_before_effects": true,
+    "maker_effect_authority": "absent",
+    "maker_observer_effect_authority": false,
+    "stable_owner_service_samples": 2,
+    "sample_state": "refund_available",
+    "sample_generation": 1,
+    "maker_second_lock_submitted": false,
+    "maker_lez_submissions_before": 0,
+    "maker_lez_submissions_after": 0,
+    "taker_lez_submissions_before": 0,
+    "taker_lez_submissions_after": 0
+  },
+  "application": {
+    "direction": "taker_sells_foreign",
+    "zcash_funder": "taker",
+    "zcash_refunder": "taker",
+    "lez_refunder": null,
+    "terminal_action_authority": "owner_taker_service",
+    "direct_taker_terminal_effects": false,
+    "concurrent_direct_maker_effects": false,
+    "transports_absent_through_terminal_state": true,
+    "fresh_operator_restart_reports_terminal": true,
+    "drive_rounds": 4,
+    "same_run_drive_retries": 0,
+    "elapsed_milliseconds_from_provisioning": 8740
+  },
+  "terminal": {
+    "maker_phase": "refunded",
+    "maker_revision": 2,
+    "taker_phase": "refunded",
+    "taker_revision": 2,
+    "operator_history_phase": "refunded",
+    "operator_status_phase": "refunded"
+  },
+  "replay": {
+    "was_replay": true,
+    "terminal_revision": 2,
+    "zebra_tip_before": 110,
+    "zebra_tip_after": 110,
+    "zebra_mempool_before": [],
+    "zebra_mempool_after": [],
+    "maker_lez_submissions_before": 0,
+    "maker_lez_submissions_after": 0,
+    "taker_lez_submissions_before": 0,
+    "taker_lez_submissions_after": 0,
+    "new_chain_effect": false
+  },
+  "ordering": [
+    "zcash_funded_and_confirmed",
+    "maker_lez_second_lock_absent",
+    "zcash_first_lock_refund_submitted_and_confirmed"
+  ],
+  "atomicity": {
+    "proof_scope": "reverse_zec_first_lock_refund_after_maker_absence",
+    "signed_deadline_preserved": true,
+    "only_funded_leg_was_zcash": true,
+    "maker_lez_effect_absent": true,
+    "refund_owner_was_original_zcash_funder": true,
+    "canonical_refund_confirmed_once": true,
+    "both_roles_terminal": true,
+    "double_collection_observed": false,
+    "argument": "The Taker alone funded the signed reverse-flow Zcash lock. The Maker supervisor and effect authority were absent before funding, two fresh owner-service samples and both empty LEZ journals proved the Maker lock stayed absent, and the unchanged signed CLTV height was reached only by mining isolated Regtest blocks. The owner Taker service then submitted one journaled refund, canonical inclusion was re-read, both roles reached terminal revision two, and an identical service replay changed neither chain."
+  },
+  "cleanup": {
+    "result": "passed",
+    "source_exit_status": 0,
+    "application_processes_absent": true,
+    "sidecar_processes_absent": true,
+    "exact_zebra_resources_absent": true,
+    "shared_effect_free_lez_stack_retained": true,
+    "private_run_material_removed": true,
+    "foreign_resources_targeted": false,
+    "broad_cleanup_used": false
+  },
+  "evidence_sha256": {
+    "result": "be707c9869e4a764e6532c9acbd35f9c3b12941bf8f0f2312d8fa437cc4675cb",
+    "maker_second_lock_absence": "910b5c43d4635b189988a227b364233568d9bb42a4d20de7944cfd6aaaeb264c",
+    "zcash_refund_window": "7d8f01a911672caaa978257a709346a29586b0d9d2d39255c5574a13d8863c3a",
+    "zcash_refund_inclusion": "d100bb2b117503b3030ef8e08b145d0a5a43c93dfb6932428ad77536ec166329",
+    "maker_terminal": "b39d224e240932e1680d98ca4caab67f6b6724d30dc77c4aa91e647fd3cc9420",
+    "taker_terminal_replay": "4dd8fcbb51cd6b47a8f59f8151a3ebe2b515ea24e9367167f4393969b4902c2f",
+    "operator_projection": "66367d6f46afdf449dd4ad6859ef9ac03eb44723028d1fd65cac8473d05ebd38",
+    "taker_funding_intent": "c28b534a397eae25daeadbd223f8e56f61f74abfcdcad2268922448336eed6b3"
+  },
+  "not_proven_by_this_certificate": [
+    "other pair or branch adverse schedules",
+    "Zcash reorganization and replacement handling",
+    "fee-stress and public-network calibration",
+    "public-network deployment"
+  ],
+  "cold_setup_external_resources": [
+    "pinned package, Git, image, and release endpoints when local caches are cold"
+  ],
+  "cold_setup_flakiness": "Cold-cache network availability can block setup; the measured journey itself used only isolated local nodes, zero peers, deterministic local funds, and no wall-clock deadline wait.",
+  "runtime_external_resources": [],
+  "public_rpc_used": false,
+  "faucet_used": false,
+  "public_funds_used": false,
+  "public_deployment": false
+}

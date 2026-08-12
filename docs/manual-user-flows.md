@@ -9549,6 +9549,15 @@ two, and an identical service replay with unchanged Zebra tip/mempool and LEZ
 journals. The component and sequence diagrams plus the atomicity argument are
 in ADR 0199.
 
+The retained pushed-source example is run `m7zecfirstrefund8981e32a` from
+commit `8981e32`. Its sanitized certificate is
+`docs/evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json`; verify it
+without starting nodes or using private material:
+
+```bash
+./scripts/test-m7-zec-first-lock-refund-actual-certificate.sh
+```
+
 Before funding is mined, `m7-taker-first-lock-intent.json` must identify role
 `taker`, operation `zcash_fund`, one durable Zebra transaction ID, a validated
 actor pair, and no disclosed submission bytes. That ID must equal the isolated

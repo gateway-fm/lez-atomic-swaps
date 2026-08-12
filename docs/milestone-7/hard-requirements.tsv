@@ -7,11 +7,11 @@ F5	green	./scripts/test-m7-tag17-actual-certificate.sh	docs/evidence/m7-actual-t
 F6	open	./scripts/test-m4-actual-claim-poc-contract.sh	docs/requirements-traceability.md	Other adversarial boundary races, reorg, fee, and concurrent outcomes
 F7	green	./scripts/test-m7-f7-custom-token-refund-actual-certificate.sh	docs/evidence/m7-actual-f7-custom-token-refund-062b6ba-20260808.json	none
 F8	upstream-deferred	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	LOGOS-021 live Logos price-module ABI compatibility
-F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	ADR 0198 makes both signed ZEC directions real CLI/Chat process-GREEN; complete the exact-node absent-Maker path and remaining daemon-owned all-pair adverse schedules
+F9	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	ADR 0199 exact-node certifies the reverse ZEC absent-Maker refund; complete the remaining daemon-owned all-pair adverse schedules
 U1	green	./scripts/test-m7-xmr-sdk-facade-contract.sh	docs/requirements-traceability.md	none
 U2	green	./scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh	docs/evidence/m7-actual-zec-accepted-process-kill-820001b-20260811.json	none
 U3	green	./scripts/test-m7-maker-all-pair-action-matrix.sh	docs/architecture/0197-compose-maker-all-pair-actions.md	none
-U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Both ZEC directions now preserve role-correct Taker authority through real CLI/Chat; complete exact-node abandoned-counterparty journeys and adverse lifecycle schedules for every supported pair
+U4	open	./scripts/test-m5-service-lifecycle-contract.sh	docs/requirements-traceability.md	Reverse ZEC abandoned-Maker refund is exact-node certified through the owner Taker service; complete remaining pair journeys and adverse lifecycle schedules
 U5	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
 U6	green	./scripts/test-m6-zec-service-runner-contract.sh	docs/requirements-traceability.md	none
 U7	green	./scripts/verify-lez-v02-provisional.sh	docs/requirements-traceability.md	none

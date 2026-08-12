@@ -3102,6 +3102,16 @@ Deadline comparisons are typed by chain and clock domain. ZEC always refunds
 LEZ first and ZEC later by the configured margin. XMR recovery is gated by a
 canonical LEZ event rather than a fictitious Monero deadline.
 
+ADR 0199 instantiates the first branch with the actual user-facing reverse-ZEC
+components: the owner Taker service and actor call Zebra Regtest; a separate
+Maker actor is observation-only; both role sidecars read the local LEZ v0.2
+sequencer/indexer; and the Maker daemon, Delivery, and Chat are absent before
+the first effect. Exact pushed-source run `m7zecfirstrefund8981e32a` certified
+one canonical Taker-owned refund at the unchanged signed height, terminal
+revision two for both roles, and an effect-free identical service replay. The
+checked evidence is
+`docs/evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json`.
+
 ## Offline actor status flow
 
 ```mermaid

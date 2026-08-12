@@ -89,6 +89,7 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m7-maker-all-pair-action-matrix.sh
 ./scripts/test-m7-zec-taker-direction-process.sh
 ./scripts/test-m7-zec-first-lock-refund-contract.sh
+./scripts/test-m7-zec-first-lock-refund-actual-certificate.sh
 ./scripts/test-m7-tag17-actual-poc-contract.sh
 ./scripts/test-m7-tag17-actual-certificate.sh
 ./scripts/test-m7-taker-claim-actual-certificate.sh

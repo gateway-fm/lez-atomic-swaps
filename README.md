@@ -87,6 +87,20 @@ and advanced Zebra only from 104 to 107. Its checked
 [certificate](docs/evidence/m7-actual-zec-accepted-process-kill-820001b-20260811.json)
 is CI-pinned and closes U2.
 
+The complementary reverse-ZEC absence journey is exact pushed-source
+actual-node GREEN under
+[ADR 0199](docs/architecture/0199-recover-reverse-zec-first-lock-without-maker.md).
+Run `m7zecfirstrefund8981e32a` used the normal Taker service to fund Zcash,
+proved the Maker daemon and LEZ second lock absent, preserved the signed refund
+height, confirmed one Taker-owned refund, reached both terminal role states,
+and replayed without a new chain effect. Its checked
+[certificate](docs/evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json)
+uses only isolated LEZ v0.2 and Zebra 5.2.0 Regtest services with deterministic
+local funds, zero peers, no public RPC/faucet/funds/deployment, and no runtime
+external resource. [Manual Flow M7-ZEC-1](docs/manual-user-flows.md#flow-m7-zec-1-reverse-first-lock-refund-after-maker-absence)
+documents a fresh reproduction and exact scoped cleanup. This closes that
+reverse-ZEC sub-gap; broader all-pair adverse schedules remain open.
+
 ADR [0174](docs/architecture/0174-join-tag17-to-the-funded-monero-output.md)
 now defines the isolated joined-abandonment runner checkpoint. Its opt-in mode
 funds the exact Stage-A Monero output before Tag17 and re-observes the same

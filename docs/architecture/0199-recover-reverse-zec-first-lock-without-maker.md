@@ -1,6 +1,6 @@
 # ADR 0199: Recover the reverse ZEC first lock without Maker
 
-Status: Accepted for exact local-node certification
+Status: Accepted and exact pushed-source local-node GREEN on `8981e32`
 
 ## Context
 
@@ -145,7 +145,15 @@ a partial LEZ loss through this path.
 - The default M5/M6 forward route is unchanged.
 - Public deployment remains configuration plus the required on-chain
   deployment; this certificate uses only isolated local nodes.
-- Exact-node evidence is required before F9, U4, or S5 may close.
+- Checked exact-node evidence now closes the reverse-ZEC absent-Maker sub-gap;
+  F9, U4, and S5 remain open for their other all-pair adverse journeys.
 - A reverse application must not supply the Taker-owned preimage to the Maker
   daemon merely to satisfy process startup.
 - No external security review or security-completion claim is part of this ADR.
+
+Exact run `m7zecfirstrefund8981e32a` used Zebra 5.2.0 Regtest with zero peers
+and the retained local LEZ v0.2 stack. It advanced Zebra from height 104 to
+110, preserved signed refund height 109, and confirmed refund transaction
+`db066a94...ab470` once in canonical block `b5645d49...f55e`. The checked
+certificate is
+`docs/evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json`.

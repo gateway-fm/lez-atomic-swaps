@@ -7801,7 +7801,22 @@ S12/S13 review and policy-deferred public deployment.
   Maker observation binding and rejects a fourth operation requirement. The
   terminal revision-2 check remains explicit. Focused M6/M7 contracts and
   shell syntax are GREEN.
-- [ ] Push the duplicate-assertion correction, retire only the affected Zebra
-  run, provision a fresh isolated node and height-104 prehistory, and repeat
-  the exact journey. Only an exact GREEN result may produce a certificate or
-  close F9/U4/S5.
+- [x] Push the duplicate-assertion correction as `8981e32`, retire only the
+  affected Zebra run, provision fresh isolated Zebra run
+  `m7frzec8981e32a` with height-104 prehistory, and repeat from exact pushed
+  source as `m7zecfirstrefund8981e32a`. The real Taker service funded Zcash,
+  two fresh owner-service samples plus empty role-local LEZ journals proved the
+  Maker lock absent, the unchanged signed height 109 admitted one Taker-owned
+  refund, and canonical block 110 contained that refund exactly once. Both
+  roles reached `refunded` revision two; an identical service replay changed
+  neither Zebra nor LEZ, and the fresh offline operator projection also read
+  terminal `refunded` without chain RPC.
+- [x] Publish and CI-pin the sanitized exact-source certificate
+  `docs/evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json`.
+  Its contract rejects private or run-local fields and pins the local node
+  versions, role/effect ownership, signed deadline, canonical inclusion,
+  terminal replay, external-resource disclosure, and eight source-evidence
+  hashes. The exact Zebra project, application processes, sidecars, and private
+  run root are absent; the shared effect-free LEZ v0.2 stack is retained for
+  the next M7 actual-node slice. This closes the reverse-ZEC absence sub-gap in
+  F9/U4/S5, not those broader all-pair rows.
