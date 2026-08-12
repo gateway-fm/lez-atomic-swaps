@@ -7874,3 +7874,14 @@ S12/S13 review and policy-deferred public deployment.
   version 22. This changes no schema or runtime behavior; it restores the
   test's stated requirement to be updated whenever migrations advance.
 - [ ] Push the audit correction and repeat with a fresh exact run ID.
+- [x] Push audit correction `21de60b` and repeat as
+  `m7reorg21de60ba`. The restart/removal prerequisite passed in 67.73 seconds,
+  and the fork test reached the higher-work replacement. The added assertion
+  incorrectly required the detached Claim lookup to fail; Zebra 5.2.0 retains
+  an indexed transaction response with `in_active_chain = false`. Exact
+  cleanup passed and no evidence packet was written.
+- [x] RED then GREEN the honest detached-transaction classification. Accept an
+  unavailable lookup or require an indexed response to be explicitly outside
+  the active chain; record which shape Zebra returned and keep the stronger
+  `detached_claim_is_not_active` outcome.
+- [ ] Push and repeat from a fresh exact run ID.

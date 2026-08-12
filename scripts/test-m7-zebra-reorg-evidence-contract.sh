@@ -14,6 +14,7 @@ for required in \
   'M7_ZEBRA_REORG_EVIDENCE' \
   'm7_actual_zebra_competing_fork' \
   'old_branch_detached' \
+  'detached_claim_is_not_active' \
   'replacement_branch_canonical' \
   'shared_refund_survived_reorg' \
   'conflicting_refund_replaced_claim' \

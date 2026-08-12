@@ -20,10 +20,11 @@ overwrite another run. The evidence records the common height, old and
 replacement branch hashes/heights, the detached Claim, canonical conflicting
 Refund, canonical shared Refund, and the exact outcome booleans.
 
-After the longer branch becomes canonical, explicitly require the old Claim's
-verbose transaction lookup to fail, the conflicting Refund to be active with
-at least four confirmations, the unrelated Refund to remain confirmed, and
-every detached height to match the fork node's replacement branch. Raw
+After the longer branch becomes canonical, explicitly require the old Claim to
+be unavailable or indexed with `in_active_chain = false`, the conflicting
+Refund to be active with at least four confirmations, the unrelated Refund to
+remain confirmed, and every detached height to match the fork node's
+replacement branch. Raw
 transactions, keys, endpoints, process identities, and filesystem locations
 are excluded.
 
@@ -53,7 +54,7 @@ sequenceDiagram
     T->>P: Relay replacement blocks
     P-->>T: Higher-work branch is canonical
     T->>P: Query old Claim
-    P-->>T: Detached Claim unavailable
+    P-->>T: Detached and not active
     T->>P: Query conflicting Refund
     P-->>T: Canonical with four confirmations
     T->>P: Query shared Refund

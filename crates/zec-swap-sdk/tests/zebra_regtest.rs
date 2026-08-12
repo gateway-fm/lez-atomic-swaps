@@ -541,10 +541,17 @@ async fn assert_and_record_reorg_outcome(
             rpc_params![detached_claim_transaction_id, 1],
         )
         .await;
-    assert!(
-        detached_claim.is_err(),
-        "the conflicting canonical refund must evict the detached claim"
-    );
+    let detached_claim_lookup = match detached_claim {
+        Ok(value) => {
+            assert_eq!(
+                value.get("in_active_chain").and_then(Value::as_bool),
+                Some(false),
+                "the conflicting canonical refund must detach the old claim"
+            );
+            "indexed_detached"
+        }
+        Err(_) => "unavailable",
+    };
     if let Ok(evidence_path) = std::env::var("M7_ZEBRA_REORG_EVIDENCE") {
         write_reorg_evidence(
             Path::new(&evidence_path),
@@ -554,6 +561,7 @@ async fn assert_and_record_reorg_outcome(
             replacement_first_hash,
             replacement_tip_hash,
             detached_claim_transaction_id,
+            detached_claim_lookup,
             replacement_refund_transaction_id,
             shared_refund_transaction_id,
         );
@@ -569,6 +577,7 @@ fn write_reorg_evidence(
     replacement_first_hash: &str,
     replacement_tip_hash: &str,
     detached_claim_transaction_id: &str,
+    detached_claim_lookup: &str,
     replacement_refund_transaction_id: &str,
     shared_refund_transaction_id: &str,
 ) {
@@ -595,10 +604,12 @@ fn write_reorg_evidence(
         },
         "transactions": {
             "detached_claim": detached_claim_transaction_id,
+            "detached_claim_lookup": detached_claim_lookup,
             "canonical_conflicting_refund": replacement_refund_transaction_id,
             "canonical_shared_refund": shared_refund_transaction_id
         },
         "old_branch_detached": true,
+        "detached_claim_is_not_active": true,
         "replacement_branch_canonical": true,
         "shared_refund_survived_reorg": true,
         "conflicting_refund_replaced_claim": true,
