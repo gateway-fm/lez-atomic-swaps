@@ -23,6 +23,13 @@ generation-fenced `taker_swap_refund_v1` method invokes the existing actor
 `recover` command. The Maker actor is used afterwards only to observe the
 Taker-owned refund and reach the same terminal revision.
 
+Chat authority is also direction-aware. `TakerSellsForeign` leaves the claim
+preimage only in the Taker actor inputs; the Maker daemon retains its own
+recovery key and actor-provisioning authority but starts without a preimage.
+Agreement completion requires that optional preimage exactly when the signed
+agreement makes Maker the LEZ claimant. This prevents a reverse-flow shortcut
+from copying Taker custody into the Maker process.
+
 ```mermaid
 flowchart LR
     U[Taker user] --> C[lez taker CLI]
@@ -48,6 +55,7 @@ sequenceDiagram
     participant M as Maker observer
 
     Note over S,M: Maker daemon stopped before first chain effect
+    Note over T,M: Taker alone holds the reverse-flow claim preimage
     T->>Z: Submit signed Zcash first lock
     Z-->>T: Two canonical confirmations
     M->>Z: Observe exact Taker first lock
@@ -87,4 +95,6 @@ a partial LEZ loss through this path.
 - Public deployment remains configuration plus the required on-chain
   deployment; this certificate uses only isolated local nodes.
 - Exact-node evidence is required before F9, U4, or S5 may close.
+- A reverse application must not supply the Taker-owned preimage to the Maker
+  daemon merely to satisfy process startup.
 - No external security review or security-completion claim is part of this ADR.

@@ -95,7 +95,7 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
         delivery: &delivery,
         key_file: &key_file,
         claim_key_file: &claim_key_file,
-        claim_preimage_file: &claim_preimage_file,
+        claim_preimage_file: None,
         actor_root: &actor.root,
         actor_source_config: &actor.source_config,
         actor_program: &actor.program,
@@ -215,7 +215,7 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         delivery: &delivery,
         key_file: &key_file,
         claim_key_file: &claim_key_file,
-        claim_preimage_file: &claim_preimage_file,
+        claim_preimage_file: Some(&claim_preimage_file),
         actor_root: &actor.root,
         actor_source_config: &actor.source_config,
         actor_program: &actor.program,
@@ -2197,7 +2197,7 @@ struct DaemonPaths<'a> {
     delivery: &'a std::path::Path,
     key_file: &'a std::path::Path,
     claim_key_file: &'a std::path::Path,
-    claim_preimage_file: &'a std::path::Path,
+    claim_preimage_file: Option<&'a std::path::Path>,
     actor_root: &'a Path,
     actor_source_config: &'a Path,
     actor_program: &'a Path,
@@ -2223,8 +2223,6 @@ fn daemon_command(paths: &DaemonPaths<'_>) -> Command {
         .arg("m5-chat-claim-key-v1")
         .arg("--maker-claim-key-file")
         .arg(paths.claim_key_file)
-        .arg("--maker-claim-preimage-file")
-        .arg(paths.claim_preimage_file)
         .arg("--zec-source-maker-config")
         .arg(paths.actor_source_config)
         .arg("--zec-maker-actor-root")
@@ -2233,6 +2231,11 @@ fn daemon_command(paths: &DaemonPaths<'_>) -> Command {
         .arg(paths.actor_program)
         .arg("--zec-actor-program-sha256")
         .arg(paths.actor_program_sha256);
+    if let Some(claim_preimage_file) = paths.claim_preimage_file {
+        command
+            .arg("--maker-claim-preimage-file")
+            .arg(claim_preimage_file);
+    }
     command
 }
 

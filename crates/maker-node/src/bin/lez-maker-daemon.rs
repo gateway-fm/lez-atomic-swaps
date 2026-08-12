@@ -105,7 +105,6 @@ struct Arguments {
         requires_all = [
             "delivery_directory",
             "maker_claim_key_file",
-            "maker_claim_preimage_file",
             "zec_source_maker_config",
             "zec_maker_actor_root",
             "zec_actor_program",
@@ -114,7 +113,7 @@ struct Arguments {
     )]
     maker_claim_key_id: Option<Box<str>>,
     /// Owner-only file containing one raw 32-byte claim-recovery key.
-    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_preimage_file"])]
+    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id"])]
     maker_claim_key_file: Option<PathBuf>,
     /// Owner-only file containing the maker-owned 32-byte claim preimage.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
@@ -127,7 +126,6 @@ struct Arguments {
             "delivery_directory",
             "maker_claim_key_id",
             "maker_claim_key_file",
-            "maker_claim_preimage_file",
             "zec_maker_actor_root",
             "zec_actor_program",
             "zec_actor_program_sha256"
@@ -1069,12 +1067,16 @@ fn maker_context(
         zec_actor_provisioner,
     ) {
         (None, None, None, None) => None,
-        (Some(claim_key_id), Some(claim_key_file), Some(preimage_file), Some(provisioner)) => {
+        (Some(claim_key_id), Some(claim_key_file), preimage_file, Some(provisioner)) => {
             let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;
             let claim_key = ProtectedClaimKey::new(claim_key_id, *claim_key_material)
                 .context("validate maker claim-recovery key ID")?;
-            let preimage_material = load_raw_secret(preimage_file, "maker claim preimage")?;
-            let preimage = ClaimPreimage::new(*preimage_material);
+            let preimage = preimage_file
+                .map(|path| {
+                    load_raw_secret(path, "maker claim preimage")
+                        .map(|material| ClaimPreimage::new(*material))
+                })
+                .transpose()?;
             let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
                 &arguments.database,
                 Participant::Maker,
@@ -1115,7 +1117,7 @@ fn maker_context(
     let context = MakerRpc::with_delivery_transport(store, delivery, signing_key);
     let context = match zec_authority {
         Some((recovery_store, preimage, provisioner)) => {
-            context.with_zec_chat_authority(recovery_store, preimage, Some(provisioner))
+            context.with_directional_zec_chat_authority(recovery_store, preimage, Some(provisioner))
         }
         None => context,
     };

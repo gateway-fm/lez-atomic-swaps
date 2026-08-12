@@ -75,14 +75,16 @@ case "$direction" in
   taker_sells_lez)
     direction_cli='taker-sells-lez'
     direction_json='TakerSellsLez'
+    maker_claim_preimage_file="$source_actors_root/maker/claim-preimage.key"
     ;;
   taker_sells_foreign)
     direction_cli='taker-sells-foreign'
     direction_json='TakerSellsForeign'
+    maker_claim_preimage_file=''
     ;;
   *) fail 'direction must be taker_sells_lez or taker_sells_foreign' ;;
 esac
-readonly direction_cli direction_json
+readonly direction_cli direction_json maker_claim_preimage_file
 for path in "$source_actors_root" "$source_provision_summary" \
   "$output_actors_root" "$application_root" "$evidence_dir" \
   "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
@@ -127,15 +129,21 @@ fi
   fail 'actor program has multiple links'
 [[ "$(sha256sum "$actor_program" | cut -d ' ' -f1)" == "$actor_program_sha256" ]] ||
   fail 'actor program SHA-256 changed'
-for private_file in \
+private_files=(
   "$source_provision_summary" \
   "$source_actors_root/shared/agreement-v2.borsh" \
   "$source_actors_root/maker/actor-config.json" \
   "$source_actors_root/taker/actor-config.json" \
   "$source_actors_root/maker/zcash.key" \
   "$source_actors_root/taker/zcash.key" \
-  "$source_actors_root/maker/claim-recovery.key" \
-  "$source_actors_root/maker/claim-preimage.key"; do
+  "$source_actors_root/maker/claim-recovery.key")
+maker_claim_preimage_arguments=()
+if [[ -n "$maker_claim_preimage_file" ]]; then
+  private_files+=("$maker_claim_preimage_file")
+  maker_claim_preimage_arguments=(--maker-claim-preimage-file "$maker_claim_preimage_file")
+fi
+readonly private_files maker_claim_preimage_arguments
+for private_file in "${private_files[@]}"; do
   [[ -f "$private_file" && ! -L "$private_file" ]] || \
     fail "private input is unavailable or unsafe: $private_file"
   [[ "$(stat -c %a -- "$private_file")" == 600 ]] || \
@@ -292,7 +300,7 @@ start_daemon() {
     --delivery-signing-key-file "$source_actors_root/maker/zcash.key" \
     --maker-claim-key-id "${run_id}-maker-claim" \
     --maker-claim-key-file "$source_actors_root/maker/claim-recovery.key" \
-    --maker-claim-preimage-file "$source_actors_root/maker/claim-preimage.key" \
+    "${maker_claim_preimage_arguments[@]}" \
     --zec-source-maker-config "$source_actors_root/maker/actor-config.json" \
     --zec-maker-actor-root "$actor_root" \
     --zec-actor-program "$actor_program" \

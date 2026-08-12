@@ -1255,6 +1255,11 @@ It uses only operator-owned loopback LEZ v0.2 and Zebra Regtest RPCs and local
 deterministic funds. No public RPC or faucet participates. Host pressure,
 local-finality lag, port collisions, stale manifests, or cold pinned-image
 acquisition can fail a run and require a fresh isolated retry.
+In the reverse direction, the claim preimage remains Taker-owned and is not
+passed to the Maker Chat daemon; the signed agreement selects whether Maker
+preimage authority is required. Preserve warm release targets during routine
+run cleanup when possible, because removing them adds build latency without
+improving functional isolation.
 These component flows use only owner-private local Unix sockets, SQLite,
 Delivery, signing, raw claim-recovery and preimage files; they use no chain RPC, Docker, faucet,
 public funds, public price feed, or external network at runtime. The composed

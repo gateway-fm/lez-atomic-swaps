@@ -9517,6 +9517,13 @@ only the isolated Zebra chain from the confirmed funding height to the refund
 height carried by the signed agreement. That accelerates Regtest time for the
 test; it does not change the CLTV or production policy.
 
+For this reverse direction the claim preimage exists only in Taker's
+owner-private actor inputs. The Maker Chat daemon deliberately starts without
+that file; do not copy or point it at Taker's preimage. Maker keeps only its
+own recovery key, Zcash key, signer, and actor-provisioning inputs. The forward
+direction continues to provide Maker's own preimage because the signed roles
+require it there.
+
 Inspect only the secret-free evidence:
 
 ```bash
@@ -9545,3 +9552,9 @@ manifests, or partially reused chain state. Any such failure invalidates the
 run; start fresh rather than treating it as evidence. Stop only the exact
 containers, networks, and processes named by the two run manifests, and never
 broad-prune while another activity exists.
+
+Cold cleanup can also remove the ordinary release caches: the measured fresh
+rebuild was 5m41s for the ZEC actor, 7m40s for application binaries, and
+16m07s for the LEZ sidecar. Keep those source-keyed target directories when
+disk pressure permits; clean completed run roots and exact run-owned Docker
+resources first. This affects iteration time only, not chain finality.

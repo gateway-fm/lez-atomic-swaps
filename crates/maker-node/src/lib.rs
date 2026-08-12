@@ -252,13 +252,32 @@ impl MakerRpc {
     /// Attaches ZEC agreement acceptance and Maker actor authority.
     #[must_use]
     pub fn with_zec_chat_authority(
-        mut self,
+        self,
         completion_store: SqliteZecRecoveryStore,
         maker_claim_preimage: ClaimPreimage,
         actor_provisioner: Option<ZecMakerActorProvisioner>,
     ) -> Self {
+        self.with_directional_zec_chat_authority(
+            completion_store,
+            Some(maker_claim_preimage),
+            actor_provisioner,
+        )
+    }
+
+    /// Attaches direction-aware ZEC agreement and Maker actor authority.
+    ///
+    /// The Maker preimage is absent when the accepted direction assigns that
+    /// material to the Taker. Agreement completion rejects an absent preimage
+    /// if and only if the signed agreement makes the Maker the LEZ claimant.
+    #[must_use]
+    pub fn with_directional_zec_chat_authority(
+        mut self,
+        completion_store: SqliteZecRecoveryStore,
+        maker_claim_preimage: Option<ClaimPreimage>,
+        actor_provisioner: Option<ZecMakerActorProvisioner>,
+    ) -> Self {
         self.zec_completion_store = Some(Arc::new(completion_store));
-        self.maker_claim_preimage = Some(Arc::new(maker_claim_preimage));
+        self.maker_claim_preimage = maker_claim_preimage.map(Arc::new);
         self.zec_actor_provisioner = actor_provisioner.map(Arc::new);
         self
     }

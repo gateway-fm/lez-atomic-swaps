@@ -7630,3 +7630,23 @@ S12/S13 review and policy-deferred public deployment.
   exact no-effect replay. The focused M5, M6, route, and new M7 contracts plus
   all 53 ZEC actor tests are GREEN. F9/U4/S5 remain open until the exact pushed
   source completes on fresh isolated LEZ v0.2 and Zebra Regtest nodes.
+- [x] Provision fresh isolated LEZ v0.2 and Zebra 5.2.0 nodes, finalize the
+  pinned escrow deployment exactly once, finalize two fresh Vault Claims, and
+  mature Zebra to height 104. The first exact pushed-source application run
+  then produced a bounded RED before any swap effect: reverse Chat startup
+  still required the absent Maker `claim-preimage.key`, while role-correct
+  provisioning placed that material only with Taker. LEZ swap journals were
+  not opened and Zebra remained unchanged. Cold cache loss measured 5m41s for
+  the ZEC actor, 7m40s for application binaries, and 16m07s for the sidecar;
+  retain warm release targets when cleaning only per-run evidence.
+- [x] RED then GREEN direction-aware Maker Chat authority. The reverse real
+  process test now starts with Maker recovery/provisioning authority but no
+  preimage, while the forward process retains Maker-owned preimage input. The
+  signed agreement remains the final guard: completion requires a Maker
+  preimage if and only if Maker is its LEZ claimant. Both handoff and later
+  supervised-daemon startup omit the preimage in `TakerSellsForeign`; no
+  Taker secret is copied across roles.
+- [ ] Push the role-custody correction and repeat the complete first-lock,
+  signed-height refund, terminal observation, and no-effect replay against the
+  already-fresh untouched nodes. Only a GREEN exact pushed-source result may
+  close F9/U4/S5 or produce the sanitized certificate.

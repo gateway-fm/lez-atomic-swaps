@@ -41,8 +41,16 @@ for required in \
   '--direction) direction=' \
   'taker_sells_foreign)' \
   "direction_cli='taker-sells-foreign'" \
+  "maker_claim_preimage_file=''" \
+  'maker_claim_preimage_arguments=()' \
   '--direction "$direction_cli"'; do
   rg -Fq -- "$required" "$handoff" || fail "handoff is missing: ${required}"
+done
+
+for required in \
+  'maker_claim_preimage_arguments=()' \
+  'if [[ "$POC_DIRECTION" == taker_sells_lez ]]'; do
+  rg -Fq -- "$required" "$runner" || fail "runner is missing role-correct preimage custody: ${required}"
 done
 
 if rg -Fq 'currently requires POC_DIRECTION=taker_sells_lez' "$runner"; then

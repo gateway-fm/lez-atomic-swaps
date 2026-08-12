@@ -424,7 +424,12 @@ capture_m5_supervised_maker_status() {
 start_m5_full_supervised_daemon() {
   local instance="${1:-initial}"
   local ready_file log actor_attempt_timeout_ms=20000
-  local -a test_pause_arguments=()
+  local -a test_pause_arguments=() maker_claim_preimage_arguments=()
+  if [[ "$POC_DIRECTION" == taker_sells_lez ]]; then
+    maker_claim_preimage_arguments=(
+      --maker-claim-preimage-file "$provision_actors_root/maker/claim-preimage.key"
+    )
+  fi
   case "$instance" in
     initial)
       ready_file="${application_root}/runtime/ready-supervised"
@@ -459,7 +464,7 @@ start_m5_full_supervised_daemon() {
     --delivery-signing-key-file "$provision_actors_root/maker/zcash.key" \
     --maker-claim-key-id "${run_id}-maker-claim" \
     --maker-claim-key-file "$provision_actors_root/maker/claim-recovery.key" \
-    --maker-claim-preimage-file "$provision_actors_root/maker/claim-preimage.key" \
+    "${maker_claim_preimage_arguments[@]}" \
     --zec-source-maker-config "$provision_actors_root/maker/actor-config.json" \
     --zec-maker-actor-root "$m5_maker_actor_root" \
     --zec-actor-program "$m5_actor_program" \
