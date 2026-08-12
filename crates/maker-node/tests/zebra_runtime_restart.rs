@@ -1,6 +1,12 @@
 //! Real-node restart proof for the maker Zcash observation runtime.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use jsonrpsee::{core::client::ClientT, rpc_params};
 use jsonrpsee_http_client::{HttpClient, HttpClientBuilder};
@@ -519,6 +525,156 @@ fn assert_removal_survives_restart(
     assert_eq!(journal_rows, 2);
 }
 
+struct ApplicationReorgEvidence<'a> {
+    funding: &'a RealFunding,
+    transaction_id: &'a str,
+    replacement_tip: u32,
+    remined: &'a CanonicalZcashOutputObservation,
+    mempool_survived_detach: bool,
+    rebroadcast_used: bool,
+    journal_events: usize,
+}
+
+fn write_application_reorg_evidence(evidence: &ApplicationReorgEvidence<'_>) {
+    let Ok(evidence_path) = std::env::var("M7_ZEBRA_APPLICATION_REORG_EVIDENCE") else {
+        return;
+    };
+    let packet = json!({
+        "schema_version": 1,
+        "kind": "m7_actual_zebra_application_reorg_continuation",
+        "result": "passed",
+        "network": "Regtest",
+        "transaction_id": evidence.transaction_id,
+        "initial_inclusion_height": u32::from(evidence.funding.canonical.block_height()),
+        "replacement_tip_before_remine": evidence.replacement_tip,
+        "remined_height": u32::from(evidence.remined.block_height()),
+        "mempool_survived_detach": evidence.mempool_survived_detach,
+        "rebroadcast_used": evidence.rebroadcast_used,
+        "exact_transaction_reused": true,
+        "funding_removed": true,
+        "funding_remined": true,
+        "swap_resumed": true,
+        "phase_after_removal": "offered",
+        "phase_after_restore": "taker_lock_confirmed",
+        "removal_revision": 2,
+        "restored_revision": 3,
+        "journal_events": evidence.journal_events,
+        "restart_replay_was_replay": true,
+        "restart_replay_appended_event": false,
+        "automatic_submission_retry": false,
+        "runtime_external_resources": [],
+        "public_rpc_used": false,
+        "faucet_used": false,
+        "public_funds_used": false,
+        "public_deployment": false
+    });
+    let path = Path::new(&evidence_path);
+    assert!(
+        !path.exists(),
+        "refusing to overwrite M7 application reorg evidence"
+    );
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .expect("create owner-private M7 application reorg evidence");
+    serde_json::to_writer_pretty(&mut file, &packet)
+        .expect("write M7 application reorg evidence JSON");
+    file.write_all(b"\n")
+        .expect("terminate M7 application reorg evidence");
+    file.sync_all().expect("sync M7 application reorg evidence");
+}
+
+async fn remine_and_resume_after_restart(
+    client: &HttpClient,
+    database: &Path,
+    swap_id: &SwapId,
+    funding: &RealFunding,
+) {
+    let transaction_id = funding.transaction.txid().to_string();
+    let mempool: Vec<String> = client
+        .request("getrawmempool", rpc_params![])
+        .await
+        .expect("Zebra returns the detached-transaction mempool");
+    let mempool_survived_detach = mempool.contains(&transaction_id);
+    let rebroadcast_used = if mempool_survived_detach {
+        false
+    } else {
+        assert_eq!(
+            broadcast(client, &funding.transaction).await,
+            transaction_id
+        );
+        true
+    };
+
+    let replacement_tip = block_count(client).await;
+    generate_to(client, replacement_tip + 1).await;
+    let remined = canonical_observation(client, &funding.transaction, &funding.expected).await;
+    assert_eq!(remined.transaction_id().to_string(), transaction_id);
+    assert_ne!(
+        remined.block_hash(),
+        funding.canonical.block_hash(),
+        "the exact funding transaction must be re-mined on the replacement branch"
+    );
+
+    let mut store = SqliteSwapStore::open(database).expect("restart before canonical reappearance");
+    let tracker = load_zcash_observation_tracker(&store, swap_id)
+        .expect("replay canonical funding and real removal before resumption");
+    assert_eq!(tracker.current(), None);
+    let event = tracker
+        .propose(&ZcashObservationReconciliation::Canonical(remined.clone()))
+        .expect("the exact detached transaction may reappear canonically")
+        .expect("canonical reappearance is a meaningful event");
+    let restored = apply_zcash_funding_event(&mut store, 2, swap_id, &event)
+        .expect("maker runtime atomically resumes from canonical reappearance");
+    assert_eq!(restored.swap().phase(), Phase::TakerLockConfirmed);
+    assert_eq!(restored.commit().revision(), 3);
+    assert!(!restored.commit().was_replay());
+    assert_eq!(
+        restored.swap().funding_transaction_id(Participant::Taker),
+        Some(transaction_id.as_str()),
+        "application resumption preserves the immutable funding identity"
+    );
+    drop(store);
+
+    let mut restarted =
+        SqliteSwapStore::open(database).expect("restart after application resumption");
+    assert_eq!(
+        restarted.load(swap_id).unwrap().unwrap().phase(),
+        Phase::TakerLockConfirmed
+    );
+    assert_eq!(
+        load_zcash_observation_tracker(&restarted, swap_id)
+            .expect("replay complete reorg history")
+            .current(),
+        Some(&remined)
+    );
+    let replay = apply_zcash_funding_event(&mut restarted, 2, swap_id, &event)
+        .expect("unknown-outcome reappearance retry converges");
+    assert!(replay.commit().was_replay());
+    assert_eq!(replay.commit().revision(), 3);
+    assert_eq!(replay.swap().phase(), Phase::TakerLockConfirmed);
+    let journal_events = restarted
+        .load_zcash_events(swap_id, Participant::Taker)
+        .expect("load canonical removal and reappearance journal")
+        .len();
+    assert_eq!(
+        journal_events, 3,
+        "terminal replay must not append an event"
+    );
+
+    write_application_reorg_evidence(&ApplicationReorgEvidence {
+        funding,
+        transaction_id: &transaction_id,
+        replacement_tip,
+        remined: &remined,
+        mempool_survived_detach,
+        rebroadcast_used,
+        journal_events,
+    });
+}
+
 #[tokio::test]
 #[ignore = "requires scripts/run-zebra-e2e.sh and two pinned Docker Zebra nodes"]
 async fn canonical_funding_is_requeried_across_store_restart_and_real_removal() {
@@ -558,4 +714,5 @@ async fn canonical_funding_is_requeried_across_store_restart_and_real_removal() 
     );
     drop(store);
     assert_removal_survives_restart(&database, &swap_id, &funding.binding, &event);
+    remine_and_resume_after_restart(&primary, &database, &swap_id, &funding).await;
 }

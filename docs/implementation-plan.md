@@ -7896,3 +7896,22 @@ S12/S13 review and policy-deferred public deployment.
   `docs/evidence/m7-actual-zebra-competing-fork-087c37f-20260812.json` and pin
   its contract in the quality runner. This closes the Zebra consensus/SDK
   checkpoint, not the remaining application-level R1/F6 continuation.
+
+## M7 Zebra application reorg continuation checkpoint (2026-08-12)
+
+- [x] Reuse the real-node `zebra_runtime_restart` Maker-store path: it already
+  commits canonical Zcash funding, restarts, detects a real longer-fork
+  removal, atomically projects the swap back to `Offered`, and replays the
+  removal after another restart.
+- [x] RED a retained evidence contract requiring the exact detached funding to
+  be re-mined, the durable application phase to resume, revisions to remain
+  monotonic, and a final restart/replay to add no journal event. The first
+  run failed on the absent `M7_ZEBRA_APPLICATION_REORG_EVIDENCE` boundary.
+- [x] GREEN the runtime path: accept the detached transaction already returned
+  to the local mempool or rebroadcast the identical signed bytes, mine it on
+  the replacement branch, atomically advance removal revision 2 to restored
+  revision 3, restart, and prove exact replay leaves three journal events.
+- [x] Document its component/sequence flow, atomic store semantics, exact
+  identity requirement, runtime resources, flakiness, and evidence limits in
+  ADR 0202; pin the offline compile contract in the quality runner and policy.
+- [ ] Push source, then certify one fresh exact replay.
