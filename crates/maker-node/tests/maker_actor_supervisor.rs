@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+#[path = "support/btc_fixture.rs"]
+mod btc_fixture;
 mod support;
 #[allow(dead_code)]
 #[path = "support/xmr_chat_fixture.rs"]
@@ -7,9 +10,14 @@ use std::{
     fs::{self, OpenOptions},
     io::Write as _,
     os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
+    path::Path,
+    process::{Child, Command, Output},
+    thread,
     time::{Duration, Instant},
 };
 
+use btc_fixture::BtcAuthorityFixture;
+use btc_reference_actor::ActorConfig as BtcActorConfig;
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorResolution,
@@ -25,7 +33,11 @@ use lez_swap_store::{
     MakerActorManualAction, MakerActorManualActionState, MakerActorProgressObservationV1,
     MakerActorScheduleState, SqliteSwapStore, validate_maker_actor_program,
 };
-use rustix::time::{ClockId, clock_gettime};
+use rustix::{
+    process::{Pid, Signal, kill_process},
+    time::{ClockId, clock_gettime},
+};
+use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 use zec_reference_actor::ActorConfig;
@@ -455,6 +467,395 @@ fn manual_refund_invokes_only_recover_and_atomically_completes_action() {
             .observation(),
         &MakerActorProgressObservationV1::active("refunded", 5, "complete").unwrap()
     );
+}
+
+#[test]
+fn all_pair_manual_actions_execute_semantic_commands_and_replay_after_restart() {
+    run_all_pair_manual_action_matrix();
+}
+
+#[derive(Clone, Copy)]
+struct ManualActionMatrixCase {
+    label: &'static str,
+    seed: u8,
+    kind: MakerActorKindV1,
+    action: MakerActorManualAction,
+    expected_command: &'static str,
+    terminal_phase: &'static str,
+}
+
+fn run_all_pair_manual_action_matrix() {
+    let root = tempdir().expect("isolated all-pair manual-action root");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let cases = [
+        ManualActionMatrixCase {
+            label: "btc-claim",
+            seed: 0x81,
+            kind: MakerActorKindV1::Bitcoin,
+            action: MakerActorManualAction::Claim,
+            expected_command: "drive",
+            terminal_phase: "completed",
+        },
+        ManualActionMatrixCase {
+            label: "btc-refund",
+            seed: 0x82,
+            kind: MakerActorKindV1::Bitcoin,
+            action: MakerActorManualAction::Refund,
+            expected_command: "recover",
+            terminal_phase: "refunded",
+        },
+        ManualActionMatrixCase {
+            label: "xmr-claim",
+            seed: 0x83,
+            kind: MakerActorKindV1::Monero,
+            action: MakerActorManualAction::Claim,
+            expected_command: "claim",
+            terminal_phase: "completed",
+        },
+        ManualActionMatrixCase {
+            label: "xmr-refund",
+            seed: 0x84,
+            kind: MakerActorKindV1::Monero,
+            action: MakerActorManualAction::Refund,
+            expected_command: "recover",
+            terminal_phase: "refunded",
+        },
+        ManualActionMatrixCase {
+            label: "zec-claim",
+            seed: 0x85,
+            kind: MakerActorKindV1::Zcash,
+            action: MakerActorManualAction::Claim,
+            expected_command: "claim",
+            terminal_phase: "completed",
+        },
+        ManualActionMatrixCase {
+            label: "zec-refund",
+            seed: 0x86,
+            kind: MakerActorKindV1::Zcash,
+            action: MakerActorManualAction::Refund,
+            expected_command: "recover",
+            terminal_phase: "refunded",
+        },
+    ];
+
+    for case in cases {
+        assert_manual_action_case(root.path(), case);
+    }
+}
+
+#[allow(clippy::too_many_lines)] // Keep one user-shaped CLI, restart, supervisor, and replay journey visible.
+fn assert_manual_action_case(root: &Path, case: ManualActionMatrixCase) {
+    let case_root = root.join(case.label);
+    fs::create_dir(&case_root).unwrap();
+    fs::set_permissions(&case_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let invocation_log = case_root.join("invocations");
+    let program_path = case_root.join("actor");
+    let program = matrix_actor_program(case, &invocation_log);
+    write_private(&program_path, program.as_bytes(), 0o700);
+
+    let database = case_root.join("maker.sqlite3");
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let swap_id = register_matrix_actor(&mut store, &case_root, &program_path, &program, case);
+    let request_id = RequestId::new(format!("m7-{}-request", case.label)).unwrap();
+    drop(store);
+
+    let runtime = case_root.join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = runtime.join("maker.sock");
+    let ready = runtime.join("ready");
+    let mut daemon = spawn_matrix_daemon(&database, &socket, &ready, false);
+    wait_for_matrix_daemon(&mut daemon, &ready, case.label);
+
+    let action_name = match case.action {
+        MakerActorManualAction::Claim => "claim",
+        MakerActorManualAction::Refund => "refund",
+    };
+    let action_arguments = [
+        action_name,
+        "--id",
+        swap_id.as_str(),
+        "--request-id",
+        request_id.as_str(),
+        "--expected-generation",
+        "0",
+    ];
+    let first = matrix_maker_cli(&socket, &action_arguments);
+    assert_matrix_cli_success(&first, case.label);
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first["swap_id"], swap_id.as_str());
+    assert_eq!(first["action"], action_name);
+    assert_eq!(first["was_replay"], false);
+
+    kill_process(Pid::from_child(&daemon), Signal::TERM).unwrap();
+    let status = daemon.wait().unwrap();
+    assert!(
+        status.success(),
+        "{} admission daemon did not stop cleanly",
+        case.label
+    );
+    daemon = spawn_matrix_daemon(&database, &socket, &ready, true);
+    wait_for_matrix_daemon(&mut daemon, &ready, case.label);
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let terminal = loop {
+        let monitor = matrix_maker_cli(&socket, &["monitor", "--id", swap_id.as_str()]);
+        assert_matrix_cli_success(&monitor, case.label);
+        let monitor: Value = serde_json::from_slice(&monitor.stdout).unwrap();
+        if monitor["schedule_state"] == "terminal"
+            && monitor["manual_action"]["state"] == "completed"
+        {
+            break monitor;
+        }
+        if let Some(status) = daemon.try_wait().unwrap() {
+            panic!(
+                "{} daemon exited before terminal action: {status}",
+                case.label
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} did not terminalize through CLI/daemon supervision: {monitor}",
+            case.label
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(terminal["lease_generation"], 1);
+    assert_eq!(terminal["attempt_count"], 1);
+    assert_eq!(
+        terminal["progress"]["observation"]["phase"],
+        case.terminal_phase
+    );
+    assert_eq!(terminal["progress"]["observation"]["revision"], 4);
+    assert_eq!(
+        terminal["progress"]["observation"]["next_action"],
+        "complete"
+    );
+    let expected_invocations = format!("status\n{}\n", case.expected_command);
+    assert_eq!(
+        fs::read_to_string(&invocation_log).unwrap(),
+        expected_invocations,
+        "{} invoked the wrong pair-semantic command",
+        case.label
+    );
+    let replay = matrix_maker_cli(&socket, &action_arguments);
+    assert_matrix_cli_success(&replay, case.label);
+    let replay: Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(replay["was_replay"], true);
+    assert_eq!(
+        fs::read_to_string(&invocation_log).unwrap(),
+        expected_invocations,
+        "{} replay invoked a second actor effect",
+        case.label
+    );
+    let new_request = RequestId::new(format!("m7-{}-post-terminal", case.label)).unwrap();
+    let rejected = matrix_maker_cli(
+        &socket,
+        &[
+            action_name,
+            "--id",
+            swap_id.as_str(),
+            "--request-id",
+            new_request.as_str(),
+            "--expected-generation",
+            "1",
+        ],
+    );
+    assert!(!rejected.status.success());
+
+    kill_process(Pid::from_child(&daemon), Signal::TERM).unwrap();
+    let status = daemon.wait().unwrap();
+    assert!(
+        status.success(),
+        "{} daemon did not stop cleanly",
+        case.label
+    );
+    let reopened = SqliteSwapStore::open(&database).unwrap();
+    let action = reopened
+        .maker_actor_manual_action(&swap_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(action.state(), MakerActorManualActionState::Completed);
+    assert_eq!(action.lease_generation(), None);
+    let record = reopened
+        .list_maker_actor_processes()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.swap_id() == &swap_id)
+        .unwrap();
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Terminal);
+    assert_eq!(record.attempt_count(), 1);
+    assert_eq!(record.child_identity(), None);
+    assert_eq!(
+        reopened
+            .maker_actor_progress(&swap_id)
+            .unwrap()
+            .unwrap()
+            .observation(),
+        &MakerActorProgressObservationV1::active(case.terminal_phase, 4, "complete").unwrap()
+    );
+}
+
+fn wait_for_matrix_daemon(daemon: &mut Child, ready: &Path, label: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if ready.exists() {
+            return;
+        }
+        if let Some(status) = daemon.try_wait().unwrap() {
+            panic!("{label} daemon exited before readiness: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label} daemon readiness timed out"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn spawn_matrix_daemon(database: &Path, socket: &Path, ready: &Path, supervise: bool) -> Child {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"));
+    command
+        .arg("--socket")
+        .arg(socket)
+        .arg("--database")
+        .arg(database)
+        .arg("--ready-file")
+        .arg(ready);
+    if supervise {
+        command
+            .arg("--actor-supervisor")
+            .arg("--actor-worker-count")
+            .arg("1")
+            .arg("--actor-poll-milliseconds")
+            .arg("10")
+            .arg("--actor-attempt-timeout-milliseconds")
+            .arg("5000");
+    }
+    command.spawn().unwrap()
+}
+
+fn matrix_maker_cli(socket: &Path, arguments: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+        .arg("--socket")
+        .arg(socket)
+        .args(arguments)
+        .output()
+        .unwrap()
+}
+
+fn assert_matrix_cli_success(output: &Output, label: &str) {
+    assert!(
+        output.status.success(),
+        "{label} CLI failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn register_matrix_actor(
+    store: &mut SqliteSwapStore,
+    root: &Path,
+    program_path: &Path,
+    program: &str,
+    case: ManualActionMatrixCase,
+) -> SwapId {
+    let (swap_id, coordinator, config_path, state_path) = match case.kind {
+        MakerActorKindV1::Bitcoin => {
+            let bytes = [case.seed; 32];
+            let id = hex::encode(bytes);
+            let fixture = BtcAuthorityFixture::new(root, case.label, bytes);
+            let config = BtcActorConfig::load_private(&fixture.maker_source_config).unwrap();
+            (
+                SwapId::new(id.clone()).unwrap(),
+                btc_swap(&id),
+                fixture.maker_source_config,
+                config.state_db().to_path_buf(),
+            )
+        }
+        MakerActorKindV1::Monero => {
+            let bytes = [case.seed; 32];
+            let id = hex::encode(bytes);
+            let fixture = XmrChatFixture::new(root, bytes, 1_000_000, 25_000, program_path);
+            (
+                SwapId::new(id.clone()).unwrap(),
+                xmr_swap(&id),
+                fixture.maker_actor_config,
+                fixture.maker_actor_state,
+            )
+        }
+        MakerActorKindV1::Zcash => {
+            let id = format!("m7-{}", case.label);
+            let deployment = actor_deployment(root, &id);
+            let config = ActorConfig::load_private(&deployment.source_config).unwrap();
+            (
+                SwapId::new(id.clone()).unwrap(),
+                swap(&id),
+                deployment.source_config,
+                config.role_state_db().to_path_buf(),
+            )
+        }
+    };
+    store.save(&coordinator).unwrap();
+    store
+        .register_maker_actor(
+            &MakerActorManifestV1::new(
+                swap_id.clone(),
+                case.kind,
+                config_path.clone(),
+                Sha256::digest(fs::read(config_path).unwrap()).into(),
+                program_path.to_path_buf(),
+                Sha256::digest(program.as_bytes()).into(),
+                state_path,
+            )
+            .unwrap(),
+            10,
+        )
+        .unwrap();
+    let record = store
+        .list_maker_actor_processes()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.swap_id() == &swap_id)
+        .unwrap();
+    prepare_maker_actor(&record).expect("matrix actor deployment preflight");
+    swap_id
+}
+
+fn matrix_actor_program(case: ManualActionMatrixCase, invocation_log: &Path) -> String {
+    let status = match case.kind {
+        MakerActorKindV1::Bitcoin => {
+            r#"{"schema_version":1,"role":"maker","state":"active","phase":"offered","revision":0,"next_action":"observe_taker_first_lock"}"#
+        }
+        MakerActorKindV1::Monero => {
+            r#"{"schema_version":1,"actor_program":"xmr-maker-actor","actor_abi":"lez_maker_xmr_pre_effect_v1","role":"maker","state":"active","phase":"offered","revision":0,"next_action":"xmr_chain_effects_not_yet_composed","chain_effect_executed":false}"#
+        }
+        MakerActorKindV1::Zcash => {
+            r#"{"schema_version":1,"role":"maker","state":"active","phase":"both_legs_locked","revision":3,"next_action":"wait"}"#
+        }
+    };
+    let outcome = match case.kind {
+        MakerActorKindV1::Bitcoin => "observed_then_projected",
+        MakerActorKindV1::Monero | MakerActorKindV1::Zcash => case.terminal_phase,
+    };
+    format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         test -r /proc/self/fd/196 || exit 93\n\
+         printf '%s\\n' \"$3\" >> '{}'\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{}' ;;\n\
+           {}) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"{}\",\"outcome\":\"{}\",\"phase\":\"{}\",\"revision\":4,\"next_action\":\"complete\"}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n",
+        invocation_log.display(),
+        status,
+        case.expected_command,
+        case.expected_command,
+        outcome,
+        case.terminal_phase,
+    )
 }
 
 #[test]
@@ -989,6 +1390,24 @@ fn xmr_swap(id: &str) -> SwapCoordinator {
         ConfirmationPolicy::new(2).unwrap(),
         ConfirmationPolicy::new(10).unwrap(),
         RecoverySchedule::xmr_lez_first(ChainPosition::timestamp(Chain::Lez, 20), 2).unwrap(),
+    )
+}
+
+fn btc_swap(id: &str) -> SwapCoordinator {
+    let direction = SwapDirection::TakerSellsForeign;
+    SwapCoordinator::new_with_direction(
+        SwapId::new(id).unwrap(),
+        Pair::Bitcoin,
+        direction,
+        ConfirmationPolicy::new(2).unwrap(),
+        RecoverySchedule::new(
+            Pair::Bitcoin,
+            direction,
+            ChainPosition::block_height(Chain::Lez, 100),
+            ChainPosition::block_height(Chain::Bitcoin, 120),
+            TimelockSafety::between(Chain::Lez, Chain::Bitcoin, 1_000, 1_200, 100).unwrap(),
+        )
+        .unwrap(),
     )
 }
 

@@ -9420,3 +9420,73 @@ Never perform a broad Docker prune or stop another project. Exact run
 legs, exact recovery, finality, accounting, and cleanup with the foreign
 sentinel intact. Its secret-safe checked packet is
 `docs/evidence/m7-actual-maker-tag15-process-kill-e455dec-20260811.json`.
+
+## Flow 1ZN: Repeat every Maker claim and refund action
+
+This ordinary QA flow emulates the Maker user for all six supported terminal
+action routes: BTC, XMR, and ZEC crossed with Claim and Refund. It uses the
+real `lez-maker` CLI, owner Unix RPC, two daemon incarnations, production actor
+supervision, validated role fixtures, isolated subprocesses, and SQLite. The
+actors are deterministic terminal markers, so this flow proves application
+composition and replay rather than new chain effects.
+
+Run the complete matrix:
+
+```bash
+./scripts/test-m7-maker-all-pair-action-matrix.sh
+```
+
+Expected output ends with one Rust test passing and:
+
+```text
+M7 Maker all-pair action matrix passed
+```
+
+```mermaid
+sequenceDiagram
+    actor U as Maker user
+    participant C as lez-maker CLI
+    participant D1 as Admission daemon
+    participant J as Maker SQLite
+    participant D2 as Restarted supervisor
+    participant A as BTC XMR or ZEC actor
+
+    U->>C: Claim or Refund with request and generation 0
+    C->>D1: Owner Unix RPC
+    D1->>J: Queue one durable action
+    D1-->>C: Accepted
+    U->>D1: Stop daemon
+    U->>D2: Restart with supervisor
+    D2->>J: Lease generation 1
+    D2->>A: Status
+    D2->>A: Pair semantic command
+    A-->>D2: Completed or Refunded
+    D2->>J: Commit terminal progress and action
+    U->>C: Repeat identical request
+    C->>D2: Owner Unix RPC
+    D2->>J: Load exact replay
+    J-->>C: Replay without another actor call
+```
+
+For Claim, the invocation log must be `status` followed by `drive` for BTC and
+`claim` for XMR/ZEC. For Refund, every pair must use `status` then `recover`.
+Each case must expose terminal schedule generation 1, attempt count 1,
+completed manual action, pair-correct Completed or Refunded progress, and no
+child identity after daemon shutdown. Repeating the same request must set
+`was_replay` and leave the invocation log byte-identical; a different request
+after terminal state must fail.
+
+The action and actor projection become terminal in one SQLite transaction, and
+the per-swap held lock plus generation lease prevents a second worker from
+using the same authority. Exact replay reads the retained mutation instead of
+opening another action. This gives local application atomicity and no duplicate
+actor invocation; pair-specific actual-node evidence remains the authority for
+cross-chain atomicity and finality.
+
+External resources: none. The test uses temporary owner-only directories,
+Unix sockets, SQLite, and local child processes. It opens no chain RPC, starts
+no Docker project, contacts no faucet, DNS service, peer, public network, or
+public deployment, and uses no funds. Runtime variance is limited to local
+compilation, process scheduling, SQLite/fsync, and CPU/disk pressure. Temporary
+resources are owned by the test process and removed on completion; no global
+Docker cleanup or foreign-resource selector is used.

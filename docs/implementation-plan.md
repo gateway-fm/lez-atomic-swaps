@@ -7588,3 +7588,17 @@ S12/S13 review and policy-deferred public deployment.
   certificate, quality/CI gates, R4 baseline, manual flow, and ledgers close
   R4; the hard inventory is now 28 rows with 10 repository-owned open and 2
   deferred.
+- [x] RED then GREEN the complete Maker semantic action matrix. The first RED
+  had no six-case execution contract. The next joined RED exposed that a
+  future registration time cannot be updated by today's real CLI timestamp;
+  the production store correctly rejected that time regression. ADR 0197
+  therefore uses the real operational sequence: the Maker queues through the
+  CLI and owner RPC, stops the admission daemon, then restarts the same SQLite
+  database under the production supervisor. BTC/XMR/ZEC Claim/Refund pass 6 of
+  6 in 32.84 seconds. BTC Claim invokes `drive`, XMR/ZEC Claim invoke `claim`,
+  and every Refund invokes `recover`; terminal resolution is generation 1,
+  attempt 1, exact replay spawns nothing, a new post-terminal request fails,
+  and reopened SQLite retains completed action/progress with no child identity.
+  The CI-pinned gate closes U3 without claiming marker actors made chain
+  effects. The hard inventory is now 28 rows with 9 repository-owned open and
+  2 deferred; F9/U4/S5 remain open for Taker and adverse actual-node journeys.

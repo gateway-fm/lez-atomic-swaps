@@ -54,6 +54,7 @@ materially affect safe reproduction.
 - [Retained refund-finality decision](../architecture/0172-retain-refund-finality-before-scoped-cleanup.md)
 - [Taker-claim certificate CI decision](../architecture/0189-pin-taker-claim-certificate-in-ci.md)
 - [Maker Tag15 owner-exact recovery decision](../architecture/0196-recover-maker-tag15-after-process-kill.md)
+- [Maker all-pair action composition decision](../architecture/0197-compose-maker-all-pair-actions.md)
 - [LEZ-BTC SDK journey](doc-packets/btc-sdk.md)
 - [LEZ-XMR SDK journey](doc-packets/xmr-sdk.md)
 - [LEZ-ZEC SDK journey](doc-packets/zec-sdk.md)

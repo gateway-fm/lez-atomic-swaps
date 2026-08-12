@@ -47,6 +47,15 @@ retains terms discovery. The [sanitized certificate](docs/evidence/m7-actual-mak
 is pinned in CI and the R4 baseline; [manual Flow 1ZM](docs/manual-user-flows.md#flow-1zm-recover-a-maker-tag15-claim-after-process-kill)
 repeats it. R4 is GREEN.
 
+The complete Maker terminal-action matrix is process-GREEN under
+[ADR 0197](docs/architecture/0197-compose-maker-all-pair-actions.md). All
+BTC/XMR/ZEC Claim and Refund requests traverse the real `lez-maker` CLI, owner
+RPC, daemon restart, production supervisor, pair actor, atomic SQLite
+completion, and exact no-second-invocation replay. [Manual Flow 1ZN](docs/manual-user-flows.md#flow-1zn-repeat-every-maker-claim-and-refund-action)
+reproduces the six cases. This closes U3 at the application boundary; it does
+not replace pair-specific actual-node evidence or close the remaining
+Taker/adverse journeys.
+
 Accepted-application BTC concurrency is actual-node GREEN on exact pushed run
 `m7btcconc-272788c-a`. Two opposite-direction agreements were authenticated by
 one Maker daemon/database, survived one post-acceptance daemon restart, reached
