@@ -831,28 +831,12 @@ docker volume create \
   "$volume" >/dev/null
 
 "${compose[@]}" config --quiet
-container_id="$(docker create \
-  --name "${project}-bitcoin-core" \
-  --label "org.logos-co.atomic-swaps.run=${run_id}" \
-  --label 'org.logos-co.atomic-swaps.scope=bitcoin-core-regtest-e2e' \
-  --label 'org.logos-co.atomic-swaps.component=bitcoin-core' \
-  --network "$network" \
-  --publish '127.0.0.1::18443' \
-  --user '65532:65532' \
-  --read-only \
-  --cap-drop ALL \
-  --security-opt no-new-privileges=true \
-  --pids-limit 256 \
-  --cpus 2 \
-  --memory 2g \
-  --stop-timeout 30 \
-  --env HOME=/tmp \
-  --mount "type=bind,source=${config_file},target=/run-config/bitcoin.conf,readonly" \
-  --mount "type=volume,source=${volume},target=/var/lib/bitcoin" \
-  --tmpfs /tmp:rw,noexec,nosuid,size=134217728,mode=1777 \
-  "$image" \
-  -conf=/run-config/bitcoin.conf \
-  -datadir=/var/lib/bitcoin)"
+# local: raw `docker create --publish` uses docker-proxy mode, which modern
+# Docker Desktop engines do not expose to --network host processes; compose
+# carries the mode:host port spec from compose.yml, which is. Same name,
+# network, volume, and config mount as the raw create it replaces.
+"${compose[@]}" create --no-start >/dev/null
+container_id="$(docker ps -aq --filter "name=${project}-bitcoin-core" | head -1)"
 if [[ -z "$container_id" ]]; then
   echo "Docker did not create the run-owned Bitcoin Core container" >&2
   exit 1
