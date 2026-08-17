@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly expected_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
-readonly expected_sequencer_sha256="7ee3b50cce5e71a3f9e7f610311635361337a80d2cc697618e837a1a2ab5e042"
-readonly expected_indexer_sha256="074930b567f3425656464a0482c15e04196f74b534e3187a9ff718ca07c98ed1"
+readonly expected_sequencer_sha256="ecbcaaff950329edc6cd15d2ae7622cc9bb8ba712d41e762ebb50e16a7cf7f3d"
+readonly expected_indexer_sha256="77ba4505e5c35131f1151d9f03f1056310357966123cbd3b5aec5b044033abd9"
 readonly expected_r0vm_sha256="05a4dc3224736c966e1c122e9c896e54443d68ed562396428bc0693f3341c098"
 readonly channel_id="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
 readonly genesis_channel_id="0000000000000000000000000000000000000000000000000000000000000000"

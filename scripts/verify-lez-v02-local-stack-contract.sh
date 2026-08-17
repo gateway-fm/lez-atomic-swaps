@@ -120,8 +120,8 @@ rg -Fqx 'public_runtime_parity_status = "unverified_upstream_tagged_readme_calls
 rg -Fqx "runtime_base_reference = \"${runtime_base}\"" "$contract"
 rg -Fqx "r0vm_sha256 = \"${r0vm_sha256}\"" "$contract"
 rg -Fqx 'binary_sha256_status = "locked_source_build_hashes_bound_and_executed_in_isolated_service_stack"' "$contract"
-rg -Fqx 'sequencer_binary_sha256 = "7ee3b50cce5e71a3f9e7f610311635361337a80d2cc697618e837a1a2ab5e042"' "$contract"
-rg -Fqx 'indexer_binary_sha256 = "074930b567f3425656464a0482c15e04196f74b534e3187a9ff718ca07c98ed1"' "$contract"
+rg -Fqx 'sequencer_binary_sha256 = "ecbcaaff950329edc6cd15d2ae7622cc9bb8ba712d41e762ebb50e16a7cf7f3d"' "$contract"
+rg -Fqx 'indexer_binary_sha256 = "77ba4505e5c35131f1151d9f03f1056310357966123cbd3b5aec5b044033abd9"' "$contract"
 rg -Fqx 'runtime_smoke_status = "distroless_services_executed_isolated_service_readiness_green"' "$contract"
 rg -Fqx '  "network_none",' "$contract"
 rg -Fqx '  "unique_private_bridge",' "$contract"
@@ -320,8 +320,8 @@ verify_artifact "$rapidsnark_lib_dir/librapidsnark.a" "d4133227f845ff5bfa3672eb5
 verify_artifact "$rapidsnark_lib_dir/libgmp.a" "0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b"
 verify_artifact "$rapidsnark_lib_dir/libfq.a" "797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0"
 verify_artifact "$rapidsnark_lib_dir/libfr.a" "40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82"
-verify_artifact "$sequencer_binary" "7ee3b50cce5e71a3f9e7f610311635361337a80d2cc697618e837a1a2ab5e042"
-verify_artifact "$indexer_binary" "074930b567f3425656464a0482c15e04196f74b534e3187a9ff718ca07c98ed1"
+verify_artifact "$sequencer_binary" "ecbcaaff950329edc6cd15d2ae7622cc9bb8ba712d41e762ebb50e16a7cf7f3d"
+verify_artifact "$indexer_binary" "77ba4505e5c35131f1151d9f03f1056310357966123cbd3b5aec5b044033abd9"
 [[ "$("$sequencer_binary" --version)" == "sequencer_service 0.1.0" ]]
 [[ "$("$indexer_binary" --version)" == "indexer_service 0.1.0" ]]
 
