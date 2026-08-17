@@ -98,12 +98,14 @@ export LOGOS_BLOCKCHAIN_CIRCUITS="$circuits_dir"
 gcc_include="$(gcc -print-file-name=include)"
 export BINDGEN_EXTRA_CLANG_ARGS="-I${gcc_include}${BINDGEN_EXTRA_CLANG_ARGS:+ ${BINDGEN_EXTRA_CLANG_ARGS}}"
 
+# local arm64 lane: skip host test gates (they are host-arch coverage, not artifact identity)
+if [[ "${LEZ_SKIP_TESTS:-0}" != "1" ]]; then
 cargo fmt --manifest-path "$root_manifest" -- --check
 cargo test --locked --manifest-path "$root_manifest" --all-targets
 cargo clippy --locked --manifest-path "$root_manifest" --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path "$root_manifest" --no-deps
-
 cargo fmt --manifest-path "$guest_manifest" -- --check
+fi
 CARGO_TARGET_DIR="$guest_target" \
   cargo check --locked --manifest-path "$guest_manifest" --bins
 CARGO_TARGET_DIR="$guest_target" \
@@ -152,6 +154,7 @@ if [[ "$docker_image_id" != "$expected_image_id" ]]; then
 fi
 rg -Fqx "risc0_guest_builder = \"${risc0_guest_builder}\"" "$artifact_manifest"
 
+if [[ "${LEZ_SKIP_TESTS:-0}" != "1" ]]; then
 cargo fmt --manifest-path "$methods_manifest" -- --check
 CARGO_TARGET_DIR="$artifact_target" \
   cargo test --locked --manifest-path "$methods_manifest" --all-targets
@@ -159,6 +162,11 @@ CARGO_TARGET_DIR="$artifact_target" \
   cargo clippy --locked --manifest-path "$methods_manifest" --all-targets -- -D warnings
 CARGO_TARGET_DIR="$artifact_target" RUSTDOCFLAGS="-D warnings" \
   cargo doc --locked --manifest-path "$methods_manifest" --no-deps
+else
+# build-only: produce the riscv-guest artifacts without executing host tests
+CARGO_TARGET_DIR="$artifact_target" \
+  cargo build --locked --manifest-path "$methods_manifest" --all-targets
+fi
 
 mapfile -t guest_elfs < <(
   find "$artifact_target/riscv-guest" -type f -name 'zec_escrow_v02.bin' -print
@@ -190,6 +198,7 @@ rg -Fqx 'transaction_hash = "pending"' "$artifact_manifest"
 rg -Fqx 'inclusion_block_id = 0' "$artifact_manifest"
 rg -Fqx 'inclusion_block_hash = "pending"' "$artifact_manifest"
 
+if [[ "${LEZ_SKIP_TESTS:-0}" != "1" ]]; then
 cargo fmt --manifest-path "$deployer_manifest" -- --check
 CARGO_TARGET_DIR="$artifact_target" \
   cargo test --locked --manifest-path "$deployer_manifest" --all-targets
@@ -197,6 +206,11 @@ CARGO_TARGET_DIR="$artifact_target" \
   cargo clippy --locked --manifest-path "$deployer_manifest" --all-targets -- -D warnings
 CARGO_TARGET_DIR="$artifact_target" RUSTDOCFLAGS="-D warnings" \
   cargo doc --locked --manifest-path "$deployer_manifest" --no-deps --bins
+else
+# build-only: the M3 lane needs the native deployer binary
+CARGO_TARGET_DIR="$artifact_target" \
+  cargo build --locked --manifest-path "$deployer_manifest" --bins
+fi
 
 lockfile="compat/lez-v0.2-provisional/Cargo.lock"
 rg -Fq "?rev=${spel_commit}#${spel_commit}" "$lockfile" || {
