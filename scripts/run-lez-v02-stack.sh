@@ -480,86 +480,16 @@ docker network create \
   --label "org.logos-co.atomic-swaps.component=lez-v0.2-network" \
   "$network" >/dev/null
 
-containers[bedrock]="$(docker create \
-  --name "${project}-bedrock" \
-  --label "org.logos-co.atomic-swaps.run=${run_id}" \
-  --label "org.logos-co.atomic-swaps.scope=lez-v0.2-local-devnet" \
-  --label "org.logos-co.atomic-swaps.component=bedrock" \
-  --network "$network" \
-  --network-alias bedrock \
-  --publish "127.0.0.1::18080" \
-  --user "${LEZ_V02_UID}:${LEZ_V02_GID}" \
-  --read-only \
-  --cap-drop ALL \
-  --security-opt no-new-privileges=true \
-  --pids-limit 512 \
-  --cpus 2 \
-  --memory 4g \
-  --stop-timeout 20 \
-  --workdir /work \
-  --env HOME=/tmp \
-  --env POL_PROOF_DEV_MODE=true \
-  --tmpfs /tmp:rw,noexec,nosuid,size=268435456,mode=1777 \
-  --mount "type=bind,src=${source_dir}/bedrock,dst=/opt/lez-v0.2-source/bedrock,readonly" \
-  --mount "type=bind,src=${source_dir}/bedrock/kzgrs_test_params,dst=/kzgrs_test_params,readonly" \
-  --mount "type=bind,src=${run_dir}/config/deployment-settings.yaml,dst=/run-config/deployment-settings.yaml,readonly" \
-  --mount "type=bind,src=${run_dir}/bedrock,dst=/work/state" \
-  --entrypoint /usr/bin/logos-blockchain-node \
-  ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f \
-  /opt/lez-v0.2-source/bedrock/node-config.yaml \
-  --deployment /run-config/deployment-settings.yaml)"
+# local: containers come from the compose file (ports use mode:host, reachable
+# from --network host processes on this engine; raw --publish is not)
+export RUN_ID LEZ_V02_IMAGE LEZ_V02_UID LEZ_V02_GID LEZ_V02_RUN_DIR
+docker compose --project-name "$project" --file "$compose_file" create >/dev/null
 
-containers[indexer]="$(docker create \
-  --name "${project}-indexer" \
-  --label "org.logos-co.atomic-swaps.run=${run_id}" \
-  --label "org.logos-co.atomic-swaps.scope=lez-v0.2-local-devnet" \
-  --label "org.logos-co.atomic-swaps.component=indexer" \
-  --network "$network" \
-  --network-alias indexer \
-  --publish "127.0.0.1::8779" \
-  --user "${LEZ_V02_UID}:${LEZ_V02_GID}" \
-  --read-only \
-  --cap-drop ALL \
-  --security-opt no-new-privileges=true \
-  --pids-limit 512 \
-  --cpus 2 \
-  --memory 2g \
-  --stop-timeout 20 \
-  --env HOME=/tmp \
-  --env RUST_LOG=info \
-  --env RISC0_SERVER_PATH=/usr/local/bin/r0vm \
-  --tmpfs /tmp:rw,noexec,nosuid,size=268435456,mode=1777 \
-  --mount "type=bind,src=${run_dir}/config/indexer_config.json,dst=/run-config/indexer_config.json,readonly" \
-  --mount "type=bind,src=${run_dir}/indexer,dst=/var/lib/indexer_service" \
-  --entrypoint /usr/local/bin/indexer_service \
-  "$LEZ_V02_IMAGE" \
-  /run-config/indexer_config.json --port 8779 --data-dir /var/lib/indexer_service)"
+containers[bedrock]="$(docker ps -aq --filter "name=${project}-bedrock" | head -1)"
 
-containers[sequencer]="$(docker create \
-  --name "${project}-sequencer" \
-  --label "org.logos-co.atomic-swaps.run=${run_id}" \
-  --label "org.logos-co.atomic-swaps.scope=lez-v0.2-local-devnet" \
-  --label "org.logos-co.atomic-swaps.component=sequencer" \
-  --network "$network" \
-  --network-alias sequencer \
-  --publish "127.0.0.1::3040" \
-  --user "${LEZ_V02_UID}:${LEZ_V02_GID}" \
-  --read-only \
-  --cap-drop ALL \
-  --security-opt no-new-privileges=true \
-  --pids-limit 1024 \
-  --cpus 4 \
-  --memory 8g \
-  --stop-timeout 30 \
-  --env HOME=/tmp \
-  --env RUST_LOG=info \
-  --env RISC0_SERVER_PATH=/usr/local/bin/r0vm \
-  --tmpfs /tmp:rw,nosuid,size=2147483648,mode=1777 \
-  --mount "type=bind,src=${run_dir}/config/sequencer_config.json,dst=/run-config/sequencer_config.json,readonly" \
-  --mount "type=bind,src=${run_dir}/sequencer,dst=/var/lib/sequencer_service" \
-  --entrypoint /usr/local/bin/sequencer_service \
-  "$LEZ_V02_IMAGE" \
-  /run-config/sequencer_config.json --port 3040)"
+containers[indexer]="$(docker ps -aq --filter "name=${project}-indexer" | head -1)"
+
+containers[sequencer]="$(docker ps -aq --filter "name=${project}-sequencer" | head -1)"
 
 printf "%s\n" \
   "LEZ_V02_DOCKER_NETWORK=${network}" \

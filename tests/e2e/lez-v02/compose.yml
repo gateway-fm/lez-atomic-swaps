@@ -15,6 +15,12 @@ services:
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
       org.logos-co.atomic-swaps.component: bedrock
     expose: ["18080"]
+    ports:
+      - target: 18080
+        published: "0"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
     volumes:
       - "${LEZ_V02_SOURCE_DIR:?LEZ_V02_SOURCE_DIR is required}/bedrock:/opt/lez-v0.2-source/bedrock:ro"
       - "${LEZ_V02_SOURCE_DIR:?LEZ_V02_SOURCE_DIR is required}/bedrock/kzgrs_test_params:/kzgrs_test_params:ro"
@@ -50,6 +56,12 @@ services:
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
       org.logos-co.atomic-swaps.component: indexer
     expose: ["8779"]
+    ports:
+      - target: 8779
+        published: "0"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
     volumes:
       - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/config/indexer_config.json:/run-config/indexer_config.json:ro"
       - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/indexer:/var/lib/indexer_service"
@@ -78,6 +90,12 @@ services:
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
       org.logos-co.atomic-swaps.component: sequencer
     expose: ["3040"]
+    ports:
+      - target: 3040
+        published: "0"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
     volumes:
       - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/config/sequencer_config.json:/run-config/sequencer_config.json:ro"
       - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/sequencer:/var/lib/sequencer_service"
