@@ -772,8 +772,12 @@ register_process() {
   local start executable
   start="$(awk '{print $22}' "/proc/${pid}/stat")"
   executable="$(readlink -f "/proc/${pid}/exe")"
-  [[ "$executable" == "$M3_POC_LEZ_SIDECAR_BIN" ]] || \
-    fail "sidecar executable drift: proc=[$executable] expected=[$M3_POC_LEZ_SIDECAR_BIN]"
+  if [[ "$executable" != "$M3_POC_LEZ_SIDECAR_BIN" ]]; then
+    local cmdline stat_ppid
+    cmdline="$(tr "\0" " " < "/proc/${pid}/cmdline" 2>/dev/null | head -c 200)"
+    stat_ppid="$(awk '{print $4}' "/proc/${pid}/stat" 2>/dev/null)"
+    fail "sidecar executable drift: proc=[$executable] expected=[$M3_POC_LEZ_SIDECAR_BIN] pid=$pid ppid=$stat_ppid cmd=[$cmdline]"
+  fi
   jq -nc --arg role "$role" --arg phase "$phase" --argjson pid "$pid" \
     --arg start "$start" --arg executable "$executable" \
     '{role:$role,phase:$phase,pid:$pid,start_ticks:$start,executable:$executable}' \
