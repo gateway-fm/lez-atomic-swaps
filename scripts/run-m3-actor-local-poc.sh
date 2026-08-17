@@ -219,9 +219,9 @@ phase_timing_active_direction=""
 phase_timing_active_start_ms=0
 phase_timing_sequence=0
 readonly rapidsnark_sha="43553a6ae796621c63837829fb8b35c46cd8f0ffdb1d88f3761eb10ddbe59657"  # local(arm64): rapidsnark-linux-aarch64-pic-v0.0.8
-readonly gmp_sha="0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b"
-readonly fq_sha="0f404849c6cfff10ceeebafd1fb1aa81e2c22ffd8e40bd4f5f1cedea815c37ed"  # local(arm64)
-readonly fr_sha="2f6003ae10bc3dc41a5b7763f05d9967fde9c5bf73435527fad04ffdcbb8911b"  # local(arm64)
+readonly gmp_sha="564dcbe0a1de194e6ce61e2bf5f370ec65c26d8bbb7a507793aa5e4fe36929c0"  # local(arm64)
+readonly fq_sha="0f404849c6cfff10ceeebafd1fb1aa81e2c22ffd8e40bd4f5f1cedea815c37ed"  # local(arm64)  # local(arm64)
+readonly fr_sha="2f6003ae10bc3dc41a5b7763f05d9967fde9c5bf73435527fad04ffdcbb8911b"  # local(arm64)  # local(arm64)
 
 emit_contract() {
   jq -n \
