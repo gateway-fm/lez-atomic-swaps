@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LEZ Explorer — local devnet</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#111827; --line:#1f2937; --text:#d6eaf8; --dim:#8899aa; --accent:#58d68d; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 ui-monospace,Menlo,monospace; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:16px; padding:14px 22px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; color:var(--accent); }
+  header .status { color:var(--dim); font-size:12px; }
+  nav { margin-left:auto; display:flex; gap:8px; }
+  nav button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer; font:inherit; }
+  nav button.active { border-color:var(--accent); color:var(--accent); }
+  main { padding:22px; max-width:1080px; margin:0 auto; }
+  input#search { width:100%; padding:10px 14px; background:var(--panel); border:1px solid var(--line); border-radius:8px; color:var(--text); font:inherit; margin-bottom:18px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+  th { color:var(--dim); font-weight:normal; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  td a { color:var(--accent); text-decoration:none; cursor:pointer; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:18px; }
+  .kv { display:grid; grid-template-columns:180px 1fr; gap:6px 14px; }
+  .kv .k { color:var(--dim); }
+  .error { color:#f1948a; }
+  .dim { color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>LEZ Explorer</h1>
+  <span class="status" id="status">connecting…</span>
+  <nav>
+    <button data-view="blocks" class="active">Blocks</button>
+  </nav>
+</header>
+<main>
+  <input id="search" placeholder="Search: block id / block hash (hex) / transaction id / account id (base58)">
+  <div id="content"><div class="card dim">Loading…</div></div>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

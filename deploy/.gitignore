@@ -1,0 +1,12 @@
+runtime/
+# heavy build payloads staged locally, not committed; see README "Asset staging"
+images/bitcoin-core/bin/
+images/lez-services/sequencer_service
+images/lez-services/indexer_service
+images/lez-services/r0vm
+images/maker-node/lez-maker
+images/maker-node/lez-maker-daemon
+images/maker-node/lez-taker
+images/maker-node/lez-taker-service
+images/maker-node/lez-taker-registry-init
+images/basecamp-ui/assets/
