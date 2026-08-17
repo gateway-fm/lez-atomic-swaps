@@ -1,0 +1,5 @@
+target/
+apps/preview/build/
+build/
+result-*/
+.DS_Store

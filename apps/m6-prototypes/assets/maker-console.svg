@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 176" role="img" aria-labelledby="title">
+  <title id="title">Abstract maker configuration console</title>
+  <defs><linearGradient id="a" x1="20" y1="20" x2="220" y2="156"><stop stop-color="#1c3b26"/><stop offset="1" stop-color="#101a14"/></linearGradient></defs>
+  <rect x="18" y="16" width="204" height="144" rx="20" fill="url(#a)" stroke="#9cff57" stroke-opacity=".25"/>
+  <rect x="34" y="34" width="72" height="110" rx="12" fill="#0b110d"/>
+  <circle cx="52" cy="52" r="7" fill="#9cff57"/><rect x="66" y="47" width="26" height="5" rx="2.5" fill="#dfffd2" fill-opacity=".72"/>
+  <rect x="45" y="76" width="48" height="8" rx="4" fill="#263b2d"/><rect x="45" y="94" width="39" height="8" rx="4" fill="#263b2d"/><rect x="45" y="112" width="44" height="8" rx="4" fill="#263b2d"/>
+  <rect x="120" y="34" width="86" height="48" rx="12" fill="#13221a"/><path d="M134 67l15-14 13 8 18-18 12 10" fill="none" stroke="#9cff57" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="120" y="94" width="40" height="50" rx="12" fill="#17271d"/><rect x="166" y="94" width="40" height="50" rx="12" fill="#17271d"/><circle cx="140" cy="114" r="8" fill="#43d7b4"/><path d="M181 107h10v24h-10z" fill="#9cff57" fill-opacity=".65"/>
+</svg>

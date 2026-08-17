@@ -1,0 +1,14 @@
+{
+  "name": "lez_atomic_swap_maker",
+  "display_name": "LEZ Atomic Swap Maker",
+  "version": "0.1.0",
+  "type": "ui_qml",
+  "category": "finance",
+  "description": "Configure local swap routes and operate Maker swaps through an owner-local service.",
+  "interface": "universal",
+  "main": "lez_atomic_swap_maker_plugin",
+  "view": "qml/Main.qml",
+  "icon": "icons/maker-console.svg",
+  "dependencies": [],
+  "codegen": { "rep": "src/lez_atomic_swap_maker.rep" }
+}

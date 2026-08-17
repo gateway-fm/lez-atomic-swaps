@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">LEZ Swap orbit mark</title>
+  <defs><linearGradient id="g" x1="8" y1="8" x2="56" y2="56"><stop stop-color="#9cff57"/><stop offset="1" stop-color="#43d7b4"/></linearGradient></defs>
+  <rect width="64" height="64" rx="18" fill="#111912"/>
+  <path d="M18 13v29c0 6 4 9 10 9h19" fill="none" stroke="url(#g)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M32 19c12 0 21 6 21 13s-9 13-21 13S11 39 11 32c0-4 3-7 8-10" fill="none" stroke="#efffe8" stroke-opacity=".46" stroke-width="2"/>
+  <circle cx="49" cy="18" r="5" fill="#9cff57"/>
+</svg>

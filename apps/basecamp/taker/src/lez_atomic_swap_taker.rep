@@ -1,0 +1,10 @@
+class LezAtomicSwapTaker
+{
+    SLOT(QString health())
+    SLOT(QString listOffers(QString pair, QString direction))
+    SLOT(QString initiate(QString requestId, QString offerId, QString pair, QString direction, QString makerIdentity, QString signedEnvelopeSha256, QString foreignUnits, QString expectedLezUnits))
+    SLOT(QString listSwaps())
+    SLOT(QString monitor(QString swapId))
+    SLOT(QString claim(QString requestId, QString swapId, QString expectedGeneration))
+    SLOT(QString refund(QString requestId, QString swapId, QString expectedGeneration))
+}
