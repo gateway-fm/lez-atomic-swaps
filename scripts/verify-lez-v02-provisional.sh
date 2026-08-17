@@ -86,6 +86,9 @@ if [[ "${LEZ_NATIVE_TOOLS:-0}" == "1" ]]; then
   fi
   export PATH="${LEZ_V02_TOOL_DIR}/bin:${PATH}"
   export RISC0_SERVER_PATH="$LEZ_V02_NATIVE_R0VM"
+  # risc0-build probes rzup for a default rust version even when the guest is
+  # built inside the pinned docker image; a stub home satisfies the probe.
+  export RISC0_HOME="${LEZ_V02_NATIVE_RISC0_HOME:-/tmp/lez-risc0-home}"
   if [[ "$(cargo risczero --version)" != "cargo-risczero ${risc0_version}" ]]; then
     echo "expected cargo-risczero ${risc0_version}" >&2
     exit 1
