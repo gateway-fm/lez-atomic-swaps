@@ -190,11 +190,6 @@ fi
 # keep the keyring in a per-run local homedir (verification unchanged)
 gnupg_home="$(mktemp -d /tmp/lez-gnupg-home.XXXXXX)"
 chmod 0700 "$gnupg_home"
-if [[ -e "$gnupg_home" ]]; then
-  echo "refusing to reuse Bitcoin Core verification keyring: ${gnupg_home}" >&2
-  exit 1
-fi
-mkdir -m 0700 "$gnupg_home"
 gpg --homedir "$gnupg_home" --batch --import "${guix_dir}"/builder-keys/*.gpg >/dev/null 2>&1
 
 gpg_status="${BITCOIN_CORE_CACHE_DIR}/release-signatures.status"
