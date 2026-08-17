@@ -11,7 +11,7 @@ set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Qml)
 
-qt_standard_project_setup(REQUIRE_ROOT_CMAKE)
+qt_standard_project_setup()
 
 qt_add_executable(lez-swap-preview
     src/main.cpp
@@ -23,7 +23,7 @@ qt_add_executable(lez-swap-preview
 qt_add_qml_module(lez-swap-preview
     URI LezSwapPreview
     VERSION 1.0
-    QML_FILES qml/preview.qml)
+    QML_FILES qml/Preview.qml)
 
 target_link_libraries(lez-swap-preview PRIVATE
     Qt6::Quick
@@ -31,4 +31,4 @@ target_link_libraries(lez-swap-preview PRIVATE
     Qt6::Qml)
 
 target_compile_definitions(lez-swap-preview PRIVATE
-    LEZ_PREVIEW_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
+    LEZ_PREVIEW_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")

@@ -12,6 +12,9 @@ ApplicationWindow {
     title: "LEZ Atomic Swaps — real Basecamp views on the stub host (sample data, no chains)"
     color: "#0b0f14"
 
+    property string initialView: (typeof previewInitialView !== "undefined"
+        && previewInitialView === "taker") ? "taker" : "maker"
+
     header: ToolBar {
         RowLayout {
             anchors.fill: parent
@@ -26,19 +29,20 @@ ApplicationWindow {
             Button {
                 text: "Maker Console"
                 checkable: true
-                checked: true
+                checked: window.initialView === "maker"
                 onToggled: if (checked) {
                     takerButton.checked = false;
-                    viewLoader.source = sourceRoot + "/basecamp/maker/src/qml/Main.qml";
+                    viewLoader.source = "file://" + sourceRoot + "/basecamp/maker/src/qml/Main.qml";
                 }
             }
             Button {
                 id: takerButton
                 text: "Taker Route"
                 checkable: true
+                checked: window.initialView === "taker"
                 onToggled: if (checked) {
                     makerButton.checked = false;
-                    viewLoader.source = sourceRoot + "/basecamp/taker/src/qml/Main.qml";
+                    viewLoader.source = "file://" + sourceRoot + "/basecamp/taker/src/qml/Main.qml";
                 }
             }
             Item { Layout.fillWidth: true }
@@ -59,16 +63,11 @@ ApplicationWindow {
         }
     }
 
-    function selectMaker() {
-        makerButton.checked = true;
-        takerButton.checked = false;
-        viewLoader.source = sourceRoot + "/basecamp/maker/src/qml/Main.qml";
-    }
-
-    Component.onCompleted: selectMaker()
-
     Loader {
         id: viewLoader
         anchors.fill: parent
+        source: window.initialView === "taker"
+            ? "file://" + sourceRoot + "/basecamp/taker/src/qml/Main.qml"
+            : "file://" + sourceRoot + "/basecamp/maker/src/qml/Main.qml"
     }
 }
