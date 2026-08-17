@@ -186,7 +186,10 @@ if [[ "$(git -C "$guix_dir" rev-parse HEAD)" != "$BITCOIN_CORE_GUIX_SIGS_COMMIT"
   exit 1
 fi
 
-gnupg_home="${BITCOIN_CORE_CACHE_DIR}/gnupg"
+# local: gpg cannot run its agent/locks on the virtiofs fakeowner mount;
+# keep the keyring in a per-run local homedir (verification unchanged)
+gnupg_home="$(mktemp -d /tmp/lez-gnupg-home.XXXXXX)"
+chmod 0700 "$gnupg_home"
 if [[ -e "$gnupg_home" ]]; then
   echo "refusing to reuse Bitcoin Core verification keyring: ${gnupg_home}" >&2
   exit 1
