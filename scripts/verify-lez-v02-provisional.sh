@@ -61,6 +61,7 @@ if [[ "$($rzup_bin --version)" != "rzup ${rzup_version}" ]]; then
   exit 1
 fi
 
+if [[ "${LEZ_NATIVE_TOOLS:-0}" != "1" ]]; then
 if ! RISC0_HOME="$risc0_home" "$rzup_bin" show | rg -q "rust.*${risc0_rust_version}"; then
   RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" \
     "$rzup_bin" install rust "$risc0_rust_version"
@@ -69,6 +70,31 @@ if [[ ! -x "$r0vm_bin" ]]; then
   RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" \
     "$rzup_bin" install r0vm "$risc0_version"
 fi
+fi
+
+# local(arm64): upstream ships no aarch64-linux cargo-risczero/r0vm release
+# assets; use a source-built cargo-risczero and a pre-staged native r0vm.
+if [[ "${LEZ_NATIVE_TOOLS:-0}" == "1" ]]; then
+  export LEZ_V02_NATIVE_R0VM="${LEZ_V02_NATIVE_R0VM:-/provision/tools-arm/bin/r0vm}"
+  [[ -x "$LEZ_V02_NATIVE_R0VM" ]] || {
+    echo "LEZ_NATIVE_TOOLS requires ${LEZ_V02_NATIVE_R0VM} (built from the risc0 v${risc0_version} tag)" >&2
+    exit 1
+  }
+  if [[ ! -x "${isolated_cargo_home}/bin/cargo-risczero" ]]; then
+    CARGO_HOME="$isolated_cargo_home" \
+      cargo install cargo-risczero --version "${risc0_version}" --locked --root "${LEZ_V02_TOOL_DIR}"
+  fi
+  export PATH="${LEZ_V02_TOOL_DIR}/bin:${PATH}"
+  export RISC0_SERVER_PATH="$LEZ_V02_NATIVE_R0VM"
+  if [[ "$(cargo risczero --version)" != "cargo-risczero ${risc0_version}" ]]; then
+    echo "expected cargo-risczero ${risc0_version}" >&2
+    exit 1
+  fi
+  if [[ "$($LEZ_V02_NATIVE_R0VM --version)" != "risc0-r0vm ${risc0_version}" ]]; then
+    echo "expected r0vm ${risc0_version}" >&2
+    exit 1
+  fi
+else
 
 export PATH="${isolated_cargo_home}/bin:${LEZ_V02_TOOL_DIR}/bin:${PATH}"
 export RISC0_HOME="$risc0_home"
@@ -82,13 +108,19 @@ if [[ "$($r0vm_bin --version)" != "risc0-r0vm ${risc0_version}" ]]; then
   exit 1
 fi
 
+fi
+
 if [[ ! -f "${circuits_dir}/VERSION" ]] || [[ "$(<"${circuits_dir}/VERSION")" != "$circuits_version" ]]; then
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/lez-v02-circuits-${run_id}.XXXXXX")"
   trap 'rm -rf "$scratch"' EXIT
-  archive="${scratch}/logos-blockchain-circuits-${circuits_version}-linux-x86_64.tar.gz"
+  circuits_arch="x86_64"
+  [[ "$(uname -m)" == "aarch64" ]] && circuits_arch="aarch64"
+  archive="${scratch}/logos-blockchain-circuits-${circuits_version}-linux-${circuits_arch}.tar.gz"
+  circuits_sha256="e9131ffac8b08a80e1a7152b34fdd5d5c52674d4cb396e8162131ca5dd7c858d"
+  [[ "$circuits_arch" == "aarch64" ]] && circuits_sha256="6bc99a6e1f31b164f3553d45848d9318ac6d783f786fa56b5554e755f582e889"
   curl --fail --silent --show-error --location --retry 3 \
     --output "$archive" \
-    "https://github.com/logos-blockchain/logos-blockchain-circuits/releases/download/${circuits_version}/logos-blockchain-circuits-${circuits_version}-linux-x86_64.tar.gz"
+    "https://github.com/logos-blockchain/logos-blockchain-circuits/releases/download/${circuits_version}/logos-blockchain-circuits-${circuits_version}-linux-${circuits_arch}.tar.gz"
   printf '%s  %s\n' "$circuits_sha256" "$archive" | sha256sum --check --strict
   mkdir -p "$circuits_dir"
   tar -xzf "$archive" -C "$circuits_dir" --strip-components=1
