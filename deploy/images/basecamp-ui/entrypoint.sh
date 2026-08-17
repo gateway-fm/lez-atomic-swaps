@@ -23,7 +23,10 @@ if ! pgrep -x fluxbox >/dev/null; then
   sleep 1
 fi
 if ! pgrep -x x11vnc >/dev/null; then
-  x11vnc -display :0 -forever -shared -nopw -listen localhost -rfbport 5900 -quiet >/tmp/x11vnc.log 2>&1 &
+  # listen on all container interfaces: docker's port proxy dials the
+  # container IP, not container-localhost. Safety comes from the compose
+  # port binding being 127.0.0.1-only on the host.
+  x11vnc -display :0 -forever -shared -nopw -rfbport 5900 -quiet >/tmp/x11vnc.log 2>&1 &
   sleep 1
 fi
 
