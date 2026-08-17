@@ -835,7 +835,7 @@ docker volume create \
 # Docker Desktop engines do not expose to --network host processes; compose
 # carries the mode:host port spec from compose.yml, which is. Same name,
 # network, volume, and config mount as the raw create it replaces.
-"${compose[@]}" create --no-start >/dev/null
+"${compose[@]}" create >/dev/null
 container_id="$(docker ps -aq --filter "name=${project}-bitcoin-core" | head -1)"
 if [[ -z "$container_id" ]]; then
   echo "Docker did not create the run-owned Bitcoin Core container" >&2
