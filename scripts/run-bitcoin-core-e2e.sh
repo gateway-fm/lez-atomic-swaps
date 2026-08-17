@@ -836,7 +836,7 @@ docker volume create \
 # carries the mode:host port spec from compose.yml, which is. Same name,
 # network, volume, and config mount as the raw create it replaces.
 "${compose[@]}" create >/dev/null
-container_id="$(docker ps -aq --filter "name=${project}-bitcoin-core" | head -1)"
+container_id="$(docker ps -aq --filter "name=${project}-bitcoin_core" | head -1)"
 if [[ -z "$container_id" ]]; then
   echo "Docker did not create the run-owned Bitcoin Core container" >&2
   exit 1
