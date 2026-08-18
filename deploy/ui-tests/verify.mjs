@@ -144,12 +144,16 @@ if (role === "maker") {
     // pick the pair carrying a live offer: ZEC when prepared swaps are armed
     // (env REAL_ZEC=1), Bitcoin otherwise
     const zecFirst = process.env.REAL_ZEC === "1";
+    const namedPair = await app.findByProperty("objectName", "takerPair");
     const combos = await app.findByProperty("displayText", "Zcash");
-    const combo = (combos.matches ?? []).find((m) => String(m.type ?? "").startsWith("ComboBox"));
+    const combo = (namedPair.matches ?? [])[0]
+      ?? (combos.matches ?? []).find((m) => String(m.type ?? "").includes("Combo"));
     if (!combo) throw new Error("pair ComboBox not found");
     await evaluateIn(app, combo.id, `currentIndex = ${zecFirst ? 0 : 1}`);
+    const namedDirection = await app.findByProperty("objectName", "takerDirection");
     const dirs = await app.findByProperty("displayText", "TakerSellsLez");
-    const dirCombo = (dirs.matches ?? []).find((m) => String(m.type ?? "").startsWith("ComboBox"));
+    const dirCombo = (namedDirection.matches ?? [])[0]
+      ?? (dirs.matches ?? []).find((m) => String(m.type ?? "").includes("Combo"));
     if (dirCombo) await evaluateIn(app, dirCombo.id, `currentIndex = ${zecFirst ? 0 : 1}`);
     const listed = unwrap(await outputAfterClick(app, "Browse authenticated offers", "takerOutput"), "offer list");
     const offers = (listed.offers ?? []).map((entry) => entry.offer ?? entry);

@@ -28,16 +28,19 @@ its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`
 | Logs | `docker compose logs -f <service>` |
 
 For the M3+ demo, run `prepare-ui-swap.sh`, open the VNC URL, and choose
-**LEZ Atomic Swap Taker**. Keep **Zcash / TakerSellsLez**, then:
+**LEZ Atomic Swap Taker**. The interface is a dark Swiss-poster console: large
+numbered stages keep the operational sequence legible, while the violet,
+green, and pink rail communicates navigation and state. Keep
+**Zcash / TakerSellsLez**, then:
 
-1. Click **Browse authenticated offers** and use the newest offer.
-2. Copy its offer ID, Maker identity, and signed-envelope digest into the
-   review form. The prepared exact amounts are `10000` ZEC atomic units and
-   `25000` LEZ atomic units (the form defaults).
+1. Click **Browse authenticated offers**. The newest authenticated offer is
+   selected automatically and its identity, digest, and exact units populate
+   the review stage without manual crypto transcription.
+2. Visually review the exact `10000` ZEC / `25000` LEZ atomic-unit terms.
 3. Click **Confirm and initiate**. This performs the signed Maker Chat
    propose/complete exchange and durably provisions both actor bundles.
-4. Click **List my swaps**, paste the returned swap ID into the progress field,
-   then click **Monitor**. The prepared corridor reports `not_activated`.
+4. The current swap card adopts the returned swap ID automatically. Click
+   **Monitor** to refresh it; the prepared corridor reports `not_activated`.
 
 Repeating **Confirm and initiate** with the same offer demonstrates the
 idempotent replay response. Every button above executes against the live
@@ -105,9 +108,10 @@ runtime/                   generated state (gitignored; wiped by --wipe)
 
 ## Demo boundary
 
-The prepared ZEC corridor is a deterministic local fixture. The UI exercises
-real signed-offer verification, Maker Chat negotiation, countersigned agreement
-creation, receipt binding, and durable Maker/Taker actor provisioning. It ends
-at `not_activated`: no funded Zebra transaction or LEZ chain effect is submitted
-by this UI lane. Use the repository's certified full-swap scripts for the
-separate on-chain CLI workflow.
+The prepared ZEC corridor is a deterministic local fixture. Its source
+agreement and published offer share the same two-hour acceptance window. The UI
+exercises real signed-offer verification, Maker Chat negotiation, countersigned
+agreement creation, receipt binding, and durable Maker/Taker actor provisioning.
+It ends at `not_activated`: no funded Zebra transaction or LEZ chain effect is
+submitted by this UI lane. Use the repository's certified full-swap scripts for
+the separate on-chain CLI workflow.

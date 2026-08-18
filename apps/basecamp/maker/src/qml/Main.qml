@@ -1,121 +1,643 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
     id: root
+
     readonly property var backend: logos.module("lez_atomic_swap_maker")
     property bool ready: false
+    property bool busy: false
+    property bool technicalVisible: false
     property string output: "No operation submitted"
+    property string statusMode: "neutral"
+    property string statusTitle: "Connecting securely"
+    property string statusDetail: "Establishing the owner-local daemon channel"
+    property int routeCount: 0
+    property int swapCount: 0
+    property string currentState: ""
+    property string latestSwap: ""
+    property string lastSavedRoute: "No route changes in this session"
+
+    component LuxeButton: Button {
+        id: control
+        property bool primary: false
+        property bool quiet: false
+        property bool destructive: false
+        hoverEnabled: true
+        implicitHeight: 44
+        leftPadding: 18
+        rightPadding: 18
+        font.pixelSize: 13
+        font.weight: Font.DemiBold
+        contentItem: Label {
+            text: control.text
+            color: !control.enabled ? "#6F7787"
+                : control.primary ? "#FFFFFF"
+                : control.destructive ? "#FF9BE0" : "#F3F5F8"
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            font: control.font
+        }
+        background: Rectangle {
+            radius: 10
+            color: !control.enabled ? "#181E29"
+                : control.primary ? (control.down ? "#7139DA" : control.hovered ? "#9D72FF" : "#8950FA")
+                : control.destructive ? (control.hovered ? "#3B1C34" : "#251621")
+                : control.quiet ? (control.hovered ? "#1B2432" : "transparent")
+                : (control.down ? "#202938" : control.hovered ? "#252F40" : "#1B2330")
+            border.width: control.primary || control.quiet ? 0 : 1
+            border.color: control.destructive ? "#8F3A77" : "#344052"
+            Behavior on color { ColorAnimation { duration: 120 } }
+        }
+    }
+
+    component LuxeField: TextField {
+        id: control
+        implicitHeight: 44
+        color: "#F5F7FA"
+        placeholderTextColor: "#707A8B"
+        selectionColor: "#8950FA"
+        selectedTextColor: "#0C1017"
+        font.pixelSize: 13
+        leftPadding: 14
+        rightPadding: 14
+        selectByMouse: true
+        background: Rectangle {
+            radius: 9
+            color: "#111925"
+            border.width: 1
+            border.color: control.activeFocus ? "#8950FA" : control.hovered ? "#46536A" : "#2A3547"
+            Behavior on border.color { ColorAnimation { duration: 120 } }
+        }
+    }
+
+    component LuxeCombo: ComboBox {
+        id: control
+        implicitHeight: 44
+        hoverEnabled: true
+        font.pixelSize: 13
+        font.weight: Font.Medium
+        contentItem: Label {
+            text: control.displayText
+            color: "#F5F7FA"
+            verticalAlignment: Text.AlignVCenter
+            leftPadding: 14
+            rightPadding: 36
+            font: control.font
+        }
+        indicator: Label {
+            x: control.width - width - 14
+            y: (control.height - height) / 2 - 1
+            text: "⌄"
+            color: "#7EE100"
+            font.pixelSize: 18
+        }
+        background: Rectangle {
+            radius: 9
+            color: control.hovered ? "#182130" : "#111925"
+            border.width: 1
+            border.color: control.activeFocus ? "#8950FA" : "#2A3547"
+        }
+        delegate: ItemDelegate {
+            id: option
+            required property int index
+            required property var modelData
+            width: control.width
+            height: 40
+            contentItem: Label {
+                text: option.modelData
+                color: option.highlighted ? "#B997FF" : "#E8ECF2"
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 10
+                font.pixelSize: 13
+            }
+            background: Rectangle { color: option.highlighted ? "#222D3D" : "transparent"; radius: 7 }
+            highlighted: control.highlightedIndex === option.index
+        }
+        popup: Popup {
+            y: control.height + 5
+            width: control.width
+            implicitHeight: contentItem.implicitHeight + 8
+            padding: 4
+            contentItem: ListView {
+                clip: true
+                implicitHeight: contentHeight
+                model: control.popup.visible ? control.delegateModel : null
+                currentIndex: control.highlightedIndex
+            }
+            background: Rectangle { color: "#111925"; radius: 10; border.width: 1; border.color: "#344052" }
+        }
+    }
+
+    component FieldLabel: Label {
+        color: "#AAB3C2"
+        font.pixelSize: 11
+        font.weight: Font.DemiBold
+        font.letterSpacing: 0.4
+    }
+
+    component StepBadge: Rectangle {
+        property string number: "01"
+        property color accent: "#8950FA"
+        implicitWidth: 46
+        implicitHeight: 26
+        radius: 2
+        color: "#151820"
+        border.width: 1
+        border.color: accent
+        Label {
+            anchors.centerIn: parent
+            text: parent.number
+            color: parent.accent
+            font.pixelSize: 11
+            font.weight: Font.Bold
+            font.letterSpacing: 1.4
+        }
+    }
 
     Connections {
         target: logos
         function onViewModuleReadyChanged(moduleName, isReady) {
-            if (moduleName === "lez_atomic_swap_maker")
-                root.ready = isReady && root.backend !== null
+            if (moduleName !== "lez_atomic_swap_maker") return
+            root.ready = isReady && root.backend !== null
+            if (root.ready) {
+                root.statusMode = "success"
+                root.statusTitle = "Maker daemon connected"
+                root.statusDetail = "Ready to configure routes and inspect actor state"
+            }
         }
     }
-    Component.onCompleted: root.ready = root.backend !== null
-        && logos.isViewModuleReady("lez_atomic_swap_maker")
 
-    function invoke(operation) {
+    Component.onCompleted: {
+        root.ready = root.backend !== null && logos.isViewModuleReady("lez_atomic_swap_maker")
+        if (root.ready) {
+            root.statusMode = "success"
+            root.statusTitle = "Maker daemon connected"
+            root.statusDetail = "Ready to configure routes and inspect actor state"
+        }
+    }
+
+    function decode(raw) {
+        var envelope = JSON.parse(String(raw))
+        if (envelope.ok !== true)
+            throw new Error(envelope.message || envelope.code || "The daemon rejected this request")
+        return envelope.result ?? {}
+    }
+
+    function run(operation, pendingTitle, onSuccess) {
         if (!root.ready) {
             root.output = "Maker service backend is not ready"
+            root.statusMode = "error"
+            root.statusTitle = "Daemon unavailable"
+            root.statusDetail = "Wait for the owner-local connection and try again"
             return
         }
+        root.busy = true
         root.output = "Waiting for owner-local service..."
+        root.statusMode = "working"
+        root.statusTitle = pendingTitle
+        root.statusDetail = "Committing the request over the owner-only channel"
         logos.watch(operation,
-            function(value) { root.output = String(value) },
-            function(error) { root.output = "Backend failure: " + String(error) })
+            function(value) {
+                root.busy = false
+                root.output = String(value)
+                try {
+                    onSuccess(root.decode(value))
+                } catch (error) {
+                    root.statusMode = "error"
+                    root.statusTitle = "Request could not be completed"
+                    root.statusDetail = String(error)
+                    root.technicalVisible = true
+                }
+            },
+            function(error) {
+                root.busy = false
+                root.output = "Backend failure: " + String(error)
+                root.statusMode = "error"
+                root.statusTitle = "Secure daemon error"
+                root.statusDetail = String(error)
+                root.technicalVisible = true
+            })
+    }
+
+    function health() {
+        root.run(root.backend.health(), "Checking daemon health", function(result) {
+            root.routeCount = (result.routes ?? []).length
+            root.statusMode = result.ready === true && result.degraded !== true ? "success" : "error"
+            root.statusTitle = result.degraded === true ? "Maker is operating in degraded mode" : "Maker systems ready"
+            root.statusDetail = root.routeCount + (root.routeCount === 1 ? " active route" : " active routes") + " · owner socket verified"
+        })
+    }
+
+    function saveRoute() {
+        var requestId = "maker-ui-route-" + Date.now()
+        root.run(root.backend.saveRoute(
+            requestId, pair.currentText, direction.currentText,
+            minimum.text, maximum.text, ttl.text, lezLot.text, foreignLot.text),
+            "Saving route atomically", function(result) {
+                root.lastSavedRoute = pair.currentText + " · " + direction.currentText
+                root.statusMode = "success"
+                root.statusTitle = "Route and price committed"
+                root.statusDetail = "Policy and pricing changed together in one transaction"
+            })
+    }
+
+    function history() {
+        root.run(root.backend.history(), "Loading swap history", function(result) {
+            var swaps = Array.isArray(result) ? result : (result.swaps ?? [])
+            root.swapCount = swaps.length
+            if (swaps.length > 0) {
+                var candidate = swaps[swaps.length - 1]
+                root.latestSwap = String(candidate.id ?? candidate.swap_id ?? "")
+                root.currentState = String(candidate.phase ?? candidate.state ?? "")
+            }
+            root.statusMode = "success"
+            root.statusTitle = swaps.length === 1 ? "1 swap in maker history" : swaps.length + " swaps in maker history"
+            root.statusDetail = swaps.length > 0 ? "Latest state: " + root.currentState : "No swaps have been recorded yet"
+        })
+    }
+
+    function monitor() {
+        root.run(root.backend.monitor(swapId.text), "Reading actor progress", function(result) {
+            root.currentState = String(result.schedule_state ?? result.state ?? "unknown")
+            generation.text = String(result.progress_generation ?? result.generation ?? generation.text)
+            root.statusMode = "success"
+            root.statusTitle = "Actor state refreshed"
+            root.statusDetail = root.currentState.split("_").join(" ") + " · generation " + generation.text
+        })
+    }
+
+    function terminal(action) {
+        var requestId = ["maker-ui", action, swapId.text, generation.text].join("-")
+        var operation = action === "claim"
+            ? root.backend.claim(requestId, swapId.text, generation.text)
+            : root.backend.refund(requestId, swapId.text, generation.text)
+        root.run(operation, action === "claim" ? "Submitting claim" : "Submitting refund", function(result) {
+            root.statusMode = "success"
+            root.statusTitle = action === "claim" ? "Claim accepted" : "Refund accepted"
+            root.statusDetail = "The actor verified the expected progress generation"
+        })
     }
 
     Rectangle {
         anchors.fill: parent
-        color: "#10161f"
+        color: "#08090D"
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#10111A" }
+            GradientStop { position: 0.55; color: "#090A0F" }
+            GradientStop { position: 1.0; color: "#07080B" }
+        }
+
+        Rectangle {
+            width: 520; height: 520; radius: 260
+            anchors.top: parent.top; anchors.right: parent.right
+            anchors.topMargin: -310; anchors.rightMargin: -150
+            color: "#8950FA"; opacity: 0.13
+        }
 
         ScrollView {
+            id: scroll
             anchors.fill: parent
-            anchors.margins: 20
+            anchors.margins: 26
             contentWidth: availableWidth
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
             ColumnLayout {
-                width: parent.width
-                spacing: 12
+                id: body
+                width: scroll.availableWidth
+                spacing: 16
 
-                Label { text: "LEZ Atomic Swap — Maker Console"; color: "white"; font.pixelSize: 24 }
-                Label {
-                    objectName: "makerConnection"
-                    text: root.ready ? "Backend connected" : "Connecting to process-isolated backend"
-                    color: root.ready ? "#58d68d" : "#f5b041"
-                }
-                Button {
-                    text: "Check service"
-                    enabled: root.ready
-                    onClicked: root.invoke(root.backend.health())
-                }
-
-                GroupBox {
-                    title: "Configure an exact local route"
+                Rectangle {
                     Layout.fillWidth: true
-                    GridLayout {
-                        columns: 2
-                        anchors.fill: parent
-                        Label { text: "Pair" }
-                        ComboBox { id: pair; objectName: "makerPair"; model: ["Zcash", "Bitcoin", "Monero"] }
-                        Label { text: "Direction" }
-                        ComboBox { id: direction; objectName: "makerDirection"; model: ["TakerSellsLez", "TakerSellsForeign"] }
-                        Label { text: "Minimum foreign units" }
-                        TextField { id: minimum; objectName: "makerForeignUnits"; text: "100000000" }
-                        Label { text: "Maximum foreign units" }
-                        TextField { id: maximum; text: "100000000" }
-                        Label { text: "Offer TTL seconds" }
-                        TextField { id: ttl; text: "300" }
-                        Label { text: "LEZ units per lot" }
-                        TextField { id: lezLot; objectName: "makerLezUnits"; text: "1" }
-                        Label { text: "Foreign units per lot" }
-                        TextField { id: foreignLot; text: "2" }
-                        Button {
-                            objectName: "makerSave"
-                            text: "Save route atomically"
-                            enabled: root.ready
-                            Layout.columnSpan: 2
-                            onClicked: root.invoke(root.backend.saveRoute(
-                                "maker-ui-route-001", pair.currentText, direction.currentText,
-                                minimum.text, maximum.text, ttl.text, lezLot.text, foreignLot.text))
+                    implicitHeight: 154
+                    radius: 18
+                    color: "#111824"
+                    border.width: 1
+                    border.color: "#273246"
+                    clip: true
+                    Rectangle {
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        height: 4
+                        Row {
+                            anchors.fill: parent
+                            Rectangle { width: parent.width * 0.46; height: parent.height; color: "#8950FA" }
+                            Rectangle { width: parent.width * 0.28; height: parent.height; color: "#7EE100" }
+                            Rectangle { width: parent.width * 0.26; height: parent.height; color: "#FA50C1" }
+                        }
+                    }
+                    RowLayout {
+                        anchors.fill: parent; anchors.margins: 24; spacing: 24
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 7
+                            Label {
+                                text: "INSTITUTIONAL LIQUIDITY DESK"
+                                color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 1.8
+                            }
+                            Label {
+                                text: "LEZ Atomic Swap — Maker Console"
+                                color: "#F7F8FA"; font.pixelSize: 30; font.weight: Font.Bold; font.letterSpacing: -0.7
+                            }
+                            Label {
+                                text: "Price local markets, oversee live swaps, and execute fenced settlement actions."
+                                color: "#9FA9B9"; font.pixelSize: 13
+                            }
+                        }
+                        ColumnLayout {
+                            Layout.alignment: Qt.AlignRight | Qt.AlignVCenter; spacing: 8
+                            Rectangle {
+                                Layout.alignment: Qt.AlignRight
+                                implicitWidth: connectionRow.implicitWidth + 22; implicitHeight: 32; radius: 16
+                                color: root.ready ? "#11271F" : "#292318"
+                                border.width: 1; border.color: root.ready ? "#497621" : "#62438B"
+                                RowLayout {
+                                    id: connectionRow; anchors.centerIn: parent; spacing: 8
+                                    Rectangle { implicitWidth: 7; implicitHeight: 7; radius: 4; color: root.ready ? "#7EE100" : "#8950FA" }
+                                    Label {
+                                        objectName: "makerConnection"
+                                        text: root.ready ? "Backend connected" : "Connecting securely"
+                                        color: root.ready ? "#B8F57C" : "#C6AAFF"
+                                        font.pixelSize: 11; font.weight: Font.DemiBold
+                                    }
+                                }
+                            }
+                            Label {
+                                Layout.alignment: Qt.AlignRight
+                                text: "Owner-local · atomic commits · generation fenced"
+                                color: "#6F7A8B"; font.pixelSize: 10
+                            }
                         }
                     }
                 }
 
-                GroupBox {
-                    objectName: "makerActive"
-                    title: "Active swap"
-                    Layout.fillWidth: true
+                Rectangle {
+                    Layout.fillWidth: true; implicitHeight: 76; radius: 14
+                    color: root.statusMode === "error" ? "#21151A"
+                        : root.statusMode === "success" ? "#102019"
+                        : root.statusMode === "working" ? "#1C1628" : "#11131A"
+                    border.width: 1
+                    border.color: root.statusMode === "error" ? "#61323E"
+                        : root.statusMode === "success" ? "#285540"
+                        : root.statusMode === "working" ? "#6742A0" : "#2A2E3A"
                     RowLayout {
-                        anchors.fill: parent
-                        TextField { id: swapId; placeholderText: "Swap ID"; Layout.fillWidth: true }
-                        TextField { id: generation; placeholderText: "Generation"; text: "0" }
-                        Button { text: "Monitor"; onClicked: root.invoke(root.backend.monitor(swapId.text)) }
-                        Button { text: "Claim"; onClicked: root.invoke(root.backend.claim("maker-ui-claim-001", swapId.text, generation.text)) }
-                        Button { text: "Refund"; onClicked: root.invoke(root.backend.refund("maker-ui-refund-001", swapId.text, generation.text)) }
+                        anchors.fill: parent; anchors.margins: 16; spacing: 14
+                        Rectangle {
+                            implicitWidth: 34; implicitHeight: 34; radius: 17
+                            color: root.statusMode === "error" ? "#49232D"
+                                : root.statusMode === "success" ? "#1C4A37"
+                                : root.statusMode === "working" ? "#392358" : "#202433"
+                            Label {
+                                anchors.centerIn: parent
+                                text: root.statusMode === "error" ? "!" : root.statusMode === "success" ? "✓" : root.statusMode === "working" ? "···" : "i"
+                                color: root.statusMode === "error" ? "#FF9FAF"
+                                    : root.statusMode === "success" ? "#7EE100"
+                                    : root.statusMode === "working" ? "#B997FF" : "#A8B5C7"
+                                font.pixelSize: 14; font.weight: Font.Bold
+                            }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            Label { text: root.statusTitle; color: "#F2F4F7"; font.pixelSize: 13; font.weight: Font.DemiBold }
+                            Label { text: root.statusDetail; color: "#929DAD"; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
+                        }
+                        RowLayout {
+                            spacing: 6
+                            LuxeButton {
+                                objectName: "makerHistory"
+                                text: "Refresh swap history"
+                                quiet: true
+                                enabled: root.ready && !root.busy
+                                onClicked: root.history()
+                            }
+                            LuxeButton {
+                                text: "Check service"
+                                quiet: true
+                                enabled: root.ready && !root.busy
+                                onClicked: root.health()
+                            }
+                        }
                     }
                 }
 
-                Button {
-                    objectName: "makerHistory"
-                    text: "Refresh swap history"
-                    enabled: root.ready
-                    onClicked: root.invoke(root.backend.history())
-                }
-                TextArea {
-                    objectName: "makerOutput"
-                    text: root.output
-                    readOnly: true
-                    wrapMode: Text.WrapAnywhere
+                GridLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 180
-                    color: "#d6eaf8"
-                    background: Rectangle { color: "#17202a"; radius: 6 }
+                    columns: width > 1040 ? 2 : 1
+                    columnSpacing: 16
+                    rowSpacing: 16
+
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
+                        implicitHeight: routeColumn.implicitHeight + 44
+                        radius: 16; color: "#101722"; border.width: 1; border.color: "#263144"
+                        ColumnLayout {
+                            id: routeColumn
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22
+                            spacing: 15
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 12
+                                StepBadge { number: "01"; accent: "#8950FA" }
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 2
+                                    Label { text: "Configure a market"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                    Label { text: "Route policy and price settle in one transaction"; color: "#7F8A9B"; font.pixelSize: 11 }
+                                }
+                            }
+                            GridLayout {
+                                Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 7
+                                FieldLabel { text: "FOREIGN ASSET" }
+                                FieldLabel { text: "TAKER DIRECTION" }
+                                LuxeCombo { id: pair; objectName: "makerPair"; model: ["Zcash", "Bitcoin", "Monero"]; Layout.fillWidth: true }
+                                LuxeCombo { id: direction; objectName: "makerDirection"; model: ["TakerSellsLez", "TakerSellsForeign"]; Layout.fillWidth: true }
+                                FieldLabel { text: "MINIMUM FOREIGN UNITS" }
+                                FieldLabel { text: "MAXIMUM FOREIGN UNITS" }
+                                LuxeField { id: minimum; objectName: "makerForeignUnits"; text: "10000"; Layout.fillWidth: true }
+                                LuxeField { id: maximum; text: "10000"; Layout.fillWidth: true }
+                                FieldLabel { text: "OFFER LIFETIME · SECONDS" }
+                                FieldLabel { text: "PRICE · LEZ / FOREIGN LOT" }
+                                LuxeField { id: ttl; text: "7200"; Layout.fillWidth: true }
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 8
+                                    LuxeField { id: lezLot; objectName: "makerLezUnits"; text: "5"; Layout.fillWidth: true }
+                                    Label { text: "/"; color: "#697587"; font.pixelSize: 16 }
+                                    LuxeField { id: foreignLot; text: "2"; Layout.fillWidth: true }
+                                }
+                            }
+                            LuxeButton {
+                                objectName: "makerSave"
+                                text: "Save route atomically"
+                                primary: true
+                                enabled: root.ready && !root.busy
+                                Layout.fillWidth: true
+                                onClicked: root.saveRoute()
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true; implicitHeight: 58; radius: 10
+                                color: "#0D141E"; border.width: 1; border.color: "#222D3D"
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 13
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; spacing: 2
+                                        Label { text: "LAST ATOMIC COMMIT"; color: "#687486"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+                                        Label { text: root.lastSavedRoute; color: "#B9C2CF"; font.pixelSize: 11 }
+                                    }
+                                    Label { text: "POLICY + PRICE"; color: "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        id: activePanel
+                        objectName: "makerActive"
+                        Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
+                        implicitHeight: actorColumn.implicitHeight + 44
+                        radius: 16; color: "#101722"; border.width: 1; border.color: "#263144"
+                        ColumnLayout {
+                            id: actorColumn
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22
+                            spacing: 15
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 12
+                                StepBadge { number: "02"; accent: "#FA50C1" }
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 2
+                                    Label { text: "Oversee a live swap"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                    Label { text: "Read current actor state before any terminal action"; color: "#7F8A9B"; font.pixelSize: 11 }
+                                }
+                                Rectangle {
+                                    visible: root.currentState !== ""
+                                    implicitWidth: stateLabel.implicitWidth + 22; implicitHeight: 30; radius: 15
+                                    color: "#241A36"; border.width: 1; border.color: "#6944A2"
+                                    Label {
+                                        id: stateLabel; anchors.centerIn: parent
+                                        text: root.currentState.split("_").join(" ").toUpperCase()
+                                        color: "#C5A9FF"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.7
+                                    }
+                                }
+                            }
+                            FieldLabel { text: "SWAP ID" }
+                            LuxeField {
+                                id: swapId; placeholderText: "Swap ID"; text: root.latestSwap
+                                Layout.fillWidth: true; font.family: "DejaVu Sans Mono"
+                            }
+                            FieldLabel { text: "EXPECTED PROGRESS GENERATION" }
+                            LuxeField { id: generation; placeholderText: "Generation"; text: "0"; Layout.fillWidth: true }
+                            LuxeButton {
+                                text: "Monitor"
+                                primary: true
+                                enabled: root.ready && !root.busy && swapId.text.length > 0
+                                Layout.fillWidth: true
+                                onClicked: root.monitor()
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 10
+                                LuxeButton {
+                                    text: "Claim"; enabled: root.ready && !root.busy && swapId.text.length > 0
+                                    Layout.fillWidth: true; onClicked: root.terminal("claim")
+                                }
+                                LuxeButton {
+                                    text: "Refund"; destructive: true
+                                    enabled: root.ready && !root.busy && swapId.text.length > 0
+                                    Layout.fillWidth: true; onClicked: root.terminal("refund")
+                                }
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true; implicitHeight: 58; radius: 10
+                                color: "#171A22"; border.width: 1; border.color: "#35323A"
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 13; spacing: 10
+                                    Label { text: "FENCED"; color: "#FA50C1"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
+                                    Label {
+                                        text: "Claim and refund require the exact generation returned by Monitor."
+                                        color: "#A8AFBB"; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 94
+                    radius: 16
+                    color: "#101722"
+                    border.width: 1
+                    border.color: "#263144"
+                    RowLayout {
+                        anchors.fill: parent; anchors.margins: 20; spacing: 18
+                        Rectangle {
+                            implicitWidth: 48; implicitHeight: 48; radius: 12; color: "#1A2432"
+                            Label { anchors.centerIn: parent; text: String(root.swapCount); color: "#7EE100"; font.pixelSize: 18; font.weight: Font.Bold }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 3
+                            Label { text: "Swap history"; color: "#F1F3F6"; font.pixelSize: 14; font.weight: Font.DemiBold }
+                            Label {
+                                text: root.swapCount === 0 ? "Refresh the durable maker database" : root.swapCount + " recorded swaps · latest " + root.currentState
+                                color: "#7F8A9B"; font.pixelSize: 11
+                            }
+                        }
+                        Label {
+                            text: root.latestSwap === "" ? "DURABLE RECORD" : root.latestSwap
+                            color: root.latestSwap === "" ? "#657184" : "#B997FF"
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            font.family: root.latestSwap === "" ? "DejaVu Sans" : "DejaVu Sans Mono"
+                            elide: Text.ElideMiddle
+                            Layout.preferredWidth: 220
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: technicalColumn.implicitHeight + 32
+                    radius: 14
+                    color: "#0E141D"
+                    border.width: 1
+                    border.color: "#222C3B"
+                    ColumnLayout {
+                        id: technicalColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 16
+                        spacing: 10
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "Technical evidence"; color: "#C7CED9"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                Label { text: "Raw owner-daemon response for audit and debugging"; color: "#657184"; font.pixelSize: 10 }
+                            }
+                            LuxeButton {
+                                text: root.technicalVisible ? "Hide technical details" : "Show technical details"
+                                quiet: true
+                                onClicked: root.technicalVisible = !root.technicalVisible
+                            }
+                        }
+                        TextArea {
+                            objectName: "makerOutput"
+                            text: root.output
+                            visible: root.technicalVisible
+                            readOnly: true
+                            wrapMode: Text.WrapAnywhere
+                            selectByMouse: true
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: root.technicalVisible ? 170 : 0
+                            color: "#BAC4D3"
+                            selectionColor: "#8950FA"
+                            selectedTextColor: "#FFFFFF"
+                            font.family: "DejaVu Sans Mono"
+                            font.pixelSize: 10
+                            leftPadding: 12; rightPadding: 12; topPadding: 10; bottomPadding: 10
+                            background: Rectangle { color: "#080C12"; radius: 9; border.width: 1; border.color: "#253043" }
+                        }
+                    }
+                }
+
+                Item { Layout.fillWidth: true; implicitHeight: 8 }
             }
         }
     }

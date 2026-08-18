@@ -95,9 +95,11 @@ In Basecamp:
 5. for an existing role-owned swap, enter its ID and generation before using
    **Monitor**, **Claim**, or **Refund**.
 
-The route click calls only `maker_local_route_save_v1`. Policy, price, and its
-replay result commit in one SQLite transaction; a stale later write rolls the
-whole operation back.
+The backend reads the current pair and local-price revisions, then the route
+click writes through `maker_local_route_save_v1`. Policy, price, and its replay
+result commit in one SQLite transaction; a stale later write rolls the whole
+operation back. Saving already-current terms returns their durable revisions
+without manufacturing another mutation.
 
 ## Run the Taker package as a real user
 
@@ -116,12 +118,12 @@ In Basecamp:
 1. open **LEZ Atomic Swap Taker** and confirm **Backend connected**;
 2. click **Service health**, choose the pair/direction, and click
    **Browse authenticated offers**;
-3. copy the chosen offer ID, compressed Maker identity, signed-envelope
-   SHA-256, foreign atomic units, and expected LEZ atomic units into the exact
-   review form;
+3. review the automatically selected newest offer; its ID, compressed Maker
+   identity, signed-envelope SHA-256, foreign units, and expected LEZ units are
+   populated into the exact review form without manual transcription;
 4. click **Confirm and initiate** once and retain the returned swap ID;
 5. repeat the unchanged click to observe exact durable replay;
-6. click **List my swaps**, enter the swap ID, and click **Monitor**;
+6. use the automatically adopted current swap ID and click **Monitor**;
 7. use **Claim** or **Refund** only when monitor advertises that exact action and
    generation. For transparent ZEC claims, follow the displayed shielding
    reminder in the wallet after the swap.

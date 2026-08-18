@@ -1,5 +1,6 @@
 #include "lez_atomic_swap_maker_backend.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -22,6 +23,42 @@ bool exactUnsigned(const QString& value, qulonglong& result)
 QString invalid()
 {
     return QStringLiteral("{\"ok\":false,\"code\":\"invalid_input\",\"message\":\"Enter canonical unsigned integers\"}");
+}
+
+struct RevisionLookup
+{
+    bool valid = false;
+    bool found = false;
+    QJsonValue revision = QJsonValue(QJsonValue::Null);
+    QJsonObject value;
+};
+
+RevisionLookup revisionForRoute(const QString& response, const QString& pair,
+                                const QString& direction)
+{
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(response.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) return {};
+    const QJsonObject envelope = document.object();
+    if (!envelope.value(QStringLiteral("ok")).toBool(false)
+        || !envelope.value(QStringLiteral("result")).isArray()) {
+        return {};
+    }
+    for (const QJsonValue& entryValue : envelope.value(QStringLiteral("result")).toArray()) {
+        const QJsonObject entry = entryValue.toObject();
+        const QJsonObject route = entry.value(QStringLiteral("value"))
+                                      .toObject()
+                                      .value(QStringLiteral("route"))
+                                      .toObject();
+        if (route.value(QStringLiteral("pair")).toString() != pair
+            || route.value(QStringLiteral("direction")).toString() != direction) {
+            continue;
+        }
+        const QJsonValue revision = entry.value(QStringLiteral("revision"));
+        if (!revision.isDouble() || revision.toDouble() < 0) return {};
+        return {true, true, revision, entry.value(QStringLiteral("value")).toObject()};
+    }
+    return {true, false, QJsonValue(QJsonValue::Null), {}};
 }
 }
 
@@ -55,8 +92,24 @@ QString LezAtomicSwapMakerBackend::saveRoute(
                                     {"offer_ttl_seconds", static_cast<qint64>(ttl)}};
     const QJsonObject price{{"route", route}, {"lez_units_per_lot", static_cast<qint64>(lezLot)},
                             {"foreign_units_per_lot", static_cast<qint64>(foreignLot)}};
+
+    const QString pairList = rpc_.call("maker_pair_list", "{}");
+    const RevisionLookup pairRevision = revisionForRoute(pairList, pair, direction);
+    if (!pairRevision.valid) return pairList;
+    const QString priceList = rpc_.call("maker_local_price_list", "{}");
+    const RevisionLookup priceRevision = revisionForRoute(priceList, pair, direction);
+    if (!priceRevision.valid) return priceList;
+
+    if (pairRevision.found && priceRevision.found && pairRevision.value == configuration
+        && priceRevision.value == price) {
+        return compact({{"ok", true},
+            {"result", QJsonObject{{"pair_revision", pairRevision.revision},
+                           {"price_revision", priceRevision.revision}, {"unchanged", true}}}});
+    }
+
     return rpc_.call("maker_local_route_save_v1", compact({{"request_id", requestId},
-        {"expected_pair_revision", QJsonValue::Null}, {"expected_price_revision", QJsonValue::Null},
+        {"expected_pair_revision", pairRevision.revision},
+        {"expected_price_revision", priceRevision.revision},
         {"configuration", configuration}, {"price", price}}));
 }
 
