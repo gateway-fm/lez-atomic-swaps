@@ -675,7 +675,8 @@ Item {
                             delegate: Rectangle {
                                 id: makerSwapRow
                                 required property var modelData
-                                Layout.fillWidth: true; implicitHeight: 86; radius: 10
+                                Layout.fillWidth: true; radius: 10
+                                implicitHeight: makerSwapRow.modelData.progress_detail ? 104 : 86
                                 color: makerSwapRow.modelData.can_act === true ? "#17152A" : "#0D141E"
                                 border.width: 1; border.color: makerSwapRow.modelData.can_act === true ? "#8950FA" : "#28364A"
                                 RowLayout {
@@ -691,13 +692,28 @@ Item {
                                             text: String(makerSwapRow.modelData.ui_swap_id) + "  /  " + String(makerSwapRow.modelData.offer_id)
                                             color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true
                                         }
-                                        Rectangle {
-                                            Layout.fillWidth: true; implicitHeight: 4; radius: 2; color: "#252E3C"
+                                        RowLayout {
+                                            Layout.fillWidth: true; spacing: 8
                                             Rectangle {
-                                                width: parent.width * Number(makerSwapRow.modelData.progress_percent ?? 0) / 100
-                                                height: parent.height; radius: 2
-                                                color: makerSwapRow.modelData.state === "completed" ? "#7EE100" : "#8950FA"
+                                                Layout.fillWidth: true; implicitHeight: 4; radius: 2; color: "#252E3C"
+                                                Rectangle {
+                                                    width: parent.width * Number(makerSwapRow.modelData.progress_percent ?? 0) / 100
+                                                    height: parent.height; radius: 2
+                                                    color: makerSwapRow.modelData.state === "completed" ? "#7EE100" : "#8950FA"
+                                                    Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                                                }
                                             }
+                                            Label {
+                                                text: String(makerSwapRow.modelData.progress_percent ?? 0) + "%"
+                                                color: "#9AA6B8"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
+                                            }
+                                        }
+                                        Label {
+                                            visible: !!makerSwapRow.modelData.progress_detail
+                                            text: String(makerSwapRow.modelData.progress_detail ?? "")
+                                                + (makerSwapRow.modelData.eta_display ? "  ·  " + String(makerSwapRow.modelData.eta_display) : "")
+                                            color: "#8E7BC6"; font.pixelSize: 10
+                                            elide: Text.ElideRight; Layout.fillWidth: true
                                         }
                                     }
                                     Label {

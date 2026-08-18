@@ -107,12 +107,62 @@ STATE_LABELS = {
 }
 
 PROGRESS = {
-    "queued": 2, "preparing": 12, "awaiting_taker_lock": 24,
-    "locking_btc": 34, "awaiting_maker_fund": 44, "funding_lez": 58,
-    "awaiting_taker_claim": 68, "claiming_lez": 80,
-    "awaiting_maker_claim": 88, "claiming_btc": 94,
-    "publishing": 98, "completed": 100, "failed": 0,
+    "queued": 2, "preparing": 4, "awaiting_taker_lock": 42,
+    "locking_btc": 44, "awaiting_maker_fund": 54, "funding_lez": 56,
+    "awaiting_taker_claim": 74, "claiming_lez": 76,
+    "awaiting_maker_claim": 88, "claiming_btc": 90,
+    "publishing": 97, "completed": 100, "failed": 0,
 }
+
+FLOW = (
+    "queued", "preparing", "awaiting_taker_lock", "locking_btc",
+    "awaiting_maker_fund", "funding_lez", "awaiting_taker_claim", "claiming_lez",
+    "awaiting_maker_claim", "claiming_btc", "publishing", "completed",
+)
+
+# Sub-checkpoints of the opaque "preparing" phase, in the order the genuine
+# runner writes its evidence files: (relative path under the run's
+# m3-actor-poc directory, viewer label, overall percent, typical seconds
+# remaining until the first actor gate opens on a warm build).
+PREP_CHECKPOINTS = (
+    ("private/directions/taker_sells_foreign/planning.json",
+     "Fresh actor identities and swap plan created", 8, 190),
+    ("evidence/lez-service.log", "Starting the isolated LEZ chain", 14, 135),
+    ("evidence/node-startup-status.json", "Bitcoin and LEZ chains online", 20, 110),
+    ("evidence/lez-deployment.json", "LEZ swap contract deployed", 22, 100),
+    ("evidence/lez-deployment-finality.json", "Contract deployment finalized", 25, 85),
+    ("evidence/maker-vault-claim-finality.json", "Maker vault claim finalized", 29, 55),
+    ("evidence/taker-vault-claim-finality.json", "Taker vault claim finalized", 33, 25),
+    ("evidence/taker_sells_foreign-stage-two.json",
+     "Authenticated agreement staged", 36, 18),
+    ("evidence/taker_sells_foreign-activation-maker.json",
+     "Actors activated · opening the first gate", 39, 8),
+)
+
+# Machine-driven phases between actor gates: typical duration in seconds and a
+# viewer label, plus the file whose mtime marks the phase start.
+WORK_PHASES = {
+    "locking_btc": (20, "Broadcasting the Bitcoin lock transaction"),
+    "funding_lez": (80, "Funding the LEZ escrow and waiting for chain finality"),
+    "claiming_lez": (45, "Revealing the secret and claiming the LEZ escrow"),
+    "claiming_btc": (20, "Sweeping Bitcoin with the revealed secret"),
+    "publishing": (25, "Exporting and validating the five public proofs"),
+}
+WORK_MARKERS = {
+    "locking_btc": "private/directions/taker_sells_foreign/interactive-gates/lock_btc.permit.json",
+    "funding_lez": "private/directions/taker_sells_foreign/interactive-gates/fund_lez.permit.json",
+    "claiming_lez": "private/directions/taker_sells_foreign/interactive-gates/claim_lez.permit.json",
+    "claiming_btc": "private/directions/taker_sells_foreign/interactive-gates/claim_btc.permit.json",
+    "publishing": "evidence/m3-actor-local-poc.json",
+}
+LIVE_STATES = frozenset(("preparing",)) | frozenset(WORK_PHASES)
+
+
+def format_eta(seconds: float) -> str:
+    seconds = max(5, int(seconds))
+    if seconds >= 90:
+        return f"about {round(seconds / 60)} min left"
+    return f"about {max(5, (seconds // 5) * 5)} s left"
 
 
 def utc_now() -> str:
@@ -642,6 +692,9 @@ class Market:
             "state": row["state"],
             "state_label": STATE_LABELS.get(row["state"], row["state"]),
             "progress_percent": PROGRESS.get(row["state"], 0),
+            "progress_detail": None,
+            "eta_seconds": None,
+            "eta_display": None,
             "action_required": action,
             "action_role": ACTIONS.get(action, {}).get("role") if action else None,
             "action_label": ACTIONS.get(action, {}).get("label") if action else None,
@@ -650,6 +703,55 @@ class Market:
             "completed_at": row["completed_at"],
             "error": row["error"],
         }
+
+    @staticmethod
+    def _live_progress(swap: dict) -> None:
+        state = swap["state"]
+        run_id = swap.get("run_id")
+        if not run_id or state not in LIVE_STATES:
+            return
+        base = EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc"
+        now = time.time()
+        if state == "preparing":
+            percent = PROGRESS["preparing"]
+            detail = "Spinning up the isolated two-chain demo stack"
+            remaining = 200.0
+            marker_time = None
+            for relative, label, checkpoint_percent, checkpoint_remaining in PREP_CHECKPOINTS:
+                try:
+                    mtime = (base / relative).stat().st_mtime
+                except OSError:
+                    continue
+                percent, detail = checkpoint_percent, label
+                remaining, marker_time = checkpoint_remaining, mtime
+            if marker_time is None:
+                try:
+                    marker_time = dt.datetime.fromisoformat(
+                        str(swap["started_at"]).replace("Z", "+00:00")).timestamp()
+                except (TypeError, ValueError):
+                    marker_time = now
+            since_marker = max(0.0, now - marker_time)
+            # Creep toward the next checkpoint so the bar visibly moves even
+            # while a slow step (for example a cold Rust build) is running.
+            percent = min(PROGRESS["awaiting_taker_lock"] - 1,
+                          percent + min(5, int(since_marker / 15)))
+            eta = remaining - since_marker
+        else:
+            expected, detail = WORK_PHASES[state]
+            try:
+                marker_time = (base / WORK_MARKERS[state]).stat().st_mtime
+            except OSError:
+                marker_time = now
+            elapsed = max(0.0, now - marker_time)
+            anchor = PROGRESS[state]
+            next_anchor = PROGRESS[FLOW[FLOW.index(state) + 1]]
+            percent = int(anchor + (next_anchor - 1 - anchor) * min(0.95, elapsed / expected))
+            eta = expected - elapsed
+        swap["progress_percent"] = percent
+        swap["progress_detail"] = detail
+        swap["eta_seconds"] = max(5, int(eta))
+        swap["eta_display"] = (
+            "running long · still working" if eta < -30 else format_eta(eta))
 
     @staticmethod
     def _gate_root(run_id: str) -> pathlib.Path:
@@ -744,6 +846,7 @@ class Market:
                 swap["action_role"] == role
                 and swap[f"{role}_wallet_id"] == wallet["id"]
             )
+            self._live_progress(swap)
         latest_balance_evidence = None
         try:
             published = json.loads(EVIDENCE_OUTPUT.read_text())
