@@ -771,7 +771,16 @@ register_process() {
   local pid="$3"
   local start executable
   start="$(awk '{print $22}' "/proc/${pid}/stat")"
-  executable="$(readlink -f "/proc/${pid}/exe")"
+  executable=""
+  # local: a very large binary on a virtiofs bind mount takes visible time to
+  # exec; poll until /proc/<pid>/exe reflects the target (or the child dies)
+  for _ in {1..200}; do
+    executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    [[ -n "$executable" && "$executable" != "/usr/bin/bash" ]] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  [[ -n "$executable" ]] || executable="$(readlink -f "/proc/${pid}/exe")"
   if [[ "$executable" != "$M3_POC_LEZ_SIDECAR_BIN" ]]; then
     local cmdline stat_ppid
     cmdline="$(tr "\0" " " < "/proc/${pid}/cmdline" 2>/dev/null | head -c 200)"
