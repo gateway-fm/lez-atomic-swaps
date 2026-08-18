@@ -91,6 +91,20 @@ secure_state_root_only_attached_chains_retained`. Wallet identities and the
 bootstrap manifest live in `runner-work/market/`; deleting them would strand the
 funded accounts.
 
+## Verification
+
+```sh
+./scripts/verify-all.sh          # everything below, in one run
+```
+
+| Stage | What it proves |
+|---|---|
+| containers | every service is up |
+| settlement chains | both chains are advancing and the Bitcoin spender index is present |
+| `verify-explorers.py` | each certified swap's transactions are *displayed* — Bitcoin ones in a real block on the Bitcoin explorer (rendered content, hidden markup excluded), LEZ ones as live transactions with program and accounts. Runs predating the settlement chains are checked against the certified proof endpoint, since their chains no longer exist |
+| `verify-market.py` | controller validation, idempotent replay, request-identity reuse, wallet ownership, offer lifecycle, role gating and the wallet ledger |
+| UI regressions | the two Basecamp suites against the live daemon and service |
+
 The BTC view can be driven automatically:
 
 ```sh
