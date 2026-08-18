@@ -1,0 +1,363 @@
+name: lez-swap-stack
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ─── Bitcoin regtest ────────────────────────────────────────────────────
+  bitcoin-init:
+    image: debian:bookworm-slim
+    container_name: lez-bitcoin-init
+    volumes:
+      - bitcoin_core_data:/var/lib/bitcoin
+    command: ["chown", "-R", "65532:65532", "/var/lib/bitcoin"]
+    networks: [chains]
+    restart: "no"
+    logging: *default-logging
+
+  bitcoin-core:
+    build: ./images/bitcoin-core
+    image: lez-bitcoin-core:local
+    container_name: lez-bitcoin-core
+    depends_on:
+      bitcoin-init:
+        condition: service_completed_successfully
+    command:
+      - "-conf=/run-config/bitcoin.conf"
+      - "-datadir=/var/lib/bitcoin"
+      - "-printtoconsole"
+    environment:
+      HOME: /tmp
+    ports:
+      - "127.0.0.1:18443:18443"
+    volumes:
+      - ./runtime/btc/bitcoin.conf:/run-config/bitcoin.conf:ro
+      - bitcoin_core_data:/var/lib/bitcoin
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/bitcoin-cli", "-conf=/run-config/bitcoin.conf", "-datadir=/var/lib/bitcoin", "-rpcwait", "getblockchaininfo"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    networks: [chains]
+    user: "65532:65532"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 256
+    mem_limit: 2g
+    restart: unless-stopped
+    logging: *default-logging
+
+  btc-miner:
+    build: ./images/btc-miner
+    image: lez-btc-miner:local
+    container_name: lez-btc-miner
+    depends_on:
+      bitcoin-core:
+        condition: service_healthy
+    volumes:
+      - ./runtime/btc/bitcoin.conf:/run-config/bitcoin.conf:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/bin/bash", "/scripts/btc-miner.sh"]
+    environment:
+      BTC_CONF: /run-config/bitcoin.conf
+      BTC_RPC_HOST: bitcoin-core
+      MINE_INTERVAL: "${MINE_INTERVAL:-15}"
+    networks: [chains]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  btc-explorer:
+    build: ./images/btc-explorer
+    image: lez-btc-explorer:local
+    container_name: lez-btc-explorer
+    depends_on:
+      bitcoin-core:
+        condition: service_healthy
+    environment:
+      BTCEXP_BITCOIND_URI: http://lezrpc:${BTC_RPC_PASSWORD:?run scripts/up.sh first}@bitcoin-core:18443
+      BTCEXP_ADDRESS_API: none
+    ports:
+      - "127.0.0.1:3002:3002"
+    networks: [chains]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ─── LEZ v0.2 devnet ────────────────────────────────────────────────────
+  bedrock:
+    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f"
+    container_name: lez-bedrock
+    entrypoint: ["/usr/bin/logos-blockchain-node"]
+    command:
+      - "/opt/lez-v0.2-source/bedrock/node-config.yaml"
+      - "--deployment"
+      - "/run-config/deployment-settings.yaml"
+    environment:
+      HOME: /tmp
+      POL_PROOF_DEV_MODE: "true"
+    working_dir: /work
+    volumes:
+      - ./assets/lez-source/bedrock:/opt/lez-v0.2-source/bedrock:ro
+      - ./assets/lez-source/bedrock/kzgrs_test_params:/kzgrs_test_params:ro
+      - ./runtime/config/deployment-settings.yaml:/run-config/deployment-settings.yaml:ro
+      - ./runtime/bedrock:/work/state
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    networks: [chains]
+    user: "65532:65532"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 512
+    cpus: 2.0
+    mem_limit: 4g
+    stop_grace_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+
+  sequencer:
+    build: ./images/lez-services
+    image: lez-services:local
+    container_name: lez-sequencer
+    entrypoint: ["/usr/local/bin/sequencer_service"]
+    command: ["/run-config/sequencer_config.json", "--port", "3040"]
+    environment:
+      HOME: /tmp
+      RUST_LOG: info
+      RISC0_SERVER_PATH: /usr/local/bin/r0vm
+    depends_on: [bedrock]
+    volumes:
+      - ./runtime/config/sequencer_config.json:/run-config/sequencer_config.json:ro
+      - ./runtime/sequencer:/var/lib/sequencer_service
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=2g,mode=1777
+    networks: [chains]
+    user: "65532:65532"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 1024
+    cpus: 4.0
+    mem_limit: 8g
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+
+  indexer:
+    image: lez-services:local
+    container_name: lez-indexer
+    entrypoint: ["/usr/local/bin/indexer_service"]
+    command:
+      - "/run-config/indexer_config.json"
+      - "--port"
+      - "8779"
+      - "--data-dir"
+      - "/var/lib/indexer_service"
+    environment:
+      HOME: /tmp
+      RUST_LOG: info
+      RISC0_SERVER_PATH: /usr/local/bin/r0vm
+    depends_on: [sequencer]
+    volumes:
+      - ./runtime/config/indexer_config.json:/run-config/indexer_config.json:ro
+      - ./runtime/indexer:/var/lib/indexer_service
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    networks: [chains]
+    user: "65532:65532"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 512
+    cpus: 2.0
+    mem_limit: 2g
+    stop_grace_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+
+  lez-explorer:
+    build: ./images/lez-explorer
+    image: lez-explorer:local
+    container_name: lez-lez-explorer
+    depends_on: [indexer]
+    environment:
+      LEZ_INDEXER_URL: http://indexer:8779
+    ports:
+      - "127.0.0.1:3003:3003"
+    networks: [chains]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ─── swap application ───────────────────────────────────────────────────
+  maker-init:
+    image: debian:bookworm-slim
+    container_name: lez-maker-init
+    volumes:
+      - maker_state:/var/lib/lez
+      - maker_socket:/run/lez
+      - delivery_dir:/delivery
+    command: ["bash", "-c", "chown -R 4713:4713 /var/lib/lez /run/lez /delivery && chmod 0700 /run/lez /delivery"]
+    networks: [chains]
+    restart: "no"
+    logging: *default-logging
+
+  maker-node:
+    build: ./images/maker-node
+    image: lez-maker-node:local
+    container_name: lez-maker-node
+    depends_on:
+      maker-init:
+        condition: service_completed_successfully
+      bitcoin-core:
+        condition: service_healthy
+      indexer:
+        condition: service_started
+    command:
+      - /bin/bash
+      - -c
+      - |
+        rm -f /run/lez/maker.sock /run/lez/maker.ready
+        if [ ! -s /var/lib/lez/delivery-signing.key ]; then
+          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > /var/lib/lez/delivery-signing.key
+          chmod 0600 /var/lib/lez/delivery-signing.key
+        fi
+        exec /usr/local/bin/lez-maker-daemon \
+          --socket /run/lez/maker.sock \
+          --database /var/lib/lez/maker.sqlite3 \
+          --ready-file /run/lez/maker.ready \
+          --delivery-directory /delivery \
+          --delivery-signing-key-file /var/lib/lez/delivery-signing.key
+    volumes:
+      - maker_state:/var/lib/lez
+      - maker_socket:/run/lez
+      - delivery_dir:/delivery
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m,mode=1777
+    networks: [chains]
+    user: lez
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  taker-init:
+    image: lez-maker-node:local
+    container_name: lez-taker-init
+    depends_on:
+      maker-node:
+        condition: service_started
+    volumes:
+      - taker_state:/var/lib/lez-taker
+      - taker_socket:/run/lez
+      - delivery_dir:/delivery:ro
+      - maker_state:/maker-state:ro
+    command:
+      - /bin/bash
+      - -c
+      - |
+        chown -R 4713:4713 /var/lib/lez-taker /run/lez
+        chmod 0700 /run/lez
+        for _ in $(seq 1 60); do
+          [ -s /maker-state/delivery-signing.key ] && break
+          sleep 1
+        done
+        identity="$(/usr/local/bin/lez-maker delivery-identity --signing-key-file /maker-state/delivery-signing.key | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
+        if [ -z "$$identity" ]; then echo "could not derive maker identity" >&2; exit 1; fi
+        echo "maker delivery identity: $$identity"
+        cat > /var/lib/lez-taker/taker-service.json <<JSON
+        {
+          "schema_version": 1,
+          "delivery_sources": [
+            {
+              "directory": "/delivery",
+              "maker_public_key": "$$identity",
+              "source_id": "local-maker"
+            }
+          ],
+          "maximum_offers": 16
+        }
+        JSON
+        chown 4713:4713 /var/lib/lez-taker/taker-service.json
+        chmod 0600 /var/lib/lez-taker/taker-service.json
+    networks: [chains]
+    restart: "no"
+    logging: *default-logging
+
+  taker-service:
+    image: lez-maker-node:local
+    container_name: lez-taker-service
+    depends_on:
+      taker-init:
+        condition: service_completed_successfully
+    command:
+      - /bin/bash
+      - -c
+      - rm -f /run/lez/taker.sock; exec /usr/local/bin/lez-taker-service --socket /run/lez/taker.sock --config /var/lib/lez-taker/taker-service.json
+    volumes:
+      - taker_state:/var/lib/lez-taker
+      - taker_socket:/run/lez
+      - delivery_dir:/delivery:ro
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m,mode=1777
+    networks: [chains]
+    user: lez
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  basecamp-ui:
+    build: ./images/basecamp-ui
+    image: lez-basecamp-ui:local
+    container_name: lez-basecamp-ui
+    depends_on:
+      maker-node:
+        condition: service_started
+      taker-service:
+        condition: service_started
+    environment:
+      BASECAMP_ROLE: ${BASECAMP_ROLE:-maker}
+      LEZ_MAKER_RPC_SOCKET: /run/lez-maker/maker.sock
+      LEZ_TAKER_RPC_SOCKET: /run/lez-taker/taker.sock
+    volumes:
+      - maker_socket:/run/lez-maker:ro
+      - taker_socket:/run/lez-taker:ro
+      - ./ui-tests:/ui-tests:ro
+    ports:
+      - "127.0.0.1:5901:5900"
+    networks: [chains]
+    user: "4713:4713"
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
+networks:
+  chains:
+    name: lez-swap-chains
+    driver: bridge
+
+volumes:
+  bitcoin_core_data:
+    name: lez-bitcoin-core-data
+  maker_state:
+    name: lez-maker-state
+  maker_socket:
+    name: lez-maker-socket
+  taker_state:
+    name: lez-taker-state
+  taker_socket:
+    name: lez-taker-socket
+  delivery_dir:
+    name: lez-delivery-dir
