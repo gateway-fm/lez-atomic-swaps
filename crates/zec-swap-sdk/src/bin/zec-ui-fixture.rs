@@ -197,7 +197,7 @@ fn main() -> Result<()> {
                 "chain_id": "06".repeat(32),
                 "channel_id": "08".repeat(32),
                 "genesis_block_hash": "07".repeat(32),
-                "escrow_program_id": "01".repeat(16),
+                "escrow_program_id": "01".repeat(32),
                 "signer_account_id": "03".repeat(32)
             },
             "request_timeout_millis": 5000
