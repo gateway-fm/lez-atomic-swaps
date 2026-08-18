@@ -114,7 +114,7 @@ fn main() -> Result<()> {
     )?;
 
     // countersigned agreement wire (same placeholder chain facts as the test)
-    let escrow_program = [1u8; 8];
+    let escrow_program = [1u32; 8];
     let onchain_swap_id = derive_lez_swap_id_v1(arguments.swap_id.as_bytes());
     let secret_digest: [u8; 32] = Sha256::digest(CLAIM_PREIMAGE).into();
     let binding = ZecSwapBinding::new(
@@ -139,7 +139,7 @@ fn main() -> Result<()> {
             LezChainIdentityV1::new(LezEnvironmentV1::DeterministicLocalV0_2, [8; 32], [7; 32]),
             escrow_program,
             LezAssetV1::Native {
-                authenticated_transfer_program_id: [2; 8],
+                authenticated_transfer_program_id: [2u32; 8],
             },
             25_000,
             derive_lez_metadata_account_v1(&escrow_program, &onchain_swap_id),
@@ -179,7 +179,7 @@ fn main() -> Result<()> {
         "run_id": "ui-fixture-authority",
         "swap_id": arguments.swap_id,
         "signed_agreement_file": shared.join("agreement-v2.borsh"),
-        "signed_agreement_sha256": hex::encode(&agreement_sha),
+        "signed_agreement_sha256": agreement_sha.iter().map(|b| format!("{b:02x}")).collect::<String>(),
         "role_state_db": maker_root.join("unused-source-state.sqlite3"),
         "claim_recovery": {
             "key_id": "ui-zec-claim",
@@ -209,7 +209,7 @@ fn main() -> Result<()> {
     });
     write_private(
         &maker_root.join("actor-config.json"),
-        serde_json::to_vec_pretty(&config).as_slice(),
+        &serde_json::to_vec_pretty(&config)?,
     )?;
 
     println!(
