@@ -79,7 +79,7 @@ program deployment and the four wallet vault claims — is idempotent:
 
 ```sh
 docker exec -e BTC_RPC_PASSWORD="$(grep '^rpcpassword=' runtime/btc/bitcoin.conf | cut -d= -f2)" \
-  lez-runner-arm bash /tmp/market-bootstrap.sh
+  lez-runner-arm bash /Users/mandrigin/Desktop/las-logos/runner-work/market/market-bootstrap.sh
 ```
 
 Each run attaches with `LEZ_M3_ATTACH=1` plus `LEZ_ATTACH_BTC_RUN`,

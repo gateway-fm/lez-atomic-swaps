@@ -68,11 +68,16 @@ deployment_tx="$(jq -r '.transaction_hash' "$deployment_evidence")"
 # ── 2. vault claims (once per wallet) ──────────────────────────────────────
 for entry in "${WALLETS[@]}"; do
   read -r wallet role owner vault allocation <<<"$entry"
-  balance="$(account_balance "$owner")"
-  if [[ "$balance" == "$allocation" ]]; then
-    echo "$wallet: owner already funded ($balance)"
+  # The vault, not the owner, says whether the one-time claim already ran:
+  # owner balances drift as the wallet trades on the standing chain.
+  vault_balance="$(account_balance "$vault")"
+  if [[ "$vault_balance" == 0 || -z "$vault_balance" ]]; then
+    echo "$wallet: vault already claimed (owner holds $(account_balance "$owner"))"
     continue
   fi
+  [[ "$vault_balance" == "$allocation" ]] ||
+    fail "$wallet vault balance unexpected: $vault_balance"
+  balance="$(account_balance "$owner")"
   [[ "$balance" == 0 || -z "$balance" ]] || fail "$wallet owner balance unexpected: $balance"
   key="$MARKET_ROOT/identities/$wallet/lez-signer.key"
   [[ -f "$key" ]] || fail "$wallet signing key missing"
@@ -88,10 +93,10 @@ for entry in "${WALLETS[@]}"; do
     and (.transaction_id | test("^[0-9a-f]{64}$"))
   ' "$MARKET_ROOT/bootstrap/$wallet-claim.json" >/dev/null || fail "$wallet claim evidence invalid"
   for _ in $(seq 1 60); do
-    [[ "$(account_balance "$owner")" == "$allocation" ]] && break
+    [[ "$(account_balance "$vault")" == 0 ]] && break
     sleep 1
   done
-  [[ "$(account_balance "$owner")" == "$allocation" ]] || fail "$wallet owner not funded after claim"
+  [[ "$(account_balance "$vault")" == 0 ]] || fail "$wallet vault not swept after claim"
   echo "$wallet: claimed $allocation into $owner ($(jq -r '.transaction_id' "$MARKET_ROOT/bootstrap/$wallet-claim.json"))"
 done
 
