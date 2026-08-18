@@ -18,7 +18,7 @@ its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`
 
 | What | Where |
 |---|---|
-| Bitcoin regtest RPC | `http://127.0.0.1:18443` (user `lezrpc`, password in `runtime/runtime.env`), auto-mining every 15 s |
+| Bitcoin regtest RPC | `http://127.0.0.1:18443` (user `lezrpc`, password in `runtime/runtime.env`), auto-mining every 120 s |
 | BTC explorer | http://127.0.0.1:3002 |
 | LEZ explorer + M3 evidence | http://127.0.0.1:3003/#/evidence |
 | **Basecamp UI (VNC)** | **`vnc://127.0.0.1:5901`** (password `lezswap`; override with `VNC_PASSWORD`) |
@@ -54,11 +54,42 @@ new run. The command-line equivalent remains available:
 ./scripts/prepare-btc-m3-demo.sh --rerun
 ```
 
-Each interactive swap and the command normally take about five minutes once
-build caches are warm; allow up to ten minutes for a cold first run. They execute the
-real LEZ/BTC application flow on isolated local chains, export only its public
-evidence, and refresh the UI. An existing run can be imported with
-`--from-run <m3-evidence-directory>`.
+Each interactive swap executes the real LEZ/BTC application flow against the
+**long-standing settlement chains** (see below), exports only its public
+evidence, and refreshes the UI. Preparation takes seconds and a full four-gate
+swap a couple of minutes, since no chain is provisioned per swap. An existing
+run can be imported with `--from-run <m3-evidence-directory>`.
+
+## Settlement chains
+
+Swaps settle on one permanent pair of chains, the way they must against real
+Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
+
+* **Bitcoin**: the standing `bitcoin-core` regtest chain (`txindex`,
+  `txospenderindex`), continuously mined by `btc-miner`. Swap transactions are
+  native chain transactions, visible in the Bitcoin explorer.
+* **LEZ**: the standing `bedrock` / `sequencer` / `indexer` chain, whose genesis
+  funds four persistent wallets (Munich, Basel, Zurich, Limmat). Balances
+  accumulate across swaps; the UI's wallet ledger shows true opening → closing
+  values, not per-run genesis allocations.
+
+Both carry `org.logos-co.atomic-swaps.{run,scope,component}` labels
+(`market-btc-0001` / `market-lez-0001`). The one-time bootstrap — escrow
+program deployment and the four wallet vault claims — is idempotent:
+
+```sh
+docker exec -e BTC_RPC_PASSWORD="$(grep '^rpcpassword=' runtime/btc/bitcoin.conf | cut -d= -f2)" \
+  lez-runner-arm bash /tmp/market-bootstrap.sh
+```
+
+Each run attaches with `LEZ_M3_ATTACH=1` plus `LEZ_ATTACH_BTC_RUN`,
+`LEZ_ATTACH_LEZ_RUN`, the two `LEZ_ATTACH_*_IDENTITY_DIR` wallet directories,
+and `LEZ_ATTACH_BOOTSTRAP_MANIFEST` (patches `0017`/`0018` in
+`full-swap/patches/`). Attached chains are never torn down: the run's cleanup
+attestation records `cleanup_scope:
+secure_state_root_only_attached_chains_retained`. Wallet identities and the
+bootstrap manifest live in `runner-work/market/`; deleting them would strand the
+funded accounts.
 
 The BTC view can be driven automatically:
 
@@ -75,13 +106,13 @@ actor provisioning, but stops at `not_activated`; it is not the M3 BTC demo.
 
 | Service | Image | Notes |
 |---|---|---|
-| `bitcoin-core` | `images/bitcoin-core` | official Core 31.1 binaries (from the checksum/Guix-verified archive used by the repo's e2e flow), distroless, `txindex=1`, healthchecked |
+| `bitcoin-core` | `images/bitcoin-core` | official Core 31.1 binaries (from the checksum/Guix-verified archive used by the repo's e2e flow), distroless, `txindex=1` + `txospenderindex=1` (the actors' lock observation needs the spender index), healthchecked, settlement-chain labels |
 | `bitcoin-init` | debian | one-shot datadir chown to the distroless uid |
-| `btc-miner` | `images/btc-miner` | regtest coinbase miner over JSON-RPC |
-| `btc-explorer` | `images/btc-explorer` | btc-rpc-explorer 3.4.0 |
+| `btc-miner` | `images/btc-miner` | regtest coinbase miner over JSON-RPC, `MINE_INTERVAL` 120s so ambient blocks do not race swap confirmations |
+| `btc-explorer` | `images/btc-explorer` | btc-rpc-explorer 3.4.0, patched for an exhausted regtest halving schedule (post-era subsidy is 0; upstream returns `undefined` and 500s the homepage) |
 | `bedrock` | pinned multi-arch digest `91d6c5…` | LEZ v0.2 consensus node (exact pin from the repo's compose) |
 | `sequencer` / `indexer` | `images/lez-services` | built from pinned `logos-execution-zone` v0.2.0 (a58fbce), native rebuild + arm64 r0vm |
-| `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`) |
+| `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves any certified run's transaction hashes |
 | `maker-init` / `taker-init` | debian | one-shot volume chowns (0700 socket dirs, 0600 taker config) |
 | `maker-node` | `images/maker-node` | real `lez-maker-daemon` + CLIs; owner socket on a shared volume |
 | `taker-service` | `images/maker-node` | real `lez-taker-service`: health, authenticated offer discovery, Chat acceptance, durable admission, list, monitor, and fenced terminal actions |
