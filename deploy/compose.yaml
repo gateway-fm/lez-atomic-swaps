@@ -227,21 +227,27 @@ services:
       - /bin/bash
       - -c
       - |
-        rm -f /run/lez/maker.sock /run/lez/maker.ready
+        rm -f /run/lez/maker.sock /run/lez/maker.ready /run/lez/chat.sock
         if [ ! -s /var/lib/lez/delivery-signing.key ]; then
           od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > /var/lib/lez/delivery-signing.key
           chmod 0600 /var/lib/lez/delivery-signing.key
+        fi
+        extra=()
+        if [ -s /prep/daemon-args.sh ]; then
+          extra+=( $$(grep -vE '^\s*(#|$$)' /prep/daemon-args.sh) )
         fi
         exec /usr/local/bin/lez-maker-daemon \
           --socket /run/lez/maker.sock \
           --database /var/lib/lez/maker.sqlite3 \
           --ready-file /run/lez/maker.ready \
           --delivery-directory /delivery \
-          --delivery-signing-key-file /var/lib/lez/delivery-signing.key
+          --delivery-signing-key-file /var/lib/lez/delivery-signing.key \
+          "$${extra[@]}"
     volumes:
       - maker_state:/var/lib/lez
       - maker_socket:/run/lez
       - delivery_dir:/delivery
+      - prep_state:/prep
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -250,6 +256,10 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     logging: *default-logging
+
+  # Chat authority for UI-initiated swaps: scripts/prepare-ui-swap.sh writes
+  # /prep/daemon-args.sh and restarts this service; those flags turn on the
+  # ZEC claim + Chat socket that the taker service's initiate executes.
 
   taker-init:
     image: lez-maker-node:local
@@ -308,6 +318,8 @@ services:
       - taker_state:/var/lib/lez-taker
       - taker_socket:/run/lez
       - delivery_dir:/delivery:ro
+      - maker_socket:/run/lez-maker-chat
+      - prep_state:/prep:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -361,3 +373,5 @@ volumes:
     name: lez-taker-socket
   delivery_dir:
     name: lez-delivery-dir
+  prep_state:
+    name: lez-prep-state

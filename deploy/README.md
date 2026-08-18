@@ -31,29 +31,6 @@ confirm **Backend connected**, then use *Check service / Save route atomically /
 Refresh swap history* (maker) or *Service health / Browse offers* (taker) —
 every click executes against the live daemon.
 
-### User journey (live offer discovery)
-
-The maker daemon signs offers into a shared Delivery volume; the taker service
-pins the maker's delivery identity and serves authenticated browsing:
-
-```sh
-# maker side (once): route + price + offer
-docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock \
-  configure-pair --request-id r1 --pair bitcoin --direction taker-sells-foreign \
-  --enabled true --minimum-foreign-units 1 --maximum-foreign-units 100000000 \
-  --offer-ttl-seconds 7200
-docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock \
-  publish-offer --request-id o1 --offer-id offer-ui-btc-001 \
-  --pair bitcoin --direction taker-sells-foreign
-```
-
-Then in the **Taker** UI select pair *Bitcoin*, direction *TakerSellsForeign*,
-press **Browse authenticated offers** — the maker's real signed offer appears
-(id, exact limits, price, TTL). *Confirm and initiate* commits to the taker
-registry; note the service admits initiation only from owner-prepared swap
-material (`prepared_private_material` capability, the ZEC prepared-acceptance
-design) — free-form BTC initiation is not yet a service feature upstream.
-
 ## Services
 
 | Service | Image | Notes |
@@ -106,12 +83,10 @@ ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspec
 runtime/                   generated state (gitignored; wiped by --wipe)
 ```
 
-## Full flow
+## Known scope
 
-The complete swap (real chains, daemon, CLIs, pinned escrow artifacts) runs
-natively — see `full-swap/README.md`. A certified run (`m5arm-08180005`)
-completed the taker-sells-foreign journey to revision 4 `completed` with real
-on-chain effects {bitcoin: 2, lez: 3}, and its maker database was imported
-into this stack: **Refresh swap history / Monitor in the Basecamp UI show the
-real swap** (`a8d37797…`, Bitcoin). `full-swap/patches/` carries the local
-patch series on top of the repository's `main`.
+The maker daemon runs in its minimal (no-chain-actor) configuration: full swap
+execution requires the repo's actor provisioning (BTC actor configs, guest
+programs, delivery/chat authority) from `scripts/run-m3-actor-local-poc.sh` in
+the lez-atomic-swaps repository. Everything up to and including the UI ↔
+daemon ↔ service plane is live and verified here.
