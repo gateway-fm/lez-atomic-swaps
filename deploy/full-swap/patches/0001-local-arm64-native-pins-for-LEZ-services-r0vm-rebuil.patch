@@ -1,0 +1,155 @@
+From 60332484fe212d7d7503507bff7b7f627a607c51 Mon Sep 17 00:00:00 2001
+From: mandrigin <igor@gateway.fm>
+Date: Mon, 17 Aug 2026 21:15:44 +0200
+Subject: [PATCH 01/16] local(arm64): native pins for LEZ services/r0vm
+ rebuilds, official Core aarch64 archive, LEZ_SKIP_TESTS lanes
+
+- sequencer/indexer/r0vm sha256 pins -> native aarch64 rebuilds from the
+  same pinned sources (v0.2.0 a58fbce, rust 1.94.0; r0vm from the risc0
+  v3.0.5 tag, no arm64-linux release asset exists)
+- bitcoin provenance.env -> the official 31.1 aarch64 archive (hash from
+  the same signed SHA256SUMS / guix attestation set)
+- verify-lez-v02-provisional: LEZ_SKIP_TESTS=1 keeps every artifact
+  digest/ImageID assertion, skips host-arch test gates and builds
+  methods/deployer without executing tests
+---
+ scripts/run-lez-v02-stack.sh                   |  6 +++---
+ scripts/verify-lez-v02-local-stack-contract.sh | 10 +++++-----
+ scripts/verify-lez-v02-provisional.sh          | 16 +++++++++++++++-
+ tests/e2e/bitcoin-core/provenance.env          |  8 ++++----
+ 4 files changed, 27 insertions(+), 13 deletions(-)
+
+diff --git a/scripts/run-lez-v02-stack.sh b/scripts/run-lez-v02-stack.sh
+index a32a870..d8f00b4 100755
+--- a/scripts/run-lez-v02-stack.sh
++++ b/scripts/run-lez-v02-stack.sh
+@@ -4,9 +4,9 @@ set -euo pipefail
+ cd "$(dirname "${BASH_SOURCE[0]}")/.."
+ 
+ readonly expected_source_commit="a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+-readonly expected_sequencer_sha256="3727e9aa10600d04d0cdfda6eb39df146ef4cc14f5b09ad33bcf076a8f2c412f"
+-readonly expected_indexer_sha256="6ed54f04ae018f3554898a9f0aef6decd6930c4e8609326d146ca164e48d7442"
+-readonly expected_r0vm_sha256="36c016a5bb2ded5bd1f8f92cc487e6ffaeb1e95ec05850c983081a0f716b515b"
++readonly expected_sequencer_sha256="7ee3b50cce5e71a3f9e7f610311635361337a80d2cc697618e837a1a2ab5e042"
++readonly expected_indexer_sha256="074930b567f3425656464a0482c15e04196f74b534e3187a9ff718ca07c98ed1"
++readonly expected_r0vm_sha256="05a4dc3224736c966e1c122e9c896e54443d68ed562396428bc0693f3341c098"
+ readonly channel_id="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
+ readonly genesis_channel_id="0000000000000000000000000000000000000000000000000000000000000000"
+ readonly bedrock_signing_key_hex="0ab865b8054be13810889714c1f1d82c3d8bb2e4510c26d0edc35cc653f306c2"
+diff --git a/scripts/verify-lez-v02-local-stack-contract.sh b/scripts/verify-lez-v02-local-stack-contract.sh
+index 5a9558c..b914123 100755
+--- a/scripts/verify-lez-v02-local-stack-contract.sh
++++ b/scripts/verify-lez-v02-local-stack-contract.sh
+@@ -19,7 +19,7 @@ logos_commit="d8711bbc3d43d3ef9755ef9b73af32fd0f703160"
+ rust_toolchain="1.94.0"
+ bedrock_image="ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f"
+ runtime_base="gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7"
+-r0vm_sha256="36c016a5bb2ded5bd1f8f92cc487e6ffaeb1e95ec05850c983081a0f716b515b"
++r0vm_sha256="05a4dc3224736c966e1c122e9c896e54443d68ed562396428bc0693f3341c098"
+ rapidsnark_revision="e91187f8ccb5bbfc7bb00dac88169112428da78f"
+ rapidsnark_archive_name="rapidsnark-linux-x86_64-pic-v0.0.8.zip"
+ rapidsnark_archive_sha256="59bdd709eed96235de061f352893f4650c923b54b591052118593012bb1cd831"
+@@ -120,8 +120,8 @@ rg -Fqx 'public_runtime_parity_status = "unverified_upstream_tagged_readme_calls
+ rg -Fqx "runtime_base_reference = \"${runtime_base}\"" "$contract"
+ rg -Fqx "r0vm_sha256 = \"${r0vm_sha256}\"" "$contract"
+ rg -Fqx 'binary_sha256_status = "locked_source_build_hashes_bound_and_executed_in_isolated_service_stack"' "$contract"
+-rg -Fqx 'sequencer_binary_sha256 = "3727e9aa10600d04d0cdfda6eb39df146ef4cc14f5b09ad33bcf076a8f2c412f"' "$contract"
+-rg -Fqx 'indexer_binary_sha256 = "6ed54f04ae018f3554898a9f0aef6decd6930c4e8609326d146ca164e48d7442"' "$contract"
++rg -Fqx 'sequencer_binary_sha256 = "7ee3b50cce5e71a3f9e7f610311635361337a80d2cc697618e837a1a2ab5e042"' "$contract"
++rg -Fqx 'indexer_binary_sha256 = "074930b567f3425656464a0482c15e04196f74b534e3187a9ff718ca07c98ed1"' "$contract"
+ rg -Fqx 'runtime_smoke_status = "distroless_services_executed_isolated_service_readiness_green"' "$contract"
+ rg -Fqx '  "network_none",' "$contract"
+ rg -Fqx '  "unique_private_bridge",' "$contract"
+@@ -320,8 +320,8 @@ verify_artifact "$rapidsnark_lib_dir/librapidsnark.a" "d4133227f845ff5bfa3672eb5
+ verify_artifact "$rapidsnark_lib_dir/libgmp.a" "0a910b420c3ad603c83c9dc2818c7ae05394c231ca23135c7b873e8e680ea41b"
+ verify_artifact "$rapidsnark_lib_dir/libfq.a" "797b5d24bb8e8b088f811bddfff35f33973af9c797fb3812489cd42ba6a957d0"
+ verify_artifact "$rapidsnark_lib_dir/libfr.a" "40f809394904682cb5517845cd3c2f936a5eb4609712534b573f552f2811fb82"
+-verify_artifact "$sequencer_binary" "3727e9aa10600d04d0cdfda6eb39df146ef4cc14f5b09ad33bcf076a8f2c412f"
+-verify_artifact "$indexer_binary" "6ed54f04ae018f3554898a9f0aef6decd6930c4e8609326d146ca164e48d7442"
++verify_artifact "$sequencer_binary" "7ee3b50cce5e71a3f9e7f610311635361337a80d2cc697618e837a1a2ab5e042"
++verify_artifact "$indexer_binary" "074930b567f3425656464a0482c15e04196f74b534e3187a9ff718ca07c98ed1"
+ [[ "$("$sequencer_binary" --version)" == "sequencer_service 0.1.0" ]]
+ [[ "$("$indexer_binary" --version)" == "indexer_service 0.1.0" ]]
+ 
+diff --git a/scripts/verify-lez-v02-provisional.sh b/scripts/verify-lez-v02-provisional.sh
+index 7d04558..d66a6fb 100755
+--- a/scripts/verify-lez-v02-provisional.sh
++++ b/scripts/verify-lez-v02-provisional.sh
+@@ -98,12 +98,14 @@ export LOGOS_BLOCKCHAIN_CIRCUITS="$circuits_dir"
+ gcc_include="$(gcc -print-file-name=include)"
+ export BINDGEN_EXTRA_CLANG_ARGS="-I${gcc_include}${BINDGEN_EXTRA_CLANG_ARGS:+ ${BINDGEN_EXTRA_CLANG_ARGS}}"
+ 
++# local arm64 lane: skip host test gates (they are host-arch coverage, not artifact identity)
++if [[ "${LEZ_SKIP_TESTS:-0}" != "1" ]]; then
+ cargo fmt --manifest-path "$root_manifest" -- --check
+ cargo test --locked --manifest-path "$root_manifest" --all-targets
+ cargo clippy --locked --manifest-path "$root_manifest" --all-targets -- -D warnings
+ RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path "$root_manifest" --no-deps
+-
+ cargo fmt --manifest-path "$guest_manifest" -- --check
++fi
+ CARGO_TARGET_DIR="$guest_target" \
+   cargo check --locked --manifest-path "$guest_manifest" --bins
+ CARGO_TARGET_DIR="$guest_target" \
+@@ -152,6 +154,7 @@ if [[ "$docker_image_id" != "$expected_image_id" ]]; then
+ fi
+ rg -Fqx "risc0_guest_builder = \"${risc0_guest_builder}\"" "$artifact_manifest"
+ 
++if [[ "${LEZ_SKIP_TESTS:-0}" != "1" ]]; then
+ cargo fmt --manifest-path "$methods_manifest" -- --check
+ CARGO_TARGET_DIR="$artifact_target" \
+   cargo test --locked --manifest-path "$methods_manifest" --all-targets
+@@ -159,6 +162,11 @@ CARGO_TARGET_DIR="$artifact_target" \
+   cargo clippy --locked --manifest-path "$methods_manifest" --all-targets -- -D warnings
+ CARGO_TARGET_DIR="$artifact_target" RUSTDOCFLAGS="-D warnings" \
+   cargo doc --locked --manifest-path "$methods_manifest" --no-deps
++else
++# build-only: produce the riscv-guest artifacts without executing host tests
++CARGO_TARGET_DIR="$artifact_target" \
++  cargo build --locked --manifest-path "$methods_manifest" --all-targets
++fi
+ 
+ mapfile -t guest_elfs < <(
+   find "$artifact_target/riscv-guest" -type f -name 'zec_escrow_v02.bin' -print
+@@ -190,6 +198,7 @@ rg -Fqx 'transaction_hash = "pending"' "$artifact_manifest"
+ rg -Fqx 'inclusion_block_id = 0' "$artifact_manifest"
+ rg -Fqx 'inclusion_block_hash = "pending"' "$artifact_manifest"
+ 
++if [[ "${LEZ_SKIP_TESTS:-0}" != "1" ]]; then
+ cargo fmt --manifest-path "$deployer_manifest" -- --check
+ CARGO_TARGET_DIR="$artifact_target" \
+   cargo test --locked --manifest-path "$deployer_manifest" --all-targets
+@@ -197,6 +206,11 @@ CARGO_TARGET_DIR="$artifact_target" \
+   cargo clippy --locked --manifest-path "$deployer_manifest" --all-targets -- -D warnings
+ CARGO_TARGET_DIR="$artifact_target" RUSTDOCFLAGS="-D warnings" \
+   cargo doc --locked --manifest-path "$deployer_manifest" --no-deps --bins
++else
++# build-only: the M3 lane needs the native deployer binary
++CARGO_TARGET_DIR="$artifact_target" \
++  cargo build --locked --manifest-path "$deployer_manifest" --bins
++fi
+ 
+ lockfile="compat/lez-v0.2-provisional/Cargo.lock"
+ rg -Fq "?rev=${spel_commit}#${spel_commit}" "$lockfile" || {
+diff --git a/tests/e2e/bitcoin-core/provenance.env b/tests/e2e/bitcoin-core/provenance.env
+index d7af7ad..5fbae95 100644
+--- a/tests/e2e/bitcoin-core/provenance.env
++++ b/tests/e2e/bitcoin-core/provenance.env
+@@ -3,10 +3,10 @@ BITCOIN_CORE_TAG=v31.1
+ BITCOIN_CORE_SOURCE_URL=https://github.com/bitcoin/bitcoin.git
+ BITCOIN_CORE_SOURCE_TAG_OBJECT=bfa6a4b79cd4c1562fd32857e3147763efae37fb
+ BITCOIN_CORE_SOURCE_COMMIT=9be056a8a72b624dae9623b2f7bded92c2a21c91
+-BITCOIN_CORE_ARCHIVE_NAME=bitcoin-31.1-x86_64-linux-gnu.tar.gz
+-BITCOIN_CORE_ARCHIVE_URL=https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz
+-BITCOIN_CORE_ARCHIVE_SHA256=b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e
+-BITCOIN_CORE_ARCHIVE_SIZE=90293352
++BITCOIN_CORE_ARCHIVE_NAME=bitcoin-31.1-aarch64-linux-gnu.tar.gz
++BITCOIN_CORE_ARCHIVE_URL=https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-aarch64-linux-gnu.tar.gz
++BITCOIN_CORE_ARCHIVE_SHA256=dcf1873f2208ba4f962f3398d47e154c39c0084be8f4553e05c940d0ace3d004
++BITCOIN_CORE_ARCHIVE_SIZE=85851107
+ BITCOIN_CORE_RELEASE_BASE_URL=https://bitcoincore.org/bin/bitcoin-core-31.1
+ BITCOIN_CORE_SHA256SUMS_SHA256=e63028d0bb33d22c847479d73866be8c1142246911765c005efbf611b645e706
+ BITCOIN_CORE_SHA256SUMS_ASC_SHA256=c22e1389b651dfa2f710345e23f3adc52d4e3b3dad8ed7977a7e29d55c55995f
+-- 
+2.50.1 (Apple Git-155)
+

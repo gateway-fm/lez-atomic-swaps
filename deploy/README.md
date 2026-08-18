@@ -83,10 +83,12 @@ ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspec
 runtime/                   generated state (gitignored; wiped by --wipe)
 ```
 
-## Known scope
+## Full flow
 
-The maker daemon runs in its minimal (no-chain-actor) configuration: full swap
-execution requires the repo's actor provisioning (BTC actor configs, guest
-programs, delivery/chat authority) from `scripts/run-m3-actor-local-poc.sh` in
-the lez-atomic-swaps repository. Everything up to and including the UI ↔
-daemon ↔ service plane is live and verified here.
+The complete swap (real chains, daemon, CLIs, pinned escrow artifacts) runs
+natively — see `full-swap/README.md`. A certified run (`m5arm-08180005`)
+completed the taker-sells-foreign journey to revision 4 `completed` with real
+on-chain effects {bitcoin: 2, lez: 3}, and its maker database was imported
+into this stack: **Refresh swap history / Monitor in the Basecamp UI show the
+real swap** (`a8d37797…`, Bitcoin). `full-swap/patches/` carries the local
+patch series on top of the repository's `main`.

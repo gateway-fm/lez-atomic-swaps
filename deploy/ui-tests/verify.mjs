@@ -57,6 +57,10 @@ async function property(app, objectName, propertyName) {
   return value.value;
 }
 
+async function evaluateIn(app, objectId, expression) {
+  return app.inspector.send("evaluate", { objectId, expression });
+}
+
 async function outputAfterClick(app, buttonLabel, objectNameOutput) {
   const before = await property(app, objectNameOutput, "text");
   await app.click(buttonLabel);
@@ -97,7 +101,25 @@ if (role === "maker") {
   test("maker: atomic route save + history on the real database", async (app) => {
     const saved = unwrap(await outputAfterClick(app, "Save route atomically", "makerOutput"), "route save");
     const history = unwrap(await outputAfterClick(app, "Refresh swap history", "makerOutput"), "history");
-    console.log(`  route save ok (revisions: ${JSON.stringify(saved.pair_revision ?? saved)}) swaps=${(history.swaps ?? []).length}`);
+    const swaps = Array.isArray(history) ? history : (history.swaps ?? []);
+    console.log(`  route save ok (revisions: ${JSON.stringify(saved.pair_revision ?? saved)}) swaps=${swaps.length}`);
+    for (const swap of swaps) {
+      console.log(`  swap ${swap.id.slice(0, 16)}… pair=${swap.pair} phase=${swap.phase}`);
+    }
+  });
+
+  test("maker: monitor the completed on-chain swap", async (app) => {
+    const found = await app.findByProperty("placeholderText", "Swap ID");
+    if (found.error || !found.matches || found.matches.length !== 1) {
+      throw new Error(`swap id field not found: ${JSON.stringify(found).slice(0, 200)}`);
+    }
+    await evaluateIn(app, found.matches[0].id, `text = "${process.env.REAL_SWAP_ID ?? "a8d37797caacc1c68da23a91061de5bc31c2d991b301ae48ff864a669e510edc"}"`);
+    const monitor = unwrap(await outputAfterClick(app, "Monitor", "makerOutput"), "monitor");
+    const swapId = monitor.swap_id ?? monitor.swap?.id ?? monitor.id;
+    if (!String(swapId ?? "").startsWith((process.env.REAL_SWAP_ID ?? "a8d37797").slice(0, 8))) {
+      throw new Error(`unexpected monitor result: ${JSON.stringify(monitor).slice(0, 200)}`);
+    }
+    console.log(`  monitored live: actor=${monitor.actor_kind} state=${monitor.schedule_state} swap=${String(swapId).slice(0, 16)}…`);
   });
 } else {
   test("taker: launcher discoverable and app opens", async (app) => {
