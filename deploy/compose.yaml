@@ -72,7 +72,7 @@ services:
     environment:
       BTC_CONF: /run-config/bitcoin.conf
       BTC_RPC_HOST: bitcoin-core
-      MINE_INTERVAL: "${MINE_INTERVAL:-15}"
+      MINE_INTERVAL: "${MINE_INTERVAL:-120}"
     networks: [chains]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped

@@ -120,33 +120,32 @@ FLOW = (
     "awaiting_maker_claim", "claiming_btc", "publishing", "completed",
 )
 
-# Sub-checkpoints of the opaque "preparing" phase, in the order the genuine
-# runner writes its evidence files: (relative path under the run's
-# m3-actor-poc directory, viewer label, overall percent, typical seconds
-# remaining until the first actor gate opens on a warm build).
+# Sub-checkpoints of the "preparing" phase, in the order an attach-mode run
+# writes its evidence files: (relative path under the run's m3-actor-poc
+# directory, viewer label, overall percent, typical seconds remaining until
+# the first actor gate opens). Attached runs skip chain provisioning, so
+# preparation is tens of seconds, not minutes.
 PREP_CHECKPOINTS = (
     ("private/directions/taker_sells_foreign/planning.json",
-     "Fresh actor identities and swap plan created", 8, 190),
-    ("evidence/lez-service.log", "Starting the isolated LEZ chain", 14, 135),
-    ("evidence/node-startup-status.json", "Bitcoin and LEZ chains online", 20, 110),
-    ("evidence/lez-deployment.json", "LEZ swap contract deployed", 22, 100),
-    ("evidence/lez-deployment-finality.json", "Contract deployment finalized", 25, 85),
-    ("evidence/maker-vault-claim-finality.json", "Maker vault claim finalized", 29, 55),
-    ("evidence/taker-vault-claim-finality.json", "Taker vault claim finalized", 33, 25),
+     "Swap plan signed for the persistent wallets", 12, 22),
+    ("evidence/node-startup-status.json",
+     "Attached to the settlement chains", 18, 18),
+    ("private/taker_sells_foreign-bitcoin-funding-source.json",
+     "Bitcoin funding source reserved on-chain", 24, 16),
     ("evidence/taker_sells_foreign-stage-two.json",
-     "Authenticated agreement staged", 36, 18),
+     "Authenticated agreement staged", 30, 12),
     ("evidence/taker_sells_foreign-activation-maker.json",
-     "Actors activated · opening the first gate", 39, 8),
+     "Actors activated · opening the first gate", 38, 5),
 )
 
 # Machine-driven phases between actor gates: typical duration in seconds and a
 # viewer label, plus the file whose mtime marks the phase start.
 WORK_PHASES = {
-    "locking_btc": (20, "Broadcasting the Bitcoin lock transaction"),
-    "funding_lez": (80, "Funding the LEZ escrow and waiting for chain finality"),
-    "claiming_lez": (45, "Revealing the secret and claiming the LEZ escrow"),
-    "claiming_btc": (20, "Sweeping Bitcoin with the revealed secret"),
-    "publishing": (25, "Exporting and validating the five public proofs"),
+    "locking_btc": (15, "Broadcasting the Bitcoin lock transaction"),
+    "funding_lez": (45, "Funding the LEZ escrow and waiting for chain finality"),
+    "claiming_lez": (30, "Revealing the secret and claiming the LEZ escrow"),
+    "claiming_btc": (15, "Sweeping Bitcoin with the revealed secret"),
+    "publishing": (20, "Exporting and validating the five public proofs"),
 }
 WORK_MARKERS = {
     "locking_btc": "private/directions/taker_sells_foreign/interactive-gates/lock_btc.permit.json",
@@ -752,8 +751,8 @@ class Market:
         now = time.time()
         if state == "preparing":
             percent = PROGRESS["preparing"]
-            detail = "Spinning up the isolated two-chain demo stack"
-            remaining = 200.0
+            detail = "Preparing the swap on the settlement chains"
+            remaining = 25.0
             marker_time = None
             for relative, label, checkpoint_percent, checkpoint_remaining in PREP_CHECKPOINTS:
                 try:
@@ -1099,6 +1098,7 @@ class Market:
             [
                 f"LEZ_M3_RUN_ID={run_id}",
                 "LEZ_M3_INTERACTIVE=1",
+                "LEZ_M3_ATTACH=1",
                 "LEZ_INTERACTIVE_UI_GATES=1",
                 f"LEZ_INTERACTIVE_REPO_ROOT={RUNNER_REPO}",
                 f"LEZ_INTERACTIVE_OFFER_ID={queued['offer_id']}",

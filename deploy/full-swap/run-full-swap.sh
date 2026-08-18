@@ -18,6 +18,17 @@ export M3_ACTOR_POC_JOURNEY=claim
 export M3_ACTOR_POC_ASSET_MODE=native
 export M3_ACTOR_POC_SCHEDULE=sequential
 
+# Attach mode: swaps execute on the long-standing settlement chains with the
+# persistent wallet identities — the mainnet-shaped path.
+if [[ "${LEZ_M3_ATTACH:-0}" == 1 ]]; then
+  market_root=/Users/mandrigin/Desktop/las-logos/runner-work/market
+  export LEZ_ATTACH_BTC_RUN="${LEZ_ATTACH_BTC_RUN:-market-btc-0001}"
+  export LEZ_ATTACH_LEZ_RUN="${LEZ_ATTACH_LEZ_RUN:-market-lez-0001}"
+  export LEZ_ATTACH_MAKER_IDENTITY_DIR="${market_root}/identities/${LEZ_INTERACTIVE_MAKER_WALLET:?attach requires the maker wallet}"
+  export LEZ_ATTACH_TAKER_IDENTITY_DIR="${market_root}/identities/${LEZ_INTERACTIVE_TAKER_WALLET:?attach requires the taker wallet}"
+  export LEZ_ATTACH_BOOTSTRAP_MANIFEST="${market_root}/market-bootstrap.env"
+fi
+
 cd /Users/mandrigin/Desktop/las-logos/runner-work/repo
 if [[ "${LEZ_M3_INTERACTIVE:-0}" == 1 ]]; then
   /tmp/lez-interactive-m3-outer.sh

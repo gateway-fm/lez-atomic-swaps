@@ -113,6 +113,7 @@ dnsseed=0
 listen=0
 
 txindex=1
+txospenderindex=1
 
 [regtest]
 rpcuser=lezrpc

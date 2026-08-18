@@ -137,11 +137,27 @@ function unwrap(raw, what) {
   return envelope.result ?? {};
 }
 
-// Offer creation lives behind the "New offer" popup: open it, then publish.
+// Offer creation lives behind the "New offer" dialog. Signal-invoke the
+// buttons by objectName — text-targeted synthetic clicks don't reliably
+// reach controls under the offscreen platform.
 async function publishOfferOnce(app, predicate) {
-  await app.click("New offer");
+  const opener = await app.findByProperty("objectName", "makerNewOffer");
+  if (opener.matches?.length !== 1) throw new Error("New offer button not found");
+  await evaluateIn(app, opener.matches[0].id, "clicked()");
   await new Promise((r) => setTimeout(r, 600));
-  return outputAfterClick(app, "Publish offer", "makerOutput", predicate);
+  const before = await property(app, "makerOutput", "text");
+  const publish = await app.findByProperty("objectName", "makerCreateOffers");
+  if (publish.matches?.length !== 1) throw new Error("Publish offer button not found");
+  await evaluateIn(app, publish.matches[0].id, "clicked()");
+  const deadline = Date.now() + 45000;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 700));
+    const raw = await property(app, "makerOutput", "text");
+    if (raw !== before && !raw.startsWith("Waiting for owner-local service")) {
+      try { if (predicate(JSON.parse(raw))) return raw; } catch {}
+    }
+    if (Date.now() > deadline) throw new Error(`publish did not complete (last: ${raw.slice(0, 200)})`);
+  }
 }
 
 if (role === "maker") {
