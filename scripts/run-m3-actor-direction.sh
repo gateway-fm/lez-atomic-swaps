@@ -1443,7 +1443,7 @@ core_admin() {
     '{{ index .Config.Labels "org.logos-co.atomic-swaps.run" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.scope" }}|{{ index .Config.Labels "org.logos-co.atomic-swaps.component" }}' \
     "$M3_POC_BITCOIN_CONTAINER_ID")"
   [[ "$actual_identity" == \
-     "${M3_POC_RUN_ID}-btc|bitcoin-core-regtest-e2e|bitcoin-core" ]] ||
+     "${M3_POC_BITCOIN_RUN_ID:-${M3_POC_RUN_ID}-btc}|bitcoin-core-regtest-e2e|bitcoin-core" ]] ||
     fail "captured Bitcoin container ownership label drifted"
   docker exec "$M3_POC_BITCOIN_CONTAINER_ID" bitcoin-cli \
     -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin "$@"
