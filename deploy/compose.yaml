@@ -206,7 +206,8 @@ services:
     volumes:
       - maker_state:/var/lib/lez
       - maker_socket:/run/lez
-    command: ["bash", "-c", "chown -R 4713:4713 /var/lib/lez /run/lez && chmod 0700 /run/lez"]
+      - delivery_dir:/delivery
+    command: ["bash", "-c", "chown -R 4713:4713 /var/lib/lez /run/lez /delivery && chmod 0700 /run/lez /delivery"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -225,10 +226,22 @@ services:
     command:
       - /bin/bash
       - -c
-      - rm -f /run/lez/maker.sock /run/lez/maker.ready; exec /usr/local/bin/lez-maker-daemon --socket /run/lez/maker.sock --database /var/lib/lez/maker.sqlite3 --ready-file /run/lez/maker.ready
+      - |
+        rm -f /run/lez/maker.sock /run/lez/maker.ready
+        if [ ! -s /var/lib/lez/delivery-signing.key ]; then
+          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > /var/lib/lez/delivery-signing.key
+          chmod 0600 /var/lib/lez/delivery-signing.key
+        fi
+        exec /usr/local/bin/lez-maker-daemon \
+          --socket /run/lez/maker.sock \
+          --database /var/lib/lez/maker.sqlite3 \
+          --ready-file /run/lez/maker.ready \
+          --delivery-directory /delivery \
+          --delivery-signing-key-file /var/lib/lez/delivery-signing.key
     volumes:
       - maker_state:/var/lib/lez
       - maker_socket:/run/lez
+      - delivery_dir:/delivery
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -239,13 +252,44 @@ services:
     logging: *default-logging
 
   taker-init:
-    image: debian:bookworm-slim
+    image: lez-maker-node:local
     container_name: lez-taker-init
+    depends_on:
+      maker-node:
+        condition: service_started
     volumes:
       - taker_state:/var/lib/lez-taker
       - taker_socket:/run/lez
-      - ./assets/taker-service.json:/seed/taker-service.json:ro
-    command: ["bash", "-c", "chown -R 4713:4713 /var/lib/lez-taker /run/lez && chmod 0700 /run/lez && install -o 4713 -g 4713 -m 0600 /seed/taker-service.json /var/lib/lez-taker/taker-service.json"]
+      - delivery_dir:/delivery:ro
+      - maker_state:/maker-state:ro
+    command:
+      - /bin/bash
+      - -c
+      - |
+        chown -R 4713:4713 /var/lib/lez-taker /run/lez
+        chmod 0700 /run/lez
+        for _ in $(seq 1 60); do
+          [ -s /maker-state/delivery-signing.key ] && break
+          sleep 1
+        done
+        identity="$(/usr/local/bin/lez-maker delivery-identity --signing-key-file /maker-state/delivery-signing.key | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
+        if [ -z "$$identity" ]; then echo "could not derive maker identity" >&2; exit 1; fi
+        echo "maker delivery identity: $$identity"
+        cat > /var/lib/lez-taker/taker-service.json <<JSON
+        {
+          "schema_version": 1,
+          "delivery_sources": [
+            {
+              "directory": "/delivery",
+              "maker_public_key": "$$identity",
+              "source_id": "local-maker"
+            }
+          ],
+          "maximum_offers": 16
+        }
+        JSON
+        chown 4713:4713 /var/lib/lez-taker/taker-service.json
+        chmod 0600 /var/lib/lez-taker/taker-service.json
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -263,6 +307,7 @@ services:
     volumes:
       - taker_state:/var/lib/lez-taker
       - taker_socket:/run/lez
+      - delivery_dir:/delivery:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -282,7 +327,7 @@ services:
       taker-service:
         condition: service_started
     environment:
-      BASECAMP_ROLE: ${BASECAMP_ROLE:-maker}
+      BASECAMP_ROLE: ${BASECAMP_ROLE:-both}
       LEZ_MAKER_RPC_SOCKET: /run/lez-maker/maker.sock
       LEZ_TAKER_RPC_SOCKET: /run/lez-taker/taker.sock
     volumes:
@@ -314,3 +359,5 @@ volumes:
     name: lez-taker-state
   taker_socket:
     name: lez-taker-socket
+  delivery_dir:
+    name: lez-delivery-dir

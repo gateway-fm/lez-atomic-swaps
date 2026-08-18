@@ -17,12 +17,14 @@ const { test, run } = await import(framework);
 const role = process.argv[2] === "taker" ? "taker" : "maker";
 
 const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
-cpSync(`/var/lez-assets/${role}-user`, freshUserDir, { recursive: true });
+// both plugins in one app: the product shape (maker + taker in the sidebar)
+cpSync(`/var/lez-assets/both-user`, freshUserDir, { recursive: true });
 process.env.BASECAMP_USER_DIR = freshUserDir;
+const appBin = "/usr/local/bin/basecamp-maker";
 
 // spawn the app ourselves (the framework's --ci mode waits only 15s; cold
 // module loading needs longer), then attach in normal mode
-const appProcess = spawn(`/usr/local/bin/basecamp-${role}`, ["-platform", "offscreen"], {
+const appProcess = spawn(appBin, ["-platform", "offscreen"], {
   stdio: ["ignore", "ignore", "inherit"],
   env: { ...process.env, QT_QPA_PLATFORM: "offscreen", QT_FORCE_STDERR_LOGGING: "1" },
 });
@@ -135,7 +137,22 @@ if (role === "maker") {
   test("taker: real service health", async (app) => {
     const health = unwrap(await outputAfterClick(app, "Service health", "takerOutput"), "health");
     if (health.ready !== true) throw new Error(`unexpected health: ${JSON.stringify(health)}`);
-    console.log(`  health: ready=true`);
+    console.log(`  health: ready=true delivery=${health.delivery}`);
+  });
+
+  test("taker: browse the maker's live signed offer", async (app) => {
+    const combos = await app.findByProperty("displayText", "Zcash");
+    const combo = (combos.matches ?? []).find((m) => String(m.type ?? "").startsWith("ComboBox"));
+    if (!combo) throw new Error("pair ComboBox not found");
+    await evaluateIn(app, combo.id, "currentIndex = 1");  // Bitcoin carries the live offer
+    const dirs = await app.findByProperty("displayText", "TakerSellsLez");
+    const dirCombo = (dirs.matches ?? []).find((m) => String(m.type ?? "").startsWith("ComboBox"));
+    if (dirCombo) await evaluateIn(app, dirCombo.id, "currentIndex = 1");  // TakerSellsForeign
+    const listed = unwrap(await outputAfterClick(app, "Browse authenticated offers", "takerOutput"), "offer list");
+    const offers = (listed.offers ?? []).map((entry) => entry.offer ?? entry);
+    const match = offers.find((o) => o.id === "offer-ui-btc-001");
+    if (!match) throw new Error(`live offer not listed: ${JSON.stringify(offers).slice(0, 200)}`);
+    console.log(`  live offer ${match.id}: pair=${match.pair_configuration.route.pair} ttl=${match.pair_configuration.offer_ttl_seconds}s`);
   });
 }
 

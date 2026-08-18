@@ -7,11 +7,14 @@ export XDG_CACHE_HOME=/tmp/.cache
 export XDG_CONFIG_HOME=/tmp/.config
 mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" /tmp/.X11-unix 2>/dev/null || true
 
-role="${BASECAMP_ROLE:-maker}"
+# one app, both consoles: the default user dir carries both role plugins.
+# Set BASECAMP_ROLE=maker|taker to start from a role-isolated dir instead.
+role="${BASECAMP_ROLE:-both}"
 case "$role" in
   maker) user_dir=/var/lez/basecamp-maker-user ;;
   taker) user_dir=/var/lez/basecamp-taker-user ;;
-  *) echo "BASECAMP_ROLE must be maker or taker" >&2; exit 2 ;;
+  both) user_dir="${BASECAMP_USER_DIR:-/var/lez/basecamp-user}" ;;
+  *) echo "BASECAMP_ROLE must be maker, taker, or both" >&2; exit 2 ;;
 esac
 
 if ! pgrep -x Xvfb >/dev/null; then
