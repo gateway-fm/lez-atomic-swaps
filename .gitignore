@@ -3,3 +3,4 @@ apps/preview/build/
 build/
 result-*/
 .DS_Store
+__pycache__/
