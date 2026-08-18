@@ -241,7 +241,7 @@ if (role === "maker") {
 
   test("taker: wallet-indexed BTC order book is ready", async (app) => {
     await app.expectTexts([
-      "Choose the Taker wallet",
+      "ACCOUNT",
       "Live BTC / LEZ order book",
       "Your Taker swaps",
       "Zurich Wallet 01 · Taker",

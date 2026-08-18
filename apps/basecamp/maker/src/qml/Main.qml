@@ -543,6 +543,25 @@ Item {
                         }
                         ColumnLayout {
                             Layout.alignment: Qt.AlignRight | Qt.AlignVCenter; spacing: 8
+                            RowLayout {
+                                Layout.alignment: Qt.AlignRight; spacing: 9
+                                Label {
+                                    text: "ACCOUNT"
+                                    color: "#6F7A8B"; font.pixelSize: 9
+                                    font.weight: Font.Bold; font.letterSpacing: 1.3
+                                }
+                                Rectangle {
+                                    implicitWidth: 9; implicitHeight: 9; radius: 5
+                                    color: makerWallet.currentIndex === 0 ? "#8950FA" : "#FA50C1"
+                                }
+                                LuxeCombo {
+                                    id: makerWallet
+                                    objectName: "makerBtcWallet"
+                                    model: ["Munich Vault 01 · Maker", "Basel Vault 02 · Maker"]
+                                    implicitWidth: 240
+                                    onActivated: root.refreshBtcMarket(false)
+                                }
+                            }
                             Rectangle {
                                 Layout.alignment: Qt.AlignRight
                                 implicitWidth: connectionRow.implicitWidth + 22; implicitHeight: 32; radius: 16
@@ -631,48 +650,6 @@ Item {
                         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                         anchors.margins: 22; spacing: 16
 
-                        RowLayout {
-                            Layout.fillWidth: true; spacing: 12
-                            StepBadge { number: "01"; accent: "#7EE100" }
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 2
-                                Label { text: "Choose the Maker wallet"; color: "#F5F6F8"; font.pixelSize: 19; font.weight: Font.DemiBold }
-                                Label { text: "Each vault keeps its own pending offers and sees only the swaps it must settle."; color: "#8793A5"; font.pixelSize: 11 }
-                            }
-                            Rectangle {
-                                implicitWidth: makerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
-                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
-                                border.width: 1; border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
-                                Label {
-                                    id: makerRunnerLabel; anchors.centerIn: parent
-                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
-                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
-                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
-                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
-                                }
-                            }
-                        }
-
-                        GridLayout {
-                            Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
-                            FieldLabel { text: "MAKER WALLET" }
-                            Item { implicitWidth: 170; implicitHeight: 1 }
-                            LuxeCombo {
-                                id: makerWallet
-                                objectName: "makerBtcWallet"
-                                model: ["Munich Vault 01 · Maker", "Basel Vault 02 · Maker"]
-                                Layout.fillWidth: true
-                                onActivated: root.refreshBtcMarket(false)
-                            }
-                            LuxeButton {
-                                objectName: "makerNewOffer"
-                                text: "New offer"
-                                primary: true; Layout.preferredWidth: 170
-                                enabled: root.ready && root.btcMarketReady
-                                onClicked: newOfferPopup.open()
-                            }
-                        }
-
                         Popup {
                             id: newOfferPopup
                             parent: Overlay.overlay
@@ -729,7 +706,7 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true; spacing: 12
-                            StepBadge { number: "02"; accent: "#FA50C1" }
+                            StepBadge { number: "01"; accent: "#FA50C1" }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
                                 Label { text: "This wallet's market"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
@@ -739,6 +716,25 @@ Item {
                                         + " · you control only Fund LEZ and Claim Bitcoin"
                                     color: "#7F8A9B"; font.pixelSize: 11
                                 }
+                            }
+                            Rectangle {
+                                implicitWidth: makerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
+                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
+                                border.width: 1; border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
+                                Label {
+                                    id: makerRunnerLabel; anchors.centerIn: parent
+                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
+                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
+                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
+                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
+                                }
+                            }
+                            LuxeButton {
+                                objectName: "makerNewOffer"
+                                text: "New offer"
+                                primary: true
+                                enabled: root.ready && root.btcMarketReady
+                                onClicked: newOfferPopup.open()
                             }
                         }
 
@@ -925,12 +921,15 @@ Item {
                 }
 
                 Label {
+                    // Non-Bitcoin routes are parked while the M3 demo is BTC-only.
+                    visible: false
                     text: "ADVANCED SERVICE CONTROLS · PREPARED NON-BITCOIN ROUTES"
                     color: "#566377"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.1
                     Layout.topMargin: 4
                 }
 
                 GridLayout {
+                    visible: false
                     Layout.fillWidth: true
                     columns: width > 1040 ? 2 : 1
                     columnSpacing: 16

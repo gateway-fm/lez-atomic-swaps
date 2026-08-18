@@ -700,6 +700,25 @@ Item {
                         ColumnLayout {
                             Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                             spacing: 8
+                            RowLayout {
+                                Layout.alignment: Qt.AlignRight; spacing: 9
+                                Label {
+                                    text: "ACCOUNT"
+                                    color: "#6F7A8B"; font.pixelSize: 9
+                                    font.weight: Font.Bold; font.letterSpacing: 1.3
+                                }
+                                Rectangle {
+                                    implicitWidth: 9; implicitHeight: 9; radius: 5
+                                    color: takerWallet.currentIndex === 0 ? "#7EE100" : "#4FC3F7"
+                                }
+                                LuxeCombo {
+                                    id: takerWallet
+                                    objectName: "takerBtcWallet"
+                                    model: ["Zurich Wallet 01 · Taker", "Limmat Wallet 02 · Taker"]
+                                    implicitWidth: 240
+                                    onActivated: root.refreshBtcMarket(false)
+                                }
+                            }
                             Rectangle {
                                 Layout.alignment: Qt.AlignRight
                                 implicitWidth: connectionRow.implicitWidth + 22
@@ -812,43 +831,6 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true; spacing: 12
-                            StepBadge { number: "01"; accent: "#7EE100" }
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 2
-                                Label {
-                                    text: "Choose the Taker wallet"
-                                    color: "#F5F6F8"; font.pixelSize: 19; font.weight: Font.DemiBold
-                                }
-                                Label {
-                                    text: "Offers and swaps stay indexed to this wallet. Changing wallets changes the desk you control."
-                                    color: "#8793A5"; font.pixelSize: 11
-                                }
-                            }
-                            Rectangle {
-                                implicitWidth: takerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
-                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
-                                border.width: 1
-                                border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
-                                Label {
-                                    id: takerRunnerLabel
-                                    anchors.centerIn: parent
-                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
-                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
-                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
-                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
-                                }
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true; spacing: 12
-                            LuxeCombo {
-                                id: takerWallet
-                                objectName: "takerBtcWallet"
-                                model: ["Zurich Wallet 01 · Taker", "Limmat Wallet 02 · Taker"]
-                                Layout.preferredWidth: 300
-                                onActivated: root.refreshBtcMarket(false)
-                            }
                             Rectangle {
                                 Layout.fillWidth: true; implicitHeight: 44; radius: 9
                                 color: "#0D141E"; border.width: 1; border.color: "#263144"
@@ -872,13 +854,27 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true; spacing: 12
-                            StepBadge { number: "02"; accent: "#FA50C1" }
+                            StepBadge { number: "01"; accent: "#FA50C1" }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
                                 Label { text: "Live BTC / LEZ order book"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
                                 Label {
                                     text: Number((root.btcMarket.summary ?? {}).pending_offers ?? 0) + " pending across both Maker wallets"
                                     color: "#7F8A9B"; font.pixelSize: 11
+                                }
+                            }
+                            Rectangle {
+                                implicitWidth: takerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
+                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
+                                border.width: 1
+                                border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
+                                Label {
+                                    id: takerRunnerLabel
+                                    anchors.centerIn: parent
+                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
+                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
+                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
+                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
                                 }
                             }
                         }
@@ -927,7 +923,7 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true; spacing: 12; Layout.topMargin: 5
-                            StepBadge { number: "03"; accent: "#8950FA" }
+                            StepBadge { number: "02"; accent: "#8950FA" }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
                                 Label { text: "Your Taker swaps"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
@@ -1057,7 +1053,7 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true; spacing: 12
-                            StepBadge { number: "04"; accent: "#8950FA" }
+                            StepBadge { number: "03"; accent: "#8950FA" }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
                                 Label {
@@ -1235,6 +1231,8 @@ Item {
                 }
 
                 GridLayout {
+                    // Non-Bitcoin routes are parked while the M3 demo is BTC-only.
+                    visible: false
                     Layout.fillWidth: true
                     columns: width > 1040 ? 2 : 1
                     columnSpacing: 16
