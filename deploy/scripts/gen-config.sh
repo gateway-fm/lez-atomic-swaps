@@ -17,6 +17,16 @@ readonly maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
 readonly taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
 readonly maker_genesis_allocation=100000
 readonly taker_genesis_allocation=200000
+# Persistent settlement wallets (owner account ids of the identities held in
+# runner-work/market/identities). Swaps run on this long-standing chain and
+# these accounts accumulate real balances across swaps — the local analog of
+# funded wallets on a real network.
+readonly wallet_munich_account_id="BD6TpNTSLjeonDFmA3PXg6YtDy7xXt2LTm46266NpwJY"
+readonly wallet_basel_account_id="A81AE1KTGdZ5GCDfy4XdUe9XvgNmkFzfgZcRkkQXm8vm"
+readonly wallet_zurich_account_id="4vDRakzuvKqJFJZ6k4ig3ybzds6fTLv1xDpwU283SwBM"
+readonly wallet_limmat_account_id="5A8bRmav5wjYQex6z7SpuuNNyhesqHwweAqjc3eWfchH"
+readonly wallet_maker_allocation=100000
+readonly wallet_taker_allocation=200000
 readonly slot_duration_seconds="1.0"
 readonly upstream_genesis_time_hex="2c04626900000000"
 
@@ -57,20 +67,30 @@ jq --arg channel "$channel_id" \
 jq --arg channel "$channel_id" \
   --arg maker "$maker_account_id" --argjson maker_amount "$maker_genesis_allocation" \
   --arg taker "$taker_account_id" --argjson taker_amount "$taker_genesis_allocation" \
+  --arg munich "$wallet_munich_account_id" --arg basel "$wallet_basel_account_id" \
+  --arg zurich "$wallet_zurich_account_id" --arg limmat "$wallet_limmat_account_id" \
+  --argjson wallet_maker_amount "$wallet_maker_allocation" \
+  --argjson wallet_taker_amount "$wallet_taker_allocation" \
   '.home = "/var/lib/sequencer_service"
    | .bedrock_config.node_url = "http://bedrock:18080"
    | .bedrock_config.channel_id = $channel
    | del(.bedrock_config.backoff)
    | .genesis = [
        {"supply_account": {"account_id": $maker, "balance": $maker_amount}},
-       {"supply_account": {"account_id": $taker, "balance": $taker_amount}}
+       {"supply_account": {"account_id": $taker, "balance": $taker_amount}},
+       {"supply_account": {"account_id": $munich, "balance": $wallet_maker_amount}},
+       {"supply_account": {"account_id": $basel, "balance": $wallet_maker_amount}},
+       {"supply_account": {"account_id": $zurich, "balance": $wallet_taker_amount}},
+       {"supply_account": {"account_id": $limmat, "balance": $wallet_taker_amount}}
      ]' \
   "$LEZ_SOURCE/sequencer-config/sequencer_config.json" \
   >"$RUNTIME/config/sequencer_config.json"
 
 jq -e --arg channel "$channel_id" '.channel_id == $channel' "$RUNTIME/config/indexer_config.json" >/dev/null
 jq -e --arg channel "$channel_id" '.bedrock_config.channel_id == $channel' "$RUNTIME/config/sequencer_config.json" >/dev/null
-[[ "$(jq -r '.genesis | length' "$RUNTIME/config/sequencer_config.json")" == 2 ]]
+[[ "$(jq -r '.genesis | length' "$RUNTIME/config/sequencer_config.json")" == 6 ]]
+[[ "$(jq -r '[.genesis[].supply_account.account_id] | unique | length' \
+  "$RUNTIME/config/sequencer_config.json")" == 6 ]]
 
 # The sequencer generates its own bedrock signing key under its state dir
 # (load_or_create_signing_key); no key file is mounted for the local stack.

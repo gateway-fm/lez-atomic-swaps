@@ -31,6 +31,10 @@ services:
       - "-printtoconsole"
     environment:
       HOME: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: market-btc-0001
+      org.logos-co.atomic-swaps.scope: bitcoin-core-regtest-e2e
+      org.logos-co.atomic-swaps.component: bitcoin-core
     ports:
       - "127.0.0.1:18443:18443"
     volumes:
@@ -104,6 +108,10 @@ services:
     environment:
       HOME: /tmp
       POL_PROOF_DEV_MODE: "true"
+    labels:
+      org.logos-co.atomic-swaps.run: market-lez-0001
+      org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
+      org.logos-co.atomic-swaps.component: bedrock
     working_dir: /work
     volumes:
       - ./assets/lez-source/bedrock:/opt/lez-v0.2-source/bedrock:ro
@@ -134,6 +142,12 @@ services:
       HOME: /tmp
       RUST_LOG: info
       RISC0_SERVER_PATH: /usr/local/bin/r0vm
+    labels:
+      org.logos-co.atomic-swaps.run: market-lez-0001
+      org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
+      org.logos-co.atomic-swaps.component: sequencer
+    ports:
+      - "127.0.0.1:3040:3040"
     depends_on: [bedrock]
     volumes:
       - ./runtime/config/sequencer_config.json:/run-config/sequencer_config.json:ro
@@ -166,6 +180,12 @@ services:
       HOME: /tmp
       RUST_LOG: info
       RISC0_SERVER_PATH: /usr/local/bin/r0vm
+    labels:
+      org.logos-co.atomic-swaps.run: market-lez-0001
+      org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
+      org.logos-co.atomic-swaps.component: indexer
+    ports:
+      - "127.0.0.1:8779:8779"
     depends_on: [sequencer]
     volumes:
       - ./runtime/config/indexer_config.json:/run-config/indexer_config.json:ro
@@ -270,6 +290,7 @@ services:
   taker-init:
     image: lez-maker-node:local
     container_name: lez-taker-init
+    user: "0:0"
     depends_on:
       maker-node:
         condition: service_started
@@ -292,7 +313,8 @@ services:
           [ -s /maker-state/delivery-signing.key ] && break
           sleep 1
         done
-        identity="$(/usr/local/bin/lez-maker delivery-identity --signing-key-file /maker-state/delivery-signing.key | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
+        install -m 600 -o root -g root /maker-state/delivery-signing.key /tmp/delivery-signing.key
+        identity="$(/usr/local/bin/lez-maker delivery-identity --signing-key-file /tmp/delivery-signing.key | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
         if [ -z "$$identity" ]; then echo "could not derive maker identity" >&2; exit 1; fi
         echo "maker delivery identity: $$identity"
         cat > /var/lib/lez-taker/taker-service.json <<JSON
