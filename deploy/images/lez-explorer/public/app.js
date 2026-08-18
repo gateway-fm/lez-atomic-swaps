@@ -43,8 +43,22 @@ function link(text, fn) {
 async function overviewStatus() {
   try {
     const { health } = await api("overview");
-    status.textContent = health ? `indexer healthy` : "indexer degraded";
+    status.textContent = health
+      ? `indexer healthy · block ${health.latest_block}${health.bedrock_status ? ` · ${String(health.bedrock_status).toLowerCase()}` : ""}`
+      : "indexer degraded";
   } catch (e) { status.textContent = `indexer unreachable (${e.message})`; }
+}
+
+function blockTime(ts) {
+  if (ts == null) return "—";
+  const d = new Date(Number(ts));
+  return Number.isNaN(d.getTime()) ? String(ts) : d.toISOString().replace("T", " ").slice(0, 19) + "Z";
+}
+
+function txHash(entry) {
+  if (entry == null) return null;
+  const inner = entry.Public ?? entry.Private ?? entry;
+  return inner?.hash ?? null;
 }
 
 async function blocksView() {
@@ -65,10 +79,19 @@ async function blocksView() {
     content.append(empty);
     return;
   }
-  content.append(table(["Block", "Details"], blocks.map((b) => {
-    const id = b.block_id ?? b.id ?? b.blockId;
+  content.append(table(["Block", "Hash", "Time", "Txs", "Finality", "Details"], blocks.map((b) => {
+    const header = b.header ?? b;
+    const id = header.block_id ?? b.block_id ?? b.id ?? b.blockId;
+    const txs = b.body?.transactions?.length ?? 0;
     const details = link("view", () => location.hash = `#/block/id/${id}`);
-    return [String(id ?? "?"), details];
+    return [
+      String(id ?? "?"),
+      link(shorten(header.hash, 10), () => location.hash = `#/block/hash/${header.hash}`),
+      blockTime(header.timestamp),
+      String(txs),
+      String(b.bedrock_status ?? "—"),
+      details,
+    ];
   })));
 }
 
@@ -81,18 +104,102 @@ async function blockView(kind, value) {
   catch (e) { loading.className = "card error"; loading.textContent = String(e.message || e); return; }
   loading.remove();
   const flat = block?.block ?? block;
-  content.append(kv(Object.entries(flat ?? { error: "empty response" }).map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : v])));
+  const header = flat?.header;
+  if (!header) {
+    content.append(kv(Object.entries(flat ?? { error: "empty response" }).map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : v])));
+    return;
+  }
+  const txs = flat.body?.transactions ?? [];
+  content.append(kv([
+    ["Block", header.block_id],
+    ["Hash", header.hash],
+    ["Previous hash", header.prev_block_hash],
+    ["Time", blockTime(header.timestamp)],
+    ["Finality", flat.bedrock_status],
+    ["Transactions", txs.length],
+    ["Signature", shorten(header.signature, 20)],
+  ]));
+  if (txs.length) {
+    content.append(table(["#", "Transaction", "Program", "Accounts"], txs.map((entry, i) => {
+      const inner = entry.Public ?? entry.Private ?? entry;
+      const hash = txHash(entry);
+      return [
+        String(i + 1),
+        hash ? link(shorten(hash, 12), () => location.hash = `#/tx/${hash}`) : "—",
+        shorten(inner?.message?.program_id, 10),
+        String(inner?.message?.account_ids?.length ?? 0),
+      ];
+    })));
+  }
+}
+
+function renderProof(proof) {
+  const effect = proof.effect;
+  content.append(kv([
+    ["Source", proof.source], ["Run", proof.run_id], ["Terminal", `revision ${proof.terminal.revision} · ${proof.terminal.phase}`],
+    ["Sequence", effect.sequence], ["Chain", effect.chain], ["Actor", effect.actor], ["Effect", effect.label],
+    ["Transaction ID", effect.transaction_id], ["Amount", effect.amount], ["Finality", effect.finality],
+    ["Confirmations", effect.confirmations], ["Block height", effect.block_height], ["Block hash", effect.block_hash],
+  ]));
+  const note = document.createElement("div");
+  note.className = "card dim";
+  note.textContent = "This transaction executed on the run's isolated chains; the certified evidence above is its public record.";
+  content.append(note);
+}
+
+async function lookupView(hash) {
+  content.replaceChildren();
+  const loading = document.createElement("div"); loading.className = "card dim"; loading.textContent = "Resolving…";
+  content.append(loading);
+  try {
+    const block = await api(`block/hash/${hash}`);
+    if (block?.header || block?.block?.header) { location.hash = `#/block/hash/${hash}`; return; }
+  } catch {}
+  location.hash = `#/tx/${hash}`;
 }
 
 async function txView(id) {
   content.replaceChildren();
   const loading = document.createElement("div"); loading.className = "card dim"; loading.textContent = "Loading transaction…";
   content.append(loading);
-  let tx;
-  try { tx = await api(`tx/${id}`); }
-  catch (e) { loading.className = "card error"; loading.textContent = String(e.message || e); return; }
+  let tx = null;
+  try { tx = await api(`tx/${id}`); } catch {}
+  if (tx == null || (!tx.Public && !tx.Private && !tx.message)) {
+    let proof = null;
+    try { proof = await api(`evidence/tx/${id}`); } catch {}
+    loading.remove();
+    if (proof) { renderProof(proof); return; }
+    const missing = document.createElement("div");
+    missing.className = "card error";
+    missing.textContent = "Not found on the live chain and not in any certified M3 run.";
+    content.append(missing);
+    return;
+  }
   loading.remove();
-  content.append(kv(Object.entries(tx ?? {}).map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : v])));
+  const kind = tx?.Public ? "Public" : tx?.Private ? "Private" : null;
+  const inner = kind ? tx[kind] : tx;
+  if (!inner?.message) {
+    content.append(kv(Object.entries(tx ?? { error: "empty response" }).map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : v])));
+    return;
+  }
+  const witnesses = inner.witness_set?.signatures_and_public_keys ?? [];
+  content.append(kv([
+    ["Transaction", inner.hash],
+    ["Visibility", kind],
+    ["Program", inner.message.program_id],
+    ["Accounts touched", inner.message.account_ids?.length ?? 0],
+    ["Nonces", (inner.message.nonces ?? []).join(", ") || "—"],
+    ["Instruction data", (inner.message.instruction_data ?? []).join(", ") || "—"],
+    ["Signatures", witnesses.length],
+    ["Proof", inner.witness_set?.proof == null ? "none" : "attached"],
+  ]));
+  const accountIds = inner.message.account_ids ?? [];
+  if (accountIds.length) {
+    content.append(table(["#", "Account"], accountIds.map((account, i) => [
+      String(i + 1),
+      link(account, () => location.hash = `#/account/${account}`),
+    ])));
+  }
 }
 
 async function evidenceView() {
@@ -155,6 +262,7 @@ async function route() {
   if (parts[0] === "evidence") return evidenceView();
   if (parts[0] === "block" && parts[1] === "id") return blockView("id", decodeURIComponent(parts[2] || ""));
   if (parts[0] === "block" && parts[1] === "hash") return blockView("hash", decodeURIComponent(parts[2] || ""));
+  if (parts[0] === "lookup") return lookupView(decodeURIComponent(parts[1] || ""));
   if (parts[0] === "tx") return txView(decodeURIComponent(parts[1] || ""));
   if (parts[0] === "account") return accountView(decodeURIComponent(parts[1] || ""));
   blocksView();
@@ -165,7 +273,7 @@ $("#search").addEventListener("keydown", (e) => {
   const q = e.target.value.trim();
   if (!q) return;
   if (/^[0-9]+$/.test(q)) location.hash = `#/block/id/${q}`;
-  else if (/^[0-9a-fA-F]{64}$/.test(q)) location.hash = `#/block/hash/${q}`;
+  else if (/^[0-9a-fA-F]{64}$/.test(q)) location.hash = `#/lookup/${q}`;
   else if (/^[1-9A-HJ-NP-Za-km-z]{40,64}$/.test(q)) location.hash = `#/account/${q}`;
   else location.hash = `#/tx/${q}`;
 });

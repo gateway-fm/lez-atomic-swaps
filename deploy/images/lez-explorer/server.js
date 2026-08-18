@@ -32,6 +32,45 @@ function send(res, code, body, type) {
   res.end(buf);
 }
 
+const RUNS_ROOT = process.env.LEZ_M3_EVIDENCE_ROOT || "";
+let runsCache = { at: 0, byTx: new Map() };
+
+// Swap transactions live on each run's isolated chains, so the certified
+// evidence files are the only queryable record. Index every run's five
+// transaction ids so any copied hash resolves, not just the latest run's.
+function evidenceByTx() {
+  const now = Date.now();
+  if (now - runsCache.at < 15000) return runsCache.byTx;
+  const byTx = new Map();
+  if (RUNS_ROOT) {
+    let runs = [];
+    try { runs = fs.readdirSync(path.join(RUNS_ROOT, ".e2e")); } catch {}
+    for (const run of runs.filter((name) => /^m5arm-[0-9]{10}$/.test(name)).slice(-50)) {
+      const file = path.join(RUNS_ROOT, ".e2e", run, "m3-actor-poc", "evidence", "m3-btc-ui-evidence.json");
+      try {
+        const info = fs.lstatSync(file);
+        if (!info.isFile() || info.size <= 0 || info.size > 262144) continue;
+        const evidence = JSON.parse(fs.readFileSync(file, "utf8"));
+        if (evidence?.kind !== "m3_btc_ui_evidence" || !Array.isArray(evidence.effects)) continue;
+        for (const effect of evidence.effects) {
+          if (typeof effect?.transaction_id === "string" && /^[0-9a-f]{64}$/.test(effect.transaction_id)) {
+            byTx.set(effect.transaction_id, {
+              source: evidence.source,
+              run_id: evidence.run_id,
+              completed_at: evidence.completed_at,
+              repository_commit: evidence.repository_commit,
+              terminal: evidence.terminal,
+              effect,
+            });
+          }
+        }
+      } catch {}
+    }
+  }
+  runsCache = { at: now, byTx };
+  return byTx;
+}
+
 function loadEvidence() {
   if (!path.isAbsolute(EVIDENCE)) throw new Error("M3 Bitcoin evidence path is not absolute");
   const info = fs.lstatSync(EVIDENCE);
@@ -64,22 +103,42 @@ async function api(req, res, url) {
     }
     const evidenceTx = route.match(/^evidence\/tx\/([0-9a-fA-F]{64})$/);
     if (evidenceTx) {
-      const evidence = loadEvidence();
-      const effect = evidence.effects.find((entry) => entry.transaction_id === evidenceTx[1]);
-      if (!effect) return send(res, 404, '{"error":"transaction is not in the certified M3 run"}', "application/json");
-      send(res, 200, JSON.stringify({
-        source: evidence.source,
-        run_id: evidence.run_id,
-        completed_at: evidence.completed_at,
-        repository_commit: evidence.repository_commit,
-        terminal: evidence.terminal,
-        effect,
-      }), "application/json");
+      const wanted = evidenceTx[1].toLowerCase();
+      let proof = null;
+      try {
+        const evidence = loadEvidence();
+        const effect = evidence.effects.find((entry) => entry.transaction_id === wanted);
+        if (effect) {
+          proof = {
+            source: evidence.source,
+            run_id: evidence.run_id,
+            completed_at: evidence.completed_at,
+            repository_commit: evidence.repository_commit,
+            terminal: evidence.terminal,
+            effect,
+          };
+        }
+      } catch {}
+      if (!proof) proof = evidenceByTx().get(wanted) ?? null;
+      if (!proof) return send(res, 404, '{"error":"transaction is not in any certified M3 run"}', "application/json");
+      send(res, 200, JSON.stringify(proof), "application/json");
       return;
     }
     if (route === "overview") {
-      const schema = await indexerCall("getSchema", []);
-      const health = await indexerCall("checkHealth", []).catch(() => null);
+      const schema = await indexerCall("getSchema", []).catch(() => null);
+      // The indexer's own checkHealth probes a "breakpoint" DB key this
+      // deployment never writes; the chain head is the honest health signal.
+      const health = await indexerCall("getBlocks", [null, 1])
+        .then((blocks) => {
+          const head = Array.isArray(blocks) && blocks[0] ? blocks[0] : null;
+          if (!head?.header) return null;
+          return {
+            latest_block: head.header.block_id ?? null,
+            timestamp: head.header.timestamp ?? null,
+            bedrock_status: head.bedrock_status ?? null,
+          };
+        })
+        .catch(() => null);
       send(res, 200, JSON.stringify({ schema, health }), "application/json");
       return;
     }
@@ -90,7 +149,13 @@ async function api(req, res, url) {
       return;
     }
     const m = route.match(/^block\/id\/(.+)$/);
-    if (m) { send(res, 200, JSON.stringify(await indexerCall("getBlockById", [m[1]])), "application/json"); return; }
+    if (m) {
+      // The indexer wants an integer block id; a numeric string is rejected
+      // with "Invalid params".
+      const blockId = /^[0-9]+$/.test(m[1]) ? Number(m[1]) : m[1];
+      send(res, 200, JSON.stringify(await indexerCall("getBlockById", [blockId])), "application/json");
+      return;
+    }
     const h = route.match(/^block\/hash\/([0-9a-fA-F]+)$/);
     if (h) { send(res, 200, JSON.stringify(await indexerCall("getBlockByHash", [h[1]])), "application/json"); return; }
     const t = route.match(/^tx\/(.+)$/);

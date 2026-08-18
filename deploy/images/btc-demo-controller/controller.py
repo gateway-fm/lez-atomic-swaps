@@ -160,6 +160,33 @@ READY_DETAILS = {spec["ready_state"]: (spec["role"], spec["label"])
                  for spec in ACTIONS.values()}
 
 
+EFFECTS_CACHE: dict[str, list] = {}
+
+
+def run_effects(run_id: str) -> list:
+    """Public chain effects of a completed run, from its generated evidence."""
+    if run_id in EFFECTS_CACHE:
+        return EFFECTS_CACHE[run_id]
+    path = (EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" / "evidence" /
+            "m3-btc-ui-evidence.json")
+    try:
+        entries = json.loads(path.read_text()).get("effects", [])
+    except (OSError, ValueError):
+        return []
+    effects = [
+        {"sequence": entry.get("sequence"), "chain": entry.get("chain"),
+         "label": entry.get("label"), "transaction_id": entry["transaction_id"],
+         "finality": entry.get("finality")}
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("transaction_id"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", entry["transaction_id"])
+    ]
+    if len(effects) == 5:
+        EFFECTS_CACHE[run_id] = effects
+    return effects
+
+
 def format_eta(seconds: float) -> str:
     seconds = max(5, int(seconds))
     if seconds >= 90:
@@ -873,6 +900,8 @@ class Market:
                     else "Starting shortly — the runner is picking this up")
             else:
                 self._live_progress(swap)
+            if swap["state"] == "completed" and isinstance(swap.get("run_id"), str):
+                swap["effects"] = run_effects(swap["run_id"])
         latest_balance_evidence = None
         try:
             published = json.loads(EVIDENCE_OUTPUT.read_text())

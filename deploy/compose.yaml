@@ -192,10 +192,12 @@ services:
     environment:
       LEZ_INDEXER_URL: http://indexer:8779
       M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
+      LEZ_M3_EVIDENCE_ROOT: /runner-repo
     ports:
       - "127.0.0.1:3003:3003"
     volumes:
       - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
+      - ${LEZ_M3_RUNNER_REPO}:/runner-repo:ro
     networks: [chains]
     read_only: true
     security_opt: ["no-new-privileges:true"]

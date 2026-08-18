@@ -30,6 +30,20 @@ Item {
     property bool btcMarketReady: false
     property bool btcMarketBusy: false
     property string marketTab: "attention"
+    property bool newOfferOpen: false
+    property var expandedSwaps: ({})
+
+    function toggleSwapHashes(uiSwapId) {
+        var next = {}
+        for (var key in root.expandedSwaps) next[key] = root.expandedSwaps[key]
+        next[uiSwapId] = !next[uiSwapId]
+        root.expandedSwaps = next
+    }
+    function copyText(value) {
+        clipboardHelper.text = String(value)
+        clipboardHelper.selectAll()
+        clipboardHelper.copy()
+    }
 
     // One unified activity list: publishable offers plus every swap this
     // wallet owns. Offers that were taken live on as their swap row, so only
@@ -63,6 +77,8 @@ Item {
             return root.marketBucket(item) === tab
         }).length
     }
+
+    TextEdit { id: clipboardHelper; visible: false }
 
     component LuxeButton: Button {
         id: control
@@ -384,7 +400,7 @@ Item {
             "Publishing BTC / LEZ inventory", function(result) {
                 root.applyBtcMarket(result)
                 root.marketTab = "open"
-                newOfferPopup.close()
+                root.newOfferOpen = false
                 root.statusMode = "success"
                 root.statusTitle = "Offer published"
                 root.statusDetail = "Indexed to " + makerWallet.currentText + " until taken or withdrawn"
@@ -650,60 +666,6 @@ Item {
                         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                         anchors.margins: 22; spacing: 16
 
-                        Popup {
-                            id: newOfferPopup
-                            parent: Overlay.overlay
-                            x: Math.round((parent.width - width) / 2)
-                            y: Math.round((parent.height - height) / 2)
-                            width: 430
-                            modal: false
-                            dim: true
-                            padding: 24
-                            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                            background: Rectangle {
-                                color: "#101722"; radius: 16
-                                border.width: 1; border.color: "#8950FA"
-                            }
-                            contentItem: ColumnLayout {
-                                spacing: 14
-                                Label {
-                                    text: "Publish a new offer"
-                                    color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold
-                                }
-                                Label {
-                                    text: "Indexed to " + makerWallet.currentText + " until taken or withdrawn."
-                                    color: "#8793A5"; font.pixelSize: 11
-                                    wrapMode: Text.WordWrap; Layout.fillWidth: true
-                                }
-                                GridLayout {
-                                    Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
-                                    FieldLabel { text: "TAKER PAYS" }
-                                    FieldLabel { text: "MAKER FUNDS" }
-                                    LuxeField { text: "0.01000000 BTC"; readOnly: true; Layout.fillWidth: true }
-                                    LuxeField { text: "1,000 LEZ"; readOnly: true; Layout.fillWidth: true }
-                                }
-                                Label {
-                                    text: "Fixed M3 preset · direction BTC → LEZ · one offer per publish"
-                                    color: "#68768A"; font.pixelSize: 10
-                                }
-                                RowLayout {
-                                    Layout.fillWidth: true; spacing: 10
-                                    Item { Layout.fillWidth: true }
-                                    LuxeButton {
-                                        text: "Cancel"; quiet: true
-                                        onClicked: newOfferPopup.close()
-                                    }
-                                    LuxeButton {
-                                        objectName: "makerCreateOffers"
-                                        text: root.btcMarketBusy ? "Publishing…" : "Publish offer"
-                                        primary: true
-                                        enabled: root.ready && root.btcMarketReady && !root.btcMarketBusy
-                                        onClicked: root.createBtcOffers()
-                                    }
-                                }
-                            }
-                        }
-
                         RowLayout {
                             Layout.fillWidth: true; spacing: 12
                             StepBadge { number: "01"; accent: "#FA50C1" }
@@ -734,7 +696,7 @@ Item {
                                 text: "New offer"
                                 primary: true
                                 enabled: root.ready && root.btcMarketReady
-                                onClicked: newOfferPopup.open()
+                                onClicked: root.newOfferOpen = true
                             }
                         }
 
@@ -811,12 +773,18 @@ Item {
                             delegate: Rectangle {
                                 id: makerSwapRow
                                 required property var modelData
+                                readonly property var effects: makerSwapRow.modelData.effects ?? []
+                                readonly property bool hashesShown:
+                                    root.expandedSwaps[makerSwapRow.modelData.ui_swap_id] === true
+                                        && makerSwapRow.effects.length > 0
                                 Layout.fillWidth: true; radius: 10
-                                implicitHeight: makerSwapRow.modelData.progress_detail ? 104 : 86
+                                implicitHeight: (makerSwapRow.modelData.progress_detail ? 104 : 86)
+                                    + (makerSwapRow.hashesShown ? makerSwapRow.effects.length * 21 + 30 : 0)
                                 color: makerSwapRow.modelData.can_act === true ? "#17152A" : "#0D141E"
                                 border.width: 1; border.color: makerSwapRow.modelData.can_act === true ? "#8950FA" : "#28364A"
                                 RowLayout {
-                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
+                                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                    anchors.margins: 13; spacing: 14
                                     ColumnLayout {
                                         Layout.fillWidth: true; spacing: 3
                                         Label {
@@ -857,11 +825,66 @@ Item {
                                             color: "#8E7BC6"; font.pixelSize: 10
                                             elide: Text.ElideRight; Layout.fillWidth: true
                                         }
+                                        ColumnLayout {
+                                            visible: makerSwapRow.hashesShown
+                                            Layout.fillWidth: true; Layout.topMargin: 4; spacing: 4
+                                            Repeater {
+                                                model: makerSwapRow.hashesShown ? makerSwapRow.effects : []
+                                                delegate: RowLayout {
+                                                    id: makerFxRow
+                                                    required property var modelData
+                                                    property bool copied: false
+                                                    Layout.fillWidth: true; spacing: 8
+                                                    Label {
+                                                        text: String(makerFxRow.modelData.chain ?? "").toUpperCase()
+                                                        color: makerFxRow.modelData.chain === "Bitcoin" ? "#B997FF" : "#7EE100"
+                                                        font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.6
+                                                        Layout.preferredWidth: 52
+                                                    }
+                                                    Label {
+                                                        text: String(makerFxRow.modelData.label ?? "")
+                                                        color: "#8E99AA"; font.pixelSize: 9
+                                                        Layout.preferredWidth: 148; elide: Text.ElideRight
+                                                    }
+                                                    Label {
+                                                        text: String(makerFxRow.modelData.transaction_id ?? "")
+                                                        color: "#C7CED9"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
+                                                        elide: Text.ElideMiddle; Layout.fillWidth: true
+                                                    }
+                                                    Label {
+                                                        text: makerFxRow.copied ? "COPIED ✓" : "COPY"
+                                                        color: makerFxRow.copied ? "#7EE100" : "#B997FF"
+                                                        font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8
+                                                        MouseArea {
+                                                            anchors.fill: parent; anchors.margins: -4
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: {
+                                                                root.copyText(makerFxRow.modelData.transaction_id)
+                                                                makerFxRow.copied = true
+                                                                makerFxCopyReset.restart()
+                                                            }
+                                                        }
+                                                    }
+                                                    Timer { id: makerFxCopyReset; interval: 1600; onTriggered: makerFxRow.copied = false }
+                                                }
+                                            }
+                                            Label {
+                                                text: "Verify any hash — paste it into the proof explorer search at 127.0.0.1:3003"
+                                                color: "#5F6B7D"; font.pixelSize: 8; font.letterSpacing: 0.4
+                                            }
+                                        }
                                     }
                                     Label {
                                         visible: makerSwapRow.modelData.can_act !== true
                                         text: makerSwapRow.modelData.action_role === "taker" ? "WAITING FOR TAKER" : String(makerSwapRow.modelData.state).toUpperCase()
                                         color: "#7B8798"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.7
+                                    }
+                                    LuxeButton {
+                                        objectName: "makerSwapHashes"
+                                        visible: makerSwapRow.effects.length > 0
+                                        text: makerSwapRow.hashesShown ? "Hide hashes" : "Tx hashes"
+                                        quiet: true
+                                        onClicked: root.toggleSwapHashes(makerSwapRow.modelData.ui_swap_id)
                                     }
                                     LuxeButton {
                                         objectName: "makerSwapAction"
@@ -1145,6 +1168,66 @@ Item {
                 }
 
                 Item { Layout.fillWidth: true; implicitHeight: 8 }
+            }
+        }
+    }
+
+    Rectangle {
+        // In-scene dialog: Popup/Overlay never renders inside Basecamp's
+        // embedded plugin view, so the dialog lives in the same scene.
+        id: newOfferOverlay
+        anchors.fill: parent
+        visible: root.newOfferOpen
+        z: 1000
+        color: "#D0060A12"
+        MouseArea { anchors.fill: parent; onClicked: root.newOfferOpen = false }
+        Rectangle {
+            anchors.centerIn: parent
+            width: 430
+            implicitHeight: newOfferColumn.implicitHeight + 48
+            color: "#101722"; radius: 16
+            border.width: 1; border.color: "#8950FA"
+            MouseArea { anchors.fill: parent }
+            ColumnLayout {
+                id: newOfferColumn
+                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                anchors.margins: 24
+                spacing: 14
+                Label {
+                    text: "Publish a new offer"
+                    color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold
+                }
+                Label {
+                    text: "Indexed to " + makerWallet.currentText + " until taken or withdrawn."
+                    color: "#8793A5"; font.pixelSize: 11
+                    wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+                GridLayout {
+                    Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
+                    FieldLabel { text: "TAKER PAYS" }
+                    FieldLabel { text: "MAKER FUNDS" }
+                    LuxeField { text: "0.01000000 BTC"; readOnly: true; Layout.fillWidth: true }
+                    LuxeField { text: "1,000 LEZ"; readOnly: true; Layout.fillWidth: true }
+                }
+                Label {
+                    text: "Fixed M3 preset · direction BTC → LEZ · one offer per publish"
+                    color: "#68768A"; font.pixelSize: 10
+                }
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 10
+                    Item { Layout.fillWidth: true }
+                    LuxeButton {
+                        text: "Cancel"; quiet: true
+                        onClicked: root.newOfferOpen = false
+                    }
+                    LuxeButton {
+                        objectName: "makerCreateOffers"
+                        text: root.btcMarketBusy ? "Publishing…" : "Publish offer"
+                        primary: true
+                        enabled: root.ready && root.btcMarketReady && !root.btcMarketBusy
+                        onClicked: root.createBtcOffers()
+                    }
+                }
             }
         }
     }

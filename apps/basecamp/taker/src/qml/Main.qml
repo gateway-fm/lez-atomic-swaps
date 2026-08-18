@@ -32,6 +32,19 @@ Item {
     property bool btcMarketReady: false
     property bool btcMarketBusy: false
     property string swapTab: "attention"
+    property var expandedSwaps: ({})
+
+    function toggleSwapHashes(uiSwapId) {
+        var next = {}
+        for (var key in root.expandedSwaps) next[key] = root.expandedSwaps[key]
+        next[uiSwapId] = !next[uiSwapId]
+        root.expandedSwaps = next
+    }
+    function copyText(value) {
+        clipboardHelper.text = String(value)
+        clipboardHelper.selectAll()
+        clipboardHelper.copy()
+    }
 
     function swapBucket(swap) {
         if (swap.state === "completed" || swap.state === "failed") return "done"
@@ -165,6 +178,8 @@ Item {
             }
         }
     }
+
+    TextEdit { id: clipboardHelper; visible: false }
 
     component FieldLabel: Label {
         color: "#AAB3C2"
@@ -966,13 +981,19 @@ Item {
                             delegate: Rectangle {
                                 id: takerSwapRow
                                 required property var modelData
+                                readonly property var effects: takerSwapRow.modelData.effects ?? []
+                                readonly property bool hashesShown:
+                                    root.expandedSwaps[takerSwapRow.modelData.ui_swap_id] === true
+                                        && takerSwapRow.effects.length > 0
                                 Layout.fillWidth: true; radius: 10
-                                implicitHeight: takerSwapRow.modelData.progress_detail ? 104 : 86
+                                implicitHeight: (takerSwapRow.modelData.progress_detail ? 104 : 86)
+                                    + (takerSwapRow.hashesShown ? takerSwapRow.effects.length * 21 + 30 : 0)
                                 color: takerSwapRow.modelData.can_act === true ? "#17152A" : "#0D141E"
                                 border.width: 1
                                 border.color: takerSwapRow.modelData.can_act === true ? "#8950FA" : "#28364A"
                                 RowLayout {
-                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
+                                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                    anchors.margins: 13; spacing: 14
                                     ColumnLayout {
                                         Layout.fillWidth: true; spacing: 3
                                         Label {
@@ -1014,11 +1035,66 @@ Item {
                                             color: "#8E7BC6"; font.pixelSize: 10
                                             elide: Text.ElideRight; Layout.fillWidth: true
                                         }
+                                        ColumnLayout {
+                                            visible: takerSwapRow.hashesShown
+                                            Layout.fillWidth: true; Layout.topMargin: 4; spacing: 4
+                                            Repeater {
+                                                model: takerSwapRow.hashesShown ? takerSwapRow.effects : []
+                                                delegate: RowLayout {
+                                                    id: takerFxRow
+                                                    required property var modelData
+                                                    property bool copied: false
+                                                    Layout.fillWidth: true; spacing: 8
+                                                    Label {
+                                                        text: String(takerFxRow.modelData.chain ?? "").toUpperCase()
+                                                        color: takerFxRow.modelData.chain === "Bitcoin" ? "#B997FF" : "#7EE100"
+                                                        font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.6
+                                                        Layout.preferredWidth: 52
+                                                    }
+                                                    Label {
+                                                        text: String(takerFxRow.modelData.label ?? "")
+                                                        color: "#8E99AA"; font.pixelSize: 9
+                                                        Layout.preferredWidth: 148; elide: Text.ElideRight
+                                                    }
+                                                    Label {
+                                                        text: String(takerFxRow.modelData.transaction_id ?? "")
+                                                        color: "#C7CED9"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
+                                                        elide: Text.ElideMiddle; Layout.fillWidth: true
+                                                    }
+                                                    Label {
+                                                        text: takerFxRow.copied ? "COPIED ✓" : "COPY"
+                                                        color: takerFxRow.copied ? "#7EE100" : "#B997FF"
+                                                        font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8
+                                                        MouseArea {
+                                                            anchors.fill: parent; anchors.margins: -4
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: {
+                                                                root.copyText(takerFxRow.modelData.transaction_id)
+                                                                takerFxRow.copied = true
+                                                                takerFxCopyReset.restart()
+                                                            }
+                                                        }
+                                                    }
+                                                    Timer { id: takerFxCopyReset; interval: 1600; onTriggered: takerFxRow.copied = false }
+                                                }
+                                            }
+                                            Label {
+                                                text: "Verify any hash — paste it into the proof explorer search at 127.0.0.1:3003"
+                                                color: "#5F6B7D"; font.pixelSize: 8; font.letterSpacing: 0.4
+                                            }
+                                        }
                                     }
                                     Label {
                                         visible: takerSwapRow.modelData.can_act !== true
                                         text: takerSwapRow.modelData.action_role === "maker" ? "WAITING FOR MAKER" : String(takerSwapRow.modelData.state).toUpperCase()
                                         color: "#7B8798"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.7
+                                    }
+                                    LuxeButton {
+                                        objectName: "takerSwapHashes"
+                                        visible: takerSwapRow.effects.length > 0
+                                        text: takerSwapRow.hashesShown ? "Hide hashes" : "Tx hashes"
+                                        quiet: true
+                                        onClicked: root.toggleSwapHashes(takerSwapRow.modelData.ui_swap_id)
                                     }
                                     LuxeButton {
                                         objectName: "takerSwapAction"
