@@ -203,9 +203,24 @@ fn main() -> Result<()> {
             "request_timeout_millis": 5000
         },
         "zebra": {
-            "endpoint": "http://127.0.0.1:19000",
-            "journal_db": maker_root.join("unused-source-zebra.sqlite3")
-        }
+            "route": {
+                "kind": "deterministic_local",
+                "endpoint": "http://127.0.0.1:19101",
+                "cookie_file": null
+            },
+            "identity": {
+                "network": "regtest",
+                "rpc_chain": "test",
+                "consensus_branch_id": "c8e71055",
+                "genesis_hash": "77".repeat(32)
+            },
+            "counterparty_scan_blocks": 1000
+        },
+        "lez_discovery_window": {"start_height": 1, "max_blocks": 256},
+        "zcash_funding_outpoints": [{
+            "transaction_id": "aa".repeat(32),
+            "output_index": 0
+        }]
     });
     write_private(
         &maker_root.join("actor-config.json"),
