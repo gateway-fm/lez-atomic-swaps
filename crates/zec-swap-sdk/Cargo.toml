@@ -35,4 +35,10 @@ hex = "0.4.3"
 jsonrpsee = { version = "0.26.0", features = ["client-core"] }
 jsonrpsee-http-client = { version = "0.26.0", default-features = false }
 serde_json = "1.0.150"
+clap = { version = "4.5.55", features = ["derive"] }
+anyhow = "1.0.100"
 tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread", "time"] }
+
+[[bin]]
+name = "zec-ui-fixture"
+path = "src/bin/zec-ui-fixture.rs"
