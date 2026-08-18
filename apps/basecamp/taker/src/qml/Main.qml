@@ -31,6 +31,23 @@ Item {
     })
     property bool btcMarketReady: false
     property bool btcMarketBusy: false
+    property string swapTab: "attention"
+
+    function swapBucket(swap) {
+        if (swap.state === "completed" || swap.state === "failed") return "done"
+        if (swap.can_act === true) return "attention"
+        return "running"
+    }
+    function filteredSwaps() {
+        var all = root.btcMarket.swaps ?? []
+        if (root.swapTab === "all") return all
+        return all.filter(function(swap) { return root.swapBucket(swap) === root.swapTab })
+    }
+    function swapCountFor(tab) {
+        return (root.btcMarket.swaps ?? []).filter(function(swap) {
+            return root.swapBucket(swap) === tab
+        }).length
+    }
     property string lastPublishedMarketRun: ""
 
     component LuxeButton: Button {
@@ -172,6 +189,44 @@ Item {
             font.pixelSize: 11
             font.weight: Font.Bold
             font.letterSpacing: 1.4
+        }
+    }
+
+    component FilterTab: Rectangle {
+        id: filterTab
+        property string label: ""
+        property int count: 0
+        property bool active: false
+        property bool showCount: true
+        signal picked()
+        implicitHeight: 28
+        implicitWidth: filterTabRow.implicitWidth + 24
+        radius: 2
+        color: filterTab.active ? "#1D2739" : filterTabArea.containsMouse ? "#151D2A" : "transparent"
+        border.width: 1
+        border.color: filterTab.active ? "#8950FA" : "#2A3547"
+        RowLayout {
+            id: filterTabRow
+            anchors.centerIn: parent
+            spacing: 6
+            Label {
+                text: filterTab.label
+                color: filterTab.active ? "#EDEFF4" : "#7F8A9B"
+                font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.1
+            }
+            Label {
+                visible: filterTab.showCount
+                text: String(filterTab.count)
+                color: filterTab.active ? "#B997FF" : "#5F6B7D"
+                font.pixelSize: 9; font.weight: Font.Bold; font.family: "DejaVu Sans Mono"
+            }
+        }
+        MouseArea {
+            id: filterTabArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: filterTab.picked()
         }
     }
 
@@ -880,14 +935,38 @@ Item {
                             }
                         }
 
+                        RowLayout {
+                            spacing: 7
+                            FilterTab {
+                                objectName: "takerSwapTabAttention"
+                                label: "NEEDS YOU"; count: root.swapCountFor("attention")
+                                active: root.swapTab === "attention"; onPicked: root.swapTab = "attention"
+                            }
+                            FilterTab {
+                                label: "RUNNING"; count: root.swapCountFor("running")
+                                active: root.swapTab === "running"; onPicked: root.swapTab = "running"
+                            }
+                            FilterTab {
+                                label: "DONE"; count: root.swapCountFor("done")
+                                active: root.swapTab === "done"; onPicked: root.swapTab = "done"
+                            }
+                            FilterTab {
+                                label: "ALL"; count: (root.btcMarket.swaps ?? []).length
+                                active: root.swapTab === "all"; onPicked: root.swapTab = "all"
+                            }
+                        }
+
                         Label {
-                            visible: (root.btcMarket.swaps ?? []).length === 0
-                            text: "This wallet has not taken an offer yet."
+                            visible: root.filteredSwaps().length === 0
+                            text: (root.btcMarket.swaps ?? []).length === 0
+                                ? "This wallet has not taken an offer yet."
+                                : root.swapTab === "attention" ? "Nothing needs you right now — check RUNNING."
+                                : "Nothing under this tab yet."
                             color: "#7F8A9B"; font.pixelSize: 12
                         }
 
                         Repeater {
-                            model: root.btcMarket.swaps ?? []
+                            model: root.filteredSwaps()
                             delegate: Rectangle {
                                 id: takerSwapRow
                                 required property var modelData
@@ -915,10 +994,16 @@ Item {
                                             Rectangle {
                                                 Layout.fillWidth: true; implicitHeight: 4; radius: 2; color: "#252E3C"
                                                 Rectangle {
+                                                    id: takerSwapFill
+                                                    property bool settled: false
                                                     width: parent.width * Number(takerSwapRow.modelData.progress_percent ?? 0) / 100
                                                     height: parent.height; radius: 2
                                                     color: takerSwapRow.modelData.state === "completed" ? "#7EE100" : "#8950FA"
-                                                    Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                                                    Timer { interval: 400; running: true; onTriggered: takerSwapFill.settled = true }
+                                                    Behavior on width {
+                                                        enabled: takerSwapFill.settled
+                                                        NumberAnimation { duration: 600; easing.type: Easing.OutCubic }
+                                                    }
                                                 }
                                             }
                                             Label {

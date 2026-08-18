@@ -29,6 +29,40 @@ Item {
     })
     property bool btcMarketReady: false
     property bool btcMarketBusy: false
+    property string marketTab: "attention"
+
+    // One unified activity list: publishable offers plus every swap this
+    // wallet owns. Offers that were taken live on as their swap row, so only
+    // pending and withdrawn offers appear as offer rows.
+    function marketBucket(item) {
+        if (item.kind === "offer")
+            return item.state === "pending" ? "open" : "done"
+        if (item.state === "completed" || item.state === "failed") return "done"
+        if (item.can_act === true) return "attention"
+        return "running"
+    }
+    function marketRows() {
+        var rows = []
+        var swaps = root.btcMarket.swaps ?? []
+        for (var i = 0; i < swaps.length; i++)
+            rows.push(Object.assign({kind: "swap"}, swaps[i]))
+        var offers = root.btcMarket.inventory ?? []
+        for (var j = 0; j < offers.length; j++) {
+            if (offers[j].state === "pending" || offers[j].state === "withdrawn")
+                rows.push(Object.assign({kind: "offer"}, offers[j]))
+        }
+        return rows
+    }
+    function filteredMarketRows() {
+        var rows = root.marketRows()
+        if (root.marketTab === "all") return rows
+        return rows.filter(function(item) { return root.marketBucket(item) === root.marketTab })
+    }
+    function marketCount(tab) {
+        return root.marketRows().filter(function(item) {
+            return root.marketBucket(item) === tab
+        }).length
+    }
 
     component LuxeButton: Button {
         id: control
@@ -164,6 +198,45 @@ Item {
             font.pixelSize: 11
             font.weight: Font.Bold
             font.letterSpacing: 1.4
+        }
+    }
+
+    component FilterTab: Rectangle {
+        id: filterTab
+        property string label: ""
+        property int count: 0
+        property bool active: false
+        property bool alert: false
+        property bool showCount: true
+        signal picked()
+        implicitHeight: 28
+        implicitWidth: filterTabRow.implicitWidth + 24
+        radius: 2
+        color: filterTab.active ? "#1D2739" : filterTabArea.containsMouse ? "#151D2A" : "transparent"
+        border.width: 1
+        border.color: filterTab.active ? "#8950FA" : filterTab.alert ? "#FA50C1" : "#2A3547"
+        RowLayout {
+            id: filterTabRow
+            anchors.centerIn: parent
+            spacing: 6
+            Label {
+                text: filterTab.label
+                color: filterTab.active ? "#EDEFF4" : filterTab.alert ? "#E9EDF3" : "#7F8A9B"
+                font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.1
+            }
+            Label {
+                visible: filterTab.showCount
+                text: String(filterTab.count)
+                color: filterTab.active ? "#B997FF" : filterTab.alert ? "#FA50C1" : "#5F6B7D"
+                font.pixelSize: 9; font.weight: Font.Bold; font.family: "DejaVu Sans Mono"
+            }
+        }
+        MouseArea {
+            id: filterTabArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: filterTab.picked()
         }
     }
 
@@ -310,6 +383,8 @@ Item {
             "1", "1000000", "1000"),
             "Publishing BTC / LEZ inventory", function(result) {
                 root.applyBtcMarket(result)
+                root.marketTab = "open"
+                newOfferPopup.close()
                 root.statusMode = "success"
                 root.statusTitle = "Offer published"
                 root.statusDetail = "Indexed to " + makerWallet.currentText + " until taken or withdrawn"
@@ -579,10 +654,8 @@ Item {
                         }
 
                         GridLayout {
-                            Layout.fillWidth: true; columns: 4; columnSpacing: 10; rowSpacing: 6
+                            Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
                             FieldLabel { text: "MAKER WALLET" }
-                            FieldLabel { text: "TAKER PAYS" }
-                            FieldLabel { text: "MAKER FUNDS" }
                             Item { implicitWidth: 170; implicitHeight: 1 }
                             LuxeCombo {
                                 id: makerWallet
@@ -591,14 +664,66 @@ Item {
                                 Layout.fillWidth: true
                                 onActivated: root.refreshBtcMarket(false)
                             }
-                            LuxeField { text: "0.01000000 BTC"; readOnly: true; Layout.fillWidth: true }
-                            LuxeField { text: "1,000 LEZ"; readOnly: true; Layout.fillWidth: true }
                             LuxeButton {
-                                objectName: "makerCreateOffers"
-                                text: root.btcMarketBusy ? "Publishing…" : "Publish offer"
-                                primary: true; Layout.fillWidth: true
-                                enabled: root.ready && root.btcMarketReady && !root.btcMarketBusy
-                                onClicked: root.createBtcOffers()
+                                objectName: "makerNewOffer"
+                                text: "New offer"
+                                primary: true; Layout.preferredWidth: 170
+                                enabled: root.ready && root.btcMarketReady
+                                onClicked: newOfferPopup.open()
+                            }
+                        }
+
+                        Popup {
+                            id: newOfferPopup
+                            parent: Overlay.overlay
+                            x: Math.round((parent.width - width) / 2)
+                            y: Math.round((parent.height - height) / 2)
+                            width: 430
+                            modal: false
+                            dim: true
+                            padding: 24
+                            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                            background: Rectangle {
+                                color: "#101722"; radius: 16
+                                border.width: 1; border.color: "#8950FA"
+                            }
+                            contentItem: ColumnLayout {
+                                spacing: 14
+                                Label {
+                                    text: "Publish a new offer"
+                                    color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold
+                                }
+                                Label {
+                                    text: "Indexed to " + makerWallet.currentText + " until taken or withdrawn."
+                                    color: "#8793A5"; font.pixelSize: 11
+                                    wrapMode: Text.WordWrap; Layout.fillWidth: true
+                                }
+                                GridLayout {
+                                    Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
+                                    FieldLabel { text: "TAKER PAYS" }
+                                    FieldLabel { text: "MAKER FUNDS" }
+                                    LuxeField { text: "0.01000000 BTC"; readOnly: true; Layout.fillWidth: true }
+                                    LuxeField { text: "1,000 LEZ"; readOnly: true; Layout.fillWidth: true }
+                                }
+                                Label {
+                                    text: "Fixed M3 preset · direction BTC → LEZ · one offer per publish"
+                                    color: "#68768A"; font.pixelSize: 10
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 10
+                                    Item { Layout.fillWidth: true }
+                                    LuxeButton {
+                                        text: "Cancel"; quiet: true
+                                        onClicked: newOfferPopup.close()
+                                    }
+                                    LuxeButton {
+                                        objectName: "makerCreateOffers"
+                                        text: root.btcMarketBusy ? "Publishing…" : "Publish offer"
+                                        primary: true
+                                        enabled: root.ready && root.btcMarketReady && !root.btcMarketBusy
+                                        onClicked: root.createBtcOffers()
+                                    }
+                                }
                             }
                         }
 
@@ -607,23 +732,54 @@ Item {
                             StepBadge { number: "02"; accent: "#FA50C1" }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
-                                Label { text: "This wallet's offer inventory"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label { text: "This wallet's market"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
                                 Label {
                                     text: Number((root.btcMarket.inventory ?? []).filter(function(item) { return item.state === "pending" }).length)
-                                        + " pending in " + makerWallet.currentText
+                                        + " open offers in " + makerWallet.currentText
+                                        + " · you control only Fund LEZ and Claim Bitcoin"
                                     color: "#7F8A9B"; font.pixelSize: 11
                                 }
                             }
                         }
 
+                        RowLayout {
+                            spacing: 7
+                            FilterTab {
+                                objectName: "makerMarketTabAttention"
+                                label: "NEEDS YOU"; count: root.marketCount("attention")
+                                alert: root.marketCount("attention") > 0
+                                active: root.marketTab === "attention"; onPicked: root.marketTab = "attention"
+                            }
+                            FilterTab {
+                                objectName: "makerMarketTabOpen"
+                                label: "OPEN OFFERS"; count: root.marketCount("open")
+                                active: root.marketTab === "open"; onPicked: root.marketTab = "open"
+                            }
+                            FilterTab {
+                                label: "RUNNING"; count: root.marketCount("running")
+                                active: root.marketTab === "running"; onPicked: root.marketTab = "running"
+                            }
+                            FilterTab {
+                                label: "DONE"; count: root.marketCount("done")
+                                active: root.marketTab === "done"; onPicked: root.marketTab = "done"
+                            }
+                            FilterTab {
+                                label: "ALL"; count: root.marketRows().length
+                                active: root.marketTab === "all"; onPicked: root.marketTab = "all"
+                            }
+                        }
+
                         Label {
-                            visible: (root.btcMarket.inventory ?? []).length === 0
-                            text: root.btcMarketReady ? "No offers belong to this wallet yet." : "Loading wallet inventory…"
+                            visible: root.filteredMarketRows().length === 0
+                            text: !root.btcMarketReady ? "Loading wallet market…"
+                                : root.marketRows().length === 0 ? "No offers or swaps belong to this wallet yet."
+                                : root.marketTab === "attention" ? "Nothing needs you right now — check RUNNING or OPEN OFFERS."
+                                : "Nothing under this tab for " + makerWallet.currentText + "."
                             color: "#7F8A9B"; font.pixelSize: 12
                         }
 
                         Repeater {
-                            model: root.btcMarket.inventory ?? []
+                            model: root.filteredMarketRows().filter(function(row) { return row.kind === "offer" })
                             delegate: Rectangle {
                                 id: makerOfferRow
                                 required property var modelData
@@ -654,24 +810,8 @@ Item {
                             }
                         }
 
-                        RowLayout {
-                            Layout.fillWidth: true; spacing: 12; Layout.topMargin: 5
-                            StepBadge { number: "03"; accent: "#8950FA" }
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 2
-                                Label { text: "Your Maker swaps"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                Label { text: "You control only Fund LEZ and Claim Bitcoin; Taker actions stay on the Taker desk."; color: "#7F8A9B"; font.pixelSize: 11 }
-                            }
-                        }
-
-                        Label {
-                            visible: (root.btcMarket.swaps ?? []).length === 0
-                            text: "No Taker has accepted this wallet's offers yet."
-                            color: "#7F8A9B"; font.pixelSize: 12
-                        }
-
                         Repeater {
-                            model: root.btcMarket.swaps ?? []
+                            model: root.filteredMarketRows().filter(function(row) { return row.kind === "swap" })
                             delegate: Rectangle {
                                 id: makerSwapRow
                                 required property var modelData
@@ -697,10 +837,16 @@ Item {
                                             Rectangle {
                                                 Layout.fillWidth: true; implicitHeight: 4; radius: 2; color: "#252E3C"
                                                 Rectangle {
+                                                    id: makerSwapFill
+                                                    property bool settled: false
                                                     width: parent.width * Number(makerSwapRow.modelData.progress_percent ?? 0) / 100
                                                     height: parent.height; radius: 2
                                                     color: makerSwapRow.modelData.state === "completed" ? "#7EE100" : "#8950FA"
-                                                    Behavior on width { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                                                    Timer { interval: 400; running: true; onTriggered: makerSwapFill.settled = true }
+                                                    Behavior on width {
+                                                        enabled: makerSwapFill.settled
+                                                        NumberAnimation { duration: 600; easing.type: Easing.OutCubic }
+                                                    }
                                                 }
                                             }
                                             Label {

@@ -137,6 +137,13 @@ function unwrap(raw, what) {
   return envelope.result ?? {};
 }
 
+// Offer creation lives behind the "New offer" popup: open it, then publish.
+async function publishOfferOnce(app, predicate) {
+  await app.click("New offer");
+  await new Promise((r) => setTimeout(r, 600));
+  return outputAfterClick(app, "Publish offer", "makerOutput", predicate);
+}
+
 if (role === "maker") {
   test("maker: launcher discoverable and app opens", async (app) => {
     await app.waitFor(async () => app.expectTexts(["LEZ / BTC Maker"]), {
@@ -170,8 +177,8 @@ if (role === "maker") {
     let munichPending = (munich.inventory ?? []).filter((offer) => offer.state === "pending").length;
     while (munichPending < 3) {
       const target = munichPending + 1;
-      munich = unwrap(await outputAfterClick(
-        app, "Publish offer", "makerOutput",
+      munich = unwrap(await publishOfferOnce(
+        app,
         (envelope) => envelope.ok === true
           && (envelope.result?.inventory ?? []).filter((offer) => offer.state === "pending").length >= target,
       ), "Munich offers");
@@ -190,8 +197,8 @@ if (role === "maker") {
     let baselPending = (basel.inventory ?? []).filter((offer) => offer.state === "pending").length;
     while (baselPending < 2) {
       const target = baselPending + 1;
-      basel = unwrap(await outputAfterClick(
-        app, "Publish offer", "makerOutput",
+      basel = unwrap(await publishOfferOnce(
+        app,
         (envelope) => envelope.ok === true
           && (envelope.result?.inventory ?? []).filter((offer) => offer.state === "pending").length >= target,
       ), "Basel offers");

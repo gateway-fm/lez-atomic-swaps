@@ -31,7 +31,7 @@ RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp \
     && chmod -R u+rwX /var/lez /var/lez-assets
 
 ENV DISPLAY=:0 \
-    QT_QUICK_BACKEND=software \
+    LIBGL_ALWAYS_SOFTWARE=1 \
     LEZ_MAKER_RPC_SOCKET=/run/lez-maker/maker.sock \
     LEZ_TAKER_RPC_SOCKET=/run/lez-taker/taker.sock \
     BASECAMP_ROLE=maker \

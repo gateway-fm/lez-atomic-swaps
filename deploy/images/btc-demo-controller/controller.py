@@ -91,7 +91,7 @@ ACTIONS = {
 }
 
 STATE_LABELS = {
-    "queued": "Accepted · waiting for local runner",
+    "queued": "Queued · starts automatically when the runner frees up",
     "preparing": "Preparing fresh actors and authenticated agreement",
     "awaiting_taker_lock": "Waiting for Taker to lock Bitcoin",
     "locking_btc": "Confirming Taker Bitcoin lock",
@@ -156,6 +156,8 @@ WORK_MARKERS = {
     "publishing": "evidence/m3-actor-local-poc.json",
 }
 LIVE_STATES = frozenset(("preparing",)) | frozenset(WORK_PHASES)
+READY_DETAILS = {spec["ready_state"]: (spec["role"], spec["label"])
+                 for spec in ACTIONS.values()}
 
 
 def format_eta(seconds: float) -> str:
@@ -707,6 +709,15 @@ class Market:
     @staticmethod
     def _live_progress(swap: dict) -> None:
         state = swap["state"]
+        if state in READY_DETAILS:
+            role_needed, label = READY_DETAILS[state]
+            if swap.get("can_act"):
+                swap["progress_detail"] = f"Your move — {label} is ready and waits for your click"
+            else:
+                desk = "Maker" if role_needed == "maker" else "Taker"
+                swap["progress_detail"] = (
+                    f"No timer here — the open gate waits for the {desk} desk to click {label}")
+            return
         run_id = swap.get("run_id")
         if not run_id or state not in LIVE_STATES:
             return
@@ -813,6 +824,12 @@ class Market:
                 "SELECT * FROM swaps ORDER BY COALESCE(started_at,'') DESC, ui_swap_id DESC "
                 "LIMIT 200"
             ).fetchall()
+            queue_positions = {
+                row["ui_swap_id"]: position + 1
+                for position, row in enumerate(connection.execute(
+                    "SELECT ui_swap_id FROM swaps WHERE state='queued' ORDER BY rowid"
+                ).fetchall())
+            }
             wallet_counts = {}
             for wallet_entry in MAKER_WALLETS + TAKER_WALLETS:
                 wallet_id = wallet_entry["id"]
@@ -841,12 +858,21 @@ class Market:
         order_book = [self._offer(row) for row in offers if row["state"] == "pending"]
         relevant_swaps = [self._swap(row) for row in swaps
                           if row[f"{role}_wallet_id"] == wallet["id"]]
+        active_runs = sum(
+            row["state"] not in ("queued", "completed", "failed") for row in swaps)
         for swap in relevant_swaps:
             swap["can_act"] = (
                 swap["action_role"] == role
                 and swap[f"{role}_wallet_id"] == wallet["id"]
             )
-            self._live_progress(swap)
+            if swap["state"] == "queued":
+                position = queue_positions.get(swap["ui_swap_id"], 1)
+                swap["progress_detail"] = (
+                    f"Position {position} in line — starts automatically when the "
+                    "active swap finishes" if active_runs
+                    else "Starting shortly — the runner is picking this up")
+            else:
+                self._live_progress(swap)
         latest_balance_evidence = None
         try:
             published = json.loads(EVIDENCE_OUTPUT.read_text())
