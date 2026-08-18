@@ -2798,6 +2798,25 @@ bootstrap_lez_runtime() {
         fail "standing-chain bootstrap manifest key ${key} is malformed"
     done
     install -m 0600 "$market_manifest" "$lez_bootstrap_manifest"
+    # Opening balances: on a lived-in chain the wallets carry cumulative
+    # balances, so capture them now — before any of this swap's funds move.
+    # The files keep the vault-claim names the balance evidence reads.
+    local attach_indexer_url attach_role attach_account
+    attach_indexer_url="$(manifest_value "$lez_manifest" LEZ_INDEXER_RPC_URL)"
+    for attach_role in maker taker; do
+      attach_account="$(jq -er '.account_id' \
+        "${evidence_dir}/${attach_role}-lez-identity.json")"
+      curl -sf -H 'content-type: application/json' \
+        -d "$(jq -cn --arg a "$attach_account" \
+          '{jsonrpc:"2.0",id:1,method:"getAccount",params:[$a]}')" \
+        "$attach_indexer_url" \
+        >"${evidence_dir}/${attach_role}-owner-after-vault-claim.json" ||
+        fail "attach-mode opening balance capture failed for ${attach_role}"
+      jq -e '.result.balance | numbers' \
+        "${evidence_dir}/${attach_role}-owner-after-vault-claim.json" >/dev/null ||
+        fail "attach-mode opening balance is malformed for ${attach_role}"
+      chmod 0600 "${evidence_dir}/${attach_role}-owner-after-vault-claim.json"
+    done
     return 0
   fi
   M3_POC_RUN_ID="$run_id" \
