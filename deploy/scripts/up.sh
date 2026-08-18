@@ -59,6 +59,7 @@ if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
 fi
 
 role_now="${BASECAMP_ROLE:-both}"
+vnc_password="${VNC_PASSWORD:-lezswap}"
 cat <<BANNER
 
 ──────────────────────────────────────────────────────────────────
@@ -67,7 +68,7 @@ cat <<BANNER
    Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining)
    BTC explorer          http://127.0.0.1:3002
    LEZ explorer          http://127.0.0.1:3003
-   Basecamp UI (VNC)     vnc://127.0.0.1:5901     (role: ${role_now})
+   Basecamp UI (VNC)     vnc://127.0.0.1:5901     (password: ${vnc_password}; role: ${role_now})
    Maker daemon          docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health
    UI verification       docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker|taker]
 

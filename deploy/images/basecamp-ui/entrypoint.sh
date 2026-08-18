@@ -29,7 +29,9 @@ if ! pgrep -x x11vnc >/dev/null; then
   # listen on all container interfaces: docker's port proxy dials the
   # container IP, not container-localhost. Safety comes from the compose
   # port binding being 127.0.0.1-only on the host.
-  x11vnc -display :0 -forever -shared -nopw -rfbport 5900 -quiet >/tmp/x11vnc.log 2>&1 &
+  x11vnc -storepasswd "${VNC_PASSWORD:-lezswap}" /tmp/vnc.pass >/dev/null
+  chmod 0600 /tmp/vnc.pass
+  x11vnc -display :0 -forever -shared -rfbauth /tmp/vnc.pass -rfbport 5900 -quiet >/tmp/x11vnc.log 2>&1 &
   sleep 1
 fi
 

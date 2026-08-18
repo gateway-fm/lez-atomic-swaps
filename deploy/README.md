@@ -21,7 +21,7 @@ its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`
 | Bitcoin regtest RPC | `http://127.0.0.1:18443` (user `lezrpc`, password in `runtime/runtime.env`), auto-mining every 15 s |
 | BTC explorer | http://127.0.0.1:3002 |
 | LEZ explorer | http://127.0.0.1:3003 |
-| **Basecamp UI (VNC)** | **`vnc://127.0.0.1:5901`** (macOS Screen Sharing works) |
+| **Basecamp UI (VNC)** | **`vnc://127.0.0.1:5901`** (password `lezswap`; override with `VNC_PASSWORD`) |
 | Maker daemon | `docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health` |
 | UI verify | `docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker\|taker]` |
 | Switch UI role | `BASECAMP_ROLE=taker docker compose up -d basecamp-ui` |
