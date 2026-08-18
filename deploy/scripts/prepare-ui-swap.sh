@@ -15,12 +15,13 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-TOKEN="ui$(date -u +%m%d%H%M)"
+TOKEN="ui$(date -u +%m%d%H%M%S)-$$"
 SWAP_ID="${TOKEN}-swap"
 OFFER_ID="offer-${TOKEN}-zec"
 RESERVATION_ID="reserve-${TOKEN}"
-DIRECTION="${UI_SWAP_DIRECTION:-taker-sells-lez}"
+DIRECTION_CLI="${UI_SWAP_DIRECTION:-taker-sells-lez}"
 DIRECTION_JSON="TakerSellsLez"
+DIRECTION_SPEC="taker_sells_lez"
 FOREIGN_UNITS=100000000
 LEZ_UNITS=50000
 TTL=7200
@@ -34,29 +35,22 @@ compose() { docker compose "$@"; }
 log "provisioning deterministic ZEC corridor fixture"
 compose run --rm --no-deps --entrypoint bash maker-node -c "
 set -e
-mkdir -p /prep/${TOKEN} && chmod 700 /prep/${TOKEN}
-cd /prep/${TOKEN}
-jq -n --arg run '${TOKEN}' --arg swap '${SWAP_ID}' --arg dir '${DIRECTION}' '
- {schema_version:1, run_id:\$run, swap_id:\$swap, direction:\$dir,
-  lez_runtime:{chain_id:(\"06\"*32), channel_id:(\"08\"*32), genesis_block_hash:(\"07\"*32),
-    escrow_program_id:(\"01\"*8), authenticated_transfer_program_id_base58:\"11111111111111111111111111111111\",
-    maker_signer_account_id_base58:\"${MAKER_ACCOUNT}\",
-    taker_signer_account_id_base58:\"${TAKER_ACCOUNT}\"},
-  bridge:{maker_endpoint:\"http://127.0.0.1:19001/\", taker_endpoint:\"http://127.0.0.1:19002/\"},
-  zebra_endpoint:\"http://127.0.0.1:19000/\",
-  lez_discovery_start_height:1, lez_discovery_max_blocks:64}' > spec.json
-chmod 0600 spec.json
-/usr/local/bin/zec-local-poc-provision --spec-file spec.json --output-root actors > provision-summary.json
-" >/dev/null
-
+mkdir -p /prep/${TOKEN}
+rm -rf /prep/${TOKEN}/actors
+/usr/local/bin/zec-ui-fixture --output-root /prep/${TOKEN}/actors --swap-id ${SWAP_ID} > /prep/${TOKEN}/fixture-summary.json
+"
 AGREEMENT="/prep/${TOKEN}/actors/shared/agreement-v2.borsh"
 log "fixture provisioned (agreement at ${AGREEMENT})"
 
 # ------------------------------------------------- 2. maker daemon: chat on
 log "enabling the maker daemon ZEC Chat authority"
-PROG_SHA="$(compose run --rm --no-deps --entrypoint sha256sum maker-node /bin/true | cut -d' ' -f1)"
+PROG_SHA="$(compose run --rm --no-deps --entrypoint bash maker-node -c '
+if [ ! -f /prep/actor-program ]; then cp /usr/bin/true /prep/actor-program && chmod 0555 /prep/actor-program; fi
+sha256sum /prep/actor-program' | tail -1 | cut -d' ' -f1)"
 compose run --rm --no-deps --entrypoint bash maker-node -c "
 set -e
+mkdir -p /prep/${TOKEN}/maker-actors
+chmod 700 /prep/${TOKEN}/maker-actors
 # concrete args file consumed by the daemon command in compose.yaml
 cat > /prep/daemon-args.sh <<EOF
 --chat-socket /run/lez/chat.sock
@@ -65,7 +59,7 @@ cat > /prep/daemon-args.sh <<EOF
 --maker-claim-preimage-file /prep/${TOKEN}/actors/maker/claim-preimage.key
 --zec-source-maker-config /prep/${TOKEN}/actors/maker/actor-config.json
 --zec-maker-actor-root /prep/${TOKEN}/maker-actors
---zec-actor-program /bin/true
+--zec-actor-program /prep/actor-program
 --zec-actor-program-sha256 ${PROG_SHA}
 EOF
 " >/dev/null
@@ -80,17 +74,34 @@ log "maker daemon is back with chat authority"
 # --------------------------------------------------------- 3. publish offer
 log "publishing the ZEC offer"
 CLI=(compose exec -T maker-node lez-maker --socket /run/lez/maker.sock)
-"${CLI[@]}" configure-pair --request-id "cfg-${TOKEN}-off" --pair zcash --direction "$DIRECTION" \
-  --enabled false --price-source local --minimum-foreign-units "$FOREIGN_UNITS" \
-  --maximum-foreign-units "$FOREIGN_UNITS" --offer-ttl-seconds "$TTL" >/dev/null
-"${CLI[@]}" set-local-price --request-id "price-${TOKEN}" --pair zcash --direction "$DIRECTION" \
-  --lez-units-per-lot 1 --foreign-units-per-lot 2000 >/dev/null
-"${CLI[@]}" configure-pair --request-id "cfg-${TOKEN}-on" --expected-revision 1 --pair zcash \
-  --direction "$DIRECTION" --enabled true --price-source local \
+rev=""
+if ! cfg_out="$("${CLI[@]}" configure-pair --request-id "cfg-${TOKEN}-off" --pair zcash --direction "$DIRECTION_CLI" \
+      --enabled false --price-source local --minimum-foreign-units "$FOREIGN_UNITS" \
+      --maximum-foreign-units "$FOREIGN_UNITS" --offer-ttl-seconds "$TTL" 2>&1)"; then
+  rev="$(grep -oE 'actual Some\([0-9]+\)' <<<"$cfg_out" | grep -oE '[0-9]+' || true)"
+fi
+extra_cfg=()
+[[ -n "$rev" ]] && extra_cfg=(--expected-revision "$rev")
+"${CLI[@]}" configure-pair --request-id "cfg-${TOKEN}-off2" "${extra_cfg[@]}" --pair zcash \
+  --direction "$DIRECTION_CLI" --enabled false --price-source local \
+  --minimum-foreign-units "$FOREIGN_UNITS" --maximum-foreign-units "$FOREIGN_UNITS" \
+  --offer-ttl-seconds "$TTL" >/dev/null
+price_rev=""
+if ! price_out="$("${CLI[@]}" set-local-price --request-id "price-${TOKEN}" --pair zcash --direction "$DIRECTION_CLI" \
+      --lez-units-per-lot 1 --foreign-units-per-lot 2000 2>&1)"; then
+  price_rev="$(grep -oE 'actual Some\([0-9]+\)' <<<"$price_out" | grep -oE '[0-9]+' || true)"
+fi
+price_extra=()
+[[ -n "$price_rev" ]] && price_extra=(--expected-revision "$price_rev")
+"${CLI[@]}" set-local-price --request-id "price-${TOKEN}2" "${price_extra[@]}" --pair zcash \
+  --direction "$DIRECTION_CLI" --lez-units-per-lot 1 --foreign-units-per-lot 2000 >/dev/null
+on_rev=$(( ${rev:-0} + 1 ))
+"${CLI[@]}" configure-pair --request-id "cfg-${TOKEN}-on" --expected-revision "$on_rev" --pair zcash \
+  --direction "$DIRECTION_CLI" --enabled true --price-source local \
   --minimum-foreign-units "$FOREIGN_UNITS" --maximum-foreign-units "$FOREIGN_UNITS" \
   --offer-ttl-seconds "$TTL" >/dev/null
 "${CLI[@]}" publish-offer --request-id "pub-${TOKEN}" --offer-id "$OFFER_ID" \
-  --pair zcash --direction "$DIRECTION" >/dev/null
+  --pair zcash --direction "$DIRECTION_CLI" >/dev/null
 log "offer ${OFFER_ID} published"
 
 # ---------------------------------------------------- 4. discovery + draft
@@ -99,7 +110,7 @@ MAKER_KEY="$(compose run --rm --no-deps --entrypoint bash maker-node -c \
   '/usr/local/bin/lez-maker delivery-identity --signing-key-file /var/lib/lez/delivery-signing.key | tr -d " \n" | grep -o "02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}"')"
 DISCOVERY="$(compose run --rm --no-deps --entrypoint bash maker-node -c "
   /usr/local/bin/lez-taker --delivery-directory /delivery --maker-public-key ${MAKER_KEY} \
-    --now-unix-seconds \$(date -u +%s) --pair zcash --direction ${DIRECTION}")"
+    --now-unix-seconds \$(date -u +%s) --pair zcash --direction ${DIRECTION_CLI}")"
 COMMITMENT="$(jq -er --arg offer "$OFFER_ID" '.offers[] | select(.offer.id == $offer) | .signed_envelope_sha256' <<<"$DISCOVERY")"
 EXPIRES="$(jq -er --arg offer "$OFFER_ID" '.offers[] | select(.offer.id == $offer) | .offer.expires_at_unix_seconds' <<<"$DISCOVERY")"
 SIGNED_ENVELOPE="/delivery/${OFFER_ID}.offer.json"
@@ -117,15 +128,16 @@ log "draft bound to offer commitment ${COMMITMENT:0:16}…"
 
 # ------------------------------------------- 5. registry + service config
 log "writing the taker service prepared configuration"
-compose run --rm --no-deps --entrypoint bash -v \
-  prep_state:/prep -v taker_state:/t -v delivery_dir:/delivery maker-node bash -c "
+compose run --rm --no-deps --entrypoint bash \
+  -v lez-prep-state:/prep -v lez-taker-state:/t -v lez-delivery-dir:/delivery maker-node -c "
 set -e
-REG=/t/taker-service.sqlite3
+mkdir -p /t/registry && chmod 700 /t/registry
+REG=/t/registry/taker-service.sqlite3
 rm -f \"\$REG\"
 /usr/local/bin/lez-taker-registry-init --database \"\$REG\" >/dev/null
 jq -n \
   --arg maker '${MAKER_KEY}' --arg chat /run/lez-maker-chat/chat.sock \
-  --arg registry \"\$REG\" --arg swap '${SWAP_ID}' --arg offer '${OFFER_ID}' \
+  --arg registry /var/lib/lez-taker/registry/taker-service.sqlite3 --arg swap '${SWAP_ID}' --arg offer '${OFFER_ID}' \
   --arg reservation '${RESERVATION_ID}' \
   --arg envelope '${SIGNED_ENVELOPE}' --arg envelope_sha '${COMMITMENT}' \
   --arg draft /prep/${TOKEN}/unsigned-draft.borsh \

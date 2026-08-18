@@ -141,18 +141,52 @@ if (role === "maker") {
   });
 
   test("taker: browse the maker's live signed offer", async (app) => {
+    // pick the pair carrying a live offer: ZEC when prepared swaps are armed
+    // (env REAL_ZEC=1), Bitcoin otherwise
+    const zecFirst = process.env.REAL_ZEC === "1";
     const combos = await app.findByProperty("displayText", "Zcash");
     const combo = (combos.matches ?? []).find((m) => String(m.type ?? "").startsWith("ComboBox"));
     if (!combo) throw new Error("pair ComboBox not found");
-    await evaluateIn(app, combo.id, "currentIndex = 1");  // Bitcoin carries the live offer
+    await evaluateIn(app, combo.id, `currentIndex = ${zecFirst ? 0 : 1}`);
     const dirs = await app.findByProperty("displayText", "TakerSellsLez");
     const dirCombo = (dirs.matches ?? []).find((m) => String(m.type ?? "").startsWith("ComboBox"));
-    if (dirCombo) await evaluateIn(app, dirCombo.id, "currentIndex = 1");  // TakerSellsForeign
+    if (dirCombo) await evaluateIn(app, dirCombo.id, `currentIndex = ${zecFirst ? 0 : 1}`);
     const listed = unwrap(await outputAfterClick(app, "Browse authenticated offers", "takerOutput"), "offer list");
     const offers = (listed.offers ?? []).map((entry) => entry.offer ?? entry);
-    const match = offers.find((o) => o.id === "offer-ui-btc-001");
-    if (!match) throw new Error(`live offer not listed: ${JSON.stringify(offers).slice(0, 200)}`);
+    const wanted = process.env.REAL_ZEC === "1" ? (process.env.REAL_OFFER_ID ?? "offer-") : "offer-ui-btc-001";
+    const match = offers.find((o) => o.id === wanted || (process.env.REAL_ZEC === "1" && o.id.startsWith(wanted)));
+    if (!match) throw new Error(`live offer not listed (${wanted}): ${JSON.stringify(offers).slice(0, 200)}`);
     console.log(`  live offer ${match.id}: pair=${match.pair_configuration.route.pair} ttl=${match.pair_configuration.offer_ttl_seconds}s`);
+
+    // fill the review form with the offer's exact facts
+    const digest = (listed.offers ?? []).find((e) => (e.offer ?? e).id === match.id);
+    const envelopeSha = Array.isArray(digest?.signed_envelope_sha256)
+      ? digest.signed_envelope_sha256.map((b) => Number(b).toString(16).padStart(2, "0")).join("")
+      : String(digest?.signed_envelope_sha256 ?? "");
+    const identity = digest?.maker_identity ?? digest?.maker_public_key ?? "";
+    console.log(`  review facts: identity=${identity.slice(0, 12)}… sha=${envelopeSha.slice(0, 12)}…`);
+    const sets = [
+      ["takerOfferId", match.id],
+      ["takerMakerIdentity", identity],
+      ["takerEnvelopeDigest", envelopeSha],
+      ["takerForeignUnits", String(process.env.REAL_FOREIGN_UNITS ?? "100000000")],
+      ["takerLezUnits", String(process.env.REAL_LEZ_UNITS ?? "50000")],
+    ];
+    for (const [objectName, value] of sets) {
+      const found = await app.findByProperty("objectName", objectName);
+      if (found.matches?.length === 1) await evaluateIn(app, found.matches[0].id, `text = ${JSON.stringify(value)}`);
+    }
+
+    // REAL Maker Chat acceptance + durable actor provisioning
+    const initiated = unwrap(await outputAfterClick(app, "Confirm and initiate", "takerOutput"), "initiate");
+    console.log(`  initiated: state=${initiated.state ?? initiated.swap_state} replay=${initiated.was_replay} swap=${String(initiated.swap_id ?? "").slice(0, 16)}…`);
+
+    const swaps = unwrap(await outputAfterClick(app, "List my swaps", "takerOutput"), "swap list");
+    const list = Array.isArray(swaps) ? swaps : (swaps.swaps ?? []);
+    if (!list.some((entry) => String(entry.swap_id ?? entry.id ?? "").startsWith(String(initiated.swap_id ?? "?").slice(0, 8)))) {
+      throw new Error(`admitted swap not listed: ${JSON.stringify(list).slice(0, 200)}`);
+    }
+    console.log(`  swap list shows the admitted swap (${list.length} total)`);
   });
 }
 
