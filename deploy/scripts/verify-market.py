@@ -174,7 +174,15 @@ expect_error("taking an unknown offer is rejected", "btc_offer_take_v1",
              "offer")
 
 print("\nbalance evidence")
-evidence = rpc("btc_market_snapshot_v1", MAKER)["result"].get("latest_balance_evidence")
+# The ledger is published for whichever wallets settled the most recent swap.
+evidence = None
+for role, wallet in (("maker", MAKER), ("maker", BASEL), ("taker", TAKER), ("taker", LIMMAT)):
+    candidate = rpc("btc_market_snapshot_v1", wallet)["result"].get("latest_balance_evidence")
+    if candidate and candidate["wallet"]["role"] == "maker":
+        evidence = candidate
+        break
+check("a wallet ledger is published", evidence is not None,
+      evidence["wallet"]["wallet_id"] if evidence else "no completed swap yet")
 if evidence:
     balances = evidence["wallet"]["balances"]
     reconciliation = evidence["reconciliation"]

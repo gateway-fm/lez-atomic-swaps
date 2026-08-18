@@ -42,10 +42,21 @@ EVIDENCE_OUTPUT = pathlib.Path(os.environ.get(
     "LEZ_M3_BTC_EVIDENCE_FILE", "/run/evidence/m3-btc-ui-evidence.json"))
 RUN_SCRIPT = pathlib.Path("/controller-assets/run-full-swap.sh")
 EXPORT_SCRIPT = pathlib.Path("/controller-assets/export-ui-evidence.sh")
-RUNNER_RUN_SCRIPT = "/tmp/lez-run-full-btc-ui.sh"
 RUNNER_EXPORT_SCRIPT = "/tmp/lez-export-btc-ui-evidence.sh"
-RUNNER_OUTER_SCRIPT = "/tmp/lez-interactive-m3-outer.sh"
-RUNNER_DIRECTION_SCRIPT = "/tmp/lez-interactive-m3-direction.sh"
+
+
+def runner_script_paths(run_id: str) -> dict[str, str]:
+    """Staged script paths for one run.
+
+    Every run gets its own copies: bash reads a script incrementally, so a
+    later run restaging a shared path would corrupt an earlier run still
+    executing it (a silent status-1 death).
+    """
+    return {
+        "run": f"/tmp/lez-run-full-btc-ui-{run_id}.sh",
+        "outer": f"/tmp/lez-interactive-m3-outer-{run_id}.sh",
+        "direction": f"/tmp/lez-interactive-m3-direction-{run_id}.sh",
+    }
 
 REQUEST_RE = re.compile(r"^ui-(?:maker|taker)-[a-z-]{2,24}-[0-9]{13}$")
 OFFER_RE = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
@@ -275,7 +286,8 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
     return source.replace(old, new, 1)
 
 
-def interactive_runner_scripts() -> dict[str, bytes]:
+def interactive_runner_scripts(run_id: str) -> dict[str, bytes]:
+    paths = runner_script_paths(run_id)
     scripts = EVIDENCE_ROOT / "scripts"
     outer = scripts.joinpath("run-m3-actor-local-poc.sh").read_text()
     direction = scripts.joinpath("run-m3-actor-direction.sh").read_text()
@@ -286,7 +298,7 @@ def interactive_runner_scripts() -> dict[str, bytes]:
     outer = replace_once(
         outer,
         'readonly direction_driver="${repo_root}/scripts/run-m3-actor-direction.sh"',
-        f'readonly direction_driver="{RUNNER_DIRECTION_SCRIPT}"',
+        f'readonly direction_driver="{paths["direction"]}"',
         "direction-driver",
     )
     outer = replace_once(
@@ -500,11 +512,17 @@ interactive_publish_wallet_balances() {
         "  direction_phase_end terminal_evidence ||\n",
         "wallet balance publication",
     )
+    run_script = replace_once(
+        RUN_SCRIPT.read_text(),
+        "/tmp/lez-interactive-m3-outer.sh",
+        paths["outer"],
+        "interactive outer script",
+    )
     return {
-        pathlib.Path(RUNNER_RUN_SCRIPT).name: RUN_SCRIPT.read_bytes(),
+        pathlib.Path(paths["run"]).name: run_script.encode(),
         pathlib.Path(RUNNER_EXPORT_SCRIPT).name: EXPORT_SCRIPT.read_bytes(),
-        pathlib.Path(RUNNER_OUTER_SCRIPT).name: outer.encode(),
-        pathlib.Path(RUNNER_DIRECTION_SCRIPT).name: direction.encode(),
+        pathlib.Path(paths["outer"]).name: outer.encode(),
+        pathlib.Path(paths["direction"]).name: direction.encode(),
     }
 
 
@@ -1090,11 +1108,11 @@ class Market:
                 break
         if not RUN_RE.fullmatch(run_id):
             raise RuntimeError("a unique local run identity is unavailable")
-        upload_bundle(interactive_runner_scripts())
+        upload_bundle(interactive_runner_scripts(run_id))
         reservation = "ui-reserve-" + hashlib.sha256(
             queued["ui_swap_id"].encode()).hexdigest()[:20]
         exec_id = create_exec(
-            ["bash", RUNNER_RUN_SCRIPT],
+            ["bash", runner_script_paths(run_id)["run"]],
             [
                 f"LEZ_M3_RUN_ID={run_id}",
                 "LEZ_M3_INTERACTIVE=1",
