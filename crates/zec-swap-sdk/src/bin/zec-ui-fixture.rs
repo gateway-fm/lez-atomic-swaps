@@ -212,12 +212,36 @@ fn main() -> Result<()> {
         &serde_json::to_vec_pretty(&config)?,
     )?;
 
+    // taker source actor config: the maker config with the role flipped and
+    // taker custody keys, exactly like the upstream test's taker source.
+    let taker_claim_key = taker_root.join("actor-claim-recovery.key");
+    let taker_capability = taker_root.join("actor-bridge.capability");
+    let taker_preimage = taker_root.join("actor-claim-preimage.key");
+    write_raw_key(&taker_claim_key, 0x7b)?;
+    write_private(
+        &taker_capability,
+        b"m5_taker_actor_capability_0123456789",
+    )?;
+    let mut taker_config = config.clone();
+    taker_config["role"] = json!("taker");
+    taker_config["role_state_db"] = json!(taker_root.join("unused-taker-source-state.sqlite3"));
+    taker_config["claim_recovery"]["key_id"] = json!("ui-zec-taker-claim");
+    taker_config["claim_recovery"]["key_file"] = json!(taker_claim_key);
+    taker_config["zcash_key_file"] = json!(taker_root.join("zcash.key"));
+    taker_config["bridge"]["capability_file"] = json!(taker_capability);
+    taker_config["bridge"]["runtime"]["sidecar_role"] = json!("taker");
+    write_private(
+        &taker_root.join("actor-config.json"),
+        &serde_json::to_vec_pretty(&taker_config)?,
+    )?;
+
     println!(
         "{}",
         json!({
             "schema_version": 1,
             "agreement_file": shared.join("agreement-v2.borsh"),
             "maker_config": maker_root.join("actor-config.json"),
+            "taker_config": taker_root.join("actor-config.json"),
             "taker_zcash_key": taker_root.join("zcash.key"),
             "private_material_disclosed": false
         })
