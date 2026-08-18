@@ -42,6 +42,9 @@ struct Arguments {
     /// Exact swap id bound into the agreement.
     #[arg(long)]
     swap_id: String,
+    /// Validity window for the source agreement used during Chat acceptance.
+    #[arg(long, default_value_t = 7_200)]
+    valid_for_seconds: u64,
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -158,7 +161,7 @@ fn main() -> Result<()> {
             40,
         ),
         ZecRefundPlanV1::new(basis_time, 116, (basis_time + 60) * 1_000, basis_time + 90),
-        NegotiationTranscriptV1::new([9; 32], [10; 32], basis_time + 300),
+        NegotiationTranscriptV1::new([9; 32], [10; 32], basis_time + arguments.valid_for_seconds),
     );
     let commitment = body.commitment();
     let record = ZecAgreementRecordV1::from_parts(
