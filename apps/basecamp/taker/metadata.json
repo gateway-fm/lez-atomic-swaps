@@ -1,10 +1,10 @@
 {
   "name": "lez_atomic_swap_taker",
-  "display_name": "LEZ / BTC Settlement",
+  "display_name": "LEZ / BTC Taker",
   "version": "0.1.0",
   "type": "ui_qml",
   "category": "finance",
-  "description": "Inspect the completed M3 LEZ/Bitcoin corridor and its five public chain effects.",
+  "description": "Take wallet-indexed BTC/LEZ offers and perform Taker settlement actions.",
   "interface": "universal",
   "main": "lez_atomic_swap_taker_plugin",
   "view": "qml/Main.qml",

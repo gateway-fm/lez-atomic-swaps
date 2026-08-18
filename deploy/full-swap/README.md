@@ -74,5 +74,10 @@ and no keys or preimages.
 From `deploy/`, `scripts/prepare-btc-m3-demo.sh --from-run <evidence-dir>`
 exports and publishes in one command. With the provisioned runner,
 `scripts/prepare-btc-m3-demo.sh --rerun` first creates a fresh real run. In
-Basecamp (VNC :5901), open **LEZ / BTC Settlement**; the same evidence is also
-available at `http://127.0.0.1:3003/#/evidence`.
+Basecamp (VNC :5901), open **LEZ / BTC Maker** to publish wallet-owned offers
+and **LEZ / BTC Taker** to take them. The same runner is gated at the four
+role-owned actor steps: Taker Bitcoin lock, Maker LEZ funding, Taker LEZ claim,
+and Maker Bitcoin claim. On completion, the mounted evidence is replaced with
+the five proofs plus per-wallet opening/closing balance reconciliation. The
+same evidence is available at
+`http://127.0.0.1:3003/#/evidence`.

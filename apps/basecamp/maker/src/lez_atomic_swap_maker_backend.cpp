@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 
 #include <limits>
 
@@ -23,6 +24,25 @@ bool exactUnsigned(const QString& value, qulonglong& result)
 QString invalid()
 {
     return QStringLiteral("{\"ok\":false,\"code\":\"invalid_input\",\"message\":\"Enter canonical unsigned integers\"}");
+}
+
+QString invalidMarket(const QString& message)
+{
+    return compact({{"ok", false}, {"code", "invalid_btc_market_request"},
+                    {"message", message}});
+}
+
+bool makerWallet(const QString& value)
+{
+    return value == QStringLiteral("maker-munich-01")
+        || value == QStringLiteral("maker-basel-02");
+}
+
+bool marketRequest(const QString& value)
+{
+    static const QRegularExpression pattern(
+        QStringLiteral("^ui-maker-[a-z-]{2,24}-[0-9]{13}$"));
+    return pattern.match(value).hasMatch();
 }
 
 struct RevisionLookup
@@ -64,13 +84,66 @@ RevisionLookup revisionForRoute(const QString& response, const QString& pair,
 
 LezAtomicSwapMakerBackend::LezAtomicSwapMakerBackend()
     : rpc_(QStringLiteral("LEZ_MAKER_RPC_SOCKET"))
+    , demoRpc_(QStringLiteral("LEZ_BTC_DEMO_RPC_SOCKET"))
 {
     (void)qEnvironmentVariable("LEZ_MAKER_RPC_SOCKET");
+    (void)qEnvironmentVariable("LEZ_BTC_DEMO_RPC_SOCKET");
 }
 
 QString LezAtomicSwapMakerBackend::health()
 {
     return rpc_.call("maker_health", "{}");
+}
+
+QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)
+{
+    if (!makerWallet(walletId)) return invalidMarket(QStringLiteral("Select a known Maker wallet"));
+    return demoRpc_.call("btc_market_snapshot_v1", compact({
+        {"schema_version", 2}, {"role", "maker"}, {"wallet_id", walletId}}));
+}
+
+QString LezAtomicSwapMakerBackend::btcCreateOffers(
+    QString requestId, QString walletId, QString count, QString bitcoinSats, QString lezUnits)
+{
+    qulonglong parsedCount = 0, bitcoin = 0, lez = 0;
+    if (!marketRequest(requestId) || !makerWallet(walletId)
+        || !exactUnsigned(count, parsedCount) || parsedCount != 1
+        || !exactUnsigned(bitcoinSats, bitcoin) || bitcoin != 1000000
+        || !exactUnsigned(lezUnits, lez) || lez != 1000) {
+        return invalidMarket(QStringLiteral("Review the fixed offer preset and wallet"));
+    }
+    return demoRpc_.call("btc_offer_create_v1", compact({
+        {"schema_version", 2}, {"request_id", requestId}, {"wallet_id", walletId},
+        {"count", static_cast<qint64>(parsedCount)},
+        {"bitcoin_sats", static_cast<qint64>(bitcoin)},
+        {"lez_units", static_cast<qint64>(lez)}}));
+}
+
+QString LezAtomicSwapMakerBackend::btcWithdrawOffer(
+    QString requestId, QString walletId, QString offerId)
+{
+    static const QRegularExpression offerPattern(QStringLiteral("^[A-Za-z0-9._-]{8,64}$"));
+    if (!marketRequest(requestId) || !makerWallet(walletId)
+        || !offerPattern.match(offerId).hasMatch()) {
+        return invalidMarket(QStringLiteral("The pending offer selection is invalid"));
+    }
+    return demoRpc_.call("btc_offer_withdraw_v1", compact({
+        {"schema_version", 2}, {"request_id", requestId}, {"wallet_id", walletId},
+        {"offer_id", offerId}}));
+}
+
+QString LezAtomicSwapMakerBackend::btcSwapAction(
+    QString requestId, QString walletId, QString swapId, QString action)
+{
+    static const QRegularExpression swapPattern(QStringLiteral("^swap-[0-9a-f]{16}$"));
+    if (!marketRequest(requestId) || !makerWallet(walletId)
+        || !swapPattern.match(swapId).hasMatch()
+        || (action != QStringLiteral("fund_lez") && action != QStringLiteral("claim_btc"))) {
+        return invalidMarket(QStringLiteral("That Maker action is not available"));
+    }
+    return demoRpc_.call("btc_swap_action_v1", compact({
+        {"schema_version", 2}, {"request_id", requestId}, {"role", "maker"},
+        {"wallet_id", walletId}, {"ui_swap_id", swapId}, {"action", action}}));
 }
 
 QString LezAtomicSwapMakerBackend::saveRoute(

@@ -20,6 +20,15 @@ Item {
     property string currentState: ""
     property string latestSwap: ""
     property string lastSavedRoute: "No route changes in this session"
+    property var btcMarket: ({
+        inventory: [], swaps: [], wallets: [],
+        summary: ({pending_offers: 0, accepted_swaps: 0, completed_swaps: 0}),
+        runner_ready: false, runner_busy: false,
+        runner_detail: "Checking the local M3 runner",
+        latest_balance_evidence: null
+    })
+    property bool btcMarketReady: false
+    property bool btcMarketBusy: false
 
     component LuxeButton: Button {
         id: control
@@ -158,6 +167,20 @@ Item {
         }
     }
 
+    Timer {
+        id: btcMarketBootstrapTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.refreshBtcMarket(false)
+    }
+
+    Timer {
+        interval: 2000
+        repeat: true
+        running: root.ready
+        onTriggered: root.refreshBtcMarket(true)
+    }
+
     Connections {
         target: logos
         function onViewModuleReadyChanged(moduleName, isReady) {
@@ -166,7 +189,8 @@ Item {
             if (root.ready) {
                 root.statusMode = "success"
                 root.statusTitle = "Maker daemon connected"
-                root.statusDetail = "Ready to configure routes and inspect actor state"
+                root.statusDetail = "Loading this wallet's offer inventory and swap actions"
+                btcMarketBootstrapTimer.restart()
             }
         }
     }
@@ -176,7 +200,8 @@ Item {
         if (root.ready) {
             root.statusMode = "success"
             root.statusTitle = "Maker daemon connected"
-            root.statusDetail = "Ready to configure routes and inspect actor state"
+            root.statusDetail = "Loading this wallet's offer inventory and swap actions"
+            btcMarketBootstrapTimer.restart()
         }
     }
 
@@ -203,6 +228,7 @@ Item {
         logos.watch(operation,
             function(value) {
                 root.busy = false
+                root.btcMarketBusy = false
                 root.output = String(value)
                 try {
                     onSuccess(root.decode(value))
@@ -215,11 +241,105 @@ Item {
             },
             function(error) {
                 root.busy = false
+                root.btcMarketBusy = false
                 root.output = "Backend failure: " + String(error)
                 root.statusMode = "error"
                 root.statusTitle = "Secure daemon error"
                 root.statusDetail = String(error)
                 root.technicalVisible = true
+            })
+    }
+
+    function selectedMakerWallet() {
+        return makerWallet.currentIndex === 1 ? "maker-basel-02" : "maker-munich-01"
+    }
+
+    function formatBtcSats(value) {
+        return (Number(value ?? 0) / 100000000).toFixed(8) + " BTC"
+    }
+
+    function formatSignedBtc(value) {
+        var amount = Number(value ?? 0)
+        return (amount >= 0 ? "+" : "−") + root.formatBtcSats(Math.abs(amount))
+    }
+
+    function formatLez(value) {
+        return Number(value ?? 0).toLocaleString(Qt.locale(), "f", 0) + " LEZ"
+    }
+
+    function formatSignedLez(value) {
+        var amount = Number(value ?? 0)
+        return (amount >= 0 ? "+" : "−") + root.formatLez(Math.abs(amount))
+    }
+
+    function applyBtcMarket(result) {
+        root.btcMarket = result
+        root.btcMarketReady = true
+    }
+
+    function refreshBtcMarket(silent) {
+        if (!root.ready || root.busy || root.btcMarketBusy) return
+        logos.watch(root.backend.btcMarket(root.selectedMakerWallet()),
+            function(value) {
+                try {
+                    if (!silent) root.output = String(value)
+                    root.applyBtcMarket(root.decode(value))
+                } catch (error) {
+                    if (!silent) {
+                        root.statusMode = "error"
+                        root.statusTitle = "BTC inventory unavailable"
+                        root.statusDetail = String(error)
+                    }
+                }
+            },
+            function(error) {
+                if (!silent) root.output = "Backend failure: " + String(error)
+                if (!silent) {
+                    root.statusMode = "error"
+                    root.statusTitle = "BTC inventory unavailable"
+                    root.statusDetail = String(error)
+                }
+            })
+    }
+
+    function createBtcOffers() {
+        if (root.btcMarketBusy) return
+        root.btcMarketBusy = true
+        var requestId = "ui-maker-create-offers-" + String(Date.now())
+        root.run(root.backend.btcCreateOffers(requestId, root.selectedMakerWallet(),
+            "1", "1000000", "1000"),
+            "Publishing BTC / LEZ inventory", function(result) {
+                root.applyBtcMarket(result)
+                root.statusMode = "success"
+                root.statusTitle = "Offer published"
+                root.statusDetail = "Indexed to " + makerWallet.currentText + " until taken or withdrawn"
+            })
+    }
+
+    function withdrawBtcOffer(offer) {
+        if (root.btcMarketBusy) return
+        root.btcMarketBusy = true
+        var requestId = "ui-maker-withdraw-offer-" + String(Date.now())
+        root.run(root.backend.btcWithdrawOffer(requestId, root.selectedMakerWallet(),
+            String(offer.offer_id)), "Withdrawing pending offer", function(result) {
+                root.applyBtcMarket(result)
+                root.statusMode = "success"
+                root.statusTitle = "Offer withdrawn"
+                root.statusDetail = "Only this Maker wallet's inventory was changed"
+            })
+    }
+
+    function runMakerAction(swap) {
+        if (root.btcMarketBusy || swap.can_act !== true) return
+        root.btcMarketBusy = true
+        var requestId = "ui-maker-swap-action-" + String(Date.now())
+        root.run(root.backend.btcSwapAction(requestId, root.selectedMakerWallet(),
+            String(swap.ui_swap_id), String(swap.action_required)),
+            String(swap.action_label), function(result) {
+                root.applyBtcMarket(result)
+                root.statusMode = "working"
+                root.statusTitle = "Maker action submitted"
+                root.statusDetail = "Waiting for finalized chain evidence before the next actor turn"
             })
     }
 
@@ -338,11 +458,11 @@ Item {
                                 color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 1.8
                             }
                             Label {
-                                text: "LEZ Atomic Swap — Maker Console"
+                                text: "LEZ / BTC — Maker Desk"
                                 color: "#F7F8FA"; font.pixelSize: 30; font.weight: Font.Bold; font.letterSpacing: -0.7
                             }
                             Label {
-                                text: "Price local markets, oversee live swaps, and execute fenced settlement actions."
+                                text: "Publish wallet-owned inventory and authorize only the Maker side of each atomic swap."
                                 color: "#9FA9B9"; font.pixelSize: 13
                             }
                         }
@@ -406,13 +526,14 @@ Item {
                         RowLayout {
                             spacing: 6
                             LuxeButton {
-                                objectName: "makerHistory"
-                                text: "Refresh swap history"
+                                objectName: "makerMarketRefresh"
+                                text: "Refresh wallet inventory"
                                 quiet: true
-                                enabled: root.ready && !root.busy
-                                onClicked: root.history()
+                                enabled: root.ready && !root.busy && !root.btcMarketBusy
+                                onClicked: root.refreshBtcMarket(false)
                             }
                             LuxeButton {
+                                objectName: "makerHealth"
                                 text: "Check service"
                                 quiet: true
                                 enabled: root.ready && !root.busy
@@ -420,6 +541,231 @@ Item {
                             }
                         }
                     }
+                }
+
+                Rectangle {
+                    id: makerMarketPanel
+                    objectName: "makerBtcMarket"
+                    Layout.fillWidth: true
+                    implicitHeight: makerMarketColumn.implicitHeight + 44
+                    radius: 16; color: "#101722"; border.width: 1
+                    border.color: root.btcMarketReady ? "#38465A" : "#5C3341"
+
+                    ColumnLayout {
+                        id: makerMarketColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        anchors.margins: 22; spacing: 16
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12
+                            StepBadge { number: "01"; accent: "#7EE100" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "Choose the Maker wallet"; color: "#F5F6F8"; font.pixelSize: 19; font.weight: Font.DemiBold }
+                                Label { text: "Each vault keeps its own pending offers and sees only the swaps it must settle."; color: "#8793A5"; font.pixelSize: 11 }
+                            }
+                            Rectangle {
+                                implicitWidth: makerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
+                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
+                                border.width: 1; border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
+                                Label {
+                                    id: makerRunnerLabel; anchors.centerIn: parent
+                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
+                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
+                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
+                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
+                                }
+                            }
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true; columns: 4; columnSpacing: 10; rowSpacing: 6
+                            FieldLabel { text: "MAKER WALLET" }
+                            FieldLabel { text: "TAKER PAYS" }
+                            FieldLabel { text: "MAKER FUNDS" }
+                            Item { implicitWidth: 170; implicitHeight: 1 }
+                            LuxeCombo {
+                                id: makerWallet
+                                objectName: "makerBtcWallet"
+                                model: ["Munich Vault 01 · Maker", "Basel Vault 02 · Maker"]
+                                Layout.fillWidth: true
+                                onActivated: root.refreshBtcMarket(false)
+                            }
+                            LuxeField { text: "0.01000000 BTC"; readOnly: true; Layout.fillWidth: true }
+                            LuxeField { text: "1,000 LEZ"; readOnly: true; Layout.fillWidth: true }
+                            LuxeButton {
+                                objectName: "makerCreateOffers"
+                                text: root.btcMarketBusy ? "Publishing…" : "Publish offer"
+                                primary: true; Layout.fillWidth: true
+                                enabled: root.ready && root.btcMarketReady && !root.btcMarketBusy
+                                onClicked: root.createBtcOffers()
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12
+                            StepBadge { number: "02"; accent: "#FA50C1" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "This wallet's offer inventory"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label {
+                                    text: Number((root.btcMarket.inventory ?? []).filter(function(item) { return item.state === "pending" }).length)
+                                        + " pending in " + makerWallet.currentText
+                                    color: "#7F8A9B"; font.pixelSize: 11
+                                }
+                            }
+                        }
+
+                        Label {
+                            visible: (root.btcMarket.inventory ?? []).length === 0
+                            text: root.btcMarketReady ? "No offers belong to this wallet yet." : "Loading wallet inventory…"
+                            color: "#7F8A9B"; font.pixelSize: 12
+                        }
+
+                        Repeater {
+                            model: root.btcMarket.inventory ?? []
+                            delegate: Rectangle {
+                                id: makerOfferRow
+                                required property var modelData
+                                Layout.fillWidth: true; implicitHeight: 68; radius: 10
+                                color: "#0D141E"; border.width: 1
+                                border.color: makerOfferRow.modelData.state === "pending" ? "#36465B" : "#252E3C"
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
+                                    Rectangle {
+                                        implicitWidth: 10; implicitHeight: 38; radius: 2
+                                        color: makerOfferRow.modelData.state === "pending" ? "#7EE100"
+                                            : makerOfferRow.modelData.state === "completed" ? "#8950FA" : "#4A5362"
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; spacing: 2
+                                        Label { text: String(makerOfferRow.modelData.offer_id); color: "#E9EDF3"; font.pixelSize: 10; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                        Label { text: String(makerOfferRow.modelData.state).toUpperCase(); color: "#718095"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+                                    }
+                                    Label { text: "0.01000000 BTC → 1,000 LEZ"; color: "#AAB4C3"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                                    LuxeButton {
+                                        objectName: "makerWithdrawOffer"
+                                        visible: makerOfferRow.modelData.state === "pending"
+                                        text: "Withdraw"; destructive: true
+                                        enabled: root.ready && !root.btcMarketBusy
+                                        onClicked: root.withdrawBtcOffer(makerOfferRow.modelData)
+                                    }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12; Layout.topMargin: 5
+                            StepBadge { number: "03"; accent: "#8950FA" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "Your Maker swaps"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label { text: "You control only Fund LEZ and Claim Bitcoin; Taker actions stay on the Taker desk."; color: "#7F8A9B"; font.pixelSize: 11 }
+                            }
+                        }
+
+                        Label {
+                            visible: (root.btcMarket.swaps ?? []).length === 0
+                            text: "No Taker has accepted this wallet's offers yet."
+                            color: "#7F8A9B"; font.pixelSize: 12
+                        }
+
+                        Repeater {
+                            model: root.btcMarket.swaps ?? []
+                            delegate: Rectangle {
+                                id: makerSwapRow
+                                required property var modelData
+                                Layout.fillWidth: true; implicitHeight: 86; radius: 10
+                                color: makerSwapRow.modelData.can_act === true ? "#17152A" : "#0D141E"
+                                border.width: 1; border.color: makerSwapRow.modelData.can_act === true ? "#8950FA" : "#28364A"
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; spacing: 3
+                                        Label {
+                                            text: String(makerSwapRow.modelData.taker_wallet_label) + " · " + String(makerSwapRow.modelData.state_label)
+                                            color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold
+                                            elide: Text.ElideRight; Layout.fillWidth: true
+                                        }
+                                        Label {
+                                            text: String(makerSwapRow.modelData.ui_swap_id) + "  /  " + String(makerSwapRow.modelData.offer_id)
+                                            color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true
+                                        }
+                                        Rectangle {
+                                            Layout.fillWidth: true; implicitHeight: 4; radius: 2; color: "#252E3C"
+                                            Rectangle {
+                                                width: parent.width * Number(makerSwapRow.modelData.progress_percent ?? 0) / 100
+                                                height: parent.height; radius: 2
+                                                color: makerSwapRow.modelData.state === "completed" ? "#7EE100" : "#8950FA"
+                                            }
+                                        }
+                                    }
+                                    Label {
+                                        visible: makerSwapRow.modelData.can_act !== true
+                                        text: makerSwapRow.modelData.action_role === "taker" ? "WAITING FOR TAKER" : String(makerSwapRow.modelData.state).toUpperCase()
+                                        color: "#7B8798"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.7
+                                    }
+                                    LuxeButton {
+                                        objectName: "makerSwapAction"
+                                        visible: makerSwapRow.modelData.can_act === true
+                                        text: String(makerSwapRow.modelData.action_label ?? "Continue")
+                                        primary: true; enabled: root.ready && !root.btcMarketBusy
+                                        onClicked: root.runMakerAction(makerSwapRow.modelData)
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            id: makerBalanceLedger
+                            objectName: "makerBalanceLedger"
+                            Layout.fillWidth: true
+                            implicitHeight: root.btcMarket.latest_balance_evidence ? 124 : 64
+                            radius: 10; color: "#0B111A"; border.width: 1
+                            border.color: root.btcMarket.latest_balance_evidence ? "#3D671E" : "#283244"
+                            ColumnLayout {
+                                anchors.fill: parent; anchors.margins: 13; spacing: 7
+                                Label {
+                                    text: root.btcMarket.latest_balance_evidence
+                                        ? "LATEST FINALIZED BALANCE · " + String(root.btcMarket.latest_balance_evidence.run_id)
+                                        : "WALLET BALANCE PROOF"
+                                    color: root.btcMarket.latest_balance_evidence ? "#7EE100" : "#748196"
+                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.7
+                                }
+                                Label {
+                                    visible: !root.btcMarket.latest_balance_evidence
+                                    text: "This wallet's opening → closing ledger appears after its interactive swap completes."
+                                    color: "#7A8697"; font.pixelSize: 10
+                                }
+                                RowLayout {
+                                    visible: root.btcMarket.latest_balance_evidence !== null
+                                    Layout.fillWidth: true
+                                    Label { text: "BTC"; color: "#8950FA"; font.pixelSize: 10; font.weight: Font.Bold; Layout.preferredWidth: 38 }
+                                    Label { text: root.btcMarket.latest_balance_evidence ? root.formatBtcSats(root.btcMarket.latest_balance_evidence.wallet.balances.bitcoin.opening) : ""; color: "#9CA7B7"; font.pixelSize: 10 }
+                                    Label { text: "→"; color: "#5F6B7D" }
+                                    Label { text: root.btcMarket.latest_balance_evidence ? root.formatBtcSats(root.btcMarket.latest_balance_evidence.wallet.balances.bitcoin.closing) : ""; color: "#F0F3F7"; font.pixelSize: 10; font.weight: Font.DemiBold }
+                                    Item { Layout.fillWidth: true }
+                                    Label { text: root.btcMarket.latest_balance_evidence ? root.formatSignedBtc(root.btcMarket.latest_balance_evidence.wallet.balances.bitcoin.net_change) : ""; color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold }
+                                }
+                                RowLayout {
+                                    visible: root.btcMarket.latest_balance_evidence !== null
+                                    Layout.fillWidth: true
+                                    Label { text: "LEZ"; color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold; Layout.preferredWidth: 38 }
+                                    Label { text: root.btcMarket.latest_balance_evidence ? root.formatLez(root.btcMarket.latest_balance_evidence.wallet.balances.lez.opening) : ""; color: "#9CA7B7"; font.pixelSize: 10 }
+                                    Label { text: "→"; color: "#5F6B7D" }
+                                    Label { text: root.btcMarket.latest_balance_evidence ? root.formatLez(root.btcMarket.latest_balance_evidence.wallet.balances.lez.closing) : ""; color: "#F0F3F7"; font.pixelSize: 10; font.weight: Font.DemiBold }
+                                    Item { Layout.fillWidth: true }
+                                    Label { text: root.btcMarket.latest_balance_evidence ? root.formatSignedLez(root.btcMarket.latest_balance_evidence.wallet.balances.lez.net_change) : ""; color: "#FA50C1"; font.pixelSize: 10; font.weight: Font.Bold }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    text: "ADVANCED SERVICE CONTROLS · PREPARED NON-BITCOIN ROUTES"
+                    color: "#566377"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.1
+                    Layout.topMargin: 4
                 }
 
                 GridLayout {

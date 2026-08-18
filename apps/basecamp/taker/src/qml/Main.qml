@@ -23,6 +23,15 @@ Item {
     property bool replayed: false
     property var btcEvidence: ({})
     property bool btcEvidenceReady: false
+    property var btcMarket: ({
+        order_book: [], swaps: [], wallets: [],
+        summary: ({pending_offers: 0, accepted_swaps: 0, completed_swaps: 0}),
+        runner_ready: false, runner_busy: false,
+        runner_detail: "Checking the local M3 runner"
+    })
+    property bool btcMarketReady: false
+    property bool btcMarketBusy: false
+    property string lastPublishedMarketRun: ""
 
     component LuxeButton: Button {
         id: control
@@ -247,6 +256,21 @@ Item {
         onTriggered: root.loadBtcEvidence()
     }
 
+    Timer {
+        id: btcMarketBootstrapTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.refreshBtcMarket(false)
+    }
+
+    Timer {
+        id: btcMarketPollTimer
+        interval: 2000
+        repeat: true
+        running: root.ready
+        onTriggered: root.refreshBtcMarket(true)
+    }
+
     Connections {
         target: logos
         function onViewModuleReadyChanged(moduleName, isReady) {
@@ -257,6 +281,7 @@ Item {
                 root.statusTitle = "Private service connected"
                 root.statusDetail = "Loading certified LEZ / Bitcoin settlement evidence"
                 btcEvidenceTimer.restart()
+                btcMarketBootstrapTimer.restart()
             }
         }
     }
@@ -268,6 +293,7 @@ Item {
             root.statusTitle = "Private service connected"
             root.statusDetail = "Loading certified LEZ / Bitcoin settlement evidence"
             btcEvidenceTimer.restart()
+            btcMarketBootstrapTimer.restart()
         }
     }
 
@@ -302,6 +328,7 @@ Item {
         logos.watch(operation,
             function(value) {
                 root.busy = false
+                root.btcMarketBusy = false
                 root.output = String(value)
                 try {
                     onSuccess(root.decode(value))
@@ -314,6 +341,7 @@ Item {
             },
             function(error) {
                 root.busy = false
+                root.btcMarketBusy = false
                 root.output = "Backend failure: " + String(error)
                 root.statusMode = "error"
                 root.statusTitle = "Secure service error"
@@ -373,13 +401,116 @@ Item {
     }
 
     function loadBtcEvidence() {
+        if (root.busy) return
         root.run(root.backend.btcEvidence(), "Loading Bitcoin settlement proof", function(result) {
             root.btcEvidence = result
             root.btcEvidenceReady = true
+            root.lastPublishedMarketRun = String(result.run_id ?? "")
             root.statusMode = "success"
             root.statusTitle = "BTC settlement verified · revision " + String(result.terminal.revision)
             root.statusDetail = "2 Bitcoin + 3 LEZ effects · completed without replay resubmission"
         })
+    }
+
+    function selectedTakerWallet() {
+        return takerWallet.currentIndex === 1 ? "taker-limmat-02" : "taker-zurich-01"
+    }
+
+    function walletBalance(role) {
+        var ledger = root.btcEvidence.wallet_balance_changes ?? {}
+        var wallets = ledger.wallets ?? []
+        for (var index = 0; index < wallets.length; ++index)
+            if (wallets[index].role === role) return wallets[index]
+        return null
+    }
+
+    function formatBtcSats(value) {
+        return (Number(value ?? 0) / 100000000).toFixed(8) + " BTC"
+    }
+
+    function formatSignedBtc(value) {
+        var amount = Number(value ?? 0)
+        return (amount >= 0 ? "+" : "−") + root.formatBtcSats(Math.abs(amount))
+    }
+
+    function formatLez(value) {
+        return Number(value ?? 0).toLocaleString(Qt.locale(), "f", 0) + " LEZ"
+    }
+
+    function formatSignedLez(value) {
+        var amount = Number(value ?? 0)
+        return (amount >= 0 ? "+" : "−") + root.formatLez(Math.abs(amount))
+    }
+
+    function applyBtcMarket(result) {
+        root.btcMarket = result
+        root.btcMarketReady = true
+        var swaps = result.swaps ?? []
+        for (var index = 0; index < swaps.length; ++index) {
+            var swap = swaps[index]
+            if (swap.state === "completed" && String(swap.run_id ?? "") !== ""
+                    && String(swap.run_id) !== root.lastPublishedMarketRun
+                    && (!root.btcEvidenceReady
+                        || String(root.btcEvidence.run_id) !== String(swap.run_id))) {
+                root.loadBtcEvidence()
+                break
+            }
+        }
+    }
+
+    function refreshBtcMarket(silent) {
+        if (!root.ready || root.busy || root.btcMarketBusy) return
+        logos.watch(root.backend.btcMarket(root.selectedTakerWallet()),
+            function(value) {
+                try {
+                    if (!silent) root.output = String(value)
+                    root.applyBtcMarket(root.decode(value))
+                } catch (error) {
+                    if (!silent) {
+                        root.statusMode = "error"
+                        root.statusTitle = "BTC market unavailable"
+                        root.statusDetail = String(error)
+                    }
+                }
+            },
+            function(error) {
+                if (!silent) root.output = "Backend failure: " + String(error)
+                if (!silent) {
+                    root.statusMode = "error"
+                    root.statusTitle = "BTC market unavailable"
+                    root.statusDetail = String(error)
+                }
+            })
+    }
+
+    function takeBtcOffer(offer) {
+        if (root.btcMarketBusy) return
+        root.btcMarketBusy = true
+        var requestId = "ui-taker-take-offer-" + String(Date.now())
+        root.run(root.backend.btcTakeOffer(
+            requestId, root.selectedTakerWallet(), String(offer.offer_id)),
+            "Accepting Maker offer", function(result) {
+                root.btcMarketBusy = false
+                root.applyBtcMarket(result)
+                root.statusMode = "success"
+                root.statusTitle = "Offer accepted by " + takerWallet.currentText
+                root.statusDetail = "The swap is queued; only the owning actors can advance it"
+            })
+    }
+
+    function runTakerAction(swap) {
+        if (root.btcMarketBusy || swap.can_act !== true) return
+        root.btcMarketBusy = true
+        var requestId = "ui-taker-swap-action-" + String(Date.now())
+        root.run(root.backend.btcSwapAction(requestId, root.selectedTakerWallet(),
+            String(swap.ui_swap_id), String(swap.action_required)),
+            String(swap.action_label), function(result) {
+                root.btcMarketBusy = false
+                root.applyBtcMarket(result)
+                root.statusMode = "working"
+                root.statusTitle = "Taker action submitted"
+                root.statusDetail = "Waiting for finalized chain evidence before the next actor turn"
+            })
     }
 
     function initiate() {
@@ -491,21 +622,21 @@ Item {
                             Layout.fillWidth: true
                             spacing: 7
                             Label {
-                                text: "M3 · LEZ / BITCOIN · COMPLETED LOCALLY"
+                                text: "M3 · LIVE LOCAL SWAP · BITCOIN / LEZ"
                                 color: "#7EE100"
                                 font.pixelSize: 10
                                 font.weight: Font.Bold
                                 font.letterSpacing: 1.8
                             }
                             Label {
-                                text: "LEZ / BTC Settlement Evidence"
+                                text: "LEZ / BTC — Taker Desk"
                                 color: "#F7F8FA"
                                 font.pixelSize: 30
                                 font.weight: Font.Bold
                                 font.letterSpacing: -0.7
                             }
                             Label {
-                                text: "Inspect every real chain effect from the certified local Bitcoin corridor."
+                                text: "Choose your wallet, take Maker offers, and authorize only the Taker-owned chain actions."
                                 color: "#9FA9B9"
                                 font.pixelSize: 13
                             }
@@ -580,13 +711,14 @@ Item {
                         }
                         LuxeButton {
                             text: "Monitor"
-                            visible: root.currentSwap !== ""
+                            visible: false
                             enabled: root.ready && !root.busy
                             implicitHeight: 38
                             primary: true
                             onClicked: root.monitor()
                         }
                         LuxeButton {
+                            objectName: "takerHealth"
                             text: "Service health"
                             quiet: true
                             enabled: root.ready && !root.busy
@@ -594,10 +726,10 @@ Item {
                             onClicked: root.health()
                         }
                         LuxeButton {
-                            text: pair.currentText === "Bitcoin" ? "Refresh BTC proof" : "List my swaps"
-                            enabled: root.ready && !root.busy
+                            text: "Refresh wallet market"
+                            enabled: root.ready && !root.busy && !root.btcMarketBusy
                             implicitHeight: 38
-                            onClicked: pair.currentText === "Bitcoin" ? root.loadBtcEvidence() : root.listSwaps()
+                            onClicked: root.refreshBtcMarket(false)
                         }
                         Label {
                             visible: pair.currentText !== "Bitcoin" && root.selectedOffer !== ""
@@ -606,6 +738,205 @@ Item {
                         }
                     }
                 }
+
+                Rectangle {
+                    id: takerMarketPanel
+                    objectName: "takerBtcMarket"
+                    Layout.fillWidth: true
+                    implicitHeight: takerMarketColumn.implicitHeight + 44
+                    radius: 16
+                    color: "#101722"
+                    border.width: 1
+                    border.color: root.btcMarketReady ? "#38465A" : "#5C3341"
+
+                    ColumnLayout {
+                        id: takerMarketColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        anchors.margins: 22
+                        spacing: 16
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12
+                            StepBadge { number: "01"; accent: "#7EE100" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label {
+                                    text: "Choose the Taker wallet"
+                                    color: "#F5F6F8"; font.pixelSize: 19; font.weight: Font.DemiBold
+                                }
+                                Label {
+                                    text: "Offers and swaps stay indexed to this wallet. Changing wallets changes the desk you control."
+                                    color: "#8793A5"; font.pixelSize: 11
+                                }
+                            }
+                            Rectangle {
+                                implicitWidth: takerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
+                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
+                                border.width: 1
+                                border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
+                                Label {
+                                    id: takerRunnerLabel
+                                    anchors.centerIn: parent
+                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
+                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
+                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
+                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12
+                            LuxeCombo {
+                                id: takerWallet
+                                objectName: "takerBtcWallet"
+                                model: ["Zurich Wallet 01 · Taker", "Limmat Wallet 02 · Taker"]
+                                Layout.preferredWidth: 300
+                                onActivated: root.refreshBtcMarket(false)
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true; implicitHeight: 44; radius: 9
+                                color: "#0D141E"; border.width: 1; border.color: "#263144"
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 12
+                                    Label { text: "BUY"; color: "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
+                                    Label { text: "1,000 LEZ"; color: "#F5F7FA"; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                    Label { text: "FOR"; color: "#6F7A8B"; font.pixelSize: 9; font.weight: Font.Bold }
+                                    Label { text: "0.01000000 BTC"; color: "#B997FF"; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                    Item { Layout.fillWidth: true }
+                                    Label { text: "REGTEST / PRIVATE LOCAL"; color: "#657184"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+                                }
+                            }
+                            LuxeButton {
+                                objectName: "takerMarketRefresh"
+                                text: "Refresh market"; quiet: true
+                                enabled: root.ready && !root.btcMarketBusy
+                                onClicked: root.refreshBtcMarket(false)
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12
+                            StepBadge { number: "02"; accent: "#FA50C1" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "Live BTC / LEZ order book"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label {
+                                    text: Number((root.btcMarket.summary ?? {}).pending_offers ?? 0) + " pending across both Maker wallets"
+                                    color: "#7F8A9B"; font.pixelSize: 11
+                                }
+                            }
+                        }
+
+                        Label {
+                            visible: (root.btcMarket.order_book ?? []).length === 0
+                            text: root.btcMarketReady ? "No pending offers. Ask a Maker wallet to publish inventory." : "Loading wallet-indexed offers…"
+                            color: "#7F8A9B"; font.pixelSize: 12
+                        }
+
+                        Repeater {
+                            model: root.btcMarket.order_book ?? []
+                            delegate: Rectangle {
+                                id: takerOfferRow
+                                required property var modelData
+                                Layout.fillWidth: true; implicitHeight: 70; radius: 10
+                                color: "#0D141E"; border.width: 1; border.color: "#28364A"
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
+                                    Rectangle {
+                                        implicitWidth: 38; implicitHeight: 38; radius: 2
+                                        color: "#201830"; border.width: 1; border.color: "#8950FA"
+                                        Label { anchors.centerIn: parent; text: "M"; color: "#B997FF"; font.pixelSize: 13; font.weight: Font.Bold }
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; spacing: 2
+                                        Label { text: String(takerOfferRow.modelData.maker_wallet_label); color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                        Label {
+                                            text: String(takerOfferRow.modelData.offer_id)
+                                            color: "#6F7B8E"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
+                                            elide: Text.ElideMiddle; Layout.fillWidth: true
+                                        }
+                                    }
+                                    Label { text: "0.01000000 BTC"; color: "#B997FF"; font.pixelSize: 12; font.weight: Font.Bold }
+                                    Label { text: "→"; color: "#687486"; font.pixelSize: 15 }
+                                    Label { text: "1,000 LEZ"; color: "#7EE100"; font.pixelSize: 12; font.weight: Font.Bold }
+                                    LuxeButton {
+                                        objectName: "takerTakeOffer"
+                                        text: "Take offer"; primary: true
+                                        enabled: root.ready && !root.btcMarketBusy
+                                        onClicked: root.takeBtcOffer(takerOfferRow.modelData)
+                                    }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12; Layout.topMargin: 5
+                            StepBadge { number: "03"; accent: "#8950FA" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "Your Taker swaps"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label { text: "You control only Lock BTC and Claim LEZ; Maker actions appear on the other dashboard."; color: "#7F8A9B"; font.pixelSize: 11 }
+                            }
+                        }
+
+                        Label {
+                            visible: (root.btcMarket.swaps ?? []).length === 0
+                            text: "This wallet has not taken an offer yet."
+                            color: "#7F8A9B"; font.pixelSize: 12
+                        }
+
+                        Repeater {
+                            model: root.btcMarket.swaps ?? []
+                            delegate: Rectangle {
+                                id: takerSwapRow
+                                required property var modelData
+                                Layout.fillWidth: true; implicitHeight: 86; radius: 10
+                                color: takerSwapRow.modelData.can_act === true ? "#17152A" : "#0D141E"
+                                border.width: 1
+                                border.color: takerSwapRow.modelData.can_act === true ? "#8950FA" : "#28364A"
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; spacing: 3
+                                        Label {
+                                            text: String(takerSwapRow.modelData.maker_wallet_label) + " · " + String(takerSwapRow.modelData.state_label)
+                                            color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold
+                                            elide: Text.ElideRight; Layout.fillWidth: true
+                                        }
+                                        Label {
+                                            text: String(takerSwapRow.modelData.ui_swap_id) + "  /  " + String(takerSwapRow.modelData.offer_id)
+                                            color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
+                                            elide: Text.ElideMiddle; Layout.fillWidth: true
+                                        }
+                                        Rectangle {
+                                            Layout.fillWidth: true; implicitHeight: 4; radius: 2; color: "#252E3C"
+                                            Rectangle {
+                                                width: parent.width * Number(takerSwapRow.modelData.progress_percent ?? 0) / 100
+                                                height: parent.height; radius: 2
+                                                color: takerSwapRow.modelData.state === "completed" ? "#7EE100" : "#8950FA"
+                                            }
+                                        }
+                                    }
+                                    Label {
+                                        visible: takerSwapRow.modelData.can_act !== true
+                                        text: takerSwapRow.modelData.action_role === "maker" ? "WAITING FOR MAKER" : String(takerSwapRow.modelData.state).toUpperCase()
+                                        color: "#7B8798"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.7
+                                    }
+                                    LuxeButton {
+                                        objectName: "takerSwapAction"
+                                        visible: takerSwapRow.modelData.can_act === true
+                                        text: String(takerSwapRow.modelData.action_label ?? "Continue")
+                                        primary: true
+                                        enabled: root.ready && !root.btcMarketBusy
+                                        onClicked: root.runTakerAction(takerSwapRow.modelData)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
 
                 Rectangle {
                     id: btcEvidencePanel
@@ -625,7 +956,7 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true; spacing: 12
-                            StepBadge { number: "01"; accent: "#8950FA" }
+                            StepBadge { number: "04"; accent: "#8950FA" }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
                                 Label {
@@ -647,6 +978,13 @@ Item {
                                     text: root.btcEvidenceReady ? "REV 4 · COMPLETED" : "VERIFYING"
                                     color: "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8
                                 }
+                            }
+                            LuxeButton {
+                                objectName: "takerRefreshProof"
+                                text: "Refresh proof"
+                                quiet: true
+                                enabled: root.ready && !root.busy
+                                onClicked: root.loadBtcEvidence()
                             }
                         }
 
@@ -670,6 +1008,93 @@ Item {
                                         anchors.fill: parent; anchors.margins: 11; spacing: 2
                                         Label { text: metricCard.modelData[0]; color: "#758195"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.7 }
                                         Label { text: metricCard.modelData[1]; color: metricCard.modelData[2]; font.pixelSize: 16; font.weight: Font.Bold }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            id: balanceLedger
+                            objectName: "takerBalanceLedger"
+                            Layout.fillWidth: true
+                            implicitHeight: balanceLedgerColumn.implicitHeight + 30
+                            radius: 11
+                            color: "#0B111A"
+                            border.width: 1
+                            border.color: root.btcEvidence.wallet_balance_changes ? "#3D671E" : "#283244"
+
+                            ColumnLayout {
+                                id: balanceLedgerColumn
+                                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                anchors.margins: 15
+                                spacing: 12
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; spacing: 2
+                                        Label { text: "Wallet balance proof"; color: "#F2F4F7"; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                        Label {
+                                            text: root.btcEvidence.wallet_balance_changes
+                                                ? "Opening → closing balances reconciled from finalized Bitcoin and LEZ state"
+                                                : "Balance ledger appears after a completed interactive Maker / Taker run"
+                                            color: "#778396"; font.pixelSize: 10
+                                        }
+                                    }
+                                    Label {
+                                        visible: root.btcEvidence.wallet_balance_changes !== undefined
+                                        text: "PRINCIPAL + FEES RECONCILED"
+                                        color: "#7EE100"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8
+                                    }
+                                }
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: width > 780 ? 2 : 1
+                                    columnSpacing: 10; rowSpacing: 10
+                                    Repeater {
+                                        model: root.btcEvidence.wallet_balance_changes
+                                            ? root.btcEvidence.wallet_balance_changes.wallets : []
+                                        delegate: Rectangle {
+                                            id: walletProof
+                                            required property var modelData
+                                            Layout.fillWidth: true; implicitHeight: 128; radius: 9
+                                            color: "#101722"; border.width: 1
+                                            border.color: walletProof.modelData.role === "taker" ? "#5A3D8B" : "#3E4A5D"
+                                            ColumnLayout {
+                                                anchors.fill: parent; anchors.margins: 12; spacing: 7
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    Label {
+                                                        text: walletProof.modelData.role.toUpperCase() + " · " + walletProof.modelData.wallet_id
+                                                        color: walletProof.modelData.role === "taker" ? "#B997FF" : "#D4DBE5"
+                                                        font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.6
+                                                    }
+                                                    Item { Layout.fillWidth: true }
+                                                    Label { text: walletProof.modelData.role === "taker" ? "YOU" : "COUNTERPARTY"; color: "#687486"; font.pixelSize: 8; font.weight: Font.Bold }
+                                                }
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    Label { text: "BTC"; color: "#8950FA"; font.pixelSize: 10; font.weight: Font.Bold; Layout.preferredWidth: 38 }
+                                                    Label { text: root.formatBtcSats(walletProof.modelData.balances.bitcoin.opening); color: "#9CA7B7"; font.pixelSize: 10 }
+                                                    Label { text: "→"; color: "#5F6B7D"; font.pixelSize: 11 }
+                                                    Label { text: root.formatBtcSats(walletProof.modelData.balances.bitcoin.closing); color: "#F0F3F7"; font.pixelSize: 10; font.weight: Font.DemiBold }
+                                                    Item { Layout.fillWidth: true }
+                                                    Label { text: root.formatSignedBtc(walletProof.modelData.balances.bitcoin.net_change); color: Number(walletProof.modelData.balances.bitcoin.net_change) >= 0 ? "#7EE100" : "#FA50C1"; font.pixelSize: 10; font.weight: Font.Bold }
+                                                }
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    Label { text: "LEZ"; color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold; Layout.preferredWidth: 38 }
+                                                    Label { text: root.formatLez(walletProof.modelData.balances.lez.opening); color: "#9CA7B7"; font.pixelSize: 10 }
+                                                    Label { text: "→"; color: "#5F6B7D"; font.pixelSize: 11 }
+                                                    Label { text: root.formatLez(walletProof.modelData.balances.lez.closing); color: "#F0F3F7"; font.pixelSize: 10; font.weight: Font.DemiBold }
+                                                    Item { Layout.fillWidth: true }
+                                                    Label { text: root.formatSignedLez(walletProof.modelData.balances.lez.net_change); color: Number(walletProof.modelData.balances.lez.net_change) >= 0 ? "#7EE100" : "#FA50C1"; font.pixelSize: 10; font.weight: Font.Bold }
+                                                }
+                                                Label {
+                                                    text: "BTC fee " + root.formatBtcSats(walletProof.modelData.balances.bitcoin.fee)
+                                                    color: "#667386"; font.pixelSize: 8
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -729,7 +1154,7 @@ Item {
                             spacing: 16
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 12
-                                StepBadge { number: "02"; accent: "#FA50C1" }
+                                StepBadge { number: "03"; accent: "#FA50C1" }
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 2
                                     Label { text: "Explore another corridor"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }

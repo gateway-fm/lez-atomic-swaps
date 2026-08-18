@@ -2,6 +2,9 @@ class LezAtomicSwapTaker
 {
     SLOT(QString health())
     SLOT(QString btcEvidence())
+    SLOT(QString btcMarket(QString walletId))
+    SLOT(QString btcTakeOffer(QString requestId, QString walletId, QString offerId))
+    SLOT(QString btcSwapAction(QString requestId, QString walletId, QString swapId, QString action))
     SLOT(QString listOffers(QString pair, QString direction))
     SLOT(QString initiate(QString requestId, QString offerId, QString pair, QString direction, QString makerIdentity, QString signedEnvelopeSha256, QString foreignUnits, QString expectedLezUnits))
     SLOT(QString listSwaps())

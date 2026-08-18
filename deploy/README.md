@@ -9,7 +9,7 @@ started with one command.
 
 ```sh
 ./scripts/up.sh                    # config → build → start → wait → UI verification
-./scripts/prepare-btc-m3-demo.sh   # publish the certified completed M3 BTC run
+./scripts/prepare-btc-m3-demo.sh   # seed evidence + arm the in-UI BTC runner
 ./scripts/down.sh                  # stop   (--wipe removes all state)
 ```
 
@@ -27,30 +27,43 @@ its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`
 | Switch UI role | `BASECAMP_ROLE=taker docker compose up -d basecamp-ui` |
 | Logs | `docker compose logs -f <service>` |
 
-For the M3 demo, run `prepare-btc-m3-demo.sh`, open the VNC URL, and choose
-**LEZ / BTC Settlement**. The dark Swiss-poster view opens on a completed
-`Bitcoin / TakerSellsForeign` run and exposes all five public transaction
-identities: two Bitcoin effects and three LEZ effects. Each card includes its
-chain, actor, amount, block identity, and finality. **Open local proof** links
-to the read-only evidence explorer at `http://127.0.0.1:3003/#/evidence`.
+For the M3 demo, run `prepare-btc-m3-demo.sh` and open the VNC URL. The two
+Basecamp microapps are the control surface:
 
-The default command publishes the repository's certified, secret-free snapshot
-of run `m5arm-08180005`. To generate new transactions first, use the already
-provisioned native-arm64 runner:
+1. Open **LEZ / BTC Maker**, select **Munich Vault 01**, and click **Publish
+   offer** three times.
+2. Select **Basel Vault 02** and click **Publish offer** twice. Each click creates
+   one offer; switching
+   back shows that each wallet retained its own inventory.
+3. Open **LEZ / BTC Taker**, select a Taker wallet, and click **Take offer** on
+   one or more order-book rows. Accepted offers are indexed to that Taker wallet
+   and queue while the local runner handles one swap at a time.
+4. Advance the active swap like two real users: **Taker: Lock BTC → Maker: Fund
+   LEZ → Taker: Claim LEZ → Maker: Claim Bitcoin**. Each dashboard exposes only
+   its own ready action.
+5. After completion, inspect the five transaction hashes and the wallet balance
+   proof: BTC/LEZ opening → closing values, signed deltas, principal, and both
+   Bitcoin fees. **Open local proof** links to the explorer at
+   `http://127.0.0.1:3003/#/evidence`.
+
+The default preparation command also publishes the certified, secret-free
+snapshot of run `m5arm-08180005`, so the proof layout is useful before the first
+new run. The command-line equivalent remains available:
 
 ```sh
 ./scripts/prepare-btc-m3-demo.sh --rerun
 ```
 
-That normally takes about five minutes, executes the real LEZ/BTC application
-flow on isolated local chains, exports only its public evidence, and refreshes
-the UI. An existing run can be imported with
+Each interactive swap and the command normally take about five minutes once
+build caches are warm; allow up to ten minutes for a cold first run. They execute the
+real LEZ/BTC application flow on isolated local chains, export only its public
+evidence, and refresh the UI. An existing run can be imported with
 `--from-run <m3-evidence-directory>`.
 
 The BTC view can be driven automatically:
 
 ```sh
-docker compose run --rm --no-deps --entrypoint node \
+docker compose --env-file runtime/runtime.env run --rm --no-deps --entrypoint node \
   basecamp-ui /ui-tests/verify.mjs taker
 ```
 
@@ -72,11 +85,12 @@ actor provisioning, but stops at `not_activated`; it is not the M3 BTC demo.
 | `maker-init` / `taker-init` | debian | one-shot volume chowns (0700 socket dirs, 0600 taker config) |
 | `maker-node` | `images/maker-node` | real `lez-maker-daemon` + CLIs; owner socket on a shared volume |
 | `taker-service` | `images/maker-node` | real `lez-taker-service`: health, authenticated offer discovery, Chat acceptance, durable admission, list, monitor, and fenced terminal actions |
+| `btc-demo-controller` | `images/btc-demo-controller` | owner-local SQLite wallet market: create/withdraw/take plus four role-gated M3 actions; queues accepted swaps and publishes validated transaction and balance evidence |
 | `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the daemon uid (4713) so the owner-only socket checks pass |
 
-The UI reaches the daemon through shared named volumes (`maker_socket`,
-`taker_socket`) mounted read-only at `/run/lez-maker` / `/run/lez-taker`; the
-C++ backends enforce `uid == socket owner && mode 0600`, hence the shared uid.
+The UI reaches the role services and demo controller through shared named
+socket volumes mounted read-only in Basecamp. The C++ backends enforce
+`uid == socket owner && mode 0600`, hence the shared uid.
 
 All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 `cap_drop: ALL` + `no-new-privileges`; ports published on loopback only.
@@ -106,6 +120,7 @@ scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets)
 scripts/btc-miner.sh       regtest mining loop
 images/                    one dir per image (Dockerfile + payloads)
   basecamp-ui/assets/      portable Basecamp bundle, role trees, qt-mcp framework
+  btc-demo-controller/     fixed-method owner-local bridge to the M3 runner
 assets/lez-source/         pinned v0.2.0 config templates (bedrock, sequencer, indexer)
 assets/taker-service.json  taker service startup config (no delivery sources)
 ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspector
@@ -114,10 +129,15 @@ runtime/                   generated state (gitignored; wiped by --wipe)
 
 ## Demo boundary
 
-The primary M3 view is a read-only presentation of a genuinely completed local
-LEZ/BTC run; it does not claim that pressing a Basecamp button broadcast those
-transactions. `prepare-btc-m3-demo.sh --rerun` is the reproducible path that
-creates fresh chain effects before republishing them. The optional prepared ZEC
+The primary M3 microapps gate the repository's fixed, genuine local LEZ/BTC
+actor workflow and then present its completed evidence. They do not yet expose
+arbitrary amounts, external wallets, public networks, or production signing.
+The named profiles are local wallet-index aliases backed by fresh run-owned
+signing keys, not persisted production wallets. The controller has no TCP
+listener and accepts only its fixed wallet-market and role-action methods over
+a mode-0600 owner socket. Its Docker socket access is local-demo infrastructure
+and is not a production boundary.
+The optional prepared ZEC
 lane is separate: it exercises real signed-offer verification, Maker Chat,
 receipt binding, and durable actor provisioning, then ends at `not_activated`
 without submitting funded chain effects.

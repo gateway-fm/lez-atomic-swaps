@@ -1,6 +1,10 @@
 class LezAtomicSwapMaker
 {
     SLOT(QString health())
+    SLOT(QString btcMarket(QString walletId))
+    SLOT(QString btcCreateOffers(QString requestId, QString walletId, QString count, QString bitcoinSats, QString lezUnits))
+    SLOT(QString btcWithdrawOffer(QString requestId, QString walletId, QString offerId))
+    SLOT(QString btcSwapAction(QString requestId, QString walletId, QString swapId, QString action))
     SLOT(QString saveRoute(QString requestId, QString pair, QString direction, QString minimumForeignUnits, QString maximumForeignUnits, QString offerTtlSeconds, QString lezUnitsPerLot, QString foreignUnitsPerLot))
     SLOT(QString history())
     SLOT(QString monitor(QString swapId))

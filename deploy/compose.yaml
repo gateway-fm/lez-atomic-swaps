@@ -340,6 +340,46 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  btc-demo-init:
+    image: python:3.12-alpine
+    container_name: lez-btc-demo-init
+    volumes:
+      - btc_demo_socket:/run/lez-btc-demo
+    command: ["sh", "-c", "chown 4713:4713 /run/lez-btc-demo && chmod 0700 /run/lez-btc-demo"]
+    networks: [chains]
+    restart: "no"
+    logging: *default-logging
+
+  btc-demo-controller:
+    build: ./images/btc-demo-controller
+    image: lez-btc-demo-controller:local
+    container_name: lez-btc-demo-controller
+    depends_on:
+      btc-demo-init:
+        condition: service_completed_successfully
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      LEZ_BTC_DEMO_SOCKET: /run/lez-btc-demo/controller.sock
+      LEZ_M3_RUNNER_CONTAINER: ${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}
+      LEZ_M3_RUNNER_REPO_IN_CONTAINER: ${LEZ_M3_RUNNER_REPO_IN_CONTAINER:-/Users/mandrigin/Desktop/las-logos/runner-work/repo}
+      LEZ_M3_EVIDENCE_ROOT: /runner-repo
+      LEZ_M3_BTC_EVIDENCE_FILE: /run/evidence/m3-btc-ui-evidence.json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./full-swap:/controller-assets:ro
+      - ${LEZ_M3_RUNNER_REPO}:/runner-repo:ro
+      - ./runtime/m3-btc-ui-evidence.json:/run/evidence/m3-btc-ui-evidence.json
+      - btc_demo_socket:/run/lez-btc-demo
+    tmpfs:
+      - /tmp:rw,nosuid,size=16m,mode=1777
+    networks: [chains]
+    user: "4713:4713"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging: *default-logging
+
   basecamp-ui:
     build: ./images/basecamp-ui
     image: lez-basecamp-ui:local
@@ -349,15 +389,19 @@ services:
         condition: service_started
       taker-service:
         condition: service_started
+      btc-demo-controller:
+        condition: service_started
     environment:
       BASECAMP_ROLE: ${BASECAMP_ROLE:-both}
       VNC_PASSWORD: ${VNC_PASSWORD:-lezswap}
       LEZ_MAKER_RPC_SOCKET: /run/lez-maker/maker.sock
       LEZ_TAKER_RPC_SOCKET: /run/lez-taker/taker.sock
+      LEZ_BTC_DEMO_RPC_SOCKET: /run/lez-btc-demo/controller.sock
       LEZ_M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
     volumes:
       - maker_socket:/run/lez-maker:ro
       - taker_socket:/run/lez-taker:ro
+      - btc_demo_socket:/run/lez-btc-demo:ro
       - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
       - ./ui-tests:/ui-tests:ro
     ports:
@@ -389,3 +433,5 @@ volumes:
     name: lez-delivery-dir
   prep_state:
     name: lez-prep-state
+  btc_demo_socket:
+    name: lez-btc-demo-socket

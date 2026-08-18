@@ -34,8 +34,10 @@ QString evidenceFailure(const QString& code, const QString& message)
 
 LezAtomicSwapTakerBackend::LezAtomicSwapTakerBackend()
     : rpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"))
+    , demoRpc_(QStringLiteral("LEZ_BTC_DEMO_RPC_SOCKET"))
 {
     (void)qEnvironmentVariable("LEZ_TAKER_RPC_SOCKET");
+    (void)qEnvironmentVariable("LEZ_BTC_DEMO_RPC_SOCKET");
 }
 
 QString LezAtomicSwapTakerBackend::health()
@@ -102,6 +104,54 @@ QString LezAtomicSwapTakerBackend::btcEvidence()
             QStringLiteral("Certified Bitcoin evidence failed its public schema checks"));
     }
     return compact({{"ok", true}, {"result", evidence}});
+}
+
+QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
+{
+    if (walletId != QStringLiteral("taker-zurich-01")
+        && walletId != QStringLiteral("taker-limmat-02")) {
+        return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
+            QStringLiteral("Select a known Taker wallet"));
+    }
+    return demoRpc_.call("btc_market_snapshot_v1", compact({
+        {"schema_version", 2}, {"role", "taker"}, {"wallet_id", walletId}}));
+}
+
+QString LezAtomicSwapTakerBackend::btcTakeOffer(
+    QString requestId, QString walletId, QString offerId)
+{
+    static const QRegularExpression requestPattern(
+        QStringLiteral("^ui-taker-[a-z-]{2,24}-[0-9]{13}$"));
+    static const QRegularExpression offerPattern(QStringLiteral("^[A-Za-z0-9._-]{8,64}$"));
+    if (!requestPattern.match(requestId).hasMatch()
+        || (walletId != QStringLiteral("taker-zurich-01")
+            && walletId != QStringLiteral("taker-limmat-02"))
+        || !offerPattern.match(offerId).hasMatch()) {
+        return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
+            QStringLiteral("The selected wallet or offer is invalid"));
+    }
+    return demoRpc_.call("btc_offer_take_v1", compact({
+        {"schema_version", 2}, {"request_id", requestId}, {"wallet_id", walletId},
+        {"offer_id", offerId}}));
+}
+
+QString LezAtomicSwapTakerBackend::btcSwapAction(
+    QString requestId, QString walletId, QString swapId, QString action)
+{
+    static const QRegularExpression requestPattern(
+        QStringLiteral("^ui-taker-[a-z-]{2,24}-[0-9]{13}$"));
+    static const QRegularExpression swapPattern(QStringLiteral("^swap-[0-9a-f]{16}$"));
+    if (!requestPattern.match(requestId).hasMatch()
+        || (walletId != QStringLiteral("taker-zurich-01")
+            && walletId != QStringLiteral("taker-limmat-02"))
+        || !swapPattern.match(swapId).hasMatch()
+        || (action != QStringLiteral("lock_btc") && action != QStringLiteral("claim_lez"))) {
+        return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
+            QStringLiteral("That Taker action is not available"));
+    }
+    return demoRpc_.call("btc_swap_action_v1", compact({
+        {"schema_version", 2}, {"request_id", requestId}, {"role", "taker"},
+        {"wallet_id", walletId}, {"ui_swap_id", swapId}, {"action", action}}));
 }
 
 QString LezAtomicSwapTakerBackend::listOffers(QString pair, QString direction)

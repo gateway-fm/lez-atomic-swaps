@@ -31,9 +31,18 @@ cd deploy
 # then open vnc://127.0.0.1:5901 (password: lezswap)
 ```
 
-Choose **LEZ / BTC Settlement** to inspect the five public effects from the
-completed local run. Use `prepare-btc-m3-demo.sh --rerun` to generate and
-publish fresh local-chain transactions with the provisioned runner.
+Open **LEZ / BTC Maker** and **LEZ / BTC Taker** as two separate desks. On the
+Maker desk, select Munich Vault 01 and click **Publish offer** three times, then
+select Basel Vault 02 and click it twice. On the Taker desk, select a Taker wallet and take one
+or more pending offers. Each active swap advances through four explicit,
+role-owned actions: **Taker locks BTC → Maker funds LEZ → Taker claims LEZ →
+Maker claims BTC**. Accepted offers queue safely while one genuine M3 runner
+uses the local chains. Completion publishes all five transaction hashes plus
+opening/closing BTC and LEZ balances, principal movements, and Bitcoin fees.
+
+The profiles are local demo wallet aliases. Each real run still creates fresh,
+run-owned signing keys; this milestone does not persist production wallet keys.
+The operator fallback remains `prepare-btc-m3-demo.sh --rerun`.
 
 ### 1. HTML prototypes (fastest)
 

@@ -46,7 +46,7 @@ case "$mode" in
     ;;
 esac
 
-chmod 0644 "$output"
+chmod 0666 "$output"
 jq -e '
   .kind == "m3_btc_ui_evidence"
   and .pair == "Bitcoin"
@@ -57,18 +57,19 @@ jq -e '
 ' "$output" >/dev/null
 
 docker compose --env-file runtime/runtime.env up -d --no-deps --force-recreate \
-  lez-explorer basecamp-ui >/dev/null
+  btc-demo-controller lez-explorer basecamp-ui >/dev/null
 
 run_id="$(jq -r '.run_id' "$output")"
 cat <<BANNER
 
 ──────────────────────────────────────────────────────────────
- M3 LEZ / Bitcoin evidence is ready
+ M3 LEZ / Bitcoin microapp is ready
 
  run:        ${run_id}
  effects:    2 Bitcoin + 3 LEZ
  terminal:   revision 4 · completed
  Basecamp:   vnc://127.0.0.1:5901  (password: lezswap)
  proof UI:   http://127.0.0.1:3003/#/evidence
+ action:     Maker publishes → Taker takes → Taker/Maker/Taker/Maker actions
 ──────────────────────────────────────────────────────────────
 BANNER

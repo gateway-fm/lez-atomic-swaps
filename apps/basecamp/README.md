@@ -1,10 +1,12 @@
 # Basecamp role packages
 
 This directory builds two independent Logos Basecamp 0.2 `ui_qml` packages.
-The Maker console configures local routes and uses existing Maker actor methods.
-The Taker route presents the completed M3 LEZ/Bitcoin evidence and also browses
-authenticated prepared-corridor offers, admits a prepared swap, monitors it,
-and exposes the generation-fenced terminal controls. Each QML view is
+The Maker desk publishes wallet-owned local BTC/LEZ inventory and performs only
+Maker actions. The Taker desk browses that order book, takes offers into its
+selected wallet, and performs only Taker actions. Together they gate the fixed
+local M3 LEZ/Bitcoin runner at the four real actor boundaries and present its
+completed transaction and balance evidence. The older prepared-corridor
+controls remain available as an advanced lane. Each QML view is
 unprivileged. Its process-isolated C++ backend calls a fixed role allowlist over
 an owner-only Unix socket.
 
@@ -86,15 +88,16 @@ export M6_BASECAMP_USER_DIR="$M6_MAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```
 
-In Basecamp:
+In Basecamp, open **LEZ / BTC Maker**, select **Munich Vault 01**, and click
+**Publish offer** three times. Select **Basel Vault 02** and publish twice.
+Each click creates exactly one independently takeable offer. Inventory is
+indexed to each wallet; a pending offer can
+only be withdrawn from the wallet that created it. When the Taker accepts an
+offer, use **Fund 1,000 LEZ** and later **Claim Bitcoin** only when those actions
+appear on that Maker wallet's swap row.
 
-1. open **LEZ Atomic Swap Maker** and confirm **Backend connected**;
-2. click **Check service**;
-3. select the pair and direction, enter exact atomic-unit limits and price,
-   then click **Save route atomically**;
-4. click **Refresh swap history**;
-5. for an existing role-owned swap, enter its ID and generation before using
-   **Monitor**, **Claim**, or **Refund**.
+The route, history, monitor, claim, and refund controls below the primary desk
+are the advanced prepared-service lane.
 
 The backend reads the current pair and local-price revisions, then the route
 click writes through `maker_local_route_save_v1`. Policy, price, and its replay
@@ -105,7 +108,11 @@ without manufacturing another mutation.
 ## Run the Taker package as a real user
 
 Set `LEZ_M3_BTC_EVIDENCE_FILE` to the absolute path of a secret-free evidence
-file produced by `deploy/full-swap/export-ui-evidence.sh`. For the optional
+file produced by `deploy/full-swap/export-ui-evidence.sh`. The wallet market and
+four actor-owned actions are supplied by the Docker deployment's bounded
+controller at `LEZ_BTC_DEMO_RPC_SOCKET`; a standalone package without that
+mode-0600 socket remains a safe evidence viewer and shows the market offline.
+For the optional
 prepared-corridor controls, also create the strict owner-private Taker service
 configuration described in
 [Flow 1Y](../../docs/manual-user-flows.md#flow-1y-run-the-actual-taker-owner-service-and-prepared-acceptance),
@@ -118,14 +125,12 @@ export M6_BASECAMP_USER_DIR="$M6_TAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```
 
-In Basecamp:
-
-1. open **LEZ / BTC Settlement**. The completed BTC evidence loads
-   automatically; **Refresh completed BTC evidence** reloads it;
-2. verify terminal revision `4 · completed`, `2 BTC`, `3 LEZ`, zero replay
-   submissions, and the five distinct transaction hashes;
-3. use each **Open local proof** action when the compose evidence explorer is
-   running.
+In Basecamp, open **LEZ / BTC Taker**, select Zurich Wallet 01 or Limmat Wallet
+02, and take a pending Maker offer. Use **Lock 0.01000000 BTC** and later
+**Claim 1,000 LEZ** only when those actions appear. Move to the Maker desk for
+the intervening Maker actions. After the fourth action, verify terminal revision
+`4 · completed`, two Bitcoin plus three LEZ transaction hashes, and the wallet
+balance proof showing opening → closing balances, signed deltas, and BTC fees.
 
 For the separate optional prepared Zcash service lane:
 
@@ -163,14 +168,17 @@ framework, one role install tree, and one real owner socket. It covers:
 
 - both missing-service fail-closed paths;
 - Maker health, atomic route save, and history through `lez-maker-daemon`;
+- wallet-indexed Maker inventory and the Taker order book;
 - Taker completed M3 BTC evidence, including all five unique transaction IDs;
 - Taker health and optional offer list through `lez-taker-service`;
 - prepared Taker initiation, exact replay, list, monitor, and a durable registry
   assertion for request `taker-ui-initiate-001`.
 
-This Basecamp run stops at admitted/monitored swap composition. Terminal
-actual-node Claim and Refund are retained as separate service/actor certificates
-so the evidence does not pretend the UI run itself produced those transactions.
+The optional prepared-service Basecamp run stops at admitted/monitored ZEC swap
+composition. Its terminal Claim and Refund remain separate service/actor
+certificates. The Dockerized BTC microapp is different: its four role-owned
+actions gate the actual-node M3 workflow and publish that fresh run's
+transaction and balance proofs.
 See [ADR 0147](../../docs/architecture/0147-isolate-basecamp-role-packages-over-owner-services.md)
 and the [M6 package evidence](../../docs/evidence/m6-basecamp-role-packages-20260804.json).
 

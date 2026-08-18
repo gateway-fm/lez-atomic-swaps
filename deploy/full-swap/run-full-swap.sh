@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Full M5-mode BTC application swap, native arm64: real daemon, CLIs,
 # Bitcoin Core 31.1 regtest, LEZ v0.2 devnet, pinned escrow artifacts.
-exec > /tmp/m5-arm.log 2>&1
 set -euxo pipefail
 
-export RUN_ID="m5arm-$(date -u +%m%d%H%M)"
+export RUN_ID="${LEZ_M3_RUN_ID:-m5arm-$(date -u +%m%d%H%M%S)}"
+exec > "/tmp/${RUN_ID}.log" 2>&1
 export DOCKER_BUILDKIT=1
 export LEZ_V02_SOURCE_DIR=/Users/mandrigin/Desktop/las-logos/runner-work/lez-source
 export LEZ_V02_SERVICES_DIR=/tmp/lez-v02-services-a58fbce2-20260713/release
@@ -19,5 +19,9 @@ export M3_ACTOR_POC_ASSET_MODE=native
 export M3_ACTOR_POC_SCHEDULE=sequential
 
 cd /Users/mandrigin/Desktop/las-logos/runner-work/repo
-./scripts/run-m3-actor-local-poc.sh
+if [[ "${LEZ_M3_INTERACTIVE:-0}" == 1 ]]; then
+  /tmp/lez-interactive-m3-outer.sh
+else
+  ./scripts/run-m3-actor-local-poc.sh
+fi
 echo "M5-ARM-RC=$?"

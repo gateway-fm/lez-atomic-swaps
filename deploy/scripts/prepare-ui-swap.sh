@@ -214,7 +214,7 @@ cat <<BANNER
 ──────────────────────────────────────────────────────────────
  Optional prepared ZEC service lane is armed (token ${TOKEN})
 
- In Basecamp (VNC :5901), LEZ / BTC Settlement → prepared corridor:
+ In Basecamp (VNC :5901), LEZ / BTC Taker → advanced prepared corridor:
    1. pair: Zcash, direction: TakerSellsLez
    2. Browse authenticated offers — newest offer auto-selected:
       ${OFFER_ID}

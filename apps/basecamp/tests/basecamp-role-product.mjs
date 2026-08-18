@@ -6,14 +6,14 @@ if (!framework) throw new Error("LOGOS_QT_MCP must select the pinned official te
 
 const roles = {
   maker: {
-    launcher: "LEZ Atomic Swap Maker",
-    heading: "LEZ Atomic Swap — Maker Console",
+    launcher: "LEZ / BTC Maker",
+    heading: "LEZ / BTC — Maker Desk",
     health: "Check service",
     output: "makerOutput",
   },
   taker: {
-    launcher: "LEZ / BTC Settlement",
-    heading: "LEZ / BTC Settlement Evidence",
+    launcher: "LEZ / BTC Taker",
+    heading: "LEZ / BTC — Taker Desk",
     health: "Service health",
     output: "takerOutput",
   },
@@ -108,7 +108,7 @@ if (expectService) {
       await invokeSuccessfully(app, "Save route atomically", "atomic route save");
       await invokeSuccessfully(app, "Refresh swap history", "history");
     } else {
-      await invokeSuccessfully(app, "Refresh BTC proof", "M3 BTC evidence",
+      await invokeSuccessfully(app, "Refresh proof", "M3 BTC evidence",
         (result) => result.kind === "m3_btc_ui_evidence"
           && result.terminal?.phase === "completed"
           && result.effects?.length === 5);

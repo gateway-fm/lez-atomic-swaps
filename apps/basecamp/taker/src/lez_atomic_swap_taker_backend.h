@@ -11,6 +11,10 @@ public:
     LezAtomicSwapTakerBackend();
     QString health() override;
     QString btcEvidence() override;
+    QString btcMarket(QString walletId) override;
+    QString btcTakeOffer(QString requestId, QString walletId, QString offerId) override;
+    QString btcSwapAction(QString requestId, QString walletId, QString swapId,
+                          QString action) override;
     QString listOffers(QString pair, QString direction) override;
     QString initiate(QString requestId, QString offerId, QString pair, QString direction,
                      QString makerIdentity, QString signedEnvelopeSha256, QString foreignUnits,
@@ -23,4 +27,5 @@ public:
 
 private:
     LocalJsonRpcClient rpc_;
+    LocalJsonRpcClient demoRpc_;
 };

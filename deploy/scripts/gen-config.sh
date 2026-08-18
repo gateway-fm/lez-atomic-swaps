@@ -30,8 +30,9 @@ mkdir -p "$RUNTIME"/{config,bedrock,indexer,sequencer,sockets,btc,secrets}
 if [[ ! -s "$RUNTIME/m3-btc-ui-evidence.json" ]]; then
   cp "$DEPLOY_ROOT/full-swap/evidence-m5arm-08180005-ui.json" \
     "$RUNTIME/m3-btc-ui-evidence.json"
-  chmod 0644 "$RUNTIME/m3-btc-ui-evidence.json"
+  chmod 0666 "$RUNTIME/m3-btc-ui-evidence.json"
 fi
+chmod 0666 "$RUNTIME/m3-btc-ui-evidence.json"
 jq -e '
   .kind == "m3_btc_ui_evidence"
   and .result == "passed"
@@ -116,6 +117,19 @@ chmod 0600 "$RUNTIME/secrets/mining.key" || exit 1
 # --- maker/taker runtime ----------------------------------------------------
 mkdir -p "$RUNTIME/sockets"
 rm -f "$RUNTIME/runtime.env"
+runner_repo="${LEZ_M3_RUNNER_REPO:-}"
+if [[ -z "$runner_repo" ]]; then
+  for candidate in "$DEPLOY_ROOT/../runner-work/repo" "$DEPLOY_ROOT/../../runner-work/repo"; do
+    if [[ -d "$candidate/.e2e" && -d "$candidate/scripts" ]]; then
+      runner_repo="$(cd "$candidate" && pwd -P)"
+      break
+    fi
+  done
+fi
+[[ -n "$runner_repo" && -d "$runner_repo" ]] || {
+  echo "LEZ_M3_RUNNER_REPO must select the provisioned M3 runner checkout" >&2
+  exit 1
+}
 printf '%s\n' \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_GENESIS_TIME_EPOCH=$chain_start_epoch" \
@@ -123,6 +137,9 @@ printf '%s\n' \
   "LEZ_V02_TAKER_ACCOUNT_ID=$taker_account_id" \
   "BTC_RPC_USER=lezrpc" \
   "BTC_RPC_PASSWORD=$btc_rpc_password" \
+  "LEZ_M3_RUNNER_REPO=$runner_repo" \
+  "LEZ_M3_RUNNER_REPO_IN_CONTAINER=$runner_repo" \
+  "LEZ_M3_RUNNER_CONTAINER=${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"
 
