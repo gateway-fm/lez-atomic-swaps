@@ -3085,6 +3085,7 @@ with_direction_environment() {
   M3_POC_LEZ_NATIVE_ESCROW_BIN="$native_escrow_bin" \
   M3_POC_BITCOIN_MANIFEST="$bitcoin_manifest" \
   M3_POC_BITCOIN_RUN_ID="$bitcoin_run_id" \
+  M3_POC_SHARED_CHAIN="$attach_mode" \
   M3_POC_BITCOIN_RPC_URL="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_RPC_URL)" \
   M3_POC_BITCOIN_MAKER_CURL_CONFIG="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_MAKER_CURL_CONFIG)" \
   M3_POC_BITCOIN_TAKER_CURL_CONFIG="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_TAKER_CURL_CONFIG)" \

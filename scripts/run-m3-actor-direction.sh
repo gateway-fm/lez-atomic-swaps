@@ -1489,12 +1489,40 @@ confirm_bitcoin_lock_after_submission() {
   local expected mempool planned_anchor mined_block
   expected="$(jq -er '.bitcoin_funding_transaction_id' \
     "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-stage-two.json")"
+  planned_anchor="$(jq -er '.planned_bitcoin_funding_anchor_height | numbers' \
+    "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-stage-two.json")"
   mempool="$(core_rpc "$peer" getrawmempool '[]')"
+  if [[ "${M3_POC_SHARED_CHAIN:-0}" == 1 ]]; then
+    # A chain this swap does not own also carries other traffic, and its
+    # miners keep producing blocks while the lock propagates — exactly what a
+    # real network does. The counterparty must therefore see the lock pending
+    # or already mined, and the funding height is a lower bound, not an
+    # equality: the refund path is a CSV timelock relative to the funding
+    # confirmation, so a later height stays safe.
+    if ! jq -e --arg tx "$expected" '[.result[] | select(. == $tx)] | length == 1' \
+        <<<"$mempool" >/dev/null; then
+      jq -e '.result.confirmations >= 1' \
+        <<<"$(core_rpc "$peer" getrawtransaction "[\"${expected}\",true]")" >/dev/null ||
+        fail "counterparty observed neither a pending nor a mined Bitcoin lock"
+    fi
+    mine_one_core_block
+    core_mined_block_hash="$(jq -er '.result.blockhash' \
+      <<<"$(core_rpc "$peer" getrawtransaction "[\"${expected}\",true]")")"
+    [[ "$core_mined_block_hash" =~ ^[0-9a-f]{64}$ ]] ||
+      fail "Bitcoin lock is not contained in any block after mining"
+    mined_block="$(core_rpc "$peer" getblock "[\"${core_mined_block_hash}\",1]")"
+    core_mined_block_height="$(jq -er '.result.height | numbers' <<<"$mined_block")"
+    [[ "$core_mined_block_height" -ge "$planned_anchor" ]] ||
+      fail "Bitcoin funding height precedes the countersigned planned anchor"
+    jq -e --arg hash "$core_mined_block_hash" --arg tx "$expected" '
+      .result.hash == $hash
+      and ([.result.tx[] | select(. == $tx)] | length) == 1
+    ' <<<"$mined_block" >/dev/null ||
+      fail "Bitcoin funding block does not contain the exact signed lock once"
+  else
   jq -e --arg tx "$expected" '.result == [$tx]' <<<"$mempool" >/dev/null ||
     fail "counterparty did not observe the exact Bitcoin lock in mempool"
   mine_one_core_block
-  planned_anchor="$(jq -er '.planned_bitcoin_funding_anchor_height | numbers' \
-    "${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-stage-two.json")"
   [[ "$core_mined_block_height" == "$planned_anchor" ]] ||
     fail "actual Bitcoin funding height differs from the countersigned planned anchor"
   mined_block="$(core_rpc "$peer" getblock "[\"${core_mined_block_hash}\",1]")"
@@ -1504,6 +1532,7 @@ confirm_bitcoin_lock_after_submission() {
     and ([.result.tx[] | select(. == $tx)] | length) == 1
   ' <<<"$mined_block" >/dev/null ||
     fail "Bitcoin funding block does not contain the exact signed lock once"
+  fi
   jq -n --arg transaction_id "$expected" --arg block_hash "$core_mined_block_hash" \
     --argjson block_height "$core_mined_block_height" \
     --argjson planned_anchor "$planned_anchor" '
@@ -2074,10 +2103,14 @@ actor_invoke_bitcoin_lock_awaiting_retry() {
     [[ "$lez_count" == "$expected_lez_count" ]] ||
       fail "Bitcoin Maker-lock retry observed LEZ effect-count drift"
     mempool="$(core_rpc taker getrawmempool '[]')"
-    if jq -e --arg tx "$expected" '.error == null and .result == [$tx]' \
+    if jq -e --arg tx "$expected" \
+        '.error == null and ([.result[] | select(. == $tx)] | length) == 1' \
         <<<"$mempool" >/dev/null; then
       mempool_count=1
-    elif jq -e '.error == null and .result == []' <<<"$mempool" >/dev/null; then
+    elif jq -e --arg tx "$expected" --argjson shared "${M3_POC_SHARED_CHAIN:-0}" \
+        'if $shared == 1 then (.error == null and ([.result[] | select(. == $tx)] | length) == 0)
+         else (.error == null and .result == []) end' \
+        <<<"$mempool" >/dev/null; then
       mempool_count=0
     else
       fail "Bitcoin Maker-lock retry observed a foreign or ambiguous mempool"
@@ -2101,7 +2134,8 @@ actor_invoke_bitcoin_lock_awaiting_retry() {
       [[ "$(lez_successful_submission_count)" == "$expected_lez_count" ]] ||
         fail "Bitcoin Maker-lock success changed the LEZ effect count"
       mempool="$(core_rpc taker getrawmempool '[]')"
-      jq -e --arg tx "$expected" '.error == null and .result == [$tx]' \
+      jq -e --arg tx "$expected" \
+        '.error == null and ([.result[] | select(. == $tx)] | length) == 1' \
         <<<"$mempool" >/dev/null ||
         fail "Bitcoin Maker-lock success did not yield exactly the planned mempool tx"
       mv "$attempt_output" "$actor_last_output"
