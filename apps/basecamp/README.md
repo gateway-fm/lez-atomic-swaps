@@ -2,8 +2,9 @@
 
 This directory builds two independent Logos Basecamp 0.2 `ui_qml` packages.
 The Maker console configures local routes and uses existing Maker actor methods.
-The Taker route browses authenticated offers, admits a prepared swap, monitors
-it, and exposes the generation-fenced terminal controls. Each QML view is
+The Taker route presents the completed M3 LEZ/Bitcoin evidence and also browses
+authenticated prepared-corridor offers, admits a prepared swap, monitors it,
+and exposes the generation-fenced terminal controls. Each QML view is
 unprivileged. Its process-isolated C++ backend calls a fixed role allowlist over
 an owner-only Unix socket.
 
@@ -103,28 +104,40 @@ without manufacturing another mutation.
 
 ## Run the Taker package as a real user
 
-Create the strict owner-private Taker service configuration described in
+Set `LEZ_M3_BTC_EVIDENCE_FILE` to the absolute path of a secret-free evidence
+file produced by `deploy/full-swap/export-ui-evidence.sh`. For the optional
+prepared-corridor controls, also create the strict owner-private Taker service
+configuration described in
 [Flow 1Y](../../docs/manual-user-flows.md#flow-1y-run-the-actual-taker-owner-service-and-prepared-acceptance),
 start `lez-taker-service` as the current user, and select its mode-0600 socket:
 
 ```sh
 export LEZ_TAKER_RPC_SOCKET="$M6_ROOT/runtime-taker/taker.sock"
+export LEZ_M3_BTC_EVIDENCE_FILE="$PWD/../../deploy/full-swap/evidence-m5arm-08180005-ui.json"
 export M6_BASECAMP_USER_DIR="$M6_TAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```
 
 In Basecamp:
 
-1. open **LEZ Atomic Swap Taker** and confirm **Backend connected**;
-2. click **Service health**, choose the pair/direction, and click
+1. open **LEZ / BTC Settlement**. The completed BTC evidence loads
+   automatically; **Refresh completed BTC evidence** reloads it;
+2. verify terminal revision `4 · completed`, `2 BTC`, `3 LEZ`, zero replay
+   submissions, and the five distinct transaction hashes;
+3. use each **Open local proof** action when the compose evidence explorer is
+   running.
+
+For the separate optional prepared Zcash service lane:
+
+1. click **Service health**, choose `Zcash / TakerSellsLez`, and click
    **Browse authenticated offers**;
-3. review the automatically selected newest offer; its ID, compressed Maker
+2. review the automatically selected newest offer; its ID, compressed Maker
    identity, signed-envelope SHA-256, foreign units, and expected LEZ units are
    populated into the exact review form without manual transcription;
-4. click **Confirm and initiate** once and retain the returned swap ID;
-5. repeat the unchanged click to observe exact durable replay;
-6. use the automatically adopted current swap ID and click **Monitor**;
-7. use **Claim** or **Refund** only when monitor advertises that exact action and
+3. click **Confirm and initiate** once and retain the returned swap ID;
+4. repeat the unchanged click to observe exact durable replay;
+5. use the automatically adopted current swap ID and click **Monitor**;
+6. use **Claim** or **Refund** only when monitor advertises that exact action and
    generation. For transparent ZEC claims, follow the displayed shielding
    reminder in the wallet after the swap.
 
@@ -150,7 +163,8 @@ framework, one role install tree, and one real owner socket. It covers:
 
 - both missing-service fail-closed paths;
 - Maker health, atomic route save, and history through `lez-maker-daemon`;
-- Taker health and offer list through `lez-taker-service`;
+- Taker completed M3 BTC evidence, including all five unique transaction IDs;
+- Taker health and optional offer list through `lez-taker-service`;
 - prepared Taker initiation, exact replay, list, monitor, and a durable registry
   assertion for request `taker-ui-initiate-001`.
 

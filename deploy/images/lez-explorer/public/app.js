@@ -95,6 +95,46 @@ async function txView(id) {
   content.append(kv(Object.entries(tx ?? {}).map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : v])));
 }
 
+async function evidenceView() {
+  content.replaceChildren();
+  const loading = document.createElement("div"); loading.className = "card dim"; loading.textContent = "Loading certified M3 Bitcoin evidence…";
+  content.append(loading);
+  let evidence;
+  try { evidence = await api("evidence"); }
+  catch (e) { loading.className = "card error"; loading.textContent = String(e.message || e); return; }
+  loading.remove();
+  content.append(kv([
+    ["Run", evidence.run_id], ["Result", evidence.result], ["Pair", `${evidence.pair} / ${evidence.direction}`],
+    ["Terminal", `revision ${evidence.terminal.revision} · ${evidence.terminal.phase}`],
+    ["Effects", `${evidence.effect_counts.bitcoin} Bitcoin + ${evidence.effect_counts.lez} LEZ`],
+    ["Completed", evidence.completed_at], ["Source commit", evidence.repository_commit],
+  ]));
+  content.append(table(["#", "Chain / effect", "Transaction", "Finality", "Block"], evidence.effects.map((effect) => [
+    String(effect.sequence),
+    `${effect.chain} · ${effect.label}`,
+    link(shorten(effect.transaction_id, 10), () => location.hash = `#/evidence/tx/${effect.transaction_id}`),
+    effect.finality,
+    effect.block_height == null ? shorten(effect.block_hash, 8) : String(effect.block_height),
+  ])));
+}
+
+async function evidenceTxView(id) {
+  content.replaceChildren();
+  const loading = document.createElement("div"); loading.className = "card dim"; loading.textContent = "Loading transaction proof…";
+  content.append(loading);
+  let proof;
+  try { proof = await api(`evidence/tx/${id}`); }
+  catch (e) { loading.className = "card error"; loading.textContent = String(e.message || e); return; }
+  loading.remove();
+  const effect = proof.effect;
+  content.append(kv([
+    ["Source", proof.source], ["Run", proof.run_id], ["Terminal", `revision ${proof.terminal.revision} · ${proof.terminal.phase}`],
+    ["Sequence", effect.sequence], ["Chain", effect.chain], ["Actor", effect.actor], ["Effect", effect.label],
+    ["Transaction ID", effect.transaction_id], ["Amount", effect.amount], ["Finality", effect.finality],
+    ["Confirmations", effect.confirmations], ["Block height", effect.block_height], ["Block hash", effect.block_hash],
+  ]));
+}
+
 async function accountView(id) {
   content.replaceChildren();
   const loading = document.createElement("div"); loading.className = "card dim"; loading.textContent = "Loading account…";
@@ -111,6 +151,8 @@ async function route() {
   const parts = hash.slice(2).split("/");
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", parts[0] === b.dataset.view));
   if (parts[0] === "blocks") return blocksView();
+  if (parts[0] === "evidence" && parts[1] === "tx") return evidenceTxView(decodeURIComponent(parts[2] || ""));
+  if (parts[0] === "evidence") return evidenceView();
   if (parts[0] === "block" && parts[1] === "id") return blockView("id", decodeURIComponent(parts[2] || ""));
   if (parts[0] === "block" && parts[1] === "hash") return blockView("hash", decodeURIComponent(parts[2] || ""));
   if (parts[0] === "tx") return txView(decodeURIComponent(parts[1] || ""));

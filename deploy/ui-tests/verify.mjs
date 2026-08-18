@@ -63,14 +63,25 @@ async function evaluateIn(app, objectId, expression) {
   return app.inspector.send("evaluate", { objectId, expression });
 }
 
-async function outputAfterClick(app, buttonLabel, objectNameOutput) {
+async function outputAfterClick(
+  app,
+  buttonLabel,
+  objectNameOutput,
+  predicate = () => true,
+  allowIdenticalResult = false,
+) {
   const before = await property(app, objectNameOutput, "text");
   await app.click(buttonLabel);
   const deadline = Date.now() + 45000;
   for (;;) {
     await new Promise((r) => setTimeout(r, 700));
     const raw = await property(app, objectNameOutput, "text");
-    if (raw !== before && !raw.startsWith("Waiting for owner-local service")) return raw;
+    if ((allowIdenticalResult || raw !== before)
+        && !raw.startsWith("Waiting for owner-local service")) {
+      try {
+        if (predicate(JSON.parse(raw))) return raw;
+      } catch {}
+    }
     if (Date.now() > deadline) throw new Error(`${buttonLabel} did not complete (last: ${raw})`);
   }
 }
@@ -125,36 +136,75 @@ if (role === "maker") {
   });
 } else {
   test("taker: launcher discoverable and app opens", async (app) => {
-    await app.waitFor(async () => app.expectTexts(["LEZ Atomic Swap Taker"]), {
+    await app.waitFor(async () => app.expectTexts(["LEZ / BTC Settlement"]), {
       timeout: 25000, interval: 500, description: "package discovery",
     });
-    await app.click("LEZ Atomic Swap Taker");
-    await app.waitFor(async () => app.expectTexts(["LEZ Atomic Swap — Taker Route", "Backend connected"]), {
+    await app.click("LEZ / BTC Settlement");
+    await app.waitFor(async () => app.expectTexts(["LEZ / BTC Settlement Evidence", "Backend connected"]), {
       timeout: 25000, interval: 500, description: "taker view + live service",
+    });
+    // Let the intentional one-shot evidence preload settle before a later
+    // button assertion observes the shared diagnostic output field.
+    await app.waitFor(async () => app.expectTexts(["REV 4 · COMPLETED"]), {
+      timeout: 25000, interval: 500, description: "completed BTC evidence preload",
     });
   });
 
   test("taker: real service health", async (app) => {
-    const health = unwrap(await outputAfterClick(app, "Service health", "takerOutput"), "health");
+    const health = unwrap(await outputAfterClick(
+      app,
+      "Service health",
+      "takerOutput",
+      (envelope) => envelope.ok === true && envelope.result?.ready === true,
+    ), "health");
     if (health.ready !== true) throw new Error(`unexpected health: ${JSON.stringify(health)}`);
     console.log(`  health: ready=true delivery=${health.delivery}`);
   });
 
+  test("taker: completed M3 BTC evidence is public, unique, and final", async (app) => {
+    const evidence = unwrap(
+      await outputAfterClick(
+        app,
+        "Refresh BTC proof",
+        "takerOutput",
+        (envelope) => envelope.ok === true
+          && envelope.result?.kind === "m3_btc_ui_evidence",
+        // Refresh can legitimately return the exact bytes loaded automatically.
+        true,
+      ),
+      "BTC evidence",
+    );
+    const ids = evidence.effects.map((effect) => effect.transaction_id);
+    const bitcoin = evidence.effects.filter((effect) => effect.chain === "Bitcoin");
+    const lez = evidence.effects.filter((effect) => effect.chain === "LEZ");
+    if (evidence.pair !== "Bitcoin" || evidence.direction !== "TakerSellsForeign"
+        || evidence.terminal?.phase !== "completed" || evidence.terminal?.revision !== 4
+        || evidence.private_material_disclosed !== false || evidence.replay_resubmission_count !== 0
+        || ids.length !== 5 || new Set(ids).size !== 5 || bitcoin.length !== 2 || lez.length !== 3
+        || !evidence.effects.every((effect) => ["Confirmed", "Finalized"].includes(effect.finality))) {
+      throw new Error(`invalid M3 BTC evidence: ${JSON.stringify(evidence).slice(0, 500)}`);
+    }
+    console.log(`  M3 BTC: ${evidence.run_id} rev=${evidence.terminal.revision} effects=${bitcoin.length}+${lez.length}`);
+    for (const effect of evidence.effects) {
+      console.log(`  ${effect.sequence}. ${effect.chain} ${effect.kind}: ${effect.transaction_id.slice(0, 16)}… ${effect.finality}`);
+    }
+  });
+
+  if (process.env.REAL_ZEC === "1") {
   test("taker: signed offer -> initiate -> monitor", async (app) => {
     // pick the pair carrying a live offer: ZEC when prepared swaps are armed
     // (env REAL_ZEC=1), Bitcoin otherwise
-    const zecFirst = process.env.REAL_ZEC === "1";
     const namedPair = await app.findByProperty("objectName", "takerPair");
     const combos = await app.findByProperty("displayText", "Zcash");
     const combo = (namedPair.matches ?? [])[0]
       ?? (combos.matches ?? []).find((m) => String(m.type ?? "").includes("Combo"));
     if (!combo) throw new Error("pair ComboBox not found");
-    await evaluateIn(app, combo.id, `currentIndex = ${zecFirst ? 0 : 1}`);
+    await evaluateIn(app, combo.id, "currentIndex = 1");
     const namedDirection = await app.findByProperty("objectName", "takerDirection");
     const dirs = await app.findByProperty("displayText", "TakerSellsLez");
     const dirCombo = (namedDirection.matches ?? [])[0]
       ?? (dirs.matches ?? []).find((m) => String(m.type ?? "").includes("Combo"));
-    if (dirCombo) await evaluateIn(app, dirCombo.id, `currentIndex = ${zecFirst ? 0 : 1}`);
+    if (dirCombo) await evaluateIn(app, dirCombo.id, "currentIndex = 1");
     const listed = unwrap(await outputAfterClick(app, "Browse authenticated offers", "takerOutput"), "offer list");
     const offers = (listed.offers ?? []).map((entry) => entry.offer ?? entry);
     const wanted = process.env.REAL_ZEC === "1" ? process.env.REAL_OFFER_ID : "offer-ui-btc-001";
@@ -206,6 +256,7 @@ if (role === "maker") {
     }
     console.log(`  monitor: state=${monitored.state} generation=${monitored.progress_generation}`);
   });
+  }
 }
 
 process.on("exit", () => {

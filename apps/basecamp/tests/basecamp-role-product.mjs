@@ -12,8 +12,8 @@ const roles = {
     output: "makerOutput",
   },
   taker: {
-    launcher: "LEZ Atomic Swap Taker",
-    heading: "LEZ Atomic Swap — Taker Route",
+    launcher: "LEZ / BTC Settlement",
+    heading: "LEZ / BTC Settlement Evidence",
     health: "Service health",
     output: "takerOutput",
   },
@@ -93,13 +93,28 @@ test(`${role}: pinned Basecamp discovers and loads the role package`, async (app
 
 if (expectService) {
   test(`${role}: Basecamp calls the real owner-local role service`, async (app) => {
+    if (role === "taker") {
+      // The Taker deliberately preloads its completed BTC evidence. Wait until
+      // that one-shot request has settled before asserting another action via
+      // the shared diagnostic output field.
+      await app.waitFor(async () => app.expectTexts(["REV 4 · COMPLETED"]), {
+        timeout: 15000,
+        interval: 300,
+        description: "taker BTC evidence preload",
+      });
+    }
     await invokeSuccessfully(app, expected.health, "health");
     if (role === "maker") {
       await invokeSuccessfully(app, "Save route atomically", "atomic route save");
       await invokeSuccessfully(app, "Refresh swap history", "history");
     } else {
-      await invokeSuccessfully(app, "Browse authenticated offers", "offer browsing");
+      await invokeSuccessfully(app, "Refresh BTC proof", "M3 BTC evidence",
+        (result) => result.kind === "m3_btc_ui_evidence"
+          && result.terminal?.phase === "completed"
+          && result.effects?.length === 5);
       if (takerFixture) {
+        await evaluateIn(app, "takerReview", "pair.currentIndex = 1; direction.currentIndex = 1; true");
+        await invokeSuccessfully(app, "Browse authenticated offers", "offer browsing");
         await evaluateIn(app, "takerReview", [
           `offerId.text = ${JSON.stringify(String(takerFixture.offer_id))}`,
           `makerIdentity.text = ${JSON.stringify(String(takerFixture.maker_identity))}`,

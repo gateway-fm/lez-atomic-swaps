@@ -25,6 +25,21 @@ umask 077
 echo "runtime root: $RUNTIME"
 mkdir -p "$RUNTIME"/{config,bedrock,indexer,sequencer,sockets,btc,secrets}
 
+# Seed the UI with a public, secret-free snapshot from the completed local BTC
+# application run. A newer rerun exported by prepare-btc-m3-demo.sh is retained.
+if [[ ! -s "$RUNTIME/m3-btc-ui-evidence.json" ]]; then
+  cp "$DEPLOY_ROOT/full-swap/evidence-m5arm-08180005-ui.json" \
+    "$RUNTIME/m3-btc-ui-evidence.json"
+  chmod 0644 "$RUNTIME/m3-btc-ui-evidence.json"
+fi
+jq -e '
+  .kind == "m3_btc_ui_evidence"
+  and .result == "passed"
+  and .terminal == {phase:"completed",revision:4}
+  and (.effects | length) == 5
+  and .private_material_disclosed == false
+' "$RUNTIME/m3-btc-ui-evidence.json" >/dev/null
+
 # --- LEZ: fresh genesis time + rendered deployment settings -----------------
 chain_start_epoch="$(date -u +%s)"
 genesis_time_hex="$(printf "%016x" "$chain_start_epoch" | sed -E 's/^(..)(..)(..)(..)(..)(..)(..)(..)$/\8\7\6\5\4\3\2\1/')"

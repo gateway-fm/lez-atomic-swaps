@@ -191,8 +191,11 @@ services:
     depends_on: [indexer]
     environment:
       LEZ_INDEXER_URL: http://indexer:8779
+      M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
     ports:
       - "127.0.0.1:3003:3003"
+    volumes:
+      - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
     networks: [chains]
     read_only: true
     security_opt: ["no-new-privileges:true"]
@@ -351,9 +354,11 @@ services:
       VNC_PASSWORD: ${VNC_PASSWORD:-lezswap}
       LEZ_MAKER_RPC_SOCKET: /run/lez-maker/maker.sock
       LEZ_TAKER_RPC_SOCKET: /run/lez-taker/taker.sock
+      LEZ_M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
     volumes:
       - maker_socket:/run/lez-maker:ro
       - taker_socket:/run/lez-taker:ro
+      - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
       - ./ui-tests:/ui-tests:ro
     ports:
       - "127.0.0.1:5901:5900"

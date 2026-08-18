@@ -10,6 +10,7 @@ class LezAtomicSwapTakerBackend : public LezAtomicSwapTakerSimpleSource,
 public:
     LezAtomicSwapTakerBackend();
     QString health() override;
+    QString btcEvidence() override;
     QString listOffers(QString pair, QString direction) override;
     QString initiate(QString requestId, QString offerId, QString pair, QString direction,
                      QString makerIdentity, QString signedEnvelopeSha256, QString foreignUnits,

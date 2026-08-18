@@ -21,6 +21,8 @@ Item {
     property string currentState: ""
     property string currentSwap: ""
     property bool replayed: false
+    property var btcEvidence: ({})
+    property bool btcEvidenceReady: false
 
     component LuxeButton: Button {
         id: control
@@ -164,6 +166,87 @@ Item {
         }
     }
 
+    component EvidenceCard: Rectangle {
+        id: evidenceCard
+        required property var effect
+        property color accent: effect.chain === "Bitcoin" ? "#8950FA" : "#7EE100"
+        Layout.fillWidth: true
+        implicitHeight: 218
+        radius: 12
+        color: "#0D141E"
+        border.width: 1
+        border.color: effect.chain === "Bitcoin" ? "#6846A2" : "#3D671E"
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 14
+            spacing: 8
+            RowLayout {
+                Layout.fillWidth: true
+                Rectangle {
+                    implicitWidth: 30; implicitHeight: 24; radius: 2
+                    color: "#151820"; border.width: 1; border.color: evidenceCard.accent
+                    Label {
+                        anchors.centerIn: parent
+                        text: String(evidenceCard.effect.sequence).padStart(2, "0")
+                        color: evidenceCard.accent; font.pixelSize: 9; font.weight: Font.Bold
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 1
+                    Label {
+                        text: evidenceCard.effect.label
+                        color: "#F4F6F8"; font.pixelSize: 12; font.weight: Font.DemiBold
+                        elide: Text.ElideRight; Layout.fillWidth: true
+                    }
+                    Label {
+                        text: evidenceCard.effect.chain.toUpperCase() + " · " + evidenceCard.effect.actor.toUpperCase()
+                        color: evidenceCard.accent; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8
+                    }
+                }
+            }
+            Label {
+                text: evidenceCard.effect.amount
+                color: "#C8D0DB"; font.pixelSize: 11; font.weight: Font.DemiBold
+            }
+            FieldLabel { text: "TRANSACTION ID" }
+            TextArea {
+                text: evidenceCard.effect.transaction_id
+                readOnly: true; selectByMouse: true; wrapMode: Text.WrapAnywhere
+                Layout.fillWidth: true; Layout.preferredHeight: 56
+                color: "#D8DEE8"; selectionColor: evidenceCard.accent; selectedTextColor: "#080A0E"
+                font.family: "DejaVu Sans Mono"; font.pixelSize: 9
+                leftPadding: 9; rightPadding: 9; topPadding: 7; bottomPadding: 7
+                background: Rectangle { color: "#080C12"; radius: 7; border.width: 1; border.color: "#243043" }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    text: evidenceCard.effect.finality.toUpperCase()
+                    color: evidenceCard.accent; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.7
+                }
+                Item { Layout.fillWidth: true }
+                Label {
+                    text: evidenceCard.effect.block_height === null
+                        ? "BLOCK PROOF ATTACHED" : "BLOCK " + evidenceCard.effect.block_height
+                    color: "#7D899A"; font.pixelSize: 8; font.weight: Font.DemiBold
+                }
+            }
+            LuxeButton {
+                text: "Open local proof"
+                quiet: true; implicitHeight: 30; Layout.fillWidth: true
+                onClicked: Qt.openUrlExternally(String(evidenceCard.effect.explorer_url))
+            }
+        }
+    }
+
+    Timer {
+        id: btcEvidenceTimer
+        interval: 250
+        repeat: false
+        onTriggered: root.loadBtcEvidence()
+    }
+
     Connections {
         target: logos
         function onViewModuleReadyChanged(moduleName, isReady) {
@@ -172,7 +255,8 @@ Item {
             if (root.ready) {
                 root.statusMode = "success"
                 root.statusTitle = "Private service connected"
-                root.statusDetail = "Ready to discover authenticated offers"
+                root.statusDetail = "Loading certified LEZ / Bitcoin settlement evidence"
+                btcEvidenceTimer.restart()
             }
         }
     }
@@ -182,7 +266,8 @@ Item {
         if (root.ready) {
             root.statusMode = "success"
             root.statusTitle = "Private service connected"
-            root.statusDetail = "Ready to discover authenticated offers"
+            root.statusDetail = "Loading certified LEZ / Bitcoin settlement evidence"
+            btcEvidenceTimer.restart()
         }
     }
 
@@ -284,6 +369,16 @@ Item {
             root.statusMode = result.ready === true ? "success" : "error"
             root.statusTitle = result.ready === true ? "All systems ready" : "Service needs attention"
             root.statusDetail = "Offer delivery: " + String(result.delivery ?? "unknown")
+        })
+    }
+
+    function loadBtcEvidence() {
+        root.run(root.backend.btcEvidence(), "Loading Bitcoin settlement proof", function(result) {
+            root.btcEvidence = result
+            root.btcEvidenceReady = true
+            root.statusMode = "success"
+            root.statusTitle = "BTC settlement verified · revision " + String(result.terminal.revision)
+            root.statusDetail = "2 Bitcoin + 3 LEZ effects · completed without replay resubmission"
         })
     }
 
@@ -396,21 +491,21 @@ Item {
                             Layout.fillWidth: true
                             spacing: 7
                             Label {
-                                text: "PRIVATE ATOMIC SETTLEMENT"
+                                text: "M3 · LEZ / BITCOIN · COMPLETED LOCALLY"
                                 color: "#7EE100"
                                 font.pixelSize: 10
                                 font.weight: Font.Bold
                                 font.letterSpacing: 1.8
                             }
                             Label {
-                                text: "LEZ Atomic Swap — Taker Route"
+                                text: "LEZ / BTC Settlement Evidence"
                                 color: "#F7F8FA"
                                 font.pixelSize: 30
                                 font.weight: Font.Bold
                                 font.letterSpacing: -0.7
                             }
                             Label {
-                                text: "Discover a signed offer, review exact terms, and secure the agreement."
+                                text: "Inspect every real chain effect from the certified local Bitcoin corridor."
                                 color: "#9FA9B9"
                                 font.pixelSize: 13
                             }
@@ -443,7 +538,7 @@ Item {
                             }
                             Label {
                                 Layout.alignment: Qt.AlignRight
-                                text: "Owner-local · signed · replay-safe"
+                                text: "Bitcoin Core 31.1 · LEZ v0.2 · no public funds"
                                 color: "#6F7A8B"
                                 font.pixelSize: 10
                             }
@@ -492,15 +587,123 @@ Item {
                             onClicked: root.monitor()
                         }
                         LuxeButton {
-                            text: "List my swaps"
+                            text: "Service health"
+                            quiet: true
                             enabled: root.ready && !root.busy
                             implicitHeight: 38
-                            onClicked: root.listSwaps()
+                            onClicked: root.health()
+                        }
+                        LuxeButton {
+                            text: pair.currentText === "Bitcoin" ? "Refresh BTC proof" : "List my swaps"
+                            enabled: root.ready && !root.busy
+                            implicitHeight: 38
+                            onClicked: pair.currentText === "Bitcoin" ? root.loadBtcEvidence() : root.listSwaps()
                         }
                         Label {
-                            visible: root.selectedOffer !== ""
+                            visible: pair.currentText !== "Bitcoin" && root.selectedOffer !== ""
                             text: root.availableOffers + (root.availableOffers === 1 ? " VERIFIED OFFER" : " VERIFIED OFFERS")
                             color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.8
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: btcEvidencePanel
+                    objectName: "takerBtcEvidence"
+                    Layout.fillWidth: true
+                    implicitHeight: btcEvidenceColumn.implicitHeight + 44
+                    radius: 16
+                    color: "#101722"
+                    border.width: 1
+                    border.color: root.btcEvidenceReady ? "#4A6940" : "#34304A"
+
+                    ColumnLayout {
+                        id: btcEvidenceColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        anchors.margins: 22
+                        spacing: 16
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12
+                            StepBadge { number: "01"; accent: "#8950FA" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label {
+                                    text: "Five effects. Two chains. One completed swap."
+                                    color: "#F5F6F8"; font.pixelSize: 19; font.weight: Font.DemiBold
+                                }
+                                Label {
+                                    text: root.btcEvidenceReady
+                                        ? "Run " + root.btcEvidence.run_id + " · " + root.btcEvidence.completed_at
+                                        : "Loading the public, secret-free certification snapshot"
+                                    color: "#7F8A9B"; font.pixelSize: 11
+                                }
+                            }
+                            Rectangle {
+                                implicitWidth: completedLabel.implicitWidth + 24; implicitHeight: 32; radius: 16
+                                color: "#142A20"; border.width: 1; border.color: "#416F4F"
+                                Label {
+                                    id: completedLabel; anchors.centerIn: parent
+                                    text: root.btcEvidenceReady ? "REV 4 · COMPLETED" : "VERIFYING"
+                                    color: "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8
+                                }
+                            }
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 4
+                            columnSpacing: 10
+                            Repeater {
+                                model: [
+                                    ["PAIR", "LEZ ↔ BTC", "#8950FA"],
+                                    ["BITCOIN EFFECTS", root.btcEvidenceReady ? String(root.btcEvidence.effect_counts.bitcoin) : "—", "#8950FA"],
+                                    ["LEZ EFFECTS", root.btcEvidenceReady ? String(root.btcEvidence.effect_counts.lez) : "—", "#7EE100"],
+                                    ["REPLAY SUBMISSIONS", root.btcEvidenceReady ? String(root.btcEvidence.replay_resubmission_count) : "—", "#FA50C1"]
+                                ]
+                                delegate: Rectangle {
+                                    id: metricCard
+                                    required property var modelData
+                                    Layout.fillWidth: true; implicitHeight: 64; radius: 9
+                                    color: "#0D141E"; border.width: 1; border.color: "#253143"
+                                    ColumnLayout {
+                                        anchors.fill: parent; anchors.margins: 11; spacing: 2
+                                        Label { text: metricCard.modelData[0]; color: "#758195"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.7 }
+                                        Label { text: metricCard.modelData[1]; color: metricCard.modelData[2]; font.pixelSize: 16; font.weight: Font.Bold }
+                                    }
+                                }
+                            }
+                        }
+
+                        GridLayout {
+                            id: evidenceGrid
+                            Layout.fillWidth: true
+                            columns: width > 1240 ? 5 : width > 760 ? 3 : 1
+                            columnSpacing: 10
+                            rowSpacing: 10
+                            Repeater {
+                                model: root.btcEvidenceReady ? root.btcEvidence.effects : []
+                                delegate: EvidenceCard {
+                                    id: effectCard
+                                    required property var modelData
+                                    effect: effectCard.modelData
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true; implicitHeight: 54; radius: 9
+                            color: "#151721"; border.width: 1; border.color: "#353446"
+                            RowLayout {
+                                anchors.fill: parent; anchors.margins: 13; spacing: 12
+                                Label { text: "EVIDENCE"; color: "#FA50C1"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 1 }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "These are public identities from a completed isolated local run—not hashes invented by the UI. Open any proof at localhost:3003."
+                                    color: "#A4ADBA"; font.pixelSize: 10; wrapMode: Text.WordWrap
+                                }
+                                LuxeButton { text: "Open evidence explorer"; quiet: true; onClicked: Qt.openUrlExternally("http://127.0.0.1:3003/#/evidence") }
+                            }
                         }
                     }
                 }
@@ -526,30 +729,30 @@ Item {
                             spacing: 16
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 12
-                                StepBadge { number: "01"; accent: "#8950FA" }
+                                StepBadge { number: "02"; accent: "#FA50C1" }
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 2
-                                    Label { text: "Choose your market"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                    Label { text: "Only authenticated Maker offers are shown"; color: "#7F8A9B"; font.pixelSize: 11 }
+                                    Label { text: "Explore another corridor"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                    Label { text: "Bitcoin opens the completed M3 proof; other pairs use prepared offers"; color: "#7F8A9B"; font.pixelSize: 11 }
                                 }
                             }
                             GridLayout {
                                 Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 7
                                 FieldLabel { text: "ASSET YOU RECEIVE" }
                                 FieldLabel { text: "YOUR SIDE" }
-                                LuxeCombo { id: pair; objectName: "takerPair"; model: ["Zcash", "Bitcoin", "Monero"]; Layout.fillWidth: true }
-                                LuxeCombo { id: direction; objectName: "takerDirection"; model: ["TakerSellsLez", "TakerSellsForeign"]; Layout.fillWidth: true }
+                                LuxeCombo { id: pair; objectName: "takerPair"; model: ["Bitcoin", "Zcash", "Monero"]; Layout.fillWidth: true }
+                                LuxeCombo { id: direction; objectName: "takerDirection"; model: ["TakerSellsForeign", "TakerSellsLez"]; Layout.fillWidth: true }
                             }
                             LuxeButton {
                                 objectName: "takerOffers"
-                                text: "Browse authenticated offers"
+                                text: pair.currentText === "Bitcoin" ? "Refresh completed BTC evidence" : "Browse authenticated offers"
                                 primary: true
                                 enabled: root.ready && !root.busy
                                 Layout.fillWidth: true
-                                onClicked: root.browse()
+                                onClicked: pair.currentText === "Bitcoin" ? root.loadBtcEvidence() : root.browse()
                             }
                             LuxeButton {
-                                text: "Service health"
+                                text: "Check prepared service"
                                 quiet: true
                                 enabled: root.ready && !root.busy
                                 Layout.fillWidth: true
@@ -559,31 +762,34 @@ Item {
                                 Layout.fillWidth: true
                                 implicitHeight: 82
                                 radius: 11
-                                color: root.selectedOffer === "" ? "#0D131C" : "#151C22"
+                                color: pair.currentText === "Bitcoin" || root.selectedOffer !== "" ? "#151C22" : "#0D131C"
                                 border.width: 1
-                                border.color: root.selectedOffer === "" ? "#202A39" : "#3C493D"
+                                border.color: pair.currentText === "Bitcoin" || root.selectedOffer !== "" ? "#3C493D" : "#202A39"
                                 RowLayout {
                                     anchors.fill: parent; anchors.margins: 14; spacing: 12
                                     Rectangle {
                                         implicitWidth: 38; implicitHeight: 38; radius: 10
-                                        color: root.selectedOffer === "" ? "#192231" : "#223528"
-                                            Label { anchors.centerIn: parent; text: root.selectedOffer === "" ? "—" : "✓"; color: "#7EE100"; font.pixelSize: 16; font.weight: Font.Bold }
+                                        color: pair.currentText === "Bitcoin" || root.selectedOffer !== "" ? "#223528" : "#192231"
+                                            Label { anchors.centerIn: parent; text: pair.currentText === "Bitcoin" || root.selectedOffer !== "" ? "✓" : "—"; color: "#7EE100"; font.pixelSize: 16; font.weight: Font.Bold }
                                     }
                                     ColumnLayout {
                                         Layout.fillWidth: true; spacing: 3
                                         Label {
-                                            text: root.selectedOffer === "" ? "No offer selected" : "Authenticated offer ready"
+                                            text: pair.currentText === "Bitcoin" ? "Completed M3 evidence ready"
+                                                : root.selectedOffer === "" ? "No offer selected" : "Authenticated offer ready"
                                             color: "#EDEFF3"; font.pixelSize: 12; font.weight: Font.DemiBold
                                         }
                                         Label {
-                                            text: root.selectedOffer === "" ? "Browse to select the newest valid quote" : root.selectedOffer
+                                            text: pair.currentText === "Bitcoin"
+                                                ? (root.btcEvidenceReady ? root.btcEvidence.run_id : "Loading certified run")
+                                                : root.selectedOffer === "" ? "Browse to select the newest valid quote" : root.selectedOffer
                                             color: "#8C97A8"; font.pixelSize: 10; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true
                                         }
                                     }
                                     ColumnLayout {
-                                        visible: root.selectedOffer !== ""; spacing: 2
-                                        Label { text: "VALID UNTIL"; color: "#687486"; font.pixelSize: 9; font.weight: Font.Bold }
-                                        Label { text: root.selectedExpiry; color: "#FA50C1"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                        visible: pair.currentText === "Bitcoin" || root.selectedOffer !== ""; spacing: 2
+                                        Label { text: pair.currentText === "Bitcoin" ? "STATE" : "VALID UNTIL"; color: "#687486"; font.pixelSize: 9; font.weight: Font.Bold }
+                                        Label { text: pair.currentText === "Bitcoin" ? "COMPLETED" : root.selectedExpiry; color: "#FA50C1"; font.pixelSize: 12; font.weight: Font.DemiBold }
                                     }
                                 }
                             }
@@ -593,6 +799,7 @@ Item {
                     Rectangle {
                         id: reviewPanel
                         objectName: "takerReview"
+                        visible: pair.currentText !== "Bitcoin"
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignTop
                         implicitHeight: reviewColumn.implicitHeight + 44
@@ -676,6 +883,7 @@ Item {
                 Rectangle {
                     id: progressPanel
                     objectName: "takerProgress"
+                    visible: pair.currentText !== "Bitcoin"
                     Layout.fillWidth: true
                     implicitHeight: progressColumn.implicitHeight + 44
                     radius: 16

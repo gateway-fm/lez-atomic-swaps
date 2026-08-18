@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prepare-ui-swap.sh — one-time owner preparation that unlocks UI-initiated swaps.
+# prepare-ui-swap.sh — optional ZEC prepared-service acceptance exercise.
 #
 # Models the repository's M6 lane (run-m2-taker-sells-lez-poc.sh with
 # M6_TAKER_SERVICE_MODE=1) and the zec_chat_process.rs service test:
@@ -8,7 +8,8 @@
 # taker's unsigned draft + actor source, and rewrites the taker service
 # configuration with a prepared entry (execute_prepared_zec: true).
 #
-# After this runs once, the Basecamp Taker UI journey is real end-to-end:
+# This is not the M3 BTC chain demo. After this runs once, the secondary
+# Basecamp prepared-corridor journey is real through actor provisioning:
 #   Browse authenticated offers -> review -> "Confirm and initiate"
 # performs the REAL Maker Chat propose/complete and durable actor
 # provisioning (state NotActivated; chain effects remain actor work).
@@ -211,9 +212,9 @@ done
 cat <<BANNER
 
 ──────────────────────────────────────────────────────────────
- UI-initiated swaps are armed (token ${TOKEN})
+ Optional prepared ZEC service lane is armed (token ${TOKEN})
 
- In Basecamp (VNC :5901), Taker Route:
+ In Basecamp (VNC :5901), LEZ / BTC Settlement → prepared corridor:
    1. pair: Zcash, direction: TakerSellsLez
    2. Browse authenticated offers — newest offer auto-selected:
       ${OFFER_ID}

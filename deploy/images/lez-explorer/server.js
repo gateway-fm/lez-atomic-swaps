@@ -7,6 +7,7 @@ const path = require("node:path");
 const INDEXER = process.env.LEZ_INDEXER_URL || "http://indexer:8779";
 const PORT = Number(process.env.LEZ_EXPLORER_PORT || 3003);
 const PUBLIC = path.join(__dirname, "public");
+const EVIDENCE = process.env.M3_BTC_EVIDENCE_FILE || "/run/lez-evidence/m3-btc-ui-evidence.json";
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
 
@@ -31,9 +32,51 @@ function send(res, code, body, type) {
   res.end(buf);
 }
 
+function loadEvidence() {
+  if (!path.isAbsolute(EVIDENCE)) throw new Error("M3 Bitcoin evidence path is not absolute");
+  const info = fs.lstatSync(EVIDENCE);
+  if (!info.isFile() || info.isSymbolicLink() || info.size <= 0 || info.size > 262144) {
+    throw new Error("M3 Bitcoin evidence file is unavailable or unsafe");
+  }
+  const raw = fs.readFileSync(EVIDENCE, "utf8");
+  const evidence = JSON.parse(raw);
+  const ids = evidence?.effects?.map((entry) => entry.transaction_id) ?? [];
+  if (evidence?.kind !== "m3_btc_ui_evidence" || evidence?.result !== "passed"
+      || evidence?.pair !== "Bitcoin" || evidence?.direction !== "TakerSellsForeign"
+      || evidence?.terminal?.phase !== "completed" || evidence?.terminal?.revision !== 4
+      || !Array.isArray(evidence?.effects) || evidence.effects.length !== 5
+      || new Set(ids).size !== 5
+      || evidence.effects.filter((entry) => entry.chain === "Bitcoin").length !== 2
+      || evidence.effects.filter((entry) => entry.chain === "LEZ").length !== 3
+      || !evidence.effects.every((entry) => ["Confirmed", "Finalized"].includes(entry.finality))
+      || evidence.private_material_disclosed !== false) {
+    throw new Error("M3 Bitcoin evidence failed its public schema checks");
+  }
+  return evidence;
+}
+
 async function api(req, res, url) {
   const route = url.pathname.replace(/^\/api\//, "");
   try {
+    if (route === "evidence") {
+      send(res, 200, JSON.stringify(loadEvidence()), "application/json");
+      return;
+    }
+    const evidenceTx = route.match(/^evidence\/tx\/([0-9a-fA-F]{64})$/);
+    if (evidenceTx) {
+      const evidence = loadEvidence();
+      const effect = evidence.effects.find((entry) => entry.transaction_id === evidenceTx[1]);
+      if (!effect) return send(res, 404, '{"error":"transaction is not in the certified M3 run"}', "application/json");
+      send(res, 200, JSON.stringify({
+        source: evidence.source,
+        run_id: evidence.run_id,
+        completed_at: evidence.completed_at,
+        repository_commit: evidence.repository_commit,
+        terminal: evidence.terminal,
+        effect,
+      }), "application/json");
+      return;
+    }
     if (route === "overview") {
       const schema = await indexerCall("getSchema", []);
       const health = await indexerCall("checkHealth", []).catch(() => null);

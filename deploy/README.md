@@ -8,9 +8,9 @@ started with one command.
 ## Quick start
 
 ```sh
-./scripts/up.sh          # config → build → start → wait → UI verification
-./scripts/prepare-ui-swap.sh # arm a deterministic ZEC offer for UI acceptance
-./scripts/down.sh        # stop   (--wipe removes all state)
+./scripts/up.sh                    # config → build → start → wait → UI verification
+./scripts/prepare-btc-m3-demo.sh   # publish the certified completed M3 BTC run
+./scripts/down.sh                  # stop   (--wipe removes all state)
 ```
 
 `up.sh` ends with the repo-style UI verification (real Basecamp driven through
@@ -20,38 +20,43 @@ its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`
 |---|---|
 | Bitcoin regtest RPC | `http://127.0.0.1:18443` (user `lezrpc`, password in `runtime/runtime.env`), auto-mining every 15 s |
 | BTC explorer | http://127.0.0.1:3002 |
-| LEZ explorer | http://127.0.0.1:3003 |
+| LEZ explorer + M3 evidence | http://127.0.0.1:3003/#/evidence |
 | **Basecamp UI (VNC)** | **`vnc://127.0.0.1:5901`** (password `lezswap`; override with `VNC_PASSWORD`) |
 | Maker daemon | `docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health` |
 | UI verify | `docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker\|taker]` |
 | Switch UI role | `BASECAMP_ROLE=taker docker compose up -d basecamp-ui` |
 | Logs | `docker compose logs -f <service>` |
 
-For the M3+ demo, run `prepare-ui-swap.sh`, open the VNC URL, and choose
-**LEZ Atomic Swap Taker**. The interface is a dark Swiss-poster console: large
-numbered stages keep the operational sequence legible, while the violet,
-green, and pink rail communicates navigation and state. Keep
-**Zcash / TakerSellsLez**, then:
+For the M3 demo, run `prepare-btc-m3-demo.sh`, open the VNC URL, and choose
+**LEZ / BTC Settlement**. The dark Swiss-poster view opens on a completed
+`Bitcoin / TakerSellsForeign` run and exposes all five public transaction
+identities: two Bitcoin effects and three LEZ effects. Each card includes its
+chain, actor, amount, block identity, and finality. **Open local proof** links
+to the read-only evidence explorer at `http://127.0.0.1:3003/#/evidence`.
 
-1. Click **Browse authenticated offers**. The newest authenticated offer is
-   selected automatically and its identity, digest, and exact units populate
-   the review stage without manual crypto transcription.
-2. Visually review the exact `10000` ZEC / `25000` LEZ atomic-unit terms.
-3. Click **Confirm and initiate**. This performs the signed Maker Chat
-   propose/complete exchange and durably provisions both actor bundles.
-4. The current swap card adopts the returned swap ID automatically. Click
-   **Monitor** to refresh it; the prepared corridor reports `not_activated`.
-
-Repeating **Confirm and initiate** with the same offer demonstrates the
-idempotent replay response. Every button above executes against the live
-daemon or taker service.
-
-The same journey can be driven automatically after preparation:
+The default command publishes the repository's certified, secret-free snapshot
+of run `m5arm-08180005`. To generate new transactions first, use the already
+provisioned native-arm64 runner:
 
 ```sh
-docker compose run --rm --no-deps -e REAL_ZEC=1 \
-  --entrypoint node basecamp-ui /ui-tests/verify.mjs taker
+./scripts/prepare-btc-m3-demo.sh --rerun
 ```
+
+That normally takes about five minutes, executes the real LEZ/BTC application
+flow on isolated local chains, exports only its public evidence, and refreshes
+the UI. An existing run can be imported with
+`--from-run <m3-evidence-directory>`.
+
+The BTC view can be driven automatically:
+
+```sh
+docker compose run --rm --no-deps --entrypoint node \
+  basecamp-ui /ui-tests/verify.mjs taker
+```
+
+`prepare-ui-swap.sh` remains available as an optional M6 prepared-service
+exercise for Zcash. It verifies offer discovery, Maker Chat acceptance, and
+actor provisioning, but stops at `not_activated`; it is not the M3 BTC demo.
 
 ## Services
 
@@ -94,7 +99,8 @@ All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 ```
 compose.yaml               the stack
 scripts/up.sh              one-command bring-up (+ UI verification)
-scripts/prepare-ui-swap.sh deterministic ZEC Chat + actor-provisioning demo lane
+scripts/prepare-btc-m3-demo.sh publish/rerun completed LEZ/BTC M3 evidence
+scripts/prepare-ui-swap.sh optional ZEC Chat + actor-provisioning service lane
 scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent
 scripts/btc-miner.sh       regtest mining loop
@@ -108,10 +114,10 @@ runtime/                   generated state (gitignored; wiped by --wipe)
 
 ## Demo boundary
 
-The prepared ZEC corridor is a deterministic local fixture. Its source
-agreement and published offer share the same two-hour acceptance window. The UI
-exercises real signed-offer verification, Maker Chat negotiation, countersigned
-agreement creation, receipt binding, and durable Maker/Taker actor provisioning.
-It ends at `not_activated`: no funded Zebra transaction or LEZ chain effect is
-submitted by this UI lane. Use the repository's certified full-swap scripts for
-the separate on-chain CLI workflow.
+The primary M3 view is a read-only presentation of a genuinely completed local
+LEZ/BTC run; it does not claim that pressing a Basecamp button broadcast those
+transactions. `prepare-btc-m3-demo.sh --rerun` is the reproducible path that
+creates fresh chain effects before republishing them. The optional prepared ZEC
+lane is separate: it exercises real signed-offer verification, Maker Chat,
+receipt binding, and durable actor provisioning, then ends at `not_activated`
+without submitting funded chain effects.

@@ -57,15 +57,22 @@ upstream pinned them.
 
 ## Surfacing the swap in the UI
 
-After a successful run, the maker database contains the real swap:
+Export the public, secret-free evidence from a completed run:
 
 ```sh
-sqlite3 .e2e/<run>/m3-actor-poc/private/directions/taker_sells_foreign/application/maker.sqlite3 \
-  'select id, revision from swaps;'
+deploy/full-swap/export-ui-evidence.sh \
+  .e2e/<run>/m3-actor-poc/evidence \
+  deploy/runtime/m3-btc-ui-evidence.json
 ```
 
-Checkpoint it, drop it into the compose stack's maker volume (uid 4713), and
-restart `maker-node`. In Basecamp (VNC :5901): **Refresh swap history** lists
-the swap; entering its id and pressing **Monitor** returns the live actor
-projection (`actor=bitcoin`). `deploy/ui-tests/verify.mjs maker` asserts the
-whole journey end-to-end.
+The exporter fails closed unless the application result passed, the pair is
+Bitcoin, the direction is `taker_sells_foreign`, terminal revision 4 is
+`completed`, the exact effect cardinality is two Bitcoin plus three LEZ, and no
+private material was disclosed. It emits the five transaction/block identities
+and no keys or preimages.
+
+From `deploy/`, `scripts/prepare-btc-m3-demo.sh --from-run <evidence-dir>`
+exports and publishes in one command. With the provisioned runner,
+`scripts/prepare-btc-m3-demo.sh --rerun` first creates a fresh real run. In
+Basecamp (VNC :5901), open **LEZ / BTC Settlement**; the same evidence is also
+available at `http://127.0.0.1:3003/#/evidence`.

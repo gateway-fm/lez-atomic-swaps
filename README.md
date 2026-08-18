@@ -18,8 +18,22 @@ Licensing: MIT OR Apache-2.0, unchanged from the source repository
 | `apps/preview/` | Standalone preview host that loads the **real** QML view sources with stubbed backends — runs natively on macOS, no nix |
 | `docs/diagrams.md` | Architecture diagram, swap flow diagram, atomicity explanation |
 | `docs/m3-local-poc-operator-guide.md` | The M3 operator guide (full PoC recipe) |
+| `deploy/` | Dockerized local LEZ/BTC stack, completed-run evidence UI, and VNC demo |
 
 ## Run the UI
+
+For the genuine local M3 LEZ/BTC demo, use the Docker stack:
+
+```sh
+cd deploy
+./scripts/up.sh
+./scripts/prepare-btc-m3-demo.sh
+# then open vnc://127.0.0.1:5901 (password: lezswap)
+```
+
+Choose **LEZ / BTC Settlement** to inspect the five public effects from the
+completed local run. Use `prepare-btc-m3-demo.sh --rerun` to generate and
+publish fresh local-chain transactions with the provisioned runner.
 
 ### 1. HTML prototypes (fastest)
 
