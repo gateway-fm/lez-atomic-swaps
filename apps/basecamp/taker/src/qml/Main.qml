@@ -90,14 +90,14 @@ Item {
                             id: foreignUnits
                             objectName: "takerForeignUnits"
                             placeholderText: "Foreign atomic units"
-                            text: "100000000"
+                            text: "10000"
                         }
                         Label { text: "Expected LEZ atomic units" }
                         TextField {
                             id: lezUnits
                             objectName: "takerLezUnits"
                             placeholderText: "Expected LEZ atomic units"
-                            text: "50000"
+                            text: "25000"
                         }
                         Button {
                             objectName: "takerInitiate"

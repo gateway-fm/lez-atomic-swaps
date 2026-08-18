@@ -52,13 +52,13 @@ done
 if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
   echo "[5/5] verifying Basecamp UI against the real daemon…"
   set -a; source runtime/runtime.env; set +a
-  docker compose run --rm --entrypoint node basecamp-ui /ui-tests/verify.mjs maker \
+  docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs maker \
     | grep -viE "locale|Qt depends|reconfigure|manual"
-  docker compose run --rm --entrypoint node basecamp-ui /ui-tests/verify.mjs taker \
+  docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs taker \
     | grep -viE "locale|Qt depends|reconfigure|manual"
 fi
 
-role_now="${BASECAMP_ROLE:-maker}"
+role_now="${BASECAMP_ROLE:-both}"
 cat <<BANNER
 
 ──────────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ cat <<BANNER
    LEZ explorer          http://127.0.0.1:3003
    Basecamp UI (VNC)     vnc://127.0.0.1:5901     (role: ${role_now})
    Maker daemon          docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health
-   UI verification       docker compose run --rm --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker|taker]
+   UI verification       docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker|taker]
 
  switch UI role:  BASECAMP_ROLE=taker docker compose up -d basecamp-ui
  logs:  docker compose logs -f <service>     down+wipe:  ./scripts/down.sh --wipe

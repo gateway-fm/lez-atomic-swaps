@@ -208,7 +208,7 @@ services:
       - maker_socket:/run/lez
       - delivery_dir:/delivery
       - prep_state:/prep
-    command: ["bash", "-c", "chown -R 4713:4713 /var/lib/lez /run/lez /delivery /prep && chmod 0700 /run/lez /delivery /prep"]
+    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez /run/lez /delivery /prep && chmod 0700 /run/lez /delivery /prep"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -277,7 +277,7 @@ services:
       - /bin/bash
       - -c
       - |
-        chown -R 4713:4713 /var/lib/lez-taker /run/lez
+        chown 4713:4713 /var/lib/lez-taker /run/lez
         chmod 0700 /run/lez
         if [ -s /var/lib/lez-taker/taker-service.json ]; then
           echo "taker config already present (prepared lane); keeping it"
@@ -326,7 +326,8 @@ services:
       - taker_socket:/run/lez
       - delivery_dir:/delivery:ro
       - maker_socket:/run/lez-maker-chat
-      - prep_state:/prep:ro
+      # Prepared acceptance writes the agreement, receipt, and actor bundle.
+      - prep_state:/prep
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]

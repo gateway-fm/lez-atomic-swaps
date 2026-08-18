@@ -140,7 +140,7 @@ if (role === "maker") {
     console.log(`  health: ready=true delivery=${health.delivery}`);
   });
 
-  test("taker: browse the maker's live signed offer", async (app) => {
+  test("taker: signed offer -> initiate -> monitor", async (app) => {
     // pick the pair carrying a live offer: ZEC when prepared swaps are armed
     // (env REAL_ZEC=1), Bitcoin otherwise
     const zecFirst = process.env.REAL_ZEC === "1";
@@ -153,8 +153,12 @@ if (role === "maker") {
     if (dirCombo) await evaluateIn(app, dirCombo.id, `currentIndex = ${zecFirst ? 0 : 1}`);
     const listed = unwrap(await outputAfterClick(app, "Browse authenticated offers", "takerOutput"), "offer list");
     const offers = (listed.offers ?? []).map((entry) => entry.offer ?? entry);
-    const wanted = process.env.REAL_ZEC === "1" ? (process.env.REAL_OFFER_ID ?? "offer-") : "offer-ui-btc-001";
-    const match = offers.find((o) => o.id === wanted || (process.env.REAL_ZEC === "1" && o.id.startsWith(wanted)));
+    const wanted = process.env.REAL_ZEC === "1" ? process.env.REAL_OFFER_ID : "offer-ui-btc-001";
+    const candidates = process.env.REAL_ZEC === "1"
+      ? offers.filter((o) => !wanted || o.id === wanted)
+      : offers.filter((o) => o.id === wanted);
+    const match = candidates.sort((a, b) =>
+      Number(b.created_at_unix_seconds ?? 0) - Number(a.created_at_unix_seconds ?? 0))[0];
     if (!match) throw new Error(`live offer not listed (${wanted}): ${JSON.stringify(offers).slice(0, 200)}`);
     console.log(`  live offer ${match.id}: pair=${match.pair_configuration.route.pair} ttl=${match.pair_configuration.offer_ttl_seconds}s`);
 
@@ -169,8 +173,8 @@ if (role === "maker") {
       ["takerOfferId", match.id],
       ["takerMakerIdentity", identity],
       ["takerEnvelopeDigest", envelopeSha],
-      ["takerForeignUnits", String(process.env.REAL_FOREIGN_UNITS ?? "100000000")],
-      ["takerLezUnits", String(process.env.REAL_LEZ_UNITS ?? "50000")],
+      ["takerForeignUnits", String(process.env.REAL_FOREIGN_UNITS ?? "10000")],
+      ["takerLezUnits", String(process.env.REAL_LEZ_UNITS ?? "25000")],
     ];
     for (const [objectName, value] of sets) {
       const found = await app.findByProperty("objectName", objectName);
@@ -178,8 +182,9 @@ if (role === "maker") {
     }
 
     // REAL Maker Chat acceptance + durable actor provisioning
-    const initiated = unwrap(await outputAfterClick(app, "Confirm and initiate", "takerOutput"), "initiate");
-    console.log(`  initiated: state=${initiated.state ?? initiated.swap_state} replay=${initiated.was_replay} swap=${String(initiated.swap_id ?? "").slice(0, 16)}…`);
+    const initiation = unwrap(await outputAfterClick(app, "Confirm and initiate", "takerOutput"), "initiate");
+    const initiated = initiation.swap ?? initiation;
+    console.log(`  initiated: state=${initiated.state ?? initiated.swap_state} replay=${initiation.was_replay} swap=${String(initiated.swap_id ?? "").slice(0, 16)}…`);
 
     const swaps = unwrap(await outputAfterClick(app, "List my swaps", "takerOutput"), "swap list");
     const list = Array.isArray(swaps) ? swaps : (swaps.swaps ?? []);
@@ -187,6 +192,15 @@ if (role === "maker") {
       throw new Error(`admitted swap not listed: ${JSON.stringify(list).slice(0, 200)}`);
     }
     console.log(`  swap list shows the admitted swap (${list.length} total)`);
+
+    const swapField = await app.findByProperty("objectName", "takerSwapId");
+    if (swapField.matches?.length !== 1) throw new Error("swap ID field not found");
+    await evaluateIn(app, swapField.matches[0].id, `text = ${JSON.stringify(initiated.swap_id)}`);
+    const monitored = unwrap(await outputAfterClick(app, "Monitor", "takerOutput"), "monitor");
+    if (monitored.swap_id !== initiated.swap_id || monitored.state !== "not_activated") {
+      throw new Error(`unexpected monitor result: ${JSON.stringify(monitored).slice(0, 200)}`);
+    }
+    console.log(`  monitor: state=${monitored.state} generation=${monitored.progress_generation}`);
   });
 }
 

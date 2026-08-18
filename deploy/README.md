@@ -9,6 +9,7 @@ started with one command.
 
 ```sh
 ./scripts/up.sh          # config → build → start → wait → UI verification
+./scripts/prepare-ui-swap.sh # arm a deterministic ZEC offer for UI acceptance
 ./scripts/down.sh        # stop   (--wipe removes all state)
 ```
 
@@ -22,14 +23,32 @@ its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`
 | LEZ explorer | http://127.0.0.1:3003 |
 | **Basecamp UI (VNC)** | **`vnc://127.0.0.1:5901`** (macOS Screen Sharing works) |
 | Maker daemon | `docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health` |
-| UI verify | `docker compose run --rm --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker\|taker]` |
+| UI verify | `docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker\|taker]` |
 | Switch UI role | `BASECAMP_ROLE=taker docker compose up -d basecamp-ui` |
 | Logs | `docker compose logs -f <service>` |
 
-In the Basecamp UI: click **LEZ Atomic Swap Maker** (or Taker) in the sidebar,
-confirm **Backend connected**, then use *Check service / Save route atomically /
-Refresh swap history* (maker) or *Service health / Browse offers* (taker) —
-every click executes against the live daemon.
+For the M3+ demo, run `prepare-ui-swap.sh`, open the VNC URL, and choose
+**LEZ Atomic Swap Taker**. Keep **Zcash / TakerSellsLez**, then:
+
+1. Click **Browse authenticated offers** and use the newest offer.
+2. Copy its offer ID, Maker identity, and signed-envelope digest into the
+   review form. The prepared exact amounts are `10000` ZEC atomic units and
+   `25000` LEZ atomic units (the form defaults).
+3. Click **Confirm and initiate**. This performs the signed Maker Chat
+   propose/complete exchange and durably provisions both actor bundles.
+4. Click **List my swaps**, paste the returned swap ID into the progress field,
+   then click **Monitor**. The prepared corridor reports `not_activated`.
+
+Repeating **Confirm and initiate** with the same offer demonstrates the
+idempotent replay response. Every button above executes against the live
+daemon or taker service.
+
+The same journey can be driven automatically after preparation:
+
+```sh
+docker compose run --rm --no-deps -e REAL_ZEC=1 \
+  --entrypoint node basecamp-ui /ui-tests/verify.mjs taker
+```
 
 ## Services
 
@@ -44,7 +63,7 @@ every click executes against the live daemon.
 | `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`) |
 | `maker-init` / `taker-init` | debian | one-shot volume chowns (0700 socket dirs, 0600 taker config) |
 | `maker-node` | `images/maker-node` | real `lez-maker-daemon` + CLIs; owner socket on a shared volume |
-| `taker-service` | `images/maker-node` | real `lez-taker-service` (`taker_health`, `taker_offer_list_v1`) |
+| `taker-service` | `images/maker-node` | real `lez-taker-service`: health, authenticated offer discovery, Chat acceptance, durable admission, list, monitor, and fenced terminal actions |
 | `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the daemon uid (4713) so the owner-only socket checks pass |
 
 The UI reaches the daemon through shared named volumes (`maker_socket`,
@@ -72,6 +91,7 @@ All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 ```
 compose.yaml               the stack
 scripts/up.sh              one-command bring-up (+ UI verification)
+scripts/prepare-ui-swap.sh deterministic ZEC Chat + actor-provisioning demo lane
 scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent
 scripts/btc-miner.sh       regtest mining loop
@@ -83,10 +103,11 @@ ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspec
 runtime/                   generated state (gitignored; wiped by --wipe)
 ```
 
-## Known scope
+## Demo boundary
 
-The maker daemon runs in its minimal (no-chain-actor) configuration: full swap
-execution requires the repo's actor provisioning (BTC actor configs, guest
-programs, delivery/chat authority) from `scripts/run-m3-actor-local-poc.sh` in
-the lez-atomic-swaps repository. Everything up to and including the UI ↔
-daemon ↔ service plane is live and verified here.
+The prepared ZEC corridor is a deterministic local fixture. The UI exercises
+real signed-offer verification, Maker Chat negotiation, countersigned agreement
+creation, receipt binding, and durable Maker/Taker actor provisioning. It ends
+at `not_activated`: no funded Zebra transaction or LEZ chain effect is submitted
+by this UI lane. Use the repository's certified full-swap scripts for the
+separate on-chain CLI workflow.
