@@ -4682,6 +4682,7 @@ write_run_evidence() {
   chmod 0600 "${run_evidence}.partial"
   mv "${run_evidence}.partial" "$run_evidence"
   jq -e --arg journey "$journey" --arg schedule "$schedule" \
+    --arg selected_directions_first "${directions[0]}" \
     --arg asset_mode "$asset_mode" \
     --arg m5_btc_application_mode "$m5_btc_application_mode" \
     --arg m7_btc_accepted_concurrency "$m7_btc_accepted_concurrency" \
