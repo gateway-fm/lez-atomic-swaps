@@ -4182,16 +4182,29 @@ write_run_evidence() {
   local actor_direction_timing_summary=""
   validate_phase_timings_for_run_evidence phase_timing_summary ||
     fail "finalized phase timing evidence is invalid"
-  validate_actor_direction_phase_timing_for_run_evidence \
-    taker_sells_foreign foreign_actor_direction_timing_summary "$phase_timing_sha" ||
-    fail "forward actor direction timing evidence is invalid"
   if [[ "$m5_btc_application_mode" == 1 &&
-        "$m7_btc_accepted_concurrency" != 1 ]]; then
+        "$m7_btc_accepted_concurrency" != 1 &&
+        " ${directions[*]} " == " taker_sells_lez " ]]; then
+    validate_actor_direction_phase_timing_for_run_evidence \
+      taker_sells_lez lez_actor_direction_timing_summary "$phase_timing_sha" ||
+      fail "reverse actor direction timing evidence is invalid"
+    actor_direction_timing_summary="$(jq -cn \
+      --argjson lez "$lez_actor_direction_timing_summary" \
+      '{taker_sells_lez:$lez}')" ||
+      fail "M5 actor direction timing summary construction failed"
+  elif [[ "$m5_btc_application_mode" == 1 &&
+          "$m7_btc_accepted_concurrency" != 1 ]]; then
+    validate_actor_direction_phase_timing_for_run_evidence \
+      taker_sells_foreign foreign_actor_direction_timing_summary "$phase_timing_sha" ||
+      fail "forward actor direction timing evidence is invalid"
     actor_direction_timing_summary="$(jq -cn \
       --argjson foreign "$foreign_actor_direction_timing_summary" \
       '{taker_sells_foreign:$foreign}')" ||
       fail "M5 actor direction timing summary construction failed"
   else
+    validate_actor_direction_phase_timing_for_run_evidence \
+      taker_sells_foreign foreign_actor_direction_timing_summary "$phase_timing_sha" ||
+      fail "forward actor direction timing evidence is invalid"
     validate_actor_direction_phase_timing_for_run_evidence \
       taker_sells_lez lez_actor_direction_timing_summary "$phase_timing_sha" ||
       fail "reverse actor direction timing evidence is invalid"
@@ -4342,10 +4355,17 @@ write_run_evidence() {
   if [[ "$schedule" == "overlap" ]]; then
     overlap_summary="$(jq -c . "${evidence_dir}/overlap-revision-two-window.json")"
   fi
-  foreign_stage2_sha="$(sha256sum \
-    "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')"
+  if [[ " ${directions[*]} " == *" taker_sells_foreign "* ]]; then
+    foreign_stage2_sha="$(sha256sum \
+      "${evidence_dir}/taker_sells_foreign-stage-two.json" | sed 's/ .*//')"
+  else
+    foreign_stage2_sha=""
+  fi
   if [[ "$m5_btc_application_mode" != 1 ||
         "$m7_btc_accepted_concurrency" == 1 ]]; then
+    lez_stage2_sha="$(sha256sum \
+      "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')"
+  elif [[ " ${directions[*]} " == *" taker_sells_lez "* ]]; then
     lez_stage2_sha="$(sha256sum \
       "${evidence_dir}/taker_sells_lez-stage-two.json" | sed 's/ .*//')"
   fi
@@ -4396,8 +4416,9 @@ write_run_evidence() {
     --argjson official_wallet_cache_summary "$official_wallet_cache_summary" \
     --argjson phase_timing_summary "$phase_timing_summary" \
     --argjson actor_direction_timing_summary "$actor_direction_timing_summary" \
-    --arg foreign_stage2_sha "$foreign_stage2_sha" \
-    --arg lez_stage2_sha "$lez_stage2_sha" --argjson foreign_terminal_balance "$foreign_terminal_balance_summary" --argjson lez_terminal_balance "$lez_terminal_balance_summary" '
+    --arg lez_stage2_sha "$lez_stage2_sha" \
+    --arg selected_directions_first "${directions[0]}" \
+    --argjson foreign_terminal_balance "$foreign_terminal_balance_summary" --argjson lez_terminal_balance "$lez_terminal_balance_summary" '
     {
       schema_version: 1,
       kind: $packet_kind,
@@ -4421,7 +4442,7 @@ write_run_evidence() {
             deployer_sha256:$lez_deployer_sha256}
         } elif $m5_btc_application_mode == "1" then {
           pair:"bitcoin",
-          direction:"taker_sells_foreign",
+          direction:$selected_directions_first,
           lez_deployment:{
             profile:$deployment_profile,
             guest_sha256:$lez_guest_sha256,
@@ -4502,8 +4523,10 @@ write_run_evidence() {
          + (if $asset_mode == "custom_token" then
               {custom_token_terminal_balances:$lez_terminal_balance}
             else {} end))
-      ] | if $m5_btc_application_mode == "1" and
-             $m7_btc_accepted_concurrency != "1" then .[0:1] else . end),
+      ] | if $m7_btc_accepted_concurrency == "1" then .
+          elif $m5_btc_application_mode == "1" then
+            map(select(.direction == $selected_directions_first))
+          else . end),
       actor_process_model: "fresh_one_shot_process_per_command",
       concurrency:
         (if $schedule == "overlap" then {
