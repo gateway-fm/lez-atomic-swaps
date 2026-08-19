@@ -333,8 +333,7 @@ require_environment() {
   if [[ "$m5_btc_application_mode" == 1 ]]; then
     [[ "$asset_mode" == native && "$M3_POC_JOURNEY" == claim &&
        ( "$M3_POC_DIRECTION" == taker_sells_foreign ||
-         ( "$m7_btc_accepted_concurrency" == 1 &&
-           "$M3_POC_DIRECTION" == taker_sells_lez ) ) ]] ||
+         "$M3_POC_DIRECTION" == taker_sells_lez ) ]] ||
       fail "BTC application runtime requires its bounded native claim route"
     value="${M3_POC_SWAP_ID:-}"
     [[ -n "$value" ]] ||
@@ -4439,11 +4438,18 @@ complete_m5_btc_application_handoff() {
   local offer_id reservation_id maker_public_key now actor_sha final_sha
   local maker_config taker_config source_maker_sha source_taker_sha
   local source_maker_inode source_taker_inode daemon_pid role_config
+  local cli_direction
   local -a maker_configs=()
 
-  [[ "$m5_btc_application_mode" == 1 &&
-     "$M3_POC_DIRECTION" == taker_sells_foreign && "$asset_mode" == native ]] ||
-    fail "M5 BTC application handoff is restricted to the native forward route"
+  [[ "$m5_btc_application_mode" == 1 && "$asset_mode" == native &&
+     ( "$M3_POC_DIRECTION" == taker_sells_foreign ||
+       "$M3_POC_DIRECTION" == taker_sells_lez ) ]] ||
+    fail "M5 BTC application handoff is restricted to the native claim routes"
+  case "$M3_POC_DIRECTION" in
+    taker_sells_foreign) cli_direction=taker-sells-foreign ;;
+    taker_sells_lez) cli_direction=taker-sells-lez ;;
+    *) fail "M5 BTC application handoff received an unsupported direction" ;;
+  esac
   [[ "$runtime_root" == "$(dirname "$(dirname "$M3_POC_SECURE_STATE_ROOT")")/c" ]] ||
     fail "M5 BTC Chat runtime root escaped the exact run-owned secure root"
   [[ "$application_root" == "${M3_POC_DIRECTION_ROOT}/application" &&
@@ -4530,7 +4536,7 @@ complete_m5_btc_application_handoff() {
   now="$(date -u +%s)"
   "$M3_POC_TAKER_CLI_BIN" --delivery-directory "$delivery" \
     --maker-public-key "$maker_public_key" --now-unix-seconds "$now" \
-    --pair bitcoin --direction taker-sells-foreign \
+    --pair bitcoin --direction "$cli_direction" \
     --accept-btc-offer "$offer_id" --chat-socket "$chat_socket" \
     --reservation-id "$reservation_id" --foreign-units 1000000 \
     --unsigned-draft-file "$draft_file" \
