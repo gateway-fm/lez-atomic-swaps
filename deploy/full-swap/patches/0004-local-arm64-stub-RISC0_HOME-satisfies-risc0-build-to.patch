@@ -1,7 +1,7 @@
 From aea991fbd0b1a47667c96aaebb552b9098a0a264 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Mon, 17 Aug 2026 22:40:45 +0200
-Subject: [PATCH 04/16] local(arm64): stub RISC0_HOME satisfies risc0-build
+Subject: [PATCH 04/26] local(arm64): stub RISC0_HOME satisfies risc0-build
  toolchain probe for docker guest builds
 
 ---
@@ -22,6 +22,3 @@ index 35d0629..44a26a8 100755
    if [[ "$(cargo risczero --version)" != "cargo-risczero ${risc0_version}" ]]; then
      echo "expected cargo-risczero ${risc0_version}" >&2
      exit 1
--- 
-2.50.1 (Apple Git-155)
-

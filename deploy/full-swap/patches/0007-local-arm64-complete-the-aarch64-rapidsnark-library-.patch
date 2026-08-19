@@ -1,7 +1,7 @@
 From 97766d0a748baff723e69aad712080a3836bca20 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Mon, 17 Aug 2026 23:32:32 +0200
-Subject: [PATCH 07/16] local(arm64): complete the aarch64 rapidsnark library
+Subject: [PATCH 07/26] local(arm64): complete the aarch64 rapidsnark library
  pins (gmp/fq/fr)
 
 ---
@@ -25,6 +25,3 @@ index 5d0aa71..914d25a 100755
  
  emit_contract() {
    jq -n \
--- 
-2.50.1 (Apple Git-155)
-

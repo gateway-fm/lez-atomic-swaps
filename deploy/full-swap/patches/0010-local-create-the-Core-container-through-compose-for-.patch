@@ -1,7 +1,7 @@
 From 34dc30d3f2261b6345d5c0b6fa1c4295111805cc Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 01:09:15 +0200
-Subject: [PATCH 10/16] local: create the Core container through compose for
+Subject: [PATCH 10/26] local: create the Core container through compose for
  mode:host port reachability
 
 ---
@@ -47,6 +47,3 @@ index 3af6f63..b555ce9 100755
  if [[ -z "$container_id" ]]; then
    echo "Docker did not create the run-owned Bitcoin Core container" >&2
    exit 1
--- 
-2.50.1 (Apple Git-155)
-

@@ -1,0 +1,71 @@
+From af40b5d11ac4c394add6d6ee594ac5e1235010c8 Mon Sep 17 00:00:00 2001
+From: Igor Mandrigin <i@mandrigin.ru>
+Date: Tue, 18 Aug 2026 11:15:20 +0200
+Subject: [PATCH 22/26] local: isolate taker authority in UI ZEC fixture
+
+---
+ crates/zec-swap-sdk/src/bin/zec-ui-fixture.rs | 26 ++++++++++---------
+ 1 file changed, 14 insertions(+), 12 deletions(-)
+
+diff --git a/crates/zec-swap-sdk/src/bin/zec-ui-fixture.rs b/crates/zec-swap-sdk/src/bin/zec-ui-fixture.rs
+index b866e7e..fa019f3 100644
+--- a/crates/zec-swap-sdk/src/bin/zec-ui-fixture.rs
++++ b/crates/zec-swap-sdk/src/bin/zec-ui-fixture.rs
+@@ -19,9 +19,9 @@ use lez_zec_swap_sdk::{
+     Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
+     NegotiationTranscriptV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashTransparentDestinationV1,
+     ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
+-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
+-    ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+-    derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
++    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
++    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
++    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+ };
+ use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+ use serde_json::{Value, json};
+@@ -168,8 +168,8 @@ fn main() -> Result<()> {
+         sign(commitment, &maker_secret),
+         sign(commitment, &taker_secret),
+     );
+-    let agreement = ZecAgreementV1::validate_at(record, UnixSeconds::new(basis_time))?
+-        .encode_wire()?;
++    let agreement =
++        ZecAgreementV1::validate_at(record, UnixSeconds::new(basis_time))?.encode_wire()?;
+     write_private(&shared.join("agreement-v2.borsh"), &agreement)?;
+     let agreement_sha = Sha256::digest(&agreement).to_vec();
+ 
+@@ -227,24 +227,26 @@ fn main() -> Result<()> {
+         &serde_json::to_vec_pretty(&config)?,
+     )?;
+ 
+-    // taker source actor config: the maker config with the role flipped and
+-    // taker custody keys, exactly like the upstream test's taker source.
++    // Taker source actor config: start from the shared corridor facts, then
++    // replace every role-specific authority and remove Maker-only inputs.
+     let taker_claim_key = taker_root.join("actor-claim-recovery.key");
+     let taker_capability = taker_root.join("actor-bridge.capability");
+-    let taker_preimage = taker_root.join("actor-claim-preimage.key");
+     write_raw_key(&taker_claim_key, 0x7b)?;
+-    write_private(
+-        &taker_capability,
+-        b"m5_taker_actor_capability_0123456789",
+-    )?;
++    write_private(&taker_capability, b"m5_taker_actor_capability_0123456789")?;
+     let mut taker_config = config.clone();
+     taker_config["role"] = json!("taker");
+     taker_config["role_state_db"] = json!(taker_root.join("unused-taker-source-state.sqlite3"));
+     taker_config["claim_recovery"]["key_id"] = json!("ui-zec-taker-claim");
+     taker_config["claim_recovery"]["key_file"] = json!(taker_claim_key);
++    taker_config["claim_preimage_file"] = Value::Null;
+     taker_config["zcash_key_file"] = json!(taker_root.join("zcash.key"));
++    taker_config["bridge"]["endpoint"] = json!("http://127.0.0.1:19002");
++    taker_config["bridge"]["journal_db"] =
++        json!(taker_root.join("unused-taker-source-bridge.sqlite3"));
+     taker_config["bridge"]["capability_file"] = json!(taker_capability);
+     taker_config["bridge"]["runtime"]["sidecar_role"] = json!("taker");
++    taker_config["bridge"]["runtime"]["signer_account_id"] = json!("04".repeat(32));
++    taker_config["zcash_funding_outpoints"] = json!([]);
+     write_private(
+         &taker_root.join("actor-config.json"),
+         &serde_json::to_vec_pretty(&taker_config)?,

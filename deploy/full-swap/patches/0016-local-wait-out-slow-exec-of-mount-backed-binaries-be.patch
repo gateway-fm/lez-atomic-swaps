@@ -1,7 +1,7 @@
 From 3018c9691916c70c8cfbb1787aa6ea504b03271e Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 02:05:11 +0200
-Subject: [PATCH 16/16] local: wait out slow exec of mount-backed binaries
+Subject: [PATCH 16/26] local: wait out slow exec of mount-backed binaries
  before the drift check
 
 ---
@@ -30,6 +30,3 @@ index a8d9e85..96725d0 100755
    if [[ "$executable" != "$M3_POC_LEZ_SIDECAR_BIN" ]]; then
      local cmdline stat_ppid
      cmdline="$(tr "\0" " " < "/proc/${pid}/cmdline" 2>/dev/null | head -c 200)"
--- 
-2.50.1 (Apple Git-155)
-

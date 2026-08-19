@@ -1,7 +1,7 @@
 From 7a2fa69ca772615db05b91436db3bdcc709ac568 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 01:55:47 +0200
-Subject: [PATCH 15/16] local: richer drift diagnostics (ppid, cmdline)
+Subject: [PATCH 15/26] local: richer drift diagnostics (ppid, cmdline)
 
 ---
  scripts/run-m3-actor-direction.sh | 8 ++++++--
@@ -26,6 +26,3 @@ index 14dc46b..a8d9e85 100755
    jq -nc --arg role "$role" --arg phase "$phase" --argjson pid "$pid" \
      --arg start "$start" --arg executable "$executable" \
      '{role:$role,phase:$phase,pid:$pid,start_ticks:$start,executable:$executable}' \
--- 
-2.50.1 (Apple Git-155)
-

@@ -1,8 +1,8 @@
 From 1594ed7b81c2301cfd1a2d78b104465a5f43bc42 Mon Sep 17 00:00:00 2001
 From: Igor Mandrigin <i@mandrigin.ru>
 Date: Tue, 18 Aug 2026 21:10:35 +0200
-Subject: [PATCH] =?UTF-8?q?local:=20attach=20mode=20=E2=80=94=20swaps=20ru?=
- =?UTF-8?q?n=20on=20long-standing=20chains?=
+Subject: [PATCH 24/26] =?UTF-8?q?local:=20attach=20mode=20=E2=80=94=20swap?=
+ =?UTF-8?q?s=20run=20on=20long-standing=20chains?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -413,6 +413,3 @@ index 914d25a..ce9e168 100755
    M3_POC_BITCOIN_RPC_URL="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_RPC_URL)" \
    M3_POC_BITCOIN_MAKER_CURL_CONFIG="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_MAKER_CURL_CONFIG)" \
    M3_POC_BITCOIN_TAKER_CURL_CONFIG="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_TAKER_CURL_CONFIG)" \
--- 
-2.50.1 (Apple Git-155)
-

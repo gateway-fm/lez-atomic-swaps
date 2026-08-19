@@ -1,7 +1,7 @@
 From a03df959eb5b60718a291d4f6d93f0f6d17e4d9c Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Mon, 17 Aug 2026 21:36:27 +0200
-Subject: [PATCH 03/16] local(arm64): LEZ_NATIVE_TOOLS lane (source-built
+Subject: [PATCH 03/26] local(arm64): LEZ_NATIVE_TOOLS lane (source-built
  cargo-risczero + native r0vm), aarch64 circuits release with pinned hash
 
 ---
@@ -74,6 +74,3 @@ index d66a6fb..35d0629 100755
    printf '%s  %s\n' "$circuits_sha256" "$archive" | sha256sum --check --strict
    mkdir -p "$circuits_dir"
    tar -xzf "$archive" -C "$circuits_dir" --strip-components=1
--- 
-2.50.1 (Apple Git-155)
-

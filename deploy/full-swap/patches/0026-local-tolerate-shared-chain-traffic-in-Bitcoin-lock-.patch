@@ -1,7 +1,7 @@
 From 882db439b82c6bcfe193f4bc1f2bd0d06079a4ce Mon Sep 17 00:00:00 2001
 From: Igor Mandrigin <i@mandrigin.ru>
 Date: Tue, 18 Aug 2026 22:34:18 +0200
-Subject: [PATCH] local: tolerate shared-chain traffic in Bitcoin lock
+Subject: [PATCH 26/26] local: tolerate shared-chain traffic in Bitcoin lock
  confirmation
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -116,6 +116,3 @@ index c391034..6881c64 100755
    M3_POC_BITCOIN_RPC_URL="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_RPC_URL)" \
    M3_POC_BITCOIN_MAKER_CURL_CONFIG="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_MAKER_CURL_CONFIG)" \
    M3_POC_BITCOIN_TAKER_CURL_CONFIG="$(manifest_value "$bitcoin_manifest" BITCOIN_CORE_TAKER_CURL_CONFIG)" \
--- 
-2.50.1 (Apple Git-155)
-

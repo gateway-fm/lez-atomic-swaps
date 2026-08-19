@@ -1,7 +1,7 @@
 From 3a15179e92bda397be018683ba87868f0740b79d Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Mon, 17 Aug 2026 21:32:36 +0200
-Subject: [PATCH 02/16] local(arm64): final native service hashes from the arm
+Subject: [PATCH 02/26] local(arm64): final native service hashes from the arm
  runner build
 
 ---
@@ -50,6 +50,3 @@ index b914123..0d34366 100755
  [[ "$("$sequencer_binary" --version)" == "sequencer_service 0.1.0" ]]
  [[ "$("$indexer_binary" --version)" == "indexer_service 0.1.0" ]]
  
--- 
-2.50.1 (Apple Git-155)
-

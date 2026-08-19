@@ -1,7 +1,7 @@
 From 062cc7c173fcd12147271bab032fb4aabaa55485 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 01:09:59 +0200
-Subject: [PATCH 11/16] local: compose create (no --no-start flag on this
+Subject: [PATCH 11/26] local: compose create (no --no-start flag on this
  plugin version)
 
 ---
@@ -21,6 +21,3 @@ index b555ce9..89386b6 100755
  container_id="$(docker ps -aq --filter "name=${project}-bitcoin-core" | head -1)"
  if [[ -z "$container_id" ]]; then
    echo "Docker did not create the run-owned Bitcoin Core container" >&2
--- 
-2.50.1 (Apple Git-155)
-

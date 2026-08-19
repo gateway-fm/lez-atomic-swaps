@@ -1,7 +1,7 @@
 From 66d57ac397b0e2167d07d4ce8e8746a713216b64 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Mon, 17 Aug 2026 23:26:49 +0200
-Subject: [PATCH 06/16] local(arm64): aarch64 rapidsnark library pins
+Subject: [PATCH 06/26] local(arm64): aarch64 rapidsnark library pins
 
 ---
  scripts/run-m3-actor-local-poc.sh | 6 +++---
@@ -25,6 +25,3 @@ index 31458d4..5d0aa71 100755
  
  emit_contract() {
    jq -n \
--- 
-2.50.1 (Apple Git-155)
-

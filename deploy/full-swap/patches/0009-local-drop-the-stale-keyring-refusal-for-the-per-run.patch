@@ -1,7 +1,7 @@
 From 60d112072d8f885e11e65d7850f0bc531be3ee94 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 00:52:34 +0200
-Subject: [PATCH 09/16] local: drop the stale-keyring refusal for the per-run
+Subject: [PATCH 09/26] local: drop the stale-keyring refusal for the per-run
  mktemp gpg home
 
 ---
@@ -24,6 +24,3 @@ index 1c4a73c..3e4c1c2 100755
  gpg --homedir "$gnupg_home" --batch --import "${guix_dir}"/builder-keys/*.gpg >/dev/null 2>&1
  
  gpg_status="${BITCOIN_CORE_CACHE_DIR}/release-signatures.status"
--- 
-2.50.1 (Apple Git-155)
-

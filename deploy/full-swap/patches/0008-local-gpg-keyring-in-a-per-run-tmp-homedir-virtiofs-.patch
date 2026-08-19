@@ -1,7 +1,7 @@
 From ee2987e7c6e663c453288844e88fd6e4b04c6d09 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 00:44:12 +0200
-Subject: [PATCH 08/16] local: gpg keyring in a per-run /tmp homedir (virtiofs
+Subject: [PATCH 08/26] local: gpg keyring in a per-run /tmp homedir (virtiofs
  cannot host gpg-agent locks)
 
 ---
@@ -24,6 +24,3 @@ index 35d7ca9..1c4a73c 100755
  if [[ -e "$gnupg_home" ]]; then
    echo "refusing to reuse Bitcoin Core verification keyring: ${gnupg_home}" >&2
    exit 1
--- 
-2.50.1 (Apple Git-155)
-

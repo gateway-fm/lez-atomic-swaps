@@ -1,7 +1,7 @@
 From b513d7f95398514014135852823ed870270d20cf Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 01:32:25 +0200
-Subject: [PATCH 13/16] local: create LEZ stack containers via compose with
+Subject: [PATCH 13/26] local: create LEZ stack containers via compose with
  mode:host ports
 
 ---
@@ -153,6 +153,3 @@ index 9896db6..af97c7d 100644
      volumes:
        - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/config/sequencer_config.json:/run-config/sequencer_config.json:ro"
        - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/sequencer:/var/lib/sequencer_service"
--- 
-2.50.1 (Apple Git-155)
-

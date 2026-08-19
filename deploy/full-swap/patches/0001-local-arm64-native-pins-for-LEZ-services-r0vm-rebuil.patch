@@ -1,7 +1,7 @@
 From 60332484fe212d7d7503507bff7b7f627a607c51 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Mon, 17 Aug 2026 21:15:44 +0200
-Subject: [PATCH 01/16] local(arm64): native pins for LEZ services/r0vm
+Subject: [PATCH 01/26] local(arm64): native pins for LEZ services/r0vm
  rebuilds, official Core aarch64 archive, LEZ_SKIP_TESTS lanes
 
 - sequencer/indexer/r0vm sha256 pins -> native aarch64 rebuilds from the
@@ -150,6 +150,3 @@ index d7af7ad..5fbae95 100644
  BITCOIN_CORE_RELEASE_BASE_URL=https://bitcoincore.org/bin/bitcoin-core-31.1
  BITCOIN_CORE_SHA256SUMS_SHA256=e63028d0bb33d22c847479d73866be8c1142246911765c005efbf611b645e706
  BITCOIN_CORE_SHA256SUMS_ASC_SHA256=c22e1389b651dfa2f710345e23f3adc52d4e3b3dad8ed7977a7e29d55c55995f
--- 
-2.50.1 (Apple Git-155)
-

@@ -1,7 +1,7 @@
 From 33697fbb26f5c99d273f21bb00bb986f6a42ef7e Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 01:44:50 +0200
-Subject: [PATCH 14/16] local: surface both paths on sidecar drift
+Subject: [PATCH 14/26] local: surface both paths on sidecar drift
 
 ---
  scripts/run-m3-actor-direction.sh | 3 ++-
@@ -21,6 +21,3 @@ index 0286313..14dc46b 100755
    jq -nc --arg role "$role" --arg phase "$phase" --argjson pid "$pid" \
      --arg start "$start" --arg executable "$executable" \
      '{role:$role,phase:$phase,pid:$pid,start_ticks:$start,executable:$executable}' \
--- 
-2.50.1 (Apple Git-155)
-

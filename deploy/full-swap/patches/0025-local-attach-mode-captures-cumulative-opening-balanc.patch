@@ -1,8 +1,8 @@
 From da413a7ec201a02848e92db4a55f1be0f235e5f2 Mon Sep 17 00:00:00 2001
 From: Igor Mandrigin <i@mandrigin.ru>
 Date: Tue, 18 Aug 2026 21:26:26 +0200
-Subject: [PATCH] local: attach mode captures cumulative opening balances at
- bootstrap
+Subject: [PATCH 25/26] local: attach mode captures cumulative opening balances
+ at bootstrap
 
 ---
  scripts/run-m3-actor-local-poc.sh | 19 +++++++++++++++++++
@@ -38,6 +38,3 @@ index ce9e168..c391034 100755
      return 0
    fi
    M3_POC_RUN_ID="$run_id" \
--- 
-2.50.1 (Apple Git-155)
-

@@ -1,7 +1,7 @@
 From 1d2d20693ba674c99d8d0c88e5c7e1f095cb90e8 Mon Sep 17 00:00:00 2001
 From: mandrigin <igor@gateway.fm>
 Date: Tue, 18 Aug 2026 01:12:02 +0200
-Subject: [PATCH 12/16] local: match the compose service name (bitcoin_core) in
+Subject: [PATCH 12/26] local: match the compose service name (bitcoin_core) in
  the container filter
 
 ---
@@ -21,6 +21,3 @@ index 89386b6..60e1441 100755
  if [[ -z "$container_id" ]]; then
    echo "Docker did not create the run-owned Bitcoin Core container" >&2
    exit 1
--- 
-2.50.1 (Apple Git-155)
-
