@@ -4634,7 +4634,7 @@ write_run_evidence() {
       expected_unique_effects_by_direction:
         (if $m5_btc_application_mode == "1" and
             $m7_btc_accepted_concurrency != "1" then
-           {taker_sells_foreign:{bitcoin:2,lez:3}}
+           {($selected_directions_first):{bitcoin:2,lez:3}}
          elif $asset_mode == "custom_token" then
            {taker_sells_foreign:{bitcoin:2,lez:4},
             taker_sells_lez:{bitcoin:2,lez:4}}
@@ -4801,7 +4801,7 @@ write_run_evidence() {
     and .expected_unique_effects_by_direction ==
       (if $m5_btc_application_mode == "1" and
           $m7_btc_accepted_concurrency != "1" then
-         {taker_sells_foreign:{bitcoin:2,lez:3}}
+         {($selected_directions_first):{bitcoin:2,lez:3}}
        elif $asset_mode == "custom_token" then
          {taker_sells_foreign:{bitcoin:2,lez:4},
           taker_sells_lez:{bitcoin:2,lez:4}}
