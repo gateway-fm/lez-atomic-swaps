@@ -4416,6 +4416,7 @@ write_run_evidence() {
     --argjson official_wallet_cache_summary "$official_wallet_cache_summary" \
     --argjson phase_timing_summary "$phase_timing_summary" \
     --argjson actor_direction_timing_summary "$actor_direction_timing_summary" \
+    --arg foreign_stage2_sha "$foreign_stage2_sha" \
     --arg lez_stage2_sha "$lez_stage2_sha" \
     --arg selected_directions_first "${directions[0]}" \
     --argjson foreign_terminal_balance "$foreign_terminal_balance_summary" --argjson lez_terminal_balance "$lez_terminal_balance_summary" '
