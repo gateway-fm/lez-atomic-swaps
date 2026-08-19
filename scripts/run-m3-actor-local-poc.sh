@@ -3425,8 +3425,8 @@ terminal_replay_actor_config() {
       fail "M7 terminal replay agreement or receipt escaped shared authority"
     handoff_config="$(overlap_actor_config "$direction" "$role")"
   else
-    [[ "$direction" == taker_sells_foreign ]] ||
-      fail "M5 terminal replay supports only the accepted forward application"
+    [[ "$direction" == taker_sells_foreign || "$direction" == taker_sells_lez ]] ||
+      fail "M5 terminal replay supports only the accepted application routes"
   fi
   [[ "$role" =~ ^(maker|taker)$ &&
      "$swap_id" =~ ^[0-9a-f]{64}$ && -d "$owner_root" && ! -L "$owner_root" &&
