@@ -15,7 +15,8 @@ def valid_sources:
   and (
     (.allocation == "one_mature_coinbase_outpoint"
       and (.sources | length) == 1
-      and [.sources[].direction] == ["taker_sells_foreign"])
+      and ([.sources[].direction] == ["taker_sells_foreign"]
+           or [.sources[].direction] == ["taker_sells_lez"]))
     or
     (.allocation == "two_distinct_mature_coinbase_outpoints"
       and (.sources | length) == 2
