@@ -4727,13 +4727,13 @@ write_run_evidence() {
     elif $m5_btc_application_mode == "1" then
       .application == {
         pair:"bitcoin",
-        direction:"taker_sells_foreign",
+        direction:$selected_directions_first,
         lez_deployment:{
           profile:$deployment_profile,
           guest_sha256:$lez_guest_sha256,
           program_id:$lez_program_id,
           deployer_sha256:$lez_deployer_sha256}}
-      and .directions[0].direction == "taker_sells_foreign"
+      and .directions[0].direction == $selected_directions_first
     else .application == null end)
     and .result == "passed"
     and .repository_commit == $repository_commit
