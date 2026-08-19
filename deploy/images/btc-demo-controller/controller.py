@@ -892,7 +892,21 @@ class Market:
                         "SELECT count(*) FROM swaps WHERE taker_wallet_id=? "
                         "AND state NOT IN ('completed','failed')", (wallet_id,),
                     ).fetchone()[0]
-                wallet_counts[wallet_id] = {"pending_offers": pending, "active_swaps": active}
+                # An open gate belongs to exactly one wallet. Surfacing it per
+                # wallet lets a desk point at whichever account is waiting,
+                # instead of showing an empty NEEDS YOU for the selected one.
+                role_actions = [action for action, spec in ACTIONS.items()
+                                if spec["role"] == wallet_entry["role"]]
+                column = ("maker_wallet_id" if wallet_entry["role"] == "maker"
+                          else "taker_wallet_id")
+                waiting = connection.execute(
+                    f"SELECT count(*) FROM swaps WHERE {column}=? "
+                    f"AND action_required IN ({','.join('?' * len(role_actions))})",
+                    (wallet_id, *role_actions),
+                ).fetchone()[0]
+                wallet_counts[wallet_id] = {"pending_offers": pending,
+                                            "active_swaps": active,
+                                            "needs_action": waiting}
         runner = runner_info()
         public_wallets = []
         for entry in MAKER_WALLETS if role == "maker" else TAKER_WALLETS:

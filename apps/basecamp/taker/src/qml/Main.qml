@@ -56,6 +56,19 @@ Item {
         if (root.swapTab === "all") return all
         return all.filter(function(swap) { return root.swapBucket(swap) === root.swapTab })
     }
+    // Another account of this role may hold the open gate. Without this the
+    // desk shows an empty NEEDS YOU and no way to discover which wallet waits.
+    function otherWalletNeedingAction() {
+        var wallets = root.btcMarket.wallets ?? []
+        for (var i = 0; i < wallets.length; i++) {
+            if (wallets[i].id !== root.btcMarket.selected_wallet_id
+                && Number(wallets[i].needs_action ?? 0) > 0) {
+                return {index: i, label: wallets[i].label,
+                        count: Number(wallets[i].needs_action)}
+            }
+        }
+        return null
+    }
     function swapCountFor(tab) {
         return (root.btcMarket.swaps ?? []).filter(function(swap) {
             return root.swapBucket(swap) === tab
@@ -895,6 +908,52 @@ Item {
                             FilterTab {
                                 label: "ALL"; count: (root.btcMarket.swaps ?? []).length
                                 active: root.swapTab === "all"; onPicked: root.swapTab = "all"
+                            }
+                        }
+
+                        Rectangle {
+                            id: takerAttentionBanner
+                            property var target: root.otherWalletNeedingAction()
+                            visible: takerAttentionBanner.target !== null
+                            Layout.fillWidth: true
+                            implicitHeight: visible ? 42 : 0
+                            radius: 10
+                            color: takerAttentionArea.containsMouse ? "#2A1930" : "#1F1526"
+                            border.width: 1; border.color: "#FA50C1"
+                            RowLayout {
+                                anchors.fill: parent; anchors.margins: 12; spacing: 10
+                                Label {
+                                    text: "ANOTHER ACCOUNT"
+                                    color: "#FA50C1"; font.pixelSize: 8
+                                    font.weight: Font.Bold; font.letterSpacing: 0.9
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: takerAttentionBanner.target
+                                        ? takerAttentionBanner.target.label + " has "
+                                          + takerAttentionBanner.target.count
+                                          + (Number(takerAttentionBanner.target.count) === 1
+                                             ? " action waiting" : " actions waiting")
+                                        : ""
+                                    color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+                                Label {
+                                    text: "SWITCH ACCOUNT →"
+                                    color: "#FFB8EC"; font.pixelSize: 9
+                                    font.weight: Font.Bold; font.letterSpacing: 0.8
+                                }
+                            }
+                            MouseArea {
+                                id: takerAttentionArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (!takerAttentionBanner.target) return
+                                    takerWallet.currentIndex = takerAttentionBanner.target.index
+                                    root.refreshBtcMarket(false)
+                                }
                             }
                         }
 
