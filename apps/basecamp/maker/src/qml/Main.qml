@@ -671,7 +671,7 @@ Item {
                             StepBadge { number: "01"; accent: "#FA50C1" }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
-                                Label { text: "This wallet's market"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label { text: "My orders"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
                                 Label {
                                     text: Number((root.btcMarket.inventory ?? []).filter(function(item) { return item.state === "pending" }).length)
                                         + " open offers in " + makerWallet.currentText

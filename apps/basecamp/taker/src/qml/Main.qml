@@ -869,80 +869,11 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true; spacing: 12
-                            StepBadge { number: "01"; accent: "#FA50C1" }
+                            StepBadge { number: "01"; accent: "#8950FA" }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
-                                Label { text: "Live BTC / LEZ order book"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                Label {
-                                    text: Number((root.btcMarket.summary ?? {}).pending_offers ?? 0) + " pending across both Maker wallets"
-                                    color: "#7F8A9B"; font.pixelSize: 11
-                                }
-                            }
-                            Rectangle {
-                                implicitWidth: takerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
-                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
-                                border.width: 1
-                                border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
-                                Label {
-                                    id: takerRunnerLabel
-                                    anchors.centerIn: parent
-                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
-                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
-                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
-                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
-                                }
-                            }
-                        }
-
-                        Label {
-                            visible: (root.btcMarket.order_book ?? []).length === 0
-                            text: root.btcMarketReady ? "No pending offers. Ask a Maker wallet to publish inventory." : "Loading wallet-indexed offers…"
-                            color: "#7F8A9B"; font.pixelSize: 12
-                        }
-
-                        Repeater {
-                            model: root.btcMarket.order_book ?? []
-                            delegate: Rectangle {
-                                id: takerOfferRow
-                                required property var modelData
-                                Layout.fillWidth: true; implicitHeight: 70; radius: 10
-                                color: "#0D141E"; border.width: 1; border.color: "#28364A"
-                                RowLayout {
-                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
-                                    Rectangle {
-                                        implicitWidth: 38; implicitHeight: 38; radius: 2
-                                        color: "#201830"; border.width: 1; border.color: "#8950FA"
-                                        Label { anchors.centerIn: parent; text: "M"; color: "#B997FF"; font.pixelSize: 13; font.weight: Font.Bold }
-                                    }
-                                    ColumnLayout {
-                                        Layout.fillWidth: true; spacing: 2
-                                        Label { text: String(takerOfferRow.modelData.maker_wallet_label); color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                        Label {
-                                            text: String(takerOfferRow.modelData.offer_id)
-                                            color: "#6F7B8E"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
-                                            elide: Text.ElideMiddle; Layout.fillWidth: true
-                                        }
-                                    }
-                                    Label { text: "0.01000000 BTC"; color: "#B997FF"; font.pixelSize: 12; font.weight: Font.Bold }
-                                    Label { text: "→"; color: "#687486"; font.pixelSize: 15 }
-                                    Label { text: "1,000 LEZ"; color: "#7EE100"; font.pixelSize: 12; font.weight: Font.Bold }
-                                    LuxeButton {
-                                        objectName: "takerTakeOffer"
-                                        text: "Take offer"; primary: true
-                                        enabled: root.ready && !root.btcMarketBusy
-                                        onClicked: root.takeBtcOffer(takerOfferRow.modelData)
-                                    }
-                                }
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true; spacing: 12; Layout.topMargin: 5
-                            StepBadge { number: "02"; accent: "#8950FA" }
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 2
-                                Label { text: "Your Taker swaps"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                Label { text: "You control only Lock BTC and Claim LEZ; Maker actions appear on the other dashboard."; color: "#7F8A9B"; font.pixelSize: 11 }
+                                Label { text: "My orders"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label { text: "Offers this wallet has taken. You control only Lock BTC and Claim LEZ; Maker actions appear on the other dashboard."; color: "#7F8A9B"; font.pixelSize: 11 }
                             }
                         }
 
@@ -1103,6 +1034,75 @@ Item {
                                         primary: true
                                         enabled: root.ready && !root.btcMarketBusy
                                         onClicked: root.runTakerAction(takerSwapRow.modelData)
+                                    }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12; Layout.topMargin: 5
+                            StepBadge { number: "02"; accent: "#FA50C1" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "Available orders"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label {
+                                    text: Number((root.btcMarket.summary ?? {}).pending_offers ?? 0) + " open across both Maker wallets"
+                                    color: "#7F8A9B"; font.pixelSize: 11
+                                }
+                            }
+                            Rectangle {
+                                implicitWidth: takerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
+                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
+                                border.width: 1
+                                border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
+                                Label {
+                                    id: takerRunnerLabel
+                                    anchors.centerIn: parent
+                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
+                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
+                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
+                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
+                                }
+                            }
+                        }
+
+                        Label {
+                            visible: (root.btcMarket.order_book ?? []).length === 0
+                            text: root.btcMarketReady ? "No pending offers. Ask a Maker wallet to publish inventory." : "Loading wallet-indexed offers…"
+                            color: "#7F8A9B"; font.pixelSize: 12
+                        }
+
+                        Repeater {
+                            model: root.btcMarket.order_book ?? []
+                            delegate: Rectangle {
+                                id: takerOfferRow
+                                required property var modelData
+                                Layout.fillWidth: true; implicitHeight: 70; radius: 10
+                                color: "#0D141E"; border.width: 1; border.color: "#28364A"
+                                RowLayout {
+                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
+                                    Rectangle {
+                                        implicitWidth: 38; implicitHeight: 38; radius: 2
+                                        color: "#201830"; border.width: 1; border.color: "#8950FA"
+                                        Label { anchors.centerIn: parent; text: "M"; color: "#B997FF"; font.pixelSize: 13; font.weight: Font.Bold }
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true; spacing: 2
+                                        Label { text: String(takerOfferRow.modelData.maker_wallet_label); color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                        Label {
+                                            text: String(takerOfferRow.modelData.offer_id)
+                                            color: "#6F7B8E"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
+                                            elide: Text.ElideMiddle; Layout.fillWidth: true
+                                        }
+                                    }
+                                    Label { text: "0.01000000 BTC"; color: "#B997FF"; font.pixelSize: 12; font.weight: Font.Bold }
+                                    Label { text: "→"; color: "#687486"; font.pixelSize: 15 }
+                                    Label { text: "1,000 LEZ"; color: "#7EE100"; font.pixelSize: 12; font.weight: Font.Bold }
+                                    LuxeButton {
+                                        objectName: "takerTakeOffer"
+                                        text: "Take offer"; primary: true
+                                        enabled: root.ready && !root.btcMarketBusy
+                                        onClicked: root.takeBtcOffer(takerOfferRow.modelData)
                                     }
                                 }
                             }
