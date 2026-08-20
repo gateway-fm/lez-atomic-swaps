@@ -12,7 +12,8 @@ public:
     QString health() override;
     QString btcMarket(QString walletId) override;
     QString btcCreateOffers(QString requestId, QString walletId, QString count,
-                            QString bitcoinSats, QString lezUnits) override;
+                            QString bitcoinSats, QString lezUnits,
+                            QString direction) override;
     QString btcWithdrawOffer(QString requestId, QString walletId, QString offerId) override;
     QString btcSwapAction(QString requestId, QString walletId, QString swapId,
                           QString action) override;

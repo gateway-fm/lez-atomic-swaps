@@ -7,6 +7,13 @@ export XDG_CACHE_HOME=/tmp/.cache
 export XDG_CONFIG_HOME=/tmp/.config
 mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" /tmp/.X11-unix 2>/dev/null || true
 
+# A SIGKILLed stop leaves Xvfb's stale lock behind; the next start then
+# refuses display :0 ("Server is already active") and the UI aborts.
+# The lock is only meaningful while an Xvfb holds it, so clear it here.
+if ! pgrep -x Xvfb >/dev/null; then
+  rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 2>/dev/null || true
+fi
+
 # one app, both consoles: the default user dir carries both role plugins.
 # Set BASECAMP_ROLE=maker|taker to start from a role-isolated dir instead.
 role="${BASECAMP_ROLE:-both}"

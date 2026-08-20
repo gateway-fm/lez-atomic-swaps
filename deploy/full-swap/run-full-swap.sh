@@ -17,6 +17,11 @@ export M5_BTC_APPLICATION_MODE=1
 export M3_ACTOR_POC_JOURNEY=claim
 export M3_ACTOR_POC_ASSET_MODE=native
 export M3_ACTOR_POC_SCHEDULE=sequential
+# The demo controller selects the swap direction per accepted offer; the
+# runner keeps its certified single-forward-direction default when unset.
+if [[ -n "${LEZ_INTERACTIVE_DIRECTION:-}" ]]; then
+  export M3_ACTOR_POC_DIRECTIONS="$LEZ_INTERACTIVE_DIRECTION"
+fi
 
 # Attach mode: swaps execute on the long-standing settlement chains with the
 # persistent wallet identities — the mainnet-shaped path.

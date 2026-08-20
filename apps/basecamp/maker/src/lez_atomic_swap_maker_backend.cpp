@@ -103,20 +103,24 @@ QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)
 }
 
 QString LezAtomicSwapMakerBackend::btcCreateOffers(
-    QString requestId, QString walletId, QString count, QString bitcoinSats, QString lezUnits)
+    QString requestId, QString walletId, QString count, QString bitcoinSats,
+    QString lezUnits, QString direction)
 {
     qulonglong parsedCount = 0, bitcoin = 0, lez = 0;
     if (!marketRequest(requestId) || !makerWallet(walletId)
         || !exactUnsigned(count, parsedCount) || parsedCount != 1
         || !exactUnsigned(bitcoinSats, bitcoin) || bitcoin != 1000000
-        || !exactUnsigned(lezUnits, lez) || lez != 1000) {
-        return invalidMarket(QStringLiteral("Review the fixed offer preset and wallet"));
+        || !exactUnsigned(lezUnits, lez) || lez != 1000
+        || (direction != QStringLiteral("taker_sells_foreign")
+            && direction != QStringLiteral("taker_sells_lez"))) {
+        return invalidMarket(QStringLiteral("Review the fixed offer preset, direction and wallet"));
     }
     return demoRpc_.call("btc_offer_create_v1", compact({
         {"schema_version", 2}, {"request_id", requestId}, {"wallet_id", walletId},
         {"count", static_cast<qint64>(parsedCount)},
         {"bitcoin_sats", static_cast<qint64>(bitcoin)},
-        {"lez_units", static_cast<qint64>(lez)}}));
+        {"lez_units", static_cast<qint64>(lez)},
+        {"direction", direction}}));
 }
 
 QString LezAtomicSwapMakerBackend::btcWithdrawOffer(
@@ -136,9 +140,13 @@ QString LezAtomicSwapMakerBackend::btcSwapAction(
     QString requestId, QString walletId, QString swapId, QString action)
 {
     static const QRegularExpression swapPattern(QStringLiteral("^swap-[0-9a-f]{16}$"));
+    // Each swap route names its Maker steps differently; the controller
+    // remains authoritative for which action belongs to which direction.
     if (!marketRequest(requestId) || !makerWallet(walletId)
         || !swapPattern.match(swapId).hasMatch()
-        || (action != QStringLiteral("fund_lez") && action != QStringLiteral("claim_btc"))) {
+        || (action != QStringLiteral("fund_lez") && action != QStringLiteral("claim_btc")
+            && action != QStringLiteral("lock_btc")
+            && action != QStringLiteral("claim_lez"))) {
         return invalidMarket(QStringLiteral("That Maker action is not available"));
     }
     return demoRpc_.call("btc_swap_action_v1", compact({

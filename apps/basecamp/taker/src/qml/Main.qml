@@ -1154,9 +1154,9 @@ Item {
                                             elide: Text.ElideMiddle; Layout.fillWidth: true
                                         }
                                     }
-                                    Label { text: "0.01000000 BTC"; color: "#B997FF"; font.pixelSize: 12; font.weight: Font.Bold }
+                                    Label { text: String(takerOfferRow.modelData.taker_pays_display ?? "0.01000000 BTC"); color: "#B997FF"; font.pixelSize: 12; font.weight: Font.Bold }
                                     Label { text: "→"; color: "#687486"; font.pixelSize: 15 }
-                                    Label { text: "1,000 LEZ"; color: "#7EE100"; font.pixelSize: 12; font.weight: Font.Bold }
+                                    Label { text: String(takerOfferRow.modelData.taker_receives_display ?? "1,000 LEZ"); color: "#7EE100"; font.pixelSize: 12; font.weight: Font.Bold }
                                     LuxeButton {
                                         objectName: "takerTakeOffer"
                                         text: "Take offer"; primary: true

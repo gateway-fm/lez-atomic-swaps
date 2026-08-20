@@ -20,6 +20,11 @@ Item {
     property string currentState: ""
     property string latestSwap: ""
     property string lastSavedRoute: "No route changes in this session"
+    // The composer side the Maker is selling: LEZ (forward route, the Taker
+    // sells Bitcoin) or Bitcoin (reverse route, the Taker sells LEZ).
+    property string sellSide: "lez"
+    readonly property string offerDirection: root.sellSide === "lez"
+        ? "taker_sells_foreign" : "taker_sells_lez"
     property var btcMarket: ({
         inventory: [], swaps: [], wallets: [],
         summary: ({pending_offers: 0, accepted_swaps: 0, completed_swaps: 0}),
@@ -29,14 +34,18 @@ Item {
     })
     property bool btcMarketReady: false
     property bool btcMarketBusy: false
-    property string marketTab: "attention"
+    // Toggleable bucket filters: ACTIVE and OPEN may be on together, DONE
+    // is exclusive with both, and an empty selection shows everything.
+    property bool showActive: true
+    property bool showOpen: true
+    property bool showDone: false
     property bool newOfferOpen: false
     property var expandedSwaps: ({})
 
     function toggleSwapHashes(uiSwapId) {
         var next = {}
         for (var key in root.expandedSwaps) next[key] = root.expandedSwaps[key]
-        next[uiSwapId] = !next[uiSwapId]
+        next[uiSwapId] = !root.expandedSwaps[uiSwapId]
         root.expandedSwaps = next
     }
     function copyText(value) {
@@ -47,13 +56,14 @@ Item {
 
     // One unified activity list: publishable offers plus every swap this
     // wallet owns. Offers that were taken live on as their swap row, so only
-    // pending and withdrawn offers appear as offer rows.
+    // pending and withdrawn offers appear as offer rows. Live swaps — whether
+    // waiting on this desk or on the counterparty — share the ACTIVE bucket;
+    // rows that need this desk carry a badge and float to the top.
     function marketBucket(item) {
         if (item.kind === "offer")
             return item.state === "pending" ? "open" : "done"
         if (item.state === "completed" || item.state === "failed") return "done"
-        if (item.can_act === true) return "attention"
-        return "running"
+        return "active"
     }
     function marketRows() {
         var rows = []
@@ -68,9 +78,28 @@ Item {
         return rows
     }
     function filteredMarketRows() {
-        var rows = root.marketRows()
-        if (root.marketTab === "all") return rows
-        return rows.filter(function(item) { return root.marketBucket(item) === root.marketTab })
+        // Bucket order is fixed: ACTIVE above OPEN above DONE — a row
+        // belongs to exactly one bucket, and the merged list never
+        // interleaves them.
+        var rank = { active: 0, open: 1, done: 2 }
+        var rows = root.marketRows().filter(function(item) {
+            var bucket = root.marketBucket(item)
+            if (bucket === "active") return root.showActive
+            if (bucket === "open") return root.showOpen
+            return root.showDone
+        })
+        rows.sort(function(a, b) {
+            var ra = rank[root.marketBucket(a)], rb = rank[root.marketBucket(b)]
+            if (ra !== rb) return ra - rb
+            // Within the list, rows waiting on this desk float to the top.
+            var aUrgent = a.can_act === true, bUrgent = b.can_act === true
+            if (aUrgent !== bUrgent) return aUrgent ? -1 : 1
+            return 0
+        })
+        return rows
+    }
+    function attentionCount() {
+        return root.marketRows().filter(function(item) { return item.can_act === true }).length
     }
     // Another account of this role may hold the open gate. Without this the
     // desk shows an empty NEEDS YOU and no way to discover which wallet waits.
@@ -88,6 +117,11 @@ Item {
     function marketCount(tab) {
         return root.marketRows().filter(function(item) {
             return root.marketBucket(item) === tab
+        }).length
+    }
+    function openOffersBySide(directionName) {
+        return (root.btcMarket.inventory ?? []).filter(function(item) {
+            return item.state === "pending" && item.direction === directionName
         }).length
     }
 
@@ -269,6 +303,133 @@ Item {
         }
     }
 
+    // DEX-style segmented control for the side the Maker sells. Plain
+    // anchored pills — a RowLayout here collapsed its two options onto
+    // each other when sized through implicitWidth + centerIn.
+    component SideToggle: Rectangle {
+        id: sideToggle
+        property string value: "lez"
+        signal picked(string side)
+        width: lezOption.width + btcOption.width + 12
+        height: 34
+        radius: 9
+        color: "#0E1520"
+        border.width: 1
+        border.color: "#28344A"
+
+        Rectangle {
+            id: lezOption
+            anchors.left: parent.left; anchors.leftMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            width: lezLabel.implicitWidth + 26; height: 26; radius: 7
+            readonly property bool chosen: sideToggle.value === "lez"
+            color: chosen ? "#241A3B" : lezArea.containsMouse ? "#182233" : "transparent"
+            border.width: chosen ? 1 : 0
+            border.color: "#8950FA"
+            Label {
+                id: lezLabel
+                anchors.centerIn: parent
+                text: "SELL LEZ"
+                color: parent.chosen ? "#C5A9FF" : "#8B96A8"
+                font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.8
+            }
+            MouseArea {
+                id: lezArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: sideToggle.picked("lez")
+            }
+        }
+
+        Rectangle {
+            id: btcOption
+            anchors.left: lezOption.right; anchors.leftMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            width: btcLabel.implicitWidth + 26; height: 26; radius: 7
+            readonly property bool chosen: sideToggle.value === "btc"
+            color: chosen ? "#33203B" : btcArea.containsMouse ? "#182233" : "transparent"
+            border.width: chosen ? 1 : 0
+            border.color: "#FA50C1"
+            Label {
+                id: btcLabel
+                anchors.centerIn: parent
+                text: "SELL BTC"
+                color: parent.chosen ? "#FFB8EC" : "#8B96A8"
+                font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.8
+            }
+            MouseArea {
+                id: btcArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: sideToggle.picked("btc")
+            }
+        }
+    }
+
+    // One leg of the compose card: asset chip, fixed amount, balance hint.
+    // Width is set by the owner (anchored column), never by Layout attached
+    // properties — the layout engine ignored fillWidth here and drew this
+    // leg wider than its card.
+    component SwapLeg: Rectangle {
+        id: swapLeg
+        property string label: "YOU SELL"
+        property string asset: "LEZ"
+        property string amount: "1,000"
+        property color accent: "#7EE100"
+        property string note: ""
+        height: 66
+        radius: 12
+        color: "#0E1520"
+        border.width: 1
+        border.color: "#26334A"
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            spacing: 12
+            Rectangle {
+                implicitWidth: 38; implicitHeight: 38; radius: 19
+                color: Qt.rgba(swapLeg.accent.r, swapLeg.accent.g, swapLeg.accent.b, 0.14)
+                border.width: 1
+                border.color: swapLeg.accent
+                Label {
+                    anchors.centerIn: parent
+                    text: swapLeg.asset === "BTC" ? "₿" : "Z"
+                    color: swapLeg.accent
+                    font.pixelSize: 15; font.weight: Font.Bold
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 1
+                Label {
+                    text: swapLeg.label
+                    color: "#77839A"; font.pixelSize: 9
+                    font.weight: Font.Bold; font.letterSpacing: 1.1
+                }
+                Label {
+                    visible: swapLeg.note !== ""
+                    text: swapLeg.note
+                    color: "#5F6E85"; font.pixelSize: 9
+                    elide: Text.ElideMiddle; Layout.fillWidth: true
+                }
+            }
+            Label {
+                text: swapLeg.amount
+                color: "#F2F5F9"
+                font.pixelSize: 21; font.weight: Font.DemiBold
+            }
+            Label {
+                text: swapLeg.asset
+                color: swapLeg.accent
+                font.pixelSize: 13; font.weight: Font.Bold
+                Layout.rightMargin: 2
+            }
+        }
+    }
+
     Timer {
         id: btcMarketBootstrapTimer
         interval: 450
@@ -407,12 +568,13 @@ Item {
     function createBtcOffers() {
         if (root.btcMarketBusy) return
         root.btcMarketBusy = true
-        var requestId = "ui-maker-create-offers-" + String(Date.now())
+        var segment = root.sellSide === "lez" ? "sell-lez" : "sell-btc"
+        var requestId = "ui-maker-" + segment + "-" + String(Date.now())
         root.run(root.backend.btcCreateOffers(requestId, root.selectedMakerWallet(),
-            "1", "1000000", "1000"),
+            "1", "1000000", "1000", root.offerDirection),
             "Publishing BTC / LEZ inventory", function(result) {
                 root.applyBtcMarket(result)
-                root.marketTab = "open"
+                root.showOpen = true
                 root.newOfferOpen = false
                 root.statusMode = "success"
                 root.statusTitle = "Offer published"
@@ -537,7 +699,7 @@ Item {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: 154
+                    implicitHeight: 150
                     radius: 18
                     color: "#111824"
                     border.width: 1
@@ -558,15 +720,11 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 7
                             Label {
-                                text: "INSTITUTIONAL LIQUIDITY DESK"
-                                color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 1.8
-                            }
-                            Label {
                                 text: "LEZ / BTC — Maker Desk"
                                 color: "#F7F8FA"; font.pixelSize: 30; font.weight: Font.Bold; font.letterSpacing: -0.7
                             }
                             Label {
-                                text: "Publish wallet-owned inventory and authorize only the Maker side of each atomic swap."
+                                text: "Quote both directions, publish wallet-owned inventory, settle atomically."
                                 color: "#9FA9B9"; font.pixelSize: 13
                             }
                         }
@@ -666,10 +824,206 @@ Item {
                     }
                 }
 
+                // ----- Market strip: live counts per side and the runner.
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 74
+                    radius: 14
+                    color: "#0E1520"
+                    border.width: 1
+                    border.color: "#26334A"
+                    RowLayout {
+                        anchors.fill: parent; anchors.margins: 16; spacing: 14
+                        Repeater {
+                            model: [
+                                {label: "SELL LEZ OFFERS", value: root.openOffersBySide("taker_sells_foreign"), accent: "#7EE100"},
+                                {label: "SELL BTC OFFERS", value: root.openOffersBySide("taker_sells_lez"), accent: "#B997FF"},
+                                {label: "COMPLETED SWAPS", value: root.btcMarket.summary?.completed_swaps ?? 0, accent: "#FA50C1"}
+                            ]
+                            delegate: ColumnLayout {
+                                id: stripCell
+                                required property var modelData
+                                spacing: 3
+                                Label {
+                                    text: stripCell.modelData.label
+                                    color: "#6F7A8B"; font.pixelSize: 8
+                                    font.weight: Font.Bold; font.letterSpacing: 1.0
+                                }
+                                Label {
+                                    text: String(stripCell.modelData.value)
+                                    color: stripCell.modelData.accent
+                                    font.pixelSize: 20; font.weight: Font.Bold
+                                    font.family: "DejaVu Sans Mono"
+                                }
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                        Rectangle {
+                            implicitWidth: makerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
+                            color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
+                            border.width: 1; border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
+                            Label {
+                                id: makerRunnerLabel; anchors.centerIn: parent
+                                text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
+                                    : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
+                                color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
+                                font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
+                            }
+                        }
+                    }
+                }
+
+                // ----- Compose (left) beside the live order book (right) on
+                // wide views; stacked on narrow ones. One anchored Item with
+                // explicit geometry only — the layout engine's attached
+                // properties mis-sized these cards (legs wider than their
+                // card, the right card vertically re-centered).
+                Item {
+                    id: deskArea
+                    property bool deskWide: scroll.availableWidth >= 1180
+                    Layout.fillWidth: true
+                    implicitHeight: deskWide
+                        ? Math.max(composeCard.implicitHeight, makerMarketPanel.implicitHeight)
+                        : composeCard.implicitHeight + 16 + makerMarketPanel.implicitHeight
+
+                // ----- The compose card: a Cowswap-shaped two-leg quote with
+                // a fixed preset, a sell-side toggle, and a live rate line.
+                Rectangle {
+                    id: composeCard
+                    objectName: "makerComposeCard"
+                    width: deskArea.deskWide ? 560 : deskArea.width
+                    height: composeColumn.implicitHeight + 44
+                    radius: 16
+                    color: "#101722"
+                    border.width: 1
+                    border.color: "#38465A"
+
+                    // Plain anchored column: children take the card's width
+                    // directly (width: parent.width), nothing depends on
+                    // Layout attached properties.
+                    Column {
+                        id: composeColumn
+                        anchors.left: parent.left; anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 22
+                        spacing: 14
+
+                        Row {
+                            width: parent.width; spacing: 12
+                            Column {
+                                width: parent.width - composeSide.width - 12; spacing: 2
+                                Label { text: "Compose an offer"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                                Label {
+                                    text: "One offer per publish"
+                                    color: "#7F8A9B"; font.pixelSize: 11
+                                    width: parent.width
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+                            SideToggle {
+                                id: composeSide
+                                value: root.sellSide
+                                onPicked: function(side) { root.sellSide = side }
+                            }
+                        }
+
+                        SwapLeg {
+                            objectName: root.sellSide === "lez" ? "makerSellLegLez" : "makerSellLegBtc"
+                            width: parent.width
+                            label: "YOU SELL"
+                            asset: root.sellSide === "lez" ? "LEZ" : "BTC"
+                            amount: root.sellSide === "lez" ? "1,000" : "0.01000000"
+                            accent: root.sellSide === "lez" ? "#7EE100" : "#B997FF"
+                            note: root.sellSide === "lez"
+                                ? "Locked in the LEZ escrow until settlement"
+                                : "Locked in the Bitcoin P2TR contract until settlement"
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 10
+                            Rectangle { height: 1; width: (parent.width - 30 - 20) / 2; anchors.verticalCenter: parent.verticalCenter; color: "#1C2739" }
+                            Rectangle {
+                                width: 30; height: 30; radius: 15
+                                color: "#1A2334"; border.width: 1; border.color: "#3A4B6B"
+                                Label {
+                                    anchors.centerIn: parent
+                                    text: "⇅"
+                                    color: "#9FB0D0"; font.pixelSize: 14; font.weight: Font.Bold
+                                }
+                            }
+                            Rectangle { height: 1; width: (parent.width - 30 - 20) / 2; anchors.verticalCenter: parent.verticalCenter; color: "#1C2739" }
+                        }
+
+                        SwapLeg {
+                            width: parent.width
+                            label: "YOU RECEIVE"
+                            asset: root.sellSide === "lez" ? "BTC" : "LEZ"
+                            amount: root.sellSide === "lez" ? "0.01000000" : "1,000"
+                            accent: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
+                            note: root.sellSide === "lez"
+                                ? "Claimed from the P2TR contract once the secret is revealed"
+                                : "Claimed from the LEZ escrow once the secret is revealed"
+                        }
+
+                        Rectangle {
+                            width: parent.width
+                            height: rateRow.implicitHeight + 20
+                            radius: 10
+                            color: "#0C1320"
+                            border.width: 1; border.color: "#233250"
+                            RowLayout {
+                                id: rateRow
+                                anchors.left: parent.left; anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: 10; spacing: 12
+                                Label {
+                                    text: "MARKET RATE"
+                                    color: "#6F7A8B"; font.pixelSize: 9
+                                    font.weight: Font.Bold; font.letterSpacing: 1.0
+                                }
+                                Label {
+                                    text: "1 BTC = 100,000 LEZ"
+                                    color: "#D9E2F2"; font.pixelSize: 12; font.weight: Font.DemiBold
+                                }
+                                Item { Layout.fillWidth: true }
+                                Label {
+                                    text: root.sellSide === "lez" ? "ROUTE BTC → LEZ" : "ROUTE LEZ → BTC"
+                                    color: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
+                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8
+                                }
+                                Label {
+                                    text: "· network fee ≈ 1,000 sat per leg"
+                                    color: "#5F6B7D"; font.pixelSize: 9
+                                }
+                            }
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 10
+                            Item { width: parent.width - 250; height: 1 }
+                            LuxeButton {
+                                objectName: "makerNewOffer"
+                                text: root.sellSide === "lez"
+                                    ? "Sell 1,000 LEZ for BTC"
+                                    : "Sell 0.01 BTC for LEZ"
+                                primary: true
+                                implicitWidth: 240
+                                enabled: root.ready && root.btcMarketReady
+                                onClicked: root.newOfferOpen = true
+                            }
+                        }
+                    }
+                }
+
+                // ----- The order book: this wallet's offers and swaps.
                 Rectangle {
                     id: makerMarketPanel
                     objectName: "makerBtcMarket"
-                    Layout.fillWidth: true
+                    anchors.top: deskArea.deskWide ? parent.top : composeCard.bottom
+                    anchors.topMargin: deskArea.deskWide ? 0 : 16
+                    anchors.left: deskArea.deskWide ? composeCard.right : parent.left
+                    anchors.leftMargin: deskArea.deskWide ? 16 : 0
+                    anchors.right: parent.right
                     implicitHeight: makerMarketColumn.implicitHeight + 44
                     radius: 16; color: "#101722"; border.width: 1
                     border.color: root.btcMarketReady ? "#38465A" : "#5C3341"
@@ -688,55 +1042,38 @@ Item {
                                 Label {
                                     text: Number((root.btcMarket.inventory ?? []).filter(function(item) { return item.state === "pending" }).length)
                                         + " open offers in " + makerWallet.currentText
-                                        + " · you control only Fund LEZ and Claim Bitcoin"
+                                        + " · you drive only your side of each gate"
                                     color: "#7F8A9B"; font.pixelSize: 11
                                 }
                             }
-                            Rectangle {
-                                implicitWidth: makerRunnerLabel.implicitWidth + 24; implicitHeight: 31; radius: 2
-                                color: root.btcMarket.runner_ready === true ? "#142A20" : "#2A1820"
-                                border.width: 1; border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
-                                Label {
-                                    id: makerRunnerLabel; anchors.centerIn: parent
-                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
-                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
-                                    color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
-                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
-                                }
-                            }
-                            LuxeButton {
-                                objectName: "makerNewOffer"
-                                text: "New offer"
-                                primary: true
-                                enabled: root.ready && root.btcMarketReady
-                                onClicked: root.newOfferOpen = true
-                            }
                         }
 
-                        RowLayout {
+                        // Toggleable filters: ACTIVE and OPEN can be on
+                        // together; DONE is exclusive with them. No ALL —
+                        // an empty selection shows everything.
+                        Row {
                             spacing: 7
                             FilterTab {
-                                objectName: "makerMarketTabAttention"
-                                label: "NEEDS YOU"; count: root.marketCount("attention")
-                                alert: root.marketCount("attention") > 0
-                                active: root.marketTab === "attention"; onPicked: root.marketTab = "attention"
+                                objectName: "makerMarketTabActive"
+                                label: "ACTIVE"
+                                count: root.marketCount("active")
+                                alert: root.attentionCount() > 0
+                                active: root.showActive
+                                onPicked: root.showActive = !root.showActive
                             }
                             FilterTab {
                                 objectName: "makerMarketTabOpen"
                                 label: "OPEN OFFERS"; count: root.marketCount("open")
-                                active: root.marketTab === "open"; onPicked: root.marketTab = "open"
-                            }
-                            FilterTab {
-                                label: "RUNNING"; count: root.marketCount("running")
-                                active: root.marketTab === "running"; onPicked: root.marketTab = "running"
+                                active: root.showOpen
+                                onPicked: root.showOpen = !root.showOpen
                             }
                             FilterTab {
                                 label: "DONE"; count: root.marketCount("done")
-                                active: root.marketTab === "done"; onPicked: root.marketTab = "done"
-                            }
-                            FilterTab {
-                                label: "ALL"; count: root.marketRows().length
-                                active: root.marketTab === "all"; onPicked: root.marketTab = "all"
+                                active: root.showDone
+                                onPicked: {
+                                    root.showDone = !root.showDone
+                                    if (root.showDone) { root.showActive = false; root.showOpen = false }
+                                }
                             }
                         }
 
@@ -790,8 +1127,9 @@ Item {
                             visible: root.filteredMarketRows().length === 0
                             text: !root.btcMarketReady ? "Loading wallet market…"
                                 : root.marketRows().length === 0 ? "No offers or swaps belong to this wallet yet."
-                                : root.marketTab === "attention" ? "Nothing needs you right now — check RUNNING or OPEN OFFERS."
-                                : "Nothing under this tab for " + makerWallet.currentText + "."
+                                : (root.showActive || root.showOpen || root.showDone)
+                                  ? "Nothing under the selected filters for " + makerWallet.currentText + "."
+                                  : "All filters are off — turn on ACTIVE, OPEN OFFERS or DONE."
                             color: "#7F8A9B"; font.pixelSize: 12
                         }
 
@@ -800,22 +1138,40 @@ Item {
                             delegate: Rectangle {
                                 id: makerOfferRow
                                 required property var modelData
+                                readonly property bool sellsLez:
+                                    (makerOfferRow.modelData.direction ?? "taker_sells_foreign") === "taker_sells_foreign"
                                 Layout.fillWidth: true; implicitHeight: 68; radius: 10
                                 color: "#0D141E"; border.width: 1
                                 border.color: makerOfferRow.modelData.state === "pending" ? "#36465B" : "#252E3C"
                                 RowLayout {
                                     anchors.fill: parent; anchors.margins: 13; spacing: 14
                                     Rectangle {
-                                        implicitWidth: 10; implicitHeight: 38; radius: 2
-                                        color: makerOfferRow.modelData.state === "pending" ? "#7EE100"
-                                            : makerOfferRow.modelData.state === "completed" ? "#8950FA" : "#4A5362"
+                                        implicitWidth: 64; implicitHeight: 24; radius: 3
+                                        color: makerOfferRow.sellsLez ? "#15251C" : "#221733"
+                                        border.width: 1
+                                        border.color: makerOfferRow.sellsLez ? "#3C6B33" : "#6944A2"
+                                        Label {
+                                            anchors.centerIn: parent
+                                            text: makerOfferRow.sellsLez ? "SELL LEZ" : "SELL BTC"
+                                            color: makerOfferRow.sellsLez ? "#7EE100" : "#C5A9FF"
+                                            font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8
+                                        }
                                     }
                                     ColumnLayout {
                                         Layout.fillWidth: true; spacing: 2
                                         Label { text: String(makerOfferRow.modelData.offer_id); color: "#E9EDF3"; font.pixelSize: 10; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
                                         Label { text: String(makerOfferRow.modelData.state).toUpperCase(); color: "#718095"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                                     }
-                                    Label { text: "0.01000000 BTC → 1,000 LEZ"; color: "#AAB4C3"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                                    Label {
+                                        text: makerOfferRow.sellsLez ? "1,000 LEZ" : "0.01000000 BTC"
+                                        color: "#AAB4C3"; font.pixelSize: 11; font.weight: Font.DemiBold
+                                    }
+                                    Label { text: "→"; color: "#687486"; font.pixelSize: 13 }
+                                    Label {
+                                        text: makerOfferRow.sellsLez ? "0.01 BTC" : "1,000 LEZ"
+                                        color: makerOfferRow.sellsLez ? "#B997FF" : "#7EE100"
+                                        font.pixelSize: 11; font.weight: Font.DemiBold
+                                    }
                                     LuxeButton {
                                         objectName: "makerWithdrawOffer"
                                         visible: makerOfferRow.modelData.state === "pending"
@@ -833,11 +1189,18 @@ Item {
                                 id: makerSwapRow
                                 required property var modelData
                                 readonly property var effects: makerSwapRow.modelData.effects ?? []
+                                readonly property bool sellsLez:
+                                    (makerSwapRow.modelData.direction ?? "taker_sells_foreign") === "taker_sells_foreign"
                                 readonly property bool hashesShown:
                                     root.expandedSwaps[makerSwapRow.modelData.ui_swap_id] === true
                                         && makerSwapRow.effects.length > 0
                                 Layout.fillWidth: true; radius: 10
+                                // The NEEDS YOU badge rides the title row, so
+                                // budget its height when this row waits on
+                                // this desk — anchored content taller than the
+                                // delegate would otherwise bleed onto the next.
                                 implicitHeight: (makerSwapRow.modelData.progress_detail ? 104 : 86)
+                                    + (makerSwapRow.modelData.can_act === true ? 16 : 0)
                                     + (makerSwapRow.hashesShown ? makerSwapRow.effects.length * 21 + 30 : 0)
                                 color: makerSwapRow.modelData.can_act === true ? "#17152A" : "#0D141E"
                                 border.width: 1; border.color: makerSwapRow.modelData.can_act === true ? "#8950FA" : "#28364A"
@@ -846,10 +1209,50 @@ Item {
                                     anchors.margins: 13; spacing: 14
                                     ColumnLayout {
                                         Layout.fillWidth: true; spacing: 3
-                                        Label {
-                                            text: String(makerSwapRow.modelData.taker_wallet_label) + " · " + String(makerSwapRow.modelData.state_label)
-                                            color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold
-                                            elide: Text.ElideRight; Layout.fillWidth: true
+                                        RowLayout {
+                                            Layout.fillWidth: true; spacing: 8
+                                            Rectangle {
+                                                implicitWidth: 58; implicitHeight: 18; radius: 3
+                                                color: makerSwapRow.sellsLez ? "#15251C" : "#221733"
+                                                border.width: 1
+                                                border.color: makerSwapRow.sellsLez ? "#3C6B33" : "#6944A2"
+                                                Label {
+                                                    anchors.centerIn: parent
+                                                    text: makerSwapRow.sellsLez ? "SELL LEZ" : "SELL BTC"
+                                                    color: makerSwapRow.sellsLez ? "#7EE100" : "#C5A9FF"
+                                                    font.pixelSize: 7; font.weight: Font.Bold; font.letterSpacing: 0.7
+                                                }
+                                            }
+                                            Label {
+                                                text: String(makerSwapRow.modelData.taker_wallet_label) + " · " + String(makerSwapRow.modelData.state_label)
+                                                color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold
+                                                elide: Text.ElideRight; Layout.fillWidth: true
+                                            }
+                                            Rectangle {
+                                                objectName: "makerSwapNeedsYouBadge"
+                                                visible: makerSwapRow.modelData.can_act === true
+                                                implicitWidth: badgeRow.implicitWidth + 16; implicitHeight: 22; radius: 11
+                                                color: "#2A1530"
+                                                border.width: 1; border.color: "#FA50C1"
+                                                RowLayout {
+                                                    id: badgeRow
+                                                    anchors.centerIn: parent; spacing: 6
+                                                    Rectangle {
+                                                        implicitWidth: 7; implicitHeight: 7; radius: 4
+                                                        color: "#FF6AD5"
+                                                        SequentialAnimation on opacity {
+                                                            loops: Animation.Infinite
+                                                            NumberAnimation { to: 0.25; duration: 700; easing.type: Easing.InOutQuad }
+                                                            NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutQuad }
+                                                        }
+                                                    }
+                                                    Label {
+                                                        text: "NEEDS YOU"
+                                                        color: "#FFB8EC"; font.pixelSize: 8
+                                                        font.weight: Font.Bold; font.letterSpacing: 0.8
+                                                    }
+                                                }
+                                            }
                                         }
                                         Label {
                                             text: String(makerSwapRow.modelData.ui_swap_id) + "  /  " + String(makerSwapRow.modelData.offer_id)
@@ -982,7 +1385,7 @@ Item {
                                     Layout.fillWidth: true
                                     Label { text: "BTC"; color: "#8950FA"; font.pixelSize: 10; font.weight: Font.Bold; Layout.preferredWidth: 38 }
                                     Label { text: root.btcMarket.latest_balance_evidence ? root.formatBtcSats(root.btcMarket.latest_balance_evidence.wallet.balances.bitcoin.opening) : ""; color: "#9CA7B7"; font.pixelSize: 10 }
-                                    Label { text: "→"; color: "#5F6B7D" }
+                                    Label { text: "→"; color: "#5F6B7D"; font.pixelSize: 10 }
                                     Label { text: root.btcMarket.latest_balance_evidence ? root.formatBtcSats(root.btcMarket.latest_balance_evidence.wallet.balances.bitcoin.closing) : ""; color: "#F0F3F7"; font.pixelSize: 10; font.weight: Font.DemiBold }
                                     Item { Layout.fillWidth: true }
                                     Label { text: root.btcMarket.latest_balance_evidence ? root.formatSignedBtc(root.btcMarket.latest_balance_evidence.wallet.balances.bitcoin.net_change) : ""; color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold }
@@ -992,7 +1395,7 @@ Item {
                                     Layout.fillWidth: true
                                     Label { text: "LEZ"; color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold; Layout.preferredWidth: 38 }
                                     Label { text: root.btcMarket.latest_balance_evidence ? root.formatLez(root.btcMarket.latest_balance_evidence.wallet.balances.lez.opening) : ""; color: "#9CA7B7"; font.pixelSize: 10 }
-                                    Label { text: "→"; color: "#5F6B7D" }
+                                    Label { text: "→"; color: "#5F6B7D"; font.pixelSize: 10 }
                                     Label { text: root.btcMarket.latest_balance_evidence ? root.formatLez(root.btcMarket.latest_balance_evidence.wallet.balances.lez.closing) : ""; color: "#F0F3F7"; font.pixelSize: 10; font.weight: Font.DemiBold }
                                     Item { Layout.fillWidth: true }
                                     Label { text: root.btcMarket.latest_balance_evidence ? root.formatSignedLez(root.btcMarket.latest_balance_evidence.wallet.balances.lez.net_change) : ""; color: "#FA50C1"; font.pixelSize: 10; font.weight: Font.Bold }
@@ -1001,6 +1404,7 @@ Item {
                         }
                     }
                 }
+                } // compose + orders desk area
 
                 Label {
                     // Non-Bitcoin routes are parked while the M3 demo is BTC-only.
@@ -1023,7 +1427,8 @@ Item {
                         radius: 16; color: "#101722"; border.width: 1; border.color: "#263144"
                         ColumnLayout {
                             id: routeColumn
-                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                            anchors.margins: 22
                             spacing: 15
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 12
@@ -1086,7 +1491,8 @@ Item {
                         radius: 16; color: "#101722"; border.width: 1; border.color: "#263144"
                         ColumnLayout {
                             id: actorColumn
-                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                            anchors.margins: 22
                             spacing: 15
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 12
@@ -1242,7 +1648,7 @@ Item {
         MouseArea { anchors.fill: parent; onClicked: root.newOfferOpen = false }
         Rectangle {
             anchors.centerIn: parent
-            width: 430
+            width: 470
             implicitHeight: newOfferColumn.implicitHeight + 48
             color: "#101722"; radius: 16
             border.width: 1; border.color: "#8950FA"
@@ -1253,7 +1659,9 @@ Item {
                 anchors.margins: 24
                 spacing: 14
                 Label {
-                    text: "Publish a new offer"
+                    text: root.sellSide === "lez"
+                        ? "Sell 1,000 LEZ for 0.01 BTC"
+                        : "Sell 0.01 BTC for 1,000 LEZ"
                     color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold
                 }
                 Label {
@@ -1263,14 +1671,31 @@ Item {
                 }
                 GridLayout {
                     Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
-                    FieldLabel { text: "TAKER PAYS" }
-                    FieldLabel { text: "MAKER FUNDS" }
-                    LuxeField { text: "0.01000000 BTC"; readOnly: true; Layout.fillWidth: true }
-                    LuxeField { text: "1,000 LEZ"; readOnly: true; Layout.fillWidth: true }
+                    FieldLabel { text: "YOU SELL" }
+                    FieldLabel { text: "YOU RECEIVE" }
+                    LuxeField {
+                        text: root.sellSide === "lez" ? "1,000 LEZ" : "0.01000000 BTC"
+                        readOnly: true; Layout.fillWidth: true
+                    }
+                    LuxeField {
+                        text: root.sellSide === "lez" ? "0.01000000 BTC" : "1,000 LEZ"
+                        readOnly: true; Layout.fillWidth: true
+                    }
+                    FieldLabel { text: "TAKER ROUTE" }
+                    FieldLabel { text: "MAKER STEPS" }
+                    LuxeField {
+                        text: root.sellSide === "lez" ? "BTC → LEZ" : "LEZ → BTC"
+                        readOnly: true; Layout.fillWidth: true
+                    }
+                    LuxeField {
+                        text: root.sellSide === "lez" ? "Fund LEZ · Claim BTC" : "Lock BTC · Claim LEZ"
+                        readOnly: true; Layout.fillWidth: true
+                    }
                 }
                 Label {
-                    text: "Fixed M3 preset · direction BTC → LEZ · one offer per publish"
+                    text: "One offer per publish"
                     color: "#68768A"; font.pixelSize: 10
+                    wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 10

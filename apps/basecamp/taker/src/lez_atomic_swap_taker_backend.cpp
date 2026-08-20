@@ -141,11 +141,15 @@ QString LezAtomicSwapTakerBackend::btcSwapAction(
     static const QRegularExpression requestPattern(
         QStringLiteral("^ui-taker-[a-z-]{2,24}-[0-9]{13}$"));
     static const QRegularExpression swapPattern(QStringLiteral("^swap-[0-9a-f]{16}$"));
+    // Each swap route names its Taker steps differently; the controller
+    // remains authoritative for which action belongs to which direction.
     if (!requestPattern.match(requestId).hasMatch()
         || (walletId != QStringLiteral("taker-zurich-01")
             && walletId != QStringLiteral("taker-limmat-02"))
         || !swapPattern.match(swapId).hasMatch()
-        || (action != QStringLiteral("lock_btc") && action != QStringLiteral("claim_lez"))) {
+        || (action != QStringLiteral("lock_btc") && action != QStringLiteral("claim_lez")
+            && action != QStringLiteral("lock_lez")
+            && action != QStringLiteral("claim_btc"))) {
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("That Taker action is not available"));
     }

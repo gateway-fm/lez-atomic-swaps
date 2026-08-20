@@ -3,7 +3,8 @@
 
 The service has no TCP listener. It persists a small, fixed-profile offer book
 by wallet and turns one accepted offer at a time into the repository's genuine
-M3 Bitcoin application flow. The four effect-producing actor steps are gated by
+M3 Bitcoin application flow, in either swap direction (the Taker sells Bitcoin
+or the Taker sells LEZ). The four effect-producing actor steps are gated by
 the owning Maker or Taker dashboard; no request text becomes a shell command.
 """
 
@@ -68,6 +69,291 @@ FIXED_LEZ_UNITS = 1_000
 MAX_OFFERS_PER_REQUEST = 1
 MAX_OPEN_OFFERS_PER_WALLET = 20
 
+
+# ---------------------------------------------------------------------------
+# Swap directions. Both routes use the same fixed preset; they differ in who
+# locks what first and which desk owns each interactive gate.
+# ---------------------------------------------------------------------------
+
+def _direction_spec(name: str, display: str, ui_direction: str, actions: dict,
+                    ordered: tuple, flow: tuple, state_labels: dict,
+                    progress: dict, work_phases: dict, work_markers: dict,
+                    prep_checkpoints: tuple, gate_splices: tuple,
+                    balances: str) -> dict:
+    return {
+        "name": name,
+        "display": display,
+        "ui_direction": ui_direction,
+        "actions": actions,
+        "ordered": ordered,
+        "flow": flow,
+        "state_labels": state_labels,
+        "progress": progress,
+        "work_phases": work_phases,
+        "work_markers": work_markers,
+        "prep_checkpoints": prep_checkpoints,
+        "gate_splices": gate_splices,
+        "balances": balances,
+    }
+
+
+DIRECTIONS: dict[str, dict] = {}
+
+DIRECTIONS["taker_sells_foreign"] = _direction_spec(
+    "taker_sells_foreign",
+    "BTC → LEZ",
+    "TakerSellsForeign",
+    {
+        "lock_btc": {
+            "role": "taker", "ready_state": "awaiting_taker_lock",
+            "working_state": "locking_btc", "label": "Lock 0.01000000 BTC",
+        },
+        "fund_lez": {
+            "role": "maker", "ready_state": "awaiting_maker_fund",
+            "working_state": "funding_lez", "label": "Fund 1,000 LEZ",
+        },
+        "claim_lez": {
+            "role": "taker", "ready_state": "awaiting_taker_claim",
+            "working_state": "claiming_lez", "label": "Claim 1,000 LEZ",
+        },
+        "claim_btc": {
+            "role": "maker", "ready_state": "awaiting_maker_claim",
+            "working_state": "claiming_btc", "label": "Claim Bitcoin",
+        },
+    },
+    ("lock_btc", "fund_lez", "claim_lez", "claim_btc"),
+    ("queued", "preparing", "awaiting_taker_lock", "locking_btc",
+     "awaiting_maker_fund", "funding_lez", "awaiting_taker_claim",
+     "claiming_lez", "awaiting_maker_claim", "claiming_btc", "publishing",
+     "completed"),
+    {
+        "queued": "Queued · starts automatically when the runner frees up",
+        "preparing": "Preparing fresh actors and authenticated agreement",
+        "awaiting_taker_lock": "Waiting for Taker to lock Bitcoin",
+        "locking_btc": "Confirming Taker Bitcoin lock",
+        "awaiting_maker_fund": "Waiting for Maker to fund LEZ escrow",
+        "funding_lez": "Finalizing Maker LEZ funding",
+        "awaiting_taker_claim": "Both legs locked · waiting for Taker claim",
+        "claiming_lez": "Finalizing Taker LEZ revealing claim",
+        "awaiting_maker_claim": "Secret revealed · waiting for Maker claim",
+        "claiming_btc": "Confirming Maker Bitcoin claim",
+        "publishing": "Publishing five public chain proofs",
+        "completed": "Completed · five chain effects published",
+        "failed": "Stopped · operator attention required",
+    },
+    {
+        "queued": 2, "preparing": 4, "awaiting_taker_lock": 42,
+        "locking_btc": 44, "awaiting_maker_fund": 54, "funding_lez": 56,
+        "awaiting_taker_claim": 74, "claiming_lez": 76,
+        "awaiting_maker_claim": 88, "claiming_btc": 90,
+        "publishing": 97, "completed": 100, "failed": 0,
+    },
+    {
+        "locking_btc": (15, "Broadcasting the Bitcoin lock transaction"),
+        "funding_lez": (45, "Funding the LEZ escrow and waiting for chain finality"),
+        "claiming_lez": (30, "Revealing the secret and claiming the LEZ escrow"),
+        "claiming_btc": (15, "Sweeping Bitcoin with the revealed secret"),
+        "publishing": (20, "Exporting and validating the five public proofs"),
+    },
+    {
+        "locking_btc": "lock_btc", "funding_lez": "fund_lez",
+        "claiming_lez": "claim_lez", "claiming_btc": "claim_btc",
+        "publishing": None,
+    },
+    (
+        ("private/directions/taker_sells_foreign/planning.json",
+         "Swap plan signed for the persistent wallets", 12, 22),
+        ("evidence/node-startup-status.json",
+         "Attached to the settlement chains", 18, 18),
+        ("private/taker_sells_foreign-bitcoin-funding-source.json",
+         "Bitcoin funding source reserved on-chain", 24, 16),
+        ("evidence/taker_sells_foreign-stage-two.json",
+         "Authenticated agreement staged", 30, 12),
+        ("evidence/taker_sells_foreign-activation-maker.json",
+         "Actors activated · opening the first gate", 38, 5),
+    ),
+    (
+        ('    taker_sells_foreign)\n'
+         '      direction_phase_begin first_lock_to_revision_one ||\n'
+         '        fail "could not begin first-lock timing"\n'
+         "      submit_taker_bitcoin_first_lock\n",
+         '    taker_sells_foreign)\n'
+         '      direction_phase_begin first_lock_to_revision_one ||\n'
+         '        fail "could not begin first-lock timing"\n'
+         "      interactive_ui_gate taker lock_btc 0\n"
+         "      submit_taker_bitcoin_first_lock\n",
+         "Taker Bitcoin lock gate"),
+        ("      direction_phase_end first_lock_to_revision_one ||\n"
+         '        fail "could not end first-lock timing"\n'
+         "      direction_phase_begin second_lock_to_revision_two ||\n"
+         '        fail "could not begin second-lock timing"\n'
+         '      if [[ "$asset_mode" == "custom_token" ]]; then\n'
+         "        submit_actor_maker_lez_asset_second_lock\n",
+         "      direction_phase_end first_lock_to_revision_one ||\n"
+         '        fail "could not end first-lock timing"\n'
+         "      direction_phase_begin second_lock_to_revision_two ||\n"
+         '        fail "could not begin second-lock timing"\n'
+         "      interactive_ui_gate maker fund_lez 1\n"
+         '      if [[ "$asset_mode" == "custom_token" ]]; then\n'
+         "        submit_actor_maker_lez_asset_second_lock\n",
+         "Maker LEZ funding gate"),
+        ("run_actor_claim_flow() {\n"
+         '  case "$M3_POC_DIRECTION" in\n'
+         "    taker_sells_foreign)\n"
+         "      direction_phase_begin revealing_claim_to_revision_three ||\n"
+         '        fail "could not begin revealing-claim timing"\n'
+         "      submit_actor_lez_claim taker 3 lez-revealing-claim\n",
+         "run_actor_claim_flow() {\n"
+         '  case "$M3_POC_DIRECTION" in\n'
+         "    taker_sells_foreign)\n"
+         "      direction_phase_begin revealing_claim_to_revision_three ||\n"
+         '        fail "could not begin revealing-claim timing"\n'
+         "      interactive_ui_gate taker claim_lez 2\n"
+         "      submit_actor_lez_claim taker 3 lez-revealing-claim\n",
+         "Taker LEZ claim gate"),
+        ("      direction_phase_end revealing_claim_to_revision_three ||\n"
+         '        fail "could not end revealing-claim timing"\n'
+         "      direction_phase_begin followup_claim_to_revision_four ||\n"
+         '        fail "could not begin follow-up-claim timing"\n'
+         "      submit_actor_bitcoin_claim maker 4 bitcoin-followup-claim\n",
+         "      direction_phase_end revealing_claim_to_revision_three ||\n"
+         '        fail "could not end revealing-claim timing"\n'
+         "      direction_phase_begin followup_claim_to_revision_four ||\n"
+         '        fail "could not begin follow-up-claim timing"\n'
+         "      interactive_ui_gate maker claim_btc 3\n"
+         "      submit_actor_bitcoin_claim maker 4 bitcoin-followup-claim\n",
+         "Maker Bitcoin claim gate"),
+    ),
+    "foreign",
+)
+
+DIRECTIONS["taker_sells_lez"] = _direction_spec(
+    "taker_sells_lez",
+    "LEZ → BTC",
+    "TakerSellsLez",
+    {
+        "lock_lez": {
+            "role": "taker", "ready_state": "awaiting_taker_lock",
+            "working_state": "locking_lez", "label": "Lock 1,000 LEZ",
+        },
+        "lock_btc": {
+            "role": "maker", "ready_state": "awaiting_maker_lock",
+            "working_state": "locking_btc", "label": "Lock 0.01000000 BTC",
+        },
+        "claim_btc": {
+            "role": "taker", "ready_state": "awaiting_taker_claim",
+            "working_state": "claiming_btc", "label": "Claim Bitcoin",
+        },
+        "claim_lez": {
+            "role": "maker", "ready_state": "awaiting_maker_claim",
+            "working_state": "claiming_lez", "label": "Claim 1,000 LEZ",
+        },
+    },
+    ("lock_lez", "lock_btc", "claim_btc", "claim_lez"),
+    ("queued", "preparing", "awaiting_taker_lock", "locking_lez",
+     "awaiting_maker_lock", "locking_btc", "awaiting_taker_claim",
+     "claiming_btc", "awaiting_maker_claim", "claiming_lez", "publishing",
+     "completed"),
+    {
+        "queued": "Queued · starts automatically when the runner frees up",
+        "preparing": "Preparing fresh actors and authenticated agreement",
+        "awaiting_taker_lock": "Waiting for Taker to lock LEZ",
+        "locking_lez": "Confirming Taker LEZ lock",
+        "awaiting_maker_lock": "Waiting for Maker to lock Bitcoin",
+        "locking_btc": "Confirming Maker Bitcoin lock",
+        "awaiting_taker_claim": "Both legs locked · waiting for Taker claim",
+        "claiming_btc": "Finalizing Taker Bitcoin revealing claim",
+        "awaiting_maker_claim": "Secret revealed · waiting for Maker claim",
+        "claiming_lez": "Finalizing Maker LEZ claim",
+        "publishing": "Publishing five public chain proofs",
+        "completed": "Completed · five chain effects published",
+        "failed": "Stopped · operator attention required",
+    },
+    {
+        "queued": 2, "preparing": 4, "awaiting_taker_lock": 42,
+        "locking_lez": 44, "awaiting_maker_lock": 54, "locking_btc": 56,
+        "awaiting_taker_claim": 74, "claiming_btc": 76,
+        "awaiting_maker_claim": 88, "claiming_lez": 90,
+        "publishing": 97, "completed": 100, "failed": 0,
+    },
+    {
+        "locking_lez": (30, "Locking the LEZ escrow and waiting for chain finality"),
+        "locking_btc": (15, "Broadcasting the Maker Bitcoin lock"),
+        "claiming_btc": (20, "Revealing the secret and claiming the Bitcoin escrow"),
+        "claiming_lez": (30, "Claiming the LEZ escrow with the revealed secret"),
+        "publishing": (20, "Exporting and validating the five public proofs"),
+    },
+    {
+        "locking_lez": "lock_lez", "locking_btc": "lock_btc",
+        "claiming_btc": "claim_btc", "claiming_lez": "claim_lez",
+        "publishing": None,
+    },
+    (
+        ("private/directions/taker_sells_lez/planning.json",
+         "Swap plan signed for the persistent wallets", 12, 22),
+        ("evidence/node-startup-status.json",
+         "Attached to the settlement chains", 18, 18),
+        ("private/taker_sells_lez-bitcoin-funding-source.json",
+         "Maker Bitcoin funding source reserved on-chain", 24, 16),
+        ("evidence/taker_sells_lez-stage-two.json",
+         "Authenticated agreement staged", 30, 12),
+        ("evidence/taker_sells_lez-activation-maker.json",
+         "Actors activated · opening the first gate", 38, 5),
+    ),
+    (
+        ('    taker_sells_lez)\n'
+         '      direction_phase_begin first_lock_to_revision_one ||\n'
+         '        fail "could not begin first-lock timing"\n'
+         '      if [[ "$asset_mode" == "custom_token" ]]; then\n'
+         "        submit_taker_lez_asset_first_lock\n",
+         '    taker_sells_lez)\n'
+         '      direction_phase_begin first_lock_to_revision_one ||\n'
+         '        fail "could not begin first-lock timing"\n'
+         "      interactive_ui_gate taker lock_lez 0\n"
+         '      if [[ "$asset_mode" == "custom_token" ]]; then\n'
+         "        submit_taker_lez_asset_first_lock\n",
+         "Taker LEZ lock gate"),
+        ("      direction_phase_end first_lock_to_revision_one ||\n"
+         '        fail "could not end first-lock timing"\n'
+         "      direction_phase_begin second_lock_to_revision_two ||\n"
+         '        fail "could not begin second-lock timing"\n'
+         "      submit_actor_maker_bitcoin_second_lock\n",
+         "      direction_phase_end first_lock_to_revision_one ||\n"
+         '        fail "could not end first-lock timing"\n'
+         "      direction_phase_begin second_lock_to_revision_two ||\n"
+         '        fail "could not begin second-lock timing"\n'
+         "      interactive_ui_gate maker lock_btc 1\n"
+         "      submit_actor_maker_bitcoin_second_lock\n",
+         "Maker Bitcoin lock gate"),
+        ("    taker_sells_lez)\n"
+         "      direction_phase_begin revealing_claim_to_revision_three ||\n"
+         '        fail "could not begin revealing-claim timing"\n'
+         "      submit_actor_bitcoin_claim taker 3 bitcoin-revealing-claim\n",
+         "    taker_sells_lez)\n"
+         "      direction_phase_begin revealing_claim_to_revision_three ||\n"
+         '        fail "could not begin revealing-claim timing"\n'
+         "      interactive_ui_gate taker claim_btc 2\n"
+         "      submit_actor_bitcoin_claim taker 3 bitcoin-revealing-claim\n",
+         "Taker Bitcoin claim gate"),
+        ("      direction_phase_end revealing_claim_to_revision_three ||\n"
+         '        fail "could not end revealing-claim timing"\n'
+         "      direction_phase_begin followup_claim_to_revision_four ||\n"
+         '        fail "could not begin follow-up-claim timing"\n'
+         "      submit_actor_lez_claim maker 4 lez-followup-claim\n",
+         "      direction_phase_end revealing_claim_to_revision_three ||\n"
+         '        fail "could not end revealing-claim timing"\n'
+         "      direction_phase_begin followup_claim_to_revision_four ||\n"
+         '        fail "could not begin follow-up-claim timing"\n'
+         "      interactive_ui_gate maker claim_lez 3\n"
+         "      submit_actor_lez_claim maker 4 lez-followup-claim\n",
+         "Maker LEZ claim gate"),
+    ),
+    "lez",
+)
+
+FOREIGN = DIRECTIONS["taker_sells_foreign"]
+LEZ = DIRECTIONS["taker_sells_lez"]
+
 MAKER_WALLETS = (
     {"id": "maker-munich-01", "label": "Munich Vault 01", "role": "maker",
      "network": "LEZ private local", "accent": "violet"},
@@ -82,92 +368,14 @@ TAKER_WALLETS = (
 )
 WALLETS = {entry["id"]: entry for entry in MAKER_WALLETS + TAKER_WALLETS}
 
-ACTIONS = {
-    "lock_btc": {
-        "role": "taker", "ready_state": "awaiting_taker_lock",
-        "working_state": "locking_btc", "label": "Lock 0.01000000 BTC",
-    },
-    "fund_lez": {
-        "role": "maker", "ready_state": "awaiting_maker_fund",
-        "working_state": "funding_lez", "label": "Fund 1,000 LEZ",
-    },
-    "claim_lez": {
-        "role": "taker", "ready_state": "awaiting_taker_claim",
-        "working_state": "claiming_lez", "label": "Claim 1,000 LEZ",
-    },
-    "claim_btc": {
-        "role": "maker", "ready_state": "awaiting_maker_claim",
-        "working_state": "claiming_btc", "label": "Claim Bitcoin",
-    },
+# Every action name a role can own across both directions, for the wallet
+# attention counters.
+ROLE_ACTIONS = {
+    role: tuple({name for spec in DIRECTIONS.values()
+                 for name, action in spec["actions"].items()
+                 if action["role"] == role})
+    for role in ("maker", "taker")
 }
-
-STATE_LABELS = {
-    "queued": "Queued · starts automatically when the runner frees up",
-    "preparing": "Preparing fresh actors and authenticated agreement",
-    "awaiting_taker_lock": "Waiting for Taker to lock Bitcoin",
-    "locking_btc": "Confirming Taker Bitcoin lock",
-    "awaiting_maker_fund": "Waiting for Maker to fund LEZ escrow",
-    "funding_lez": "Finalizing Maker LEZ funding",
-    "awaiting_taker_claim": "Both legs locked · waiting for Taker claim",
-    "claiming_lez": "Finalizing Taker LEZ revealing claim",
-    "awaiting_maker_claim": "Secret revealed · waiting for Maker claim",
-    "claiming_btc": "Confirming Maker Bitcoin claim",
-    "publishing": "Publishing five public chain proofs",
-    "completed": "Completed · five chain effects published",
-    "failed": "Stopped · operator attention required",
-}
-
-PROGRESS = {
-    "queued": 2, "preparing": 4, "awaiting_taker_lock": 42,
-    "locking_btc": 44, "awaiting_maker_fund": 54, "funding_lez": 56,
-    "awaiting_taker_claim": 74, "claiming_lez": 76,
-    "awaiting_maker_claim": 88, "claiming_btc": 90,
-    "publishing": 97, "completed": 100, "failed": 0,
-}
-
-FLOW = (
-    "queued", "preparing", "awaiting_taker_lock", "locking_btc",
-    "awaiting_maker_fund", "funding_lez", "awaiting_taker_claim", "claiming_lez",
-    "awaiting_maker_claim", "claiming_btc", "publishing", "completed",
-)
-
-# Sub-checkpoints of the "preparing" phase, in the order an attach-mode run
-# writes its evidence files: (relative path under the run's m3-actor-poc
-# directory, viewer label, overall percent, typical seconds remaining until
-# the first actor gate opens). Attached runs skip chain provisioning, so
-# preparation is tens of seconds, not minutes.
-PREP_CHECKPOINTS = (
-    ("private/directions/taker_sells_foreign/planning.json",
-     "Swap plan signed for the persistent wallets", 12, 22),
-    ("evidence/node-startup-status.json",
-     "Attached to the settlement chains", 18, 18),
-    ("private/taker_sells_foreign-bitcoin-funding-source.json",
-     "Bitcoin funding source reserved on-chain", 24, 16),
-    ("evidence/taker_sells_foreign-stage-two.json",
-     "Authenticated agreement staged", 30, 12),
-    ("evidence/taker_sells_foreign-activation-maker.json",
-     "Actors activated · opening the first gate", 38, 5),
-)
-
-# Machine-driven phases between actor gates: typical duration in seconds and a
-# viewer label, plus the file whose mtime marks the phase start.
-WORK_PHASES = {
-    "locking_btc": (15, "Broadcasting the Bitcoin lock transaction"),
-    "funding_lez": (45, "Funding the LEZ escrow and waiting for chain finality"),
-    "claiming_lez": (30, "Revealing the secret and claiming the LEZ escrow"),
-    "claiming_btc": (15, "Sweeping Bitcoin with the revealed secret"),
-    "publishing": (20, "Exporting and validating the five public proofs"),
-}
-WORK_MARKERS = {
-    "locking_btc": "private/directions/taker_sells_foreign/interactive-gates/lock_btc.permit.json",
-    "funding_lez": "private/directions/taker_sells_foreign/interactive-gates/fund_lez.permit.json",
-    "claiming_lez": "private/directions/taker_sells_foreign/interactive-gates/claim_lez.permit.json",
-    "claiming_btc": "private/directions/taker_sells_foreign/interactive-gates/claim_btc.permit.json",
-    "publishing": "evidence/m3-actor-local-poc.json",
-}
-LIVE_STATES = frozenset(("preparing",)) | frozenset(WORK_PHASES)
-READY_DETAILS = {spec["ready_state"]: (spec["role"], spec["label"])
-                 for spec in ACTIONS.values()}
 
 
 EFFECTS_CACHE: dict[str, list] = {}
@@ -286,42 +494,11 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
     return source.replace(old, new, 1)
 
 
-def interactive_runner_scripts(run_id: str) -> dict[str, bytes]:
-    paths = runner_script_paths(run_id)
-    scripts = EVIDENCE_ROOT / "scripts"
-    outer = scripts.joinpath("run-m3-actor-local-poc.sh").read_text()
-    direction = scripts.joinpath("run-m3-actor-direction.sh").read_text()
-
-    cd_line = 'cd "$(dirname "${BASH_SOURCE[0]}")/.."'
-    interactive_cd = 'cd "${LEZ_INTERACTIVE_REPO_ROOT:?}"'
-    outer = replace_once(outer, cd_line, interactive_cd, "outer working-directory")
-    outer = replace_once(
-        outer,
-        'readonly direction_driver="${repo_root}/scripts/run-m3-actor-direction.sh"',
-        f'readonly direction_driver="{paths["direction"]}"',
-        "direction-driver",
-    )
-    outer = replace_once(
-        outer,
-        'offer_id="m5btc-offer-${run_id:0:24}"',
-        'offer_id="${LEZ_INTERACTIVE_OFFER_ID:?}"',
-        "offer identity",
-    )
-    outer = replace_once(
-        outer,
-        'reservation_id="m5btc-reservation-${run_id:0:24}"',
-        'reservation_id="${LEZ_INTERACTIVE_RESERVATION_ID:?}"',
-        "reservation identity",
-    )
-
-    direction = replace_once(
-        direction, cd_line, interactive_cd, "direction working-directory")
-    fail_block = '''fail() {
+GATE_HELPER_BLOCK = '''fail() {
   echo "M3 actor direction failed: $*" >&2
   exit 2
 }
-'''
-    gate_block = fail_block + r'''
+''' + r'''
 
 interactive_ui_gate() {
   local role="$1" action="$2" expected_revision="$3"
@@ -360,7 +537,7 @@ interactive_ui_gate() {
   fail "interactive ${action} approval timed out"
 }
 
-interactive_publish_wallet_balances() {
+''' + r'''interactive_publish_wallet_balances_FOREIGN() {
   [[ "${LEZ_INTERACTIVE_UI_GATES:-0}" == 1 ]] || return 0
   local tip maker_account taker_account maker_final taker_final output
   local maker_open taker_open funding claim
@@ -382,7 +559,7 @@ interactive_publish_wallet_balances() {
     "$(jq -cn --arg account "$taker_account" --argjson block "$tip" \
       '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$account,$block]}')" \
     "$taker_final"
-  jq -n --arg run "$M3_POC_RUN_ID" \
+  jq -n --arg run "$M3_POC_RUN_ID" --arg direction "$M3_POC_DIRECTION" \
     --arg maker_wallet "${LEZ_INTERACTIVE_MAKER_WALLET:?}" \
     --arg taker_wallet "${LEZ_INTERACTIVE_TAKER_WALLET:?}" \
     --argjson tip "$tip" --slurpfile maker_open "$maker_open" \
@@ -401,7 +578,8 @@ interactive_publish_wallet_balances() {
     | ($taker_final[0].result.balance) as $taker_lez_close
     | {
         schema_version:1,kind:"m3_interactive_wallet_balance_changes",run_id:$run,
-        finalized_lez_tip:$tip,units:{bitcoin:"satoshi",lez:"native unit"},
+        direction:$direction,finalized_lez_tip:$tip,
+        units:{bitcoin:"satoshi",lez:"native unit"},
         wallets:[
           {role:"maker",wallet_id:$maker_wallet,balances:{
             bitcoin:{opening:0,credit:$principal,debit:0,fee:$claim_fee,
@@ -417,11 +595,11 @@ interactive_publish_wallet_balances() {
         reconciliation:{bitcoin_principal:$principal,total_bitcoin_fees:($lock_fee+$claim_fee),
           lez_principal:1000,lez_conserved:
             (($maker_lez_close+$taker_lez_close)==($maker_lez_open+$taker_lez_open))},
-        sources:{bitcoin_funding:"taker_sells_foreign-funding-prepared.json",
-          bitcoin_claim:"taker_sells_foreign-bitcoin-followup-claim-confirmed.json",
+        sources:{bitcoin_funding:($direction+"-funding-prepared.json"),
+          bitcoin_claim:($direction+"-bitcoin-followup-claim-confirmed.json"),
           lez_opening:["maker-owner-after-vault-claim.json","taker-owner-after-vault-claim.json"],
-          lez_closing:["taker_sells_foreign-maker-wallet-final.json",
-            "taker_sells_foreign-taker-wallet-final.json"]},
+          lez_closing:[($direction+"-maker-wallet-final.json"),
+            ($direction+"-taker-wallet-final.json")]},
         private_material_disclosed:false
       }
   ' >"${output}.partial"
@@ -439,72 +617,141 @@ interactive_publish_wallet_balances() {
   ' "${output}.partial" >/dev/null || fail "interactive wallet balances did not reconcile"
   mv "${output}.partial" "$output"
 }
+
+''' + r'''interactive_publish_wallet_balances_LEZ() {
+  [[ "${LEZ_INTERACTIVE_UI_GATES:-0}" == 1 ]] || return 0
+  local tip maker_account taker_account maker_final taker_final output
+  local maker_open taker_open funding claim
+  tip="$(finalized_tip)"
+  maker_account="$(jq -er '.account_id' "$M3_POC_MAKER_LEZ_IDENTITY")"
+  taker_account="$(jq -er '.account_id' "$M3_POC_TAKER_LEZ_IDENTITY")"
+  maker_final="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-maker-wallet-final.json"
+  taker_final="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-taker-wallet-final.json"
+  maker_open="${M3_POC_EVIDENCE_DIR}/maker-owner-after-vault-claim.json"
+  taker_open="${M3_POC_EVIDENCE_DIR}/taker-owner-after-vault-claim.json"
+  funding="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-funding-prepared.json"
+  claim="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-bitcoin-revealing-claim-confirmed.json"
+  output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-interactive-wallet-balances.json"
+  rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
+    "$(jq -cn --arg account "$maker_account" --argjson block "$tip" \
+      '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$account,$block]}')" \
+    "$maker_final"
+  rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
+    "$(jq -cn --arg account "$taker_account" --argjson block "$tip" \
+      '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$account,$block]}')" \
+    "$taker_final"
+  jq -n --arg run "$M3_POC_RUN_ID" --arg direction "$M3_POC_DIRECTION" \
+    --arg maker_wallet "${LEZ_INTERACTIVE_MAKER_WALLET:?}" \
+    --arg taker_wallet "${LEZ_INTERACTIVE_TAKER_WALLET:?}" \
+    --argjson tip "$tip" --slurpfile maker_open "$maker_open" \
+    --slurpfile taker_open "$taker_open" --slurpfile maker_final "$maker_final" \
+    --slurpfile taker_final "$taker_final" --slurpfile funding "$funding" \
+    --slurpfile claim "$claim" '
+    ($funding[0].input_value_sat) as $maker_btc_open
+    | ($funding[0].change_value_sat) as $maker_btc_close
+    | ($funding[0].contract_value_sat) as $principal
+    | ($funding[0].fee_sat) as $lock_fee
+    | (($claim[0].result.vout[0].value * 100000000) | round) as $taker_btc_close
+    | ($principal - $taker_btc_close) as $claim_fee
+    | ($maker_open[0].result.balance) as $maker_lez_open
+    | ($taker_open[0].result.balance) as $taker_lez_open
+    | ($maker_final[0].result.balance) as $maker_lez_close
+    | ($taker_final[0].result.balance) as $taker_lez_close
+    | {
+        schema_version:1,kind:"m3_interactive_wallet_balance_changes",run_id:$run,
+        direction:$direction,finalized_lez_tip:$tip,
+        units:{bitcoin:"satoshi",lez:"native unit"},
+        wallets:[
+          {role:"maker",wallet_id:$maker_wallet,balances:{
+            bitcoin:{opening:$maker_btc_open,credit:0,debit:$principal,fee:$lock_fee,
+              closing:$maker_btc_close,net_change:($maker_btc_close-$maker_btc_open)},
+            lez:{opening:$maker_lez_open,credit:1000,debit:0,fee:0,
+              closing:$maker_lez_close,net_change:($maker_lez_close-$maker_lez_open)}}},
+          {role:"taker",wallet_id:$taker_wallet,balances:{
+            bitcoin:{opening:0,credit:$principal,debit:0,fee:$claim_fee,
+              closing:$taker_btc_close,net_change:$taker_btc_close},
+            lez:{opening:$taker_lez_open,credit:0,debit:1000,fee:0,
+              closing:$taker_lez_close,net_change:($taker_lez_close-$taker_lez_open)}}}
+        ],
+        reconciliation:{bitcoin_principal:$principal,total_bitcoin_fees:($lock_fee+$claim_fee),
+          lez_principal:1000,lez_conserved:
+            (($maker_lez_close+$taker_lez_close)==($maker_lez_open+$taker_lez_open))},
+        sources:{bitcoin_funding:($direction+"-funding-prepared.json"),
+          bitcoin_claim:($direction+"-bitcoin-revealing-claim-confirmed.json"),
+          lez_opening:["maker-owner-after-vault-claim.json","taker-owner-after-vault-claim.json"],
+          lez_closing:[($direction+"-maker-wallet-final.json"),
+            ($direction+"-taker-wallet-final.json")]},
+        private_material_disclosed:false
+      }
+  ' >"${output}.partial"
+  chmod 0600 "${output}.partial"
+  jq -e '
+    .kind == "m3_interactive_wallet_balance_changes"
+    and (.wallets | length) == 2
+    and .wallets[0].balances.bitcoin.net_change == -1001000
+    and .wallets[0].balances.lez.net_change == 1000
+    and .wallets[1].balances.bitcoin.closing == 999000
+    and .wallets[1].balances.bitcoin.net_change == 999000
+    and .wallets[1].balances.lez.net_change == -1000
+    and .reconciliation == {bitcoin_principal:1000000,total_bitcoin_fees:2000,
+      lez_principal:1000,lez_conserved:true}
+    and .private_material_disclosed == false
+  ' "${output}.partial" >/dev/null || fail "interactive wallet balances did not reconcile"
+  mv "${output}.partial" "$output"
+}
+
+interactive_publish_wallet_balances() {
+  case "$M3_POC_DIRECTION" in
+    taker_sells_foreign) interactive_publish_wallet_balances_FOREIGN ;;
+    taker_sells_lez) interactive_publish_wallet_balances_LEZ ;;
+    *) fail "interactive balances are unavailable for this direction" ;;
+  esac
+}
 '''
-    direction = replace_once(direction, fail_block, gate_block, "gate helper")
-    direction = replace_once(
-        direction,
-        '    taker_sells_foreign)\n'
-        '      direction_phase_begin first_lock_to_revision_one ||\n'
-        '        fail "could not begin first-lock timing"\n'
-        "      submit_taker_bitcoin_first_lock\n",
-        '    taker_sells_foreign)\n'
-        '      direction_phase_begin first_lock_to_revision_one ||\n'
-        '        fail "could not begin first-lock timing"\n'
-        "      interactive_ui_gate taker lock_btc 0\n"
-        "      submit_taker_bitcoin_first_lock\n",
-        "Taker Bitcoin lock gate",
+
+
+def interactive_runner_scripts(run_id: str, direction: str) -> dict[str, bytes]:
+    spec = DIRECTIONS[direction]
+    paths = runner_script_paths(run_id)
+    scripts = EVIDENCE_ROOT / "scripts"
+    outer = scripts.joinpath("run-m3-actor-local-poc.sh").read_text()
+    direction_script = scripts.joinpath("run-m3-actor-direction.sh").read_text()
+
+    cd_line = 'cd "$(dirname "${BASH_SOURCE[0]}")/.."'
+    interactive_cd = 'cd "${LEZ_INTERACTIVE_REPO_ROOT:?}"'
+    outer = replace_once(outer, cd_line, interactive_cd, "outer working-directory")
+    outer = replace_once(
+        outer,
+        'readonly direction_driver="${repo_root}/scripts/run-m3-actor-direction.sh"',
+        f'readonly direction_driver="{paths["direction"]}"',
+        "direction-driver",
     )
-    direction = replace_once(
-        direction,
-        "      direction_phase_end first_lock_to_revision_one ||\n"
-        '        fail "could not end first-lock timing"\n'
-        "      direction_phase_begin second_lock_to_revision_two ||\n"
-        '        fail "could not begin second-lock timing"\n'
-        '      if [[ "$asset_mode" == "custom_token" ]]; then\n'
-        "        submit_actor_maker_lez_asset_second_lock\n",
-        "      direction_phase_end first_lock_to_revision_one ||\n"
-        '        fail "could not end first-lock timing"\n'
-        "      direction_phase_begin second_lock_to_revision_two ||\n"
-        '        fail "could not begin second-lock timing"\n'
-        "      interactive_ui_gate maker fund_lez 1\n"
-        '      if [[ "$asset_mode" == "custom_token" ]]; then\n'
-        "        submit_actor_maker_lez_asset_second_lock\n",
-        "Maker LEZ funding gate",
+    outer = replace_once(
+        outer,
+        'offer_id="m5btc-offer-${run_id:0:24}"',
+        'offer_id="${LEZ_INTERACTIVE_OFFER_ID:?}"',
+        "offer identity",
     )
-    direction = replace_once(
-        direction,
-        "run_actor_claim_flow() {\n"
-        '  case "$M3_POC_DIRECTION" in\n'
-        "    taker_sells_foreign)\n"
-        "      direction_phase_begin revealing_claim_to_revision_three ||\n"
-        '        fail "could not begin revealing-claim timing"\n'
-        "      submit_actor_lez_claim taker 3 lez-revealing-claim\n",
-        "run_actor_claim_flow() {\n"
-        '  case "$M3_POC_DIRECTION" in\n'
-        "    taker_sells_foreign)\n"
-        "      direction_phase_begin revealing_claim_to_revision_three ||\n"
-        '        fail "could not begin revealing-claim timing"\n'
-        "      interactive_ui_gate taker claim_lez 2\n"
-        "      submit_actor_lez_claim taker 3 lez-revealing-claim\n",
-        "Taker LEZ claim gate",
+    outer = replace_once(
+        outer,
+        'reservation_id="m5btc-reservation-${run_id:0:24}"',
+        'reservation_id="${LEZ_INTERACTIVE_RESERVATION_ID:?}"',
+        "reservation identity",
     )
-    direction = replace_once(
-        direction,
-        "      direction_phase_end revealing_claim_to_revision_three ||\n"
-        '        fail "could not end revealing-claim timing"\n'
-        "      direction_phase_begin followup_claim_to_revision_four ||\n"
-        '        fail "could not begin follow-up-claim timing"\n'
-        "      submit_actor_bitcoin_claim maker 4 bitcoin-followup-claim\n",
-        "      direction_phase_end revealing_claim_to_revision_three ||\n"
-        '        fail "could not end revealing-claim timing"\n'
-        "      direction_phase_begin followup_claim_to_revision_four ||\n"
-        '        fail "could not begin follow-up-claim timing"\n'
-        "      interactive_ui_gate maker claim_btc 3\n"
-        "      submit_actor_bitcoin_claim maker 4 bitcoin-followup-claim\n",
-        "Maker Bitcoin claim gate",
-    )
-    direction = replace_once(
-        direction,
+
+    direction_script = replace_once(
+        direction_script, cd_line, interactive_cd, "direction working-directory")
+    fail_block = '''fail() {
+  echo "M3 actor direction failed: $*" >&2
+  exit 2
+}
+'''
+    direction_script = replace_once(
+        direction_script, fail_block, GATE_HELPER_BLOCK, "gate helper")
+    for old, new, label in spec["gate_splices"]:
+        direction_script = replace_once(direction_script, old, new, label)
+    direction_script = replace_once(
+        direction_script,
         "  write_actual_effect_manifest\n"
         "  direction_phase_end terminal_evidence ||\n",
         "  write_actual_effect_manifest\n"
@@ -522,7 +769,7 @@ interactive_publish_wallet_balances() {
         pathlib.Path(paths["run"]).name: run_script.encode(),
         pathlib.Path(RUNNER_EXPORT_SCRIPT).name: EXPORT_SCRIPT.read_bytes(),
         pathlib.Path(paths["outer"]).name: outer.encode(),
-        pathlib.Path(paths["direction"]).name: direction.encode(),
+        pathlib.Path(paths["direction"]).name: direction_script.encode(),
     }
 
 
@@ -581,7 +828,7 @@ def wait_exec(exec_id: str) -> int:
         time.sleep(2)
 
 
-def validate_public_evidence(value: dict, run_id: str) -> None:
+def validate_public_evidence(value: dict, run_id: str, direction: str) -> None:
     effects = value.get("effects") if isinstance(value.get("effects"), list) else []
     identifiers = [effect.get("transaction_id") for effect in effects]
     if not (
@@ -589,7 +836,7 @@ def validate_public_evidence(value: dict, run_id: str) -> None:
         and value.get("result") == "passed"
         and value.get("run_id") == run_id
         and value.get("pair") == "Bitcoin"
-        and value.get("direction") == "TakerSellsForeign"
+        and value.get("direction") == DIRECTIONS[direction]["ui_direction"]
         and value.get("terminal") == {"phase": "completed", "revision": 4}
         and value.get("private_material_disclosed") is False
         and len(effects) == 5 and len(set(identifiers)) == 5
@@ -658,6 +905,16 @@ class Market:
                     recorded_at TEXT NOT NULL
                 );
             """)
+            # Direction support arrived after the first deployments: existing
+            # books are entirely the forward route, so the backfill default
+            # preserves every historical row.
+            for table in ("offers", "swaps"):
+                columns = {row["name"] for row in
+                           connection.execute(f"PRAGMA table_info({table})")}
+                if "direction" not in columns:
+                    connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN direction TEXT "
+                        "NOT NULL DEFAULT 'taker_sells_foreign'")
         os.chmod(DATABASE_PATH, 0o600)
 
     def _recover(self) -> None:
@@ -668,7 +925,8 @@ class Market:
         if active is not None and active["exec_id"]:
             threading.Thread(
                 target=self._finish_run,
-                args=(active["ui_swap_id"], active["run_id"], active["exec_id"]),
+                args=(active["ui_swap_id"], active["run_id"], active["exec_id"],
+                      active["direction"]),
                 daemon=True,
             ).start()
         elif active is None:
@@ -708,6 +966,10 @@ class Market:
 
     @staticmethod
     def _offer(row: sqlite3.Row) -> dict:
+        direction = DIRECTIONS[row["direction"]]
+        # Amount display is from the Taker's perspective: what a taking
+        # wallet pays and receives for this offer.
+        taker_pays_bitcoin = row["direction"] == "taker_sells_foreign"
         return {
             "offer_id": row["offer_id"],
             "maker_wallet_id": row["maker_wallet_id"],
@@ -717,7 +979,10 @@ class Market:
             "bitcoin_display": "0.01000000 BTC",
             "lez_units": row["lez_units"],
             "lez_display": "1,000 LEZ",
-            "direction": "BTC → LEZ",
+            "direction": row["direction"],
+            "direction_display": direction["display"],
+            "taker_pays_display": "0.01000000 BTC" if taker_pays_bitcoin else "1,000 LEZ",
+            "taker_receives_display": "1,000 LEZ" if taker_pays_bitcoin else "0.01000000 BTC",
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "taker_wallet_id": row["taker_wallet_id"],
@@ -726,7 +991,9 @@ class Market:
 
     @staticmethod
     def _swap(row: sqlite3.Row) -> dict:
+        spec = DIRECTIONS[row["direction"]]
         action = row["action_required"]
+        action_spec = spec["actions"].get(action, {}) if action else {}
         return {
             "ui_swap_id": row["ui_swap_id"],
             "protocol_swap_id": row["protocol_swap_id"],
@@ -735,26 +1002,30 @@ class Market:
             "maker_wallet_label": WALLETS[row["maker_wallet_id"]]["label"],
             "taker_wallet_id": row["taker_wallet_id"],
             "taker_wallet_label": WALLETS[row["taker_wallet_id"]]["label"],
+            "direction": row["direction"],
+            "direction_display": spec["display"],
             "state": row["state"],
-            "state_label": STATE_LABELS.get(row["state"], row["state"]),
-            "progress_percent": PROGRESS.get(row["state"], 0),
+            "state_label": spec["state_labels"].get(row["state"], row["state"]),
+            "progress_percent": spec["progress"].get(row["state"], 0),
             "progress_detail": None,
             "eta_seconds": None,
             "eta_display": None,
             "action_required": action,
-            "action_role": ACTIONS.get(action, {}).get("role") if action else None,
-            "action_label": ACTIONS.get(action, {}).get("label") if action else None,
+            "action_role": action_spec.get("role"),
+            "action_label": action_spec.get("label"),
             "run_id": row["run_id"],
             "started_at": row["started_at"],
             "completed_at": row["completed_at"],
             "error": row["error"],
         }
 
-    @staticmethod
-    def _live_progress(swap: dict) -> None:
+    def _live_progress(self, swap: dict) -> None:
         state = swap["state"]
-        if state in READY_DETAILS:
-            role_needed, label = READY_DETAILS[state]
+        spec = DIRECTIONS[swap["direction"]]
+        ready_details = {action["ready_state"]: (action["role"], action["label"])
+                         for action in spec["actions"].values()}
+        if state in ready_details:
+            role_needed, label = ready_details[state]
             if swap.get("can_act"):
                 swap["progress_detail"] = f"Your move — {label} is ready and waits for your click"
             else:
@@ -763,16 +1034,17 @@ class Market:
                     f"No timer here — the open gate waits for the {desk} desk to click {label}")
             return
         run_id = swap.get("run_id")
-        if not run_id or state not in LIVE_STATES:
+        if not run_id or state not in spec["work_phases"] and state != "preparing":
             return
         base = EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc"
         now = time.time()
         if state == "preparing":
-            percent = PROGRESS["preparing"]
+            percent = spec["progress"]["preparing"]
             detail = "Preparing the swap on the settlement chains"
             remaining = 25.0
             marker_time = None
-            for relative, label, checkpoint_percent, checkpoint_remaining in PREP_CHECKPOINTS:
+            for relative, label, checkpoint_percent, checkpoint_remaining in \
+                    spec["prep_checkpoints"]:
                 try:
                     mtime = (base / relative).stat().st_mtime
                 except OSError:
@@ -788,18 +1060,25 @@ class Market:
             since_marker = max(0.0, now - marker_time)
             # Creep toward the next checkpoint so the bar visibly moves even
             # while a slow step (for example a cold Rust build) is running.
-            percent = min(PROGRESS["awaiting_taker_lock"] - 1,
+            percent = min(spec["progress"]["awaiting_taker_lock"] - 1,
                           percent + min(5, int(since_marker / 15)))
             eta = remaining - since_marker
         else:
-            expected, detail = WORK_PHASES[state]
+            expected, detail = spec["work_phases"][state]
+            marker_name = spec["work_markers"][state]
             try:
-                marker_time = (base / WORK_MARKERS[state]).stat().st_mtime
+                if marker_name is None:
+                    marker_time = (base / "evidence" / "m3-actor-local-poc.json")\
+                        .stat().st_mtime
+                else:
+                    marker_time = (base / "private" / "directions" / swap["direction"]
+                                   / "interactive-gates" / f"{marker_name}.permit.json")\
+                        .stat().st_mtime
             except OSError:
                 marker_time = now
             elapsed = max(0.0, now - marker_time)
-            anchor = PROGRESS[state]
-            next_anchor = PROGRESS[FLOW[FLOW.index(state) + 1]]
+            anchor = spec["progress"][state]
+            next_anchor = spec["progress"][spec["flow"][spec["flow"].index(state) + 1]]
             percent = int(anchor + (next_anchor - 1 - anchor) * min(0.95, elapsed / expected))
             eta = expected - elapsed
         swap["progress_percent"] = percent
@@ -809,9 +1088,9 @@ class Market:
             "running long · still working" if eta < -30 else format_eta(eta))
 
     @staticmethod
-    def _gate_root(run_id: str) -> pathlib.Path:
+    def _gate_root(run_id: str, direction: str) -> pathlib.Path:
         return (EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" / "private" /
-                "directions" / "taker_sells_foreign" / "interactive-gates")
+                "directions" / direction / "interactive-gates")
 
     def _sync_active(self, connection: sqlite3.Connection) -> None:
         row = connection.execute(
@@ -820,15 +1099,17 @@ class Market:
         if row is None or not row["run_id"]:
             return
         run_id = row["run_id"]
-        gate_root = self._gate_root(run_id)
+        direction = row["direction"]
+        spec = DIRECTIONS[direction]
+        gate_root = self._gate_root(run_id, direction)
         selected_state = row["state"]
         selected_action = row["action_required"]
-        ordered = ("lock_btc", "fund_lez", "claim_lez", "claim_btc")
-        for action in ordered:
+        for action in spec["ordered"]:
             ready = gate_root / f"{action}.ready.json"
             permit = gate_root / f"{action}.permit.json"
             if ready.is_file():
-                selected_state = ACTIONS[action][
+                action_spec = spec["actions"][action]
+                selected_state = action_spec[
                     "working_state" if permit.is_file() else "ready_state"]
                 selected_action = None if permit.is_file() else action
         evidence = (EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" /
@@ -836,8 +1117,7 @@ class Market:
         if evidence.is_file():
             selected_state, selected_action = "publishing", None
         plan = (EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" / "private" /
-                "directions" / "taker_sells_foreign" / "application" /
-                "btc-plan.json")
+                "directions" / direction / "application" / "btc-plan.json")
         protocol_swap_id = row["protocol_swap_id"]
         if plan.is_file() and not protocol_swap_id:
             try:
@@ -895,8 +1175,7 @@ class Market:
                 # An open gate belongs to exactly one wallet. Surfacing it per
                 # wallet lets a desk point at whichever account is waiting,
                 # instead of showing an empty NEEDS YOU for the selected one.
-                role_actions = [action for action, spec in ACTIONS.items()
-                                if spec["role"] == wallet_entry["role"]]
+                role_actions = ROLE_ACTIONS[wallet_entry["role"]]
                 column = ("maker_wallet_id" if wallet_entry["role"] == "maker"
                           else "taker_wallet_id")
                 waiting = connection.execute(
@@ -941,6 +1220,7 @@ class Market:
                 if entry.get("wallet_id") == wallet["id"] and entry.get("role") == role:
                     latest_balance_evidence = {
                         "run_id": published.get("run_id"),
+                        "direction": published.get("direction"),
                         "completed_at": published.get("completed_at"),
                         "wallet": entry,
                         "reconciliation": balance_changes.get("reconciliation"),
@@ -948,6 +1228,28 @@ class Market:
                     break
         except (OSError, ValueError, TypeError):
             latest_balance_evidence = None
+        direction_catalog = [
+            {
+                "direction": spec["name"],
+                "display": spec["display"],
+                "ui_direction": spec["ui_direction"],
+                "bitcoin_sats": FIXED_BITCOIN_SATS,
+                "bitcoin_display": "0.01000000 BTC",
+                "lez_units": FIXED_LEZ_UNITS,
+                "lez_display": "1,000 LEZ",
+                "maker_label": "Sell " + (
+                    "1,000 LEZ for 0.01000000 BTC"
+                    if spec["name"] == "taker_sells_foreign"
+                    else "0.01000000 BTC for 1,000 LEZ"),
+                "maker_actions": [spec["actions"][name]["label"]
+                                  for name in spec["ordered"]
+                                  if spec["actions"][name]["role"] == "maker"],
+                "taker_actions": [spec["actions"][name]["label"]
+                                  for name in spec["ordered"]
+                                  if spec["actions"][name]["role"] == "taker"],
+            }
+            for spec in DIRECTIONS.values()
+        ]
         return {
             "schema_version": 2,
             "kind": "m3_btc_wallet_market",
@@ -970,6 +1272,7 @@ class Market:
                 "lez_display": "1,000 LEZ",
                 "direction": "BTC → LEZ",
             },
+            "directions": direction_catalog,
             "runner_ready": runner["ready"],
             "runner_busy": runner["busy"],
             "runner_detail": runner["reason"],
@@ -979,6 +1282,15 @@ class Market:
         wallet = self._wallet(params.get("wallet_id"), "maker")
         request_id, fingerprint = self._request(params, "create_offers")
         count = params.get("count")
+        # The direction is carried either as an explicit parameter (the
+        # rebuilt Maker plugin) or, for the original plugin signature, inside
+        # the request identity segment ("sell-btc" / "sell-lez").
+        direction = params.get("direction")
+        if direction is None:
+            direction = ("taker_sells_lez" if "-sell-lez-" in request_id
+                         else "taker_sells_foreign")
+        if direction not in DIRECTIONS:
+            raise ValueError("the local market supports the two fixed swap directions")
         if not isinstance(count, int) or isinstance(count, bool) \
                 or count != MAX_OFFERS_PER_REQUEST:
             raise ValueError("publish exactly one offer per request")
@@ -996,14 +1308,17 @@ class Market:
                 if open_count + count > MAX_OPEN_OFFERS_PER_WALLET:
                     raise ValueError("this wallet may hold at most twenty pending offers")
                 stamp = utc_now()
-                digest = hashlib.sha256(request_id.encode()).hexdigest()[:12]
+                digest = hashlib.sha256(
+                    f"{request_id}:{direction}".encode()).hexdigest()[:12]
                 suffix = "munich" if wallet["id"] == "maker-munich-01" else "basel"
                 for index in range(1, count + 1):
                     offer_id = f"m3btc-{suffix}-{digest}-{index}"
                     connection.execute(
-                        "INSERT INTO offers VALUES(?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO offers(offer_id,maker_wallet_id,state,"
+                        "bitcoin_sats,lez_units,created_at,updated_at,direction) "
+                        "VALUES(?,?,?,?,?,?,?,?)",
                         (offer_id, wallet["id"], "pending", FIXED_BITCOIN_SATS,
-                         FIXED_LEZ_UNITS, stamp, stamp, None, None),
+                         FIXED_LEZ_UNITS, stamp, stamp, direction),
                     )
         return self.snapshot({"role": "maker", "wallet_id": wallet["id"]})
 
@@ -1049,9 +1364,9 @@ class Market:
                 )
                 connection.execute(
                     "INSERT INTO swaps(ui_swap_id,offer_id,maker_wallet_id,"
-                    "taker_wallet_id,state) VALUES(?,?,?,?,?)",
+                    "taker_wallet_id,state,direction) VALUES(?,?,?,?,?,?)",
                     (ui_swap_id, offer_id, offer["maker_wallet_id"],
-                     wallet["id"], "queued"),
+                     wallet["id"], "queued", offer["direction"]),
                 )
             self._maybe_start_next(connection)
         return self.snapshot({"role": "taker", "wallet_id": wallet["id"]})
@@ -1066,8 +1381,6 @@ class Market:
         action = params.get("action")
         if not isinstance(ui_swap_id, str) or not SWAP_RE.fullmatch(ui_swap_id):
             raise ValueError("swap identity is invalid")
-        if action not in ACTIONS or ACTIONS[action]["role"] != role:
-            raise ValueError("that actor action is unavailable for this role")
         with self.lock, self._connect() as connection:
             self._sync_active(connection)
             replay = self._record_request(connection, request_id, "swap_action", fingerprint)
@@ -1075,13 +1388,18 @@ class Market:
                 "SELECT * FROM swaps WHERE ui_swap_id=?", (ui_swap_id,)).fetchone()
             if row is None or row[f"{role}_wallet_id"] != wallet["id"]:
                 raise ValueError("the selected wallet does not own this swap action")
+            spec = DIRECTIONS[row["direction"]]
+            if action not in spec["actions"] or spec["actions"][action]["role"] != role:
+                raise ValueError("that actor action is unavailable for this role")
             if not replay:
-                if row["action_required"] != action or row["state"] != ACTIONS[action]["ready_state"]:
+                action_spec = spec["actions"][action]
+                if row["action_required"] != action \
+                        or row["state"] != action_spec["ready_state"]:
                     raise ValueError("the requested action is not ready at this swap revision")
                 run_id = row["run_id"]
                 if not isinstance(run_id, str) or not RUN_RE.fullmatch(run_id):
                     raise RuntimeError("active run identity is unavailable")
-                revision = ("lock_btc", "fund_lez", "claim_lez", "claim_btc").index(action)
+                revision = spec["ordered"].index(action)
                 permit = compact({
                     "schema_version": 1, "run_id": run_id, "role": role,
                     "action": action, "expected_revision": revision,
@@ -1089,12 +1407,12 @@ class Market:
                 }).encode() + b"\n"
                 runner_dir = (
                     f"{RUNNER_REPO}/.e2e/{run_id}/m3-actor-poc/private/"
-                    "directions/taker_sells_foreign/interactive-gates"
+                    f"directions/{row['direction']}/interactive-gates"
                 )
                 upload_bundle({f"{action}.permit.json": permit}, runner_dir)
                 connection.execute(
                     "UPDATE swaps SET state=?, action_required=NULL WHERE ui_swap_id=?",
-                    (ACTIONS[action]["working_state"], ui_swap_id),
+                    (action_spec["working_state"], ui_swap_id),
                 )
         return self.snapshot({"role": role, "wallet_id": wallet["id"]})
 
@@ -1111,6 +1429,7 @@ class Market:
         runner = runner_info()
         if not runner["ready"] or runner["busy"]:
             return
+        direction = queued["direction"]
         run_id = ""
         now = dt.datetime.now(dt.timezone.utc)
         for offset in range(60):
@@ -1122,7 +1441,7 @@ class Market:
                 break
         if not RUN_RE.fullmatch(run_id):
             raise RuntimeError("a unique local run identity is unavailable")
-        upload_bundle(interactive_runner_scripts(run_id))
+        upload_bundle(interactive_runner_scripts(run_id, direction))
         reservation = "ui-reserve-" + hashlib.sha256(
             queued["ui_swap_id"].encode()).hexdigest()[:20]
         exec_id = create_exec(
@@ -1132,6 +1451,7 @@ class Market:
                 "LEZ_M3_INTERACTIVE=1",
                 "LEZ_M3_ATTACH=1",
                 "LEZ_INTERACTIVE_UI_GATES=1",
+                "LEZ_INTERACTIVE_DIRECTION=" + direction,
                 f"LEZ_INTERACTIVE_REPO_ROOT={RUNNER_REPO}",
                 f"LEZ_INTERACTIVE_OFFER_ID={queued['offer_id']}",
                 f"LEZ_INTERACTIVE_RESERVATION_ID={reservation}",
@@ -1148,11 +1468,12 @@ class Market:
         connection.commit()
         threading.Thread(
             target=self._finish_run,
-            args=(queued["ui_swap_id"], run_id, exec_id),
+            args=(queued["ui_swap_id"], run_id, exec_id, direction),
             daemon=True,
         ).start()
 
-    def _finish_run(self, ui_swap_id: str, run_id: str, exec_id: str) -> None:
+    def _finish_run(self, ui_swap_id: str, run_id: str, exec_id: str,
+                    direction: str) -> None:
         try:
             exit_code = wait_exec(exec_id)
             if exit_code != 0:
@@ -1161,7 +1482,7 @@ class Market:
             generated = f"{source}/m3-btc-ui-evidence.json"
             export_exec = create_exec([
                 "bash", RUNNER_EXPORT_SCRIPT, source, generated,
-            ])
+            ], ["LEZ_UI_EVIDENCE_DIRECTION=" + direction])
             start_exec(export_exec)
             if wait_exec(export_exec) != 0:
                 raise RuntimeError("public evidence export failed")
@@ -1170,15 +1491,16 @@ class Market:
                 "evidence" / "m3-btc-ui-evidence.json"
             )
             evidence = json.loads(generated_on_mount.read_text())
-            validate_public_evidence(evidence, run_id)
+            validate_public_evidence(evidence, run_id, direction)
             balances_path = (
                 EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" / "evidence" /
-                "taker_sells_foreign-interactive-wallet-balances.json"
+                f"{direction}-interactive-wallet-balances.json"
             )
             balances = json.loads(balances_path.read_text())
             if not (
                 balances.get("kind") == "m3_interactive_wallet_balance_changes"
                 and balances.get("run_id") == run_id
+                and balances.get("direction") == direction
                 and balances.get("private_material_disclosed") is False
                 and len(balances.get("wallets", [])) == 2
                 and balances.get("reconciliation", {}).get("lez_conserved") is True
@@ -1192,6 +1514,8 @@ class Market:
                 evidence["market_context"] = {
                     "ui_swap_id": ui_swap_id,
                     "offer_id": row["offer_id"],
+                    "direction": direction,
+                    "direction_display": DIRECTIONS[direction]["display"],
                     "maker_wallet_id": row["maker_wallet_id"],
                     "maker_wallet_label": WALLETS[row["maker_wallet_id"]]["label"],
                     "taker_wallet_id": row["taker_wallet_id"],
