@@ -1,0 +1,236 @@
+From d2eea2572d3577d82d9e777b5c251f8af09c8638 Mon Sep 17 00:00:00 2001
+From: local demo runner <runner@local>
+Date: Wed, 19 Aug 2026 20:07:41 +0200
+Subject: [PATCH 27/34] local: selectable single direction for M5 BTC
+ application runs
+
+M3_ACTOR_POC_DIRECTIONS selects taker_sells_foreign or taker_sells_lez
+for M5 application runs; unset keeps the certified forward-only default.
+The M5 handoff and delivery planning accept either bounded direction,
+and phase-timing evidence follows the selected set.
+---
+ scripts/run-m3-actor-direction.sh |  18 +++--
+ scripts/run-m3-actor-local-poc.sh | 109 +++++++++++++++++-------------
+ 2 files changed, 74 insertions(+), 53 deletions(-)
+
+diff --git a/scripts/run-m3-actor-direction.sh b/scripts/run-m3-actor-direction.sh
+index b751a55..6d2bc38 100755
+--- a/scripts/run-m3-actor-direction.sh
++++ b/scripts/run-m3-actor-direction.sh
+@@ -333,8 +333,7 @@ require_environment() {
+   if [[ "$m5_btc_application_mode" == 1 ]]; then
+     [[ "$asset_mode" == native && "$M3_POC_JOURNEY" == claim &&
+        ( "$M3_POC_DIRECTION" == taker_sells_foreign ||
+-         ( "$m7_btc_accepted_concurrency" == 1 &&
+-           "$M3_POC_DIRECTION" == taker_sells_lez ) ) ]] ||
++         "$M3_POC_DIRECTION" == taker_sells_lez ) ]] ||
+       fail "BTC application runtime requires its bounded native claim route"
+     value="${M3_POC_SWAP_ID:-}"
+     [[ -n "$value" ]] ||
+@@ -4439,11 +4438,18 @@ complete_m5_btc_application_handoff() {
+   local offer_id reservation_id maker_public_key now actor_sha final_sha
+   local maker_config taker_config source_maker_sha source_taker_sha
+   local source_maker_inode source_taker_inode daemon_pid role_config
++  local cli_direction
+   local -a maker_configs=()
+ 
+-  [[ "$m5_btc_application_mode" == 1 &&
+-     "$M3_POC_DIRECTION" == taker_sells_foreign && "$asset_mode" == native ]] ||
+-    fail "M5 BTC application handoff is restricted to the native forward route"
++  [[ "$m5_btc_application_mode" == 1 && "$asset_mode" == native &&
++     ( "$M3_POC_DIRECTION" == taker_sells_foreign ||
++       "$M3_POC_DIRECTION" == taker_sells_lez ) ]] ||
++    fail "M5 BTC application handoff is restricted to the native claim routes"
++  case "$M3_POC_DIRECTION" in
++    taker_sells_foreign) cli_direction=taker-sells-foreign ;;
++    taker_sells_lez) cli_direction=taker-sells-lez ;;
++    *) fail "M5 BTC application handoff received an unsupported direction" ;;
++  esac
+   [[ "$runtime_root" == "$(dirname "$(dirname "$M3_POC_SECURE_STATE_ROOT")")/c" ]] ||
+     fail "M5 BTC Chat runtime root escaped the exact run-owned secure root"
+   [[ "$application_root" == "${M3_POC_DIRECTION_ROOT}/application" &&
+@@ -4530,7 +4536,7 @@ complete_m5_btc_application_handoff() {
+   now="$(date -u +%s)"
+   "$M3_POC_TAKER_CLI_BIN" --delivery-directory "$delivery" \
+     --maker-public-key "$maker_public_key" --now-unix-seconds "$now" \
+-    --pair bitcoin --direction taker-sells-foreign \
++    --pair bitcoin --direction "$cli_direction" \
+     --accept-btc-offer "$offer_id" --chat-socket "$chat_socket" \
+     --reservation-id "$reservation_id" --foreign-units 1000000 \
+     --unsigned-draft-file "$draft_file" \
+diff --git a/scripts/run-m3-actor-local-poc.sh b/scripts/run-m3-actor-local-poc.sh
+index 6881c64..6b297da 100755
+--- a/scripts/run-m3-actor-local-poc.sh
++++ b/scripts/run-m3-actor-local-poc.sh
+@@ -31,6 +31,38 @@ if [[ "$schedule" != "sequential" && "$schedule" != "overlap" ]]; then
+   echo "M3_ACTOR_POC_SCHEDULE must be sequential or overlap" >&2
+   exit 2
+ fi
++# Optional direction selection: a space- or comma-separated subset of
++# {taker_sells_foreign,taker_sells_lez}. Unset keeps the historical defaults
++# (single forward direction under M5 application mode, both directions
++# otherwise), so every certified invocation stays byte-identical.
++direction_selection="${M3_ACTOR_POC_DIRECTIONS:-}"
++direction_selection="${direction_selection//,/ }"
++if [[ -n "$direction_selection" ]]; then
++  shopt -s extglob
++  read -r -a selected_direction_tokens <<<"$direction_selection"
++  if [[ "${#selected_direction_tokens[@]}" -eq 0 ||
++        $(printf '%s\n' "${selected_direction_tokens[@]}" | sort -u | wc -l) -ne "${#selected_direction_tokens[@]}" ]]; then
++    echo "M3_ACTOR_POC_DIRECTIONS must list each supported direction at most once" >&2
++    exit 2
++  fi
++  for selected_direction in "${selected_direction_tokens[@]}"; do
++    if [[ "$selected_direction" != "taker_sells_foreign" &&
++          "$selected_direction" != "taker_sells_lez" ]]; then
++      echo "M3_ACTOR_POC_DIRECTIONS tokens must be taker_sells_foreign or taker_sells_lez" >&2
++      exit 2
++    fi
++  done
++  if [[ "$m7_btc_accepted_concurrency" == 1 &&
++        "${selected_direction_tokens[*]}" != "taker_sells_foreign taker_sells_lez" ]]; then
++    echo 'M7_BTC_ACCEPTED_CONCURRENCY=1 requires M3_ACTOR_POC_DIRECTIONS to be both fixed directions' >&2
++    exit 2
++  fi
++  if [[ "$m7_btc_accepted_concurrency" != 1 && "${#selected_direction_tokens[@]}" -ne 1 ]]; then
++    echo 'an explicit M3_ACTOR_POC_DIRECTIONS selection currently requires exactly one direction' >&2
++    exit 2
++  fi
++  direction_selection="${selected_direction_tokens[*]}"
++fi
+ run_id="${RUN_ID:-m3local-$(date -u +%Y%m%d%H%M%S)-$$}"
+ if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]{7,47}$ ]]; then
+   echo "RUN_ID must be 8..48 lowercase letters, numbers, underscores, or hyphens" >&2
+@@ -221,7 +253,11 @@ readonly expected_lez_guest_sha256 expected_lez_program_id
+ readonly expected_lez_deployer_sha256 expected_lez_deployment_profile
+ readonly lez_token_program_id="c5d50f88bfe7cb14b421673e9441aade7571e522eef035cc24d80b2e53c69a7c"
+ readonly lez_ata_program_id="95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397aa05acd51500f8"
+-if [[ "$m5_btc_application_mode" == 1 && "$m7_btc_accepted_concurrency" != 1 ]]; then
++if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
++  readonly -a directions=(taker_sells_foreign taker_sells_lez)
++elif [[ -n "$direction_selection" ]]; then
++  readonly -a directions=($direction_selection)
++elif [[ "$m5_btc_application_mode" == 1 ]]; then
+   readonly -a directions=(taker_sells_foreign)
+ else
+   readonly -a directions=(taker_sells_foreign taker_sells_lez)
+@@ -253,6 +289,7 @@ emit_contract() {
+     --arg asset_mode "$asset_mode" \
+     --arg m5_btc_application_mode "$m5_btc_application_mode" \
+     --arg m7_btc_accepted_concurrency "$m7_btc_accepted_concurrency" \
++    --arg selected_directions "${directions[*]}" \
+     --arg deployment_profile "$expected_lez_deployment_profile" \
+     --arg token_program_id "$lez_token_program_id" \
+     --arg ata_program_id "$lez_ata_program_id" \
+@@ -283,11 +320,7 @@ emit_contract() {
+           deployment_profile: $deployment_profile
+         }
+       },
+-      directions:
+-        (if $m5_btc_application_mode == "1" and
+-            $m7_btc_accepted_concurrency != "1" then
+-           ["taker_sells_foreign"]
+-         else ["taker_sells_foreign", "taker_sells_lez"] end),
++      directions: ($selected_directions | split(" ")),
+       application_route:
+         (if $m7_btc_accepted_concurrency == "1" then {
+           pair:"bitcoin", directions:["taker_sells_foreign","taker_sells_lez"],
+@@ -296,7 +329,7 @@ emit_contract() {
+           real_maker_cli:true, real_taker_cli:true,
+           schema_6_role_provisioning:true, actor_worker_count:2
+         } elif $m5_btc_application_mode == "1" then {
+-          pair:"bitcoin", direction:"taker_sells_foreign",
++          pair:"bitcoin", direction:($selected_directions | split(" ") | .[0]),
+           delivery_before_stage_two:true, authenticated_swap_id:true,
+           real_maker_cli:true, real_taker_cli:true,
+           schema_6_role_provisioning:true
+@@ -639,7 +672,8 @@ expected_phase_timings_json() {
+   [[ "$schedule" == "sequential" || "$schedule" == "overlap" ]] || return 1
+   [[ "$asset_mode" == "native" || "$asset_mode" == "custom_token" ]] || return 1
+   jq -cn --arg schedule "$schedule" --arg asset_mode "$asset_mode" \
+-    --arg m5_btc_application_mode "$m5_btc_application_mode" '
++    --arg m5_btc_application_mode "$m5_btc_application_mode" \
++    --arg selected_directions "${directions[*]}" '
+     [
+       {phase_id:"contract_validation",direction:null},
+       {phase_id:"prebuild",direction:null},
+@@ -654,34 +688,14 @@ expected_phase_timings_json() {
+     + (if $schedule == "overlap" then
+         [{phase_id:"directions_overlap",direction:null}]
+       else
+-        ([
+-          {phase_id:"direction_taker_sells_foreign_reserve_funding",
+-            direction:"taker_sells_foreign"},
+-          {phase_id:"direction_taker_sells_foreign_stage_two",
+-            direction:"taker_sells_foreign"},
+-          {phase_id:"direction_taker_sells_foreign_actor_flow",
+-            direction:"taker_sells_foreign"},
+-          {phase_id:"direction_taker_sells_foreign_terminal_replay",
+-            direction:"taker_sells_foreign"}
+-        ]
+-        + (if $asset_mode == "custom_token" then
+-            [{phase_id:"direction_taker_sells_foreign_terminal_balances",
+-              direction:"taker_sells_foreign"}]
+-          else [] end)
+-        + (if $m5_btc_application_mode == "1" then [] else [
+-          {phase_id:"direction_taker_sells_lez_reserve_funding",
+-            direction:"taker_sells_lez"},
+-          {phase_id:"direction_taker_sells_lez_stage_two",
+-            direction:"taker_sells_lez"},
+-          {phase_id:"direction_taker_sells_lez_actor_flow",
+-            direction:"taker_sells_lez"},
+-          {phase_id:"direction_taker_sells_lez_terminal_replay",
+-            direction:"taker_sells_lez"}
+-        ]
+-        + (if $asset_mode == "custom_token" then
+-            [{phase_id:"direction_taker_sells_lez_terminal_balances",
+-              direction:"taker_sells_lez"}]
+-          else [] end) end))
++        (($selected_directions | split(" ")) | map(
++          {phase_id:("direction_" + . + "_reserve_funding"), direction:.},
++          {phase_id:("direction_" + . + "_stage_two"), direction:.},
++          {phase_id:("direction_" + . + "_actor_flow"), direction:.},
++          {phase_id:("direction_" + . + "_terminal_replay"), direction:.}
++          + (if $asset_mode == "custom_token" then
++              {phase_id:("direction_" + . + "_terminal_balances")}
++            else {} end)))
+       end)
+     + [{phase_id:"effect_validation",direction:null}]
+   '
+@@ -1257,15 +1271,14 @@ actor_direction_phase_timings_hash_stable() {
+   local expected="$1" direction child_path effects_path
+   local expected_child_sha expected_effects_sha child_sha effects_sha
+   jq -e --arg m5_btc_application_mode "$m5_btc_application_mode" \
+-    --arg m7_btc_accepted_concurrency "$m7_btc_accepted_concurrency" '
+-    (keys | sort) ==
+-      (if $m5_btc_application_mode == "1" and
+-          $m7_btc_accepted_concurrency != "1" then ["taker_sells_foreign"]
+-       else (["taker_sells_foreign","taker_sells_lez"] | sort) end)
+-    and .taker_sells_foreign.direction == "taker_sells_foreign"
+-    and (if $m5_btc_application_mode == "1" and
+-            $m7_btc_accepted_concurrency != "1" then has("taker_sells_lez") | not
+-         else .taker_sells_lez.direction == "taker_sells_lez" end)
++    --arg m7_btc_accepted_concurrency "$m7_btc_accepted_concurrency" \
++    --arg selected_directions "${directions[*]}" '
++    (keys | sort) == (($selected_directions | split(" ")) | sort)
++    and (if ($selected_directions | split(" ") | index("taker_sells_foreign")) != null then
++           .taker_sells_foreign.direction == "taker_sells_foreign" end)
++    and (if ($selected_directions | split(" ") | index("taker_sells_lez")) != null then
++           .taker_sells_lez.direction == "taker_sells_lez"
++         else (has("taker_sells_lez") | not) end)
+     and ([.[] |
+       (.evidence_sha256 | type) == "string"
+       and (.evidence_sha256 | test("^[0-9a-f]{64}$"))
+@@ -2920,8 +2933,10 @@ prepare_m5_btc_delivery_plan() {
+     [[ "${planned_directions[*]}" == "taker_sells_foreign taker_sells_lez" ]] ||
+       fail "M7 BTC planning requires both fixed directions"
+   else
+-    [[ "${planned_directions[*]}" == "taker_sells_foreign" ]] ||
+-      fail "M5 BTC planning is restricted to taker_sells_foreign"
++    [[ "${#planned_directions[@]}" == 1 &&
++       ( "${planned_directions[0]}" == "taker_sells_foreign" ||
++         "${planned_directions[0]}" == "taker_sells_lez" ) ]] ||
++      fail "M5 BTC planning requires exactly one supported direction"
+   fi
+   [[ ! -e "$application_root" && ! -L "$application_root" ]] ||
+     fail "M5 BTC application root already exists"

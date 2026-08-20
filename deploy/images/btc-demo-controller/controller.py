@@ -34,10 +34,7 @@ DATABASE_PATH = SOCKET_PATH.with_name("market.sqlite3")
 DOCKER_SOCKET = os.environ.get("DOCKER_HOST_SOCKET", "/var/run/docker.sock")
 DOCKER_API = os.environ.get("DOCKER_API_VERSION", "/v1.41")
 RUNNER_NAME = os.environ.get("LEZ_M3_RUNNER_CONTAINER", "lez-runner-arm")
-RUNNER_REPO = os.environ.get(
-    "LEZ_M3_RUNNER_REPO_IN_CONTAINER",
-    "/Users/mandrigin/Desktop/las-logos/runner-work/repo",
-)
+RUNNER_REPO = os.environ["LEZ_M3_RUNNER_REPO_IN_CONTAINER"]
 EVIDENCE_ROOT = pathlib.Path(os.environ.get("LEZ_M3_EVIDENCE_ROOT", "/runner-repo"))
 EVIDENCE_OUTPUT = pathlib.Path(os.environ.get(
     "LEZ_M3_BTC_EVIDENCE_FILE", "/run/evidence/m3-btc-ui-evidence.json"))

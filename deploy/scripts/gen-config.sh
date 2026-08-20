@@ -151,6 +151,11 @@ fi
   echo "LEZ_M3_RUNNER_REPO must select the provisioned M3 runner checkout" >&2
   exit 1
 }
+runner_repo_in_container="${LEZ_M3_RUNNER_REPO_IN_CONTAINER:-$runner_repo}"
+[[ "$runner_repo_in_container" == /* ]] || {
+  echo "LEZ_M3_RUNNER_REPO_IN_CONTAINER must be an absolute path" >&2
+  exit 1
+}
 printf '%s\n' \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_GENESIS_TIME_EPOCH=$chain_start_epoch" \
@@ -159,7 +164,7 @@ printf '%s\n' \
   "BTC_RPC_USER=lezrpc" \
   "BTC_RPC_PASSWORD=$btc_rpc_password" \
   "LEZ_M3_RUNNER_REPO=$runner_repo" \
-  "LEZ_M3_RUNNER_REPO_IN_CONTAINER=$runner_repo" \
+  "LEZ_M3_RUNNER_REPO_IN_CONTAINER=$runner_repo_in_container" \
   "LEZ_M3_RUNNER_CONTAINER=${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"

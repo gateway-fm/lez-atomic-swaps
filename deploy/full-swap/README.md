@@ -19,17 +19,28 @@ end-to-end and then surfaced in the Basecamp UI.
 ## How to reproduce
 
 Everything runs inside a native arm64 runner container against the host's
-docker socket:
+Docker socket. The runner-work root is mounted at the same absolute path on
+both sides because nested Docker bind mounts are resolved by the host daemon.
+From a workspace containing `submission/`, `runner-work/`, and provisioned
+`provision/data/` directories:
 
 ```sh
-docker build -t lez-runner-arm:latest full-swap/runner-arm.Dockerfile   # see file for context path
+workspace_root="$(pwd -P)"
+runner_work_root="$workspace_root/runner-work"
+docker build -t lez-runner-arm:latest \
+  -f submission/deploy/full-swap/runner-arm.Dockerfile submission/deploy
 docker run -d --name lez-runner-arm --network host \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v <this-repo-checkout>:/repo \
+  -v "$runner_work_root:$runner_work_root" \
+  -v "$workspace_root/provision/data:/provision" \
   lez-runner-arm:latest sleep infinity
-# provision pinned prerequisites (LEZ v0.2 source at /tmp paths, arm64
-# rapidsnark libs, native r0vm from the risc0 v3.0.5 tag), then:
-docker exec lez-runner-arm bash full-swap/run-full-swap.sh
+# After provisioning the pinned LEZ source, arm64 rapidsnark libraries, and
+# risc0 v3.0.5 r0vm in those roots:
+docker cp submission/deploy/full-swap/run-full-swap.sh \
+  lez-runner-arm:/tmp/lez-run-full-swap.sh
+docker exec \
+  -e LEZ_M3_RUNNER_REPO_IN_CONTAINER="$runner_work_root/repo" \
+  lez-runner-arm bash /tmp/lez-run-full-swap.sh
 ```
 
 `run-full-swap.sh` builds the escrow artifact through the repository's own
@@ -38,7 +49,7 @@ docker exec lez-runner-arm bash full-swap/run-full-swap.sh
 
 ## The local patch series
 
-`patches/` contains the 16 commits applied on top of `main` (5c384a5) that
+`patches/` contains the 34 commits applied on top of `main` (`5c384a5`) that
 make the pinned verification lane work on an Apple-Silicon host:
 
 1. **arm64 pins** (0001–0007): native rebuild hashes for the LEZ services,
@@ -46,11 +57,20 @@ make the pinned verification lane work on an Apple-Silicon host:
    from the same signed SHA256SUMS / Guix attestation set); a
    `LEZ_NATIVE_TOOLS` lane with source-built `cargo-risczero` (upstream ships
    no aarch64-linux release assets) and an aarch64 circuits release.
-2. **host quirks** (0008–0016): per-run `/tmp` gpg homedir (virtiofs cannot
+2. **host quirks** (0008–0016): per-run `/tmp` GPG home (virtiofs cannot
    host gpg-agent locks), container creation through compose so published
    ports use `mode: host` (this engine's docker-proxy ports are unreachable
    from `--network host` processes), and an exec-wait for the 344 MB
    mount-backed binaries before the `/proc/<pid>/exe` drift check.
+3. **prepared ZEC UI corridor** (0017–0023): deterministic fixtures, isolated
+   Taker authority, and offer-TTL handling for the optional prepared-service
+   exercise.
+4. **long-standing-chain attach mode** (0024–0026): injectable chain run IDs,
+   persistent wallet identities, idempotent bootstrap reuse, cumulative
+   opening balances, and shared-chain Bitcoin confirmation handling.
+5. **bidirectional application runs** (0027–0034): direction selection,
+   direction-aware funding sources, replay assertions, and evidence maps for
+   both bounded LEZ/BTC economic routes.
 
 Guest ELF/ImageID digests and all on-chain assertions remain exactly as
 upstream pinned them.

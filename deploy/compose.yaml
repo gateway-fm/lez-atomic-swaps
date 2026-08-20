@@ -385,7 +385,7 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       LEZ_BTC_DEMO_SOCKET: /run/lez-btc-demo/controller.sock
       LEZ_M3_RUNNER_CONTAINER: ${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}
-      LEZ_M3_RUNNER_REPO_IN_CONTAINER: ${LEZ_M3_RUNNER_REPO_IN_CONTAINER:-/Users/mandrigin/Desktop/las-logos/runner-work/repo}
+      LEZ_M3_RUNNER_REPO_IN_CONTAINER: ${LEZ_M3_RUNNER_REPO_IN_CONTAINER:?run scripts/gen-config.sh first}
       LEZ_M3_EVIDENCE_ROOT: /runner-repo
       LEZ_M3_BTC_EVIDENCE_FILE: /run/evidence/m3-btc-ui-evidence.json
     volumes:

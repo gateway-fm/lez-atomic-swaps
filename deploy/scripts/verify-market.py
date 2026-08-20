@@ -3,8 +3,8 @@
 
 Runs INSIDE the btc-demo-controller container (the RPC socket is owner-only).
 Exercises validation, idempotent replay, wallet ownership, offer lifecycle,
-role gating and queueing without starting any swap runs, then leaves the
-market exactly as it found it.
+role gating and queueing without starting any swap runs. Its uniquely named
+test offer is withdrawn, while the controller retains the normal audit row.
 
 Usage: docker exec -i lez-btc-demo-controller python3 - < verify-market.py
 """
@@ -156,14 +156,14 @@ if completed:
     check("completed swaps carry their five chain effects",
           len(finished.get("effects", [])) == 5,
           f"{len(finished.get('effects', []))} effects")
-expect_error("maker cannot perform a taker action", "btc_swap_action_v1",
+expect_error("unowned swap action fails without exposing role details", "btc_swap_action_v1",
              {**MAKER, "request_id": request_id("maker", "swap-action"),
               "ui_swap_id": "swap-0000000000000000", "action": "lock_btc"},
-             "unavailable for this role")
-expect_error("unknown action rejected", "btc_swap_action_v1",
+             "does not own this swap action")
+expect_error("unknown action on an unowned swap fails closed", "btc_swap_action_v1",
              {**TAKER, "request_id": request_id("taker", "swap-action"),
               "ui_swap_id": "swap-0000000000000000", "action": "drain_wallet"},
-             "unavailable for this role")
+             "does not own this swap action")
 expect_error("malformed swap id rejected", "btc_swap_action_v1",
              {**TAKER, "request_id": request_id("taker", "swap-action"),
               "ui_swap_id": "swap-nope", "action": "lock_btc"},

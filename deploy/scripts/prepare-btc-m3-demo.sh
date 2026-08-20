@@ -13,7 +13,8 @@ fi
 
 mode="${1:---certified}"
 runner_name="${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}"
-runner_repo="${LEZ_M3_RUNNER_REPO:-/Users/mandrigin/Desktop/las-logos/runner-work/repo}"
+runner_repo="${LEZ_M3_RUNNER_REPO:-}"
+runner_repo_in_container="${LEZ_M3_RUNNER_REPO_IN_CONTAINER:-}"
 output="$DEPLOY_ROOT/runtime/m3-btc-ui-evidence.json"
 
 mkdir -p runtime
@@ -28,13 +29,22 @@ case "$mode" in
     ;;
   --rerun)
     [[ $# == 1 ]] || { echo "usage: $0 --rerun" >&2; exit 64; }
+    [[ -n "$runner_repo" && -d "$runner_repo" ]] || {
+      echo "LEZ_M3_RUNNER_REPO must select the host runner checkout" >&2
+      exit 1
+    }
+    [[ -n "$runner_repo_in_container" ]] || {
+      echo "LEZ_M3_RUNNER_REPO_IN_CONTAINER must select the runner checkout in $runner_name" >&2
+      exit 1
+    }
     docker inspect "$runner_name" >/dev/null 2>&1 || {
       echo "local ARM runner is unavailable: $runner_name" >&2
       exit 1
     }
     echo "starting a fresh real LEZ/BTC run (normally about five minutes)…"
     docker cp full-swap/run-full-swap.sh "$runner_name:/tmp/lez-run-full-btc-ui.sh"
-    docker exec "$runner_name" bash /tmp/lez-run-full-btc-ui.sh
+    docker exec -e LEZ_M3_RUNNER_REPO_IN_CONTAINER="$runner_repo_in_container" \
+      "$runner_name" bash /tmp/lez-run-full-btc-ui.sh
     latest="$(find "$runner_repo/.e2e" -mindepth 1 -maxdepth 1 -type d -name 'm5arm-*' -print \
       | sort | tail -1)"
     [[ -n "$latest" ]] || { echo "fresh BTC run evidence was not found" >&2; exit 1; }

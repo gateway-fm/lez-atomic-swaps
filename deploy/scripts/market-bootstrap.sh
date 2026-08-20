@@ -10,8 +10,8 @@ set -euo pipefail
 export LC_ALL=C
 umask 077
 
-readonly MARKET_ROOT="${MARKET_ROOT:-/Users/mandrigin/Desktop/las-logos/runner-work/market}"
-readonly REPO_ROOT="${REPO_ROOT:-/Users/mandrigin/Desktop/las-logos/runner-work/repo}"
+readonly REPO_ROOT="${REPO_ROOT:?REPO_ROOT must select the runner checkout}"
+readonly MARKET_ROOT="${MARKET_ROOT:-$(dirname "$REPO_ROOT")/market}"
 readonly SEQUENCER_URL="${SEQUENCER_URL:-http://127.0.0.1:3040}"
 readonly INDEXER_URL="${INDEXER_URL:-http://127.0.0.1:8779}"
 readonly CHANNEL_ID="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"

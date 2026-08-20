@@ -6,7 +6,13 @@ set -euxo pipefail
 export RUN_ID="${LEZ_M3_RUN_ID:-m5arm-$(date -u +%m%d%H%M%S)}"
 exec > "/tmp/${RUN_ID}.log" 2>&1
 export DOCKER_BUILDKIT=1
-export LEZ_V02_SOURCE_DIR=/Users/mandrigin/Desktop/las-logos/runner-work/lez-source
+repo_root="${LEZ_INTERACTIVE_REPO_ROOT:-${LEZ_M3_RUNNER_REPO_IN_CONTAINER:-}}"
+[[ -n "$repo_root" && -d "$repo_root" ]] || {
+  echo "LEZ_M3_RUNNER_REPO_IN_CONTAINER must select the runner checkout" >&2
+  exit 64
+}
+runner_work_root="$(cd "$(dirname "$repo_root")" && pwd -P)"
+export LEZ_V02_SOURCE_DIR="${LEZ_V02_SOURCE_DIR:-$runner_work_root/lez-source}"
 export LEZ_V02_SERVICES_DIR=/tmp/lez-v02-services-a58fbce2-20260713/release
 export LEZ_V02_R0VM=/provision/tools-arm/bin/r0vm
 export LEZ_V02_ARTIFACT_TARGET_DIR=/tmp/lez-m3-artifact-arm
@@ -24,9 +30,9 @@ if [[ -n "${LEZ_INTERACTIVE_DIRECTION:-}" ]]; then
 fi
 
 # Attach mode: swaps execute on the long-standing settlement chains with the
-# persistent wallet identities — the mainnet-shaped path.
+# persistent wallet identities — the long-standing-chain path.
 if [[ "${LEZ_M3_ATTACH:-0}" == 1 ]]; then
-  market_root=/Users/mandrigin/Desktop/las-logos/runner-work/market
+  market_root="${MARKET_ROOT:-$runner_work_root/market}"
   export LEZ_ATTACH_BTC_RUN="${LEZ_ATTACH_BTC_RUN:-market-btc-0001}"
   export LEZ_ATTACH_LEZ_RUN="${LEZ_ATTACH_LEZ_RUN:-market-lez-0001}"
   export LEZ_ATTACH_MAKER_IDENTITY_DIR="${market_root}/identities/${LEZ_INTERACTIVE_MAKER_WALLET:?attach requires the maker wallet}"
@@ -34,7 +40,7 @@ if [[ "${LEZ_M3_ATTACH:-0}" == 1 ]]; then
   export LEZ_ATTACH_BOOTSTRAP_MANIFEST="${market_root}/market-bootstrap.env"
 fi
 
-cd /Users/mandrigin/Desktop/las-logos/runner-work/repo
+cd "$repo_root"
 if [[ "${LEZ_M3_INTERACTIVE:-0}" == 1 ]]; then
   /tmp/lez-interactive-m3-outer.sh
 else

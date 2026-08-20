@@ -1,0 +1,22 @@
+From aebe722fbae8165d0fe6e4486f6e8975ddfef39b Mon Sep 17 00:00:00 2001
+From: local demo runner <runner@local>
+Date: Wed, 19 Aug 2026 21:09:29 +0200
+Subject: [PATCH 31/34] local: restore the forward stage-two digest argument in
+ run evidence
+
+---
+ scripts/run-m3-actor-local-poc.sh | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/scripts/run-m3-actor-local-poc.sh b/scripts/run-m3-actor-local-poc.sh
+index 1d772d2..d53f672 100755
+--- a/scripts/run-m3-actor-local-poc.sh
++++ b/scripts/run-m3-actor-local-poc.sh
+@@ -4416,6 +4416,7 @@ write_run_evidence() {
+     --argjson official_wallet_cache_summary "$official_wallet_cache_summary" \
+     --argjson phase_timing_summary "$phase_timing_summary" \
+     --argjson actor_direction_timing_summary "$actor_direction_timing_summary" \
++    --arg foreign_stage2_sha "$foreign_stage2_sha" \
+     --arg lez_stage2_sha "$lez_stage2_sha" \
+     --arg selected_directions_first "${directions[0]}" \
+     --argjson foreign_terminal_balance "$foreign_terminal_balance_summary" --argjson lez_terminal_balance "$lez_terminal_balance_summary" '

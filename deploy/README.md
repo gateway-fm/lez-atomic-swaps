@@ -23,9 +23,9 @@ its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`
 | LEZ explorer + M3 evidence | http://127.0.0.1:3003/#/evidence |
 | **Basecamp UI (VNC)** | **`vnc://127.0.0.1:5901`** (password `lezswap`; override with `VNC_PASSWORD`) |
 | Maker daemon | `docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health` |
-| UI verify | `docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker\|taker]` |
-| Switch UI role | `BASECAMP_ROLE=taker docker compose up -d basecamp-ui` |
-| Logs | `docker compose logs -f <service>` |
+| UI verify | `docker compose --env-file runtime/runtime.env run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker\|taker]` |
+| Switch UI role | `BASECAMP_ROLE=taker docker compose --env-file runtime/runtime.env up -d basecamp-ui` |
+| Logs | `docker compose --env-file runtime/runtime.env logs -f <service>` |
 
 For the M3 demo, run `prepare-btc-m3-demo.sh` and open the VNC URL. The two
 Basecamp microapps are the control surface:
@@ -78,8 +78,15 @@ Both carry `org.logos-co.atomic-swaps.{run,scope,component}` labels
 program deployment and the four wallet vault claims — is idempotent:
 
 ```sh
-docker exec -e BTC_RPC_PASSWORD="$(grep '^rpcpassword=' runtime/btc/bitcoin.conf | cut -d= -f2)" \
-  lez-runner-arm bash /Users/mandrigin/Desktop/las-logos/runner-work/market/market-bootstrap.sh
+set -a
+source runtime/runtime.env
+set +a
+docker cp scripts/market-bootstrap.sh lez-runner-arm:/tmp/lez-market-bootstrap.sh
+docker exec \
+  -e REPO_ROOT="$LEZ_M3_RUNNER_REPO_IN_CONTAINER" \
+  -e MARKET_ROOT="$(dirname "$LEZ_M3_RUNNER_REPO_IN_CONTAINER")/market" \
+  -e BTC_RPC_PASSWORD="$BTC_RPC_PASSWORD" \
+  lez-runner-arm bash /tmp/lez-market-bootstrap.sh
 ```
 
 Each run attaches with `LEZ_M3_ATTACH=1` plus `LEZ_ATTACH_BTC_RUN`,
@@ -169,8 +176,13 @@ images/                    one dir per image (Dockerfile + payloads)
 assets/lez-source/         pinned v0.2.0 config templates (bedrock, sequencer, indexer)
 assets/taker-service.json  taker service startup config (no delivery sources)
 ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspector
-runtime/                   generated state (gitignored; wiped by --wipe)
+  runtime/                   generated state (gitignored; wiped by --wipe)
 ```
+
+The external `runner-work` root must be mounted into `lez-runner-arm` at the
+same absolute path recorded in `runtime/runtime.env`. The runner talks to the
+host Docker daemon, so nested bind sources such as `runner-work/lez-source`
+must resolve identically on the host and inside that container.
 
 ## Demo boundary
 

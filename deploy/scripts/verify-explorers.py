@@ -66,7 +66,11 @@ def load_runs(runs_dir: pathlib.Path) -> list[dict]:
             evidence = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        if evidence.get("kind") == "m3_btc_ui_evidence" and evidence.get("effects"):
+        # Match the explorer's public-evidence admission rule. Ad-hoc attach
+        # fixtures use noncanonical names and are intentionally not published.
+        canonical_run = re.fullmatch(r"m5arm-[0-9]{10}", str(evidence.get("run_id", "")))
+        if (canonical_run and evidence.get("kind") == "m3_btc_ui_evidence"
+                and evidence.get("result") == "passed" and evidence.get("effects")):
             runs.append(evidence)
     return runs
 
@@ -75,7 +79,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--btc", default="http://127.0.0.1:3002")
     parser.add_argument("--lez", default="http://127.0.0.1:3003")
-    parser.add_argument("--runs", default="/Users/mandrigin/Desktop/las-logos/runner-work/repo/.e2e")
+    parser.add_argument("--runs", required=True)
     args = parser.parse_args()
 
     runs = load_runs(pathlib.Path(args.runs))

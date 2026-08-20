@@ -1,22 +1,25 @@
 # Runner patch series
 
-The demo stack drives the certified M3 runner from the implementation repo.
-This directory holds the complete local delta that runner carries, as an
-ordered `git format-patch` series, so this branch is self-sufficient: nothing
-the demo needs lives only on a developer's machine.
+The demo stack drives the certified M3 runner from the implementation history.
+This directory holds its complete local delta as an ordered `git format-patch`
+series: no runner change exists only in an uncommitted developer worktree. The
+exact base commit is still fetched from the implementation repository.
 
 ## Reproducing the runner
 
 ```sh
-git clone git@github.com:mandrigin/lez-atomic-swaps.git runner-work/repo
-cd runner-work/repo
-git checkout 5c384a5                       # upstream main, tag m7-functional-complete
-git am /path/to/deploy/full-swap/patches/*.patch
+workspace_root="$(pwd -P)"
+git clone https://github.com/gateway-fm/lez-atomic-swaps.git submission
+git -C submission switch m3-plus
+git clone https://github.com/mandrigin/lez-atomic-swaps.git runner-work/repo
+git -C runner-work/repo checkout 5c384a5
+git -C runner-work/repo am \
+  "$workspace_root"/submission/deploy/full-swap/patches/*.patch
 ```
 
-Applying all 26 patches to `5c384a5` reproduces tree `1e5fdfd8` exactly — the
-same tree the demo runs against. The same commits are also pushed as the
-branch `m3-attach-mode` for anyone who prefers a branch to a series.
+Applying all 34 patches to `5c384a5` reproduces tree
+`c3bc49ad802328455ef7c8843d3c7a4ee81bade9` exactly — the same tree the demo
+runs against.
 
 ## What the series contains
 
@@ -29,9 +32,11 @@ branch `m3-attach-mode` for anyone who prefers a branch to a series.
 | 0017-0021 | Deterministic ZEC corridor fixture for UI-initiated swaps |
 | 0022-0023 | UI ZEC fixture taker authority isolation and offer-TTL validity |
 | **0024-0026** | **Attach mode**: swaps run on the long-standing settlement chains — injectable chain run ids, no chain launch or teardown, funding discovered from unspent mature coinbases, persistent wallet identities, one-time bootstrap reuse, cumulative opening balances, and shared-chain tolerance in the Bitcoin lock confirmation |
+| **0027-0034** | **Bidirectional runner**: one selected LEZ/BTC direction flows through funding discovery, application replay, terminal assertions, and exported journey evidence |
 
-Patches 0024-0026 are the ones that make the demo mainnet-shaped: without them
-the runner provisions and destroys a chain pair per swap.
+Patches 0024-0026 make the demo persistent-chain-shaped: without them the
+runner provisions and destroys a chain pair per swap. This is still a local
+regtest/devnet lane, not a mainnet-readiness claim.
 
 ## Keeping it current
 
