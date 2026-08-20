@@ -1,343 +1,174 @@
-# Threat model
+<!-- Generated from threat-model.json; run:
+python3 scripts/check-threat-model.py --write
+Resolve pinned implementation references when the source tree is available:
+python3 scripts/check-threat-model.py --check --source-repo PATH -->
 
-Status: re-baselined against the m3-plus branch — 2026-08-20. The
-milestone-1 review candidate of 2026-07-11 is superseded by this revision,
-which models the architecture actually built (role actors with LEZ sidecars,
-owner services, maker-local RPC, Basecamp mini-apps, deploy tooling, and the
-runner/evidence pipeline) instead of the M1 plan. Implementation evidence
-remains milestone-gated; `Passing` claims live only in
-[the traceability matrix](../requirements-traceability.md).
+# LEZ atomic swaps threat model
 
-A same-day P0 revision completes the method: trust boundaries are drawn
-explicitly on the DFD; the public node route, taker facade, credential
-source, evidence packets, and runner are modeled as elements; TM-S-01 is
-rated Critical; and TM-S-04/05, TM-T-10/11, TM-I-06, TM-D-06, and TM-E-04
-enter the register.
+## Scope
 
-Method: Shostack's four questions. What are we building — the DFD with
-explicit trust boundaries B0–B6 plus the assets, actors, and personas below.
-What can go wrong — STRIDE applied to every element and every cross-boundary
-interaction, so coverage is systematic rather than brainstormed. What will we
-do about it — each threat carries likelihood, impact, and an explicit
-disposition with an owner and a closure condition. Did we do a good job — the
-traceability matrix, milestone gates, and the M7 review scope regenerated from
-this register's Critical/High rows close the loop; empty matrix cells are
-justified below rather than left silent.
+One global threat model for the integrated M1-M7 implementation. Milestones record where a feature entered; they do not limit threat scope. The model covers the full application, protocol, recovery, deployment, and evidence system. Public and production profiles remain in scope even when their controls are not yet verified.
 
-## Data flow diagram
+Implementation: M7 functional baseline 5c384a5151f59bef1a2f19421ef6ab2b004db3d4 plus the runnable application tree 2888e8cf818143a7dce903f343fdbe70de9e267a.
+
+Package: The m3-plus package and deployment are reviewed at a8a3d6de3c8d9b5a5e0557c2de53cd53fa2dbbe8. Its narrower submission claims do not narrow this model.
+
+Method: Shostack's four questions, with STRIDE for security, LINDDUN for privacy, and route-state analysis for atomicity.
+
+Excluded:
+- XMR-first swaps; admission must reject them.
+- Shielded Zcash swap legs.
+- Ethereum and other unimplemented pairs.
+- Automatic legal or regulatory decisions.
+
+## Routes
+
+| Route | Supported directions |
+|---|---|
+| LEZ-BTC (`lez-btc`) | taker-sells-btc, taker-sells-lez |
+| LEZ-XMR (`lez-xmr`) | taker-sells-lez |
+| LEZ-transparent-ZEC (`lez-zec`) | taker-sells-zec, taker-sells-lez |
+
+## System view
 
 ```mermaid
 flowchart LR
-    subgraph B0["B0 peer/transport: untrusted network"]
-        Peer["Untrusted maker/taker peer"]
-        Delivery["Logos Delivery + Chat boundary"]
+    subgraph B0["B0 Untrusted people, processes, and coordination"]
+        E0["Untrusted counterparty"]
+        E1["Delivery and Chat"]
+        E24["Untrusted local VNC viewer or same-UID process"]
     end
-    subgraph B1["B1 maker host: local OS user / UI-to-service / RPC loopback"]
-        Local["Unprivileged local user"]
-        RPC["Maker-local RPC facade (ADR 0007)"]
-        MiniM["Basecamp maker mini-app"]
-        OwnerSvc["Owner service boundary (ADR 0147)"]
-        Feed["Price module: local or Logos C-API"]
-        Cred["systemd credential or owner-only key file"]
+    subgraph B1["B1 Maker OS account"]
+        E2["Maker UI and CLI"]
+        E4["Maker daemon and owner service"]
+        E6["Price worker"]
+        E8["Maker state and workers"]
     end
-    subgraph B2["B2 taker host: UI-to-service"]
-        MiniT["Basecamp taker mini-app"]
-        TakerFacade["Strict role-fixed taker facade (ADR 0130/0131)"]
+    subgraph B2["B2 Taker OS account"]
+        E3["Taker UI and CLI"]
+        E5["Taker service"]
+        E9["Taker state and workers"]
     end
-    subgraph B3["B3 role process boundary"]
-        Actor["Authenticated maker/taker role actor"]
-        Sidecar["Role LEZ sidecar holding LEZ signing material"]
-        Store[("Role-local SQLite: encrypted envelopes, signing journals")]
+    subgraph B3["B3 Separate per-role protocol and signing processes"]
+        E7["Role-local coordinators and pair SDKs"]
+        E10["Maker signers and wallets"]
+        E21["Taker signers and wallets"]
+        E11["LEZ adapter and sidecars"]
+        E12["Bitcoin protocol adapter"]
+        E13["Monero protocol adapter"]
+        E14["Zcash protocol adapter"]
     end
-    subgraph B4["B4 chain/consensus"]
-        Lez["LEZ sequencer / Bedrock / indexer"]
-        Foreign["Bitcoin Core / monerod / Zebra nodes"]
-        Public["Public node route (Tatum HTTPS, optional)"]
+    subgraph B4["B4 Chain, provider, and host-time inputs"]
+        E15["LEZ escrow, sequencer, and indexer"]
+        E16["Foreign nodes and public providers"]
+        E22["Host clocks and schedulers"]
     end
-    subgraph B5["B5 build/supply chain"]
-        Supply["Dependency/builder attacker"]
-        Build["Locked, advisory/license-checked, digest-pinned build"]
+    subgraph B5["B5 Build and deployment inputs"]
+        E17["Dependencies, builders, and artifacts"]
     end
-    subgraph B6["B6 operator evidence boundary"]
-        Runner["Isolated E2E runner (ADR 0005) and evidence packets"]
-        Evidence["Canonical finalized chain evidence"]
+    subgraph B6["B6 Privileged runtime and private evidence"]
+        E18["Deployment controller"]
+        E19["Private run roots and exporter"]
+        E23["Privileged Docker daemon and external runner"]
     end
-    Peer --> Delivery
-    Delivery --> Actor
-    Local --> RPC
-    MiniM --> OwnerSvc
-    OwnerSvc --> RPC
-    RPC --> Actor
-    MiniT --> TakerFacade
-    TakerFacade --> Actor
-    Feed --> Actor
-    Cred --> Actor
-    Actor --> Store
-    Actor --> Sidecar
-    Sidecar --> Lez
-    Actor --> Foreign
-    Actor --> Public
-    Lez --> Evidence
-    Foreign --> Evidence
-    Public --> Evidence
-    Evidence --> Actor
-    Store --> Recovery["Chain-only recovery worker (B3)"]
-    Recovery --> Lez
-    Recovery --> Foreign
-    Supply --> Build
-    Build --> Actor
-    Runner --> Actor
+    subgraph B7["B7 Published evidence"]
+        E20["Public explorer, evidence, and reviewer"]
+    end
+    E0 <-->|"offers and negotiation messages"| E1
+    E1 <-->|"Maker advertisements, messages, and receipts"| E4
+    E1 <-->|"Taker proposals, messages, and receipts"| E5
+    E2 <-->|"Maker commands and status"| E4
+    E3 <-->|"Taker commands and status"| E5
+    E6 -->|"price and route health"| E4
+    E4 <-->|"Maker admissions, actions, and status"| E7
+    E5 <-->|"Taker admissions, actions, and status"| E7
+    E7 <-->|"Maker state and effect work"| E8
+    E7 <-->|"Taker state and effect work"| E9
+    E8 <-->|"Maker signing and wallet requests and results"| E10
+    E9 <-->|"Taker signing and wallet requests and results"| E21
+    E7 <-->|"LEZ plans, submissions, and observations"| E11
+    E7 <-->|"Bitcoin plans, submissions, and observations"| E12
+    E7 <-->|"Monero plans, submissions, and observations"| E13
+    E7 <-->|"Zcash plans, submissions, and observations"| E14
+    E11 <-->|"LEZ transactions, queries, and canonical facts"| E15
+    E12 <-->|"Bitcoin transactions, queries, and canonical facts"| E16
+    E13 <-->|"Monero transactions, wallet queries, and canonical facts"| E16
+    E14 <-->|"Zcash transactions, queries, and canonical facts"| E16
+    E17 -->|"controller image, scripts, and configuration"| E18
+    E23 <-->|"Maker role-actor effect control and results"| E7
+    E23 <-->|"Taker role-actor effect control and results"| E7
+    E23 -->|"logs, state, and run evidence"| E19
+    E18 -->|"candidate public evidence export"| E20
+    E22 -->|"wall time, monotonic intervals, and wakeups"| E7
+    E2 <-->|"Maker demo commands and status"| E18
+    E3 <-->|"Taker demo commands and status"| E18
+    E18 <-->|"Docker API and external-runner effect control"| E23
+    E24 <-->|"Maker VNC input and local IPC"| E2
+    E24 <-->|"Taker VNC input and local IPC"| E3
+    E18 <-->|"private run reads and evidence writes"| E19
+    E19 -->|"broad private-root explorer read (current gap)"| E20
+    E24 <-->|"Maker socket and same-UID process access"| E4
+    E24 <-->|"Taker socket and same-UID process access"| E5
+    E24 <-->|"controller socket and local process access"| E18
+    E17 -->|"runner source, binaries, patches, and configuration"| E23
 ```
 
-Boundaries B0–B6 are drawn above. B0 is the untrusted peer/transport network;
-B1 is the maker host (local OS user, mini-app to owner service to facade, RPC
-loopback); B2 is the taker host UI-to-service boundary; B3 is the role process
-boundary (actor, sidecar, store); B4 is chain/consensus, including any public
-node route; B5 is the build/supply chain; B6 separates private run roots from
-published evidence packets. Every edge that crosses a subgraph boundary
-crosses a trust boundary, and each such interaction inherits the threats of
-both endpoints.
+Boundary shorthand: B1-B3 show the production trust target, and B3 is repeated as separate Maker and Taker instances. Private-local evidence and the m3-plus demo may collapse parts of B1-B3; TM-0001 tracks that gap.
 
-## Assets and actors
+## Invariants
 
-Assets are maker/taker funds on LEZ and the foreign chain, adaptor secrets or
-HTLC preimages, Monero spend-key shares, wallet and role keys, persisted
-recovery state and signing journals, price configuration, daemon control
-authority, the secret-bearing contents of private evidence run roots, and
-counterparty/transaction privacy against metadata correlation.
+- **INV-01:** The Taker funds the first leg. The Maker funds the second leg only after the exact first lock satisfies its route-specific canonicality policy and cutoff.
+- **INV-02:** Both signatures bind the roles, route, direction, networks, assets, amounts, destinations, transactions, recovery policy, and unique swap identity before either lock.
+- **INV-03:** After the first lock, each role can finish every permitted claim or recovery path from protected local state and chain access without Delivery, Chat, or another signing round.
+- **INV-04:** A replay, restart, race, or ambiguous response cannot change an effect's meaning, execute it twice, or make two terminal branches authoritative.
+- **INV-05:** No permitted branch lets a party use a revealed claim or recovery secret on one chain and then recover the revealing leg.
+- **INV-06:** Crashes, restores, and concurrent swaps cannot erase recovery data, reuse one-time signing material, or rearm spent authority.
+- **INV-07:** Recovery order is route-specific: BTC recovers the Maker-funded leg first; ZEC claim order is LEZ reveal then ZEC claim, while no-reveal recovery is LEZ refund then ZEC refund; XMR is LEZ-first and uses Tag 14 authorization, Tag 15 claim, Tag 16 refund, and Tag 17 punishment. Tag 17 reveals no XMR share.
+- **INV-08:** Maker, Taker, signer, wallet, UI, controller, and evidence authorities are separated and receive only the permissions their role needs.
+- **INV-09:** Private run roots remain private. Published evidence is integrity-bound, reviewed, and contains neither secrets nor unnecessary cross-chain linkage.
 
-Actors are the maker operator, taker user, potentially malicious counterparty,
-chain miners/sequencers, Logos Delivery/Chat peers, local unprivileged users,
-and a supply-chain attacker.
+## Risk and release posture
 
-## Attacker personas
+Likelihood and impact use a 1–5 scale. The checker computes Low, Medium, High, or Critical. Inherent risk ignores controls; current residual risk is the owner's estimate after cited controls. References provide traceability, not independent assurance.
 
-| Persona | Capability and objective |
-|---|---|
-| Rational counterparty | Fully protocol-aware; defects exactly when a profitable violation exists (stall after witness exposure, refuse second lock, present forged confirmations to induce a premature lock) |
-| Vandal | Causes refunds/timeouts/delay for no profit; includes counterparty harassment post-reveal |
-| Cheap-hashpower reorg attacker | Testnet/low-security hashpower to reorganize observed confirmations or finality windows |
-| Compromised or faulty chain infra | LEZ sequencer/indexer equivocation, censorship, halt; fabricating consistent-but-false block/account facts (see LOGOS-004/016/017); a spoofed foreign node or public route feeding fabricated confirmations (TM-S-04) |
-| Network adversary | Controls or jams Discovery/Chat delivery; replays, reorders, or mutates coordination messages |
-| Surveillance analyst | Passively observes Delivery/Chat metadata, network timing, and public legs to link counterparties and amounts without violating protocol (TM-I-06) |
-| Local unprivileged user | Same host, different UID; probes the RPC facade, files, process dumps, or argv |
-| Supply-chain attacker | Compromises a dependency, builder image, or published artefact (TOOLCHAIN-001) |
-| Operator insider or careless operator | Legitimate access misused; or leaks a private run root, key file, or recording bundle |
+Likelihood: 1 rare, 2 unlikely, 3 plausible, 4 likely or repeatable, 5 easy or expected. Impact: 1 negligible, 2 limited, 3 material but recoverable, 4 major loss or exposure, 5 irreversible principal or system-authority loss.
 
-## Non-negotiable invariants
+Current production residual estimate: 2 Critical, 26 High, 1 Medium, and 0 Low. Every schema-v1 row blocks a value-bearing release; verified closure or removal requires a future schema revision.
 
-1. The maker never locks before the taker's foreign lock reaches pair-specific
-   confirmation policy.
-2. After the first lock, claim and refund need only persisted state and chain
-   nodes.
-3. No reachable terminal or intermediate state lets one party receive proceeds
-   while preventing the other from claiming or eventually refunding.
-4. LEZ refund becomes available before the foreign refund, with a margin that
-   covers inclusion delay, reorgs, clock drift, and operator reaction.
-5. Every swap has independent IDs, secrets, keys, transactions, deadlines, and
-   database writes.
-6. A crash may delay progress but cannot erase the data required to recover.
-7. Refund safety depends on chain state and deadlines, never on which party's
-   refund observation reaches the coordinator first.
-8. Monero recovery is triggered by the canonical LEZ refund/key-share path; no
-   component treats a Monero height as a native refund timelock.
-9. Private run roots, signing journals, and demo recordings are secrets; only
-   redacted, reviewed evidence packets are publishable (ADR 0052 discipline).
+States: open means a blocking control gap remains; working means control work is active; checking means implemented but not independently validated. Schema v1 has no closed or accepted state.
 
-## STRIDE coverage matrix
+## Threats
 
-Each DFD element is examined for every STRIDE category, and each
-cross-boundary interaction inherits the threats of both endpoints; the
-register below is complete with respect to this matrix. Empty cells are
-dismissed explicitly below, not left silent.
+The table shows production inherent → current residual risk. Exact phases, profiles, DFD targets, classifications, milestone provenance, scores, legacy IDs, and evidence references remain in the canonical JSON source.
 
-| Element (boundary) | Spoofing | Tampering | Repudiation | Info disclosure | DoS | Elevation |
-|---|---|---|---|---|---|---|
-| Peer/Delivery/Chat (B0) | TM-S-01 | TM-T-02 | — | TM-I-06 | TM-D-01 | — |
-| Maker-local RPC facade (B1) | TM-S-02 | — | TM-R-01 | TM-I-05 | TM-D-02 | TM-E-01 |
-| Mini-app/owner service (B1) | TM-S-03 | — | TM-R-01 | TM-I-05 | TM-D-02 | TM-E-01/04 |
-| Taker facade (B2) | TM-S-05 | — | TM-R-01 | — | TM-D-02 | TM-E-01 |
-| Price module (B1) | — | — | — | — | TM-D-04 | — |
-| Credential source (B1) | — | — | — | — | — | TM-E-01 |
-| Role actor (B3) | TM-S-01 | TM-T-01/03/04/09/11 | TM-R-01 | TM-I-04/05 | TM-D-06 | — |
-| LEZ sidecar (B3) | — | — | — | TM-I-01 | — | TM-E-01/03 |
-| SQLite store (B3) | — | TM-T-05/06 | TM-R-01 | TM-I-02/03 | TM-D-05 | — |
-| Chain nodes/sequencer (B4) | TM-S-04 | TM-T-03/08/10 | — | TM-I-04 | TM-D-03 | — |
-| Public node route (B4) | TM-S-04 | — | — | TM-I-04 | TM-D-03 | — |
-| Recovery worker (B3) | — | TM-T-07 | — | TM-I-03 | TM-D-03 | — |
-| Build/supply chain (B5) | — | — | — | — | — | TM-E-02 |
-| Runner/evidence pipeline (B6) | — | — | — | TM-I-03 | — | TM-E-01 |
-| Evidence packets (B6) | — | — | TM-R-01 | TM-I-03 | — | — |
-
-### Justified empties
-
-- Spoofing on price, sidecar, store, recovery worker, credential, evidence,
-  and build: these expose no forgeable remote identity; reaching them already
-  requires crossing B1/B3/B5, which is elevation (TM-E-01/02/03).
-- Tampering on facades and the public route: control commands are
-  capability-authenticated and idempotent, and tampered observations are
-  advisory, never authority (TM-S-02/03/04/05).
-- Tampering on evidence packets: derived data; alteration requires private
-  run-root access (TM-E-01) and meets the redaction checklist gate (TM-I-03).
-- Repudiation on peer, chain, and price feed: accepted messages and chain
-  effects are hash-bound into the signed transcript and journals (TM-R-01);
-  chain state is public and consensus-timestamped; the feed issues no
-  authoritative action.
-- Info disclosure on the taker facade: it carries terms, capability tokens,
-  and redacted fingerprints only (TM-I-05 discipline).
-- DoS on sidecar, credential, build, runner, and evidence: halts fail closed
-  into the safety partition (invariants 2 and 6) or are operational liveness
-  accepted under TM-D-03 policy; a missing or wrong credential is a startup
-  failure, not a fund event.
-- Elevation on peer, actor, and store: the peer is untrusted by construction,
-  the actor already holds full role authority, and the store has no execution
-  surface — file access is host compromise (TM-E-01/02).
-
-## Threat register
-
-Likelihood and impact are coarse (Low/Medium/High; Critical = direct loss of
-funds or keys). Disposition names the owning gate: an executable milestone
-gate, an upstream-tracked blocker, an explicit acceptance, or policy/docs work.
-
-| ID | Threat | L | I | Mitigation/evidence gate | Disposition |
-|---|---|---|---|---|---|
-| TM-T-01 | Maker locks on zero/insufficient confirmations | M | Critical | State transition rejects maker lock; adapters prove canonical confirmations | Gate: R1 adapter evidence M2–M4 |
-| TM-T-02 | Discovery/Chat message tampering substitutes terms or observations | H | Critical | Signed transcript binds every later message and on-chain observation by hash; transport cannot alter it | Core passing; role E2E M5 |
-| TM-T-03 | Rollback/reorg after observation | M | High | Regression/removal before maker lock revokes permission and permits explicit replacement; after maker lock the exact txid stays pinned, claims suspend, refunds remain; pair finality tests | Gate: reorg matrices M2–M4 |
-| TM-T-04 | Deadline off-by-one or mixed clocks | M | Critical | Typed chain/basis positions reject cross-domain comparison; conservative bounds validate margin; LEZ `[from,to)` and pair boundaries are executable gates | Gate: R6 boundary tests |
-| TM-T-05 | Missing/corrupt local state | M | Critical | SQLite FULL durability, encrypted secret handling, backups, restart/process-kill matrix | Gate: R4 kill-at-every-transition matrix M5 |
-| TM-T-06 | Replay/duplicate chain event | M | High | Idempotency keys include pair, chain ID, txid, output index, swap ID | Core passing; chain replay tests M2–M4 |
-| TM-T-07 | Concurrent swap cross-talk | M | High | Typed swap IDs, per-swap aggregates, DB primary keys, concurrent model/E2E tests; overlap run `m3overlap-20260717a` is initial evidence; arbitrary-N and same-direction LEZ nonce scheduling remain open | Gate: R5 M5 |
-| TM-T-08 | Malicious/unsupported LEZ asset account | M | High | Metadata PDA, native vault PDA, ATA derivation, program owner, token definition, exact balance delta, fixed destinations are transcript-bound and guest-validated | Gate: F7 M2–M4 |
-| TM-T-09 | Claim/refund race at LEZ boundary | L | Critical | Claim validity ends at the exclusive refund timestamp; refund entitlement starts inclusively; exact before/at/after standalone-sequencer tests | Gate: M2–M4 |
-| TM-T-10 | LEZ escrow program authority compromise: the pinned guest program is upgraded or replaced to divert escrowed funds | L | Critical | Signed terms pin the canonical ProgramId/ELF and every escrow effect revalidates it before submission; upgrade-authority custody, quorum, and ceremony must be documented | Open: authority-custody documentation + M7 review; identity pinning gated by F5/F7 |
-| TM-T-11 | Fee starvation inside the refund window: a fee storm strands a pre-signed BTC CSV / ZEC CLTV refund that cannot self-RBF | M | Critical | Refund constructions preserve CPFP/RBF anchors and signed fee floors/ceilings; fee policy never moves the refund boundary (parameter profiles); fault matrix injects fee storms at the margin limit | Gate: R6 fee-storm matrices M2–M3 (BTC) and M2–M4 (ZEC) |
-| TM-S-01 | Counterparty impersonation via forged Delivery advertisement or session takeover | H | Critical | Role keys and the signed transcript bind identity before any lock; advertisement acceptance requires a possession proof of the advertised role key; reject unproven identities; rated Critical because a successful impersonation directly diverts taker funds | Open: possession-proof requirement + adversarial role E2E (M5); traceability F1 |
-| TM-S-02 | Local RPC takeover | M | High | Current loopback adapter refuses remote bind and uses Bearer capability; production gate adds Unix peer permissions, credential file, least-privilege systemd unit, and audit log | Gate: hardening M5 (ADR 0007) |
-| TM-S-03 | Mini-app or local client spoofing the owner service / facade | M | High | ADR 0147 isolates role packages over owner services; ADR 0130/0131 fix the taker facade; services require per-role capability tokens on the loopback boundary | Open: capability enforcement + Playwright adversarial cases (M6); U3/U5/U6 |
-| TM-S-04 | Spoofed foreign node or public route (incl. the Tatum HTTPS lane) feeds fabricated confirmations or balances, defeating the TM-T-01/T-03 depth assumptions | M | Critical | Authority routes are self-hosted authenticated nodes (loopback, cookie where supported); public-route observations are advisory only and never authorize a lock; every observation binds chain/network ID, exact block/tx identity, and depth; second-source agreement for depth decisions is required | Open: route-authentication matrix + second-source policy (M5); depth-regression gates M2–M4 |
-| TM-S-05 | Malicious maker displays false confirmations or balances to induce a premature taker lock | M | Critical | Taker lock authority consumes only the taker's own canonical observation over its own route; maker-supplied observations are transcript claims, never authority | Open: adversarial lying-maker taker E2E (M5); traceability F4/U4 |
-| TM-R-01 | Operator or counterparty repudiates issued actions; disputes cannot be reconstructed | M | High | Signed negotiated transcript plus append-before-submit signing journals (ADR 0033) already persist order; gap is a hash-chained, tamper-evident audit log over control actions and chain effects, plus a documented dispute-evidence export format | Open: audit chain + export (M5 design, M7 review) |
-| TM-I-01 | Key material exposed through upstream `Debug`/`Display`, cloning, and non-zeroized copies | M | Critical | Never format upstream `PrivateKey`; role-owned sidecar wrapper and capability boundary; prohibit secret-bearing diagnostics; retain leak tests | Upstream: LOGOS-008 (compensating control live; exit = upstream redaction/zeroize or HSM signer) |
-| TM-I-02 | Plaintext wallet storage and argv key import | L | High | Fixture discipline only: `umask 077`, `0700` role homes, `0600` files, throwaway keys, argv boundary labelled in evidence, state deleted after collection | Upstream: LOGOS-018 (no public/long-lived key uses this path) |
-| TM-I-03 | Private evidence run roots, journals, or demo bundles leak keys, signed transactions, or capabilities | M | High | Run roots stay owner-private and are never published; published packets are redacted secret-safe checkpoints; ADR 0052 binds recordings to actual node evidence; operator runbook states the redaction standard | Policy + gate: redaction checklist enforced at packet publication (M3+ now, M7 audit) |
-| TM-I-04 | Swap linkability and address reuse across swaps or pairs | H | Medium | Fresh destination addresses/keys per swap per invariant 5; BTC cooperative claims are key-path (script invisible) while refund paths are inherently visible; ZEC transparent amounts/scripts/linkage are public by design and documented; XMR is private by construction | Policy/docs: linkability posture stated per pair (now); fresh-address enforcement test (M5) |
-| TM-I-05 | Secrets exposed via core dumps, crash reports, swap space, or over-shared diagnostics | L | Critical | Disable/limit core dumps for daemon and sidecars; secrets in `secrecy`/`Zeroizing` containers; logs carry envelope IDs and redacted fingerprints only | Open: process hardening + dump policy in systemd unit (M5) |
-| TM-I-06 | Coordination metadata surveillance: Delivery/Chat timing and participant linkage, IP exposure, cross-leg timing correlation | H | Medium | Metadata posture documented per component (what Delivery/Chat and each public leg reveal); fresh addresses/keys per swap (invariant 5); timing budgets stated; network-level protection is operator guidance, not a protocol claim | Policy/docs: posture statement now; correlation review M7 |
-| TM-D-01 | Delivery/Chat outage or malicious withholding | H | Medium | Persist negotiated transcript before lock; post-lock API has no transport dependency (invariant 2); retries/buffering and user-visible degraded state | Partial (R2); outage matrix M5 |
-| TM-D-02 | Taker-initiation flood or resource exhaustion of maker (disk, connections, CPU) | H | Medium | Admission control and rate limits on the taker facade and RPC; per-swap quotas; bounded mempool/scan windows already cap observation cost | Open: admission-control design + load tests (M5) |
-| TM-D-03 | LEZ sequencer censorship, halt, or equivocation; foreign node outage | M | High | Safety partition: liveness-only threat — claims suspend, refunds remain per deadlines, no double-transition occurs; canonicality policy halts new swaps and operator-alerts on profile violation; authoritative-node trust compensations LOGOS-004/007/014/016/017 bound observation risk | Accepted for liveness (bounded halt policy in parameter profiles); R3 cross-pair isolation M5 |
-| TM-D-04 | Price-feed compromise | M | Medium | Bounds/staleness policy, operator limits, explicit source health; never weakens atomicity (economically harmful but valid swap only) | Gate: F8 fake/stale feed tests M5 |
-| TM-D-05 | Backup without decryption key, or key without database | L | High | Operator runbook backs up encrypted DB and master credential as two separately access-controlled artefacts and performs a restore drill before enabling non-demo value | Gate: M5 restore drill |
-| TM-D-06 | Alert-path failure: monitoring/notification outage during the margin window leaves an operator-unaware refund deadline | M | High | Watchtower-style self-monitoring with a fallback alert channel distinct from the primary path; deadlines persist ahead of time so recovery needs no live operator decision; escalation drill exercises alert-path failure inside the budget | Open: fallback alert channel + escalation drill (M5); budgets already gated by R6 |
-| TM-E-01 | Privilege escalation between actor, sidecar, mini-app services, or local user | M | High | Sidecar holds signing material behind a capability boundary with no unnecessary egress; least-privilege systemd units; ADR 0005 per-run isolated Compose projects/networks/ephemeral ports; ADR 0147 isolates Basecamp role packages over owner services | Open: hardened units + seccomp profile (M5); isolation live in E2E |
-| TM-E-02 | Dependency or builder compromise (incl. CVE-laden builder image, LGPL archive obligations) | L | Critical | Lockfile, cargo-deny advisories/licenses/sources, minimal features, reviewed updates, digest-pinned builder with visible CI scans reproducing exact ELF/ProgramId | Upstream: TOOLCHAIN-001, LOGOS-002/009/010/012 (register + gates live) |
-| TM-E-03 | LEZ sequencer binds `0.0.0.0` with no auth in compatibility lane | L | Medium | Run only inside a unique isolated Compose network with no host node port; loopback-only sidecar mapping | Upstream: LOGOS-006 (compatibility lane only, not production) |
-| TM-E-04 | Mini-app distribution or Basecamp platform compromise substitutes a hostile UI or exfiltrates capability tokens | L | High | Consumer-locked builds (ADR 0146) pin exact artefacts; role packages isolated over owner services (ADR 0147); capability tokens are per-role, short-lived, and loopback-bound so a stolen token is not durable authority | Open: distribution pinning review + Playwright adversarial cases (M6); U5/U6 |
-
-## Bitcoin-specific threats
-
-- Adaptor pre-signature forgery or failed witness extraction: use a reviewed
-  construction and DLC vectors; prove aEUF-CMA, witness extractability, and
-  pre-signature adaptability assumptions.
-- Refund fragility: ADR 0009 selects a consensus-enforced Taproot script-path CSV
-  refund. Validate exact boundary, key backup, current-fee construction, RBF/CPFP,
-  and reorg behavior against Bitcoin Core.
-- Signature byte mutation: extraction depends on the accepted BIP-340 scalar.
-  The pinned sequencer transaction-equality test is the byte-preservation gate;
-  the claim authority is isolated per swap so its message and nonce are frozen.
-- UTXO replacement/fee starvation: bind exact outpoint/script/value and maintain a
-  fee-bump path that cannot alter adaptor commitments.
-
-## Monero-specific threats
-
-- Invalid cross-curve DLEQ or subgroup handling: use COMIT/h4sh3d construction and
-  published vectors; reject non-canonical points/scalars.
-- Spend-key-share loss or partial transcript loss: persist encrypted shares and
-  every signed recovery artefact before advancing.
-- View/spend key confusion and wallet scan lag: separate typed keys and require
-  canonical wallet/node observations before transitions.
-- Counterparty disappears after witness exposure: recovery instructions must be
-  derivable from persisted state without Chat.
-- The maker-funded Monero output has no script/timelock. If the maker does not
-  claim LEZ, the taker refunds LEZ and the resulting recovery-share path lets
-  the maker spend XMR. The coordinator must not expose maker recovery before
-  canonical LEZ refund evidence and must retain it after restart.
-- Unsupported XMR-first funding: the pinned COMIT construction requires the
-  scriptable leg first, so core term validation and CLI/daemon reject XMR-first.
-
-## Zcash-specific threats
-
-- Transparent-pool privacy confusion: UI and docs state that amounts, scripts,
-  addresses, and linkage are public (TM-I-04); shield-after-swap is guidance,
-  not a property of the atomic swap.
-- BIP-199 script branch or CLTV error: canonical script vectors, minimal script,
-  exact transaction-version/branch-ID tests, and third-party review.
-- `nExpiryHeight` or reorg interaction: expiry is distinct from refund CLTV;
-  construction and fee policy must leave enough blocks for both claim and refund.
-- Node transition risk: use Zebra, construct locally with canonical Zcash crates,
-  and pin network-upgrade behavior.
-
-## Secret storage and operator recovery decision
-
-Secret material is persisted only as versioned per-swap envelopes encrypted
-with RustCrypto `XChaCha20Poly1305`; keys are derived per swap and purpose with
-HKDF-SHA256 from a random 256-bit master credential. Nonces come from the OS CSPRNG
-and are never reused for a key. The implementation uses the maintained crates,
-published algorithms, `secrecy`, and `zeroize`; it does not implement primitives.
-Associated data binds schema version, swap ID, pair, direction, and terms hash.
-
-The master credential is supplied through `systemd-creds` where available or an
-owner-only file outside the database directory. It is never accepted through a
-CLI argument or environment variable. Startup fails closed for encrypted swaps
-when the credential is missing/wrong; read-only public history may remain
-available. Rotation decrypts and re-encrypts each envelope transactionally,
-leaving the old credential valid until the new database commit is durable.
-
-Backups contain the SQLite database/WAL checkpoint and the credential as
-separate artefacts. The operator flow requires a restore-and-recovery dry run;
-logs and diagnostics contain only envelope IDs and redacted fingerprints.
-
-## Upstream trust compensations
-
-The register references but does not duplicate
-[the upstream blocker register](../upstream-production-blockers.md). Its
-authoritative-node and observation-trust items (LOGOS-004, LOGOS-007,
-LOGOS-014, LOGOS-016, LOGOS-017) are the standing compensations for the
-compromised/faulty-LEZ-infra persona: every observation is fail-closed,
-bounded, and never treated as independent consensus proof until finality is
-cross-checked. M7 production readiness must close or explicitly accept each
-open item; that review's scope is derived from the Critical/High rows of this
-register plus the upstream table.
-
-## Parameter and implementation gates
-
-The quantified `public-testnet-v1` depths, direction-specific horizons, margin
-budgets, and XMR event-gated recovery are in
-[the parameter profile](parameter-profiles.md). They are testnet acceptance
-defaults, not audited mainnet settings.
-
-The remaining work is evidence, not an unstated design choice:
-
-- M2 compiles a minimal SPEL-generated program against the pinned LEZ commit,
-  validates the metadata/native-vault/ATA model, and measures compute units;
-- M2–M4 execute exact boundary, reorg, fee-stress, evidence-extraction, and
-  chain-only recovery matrices per pair;
-- M5 implements encrypted envelopes, credential rotation, backup restore,
-  process-kill durability, local-RPC hardening, admission control, audit-chain
-  and dump hardening, and concurrent isolation; and
-- M7 reviews the escrow, scripts, cryptographic protocols, parameter assumptions,
-  storage, daemon boundary, and this register's open dispositions, with
-  critical/high remediation required.
-
-## Maintenance
-
-- Every new ADR records its threat-model delta or states that none applies; the
-  architecture decision log enforces this at review.
-- The register is re-validated at each milestone gate and whenever
-  `system-architecture.md`, the upstream blocker register, or the deployment
-  map changes materially.
-- New dispositions follow the register vocabulary: gate, open, upstream,
-  accepted, or policy — with an owner and a closure condition.
-- The M7 third-party review scope (traceability S12/S13) is generated from the
-  Critical/High rows of this register, not renegotiated ad hoc.
+| ID | Area | Risk | What can go wrong | Response / owner |
+|---|---|---|---|---|
+| TM-0001 | Local access and control | Critical → High | A local UI, service, sidecar, compatibility process, or test controller acts with another role's authority. | Role-fixed owner services, Unix-socket custody, actor locks, and narrow signer routes limit authority.<br>Next: The m3-plus and private-local lanes still combine roles or UIDs, share sockets and prep state, handle a Maker key through Taker init, expose default VNC, and grant controller Docker authority; keep them zero-value only.<br>application-security / open |
+| TM-0002 | Local access and control | High → High | Keys or recovery secrets leak from files, memory, logs, arguments, dumps, backups, or diagnostics. | Some role secrets use encrypted envelopes; owner-only paths, redacted logs, and zeroizing wrappers reduce exposure.<br>Next: The BTC MuSig2 nonce journal and raw wallet or Delivery keys remain plaintext. Rollback fencing, rotation, restore drills, upstream formatting, dump policy, and long-lived custody also need production proof.<br>key-custody / checking |
+| TM-0003 | Local access and control | High → High | The local control plane is flooded or accepts an unsafe price, pair, route, or exposure setting. | Schema bounds, stale-price rejection, route health, admission limits, and per-route exposure caps fail closed.<br>Next: Public load limits, aggregate value caps, and price-failure drills need calibration.<br>maker-service / checking |
+| TM-0004 | Trade setup | Critical → High | A fake peer or changed, replayed, or cross-swapped offer, agreement, or receipt is accepted. | Role signatures and unique session IDs bind the complete agreement before any effect; later inputs are derived from those bytes.<br>Next: Adversarial identity possession, cross-route substitution, and stale-offer tests remain part of independent review.<br>negotiation / checking |
+| TM-0005 | Trade setup | Critical → High | A participant's claim about a lock, balance, confirmation, or route health is treated as chain authority. | Only a role's own configured chain route can authorize a transition; peer and UI observations are display data.<br>Next: Public provider authority and independent confirmation are handled by TM-0020 and TM-0021.<br>coordinator / checking |
+| TM-0006 | Trade setup | Critical → High | A peer or Delivery and Chat withholds progress, disappears, or buys a free option with the first funder's locked capital. | Post-lock progress uses durable state and chains rather than Delivery or Chat; offers expire and exposure can be capped.<br>Next: Per-peer quotas, value limits, reputation or deposits, and XMR punishment economics need an explicit production policy.<br>product-risk / working |
+| TM-0007 | Trade setup | Critical → High | Delivery, Chat, timing, IP, and offer metadata link the parties before or during a swap. | Fresh session identities and minimal coordination data reduce reuse; the protocol makes no network-anonymity promise.<br>Next: An observer-specific privacy statement and network-layer guidance remain required.<br>privacy / open |
+| TM-0008 | Durable swap control | High → High | Recovery data, its encryption key, or a usable backup is unavailable after funds lock. | Recovery material is persisted before its dependent phase; supervisors restart from role-local journals.<br>Next: Host-loss restore, credential rotation, and recovery drills need production evidence.<br>persistence / checking |
+| TM-0009 | Durable swap control | Critical → High | Old, changed, cloned, or shared state changes who may act, crosses swaps, or reuses a nonce or one-shot authority. | Swap IDs, role-local stores, actor locks, process generations, leases, and one-use journal records fence concurrent authority.<br>Next: A valid old encrypted snapshot still passes authentication; durable monotonic rollback fencing remains open.<br>persistence / working |
+| TM-0010 | Durable swap control | Critical → High | An uncertain or replayed effect, or a competing terminal branch, executes twice or with a second meaning. | Exact transaction bytes and effect identity are journaled before submission; unknown outcomes reconcile that same effect before retry.<br>Next: Public-network ambiguity, crash, and branch-race matrices remain release gates.<br>coordinator / checking |
+| TM-0011 | Durable swap control | Critical → High | A watcher, signer, wallet, credential, worker, or alert path fails after funds lock. | Supervisors, sealed handoffs, durable deadlines, and branch-specific workers resume without a new counterparty message.<br>Next: Independent watchtower, credential-loss, full-host outage, and alert-channel drills remain open.<br>recovery-operations / checking |
+| TM-0012 | Chain protocols and custody | Critical → High | The Maker locks before the exact Taker-funded first leg is safe, or after the signed second-lock cutoff. | The second-lock effect requires an exact, fresh, route-bound first-lock observation and fails closed at the cutoff.<br>Next: Public finality and cutoff calibration remain open.<br>protocol-core / checking |
+| TM-0013 | Chain protocols and custody | Critical → High | A deadline, host or chain clock jump, clock conversion, confirmation rule, or route-specific recovery order is wrong. | Signed typed clock domains and pair-direction schedules reject mixed domains; boundary tests cover each before, at, and after case.<br>Next: Mainnet profiles, measured latency, host-clock jump or suspend tests, adversarial LEZ timestamp skew or stall tests, and a fail-closed halt policy remain open.<br>protocol-core / working |
+| TM-0014 | Chain protocols and custody | Critical → High | Fees, pinning, expiry, or transaction policy strand a valid claim or refund inside its safety window. | BTC constructs the CSV refund when needed; ZEC rebuilds expired transactions without moving CLTV; XMR keeps exact Tag 15 and Tag 16 LEZ windows. Signed fee bounds limit fee erosion but cannot guarantee inclusion.<br>Next: Public-network package policy, fee bumping, pinning, congestion, and XMR Tag 16 inclusion-margin tests remain open.<br>chain-adapters / working |
+| TM-0015 | Chain protocols and custody | High → High | A wrong LEZ program, IDL, account, asset, custody path, or upgrade moves funds or changes branch meaning. | Signed terms pin ProgramId, ELF or ImageID, account order, owners, assets, amounts, and fixed destinations; adapters revalidate them.<br>Next: Production upgrade-authority custody, independent program review, and public deployment identity remain open.<br>lez-program / open |
+| TM-0016 | Chain protocols and custody | Critical → High | A BTC MuSig2, adaptor, Taproot, nonce, extraction, sighash, tweak, parity, or CSV mistake breaks recovery or exposes a key. | Agreement-derived sessions bind exact keys, messages, outpoints, Taproot commitments, nonce use, and extracted scalar checks.<br>Next: The exact two-party aggregate adaptor construction and dependency require independent cryptographic review and malicious-key vectors.<br>btc-cryptography / open |
+| TM-0017 | Chain protocols and custody | High → High | A ZEC hash, preimage, Script branch, CLTV, expiry, network-upgrade, or transaction-construction mistake breaks claim or refund. | Canonical BIP-199 construction binds the shared SHA-256 hash, transparent output, branch, CLTV, expiry policy, and network upgrade.<br>Next: Independent Script review and public fee, expiry, and upgrade-boundary evidence remain open.<br>zec-protocol / checking |
+| TM-0018 | Chain protocols and custody | Critical → High | An XMR DLEQ, share, Tag 14-17 branch, direction, reconstruction, or wallet mistake gives the wrong party funds or strands them. | Core and CLI reject XMR-first. Domain-bound cross-curve proofs, sealed journals, and losing-branch exclusion bind each route. Tag 15 reveals s_a to Taker; Tag 16 reveals s_b to Maker.<br>Next: The exact DLEQ and adaptor composition, all malformed inputs, and public-network branch races require independent review.<br>xmr-cryptography / open |
+| TM-0019 | Chain protocols and custody | Critical → Critical | A malicious Taker commits an invalid Stage-B claim partial or withholds Tag 14 after Maker funds XMR, disabling Tag 15; if Taker also abandons independent Tag 16, XMR remains stuck. | Before XMR funding, Stage B commits the hidden claim partial; after confirmed funding, Tag 14 must publish those bytes. Independent Tag 16 can refund LEZ and reveal s_b to Maker; Tag 17 only awards LEZ punishment.<br>Next: The commitment proves neither partial validity nor later publication. Add validity evidence for garbage; deliberate nonpublication still requires Tag 16 cooperation or explicit acceptance of the stuck-XMR penalty model.<br>xmr-protocol / open |
+| TM-0020 | Nodes, consensus, and time | High → High | An owned node, node credential, or selected network reports a false chain, equivocates, or moves canonical LEZ time across a branch boundary. | Routes bind network and genesis identity, authenticate node access, and bind each observation to exact blocks, transactions, outputs, values, depth, and monotonic LEZ time.<br>Next: LEZ finality, account facts, and sequencer timestamp behavior remain authoritative-node assumptions without independent proofs or a calibrated skew-and-stall halt policy.<br>node-security / open |
+| TM-0021 | Nodes, consensus, and time | Critical → High | A public provider, DNS or TLS path, or provider account gives a false, stale, censored, or split view. | Public routes are explicit and bounded; authoritative decisions require an authenticated source and halt on source disagreement.<br>Next: The authority policy, source independence, account compromise, TLS and DNS trust, and provider privacy need exact enforcement and tests.<br>node-security / open |
+| TM-0022 | Nodes, consensus, and time | Critical → High | The first-lock evidence reorgs before the Maker funds, but stale authority still permits the second lock. | Fresh canonicality checks revoke first-lock authority on removal and require the exact replacement to satisfy policy again.<br>Next: BTC, XMR, ZEC, and LEZ public-node split-view matrices remain release gates.<br>chain-adapters / checking |
+| TM-0023 | Nodes, consensus, and time | High → High | After both legs lock but before a secret reveal, a reorg removes or changes one funded leg. | The coordinator pins exact funded transactions, suspends claims on regression, and retains the route-specific recovery branch.<br>Next: Deep post-funding reorgs and permanent non-reappearance remain conditional safety assumptions.<br>protocol-core / working |
+| TM-0024 | Nodes, consensus, and time | Critical → Critical | A claim or recovery secret becomes visible from a transaction that is censored, rejected, or reorged before it is irreversible. | Honest actors wait for route-specific canonical evidence and retain the exact follower action before using a reveal. On XMR, Tag 15 reveals s_a to Taker and Tag 16 reveals s_b to Maker.<br>Next: Honest waiting does not restrain a malicious peer. Require a reviewed bounded-censorship/finality argument or stronger release design, plus leaked-but-nonfinal reveal tests.<br>protocol-security / open |
+| TM-0025 | Nodes, consensus, and time | High → Medium | A node, wallet, indexer, sequencer, or chain is unavailable before either party locks. | Route health fails closed and removes unhealthy offers before any lock.<br>Next: Public outage thresholds and independent failover policy need calibration.<br>operations / checking |
+| TM-0026 | Nodes, consensus, and time | Critical → High | A node, wallet, indexer, sequencer, miner, or chain censors or fails after funds lock. | Durable recovery workers keep exact actions ready, stop new offers, and alert when observation or inclusion margin is unsafe.<br>Next: This is not liveness-only after locking. Public censorship, failover, fee, and safety-window drills remain release gates.<br>recovery-operations / working |
+| TM-0027 | Nodes, consensus, and time | Critical → High | Chains, providers, counterparties, or published facts link both swap legs, amounts, addresses, and users. | Fresh keys and wallets reduce reuse; self-hosted nodes reduce provider visibility; the UI states route-specific public facts.<br>Next: BTC remains graph-linkable, ZEC is deterministically linked by its shared preimage, and XMR privacy still depends on counterparty, wallet, RPC, network, and evidence metadata.<br>privacy / open |
+| TM-0028 | Build, deployment, and evidence | Critical → High | A dependency, builder, image, binary, update, UI package, runner, or deployment controller is malicious or substituted. | Locked inputs, exact program identities, consumer pins, clean builds, vulnerability checks, and immutable review commits constrain artifacts.<br>Next: The m3-plus stack still contains mutable inputs and a Docker-socket controller; SBOM, signed provenance, independent builds, and S12/S13 review remain open.<br>release-security / open |
+| TM-0029 | Build, deployment, and evidence | High → High | Action history or published evidence is forged, replaced, deleted, or exposes secrets and unnecessary cross-chain linkage. | Private roots are separated from reviewed exports; packets bind public effects to a source commit and reject known secret fields.<br>Next: The m3-plus evidence file is writable and unsigned, and the explorer can read the private run tree. Export-only mounts, owner-only publication, signatures, and privacy review remain open.<br>evidence-security / open |

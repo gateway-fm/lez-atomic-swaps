@@ -26,3 +26,5 @@ if [[ "$actual_count" != "${#required_ids[@]}" ]]; then
   echo "matrix has ${actual_count} requirement rows; expected ${#required_ids[@]}" >&2
   exit 1
 fi
+
+python3 scripts/check-threat-model.py --check

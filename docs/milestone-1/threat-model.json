@@ -1,0 +1,1092 @@
+{
+  "schema_version": 1,
+  "system": {
+    "name": "LEZ atomic swaps",
+    "scope": "One global threat model for the integrated M1-M7 implementation. Milestones record where a feature entered; they do not limit threat scope. The model covers the full application, protocol, recovery, deployment, and evidence system. Public and production profiles remain in scope even when their controls are not yet verified.",
+    "implementation": "M7 functional baseline 5c384a5151f59bef1a2f19421ef6ab2b004db3d4 plus the runnable application tree 2888e8cf818143a7dce903f343fdbe70de9e267a.",
+    "package": "The m3-plus package and deployment are reviewed at a8a3d6de3c8d9b5a5e0557c2de53cd53fa2dbbe8. Its narrower submission claims do not narrow this model.",
+    "method": "Shostack's four questions, with STRIDE for security, LINDDUN for privacy, and route-state analysis for atomicity.",
+    "exclusions": [
+      "XMR-first swaps; admission must reject them.",
+      "Shielded Zcash swap legs.",
+      "Ethereum and other unimplemented pairs.",
+      "Automatic legal or regulatory decisions."
+    ]
+  },
+  "legacy_ids": [
+    "TM-T-01",
+    "TM-T-02",
+    "TM-T-03",
+    "TM-T-04",
+    "TM-T-05",
+    "TM-T-06",
+    "TM-T-07",
+    "TM-T-08",
+    "TM-T-09",
+    "TM-T-10",
+    "TM-T-11",
+    "TM-S-01",
+    "TM-S-02",
+    "TM-S-03",
+    "TM-S-04",
+    "TM-S-05",
+    "TM-R-01",
+    "TM-I-01",
+    "TM-I-02",
+    "TM-I-03",
+    "TM-I-04",
+    "TM-I-05",
+    "TM-I-06",
+    "TM-D-01",
+    "TM-D-02",
+    "TM-D-03",
+    "TM-D-04",
+    "TM-D-05",
+    "TM-D-06",
+    "TM-E-01",
+    "TM-E-02",
+    "TM-E-03",
+    "TM-E-04"
+  ],
+  "profiles": [
+    {
+      "id": "integrated-local",
+      "name": "Integrated local",
+      "meaning": "The full application on isolated private nodes and the m3-plus product stack, using test assets only."
+    },
+    {
+      "id": "public-testnet",
+      "name": "Public testnet",
+      "meaning": "Configured public or testnet nodes and providers, with no production-value claim."
+    },
+    {
+      "id": "production",
+      "name": "Production",
+      "meaning": "A real-value deployment. Parameters, external review, and several controls remain open."
+    }
+  ],
+  "routes": [
+    {
+      "id": "lez-btc",
+      "name": "LEZ-BTC",
+      "directions": [
+        "taker-sells-btc",
+        "taker-sells-lez"
+      ]
+    },
+    {
+      "id": "lez-xmr",
+      "name": "LEZ-XMR",
+      "directions": [
+        "taker-sells-lez"
+      ]
+    },
+    {
+      "id": "lez-zec",
+      "name": "LEZ-transparent-ZEC",
+      "directions": [
+        "taker-sells-zec",
+        "taker-sells-lez"
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "id": "setup",
+      "name": "Setup and discovery"
+    },
+    {
+      "id": "agreement",
+      "name": "Agreement and admission"
+    },
+    {
+      "id": "first-lock",
+      "name": "Taker-funded first lock"
+    },
+    {
+      "id": "second-lock",
+      "name": "Maker-funded second lock"
+    },
+    {
+      "id": "claim-reveal",
+      "name": "Claim and secret reveal"
+    },
+    {
+      "id": "recovery",
+      "name": "Refund, recovery, or punishment"
+    },
+    {
+      "id": "terminal",
+      "name": "Terminal replay, cleanup, and evidence"
+    }
+  ],
+  "views": [
+    {
+      "id": "local-control",
+      "name": "Local access and control",
+      "includes": [
+        "Maker and Taker UIs and CLIs",
+        "owner services and daemon",
+        "price worker and local credentials"
+      ],
+      "stride_exceptions": {},
+      "privacy_relevant": true
+    },
+    {
+      "id": "trade-setup",
+      "name": "Trade setup",
+      "includes": [
+        "counterparties",
+        "Delivery and Chat",
+        "offers, receipts, and signed agreements"
+      ],
+      "stride_exceptions": {
+        "stride.elevation-of-privilege": "Network input receives authority only through the local admission boundary covered by TM-0001."
+      },
+      "privacy_relevant": true
+    },
+    {
+      "id": "durable-state",
+      "name": "Durable swap control",
+      "includes": [
+        "coordinator and pair SDKs",
+        "role stores, journals, leases, and supervisors",
+        "one-shot workers and recovery state"
+      ],
+      "stride_exceptions": {},
+      "privacy_relevant": true
+    },
+    {
+      "id": "chain-protocol",
+      "name": "Chain protocols and custody",
+      "includes": [
+        "LEZ escrow and sidecars",
+        "Bitcoin, Monero, and Zcash constructions",
+        "signers, wallets, and recovery branches"
+      ],
+      "stride_exceptions": {
+        "stride.repudiation": "Action attribution and dispute evidence are covered at the evidence boundary by TM-0029."
+      },
+      "privacy_relevant": true
+    },
+    {
+      "id": "chain-observation",
+      "name": "Nodes, consensus, and time",
+      "includes": [
+        "LEZ sequencer, Bedrock, and indexer",
+        "Bitcoin Core, monerod, wallet RPCs, and Zebra",
+        "public providers, canonicality, clocks, and fees"
+      ],
+      "stride_exceptions": {},
+      "privacy_relevant": true
+    },
+    {
+      "id": "build-evidence",
+      "name": "Build, deployment, and evidence",
+      "includes": [
+        "dependencies, builders, and artifacts",
+        "containers, controller, and host integration",
+        "private runs and published evidence"
+      ],
+      "stride_exceptions": {},
+      "privacy_relevant": true
+    }
+  ],
+  "boundaries": [
+    { "id": "B0", "name": "B0 Untrusted people, processes, and coordination" },
+    { "id": "B1", "name": "B1 Maker OS account" },
+    { "id": "B2", "name": "B2 Taker OS account" },
+    { "id": "B3", "name": "B3 Separate per-role protocol and signing processes" },
+    { "id": "B4", "name": "B4 Chain, provider, and host-time inputs" },
+    { "id": "B5", "name": "B5 Build and deployment inputs" },
+    { "id": "B6", "name": "B6 Privileged runtime and private evidence" },
+    { "id": "B7", "name": "B7 Published evidence" }
+  ],
+  "elements": [
+    { "id": "E01", "name": "Untrusted counterparty", "view": "trade-setup", "boundary": "B0" },
+    { "id": "E02", "name": "Delivery and Chat", "view": "trade-setup", "boundary": "B0" },
+    { "id": "E03", "name": "Maker UI and CLI", "view": "local-control", "boundary": "B1" },
+    { "id": "E04", "name": "Taker UI and CLI", "view": "local-control", "boundary": "B2" },
+    { "id": "E05", "name": "Maker daemon and owner service", "view": "local-control", "boundary": "B1" },
+    { "id": "E06", "name": "Taker service", "view": "local-control", "boundary": "B2" },
+    { "id": "E07", "name": "Price worker", "view": "local-control", "boundary": "B1" },
+    { "id": "E08", "name": "Role-local coordinators and pair SDKs", "view": "durable-state", "boundary": "B3" },
+    { "id": "E09", "name": "Maker state and workers", "view": "durable-state", "boundary": "B1" },
+    { "id": "E10", "name": "Taker state and workers", "view": "durable-state", "boundary": "B2" },
+    { "id": "E11", "name": "Maker signers and wallets", "view": "chain-protocol", "boundary": "B3" },
+    { "id": "E22", "name": "Taker signers and wallets", "view": "chain-protocol", "boundary": "B3" },
+    { "id": "E12", "name": "LEZ adapter and sidecars", "view": "chain-protocol", "boundary": "B3" },
+    { "id": "E13", "name": "Bitcoin protocol adapter", "view": "chain-protocol", "boundary": "B3" },
+    { "id": "E14", "name": "Monero protocol adapter", "view": "chain-protocol", "boundary": "B3" },
+    { "id": "E15", "name": "Zcash protocol adapter", "view": "chain-protocol", "boundary": "B3" },
+    { "id": "E16", "name": "LEZ escrow, sequencer, and indexer", "view": "chain-observation", "boundary": "B4" },
+    { "id": "E17", "name": "Foreign nodes and public providers", "view": "chain-observation", "boundary": "B4" },
+    { "id": "E18", "name": "Dependencies, builders, and artifacts", "view": "build-evidence", "boundary": "B5" },
+    { "id": "E19", "name": "Deployment controller", "view": "build-evidence", "boundary": "B6" },
+    { "id": "E20", "name": "Private run roots and exporter", "view": "build-evidence", "boundary": "B6" },
+    { "id": "E21", "name": "Public explorer, evidence, and reviewer", "view": "build-evidence", "boundary": "B7" },
+    { "id": "E23", "name": "Host clocks and schedulers", "view": "chain-observation", "boundary": "B4" },
+    { "id": "E24", "name": "Privileged Docker daemon and external runner", "view": "build-evidence", "boundary": "B6" },
+    { "id": "E25", "name": "Untrusted local VNC viewer or same-UID process", "view": "local-control", "boundary": "B0" }
+  ],
+  "flows": [
+    { "id": "F01", "from": "E01", "to": "E02", "data": "offers and negotiation messages", "two_way": true },
+    { "id": "F02", "from": "E02", "to": "E05", "data": "Maker advertisements, messages, and receipts", "two_way": true },
+    { "id": "F03", "from": "E02", "to": "E06", "data": "Taker proposals, messages, and receipts", "two_way": true },
+    { "id": "F04", "from": "E03", "to": "E05", "data": "Maker commands and status", "two_way": true },
+    { "id": "F05", "from": "E04", "to": "E06", "data": "Taker commands and status", "two_way": true },
+    { "id": "F06", "from": "E07", "to": "E05", "data": "price and route health", "two_way": false },
+    { "id": "F07", "from": "E05", "to": "E08", "data": "Maker admissions, actions, and status", "two_way": true },
+    { "id": "F08", "from": "E06", "to": "E08", "data": "Taker admissions, actions, and status", "two_way": true },
+    { "id": "F09", "from": "E08", "to": "E09", "data": "Maker state and effect work", "two_way": true },
+    { "id": "F10", "from": "E08", "to": "E10", "data": "Taker state and effect work", "two_way": true },
+    { "id": "F11", "from": "E09", "to": "E11", "data": "Maker signing and wallet requests and results", "two_way": true },
+    { "id": "F12", "from": "E10", "to": "E22", "data": "Taker signing and wallet requests and results", "two_way": true },
+    { "id": "F13", "from": "E08", "to": "E12", "data": "LEZ plans, submissions, and observations", "two_way": true },
+    { "id": "F14", "from": "E08", "to": "E13", "data": "Bitcoin plans, submissions, and observations", "two_way": true },
+    { "id": "F15", "from": "E08", "to": "E14", "data": "Monero plans, submissions, and observations", "two_way": true },
+    { "id": "F16", "from": "E08", "to": "E15", "data": "Zcash plans, submissions, and observations", "two_way": true },
+    { "id": "F17", "from": "E12", "to": "E16", "data": "LEZ transactions, queries, and canonical facts", "two_way": true },
+    { "id": "F18", "from": "E13", "to": "E17", "data": "Bitcoin transactions, queries, and canonical facts", "two_way": true },
+    { "id": "F19", "from": "E14", "to": "E17", "data": "Monero transactions, wallet queries, and canonical facts", "two_way": true },
+    { "id": "F20", "from": "E15", "to": "E17", "data": "Zcash transactions, queries, and canonical facts", "two_way": true },
+    { "id": "F23", "from": "E18", "to": "E19", "data": "controller image, scripts, and configuration", "two_way": false },
+    { "id": "F24", "from": "E24", "to": "E08", "data": "Maker role-actor effect control and results", "two_way": true },
+    { "id": "F25", "from": "E24", "to": "E08", "data": "Taker role-actor effect control and results", "two_way": true },
+    { "id": "F26", "from": "E24", "to": "E20", "data": "logs, state, and run evidence", "two_way": false },
+    { "id": "F27", "from": "E19", "to": "E21", "data": "candidate public evidence export", "two_way": false },
+    { "id": "F28", "from": "E23", "to": "E08", "data": "wall time, monotonic intervals, and wakeups", "two_way": false },
+    { "id": "F29", "from": "E03", "to": "E19", "data": "Maker demo commands and status", "two_way": true },
+    { "id": "F30", "from": "E04", "to": "E19", "data": "Taker demo commands and status", "two_way": true },
+    { "id": "F31", "from": "E19", "to": "E24", "data": "Docker API and external-runner effect control", "two_way": true },
+    { "id": "F32", "from": "E25", "to": "E03", "data": "Maker VNC input and local IPC", "two_way": true },
+    { "id": "F33", "from": "E25", "to": "E04", "data": "Taker VNC input and local IPC", "two_way": true },
+    { "id": "F34", "from": "E19", "to": "E20", "data": "private run reads and evidence writes", "two_way": true },
+    { "id": "F35", "from": "E20", "to": "E21", "data": "broad private-root explorer read (current gap)", "two_way": false },
+    { "id": "F36", "from": "E25", "to": "E05", "data": "Maker socket and same-UID process access", "two_way": true },
+    { "id": "F37", "from": "E25", "to": "E06", "data": "Taker socket and same-UID process access", "two_way": true },
+    { "id": "F38", "from": "E25", "to": "E19", "data": "controller socket and local process access", "two_way": true },
+    { "id": "F39", "from": "E18", "to": "E24", "data": "runner source, binaries, patches, and configuration", "two_way": false }
+  ],
+  "assets": [
+    { "id": "AS-FUNDS", "name": "Maker and Taker principal" },
+    { "id": "AS-KEYS", "name": "Wallet keys, nonces, shares, and preimages" },
+    { "id": "AS-STATE", "name": "Durable state, journals, and recovery material" },
+    { "id": "AS-AUTH", "name": "Role, signer, and effect authority" },
+    { "id": "AS-TERMS", "name": "Signed trade terms and route policy" },
+    { "id": "AS-CHAIN", "name": "Canonical chain evidence and time" },
+    { "id": "AS-PRIVACY", "name": "Participant, amount, address, and timing privacy" },
+    { "id": "AS-ARTIFACT", "name": "Software, program, configuration, and evidence identity" }
+  ],
+  "invariants": [
+    {
+      "id": "INV-01",
+      "text": "The Taker funds the first leg. The Maker funds the second leg only after the exact first lock satisfies its route-specific canonicality policy and cutoff.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["docs/architecture/0008-bidirectional-role-ordering.md"]
+    },
+    {
+      "id": "INV-02",
+      "text": "Both signatures bind the roles, route, direction, networks, assets, amounts, destinations, transactions, recovery policy, and unique swap identity before either lock.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-1/protocol-design.md"]
+    },
+    {
+      "id": "INV-03",
+      "text": "After the first lock, each role can finish every permitted claim or recovery path from protected local state and chain access without Delivery, Chat, or another signing round.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md"]
+    },
+    {
+      "id": "INV-04",
+      "text": "A replay, restart, race, or ambiguous response cannot change an effect's meaning, execute it twice, or make two terminal branches authoritative.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/system-architecture.md"]
+    },
+    {
+      "id": "INV-05",
+      "text": "No permitted branch lets a party use a revealed claim or recovery secret on one chain and then recover the revealing leg.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/mainnet-readiness.md"]
+    },
+    {
+      "id": "INV-06",
+      "text": "Crashes, restores, and concurrent swaps cannot erase recovery data, reuse one-time signing material, or rearm spent authority.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/README.md"]
+    },
+    {
+      "id": "INV-07",
+      "text": "Recovery order is route-specific: BTC recovers the Maker-funded leg first; ZEC claim order is LEZ reveal then ZEC claim, while no-reveal recovery is LEZ refund then ZEC refund; XMR is LEZ-first and uses Tag 14 authorization, Tag 15 claim, Tag 16 refund, and Tag 17 punishment. Tag 17 reveals no XMR share.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["docs/architecture/0008-bidirectional-role-ordering.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0174-join-tag17-to-the-funded-monero-output.md"]
+    },
+    {
+      "id": "INV-08",
+      "text": "Maker, Taker, signer, wallet, UI, controller, and evidence authorities are separated and receive only the permissions their role needs.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["docs/architecture/0147-isolate-basecamp-role-packages-over-owner-services.md"]
+    },
+    {
+      "id": "INV-09",
+      "text": "Private run roots remain private. Published evidence is integrity-bound, reviewed, and contains neither secrets nor unnecessary cross-chain linkage.",
+      "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+      "proofs": ["docs/architecture/0052-bind-private-demo-videos-to-actual-node-evidence.md"]
+    }
+  ],
+  "threats": [
+    {
+      "id": "TM-0001",
+      "old_ids": ["TM-S-02", "TM-S-03", "TM-E-01", "TM-E-03", "TM-E-04"],
+      "view": "local-control",
+      "scenario": "A local UI, service, sidecar, compatibility process, or test controller acts with another role's authority.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement", "first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E03", "E04", "E05", "E06", "E08", "E11", "E22", "E19", "E24", "E25", "F04", "F05", "F07", "F08", "F11", "F12", "F24", "F25", "F29", "F30", "F31", "F32", "F33", "F36", "F37", "F38"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "stride.repudiation", "stride.elevation-of-privilege", "protocol.authorization"],
+      "harms": ["AS-AUTH", "AS-FUNDS", "INV-08"],
+      "milestones": ["M5", "M6", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 4, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Role-fixed owner services, Unix-socket custody, actor locks, and narrow signer routes limit authority.",
+      "proofs": ["docs/architecture/0147-isolate-basecamp-role-packages-over-owner-services.md", "docs/evidence/m6-basecamp-role-packages-20260804.json", "deploy/compose.yaml"],
+      "remaining": "The m3-plus and private-local lanes still combine roles or UIDs, share sockets and prep state, handle a Maker key through Taker init, expose default VNC, and grant controller Docker authority; keep them zero-value only.",
+      "owner": "application-security",
+      "state": "open"
+    },
+    {
+      "id": "TM-0002",
+      "old_ids": ["TM-I-01", "TM-I-02", "TM-I-03", "TM-I-05"],
+      "view": "local-control",
+      "scenario": "Keys or recovery secrets leak from files, memory, logs, arguments, dumps, backups, or diagnostics.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E05", "E06", "E09", "E10", "E11", "E22", "E19", "E20", "F09", "F10", "F11", "F12", "F26"]
+      },
+      "classes": ["stride.information-disclosure", "privacy.disclosure", "protocol.secret-lifecycle"],
+      "harms": ["AS-KEYS", "AS-STATE", "AS-PRIVACY", "INV-03", "INV-06", "INV-09"],
+      "milestones": ["M1", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 3, "impact": 5 }, "residual": { "likelihood": 2, "impact": 5 } }
+      ],
+      "control": "Some role secrets use encrypted envelopes; owner-only paths, redacted logs, and zeroizing wrappers reduce exposure.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/deployment-components-and-rpcs.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:crates/swap-store/src/adaptor_session_journal.rs", "docs/upstream-production-blockers.md"],
+      "remaining": "The BTC MuSig2 nonce journal and raw wallet or Delivery keys remain plaintext. Rollback fencing, rotation, restore drills, upstream formatting, dump policy, and long-lived custody also need production proof.",
+      "owner": "key-custody",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0003",
+      "old_ids": ["TM-D-02", "TM-D-04"],
+      "view": "local-control",
+      "scenario": "The local control plane is flooded or accepts an unsafe price, pair, route, or exposure setting.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E05", "E06", "E07", "F04", "F05", "F06"]
+      },
+      "classes": ["stride.tampering", "stride.denial-of-service", "protocol.authorization"],
+      "harms": ["AS-FUNDS", "AS-TERMS", "AS-AUTH"],
+      "milestones": ["M5", "M6", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 4 }, "residual": { "likelihood": 3, "impact": 4 } }
+      ],
+      "control": "Schema bounds, stale-price rejection, route health, admission limits, and per-route exposure caps fail closed.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/mainnet-readiness.md"],
+      "remaining": "Public load limits, aggregate value caps, and price-failure drills need calibration.",
+      "owner": "maker-service",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0004",
+      "old_ids": ["TM-T-02", "TM-S-01"],
+      "view": "trade-setup",
+      "scenario": "A fake peer or changed, replayed, or cross-swapped offer, agreement, or receipt is accepted.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E02", "E05", "E06", "E08", "F01", "F02", "F03", "F07", "F08"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "stride.repudiation", "protocol.binding", "protocol.replay-durability"],
+      "harms": ["AS-FUNDS", "AS-TERMS", "AS-AUTH", "INV-02"],
+      "milestones": ["M1", "M4", "M5"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Role signatures and unique session IDs bind the complete agreement before any effect; later inputs are derived from those bytes.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-1/protocol-design.md", "docs/architecture/0032-derive-adaptor-contexts-from-agreement.md"],
+      "remaining": "Adversarial identity possession, cross-route substitution, and stale-offer tests remain part of independent review.",
+      "owner": "negotiation",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0005",
+      "old_ids": ["TM-S-05"],
+      "view": "trade-setup",
+      "scenario": "A participant's claim about a lock, balance, confirmation, or route health is treated as chain authority.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["agreement", "first-lock", "second-lock"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E02", "E05", "E06", "E08", "F01", "F02", "F03", "F07", "F08"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "protocol.canonicality", "protocol.authorization"],
+      "harms": ["AS-FUNDS", "AS-CHAIN", "INV-01"],
+      "milestones": ["M1", "M2", "M3", "M4", "M5"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 1, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Only a role's own configured chain route can authorize a transition; peer and UI observations are display data.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/system-architecture.md"],
+      "remaining": "Public provider authority and independent confirmation are handled by TM-0020 and TM-0021.",
+      "owner": "coordinator",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0006",
+      "old_ids": ["TM-D-01"],
+      "view": "trade-setup",
+      "scenario": "A peer or Delivery and Chat withholds progress, disappears, or buys a free option with the first funder's locked capital.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E02", "E05", "E06", "F01", "F02", "F03"]
+      },
+      "classes": ["stride.denial-of-service", "protocol.recovery", "protocol.economic-griefing"],
+      "harms": ["AS-FUNDS", "AS-STATE", "INV-03"],
+      "milestones": ["M1", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 5, "impact": 2 }, "residual": { "likelihood": 3, "impact": 2 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 5, "impact": 3 }, "residual": { "likelihood": 4, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 5, "impact": 4 }, "residual": { "likelihood": 4, "impact": 4 } }
+      ],
+      "control": "Post-lock progress uses durable state and chains rather than Delivery or Chat; offers expire and exposure can be capped.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md"],
+      "remaining": "Per-peer quotas, value limits, reputation or deposits, and XMR punishment economics need an explicit production policy.",
+      "owner": "product-risk",
+      "state": "working"
+    },
+    {
+      "id": "TM-0007",
+      "old_ids": ["TM-I-06"],
+      "view": "trade-setup",
+      "scenario": "Delivery, Chat, timing, IP, and offer metadata link the parties before or during a swap.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement", "first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E02", "F01", "F02", "F03"]
+      },
+      "classes": ["stride.information-disclosure", "privacy.linkability", "privacy.identifiability", "privacy.detectability"],
+      "harms": ["AS-PRIVACY"],
+      "milestones": ["M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 5, "impact": 3 }, "residual": { "likelihood": 4, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 5, "impact": 4 }, "residual": { "likelihood": 4, "impact": 4 } }
+      ],
+      "control": "Fresh session identities and minimal coordination data reduce reuse; the protocol makes no network-anonymity promise.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/mainnet-readiness.md"],
+      "remaining": "An observer-specific privacy statement and network-layer guidance remain required.",
+      "owner": "privacy",
+      "state": "open"
+    },
+    {
+      "id": "TM-0008",
+      "old_ids": ["TM-T-05", "TM-D-05"],
+      "view": "durable-state",
+      "scenario": "Recovery data, its encryption key, or a usable backup is unavailable after funds lock.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E09", "E10", "F09", "F10"]
+      },
+      "classes": ["stride.denial-of-service", "protocol.recovery"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "AS-STATE", "INV-03", "INV-06"],
+      "milestones": ["M1", "M2", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 3, "impact": 5 }, "residual": { "likelihood": 2, "impact": 5 } }
+      ],
+      "control": "Recovery material is persisted before its dependent phase; supervisors restart from role-local journals.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-actual-maker-refund-process-kill-f8bee63-20260808.json", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-actual-maker-tag15-process-kill-e455dec-20260811.json"],
+      "remaining": "Host-loss restore, credential rotation, and recovery drills need production evidence.",
+      "owner": "persistence",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0009",
+      "old_ids": ["TM-T-05", "TM-T-07"],
+      "view": "durable-state",
+      "scenario": "Old, changed, cloned, or shared state changes who may act, crosses swaps, or reuses a nonce or one-shot authority.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E09", "E10", "E11", "E22", "F09", "F10", "F11", "F12"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "stride.information-disclosure", "stride.elevation-of-privilege", "privacy.disclosure", "protocol.replay-durability", "protocol.concurrency", "protocol.secret-lifecycle"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "AS-STATE", "AS-AUTH", "INV-04", "INV-06"],
+      "milestones": ["M1", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Swap IDs, role-local stores, actor locks, process generations, leases, and one-use journal records fence concurrent authority.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-actual-btc-accepted-concurrency-272788c-20260808.json", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-actual-xmr-accepted-concurrency-d8efb7c-20260812.json"],
+      "remaining": "A valid old encrypted snapshot still passes authentication; durable monotonic rollback fencing remains open.",
+      "owner": "persistence",
+      "state": "working"
+    },
+    {
+      "id": "TM-0010",
+      "old_ids": ["TM-T-06", "TM-T-09"],
+      "view": "durable-state",
+      "scenario": "An uncertain or replayed effect, or a competing terminal branch, executes twice or with a second meaning.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E09", "E10", "F07", "F08", "F09", "F10", "F13", "F14", "F15", "F16"]
+      },
+      "classes": ["stride.tampering", "stride.repudiation", "protocol.branch-exclusivity", "protocol.replay-durability", "protocol.concurrency"],
+      "harms": ["AS-FUNDS", "AS-STATE", "AS-AUTH", "INV-04"],
+      "milestones": ["M1", "M2", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Exact transaction bytes and effect identity are journaled before submission; unknown outcomes reconcile that same effect before retry.",
+      "proofs": ["docs/architecture/0033-persist-public-effects-before-submission.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0181-preserve-exact-refund-miss-uncertainty.md"],
+      "remaining": "Public-network ambiguity, crash, and branch-race matrices remain release gates.",
+      "owner": "coordinator",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0011",
+      "old_ids": ["TM-D-03", "TM-D-06"],
+      "view": "durable-state",
+      "scenario": "A watcher, signer, wallet, credential, worker, or alert path fails after funds lock.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E09", "E10", "E11", "E22", "F09", "F10", "F11", "F12", "F13", "F14", "F15", "F16"]
+      },
+      "classes": ["stride.denial-of-service", "protocol.deadline-inclusion", "protocol.recovery"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "AS-STATE", "INV-03"],
+      "milestones": ["M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Supervisors, sealed handoffs, durable deadlines, and branch-specific workers resume without a new counterparty message.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0177-reconcile-killed-monero-refund-actors.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/README.md"],
+      "remaining": "Independent watchtower, credential-loss, full-host outage, and alert-channel drills remain open.",
+      "owner": "recovery-operations",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0012",
+      "old_ids": ["TM-T-01"],
+      "view": "chain-protocol",
+      "scenario": "The Maker locks before the exact Taker-funded first leg is safe, or after the signed second-lock cutoff.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E12", "E13", "E14", "E15", "F13", "F14", "F15", "F16"]
+      },
+      "classes": ["stride.tampering", "protocol.ordering", "protocol.canonicality", "protocol.deadline-inclusion"],
+      "harms": ["AS-FUNDS", "AS-CHAIN", "INV-01"],
+      "milestones": ["M1", "M2", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 1, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 2, "impact": 5 } }
+      ],
+      "control": "The second-lock effect requires an exact, fresh, route-bound first-lock observation and fails closed at the cutoff.",
+      "proofs": ["docs/architecture/0039-admit-first-lock-recovery-only-after-cross-chain-cutoff.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md"],
+      "remaining": "Public finality and cutoff calibration remain open.",
+      "owner": "protocol-core",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0013",
+      "old_ids": ["TM-T-04"],
+      "view": "chain-protocol",
+      "scenario": "A deadline, host or chain clock jump, clock conversion, confirmation rule, or route-specific recovery order is wrong.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E12", "E13", "E14", "E15", "E23", "F13", "F14", "F15", "F16", "F28"]
+      },
+      "classes": ["stride.tampering", "protocol.ordering", "protocol.deadline-inclusion", "protocol.recovery"],
+      "harms": ["AS-FUNDS", "AS-TERMS", "AS-CHAIN", "INV-05", "INV-07"],
+      "milestones": ["M1", "M2", "M3", "M4", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 1, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Signed typed clock domains and pair-direction schedules reject mixed domains; boundary tests cover each before, at, and after case.",
+      "proofs": ["docs/architecture/0010-typed-cross-chain-deadlines.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-1/parameter-profiles.md"],
+      "remaining": "Mainnet profiles, measured latency, host-clock jump or suspend tests, adversarial LEZ timestamp skew or stall tests, and a fail-closed halt policy remain open.",
+      "owner": "protocol-core",
+      "state": "working"
+    },
+    {
+      "id": "TM-0014",
+      "old_ids": ["TM-T-11"],
+      "view": "chain-protocol",
+      "scenario": "Fees, pinning, expiry, or transaction policy strand a valid claim or refund inside its safety window.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E12", "E13", "E14", "E15", "E16", "E17", "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20"]
+      },
+      "classes": ["stride.tampering", "stride.denial-of-service", "protocol.deadline-inclusion", "protocol.recovery"],
+      "harms": ["AS-FUNDS", "AS-CHAIN", "INV-03", "INV-05"],
+      "milestones": ["M1", "M2", "M3", "M4", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 5, "impact": 4 }, "residual": { "likelihood": 4, "impact": 4 } }
+      ],
+      "control": "BTC constructs the CSV refund when needed; ZEC rebuilds expired transactions without moving CLTV; XMR keeps exact Tag 15 and Tag 16 LEZ windows. Signed fee bounds limit fee erosion but cannot guarantee inclusion.",
+      "proofs": ["docs/architecture/0009-bitcoin-refund-path.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-1/parameter-profiles.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0177-reconcile-killed-monero-refund-actors.md"],
+      "remaining": "Public-network package policy, fee bumping, pinning, congestion, and XMR Tag 16 inclusion-margin tests remain open.",
+      "owner": "chain-adapters",
+      "state": "working"
+    },
+    {
+      "id": "TM-0015",
+      "old_ids": ["TM-T-08", "TM-T-10"],
+      "view": "chain-protocol",
+      "scenario": "A wrong LEZ program, IDL, account, asset, custody path, or upgrade moves funds or changes branch meaning.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E11", "E22", "E12", "E16", "F11", "F12", "F13", "F17"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "stride.elevation-of-privilege", "protocol.binding", "protocol.authorization", "protocol.branch-exclusivity"],
+      "harms": ["AS-FUNDS", "AS-AUTH", "AS-ARTIFACT", "INV-02", "INV-04"],
+      "milestones": ["M1", "M2", "M3", "M4", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 1, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 3, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Signed terms pin ProgramId, ELF or ImageID, account order, owners, assets, amounts, and fixed destinations; adapters revalidate them.",
+      "proofs": ["docs/architecture/0012-lez-escrow-custody.md", "docs/architecture/0042-bind-witnessed-token-claims-to-exact-atas.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0151-freeze-generated-spel-custody-abi.md"],
+      "remaining": "Production upgrade-authority custody, independent program review, and public deployment identity remain open.",
+      "owner": "lez-program",
+      "state": "open"
+    },
+    {
+      "id": "TM-0016",
+      "old_ids": [],
+      "view": "chain-protocol",
+      "scenario": "A BTC MuSig2, adaptor, Taproot, nonce, extraction, sighash, tweak, parity, or CSV mistake breaks recovery or exposes a key.",
+      "scope": {
+        "routes": ["lez-btc"],
+        "directions": ["taker-sells-btc", "taker-sells-lez"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E11", "E22", "E13", "F11", "F12", "F14", "F18"]
+      },
+      "classes": ["stride.tampering", "stride.information-disclosure", "protocol.binding", "protocol.secret-lifecycle", "protocol.branch-exclusivity"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "AS-STATE", "INV-02", "INV-05", "INV-06"],
+      "milestones": ["M1", "M3", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Agreement-derived sessions bind exact keys, messages, outpoints, Taproot commitments, nonce use, and extracted scalar checks.",
+      "proofs": ["docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md", "docs/evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json"],
+      "remaining": "The exact two-party aggregate adaptor construction and dependency require independent cryptographic review and malicious-key vectors.",
+      "owner": "btc-cryptography",
+      "state": "open"
+    },
+    {
+      "id": "TM-0017",
+      "old_ids": [],
+      "view": "chain-protocol",
+      "scenario": "A ZEC hash, preimage, Script branch, CLTV, expiry, network-upgrade, or transaction-construction mistake breaks claim or refund.",
+      "scope": {
+        "routes": ["lez-zec"],
+        "directions": ["taker-sells-zec", "taker-sells-lez"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E11", "E22", "E12", "E15", "F11", "F12", "F13", "F16", "F20"]
+      },
+      "classes": ["stride.tampering", "stride.information-disclosure", "privacy.unawareness", "protocol.binding", "protocol.branch-exclusivity", "protocol.deadline-inclusion"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "AS-PRIVACY", "INV-02", "INV-05", "INV-07"],
+      "milestones": ["M1", "M2", "M5", "M6", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 1, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 3, "impact": 5 }, "residual": { "likelihood": 2, "impact": 5 } }
+      ],
+      "control": "Canonical BIP-199 construction binds the shared SHA-256 hash, transparent output, branch, CLTV, expiry policy, and network upgrade.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-1/protocol-design.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-actual-zec-first-lock-refund-8981e32-20260812.json"],
+      "remaining": "Independent Script review and public fee, expiry, and upgrade-boundary evidence remain open.",
+      "owner": "zec-protocol",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0018",
+      "old_ids": [],
+      "view": "chain-protocol",
+      "scenario": "An XMR DLEQ, share, Tag 14-17 branch, direction, reconstruction, or wallet mistake gives the wrong party funds or strands them.",
+      "scope": {
+        "routes": ["lez-xmr"],
+        "directions": ["taker-sells-lez"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E11", "E22", "E12", "E14", "F11", "F12", "F13", "F15", "F19"]
+      },
+      "classes": ["stride.tampering", "stride.information-disclosure", "stride.elevation-of-privilege", "privacy.disclosure", "protocol.binding", "protocol.secret-lifecycle", "protocol.branch-exclusivity"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "AS-STATE", "INV-02", "INV-05", "INV-07"],
+      "milestones": ["M1", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Core and CLI reject XMR-first. Domain-bound cross-curve proofs, sealed journals, and losing-branch exclusion bind each route. Tag 15 reveals s_a to Taker; Tag 16 reveals s_b to Maker.",
+      "proofs": ["docs/architecture/0008-bidirectional-role-ordering.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0054-bound-xmr-share-to-lez-adaptor-point.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-actual-maker-refund-7cd3a9c-20260805.json", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-actual-taker-claim-2cff48d-20260805.json"],
+      "remaining": "The exact DLEQ and adaptor composition, all malformed inputs, and public-network branch races require independent review.",
+      "owner": "xmr-cryptography",
+      "state": "open"
+    },
+    {
+      "id": "TM-0019",
+      "old_ids": [],
+      "view": "chain-protocol",
+      "scenario": "A malicious Taker commits an invalid Stage-B claim partial or withholds Tag 14 after Maker funds XMR, disabling Tag 15; if Taker also abandons independent Tag 16, XMR remains stuck.",
+      "scope": {
+        "routes": ["lez-xmr"],
+        "directions": ["taker-sells-lez"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E08", "E11", "E22", "E14", "F03", "F08", "F12", "F15", "F19"]
+      },
+      "classes": ["stride.tampering", "stride.denial-of-service", "protocol.binding", "protocol.recovery", "protocol.economic-griefing"],
+      "harms": ["AS-FUNDS", "AS-STATE", "INV-03", "INV-05", "INV-07"],
+      "milestones": ["M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 4, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 4, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 4, "impact": 5 } }
+      ],
+      "control": "Before XMR funding, Stage B commits the hidden claim partial; after confirmed funding, Tag 14 must publish those bytes. Independent Tag 16 can refund LEZ and reveal s_b to Maker; Tag 17 only awards LEZ punishment.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0055-preserve-xmr-atomicity-with-dual-reveal-branches.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0174-join-tag17-to-the-funded-monero-output.md"],
+      "remaining": "The commitment proves neither partial validity nor later publication. Add validity evidence for garbage; deliberate nonpublication still requires Tag 16 cooperation or explicit acceptance of the stuck-XMR penalty model.",
+      "owner": "xmr-protocol",
+      "state": "open"
+    },
+    {
+      "id": "TM-0020",
+      "old_ids": ["TM-S-04"],
+      "view": "chain-observation",
+      "scenario": "An owned node, node credential, or selected network reports a false chain, equivocates, or moves canonical LEZ time across a branch boundary.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E16", "E17", "F17", "F18", "F19", "F20"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "stride.repudiation", "stride.elevation-of-privilege", "protocol.canonicality", "protocol.authorization"],
+      "harms": ["AS-FUNDS", "AS-CHAIN", "INV-01", "INV-05"],
+      "milestones": ["M1", "M2", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 3, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Routes bind network and genesis identity, authenticate node access, and bind each observation to exact blocks, transactions, outputs, values, depth, and monotonic LEZ time.",
+      "proofs": ["docs/architecture/0051-bind-bitcoin-testnet4-routes-to-chain-profile.md", "docs/upstream-production-blockers.md"],
+      "remaining": "LEZ finality, account facts, and sequencer timestamp behavior remain authoritative-node assumptions without independent proofs or a calibrated skew-and-stall halt policy.",
+      "owner": "node-security",
+      "state": "open"
+    },
+    {
+      "id": "TM-0021",
+      "old_ids": ["TM-S-04"],
+      "view": "chain-observation",
+      "scenario": "A public provider, DNS or TLS path, or provider account gives a false, stale, censored, or split view.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["public-testnet", "production"],
+        "targets": ["E08", "E17", "F18", "F19", "F20"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "stride.repudiation", "stride.information-disclosure", "stride.elevation-of-privilege", "privacy.disclosure", "protocol.canonicality", "protocol.authorization"],
+      "harms": ["AS-FUNDS", "AS-CHAIN", "AS-PRIVACY", "INV-01", "INV-05"],
+      "milestones": ["M2", "M3", "M5", "M7"],
+      "risk": [
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Public routes are explicit and bounded; authoritative decisions require an authenticated source and halt on source disagreement.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/deployment-components-and-rpcs.md"],
+      "remaining": "The authority policy, source independence, account compromise, TLS and DNS trust, and provider privacy need exact enforcement and tests.",
+      "owner": "node-security",
+      "state": "open"
+    },
+    {
+      "id": "TM-0022",
+      "old_ids": ["TM-T-03"],
+      "view": "chain-observation",
+      "scenario": "The first-lock evidence reorgs before the Maker funds, but stale authority still permits the second lock.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E16", "E17", "F17", "F18", "F19", "F20"]
+      },
+      "classes": ["stride.tampering", "protocol.canonicality", "protocol.ordering", "protocol.replay-durability"],
+      "harms": ["AS-FUNDS", "AS-CHAIN", "AS-STATE", "INV-01"],
+      "milestones": ["M1", "M2", "M3", "M4", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 1, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Fresh canonicality checks revoke first-lock authority on removal and require the exact replacement to satisfy policy again.",
+      "proofs": ["docs/architecture/0039-admit-first-lock-recovery-only-after-cross-chain-cutoff.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-actual-zebra-competing-fork-087c37f-20260812.json"],
+      "remaining": "BTC, XMR, ZEC, and LEZ public-node split-view matrices remain release gates.",
+      "owner": "chain-adapters",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0023",
+      "old_ids": ["TM-T-03"],
+      "view": "chain-observation",
+      "scenario": "After both legs lock but before a secret reveal, a reorg removes or changes one funded leg.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E16", "E17", "F17", "F18", "F19", "F20"]
+      },
+      "classes": ["stride.tampering", "stride.denial-of-service", "protocol.canonicality", "protocol.recovery"],
+      "harms": ["AS-FUNDS", "AS-CHAIN", "AS-STATE", "INV-03", "INV-05"],
+      "milestones": ["M1", "M2", "M3", "M4", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 3, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "The coordinator pins exact funded transactions, suspends claims on regression, and retains the route-specific recovery branch.",
+      "proofs": ["docs/architecture/0035-project-claims-only-from-canonical-public-evidence.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0202-resume-zec-application-after-canonical-reappearance.md"],
+      "remaining": "Deep post-funding reorgs and permanent non-reappearance remain conditional safety assumptions.",
+      "owner": "protocol-core",
+      "state": "working"
+    },
+    {
+      "id": "TM-0024",
+      "old_ids": ["TM-T-03", "TM-T-09", "TM-T-11", "TM-D-03"],
+      "view": "chain-observation",
+      "scenario": "A claim or recovery secret becomes visible from a transaction that is censored, rejected, or reorged before it is irreversible.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E08", "E12", "E13", "E14", "E15", "E16", "E17", "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20"]
+      },
+      "classes": ["stride.tampering", "stride.denial-of-service", "protocol.canonicality", "protocol.secret-lifecycle", "protocol.branch-exclusivity", "protocol.deadline-inclusion"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "AS-CHAIN", "INV-05", "INV-07"],
+      "milestones": ["M1", "M3", "M4", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 3, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 4, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 4, "impact": 5 } }
+      ],
+      "control": "Honest actors wait for route-specific canonical evidence and retain the exact follower action before using a reveal. On XMR, Tag 15 reveals s_a to Taker and Tag 16 reveals s_b to Maker.",
+      "proofs": ["docs/architecture/0040-continue-post-reveal-from-canonical-evidence.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0175-reject-losing-tag16-after-finalized-tag17.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0176-exclude-losing-tag17-after-finalized-tag16.md"],
+      "remaining": "Honest waiting does not restrain a malicious peer. Require a reviewed bounded-censorship/finality argument or stronger release design, plus leaked-but-nonfinal reveal tests.",
+      "owner": "protocol-security",
+      "state": "open"
+    },
+    {
+      "id": "TM-0025",
+      "old_ids": ["TM-D-03"],
+      "view": "chain-observation",
+      "scenario": "A node, wallet, indexer, sequencer, or chain is unavailable before either party locks.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E05", "E06", "E08", "E16", "E17", "F06", "F13", "F14", "F15", "F16"]
+      },
+      "classes": ["stride.denial-of-service", "protocol.authorization"],
+      "harms": ["AS-AUTH", "AS-CHAIN"],
+      "milestones": ["M2", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 5, "impact": 2 }, "residual": { "likelihood": 3, "impact": 2 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 5, "impact": 2 }, "residual": { "likelihood": 3, "impact": 2 } },
+        { "profile": "production", "inherent": { "likelihood": 5, "impact": 2 }, "residual": { "likelihood": 3, "impact": 2 } }
+      ],
+      "control": "Route health fails closed and removes unhealthy offers before any lock.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/evidence/m7-unaffected-pair-outage-2c63218-20260804.json"],
+      "remaining": "Public outage thresholds and independent failover policy need calibration.",
+      "owner": "operations",
+      "state": "checking"
+    },
+    {
+      "id": "TM-0026",
+      "old_ids": ["TM-D-03"],
+      "view": "chain-observation",
+      "scenario": "A node, wallet, indexer, sequencer, miner, or chain censors or fails after funds lock.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["first-lock", "second-lock", "claim-reveal", "recovery"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E08", "E09", "E10", "E11", "E22", "E16", "E17", "F09", "F10", "F11", "F12", "F17", "F18", "F19", "F20"]
+      },
+      "classes": ["stride.denial-of-service", "protocol.deadline-inclusion", "protocol.recovery"],
+      "harms": ["AS-FUNDS", "AS-STATE", "AS-CHAIN", "INV-03", "INV-05"],
+      "milestones": ["M1", "M2", "M3", "M4", "M5", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Durable recovery workers keep exact actions ready, stop new offers, and alert when observation or inclusion margin is unsafe.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/mainnet-readiness.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/0207-certify-literal-reliability-acceptance.md"],
+      "remaining": "This is not liveness-only after locking. Public censorship, failover, fee, and safety-window drills remain release gates.",
+      "owner": "recovery-operations",
+      "state": "working"
+    },
+    {
+      "id": "TM-0027",
+      "old_ids": ["TM-I-04"],
+      "view": "chain-observation",
+      "scenario": "Chains, providers, counterparties, or published facts link both swap legs, amounts, addresses, and users.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement", "first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E01", "E02", "E12", "E13", "E14", "E15", "E16", "E17", "F01", "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20"]
+      },
+      "classes": ["stride.information-disclosure", "privacy.linkability", "privacy.identifiability", "privacy.detectability", "privacy.disclosure", "privacy.unawareness"],
+      "harms": ["AS-PRIVACY"],
+      "milestones": ["M1", "M2", "M3", "M4", "M5", "M6", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 5, "impact": 3 }, "residual": { "likelihood": 4, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 5, "impact": 4 }, "residual": { "likelihood": 4, "impact": 4 } }
+      ],
+      "control": "Fresh keys and wallets reduce reuse; self-hosted nodes reduce provider visibility; the UI states route-specific public facts.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-1/protocol-design.md"],
+      "remaining": "BTC remains graph-linkable, ZEC is deterministically linked by its shared preimage, and XMR privacy still depends on counterparty, wallet, RPC, network, and evidence metadata.",
+      "owner": "privacy",
+      "state": "open"
+    },
+    {
+      "id": "TM-0028",
+      "old_ids": ["TM-E-02", "TM-E-04"],
+      "view": "build-evidence",
+      "scenario": "A dependency, builder, image, binary, update, UI package, runner, or deployment controller is malicious or substituted.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement", "first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E03", "E04", "E05", "E06", "E08", "E11", "E22", "E18", "E19", "E24", "F23", "F24", "F25", "F31", "F39"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "stride.information-disclosure", "stride.denial-of-service", "stride.elevation-of-privilege", "protocol.supply-chain"],
+      "harms": ["AS-FUNDS", "AS-KEYS", "AS-AUTH", "AS-ARTIFACT", "INV-08"],
+      "milestones": ["M1", "M2", "M3", "M4", "M5", "M6", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
+      ],
+      "control": "Locked inputs, exact program identities, consumer pins, clean builds, vulnerability checks, and immutable review commits constrain artifacts.",
+      "proofs": ["docs/upstream-production-blockers.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md", "deploy/full-swap/README.md"],
+      "remaining": "The m3-plus stack still contains mutable inputs and a Docker-socket controller; SBOM, signed provenance, independent builds, and S12/S13 review remain open.",
+      "owner": "release-security",
+      "state": "open"
+    },
+    {
+      "id": "TM-0029",
+      "old_ids": ["TM-R-01", "TM-I-03"],
+      "view": "build-evidence",
+      "scenario": "Action history or published evidence is forged, replaced, deleted, or exposes secrets and unnecessary cross-chain linkage.",
+      "scope": {
+        "routes": ["lez-btc", "lez-xmr", "lez-zec"],
+        "directions": ["all-supported"],
+        "phases": ["setup", "agreement", "first-lock", "second-lock", "claim-reveal", "recovery", "terminal"],
+        "profiles": ["integrated-local", "public-testnet", "production"],
+        "targets": ["E19", "E20", "E21", "E24", "F26", "F27", "F29", "F30", "F31", "F34", "F35"]
+      },
+      "classes": ["stride.spoofing", "stride.tampering", "stride.repudiation", "stride.information-disclosure", "stride.denial-of-service", "privacy.linkability", "privacy.non-repudiation", "privacy.disclosure", "privacy.non-compliance"],
+      "harms": ["AS-KEYS", "AS-STATE", "AS-PRIVACY", "AS-ARTIFACT", "INV-09"],
+      "milestones": ["M2", "M3", "M6", "M7"],
+      "risk": [
+        { "profile": "integrated-local", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 4, "impact": 3 } },
+        { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
+        { "profile": "production", "inherent": { "likelihood": 4, "impact": 4 }, "residual": { "likelihood": 3, "impact": 4 } }
+      ],
+      "control": "Private roots are separated from reviewed exports; packets bind public effects to a source commit and reject known secret fields.",
+      "proofs": ["docs/architecture/0052-bind-private-demo-videos-to-actual-node-evidence.md", "docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json", "deploy/compose.yaml", "deploy/images/btc-demo-controller/controller.py"],
+      "remaining": "The m3-plus evidence file is writable and unsigned, and the explorer can read the private run tree. Export-only mounts, owner-only publication, signatures, and privacy review remain open.",
+      "owner": "evidence-security",
+      "state": "open"
+    }
+  ]
+}
