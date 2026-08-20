@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "milestone": "M3",
+  "scope": "bitcoin_core_infrastructure_only",
+  "result": "passed",
+  "tested_repository_commit": "a7393dfb74dc4113a0cb58a54528b3fd6268d0ef",
+  "tested_origin_main_commit": "a7393dfb74dc4113a0cb58a54528b3fd6268d0ef",
+  "worktree_clean_before_run": true,
+  "run_id": "m3-core-exact-a7393df",
+  "completed_at": "2026-07-14T22:08:28Z",
+  "runner": "scripts/run-bitcoin-core-e2e.sh",
+  "core": {
+    "version": "31.1",
+    "source_commit": "9be056a8a72b624dae9623b2f7bded92c2a21c91",
+    "archive_sha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+    "provenance_evidence_sha256": "9d675a7f8e2d274d9d3e81343e013eb1952a2b0b960da342aabc6bf7ce348440",
+    "image_id": "sha256:a481ae293ac069102f77ade41a7fd1229d4c1f9385af50b4d18b5dfe73067168"
+  },
+  "isolation": {
+    "lifecycle": "exact_id_native_docker",
+    "compose_contract_validated": true,
+    "network_cidr": "172.23.0.0/16",
+    "rpc_endpoint": "127.0.0.1:32841",
+    "rpc_publication": "dynamic_literal_loopback_only",
+    "p2p_port_published": false,
+    "network_ip_masquerade": false,
+    "core_network_active": false,
+    "peers_before": 0,
+    "peers_after": 0
+  },
+  "chain": {
+    "network": "regtest",
+    "genesis": "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
+    "initial_height": 0,
+    "final_height": 101,
+    "mocktime_base": 1700000000,
+    "block_spacing_seconds": 600,
+    "generated_block_policy_sha256": "84bfb594e97d61f79175674a260b5238acf0af60b98382726ec1d790f0be6b07"
+  },
+  "deterministic_funding": {
+    "descriptor": "rawtr(79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)#xsjqcczm",
+    "address": "bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6",
+    "txid": "368bb4e4f93452636d0d57ec0a4f2ca167b98ffd80d6cc59e1a1dabea9f8962b",
+    "vout": 0,
+    "value_btc": 50,
+    "confirmations": 101,
+    "script_type": "witness_v1_taproot",
+    "reproducibility": "semantic_policy_not_cross_run_block_or_tx_identity"
+  },
+  "actor_rpc": {
+    "roles": [
+      "maker",
+      "taker"
+    ],
+    "credentials_distinct": true,
+    "credentials_mode": "0600_under_0700_run_root",
+    "plaintext_credentials_disclosed": false,
+    "allowed_success_count": 18,
+    "allowed_method_error_count": 6,
+    "forbidden_http_403_count": 16,
+    "crossed_credentials_http_401_count": 2
+  },
+  "external_dependencies": {
+    "runtime_external_resources": [],
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "cold_setup_resources": [
+      "bitcoincore.org signed release assets",
+      "github.com/bitcoin/bitcoin source tag",
+      "github.com/bitcoin-core/guix.sigs attestations",
+      "digest-pinned gcr.io distroless runtime base",
+      "Trivy vulnerability database in CI"
+    ]
+  },
+  "security": {
+    "evidence_secret_scan": "passed",
+    "ci_exact_image_trivy_fail_high_critical": "configured_on_tested_commit_remote_result_not_locally_observed",
+    "broad_cleanup_used": false
+  },
+  "cleanup": {
+    "status": "passed",
+    "exact_run_resources_absent": true,
+    "foreign_sentinel_survived_exact_cleanup": true
+  },
+  "source_packet_sha256": {
+    "runtime_json": "59408cdb05339af2f44da7a620c6de3ff6fa5436c4ad220e18c4455d4ef473f5",
+    "cleanup_json": "d5838a8c05a3c2054c99ba14a3ea63c23e70e09c54d9ee26c51041784ec2aa57"
+  },
+  "limitations": [
+    "This packet proves only the isolated Bitcoin Core infrastructure slice.",
+    "The funding output is a deterministic provisioner fixture, not the two-party aggregate swap output.",
+    "No aggregate-key P2TR spend, CSV refund spend, adaptor signature, BTC SDK, LEZ BTC claim, or swap direction is claimed.",
+    "The private remote CI and exact-image Trivy outcomes are not claimed until independently observable."
+  ]
+}

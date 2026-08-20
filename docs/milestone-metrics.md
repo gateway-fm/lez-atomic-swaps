@@ -1,0 +1,185 @@
+# Milestone delivery metrics
+
+Last updated: 2026-07-19
+
+This is the live evidence scorecard for ADR 0027's progressive milestone
+delivery. It tracks measurements and explicit unknowns; it does not infer a
+percentage from task counts. Update it whenever a phase changes, a reproducible
+run is recorded, or an open item is closed or invalidated.
+
+Status vocabulary:
+
+- `in progress`: the owner-selected active phase;
+- `awaiting owner transition`: work is intentionally not the active phase;
+- `carried evidence`: relevant evidence created before the phase was selected,
+  retained for later revalidation; and
+- `gate met`: all documented exit evidence exists, subject to owner review.
+
+## Milestone phase register
+
+| Milestone | Active phase | Phase status | Completion tag | Owner transition |
+|---|---|---|---|---|
+| M1 | Historical completed milestone | Historical evidence predates ADR 0027; not retroactively reclassified | `m1-complete` and corrective tag `m1-complete.1` | No transition requested |
+| M2 | Certified local-functional PoC | Canonical Docker-built/deployed artifact, both local LEZ/ZEC directions, and the exact-tree repository gates are GREEN; later hardening is deferred | `m2-complete` | M2 completion/tag directed; no QA or M3 transition requested |
+| M3 | Progressive local PoC closure | All six issue-#112 outputs, including the literal RFP D1 three-video deliverable, and the underlying actual-node happy/refund/concurrent evidence are complete at the private functional boundary. The 2026-07-19 local lint/test/security/license/isolation/traceability and 150-diagram render closure gates are GREEN. No cross-system atomic commit, public live deployment, or production-hardening completion is claimed | None | Owner entered M3 on 2026-07-14 and directed completion. Closure-evidence push, remote CI, and the annotated tag remain; cutoff-race/process-kill/reorg/fee/chaos/formal review are later owner-selected phases |
+| M4 | Not active | Awaiting owner transition | None | Not requested |
+| M5 | Not active | Awaiting owner transition | None | Not requested |
+| M6 | Not active | Awaiting owner transition | None | Not requested |
+| M7 | Not active | Awaiting owner transition | None | Not requested |
+
+## M3 PoC scorecard
+
+Status: progressive local PoC evidence gate met. Counts below deliberately measure
+evidence instead of assigning a percentage to unlike work items.
+
+| Metric | Current measurement | Evidence or next measurement point |
+|---|---|---|
+| Live authorities reconciled | 2 of 2 | RFP master commit `121da225...5542a` / blob `d0fa52b`; accepted issue #112 is open, retains the `accepted` and `RFP-003` labels, and has body SHA-256 `49356263...f1c87`; issue #61 excluded. Re-fetched 2026-07-18 |
+| Executable BTC-specific crates/components | 3 BTC crates, 1 actual-node runner, 4 fixture examples/CLIs, 1 role-local journal, 1 role-runner crate, and 2 of 2 live actor directions GREEN | Source tests remain GREEN. Run `m3actor-20260716n` binds commit `6ded2f9`, certified script hashes, fresh one-shot actor processes, four terminal role stores, and exact replay |
+| Typed Bitcoin Core adapter | 37 of 37 all-target test executions plus 2 of 2 happy and 2 of 2 refund actual-node actor integrations GREEN | Run H exercised exact Core 31.1 signed-anchor maturity, next-block eligibility, canonical three-item refund witness, txid/wtxid readback, one-attempt submission, containing-height confirmation, and terminal replay. Five focused tests additionally prove exact Testnet4 chain/genesis/index readiness plus self-hosted loopback and exact HTTPS route/profile composition without public I/O. Fee stress, bounded RBF/CPFP, live Testnet4, and reorg remain later hardening |
+| LEZ BTC witnessed path | Fresh checked deployment/onboarding plus 2 of 2 happy and 2 of 2 refund actor directions GREEN | Run-n retains both witnessed claims. Run H separately finalized maker `RefundNative` `a5cbb48a...97e41` in block 111 and taker `RefundNative` `64e1005b...9a6b4` in block 292 under private-local 3.0-second slots. Bounded scans and finite 30-second reads are live-proven; upstream historical-account proof/snapshot limits remain |
+| Durable signer, public-effect, and BTC recovery-state boundaries | Schema-3 actor: 49 library cases and 8 CLI integrations GREEN; actual-node happy and refund actors: 2 of 2 directions each | Run H covers rev2 to 3 to 4 direction mappings, role authority, pre-deadline no-send, exact bytes before one CAS/attempt, accepted-restart observation, owner/nonowner finality projection, terminal `Refunded`, and unchanged replay counts. Process-kill timing, cutoff/race stress, and malicious database-owner authentication remain pending; no chain/database atomic commit is claimed |
+| Actual local timeout/refund compositions | 2 of 2 directions | `m3refund-20260716h` completed both ordered two-lock paths on fresh Core 31.1 Regtest and LEZ v0.2 actual nodes. All four role/direction stores are revision 4 `Refunded`. Each direction retains exactly 2 Bitcoin and 3 LEZ effects, one actor-owned refund per chain, no cooperative claim, zero replay resubmissions, no public RPC/faucet/funds, and exact non-foreign cleanup |
+| Actual local refund runtime | 54 minutes 5 seconds from first retained evidence file through cleanup | The directions are sequential and wait for signed five- and fifteen-minute bounds with 3.0-second LEZ slots. This is deadline evidence, not a throughput baseline. Scheduling, finality, and moving-tip retries can extend it |
+| Dependency groups accepted | 2 of 5 entry candidates | Core 31.1 and exact-pinned `bitcoin` 0.32.101 graphs passed their acceptance gates. The exact `musig2` 0.4.1 graph is locked, policy-gated, exercised through Core, the real LEZ guest, and independent crash-safe role processes, but remains an unaccepted beta/unaudited candidate pending stronger secret handling and review; `miniscript` and `corepc` also remain unaccepted |
+| Fresh identity, guest, and pre-lock orchestration | Actual-node effect-bearing run GREEN | `m3actor-20260716n` generated fresh owners/Vaults, deployed exact guest `a199c5be...e293` / ProgramId `39b6a4db...4dec`, finalized onboarding, pre-admitted exact Bitcoin funding, finalized agreement and journals before effects, and hit planned anchors 102/104 |
+| Actual local M3 happy compositions | Repository-owned actor: 2 of 2 fresh directions on 1 isolated Core/LEZ tuple | Run used Core `32913`, Bedrock `32914`, sequencer `32915`, indexer `32916`, and dynamic role sidecars. No public RPC/faucet/funds; exact cleanup attestation passed without targeting foreign resources |
+| Supported happy directions completed | Fresh repo-owned actor composition: 2 of 2 | `TakerSellsForeign` and `TakerSellsLez` both reached revision 4 for maker and taker. Each Bitcoin contract outpoint was spent once and each LEZ custody account ended zero |
+| Completed native happy E2E executions | 6 per direction actually executed; 3 per direction retained in committed secret-safe packets plus 3 owner-private runs | The earlier fourth pair is `m3actor-20260716n`. Fresh D1 happy and concurrent recordings add the fifth and sixth executions in each direction at evidence commit `a6eb1ad`, with exact hashes, terminal replay, and cleanup retained in the private bundle. Public packets cover the initial composition, schema-4 actor-owned locks, and earlier overlapping pair |
+| F7 custom-token actual-node composition | Four complete pairs GREEN on clean pushed commits; required 3 of 3 repetitions per direction exceeded | Runs X (`422c72e`, 20m52s), Z (`1555749`, 19m10.95s), AA (`df7ed86`, 18m13.61s), and AD (`0826dd5`, 16m06.52s) each completed both actual-node directions at one-second cadence. Every direction ended revision 4 with exactly 2 Bitcoin and 4 LEZ effects, one Maker second lock, zero replay resubmission, zero custody, conserved total 250, and exact balances `175/75/0` or `75/175/0`; exact cleanup removed only captured resources. Runs Y, AB, and AC failed closed and count as no repetition. The F7 repeatability gate is closed; this is not the M3 tag |
+| M3 official-wallet repeat preparation | Hardened cold 202.42 s; exact hit 10.35 s; certified Z/AA/AD hits 10.32/7.81/7.370 s | Same host and production inputs under policy 2, input key `6607d474...ded208`, wallet `28245d5f...f96e6`, 118,659,320 bytes. Cold/hit peak RSS was 856,824/33,844 KiB, about 804 MiB lower on hit. Contract tests cover miss/hit, expected-output pin, effective legacy Cargo config, production test-var rejection, dirty source, fingerprint failure, tamper/mode/missing object, no-overwrite, and concurrent one-build publication. Runs Z, AA, and AD retained production-mode hits on exact pushed code without changing finality, effects, balances, replay, or cleanup |
+| Early artifact-drift rejection | RED-GREEN; late 1m58s Run-Y failure path moved before builds/nodes | Outer preflight pins canonical regular non-symlink F7 guest `bc2ea18e...67fd7` and deployer `a7f1e259...191c`. Bootstrap still independently pins the guest and requires the deployer hash to remain exact at entry, point of use, and evidence publication. This is avoided failure latency, not a claimed successful-run speedup |
+| Runnable manual BTC flows | Happy and two-lock timeout/refund paths actual-node evidenced | The guide gives a fresh-ID `M3_ACTOR_POC_JOURNEY=refund` command, both direction orders, exact terminal/effect/replay/cleanup assertions, Core 31.1 and LEZ v0.2 local inventory, the observed deadline runtime, flakiness, and Run H's explicit absent-maker/survivor/race/concurrency/process-kill/reorg nonclaims |
+| Public BTC lifecycle SDK boundary | 15 unit, 32 external facade, and 2 doctests GREEN; combined SDK all-target/all-feature total 75 | Pushed `0c78f3d` supplies canonical bounded secret-free records, full-range decimal `u128`, exact create/CAS port, role-fixed resume, typed Bitcoin/LEZ runtime, both claim and ordered-refund directions, restart every transition, zero-write replay, substitution rejection, and a dedicated wiring example. Production supplies the durable store and persist-before-send port journals |
+| Official and swap-specific cryptographic vectors | 9 of 9 focused groups GREEN; immutable corpus checksum gate GREEN | All 19 official BIP-340 rows cross-check `musig2` and `k256`, with applicable rows also checked by rust-bitcoin. Applicable stateful BIP-327 key/nonce/sign/verify/tweak/aggregate operations execute valid and error vectors. The exact swap fixture adapts, extracts, independently verifies, and rejects context/key/order/tweak/point/signature/secret substitutions. The unused newer deterministic-signing extension is checksum/structure validated but is not a production SDK path |
+| Testnet4 configuration portability | 5 of 5 focused tests and 37 adapter tests GREEN; live public calls 0 | Exact Core 31.1, `chain=testnet4`, three-way genesis, synchronized indexes, literal-loopback self-host, and exact allowlisted HTTPS Basic composition pass. The setup guide covers release verification, wallet/funding, readiness, role credentials, SDK composition, external dependencies, and flakiness. Live peers/gateway/faucet/funds remain deliberately unclaimed |
+| D1 BTC demo videos | 3 of 3 source recordings and 3 of 3 required MP4s GREEN | Happy, refund, and concurrent owner-private actual-node recordings bind evidence commit `a6eb1ad`; source verifier commit `946208a` sealed mode-`0600` source bundle `3d7d7adc...a86c7cc`. Renderer/verifier commit `846ba56` produced 21.640/20.360/20.360-second H.264 1280x720 MP4s; regenerated-source, complete-decode, frame-sampling, and private bundle verification passed at SHA-256 `7697a27c...f101ba8`. No public RPC, faucet, public funds, or external-network success dependency participated |
+| M3 local closure gates | GREEN on 2026-07-19 | Pinned quality runner, Rust format/strict Clippy/all-target tests/warning-free docs, focused vectors/Testnet4, Node audit/license, repository and chain-container isolation, traceability, and action/CI policy passed. All 11 cargo-deny graphs passed advisories/bans/licenses/sources; all 150 Mermaid diagrams passed conservative GitHub parsing and exact rendering. Remote Trivy and actual-node lanes remain push-CI evidence, not local substitutions |
+| Concurrent actual-node startup | Certified actual-node saving 31 s; full AD runtime 16m06.52s | Run AA's pre-change service logs measured 39 seconds Core, 58 seconds LEZ, and a 98-second sequential window. AB exposed the unparsed actor handoff; AC crossed it but exposed false cleanup-boolean status. Both failed closed and count as no benchmark. Run AD on clean pushed `0826dd5` completed both directions and cleanup with exit zero. Core took 38 seconds and LEZ 67 seconds in one 67-second overlapped window, certifying a 31-second startup saving. AD was 127.09 seconds faster end-to-end than AA, but only 31 seconds is attributed to startup until structured phase timings explain the remaining variance |
+| Structured M3 phase evidence | Clean pushed Run AF: 16m40.17s outer with 510 ms unattributed; 16m47.57s through exact cleanup | ADR 0049 fixes monotonic outer and child phases, secret-safe exact schemas, effect binding, parent containment, and five-file pre/post-publication rehash. `m3f7compose20260718af` at `0b54ab6` passed both real custom-token directions and cleanup. Forward/reverse children were 346.06/386.06 s inside 346.28/386.31 s parents. Forward LEZ second lock/revealing claim were 243.62/99.48 s; reverse Bitcoin second lock, LEZ first lock, and LEZ follow-up claim were 141.01/126.64/116.11 s. Every other child phase was below one second. Exact effects, balances, conservation, zero replay/custody, and no foreign cleanup remain GREEN. An unrelated host workload makes the 22-second Run-AE wall-time difference non-certifiable as a speedup |
+| Gateway proposal acceptance errata | 1 nonblocking upstream production/review item | GW-M3-001 records the nonexistent DLC Schnorr adaptor-vector path and the proposed replacement evidence contract. It does not block local milestone certification under the owner policy, but remains visible for Logos/Gateway review and production readiness |
+| QA / chaos / information security / production phases | Not active | Each phase begins only after its owner transition; continuous CI/security baselines remain enforced |
+| M3 completion tag | None | Closure-evidence push, remote tag-commit audit, and the annotated tag remain |
+
+## M2 current scorecard
+
+### PoC
+
+| Metric | Current measurement | Evidence or next measurement point |
+|---|---|---|
+| Full corridor reproductions | 2 successful directions: `m2poc-corridor-fresh-20260714o` and `m2poc-corridor-reverse-fresh-20260714c` | Run 14o completed `TakerSellsLez`; reverse run 14c completed `TakerSellsForeign`. The checked-in secret-safe evidence packets retain exact transactions, blocks, actors, and limitations |
+| Completed happy E2E executions | 3 per direction, 6 total | The foundational, schema-v3 recertification, and canonical deployed-artifact runs each created fresh effects in both directions. The requested post-certification repeatability target adds two clean canonical executions per direction after the M3 PoC boundary, reaching 5 per direction without rewriting the historical `m2-complete` claim |
+| Current-schema exact-tree replay | 2 of 2 actual-node directions GREEN: `m2cert-schema3-forward-2d09997-20260714a` and `m2cert-schema3-reverse-2d09997-20260714a` | Schema-v3 typed local routes crossed the retained pinned LEZ v0.2 and Zebra Regtest nodes. Forward completed in 46 rounds with 0 retries; reverse completed in 33 rounds with 2 bounded retries. Both actors reached `completed`, atomic order was observed, and no public RPC/faucet was used |
+| Canonical Docker artifact and corridor replay | 2 of 2 actual-node directions GREEN after exact local deployment | Direct Docker and Docker-backed methods builds agree on ELF `c85055f6...c9d2e` and ImageID/ProgramId `5cf8c5a4...329c1`. Deployment transaction `bd16808e...733f` finalized in local LEZ block 2582. Canonical forward/reverse runs completed in 38/47 rounds with 2/0 bounded retries and no public resources; see `m2-canonical-local-certification-20260714.json` |
+| Clean-host reproductions | 0 | Both successes used fresh run-owned actor state and isolated retained devnets on a host with verified caches. A cold clean-host repeat remains not measured and is not inferred from the two successful directions |
+| Setup duration | Run 14o entered effects after 400 ms of provisioning; reverse 14c entered effects after 300 ms | Prebuild happens before the protocol clock. Earlier partial baselines were 6 seconds in 14d, 17 seconds in 14e, and 5590 ms in 14f |
+| Happy-path execution duration | 25.370 seconds for 14o; 26.960 seconds for reverse 14c, each measured from provisioning through both terminal actor states | The cap is 49 seconds, preserving a true minimum 10-second margin against the 60-second LEZ delay despite whole-second deadline truncation |
+| Required local chain environments | 2: pinned LEZ v0.2 and pinned Zebra Regtest | Both successful directions crossed the same retained endpoint tuple serially; the runner now holds an endpoint-tuple advisory lock so effect-bearing corridor runs cannot overlap |
+| LEZ processes in the target environment | 3: Bedrock, non-standalone sequencer, indexer | All three remained live while Vault onboarding, checked deployment, native initialize/fund/claim, same-tip state reads, and manual indexer finality completed |
+| Effect-bearing swap actors | 2 independent reference actors and 2 role bridges completed each direction | Run 14o recorded 78 actor events across 39 rounds; reverse 14c recorded 100 events across 50 rounds. Maker and taker independently reached revision 4 `Completed` in both runs |
+| Exact v0.2 PoC role bridge | 1 executable; both role processes completed the direction-correct method sequence in both runs | Run 14o used taker LEZ deposit then maker reveal; reverse 14c used maker LEZ deposit then taker reveal. Both crossed initialize, fund, bounded observe, revealing claim, and exact submit |
+| Same-run retry evidence | Retained schema-v2 runs: 1 successful retry in 14o and 0 in reverse 14c; current-schema runs: 0 in forward and 2 in reverse; configured ceiling is 8 exact same-run retries within the unchanged absolute deadline | Taker round 2 in 14o retried `lez_bridge.v1.observe_escrow` once after payload-free `moving_tip`, then completed. Reverse 14c completed without a same-run retry. Current-schema forward completed without retries; current-schema reverse completed after two bounded same-run retries |
+| Supported happy directions | 2 of 2 composed | `TakerSellsLez` and `TakerSellsForeign` are GREEN; `m2-complete` binds this PoC boundary without entering a later phase |
+| Actual maker/taker Vault Claims | 2 of 2 finalized on the retained local LEZ run | Maker block 29 and taker block 30 are exact finalized indexer evidence; this onboards the LEZ actors but is not a swap corridor |
+| Checked LEZ escrow lifecycles | 2 canonical plus 2 retained historical composed initialize/fund/claim lifecycles, and the earlier local-only slice | Canonical forward effects finalized in blocks 2594/2595/2596; canonical reverse effects finalized in 2605/2606/2607, all under ProgramId `5cf8...29c1`. Both ended `Claimed` with custody 0. Blocks 264/265/266 and 641/642/643 remain immutable pre-canonical behavior evidence |
+| Zcash/reference-actor fixture readiness | 2 successful just-in-time pairs were provisioned and consumed; 0 retained actor pairs are advertised as reusable | Stable Zebra identity/output checks ran before each corridor. Every repetition must select fresh current inputs and a fresh LEZ window; saved or failed-run files and candidates are never reused |
+| Actual Zcash HTLC lifecycle | 2 canonical terminal composed funding and claim lifecycles plus retained historical evidence | Canonical forward funding `0d041be6...b64c:0` at height 122 was spent by `8555c3d7...77d7` at 124. Canonical reverse funding `1cbb5923...4785:0` at 125 was spent by `bfbd4379...9b2a` at 127. Both had a second confirmation before LEZ reveal; the older height 106/108 and 113/115 runs remain historical |
+| Final state and balance proof | 2 canonical cross-chain terminal proofs plus retained historical and LEZ-only proofs | Canonical forward block 2596 ended custody/depositor/claimant at 0/100000/50000 from 0/150000/0; canonical reverse block 2607 ended 0/0/150000 from 0/50000/100000. Each conserves 150000 LEZ and both pairs of actor stores are revision 4 `Completed` |
+| Public RPCs, faucets, or public funds used | 0 | Both successes used only isolated local LEZ and Zebra endpoints and deterministic local Vault/Regtest funds; cold artifact provisioning remains an external availability dependency |
+| Dormant public route contract | 5 composed boundaries, 0 public calls | Signed public LEZ agreement activation, actor schema-v3 routes, Zebra HTTPS/API-key transport, the sidecar's exact official-public outbound profile, and the authenticated deployment-evidence-to-runtime-identity handoff pass local executable contract tests. The actor-facing sidecar listener stays loopback-only. Provisioning uses domain-separated HMAC-SHA256 and covers one happy case, no-clobber output, eight authenticated evidence mutations, wrong-key plus unauthenticated semantic/envelope chain-fact tampering, bounded/non-regular input, and exact owner-only key-file validation. Live LEZ finalized-tip availability and provider rate limits remain unmeasured |
+| Cleanup and retained state | Bridge processes are exact-PID/start-time/executable scoped; endpoint tuples are serialized; failure roots are retained; chain funds are not rolled back | Successful runs stopped only their role bridges. Failed 14j and reverse attempts 14a/14b retain effects in distinct nonretryable swaps; never reuse their actor files, swaps, candidates, or funds |
+| PoC defect evidence | 1 directionality defect reproduced in 2 effect-bearing reverse attempts, then corrected | Reverse attempts 14a/14b exposed a forward-only canonical LEZ validator. The correction binds validation to the agreement-derived LEZ depositor; its focused regression and all 35 SDK lifecycle tests passed before reverse 14c |
+| Manual reproduction path | One direction-aware runner and expected evidence for both directions are documented | Requires already-running explicit fresh local nodes, a unique run ID/output root per attempt, and serialized runs. The retained evidence endpoints and run IDs are examples, never defaults |
+| Exact LEZ v0.2 closure verifier | GREEN | Root compatibility, escrow and local-stack tests; strict Clippy and rustdoc; canonical Docker guest artifact/ProgramId equality; recursive native/refund/rollback/two-definition suites; deployer tests; and dependency source/feature checks all passed |
+| Fresh Zebra closure E2E | 2 of 2 GREEN | Isolated `m2cert-final-bc31373-zebra-20260714b` passed restart/requery/actual-fork removal and real actor-key fund/claim/refund through Zebra consensus; the schema-v10 expectation fix followed a RED-to-GREEN defect audit |
+| Supply-chain and image vulnerability closure | GREEN | All 11 Rust dependency graphs pass advisories/bans/licenses/sources, npm audit reports zero vulnerabilities, and fail-hard Trivy 0.70.0 with a fresh database reports zero HIGH/CRITICAL findings in the exact Zebra image |
+| Architecture and repository-policy closure | GREEN | All 95 tracked Mermaid diagrams render with the repository harness; traceability, CI hardening, formatting, strict Clippy, tests, and docs gates pass. Remote-hosted CI status is not inferred from this checked-in local evidence |
+
+The local-functional PoC boundary is certified under `m2-complete`; the owner
+has not entered QA or M3. Run 14o and reverse 14c live-prove the no-round-cap loop,
+0.10-second polling, fail-closed millisecond clock, KILL-bounded calls,
+maximum-eight exact same-run retry policy, direction-derived effect owners,
+two-confirmation Zcash reveal gate, exact claim/follow-up order, and terminal
+LEZ indexer/account evidence. The runner prebuilds, provisions at a fresh tip,
+starts run-owned bridge ports, mines only after a reported Zcash effect, locks
+the exact shared endpoint tuple against concurrent corridor use, and fails on
+deadline/headroom. Forward failures 14i and 14k through 14n made no effect;
+14j and reverse 14a/14b retain effects in distinct nonretryable swaps. Cross-
+chain atomicity remains protocol ordering and recoverability rather than one
+database transaction. The configuration-portability contract is locally GREEN without public I/O,
+and the exact local repository closure gates are GREEN. Recovery/refund,
+restart, reorg,
+ambiguity, concurrency, and broader hardening wait for owner transition unless
+needed to protect correctness. Logos-owned production issues remain nonblocking
+for this local phase and stay in the upstream register.
+
+### QA
+
+Status: awaiting owner transition. Extensive unit, property, persistence,
+adapter, role-boundary, and real-node regression evidence already exists and is
+carried forward. It is not a claim that the M2 QA phase is complete.
+
+| Metric | Current classification | QA-phase measurement |
+|---|---|---|
+| Requirement/invariant coverage | Carried evidence exists; composed matrix not measured | Map every M2 happy and negative behavior to executable actor-level evidence |
+| RED-GREEN-REFACTOR cases | Historical cases exist; no count assigned to the new phase | Count new failing cases, fixes, and refactors from QA entry |
+| Restart, boundary, reorg, refund, concurrency cases | Proven in multiple lower lanes; 0 composed phase cases | Revalidate around the completed PoC using real roles and required nodes |
+| Pass/fail/ignored totals | Not baselined for the phase | Record exact commands, totals, and justified ignores on phase entry and exit |
+| Flake rate | Not measured | Repeated isolated runs must report attempts, intermittent failures, and causes |
+| Open QA defects | Not baselined | Maintain severity, owner, reproduction, and disposition |
+
+### Chaos
+
+Status: awaiting owner transition. Zebra fork/reorg, restart, ambiguous effect,
+and store recovery tests are carried evidence, not a composed chaos campaign.
+
+| Metric | Current measurement | Chaos-phase target |
+|---|---|---|
+| Composed fault cases injected | 0 | Catalogue process, RPC, node, network, reorg, storage, and timing faults |
+| Successful recoveries | 0 composed | Record result and observed recovery time per fault |
+| Duplicate external effects | Not measured in a composed run | 0 unexplained duplicates |
+| Lost funds or state corruption | Not measured in a composed run | 0 |
+| Run-owned resource leaks | Not measured in a composed run | 0 after exact cleanup |
+
+### Information security
+
+Status: awaiting owner transition. Security is still a continuous baseline:
+formatting, strict linters, tests/docs, RustSec, dependency bans/licenses/sources,
+ShellCheck, traceability, Mermaid policy, and pinned image scanning remain CI
+requirements. Prior green results are carried evidence and must be freshly
+recorded when this phase is active.
+
+| Metric | Current measurement | Information-security phase target |
+|---|---|---|
+| Repository-controlled critical/high vulnerabilities | All eleven independently checked-in Rust lockfiles resolve non-yanked `spin 0.9.9`; exact advisory/bans/licenses/sources audits are GREEN for the root and all ten nested graphs with no `spin` exception. Final-image scanning remains in the exact-commit certification pass. | 0 unresolved |
+| Logos-owned advisory exceptions | Present and enumerated in the upstream production-blocker register | Exact, narrow, reviewed, and non-expanding for local evidence |
+| Threat-model findings | Not rebaselined for the composed corridor | Count by severity with disposition and regression evidence |
+| Secret exposure findings | No composed-run measurement | 0; logs, evidence, configs, stores, and process arguments included |
+| License/source-policy violations | Prior gates carried; fresh phase result pending | 0 undisclosed violations or license bombs |
+| Lint/static-analysis/image gates | CI gates exist; fresh phase result pending | All required jobs GREEN on the exact evidence commit |
+
+### Production readiness
+
+Status: awaiting owner transition.
+
+| Metric | Current measurement | Production-readiness target |
+|---|---|---|
+| Public configuration portability | Locally contract-proven, including authenticated offline evidence provisioning and no-clobber exact identity output; not live-exercised | Same actor binaries, SDK, builders, and validators; route changes through signed configuration, credentials, funding, and verified LEZ deployment provisioning only |
+| Public deployment/execution | Intentionally absent under ADR 0023 | Remains explicit until owner authorizes evidence or scope changes |
+| Latency/resource envelope | Not measured for composed corridor | Report setup/runtime latency, CPU, memory, storage, chain compute/fees, and concurrency envelope |
+| Availability/recovery objectives | Not defined | Define and verify operator-facing objectives |
+| Observability and alert coverage | Partial lower-layer diagnostics; not measured | Every external effect, wait, recovery, and terminal failure is diagnosable without exposing secrets |
+| Operator runbooks | Partial manual component flows | Clean setup, normal operation, recovery, upgrade, backup/restore, and teardown paths complete |
+| Release artifacts and provenance | Partial pinned inputs | Reproducible package, SBOM/provenance, signatures, scans, and release notes complete |
+| Upstream production blockers | Living register exists | Every Logos-owned dependency risk has owner/status/impact/workaround and release disposition |
+
+## Update rules
+
+1. Record the exact commit, command, run ID, cache/network assumptions, and
+   result behind every numeric improvement.
+2. Never count a lower-lane unit or contract test as a composed PoC run.
+3. Never count carried evidence as phase completion until it is revalidated
+   against the working vertical path.
+4. Record failed attempts and flakes as well as successes.
+5. Update the implementation plan, manual guide, architecture diagrams, and
+   external-resource inventory in the same change when their facts change.

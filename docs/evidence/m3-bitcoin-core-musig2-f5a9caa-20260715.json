@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "milestone": "M3",
+  "scope": "bitcoin_core_musig2_adaptor_p2tr_fixture",
+  "result": "passed",
+  "tested_repository_commit": "f5a9caa66b04b0bec1a86cb732f5a64f63852e6e",
+  "tested_origin_main_commit": "f5a9caa66b04b0bec1a86cb732f5a64f63852e6e",
+  "worktree_clean_before_run": true,
+  "clean_worktree_required": true,
+  "run_id": "m3-musig-exact-f5a9caa",
+  "completed_at": "2026-07-15T07:58:22Z",
+  "runner": "scripts/run-bitcoin-core-e2e.sh",
+  "core": {
+    "version": "31.1",
+    "source_commit": "9be056a8a72b624dae9623b2f7bded92c2a21c91",
+    "archive_sha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+    "provenance_evidence_sha256": "fa477ab9a8e4929bb8a944e599c23ea4f20ebc39447094edfcbf8e0d3a60d75c",
+    "image_id": "sha256:a208e369963cf6f0bb91e447a7d20223175744da45651e9753888516ed92f430",
+    "fixture_helper_sha256": "772cdf6405747ed07aad17537a890b6497f4a7be35ef2e41c301532bd860479e"
+  },
+  "isolation": {
+    "lifecycle": "exact_id_native_docker",
+    "compose_contract_validated": true,
+    "rpc_publication": "dynamic_literal_loopback_only",
+    "p2p_port_published": false,
+    "network_ip_masquerade": false,
+    "core_network_active": false,
+    "peers_before": 0,
+    "peers_after": 0
+  },
+  "chain": {
+    "network": "regtest",
+    "genesis": "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
+    "initial_height": 0,
+    "final_height": 103,
+    "mocktime_base": 1700000000,
+    "block_spacing_seconds": 600
+  },
+  "contract": {
+    "fixture_only": true,
+    "fixture_authority": "two_party_musig2_adaptor_public_regtest_vector",
+    "signing_protocol": "BIP327_MUSIG2_SCHNORR_ADAPTOR",
+    "musig2_version": "0.4.1",
+    "signer_order": [
+      "maker",
+      "taker"
+    ],
+    "adaptor_point": "031428f3a3532ff4f1cac70f7292bfad06d1037f800ee8839b56ebba917a22e900",
+    "csv_blocks": 144,
+    "script_pubkey": "5120e077de917e5cff6c4055f07ef4676f3d0df57dc2ff66036824d917e1937c8a3a",
+    "address": "bcrt1pupmaayt7tnlkcsz47pl0gem085xl2lwzlanqx6pymyt7rymu3gaq6psr5y"
+  },
+  "funding": {
+    "submitted_by": "taker",
+    "observed_by": "maker",
+    "value_sat": 100000000,
+    "fee_sat": 1000,
+    "txid": "7393db97def6fa567db9ea8a125361371ee31d96062562ddc94b20d67f54ae3f",
+    "wtxid": "d1406e7801ea4898b46c3f4d5661bfdaa77267af1cdc6c6c4a2897dcfaa9dec6",
+    "block_height": 102,
+    "policy_accepted": true,
+    "consensus_accepted": true
+  },
+  "cooperative_key_path_claim": {
+    "submitted_by": "maker",
+    "observed_by": "taker",
+    "signer_order": [
+      "maker",
+      "taker"
+    ],
+    "nonce_commitment_scheme": "SHA256_domain_role_session_message_pubnonce",
+    "nonce_commitments_computed": true,
+    "nonce_commitment_exchange_proven": false,
+    "adaptor_presignature_bytes": 65,
+    "adaptor_presignature_verified": true,
+    "final_signature_verified_under_q": true,
+    "extracted_scalar_public_fixture": true,
+    "extracted_point_matches": true,
+    "value_sat": 99999000,
+    "fee_sat": 1000,
+    "txid": "46ba38582cf6fbd4a0c656c3f1dce617f26028a1e329394e16ed3dafae4300ac",
+    "wtxid": "6787cf10d6d2e36fb951bff906ebdc6ac78287bbff97a0bf2fcb6499f6a678b2",
+    "block_height": 103,
+    "witness_items": 1,
+    "witness_bytes": 64,
+    "sighash_type": "DEFAULT",
+    "annex": false,
+    "policy_accepted": true,
+    "consensus_accepted": true,
+    "exact_contract_outpoint_spent_once": true
+  },
+  "security_claims": {
+    "taproot_tweak_and_consensus_spend_proven": true,
+    "known_private_key_fixture": true,
+    "production_signing_authority_proven": false,
+    "independent_actor_processes_proven": false,
+    "durable_actor_stores_proven": false,
+    "musig2_taproot_fixture_proven": true,
+    "adaptor_signature_fixture_proven": true,
+    "scalar_extraction_fixture_proven": true,
+    "nonce_commitment_exchange_proven": false,
+    "crash_safe_nonce_journal_proven": false,
+    "lez_composition_proven": false,
+    "atomicity_proven": false
+  },
+  "actor_rpc": {
+    "roles": [
+      "maker",
+      "taker"
+    ],
+    "credentials_distinct": true,
+    "credentials_mode": "0600_under_0700_run_root",
+    "plaintext_credentials_disclosed": false,
+    "wallet_mining_clock_network_shutdown_calls_denied": true,
+    "crossed_credentials_rejected": true
+  },
+  "external_dependencies": {
+    "runtime_external_resources": [],
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_peers_used": false,
+    "cold_setup_resources": [
+      "bitcoincore.org signed release assets",
+      "github.com/bitcoin/bitcoin source tag",
+      "github.com/bitcoin-core/guix.sigs attestations",
+      "digest-pinned gcr.io distroless runtime base",
+      "locked Rust registries"
+    ]
+  },
+  "cleanup": {
+    "status": "passed",
+    "exact_run_resources_absent": true,
+    "foreign_sentinel_survived_exact_cleanup": true,
+    "broad_cleanup_used": false
+  },
+  "source_packet_sha256": {
+    "runtime_json": "c1776cb6688c900e2ba3a0626cc5a6498bfc04cdaf3d5b1cab19676c5edb44d8",
+    "cleanup_json": "9ac7315ffb30fe693b383c0bbff60d63096801fd2e55c4a3dcedb6055c723540",
+    "critical_evidence_manifest": "344e6884becf5c536e15d1a233c42993530ee0c2d48469921f967af72f13e43a",
+    "attestation_json": "bf340e91139db2b45c27a597acd7607190ef8b5253ec04558d9b13c0b33776ca"
+  },
+  "limitations": [
+    "This packet proves a one-process two-party MuSig2 adaptor Bitcoin-leg fixture, not a complete swap direction.",
+    "All signer and adaptor secrets are labeled public deterministic Regtest fixture values, not production signing authority.",
+    "Nonce commitments are computed but not exchanged before nonce reveal; no crash-safe reservation, consumption, or restart journal is proven.",
+    "Independent maker and taker signer processes and durable actor stores are not proven.",
+    "No LEZ effect, refund execution, second direction, complete direction, or end-to-end atomicity is claimed.",
+    "The beta and unaudited musig2 0.4.1 dependency remains a PoC candidate pending negative vectors, secret-handling hardening, and review.",
+    "Remote CI and exact-image Trivy outcomes are not claimed until independently observable."
+  ]
+}

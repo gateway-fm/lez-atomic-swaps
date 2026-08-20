@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-16",
+  "milestone": "M3",
+  "classification": "private_local_two_direction_two_lock_refund_poc",
+  "result": "passed",
+  "run_id": "m3refund-20260716h",
+  "completed_at": "2026-07-16T10:22:51Z",
+  "provenance": {
+    "base_head": "ef5f306f2459dc8b5e8638c8c115c200b6acc74d",
+    "worktree_clean_during_run": false,
+    "classification": "dirty_precommit_hash_bound_run",
+    "caveat": "The run used base HEAD ef5f306 with pending source changes. It is not clean pushed-commit certification. All three executable runner hashes and both stage-two evidence hashes were independently validated after the run; the commit containing this summary records the tested source tree.",
+    "validated_executable_scripts": {
+      "outer_runner": {
+        "repository_path": "scripts/run-m3-actor-local-poc.sh",
+        "sha256": "e60d2c92fe7b889871892815659b6b088406c0091e2d9dccf42519e4fff1d3bb"
+      },
+      "direction_driver": {
+        "repository_path": "scripts/run-m3-actor-direction.sh",
+        "sha256": "008cf0e4c14bacacdf3b155a5e1e96e0b305096a939a77b24305d13f53bb71ec"
+      },
+      "lez_bootstrap": {
+        "repository_path": "scripts/run-m3-lez-bootstrap.sh",
+        "sha256": "fb888075a391d5757faf8626956f63a10447c1d0a7c18526642ef034edbf82fa"
+      }
+    },
+    "validated_stage_two_evidence": {
+      "taker_sells_foreign_sha256": "817f423df633a68495ada45414bdcd7c5ae3f0755cdcb8a91e75ac4f12578a39",
+      "taker_sells_lez_sha256": "4f5fe94643e42be4345076370b550ba05caa9483cac025ec05ff51084b087f57"
+    }
+  },
+  "local_topology": {
+    "bitcoin_core": {
+      "version": "31.1",
+      "source_commit": "9be056a8a72b624dae9623b2f7bded92c2a21c91",
+      "release_archive_sha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+      "network": "regtest",
+      "rpc_scope": "ephemeral_literal_loopback",
+      "network_active": false,
+      "public_peers": 0,
+      "funds_source": "deterministic_local_regtest_coinbase_output"
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+      "network": "private_local",
+      "slot_duration_seconds": "3.0",
+      "rpc_scope": "ephemeral_literal_loopback",
+      "funds_source": "deterministic_local_genesis_vault_allocations"
+    },
+    "actor_process_model": "fresh_one_shot_process_per_command",
+    "maker_and_taker_credentials_distinct": true,
+    "maker_and_taker_stores_distinct": true
+  },
+  "directions": [
+    {
+      "direction": "TakerSellsForeign",
+      "journey": "two_lock_timeout_refund",
+      "terminal": {
+        "maker": {
+          "revision": 4,
+          "phase": "refunded",
+          "next_action": "complete"
+        },
+        "taker": {
+          "revision": 4,
+          "phase": "refunded",
+          "next_action": "complete"
+        }
+      },
+      "effects": {
+        "bitcoin_count": 2,
+        "bitcoin_ids": [
+          "460c7e056a156e9f9a29a97d9ffd0843b903ebc267101a55daa4e1ebfc4c56b8",
+          "ef48682ae4b75d4dac0ae650af74281912e9a7aa0ea4d05848981a4d49572886"
+        ],
+        "lez_count": 3,
+        "lez_ids": [
+          "48a3d15ace273f9dfd71de0b39a084199ee2a77710c45a39dc6ebb5673cfec66",
+          "00194d259170d3b7a4cd6ddceca7c0ff3e163917448cc6d1b44f5eb8c38b9781",
+          "a5cbb48a21d41616dc7fcd50bd39806f7a9bd25f4466076b1f2a02974e997e41"
+        ],
+        "cooperative_claim_effects_present": false
+      },
+      "refunds": {
+        "bitcoin": {
+          "transaction_id": "ef48682ae4b75d4dac0ae650af74281912e9a7aa0ea4d05848981a4d49572886",
+          "witness_transaction_id": "f2bd4109327f439de73014389cdf7629ea56c853e30cae44508a5620b21dec5d",
+          "containing_block_hash": "53829bbabf5c0ac066128e82d3ed3b3958e78edc5f3fcc34804c612965cccfbf",
+          "confirmations_when_certified": 1,
+          "spent_exact_funding_output": true
+        },
+        "lez": {
+          "transaction_id": "a5cbb48a21d41616dc7fcd50bd39806f7a9bd25f4466076b1f2a02974e997e41",
+          "finalized_block_id": 111,
+          "finalized_block_hash": "e3e4ffc655758e9bc12b617d8f7b9306cc38b70217bf0a9d9c41b7764e2fc42f",
+          "exact_occurrences": 1,
+          "deadline_satisfied": true,
+          "metadata_status": "refunded",
+          "custody_balance": "0",
+          "immutable_depositor_validated": true
+        }
+      }
+    },
+    {
+      "direction": "TakerSellsLez",
+      "journey": "two_lock_timeout_refund",
+      "terminal": {
+        "maker": {
+          "revision": 4,
+          "phase": "refunded",
+          "next_action": "complete"
+        },
+        "taker": {
+          "revision": 4,
+          "phase": "refunded",
+          "next_action": "complete"
+        }
+      },
+      "effects": {
+        "bitcoin_count": 2,
+        "bitcoin_ids": [
+          "8205437be1612322cf99f37fcd371576a47e3e08e964438f2945fd6f4998a5c0",
+          "17c652fbd8541ff35af5ea277567f7b67a6ce09de2b9b0b1c21851b078d56c96"
+        ],
+        "lez_count": 3,
+        "lez_ids": [
+          "61bd50a2e2667bd18f230b708e3652d2898e8098c721d4fadb7cbeb7e5f2cee3",
+          "db43c0620fc81b6e249aa3f36c813a3ac0974086ecb5eebd960e54a312124b80",
+          "64e1005b3b0c259f0a120926b8728bfdfc144d02d2fc1efcd452576da0d9a6b4"
+        ],
+        "cooperative_claim_effects_present": false
+      },
+      "refunds": {
+        "bitcoin": {
+          "transaction_id": "17c652fbd8541ff35af5ea277567f7b67a6ce09de2b9b0b1c21851b078d56c96",
+          "witness_transaction_id": "5015ccadb295e04ce7cb7f8de8c9aaee56b5015533aca9bed84f7a86497348e6",
+          "containing_block_hash": "2f093dc5493c698dde1c2ab1aaa9c25a5b3963424747f6bc0405318127582b74",
+          "confirmations_when_certified": 1,
+          "spent_exact_funding_output": true
+        },
+        "lez": {
+          "transaction_id": "64e1005b3b0c259f0a120926b8728bfdfc144d02d2fc1efcd452576da0d9a6b4",
+          "finalized_block_id": 292,
+          "finalized_block_hash": "b1355b2c8ebaee2dae3ddc5e85202a877202766fbe92b4f1548f6634f219c701",
+          "exact_occurrences": 1,
+          "deadline_satisfied": true,
+          "metadata_status": "refunded",
+          "custody_balance": "0",
+          "immutable_depositor_validated": true
+        }
+      }
+    }
+  ],
+  "terminal_replay": {
+    "recover_invocations": 4,
+    "before_after_effect_manifests_byte_identical": true,
+    "resubmission_count": 0,
+    "output_enum": "not_yet_composed",
+    "durable_status_after_replay": {
+      "revision": 4,
+      "phase": "refunded",
+      "next_action": "complete"
+    },
+    "interpretation": "The terminal recover enum label is not a completion claim. Certification is based on unchanged terminal status and exact zero-effect replay comparison."
+  },
+  "exact_cleanup": {
+    "result": "passed",
+    "scope": "captured_exact_ids_names_and_secure_state_root",
+    "all_exact_run_resources_absent": true,
+    "containers_absent": true,
+    "networks_absent": true,
+    "volumes_absent": true,
+    "images_absent": true,
+    "secure_reservation_state_absent": true,
+    "broad_cleanup_used": false,
+    "foreign_resources_targeted": false
+  },
+  "runtime_external_resources": {
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_peers_used": false,
+    "network_dependency_during_certification": false
+  },
+  "secret_safety": {
+    "private_keys_recorded": false,
+    "credentials_recorded": false,
+    "capabilities_recorded": false,
+    "adaptor_scalar_or_preimage_recorded": false,
+    "raw_transactions_recorded": false,
+    "logs_recorded": false,
+    "private_material_disclosed": false,
+    "public_transaction_and_block_identifiers_recorded": true
+  },
+  "open_scope": [
+    "The first-lock-only absent-maker survivor journey remains open: owner submission, the signed maker-second-lock cutoff and cutoff/refund race, and fresh actual-node evidence are not proven by this two-lock run.",
+    "Concurrent swaps with independent funding, agreements, actor stores, effect journals, and overlapping in-flight phases remain open.",
+    "Process-kill, ambiguous-outcome, reorg/replacement, fee-pressure, and chaos hardening remain open beyond this local functional evidence.",
+    "Public Testnet4 and public LEZ execution, production key custody, public finality proof, formal review, and production readiness remain open.",
+    "This file alone does not authorize an M3 completion tag."
+  ]
+}

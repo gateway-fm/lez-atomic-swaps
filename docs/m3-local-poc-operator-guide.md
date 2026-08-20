@@ -1145,22 +1145,14 @@ transaction, port, and evidence path remains run-private.
 
 The F7 flow requires the witnessed-token guest ELF
 `bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea53080c926850967fd7`
-and deployer `c594ea1ec34fc0227e8e1b6ced9917ad4df5c5e4dfac7616565aae830d3f5cbd`.
-The deployer was rebuilt by the full pinned verifier from clean commit
-`0b54ab68f766ff016741dd6ba2eacade4a1c1e31` in the deterministic worktree
-`/tmp/lez-f7-artifact-src-0b54ab68`. Its host-debug bytes include absolute
-source-path metadata, so use that exact worktree path when rebuilding this
-hash. The Docker-built guest and its ProgramId remain path-independent and
-unchanged. ADR 0179 records the bounded host-artifact rotation and why it does
-not change the on-chain program identity.
+and deployer `a7f1e2593844bef8fc61cab4b37566fb5c6b8cb8eba27efb50f985e995ba191c`.
 Do not reuse the older native-only `a199c5be...` artifact target shown in
 historical audit commands. Run Y demonstrated that the independent bootstrap
 check rejects that stale target before deployment and still performs exact
 cleanup. The current outer runner rejects the exact mismatch even earlier,
 before prebuild or node startup; bootstrap still revalidates the guest and the
 deployer through point of use and evidence publication. Supply a target
-produced by the F7 pinned verifier at the commit and deterministic path above;
-retained Run Z used
+produced by the current pinned verifier; retained Run Z used
 `/tmp/lez-v02-provisional-artifact-m3f7artifact20260717a` only as an audited
 example, not as a portable path.
 
@@ -1514,97 +1506,6 @@ for direction in taker_sells_foreign taker_sells_lez; do
 done
 unset M3_ACTOR_POC_JOURNEY
 ~~~
-
-### Reproduce the certified custom-token F7 refund pair
-
-Keep every pinned prerequisite from
-[the custom-token F7 setup](#reproduce-the-custom-token-f7-happy-pair-with-the-verified-wallet-cache),
-but select both the witnessed-token mode and the refund journey. Use a fresh
-run ID; failed and successful roots are both spent.
-
-~~~sh
-export RUN_ID=m3f7-refund-manual-001
-export M3_ACTOR_POC_ASSET_MODE=custom_token
-export M3_ACTOR_POC_JOURNEY=refund
-./scripts/run-m3-actor-local-poc.sh
-
-export M3_EVIDENCE="$PWD/.e2e/$RUN_ID/m3-actor-poc/evidence"
-jq -e '
-  .kind == "m3_actor_two_direction_custom_token_refund_local_poc"
-  and .journey == "refund"
-  and .asset_mode == "custom_token"
-  and .result == "passed"
-  and .execution_provenance == {
-    repository_clean_exact_head:true,
-    origin_main_equals_head:true,
-    executable_hashes_stable_from_start_to_publication:true}
-  and [.directions[].direction] ==
-    ["taker_sells_foreign","taker_sells_lez"]
-  and all(.directions[];
-    .terminal_revision == 4
-    and .terminal_phase == "refunded"
-    and .expected_unique_effects == {bitcoin:2,lez:4})
-  and .directions[0].custom_token_terminal_balances.balances ==
-    {maker:250,taker:0,custody:0}
-  and .directions[1].custom_token_terminal_balances.balances ==
-    {maker:0,taker:250,custody:0}
-  and .actor_owned_effect_semantics == "refund"
-  and .replay_command == "recover"
-  and .replay_resubmission_count == 0
-  and .services.bitcoin_core.version == "31.1"
-  and .services.bitcoin_core.network == "regtest"
-  and .services.lez.version == "v0.2.0"
-  and .services.lez.network == "private_local"
-  and .public_rpc_used == false
-  and .faucet_used == false
-  and .public_funds_used == false
-  and .private_material_disclosed == false
-' "$M3_EVIDENCE/m3-actor-local-poc.json"
-
-for direction in taker_sells_foreign taker_sells_lez; do
-  jq -e '
-    .journey == "refund"
-    and .expected_unique_effects == {bitcoin:2,lez:4}
-    and (.bitcoin_effect_ids | length) == 2
-    and (.lez_effect_ids | length) == 4
-    and .actor_owned_refunds.bitcoin == .bitcoin_effect_ids[1]
-    and .actor_owned_refunds.lez == .lez_effect_ids[3]
-    and .cooperative_claim_effects_present == false
-    and .asset.kind == "custom_token"
-    and .asset.first_lock_order ==
-      ["initialize_witnessed","create_custody_ata","fund"]
-  ' "$M3_EVIDENCE/${direction}-actual-effects.json"
-  jq -s -e '.[0] == .[1]' \
-    "$M3_EVIDENCE/${direction}-submission-counts-before-replay.json" \
-    "$M3_EVIDENCE/${direction}-submission-counts-after-replay.json"
-done
-
-jq -e '
-  .journey == "refund"
-  and .result == "passed"
-  and .all_exact_run_resources_absent == true
-  and .foreign_resources_targeted == false
-  and .broad_cleanup_used == false
-' "$M3_EVIDENCE/cleanup-attestation.json"
-
-unset M3_ACTOR_POC_ASSET_MODE M3_ACTOR_POC_JOURNEY
-~~~
-
-Reference run m7f7refund-062b6ba-h at pushed commit 062b6ba passed this
-exact procedure in 3,699,310 milliseconds. Forward finalized the Maker-owned
-LEZ refund before the later Bitcoin Taker refund; reverse finalized the Bitcoin
-Maker refund before the later Taker-owned LEZ refund. Both directions returned
-the full principal with zero custody and no cooperative claim effect. The
-checked secret-safe summary is
-docs/evidence/m7-actual-f7-custom-token-refund-062b6ba-20260808.json.
-
-The measured run used only run-private Core 31.1 Regtest and LEZ v0.2 services
-plus deterministic genesis/Regtest funds and official local tokens. The pinned
-Bedrock component attempted pool.ntp.org:123/udp and observed timeouts, but the
-run did not depend on an NTP response. No public chain RPC, faucet, peer,
-public funds, or public deployment participated. Cold setup can still fail on
-package, Git, or release availability before the locked offline inputs and
-verified artifacts are cached.
 
 Run H's evidence files span 54 minutes 5 seconds from the first retained file
 through cleanup. The two directions run sequentially and intentionally wait for

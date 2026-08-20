@@ -1,0 +1,419 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-15",
+  "milestone": "M3",
+  "classification": "private_local_two_direction_happy_path_poc",
+  "result": "passed",
+  "tested_repository_commit": "f605cd6340746f32f85092648a4a4ba677883b60",
+  "tested_origin_main_commit": "f605cd6340746f32f85092648a4a4ba677883b60",
+  "worktree_clean_before_chain_run": true,
+  "run_id": "m3poc-live2-20260715a",
+  "milestone_boundary": {
+    "local_functional_poc_complete": true,
+    "happy_directions_completed": 2,
+    "happy_directions_required": 2,
+    "production_ready": false,
+    "m3_completion_tag_created": false,
+    "public_deployment_required_for_this_boundary": false
+  },
+  "local_topology": {
+    "bitcoin_core": {
+      "version": "31.1",
+      "source_commit": "9be056a8a72b624dae9623b2f7bded92c2a21c91",
+      "release_archive_sha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+      "network": "regtest",
+      "rpc": "http://127.0.0.1:32853",
+      "rpc_scope": "ephemeral_literal_loopback",
+      "p2p_port_published": false,
+      "public_peers": 0,
+      "actor_rpc_roles": [
+        "maker",
+        "taker"
+      ],
+      "actor_credentials_distinct": true,
+      "provisioner_authority_separate_from_actor_rpc": true
+    },
+    "lez": {
+      "version": "v0.2.0",
+      "network": "private_local_devnet",
+      "channel_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+      "genesis_block_hash": "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9",
+      "bedrock_rpc": "http://127.0.0.1:32854",
+      "sequencer_rpc": "http://127.0.0.1:32855",
+      "indexer_rpc": "http://127.0.0.1:32856",
+      "rpc_scope": "ephemeral_literal_loopback"
+    },
+    "role_sidecars": {
+      "maker": "http://127.0.0.1:32857",
+      "taker": "http://127.0.0.1:32858",
+      "endpoint_scope": "ephemeral_literal_loopback",
+      "processes_independent": true,
+      "stores_independent": true,
+      "signing_journals_independent": true
+    },
+    "isolation": {
+      "docker_resources_run_owned": true,
+      "shared_or_foreign_resources_removed": false,
+      "broad_docker_cleanup_used": false,
+      "public_runtime_network_required": false
+    }
+  },
+  "lez_guest_deployment": {
+    "artifact": "lez-zec-escrow-v02",
+    "elf_sha256": "a199c5be062adcb27cf63c62d9f5688b37058b4699ce7e1767fd26eeceb5e293",
+    "image_id": "39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec",
+    "program_id": "39b6a4db85374de9359ea82164ef415019919475f656d597c5ab2231bc104dec",
+    "deployment_transaction_id": "94a49583a5fd5d6a749fd227f38fe99b002866921a9b77e956623ee6f36e76d3",
+    "inclusion_block_id": 405,
+    "inclusion_block_hash": "dfe017c8167c09bf098935afd8585c928e99c6405c1f662e4ce087b465ad73fc",
+    "bedrock_status": "Finalized",
+    "finalized_tip_when_independently_rechecked": 407,
+    "block_lookup_by_id_and_hash_agreed": true
+  },
+  "lez_vault_onboarding": {
+    "required_before_swap_transcript_preparation": true,
+    "finalized_tip_when_independently_rechecked": 459,
+    "authenticated_transfer_program_id": "dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71",
+    "actors": [
+      {
+        "role": "maker",
+        "claim_transaction_id": "e41cf042b058aa258fcd19d8ce2384f2635f5c4dfc0c2b64b59a2d588804d1f9",
+        "finalized_block_id": 456,
+        "finalized_block_hash": "974580e8eeec90c220563c842fc5cfac46a683b7a373abe323ab9426e96990b0",
+        "bedrock_status": "Finalized",
+        "owner_balance_after": "100000",
+        "owner_nonce_after": 1,
+        "vault_balance_after": "0",
+        "vault_nonce_after": 0
+      },
+      {
+        "role": "taker",
+        "claim_transaction_id": "aa19763d19ce3849b1b0e955e2c049fa31cd357c1f0151a3b1f52ec03428c15b",
+        "finalized_block_id": 457,
+        "finalized_block_hash": "8d7f74afb4f6b63ec4b1e394fac042dbe3ae551b03de69b78d20d648d2f7b2fd",
+        "bedrock_status": "Finalized",
+        "owner_balance_after": "200000",
+        "owner_nonce_after": 1,
+        "vault_balance_after": "0",
+        "vault_nonce_after": 0
+      }
+    ]
+  },
+  "directions": [
+    {
+      "direction": "TakerSellsForeign",
+      "result": "completed",
+      "terms": {
+        "swap_id": "d2b3e70770d0fcafc8080b308df0268b867fa380d88272d133fb939157216102",
+        "terms_hash": "8a276840f00ce59129dc02af050128fd6ea7f177656107d518a8b2ae591a20b5",
+        "lez_depositor_role": "maker",
+        "lez_claimant_role": "taker",
+        "lez_amount": "1000",
+        "refund_at_ms": 1784123468000,
+        "lez_claim_message_hash": "4c00ad59d3a1664ad14a6e1b3ad68c85d05775caf046cd83ad61959a56afe124",
+        "bitcoin_contract_value_sat": 100000000,
+        "bitcoin_locker_role": "taker",
+        "bitcoin_claimant_role": "maker"
+      },
+      "pre_effect_gate": {
+        "all_bitcoin_and_lez_presignatures_completed_before_first_chain_effect": true,
+        "bitcoin_presignature_packet_sha256": "c28d6eef0ac218452f855222ec05bbbbdc2f5a788810db14d2dd782c54bbbda1",
+        "lez_presignature_packet_sha256": "02cbc731cbd68f2f15e03502ce2b71cde01e61810d9ba64016ef6587d224bb52",
+        "fresh_process_per_signing_phase": true,
+        "separate_role_journals": true,
+        "latest_presignature_file_mtime_epoch_seconds": 1784116330,
+        "first_chain_effect_evidence_mtime_epoch_seconds": 1784116525,
+        "both_locks_final_evidence_mtime_epoch_seconds": 1784116972,
+        "first_reveal_packet_mtime_epoch_seconds": 1784117028,
+        "strict_order": "presignatures_before_first_effect_before_dual_lock_finality_before_reveal",
+        "chronology_basis": "operator_sequence_and_local_file_metadata_not_a_trusted_clock",
+        "post_lock_delivery_or_chat_configured": false
+      },
+      "bitcoin": {
+        "lock": {
+          "transaction_id": "ca0ae6418c3cfe28c114e1acd8d50c25b39f8ab63b62e480d31d5005e94a4c75",
+          "wtxid": "7bc6098e52ff166d24b0ef2c41073501cf2c76d13943c69150680b3a8029ef5b",
+          "block_hash": "6ed356e7cc00c6fd796cc5fcfbbb72b598d912cc9729e37c0426464e606355d8",
+          "confirmations_when_gate_opened": 1,
+          "submitted_by": "taker",
+          "observed_by": "maker",
+          "contract_output_value_sat": 100000000,
+          "contract_output_type": "p2tr"
+        },
+        "claim": {
+          "transaction_id": "0ee99753bf35ae3d122e5887fb42ec19e95ea26bf43f3d4897efa9dbd116a5aa",
+          "wtxid": "1807f09c8753e08c336125295b6b5c22585b517ef4e0ddd09f92cd2ea00fef8c",
+          "block_hash": "5346b095231564e9a6fe2017b5e4ce2681523cd37d4bef14919bbeefddbc0a7c",
+          "confirmations_when_certified": 1,
+          "submitted_by": "maker",
+          "observed_by": "taker",
+          "recipient_role": "maker",
+          "spent_lock_outpoint_exactly_once": true,
+          "contract_output_spent": true,
+          "witness_items": 1,
+          "exact_final_signature_witness_match": true
+        }
+      },
+      "lez": {
+        "transactions": [
+          {
+            "kind": "initialize_native",
+            "transaction_id": "a0ddd3427fc278d0ae4d42cce0dd6f07d6e52d102a17bbe31342b6ff1bb85a5c",
+            "submitted_by": "maker",
+            "finalized_block_id": 540,
+            "finalized_block_hash": "065b8f0e80de2e29cd26aad78f5b133455f9e205811b86da40ede98ccc4b0382",
+            "bedrock_status": "Finalized",
+            "exact_occurrences_in_scanned_range": 1
+          },
+          {
+            "kind": "fund_native",
+            "transaction_id": "fcf484a8a21e8fd83d456a4bc6e98e84230d171351d68362c71e68aa0eb988a9",
+            "submitted_by": "maker",
+            "finalized_block_id": 544,
+            "finalized_block_hash": "801d38735e33d156c6c3d5b33bf1779c2838f965717cd16491ac0c620cc4a1b7",
+            "bedrock_status": "Finalized",
+            "exact_occurrences_in_scanned_range": 1
+          },
+          {
+            "kind": "claim_native_witnessed",
+            "transaction_id": "ef77099ea877b562dd5192fd6feb929bcfd31b18ea1bd5e58e65a9af3232cde3",
+            "submitted_by": "taker",
+            "recipient_role": "taker",
+            "finalized_block_id": 570,
+            "finalized_block_hash": "582f94f320beb69d0e5fa4417a4daa2ade671d5b1c2ccd0c8b361a431466bdf1",
+            "bedrock_status": "Finalized",
+            "exact_occurrences_in_scanned_range": 1
+          }
+        ],
+        "terminal_metadata_status": "claimed",
+        "terminal_custody_balance": "0",
+        "finalized_claim_witness_count": 1,
+        "exact_finalized_signature_match": true,
+        "finalized_signature_sha256": "bfc8989969aca80972e84805a9681729e42082b90c7a8b82df3fa21507411e55"
+      },
+      "atomicity": {
+        "adaptor_secret_release_waited_for_both_locks": true,
+        "dual_lock_gate": [
+          "bitcoin_lock_confirmed",
+          "lez_funding_finalized"
+        ],
+        "first_reveal_chain": "lez",
+        "opposite_claim_completed_unilaterally_from_persisted_role_state": true,
+        "recovered_value_matched_committed_point": true,
+        "secret_value_recorded": false
+      },
+      "terminal_recipients": {
+        "bitcoin": "maker",
+        "lez": "taker",
+        "both_contract_outputs_consumed": true,
+        "lez_custody_zero": true
+      }
+    },
+    {
+      "direction": "TakerSellsLez",
+      "result": "completed",
+      "terms": {
+        "swap_id": "c98226893b751e36ee5971dd618efe6871ad8413133c06ad683113f6f4341960",
+        "terms_hash": "85444ba28eee2daebec3d98c3efb3edd8b1a232f7e8056a787d07737e2397f33",
+        "lez_depositor_role": "taker",
+        "lez_claimant_role": "maker",
+        "lez_amount": "2000",
+        "refund_at_ms": 1784127068000,
+        "lez_claim_message_hash": "b81e75fcd36518ca8289c7cfc3ffce3365f1eb120ebb4dfe6333c587bff5292b",
+        "bitcoin_contract_value_sat": 100000000,
+        "bitcoin_locker_role": "maker",
+        "bitcoin_claimant_role": "taker"
+      },
+      "pre_effect_gate": {
+        "all_bitcoin_and_lez_presignatures_completed_before_first_chain_effect": true,
+        "bitcoin_presignature_packet_sha256": "b8003500674229d2a16f01963025c505cb45bbb739c10e1b2471f31889d1cc72",
+        "lez_presignature_packet_sha256": "3281e06bae85b116bf76a6ddd514243864c599c6b1b8d963eddb2ca6bdaf24a4",
+        "fresh_process_per_signing_phase": true,
+        "separate_role_journals": true,
+        "latest_presignature_file_mtime_epoch_seconds": 1784117532,
+        "first_chain_effect_evidence_mtime_epoch_seconds": 1784117554,
+        "both_locks_final_evidence_mtime_epoch_seconds": 1784117704,
+        "first_reveal_packet_mtime_epoch_seconds": 1784117741,
+        "strict_order": "presignatures_before_first_effect_before_dual_lock_finality_before_reveal",
+        "chronology_basis": "operator_sequence_and_local_file_metadata_not_a_trusted_clock",
+        "post_lock_delivery_or_chat_configured": false
+      },
+      "bitcoin": {
+        "lock": {
+          "transaction_id": "c5dd0f85e0569a553716c0f908707f7039e0436f451d938df15cf1fb303752a3",
+          "wtxid": "82fa313bacabfa79b999a87a34ae0942db870e77393cd77824b98f8ff8450d3c",
+          "block_hash": "0a6570f428ad4a69f2e237673f6bdd9b59dc1f34f2ddfec25e8f35fa2e9e9740",
+          "confirmations_when_gate_opened": 1,
+          "submitted_by": "maker",
+          "observed_by": "taker",
+          "contract_output_value_sat": 100000000,
+          "contract_output_type": "p2tr"
+        },
+        "claim": {
+          "transaction_id": "66255398761bccc89b3e44e79ea1ca4822939f99f8054c08560ea594840054f4",
+          "wtxid": "537382807999d922f0743a495e9110d1b2f1cbcf50c5338e6ef19e9822e4faf9",
+          "block_hash": "302e17248a0110472377b10227d97af4be0e3a362b19a279e901b6cf3fe54524",
+          "confirmations_when_certified": 1,
+          "submitted_by": "taker",
+          "observed_by": "maker",
+          "recipient_role": "taker",
+          "spent_lock_outpoint_exactly_once": true,
+          "contract_output_spent": true,
+          "witness_items": 1,
+          "exact_final_signature_witness_match": true,
+          "confirmed_signature_sha256": "e7e9ac9abc6e434a2d99b81e22ac1f09bc23bbb5adac157bdb68e89669326e41"
+        }
+      },
+      "lez": {
+        "transactions": [
+          {
+            "kind": "initialize_native",
+            "transaction_id": "64e8df3bb9aa83d1eb96ae81d5485f9a980cb3398c9e733af5523303240351a4",
+            "submitted_by": "taker",
+            "finalized_block_id": 617,
+            "finalized_block_hash": "cf136b7a26c98a6a1b086bb55c1a82f38d4186f88c7da6a2d1d2de00f24cebf4",
+            "bedrock_status": "Finalized",
+            "exact_occurrences_in_scanned_range": 1
+          },
+          {
+            "kind": "fund_native",
+            "transaction_id": "80bc74d43c3be658f296ff3f604c47632ac02301bbc35f5b4501c958e8a1daa6",
+            "submitted_by": "taker",
+            "finalized_block_id": 620,
+            "finalized_block_hash": "8b7b01138e054089be86d6edba5e0692c3745da4b3e696862f003dff9ead14f6",
+            "bedrock_status": "Finalized",
+            "exact_occurrences_in_scanned_range": 1
+          },
+          {
+            "kind": "claim_native_witnessed",
+            "transaction_id": "834c67e9130f8a92a8875053f5c08ba7f768f59ad5bb761c10be341d6e9d3033",
+            "submitted_by": "maker",
+            "recipient_role": "maker",
+            "finalized_block_id": 644,
+            "finalized_block_hash": "88e22483ee2f145f3b7945446e8dd65e183de1b91c040f45f6123d7e60127a44",
+            "bedrock_status": "Finalized",
+            "exact_occurrences_in_scanned_range": 1
+          }
+        ],
+        "terminal_metadata_status": "claimed",
+        "terminal_custody_balance": "0",
+        "exact_finalized_signature_match": true,
+        "finalized_signature_sha256": "1e23df9ba2d1f579ec63eb3798c0e659c89ca314c2658e332446a502874c01de"
+      },
+      "atomicity": {
+        "adaptor_secret_release_waited_for_both_locks": true,
+        "dual_lock_gate": [
+          "lez_funding_finalized",
+          "bitcoin_lock_confirmed"
+        ],
+        "first_reveal_chain": "bitcoin",
+        "opposite_claim_completed_unilaterally_from_persisted_role_state": true,
+        "recovered_value_matched_committed_point": true,
+        "secret_value_recorded": false
+      },
+      "terminal_recipients": {
+        "bitcoin": "taker",
+        "lez": "maker",
+        "both_contract_outputs_consumed": true,
+        "lez_custody_zero": true
+      }
+    }
+  ],
+  "atomic_diagnostic_excluded_from_certification": {
+    "run_id": "m3poc-live-20260715a",
+    "bitcoin_lock_transaction_id": "7393db97def6fa567db9ea8a125361371ee31d96062562ddc94b20d67f54ae3f",
+    "bitcoin_lock_block_hash": "6e146e771b0fd7ceb104808327a5384a274d806d0a6eecd35e90befebaf758a8",
+    "bitcoin_lock_confirmations": 1,
+    "lez_initialize_transaction_id": "230f8c68eb859bcbfca12ad4e665d9929e2bd55831d60b89d0fe06ba356cb11c",
+    "lez_initialize_outcome": "admitted_then_dropped",
+    "lez_program_error_code": 6003,
+    "cause": "native_custody_or_actor_owner_mismatch_before_vault_onboarding",
+    "lez_funding_submitted": false,
+    "adaptor_secret_revealed": false,
+    "same_swap_repair_refused": true,
+    "refusal_reason": "onboarding_then_repreparing_the_lez_claim_after_the_confirmed_bitcoin_lock_would_have_created_a_new_transcript_after_the_first_effect",
+    "resolution": "onboard_both_vaults_then_start_a_fresh_swap_with_both_presignatures_complete_before_any_effect",
+    "real_funds_at_risk": false
+  },
+  "runtime_resource_boundary": {
+    "runtime_external_resources": [],
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_peers_used": false,
+    "bitcoin_funds_source": "deterministic_local_regtest_coinbase_outputs",
+    "lez_funds_source": "deterministic_local_genesis_vault_allocations",
+    "network_flakiness_from_public_services": false,
+    "remaining_flakiness_sources": [
+      "local_process_scheduling",
+      "moving_lez_tip_during_multi_read_observation",
+      "local_indexer_or_sequencer_readiness",
+      "manual_operator_orchestration"
+    ]
+  },
+  "confirmation_and_finality_policy": {
+    "bitcoin_local_poc_confirmations": 1,
+    "bitcoin_policy_scope": "regtest_happy_path_only",
+    "bitcoin_blocks_mined_deterministically_by_local_provisioner": true,
+    "lez_requires_indexer_finalized_block": true,
+    "lez_finality_checked_independently_of_actor_observation": true,
+    "lez_block_lookup_by_id_and_hash_required": true,
+    "lez_exact_transaction_occurrence_required": 1
+  },
+  "secret_safety": {
+    "private_keys_recorded": false,
+    "capabilities_recorded": false,
+    "rpc_credentials_or_passwords_recorded": false,
+    "adaptor_secret_or_recovered_value_recorded": false,
+    "raw_transactions_recorded": false,
+    "exact_transaction_bytes_recorded": false,
+    "full_signatures_or_presignatures_recorded": false,
+    "private_runtime_paths_recorded": false,
+    "public_packet_and_observed_signature_hashes_recorded": true
+  },
+  "production_nonclaims": [
+    "This record certifies a private local functional M3 happy-path PoC, not production readiness or a public deployment.",
+    "One Bitcoin Regtest confirmation is intentionally sufficient for this PoC and is not a production confirmation policy.",
+    "The Bitcoin transaction helper and signing identities use deterministic public fixture material; production key custody, HSM integration, rotation, backup, and recovery are not proven.",
+    "The two live directions do not prove refund, abandonment, reorg, concurrent-swap, crash-recovery, chaos, denial-of-service, or adversarial-security behavior.",
+    "The local LEZ guest deployment is not a public-network deployment and no claim is made about public endpoint availability or public faucet behavior.",
+    "No formal cryptographic audit or independent production review of the MuSig2 adaptor construction is claimed.",
+    "GW-M3-001 remains an acceptance-pending upstream proposal erratum; it does not invalidate this local functional PoC but remains open for milestone review and release governance.",
+    "No M3 completion tag is claimed by this evidence file alone."
+  ],
+  "exact_cleanup": {
+    "performed_on": "2026-07-15",
+    "maker_and_taker_sidecar_processes_stopped": true,
+    "run_labels_with_remaining_containers": [],
+    "removed_container_ids": [
+      "75cf99dbc9a32e0584c254f0ad5225777fa02eab03625048585e843f65d4e174",
+      "78b96de6afa01ea8b57e05d4500b1171300b59cfceb0e23c399898fff7435735",
+      "816c0e4315d122788c77dc9d43299ce89e7ae2ff9ba085464fbdc66f0f297497",
+      "ea3191dc08f18b7f854784aadfd49f5d9fe119b653404370450869354b0208a4"
+    ],
+    "removed_networks": [
+      "lez-atomic-swaps-bitcoin-core-m3poc-core-20260715a_bitcoin_core_private",
+      "lez-atomic-swaps-lez-v02-m3poc-lez-20260715b-private"
+    ],
+    "removed_volumes": [
+      "lez-atomic-swaps-bitcoin-core-m3poc-core-20260715a_core_data"
+    ],
+    "removed_run_owned_image_tags": [
+      "lez-atomic-swaps-bitcoin-core:m3poc-core-20260715a",
+      "lez-atomic-swaps-lez-v02:m3poc-lez-20260715b"
+    ],
+    "shared_upstream_image_removed": false,
+    "broad_prune_or_wildcard_cleanup_used": false,
+    "unrelated_docker_resources_touched": false,
+    "post_cleanup_exact_resource_inspection": "not_found",
+    "private_tmp_and_e2e_run_roots_removed_after_public_packet_push": true
+  },
+  "evidence_limitations": [
+    "The underlying runtime packet was retained for local audit, intentionally not committed because it contained signed bytes and secret-bearing role state, and removed after this secret-safe packet was pushed.",
+    "This secret-safe record contains exact transaction and block identifiers plus signature and packet hashes, but intentionally omits the bytes needed for a third party to recompute every equality assertion from this file alone.",
+    "Pre-effect signing order was checked from the operator sequence, retained packet hashes, and local file metadata; it is not a trusted external timestamp attestation.",
+    "The run was operator-composed across real local node RPCs and independent role processes rather than executed by a production reference application.",
+    "The tested source commit predates this documentation-only evidence file; this file records the exact source commit used by the run.",
+    "Remote CI, public-network behavior, and post-PoC hardening results are outside this record."
+  ]
+}
