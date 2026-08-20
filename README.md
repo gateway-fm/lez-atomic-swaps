@@ -1,91 +1,71 @@
-# lez-atomic-swaps — M3+ app branch
+# LEZ Atomic Swaps
 
-Orphan branch holding the user-checkable M3+ slice of the LEZ atomic-swap
-delivery: the real Basecamp Maker/Taker UI packages, the clickable HTML
-prototypes, and the minimal M3 diagrams. Content was extracted from `main`
-(licensing and app trees) at commit `5c384a5` of the private
-`mandrigin/lez-atomic-swaps` repository.
+Atomic swaps between Bitcoin and LEZ. No trusted third party. No collateral.
+The secret that unlocks one side is the secret that unlocks the other — so
+either both sides settle, or both sides refund.
 
-Licensing: MIT OR Apache-2.0, unchanged from the source repository
-(`LICENSE-MIT`, `LICENSE-APACHE`).
+Both directions work: **BTC → LEZ** and **LEZ → BTC**.
 
-## What is here
+## Why you can trust it
 
-| Path | What it is |
-|---|---|
-| `apps/m6-prototypes/` | Deterministic, secret-free HTML prototypes for the Maker and Taker journeys |
-| `apps/basecamp/` | The real `ui_qml` Basecamp packages (Maker console, Taker route) built with the pinned `logos-module-builder` via nix |
-| `apps/preview/` | Standalone preview host that loads the **real** QML view sources with stubbed backends — runs natively on macOS, no nix |
-| `docs/diagrams.md` | Architecture diagram, swap flow diagram, atomicity explanation |
-| `docs/m3-local-poc-operator-guide.md` | The M3 operator guide (full PoC recipe) |
-| `deploy/` | Dockerized local LEZ/BTC stack, completed-run evidence UI, and VNC demo |
+Every claim in this repo is checked, not asserted.
 
-## Run the UI
+- [**The atomicity argument**](docs/diagrams.md) — how adaptor signatures and
+  two-party MuSig2 make the legs inseparable, grounded in the shipped code.
+- [**Proofs of work**](deploy/full-swap/evidence-m5arm-08180005.json) — a
+  completed run's public evidence: five transaction IDs on two chains, exact
+  balances, zero private material. Machine-checkable.
+- [**Scope, honestly stated**](docs/m3-local-poc-operator-guide.md) — the
+  operator guide names what is *not* proven yet: reorgs, process-kill
+  recovery, same-direction scheduling. Read the nonclaims before relying on
+  anything.
+- [**The security-ADR series**](deploy/full-swap/patches/) — the certified
+  runner's 26-commit delta, including its 200+ architecture decisions
+  (adaptor security properties, refund paths, at-most-once submission).
 
-For the genuine local M3 LEZ/BTC demo, use the Docker stack:
+## Run it
+
+A real swap, on real chains, on your machine:
 
 ```sh
 cd deploy
 ./scripts/up.sh
 ./scripts/prepare-btc-m3-demo.sh
-# then open vnc://127.0.0.1:5901 (password: lezswap)
+open vnc://127.0.0.1:5901   # password: lezswap
 ```
 
-Open **LEZ / BTC Maker** and **LEZ / BTC Taker** as two separate desks. On the
-Maker desk, select Munich Vault 01 and click **Publish offer** three times, then
-select Basel Vault 02 and click it twice. On the Taker desk, select a Taker wallet and take one
-or more pending offers. Each active swap advances through four explicit,
-role-owned actions: **Taker locks BTC → Maker funds LEZ → Taker claims LEZ →
-Maker claims BTC**. Accepted offers queue safely while one genuine M3 runner
-uses the local chains. Completion publishes all five transaction hashes plus
-opening/closing BTC and LEZ balances, principal movements, and Bitcoin fees.
+Two desks appear. Maker publishes. Taker takes. Then four gates, each owned by
+one side:
 
-The profiles are local demo wallet aliases. Each real run still creates fresh,
-run-owned signing keys; this milestone does not persist production wallet keys.
-The operator fallback remains `prepare-btc-m3-demo.sh --rerun`.
+**Lock → Lock → Claim → Claim.**
 
-### 1. HTML prototypes (fastest)
+Nobody can move funds until both sides click. The swap settles only when both
+agree — and refunds if they don't.
 
-```sh
-scripts/run-prototypes.sh
-# open the loopback URL it prints (maker.html / taker.html)
-```
+Closing everything: `./deploy/scripts/down.sh`.
 
-### 2. Real QML views on the stub host (native, no nix)
+## What's here
 
-Requires Qt 6 (`brew install qt` on macOS; `CMAKE_PREFIX_PATH` elsewhere).
+| Path | What it is |
+|---|---|
+| `apps/basecamp/` | The real Maker and Taker apps (QML over an owner-only socket) |
+| `deploy/` | Dockerized LEZ + Bitcoin stack, market controller, VNC demo |
+| `deploy/full-swap/` | Evidence packets, runner patches, export tooling |
+| `docs/` | Diagrams, atomicity argument, the full operator guide |
+| `apps/m6-prototypes/` | Clickable HTML prototypes of both journeys |
 
-```sh
-scripts/run-real-ui.sh
-```
+## Just want to look?
 
-Loads `apps/basecamp/{maker,taker}/src/qml/Main.qml` **unmodified** into a
-window with a Maker/Taker switcher. The host object `logos` and both role
-backends are stubs returning canned sample JSON; no daemon, no Delivery/Chat,
-no chain nodes are contacted. This is for visual review of the production
-views; it is not a swap execution environment.
+- **Prototypes, in seconds** — `scripts/run-prototypes.sh`, then open the URL it prints.
+- **Real views, no chains** — `scripts/run-real-ui.sh` loads the production
+  QML with stub backends.
+- **Architecture first?** Start with the [diagrams](docs/diagrams.md).
 
-### 3. Production-faithful Basecamp packages (nix)
+## Verification
 
-Per `apps/basecamp/README.md`, with the pinned `nixos/nix` container digest
-and dedicated nix-store volume from the M6 evidence packet. On Apple-silicon
-Macs run the container with `--platform linux/amd64` to match the pinned
-evidence exactly.
+`./deploy/scripts/verify-all.sh` checks the stack end to end: controller
+behavior, offer lifecycle, role gating, replay protection, the wallet ledger.
 
-```sh
-cd apps/basecamp
-nix build --no-update-lock-file .#maker -o result-maker
-nix build --no-update-lock-file .#taker -o result-taker
-```
+## License
 
-## Building the Rust workspace on a Mac
-
-The workspace targets Linux (e.g. `lez-swap-store` uses `openat2`); on macOS
-use the container:
-
-```sh
-docker run --rm -v "$PWD":/workspace -w /workspace rust:1.96.0 \
-    cargo check --workspace --locked
-```
-
-(Verified: all 21 crates check clean in ~1 minute on arm64.)
+MIT OR Apache-2.0.
