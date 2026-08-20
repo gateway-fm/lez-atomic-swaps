@@ -7,6 +7,13 @@ repository_root="$(git rev-parse --show-toplevel)"
 readonly repository_root
 readonly container_name="lez-m6-ui-$UID-$$"
 
+docker_arch="$(docker info --format '{{.Architecture}}')"
+if [[ "$docker_arch" != amd64 && "$docker_arch" != x86_64 ]]; then
+  echo "the pinned sandboxed M6 browser lane requires a native amd64 Docker engine; found $docker_arch" >&2
+  echo "refusing an emulated or --no-sandbox fallback" >&2
+  exit 69
+fi
+
 cleanup() {
   docker rm --force "$container_name" >/dev/null 2>&1 || true
 }
@@ -28,7 +35,7 @@ docker run --rm \
   --env HOME=/home/m6 \
   --env PUPPETEER_EXECUTABLE_PATH="$chrome" \
   --env M6_UI_TEST_ROOT=/tmp/lez-m6-ui \
-  --mount "type=bind,src=$repository_root,dst=/workspace,readonly" \
-  --workdir /workspace \
+  --mount "type=bind,src=$repository_root,dst=/home/pptruser/workspace,readonly" \
+  --workdir /home/pptruser/workspace \
   "$image" \
   node --test --test-concurrency=1 tests/ui/m6-prototype.e2e.test.mjs

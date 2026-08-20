@@ -1,0 +1,381 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-14",
+  "classification": "m2_canonical_docker_built_private_actual_local_node_certification",
+  "runtime_implementation_base_commit": "bb53daf40d3b30def7dee173a2577dc691de01f8",
+  "repository_state": {
+    "base_commit": "bb53daf40d3b30def7dee173a2577dc691de01f8",
+    "canonical_build_and_program_identity_changes": "recorded by the commit containing this evidence packet",
+    "evidence_commit_identity": "self",
+    "base_commit_alone_contains_canonical_promotion": false
+  },
+  "owner_approved_scope": {
+    "profile": "private_local_functional_stealth",
+    "decision": "ADR-0023",
+    "public_lez_deployment_required_for_m2": false,
+    "public_zcash_execution_required_for_m2": false,
+    "public_recording_required_for_m2": false,
+    "deferred_to_production_readiness": true,
+    "scope_does_not_relax_repository_correctness_security_or_quality_gates": true
+  },
+  "canonical_build": {
+    "source": {
+      "lez_tag": "v0.2.0",
+      "lez_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+      "spel_pull_request": 238,
+      "spel_commit": "df17acd98436be4f09c55877dae1fe2e73cbcdca",
+      "risc0_version": "3.0.5"
+    },
+    "guest_toolchain": {
+      "rust_release": "1.94.1",
+      "rustc_commit": "e408947bfd200af42db322daf0fadfe7e26d3bd1",
+      "llvm_version": "21.1.8",
+      "builder_image": "risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be",
+      "builder_network_during_identity_recheck": "none"
+    },
+    "source_layout": {
+      "direct_docker_build": "run-local minimal escrow/methods/guest plus escrow/src tree",
+      "methods_embedding": "risc0_build::embed_methods_with_options with DockerOptions root ../..",
+      "shared_host_target_between_builds": false
+    },
+    "artifact": {
+      "elf_sha256": "c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e",
+      "image_id": "5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1",
+      "program_id": "5cf8c5a4eedb3c2873956cb7898eb33a495407c9746fb1a065c99638159329c1",
+      "program_id_base58": "7FvXMuDyZfHPYWS9UMT2zZ3NRLY681xEgwSMCiF26THa",
+      "program_id_words": [
+        2764437596,
+        675077102,
+        3077346675,
+        984845961,
+        3372700745,
+        2695982964,
+        949406053,
+        3240727317
+      ],
+      "direct_docker_equals_methods_embedded": true,
+      "methods_artifact_sha256_recheck": "c85055f6fe85b71535a322ba84ffc612f5d093954a721ba3b529428814dc9d2e"
+    },
+    "superseded_host_artifact": {
+      "elf_sha256": "40c9d37c5dc3c8544bcb7c26916a5be1039b76cc862b2c9dcd34e0cf61468021",
+      "image_id": "f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe",
+      "classification": "historical_pre_canonical_evidence_only",
+      "cause": "Host and container source paths changed Rust crate-disambiguator and path-bearing ELF bytes despite the same reviewed source/compiler identity.",
+      "trusted_current_target": false,
+      "used_by_either_canonical_actor_pair": false
+    }
+  },
+  "isolated_local_environments": {
+    "lez": {
+      "version": "v0.2.0",
+      "source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+      "channel_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+      "genesis_block_id": 1,
+      "genesis_block_hash": "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9",
+      "components": [
+        "Bedrock",
+        "non-standalone sequencer",
+        "indexer"
+      ],
+      "proof_endpoints": {
+        "bedrock": "http://127.0.0.1:32831",
+        "sequencer": "http://127.0.0.1:32832",
+        "indexer": "http://127.0.0.1:32833"
+      },
+      "endpoint_scope": "retained_audit_run_only_not_reusable_defaults"
+    },
+    "zebra": {
+      "version": "5.2.0",
+      "network": "Regtest",
+      "rpc_chain": "test",
+      "consensus_branch_id": "5437f330",
+      "genesis_hash": "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327",
+      "proof_endpoint": "http://127.0.0.1:32834",
+      "endpoint_scope": "retained_audit_run_only_not_reusable_default"
+    },
+    "resource_policy": {
+      "transport": "literal_loopback",
+      "public_rpc_used": false,
+      "faucet_used": false,
+      "public_funds_used": false,
+      "funding_source": "deterministic_local_lez_vault_allocations_and_zebra_regtest_outputs"
+    }
+  },
+  "canonical_local_deployment": {
+    "rpc": "sequencer JSON-RPC over retained literal loopback",
+    "transaction_hash": "bd16808ee91c9860e860830e7437148b3f4f81c632fc1b6d40350e20cc47733f",
+    "inclusion_block_id": 2582,
+    "inclusion_block_hash": "d2c4944a936347207be7030bb39f6b8f21dfc3dc75e95afedb58e22ed1f96860",
+    "bedrock_status": "Finalized",
+    "transaction_present_in_recorded_indexer_block": true,
+    "submission_attempts": 1,
+    "ambiguous_submission_retry_allowed": false,
+    "deployment_json_sha256": "d69db30614ad3d8dff4978ae9cceb29cf8544c9ca5da972673f1ebdaa0127294",
+    "finality_json_sha256": "fc1cadd089c952c77171db95ae2e55b6990356abd49ef2f5e85647f2246e5fde"
+  },
+  "corridors": [
+    {
+      "run_id": "m2cert-canonical-forward-bb53daf-20260714a",
+      "direction": "taker_sells_lez",
+      "result": "completed",
+      "signed_agreement_sha256": "60aeb0405b325f89d5a7104d98da529af70515ef089ccf8d216c8bd74d7170db",
+      "actors": {
+        "maker": {
+          "process_store_and_credentials_independent": true,
+          "terminal_phase": "completed",
+          "terminal_revision": 4
+        },
+        "taker": {
+          "process_store_and_credentials_independent": true,
+          "terminal_phase": "completed",
+          "terminal_revision": 4
+        },
+        "actor_pair_validated": true,
+        "private_material_disclosed": false
+      },
+      "effect_owners": {
+        "zcash_funder": "maker",
+        "lez_depositor": "taker",
+        "lez_claimant": "maker",
+        "zcash_claimant": "taker"
+      },
+      "lez_native_escrow": {
+        "amount": 50000,
+        "metadata_account": "HrZN9CuhzEw9BparRNaXZB547BUNCocTe2GULpWKADn2",
+        "custody_account": "F8GSCCQDC1fWwsGbhbno8HdhEC7ehor9JgZPEhXvndSM",
+        "transactions": [
+          {
+            "kind": "initialize_native",
+            "opcode": 0,
+            "transaction_id": "de2628958d4ad461940dfb93e3eff2cbf6fe92856530c9e5c1b3b8f90016fe79",
+            "finalized_block_id": 2594,
+            "finalized_block_hash": "a3c661498b142f5ef58ad4e9bbac728232592d400dad732da90feae5cc596872"
+          },
+          {
+            "kind": "fund_native",
+            "opcode": 1,
+            "transaction_id": "dd5decfb84bb6709dea1d4b32778c000d36d823543ea69d2e35e632979294564",
+            "finalized_block_id": 2595,
+            "finalized_block_hash": "3196df4195764189ba1fe21298d42e5754e0fa88471c1b40b5b5d4c9e8a91a55"
+          },
+          {
+            "kind": "claim_native",
+            "opcode": 2,
+            "transaction_id": "582ad99b33b7fc50dfa1e42b6f3fad1a6902c13f92c9795536b5832be5e3b0b1",
+            "finalized_block_id": 2596,
+            "finalized_block_hash": "8aa92a3ee48649c1211ad170b71e8fabb270f577e0ccb241744e68b803ac1160"
+          }
+        ],
+        "terminal_state_at_finalized_block_2596": {
+          "metadata_status": "Claimed",
+          "metadata_discriminant": 2,
+          "custody_balance": 0,
+          "depositor_balance_before": 150000,
+          "depositor_balance_after": 100000,
+          "claimant_balance_before": 0,
+          "claimant_balance_after": 50000,
+          "balance_conservation": true
+        }
+      },
+      "zcash_htlc": {
+        "source_candidate": "8957aad4af20665fc02f79498aa542f8c67db85ddbba159dfe98788d3d612bae:0",
+        "funding_transaction_id": "0d041be6de75c5d266fad1ade1b5d3e5f730cd54b0edec925880a2450b69b64c",
+        "htlc_outpoint": "0d041be6de75c5d266fad1ade1b5d3e5f730cd54b0edec925880a2450b69b64c:0",
+        "htlc_value_zatoshis": 100000000,
+        "funding_height": 122,
+        "funding_block_hash": "4cbcbc67aeb72284c70008fd0f446d527fd10c87e8b8c1940fbd74fd983a5eb9",
+        "second_confirmation_height": 123,
+        "second_confirmation_block_hash": "05b1adb9a32d982bbcff6f42bf816da904d6dc966449c0230da9be5d44cc733c",
+        "claim_transaction_id": "8555c3d7f4356bb12a01cc4c1564ae982dc7ab282ce63c4da20586190e5177d7",
+        "claim_height": 124,
+        "claim_block_hash": "daf979fb0f13675de21b94c87e14cc74f28ab33fb6387ca01ebf20ae94a17f79",
+        "claim_spent_exact_htlc_outpoint": true,
+        "funding_outpoint_unspent_at_tip_127": false,
+        "claim_output_value_zatoshis": 99990000,
+        "funding_fee_zatoshis": 10000,
+        "claim_fee_zatoshis": 10000
+      },
+      "execution": {
+        "zebra_tip_initial": 121,
+        "zebra_tip_terminal": 124,
+        "generated_blocks": 3,
+        "drive_rounds": 38,
+        "same_run_drive_retries": 2,
+        "elapsed_milliseconds_from_provisioning": 25580,
+        "result_json_sha256": "a2a4179fa37c34acec2aa3871bd51319368076bc3bd23f6814d00c4d33f50478",
+        "run_identity_json_sha256": "b0c6bc6dddde6f4b54d7355dba86652a7cfb20c1fc2f9f44907c787694ea185a",
+        "provision_summary_json_sha256": "71cd6076b1b95206fadf6180d8d515b1c9c649528f4ccd34ebda4d919ad58958"
+      }
+    },
+    {
+      "run_id": "m2cert-canonical-reverse-bb53daf-20260714a",
+      "direction": "taker_sells_foreign",
+      "result": "completed",
+      "signed_agreement_sha256": "079c04547e4b2b16f0bbd46fafdc98a3f374ee59c9beedd4a1c7fa48621086f1",
+      "actors": {
+        "maker": {
+          "process_store_and_credentials_independent": true,
+          "terminal_phase": "completed",
+          "terminal_revision": 4
+        },
+        "taker": {
+          "process_store_and_credentials_independent": true,
+          "terminal_phase": "completed",
+          "terminal_revision": 4
+        },
+        "actor_pair_validated": true,
+        "private_material_disclosed": false
+      },
+      "effect_owners": {
+        "zcash_funder": "taker",
+        "lez_depositor": "maker",
+        "lez_claimant": "taker",
+        "zcash_claimant": "maker"
+      },
+      "lez_native_escrow": {
+        "amount": 50000,
+        "metadata_account": "GcSEBRq5cLZCNX1HbhQoLcKkebEJgs4BPeh6cp9ucFTX",
+        "custody_account": "8NS7aYoSAArWTEvS4cpUjYh81ArifjPnnAPV3cHbB8Dj",
+        "transactions": [
+          {
+            "kind": "initialize_native",
+            "opcode": 0,
+            "transaction_id": "53b09211c8cb74a26a6cdb9252089d980c20c4314883b9d60f394506c20385f1",
+            "finalized_block_id": 2605,
+            "finalized_block_hash": "15c3f1698ce3306c506e5718b815425f999ee4649d0bc5b1064b7e14ea5fa217"
+          },
+          {
+            "kind": "fund_native",
+            "opcode": 1,
+            "transaction_id": "ef2674710116151bbf569204b5fc4b3ca0edf938e0bd92fc811d42e8da067600",
+            "finalized_block_id": 2606,
+            "finalized_block_hash": "30f5763f18fe22f3088657d866be74d8fb7de98e925826cfc9c800ebaa6c1a79"
+          },
+          {
+            "kind": "claim_native",
+            "opcode": 2,
+            "transaction_id": "3d45574bb04bdd4c9cb2fe6206f632f527199f1e56ddc49c498009414c4b8ce5",
+            "finalized_block_id": 2607,
+            "finalized_block_hash": "7bcaa21f384fe4dec3c854b4c4491112d2574d8da7a77031b9e9ae8be725b295"
+          }
+        ],
+        "terminal_state_at_finalized_block_2607": {
+          "metadata_status": "Claimed",
+          "metadata_discriminant": 2,
+          "custody_balance": 0,
+          "depositor_balance_before": 50000,
+          "depositor_balance_after": 0,
+          "claimant_balance_before": 100000,
+          "claimant_balance_after": 150000,
+          "balance_conservation": true
+        }
+      },
+      "zcash_htlc": {
+        "source_candidate": "152f1596b1d27fe565fc3365d85d619f3df35d73f00a5cb09c73e45486d1caee:0",
+        "funding_transaction_id": "1cbb5923134481001fcbcca1e0fcb96c3c513c5e1059648a7c0777a3c4604785",
+        "htlc_outpoint": "1cbb5923134481001fcbcca1e0fcb96c3c513c5e1059648a7c0777a3c4604785:0",
+        "htlc_value_zatoshis": 100000000,
+        "funding_height": 125,
+        "funding_block_hash": "fbe5c7ba24a4d95c5d19656f3a8679816f29ec1b93284ccd045cfd0210c18204",
+        "second_confirmation_height": 126,
+        "second_confirmation_block_hash": "feb4f11ae56e957c96e3eeeb990320e15cb8e6a73cb8d0f60dbc5856d82fb5af",
+        "claim_transaction_id": "bfbd437921dfca1fd795e9051214f90d1255ece10f116bffc36326333bec9b2a",
+        "claim_height": 127,
+        "claim_block_hash": "eefda74de8148fe3ef97dd68b3cfd16698f0adbd1a07f9d58856da8be3b66034",
+        "claim_spent_exact_htlc_outpoint": true,
+        "funding_outpoint_unspent_at_tip_127": false,
+        "claim_output_value_zatoshis": 99990000,
+        "funding_fee_zatoshis": 10000,
+        "claim_fee_zatoshis": 10000
+      },
+      "execution": {
+        "zebra_tip_initial": 124,
+        "zebra_tip_terminal": 127,
+        "generated_blocks": 3,
+        "drive_rounds": 47,
+        "same_run_drive_retries": 0,
+        "elapsed_milliseconds_from_provisioning": 28790,
+        "result_json_sha256": "b92636e7222eea2b96de7146dd77fe11610d933218c913ae5ab7874fe317db7a",
+        "run_identity_json_sha256": "c1d86cc237dcb8830de5bc8f896d344c5f80fb1158b6d8719772816d0c1b9611",
+        "provision_summary_json_sha256": "d3b35e8ccc2449193690d2ad4e4b22755dcc1ab9ab6fc19b5118082c0495d586"
+      }
+    }
+  ],
+  "atomicity_evidence": {
+    "observed_order_in_both_directions": [
+      "zcash_funded_and_confirmed",
+      "lez_revealing_claim_submitted",
+      "zcash_followup_claim_submitted_and_confirmed"
+    ],
+    "both_direction_correct_funders_and_claimants": true,
+    "both_zcash_locks_had_two_confirmations_before_lez_reveal": true,
+    "both_lez_claims_revealed_before_exact_zcash_htlc_spend": true,
+    "both_terminal_outcomes": "both_claimed",
+    "both_lez_custody_balances_zero": true,
+    "both_exact_zcash_funding_outpoints_spent": true,
+    "central_swap_custody_or_coordinator": false,
+    "scope": "actual-node happy-claim atomicity; composed refund, restart, reorg, concurrency and chaos remain later progressive hardening"
+  },
+  "cleanup_and_secret_boundary": {
+    "four_role_sidecar_processes_stopped": true,
+    "four_role_sidecar_ports_closed": true,
+    "private_run_roots_retained_mode_0700_for_audit": true,
+    "representative_private_files_mode_0600": true,
+    "private_run_roots_committed": false,
+    "preimage_private_keys_capabilities_or_signed_bytes_recorded": false,
+    "shared_local_devnet_containers_retained_for_audit": true,
+    "complete_resource_cleanup_claimed": false,
+    "unrelated_docker_resources_touched": false
+  },
+  "assertions": {
+    "canonical_build_identity_reproduced_two_ways": true,
+    "canonical_artifact_deployed_and_finalized_before_corridors": true,
+    "both_supported_directions_completed": true,
+    "all_four_independent_actor_stores_terminal": true,
+    "all_six_lez_transactions_use_canonical_program_id": true,
+    "all_six_lez_transactions_directly_queryable": true,
+    "all_six_lez_transactions_in_finalized_blocks": true,
+    "required_atomic_order_observed": true,
+    "superseded_f838_program_absent_from_both_actor_pairs": true,
+    "public_rpc_or_faucet_used": false
+  },
+  "evidence_binding": {
+    "forward_actor_status_sha256": {
+      "maker": "96eb16c7c848dfeb8cc1618d574c3d409fac88f5b78be34704b0757b129c020f",
+      "taker": "0ad7bedcff3d29ccfb095ac2211783235148959088fc5a3be678d87801706949"
+    },
+    "reverse_actor_status_sha256": {
+      "maker": "96eb16c7c848dfeb8cc1618d574c3d409fac88f5b78be34704b0757b129c020f",
+      "taker": "0ad7bedcff3d29ccfb095ac2211783235148959088fc5a3be678d87801706949"
+    },
+    "public_resource_assertion_basis": "runner result plus validated deterministic_local actor routes; no packet capture was performed"
+  },
+  "immutable_historical_evidence": [
+    {
+      "path": "docs/evidence/m2-local-onboarding-20260714.json",
+      "sha256": "37203dc770b6649f0486dfafc72810ff7637dea2b89b90f4e963062cf2943ab5"
+    },
+    {
+      "path": "docs/evidence/m2-taker-sells-lez-corridor-20260714.json",
+      "sha256": "3184ed8a1bb9bcd32c3474940db24340e8dad1aafa48561163d5b75abb2bf942"
+    },
+    {
+      "path": "docs/evidence/m2-taker-sells-foreign-corridor-20260714.json",
+      "sha256": "ba933bc4b129bce2f13a7b35e496de1fbed2a1401384147c43688192718afb73"
+    },
+    {
+      "path": "docs/evidence/m2-schema-v3-local-corridors-20260714.json",
+      "sha256": "b862f88133a4f1248164b8b940c96ec213c470541c4ab2767398cc48591710e8"
+    }
+  ],
+  "limitations_and_external_availability": [
+    "The canonical runs reused one retained source-audited local-node tuple with fresh actor state and unspent deterministic inputs; this is not a cold clean-host reproduction.",
+    "Cold provisioning can require crates and Rust distributions, the exact Docker image digest, Logos circuits v0.4.2, and pinned source artifacts from external registries or GitHub; outages can block setup but cannot relax identity checks.",
+    "An initial deployer build without RAPIDSNARK_LIB_DIR entered the upstream GitHub release fallback and failed before chain mutation because unzip was unavailable; the successful deployment used four locally hash-verified Rapisnark/GMP libraries.",
+    "Literal loopback isolates access but does not emulate public peer propagation, provider quotas, organic timing, fee markets, or public testnet behavior.",
+    "Public deployment, public execution, and public recording are intentionally deferred under ADR 0023 and must not be inferred from this packet.",
+    "Composed actual-node refund, restart, reorg, concurrency, chaos, and production-readiness expansion remain owner-gated phases under ADR 0027.",
+    "The run-recorded no-public-resource assertion is supported by deterministic_local route configuration but was not independently packet-captured.",
+    "Private actor roots and shared devnet containers remain deliberately retained for audit; only role sidecar cleanup is claimed."
+  ]
+}

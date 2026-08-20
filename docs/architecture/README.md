@@ -37,3 +37,20 @@ flowchart TB
 | [0011](0011-event-gated-recovery.md) | Recovery uses typed deadlines or canonical events; XMR has no native timelock | Accepted and represented in core/RPC/CLI |
 | [0012](0012-lez-escrow-custody.md) | Split metadata PDA from native vault or required custom-token ATA | Accepted, M2 validation pending |
 | [0013](0013-sdk-layering.md) | Deterministic common core plus complete per-pair async facades | Accepted for Logos review |
+
+## Submission series
+
+This focused branch also carries the decision ranges needed to review the M3
+Bitcoin implementation and M6 Basecamp surface. Numbers between the ranges
+belong to milestones outside this package and are intentionally not reproduced
+here.
+
+| Range | Focus |
+|---|---|
+| [0029](0029-m3-bitcoin-local-poc-entry.md)–[0052](0052-bind-private-demo-videos-to-actual-node-evidence.md) | M3 Bitcoin entry, exact lock/claim evidence, adaptor security properties, recovery, replay, concurrency, and demo evidence |
+| [0128](0128-enter-m6-through-current-basecamp-qml.md)–[0147](0147-isolate-basecamp-role-packages-over-owner-services.md) | M6 role services, terminal actions/refunds, Basecamp toolchain pinning, and isolated packages |
+
+The [system architecture](system-architecture.md) and
+[deployment/RPC map](deployment-components-and-rpcs.md) are the detailed M3
+references. The shorter [M3+ product diagrams](../diagrams.md) show only the
+LEZ/BTC stack exercised by this submission.

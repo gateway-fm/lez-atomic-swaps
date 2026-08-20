@@ -1,0 +1,43 @@
+diff --git a/lez/sequencer/core/src/tests.rs b/lez/sequencer/core/src/tests.rs
+--- a/lez/sequencer/core/src/tests.rs
++++ b/lez/sequencer/core/src/tests.rs
+@@ -349,3 +349,39 @@
++#[tokio::test]
++async fn atomic_swap_reproducer_mempool_admits_then_block_rejects() {
++    let (mut sequencer, mempool_handle) = common_setup().await;
++
++    let sender = initial_public_user_accounts()[0].account_id;
++    let recipient = initial_public_user_accounts()[1].account_id;
++    let signing_key = create_signing_key_for_account1();
++    let state_invalid = common::test_utils::create_transaction_native_token_transfer(
++        sender,
++        0,
++        recipient,
++        10_000_000,
++        &signing_key,
++    );
++
++    assert!(state_invalid.clone().transaction_stateless_check().is_ok());
++    mempool_handle
++        .push((TransactionOrigin::User, state_invalid))
++        .await
++        .expect("mempool accepts stateless-valid transaction before state validation");
++
++    sequencer.produce_new_block().await.unwrap();
++    let block = sequencer
++        .store
++        .get_block_at_id(sequencer.chain_height)
++        .unwrap()
++        .unwrap();
++
++    assert_eq!(
++        block.body.transactions,
++        vec![LeeTransaction::Public(clock_invocation(
++            block.header.timestamp
++        ))]
++    );
++}
++
+ #[tokio::test]
+ async fn transaction_execute_native_transfer() {
+     let (mut sequencer, _mempool_handle) = common_setup().await;

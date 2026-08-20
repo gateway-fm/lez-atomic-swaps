@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-14",
+  "classification": "m2_poc_second_of_two_local_devnet_happy_directions",
+  "run_id": "m2poc-corridor-reverse-fresh-20260714c",
+  "direction": "taker_sells_foreign",
+  "result": "completed",
+  "milestone_status_after_run": {
+    "happy_directions_completed": 2,
+    "happy_directions_required": 2,
+    "m2_poc_complete": true,
+    "m2_complete": false,
+    "m2_tag_created": false,
+    "remaining_work": "documentation_and_repository_completion_gates"
+  },
+  "isolated_local_environments": {
+    "lez": {
+      "run_id": "m2poc-fresh-lez-20260714a",
+      "source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+      "version": "v0.2.0",
+      "channel_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+      "genesis_block_hash": "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9",
+      "escrow_program_id": "f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe",
+      "endpoints": {
+        "bedrock": "http://127.0.0.1:32831",
+        "sequencer": "http://127.0.0.1:32832",
+        "indexer": "http://127.0.0.1:32833"
+      },
+      "endpoint_scope": "ephemeral_loopback_urls_from_this_retained_run_only"
+    },
+    "zebra": {
+      "run_id": "m2poc-fresh-zebra-20260714a",
+      "version": "5.2.0",
+      "network": "regtest",
+      "endpoint": "http://127.0.0.1:32834",
+      "endpoint_scope": "ephemeral_loopback_url_from_this_retained_run_only"
+    },
+    "role_bridges": {
+      "maker": "http://127.0.0.1:58955/",
+      "taker": "http://127.0.0.1:34999/",
+      "endpoint_scope": "ephemeral_run_owned_processes_stopped_by_exact_pid_start_tick_and_executable_identity"
+    },
+    "corridor_serialization": "endpoint_tuple_scoped_advisory_lock"
+  },
+  "actors": {
+    "maker": {
+      "process_and_store_independent": true,
+      "terminal_phase": "completed",
+      "terminal_revision": 4
+    },
+    "taker": {
+      "process_and_store_independent": true,
+      "terminal_phase": "completed",
+      "terminal_revision": 4
+    },
+    "role_order": [
+      "taker_funded_zcash_htlc",
+      "maker_observed_two_zcash_confirmations_then_initialized_and_funded_lez_native_escrow",
+      "taker_observed_lez_funding_then_claimed_lez_and_revealed_the_preimage",
+      "maker_observed_the_lez_reveal_then_spent_the_zcash_htlc"
+    ]
+  },
+  "execution": {
+    "pre_effect_milliseconds": 300,
+    "elapsed_milliseconds_from_provisioning": 26960,
+    "drive_rounds": 50,
+    "actor_drive_events": 100,
+    "same_run_drive_retries": 0,
+    "provision_to_completion_cap_seconds": 49,
+    "lez_delay_margin_seconds": 10,
+    "live_atomic_order_guard": [
+      "zcash_funded_and_confirmed",
+      "lez_revealing_claim_submitted",
+      "zcash_followup_claim_submitted_and_confirmed"
+    ]
+  },
+  "lez_native_escrow": {
+    "terms": {
+      "swap_id": "cc9ae088aacb94713172569cf349f7153e01c22210966afabe06c04303f7b81e",
+      "amount": 50000,
+      "depositor_role": "maker",
+      "depositor_account_id": "94b3cefdc7335256e802987a50f336cfed7053992c3bcc318054a0e3d8956166",
+      "claimant_role": "taker",
+      "claimant_account_id": "1e916b03cf49c0e6a03feecf124536d867f45c5e7cf82a108d1377120ee28ccc"
+    },
+    "transactions": [
+      {
+        "kind": "initialize_native",
+        "transaction_id": "ea7d8b2823d017c4dc4b68bdf6e1237751ecaf7225099de13d6da1a85ee81fbe",
+        "finalized_indexer_block_id": 641,
+        "finalized_indexer_block_hash": "cd5e9cc818192f61690ca7b433e7d856ea028cd2ac3c2e5f60e93572e88c1099",
+        "bedrock_status": "Finalized"
+      },
+      {
+        "kind": "fund_native",
+        "transaction_id": "f5ec7fbcb0993435d38f28c329b58c8dc7d22cb128be5debd851805adf92e5b7",
+        "finalized_indexer_block_id": 642,
+        "finalized_indexer_block_hash": "c1f91df0a32f5ef61d646cacfa7190917f0995cda0e55877e86f597c4ca4d81e",
+        "bedrock_status": "Finalized"
+      },
+      {
+        "kind": "claim_native",
+        "transaction_id": "3983a80459e6f6e400f1dd0eba8e62f3a48e9481a1d1bd5ebad07d78ee7054f8",
+        "finalized_indexer_block_id": 643,
+        "finalized_indexer_block_hash": "e744565973da074967dc32839b759464f83c830235a6b12562113215484ff817",
+        "bedrock_status": "Finalized"
+      }
+    ],
+    "terminal_state_at_finalized_block_643": {
+      "metadata_status": "Claimed",
+      "custody_balance": 0,
+      "depositor_balance": 0,
+      "claimant_balance": 150000
+    },
+    "finality_audit": {
+      "last_finalized_block_id_when_rechecked": 665,
+      "all_three_transaction_hashes_present_in_their_recorded_blocks": true
+    }
+  },
+  "zcash_htlc": {
+    "zebra_tip": {
+      "initial": 112,
+      "after_two_funding_confirmation_blocks": 114,
+      "terminal": 115
+    },
+    "generate_calls": 2,
+    "generated_blocks": 3,
+    "funding_transaction": {
+      "transaction_id": "181c4baafb5406b985bcf5a350cec18429d0de8ded880becfeff8159184c14f0",
+      "htlc_outpoint": "181c4baafb5406b985bcf5a350cec18429d0de8ded880becfeff8159184c14f0:0",
+      "htlc_value_zatoshis": 100000000,
+      "height": 113,
+      "block_hash": "3e22651fd85a54ce73c5adf2a028a1d07ddb49e895875e98b4cf859bd93e6cb5",
+      "second_confirmation_height": 114,
+      "second_confirmation_block_hash": "0b70d5f06ba82922477fa2df2b1b98ff06c2b4f286e2fd1a7d5db75527a5f04a",
+      "confirmations_at_terminal_tip": 3
+    },
+    "claim_transaction": {
+      "transaction_id": "ba65b2108bba81cebe5124132907071bfc955b5c6ef47eac057a728dfcf71e30",
+      "spent_outpoint": "181c4baafb5406b985bcf5a350cec18429d0de8ded880becfeff8159184c14f0:0",
+      "height": 115,
+      "block_hash": "a38d2ff92a990f53ca06364bdf68731c2959a2ba8bfbe893d9ab2a9d6dd1bc03",
+      "confirmations_at_terminal_tip": 1
+    }
+  },
+  "failed_fresh_attempts_before_success": [
+    {
+      "suffix": "20260714a",
+      "external_effect": true,
+      "cause": "forward_only_sdk_canonical_lez_validator_rejected_the_reverse_maker_depositor",
+      "retained_effect": "distinct_zcash_contract_and_50000_lez_funded_escrow",
+      "reuse_allowed": false
+    },
+    {
+      "suffix": "20260714b",
+      "external_effect": true,
+      "cause": "same_forward_only_validator_reproduced_after_nine_bounded_observation_attempts",
+      "retained_effect": "distinct_zcash_contract_and_50000_lez_funded_escrow",
+      "reuse_allowed": false
+    }
+  ],
+  "defect_correction": {
+    "root_cause": "canonical_lez_fund_validation_hard_coded_taker_sells_lez_and_taker_signer",
+    "correction": "validate_both_directions_and_bind_the_signer_to_the_agreement_derived_lez_depositor",
+    "focused_regression": "canonical_lez_observation_uses_the_direction_derived_depositor",
+    "full_sdk_lifecycle_tests_after_fix": 35
+  },
+  "resource_and_secret_boundary": {
+    "public_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "funding_source": "deterministic_local_lez_vault_allocations_and_zebra_regtest_outputs",
+    "exact_signed_bytes_recorded": false,
+    "preimage_recorded": false,
+    "private_keys_or_capabilities_recorded": false,
+    "private_run_root_committed": false
+  },
+  "limitations": [
+    "Both required M2 PoC happy directions are now complete, but the M2 tag still waits for documentation and repository completion gates.",
+    "The two retained failed-run escrows are distinct swaps and are not counted as custody for the successful run.",
+    "Restart, refund, reorg, chaos, and broader hardening remain owner-gated post-PoC work unless needed for happy-path correctness.",
+    "Public-testnet deployment and execution are intentionally deferred under ADR 0023."
+  ]
+}

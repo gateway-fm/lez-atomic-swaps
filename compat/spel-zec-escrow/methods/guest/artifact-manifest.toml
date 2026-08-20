@@ -1,0 +1,8 @@
+format_version = 1
+program = "zec_escrow"
+spel_commit = "73fc462eb8f0a4d00f1a846437c627ec2e523f83"
+lez_commit = "cf3639d8252040d13b3d4e933feb19b42c76e14a"
+risc0_version = "3.0.5"
+risc0_guest_builder = "risczero/risc0-guest-builder:r0.1.88.0@sha256:3e12f71bacd27527a61dea96fa0e53e468c99aa261d3a1019b593f6dbd943eb3"
+elf_sha256 = "a324355c6417f6ac7265ab8ba880287d0976e8c27a672917d293bddd80be7006"
+image_id = "c14c978abbaedeffb54c71aa6a96275d1fdb66fcf79f7343bf6bf7aee04f4483"
