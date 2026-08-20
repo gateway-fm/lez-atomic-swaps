@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "milestone": "M6",
+  "evidence_kind": "basecamp_0_2_cpp_qml_toolchain_preflight",
+  "date_utc": "2026-08-04",
+  "source": {
+    "repository_commit": "c3bba12e04b296ed9ce4738b544b897106bea02e",
+    "origin_main_equal_at_start": true,
+    "worktree_clean_at_start": true,
+    "logos_tutorial_commit": "bfc34c451c08da9f78072dd825756a1e071a051d",
+    "logos_module_builder_tag": "0.2.0",
+    "logos_module_builder_commit": "92ef691ea72844134f6c68fb447d37f855fc9690",
+    "logos_module_builder_nar_hash": "sha256-jm3NQ0BZ5qnUs/boE1vTil+mGbbp+Wix0ggl1HzR2gw=",
+    "logos_basecamp_tag": "0.2.0",
+    "logos_basecamp_commit": "48b26c0d33573b5dd3695ae5868b04328f79e5c6",
+    "logos_basecamp_internal_version": "0.2.0-RC3",
+    "logos_package_manager_tag": "0.2.0",
+    "logos_package_manager_commit": "7a1f1cf35b22dc1a3407d6b5cafce333321be584",
+    "consumer_lock_sha256": "160529b12ebfd29507810f225898ff2d0a3f11810e4f0119fbb3bdb65cadeb6d",
+    "consumer_lock_bytes": 1160767
+  },
+  "isolation": {
+    "container_image": "nixos/nix@sha256:d78540374f6a886653cba47d5c3f61c5a41d42e2a8db2607b8d68cb226fd463e",
+    "image_version": "2.35.1",
+    "image_platform": "linux/amd64",
+    "dedicated_nix_store_volume": "lez-m6-nix-store-preflight-c3bba12a",
+    "temporary_root": "/tmp/lez-m6-nix-preflight-c3bba12a",
+    "cpu_limit": 4,
+    "memory_limit_gib": 12,
+    "pids_limit": 1024,
+    "no_new_privileges": true,
+    "unrelated_docker_resources_modified": false,
+    "repository_modified_by_build": false,
+    "temporary_resources_removed_after_evidence_capture": true,
+    "free_space_after_exact_project_cleanup_gib": 433,
+    "ignored_project_output_paths_removed": [
+      ".e2e",
+      "target",
+      "compat/lez-v0_2-sidecar/target",
+      "compat/spel-zec-escrow/methods/guest/target"
+    ]
+  },
+  "package_build": {
+    "command": "nix build --no-update-lock-file .#default",
+    "result": "passed",
+    "store_path": "/nix/store/4ixg1vsrvrg7kxx30q9iq2rwzl75a8ji-logos-calc_ui_cpp-module",
+    "deriver": "/nix/store/1937fvvwiy1w5m9g2hlk2dxr8n6ip62s-logos-calc_ui_cpp-module.drv",
+    "nar_hash": "sha256-UoyshKh+zzMVigumE3BhjMgQUEFaM8HsuyFcXvCEdpk=",
+    "nar_size_bytes": 2130512,
+    "qt_version": "6.9.2",
+    "qt_remote_objects_runtime_reference": true
+  },
+  "lgx_build": {
+    "command": "nix build --no-update-lock-file .#lgx",
+    "result": "passed",
+    "store_path": "/nix/store/bi1wla9z7nk4ayv4zln6fyrckhlhj3hg-logos-calc_ui_cpp-module-lgx-1.0.0",
+    "artifact": "logos-calc_ui_cpp-module.lgx",
+    "artifact_sha256": "d184c0423dc7dc5bee98e74eb1cf51c4edc3e381ce017ab88a38caf857e13bd5"
+  },
+  "core_lgx_build": {
+    "result": "passed",
+    "documented_prerequisite": "libcalc.so built before module packaging",
+    "store_path": "/nix/store/36ns1acjdyg34gyvcl47b2b8ah1bq316-logos-calc_module-module-lib-lgx-1.0.0",
+    "artifact": "logos-calc_module-module-lib.lgx",
+    "artifact_sha256": "959126dcd54ded28be30a33c63a9c191febf119b7bd7f3c664ae89376e8d8f54"
+  },
+  "package_manager_build": {
+    "result": "passed",
+    "reported_version": "0.2.0 (dev build)",
+    "reported_commit": "7a1f1cf35b22dc1a3407d6b5cafce333321be584",
+    "store_path": "/nix/store/ki47x9icxz8bzrp96z526v61llijr0g0-logos-package-manager-cli-0.2.0",
+    "dry_run_download_mib": 124.9,
+    "dry_run_unpacked_mib": 500.4
+  },
+  "isolated_install_rehearsal": {
+    "result": "passed",
+    "unsigned_tutorial_artifacts_explicitly_allowed": true,
+    "production_signature_policy_satisfied": false,
+    "core_install": {
+      "name": "calc_module",
+      "type": "core",
+      "version": "1.0.0",
+      "root_hash": "b72c1ef7b8f213940a7d67c0f39428344ecd54776f9e8bca1e5bd81ffcb0cb32"
+    },
+    "ui_install": {
+      "name": "calc_ui_cpp",
+      "type": "ui_qml",
+      "version": "1.0.0",
+      "dependencies": [
+        "calc_module"
+      ],
+      "root_hash": "e321c6ba21cf300f18cd9ca5c7f89debbad22157b7fb3e312280eb9d90cb82ed",
+      "process_isolated_backend_artifacts": [
+        "calc_ui_cpp_plugin.so",
+        "calc_ui_cpp_replica_factory.so"
+      ],
+      "view": "qml/Main.qml"
+    }
+  },
+  "basecamp_root_build_and_load": {
+    "result": "official_runtime_smoke_passed_product_package_load_pending",
+    "basecamp_commit": "48b26c0d33573b5dd3695ae5868b04328f79e5c6",
+    "basecamp_version": "0.2.0-RC3",
+    "untrusted_upstream_extra_cache_configuration_accepted": false,
+    "command": "nix --extra-experimental-features nix-command --extra-experimental-features flakes build --no-update-lock-file --no-accept-flake-config --no-link path:/work#smoke-test -L --print-out-paths",
+    "repository_commit_at_replay": "fed820eb9c4154554d558f2157795b6d407e7530",
+    "basecamp_lock_sha256": "1fc59da49fddce65efc4f668b53640849a0c103a162a43a3096a768c735a4419",
+    "dedicated_nix_store_volume": "lez-m6-nix-basecamp-fed820e",
+    "temporary_root": "/tmp/lez-m6-basecamp-runtime-fed820e",
+    "runtime_smoke_result": "passed",
+    "runtime_smoke_expected_timeout_exit_code": 124,
+    "runtime_smoke_elapsed_seconds": 5,
+    "basecamp_binary_built": true,
+    "basecamp_store_path": "/nix/store/55wr9ifffpzgqlwp3jzwxnwrag6l3313-logos-basecamp-0.2.0-RC3",
+    "smoke_store_path": "/nix/store/cckzvs6p79ygfd2l0rmw8816nklnyndp-logos-basecamp-smoke-test",
+    "smoke_deriver": "/nix/store/jpyhswazh00hhg3cijszwa5nsl4yhzfl-logos-basecamp-smoke-test.drv",
+    "smoke_nar_hash": "sha256-lfg55Q/2x84ormtBRzFytP4hMfd1jH0sS7oIkcQN3nI=",
+    "smoke_nar_size_bytes": 41544,
+    "smoke_closure_size_bytes": 2749148608,
+    "capability_module_loaded": true,
+    "package_manager_module_loaded": true,
+    "package_downloader_module_loaded": true,
+    "main_ui_loaded": true,
+    "qt_remote_objects_connected": true,
+    "installed_packages_loaded_by_basecamp": false,
+    "upstream_build_warning": "The install phase emitted a non-fatal cp missing-destination warning; the derivation and runtime smoke still passed.",
+    "temporary_resources_removed_after_evidence_capture": true,
+    "free_space_before_exact_cleanup_gib": 406,
+    "free_space_after_exact_cleanup_gib": 411,
+    "removed_resources": [
+      "lez-m6-nix-basecamp-fed820e volume (5.254 GB)",
+      "nixos/nix image d78540374f6a (988 MB)",
+      "/tmp/lez-m6-basecamp-runtime-fed820e checkout (9.2 MB)"
+    ],
+    "unrelated_docker_build_cache_modified": false,
+    "prior_safety_stop": {
+      "initial_dry_run_derivations": 101,
+      "initial_dry_run_download_mib": 506.5,
+      "initial_dry_run_unpacked_gib": 2.5,
+      "host_free_space_at_stop_gib": 14,
+      "reason": "The earlier attempt stopped before host exhaustion at 98 percent utilization."
+    },
+    "disposition": "The pinned official Basecamp binary/runtime is certified locally. Do not claim Maker/Taker package load until prototype signoff, package implementation, installation, and actor-real Basecamp replay pass."
+  },
+  "upstream_integration_check": {
+    "command": "nix flake check --no-update-lock-file --no-build",
+    "result": "failed",
+    "failed_output": "packages.x86_64-linux.integration-test",
+    "fixed_error": "referenced_nix_store_source_path_is_not_valid",
+    "isolated_store_verify_check_contents": "passed",
+    "disposition": "upstream_release_finding_not_suppressed; repository_owned_actor_ui_tests_required"
+  },
+  "release_findings": {
+    "blocker_id": "LOGOS-025",
+    "floating_scaffold_input": true,
+    "official_tutorial_consumer_lock_present": false,
+    "duplicate_repository_revisions_in_graph": true,
+    "direct_logos_sources_without_explicit_license_grant": [
+      "logos-plugin-qt",
+      "logos-protocol",
+      "logos-qt-sdk",
+      "nix-bundle-logos-module-install",
+      "logos-view-module-runtime"
+    ],
+    "local_m6_poc_blocked": false,
+    "production_distribution_blocked": true
+  },
+  "external_resources": {
+    "runtime_chain_or_swap_resources": [],
+    "public_chain_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false,
+    "build_fetch_sources": [
+      "github.com immutable flake inputs",
+      "cache.nixos.org immutable NARs"
+    ],
+    "build_fetch_flakiness": "Cold-cache DNS, GitHub, or Nix-cache availability can fail or delay the first build; a warmed networkless replay remains a production gate."
+  },
+  "scope": "Toolchain, packaging, exact package-manager installation, and the pinned official Basecamp binary/runtime smoke only; no Maker or Taker production UI, product package load, actor journey, or milestone completion is claimed."
+}

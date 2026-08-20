@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "milestone": "M6",
+  "evidence_kind": "clickable_prototype_actor_browser_revalidation",
+  "date_utc": "2026-08-04",
+  "repository_commit": "1afc0db50f7c5bcf495edfabe4b4f9c65cdd2258",
+  "prototype_checkpoint": "0abdbc2",
+  "prototype_and_test_inputs_unchanged_since": "e48ad9c",
+  "contract_check": {
+    "command": "npm run test:m6:prototype:contract",
+    "result": "passed",
+    "entrypoints": 3,
+    "local_assets": 6
+  },
+  "actor_browser_check": {
+    "command": "./scripts/run-m6-prototype-e2e-isolated.sh",
+    "result": "passed",
+    "passed": 6,
+    "failed": 0,
+    "duration_milliseconds": 19343.681104,
+    "journeys": [
+      "role surfaces remain isolated",
+      "Maker configures, monitors, filters history, and records manual intent",
+      "Taker completes the ZEC claim journey and acknowledges shielding guidance",
+      "Taker can choose the mutually exclusive refund branch",
+      "Taker can select BTC and XMR offers without cross-pair substitution",
+      "mobile role journeys do not overflow horizontally"
+    ]
+  },
+  "isolation": {
+    "image": "ghcr.io/puppeteer/puppeteer@sha256:9665f5b57abc5cc7080a641878964018de219055a4d2c9d8d050ceb1161778ba",
+    "image_size_bytes": 783808473,
+    "container_network": "none",
+    "repository_mount": "read_only",
+    "container_root": "read_only",
+    "chromium_sandbox_enabled": true,
+    "external_requests_observed": 0,
+    "temporary_container_removed": true,
+    "temporary_image_removed": true,
+    "temporary_host_directory_removed": true,
+    "unrelated_docker_resources_modified": false
+  },
+  "external_resources": {
+    "one_time_image_pull": "ghcr.io",
+    "runtime_rpc_or_chain_resources": [],
+    "public_chain_rpc_used": false,
+    "faucet_used": false,
+    "public_funds_used": false,
+    "public_deployment_used": false,
+    "flakiness": "A cold machine requires the digest-pinned GHCR image pull. The browser test itself is networkless and deterministic."
+  },
+  "host_only_attempt": {
+    "result": "environmental_refusal_before_test_execution",
+    "reason": "The host disables the unprivileged user namespace required by Chromium. The test correctly refused a no-sandbox fallback.",
+    "acceptance_effect": "none; the intended sandboxed container lane passed all six journeys"
+  },
+  "scope": "Automated prototype behavior and isolation only. Human design signoff, production QML, product package load, actor-real backend behavior, and M6 completion are not claimed."
+}
