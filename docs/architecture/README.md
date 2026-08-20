@@ -1,7 +1,9 @@
 # Architecture decision log
 
 ADRs are append-only. Superseded decisions remain here and link to their
-replacement.
+replacement. Every new ADR records its threat-model delta or states that none
+applies; the [threat model](../milestone-1/threat-model.md) is re-validated at
+each milestone gate.
 
 ```mermaid
 flowchart TB
