@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "kind": "rfp003_m1_m3_m6_submission_pack",
+  "generated_at": "2026-08-25T14:51:42Z",
+  "repository": {
+    "remote": "git@github.com:gateway-fm/lez-atomic-swaps.git",
+    "branch": "m3-plus",
+    "package_base_commit": "049fb475a5d340ab76a9255fc875f5795a656660",
+    "history_shape": "curated_orphan_submission_snapshot"
+  },
+  "upstream_milestones": [
+    {
+      "number": 121,
+      "area": "M1",
+      "url": "https://github.com/logos-co/rfp/issues/121",
+      "state_at_generation": "open",
+      "checkboxes_at_generation": "unchecked"
+    },
+    {
+      "number": 123,
+      "area": "M3",
+      "url": "https://github.com/logos-co/rfp/issues/123",
+      "state_at_generation": "open",
+      "checkboxes_at_generation": "unchecked"
+    },
+    {
+      "number": 126,
+      "area": "M6",
+      "url": "https://github.com/logos-co/rfp/issues/126",
+      "state_at_generation": "open",
+      "checkboxes_at_generation": "unchecked"
+    }
+  ],
+  "historical_checkpoints": {
+    "m1": {
+      "name": "m1-complete.1",
+      "commit": "96b7b229557e5084857e05bc0c34c03f40c73b66",
+      "gateway_tag_published_at_generation": false
+    },
+    "m3": {
+      "name": "m3-complete",
+      "commit": "f7fb250f0491b9c33ed56f2ee02cdbc5ea5dcbb2",
+      "gateway_tag_published_at_generation": false
+    },
+    "m6": {
+      "name": "m6-poc-complete",
+      "commit": "78f9842465462715a913dde37105b77c4fd880b2",
+      "gateway_tag_published_at_generation": false
+    },
+    "integrated_ui_baseline": {
+      "commit": "93dd323ca01b396e30bdc04a75073419c737ea2c"
+    },
+    "application_runner": {
+      "base_commit": "5c384a5",
+      "result_commit": "2888e8cf818143a7dce903f343fdbe70de9e267a",
+      "result_tree": "c3bc49ad802328455ef7c8843d3c7a4ee81bade9",
+      "ordered_patch_count": 34,
+      "gateway_owned_base_ref_at_generation": false
+    }
+  },
+  "matching_product_run": {
+    "run_id": "m5arm-0820121736",
+    "evidence": "docs/evidence/m3-btc-ui-run-m5arm-0820121736.json",
+    "result": "passed",
+    "direction": "TakerSellsForeign",
+    "terminal": {
+      "phase": "completed",
+      "revision": 4
+    },
+    "amounts": {
+      "bitcoin_sats": 1000000,
+      "lez_units": 1000
+    },
+    "effect_counts": {
+      "bitcoin": 2,
+      "lez": 3,
+      "total": 5
+    },
+    "replay_resubmission_count": 0,
+    "private_material_disclosed": false,
+    "sha256": "646d233682e25aebdea7329e2f5b2cda095bef06e019c42a6d7726420b47d5a0"
+  },
+  "actual_ui_demo": {
+    "path": "media/lez-btc-ui-swap-demo.mp4",
+    "run_id": "m5arm-0825141508",
+    "evidence": "docs/evidence/m3-btc-ui-run-m5arm-0825141508.json",
+    "evidence_sha256": "6b10bac20554a78c15a89f73c0d1e9bcbc28279db4c3482979b1f0b27c02d46c",
+    "result": "passed",
+    "direction": "TakerSellsForeign",
+    "completed_at": "2026-08-25T14:24:31Z",
+    "amounts": {
+      "bitcoin_sats": 1000000,
+      "lez_units": 1000
+    },
+    "effect_counts": {
+      "bitcoin": 2,
+      "lez": 3,
+      "total": 5
+    },
+    "replay_resubmission_count": 0,
+    "private_material_disclosed": false,
+    "duration_seconds": 220.7,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "frame_count": 6621,
+    "codec": "h264",
+    "pixel_format": "yuv420p",
+    "audio_stream_count": 0,
+    "size_bytes": 7136292,
+    "sha256": "795d25aa0901e7bb135271049bf99f8f28dd5c070b7c310fc283b286568f3742"
+  },
+  "presentation": {
+    "html_entry": "submission/presentation/index.html",
+    "slides": 14,
+    "external_runtime_dependencies": 0,
+    "controls": [
+      "keyboard",
+      "touch",
+      "fullscreen",
+      "deterministic_autoplay"
+    ],
+    "standalone_html": {
+      "path": "media/lez-btc-m1-m3-m6-submission.html",
+      "size_bytes": 1822487,
+      "external_runtime_dependencies": 0,
+      "sha256": "abf17475ed0e9c271ffcd184e76763889ab7ea8ddc2a9faaad072234fc92914d"
+    },
+    "video": {
+      "path": "media/lez-btc-m1-m3-m6-submission-silent.mp4",
+      "duration_seconds": 99,
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "codec": "h264",
+      "pixel_format": "yuv420p",
+      "audio_stream_count": 0,
+      "size_bytes": 6618674,
+      "sha256": "81798bfa38c1229c34692f60b1cbf226eb58bfa284137c7d206cb83effaa5d1c"
+    },
+    "poster": {
+      "path": "media/screenshots/lez-btc-m1-m3-m6-submission-cover.png",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "cc6fcae71fffe6d7b44ddc912c824c2421ac823ba73d01a8845a6988c579a3c2"
+    },
+    "source_hashes": {
+      "index_html": "6aedbc5b48a01662d68c607ed67c8b1ee10b72e05165a26d94615adace0bd944",
+      "styles_css": "c90a52a06d966fd81d9f7a4c267e5740d30c1dda38aa99030b98b7837e3ef093",
+      "deck_js": "86e04da5713207532ff682079ec0201e1c0bbcdb7bc9c57bc7c2214f1e458dc1",
+      "standalone_builder": "43b33578d51a9acae81ffacda6a7b972e3a88bd4a66a3a8ea7653f309b8f30d9",
+      "render_script": "ee9b9c1560f23cdad73aa3d5207a22c1a27fe57478ca02df87cd70e6897c0971"
+    }
+  },
+  "live_validation": {
+    "observed_at": "2026-08-20T18:01:15Z",
+    "summary": "submission/runtime-validation-20260820.md",
+    "all_stages_passed": true,
+    "compose_services_up": 11,
+    "explorer_checks": "110/110",
+    "market_controller_checks": "31/31",
+    "basecamp_maker_checks": "3/3",
+    "basecamp_taker_checks": "4/4",
+    "maker_health": {
+      "ready": true,
+      "degraded": false,
+      "delivery": "available",
+      "chat": "disabled"
+    }
+  },
+  "claim_boundary": {
+    "environment": "private_local_functional",
+    "bitcoin": "Bitcoin Core 31.1 regtest",
+    "lez": "LEZ v0.2 private devnet",
+    "not_claimed": [
+      "public_network_deployment",
+      "production_custody",
+      "formal_cryptographic_audit",
+      "M2_delivery",
+      "M4_delivery",
+      "complete_M5_delivery",
+      "M7_mainnet_readiness"
+    ],
+    "normative_limitations": "submission/LIMITATIONS.md"
+  }
+}

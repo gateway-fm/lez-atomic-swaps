@@ -865,6 +865,33 @@ def render(model: dict[str, Any]) -> str:
             f"| {joined(route['directions'])} |"
         )
 
+    lines.extend(
+        [
+            "",
+            "## Independent verification: Taker sells BTC",
+            "",
+            "```mermaid",
+            "flowchart LR",
+            '    A["Agreement fixes both locks,<br/>payouts, T, and refunds"] --> B["Taker locks the exact<br/>joint P2TR BTC output"]',
+            '    B --> C{"Maker Bitcoin route:<br/>exact and canonical?"}',
+            '    C -->|yes| D["Maker funds the exact<br/>LEZ escrow"]',
+            '    C -->|no| X["STOP<br/>No LEZ funding"]',
+            '    D --> E{"Taker LEZ route:<br/>exact and finalized?"}',
+            '    E -->|yes| F["Taker claims LEZ and reveals t<br/>Maker checks tG = T and completes<br/>the fixed BTC spend to Maker"]',
+            '    E -->|no| Y["STOP<br/>No claim and no t"]',
+            "```",
+            "",
+            "The Maker checks the signed network, transaction, output key, value, "
+            "unspent state, and confirmation policy through its own Bitcoin route. "
+            "The Taker checks the exact program, swap, asset, amount, accounts, "
+            "custody, parties, and finality through its own LEZ route.",
+            "",
+            "Reject means stop advancing; it cannot undo a finalized lock. Ordered "
+            "refunds recover existing locks. The joint BTC key controls temporary "
+            "custody, while the agreement-bound spend fixes the Maker's payout.",
+        ]
+    )
+
     lines.extend(["", "## System view", "", "```mermaid", "flowchart LR"])
     boundary_nodes = {
         boundary["id"]: f"B{index}"

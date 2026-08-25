@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "kind": "m3_btc_ui_evidence",
+  "source_kind": "m5_btc_application_local_poc",
+  "source": "certified_local_run_snapshot",
+  "result": "passed",
+  "run_id": "m5arm-0825141508",
+  "completed_at": "2026-08-25T14:24:31Z",
+  "repository_commit": "2888e8cf818143a7dce903f343fdbe70de9e267a",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "journey": "claim",
+  "terminal": {
+    "phase": "completed",
+    "revision": 4
+  },
+  "amounts": {
+    "bitcoin_sats": 1000000,
+    "bitcoin_display": "0.01000000 BTC",
+    "lez_units": 1000,
+    "lez_display": "1,000 LEZ units"
+  },
+  "networks": {
+    "bitcoin": "Bitcoin Core 31.1 \u00b7 regtest",
+    "lez": "LEZ v0.2.0 \u00b7 private local"
+  },
+  "effect_counts": {
+    "bitcoin": 2,
+    "lez": 3,
+    "total": 5
+  },
+  "replay_resubmission_count": 0,
+  "private_material_disclosed": false,
+  "stage_two_evidence_sha256": "2299d2e1f6152ccb178ce65cfbd495341569e36505e8139a03425e234cc27a92",
+  "effects": [
+    {
+      "sequence": 1,
+      "chain": "Bitcoin",
+      "actor": "Taker",
+      "kind": "first_lock",
+      "label": "Taker first lock",
+      "transaction_id": "2d761f173f0a9b94d6cd783e45d130bd8b6d09ad4bc39c6d67d86fa22f4d1798",
+      "amount": "0.01000000 BTC",
+      "block_height": 9471,
+      "block_hash": "67d9a37195be2c42a30d1af392f7c5feecbc2d115d65e2afc8f683a44dafb029",
+      "confirmations": 1,
+      "finality": "Confirmed",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/2d761f173f0a9b94d6cd783e45d130bd8b6d09ad4bc39c6d67d86fa22f4d1798"
+    },
+    {
+      "sequence": 2,
+      "chain": "LEZ",
+      "actor": "Maker",
+      "kind": "initialization",
+      "label": "Escrow initialization",
+      "transaction_id": "8ec03c2cf73ae87e0185039b36030d909d1682aceaac6d19e471eeb2a4cfe17a",
+      "amount": "Escrow authority",
+      "block_height": 25953,
+      "block_hash": "8fc23bb16d065149725b5f33f4fd9f47c5f1daad55af7eac79cdc90fb4418ed2",
+      "confirmations": null,
+      "finality": "Finalized",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/8ec03c2cf73ae87e0185039b36030d909d1682aceaac6d19e471eeb2a4cfe17a"
+    },
+    {
+      "sequence": 3,
+      "chain": "LEZ",
+      "actor": "Maker",
+      "kind": "funding",
+      "label": "Maker second lock",
+      "transaction_id": "e505a4a70a761f4ca3a7369efde3de56b7acf6ddc3dddef63766d6d8131f7c50",
+      "amount": "1,000 LEZ units",
+      "block_height": 25959,
+      "block_hash": "6f798709413097ded8c73aedaba9d953391c9c2367cdf3200ff569061a2bed56",
+      "confirmations": null,
+      "finality": "Finalized",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/e505a4a70a761f4ca3a7369efde3de56b7acf6ddc3dddef63766d6d8131f7c50"
+    },
+    {
+      "sequence": 4,
+      "chain": "LEZ",
+      "actor": "Taker",
+      "kind": "revealing_claim",
+      "label": "Taker revealing claim",
+      "transaction_id": "076bc1e5379098dc67c7a39ecb2393f085d42c05cbf5bc508fd27113c66accff",
+      "amount": "1,000 LEZ units",
+      "block_height": 25976,
+      "block_hash": "fc33fee941f9fa3c5c733d3047de7bab2d62b3e33db5ed054d451c064d34c807",
+      "confirmations": null,
+      "finality": "Finalized",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/076bc1e5379098dc67c7a39ecb2393f085d42c05cbf5bc508fd27113c66accff"
+    },
+    {
+      "sequence": 5,
+      "chain": "Bitcoin",
+      "actor": "Maker",
+      "kind": "followup_claim",
+      "label": "Maker follow-up claim",
+      "transaction_id": "9ef8a14f01c72893526f9e8def82a3b823055f94b35b4036c4900fb79bccc6c6",
+      "amount": "0.00999000 BTC",
+      "block_height": null,
+      "block_hash": "72a68c3425c8d256eeb82f125fe51aa322564b0cc028d7a37645151d3a4f0858",
+      "confirmations": 1,
+      "finality": "Confirmed",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/9ef8a14f01c72893526f9e8def82a3b823055f94b35b4036c4900fb79bccc6c6"
+    }
+  ],
+  "market_context": {
+    "ui_swap_id": "swap-25c787dc855bf21a",
+    "offer_id": "m3btc-munich-e00b5cd745fc-1",
+    "direction": "taker_sells_foreign",
+    "direction_display": "BTC \u2192 LEZ",
+    "maker_wallet_id": "maker-munich-01",
+    "maker_wallet_label": "Munich Vault 01",
+    "taker_wallet_id": "taker-zurich-01",
+    "taker_wallet_label": "Zurich Wallet 01",
+    "interaction_model": "two_dashboard_four_actor_actions",
+    "wallet_authority_model": "fresh_run_owned_keys_indexed_by_local_wallet_profile"
+  },
+  "wallet_balance_changes": {
+    "schema_version": 1,
+    "kind": "m3_interactive_wallet_balance_changes",
+    "run_id": "m5arm-0825141508",
+    "direction": "taker_sells_foreign",
+    "finalized_lez_tip": 25985,
+    "units": {
+      "bitcoin": "satoshi",
+      "lez": "native unit"
+    },
+    "wallets": [
+      {
+        "role": "maker",
+        "wallet_id": "maker-munich-01",
+        "balances": {
+          "bitcoin": {
+            "opening": 0,
+            "credit": 1000000,
+            "debit": 0,
+            "fee": 1000,
+            "closing": 999000,
+            "net_change": 999000
+          },
+          "lez": {
+            "opening": 104000,
+            "credit": 0,
+            "debit": 1000,
+            "fee": 0,
+            "closing": 103000,
+            "net_change": -1000
+          }
+        }
+      },
+      {
+        "role": "taker",
+        "wallet_id": "taker-zurich-01",
+        "balances": {
+          "bitcoin": {
+            "opening": 5000000000,
+            "credit": 0,
+            "debit": 1000000,
+            "fee": 1000,
+            "closing": 4998999000,
+            "net_change": -1001000
+          },
+          "lez": {
+            "opening": 195000,
+            "credit": 1000,
+            "debit": 0,
+            "fee": 0,
+            "closing": 196000,
+            "net_change": 1000
+          }
+        }
+      }
+    ],
+    "reconciliation": {
+      "bitcoin_principal": 1000000,
+      "total_bitcoin_fees": 2000,
+      "lez_principal": 1000,
+      "lez_conserved": true
+    },
+    "sources": {
+      "bitcoin_funding": "taker_sells_foreign-funding-prepared.json",
+      "bitcoin_claim": "taker_sells_foreign-bitcoin-followup-claim-confirmed.json",
+      "lez_opening": [
+        "maker-owner-after-vault-claim.json",
+        "taker-owner-after-vault-claim.json"
+      ],
+      "lez_closing": [
+        "taker_sells_foreign-maker-wallet-final.json",
+        "taker_sells_foreign-taker-wallet-final.json"
+      ]
+    },
+    "private_material_disclosed": false
+  }
+}

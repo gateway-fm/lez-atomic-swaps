@@ -1,0 +1,55 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:04.800
+[Bright instrumental music] Actual Basecamp UI: a fresh Bitcoin-to-LEZ atomic swap, with five on-chain actions and zero replays.
+
+00:00:04.800 --> 00:00:19.467
+The Maker publishes exact terms: 1,000 LEZ for 0.01000000 BTC.
+
+00:00:19.467 --> 00:00:21.867
+Control passes from Maker to Taker.
+
+00:00:21.867 --> 00:00:27.867
+The Taker accepts that exact offer. The agreement fixes both locks, payouts, deadlines, and recovery rules before funding.
+
+00:00:27.867 --> 00:00:32.867
+Fresh role-local actors prepare. This short wait is accelerated.
+
+00:00:32.867 --> 00:00:44.867
+The Taker locks the exact joint P2TR Bitcoin output.
+
+00:00:44.867 --> 00:00:47.267
+A card jokes: Peer message, “Trust me, bro.” Maker's Bitcoin node replies, “Nope. I checked.”
+
+00:00:47.267 --> 00:00:52.067
+The Maker independently checks the exact outpoint, value, expected P2TR lock, confirmations, and fixed payout.
+
+00:00:52.067 --> 00:01:00.400
+Only after those Bitcoin checks pass does the Maker fund 1,000 LEZ.
+
+00:01:00.400 --> 00:01:02.800
+LEZ finality wait. A card reads, “Blockchain doing blockchain things.”
+
+00:01:02.800 --> 00:01:07.600
+The Taker independently checks the exact LEZ escrow, asset, accounts, amounts, rules, and finalized chain state.
+
+00:01:07.600 --> 00:01:16.600
+Only after those LEZ checks pass does the Taker claim LEZ, revealing t in the canonical claim.
+
+00:01:16.600 --> 00:01:19.000
+A card reads, “t has entered the chat.”
+
+00:01:19.000 --> 00:01:23.800
+Control returns to the Maker, who verifies tG equals T and retains only the signature bound to the exact Bitcoin payout paying Maker.
+
+00:01:23.800 --> 00:01:26.800
+The Maker claims the fixed Bitcoin payout.
+
+00:01:26.800 --> 00:01:38.800
+The completed fresh run lists five transaction hashes: Bitcoin lock; LEZ escrow initialization; LEZ funding; LEZ revealing claim; and Bitcoin claim.
+
+00:01:38.800 --> 00:01:46.000
+The evidence calls these “effects.” In plain language, they are five confirmed or finalized on-chain actions.
+
+00:01:46.000 --> 00:01:53.200
+Fresh run verified: two chains, five actions, zero replays. Bitcoin regtest and LEZ private devnet, not mainnet. Music: “Bit Quest” by Kevin MacLeod, CC BY 4.0.

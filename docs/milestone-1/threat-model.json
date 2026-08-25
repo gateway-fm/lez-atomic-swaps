@@ -281,15 +281,15 @@
   "invariants": [
     {
       "id": "INV-01",
-      "text": "The Taker funds the first leg. The Maker funds the second leg only after the exact first lock satisfies its route-specific canonicality policy and cutoff.",
+      "text": "The Taker funds the first leg. The Maker funds the second leg only after its own chain route verifies the exact first lock and cutoff. The Taker reveals only after its own chain route verifies the exact second lock. Missing or invalid evidence never authorizes the next step.",
       "routes": ["lez-btc", "lez-xmr", "lez-zec"],
-      "proofs": ["docs/architecture/0008-bidirectional-role-ordering.md"]
+      "proofs": ["docs/architecture/0008-bidirectional-role-ordering.md", "docs/architecture/0030-finalized-lez-funding-before-claim.md", "docs/architecture/0037-finalize-exact-bitcoin-funding-before-first-effect.md"]
     },
     {
       "id": "INV-02",
-      "text": "Both signatures bind the roles, route, direction, networks, assets, amounts, destinations, transactions, recovery policy, and unique swap identity before either lock.",
+      "text": "Before either lock, both signatures bind the roles, route, direction, networks, assets, amounts, destinations, transactions, recovery policy, and unique swap identity. For BTC, the joint Taproot key controls temporary custody; the exact agreement-bound spend fixes the beneficiary.",
       "routes": ["lez-btc", "lez-xmr", "lez-zec"],
-      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-1/protocol-design.md"]
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-1/protocol-design.md", "docs/architecture/0043-derive-btc-claims-from-the-agreement.md", "docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md"]
     },
     {
       "id": "INV-03",
@@ -443,11 +443,11 @@
       "id": "TM-0005",
       "old_ids": ["TM-S-05"],
       "view": "trade-setup",
-      "scenario": "A participant's claim about a lock, balance, confirmation, or route health is treated as chain authority.",
+      "scenario": "A participant's or UI's claim about a lock, balance, confirmation, or route health is treated as chain authority.",
       "scope": {
         "routes": ["lez-btc", "lez-xmr", "lez-zec"],
         "directions": ["all-supported"],
-        "phases": ["agreement", "first-lock", "second-lock"],
+        "phases": ["agreement", "first-lock", "second-lock", "claim-reveal"],
         "profiles": ["integrated-local", "public-testnet", "production"],
         "targets": ["E01", "E02", "E05", "E06", "E08", "F01", "F02", "F03", "F07", "F08"]
       },
@@ -459,9 +459,9 @@
         { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
         { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
       ],
-      "control": "Only a role's own configured chain route can authorize a transition; peer and UI observations are display data.",
-      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/system-architecture.md"],
-      "remaining": "Public provider authority and independent confirmation are handled by TM-0020 and TM-0021.",
+      "control": "The Maker's own first-leg chain route verifies the first lock before funding; the Taker's own second-leg chain route verifies the second lock before claiming or revealing. Peer and UI observations are display data only.",
+      "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/system-architecture.md", "docs/architecture/0030-finalized-lez-funding-before-claim.md", "docs/architecture/0037-finalize-exact-bitcoin-funding-before-first-effect.md"],
+      "remaining": "Role-local means independent of counterparty and UI claims, not necessarily separate infrastructure. Provider authority, split views, and finality are handled by TM-0020 and TM-0021.",
       "owner": "coordinator",
       "state": "checking"
     },
@@ -625,7 +625,7 @@
       "id": "TM-0012",
       "old_ids": ["TM-T-01"],
       "view": "chain-protocol",
-      "scenario": "The Maker locks before the exact Taker-funded first leg is safe, or after the signed second-lock cutoff.",
+      "scenario": "The Maker funds before the exact Taker-funded first lock is safe, or the Taker claims and reveals before the exact Maker-funded second lock is safe.",
       "scope": {
         "routes": ["lez-btc", "lez-xmr", "lez-zec"],
         "directions": ["all-supported"],
@@ -641,8 +641,8 @@
         { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 2, "impact": 3 } },
         { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 2, "impact": 5 } }
       ],
-      "control": "The second-lock effect requires an exact, fresh, route-bound first-lock observation and fails closed at the cutoff.",
-      "proofs": ["docs/architecture/0039-admit-first-lock-recovery-only-after-cross-chain-cutoff.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md"],
+      "control": "Each role uses a fresh, agreement-bound observation from its own chain route before the next irreversible effect. A missing, stale, ambiguous, or mismatched observation stops progress; ordered refunds recover locks already on-chain.",
+      "proofs": ["docs/architecture/0030-finalized-lez-funding-before-claim.md", "docs/architecture/0037-finalize-exact-bitcoin-funding-before-first-effect.md", "docs/architecture/0039-admit-first-lock-recovery-only-after-cross-chain-cutoff.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md"],
       "remaining": "Public finality and cutoff calibration remain open.",
       "owner": "protocol-core",
       "state": "checking"
@@ -745,8 +745,8 @@
         { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
         { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
       ],
-      "control": "Agreement-derived sessions bind exact keys, messages, outpoints, Taproot commitments, nonce use, and extracted scalar checks.",
-      "proofs": ["docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md", "docs/evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json"],
+      "control": "Both roles verify both agreement-derived pre-signatures before funding. The BTC signature binds the exact outpoint, Taproot commitment, sighash, and spend to the fixed beneficiary; changing any of them invalidates it. Extracted t must satisfy tG = T before the opposite claim.",
+      "proofs": ["docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md", "docs/evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:crates/btc-swap-sdk/src/agreement_v1.rs"],
       "remaining": "The exact two-party aggregate adaptor construction and dependency require independent cryptographic review and malicious-key vectors.",
       "owner": "btc-cryptography",
       "state": "open"

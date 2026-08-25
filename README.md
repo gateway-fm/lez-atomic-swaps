@@ -7,10 +7,19 @@ cross-chain bridge controls settlement.
 `M3+ submission` · `Bitcoin Core regtest` · `LEZ v0.2 private devnet` ·
 `Basecamp Maker + Taker mini-apps`
 
-[![A completed LEZ/BTC swap with five public effects and reconciled balances](media/screenshots/finalized-swap-proof.png)](media/lez-btc-rfp003-proposal-vertical.mp4)
+[![LEZ and Bitcoin M1, M3, and M6 submission presentation](media/screenshots/lez-btc-m1-m3-m6-submission-cover.png)](media/lez-btc-m1-m3-m6-submission.html)
 
-*A real private-local run: two Bitcoin effects, three LEZ effects, reconciled
-wallet balances, and zero replay submissions. [Watch the 1:42 proposal demo →](media/lez-btc-rfp003-proposal-vertical.mp4)*
+*[Open the single-file HTML presentation →](media/lez-btc-m1-m3-m6-submission.html) ·
+[Watch the 1:39 silent submission video →](media/lez-btc-m1-m3-m6-submission-silent.mp4) ·
+[Watch the 3:41 actual UI swap →](media/lez-btc-ui-swap-demo.mp4) ·
+[Watch the 1:42 narrated product cut →](media/lez-btc-rfp003-proposal-vertical.mp4)*
+
+The fresh actual-UI run has two Bitcoin effects, three LEZ effects,
+reconciled wallet balances, and zero replay submissions. Its
+[secret-safe evidence record](docs/evidence/m3-btc-ui-run-m5arm-0825141508.json)
+contains the exact public transaction and block identities shown in the media.
+The presentation screenshots and narrated cut remain bound to the separate
+[`m5arm-0820121736` record](docs/evidence/m3-btc-ui-run-m5arm-0820121736.json).
 
 ## The product flow
 
@@ -117,8 +126,10 @@ This branch presents three milestone areas as one reviewable vertical slice:
 
 The live BTC demo also integrates M5-derived daemon, service, persistence, and
 runner components. It is not presented here as proof that the complete M5
-scope is delivered. See [submission scope and provenance](docs/submission.md)
-for exact source checkpoints and nonclaims.
+scope is delivered. Start with the reviewer-facing
+[submission pack](submission/README.md), then see
+[submission scope and provenance](docs/submission.md) for exact source
+checkpoints and nonclaims.
 
 ## Scope boundary
 
@@ -141,6 +152,7 @@ M4 Monero, complete M5 operations, or M7 mainnet readiness.
 | [`docs/evidence/`](docs/evidence/) | Public M3/M6 records plus the M2 prerequisite records referenced by M3 |
 | [`docs/architecture/`](docs/architecture/) | Milestone ADRs and security arguments |
 | [`media/`](media/) | Proposal video and secret-free screenshots from real local runs |
+| [`submission/`](submission/) | Reviewer map, milestone/evidence indexes, limitations, HTML deck, and render recipe |
 
 ## License
 
