@@ -3,11 +3,13 @@ use bitcoin::secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
 use lez_bridge_protocol::RequestId;
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, BtcAgreementBodyV1, BtcAgreementDraftV1, BtcAgreementV1,
-    BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1, BtcLezTermsV1,
-    BtcMakerAgreementProposalV1, BtcP2trTermsV1, BtcParticipantIdentityV1, BtcParticipantsV1,
-    BtcRecoveryPlanV1, CooperativeKeyPathSpend, CsvBlockDelay, P2trSwapOutput, RefundXOnlyKey,
-    TwoPartyAggregateKey,
+    AdaptorSessionContext, BTC_ROLE_CONTRIBUTION_SCHEMA_V1, BtcAgreementBodyV1,
+    BtcAgreementDraftV1, BtcAgreementV1, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,
+    BtcLezChainIdentityV1, BtcLezTermsV1, BtcMakerAgreementProposalV1, BtcP2trTermsV1,
+    BtcParticipantIdentityV1, BtcParticipantsV1, BtcRecoveryPlanV1, BtcRoleContributionBodyV1,
+    BtcRoleContributionPairV1, BtcRoleContributionRecordV1, BtcRoleContributionV1,
+    CooperativeKeyPathSpend, CsvBlockDelay, P2trSwapOutput, RefundXOnlyKey, TwoPartyAggregateKey,
+    derive_btc_pre_session_id_v1,
 };
 use lez_swap_core::{Pair, Participant, SwapCoordinator, SwapDirection};
 use lez_swap_store::{
@@ -40,6 +42,7 @@ struct NegotiationFixture {
     final_wire: Vec<u8>,
     alternate_final_wire: Vec<u8>,
     coordinator: SwapCoordinator,
+    contribution_wires: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 fn secret(value: u8) -> SecretKey {
@@ -85,6 +88,22 @@ fn alternate_signature(secret: &SecretKey, commitment: [u8; 32]) -> [u8; 64] {
 
 #[allow(clippy::too_many_lines)]
 fn negotiation_fixture(reservation_id: &RequestId, key_offset: u8) -> NegotiationFixture {
+    negotiation_fixture_inner(reservation_id, key_offset, false)
+}
+
+fn contributed_negotiation_fixture(
+    reservation_id: &RequestId,
+    key_offset: u8,
+) -> NegotiationFixture {
+    negotiation_fixture_inner(reservation_id, key_offset, true)
+}
+
+#[allow(clippy::too_many_lines)]
+fn negotiation_fixture_inner(
+    reservation_id: &RequestId,
+    key_offset: u8,
+    contribution_bound: bool,
+) -> NegotiationFixture {
     let maker_secret = secret(1 + key_offset);
     let taker_secret = secret(2 + key_offset);
     let maker_refund_secret = secret(3 + key_offset);
@@ -154,8 +173,75 @@ fn negotiation_fixture(reservation_id: &RequestId, key_offset: u8) -> Negotiatio
         1_700_000_100_000,
         [19; 32],
     );
+    let contribution_wires = if contribution_bound {
+        let pre_session = derive_btc_pre_session_id_v1(
+            &OFFER_COMMITMENT,
+            reservation_id.as_str().as_bytes(),
+            SwapDirection::TakerSellsForeign,
+        )
+        .unwrap();
+        let lez_chain = BtcLezChainIdentityV1::new([18; 32], [17; 32], [15; 32], [16; 32]);
+        let maker_body = BtcRoleContributionBodyV1::new(
+            pre_session,
+            Participant::Maker,
+            SwapDirection::TakerSellsForeign,
+            BtcChainPolicyV1::new([8; 32], 6),
+            lez_chain,
+            participants.for_participant(Participant::Maker).clone(),
+            x_only_public_key(&secret(8 + key_offset)),
+            None,
+            [40 + key_offset; 32],
+            400,
+        )
+        .unwrap();
+        let taker_body = BtcRoleContributionBodyV1::new(
+            pre_session,
+            Participant::Taker,
+            SwapDirection::TakerSellsForeign,
+            BtcChainPolicyV1::new([8; 32], 6),
+            lez_chain,
+            participants.for_participant(Participant::Taker).clone(),
+            x_only_public_key(&secret(9 + key_offset)),
+            Some(adaptor_point),
+            [41 + key_offset; 32],
+            400,
+        )
+        .unwrap();
+        let maker_commitment = maker_body.commitment();
+        let taker_commitment = taker_body.commitment();
+        let maker_contribution =
+            BtcRoleContributionV1::validate(BtcRoleContributionRecordV1::from_parts(
+                BTC_ROLE_CONTRIBUTION_SCHEMA_V1,
+                maker_body,
+                maker_commitment,
+                signature(&maker_secret, maker_commitment),
+            ))
+            .unwrap();
+        let taker_contribution =
+            BtcRoleContributionV1::validate(BtcRoleContributionRecordV1::from_parts(
+                BTC_ROLE_CONTRIBUTION_SCHEMA_V1,
+                taker_body,
+                taker_commitment,
+                signature(&taker_secret, taker_commitment),
+            ))
+            .unwrap();
+        let pair =
+            BtcRoleContributionPairV1::new(maker_contribution.clone(), taker_contribution.clone())
+                .unwrap();
+        Some((
+            maker_contribution.encode_wire().unwrap(),
+            taker_contribution.encode_wire().unwrap(),
+        ))
+        .map(|wires| (*pair.swap_id(), wires))
+    } else {
+        None
+    };
+    let swap_id = contribution_wires.as_ref().map_or_else(
+        || maker_btc_chat_swap_id(&OFFER_COMMITMENT, reservation_id),
+        |(swap_id, _)| *swap_id,
+    );
     let body = BtcAgreementBodyV1::new(
-        maker_btc_chat_swap_id(&OFFER_COMMITMENT, reservation_id),
+        swap_id,
         SwapDirection::TakerSellsForeign,
         BtcChainPolicyV1::new([8; 32], 6),
         participants,
@@ -210,6 +296,7 @@ fn negotiation_fixture(reservation_id: &RequestId, key_offset: u8) -> Negotiatio
         final_wire,
         alternate_final_wire,
         coordinator: agreement.coordinator().clone(),
+        contribution_wires: contribution_wires.map(|(_, wires)| wires),
     }
 }
 
@@ -218,18 +305,35 @@ fn proposed(
     fixture: &NegotiationFixture,
     reserved_at_unix_seconds: u64,
 ) -> MakerBtcNegotiationV1 {
-    MakerBtcNegotiationV1::proposed(
-        reservation_id.clone(),
-        OFFER_COMMITMENT,
-        fixture.maker_identity,
-        fixture.taker_identity,
-        FUNDING_VALUE_SAT,
-        LEZ_UNITS,
-        reserved_at_unix_seconds,
-        fixture.agreement_commitment,
-        fixture.proposal_wire.clone(),
-    )
-    .unwrap()
+    if let Some((maker, taker)) = &fixture.contribution_wires {
+        MakerBtcNegotiationV1::proposed_with_contributions(
+            reservation_id.clone(),
+            OFFER_COMMITMENT,
+            fixture.maker_identity,
+            fixture.taker_identity,
+            FUNDING_VALUE_SAT,
+            LEZ_UNITS,
+            reserved_at_unix_seconds,
+            fixture.agreement_commitment,
+            fixture.proposal_wire.clone(),
+            maker.clone(),
+            taker.clone(),
+        )
+        .unwrap()
+    } else {
+        MakerBtcNegotiationV1::proposed(
+            reservation_id.clone(),
+            OFFER_COMMITMENT,
+            fixture.maker_identity,
+            fixture.taker_identity,
+            FUNDING_VALUE_SAT,
+            LEZ_UNITS,
+            reserved_at_unix_seconds,
+            fixture.agreement_commitment,
+            fixture.proposal_wire.clone(),
+        )
+        .unwrap()
+    }
 }
 
 fn configure_route(store: &mut SqliteSwapStore, route: MakerRouteV1, prefix: &str) {
@@ -270,6 +374,288 @@ fn configure_route(store: &mut SqliteSwapStore, route: MakerRouteV1, prefix: &st
             .unwrap(),
         )
         .unwrap();
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn legacy_btc_negotiation_schema_migrates_and_completes_v1() {
+    let run = tempdir().unwrap();
+    let database = run.path().join("legacy-btc-negotiation.sqlite3");
+    let offer_id = MakerOfferId::new("legacy-btc-negotiation-offer-001").unwrap();
+    let reservation_id = request("legacy-btc-negotiation-reservation-001");
+    let stage_request = request("legacy-btc-negotiation-stage-001");
+    let fixture = negotiation_fixture(&reservation_id, 0);
+    let negotiation = proposed(&reservation_id, &fixture, 101);
+
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    configure_route(&mut store, bitcoin_route(), "legacy-btc-negotiation");
+    store
+        .publish_local_offer(
+            &request("legacy-btc-negotiation-publish-001"),
+            &offer_id,
+            bitcoin_route(),
+            100,
+        )
+        .unwrap();
+    store
+        .stage_btc_maker_negotiation(&stage_request, &offer_id, 1, &negotiation)
+        .unwrap();
+    drop(store);
+
+    let legacy = Connection::open(&database).unwrap();
+    legacy
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             DROP INDEX maker_btc_negotiations_state_reservation;
+             ALTER TABLE maker_btc_negotiations
+                 RENAME TO maker_btc_negotiations_with_contributions;
+             CREATE TABLE maker_btc_negotiations (
+                 offer_id                     TEXT PRIMARY KEY NOT NULL,
+                 reservation_id               TEXT NOT NULL UNIQUE,
+                 payload_version              INTEGER NOT NULL CHECK (payload_version = 1),
+                 offer_commitment              BLOB NOT NULL CHECK (length(offer_commitment) = 32),
+                 maker_agreement_identity      BLOB NOT NULL CHECK (length(maker_agreement_identity) = 33),
+                 taker_agreement_identity      BLOB NOT NULL CHECK (length(taker_agreement_identity) = 33),
+                 foreign_units                 INTEGER NOT NULL CHECK (foreign_units > 0),
+                 lez_units                     BLOB NOT NULL CHECK (length(lez_units) = 16),
+                 reserved_at_unix_seconds      INTEGER NOT NULL CHECK (reserved_at_unix_seconds > 0),
+                 agreement_commitment          BLOB NOT NULL CHECK (length(agreement_commitment) = 32),
+                 maker_proposal_wire           BLOB NOT NULL CHECK (
+                     length(maker_proposal_wire) BETWEEN 1 AND 16384
+                 ),
+                 state                         TEXT NOT NULL CHECK (state IN ('proposed', 'completed')),
+                 final_agreement_wire          BLOB CHECK (
+                     final_agreement_wire IS NULL
+                     OR length(final_agreement_wire) BETWEEN 1 AND 16384
+                 ),
+                 swap_id                       TEXT,
+                 updated_request_id             TEXT NOT NULL,
+                 FOREIGN KEY (offer_id) REFERENCES maker_offers(offer_id) ON DELETE RESTRICT,
+                 FOREIGN KEY (swap_id) REFERENCES swaps(id) ON DELETE RESTRICT,
+                 CHECK (maker_agreement_identity != taker_agreement_identity),
+                 CHECK (
+                     (state = 'proposed' AND final_agreement_wire IS NULL AND swap_id IS NULL)
+                     OR (state = 'completed' AND final_agreement_wire IS NOT NULL AND swap_id IS NOT NULL)
+                 )
+             ) STRICT;
+             INSERT INTO maker_btc_negotiations (
+                 offer_id, reservation_id, payload_version, offer_commitment,
+                 maker_agreement_identity, taker_agreement_identity, foreign_units,
+                 lez_units, reserved_at_unix_seconds, agreement_commitment,
+                 maker_proposal_wire, state, final_agreement_wire, swap_id,
+                 updated_request_id
+             )
+             SELECT offer_id, reservation_id, payload_version, offer_commitment,
+                    maker_agreement_identity, taker_agreement_identity, foreign_units,
+                    lez_units, reserved_at_unix_seconds, agreement_commitment,
+                    maker_proposal_wire, state, final_agreement_wire, swap_id,
+                    updated_request_id
+               FROM maker_btc_negotiations_with_contributions;
+             DROP TABLE maker_btc_negotiations_with_contributions;
+             CREATE INDEX maker_btc_negotiations_state_reservation
+                 ON maker_btc_negotiations (state, reservation_id);",
+        )
+        .unwrap();
+    drop(legacy);
+
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let migrated = store
+        .load_btc_maker_negotiation(&offer_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(migrated, negotiation);
+    assert!(migrated.contribution_wires().is_none());
+    assert!(
+        store
+            .stage_btc_maker_negotiation(&stage_request, &offer_id, 1, &negotiation)
+            .unwrap()
+            .was_replay()
+    );
+    let accepted = BtcAgreementAcceptance::new(
+        &fixture.coordinator,
+        Participant::Maker,
+        fixture.final_wire.clone(),
+        fixture.agreement_commitment,
+        102,
+    )
+    .unwrap();
+    let actor = MakerActorManifestV1::new(
+        fixture.coordinator.id().clone(),
+        MakerActorKindV1::Bitcoin,
+        run.path().join("legacy-maker-config.json"),
+        [0xa1; 32],
+        run.path().join("legacy-btc-reference-actor"),
+        [0xb2; 32],
+        run.path().join("legacy-maker-state.sqlite3"),
+    )
+    .unwrap();
+    let completed = store
+        .complete_maker_btc_negotiation_and_register_actor(
+            &request("legacy-btc-negotiation-complete-001"),
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &fixture.coordinator,
+            &actor,
+            103,
+        )
+        .unwrap();
+    assert_eq!(completed.offer_revision(), 3);
+    assert!(!completed.was_replay());
+}
+
+#[test]
+fn contribution_bound_negotiation_survives_restart_and_rejects_durable_crosswire() {
+    let run = tempdir().unwrap();
+    let database = run.path().join("btc-contribution-negotiation.sqlite3");
+    let offer_id = MakerOfferId::new("btc-contribution-offer-001").unwrap();
+    let reservation_id = request("btc-contribution-reservation-001");
+    let stage_request = request("btc-contribution-stage-001");
+    let fixture = contributed_negotiation_fixture(&reservation_id, 0);
+    let negotiation = proposed(&reservation_id, &fixture, 101);
+    assert!(negotiation.contribution_wires().is_some());
+
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    configure_route(&mut store, bitcoin_route(), "btc-contribution");
+    store
+        .publish_local_offer(
+            &request("btc-contribution-publish-001"),
+            &offer_id,
+            bitcoin_route(),
+            100,
+        )
+        .unwrap();
+    store
+        .stage_btc_maker_negotiation(&stage_request, &offer_id, 1, &negotiation)
+        .unwrap();
+    drop(store);
+
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    assert_eq!(
+        store.load_btc_maker_negotiation(&offer_id).unwrap(),
+        Some(negotiation.clone())
+    );
+    assert!(
+        store
+            .stage_btc_maker_negotiation(&stage_request, &offer_id, 1, &negotiation)
+            .unwrap()
+            .was_replay()
+    );
+    let raw = Connection::open(&database).unwrap();
+    raw.execute(
+        "UPDATE maker_btc_negotiations
+            SET maker_contribution_wire = taker_contribution_wire
+          WHERE offer_id = ?1",
+        params![offer_id.as_str()],
+    )
+    .unwrap();
+    assert!(matches!(
+        store.stage_btc_maker_negotiation(&stage_request, &offer_id, 1, &negotiation),
+        Err(StoreError::CorruptMakerOffer)
+    ));
+    assert!(matches!(
+        store.load_btc_maker_negotiation(&offer_id),
+        Err(StoreError::MakerOffer(_) | StoreError::CorruptMakerOffer)
+    ));
+}
+
+#[test]
+fn contribution_bound_agreement_rejects_fixture_actor_and_accepts_without_one() {
+    let run = tempdir().unwrap();
+    let database = run.path().join("btc-role-agreement.sqlite3");
+    let offer_id = MakerOfferId::new("btc-role-agreement-offer-001").unwrap();
+    let reservation_id = request("btc-role-agreement-reservation-001");
+    let fixture = contributed_negotiation_fixture(&reservation_id, 0);
+    let accepted = BtcAgreementAcceptance::new(
+        &fixture.coordinator,
+        Participant::Maker,
+        fixture.final_wire.clone(),
+        fixture.agreement_commitment,
+        102,
+    )
+    .unwrap();
+    let completion_request = request("btc-role-agreement-complete-001");
+
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    configure_route(&mut store, bitcoin_route(), "btc-role-agreement");
+    store
+        .publish_local_offer(
+            &request("btc-role-agreement-publish-001"),
+            &offer_id,
+            bitcoin_route(),
+            100,
+        )
+        .unwrap();
+    store
+        .stage_btc_maker_negotiation(
+            &request("btc-role-agreement-stage-001"),
+            &offer_id,
+            1,
+            &proposed(&reservation_id, &fixture, 101),
+        )
+        .unwrap();
+    let fixture_actor = MakerActorManifestV1::new(
+        fixture.coordinator.id().clone(),
+        MakerActorKindV1::Bitcoin,
+        run.path().join("forbidden-maker-config.json"),
+        [0xa1; 32],
+        run.path().join("forbidden-btc-reference-actor"),
+        [0xb2; 32],
+        run.path().join("forbidden-maker-state.sqlite3"),
+    )
+    .unwrap();
+    assert!(matches!(
+        store.complete_maker_btc_negotiation_and_register_actor(
+            &request("btc-role-agreement-forbidden-v1-complete"),
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &fixture.coordinator,
+            &fixture_actor,
+            103,
+        ),
+        Err(StoreError::InvalidBtcApplicationState)
+    ));
+    assert!(store.list_maker_actor_processes().unwrap().is_empty());
+    let committed = store
+        .accept_maker_btc_negotiation_without_actor(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &fixture.coordinator,
+        )
+        .unwrap();
+    assert_eq!(committed.offer_revision(), 3);
+    assert!(!committed.was_replay());
+    assert!(store.list_maker_actor_processes().unwrap().is_empty());
+    drop(store);
+
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let replay = store
+        .accept_maker_btc_negotiation_without_actor(
+            &completion_request,
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &fixture.coordinator,
+        )
+        .unwrap();
+    assert!(replay.was_replay());
+    assert!(store.list_maker_actor_processes().unwrap().is_empty());
+    let negotiation = store
+        .load_btc_maker_negotiation(&offer_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(negotiation.status(), MakerBtcNegotiationStatus::Completed);
+    assert_eq!(
+        negotiation.final_agreement_wire(),
+        Some(fixture.final_wire.as_slice())
+    );
 }
 
 #[test]
@@ -447,6 +833,17 @@ fn btc_maker_negotiation_is_one_winner_restart_safe_and_completes_atomically() {
             .unwrap()
             .is_none()
     );
+    assert!(matches!(
+        store.accept_maker_btc_negotiation_without_actor(
+            &request("btc-negotiation-forbidden-v2-complete"),
+            &offer_id,
+            2,
+            &reservation_id,
+            &accepted,
+            &initial,
+        ),
+        Err(StoreError::InvalidBtcApplicationState)
+    ));
     let early = BtcAgreementAcceptance::new(
         &initial,
         Participant::Maker,

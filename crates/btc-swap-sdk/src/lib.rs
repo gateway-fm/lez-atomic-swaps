@@ -8,6 +8,7 @@
 mod agreement_v1;
 mod asset_sdk;
 mod p2tr;
+mod preagreement_v1;
 mod sdk;
 mod transaction;
 
@@ -37,6 +38,13 @@ pub use p2tr::{
     CsvBlockDelay, CsvBlockDelayError, InvalidXOnlyKey, OutputKeyParity, P2trSwapOutput,
     P2trSwapOutputError, RefundXOnlyKey, TwoPartyAggregateKey, XOnlyKeyPurpose,
 };
+pub use preagreement_v1::{
+    BTC_JOINT_SWAP_ID_V1_DOMAIN, BTC_PRE_SESSION_V1_DOMAIN, BTC_ROLE_CONTRIBUTION_SCHEMA_V1,
+    BTC_ROLE_CONTRIBUTION_V1_DOMAIN, BtcLezChainIdentityV1, BtcRoleContributionBodyV1,
+    BtcRoleContributionPairV1, BtcRoleContributionRecordV1, BtcRoleContributionV1,
+    BtcRoleContributionV1Error, MAX_BTC_PRE_SESSION_RESERVATION_BYTES,
+    MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES, derive_btc_pre_session_id_v1,
+};
 pub use sdk::{
     AcceptedBtcAgreementV1, ActiveBtcSwap, BitcoinBtcLifecyclePort,
     BitcoinCanonicalRecoveryStateV1, BitcoinFirstLockEvidenceV1, BitcoinFollowupClaimEvidenceV1,
@@ -52,9 +60,9 @@ pub use sdk::{
     BtcSwapStatusV1, ConfirmedBtcFirstLockV1, InMemoryBtcLifecycleStore,
     InMemoryBtcLifecycleStoreError, LezBtcLifecyclePort, LezCanonicalRecoveryStateV1,
     LezFirstLockEvidenceV1, LezFollowupClaimEvidenceV1, LezRevealingClaimEvidenceV1,
-    MAX_BTC_LIFECYCLE_RECORD_BYTES, PreparedBitcoinFundingV1, PreparedBitcoinRefundV1,
-    PreparedLezClaimTemplateV1, PreparedLezFundingV1, PreparedLezRefundV1, StoredBtcLifecycleSdk,
-    ValidatedBtcProtocolTermsV1,
+    MAX_BTC_LIFECYCLE_RECORD_BYTES, PlannedBitcoinFundingV1, PreparedBitcoinFundingV1,
+    PreparedBitcoinRefundV1, PreparedLezClaimTemplateV1, PreparedLezFundingV1, PreparedLezRefundV1,
+    StoredBtcLifecycleSdk, ValidatedBtcProtocolTermsV1,
 };
 pub use transaction::{
     CooperativeKeyPathSpend, CooperativeKeyPathSpendError, RefundScriptPathSpend,

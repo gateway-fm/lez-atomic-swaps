@@ -217,6 +217,15 @@ impl BtcParticipantsV1 {
             Participant::Taker => &self.taker,
         }
     }
+
+    /// Derives the canonical fixed-order `MuSig2` aggregate x-only key.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed participant public keys or aggregate-key failure.
+    pub fn aggregate_internal_key(&self) -> Result<[u8; 32], BtcAgreementV1Error> {
+        derive_aggregate_key(self)
+    }
 }
 
 /// Exact LEZ chain, deployment, accounts, value, deadline, and claim message.

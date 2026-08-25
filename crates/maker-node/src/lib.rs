@@ -25,8 +25,8 @@ pub use actor_supervisor::{
     supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
     supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
 };
-pub use btc_chat::BtcMakerActorProvisioner;
 use btc_chat::register_btc_chat_methods;
+pub use btc_chat::{BtcMakerActorProvisioner, BtcMakerRoleAgreementAuthority};
 pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,
@@ -85,8 +85,9 @@ use btc_reference_actor::{
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
 use lez_btc_swap_sdk::{
-    BtcAgreementDraftV1, BtcAgreementV1, BtcMakerAgreementProposalV1,
-    MAX_BTC_AGREEMENT_RECORD_BYTES,
+    BtcAgreementDraftV1, BtcAgreementV1, BtcMakerAgreementProposalV1, BtcRoleContributionPairV1,
+    BtcRoleContributionV1, MAX_BTC_AGREEMENT_RECORD_BYTES, MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES,
+    derive_btc_pre_session_id_v1,
 };
 use lez_swap_core::{
     Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Participant, Phase,
@@ -136,6 +137,7 @@ pub struct MakerRpc {
     chat_signing_key: Option<Arc<SecretKey>>,
     btc_chat_signing_key: Option<Arc<SecretKey>>,
     btc_actor_provisioner: Option<Arc<BtcMakerActorProvisioner>>,
+    btc_role_agreement_authority: Option<Arc<BtcMakerRoleAgreementAuthority>>,
     xmr_chat_authority: Option<Arc<XmrMakerChatAuthority>>,
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
     maker_claim_preimage: Option<Arc<ClaimPreimage>>,
@@ -168,6 +170,13 @@ impl std::fmt::Debug for MakerRpc {
             .field(
                 "btc_actor_provisioner",
                 &self.btc_actor_provisioner.as_ref().map(|_| "configured"),
+            )
+            .field(
+                "btc_role_agreement_authority",
+                &self
+                    .btc_role_agreement_authority
+                    .as_ref()
+                    .map(|_| "configured"),
             )
             .field(
                 "xmr_chat_authority",
@@ -203,6 +212,7 @@ impl MakerRpc {
             zec_completion_store: None,
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
+            btc_role_agreement_authority: None,
             xmr_chat_authority: None,
             maker_claim_preimage: None,
             zec_actor_provisioner: None,
@@ -242,6 +252,7 @@ impl MakerRpc {
             chat_signing_key: Some(Arc::new(chat_signing_key)),
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
+            btc_role_agreement_authority: None,
             xmr_chat_authority: None,
             zec_completion_store: None,
             maker_claim_preimage: None,
@@ -291,6 +302,21 @@ impl MakerRpc {
     ) -> Self {
         self.btc_chat_signing_key = Some(Arc::new(signing_key));
         self.btc_actor_provisioner = Some(Arc::new(actor_provisioner));
+        self
+    }
+
+    /// Attaches fixture-independent BTC role-agreement authority, optionally
+    /// retaining the legacy pre-finalized actor path for Chat v1.
+    #[must_use]
+    pub fn with_btc_chat_authorities(
+        mut self,
+        signing_key: SecretKey,
+        actor_provisioner: Option<BtcMakerActorProvisioner>,
+        role_agreement_authority: Option<BtcMakerRoleAgreementAuthority>,
+    ) -> Self {
+        self.btc_chat_signing_key = Some(Arc::new(signing_key));
+        self.btc_actor_provisioner = actor_provisioner.map(Arc::new);
+        self.btc_role_agreement_authority = role_agreement_authority.map(Arc::new);
         self
     }
 
@@ -963,6 +989,33 @@ pub struct BtcChatProposeRequestV1 {
     pub unsigned_draft_wire: Vec<u8>,
 }
 
+/// Versioned Taker request carrying both independently signed role
+/// contributions and the resulting joint-identity agreement draft.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcChatProposeRequestV2 {
+    /// Must be two for this DTO shape.
+    pub schema_version: u16,
+    /// Global exact-replay identity for durable proposal staging.
+    pub request_id: RequestId,
+    /// Selected immutable offer identity.
+    pub offer_id: MakerOfferId,
+    /// Current active offer revision, normally one.
+    pub expected_offer_revision: u64,
+    /// Winning reservation bound by both role contributions.
+    pub reservation_id: RequestId,
+    /// Exact selected Bitcoin principal in satoshis.
+    pub foreign_units: u64,
+    /// Exact signed Delivery envelope authenticated by both roles.
+    pub signed_offer_envelope: Vec<u8>,
+    /// Canonical signed Maker role contribution.
+    pub maker_contribution_wire: Vec<u8>,
+    /// Canonical signed Taker role contribution.
+    pub taker_contribution_wire: Vec<u8>,
+    /// Canonical bounded unsigned agreement with the joint swap identity.
+    pub unsigned_draft_wire: Vec<u8>,
+}
+
 /// Exact durable BTC Maker proposal returned only after staging commits.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -987,6 +1040,36 @@ pub struct BtcChatProposalV1 {
     pub proposal_wire: Vec<u8>,
 }
 
+/// Durable contribution-bound Maker proposal returned by Chat v2.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcChatProposalV2 {
+    /// This response schema version, always two.
+    pub schema_version: u16,
+    /// Durable reserved offer revision.
+    pub offer_revision: u64,
+    /// Whether the exact stage request was already committed.
+    pub was_replay: bool,
+    /// Winning reservation and contribution pre-session identity.
+    pub reservation_id: RequestId,
+    /// Exact no-rounding LEZ principal.
+    pub lez_units: u128,
+    /// BTC agreement identity that produced the Maker signature.
+    pub maker_identity: Vec<u8>,
+    /// Taker identity authenticated by its role contribution.
+    pub taker_identity: Vec<u8>,
+    /// Joint swap identity derived from both contribution commitments.
+    pub joint_swap_id: [u8; 32],
+    /// Exact Maker contribution commitment retained durably by the store.
+    pub maker_contribution_commitment: [u8; 32],
+    /// Exact Taker contribution commitment retained durably by the store.
+    pub taker_contribution_commitment: [u8; 32],
+    /// Canonical body commitment signed by the Maker.
+    pub agreement_commitment: [u8; 32],
+    /// Exact bounded Maker-proposal wire for Taker countersigning.
+    pub proposal_wire: Vec<u8>,
+}
+
 /// Versioned Taker response carrying the exact countersigned BTC agreement.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1005,6 +1088,25 @@ pub struct BtcChatCompleteRequestV1 {
     pub final_agreement_wire: Vec<u8>,
 }
 
+/// Contribution-bound completion request. Unlike v1, acceptance deliberately
+/// ends before actor registration and all public-effect authorization.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcChatCompleteRequestV2 {
+    /// Must be two for this DTO shape.
+    pub schema_version: u16,
+    /// Global exact-replay identity for fixture-independent final acceptance.
+    pub request_id: RequestId,
+    /// Reserved immutable offer identity.
+    pub offer_id: MakerOfferId,
+    /// Current reserved offer revision, normally two.
+    pub expected_offer_revision: u64,
+    /// Winning reservation and contribution pre-session identity.
+    pub reservation_id: RequestId,
+    /// Exact bounded countersigned contribution-bound agreement.
+    pub final_agreement_wire: Vec<u8>,
+}
+
 /// Durable BTC final-acceptance result returned after every linked row commits.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1017,6 +1119,25 @@ pub struct BtcChatCompleteResponseV1 {
     pub was_replay: bool,
     /// Agreement-derived application swap identity.
     pub swap_id: Box<str>,
+}
+
+/// Durable fixture-independent agreement acceptance. Public effects remain
+/// disabled until a separate role-local activation ceremony succeeds.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcChatCompleteResponseV2 {
+    /// This response schema version, always two.
+    pub schema_version: u16,
+    /// Durable consumed offer revision.
+    pub offer_revision: u64,
+    /// Whether the exact store completion request was already committed.
+    pub was_replay: bool,
+    /// Agreement-derived application swap identity.
+    pub swap_id: Box<str>,
+    /// Maker role root revalidated and bound the exact final agreement.
+    pub maker_role_bound: bool,
+    /// Always false at this boundary; no chain effect is yet authorized.
+    pub ready_for_public_effects: bool,
 }
 
 /// Empty parameters for bounded owner-local list methods.

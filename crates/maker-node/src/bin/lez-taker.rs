@@ -102,6 +102,18 @@ struct Arguments {
     /// Owner-private canonical unsigned agreement draft.
     #[arg(long)]
     unsigned_draft_file: Option<PathBuf>,
+    /// Exact signed Maker contribution for contribution-bound BTC Chat v2.
+    #[arg(long, requires = "taker_contribution_file")]
+    maker_contribution_file: Option<PathBuf>,
+    /// Exact local signed Taker contribution for contribution-bound BTC Chat v2.
+    #[arg(long, requires = "maker_contribution_file")]
+    taker_contribution_file: Option<PathBuf>,
+    /// Existing owner-private Taker role root created before Chat v2.
+    #[arg(
+        long,
+        requires_all = ["maker_contribution_file", "taker_contribution_file"]
+    )]
+    btc_role_root: Option<PathBuf>,
     /// Owner-private raw 32-byte taker agreement key.
     #[arg(long)]
     taker_signing_key_file: Option<PathBuf>,
@@ -485,6 +497,28 @@ async fn execute_btc_take(
             expected_maker.to_owned(),
         )?)
     };
+    let contribution_files = arguments
+        .maker_contribution_file
+        .as_deref()
+        .zip(arguments.taker_contribution_file.as_deref());
+    let role_root = if contribution_files.is_some() {
+        ensure!(
+            arguments.btc_source_taker_config.is_none()
+                && arguments.btc_taker_actor_root.is_none()
+                && arguments.btc_acceptance_receipt.is_none(),
+            "BTC Chat v2 role acceptance does not accept fixture actor authority"
+        );
+        Some(required_btc_path(
+            arguments.btc_role_root.as_deref(),
+            "--btc-role-root",
+        )?)
+    } else {
+        ensure!(
+            arguments.btc_role_root.is_none(),
+            "--btc-role-root requires contribution-bound BTC Chat v2"
+        );
+        None
+    };
     let output = take_btc(BtcTakeInput {
         direction: direction.into(),
         delivery: delivery.as_ref(),
@@ -505,23 +539,16 @@ async fn execute_btc_take(
             arguments.unsigned_draft_file.as_deref(),
             "--unsigned-draft-file",
         )?,
+        contribution_files,
+        role_root,
         taker_signing_key_file: required_btc_path(
             arguments.taker_signing_key_file.as_deref(),
             "--taker-signing-key-file",
         )?,
         agreement_output_file,
-        source_taker_config_file: required_btc_path(
-            arguments.btc_source_taker_config.as_deref(),
-            "--btc-source-taker-config",
-        )?,
-        taker_actor_root: required_btc_path(
-            arguments.btc_taker_actor_root.as_deref(),
-            "--btc-taker-actor-root",
-        )?,
-        acceptance_receipt_file: required_btc_path(
-            arguments.btc_acceptance_receipt.as_deref(),
-            "--btc-acceptance-receipt",
-        )?,
+        source_taker_config_file: arguments.btc_source_taker_config.as_deref(),
+        taker_actor_root: arguments.btc_taker_actor_root.as_deref(),
+        acceptance_receipt_file: arguments.btc_acceptance_receipt.as_deref(),
     })
     .await?;
     println!("{}", serde_json::to_string(&output)?);
@@ -652,6 +679,9 @@ async fn execute_btc_plan(
     ensure!(
         arguments.chat_socket.is_none()
             && arguments.unsigned_draft_file.is_none()
+            && arguments.maker_contribution_file.is_none()
+            && arguments.taker_contribution_file.is_none()
+            && arguments.btc_role_root.is_none()
             && arguments.taker_signing_key_file.is_none()
             && arguments.agreement_output_file.is_none()
             && arguments.zec_source_taker_config.is_none()
@@ -722,6 +752,9 @@ async fn execute_xmr_plan(
     ensure!(
         arguments.chat_socket.is_none()
             && arguments.unsigned_draft_file.is_none()
+            && arguments.maker_contribution_file.is_none()
+            && arguments.taker_contribution_file.is_none()
+            && arguments.btc_role_root.is_none()
             && arguments.taker_signing_key_file.is_none()
             && arguments.agreement_output_file.is_none()
             && arguments.zec_source_taker_config.is_none()
@@ -1298,6 +1331,9 @@ fn btc_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.btc_source_taker_config.is_some()
         || arguments.btc_taker_actor_root.is_some()
         || arguments.btc_acceptance_receipt.is_some()
+        || arguments.btc_role_root.is_some()
+        || arguments.maker_contribution_file.is_some()
+        || arguments.taker_contribution_file.is_some()
 }
 
 fn xmr_actor_bundle_is_durable(path: &std::path::Path) -> anyhow::Result<bool> {
@@ -1336,6 +1372,8 @@ fn shared_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.reservation_id.is_some()
         || arguments.foreign_units.is_some()
         || arguments.unsigned_draft_file.is_some()
+        || arguments.maker_contribution_file.is_some()
+        || arguments.taker_contribution_file.is_some()
         || arguments.taker_signing_key_file.is_some()
         || arguments.agreement_output_file.is_some()
 }

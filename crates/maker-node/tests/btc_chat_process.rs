@@ -22,10 +22,14 @@ mod btc_fixture;
 use btc_fixture::BtcAuthorityFixture;
 
 use btc_reference_actor::{ActorConfig, ActorRole};
+use btc_role_preflight::{bootstrap_role, compose_agreement_draft};
 use lez_bridge_protocol::RequestId;
+use lez_btc_swap_sdk::BtcMakerAgreementProposalV1;
 use lez_maker_node::{
-    AuthenticatedOfferRefV1, BtcChatProposalV1, BtcChatProposeRequestV1, DeliveryOfferQueryV1,
-    LocalPriceSetRequest, PairConfigureRequest, RunLocalDelivery, call_local_rpc,
+    AuthenticatedOfferRefV1, BtcChatCompleteRequestV1, BtcChatCompleteResponseV1,
+    BtcChatProposalV1, BtcChatProposalV2, BtcChatProposeRequestV1, BtcChatProposeRequestV2,
+    DeliveryOfferQueryV1, LocalPriceSetRequest, PairConfigureRequest, RunLocalDelivery,
+    call_local_rpc,
 };
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
@@ -35,7 +39,7 @@ use lez_swap_store::{
     maker_btc_chat_swap_id,
 };
 use rustix::process::{Pid, Signal, kill_process};
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
@@ -238,6 +242,275 @@ async fn real_taker_plans_and_accepts_authenticated_reverse_btc_offer() {
     stop_daemon(&mut daemon, &paths);
 }
 
+#[tokio::test]
+async fn independent_role_roots_complete_chat_v2_without_fixture_actor_authority() {
+    run_independent_role_chat_v2_case(
+        "forward",
+        SwapDirection::TakerSellsForeign,
+        "taker-sells-foreign",
+        "taker_sells_foreign",
+        28,
+    )
+    .await;
+    run_independent_role_chat_v2_case(
+        "reverse",
+        SwapDirection::TakerSellsLez,
+        "taker-sells-lez",
+        "taker_sells_lez",
+        29,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_lines)]
+async fn run_independent_role_chat_v2_case(
+    case: &str,
+    direction: SwapDirection,
+    cli_direction: &str,
+    spec_direction: &str,
+    delivery_key_byte: u8,
+) {
+    let run = tempdir().expect("isolated contribution-bound BTC Chat root");
+    make_private_directory(run.path());
+    let run_root = fs::canonicalize(run.path()).unwrap();
+    let runtime = run_root.join("runtime");
+    make_private_directory(&runtime);
+    let delivery = run_root.join("delivery");
+    let socket = runtime.join("maker.sock");
+    let chat_socket = runtime.join("chat.sock");
+    let ready = runtime.join("ready");
+    let database = run_root.join("maker.sqlite3");
+    let delivery_key = run_root.join("delivery.key");
+    let unused_agreement_key = run_root.join("unused-agreement.key");
+    write_raw_key(&delivery_key, delivery_key_byte);
+    let bootstrap_base = DaemonBase {
+        socket: &socket,
+        chat_socket: &chat_socket,
+        ready: &ready,
+        database: &database,
+        delivery: &delivery,
+        delivery_key: &delivery_key,
+        maker_agreement_key: &unused_agreement_key,
+    };
+    let route = MakerRouteV1::new(Pair::Bitcoin, direction).unwrap();
+    let offer_id = MakerOfferId::new(format!("btc-role-chat-v2-{case}-offer-001")).unwrap();
+    let reservation_id = request(&format!("btc-role-chat-v2-{case}-reservation-001"));
+
+    let mut daemon = start_delivery_only_daemon(&bootstrap_base);
+    wait_delivery_only_ready(&mut daemon, &bootstrap_base);
+    configure_live_route(&socket, route).await;
+    publish_offer(&socket, &offer_id, cli_direction);
+    let delivery_maker = public_key(&key(delivery_key_byte));
+    let authenticated = plan_and_discover(
+        &delivery,
+        &offer_id,
+        &reservation_id,
+        delivery_maker,
+        route,
+        cli_direction,
+    )
+    .await;
+    stop_delivery_only_daemon(&mut daemon, &bootstrap_base);
+
+    let maker_spec = run_root.join("maker-role.json");
+    let taker_spec = run_root.join("taker-role.json");
+    let draft_spec = run_root.join("draft-facts.json");
+    let expiry = authenticated.offer().expires_at_unix_seconds();
+    write_private_json(
+        &maker_spec,
+        &role_bootstrap_spec(
+            "maker",
+            0x31,
+            authenticated.commitment(),
+            &reservation_id,
+            expiry,
+            spec_direction,
+        ),
+    );
+    write_private_json(
+        &taker_spec,
+        &role_bootstrap_spec(
+            "taker",
+            0x32,
+            authenticated.commitment(),
+            &reservation_id,
+            expiry,
+            spec_direction,
+        ),
+    );
+    write_private_json(&draft_spec, &agreement_draft_spec(direction));
+    let maker_role = run_root.join("maker-role");
+    let taker_role = run_root.join("taker-role");
+    bootstrap_role(&maker_spec, &maker_role).unwrap();
+    bootstrap_role(&taker_spec, &taker_role).unwrap();
+    let draft_root = run_root.join("agreement-draft");
+    let draft = compose_agreement_draft(
+        &draft_spec,
+        &maker_role.join("contribution.borsh"),
+        &taker_role.join("contribution.borsh"),
+        &draft_root,
+    )
+    .unwrap();
+
+    let maker_agreement_key = maker_role.join("private/agreement.key");
+    let daemon_base = DaemonBase {
+        socket: &socket,
+        chat_socket: &chat_socket,
+        ready: &ready,
+        database: &database,
+        delivery: &delivery,
+        delivery_key: &delivery_key,
+        maker_agreement_key: &maker_agreement_key,
+    };
+    let mut daemon = start_role_agreement_daemon(&daemon_base, &maker_role);
+    wait_role_agreement_ready(&mut daemon, &daemon_base);
+    let first_proposal = stage_contribution_proposal(
+        &chat_socket,
+        &offer_id,
+        &reservation_id,
+        &authenticated,
+        draft.draft_file(),
+        &maker_role,
+        &taker_role,
+    )
+    .await;
+    assert!(!first_proposal.was_replay);
+    let proposal = BtcMakerAgreementProposalV1::from_wire(&first_proposal.proposal_wire).unwrap();
+    let taker_secret =
+        SecretKey::from_slice(&fs::read(taker_role.join("private/agreement.key")).unwrap())
+            .unwrap();
+    let taker_signature = Secp256k1::new()
+        .sign_schnorr_no_aux_rand(
+            &Message::from_digest(proposal.commitment()),
+            &Keypair::from_secret_key(&Secp256k1::new(), &taker_secret),
+        )
+        .serialize();
+    let forbidden_v1_agreement = proposal
+        .complete(taker_signature)
+        .unwrap()
+        .encode_wire()
+        .unwrap();
+    let forbidden_v1: Result<BtcChatCompleteResponseV1, _> = call_local_rpc(
+        &chat_socket,
+        "btc_chat_complete_v1",
+        &BtcChatCompleteRequestV1 {
+            schema_version: 1,
+            request_id: chat_request(&reservation_id, b"forbidden-complete-v1"),
+            offer_id: offer_id.clone(),
+            expected_offer_revision: 2,
+            reservation_id: reservation_id.clone(),
+            final_agreement_wire: forbidden_v1_agreement,
+        },
+    )
+    .await;
+    assert!(
+        forbidden_v1
+            .unwrap_err()
+            .to_string()
+            .contains("requires Chat completion v2")
+    );
+    let store = SqliteSwapStore::open(&database).unwrap();
+    assert!(store.list_maker_actor_processes().unwrap().is_empty());
+    assert_eq!(
+        store
+            .load_btc_maker_negotiation(&offer_id)
+            .unwrap()
+            .unwrap()
+            .status(),
+        MakerBtcNegotiationStatus::Proposed
+    );
+    drop(store);
+    let final_agreement = run_root.join("final-agreement.borsh");
+    let accepted_at = now();
+    let accepted = run_contribution_taker(
+        &delivery,
+        &chat_socket,
+        &offer_id,
+        &reservation_id,
+        &delivery_maker,
+        accepted_at,
+        draft.draft_file(),
+        &maker_role,
+        &taker_role,
+        &final_agreement,
+        cli_direction,
+    );
+    assert_eq!(accepted["schema_version"], 2);
+    assert_eq!(accepted["offer_revision"], 3);
+    assert_eq!(accepted["ready_for_public_effects"], false);
+    assert_eq!(accepted["fixture_actor_authority_used"], false);
+    assert_eq!(accepted["private_material_disclosed"], false);
+    assert_eq!(accepted["replay"]["proposal"], true);
+    assert!(accepted.get("actor").is_none());
+    assert_eq!(accepted["agreement_binding"]["role"], "taker");
+    assert_eq!(accepted["agreement_binding"]["was_replay"], false);
+    assert_eq!(
+        fs::read(maker_role.join("agreement.borsh")).unwrap(),
+        fs::read(&final_agreement).unwrap()
+    );
+    assert_eq!(
+        fs::read(taker_role.join("peer-contribution.borsh")).unwrap(),
+        fs::read(maker_role.join("contribution.borsh")).unwrap()
+    );
+    for root in [&maker_role, &taker_role] {
+        assert!(root.join("agreement-binding.json").is_file());
+        assert!(root.join("peer-contribution.borsh").is_file());
+        assert!(!root.join("actor-config.json").exists());
+    }
+    let store = SqliteSwapStore::open(&database).unwrap();
+    assert!(store.list_maker_actor_processes().unwrap().is_empty());
+    let negotiation = store
+        .load_btc_maker_negotiation(&offer_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(negotiation.status(), MakerBtcNegotiationStatus::Completed);
+    assert!(negotiation.contribution_wires().is_some());
+    drop(store);
+
+    let final_inode = inode(&final_agreement);
+    let maker_binding_inode = inode(&maker_role.join("agreement-binding.json"));
+    let taker_binding_inode = inode(&taker_role.join("agreement-binding.json"));
+    fs::rename(&delivery, run_root.join("delivery.offline")).unwrap();
+    let replay = run_contribution_taker(
+        &delivery,
+        &chat_socket,
+        &offer_id,
+        &reservation_id,
+        &delivery_maker,
+        accepted_at,
+        draft.draft_file(),
+        &maker_role,
+        &taker_role,
+        &final_agreement,
+        cli_direction,
+    );
+    assert_eq!(replay["replay"]["proposal"], true);
+    assert_eq!(replay["replay"]["completion"], true);
+    assert_eq!(replay["replay"]["agreement_file"], true);
+    assert_eq!(replay["agreement_binding"]["was_replay"], true);
+    assert_eq!(inode(&final_agreement), final_inode);
+    assert_eq!(
+        inode(&maker_role.join("agreement-binding.json")),
+        maker_binding_inode
+    );
+    assert_eq!(
+        inode(&taker_role.join("agreement-binding.json")),
+        taker_binding_inode
+    );
+
+    stop_delivery_only_daemon(&mut daemon, &daemon_base);
+    let store = SqliteSwapStore::open(&database).unwrap();
+    assert!(store.list_maker_actor_processes().unwrap().is_empty());
+    assert_eq!(
+        store
+            .load_btc_maker_negotiation(&offer_id)
+            .unwrap()
+            .unwrap()
+            .status(),
+        MakerBtcNegotiationStatus::Completed
+    );
+}
+
 async fn stage_proposal(
     chat_socket: &Path,
     offer_id: &MakerOfferId,
@@ -276,6 +549,35 @@ async fn stage_proposal(
         public_key(&key(TAKER_AGREEMENT_KEY)).serialize()
     );
     assert!(!staged.proposal_wire.is_empty());
+}
+
+async fn stage_contribution_proposal(
+    chat_socket: &Path,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    authenticated: &AuthenticatedOfferRefV1,
+    draft_file: &Path,
+    maker_role: &Path,
+    taker_role: &Path,
+) -> BtcChatProposalV2 {
+    call_local_rpc(
+        chat_socket,
+        "btc_chat_propose_v2",
+        &BtcChatProposeRequestV2 {
+            schema_version: 2,
+            request_id: chat_request(reservation_id, b"propose-v2"),
+            offer_id: offer_id.clone(),
+            expected_offer_revision: 1,
+            reservation_id: reservation_id.clone(),
+            foreign_units: FOREIGN_UNITS_SAT,
+            signed_offer_envelope: authenticated.signed_envelope().to_vec(),
+            maker_contribution_wire: fs::read(maker_role.join("contribution.borsh")).unwrap(),
+            taker_contribution_wire: fs::read(taker_role.join("contribution.borsh")).unwrap(),
+            unsigned_draft_wire: fs::read(draft_file).unwrap(),
+        },
+    )
+    .await
+    .expect("Maker durably stages a contribution-bound proposal")
 }
 
 fn assert_initial_acceptance(accepted: &Value, proposal_was_replay: bool) {
@@ -573,6 +875,130 @@ fn run_taker(
     serde_json::from_slice(&output.stdout).expect("real Taker returns bounded JSON")
 }
 
+#[allow(clippy::too_many_arguments)]
+fn run_contribution_taker(
+    delivery: &Path,
+    chat_socket: &Path,
+    offer_id: &MakerOfferId,
+    reservation_id: &RequestId,
+    maker_key: &PublicKey,
+    accepted_at: u64,
+    draft_file: &Path,
+    maker_role: &Path,
+    taker_role: &Path,
+    final_agreement: &Path,
+    direction: &str,
+) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+        .arg("--delivery-directory")
+        .arg(delivery)
+        .arg("--maker-public-key")
+        .arg(hex::encode(maker_key.serialize()))
+        .arg("--now-unix-seconds")
+        .arg(accepted_at.to_string())
+        .arg("--pair")
+        .arg("bitcoin")
+        .arg("--direction")
+        .arg(direction)
+        .arg("--accept-btc-offer")
+        .arg(offer_id.as_str())
+        .arg("--chat-socket")
+        .arg(chat_socket)
+        .arg("--reservation-id")
+        .arg(reservation_id.as_str())
+        .arg("--foreign-units")
+        .arg(FOREIGN_UNITS_SAT.to_string())
+        .arg("--unsigned-draft-file")
+        .arg(draft_file)
+        .arg("--maker-contribution-file")
+        .arg(maker_role.join("contribution.borsh"))
+        .arg("--taker-contribution-file")
+        .arg(taker_role.join("contribution.borsh"))
+        .arg("--btc-role-root")
+        .arg(taker_role)
+        .arg("--taker-signing-key-file")
+        .arg(taker_role.join("private/agreement.key"))
+        .arg("--agreement-output-file")
+        .arg(final_agreement)
+        .output()
+        .expect("run contribution-bound BTC Taker process");
+    assert!(
+        output.status.success(),
+        "contribution-bound BTC Taker failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("real Taker returns Chat-v2 acceptance JSON")
+}
+
+fn role_bootstrap_spec(
+    role: &str,
+    owner: u8,
+    offer_commitment: [u8; 32],
+    reservation_id: &RequestId,
+    expires_at_unix_seconds: u64,
+    direction: &str,
+) -> Value {
+    json!({
+        "schema_version": 1,
+        "role": role,
+        "direction": direction,
+        "offer_commitment": hex::encode(offer_commitment),
+        "reservation_binding": hex::encode(reservation_id.as_str().as_bytes()),
+        "bitcoin": {
+            "genesis_block_hash": hex::encode([8; 32]),
+            "required_confirmations": 6
+        },
+        "lez": {
+            "genesis_block_hash": hex::encode([18; 32]),
+            "channel_id": hex::encode([17; 32]),
+            "escrow_program_id": hex::encode([15; 32]),
+            "authenticated_transfer_program_id": hex::encode([16; 32])
+        },
+        "lez_owner_account": hex::encode([owner; 32]),
+        "expires_at_unix_seconds": expires_at_unix_seconds
+    })
+}
+
+fn agreement_draft_spec(direction: SwapDirection) -> Value {
+    let lez_refund_at_ms = match direction {
+        SwapDirection::TakerSellsForeign => 4_102_444_500_000_u64,
+        SwapDirection::TakerSellsLez => 4_102_444_800_000_u64,
+    };
+    json!({
+        "schema_version": 1,
+        "bitcoin": {
+            "funding_transaction_id": hex::encode([9; 32]),
+            "funding_output_index": 1,
+            "funding_value_sat": FOREIGN_UNITS_SAT,
+            "claim_value_sat": 99_000,
+            "refund_csv_blocks": 144
+        },
+        "lez": {
+            "aggregate_authority_account": hex::encode([12; 32]),
+            "metadata_account": hex::encode([13; 32]),
+            "custody_account": hex::encode([14; 32]),
+            "amount": 5_000,
+            "refund_at_ms": lez_refund_at_ms,
+            "prepared_claim_message_hash": hex::encode([19; 32])
+        },
+        "recovery": {
+            "planned_bitcoin_funding_anchor_height": 1_000,
+            "bitcoin_refund_height": 1_144,
+            "maker_second_lock_cutoff_unix_seconds": 4_102_444_200_u64,
+            "earlier_refund_latest_unix_seconds": 4_102_444_500_u64,
+            "later_refund_earliest_unix_seconds": 4_102_444_800_u64,
+            "required_margin_seconds": 300
+        }
+    })
+}
+
+fn write_private_json(path: &Path, value: &Value) {
+    let mut bytes = serde_json::to_vec(&value).unwrap();
+    bytes.push(b'\n');
+    write_private(path, &bytes);
+}
+
 fn assert_completed_handoff(
     database: &Path,
     offer_id: &MakerOfferId,
@@ -810,6 +1236,18 @@ fn start_delivery_only_daemon(base: &DaemonBase<'_>) -> Child {
         .expect("start isolated Delivery-only Maker daemon")
 }
 
+fn start_role_agreement_daemon(base: &DaemonBase<'_>, maker_role: &Path) -> Child {
+    delivery_only_daemon_command(base)
+        .arg("--chat-socket")
+        .arg(base.chat_socket)
+        .arg("--btc-maker-signing-key-file")
+        .arg(base.maker_agreement_key)
+        .arg("--btc-maker-role-root")
+        .arg(maker_role)
+        .spawn()
+        .expect("start contribution-bound BTC Maker daemon")
+}
+
 fn wait_delivery_only_ready(daemon: &mut Child, base: &DaemonBase<'_>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -827,6 +1265,11 @@ fn wait_delivery_only_ready(daemon: &mut Child, base: &DaemonBase<'_>) {
         );
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn wait_role_agreement_ready(daemon: &mut Child, base: &DaemonBase<'_>) {
+    wait_delivery_only_ready(daemon, base);
+    assert!(base.chat_socket.exists());
 }
 
 fn stop_delivery_only_daemon(daemon: &mut Child, base: &DaemonBase<'_>) {

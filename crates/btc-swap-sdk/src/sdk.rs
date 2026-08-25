@@ -51,6 +51,85 @@ const BITCOIN_REFUND_STEP: &str = "bitcoin.refund";
 const LEZ_REFUND_STEP: &str = "lez.refund";
 const SCHNORR_SIGNATURE_BYTES: usize = 64;
 
+/// Exact authorization-free native-SegWit Bitcoin funding template.
+///
+/// Its txid is stable before signing because every input has an empty
+/// `script_sig`; input authorization may therefore be attached only after the
+/// agreement and recovery material are durable without changing the identity
+/// committed by the agreement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct PlannedBitcoinFundingV1 {
+    transaction_id: Txid,
+    exact_unsigned_transaction: ExactPublicEffectBytes,
+    transaction: Transaction,
+}
+
+impl PlannedBitcoinFundingV1 {
+    /// Parses an exact unsigned native-SegWit transaction template and binds
+    /// its computed txid to the caller-supplied expected public identity.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed bytes, coinbase/empty transactions, any input that
+    /// already contains authorization data, or an expected txid mismatch.
+    pub fn new(
+        expected_transaction_id: impl Into<Box<str>>,
+        exact_unsigned_transaction: impl Into<Box<[u8]>>,
+    ) -> Result<Self, BtcSdkError> {
+        let expected_transaction_id = ExpectedPublicEffectId::new(expected_transaction_id)?;
+        let exact_unsigned_transaction = ExactPublicEffectBytes::new(exact_unsigned_transaction)?;
+        let transaction = parse_unsigned_bitcoin_funding(&exact_unsigned_transaction)?;
+        let transaction_id = transaction.compute_txid();
+        if expected_transaction_id.as_str() != transaction_id.to_string() {
+            return Err(BtcSdkError::BitcoinFundingIdentityMismatch);
+        }
+        Ok(Self {
+            transaction_id,
+            exact_unsigned_transaction,
+            transaction,
+        })
+    }
+
+    /// Stable non-witness transaction ID committed before authorization.
+    #[must_use]
+    pub const fn transaction_id(&self) -> Txid {
+        self.transaction_id
+    }
+
+    /// Exact authorization-free transaction bytes.
+    #[must_use]
+    pub fn exact_unsigned_transaction(&self) -> &[u8] {
+        self.exact_unsigned_transaction.as_slice()
+    }
+
+    /// Attaches role-owned authorization while preserving every planned
+    /// non-witness transaction field.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed or still-unsigned bytes, a txid mismatch, or any
+    /// change to the version, lock time, inputs, sequences, or outputs.
+    pub fn authorize(
+        &self,
+        exact_signed_transaction: impl Into<Box<[u8]>>,
+    ) -> Result<PreparedBitcoinFundingV1, BtcSdkError> {
+        let prepared = PreparedBitcoinFundingV1::new(
+            self.transaction_id.to_string(),
+            exact_signed_transaction,
+        )?;
+        let mut authorization_free = prepared.transaction()?;
+        for input in &mut authorization_free.input {
+            input.script_sig = bitcoin::ScriptBuf::new();
+            input.witness = Witness::default();
+        }
+        if authorization_free != self.transaction {
+            return Err(BtcSdkError::BitcoinFundingTemplateMismatch);
+        }
+        Ok(prepared)
+    }
+}
+
 /// Exact signed Bitcoin funding effect supplied before activation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use]
@@ -1975,9 +2054,15 @@ pub enum BtcSdkError {
     /// Funding bytes do not contain a non-coinbase input with unlocking data.
     #[error("Bitcoin funding transaction is not a signed non-coinbase transaction")]
     UnsignedBitcoinFunding,
+    /// A funding template must not contain input authorization data.
+    #[error("Bitcoin funding template already contains input authorization data")]
+    AuthorizedBitcoinFundingTemplate,
     /// Caller-supplied expected txid differs from the exact transaction bytes.
     #[error("Bitcoin funding expected identity differs from exact bytes")]
     BitcoinFundingIdentityMismatch,
+    /// Authorized funding bytes changed a field fixed by the unsigned template.
+    #[error("authorized Bitcoin funding differs from its unsigned template")]
+    BitcoinFundingTemplateMismatch,
     /// Exact funding txid differs from the countersigned agreement.
     #[error("Bitcoin funding transaction differs from the countersigned agreement")]
     BitcoinFundingAgreementMismatch,
@@ -2214,7 +2299,9 @@ impl ProtocolError for BtcSdkError {
             | Self::InvalidEffectPlan(_)
             | Self::MalformedBitcoinFunding(_)
             | Self::UnsignedBitcoinFunding
+            | Self::AuthorizedBitcoinFundingTemplate
             | Self::BitcoinFundingIdentityMismatch
+            | Self::BitcoinFundingTemplateMismatch
             | Self::BitcoinFundingAgreementMismatch
             | Self::DuplicateLezEffectIdentity
             | Self::MissingClaimEffects
@@ -3050,6 +3137,24 @@ fn parse_signed_bitcoin_funding(
             .any(|input| !input.script_sig.is_empty() || !input.witness.is_empty())
     {
         return Err(BtcSdkError::UnsignedBitcoinFunding);
+    }
+    Ok(transaction)
+}
+
+fn parse_unsigned_bitcoin_funding(
+    bytes: &ExactPublicEffectBytes,
+) -> Result<Transaction, BtcSdkError> {
+    let transaction: Transaction =
+        deserialize(bytes.as_slice()).map_err(BtcSdkError::MalformedBitcoinFunding)?;
+    if transaction.is_coinbase() || transaction.input.is_empty() || transaction.output.is_empty() {
+        return Err(BtcSdkError::UnsignedBitcoinFunding);
+    }
+    if transaction
+        .input
+        .iter()
+        .any(|input| !input.script_sig.is_empty() || !input.witness.is_empty())
+    {
+        return Err(BtcSdkError::AuthorizedBitcoinFundingTemplate);
     }
     Ok(transaction)
 }

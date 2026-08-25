@@ -13,9 +13,9 @@ use anyhow::{Context as _, bail, ensure};
 use clap::{ArgGroup, Parser};
 use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
 use lez_maker_node::{
-    BtcMakerActorProvisioner, MakerActorSupervisorCancellation, MakerActorSupervisorConfig,
-    MakerRpc, ProcessLogosPriceSource, ProcessRouteHealthProbe, RunLocalDelivery,
-    XmrMakerChatAuthority, ZecMakerActorProvisioner, chat_rpc_module,
+    BtcMakerActorProvisioner, BtcMakerRoleAgreementAuthority, MakerActorSupervisorCancellation,
+    MakerActorSupervisorConfig, MakerRpc, ProcessLogosPriceSource, ProcessRouteHealthProbe,
+    RunLocalDelivery, XmrMakerChatAuthority, ZecMakerActorProvisioner, chat_rpc_module,
     import_terminal_zec_maker_projection,
     owner_rpc_server::{OwnedPath, bind_owner_socket, server_config, validate_runtime_directory},
     rpc_module,
@@ -42,7 +42,11 @@ use xmr_reference_actor::{
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: u32 = 1024 * 1024;
 
-type BtcChatAuthority = (SecretKey, BtcMakerActorProvisioner);
+type BtcChatAuthority = (
+    SecretKey,
+    Option<BtcMakerActorProvisioner>,
+    Option<BtcMakerRoleAgreementAuthority>,
+);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -155,17 +159,14 @@ struct Arguments {
     )]
     btc_source_maker_config: Vec<PathBuf>,
     /// Owner-only raw or hexadecimal secp256k1 key used to sign BTC agreements.
+    #[arg(long, requires = "delivery_directory")]
+    btc_maker_signing_key_file: Option<PathBuf>,
+    /// Existing owner-private role root created before Chat v2 negotiation.
     #[arg(
         long,
-        requires_all = [
-            "delivery_directory",
-            "btc_source_maker_config",
-            "btc_maker_actor_root",
-            "btc_actor_program",
-            "btc_actor_program_sha256"
-        ]
+        requires_all = ["delivery_directory", "btc_maker_signing_key_file"]
     )]
-    btc_maker_signing_key_file: Option<PathBuf>,
+    btc_maker_role_root: Option<PathBuf>,
     /// Existing owner-private mode-0700 base for deterministic BTC actor bundles.
     #[arg(long, requires_all = ["btc_source_maker_config", "btc_maker_signing_key_file", "btc_actor_program", "btc_actor_program_sha256"])]
     btc_maker_actor_root: Option<PathBuf>,
@@ -880,47 +881,67 @@ fn configured_zec_actor_provisioner(
 fn configured_btc_chat_authority(
     arguments: &Arguments,
 ) -> anyhow::Result<Option<BtcChatAuthority>> {
-    let deployment = (
-        arguments.btc_maker_signing_key_file.as_ref(),
+    let actor_deployment = (
         arguments.btc_maker_actor_root.as_ref(),
         arguments.btc_actor_program.as_ref(),
         arguments.btc_actor_program_sha256.as_deref(),
     );
-    if arguments.btc_source_maker_config.is_empty() {
-        ensure!(
-            deployment == (None, None, None, None),
-            "BTC actor templates, signing key, root, program, and SHA-256 must be configured together"
-        );
+    let any_authority = !arguments.btc_source_maker_config.is_empty()
+        || arguments.btc_maker_role_root.is_some()
+        || arguments.btc_maker_signing_key_file.is_some()
+        || actor_deployment != (None, None, None);
+    if !any_authority {
         return Ok(None);
     }
-    let (Some(signing_key_file), Some(root), Some(program), Some(program_sha256)) = deployment
-    else {
-        bail!(
-            "BTC actor templates, signing key, root, program, and SHA-256 must be configured together"
-        );
-    };
-    validate_runtime_directory(root).context("validate BTC maker actor root")?;
-    ensure!(
-        root.is_absolute()
-            && fs::canonicalize(root).context("canonicalize BTC maker actor root")? == *root,
-        "BTC maker actor root must be absolute and canonical"
-    );
-    ensure!(
-        program_sha256.len() == 64,
-        "BTC actor program SHA-256 must contain exactly 32 bytes as hexadecimal"
-    );
-    let mut identity = [0_u8; 32];
-    hex::decode_to_slice(program_sha256, &mut identity)
-        .context("decode BTC actor program SHA-256")?;
+    let signing_key_file = arguments
+        .btc_maker_signing_key_file
+        .as_ref()
+        .context("BTC Chat authority requires a Maker signing key")?;
     let signing_key = load_secp256k1_secret(signing_key_file, "BTC Maker signing key")?;
-    let provisioner = BtcMakerActorProvisioner::new(
-        &arguments.btc_source_maker_config,
-        root.clone(),
-        program.clone(),
-        identity,
-    )
-    .context("validate BTC maker actor deployment")?;
-    Ok(Some((signing_key, provisioner)))
+    let actor_provisioner = if arguments.btc_source_maker_config.is_empty() {
+        ensure!(
+            actor_deployment == (None, None, None),
+            "BTC actor templates, root, program, and SHA-256 must be configured together"
+        );
+        None
+    } else {
+        let (Some(root), Some(program), Some(program_sha256)) = actor_deployment else {
+            bail!("BTC actor templates, root, program, and SHA-256 must be configured together");
+        };
+        validate_runtime_directory(root).context("validate BTC maker actor root")?;
+        ensure!(
+            root.is_absolute()
+                && fs::canonicalize(root).context("canonicalize BTC maker actor root")? == *root,
+            "BTC maker actor root must be absolute and canonical"
+        );
+        ensure!(
+            program_sha256.len() == 64,
+            "BTC actor program SHA-256 must contain exactly 32 bytes as hexadecimal"
+        );
+        let mut identity = [0_u8; 32];
+        hex::decode_to_slice(program_sha256, &mut identity)
+            .context("decode BTC actor program SHA-256")?;
+        Some(
+            BtcMakerActorProvisioner::new(
+                &arguments.btc_source_maker_config,
+                root.clone(),
+                program.clone(),
+                identity,
+            )
+            .context("validate BTC maker actor deployment")?,
+        )
+    };
+    let role_authority = arguments
+        .btc_maker_role_root
+        .as_ref()
+        .map(|root| BtcMakerRoleAgreementAuthority::new(root.clone(), &signing_key))
+        .transpose()
+        .context("validate BTC Maker role-agreement authority")?;
+    ensure!(
+        actor_provisioner.is_some() || role_authority.is_some(),
+        "BTC signing key requires actor templates or a role-agreement root"
+    );
+    Ok(Some((signing_key, actor_provisioner, role_authority)))
 }
 
 fn configured_xmr_chat_authority(
@@ -1122,8 +1143,8 @@ fn maker_context(
         None => context,
     };
     let context = match btc_chat_authority {
-        Some((signing_key, provisioner)) => {
-            context.with_btc_chat_authority(signing_key, provisioner)
+        Some((signing_key, provisioner, role_authority)) => {
+            context.with_btc_chat_authorities(signing_key, provisioner, role_authority)
         }
         None => context,
     };

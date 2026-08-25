@@ -1,7 +1,10 @@
 //! Durable maker offers and one-winner acceptance transitions.
 
 use lez_bridge_protocol::RequestId;
-use lez_btc_swap_sdk::{BtcAgreementV1, BtcMakerAgreementProposalV1};
+use lez_btc_swap_sdk::{
+    BtcAgreementBodyV1, BtcAgreementV1, BtcMakerAgreementProposalV1, BtcRoleContributionPairV1,
+    BtcRoleContributionV1, derive_btc_pre_session_id_v1,
+};
 use lez_swap_core::{Pair, Participant, Phase, SwapCoordinator, SwapDirection, SwapId};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrActivatedAgreementV1,
@@ -915,6 +918,8 @@ pub struct MakerBtcNegotiationV1 {
     reserved_at_unix_seconds: u64,
     agreement_commitment: [u8; 32],
     maker_proposal_wire: Vec<u8>,
+    maker_contribution_wire: Option<Vec<u8>>,
+    taker_contribution_wire: Option<Vec<u8>>,
     status: MakerBtcNegotiationStatus,
     final_agreement_wire: Option<Vec<u8>>,
     swap_id: Option<Box<str>>,
@@ -952,6 +957,49 @@ impl MakerBtcNegotiationV1 {
             reserved_at_unix_seconds,
             agreement_commitment,
             maker_proposal_wire,
+            maker_contribution_wire: None,
+            taker_contribution_wire: None,
+            status: MakerBtcNegotiationStatus::Proposed,
+            final_agreement_wire: None,
+            swap_id: None,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Constructs a proposal whose swap identity and role authority are bound
+    /// to exact independently signed Maker and Taker contributions.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed contributions or any mismatch with the authenticated
+    /// offer, reservation, direction, chains, roles, expiry, or proposal body.
+    #[allow(clippy::too_many_arguments)]
+    pub fn proposed_with_contributions(
+        reservation_id: RequestId,
+        offer_commitment: [u8; 32],
+        maker_agreement_identity: [u8; 33],
+        taker_agreement_identity: [u8; 33],
+        foreign_units: u64,
+        lez_units: u128,
+        reserved_at_unix_seconds: u64,
+        agreement_commitment: [u8; 32],
+        maker_proposal_wire: Vec<u8>,
+        maker_contribution_wire: Vec<u8>,
+        taker_contribution_wire: Vec<u8>,
+    ) -> Result<Self, MakerOfferError> {
+        let value = Self {
+            reservation_id,
+            offer_commitment,
+            maker_agreement_identity,
+            taker_agreement_identity,
+            foreign_units,
+            lez_units,
+            reserved_at_unix_seconds,
+            agreement_commitment,
+            maker_proposal_wire,
+            maker_contribution_wire: Some(maker_contribution_wire),
+            taker_contribution_wire: Some(taker_contribution_wire),
             status: MakerBtcNegotiationStatus::Proposed,
             final_agreement_wire: None,
             swap_id: None,
@@ -1013,6 +1061,15 @@ impl MakerBtcNegotiationV1 {
         &self.maker_proposal_wire
     }
 
+    /// Exact signed role contributions, when this is a contribution-bound
+    /// negotiation, in canonical Maker-then-Taker order.
+    #[must_use]
+    pub fn contribution_wires(&self) -> Option<(&[u8], &[u8])> {
+        self.maker_contribution_wire
+            .as_deref()
+            .zip(self.taker_contribution_wire.as_deref())
+    }
+
     /// Durable negotiation phase.
     #[must_use]
     pub const fn status(&self) -> MakerBtcNegotiationStatus {
@@ -1043,6 +1100,14 @@ impl MakerBtcNegotiationV1 {
             || self.reserved_at_unix_seconds > i64::MAX as u64
             || self.maker_proposal_wire.is_empty()
             || self.maker_proposal_wire.len() > MAXIMUM_BTC_PROPOSAL_BYTES
+            || self.maker_contribution_wire.as_ref().is_some_and(|wire| {
+                wire.is_empty()
+                    || wire.len() > lez_btc_swap_sdk::MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES
+            })
+            || self.taker_contribution_wire.as_ref().is_some_and(|wire| {
+                wire.is_empty()
+                    || wire.len() > lez_btc_swap_sdk::MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES
+            })
             || self
                 .final_agreement_wire
                 .as_ref()
@@ -1054,8 +1119,6 @@ impl MakerBtcNegotiationV1 {
             .map_err(|_| MakerOfferError::InvalidNegotiation)?;
         let body = proposal.body();
         if proposal.commitment() != self.agreement_commitment
-            || body.swap_id()
-                != &maker_btc_chat_swap_id(&self.offer_commitment, &self.reservation_id)
             || body
                 .participants()
                 .for_participant(lez_swap_core::Participant::Maker)
@@ -1070,6 +1133,18 @@ impl MakerBtcNegotiationV1 {
             || body.lez_terms().amount() != self.lez_units
         {
             return Err(MakerOfferError::InvalidNegotiation);
+        }
+        match (
+            self.maker_contribution_wire.as_deref(),
+            self.taker_contribution_wire.as_deref(),
+        ) {
+            (None, None)
+                if body.swap_id()
+                    == &maker_btc_chat_swap_id(&self.offer_commitment, &self.reservation_id) => {}
+            (Some(maker_wire), Some(taker_wire)) => {
+                validate_btc_contribution_binding(self, body, maker_wire, taker_wire)?;
+            }
+            _ => return Err(MakerOfferError::InvalidNegotiation),
         }
         if self.status == MakerBtcNegotiationStatus::Completed {
             let final_wire = self
@@ -1099,6 +1174,34 @@ impl MakerBtcNegotiationV1 {
         }
         Ok(())
     }
+}
+
+fn validate_btc_contribution_binding(
+    negotiation: &MakerBtcNegotiationV1,
+    body: &BtcAgreementBodyV1,
+    maker_wire: &[u8],
+    taker_wire: &[u8],
+) -> Result<(), MakerOfferError> {
+    let maker = BtcRoleContributionV1::from_wire(maker_wire)
+        .map_err(|_| MakerOfferError::InvalidNegotiation)?;
+    let taker = BtcRoleContributionV1::from_wire(taker_wire)
+        .map_err(|_| MakerOfferError::InvalidNegotiation)?;
+    let pair = BtcRoleContributionPairV1::new(maker, taker)
+        .map_err(|_| MakerOfferError::InvalidNegotiation)?;
+    let expected_pre_session = derive_btc_pre_session_id_v1(
+        &negotiation.offer_commitment,
+        negotiation.reservation_id.as_str().as_bytes(),
+        body.direction(),
+    )
+    .map_err(|_| MakerOfferError::InvalidNegotiation)?;
+    if pair.maker().body().pre_session_id() != &expected_pre_session
+        || pair
+            .validate_agreement_body(body, negotiation.reserved_at_unix_seconds)
+            .is_err()
+    {
+        return Err(MakerOfferError::InvalidNegotiation);
+    }
+    Ok(())
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1175,6 +1278,8 @@ struct StageBtcNegotiationRequest<'a> {
     lez_units: String,
     agreement_commitment: &'a [u8],
     maker_proposal_sha256: [u8; 32],
+    maker_contribution_sha256: Option<[u8; 32]>,
+    taker_contribution_sha256: Option<[u8; 32]>,
 }
 
 #[derive(Serialize)]
@@ -1199,6 +1304,16 @@ struct CompleteBtcNegotiationRequest<'a> {
     agreement_commitment: [u8; 32],
     initial_snapshot_sha256: [u8; 32],
     actor: &'a MakerActorManifestV1,
+}
+
+#[derive(Serialize)]
+struct AcceptBtcNegotiationRequest<'a> {
+    offer_id: &'a MakerOfferId,
+    expected_offer_revision: u64,
+    reservation_id: &'a RequestId,
+    agreement_wire_sha256: [u8; 32],
+    agreement_commitment: [u8; 32],
+    initial_snapshot_sha256: [u8; 32],
 }
 
 #[derive(Serialize)]
@@ -1966,6 +2081,14 @@ impl SqliteSwapStore {
             return Err(MakerOfferError::InvalidNegotiation.into());
         }
         let proposal_sha256: [u8; 32] = Sha256::digest(negotiation.maker_proposal_wire()).into();
+        let (maker_contribution_sha256, taker_contribution_sha256) = negotiation
+            .contribution_wires()
+            .map_or((None, None), |(maker, taker)| {
+                (
+                    Some(Sha256::digest(maker).into()),
+                    Some(Sha256::digest(taker).into()),
+                )
+            });
         let request_json = serde_json::to_string(&StageBtcNegotiationRequest {
             offer_id,
             expected_revision,
@@ -1977,6 +2100,8 @@ impl SqliteSwapStore {
             lez_units: negotiation.lez_units().to_string(),
             agreement_commitment: negotiation.agreement_commitment(),
             maker_proposal_sha256: proposal_sha256,
+            maker_contribution_sha256,
+            taker_contribution_sha256,
         })?;
         let transaction = self
             .connection
@@ -2006,6 +2131,8 @@ impl SqliteSwapStore {
                         AND n.foreign_units = ?7 AND n.lez_units = ?8
                         AND n.agreement_commitment = ?9
                         AND n.maker_proposal_wire = ?10
+                        AND n.maker_contribution_wire IS ?12
+                        AND n.taker_contribution_wire IS ?13
                         AND n.final_agreement_wire IS NULL AND n.swap_id IS NULL
                         AND n.updated_request_id = ?11
                  )",
@@ -2021,6 +2148,8 @@ impl SqliteSwapStore {
                     negotiation.agreement_commitment().as_slice(),
                     negotiation.maker_proposal_wire(),
                     request_id.as_str(),
+                    negotiation.contribution_wires().map(|value| value.0),
+                    negotiation.contribution_wires().map(|value| value.1),
                 ],
                 |row| row.get(0),
             )?;
@@ -2088,10 +2217,11 @@ impl SqliteSwapStore {
                  offer_id, reservation_id, payload_version, offer_commitment,
                  maker_agreement_identity, taker_agreement_identity, foreign_units, lez_units,
                  reserved_at_unix_seconds, agreement_commitment, maker_proposal_wire,
+                 maker_contribution_wire, taker_contribution_wire,
                  state, final_agreement_wire, swap_id, updated_request_id
              ) VALUES (
                  ?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                 'proposed', NULL, NULL, ?11
+                 ?11, ?12, 'proposed', NULL, NULL, ?13
              )",
             params![
                 offer_id.as_str(),
@@ -2104,6 +2234,8 @@ impl SqliteSwapStore {
                 u64_to_sql(negotiation.reserved_at_unix_seconds())?,
                 negotiation.agreement_commitment().as_slice(),
                 negotiation.maker_proposal_wire(),
+                negotiation.contribution_wires().map(|value| value.0),
+                negotiation.contribution_wires().map(|value| value.1),
                 request_id.as_str(),
             ],
         )?;
@@ -2227,7 +2359,8 @@ impl SqliteSwapStore {
                 "SELECT reservation_id, payload_version, offer_commitment,
                         maker_agreement_identity, taker_agreement_identity, foreign_units,
                         lez_units, reserved_at_unix_seconds, agreement_commitment,
-                        maker_proposal_wire, state, final_agreement_wire, swap_id
+                        maker_proposal_wire, maker_contribution_wire, taker_contribution_wire,
+                        state, final_agreement_wire, swap_id
                    FROM maker_btc_negotiations WHERE offer_id = ?1",
                 params![offer_id.as_str()],
                 |row| {
@@ -2245,6 +2378,8 @@ impl SqliteSwapStore {
                         row.get(10)?,
                         row.get(11)?,
                         row.get(12)?,
+                        row.get(13)?,
+                        row.get(14)?,
                     ))
                 },
             )
@@ -2284,6 +2419,7 @@ impl SqliteSwapStore {
             || negotiation.reservation_id() != reservation_id
             || negotiation.final_agreement_wire() != Some(canonical_wire.as_slice())
             || negotiation.swap_id() != Some(initial.id().as_str())
+            || negotiation.contribution_wires().is_some()
             || record.status != MakerOfferStatus::Consumed
             || record.revision != committed_revision
             || record.reservation_id.as_ref() != Some(reservation_id)
@@ -2638,6 +2774,8 @@ impl SqliteSwapStore {
                         AND o.reservation_id = ?3 AND o.swap_id = ?4
                         AND n.state = 'completed' AND n.reservation_id = ?3
                         AND n.final_agreement_wire = ?5 AND n.swap_id = ?4
+                        AND n.maker_contribution_wire IS NULL
+                        AND n.taker_contribution_wire IS NULL
                         AND n.updated_request_id = ?6 AND s.state_json = ?7
                  )",
                 params![
@@ -2670,7 +2808,8 @@ impl SqliteSwapStore {
                 "SELECT reservation_id, payload_version, offer_commitment,
                         maker_agreement_identity, taker_agreement_identity, foreign_units,
                         lez_units, reserved_at_unix_seconds, agreement_commitment,
-                        maker_proposal_wire, state, final_agreement_wire, swap_id
+                        maker_proposal_wire, maker_contribution_wire, taker_contribution_wire,
+                        state, final_agreement_wire, swap_id
                    FROM maker_btc_negotiations WHERE offer_id = ?1",
                 params![offer_id.as_str()],
                 |row| {
@@ -2688,6 +2827,8 @@ impl SqliteSwapStore {
                         row.get(10)?,
                         row.get(11)?,
                         row.get(12)?,
+                        row.get(13)?,
+                        row.get(14)?,
                     ))
                 },
             )
@@ -2707,6 +2848,7 @@ impl SqliteSwapStore {
             || record.reservation_id.as_ref() != Some(reservation_id)
             || negotiation.status() != MakerBtcNegotiationStatus::Proposed
             || negotiation.reservation_id() != reservation_id
+            || negotiation.contribution_wires().is_some()
             || accepted.accepted_at_unix_seconds() < negotiation.reserved_at_unix_seconds()
             || accepted.accepted_at_unix_seconds() >= record.offer.expires_at_unix_seconds()
             || record.offer.route().pair() != Pair::Bitcoin
@@ -2729,6 +2871,217 @@ impl SqliteSwapStore {
         )?;
         register_maker_actor_in_transaction(&transaction, actor, actor_not_before)
             .map_err(|_| StoreError::InvalidMakerActorRegistration)?;
+        let negotiation_updated = transaction.execute(
+            "UPDATE maker_btc_negotiations
+                SET state = 'completed', final_agreement_wire = ?1,
+                    swap_id = ?2, updated_request_id = ?3
+              WHERE offer_id = ?4 AND reservation_id = ?5 AND state = 'proposed'",
+            params![
+                canonical_wire,
+                initial.id().as_str(),
+                request_id.as_str(),
+                offer_id.as_str(),
+                reservation_id.as_str(),
+            ],
+        )?;
+        let offer_updated = transaction.execute(
+            "UPDATE maker_offers
+                SET state = 'consumed', revision = ?1, swap_id = ?2,
+                    updated_request_id = ?3
+              WHERE offer_id = ?4 AND revision = ?5 AND state = 'reserved'
+                AND reservation_id = ?6",
+            params![
+                u64_to_sql(committed_revision)?,
+                initial.id().as_str(),
+                request_id.as_str(),
+                offer_id.as_str(),
+                u64_to_sql(expected_offer_revision)?,
+                reservation_id.as_str(),
+            ],
+        )?;
+        if negotiation_updated != 1 || offer_updated != 1 {
+            return Err(StoreError::InvalidBtcApplicationState);
+        }
+        persist_offer_mutation(
+            &transaction,
+            request_id,
+            "btc_negotiation_complete",
+            &request_json,
+            committed_revision,
+        )?;
+        transaction.commit()?;
+        Ok(MakerBtcAcceptanceCommit {
+            offer_revision: committed_revision,
+            was_replay: false,
+        })
+    }
+
+    /// Atomically accepts one contribution-bound Bitcoin agreement without
+    /// manufacturing actor authority from a pre-finalized fixture.
+    ///
+    /// The exact countersigned agreement, agreement-derived coordinator,
+    /// completed negotiation, consumed offer, and replay result share one
+    /// `BEGIN IMMEDIATE` transaction. No actor is registered or scheduled; a
+    /// later ceremony must provision verified recovery and effect authority.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on a legacy/non-contribution proposal, any signature,
+    /// commitment, route, amount, reservation, acceptance-window, replay, or
+    /// durable-state mismatch.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn accept_maker_btc_negotiation_without_actor(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        expected_offer_revision: u64,
+        reservation_id: &RequestId,
+        accepted: &BtcAgreementAcceptance,
+        initial: &SwapCoordinator,
+    ) -> Result<MakerBtcAcceptanceCommit, StoreError> {
+        let agreement = BtcAgreementV1::from_wire(accepted.agreement_wire())
+            .map_err(|_| StoreError::InvalidBtcApplicationState)?;
+        let canonical_wire = agreement
+            .encode_wire()
+            .map_err(|_| StoreError::InvalidBtcApplicationState)?;
+        let initial_json = serde_json::to_string(initial)?;
+        let initial_snapshot_sha256: [u8; 32] = Sha256::digest(initial_json.as_bytes()).into();
+        if canonical_wire.as_slice() != accepted.agreement_wire()
+            || agreement.agreement_commitment() != accepted.agreement_commitment()
+            || agreement.coordinator() != initial
+            || accepted.swap_id() != initial.id()
+            || accepted.local_role() != Participant::Maker
+            || accepted.asset_extension_wire().is_some()
+            || accepted.asset_commitment().is_some()
+            || accepted.initial_snapshot_digest() != &initial_snapshot_sha256
+            || initial.pair() != Pair::Bitcoin
+            || initial.phase() != Phase::Offered
+        {
+            return Err(StoreError::InvalidBtcApplicationState);
+        }
+        let agreement_wire_sha256: [u8; 32] = Sha256::digest(&canonical_wire).into();
+        let request_json = serde_json::to_string(&AcceptBtcNegotiationRequest {
+            offer_id,
+            expected_offer_revision,
+            reservation_id,
+            agreement_wire_sha256,
+            agreement_commitment: *agreement.agreement_commitment(),
+            initial_snapshot_sha256,
+        })?;
+        let committed_revision = expected_offer_revision
+            .checked_add(1)
+            .ok_or(StoreError::RevisionOverflow)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(commit) = replay_offer_mutation(
+            &transaction,
+            request_id,
+            "btc_negotiation_complete",
+            &request_json,
+        )? {
+            let exact: bool = transaction.query_row(
+                "SELECT EXISTS(
+                     SELECT 1
+                       FROM maker_offers o
+                       JOIN maker_btc_negotiations n USING (offer_id)
+                       JOIN swaps s ON s.id = n.swap_id
+                      WHERE o.offer_id = ?1
+                        AND o.state = 'consumed' AND o.revision = ?2
+                        AND o.reservation_id = ?3 AND o.swap_id = ?4
+                        AND n.state = 'completed' AND n.reservation_id = ?3
+                        AND n.final_agreement_wire = ?5 AND n.swap_id = ?4
+                        AND n.updated_request_id = ?6 AND s.state_json = ?7
+                 )",
+                params![
+                    offer_id.as_str(),
+                    u64_to_sql(committed_revision)?,
+                    reservation_id.as_str(),
+                    initial.id().as_str(),
+                    canonical_wire,
+                    request_id.as_str(),
+                    initial_json,
+                ],
+                |row| row.get(0),
+            )?;
+            if !exact || commit.revision() != committed_revision {
+                return Err(StoreError::CorruptMakerOffer);
+            }
+            transaction.commit()?;
+            return Ok(MakerBtcAcceptanceCommit {
+                offer_revision: committed_revision,
+                was_replay: true,
+            });
+        }
+
+        let record = load_offer(&transaction, offer_id, accepted.accepted_at_unix_seconds())?
+            .ok_or(StoreError::MissingMakerOffer)?;
+        let negotiation = transaction
+            .query_row(
+                "SELECT reservation_id, payload_version, offer_commitment,
+                        maker_agreement_identity, taker_agreement_identity, foreign_units,
+                        lez_units, reserved_at_unix_seconds, agreement_commitment,
+                        maker_proposal_wire, maker_contribution_wire, taker_contribution_wire,
+                        state, final_agreement_wire, swap_id
+                   FROM maker_btc_negotiations WHERE offer_id = ?1",
+                params![offer_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                        row.get(11)?,
+                        row.get(12)?,
+                        row.get(13)?,
+                        row.get(14)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(decode_btc_negotiation_row)
+            .transpose()?
+            .ok_or(StoreError::InvalidBtcApplicationState)?;
+        let proposal = BtcMakerAgreementProposalV1::from_wire(negotiation.maker_proposal_wire())
+            .map_err(|_| StoreError::InvalidBtcApplicationState)?;
+        if record.revision != expected_offer_revision {
+            return Err(StoreError::StaleMakerOffer {
+                expected: expected_offer_revision,
+                actual: record.revision,
+            });
+        }
+        if record.status != MakerOfferStatus::Reserved
+            || record.reservation_id.as_ref() != Some(reservation_id)
+            || negotiation.status() != MakerBtcNegotiationStatus::Proposed
+            || negotiation.reservation_id() != reservation_id
+            || negotiation.contribution_wires().is_none()
+            || accepted.accepted_at_unix_seconds() < negotiation.reserved_at_unix_seconds()
+            || accepted.accepted_at_unix_seconds() >= record.offer.expires_at_unix_seconds()
+            || record.offer.route().pair() != Pair::Bitcoin
+            || record.offer.route().direction() != agreement.direction()
+            || initial.direction() != agreement.direction()
+            || record
+                .offer
+                .quote_foreign_amount(negotiation.foreign_units())?
+                != negotiation.lez_units()
+            || proposal.body() != agreement.body()
+            || proposal.commitment() != *agreement.agreement_commitment()
+            || proposal.maker_signature() != agreement.record().signature(Participant::Maker)
+            || negotiation.agreement_commitment() != agreement.agreement_commitment()
+        {
+            return Err(StoreError::InvalidBtcApplicationState);
+        }
+        transaction.execute(
+            "INSERT INTO swaps (id, schema_version, state_json) VALUES (?1, ?2, ?3)",
+            params![initial.id().as_str(), SWAP_PAYLOAD_VERSION, initial_json],
+        )?;
         let negotiation_updated = transaction.execute(
             "UPDATE maker_btc_negotiations
                 SET state = 'completed', final_agreement_wire = ?1,
@@ -3001,7 +3354,8 @@ impl SqliteSwapStore {
                 "SELECT reservation_id, payload_version, offer_commitment,
                         maker_agreement_identity, taker_agreement_identity, foreign_units,
                         lez_units, reserved_at_unix_seconds, agreement_commitment,
-                        maker_proposal_wire, state, final_agreement_wire, swap_id
+                        maker_proposal_wire, maker_contribution_wire, taker_contribution_wire,
+                        state, final_agreement_wire, swap_id
                  FROM maker_btc_negotiations WHERE offer_id = ?1",
                 params![offer_id.as_str()],
                 |row| {
@@ -3019,6 +3373,8 @@ impl SqliteSwapStore {
                         row.get(10)?,
                         row.get(11)?,
                         row.get(12)?,
+                        row.get(13)?,
+                        row.get(14)?,
                     ))
                 },
             )
@@ -3409,7 +3765,23 @@ fn decode_zec_negotiation_row(row: ZecNegotiationRow) -> Result<MakerZecNegotiat
     Ok(value)
 }
 
-type BtcNegotiationRow = ZecNegotiationRow;
+type BtcNegotiationRow = (
+    String,
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    i64,
+    Vec<u8>,
+    i64,
+    Vec<u8>,
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+    String,
+    Option<Vec<u8>>,
+    Option<String>,
+);
 
 fn decode_btc_negotiation_row(row: BtcNegotiationRow) -> Result<MakerBtcNegotiationV1, StoreError> {
     let (
@@ -3423,6 +3795,8 @@ fn decode_btc_negotiation_row(row: BtcNegotiationRow) -> Result<MakerBtcNegotiat
         reserved_at_unix_seconds,
         agreement_commitment,
         maker_proposal_wire,
+        maker_contribution_wire,
+        taker_contribution_wire,
         state,
         final_agreement_wire,
         swap_id,
@@ -3463,6 +3837,8 @@ fn decode_btc_negotiation_row(row: BtcNegotiationRow) -> Result<MakerBtcNegotiat
         reserved_at_unix_seconds: sql_to_u64(reserved_at_unix_seconds)?,
         agreement_commitment,
         maker_proposal_wire,
+        maker_contribution_wire,
+        taker_contribution_wire,
         status,
         final_agreement_wire,
         swap_id,
@@ -3883,6 +4259,14 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
              maker_proposal_wire           BLOB NOT NULL CHECK (
                  length(maker_proposal_wire) BETWEEN 1 AND 16384
              ),
+             maker_contribution_wire       BLOB CHECK (
+                 maker_contribution_wire IS NULL
+                 OR length(maker_contribution_wire) BETWEEN 1 AND 2048
+             ),
+             taker_contribution_wire       BLOB CHECK (
+                 taker_contribution_wire IS NULL
+                 OR length(taker_contribution_wire) BETWEEN 1 AND 2048
+             ),
              state                         TEXT NOT NULL CHECK (state IN ('proposed', 'completed')),
              final_agreement_wire          BLOB CHECK (
                  final_agreement_wire IS NULL
@@ -3893,6 +4277,7 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
              FOREIGN KEY (offer_id) REFERENCES maker_offers(offer_id) ON DELETE RESTRICT,
              FOREIGN KEY (swap_id) REFERENCES swaps(id) ON DELETE RESTRICT,
              CHECK (maker_agreement_identity != taker_agreement_identity),
+             CHECK ((maker_contribution_wire IS NULL) = (taker_contribution_wire IS NULL)),
              CHECK (
                  (state = 'proposed' AND final_agreement_wire IS NULL AND swap_id IS NULL)
                  OR (state = 'completed' AND final_agreement_wire IS NOT NULL AND swap_id IS NOT NULL)
@@ -3943,6 +4328,31 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
              ON maker_xmr_negotiations (state, reservation_id);
 ",
     )?;
+    let supports_btc_contributions: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM pragma_table_info('maker_btc_negotiations')
+              WHERE name = 'maker_contribution_wire'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !supports_btc_contributions {
+        transaction.execute_batch(
+            "ALTER TABLE maker_btc_negotiations
+                 ADD COLUMN maker_contribution_wire BLOB CHECK (
+                     maker_contribution_wire IS NULL
+                     OR length(maker_contribution_wire) BETWEEN 1 AND 2048
+                 );
+             ALTER TABLE maker_btc_negotiations
+                 ADD COLUMN taker_contribution_wire BLOB CHECK (
+                     taker_contribution_wire IS NULL
+                     OR length(taker_contribution_wire) BETWEEN 1 AND 2048
+                 );",
+        )?;
+        // SQLite cannot add the fresh table's cross-column NULL-pair CHECK to
+        // an existing table; `MakerBtcNegotiationV1::validate` enforces it on
+        // every migrated-row load and before every write.
+    }
     let supports_xmr_activation: bool = transaction.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM pragma_table_info('maker_xmr_negotiations')

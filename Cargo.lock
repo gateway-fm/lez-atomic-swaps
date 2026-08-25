@@ -430,6 +430,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "btc-role-preflight"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitcoin",
+ "clap",
+ "getrandom 0.3.4",
+ "hex",
+ "lez-btc-swap-sdk",
+ "lez-swap-core",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1998,8 +2017,10 @@ dependencies = [
  "base64 0.22.1",
  "bitcoin",
  "btc-reference-actor",
+ "btc-role-preflight",
  "bytes",
  "clap",
+ "getrandom 0.3.4",
  "hex",
  "http-body-util",
  "hyper",

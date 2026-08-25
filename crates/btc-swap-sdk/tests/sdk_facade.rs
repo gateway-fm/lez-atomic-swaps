@@ -23,9 +23,9 @@ use lez_btc_swap_sdk::{
     BtcRecoveryWaitReasonV1, BtcRevealingClaimEvidenceV1, BtcSdkError, CooperativeKeyPathSpend,
     CsvBlockDelay, InMemoryBtcLifecycleStore, LezBtcLifecyclePort, LezCanonicalRecoveryStateV1,
     LezFirstLockEvidenceV1, LezFollowupClaimEvidenceV1, LezRevealingClaimEvidenceV1,
-    P2trSwapOutput, PreparedBitcoinFundingV1, PreparedBitcoinRefundV1, PreparedLezClaimTemplateV1,
-    PreparedLezFundingV1, PreparedLezRefundV1, RefundXOnlyKey, SigningRole, StoredBtcLifecycleSdk,
-    TwoPartyAggregateKey, adapt_presignature,
+    P2trSwapOutput, PlannedBitcoinFundingV1, PreparedBitcoinFundingV1, PreparedBitcoinRefundV1,
+    PreparedLezClaimTemplateV1, PreparedLezFundingV1, PreparedLezRefundV1, RefundXOnlyKey,
+    SigningRole, StoredBtcLifecycleSdk, TwoPartyAggregateKey, adapt_presignature,
 };
 use lez_swap_core::{Participant, Phase, SwapDirection};
 use lez_swap_sdk_core::{ClaimOrder, NegotiationChannel, OfferDiscovery, SwapProtocol};
@@ -681,6 +681,42 @@ fn malformed_unsigned_or_identity_drifted_bitcoin_effects_fail_closed() {
     assert!(matches!(
         sdk.activate(accepted, drifted),
         Err(BtcSdkError::BitcoinFundingAgreementMismatch)
+    ));
+}
+
+#[test]
+fn unsigned_funding_template_is_frozen_before_role_owned_authorization() {
+    let mut unsigned = fixture(SwapDirection::TakerSellsForeign).funding;
+    unsigned.input[0].script_sig = ScriptBuf::new();
+    unsigned.input[0].witness = Witness::default();
+    let planned =
+        PlannedBitcoinFundingV1::new(unsigned.compute_txid().to_string(), serialize(&unsigned))
+            .expect("authorization-free funding template");
+    assert_eq!(planned.transaction_id(), unsigned.compute_txid());
+    assert_eq!(planned.exact_unsigned_transaction(), serialize(&unsigned));
+
+    let mut signed = unsigned.clone();
+    signed.input[0].witness = Witness::from_slice(&[[0x42; 64]]);
+    let prepared = planned
+        .authorize(serialize(&signed))
+        .expect("witness-only authorization");
+    assert_eq!(prepared.transaction_id(), planned.transaction_id());
+
+    assert!(matches!(
+        PlannedBitcoinFundingV1::new(signed.compute_txid().to_string(), serialize(&signed)),
+        Err(BtcSdkError::AuthorizedBitcoinFundingTemplate)
+    ));
+    assert!(matches!(
+        planned.authorize(serialize(&unsigned)),
+        Err(BtcSdkError::UnsignedBitcoinFunding)
+    ));
+
+    let mut changed = signed;
+    changed.output[0].value = Amount::from_sat(FUNDING_VALUE_SAT - 1);
+    assert!(matches!(
+        planned.authorize(serialize(&changed)),
+        Err(BtcSdkError::BitcoinFundingIdentityMismatch
+            | BtcSdkError::BitcoinFundingTemplateMismatch)
     ));
 }
 
