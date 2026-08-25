@@ -1,4 +1,5 @@
 #include "lez_atomic_swap_taker_backend.h"
+#include "logos_sdk.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -25,13 +26,36 @@ QString invalid()
 
 LezAtomicSwapTakerBackend::LezAtomicSwapTakerBackend()
     : rpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"))
+    , chat_(std::make_unique<LogosChatBridge>(QStringLiteral("taker"), this))
 {
     (void)qEnvironmentVariable("LEZ_TAKER_RPC_SOCKET");
+}
+
+LezAtomicSwapTakerBackend::~LezAtomicSwapTakerBackend() = default;
+
+void LezAtomicSwapTakerBackend::onContextReady()
+{
+    chat_->initialise(modules().chat_module);
 }
 
 QString LezAtomicSwapTakerBackend::health()
 {
     return rpc_.call("taker_health", "{\"schema_version\":1}");
+}
+
+QString LezAtomicSwapTakerBackend::chatStatus()
+{
+    return chat_->statusJson();
+}
+
+QString LezAtomicSwapTakerBackend::connectChat(QString peerAddress)
+{
+    return chat_->connectPeer(peerAddress);
+}
+
+QString LezAtomicSwapTakerBackend::resetChat()
+{
+    return chat_->resetSession();
 }
 
 QString LezAtomicSwapTakerBackend::listOffers(QString pair, QString direction)

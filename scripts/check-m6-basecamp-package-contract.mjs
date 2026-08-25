@@ -8,8 +8,10 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const basecampRoot = resolve(repositoryRoot, "apps/basecamp");
 const errors = [];
 
-const builderCommit = "92ef691ea72844134f6c68fb447d37f855fc9690";
-const builderNarHash = "sha256-jm3NQ0BZ5qnUs/boE1vTil+mGbbp+Wix0ggl1HzR2gw=";
+const chatCommit = "dfe8ccf3eff3e95da0ba54043577270474a216ae";
+const chatNarHash = "sha256-fztN9UpWmNe1SVe4/173vrKvzh4vyHIRxEg/OoUa6Mg=";
+const deliveryCommit = "3258cdb0132e37228aa2519e0c01c0e7429a20dd";
+const deliveryNarHash = "sha256-6shBduxH/12ph+Y2R1Kwq65rjK6QfZCwp5vBU5h0i5Y=";
 
 const packages = [
   {
@@ -27,9 +29,12 @@ const packages = [
       "maker_actor_claim_v1",
       "maker_actor_refund_v1",
     ],
-    slots: ["health", "saveRoute", "history", "monitor", "claim", "refund"],
+    slots: ["health", "chatStatus", "resetChat", "saveRoute", "history", "monitor", "claim", "refund"],
     objects: [
       "makerConnection",
+      "makerChat",
+      "makerChatStatus",
+      "makerChatReset",
       "makerPair",
       "makerDirection",
       "makerForeignUnits",
@@ -56,9 +61,14 @@ const packages = [
       "taker_swap_claim_v1",
       "taker_swap_refund_v1",
     ],
-    slots: ["health", "listOffers", "initiate", "listSwaps", "monitor", "claim", "refund"],
+    slots: ["health", "chatStatus", "connectChat", "resetChat", "listOffers", "initiate", "listSwaps", "monitor", "claim", "refund"],
     objects: [
       "takerConnection",
+      "takerChat",
+      "takerChatAddress",
+      "takerChatConnect",
+      "takerChatStatus",
+      "takerChatReset",
       "takerOffers",
       "takerReview",
       "takerOfferId",
@@ -120,8 +130,20 @@ const flakeSource = read(rootFlake, "consumer flake");
 requirePattern(
   rootFlake,
   flakeSource,
-  /logos-module-builder\.url\s*=\s*"github:logos-co\/logos-module-builder\/0\.2\.0"/,
-  "must select official module-builder tag 0.2.0",
+  /logos-module-builder\.follows\s*=\s*"chat_module\/logos-module-builder"/,
+  "must follow the Chat release's module-builder",
+);
+requirePattern(
+  rootFlake,
+  flakeSource,
+  /chat_module\.url\s*=\s*"github:logos-co\/logos-chat-module\/v0\.2\.2"/,
+  "must pin the official Chat module v0.2.2 release",
+);
+requirePattern(
+  rootFlake,
+  flakeSource,
+  /logos-delivery-module\.follows\s*=\s*"chat_module\/logos-delivery-module"/,
+  "must follow Chat's exact Delivery release",
 );
 for (const value of ["maker", "taker"]) {
   requirePattern(
@@ -141,8 +163,9 @@ requirePattern(
   rootFlake,
   flakeSource,
   /commonSource/,
-  "must inject one shared local-RPC client source into both isolated package builds",
+  "must inject shared local-RPC and Chat bridge sources into both isolated package builds",
 );
+requirePattern(rootFlake, flakeSource, /delivery_module\s*=\s*logos-delivery-module/, "must map the Delivery runtime dependency");
 rejectPattern(
   rootFlake,
   flakeSource,
@@ -154,19 +177,33 @@ const lockFile = resolve(basecampRoot, "flake.lock");
 const lock = parseJson(lockFile, "consumer flake lock");
 if (lock !== null) {
   const rootNode = lock.nodes?.[lock.root];
-  const directBuilderName = rootNode?.inputs?.["logos-module-builder"];
-  const directBuilder =
-    typeof directBuilderName === "string" ? lock.nodes?.[directBuilderName] : null;
+  const chatName = rootNode?.inputs?.chat_module;
+  const chat = typeof chatName === "string" ? lock.nodes?.[chatName] : null;
+  const deliveryName = chat?.inputs?.["logos-delivery-module"];
+  const delivery = typeof deliveryName === "string" ? lock.nodes?.[deliveryName] : null;
   if (
-    directBuilder?.locked?.owner !== "logos-co" ||
-    directBuilder?.locked?.repo !== "logos-module-builder" ||
-    directBuilder.locked.rev !== builderCommit ||
-    directBuilder.locked.narHash !== builderNarHash
+    chat?.locked?.owner !== "logos-co" ||
+    chat?.locked?.repo !== "logos-chat-module" ||
+    chat.locked.rev !== chatCommit ||
+    chat.locked.narHash !== chatNarHash
   ) {
-    report(
-      lockFile,
-      "root input must pin module-builder to the approved commit and NAR hash",
-    );
+    report(lockFile, "root input must pin Chat v0.2.2 to the approved commit and NAR hash");
+  }
+  if (
+    delivery?.locked?.owner !== "logos-co" ||
+    delivery?.locked?.repo !== "logos-delivery-module" ||
+    delivery.locked.rev !== deliveryCommit ||
+    delivery.locked.narHash !== deliveryNarHash
+  ) {
+    report(lockFile, "Chat must pin Delivery v0.2.0 to the approved commit and NAR hash");
+  }
+  if (
+    JSON.stringify(rootNode?.inputs?.["logos-module-builder"]) !==
+      JSON.stringify(["chat_module", "logos-module-builder"]) ||
+    JSON.stringify(rootNode?.inputs?.["logos-delivery-module"]) !==
+      JSON.stringify(["chat_module", "logos-delivery-module"])
+  ) {
+    report(lockFile, "root builder and Delivery inputs must follow the pinned Chat release");
   }
 }
 
@@ -174,18 +211,45 @@ const commonHeader = resolve(basecampRoot, "common/local_json_rpc_client.h");
 const commonSourceFile = resolve(basecampRoot, "common/local_json_rpc_client.cpp");
 const commonHeaderText = read(commonHeader, "shared local-RPC header");
 const commonText = read(commonSourceFile, "shared local-RPC implementation");
+const chatHeader = resolve(basecampRoot, "common/logos_chat_bridge.h");
+const chatSource = resolve(basecampRoot, "common/logos_chat_bridge.cpp");
+const chatHeaderText = read(chatHeader, "shared Logos Chat bridge header");
+const chatText = read(chatSource, "shared Logos Chat bridge implementation");
+const chatContractText = `${chatHeaderText ?? ""}\n${chatText ?? ""}`;
 for (const [pattern, message] of [
   [/QLocalSocket/, "must use Qt's Unix-domain local socket client"],
   [/lstat\s*\(/, "must inspect the socket without following symlinks"],
   [/geteuid\s*\(/, "must bind socket ownership to the effective user"],
   [/S_ISSOCK/, "must require an actual Unix socket"],
   [/0?600/, "must require owner-only socket mode 0600"],
-  [/64\s*\*\s*1024|65536/, "must bound RPC messages to 64 KiB"],
   [/Content-Length/i, "must enforce bounded HTTP Content-Length framing"],
   [/QJsonDocument/, "must parse JSON through Qt's maintained JSON implementation"],
   [/waitForConnected/, "must bound connection readiness"],
 ]) {
   requirePattern(commonSourceFile, commonText, pattern, message);
+}
+requirePattern(commonHeader, commonHeaderText, /64\s*\*\s*1024|65536/, "must bound ordinary RPC messages to 64 KiB");
+for (const [pattern, message] of [
+  [/delivery_state_changed/, "must wait for Chat delivery state"],
+  [/conversation_created/, "must bind one direct Chat conversation"],
+  [/message_received/, "must consume Chat messages through push events"],
+  [/send_message/, "must send gateway frames through E2EE Chat"],
+  [/logos_chat_bind_session_v1/, "must pin the owner-local gateway session"],
+  [/logos_chat_outbox_peek_v1/, "must read only the fixed gateway outbox"],
+  [/logos_chat_outbox_ack_v1/, "must acknowledge only an accepted Chat send"],
+  [/logos_chat_ingest_v1/, "must submit inbound frames to the fixed gateway method"],
+  [/logos_chat_reset_session_v1/, "must expose an owner-local recovery from an unintended peer binding"],
+  [/QTimer::singleShot/, "must defer inbound processing out of the Chat event callback"],
+]) {
+  requirePattern(chatSource, chatContractText, pattern, message);
+}
+requirePattern(chatHeader, chatHeaderText, /chat\.init\s*\(/, "must initialise the generated Chat client");
+for (const [pattern, message] of [
+  [/QTcpSocket|QNetworkAccessManager|QWebSocket/, "must not add a direct web transport"],
+  [/QProcess|\bsystem\s*\(|\bpopen\s*\(|\bexec[a-z]*\s*\(/, "must not spawn commands"],
+  [/qDebug|std::cerr|fprintf\s*\(\s*stderr/, "must not log Chat or RPC payloads"],
+]) {
+  rejectPattern(chatSource, chatText, pattern, message);
 }
 requirePattern(
   commonHeader,
@@ -220,8 +284,16 @@ for (const pkg of packages) {
     for (const [key, value] of Object.entries(expected)) {
       if (metadata[key] !== value) report(metadataFile, `${key} must equal ${JSON.stringify(value)}`);
     }
-    if (!Array.isArray(metadata.dependencies) || metadata.dependencies.length !== 0) {
-      report(metadataFile, "must not grant a generic Logos module dependency");
+    if (
+      JSON.stringify(metadata.dependencies) !== JSON.stringify(["chat_module", "delivery_module"])
+    ) {
+      report(metadataFile, "must grant only the pinned Chat module and its Delivery runtime");
+    }
+    if (
+      metadata.dependency_overrides?.delivery_module?.input !== "chat_module" ||
+      metadata.dependency_overrides?.delivery_module?.file !== "rust-lib/deps/delivery_module.lidl"
+    ) {
+      report(metadataFile, "must reuse Chat's bundled Delivery API contract");
     }
     if (typeof metadata.description !== "string" || metadata.description.length < 40) {
       report(metadataFile, "must provide a meaningful user-facing description");
@@ -237,6 +309,7 @@ for (const pkg of packages) {
     [/logos_module\s*\(/, "must use the official logos_module builder"],
     [/REP_FILE/, "must generate a typed QtRO boundary"],
     [/LocalJsonRpcClient|local_json_rpc_client/, "must compile the shared local-RPC client"],
+    [/LogosChatBridge|logos_chat_bridge/, "must compile the shared Chat gateway bridge"],
     [/Qt\$\{QT_VERSION_MAJOR\}::Network|Qt6::Network/, "must explicitly link Qt Network for QLocalSocket"],
   ]) {
     requirePattern(cmakeFile, cmake, pattern, message);
@@ -270,6 +343,7 @@ for (const pkg of packages) {
     /SimpleSource[\s\S]*LogosUiPluginContext/,
     "must inherit the generated QtRO source and LogosUiPluginContext",
   );
+  requirePattern(backendSource, source, /modules\(\)\.chat_module/, "must use the generated Chat module wrapper");
   requirePattern(
     backendSource,
     source,
@@ -337,6 +411,6 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   process.stdout.write(
-    "M6 Basecamp package contract: GREEN (2 ui_qml packages, 13 typed slots, one owner-local transport)\n",
+    "M6 Basecamp package contract: GREEN (2 ui_qml packages, 18 typed slots, pinned E2EE Chat plus owner-local gateway)\n",
   );
 }

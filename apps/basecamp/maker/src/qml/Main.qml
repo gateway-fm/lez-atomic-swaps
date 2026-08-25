@@ -53,6 +53,31 @@ Item {
                     enabled: root.ready
                     onClicked: root.invoke(root.backend.health())
                 }
+                GroupBox {
+                    objectName: "makerChat"
+                    title: "Session Chat address"
+                    Layout.fillWidth: true
+                    RowLayout {
+                        anchors.fill: parent
+                        Label {
+                            text: "Keep this app open; give the address in Chat status to the Taker"
+                            color: "#f9e79f"
+                            Layout.fillWidth: true
+                        }
+                        Button {
+                            objectName: "makerChatStatus"
+                            text: "Chat status"
+                            enabled: root.ready
+                            onClicked: root.invoke(root.backend.chatStatus())
+                        }
+                        Button {
+                            objectName: "makerChatReset"
+                            text: "Reset Chat"
+                            enabled: root.ready
+                            onClicked: root.invoke(root.backend.resetChat())
+                        }
+                    }
+                }
 
                 GroupBox {
                     title: "Configure an exact local route"

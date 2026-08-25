@@ -4,6 +4,7 @@ mod actor_supervisor;
 mod btc_chat;
 mod daemon_lifecycle;
 mod local_rpc;
+mod logos_chat_gateway;
 mod logos_price_source;
 pub mod owner_rpc_server;
 mod price_source;
@@ -31,7 +32,15 @@ pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,
 };
-pub use local_rpc::{call_local_chat_rpc, call_local_rpc};
+pub use local_rpc::{call_local_chat_gateway_rpc, call_local_chat_rpc, call_local_rpc};
+pub use logos_chat_gateway::{
+    LOGOS_CHAT_GATEWAY_METHODS_V1, LogosChatGateway, LogosChatGatewayAckV1,
+    LogosChatGatewayBindRequestV1, LogosChatGatewayError, LogosChatGatewayIngestRequestV1,
+    LogosChatGatewayOutboxAckRequestV1, LogosChatGatewayOutboxItemV1,
+    LogosChatGatewayOutboxRequestV1, LogosChatGatewayResetRequestV1, LogosChatGatewayRoleV1,
+    LogosChatGatewayStatusRequestV1, LogosChatGatewayStatusV1,
+    logos_chat_gateway_control_rpc_module, logos_chat_gateway_proxy_rpc_module,
+};
 pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
 pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};

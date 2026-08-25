@@ -7,13 +7,15 @@ use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, header};
 use hyper_util::rt::TokioIo;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use thiserror::Error;
 use tokio::net::UnixStream;
 
 const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_ID: u64 = 1;
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: usize = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: usize = 1024 * 1024;
+const MAXIMUM_CHAT_GATEWAY_RPC_BODY_BYTES: usize = 4 * 1024 * 1024;
 const DEFAULT_LOCAL_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Serialize)]
@@ -25,17 +27,39 @@ struct RpcRequest<'a, P> {
 }
 
 #[derive(Deserialize)]
+#[serde(bound(deserialize = "R: Deserialize<'de>"))]
 struct RpcResponse<R> {
     jsonrpc: Box<str>,
     id: u64,
-    result: Option<R>,
-    error: Option<RpcError>,
+    #[serde(default)]
+    result: RpcResultField<R>,
+    error: Option<LocalRpcRemoteError>,
 }
 
-#[derive(Deserialize)]
-struct RpcError {
-    code: i32,
-    message: Box<str>,
+#[derive(Default)]
+enum RpcResultField<R> {
+    #[default]
+    Missing,
+    Present(R),
+}
+
+impl<'de, R> Deserialize<'de> for RpcResultField<R>
+where
+    R: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        R::deserialize(deserializer).map(Self::Present)
+    }
+}
+
+#[derive(Debug, Deserialize, Error)]
+#[error("local RPC error {code}: {message}")]
+pub(crate) struct LocalRpcRemoteError {
+    pub(crate) code: i32,
+    pub(crate) message: Box<str>,
 }
 
 /// Calls one typed JSON-RPC method through an owner-local Unix socket.
@@ -85,6 +109,34 @@ where
         method,
         parameter,
         MAXIMUM_CHAT_RPC_BODY_BYTES,
+        DEFAULT_LOCAL_RPC_TIMEOUT,
+    )
+    .await
+}
+
+/// Calls one gateway-control method through a Unix socket.
+///
+/// Gateway control messages JSON-escape an already encoded Chat frame. Their
+/// transport envelope therefore needs more room than the independently
+/// enforced 1 MiB frame and Taker-facing Chat method limits.
+///
+/// # Errors
+///
+/// Returns the same bounded transport and JSON-RPC errors as `call_local_rpc`.
+pub async fn call_local_chat_gateway_rpc<P, R>(
+    socket: &Path,
+    method: &str,
+    parameter: &P,
+) -> anyhow::Result<R>
+where
+    P: Serialize,
+    R: DeserializeOwned,
+{
+    call_local_rpc_bounded(
+        socket,
+        method,
+        parameter,
+        MAXIMUM_CHAT_GATEWAY_RPC_BODY_BYTES,
         DEFAULT_LOCAL_RPC_TIMEOUT,
     )
     .await
@@ -182,8 +234,8 @@ where
         "local RPC response version or request ID mismatch"
     );
     match (response.result, response.error) {
-        (Some(result), None) => Ok(result),
-        (None, Some(error)) => bail!("local RPC error {}: {}", error.code, error.message),
+        (RpcResultField::Present(result), None) => Ok(result),
+        (RpcResultField::Missing, Some(error)) => Err(error.into()),
         _ => bail!("local RPC response must contain exactly one result or error"),
     }
 }
@@ -221,7 +273,9 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{MAXIMUM_CONTROL_RPC_BODY_BYTES, call_local_rpc, call_local_rpc_bounded};
+    use super::{
+        LocalRpcRemoteError, MAXIMUM_CONTROL_RPC_BODY_BYTES, call_local_rpc, call_local_rpc_bounded,
+    };
 
     const TEST_GUARD_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -304,6 +358,75 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, json!({ "ready": true }));
+        peer.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn present_null_result_is_not_treated_as_a_missing_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("nullable.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let peer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let request = read_http_request(&mut stream);
+            assert!(String::from_utf8_lossy(&request).contains("outbox_peek"));
+
+            let body = r#"{"jsonrpc":"2.0","id":1,"result":null}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let result: Option<Value> = call_local_rpc(&socket, "outbox_peek", &json!({}))
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        peer.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn server_error_remains_structured_for_bounded_forwarding() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("remote-error.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let peer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let _request = read_http_request(&mut stream);
+            let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32045,"message":"requires Chat completion v2"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let error = call_local_rpc::<_, Value>(&socket, "btc_chat_complete_v1", &json!({}))
+            .await
+            .unwrap_err();
+        let remote = error
+            .downcast_ref::<LocalRpcRemoteError>()
+            .expect("server-side error must retain its code and message");
+        assert_eq!(remote.code, -32045);
+        assert_eq!(remote.message.as_ref(), "requires Chat completion v2");
         peer.join().unwrap();
     }
 

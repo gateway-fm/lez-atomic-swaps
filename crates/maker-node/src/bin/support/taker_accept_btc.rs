@@ -17,7 +17,7 @@ use lez_btc_swap_sdk::{
 use lez_maker_node::{
     BtcChatCompleteRequestV1, BtcChatCompleteRequestV2, BtcChatCompleteResponseV1,
     BtcChatCompleteResponseV2, BtcChatProposalV1, BtcChatProposalV2, BtcChatProposeRequestV1,
-    BtcChatProposeRequestV2, DeliveryOfferQueryV1, RunLocalDelivery, call_local_rpc,
+    BtcChatProposeRequestV2, DeliveryOfferQueryV1, RunLocalDelivery, call_local_chat_rpc,
     secure_file::{load_raw_secret, read_private_file},
 };
 use lez_swap_core::{Pair, Participant, SwapDirection};
@@ -166,7 +166,7 @@ pub(crate) async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAccep
             input.now_unix_seconds,
             &contributions,
         )?;
-        let response: BtcChatProposalV2 = call_local_rpc(
+        let response: BtcChatProposalV2 = call_local_chat_rpc(
             input.chat_socket,
             "btc_chat_propose_v2",
             &BtcChatProposeRequestV2 {
@@ -213,7 +213,7 @@ pub(crate) async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAccep
             &taker_public,
             input.direction,
         )?;
-        call_local_rpc(
+        call_local_chat_rpc(
             input.chat_socket,
             "btc_chat_propose_v1",
             &BtcChatProposeRequestV1 {
@@ -524,7 +524,7 @@ async fn complete_with_maker(
     expected_offer_revision: u64,
     final_wire: &[u8],
 ) -> anyhow::Result<BtcChatCompleteResponseV1> {
-    call_local_rpc(
+    call_local_chat_rpc(
         input.chat_socket,
         "btc_chat_complete_v1",
         &BtcChatCompleteRequestV1 {
@@ -546,7 +546,7 @@ async fn complete_with_maker_v2(
     expected_offer_revision: u64,
     final_wire: &[u8],
 ) -> anyhow::Result<BtcChatCompleteResponseV2> {
-    call_local_rpc(
+    call_local_chat_rpc(
         input.chat_socket,
         "btc_chat_complete_v2",
         &BtcChatCompleteRequestV2 {

@@ -58,6 +58,39 @@ Item {
                 }
 
                 GroupBox {
+                    objectName: "takerChat"
+                    title: "Private Maker Chat session"
+                    Layout.fillWidth: true
+                    RowLayout {
+                        anchors.fill: parent
+                        TextField {
+                            id: makerChatAddress
+                            objectName: "takerChatAddress"
+                            placeholderText: "Maker Chat address (valid while Maker app is open)"
+                            Layout.fillWidth: true
+                        }
+                        Button {
+                            objectName: "takerChatConnect"
+                            text: "Connect Chat"
+                            enabled: root.ready && makerChatAddress.text.length > 0
+                            onClicked: root.invoke(root.backend.connectChat(makerChatAddress.text))
+                        }
+                        Button {
+                            objectName: "takerChatStatus"
+                            text: "Chat status"
+                            enabled: root.ready
+                            onClicked: root.invoke(root.backend.chatStatus())
+                        }
+                        Button {
+                            objectName: "takerChatReset"
+                            text: "Reset Chat"
+                            enabled: root.ready
+                            onClicked: root.invoke(root.backend.resetChat())
+                        }
+                    }
+                }
+
+                GroupBox {
                     objectName: "takerReview"
                     title: "Review exact public offer facts"
                     Layout.fillWidth: true

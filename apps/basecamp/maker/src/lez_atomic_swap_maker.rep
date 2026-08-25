@@ -1,6 +1,8 @@
 class LezAtomicSwapMaker
 {
     SLOT(QString health())
+    SLOT(QString chatStatus())
+    SLOT(QString resetChat())
     SLOT(QString saveRoute(QString requestId, QString pair, QString direction, QString minimumForeignUnits, QString maximumForeignUnits, QString offerTtlSeconds, QString lezUnitsPerLot, QString foreignUnitsPerLot))
     SLOT(QString history())
     SLOT(QString monitor(QString swapId))

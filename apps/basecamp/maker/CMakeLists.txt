@@ -18,6 +18,8 @@ logos_module(
         src/lez_atomic_swap_maker_backend.cpp
         src/local_json_rpc_client.h
         src/local_json_rpc_client.cpp
+        src/logos_chat_bridge.h
+        src/logos_chat_bridge.cpp
     INCLUDE_DIRS src
 )
 

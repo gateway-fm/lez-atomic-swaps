@@ -9,7 +9,8 @@ use std::{
     fs::{self, OpenOptions},
     io::Write as _,
     os::unix::fs::{
-        DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
+        DirBuilderExt as _, FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _,
+        PermissionsExt as _,
     },
     path::{Path, PathBuf},
     process::{Child, Command},
@@ -28,7 +29,8 @@ use lez_btc_swap_sdk::BtcMakerAgreementProposalV1;
 use lez_maker_node::{
     AuthenticatedOfferRefV1, BtcChatCompleteRequestV1, BtcChatCompleteResponseV1,
     BtcChatProposalV1, BtcChatProposalV2, BtcChatProposeRequestV1, BtcChatProposeRequestV2,
-    DeliveryOfferQueryV1, LocalPriceSetRequest, PairConfigureRequest, RunLocalDelivery,
+    DeliveryOfferQueryV1, LocalPriceSetRequest, LogosChatGatewayStatusRequestV1,
+    LogosChatGatewayStatusV1, PairConfigureRequest, RunLocalDelivery, call_local_chat_rpc,
     call_local_rpc,
 };
 use lez_swap_core::{Pair, SwapDirection};
@@ -364,8 +366,10 @@ async fn run_independent_role_chat_v2_case(
     };
     let mut daemon = start_role_agreement_daemon(&daemon_base, &maker_role);
     wait_role_agreement_ready(&mut daemon, &daemon_base);
+    let mut local_chat = LocalLogosChatHarness::start(&runtime, &chat_socket);
+    local_chat.wait_until_bound().await;
     let first_proposal = stage_contribution_proposal(
-        &chat_socket,
+        local_chat.proxy_socket(),
         &offer_id,
         &reservation_id,
         &authenticated,
@@ -424,7 +428,7 @@ async fn run_independent_role_chat_v2_case(
     let accepted_at = now();
     let accepted = run_contribution_taker(
         &delivery,
-        &chat_socket,
+        local_chat.proxy_socket(),
         &offer_id,
         &reservation_id,
         &delivery_maker,
@@ -473,7 +477,7 @@ async fn run_independent_role_chat_v2_case(
     fs::rename(&delivery, run_root.join("delivery.offline")).unwrap();
     let replay = run_contribution_taker(
         &delivery,
-        &chat_socket,
+        local_chat.proxy_socket(),
         &offer_id,
         &reservation_id,
         &delivery_maker,
@@ -498,6 +502,7 @@ async fn run_independent_role_chat_v2_case(
         taker_binding_inode
     );
 
+    local_chat.stop();
     stop_delivery_only_daemon(&mut daemon, &daemon_base);
     let store = SqliteSwapStore::open(&database).unwrap();
     assert!(store.list_maker_actor_processes().unwrap().is_empty());
@@ -560,7 +565,7 @@ async fn stage_contribution_proposal(
     maker_role: &Path,
     taker_role: &Path,
 ) -> BtcChatProposalV2 {
-    call_local_rpc(
+    call_local_chat_rpc(
         chat_socket,
         "btc_chat_propose_v2",
         &BtcChatProposeRequestV2 {
@@ -578,6 +583,155 @@ async fn stage_contribution_proposal(
     )
     .await
     .expect("Maker durably stages a contribution-bound proposal")
+}
+
+struct LocalLogosChatHarness {
+    maker: Option<Child>,
+    taker: Option<Child>,
+    relay: Option<Child>,
+    maker_control_socket: PathBuf,
+    taker_control_socket: PathBuf,
+    proxy_socket: PathBuf,
+}
+
+impl LocalLogosChatHarness {
+    fn start(runtime: &Path, maker_chat_socket: &Path) -> Self {
+        let maker_control_socket = runtime.join("logos-chat-maker-control.sock");
+        let taker_control_socket = runtime.join("logos-chat-taker-control.sock");
+        let proxy_socket = runtime.join("logos-chat-taker-proxy.sock");
+        let mut maker = Command::new(env!("CARGO_BIN_EXE_lez-logos-chat-gateway"))
+            .arg("endpoint")
+            .arg("--role")
+            .arg("maker")
+            .arg("--control-socket")
+            .arg(&maker_control_socket)
+            .arg("--maker-chat-socket")
+            .arg(maker_chat_socket)
+            .spawn()
+            .expect("start isolated Maker Logos Chat gateway");
+        wait_process_socket(&mut maker, &maker_control_socket, "Maker gateway");
+        let mut taker = Command::new(env!("CARGO_BIN_EXE_lez-logos-chat-gateway"))
+            .arg("endpoint")
+            .arg("--role")
+            .arg("taker")
+            .arg("--control-socket")
+            .arg(&taker_control_socket)
+            .arg("--proxy-socket")
+            .arg(&proxy_socket)
+            .spawn()
+            .expect("start isolated Taker Logos Chat gateway");
+        wait_process_socket(&mut taker, &taker_control_socket, "Taker gateway control");
+        wait_process_socket(&mut taker, &proxy_socket, "Taker gateway proxy");
+        let relay = Command::new(env!("CARGO_BIN_EXE_lez-logos-chat-gateway"))
+            .arg("local-relay")
+            .arg("--maker-control-socket")
+            .arg(&maker_control_socket)
+            .arg("--taker-control-socket")
+            .arg(&taker_control_socket)
+            .spawn()
+            .expect("start isolated Unix-only Logos Chat relay");
+        Self {
+            maker: Some(maker),
+            taker: Some(taker),
+            relay: Some(relay),
+            maker_control_socket,
+            taker_control_socket,
+            proxy_socket,
+        }
+    }
+
+    fn proxy_socket(&self) -> &Path {
+        &self.proxy_socket
+    }
+
+    async fn wait_until_bound(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let maker = call_local_chat_rpc::<_, LogosChatGatewayStatusV1>(
+                &self.maker_control_socket,
+                "logos_chat_status_v1",
+                &LogosChatGatewayStatusRequestV1 { schema_version: 1 },
+            )
+            .await;
+            let taker = call_local_chat_rpc::<_, LogosChatGatewayStatusV1>(
+                &self.taker_control_socket,
+                "logos_chat_status_v1",
+                &LogosChatGatewayStatusRequestV1 { schema_version: 1 },
+            )
+            .await;
+            if maker.is_ok_and(|status| status.session_bound)
+                && taker.is_ok_and(|status| status.session_bound)
+            {
+                return;
+            }
+            assert!(
+                self.relay
+                    .as_mut()
+                    .expect("local relay is running")
+                    .try_wait()
+                    .unwrap()
+                    .is_none(),
+                "local Logos Chat relay exited before binding both endpoints"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "local Logos Chat binding timed out"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    fn stop(&mut self) {
+        stop_optional_process(&mut self.relay, "local Logos Chat relay");
+        stop_optional_process(&mut self.taker, "Taker Logos Chat gateway");
+        stop_optional_process(&mut self.maker, "Maker Logos Chat gateway");
+    }
+}
+
+impl Drop for LocalLogosChatHarness {
+    fn drop(&mut self) {
+        for child in [&mut self.relay, &mut self.taker, &mut self.maker] {
+            if let Some(mut child) = child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+fn wait_process_socket(child: &mut Child, socket: &Path, label: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if fs::symlink_metadata(socket).is_ok_and(|metadata| {
+            metadata.file_type().is_socket() && metadata.mode() & 0o7777 == 0o600
+        }) {
+            return;
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "{label} exited before readiness"
+        );
+        assert!(Instant::now() < deadline, "{label} readiness timed out");
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn stop_optional_process(child: &mut Option<Child>, label: &str) {
+    let mut child = child.take().expect("gateway process is running");
+    kill_process(Pid::from_child(&child), Signal::INT).expect("signal gateway process");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().expect("poll gateway process") {
+            assert!(status.success(), "{label} shutdown failed: {status}");
+            return;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("kill wedged gateway process");
+            child.wait().expect("reap wedged gateway process");
+            panic!("{label} did not stop");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn assert_initial_acceptance(accepted: &Value, proposal_was_replay: bool) {
