@@ -17,8 +17,9 @@ git -C runner-work/repo am \
   "$workspace_root"/submission/deploy/full-swap/patches/*.patch
 ```
 
-Applying all 34 patches to `5c384a5` reproduces tree
-`c3bc49ad802328455ef7c8843d3c7a4ee81bade9` exactly — the same tree the demo
+Applying all 35 patches to `5c384a5` reproduces tree
+`f9b445a01c0a820744be8be00b3d043a36a84b7f` exactly — the same implementation
+tree the role-agreement-enabled demo
 runs against.
 
 ## What the series contains
@@ -33,6 +34,7 @@ runs against.
 | 0022-0023 | UI ZEC fixture taker authority isolation and offer-TTL validity |
 | **0024-0026** | **Attach mode**: swaps run on the long-standing settlement chains — injectable chain run ids, no chain launch or teardown, funding discovered from unspent mature coinbases, persistent wallet identities, one-time bootstrap reuse, cumulative opening balances, and shared-chain tolerance in the Bitcoin lock confirmation |
 | **0027-0034** | **Bidirectional runner**: one selected LEZ/BTC direction flows through funding discovery, application replay, terminal assertions, and exported journey evidence |
+| **0035** | **Independent role agreements**: Maker and Taker construct separately signed contributions, bind messages and assets to chain identities and direction, and finalize the same agreement without a fixture actor holding both roles |
 
 Patches 0024-0026 make the demo persistent-chain-shaped: without them the
 runner provisions and destroys a chain pair per swap. This is still a local
