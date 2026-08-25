@@ -14,6 +14,8 @@ test("maker: role console loads", async (app) => {
     "This wallet's offer inventory",
     "Your Maker swaps",
     "Publish offer",
+    "Private negotiation Chat",
+    "End-to-end encrypted by Logos Chat; valid only while this Maker app is open",
     "ADVANCED SERVICE CONTROLS · PREPARED NON-BITCOIN ROUTES",
   ]);
 });

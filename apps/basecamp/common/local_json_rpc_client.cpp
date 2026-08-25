@@ -1,6 +1,7 @@
 #include "local_json_rpc_client.h"
 
 #include <QByteArray>
+#include <QDeadlineTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -12,10 +13,6 @@
 #include <utility>
 
 namespace {
-constexpr qsizetype kMaximumMessageBytes = 64 * 1024;
-constexpr int kConnectTimeoutMs = 3000;
-constexpr int kIoTimeoutMs = 10000;
-
 QString failure(const QString& code, const QString& message)
 {
     QJsonObject envelope{{"ok", false}, {"code", code}, {"message", message}};
@@ -30,18 +27,25 @@ bool isOwnerSocket(const QByteArray& encodedPath)
         && (information.st_mode & 07777) == 0600;
 }
 
-bool readMore(QLocalSocket& socket, QByteArray& response)
+bool readMore(QLocalSocket& socket, QByteArray& response, qsizetype maximumMessageBytes,
+              QDeadlineTimer& deadline)
 {
-    if (!socket.bytesAvailable() && !socket.waitForReadyRead(kIoTimeoutMs)) {
+    const qint64 remaining = deadline.remainingTime();
+    if (remaining <= 0
+        || (!socket.bytesAvailable() && !socket.waitForReadyRead(static_cast<int>(remaining)))) {
         return false;
     }
     response += socket.readAll();
-    return response.size() <= kMaximumMessageBytes;
+    return response.size() <= maximumMessageBytes;
 }
 }
 
-LocalJsonRpcClient::LocalJsonRpcClient(QString environmentVariable)
+LocalJsonRpcClient::LocalJsonRpcClient(QString environmentVariable, qsizetype maximumMessageBytes,
+                                       int connectTimeoutMs, int ioTimeoutMs)
     : environmentVariable_(std::move(environmentVariable))
+    , maximumMessageBytes_(maximumMessageBytes)
+    , connectTimeoutMs_(connectTimeoutMs)
+    , ioTimeoutMs_(ioTimeoutMs)
 {
 }
 
@@ -61,7 +65,10 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
     QJsonObject request{{"jsonrpc", "2.0"}, {"id", 1}, {"method", method},
                         {"params", QJsonArray{parameters.object()}}};
     const QByteArray body = QJsonDocument(request).toJson(QJsonDocument::Compact);
-    if (body.size() > kMaximumMessageBytes) {
+    if (maximumMessageBytes_ <= 0 || connectTimeoutMs_ <= 0 || ioTimeoutMs_ <= 0) {
+        return failure("invalid_configuration", "Local RPC client limits are invalid");
+    }
+    if (body.size() > maximumMessageBytes_) {
         return failure("request_too_large", "Request exceeds the local RPC limit");
     }
     const QByteArray wire = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
@@ -69,17 +76,19 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
 
     QLocalSocket socket;
     socket.connectToServer(QString::fromUtf8(socketPath), QIODevice::ReadWrite);
-    if (!socket.waitForConnected(kConnectTimeoutMs)) {
+    if (!socket.waitForConnected(connectTimeoutMs_)) {
         return failure("endpoint_unavailable", "Owner-local service did not accept the connection");
     }
-    if (socket.write(wire) != wire.size() || !socket.waitForBytesWritten(kIoTimeoutMs)) {
+    QDeadlineTimer ioDeadline(ioTimeoutMs_);
+    if (socket.write(wire) != wire.size()
+        || !socket.waitForBytesWritten(static_cast<int>(ioDeadline.remainingTime()))) {
         return failure("transport_failure", "Local request could not be sent");
     }
 
     QByteArray response;
     qsizetype headerEnd = -1;
     while ((headerEnd = response.indexOf("\r\n\r\n")) < 0) {
-        if (!readMore(socket, response)) {
+        if (!readMore(socket, response, maximumMessageBytes_, ioDeadline)) {
             return failure("transport_failure", "Local response header was incomplete");
         }
     }
@@ -100,7 +109,7 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
             }
             bool ok = false;
             contentLength = clean.mid(sizeof("Content-Length:") - 1).trimmed().toLongLong(&ok);
-            if (!ok || contentLength < 0 || contentLength > kMaximumMessageBytes) {
+            if (!ok || contentLength < 0 || contentLength > maximumMessageBytes_) {
                 return failure("invalid_response", "Local response exceeds the framing limit");
             }
         }
@@ -112,7 +121,7 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
     QByteArray responseBody = response.mid(headerEnd + 4);
     while (responseBody.size() < contentLength) {
         QByteArray chunk;
-        if (!readMore(socket, chunk)) {
+        if (!readMore(socket, chunk, maximumMessageBytes_, ioDeadline)) {
             return failure("transport_failure", "Local response body was incomplete");
         }
         responseBody += chunk;

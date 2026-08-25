@@ -1,4 +1,5 @@
 #include "lez_atomic_swap_maker_backend.h"
+#include "logos_sdk.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -85,14 +86,32 @@ RevisionLookup revisionForRoute(const QString& response, const QString& pair,
 LezAtomicSwapMakerBackend::LezAtomicSwapMakerBackend()
     : rpc_(QStringLiteral("LEZ_MAKER_RPC_SOCKET"))
     , demoRpc_(QStringLiteral("LEZ_BTC_DEMO_RPC_SOCKET"))
+    , chat_(std::make_unique<LogosChatBridge>(QStringLiteral("maker"), this))
 {
     (void)qEnvironmentVariable("LEZ_MAKER_RPC_SOCKET");
     (void)qEnvironmentVariable("LEZ_BTC_DEMO_RPC_SOCKET");
 }
 
+LezAtomicSwapMakerBackend::~LezAtomicSwapMakerBackend() = default;
+
+void LezAtomicSwapMakerBackend::onContextReady()
+{
+    chat_->initialise(modules().chat_module);
+}
+
 QString LezAtomicSwapMakerBackend::health()
 {
     return rpc_.call("maker_health", "{}");
+}
+
+QString LezAtomicSwapMakerBackend::chatStatus()
+{
+    return chat_->statusJson();
+}
+
+QString LezAtomicSwapMakerBackend::resetChat()
+{
+    return chat_->resetSession();
 }
 
 QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)

@@ -8,13 +8,18 @@ local M3 LEZ/Bitcoin runner at the four real actor boundaries and present its
 completed transaction and balance evidence. The older prepared-corridor
 controls remain available as an advanced lane. Each QML view is
 unprivileged. Its process-isolated C++ backend calls a fixed role allowlist over
-an owner-only Unix socket.
+an owner-only Unix socket. The negotiation path uses pinned Logos Chat `v0.2.2`
+and its pinned Delivery runtime for the peer-to-peer E2EE transport; the Rust
+stores, signatures, role contributions, and chain-identity checks remain the
+protocol authority.
 
 ## Prerequisites and external resources
 
 - Nix with flakes enabled, or the digest-pinned `nixos/nix` container recorded
   in the M6 evidence packet;
 - the repository Rust binaries for the real-service exercises;
+- Logos Chat `v0.2.2` and its followed Delivery/module-builder inputs, exactly
+  resolved by `flake.lock`;
 - Basecamp tag `0.2.0`, exact commit
   `48b26c0d33573b5dd3695ae5868b04328f79e5c6` (internal `0.2.0-RC3`);
 - enough disk for the measured roughly 2.75 GB Basecamp closure plus build
@@ -73,6 +78,53 @@ export M6_BASECAMP_BIN="$M6_ROOT/basecamp/bin/LogosBasecamp"
 The clone and cold Nix fetch are setup-only public dependencies. Pinning the
 commit prevents silent source drift; it does not make an unavailable cache
 reliable. Production distribution additionally remains subject to LOGOS-025.
+
+## Run one app-lifetime Logos Chat session
+
+Build `lez-logos-chat-gateway` from the reconstructed runner worktree after
+applying `deploy/full-swap/patches/0001-0036`. Each role runs its own endpoint;
+the endpoint contains only bounded in-memory queues and one pinned direct
+conversation. Start it with the app and stop it when the app exits. Chat
+identity, conversation, and history are intentionally session-scoped; the
+countersigned agreement and replay authority stay durable in the Rust stores.
+
+Maker terminal (the Maker daemon's existing `--chat-socket` is the final
+owner-local authority):
+
+```sh
+export LEZ_LOGOS_CHAT_PRESET=logos.test
+export LEZ_LOGOS_CHAT_GATEWAY_SOCKET="$M6_ROOT/runtime-maker/logos-chat-control.sock"
+"$RUNNER_ROOT/target/release/lez-logos-chat-gateway" endpoint \
+  --role maker \
+  --control-socket "$LEZ_LOGOS_CHAT_GATEWAY_SOCKET" \
+  --maker-chat-socket "$M6_ROOT/runtime-maker/chat.sock" &
+maker_chat_pid=$!
+trap 'kill -INT "$maker_chat_pid" 2>/dev/null || true; wait "$maker_chat_pid" 2>/dev/null || true' EXIT
+```
+
+Taker terminal (configure `lez-taker-service`'s `chat_socket` to the proxy path
+before starting that service):
+
+```sh
+export LEZ_LOGOS_CHAT_PRESET=logos.test
+export LEZ_LOGOS_CHAT_GATEWAY_SOCKET="$M6_ROOT/runtime-taker/logos-chat-control.sock"
+export LEZ_LOGOS_CHAT_PROXY_SOCKET="$M6_ROOT/runtime-taker/logos-chat-proxy.sock"
+"$RUNNER_ROOT/target/release/lez-logos-chat-gateway" endpoint \
+  --role taker \
+  --control-socket "$LEZ_LOGOS_CHAT_GATEWAY_SOCKET" \
+  --proxy-socket "$LEZ_LOGOS_CHAT_PROXY_SOCKET" &
+taker_chat_pid=$!
+trap 'kill -INT "$taker_chat_pid" 2>/dev/null || true; wait "$taker_chat_pid" 2>/dev/null || true' EXIT
+```
+
+Open both apps with separate Basecamp `--user-dir` values. In the Maker app,
+refresh Chat and copy its current address. Paste that address into the Taker
+app and connect. Closing either app calls `chat.shutdown()`; also stop its
+paired gateway endpoint so the next launch starts with no stale binding.
+If an unintended peer binds first, use **Reset Chat** while no request is in
+flight, then share/paste the intended current address again. The owner-local
+reset clears the gateway binding, outbox, and response cache without changing
+any durable agreement state.
 
 ## Run the Maker package as a real user
 
@@ -181,6 +233,23 @@ actions gate the actual-node M3 workflow and publish that fresh run's
 transaction and balance proofs.
 See [ADR 0147](../../docs/architecture/0147-isolate-basecamp-role-packages-over-owner-services.md)
 and the [M6 package evidence](../../docs/evidence/m6-basecamp-role-packages-20260804.json).
+
+The Chat negotiation process E2E uses only Unix-domain sockets and deterministic
+local role roots. From the reconstructed runner worktree it can be run after a
+one-time dependency warm-up with Cargo networking disabled:
+
+```sh
+CARGO_NET_OFFLINE=true cargo test -p lez-maker-node \
+  --test btc_chat_process \
+  independent_role_roots_complete_chat_v2_without_fixture_actor_authority \
+  -- --exact
+```
+
+For a physical network-denial check, run that same command in the dedicated
+runner image with Docker `--network none`, a read-only source mount, and a
+task-private target directory. The test launches only its own Maker daemon,
+Maker/Taker gateway endpoints, and the gateway's Unix-only local relay; it does
+not use Chat's Delivery network, public RPC, or any running Compose service.
 
 ## Cleanup
 

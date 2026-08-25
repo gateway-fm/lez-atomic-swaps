@@ -1,6 +1,9 @@
 class LezAtomicSwapTaker
 {
     SLOT(QString health())
+    SLOT(QString chatStatus())
+    SLOT(QString connectChat(QString peerAddress))
+    SLOT(QString resetChat())
     SLOT(QString btcEvidence())
     SLOT(QString btcMarket(QString walletId))
     SLOT(QString btcTakeOffer(QString requestId, QString walletId, QString offerId))

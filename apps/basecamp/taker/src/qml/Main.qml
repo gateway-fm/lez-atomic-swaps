@@ -33,6 +33,7 @@ Item {
     property bool btcMarketBusy: false
     property string swapTab: "attention"
     property var expandedSwaps: ({})
+    property string chatState: "not initialised"
 
     function toggleSwapHashes(uiSwapId) {
         var next = {}
@@ -480,6 +481,38 @@ Item {
             root.statusMode = result.ready === true ? "success" : "error"
             root.statusTitle = result.ready === true ? "All systems ready" : "Service needs attention"
             root.statusDetail = "Offer delivery: " + String(result.delivery ?? "unknown")
+        })
+    }
+
+    function chatStatus() {
+        root.run(root.backend.chatStatus(), "Reading Logos Chat session", function(result) {
+            root.chatState = String(result.state ?? "unknown")
+            root.statusMode = result.online === true ? "success" : "working"
+            root.statusTitle = result.session_bound === true ? "Private Chat connected" : "Private Chat is ready"
+            root.statusDetail = result.session_bound === true
+                ? "Direct Maker conversation bound for this app session"
+                : "Paste the Maker's current session address to connect"
+        })
+    }
+
+    function connectChat() {
+        var address = takerChatAddress.text.trim()
+        if (address.length === 0) return
+        root.run(root.backend.connectChat(address), "Connecting private Logos Chat", function(result) {
+            root.chatState = String(result.state ?? "online")
+            root.statusMode = result.session_bound === true ? "success" : "working"
+            root.statusTitle = result.session_bound === true ? "Private Chat connected" : "Conversation is starting"
+            root.statusDetail = "The direct session lasts only while both Basecamp apps remain open"
+        })
+    }
+
+    function resetChat() {
+        root.run(root.backend.resetChat(), "Resetting private Chat session", function(result) {
+            takerChatAddress.text = ""
+            root.chatState = String(result.state ?? "online")
+            root.statusMode = "working"
+            root.statusTitle = "Private Chat session reset"
+            root.statusDetail = "Paste the intended Maker's current address to bind a new peer"
         })
     }
 
@@ -1623,6 +1656,61 @@ Item {
                                 }
                             }
                         }
+                    }
+                }
+
+                Rectangle {
+                    objectName: "takerChat"
+                    Layout.fillWidth: true
+                    implicitHeight: takerChatColumn.implicitHeight + 40
+                    radius: 14
+                    color: "#101722"
+                    border.width: 1
+                    border.color: "#3A3152"
+                    ColumnLayout {
+                        id: takerChatColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        anchors.margins: 20
+                        spacing: 10
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "Private negotiation Chat"; color: "#F1F3F6"; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                Label { text: "Paste the Maker address shown by the currently open Maker app"; color: "#7F8A9B"; font.pixelSize: 10 }
+                            }
+                            Label { text: root.chatState.toUpperCase(); color: "#B997FF"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 10
+                            LuxeField {
+                                id: takerChatAddress
+                                objectName: "takerChatAddress"
+                                placeholderText: "Maker Logos Chat session address"
+                                Layout.fillWidth: true
+                                font.family: "DejaVu Sans Mono"
+                            }
+                            LuxeButton {
+                                objectName: "takerChatConnect"
+                                text: "Connect Chat"
+                                primary: true
+                                enabled: root.ready && !root.busy && takerChatAddress.text.trim().length > 0
+                                onClicked: root.connectChat()
+                            }
+                            LuxeButton {
+                                objectName: "takerChatStatus"
+                                text: "Status"
+                                enabled: root.ready && !root.busy
+                                onClicked: root.chatStatus()
+                            }
+                            LuxeButton {
+                                objectName: "takerChatReset"
+                                text: "Reset"
+                                enabled: root.ready && !root.busy
+                                onClicked: root.resetChat()
+                            }
+                        }
+                        Label { text: "Session identity and conversation history are intentionally discarded when the app closes."; color: "#657184"; font.pixelSize: 10 }
                     }
                 }
 

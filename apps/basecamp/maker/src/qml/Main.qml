@@ -20,6 +20,8 @@ Item {
     property string currentState: ""
     property string latestSwap: ""
     property string lastSavedRoute: "No route changes in this session"
+    property string chatAddress: ""
+    property string chatState: "not initialised"
     // The composer side the Maker is selling: LEZ (forward route, the Taker
     // sells Bitcoin) or Bitcoin (reverse route, the Taker sells LEZ).
     property string sellSide: "lez"
@@ -615,6 +617,28 @@ Item {
             root.statusMode = result.ready === true && result.degraded !== true ? "success" : "error"
             root.statusTitle = result.degraded === true ? "Maker is operating in degraded mode" : "Maker systems ready"
             root.statusDetail = root.routeCount + (root.routeCount === 1 ? " active route" : " active routes") + " · owner socket verified"
+        })
+    }
+
+    function chatStatus() {
+        root.run(root.backend.chatStatus(), "Reading Logos Chat session", function(result) {
+            root.chatAddress = String(result.address ?? "")
+            root.chatState = String(result.state ?? "unknown")
+            root.statusMode = result.online === true ? "success" : "working"
+            root.statusTitle = result.online === true ? "Private Chat is online" : "Private Chat is starting"
+            root.statusDetail = result.session_bound === true
+                ? "Direct Taker conversation bound for this app session"
+                : "Share this session address with the Taker"
+        })
+    }
+
+    function resetChat() {
+        root.run(root.backend.resetChat(), "Resetting private Chat session", function(result) {
+            root.chatAddress = String(result.address ?? "")
+            root.chatState = String(result.state ?? "online")
+            root.statusMode = "working"
+            root.statusTitle = "Private Chat session reset"
+            root.statusDetail = "Share this address again; no previous peer binding remains"
         })
     }
 
@@ -1584,6 +1608,52 @@ Item {
                             font.family: root.latestSwap === "" ? "DejaVu Sans" : "DejaVu Sans Mono"
                             elide: Text.ElideMiddle
                             Layout.preferredWidth: 220
+                        }
+                    }
+                }
+
+                Rectangle {
+                    objectName: "makerChat"
+                    Layout.fillWidth: true
+                    implicitHeight: makerChatColumn.implicitHeight + 40
+                    radius: 14
+                    color: "#101722"
+                    border.width: 1
+                    border.color: "#3A3152"
+                    ColumnLayout {
+                        id: makerChatColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        anchors.margins: 20
+                        spacing: 10
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: "Private negotiation Chat"; color: "#F1F3F6"; font.pixelSize: 14; font.weight: Font.DemiBold }
+                                Label { text: "End-to-end encrypted by Logos Chat; valid only while this Maker app is open"; color: "#7F8A9B"; font.pixelSize: 10 }
+                            }
+                            Label { text: root.chatState.toUpperCase(); color: "#B997FF"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+                            LuxeButton {
+                                objectName: "makerChatStatus"
+                                text: "Refresh Chat"
+                                enabled: root.ready && !root.busy
+                                onClicked: root.chatStatus()
+                            }
+                            LuxeButton {
+                                objectName: "makerChatReset"
+                                text: "Reset"
+                                enabled: root.ready && !root.busy
+                                onClicked: root.resetChat()
+                            }
+                        }
+                        LuxeField {
+                            objectName: "makerChatAddress"
+                            text: root.chatAddress
+                            placeholderText: "Refresh after Logos Chat reaches online"
+                            readOnly: true
+                            selectByMouse: true
+                            Layout.fillWidth: true
+                            font.family: "DejaVu Sans Mono"
                         }
                     }
                 }
