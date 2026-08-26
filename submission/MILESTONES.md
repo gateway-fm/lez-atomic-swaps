@@ -1,6 +1,6 @@
 # Milestone-to-artifact map
 
-Snapshot date: 2026-08-20. The upstream issues are open and all listed
+Snapshot date: 2026-08-26. The upstream issues are open and all listed
 checkboxes are currently unchecked. `Included` below means the artifact is in
 this submission branch; it does not mean Logos has accepted the deliverable.
 
@@ -32,7 +32,7 @@ Upstream: [logos-co/rfp#123](https://github.com/logos-co/rfp/issues/123)
 | LEZ/BTC SDK with full lifecycle coverage | [M3 operator guide](../docs/m3-local-poc-operator-guide.md), [M3 review](../docs/milestone-3-review.md), [ADR 0046](../docs/architecture/0046-replay-btc-sdk-lifecycle-from-exact-transitions.md), exact runner patch series under `deploy/full-swap/patches/` | Historical review/evidence plus reproducible runner delta included; see portability limits |
 | DLC `AdaptorSignature.md` vectors plus swap-specific vectors | [ADR 0050](../docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md), Bitcoin Core smoke/P2TR/MuSig2 JSON records, [proposal errata](../docs/proposal-acceptance-errata.md) | **Qualified deviation:** the cited DLC vector file does not exist; BIP-340/BIP-327 and swap-specific evidence is supplied without claiming literal DLC-file conformance |
 | `bitcoind` testnet setup documentation | [`docs/bitcoin-testnet4-setup.md`](../docs/bitcoin-testnet4-setup.md), [ADR 0051](../docs/architecture/0051-bind-bitcoin-testnet4-routes-to-chain-profile.md) | Included; the demonstrated run remains regtest |
-| BTC demo set per D1 | Historical three-video identities in [`milestone-3-review.md`](../docs/milestone-3-review.md); public happy-path vertical demo plus this pack's silent overview | **Partial public media:** refund/concurrency D1 videos are hash-described private evidence, not publicly packaged here |
+| BTC demo set per D1 | Public [actual-UI happy-path walkthrough](../media/lez-btc-ui-swap-demo.mp4); actual-node [two-lock refund](../docs/evidence/m3-local-two-direction-refund-poc-20260716.json) and [opposite-direction overlap](../docs/evidence/m3-overlapping-two-swap-poc-20260717.json) records; exact reproduction procedures in the [M3 operator guide](../docs/m3-local-poc-operator-guide.md) | Included as public walkthrough plus runnable procedures and passed secret-safe evidence; refund/overlap are not represented as public execution footage |
 | Inline Aumayr and Fournier grounding | [ADR 0050](../docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md) | Included as a security-property mapping, not a transferred formal proof |
 
 Additional functional cases in this pack: both-direction happy settlement,

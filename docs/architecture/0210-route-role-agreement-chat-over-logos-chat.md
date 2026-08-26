@@ -24,10 +24,18 @@ authority to create, validate, sign, or persist a swap agreement.
 Use Logos Chat as the transport for the existing fixed Chat RPC methods, with a
 small role-fixed Rust gateway on each installation:
 
-```text
-Taker service -> Taker proxy UDS -> Taker gateway -> Basecamp Chat
-                                                    | E2EE direct conversation
-Maker daemon Chat UDS <- Maker gateway <- Basecamp Chat
+```mermaid
+flowchart LR
+    TakerService["Taker service"] -->|owner-local RPC| TakerProxy["Taker proxy UDS"]
+    TakerProxy --> TakerGateway["Taker role gateway"]
+    TakerGateway -->|bounded signed frame| TakerChat["Basecamp Chat"]
+    TakerChat <-->|E2EE direct conversation| MakerChat["Basecamp Chat"]
+    MakerChat --> MakerGateway["Maker role gateway"]
+    MakerGateway -->|owner-local RPC| MakerDaemon["Maker daemon Chat UDS"]
+
+    Durable["Signed role stores<br/>and countersigned agreement"]
+    TakerService --> Durable
+    MakerDaemon --> Durable
 ```
 
 The Basecamp adapter owns the Chat module instance and event subscriptions.
