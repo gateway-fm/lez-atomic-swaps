@@ -350,117 +350,172 @@
       <footer class="source-line">Threats TM-0005, TM-0012, TM-0016 · ADRs 0030, 0037, 0043, 0050</footer>
     </section>
 
-    <section class="slide xray-slide" data-title="The adaptor secret" data-duration="9">
+    <section class="slide xray-slide" data-title="The adaptor secret" data-duration="10">
       <header class="slide-header">
         <p class="eyebrow lime tag">M3</p>
-        <h2>Claiming one leg hands over the key to the other.</h2>
+        <h2>The claim's own signature is the secret.</h2>
       </header>
       <div class="xray">
         <div class="xray-code">
-          <div class="xray-file">crates/adaptor-signature/src/lib.rs</div>
-          <pre><span class="c">// t is never sent. It is added — and the sum is what lands on chain.</span>
-<span class="k">pub fn</span> <span class="f">adapt_presignature</span>(context, presignature: [u8; 65],
-                          adaptor_secret: Zeroizing&lt;[u8; 32]&gt;) -&gt; Result&lt;[u8; 64]&gt; {
-    <span class="k">let</span> presignature = verified_presignature(context, &amp;presignature)?;
-    <span class="k">let</span> secret       = checked_adaptor_secret(context, adaptor_secret)?;
-    <span class="k">let</span> final_signature = <span class="hl">presignature.adapt(secret)</span>
-        .ok_or(AdaptorSessionError::AdaptationFailed)?;
-    verify_final_signature(context, bytes)?;   <span class="c">// s must be a real signature</span>
-}
+          <div class="xray-file">the claim path, in order · escrow/src/lib.rs → adaptor-signature/src/lib.rs</div>
+          <pre><span class="c">// 1 — The escrow takes no signature argument. It requires the transaction</span>
+<span class="c">//     itself to be signed by the aggregate account.</span>
+<span class="k">pub fn</span> <span class="f">claim_native_witnessed</span>(_ctx, metadata, custody,
+    <span class="a">#[account(mut)]</span> claimant: AccountWithMetadata,
+    <span class="hl">#[account(signer)] aggregate_authority: AccountWithMetadata,</span>
+    swap_id: [u8; 32]) -&gt; SpelResult { … }
 
-<span class="c">// The other side subtracts. Nobody transmitted anything secret.</span>
-<span class="k">pub fn</span> <span class="f">extract_adaptor_secret</span>(context, presignature: [u8; 65],
-                              final_signature: [u8; 64]) -&gt; Result&lt;Zeroizing&lt;[u8; 32]&gt;&gt; {
-    <span class="k">let</span> extracted: MaybeScalar = <span class="hl">presignature.reveal_secret(&amp;final_signature)</span>
-        .ok_or(AdaptorSessionError::ExtractionFailed)?;
-    <span class="k">if</span> <span class="hl">extracted.base_point_mul() != context.adaptor_point_value()?</span> {
-        <span class="k">return</span> Err(AdaptorSessionError::ExtractedScalarPointMismatch);
-    }
-    Ok(Zeroizing::new(extracted.serialize()))   <span class="c">// zeroized on drop</span>
-}
+<span class="c">// 2 — …and that signer must be the exact key recorded at initialize.</span>
+<span class="k">if</span> witnessed_account_id(&amp;x_only_public_key) != account_id
+    || <span class="hl">account_id != aggregate_authority</span> { <span class="k">return</span> Err(ERROR_ACCOUNT_BINDING) }
 
-<span class="c">// Both directions are point-checked against the T fixed in the agreement.</span>
-<span class="k">fn</span> <span class="f">checked_adaptor_secret</span>(context, adaptor_secret) -&gt; Result&lt;Scalar&gt; {
-    <span class="k">if</span> <span class="hl">secret.base_point_mul() != context.adaptor_point_value()?</span> {
-        <span class="k">return</span> Err(AdaptorSessionError::AdaptorSecretPointMismatch);
-    }
+<span class="c">// 3 — That key is 2-of-2. The Taker cannot sign alone; it finishes the</span>
+<span class="c">//     pre-signature both parties built in the M1 rounds.</span>
+<span class="k">let</span> final_signature = <span class="hl">presignature.adapt(secret)</span>;    <span class="c">// s = s′ + t</span>
+verify_final_signature(context, bytes)?;
+
+<span class="c">// 4 — s authorised the transaction, so s is in the block. The Maker</span>
+<span class="c">//     already holds s′ and subtracts.</span>
+<span class="k">let</span> extracted = <span class="hl">presignature.reveal_secret(&amp;final_signature)</span>;  <span class="c">// t = s − s′</span>
+<span class="k">if</span> extracted.base_point_mul() != context.adaptor_point_value()? {
+    <span class="k">return</span> Err(AdaptorSessionError::ExtractedScalarPointMismatch);
 }</pre>
         </div>
         <aside class="xray-notes">
-          <article><h3>Where the Maker calls it</h3><p><code>sdk.rs:2692</code> — after observing the counterparty claim, it rebuilds the session from the countersigned agreement, verifies the final signature, then extracts. The pre-signature it subtracts is the one it already stored: <code>prepared.claim_effects().bitcoin_presignature</code>.</p></article>
-          <article><h3>Extraction cannot be spoofed</h3><p>A recovered scalar is only returned if <em>t·G = T</em> against the <em>T</em> the agreement froze. A counterparty publishing a different signature yields either no scalar or a point mismatch — never a wrong secret that looks right.</p></article>
-          <article><h3>The session is derived, not passed</h3><p><code>claim_adaptor_session_context(Bitcoin)</code> hashes the agreement commitment with the chain tag, so the pre-signature can only be adapted or subtracted inside the session those exact signed terms define.</p></article>
+          <article><h3>There is no "reveal" step</h3><p>The Taker never sends <em>t</em> to anyone. It signs a transaction it wanted to send anyway. The signature that made the escrow pay out is the same object the Maker subtracts from — publication is a side effect of getting paid.</p></article>
+          <article><h3>Why the Taker cannot sign alone</h3><p>The aggregate authority is a 2-of-2 MuSig2 key. The Taker holds one partial, never the other. The pre-signature from the signing rounds plus <em>t</em> is the <em>only</em> route to a complete signature under that key.</p></article>
+          <article><h3>And it cannot be faked</h3><p>Extraction returns a scalar only when <em>t·G = T</em> against the <em>T</em> the agreement froze. A different signature yields no scalar or a point mismatch — never a wrong secret that looks usable.</p></article>
         </aside>
       </div>
       <div class="reveal-band">
-        <div class="reveal-lead"><b>Add on one chain, subtract on the other.</b><span>The same pre-signature is used twice: once to finish a signature, once to recover what finished it.</span></div>
+        <div class="reveal-lead"><b>Nothing is transmitted.</b><span>The Taker gets paid; the Maker reads the receipt.</span></div>
         <div class="reveal-math">
-          <div class="rv secret"><code>s = s′ + t</code><span><b>adapt_presignature</b><br>the claimant spends</span></div>
+          <div class="rv secret"><code>s = s′ + t</code><span>the only signature that<br>satisfies <b>#[account(signer)]</b></span></div>
           <i class="arr">→</i>
-          <div class="rv onchain"><code>s</code><span>public on chain<br>an ordinary signature</span></div>
+          <div class="rv onchain"><code>tx.signature = s</code><span>in the block, because it is<br>what authorised the claim</span></div>
           <i class="arr">→</i>
-          <div class="rv extract"><code>t = s − s′</code><span><b>extract_adaptor_secret</b><br>the follower spends the other leg</span></div>
+          <div class="rv extract"><code>t = s − s′</code><span>the Maker spends the<br>Bitcoin leg with it</span></div>
         </div>
       </div>
-      <footer class="source-line">Adaptor arithmetic · <code>crates/adaptor-signature/src/lib.rs:813-863</code> · call sites <code>crates/btc-swap-sdk/src/sdk.rs:2692, 2768</code></footer>
+      <footer class="source-line">Claim instruction · <code>escrow/src/lib.rs:943-973</code> · gate <code>:181-188</code> · arithmetic <code>adaptor-signature/src/lib.rs:813, 846</code></footer>
     </section>
 
-    <section class="slide xray-slide" data-title="LEZ escrow" data-duration="9">
+    <section class="slide xray-slide" data-title="Escrow happy path" data-duration="10">
       <header class="slide-header">
         <p class="eyebrow purple tag">M3</p>
-        <h2>The escrow decides, not the counterparty.</h2>
+        <h2>Eight bindings, then it pays.</h2>
       </header>
       <div class="xray">
         <div class="xray-code">
-          <div class="xray-file">compat/lez-v0.2-provisional/escrow/src/lib.rs</div>
-          <pre><span class="c">// Two derived accounts per swap. Nobody chooses either address.</span>
-<span class="a">#[account(init, pda = arg("swap_id"))]</span> metadata: AccountWithMetadata,
-<span class="a">#[account(mut, pda = [literal("custody"), arg("swap_id")])]</span> custody: AccountWithMetadata,
-<span class="a">#[account(signer)]</span> depositor: AccountWithMetadata,
+          <div class="xray-file">compat/lez-v0.2-provisional/escrow/src/lib.rs · validated_native_claim_state</div>
+          <pre><span class="k">let mut</span> state = read_metadata(metadata)?;
+require_funded(&amp;state)?;                     <span class="c">// status must be Funded</span>
 
-<span class="c">// The claim key is bound to a LEZ account by hashing, not by assertion.</span>
-<span class="k">const</span> PUBLIC_ACCOUNT_ID_PREFIX: &amp;[u8; 32] = b<span class="s">"/LEE/v0.3/AccountId/Public/\x00…"</span>;
-
-<span class="k">fn</span> <span class="f">witnessed_account_id</span>(x_only_public_key: &amp;[u8; 32]) -&gt; AccountId {
-    hasher.update(PUBLIC_ACCOUNT_ID_PREFIX);
-    hasher.update(x_only_public_key);
-    AccountId::new(hasher.finalize().into())
-}
-
-<span class="c">// Three clauses. Each one blocks a different attack.</span>
-<span class="k">if</span> <span class="hl">witnessed_account_id(&amp;x_only_public_key) != account_id</span>
-    || <span class="hl">account_id != aggregate_authority</span>
-    || <span class="hl">account_id == state.claimant</span>
+<span class="k">if</span> <span class="hl">state.swap_id != swap_id</span>                  <span class="c">// this swap, not a sibling</span>
+    || <span class="hl">state.asset_definition != [0; 32]</span>       <span class="c">// native asset only</span>
+    || <span class="hl">state.asset_program != state.custody_program</span>
+    || <span class="hl">state.claimant != claimant.account_id</span>     <span class="c">// pays the recorded party</span>
+    || <span class="hl">state.custody != custody.account_id</span>       <span class="c">// the recorded vault</span>
+    || <span class="hl">claimant.account.program_owner != state.asset_program</span>
+    || <span class="hl">custody.account.program_owner != state.asset_program</span>
+    || <span class="hl">custody.account.balance != state.amount</span>   <span class="c">// exact amount, still there</span>
 {
     <span class="k">return</span> Err(custom_error(ERROR_ACCOUNT_BINDING,
-        <span class="s">"aggregate witness account binding mismatch"</span>));
+        <span class="s">"native claim account binding mismatch"</span>));
 }
 
-<span class="c">// Refund takes no signer at all — and can only pay the depositor.</span>
-<span class="k">pub fn</span> <span class="f">refund_native</span>(_ctx, metadata, custody,
-                     <span class="a">#[account(mut)]</span> depositor, swap_id) -&gt; SpelResult {
-    <span class="k">if</span> state.depositor != depositor.account_id { <span class="k">return</span> Err(…) }
+<span class="k">match</span> proof {
+    ClaimProof::Sha256Preimage(preimage)   =&gt; require_preimage_authority(…)?,
+    ClaimProof::AggregateWitness(authority) =&gt; require_aggregate_witness_authority(…)?,
+}
+state.status = EscrowStatus::Claimed;        <span class="c">// one-way; replay is not a claim</span>
+
+<span class="c">// Every record carries its own format version.</span>
+<span class="k">const</span> ESCROW_METADATA_VERSION: u8 = <span class="hl">2</span>;   <span class="k">pub</span> version: u8,</pre>
+        </div>
+        <aside class="xray-notes">
+          <article><h3>Nothing is taken on trust</h3><p>Every account the caller passes is re-derived or compared against the metadata written at initialize. Supplying a different vault, a different claimant, or a partially drained balance fails the same branch.</p></article>
+          <article><h3>Authority is the last check</h3><p>Bindings first, cryptography second. A caller with a perfectly valid signature still cannot claim into the wrong account, and the expensive check never runs on a malformed request.</p></article>
+          <article><h3>Versioned on both sides</h3><p>The escrow stamps <code>version: 2</code> into every record and refuses the XMR branch unless it reads <code>3</code>. The agreement carries <code>BTC_AGREEMENT_SCHEMA_V1</code>, and every digest domain ends in <code>/v1</code>.</p></article>
+        </aside>
+      </div>
+      <footer class="source-line">Claim validation · <code>escrow/src/lib.rs:455-487</code> · versions <code>:56, 78-79, 757-758</code></footer>
+    </section>
+
+    <section class="slide xray-slide" data-title="Permissionless surface" data-duration="9">
+      <header class="slide-header">
+        <p class="eyebrow purple tag">M3</p>
+        <h2>Who is allowed to call each instruction.</h2>
+      </header>
+      <div class="xray">
+        <div class="xray-code">
+          <div class="xray-file">the whole signer surface of the escrow program</div>
+          <pre><span class="c">// Funding — only the depositor can put its own money in.</span>
+<span class="k">pub fn</span> <span class="f">initialize_native_witnessed</span>(…,
+    <span class="hl">#[account(signer)] depositor: AccountWithMetadata,</span>
+    claimant, aggregate_authority, swap_id, terms_hash,
+    aggregate_x_only_public_key, amount, refund_at, …)
+
+<span class="c">// Claiming — only the 2-of-2 joint key, and it is not the claimant.</span>
+<span class="k">pub fn</span> <span class="f">claim_native_witnessed</span>(…,
+    <span class="a">#[account(mut)]</span> claimant: AccountWithMetadata,
+    <span class="hl">#[account(signer)] aggregate_authority: AccountWithMetadata,</span> …)
+
+<span class="c">// Refunding — no signer anywhere in the signature. Anyone may submit it.</span>
+<span class="k">pub fn</span> <span class="f">refund_native</span>(_ctx: ProgramContext,
+    <span class="a">#[account(mut, owner = self_program_id, pda = arg("swap_id"))]</span> metadata,
+    <span class="a">#[account(mut, pda = [literal("custody"), arg("swap_id")])]</span> custody,
+    <span class="hl">#[account(mut)] depositor: AccountWithMetadata,</span>   <span class="c">// ← no signer</span>
+    swap_id: [u8; 32]) -&gt; SpelResult
+{
+    <span class="k">if</span> … || <span class="hl">state.depositor != depositor.account_id</span> || … {
+        <span class="k">return</span> Err(custom_error(ERROR_ACCOUNT_BINDING, …));
+    }
 }</pre>
         </div>
         <aside class="xray-notes">
-          <article><h3>Windows are consensus, not code</h3><p>The claim carries <code>.with_timestamp_validity_window(..state.refund_at)</code> and the refund carries <code>(state.refund_at..)</code>. Disjoint and exhaustive — no block can hold both, and the escrow never needs an <code>if now &lt; deadline</code>.</p></article>
-          <article><h3>Why <code>account_id == state.claimant</code> fails</h3><p>If the claimant were also the aggregate authority it could claim alone, and no joint signature would ever appear. The clause forces the claim to carry a signature under the <em>joint</em> key — which is the mechanism below.</p></article>
-          <article><h3>Permissionless, not unrestricted</h3><p>Anyone may submit the refund — a watchtower, the counterparty, a stranger. It still pays only the recorded depositor, so recovery survives the counterparty vanishing and needs no operator online.</p></article>
+          <article><h3>Addresses need no registry</h3><p>Both accounts are PDAs of the swap id, so any observer derives them without asking anyone. There is no index to query, no operator to be online, and nothing to gate discovery.</p></article>
+          <article><h3>Permissionless ≠ unrestricted</h3><p>Dropping the signer on refund does not widen who gets paid. The binding still forces the recorded depositor, so a stranger submitting it merely pays the fee on someone else's recovery.</p></article>
+          <article><h3>What that buys</h3><p>Recovery survives the counterparty vanishing, the maker daemon being down, and the taker losing its process. A watchtower — or the counterparty, wanting its own leg unstuck — can push the refund through.</p></article>
         </aside>
       </div>
-      <div class="reveal-band">
-        <div class="reveal-lead"><b>The escrow never sees <em>t</em>.</b><span>It only accepts a complete signature under the joint key — and adding <em>t</em> is the only way to make one.</span></div>
-        <div class="reveal-math">
-          <div class="rv"><code>s′</code><span>pre-signature<br>both parties hold it</span></div>
-          <i>+</i>
-          <div class="rv secret"><code>t</code><span>adaptor secret<br>Taker only</span></div>
-          <i>=</i>
-          <div class="rv onchain"><code>s</code><span>valid aggregate signature<br>published on LEZ</span></div>
-          <i class="arr">→</i>
-          <div class="rv extract"><code>t = s − s′</code><span>the Maker already had <code>s′</code><br>so the claim hands it <em>t</em></span></div>
+      <footer class="source-line">Signer surface · <code>escrow/src/lib.rs:824-833, 943-950, 977-1010</code></footer>
+    </section>
+
+    <section class="slide xray-slide" data-title="Escrow refunds" data-duration="10">
+      <header class="slide-header">
+        <p class="eyebrow amber tag">M3</p>
+        <h2>The deadline is enforced by consensus.</h2>
+      </header>
+      <div class="xray">
+        <div class="xray-code">
+          <div class="xray-file">compat/lez-v0.2-provisional/escrow/src/lib.rs · validity windows</div>
+          <pre><span class="c">// Claim — valid only strictly before the deadline.</span>
+Ok(SpelOutput::execute(vec![metadata, custody, claimant, aggregate_authority],
+                       vec![transfer])
+    <span class="hl">.with_timestamp_validity_window(..state.refund_at))</span>
+
+<span class="c">// Refund — valid only from the deadline onward.</span>
+Ok(SpelOutput::execute(vec![metadata, custody, depositor],
+                       vec![transfer])
+    <span class="hl">.with_timestamp_validity_window(state.refund_at..))</span>
+
+<span class="c">// The refund pays the depositor, the full recorded amount, once.</span>
+<span class="k">let</span> transfer = native_transfer_call(state.asset_program,
+    custody.clone(), <span class="hl">depositor.clone()</span>, <span class="hl">state.amount</span>, <span class="k">true</span>, &amp;swap_id);
+state.status = EscrowStatus::Refunded;
+
+<span class="c">// refund_at is fixed at initialize and never rewritten afterwards.</span>
+<span class="k">pub</span> refund_at: u64,          <span class="c">// EscrowMetadata field, set once</span>
+<span class="k">if</span> … || <span class="hl">refund_at == 0</span> { <span class="k">return</span> Err(…) }   <span class="c">// rejected at init</span></pre>
         </div>
+        <aside class="xray-notes">
+          <article><h3>Disjoint and exhaustive</h3><p><code>..refund_at</code> and <code>refund_at..</code> tile the timeline with no overlap and no gap. Exactly one of claim and refund can be included in any block — the escrow needs no <code>if now &lt; deadline</code>, because a stale transaction is never valid to include.</p></article>
+          <article><h3>The maker-funded leg refunds first</h3><p>Deadlines are staggered in the agreement, not here. The leg funded second carries the earlier <code>refund_at</code>, so the party who moved first is always the last one able to recover.</p></article>
+          <article><h3>Not a race with the claim</h3><p>Because the windows cannot overlap, the LEZ side has no claim-versus-refund contention. That race exists only on Bitcoin, after CSV maturity, and is what the safety margin keeps the normal flow away from.</p></article>
+        </aside>
       </div>
-      <footer class="source-line">Escrow program · <code>compat/lez-v0.2-provisional/escrow/src/lib.rs</code> · lines 90-98, 181-188, 977-1021</footer>
+      <footer class="source-line">Windows and refund · <code>escrow/src/lib.rs:973, 1021</code> · <code>refund_native :977-1021</code> · field <code>:71</code></footer>
     </section>
 
     <section class="slide xray-slide" data-title="P2TR custody" data-duration="9">
