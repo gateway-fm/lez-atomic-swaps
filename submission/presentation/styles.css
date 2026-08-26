@@ -892,3 +892,7 @@ code {
 .flow-ctx { display: flex; align-items: center; flex-wrap: wrap; gap: .55em; margin: 0 0 1.2%; color: #5f6d83; font: 700 clamp(7px, .58vw, 11px) "SFMono-Regular", monospace; letter-spacing: .06em; text-transform: uppercase; }
 .flow-ctx i { color: #35435a; font-style: normal; }
 .flow-ctx .here { padding: .3em .7em; border: 1px solid rgba(157,108,255,.5); border-radius: 999px; background: rgba(157,108,255,.12); color: #cbb6ff; }
+.code-stack { display: flex; flex-direction: column; gap: 1.2%; min-width: 0; }
+.code-stack .xray-code { flex: none; }
+.code-stack .xray-file { padding: .5em 1.1em; }
+.code-stack .xray-code pre { padding: .8em 1.2em; }
