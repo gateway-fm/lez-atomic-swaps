@@ -19,7 +19,6 @@
       <div class="cover-copy">
         <p class="eyebrow">BILATERAL ATOMIC SWAPS</p>
         <h1>LEZ <span class="swap-glyph">⇄</span> Bitcoin</h1>
-        <p class="cover-lede">One protocol foundation. One real Bitcoin integration. One operator-facing Basecamp flow.</p>
         <div class="milestone-strip" aria-label="Included milestone areas">
           <span><b>M1</b> design</span>
           <i></i>
@@ -40,10 +39,8 @@
     </section>
 
     <section class="slide" data-title="Three milestone layers" data-duration="7">
-      <header class="slide-header">
-        <p class="eyebrow">THE SUBMISSION</p>
-        <h2>One vertical slice. Three milestone layers.</h2>
-        <p class="lede">The package connects reviewed design to chain evidence and then to a usable Maker/Taker journey.</p>
+      <header class="slide-header no-eyebrow">
+        <h2>What this submission covers</h2>
       </header>
       <div class="layer-grid">
         <article class="layer-card m1">
@@ -74,11 +71,46 @@
       <footer class="source-line">Scope and provenance · <code>docs/submission.md</code></footer>
     </section>
 
+    <section class="slide divider m1" data-title="Protocol foundations" data-duration="3">
+      <p class="eyebrow lime tag">M1</p>
+      <h2>Protocol foundations</h2>
+      <span class="divider-rule"></span>
+    </section>
+
+    <section class="slide" data-title="Structural properties" data-duration="8">
+      <header class="slide-header">
+        <p class="eyebrow lime tag">M1</p>
+        <h2>No third party holds funds or matches orders.</h2>
+      </header>
+      <div class="property-grid">
+        <article class="property-card">
+          <span class="property-id">01</span>
+          <h3>Self-custodial</h3>
+          <p>Each role keeps its own keys, state and recovery authority. Bitcoin custody is a 2-of-2 MuSig2 output neither side can spend alone. The LEZ refund instruction takes no signer at all and can only pay the recorded depositor.</p>
+          <strong>No bridge · no custodian · no third-party signer</strong>
+        </article>
+        <article class="property-card">
+          <span class="property-id">02</span>
+          <h3>No liquidity pool</h3>
+          <p>Every swap is bilateral: two parties, and the exact amounts fixed in the countersigned agreement before either chain moves. No pooled capital, no LP position, no pricing curve.</p>
+          <strong>No pool to drain · no shared inventory</strong>
+        </article>
+        <article class="property-card">
+          <span class="property-id">03</span>
+          <h3>Peer-to-peer offers</h3>
+          <p>Offers travel as signed envelopes from maker to taker. The taker verifies the maker's signature and the exact terms before consenting to anything. Nothing on that path takes custody or matches orders.</p>
+          <strong>No venue custody · no matching engine</strong>
+        </article>
+      </div>
+      <div class="atomic-note property-note"><b>Consequence:</b> recovery never depends on the counterparty's cooperation, on an operator staying online, or on a third party staying solvent. Each side's refund is a transaction it can already build and broadcast itself.</div>
+      <footer class="source-line">Design + threat model · <code>docs/milestone-1/protocol-design.md</code> · <code>threat-model.md</code></footer>
+    </section>
+
     <section class="slide" data-title="M1 foundation" data-duration="8">
       <header class="slide-header split-heading">
         <div>
-          <p class="eyebrow lime">M1 · FOUNDATION</p>
-          <h2>Security starts before either chain moves.</h2>
+          <p class="eyebrow lime tag">M1</p>
+          <h2>Nothing is funded until refunds are signed.</h2>
         </div>
         <div class="checkpoint">checkpoint <strong>m1-complete.1</strong><br><code>96b7b22</code></div>
       </header>
@@ -86,8 +118,8 @@
         <div class="foundation-spine">
           <div class="foundation-node"><span>01</span><strong>Countersigned agreement</strong><small>roles · direction · assets · messages · chain identities</small></div>
           <div class="foundation-node"><span>02</span><strong>Verified signing material</strong><small>MuSig2 contexts · adaptor points · exact pre-signatures</small></div>
-          <div class="foundation-node"><span>03</span><strong>Recovery ready first</strong><small>signed deadlines · exact refund paths · durable state</small></div>
-          <div class="foundation-node"><span>04</span><strong>Only then: value at risk</strong><small>persist before send · canonical observation · bounded authority</small></div>
+          <div class="foundation-node"><span>03</span><strong>Recovery ready first</strong><small>signed deadlines · refund paths · durable state</small></div>
+          <div class="foundation-node"><span>04</span><strong>Funds move last.</strong><small>persist before send · canonical observation · bounded authority</small></div>
         </div>
         <aside class="foundation-proof">
           <div class="stat-row">
@@ -103,17 +135,23 @@
             <span>sdk-trait-surface.md</span>
             <span>lez-primitive-verification.md</span>
           </div>
-          <p><strong>No bridge or custodian controls settlement.</strong> Each role retains its own keys, state, and recovery authority.</p>
+          <p><strong>Each step must be durable before the next begins.</strong> A crash between them resumes; it does not improvise.</p>
         </aside>
       </div>
       <footer class="source-line">Review entry · <code>docs/milestone-1/README.md</code></footer>
     </section>
 
+    <section class="slide divider m3" data-title="LEZ ⇄ Bitcoin leg" data-duration="3">
+      <p class="eyebrow purple tag">M3</p>
+      <h2>LEZ ⇄ Bitcoin leg</h2>
+      <span class="divider-rule"></span>
+    </section>
+
     <section class="slide" data-title="Swap algorithm" data-duration="9">
       <header class="slide-header">
-        <p class="eyebrow purple">M3 · INDEPENDENT VERIFICATION</p>
-        <h2>Each side verifies the other chain before giving up leverage.</h2>
-        <p class="lede">Direction shown: Taker sells 0.01 BTC; Maker delivers 1,000 LEZ.</p>
+        <p class="eyebrow purple tag">M3</p>
+        <h2>Each side checks the other chain itself.</h2>
+        <p class="lede">Taker sells 0.01 BTC for 1,000 LEZ.</p>
       </header>
       <div class="protocol-flow">
         <article class="flow-step preflight">
@@ -131,14 +169,14 @@
         <article class="flow-step verify-btc">
           <span class="step-id">02</span><span class="role maker">MAKER</span>
           <strong>Verify BTC; fund LEZ</strong>
-          <small>Maker's own Bitcoin route checks network, transaction, output key, value, unspent state, and depth.</small>
+          <small>Maker's own Bitcoin node checks network, exact outpoint, value, P2TR output, confirmations, and the fixed payout.</small>
           <span class="fail-closed">Mismatch → stop; no LEZ.</span>
         </article>
         <div class="flow-join accent">→</div>
         <article class="flow-step verify-lez">
           <span class="step-id">03</span><span class="role taker">TAKER</span>
           <strong>Verify LEZ; claim</strong>
-          <small>Taker's own LEZ route checks program, swap, asset, amount, parties, custody, and finality.</small>
+          <small>Taker's own authenticated LEZ node checks the exact escrow, asset, amount, accounts, recipients, deadlines, and finality.</small>
           <span class="fail-closed">Mismatch → stop; no claim or <em>t</em>.</span>
         </article>
         <div class="flow-join">→</div>
@@ -157,8 +195,8 @@
 
     <section class="slide" data-title="Both directions" data-duration="7">
       <header class="slide-header">
-        <p class="eyebrow purple">M3 · BIDIRECTIONAL</p>
-        <h2>Two economic directions. One safety invariant.</h2>
+        <p class="eyebrow purple tag">M3</p>
+        <h2>Both directions, same funding order.</h2>
       </header>
       <div class="direction-grid">
         <article class="direction-card">
@@ -191,9 +229,8 @@
 
     <section class="slide" data-title="Refunds and atomicity" data-duration="9">
       <header class="slide-header">
-        <p class="eyebrow amber">M3 · RECOVERY</p>
-        <h2>Atomicity is conditional safety plus recoverability.</h2>
-        <p class="lede">The chains commit independently. Deadlines and evidence determine who may act next.</p>
+        <p class="eyebrow amber tag">M3</p>
+        <h2>Four ways a swap ends.</h2>
       </header>
       <div class="case-grid">
         <article class="case-card safe">
@@ -225,168 +262,9 @@
       <footer class="source-line">Refund evidence · <code>m3-local-two-direction-refund-poc-20260716.json</code></footer>
     </section>
 
-    <section class="slide" data-title="M3 evidence matrix" data-duration="8">
-      <header class="slide-header split-heading">
-        <div>
-          <p class="eyebrow purple">M3 · EVIDENCE SET</p>
-          <h2>Happy path is only one row.</h2>
-        </div>
-        <div class="evidence-seal"><span>SECRET-SAFE</span><strong>PUBLIC RECORDS</strong></div>
-      </header>
-      <div class="evidence-matrix">
-        <div class="matrix-head"><span>Scenario</span><span>Coverage</span><span>Result</span><span>Record</span></div>
-        <div class="matrix-row"><strong>Settlement</strong><span>Both directions · actual BTC + LEZ nodes</span><b>PASS</b><code>two-direction-poc</code></div>
-        <div class="matrix-row"><strong>Ordered refunds</strong><span>Both directions · exact terminal replay</span><b>PASS</b><code>two-direction-refund</code></div>
-        <div class="matrix-row"><strong>First-lock recovery</strong><span>Absent second lock · both directions</span><b>PASS</b><code>first-lock-refund</code></div>
-        <div class="matrix-row"><strong>Post-reveal restart</strong><span>Fresh Maker-controlled survivor process</span><b>PASS</b><code>survivor-claim</code></div>
-        <div class="matrix-row"><strong>Overlap</strong><span>Two opposite-direction swaps in flight</span><b>PASS</b><code>overlapping-two-swap</code></div>
-      </div>
-      <div class="evidence-foot">
-        <div><strong>Recorded</strong><span>public transaction + block identifiers</span></div>
-        <div><strong>Omitted</strong><span>keys · credentials · adaptor scalar · raw private state</span></div>
-        <div><strong>Boundary</strong><span>private-local functional evidence, not mainnet readiness</span></div>
-      </div>
-      <footer class="source-line">Index · <code>docs/milestone-3-review.md</code> + <code>docs/evidence/m3-*.json</code></footer>
-    </section>
-
-    <section class="slide product-slide" data-title="M6 product journey" data-duration="8">
-      <header class="slide-header compact-heading">
-        <div>
-          <p class="eyebrow pink">M6 · PRODUCT SURFACE</p>
-          <h2>Separate roles. Only the action you own.</h2>
-        </div>
-        <p class="mini-lede">Maker publishes wallet-owned liquidity.<br>Taker discovers, accepts, and advances its gates.</p>
-      </header>
-      <div class="product-screens">
-        <figure class="screen-card maker-screen">
-          <div class="screen-label"><b>01</b><span>MAKER DESK</span><em>publish · monitor · history</em></div>
-          <img src="../../media/screenshots/maker-offer-desk.png" alt="Basecamp Maker desk showing a LEZ for BTC offer" loading="eager">
-        </figure>
-        <figure class="screen-card taker-screen">
-          <div class="screen-label"><b>02</b><span>TAKER MARKET</span><em>discover · accept · act</em></div>
-          <img src="../../media/screenshots/taker-market.png" alt="Basecamp Taker market showing available BTC and LEZ offers" loading="eager">
-        </figure>
-      </div>
-      <div class="role-actions"><span>Taker · Lock BTC</span><i>→</i><span>Maker · Fund LEZ</span><i>→</i><span>Taker · Claim LEZ</span><i>→</i><span>Maker · Claim BTC</span></div>
-      <footer class="source-line">Current branch UI · <code>apps/basecamp/maker</code> + <code>apps/basecamp/taker</code></footer>
-    </section>
-
-    <section class="slide proof-slide" data-title="Completed run proof" data-duration="8">
-      <header class="slide-header compact-heading">
-        <div>
-          <p class="eyebrow lime">M3 + M6 · COMPLETED RUN</p>
-          <h2>Five on-chain actions. Two chains. One reconciled swap.</h2>
-        </div>
-        <div class="run-pill">RUN <code>m5arm-0820121736</code></div>
-      </header>
-      <div class="proof-metrics">
-        <div><span>AMOUNT</span><strong>0.01 BTC ⇄ 1,000 LEZ</strong></div>
-        <div><span>ON-CHAIN ACTIONS</span><strong>2 Bitcoin + 3 LEZ</strong></div>
-        <div><span>STATE</span><strong>revision 4 · completed</strong></div>
-        <div><span>REPLAY</span><strong>0 duplicate submissions</strong></div>
-      </div>
-      <figure class="proof-frame">
-        <img src="../../media/screenshots/finalized-swap-proof.png" alt="Basecamp completed swap proof with five on-chain actions and balance reconciliation" loading="eager">
-      </figure>
-      <footer class="source-line">Machine-readable export · <code>docs/evidence/m3-btc-ui-run-m5arm-0820121736.json</code></footer>
-    </section>
-
-    <section class="slide explorer-slide" data-title="Explorer evidence" data-duration="7">
-      <header class="slide-header compact-heading">
-        <div>
-          <p class="eyebrow blue">CHAIN PROOF</p>
-          <h2>The receipt resolves beyond the UI.</h2>
-        </div>
-        <p class="mini-lede">Exact public identities are inspectable in both local explorers and in the exported evidence view.</p>
-      </header>
-      <div class="explorer-grid">
-        <figure class="explorer-card">
-          <div class="explorer-title"><i class="btc-dot">₿</i><span><b>Bitcoin follow-up claim</b><small>P2TR · confirmed · exact outpoint spent</small></span></div>
-          <img src="../../media/screenshots/bitcoin-claim-explorer.png" alt="Bitcoin regtest explorer transaction details" loading="eager">
-        </figure>
-        <figure class="explorer-card">
-          <div class="explorer-title"><i class="lez-dot">L</i><span><b>LEZ revealing claim</b><small>finalized · exact witnessed signature match</small></span></div>
-          <img src="../../media/screenshots/lez-claim-explorer.png" alt="LEZ explorer revealing claim details" loading="eager">
-        </figure>
-        <figure class="explorer-card evidence-view">
-          <div class="explorer-title"><i class="evidence-dot">✓</i><span><b>Evidence record</b><small>block + account identities · secret-safe</small></span></div>
-          <img src="../../media/screenshots/lez-claim-evidence.png" alt="LEZ evidence explorer record" loading="eager">
-        </figure>
-      </div>
-      <footer class="source-line">Public identities from disposable local chains · no keys, seeds, or adaptor scalar included</footer>
-    </section>
-
-    <section class="slide" data-title="Live stack and logs" data-duration="8">
-      <header class="slide-header split-heading">
-        <div>
-          <p class="eyebrow blue">LIVE VALIDATION · 2026-08-20 18:01 UTC</p>
-          <h2>Services, chains, explorers, logs, and UI gates are live.</h2>
-        </div>
-        <div class="health-pill"><i></i> ALL STAGES PASSED</div>
-      </header>
-      <div class="runtime-layout">
-        <div class="terminal" aria-label="Verification command output">
-          <div class="terminal-bar"><i></i><i></i><i></i><span>submission verification</span></div>
-          <pre><span class="prompt">$</span> ./deploy/scripts/verify-all.sh
-
-<span class="ok">✓</span> all 11 stack services up
-<span class="ok">✓</span> Bitcoin Core chain · height 7,872
-<span class="ok">✓</span> LEZ finalized chain · block 6,980
-<span class="ok">✓</span> explorer transaction display · 110 / 110
-<span class="ok">✓</span> wallet market controller · 31 / 31
-<span class="ok">✓</span> Basecamp Maker · 3 / 3
-<span class="ok">✓</span> Basecamp Taker · 4 / 4
-
-<span class="ok">all verification stages passed</span></pre>
-        </div>
-        <div class="runtime-side">
-          <div class="service-health"><span>maker-node / health</span><code>{ ready: true, degraded: false }</code><small>delivery: available · chat: disabled</small></div>
-          <div class="log-window">
-            <span>LIVE NODE LOGS</span>
-            <p><i>indexer_core</i> Indexed L2 block 6994</p>
-            <p><i>sequencer_core</i> Created block with 1 transaction</p>
-            <p><i>Bitcoin Core</i> UpdateTip · height 7872 · progress 1.0</p>
-          </div>
-          <div class="stack-route">
-            <span>Basecamp</span><b>→</b><span>owner-local services</span><b>→</b><span>role-local actors</span><b>→</b><span>BTC + LEZ</span>
-          </div>
-        </div>
-      </div>
-      <footer class="source-line">Dated validation summary · <code>submission/runtime-validation-20260820.md</code></footer>
-    </section>
-
-    <section class="slide" data-title="M6 packaging" data-duration="8">
-      <header class="slide-header">
-        <p class="eyebrow pink">M6 · REVIEWABLE PRODUCT WORK</p>
-        <h2>From clickable journeys to Basecamp role packages.</h2>
-      </header>
-      <div class="m6-layout">
-        <div class="package-pair">
-          <article class="package-card maker-package">
-            <img src="../../apps/m6-prototypes/assets/maker-console.svg" alt="Maker package illustration">
-            <div><span>BASECAMP PACKAGE</span><h3>Maker</h3><p>Pair and price configuration, offer inventory, active swaps, history, role-local health.</p></div>
-          </article>
-          <article class="package-card taker-package">
-            <img src="../../apps/m6-prototypes/assets/taker-route.svg" alt="Taker package illustration">
-            <div><span>BASECAMP PACKAGE</span><h3>Taker</h3><p>Offer browsing, exact-term consent, progress, mutually exclusive terminal action, proof.</p></div>
-          </article>
-        </div>
-        <aside class="m6-proof-list">
-          <div><b>6 / 6</b><span>isolated browser prototype journeys</span></div>
-          <div><b>2</b><span>separately installable role packages</span></div>
-          <div><b>13</b><span>package contract slots</span></div>
-          <div><b>1</b><span>owner-local transport boundary</span></div>
-          <p>The video proves the current BTC journey. Historical M6 evidence additionally reviews refund and ZEC privacy guidance without claiming those screens are shown here.</p>
-        </aside>
-      </div>
-      <footer class="source-line">Review + certificate · <code>docs/m6-prototype-review.md</code> · <code>m6-basecamp-role-packages-20260804.json</code></footer>
-    </section>
-
     <section class="slide" data-title="Post-quantum posture" data-duration="9">
-      <header class="slide-header">
-        <p class="eyebrow pink">CRYPTOGRAPHIC ASSUMPTIONS</p>
-        <h2>The secret is a scalar, not a preimage.</h2>
-        <p class="lede">Adaptor signatures buy scriptless, unlinkable swaps — and move atomicity onto discrete log.</p>
+      <header class="slide-header no-eyebrow">
+        <h2>What a quantum computer breaks.</h2>
       </header>
       <div class="pq-layout">
         <div class="pq-ledger">
@@ -413,25 +291,144 @@
           </div>
         </div>
         <aside class="pq-finding">
-          <h3>Strictly weaker than the HTLC it replaces</h3>
-          <p>An HTLC's secret is a hash preimage: Grover halves it, 256 bits become 128, and <b>the atomicity survives</b>. Our secret is a scalar with <em>T = t·G</em> published in the agreement. Shor recovers <em>t</em> and claims both legs.</p>
-          <p class="pq-consequence">Even if both chains adopted PQ signatures, a secp256k1 adaptor swap would still leak its witness.</p>
+          <h3>Bitcoin is not post-quantum either.</h3>
+          <ol class="pq-why">
+            <li><b>Post-quantum atomicity would protect nothing here.</b> The same adversary spends the P2TR output directly — a Taproot output key is on chain from the moment it is funded.</li>
+            <li><b>So the mechanism was chosen on properties we can actually have.</b> No script on either chain, no preimage on chain, nothing linking the two legs, one fewer output to spend.</li>
+            <li><b>Upgrading is a mechanism swap, not a redesign.</b> <code>ClaimAuthority</code> is per escrow, and <code>Sha256Preimage</code> already runs the ZEC corridor. Agreement, deadlines and refunds do not depend on the signature scheme.</li>
+          </ol>
           <div class="pq-contrast">
             <div><span class="pq-dot btc"></span>BTC leg · adaptor<b>discrete log</b></div>
             <div><span class="pq-dot zec"></span>ZEC leg · BIP-199 hashlock<b>hash — already PQ-shaped</b></div>
           </div>
-          <p class="pq-path">Migration path is the construction we already ship, not new cryptography.</p>
         </aside>
       </div>
-      <div class="atomic-note pq-note"><b>Inherited, not chosen:</b> Bitcoin consensus has no post-quantum signature scheme, so every BTC swap today is Schnorr-based; P2TR additionally exposes the output key at rest. Lattice (LAS) and isogeny (IAS) adaptor signatures exist in research but need a soft fork. Exposure is real-time, not harvest-now — a settled swap cannot be stolen retroactively.</div>
+      <div class="atomic-note pq-note"><b>The gap is real:</b> an HTLC's secret is a hash preimage — Grover only halves it, so its atomicity survives. Ours is a scalar with <i>T = t·G</i> published in the agreement, so Shor recovers <i>t</i> and claims both legs. Bitcoin gives us no way to close that today: lattice (LAS) and isogeny (IAS) adaptor signatures exist in research but need a soft fork. Exposure is real-time, not harvest-now — a settled swap cannot be stolen retroactively.</div>
       <footer class="source-line">Not a claimed property · tracked as a design assumption, not a mitigation</footer>
     </section>
 
-    <section class="slide" data-title="Scope boundary" data-duration="8">
-      <header class="slide-header">
-        <p class="eyebrow amber">WHAT THIS PACKAGE CLAIMS</p>
-        <h2>Strong evidence, deliberately narrow boundary.</h2>
+    <section class="slide" data-title="M3 evidence matrix" data-duration="8">
+      <header class="slide-header split-heading">
+        <div>
+          <p class="eyebrow purple tag">M3</p>
+          <h2>Five scenarios recorded, all passing.</h2>
+        </div>
+        <div class="evidence-seal"><span>SECRET-SAFE</span><strong>PUBLIC RECORDS</strong></div>
       </header>
+      <div class="evidence-matrix">
+        <div class="matrix-head"><span>Scenario</span><span>Coverage</span><span>Result</span><span>Record</span></div>
+        <div class="matrix-row"><strong>Settlement</strong><span>Both directions · actual BTC + LEZ nodes</span><b>PASS</b><code>two-direction-poc</code></div>
+        <div class="matrix-row"><strong>Ordered refunds</strong><span>Both directions · exact terminal replay</span><b>PASS</b><code>two-direction-refund</code></div>
+        <div class="matrix-row"><strong>First-lock recovery</strong><span>Absent second lock · both directions</span><b>PASS</b><code>first-lock-refund</code></div>
+        <div class="matrix-row"><strong>Post-reveal restart</strong><span>Fresh Maker-controlled survivor process</span><b>PASS</b><code>survivor-claim</code></div>
+        <div class="matrix-row"><strong>Overlap</strong><span>Two opposite-direction swaps in flight</span><b>PASS</b><code>overlapping-two-swap</code></div>
+      </div>
+      <div class="evidence-foot">
+        <div><strong>Recorded</strong><span>public transaction + block identifiers</span></div>
+        <div><strong>Omitted</strong><span>keys · credentials · adaptor scalar · raw private state</span></div>
+        <div><strong>Boundary</strong><span>private-local functional evidence, not mainnet readiness</span></div>
+      </div>
+      <footer class="source-line">Index · <code>docs/milestone-3-review.md</code> + <code>docs/evidence/m3-*.json</code></footer>
+    </section>
+
+    <section class="slide divider m6" data-title="Basecamp apps" data-duration="3">
+      <p class="eyebrow pink tag">M6</p>
+      <h2>Basecamp apps</h2>
+      <span class="divider-rule"></span>
+    </section>
+
+    <section class="slide product-slide" data-title="M6 product journey" data-duration="8">
+      <header class="slide-header compact-heading">
+        <div>
+          <p class="eyebrow pink tag">M6</p>
+          <h2>Each desk shows only its own action.</h2>
+        </div>
+      </header>
+      <div class="product-screens">
+        <figure class="screen-card maker-screen">
+          <div class="screen-label"><b>01</b><span>MAKER DESK</span><em>publish · monitor · history</em></div>
+          <img src="../../media/screenshots/maker-offer-desk.png" alt="Basecamp Maker desk showing a LEZ for BTC offer" loading="eager">
+        </figure>
+        <figure class="screen-card taker-screen">
+          <div class="screen-label"><b>02</b><span>TAKER MARKET</span><em>discover · accept · act</em></div>
+          <img src="../../media/screenshots/taker-market.png" alt="Basecamp Taker market showing available BTC and LEZ offers" loading="eager">
+        </figure>
+      </div>
+      <div class="role-actions"><span>Taker · Lock BTC</span><i>→</i><span>Maker · Fund LEZ</span><i>→</i><span>Taker · Claim LEZ</span><i>→</i><span>Maker · Claim BTC</span></div>
+      <footer class="source-line">Current branch UI · <code>apps/basecamp/maker</code> + <code>apps/basecamp/taker</code></footer>
+    </section>
+
+    <section class="slide proof-slide" data-title="Completed run proof" data-duration="8">
+      <header class="slide-header compact-heading">
+        <div>
+          <p class="eyebrow lime tag">M3 + M6</p>
+          <h2>One completed swap, five on-chain actions.</h2>
+        </div>
+        <div class="run-pill">RUN <code>m5arm-0820121736</code></div>
+      </header>
+      <div class="proof-metrics">
+        <div><span>AMOUNT</span><strong>0.01 BTC ⇄ 1,000 LEZ</strong></div>
+        <div><span>ON-CHAIN ACTIONS (“EFFECTS” IN EVIDENCE)</span><strong>2 Bitcoin + 3 LEZ</strong></div>
+        <div><span>STATE</span><strong>revision 4 · completed</strong></div>
+        <div><span>REPLAY</span><strong>0 duplicate submissions</strong></div>
+      </div>
+      <figure class="proof-frame">
+        <img src="../../media/screenshots/finalized-swap-proof.png" alt="Basecamp completed swap proof with five on-chain actions and balance reconciliation" loading="eager">
+      </figure>
+      <footer class="source-line">Machine-readable export · <code>docs/evidence/m3-btc-ui-run-m5arm-0820121736.json</code></footer>
+    </section>
+
+    <section class="slide explorer-slide" data-title="Explorer evidence" data-duration="7">
+      <header class="slide-header compact-heading">
+        <div class="no-eyebrow">
+          <h2>Every transaction resolves in both explorers.</h2>
+        </div>
+      </header>
+      <div class="explorer-grid">
+        <figure class="explorer-card">
+          <div class="explorer-title"><i class="btc-dot">₿</i><span><b>Bitcoin follow-up claim</b><small>P2TR · confirmed · exact outpoint spent</small></span></div>
+          <img src="../../media/screenshots/bitcoin-claim-explorer.png" alt="Bitcoin regtest explorer transaction details" loading="eager">
+        </figure>
+        <figure class="explorer-card">
+          <div class="explorer-title"><i class="lez-dot">L</i><span><b>LEZ revealing claim</b><small>finalized · exact witnessed signature match</small></span></div>
+          <img src="../../media/screenshots/lez-claim-explorer.png" alt="LEZ explorer revealing claim details" loading="eager">
+        </figure>
+        <figure class="explorer-card evidence-view">
+          <div class="explorer-title"><i class="evidence-dot">✓</i><span><b>Evidence record</b><small>block + account identities · secret-safe</small></span></div>
+          <img src="../../media/screenshots/lez-claim-evidence.png" alt="LEZ evidence explorer record" loading="eager">
+        </figure>
+      </div>
+      <footer class="source-line">Public identities from disposable local chains · no keys, seeds, or adaptor scalar included</footer>
+    </section>
+
+    <section class="slide" data-title="M6 packaging" data-duration="8">
+      <header class="slide-header">
+        <p class="eyebrow pink tag">M6</p>
+        <h2>Two separately installable role packages.</h2>
+      </header>
+      <div class="m6-layout">
+        <div class="package-pair">
+          <article class="package-card maker-package">
+            <img src="../../apps/m6-prototypes/assets/maker-console.svg" alt="Maker package illustration">
+            <div><span>BASECAMP PACKAGE</span><h3>Maker</h3><p>Pair and price configuration, offer inventory, active swaps, history, role-local health.</p></div>
+          </article>
+          <article class="package-card taker-package">
+            <img src="../../apps/m6-prototypes/assets/taker-route.svg" alt="Taker package illustration">
+            <div><span>BASECAMP PACKAGE</span><h3>Taker</h3><p>Offer browsing, exact-term consent, progress, mutually exclusive terminal action, proof.</p></div>
+          </article>
+        </div>
+        <aside class="m6-proof-list">
+          <div><b>6 / 6</b><span>isolated browser prototype journeys</span></div>
+          <div><b>2</b><span>separately installable role packages</span></div>
+          <div><b>13</b><span>package contract slots</span></div>
+          <div><b>1</b><span>owner-local transport boundary</span></div>
+          <p>The video proves the current BTC journey. Historical M6 evidence additionally reviews refund and ZEC privacy guidance without claiming those screens are shown here.</p>
+        </aside>
+      </div>
+      <footer class="source-line">Review + certificate · <code>docs/m6-prototype-review.md</code> · <code>m6-basecamp-role-packages-20260804.json</code></footer>
+    </section>
+
+    <section class="slide boundary-slide" data-title="Scope boundary" data-duration="8">
       <div class="boundary-grid">
         <article class="boundary-card included">
           <span>INCLUDED</span>
@@ -461,22 +458,24 @@
 
     <section class="slide closing" data-title="Reviewer path" data-duration="6">
       <div class="closing-mark"><img src="../../apps/m6-prototypes/assets/lez-orbit.svg" alt="LEZ Swap mark"></div>
-      <p class="eyebrow">REVIEWER PATH</p>
-      <h2>Designed in M1.<br>Demonstrated in M3.<br><span>Operable through M6.</span></h2>
+      <h2>How to review this.</h2>
       <div class="review-path">
         <span><b>01</b> Read the milestone map</span>
         <span><b>02</b> Inspect public evidence</span>
         <span><b>03</b> Run the private-local stack</span>
         <span><b>04</b> Open both explorers</span>
       </div>
-      <p class="closing-link">START AT <code>submission/README.md</code></p>
+      <div class="closing-links">
+        <div><span>WATCH</span><code>media/lez-btc-ui-swap-demo.mp4</code><small>113 s · Basecamp UI · run m5arm-0825151914 · captions in <i>.en.vtt</i></small></div>
+        <div><span>READ</span><code>submission/README.md</code><small>MILESTONES · EVIDENCE · REPRODUCE · LIMITATIONS</small></div>
+      </div>
       <p class="scope-badge">LEZ ⇄ BITCOIN · M1 + M3 + M6 SUBMISSION</p>
     </section>
   </main>
 
   <nav class="deck-controls" aria-label="Presentation controls">
     <button type="button" data-action="previous" aria-label="Previous slide">←</button>
-    <div class="deck-status"><span class="current">01</span><i></i><span class="total">14</span></div>
+    <div class="deck-status"><span class="current">01</span><i></i><span class="total">17</span></div>
     <button type="button" data-action="next" aria-label="Next slide">→</button>
     <button type="button" class="autoplay" data-action="autoplay" aria-label="Toggle autoplay">AUTO</button>
     <button type="button" data-action="fullscreen" aria-label="Toggle fullscreen">⛶</button>

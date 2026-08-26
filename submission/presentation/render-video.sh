@@ -25,8 +25,23 @@ fi
 render_tmp=$(mktemp -d "${TMPDIR:-/tmp}/lez-submission-render.XXXXXX")
 trap 'rm -rf -- "$render_tmp"' EXIT
 
-durations=(5 7 8 9 7 9 8 8 8 7 8 8 8 6)
-offsets=(4.5 11.0 18.5 27.0 33.5 42.0 49.5 57.0 64.5 71.0 78.5 86.0 93.0)
+durations=()
+while IFS= read -r duration; do
+  durations+=("$duration")
+done < <(sed -n 's/.*<section class="slide[^>]*data-duration="\([0-9][0-9.]*\)".*/\1/p' "$deck")
+
+if [[ ${#durations[@]} -eq 0 ]]; then
+  echo "No timed slides found in: $deck" >&2
+  exit 1
+fi
+
+offsets=()
+start=0
+for ((index = 1; index < ${#durations[@]}; index++)); do
+  start=$(awk -v start="$start" -v duration="${durations[$((index - 1))]}" \
+    'BEGIN { printf "%.3f", start + duration - 0.5 }')
+  offsets+=("$start")
+done
 
 echo "Rendering ${#durations[@]} HTML slides at 1920x1080..."
 for index in "${!durations[@]}"; do
