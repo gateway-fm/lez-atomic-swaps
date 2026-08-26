@@ -350,6 +350,94 @@
       <footer class="source-line">Threats TM-0005, TM-0012, TM-0016 · ADRs 0030, 0037, 0043, 0050</footer>
     </section>
 
+    <section class="slide xray-slide" data-title="LEZ escrow" data-duration="9">
+      <header class="slide-header">
+        <p class="eyebrow purple tag">M3</p>
+        <h2>The escrow decides, not the counterparty.</h2>
+      </header>
+      <div class="xray">
+        <div class="xray-code">
+          <div class="xray-file">compat/lez-v0.2-provisional/escrow/src/lib.rs</div>
+          <pre><span class="c">// Two derived accounts per swap. Nobody chooses either address.</span>
+<span class="a">#[account(init, pda = arg("swap_id"))]</span> metadata: AccountWithMetadata,
+<span class="a">#[account(mut, pda = [literal("custody"), arg("swap_id")])]</span> custody: AccountWithMetadata,
+<span class="a">#[account(signer)]</span> depositor: AccountWithMetadata,
+
+<span class="c">// The claim key is bound to a LEZ account by hashing, not by assertion.</span>
+<span class="k">const</span> PUBLIC_ACCOUNT_ID_PREFIX: &amp;[u8; 32] = b<span class="s">"/LEE/v0.3/AccountId/Public/\x00…"</span>;
+
+<span class="k">fn</span> <span class="f">witnessed_account_id</span>(x_only_public_key: &amp;[u8; 32]) -&gt; AccountId {
+    hasher.update(PUBLIC_ACCOUNT_ID_PREFIX);
+    hasher.update(x_only_public_key);
+    AccountId::new(hasher.finalize().into())
+}
+
+<span class="c">// Three clauses. Each one blocks a different attack.</span>
+<span class="k">if</span> <span class="hl">witnessed_account_id(&amp;x_only_public_key) != account_id</span>
+    || <span class="hl">account_id != aggregate_authority</span>
+    || <span class="hl">account_id == state.claimant</span>
+{
+    <span class="k">return</span> Err(custom_error(ERROR_ACCOUNT_BINDING,
+        <span class="s">"aggregate witness account binding mismatch"</span>));
+}
+
+<span class="c">// Refund takes no signer at all — and can only pay the depositor.</span>
+<span class="k">pub fn</span> <span class="f">refund_native</span>(_ctx, metadata, custody,
+                     <span class="a">#[account(mut)]</span> depositor, swap_id) -&gt; SpelResult {
+    <span class="k">if</span> state.depositor != depositor.account_id { <span class="k">return</span> Err(…) }
+}</pre>
+        </div>
+        <aside class="xray-notes">
+          <article><h3>Windows are consensus, not code</h3><p>The claim carries <code>.with_timestamp_validity_window(..state.refund_at)</code> and the refund carries <code>(state.refund_at..)</code>. Disjoint and exhaustive — no block can hold both, and the escrow never needs an <code>if now &lt; deadline</code>.</p></article>
+          <article><h3>Why <code>account_id == state.claimant</code> fails</h3><p>If the claimant were also the aggregate authority, one party could claim alone. The clause forces the claim to prove a signature under the <em>joint</em> key, which is what makes the LEZ claim reveal <em>t</em>.</p></article>
+          <article><h3>Permissionless, not unrestricted</h3><p>Anyone may submit the refund — a watchtower, the counterparty, a stranger. It still pays only the recorded depositor, so recovery survives the counterparty vanishing and needs no operator online.</p></article>
+        </aside>
+      </div>
+      <footer class="source-line">Escrow program · <code>compat/lez-v0.2-provisional/escrow/src/lib.rs</code> · lines 90-98, 181-188, 977-1021</footer>
+    </section>
+
+    <section class="slide xray-slide" data-title="P2TR custody" data-duration="9">
+      <header class="slide-header">
+        <p class="eyebrow amber tag">M3</p>
+        <h2>One output, two ways to spend it.</h2>
+      </header>
+      <div class="xray">
+        <div class="xray-code">
+          <div class="xray-file">crates/btc-swap-sdk/src/p2tr.rs</div>
+          <pre><span class="c">// The refund branch is one script: wait, then a single signature.</span>
+<span class="k">let</span> refund_script = Builder::new()
+    .push_sequence(refund_delay.bitcoin_sequence())
+    .push_opcode(<span class="hl">OP_CSV</span>)
+    .push_opcode(OP_DROP)
+    .push_x_only_key(&amp;refund_key.0)
+    .push_opcode(OP_CHECKSIG)
+    .into_script();
+
+<span class="c">// One leaf, tweaked onto the two-party aggregate internal key P.</span>
+<span class="k">let</span> spend_info = TaprootBuilder::new()
+    .add_leaf(0, refund_script.clone())?
+    .finalize(&amp;secp, UntweakedPublicKey::from(<span class="hl">aggregate_key.0</span>))?;
+
+<span class="k">let</span> merkle_root      = spend_info.merkle_root()?;
+<span class="k">let</span> output_key       = spend_info.output_key();
+<span class="k">let</span> output_key_parity = spend_info.output_key_parity().into();
+
+<span class="c">// Refuse to build an output whose commitment does not verify.</span>
+<span class="k">if</span> !control_block.<span class="f">verify_taproot_commitment</span>(
+        &amp;secp, output_key.to_x_only_public_key(), &amp;refund_script) {
+    <span class="k">return</span> Err(P2trSwapOutputError::InvalidControlBlock);
+}
+<span class="k">let</span> script_pubkey = ScriptBuf::new_p2tr_tweaked(output_key);</pre>
+        </div>
+        <aside class="xray-notes">
+          <article><h3>Key path — the normal case</h3><p>Both parties sign once under the MuSig2 aggregate. On chain it is a single Schnorr signature against one key: no script, no branch, nothing that says "swap". The refund leaf is never published.</p></article>
+          <article><h3>Script path — the recovery case</h3><p>Only if cooperation fails. <code>OP_CSV</code> enforces a relative block delay against the funding output, then one signature from the funder's own refund key. Revealing the leaf also reveals the control block.</p></article>
+          <article><h3>Parity is load-bearing</h3><p><code>output_key_parity</code> is carried into the signing context and into the durable binding. It is exactly the field that silently flips and produces a signature that fails much later, so it is committed early and compared on resume.</p></article>
+        </aside>
+      </div>
+      <footer class="source-line">Taproot construction · <code>crates/btc-swap-sdk/src/p2tr.rs:229-277</code> · one leaf, BIP-341 tweak</footer>
+    </section>
+
     <section class="slide" data-title="Both directions" data-duration="7">
       <header class="slide-header">
         <p class="eyebrow purple tag">M3</p>

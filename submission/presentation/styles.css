@@ -830,3 +830,26 @@ code {
   -webkit-mask-image: radial-gradient(ellipse 70% 78% at 64% 44%, #000 10%, transparent 82%);
   opacity: .55;
 }
+
+/* ── Code x-ray slides ────────────────────────────────────────────────── */
+.xray-slide .slide-header { margin-bottom: 1.6%; }
+.xray { display: grid; grid-template-columns: 1.42fr .58fr; gap: 2.2%; min-height: 72%; }
+.xray-code { position: relative; border: 1px solid #26344a; border-radius: 16px; background: #0a0f17; overflow: hidden; }
+.xray-file { padding: .7em 1.1em; border-bottom: 1px solid #1e2a3a; color: #64738a; background: #0d131c; font: 700 clamp(8px, .62vw, 12px) "SFMono-Regular", monospace; letter-spacing: .06em; }
+.xray-code pre { margin: 0; padding: 1.15em 1.3em; color: #b8c4d3; font: clamp(8px, .69vw, 13.5px)/1.62 "SFMono-Regular", monospace; white-space: pre; overflow: hidden; }
+.xray-code .c { color: #5c6b82; font-style: italic; }
+.xray-code .k { color: var(--purple); }
+.xray-code .f { color: var(--blue); }
+.xray-code .s { color: var(--green); }
+.xray-code .a { color: var(--amber); }
+.xray-code .hl { color: var(--lime); font-weight: 700; }
+.xray-notes { display: flex; flex-direction: column; justify-content: center; gap: 4.5%; }
+.xray-notes article { padding: 5.5% 6%; border: 1px solid #2b384c; border-left-width: 3px; border-radius: 14px; background: #0d141e; }
+.xray-notes h3 { margin: 0 0 .55em; font-size: clamp(12px, .95vw, 18px); }
+.xray-notes p { margin: 0; color: #8795a9; font-size: clamp(9px, .72vw, 14px); line-height: 1.55; }
+.xray-notes code { color: #cdd7e6; font-size: .93em; }
+.xray-notes em { color: var(--lime); font-style: italic; }
+.xray-slide .eyebrow.purple ~ * .xray-notes article,
+.xray-notes article:nth-child(1) { border-left-color: var(--purple); }
+.xray-notes article:nth-child(2) { border-left-color: var(--lime); }
+.xray-notes article:nth-child(3) { border-left-color: var(--amber); }
