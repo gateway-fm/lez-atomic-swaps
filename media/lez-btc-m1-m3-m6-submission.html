@@ -890,6 +890,17 @@ code {
 .blame-row.pub { background: rgba(156,255,87,.06); }
 .blame-row.pub .blame-note { background: rgba(156,255,87,.05); color: #b9c8d8; border-right-color: rgba(156,255,87,.28); }
 .blame-row.pub .pub-line { color: var(--lime); font-weight: 700; }
+.xray-code.callouts pre { font-size: clamp(6px, .55vw, 10.8px); line-height: 1.62; }
+.xray-code .n, .xray-notes .n { display: inline-block; width: 1.55em; height: 1.55em; line-height: 1.55em; border-radius: 50%; background: rgba(157,108,255,.2); border: 1px solid rgba(157,108,255,.55); color: #d9c9ff; font: 800 .82em "SFMono-Regular", monospace; text-align: center; }
+.xray-notes.numbered { justify-content: space-between; gap: 0; }
+.xray-notes.numbered article { padding: 3.2% 5%; border-left-color: rgba(157,108,255,.45); }
+.xray-notes.numbered h3 { display: flex; align-items: center; gap: .55em; margin-bottom: .4em; font-size: clamp(10px, .82vw, 15px); }
+.xray-notes.numbered .n { flex: none; font-size: .78em; }
+.xray-notes.numbered p { font-size: clamp(8px, .64vw, 12.5px); line-height: 1.45; }
+
+.flow-ctx { display: flex; align-items: center; flex-wrap: wrap; gap: .55em; margin: 0 0 1.2%; color: #5f6d83; font: 700 clamp(7px, .58vw, 11px) "SFMono-Regular", monospace; letter-spacing: .06em; text-transform: uppercase; }
+.flow-ctx i { color: #35435a; font-style: normal; }
+.flow-ctx .here { padding: .3em .7em; border: 1px solid rgba(157,108,255,.5); border-radius: 999px; background: rgba(157,108,255,.12); color: #cbb6ff; }
 
   </style>
 </head>
@@ -1240,22 +1251,56 @@ code {
         <p class="eyebrow purple">M3 · LEZ ESCROW DESIGN</p>
         <h2>Creation</h2>
       </header>
-      <div class="blame-panel">
-        <div class="xray-file">initialize_native_witnessed · what is written once, and what is refused</div>
-        <div class="blame">
-          <div class="blame-row "><div class="blame-note">The record's address <em>is</em> the swap id. Nobody picks it; both sides derive the same one.</div><pre class="blame-code"><span class="a">#[account(init, pda = arg("swap_id"))]</span> metadata: AccountWithMetadata,</pre></div>
-          <div class="blame-row "><div class="blame-note">The vault likewise. Two accounts per swap, derivable by any observer without a registry.</div><pre class="blame-code"><span class="a">#[account(mut, pda = [literal("custody"), arg("swap_id")])]</span> custody: …,</pre></div>
-          <div class="blame-row "><div class="blame-note">Only the depositor may seed it. You cannot lock someone else's money into a swap.</div><pre class="blame-code"><span class="hl">#[account(signer)] depositor</span>: AccountWithMetadata,</pre></div>
-          <div class="blame-row "><div class="blame-note">A zero amount, a missing deadline or unbound terms are refused outright — the escrow simply does not come into existence.</div><pre class="blame-code"><span class="k">if</span> <span class="hl">amount == 0 || refund_at == 0 || terms_hash == [0; 32]</span></pre></div>
-          <div class="blame-row "><div class="blame-note">…and the claim authority must be well formed. This is the seeding-time half of the rule the claim enforces later.</div><pre class="blame-code">    || <span class="hl">!valid_claim_authority(claim_authority, claimant.account_id)</span></pre></div>
-          <div class="blame-row pub"><div class="blame-note">A swap can never be created whose claimant could also claim alone. The joint key is required from the first instruction, not just at payout.</div><pre class="blame-code">AggregateWitness { … } =&gt; witnessed_account_id(&amp;key) == account_id
-                     &amp;&amp; <span class="hl">account_id != claimant</span></pre></div>
-          <div class="blame-row "><div class="blame-note">The vault must be untouched. A balance already there means this swap id has been used.</div><pre class="blame-code"><span class="k">if</span> <span class="hl">custody.account != Account::default()</span> { <span class="k">return</span> Err(…) }</pre></div>
-          <div class="blame-row "><div class="blame-note">Everything the claim and the refund will later check is written here, once, and never rewritten.</div><pre class="blame-code">EscrowMetadata { <span class="hl">version: 2</span>, swap_id, terms_hash, claim_authority,
-    depositor, claimant, custody, amount, <span class="hl">refund_at</span>, status: Empty }</pre></div>
+        <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>Taker locks BTC</span><i>→</i><span class="here">Maker seeds the LEZ escrow</span><i>→</i><span>Taker verifies LEZ</span><i>→</i><span>Taker claims LEZ</span><i>→</i><span>Maker claims BTC</span></div>
+      <div class="xray">
+        <div class="xray-code callouts">
+          <div class="xray-file">escrow/src/lib.rs · called by the LEZ-funding actor through the sidecar's generated client</div>
+          <pre><span class="k">pub fn</span> <span class="f">initialize_native_witnessed</span>(ctx: ProgramContext,
+    <span class="a">#[account(init, pda = arg("swap_id"))]</span> metadata: AccountWithMetadata,      <span class="n">1</span>
+    <span class="a">#[account(mut, pda = [literal("custody"), arg("swap_id")])]</span> custody: …,
+    <span class="a">#[account(signer)]</span> depositor: AccountWithMetadata,                        <span class="n">2</span>
+    claimant: AccountWithMetadata,
+    aggregate_authority: AccountWithMetadata,
+    swap_id: [u8; 32], terms_hash: [u8; 32],
+    aggregate_x_only_public_key: [u8; 32],
+    amount: u128, refund_at: u64, authenticated_transfer_program: [u32; 8],
+) -&gt; SpelResult {
+    <span class="k">let</span> state = native_initial_state(&amp;ctx, &amp;custody, &amp;depositor, &amp;claimant,
+        swap_id, terms_hash,
+        ClaimAuthority::AggregateWitness {                                     <span class="n">3</span>
+            x_only_public_key: aggregate_x_only_public_key,
+            account_id: aggregate_authority.account_id,
+        },
+        amount, refund_at, authenticated_transfer_program)?;
+    write_metadata(&amp;<span class="k">mut</span> metadata, &amp;state)?;
+}
+
+<span class="k">fn</span> <span class="f">native_initial_state</span>(…) -&gt; Result&lt;EscrowMetadata, SpelError&gt; {
+    <span class="k">if</span> amount == 0 || refund_at == 0 || terms_hash == [0; 32]                   <span class="n">4</span>
+        || !valid_claim_authority(claim_authority, claimant.account_id)         <span class="n">5</span>
+        || authenticated_transfer_program == ctx.self_program_id
+    { <span class="k">return</span> Err(custom_error(ERROR_INVALID_TERMS, <span class="s">"invalid native terms"</span>)); }
+
+    <span class="k">if</span> custody.account != Account::default()                                    <span class="n">6</span>
+        || depositor.account.program_owner != authenticated_transfer_program
+    { <span class="k">return</span> Err(custom_error(ERROR_ACCOUNT_BINDING, …)); }
+
+    Ok(EscrowMetadata { version: ESCROW_METADATA_VERSION, swap_id, terms_hash,  <span class="n">7</span>
+        claim_authority, depositor, claimant, custody, amount, refund_at,
+        status: EscrowStatus::Empty })
+}</pre>
         </div>
+        <aside class="xray-notes numbered">
+          <article><h3><span class="n">1</span>Both addresses are the swap id</h3><p>Metadata at <code>pda = swap_id</code>, the vault at <code>["custody", swap_id]</code>. Nobody chooses either; both sides — and any observer — derive the same two.</p></article>
+          <article><h3><span class="n">2</span>Only the depositor seeds it</h3><p>The one signer on the instruction. You cannot lock someone else's balance into a swap they never agreed to.</p></article>
+          <article><h3><span class="n">3</span>The joint key is recorded now</h3><p>The aggregate x-only key and its account are written at creation, so the claim later has something fixed to check against rather than something a caller supplies.</p></article>
+          <article><h3><span class="n">4</span>No escrow without terms</h3><p>Zero amount, missing deadline or unbound <code>terms_hash</code> are refused. The record cannot exist in a state the claim or refund would have to interpret.</p></article>
+          <article><h3><span class="n">5</span>And never self-claimable</h3><p><code>valid_claim_authority</code> requires <code>account_id != claimant</code>. A swap whose claimant could claim alone is rejected at seeding — not caught at payout.</p></article>
+          <article><h3><span class="n">6</span>The vault must be empty</h3><p>A balance already at that address means the swap id has been used. Re-seeding over a live escrow is impossible.</p></article>
+          <article><h3><span class="n">7</span>Written once</h3><p>Amount, deadline, both parties, custody and the claim authority land in one record and are never rewritten. Every later check reads from here.</p></article>
+        </aside>
       </div>
-      <footer class="source-line">Seeding · <code>escrow/src/lib.rs:824-860</code> · terms gate <code>:340-390</code> · authority gate <code>:105-115</code></footer>
+      <footer class="source-line">Seeding · <code>escrow/src/lib.rs:824-860</code> · terms gate <code>:353-370</code> · authority gate <code>:105-115</code></footer>
     </section>
 
     <section class="slide xray-slide" data-title="Happy path" data-duration="10">
@@ -1263,8 +1308,9 @@ code {
         <p class="eyebrow purple">M3 · LEZ ESCROW DESIGN</p>
         <h2>Happy path</h2>
       </header>
+        <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>Taker locks BTC</span><i>→</i><span>Maker seeds the LEZ escrow</span><i>→</i><span>Taker verifies LEZ</span><i>→</i><span class="here">Taker claims LEZ</span><i>→</i><span>Maker claims BTC</span></div>
       <div class="blame-panel">
-        <div class="xray-file">where t comes from, and where it becomes public · provision → escrow → adaptor-signature</div>
+        <div class="xray-file">where t comes from and where it becomes public · the claiming actor calls claim_native_witnessed through the same generated client</div>
         <div class="blame">
           <div class="blame-row "><div class="blame-note">t is born here, inside the revealing actor's owner-private secrets. Nothing sends it.</div><pre class="blame-code"><span class="k">let</span> <span class="hl">adaptor_secret</span> = secret_key(&amp;secrets.adaptor, <span class="s">"adaptor scalar"</span>)?;</pre></div>
           <div class="blame-row "><div class="blame-note">T = t·G. This is the only value derived from t that is ever published.</div><pre class="blame-code"><span class="k">let</span> <span class="hl">adaptor_point</span> = PublicKey::from_secret_key(&amp;secp, &amp;adaptor_secret).serialize();</pre></div>

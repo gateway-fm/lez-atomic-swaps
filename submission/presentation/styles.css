@@ -881,3 +881,14 @@ code {
 .blame-row.pub { background: rgba(156,255,87,.06); }
 .blame-row.pub .blame-note { background: rgba(156,255,87,.05); color: #b9c8d8; border-right-color: rgba(156,255,87,.28); }
 .blame-row.pub .pub-line { color: var(--lime); font-weight: 700; }
+.xray-code.callouts pre { font-size: clamp(6px, .55vw, 10.8px); line-height: 1.62; }
+.xray-code .n, .xray-notes .n { display: inline-block; width: 1.55em; height: 1.55em; line-height: 1.55em; border-radius: 50%; background: rgba(157,108,255,.2); border: 1px solid rgba(157,108,255,.55); color: #d9c9ff; font: 800 .82em "SFMono-Regular", monospace; text-align: center; }
+.xray-notes.numbered { justify-content: space-between; gap: 0; }
+.xray-notes.numbered article { padding: 3.2% 5%; border-left-color: rgba(157,108,255,.45); }
+.xray-notes.numbered h3 { display: flex; align-items: center; gap: .55em; margin-bottom: .4em; font-size: clamp(10px, .82vw, 15px); }
+.xray-notes.numbered .n { flex: none; font-size: .78em; }
+.xray-notes.numbered p { font-size: clamp(8px, .64vw, 12.5px); line-height: 1.45; }
+
+.flow-ctx { display: flex; align-items: center; flex-wrap: wrap; gap: .55em; margin: 0 0 1.2%; color: #5f6d83; font: 700 clamp(7px, .58vw, 11px) "SFMono-Regular", monospace; letter-spacing: .06em; text-transform: uppercase; }
+.flow-ctx i { color: #35435a; font-style: normal; }
+.flow-ctx .here { padding: .3em .7em; border: 1px solid rgba(157,108,255,.5); border-radius: 999px; background: rgba(157,108,255,.12); color: #cbb6ff; }
