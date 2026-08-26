@@ -755,7 +755,7 @@ code {
 
 /* ── M1 sequence diagram + design-evidence strip ──────────────────────── */
 
-.seq-diagram.m1-seq { height: min(76vh, 820px); min-height: 470px; }
+.seq-diagram.m1-seq { height: min(78vh, 845px); min-height: 470px; }
 .m1-seq .msg.purple { stroke: var(--purple); }
 .m1-seq .note { fill: rgba(156,255,87,.045); stroke: rgba(156,255,87,.28); stroke-width: 1.5; }
 .m1-seq .persist { fill: #0a1018; stroke: var(--lime); stroke-width: 2; }
@@ -769,3 +769,5 @@ code {
 .m1-seq .head-label { font-size: 16px; }
 .m1-seq .phase { fill: #cdd7e6; font: 650 17px Inter, sans-serif; }
 .m1-seq .phase.risk { fill: var(--amber); }
+.m1-seq .round { fill: #b8c6d8; font: 750 12.5px "SFMono-Regular", monospace; letter-spacing: 1.3px; }
+.m1-seq .gate { fill: var(--lime); font: 600 12px Inter, sans-serif; }

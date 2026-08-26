@@ -166,56 +166,59 @@
         <div class="checkpoint">checkpoint <strong>m1-complete.1</strong><br><code>96b7b22</code></div>
       </header>
       <div class="seq-diagram m1-seq">
-        <svg viewBox="0 0 1700 857" role="img" aria-label="Sequence diagram: Taker and Maker complete the agreement, signing material and recovery before any funds move">
+        <svg viewBox="0 0 1700 862" role="img" aria-label="Sequence diagram: Taker and Maker complete the agreement and three ordered MuSig2 rounds before any funds move">
           <defs>
-            <marker id="m1-p" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto-start-reverse"><path d="M0,0 L9,4.5 L0,9 Z" fill="#9d6cff"/></marker>
+            <marker id="m1-p" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#9d6cff"/></marker>
           </defs>
           <rect class="head taker" x="315" y="0" width="210" height="52" rx="13"/>
           <text class="head-label" x="420" y="33" text-anchor="middle">TAKER</text>
           <rect class="head maker" x="1235" y="0" width="210" height="52" rx="13"/>
           <text class="head-label" x="1340" y="33" text-anchor="middle">MAKER</text>
-          <path class="life" d="M420,52 V847"/><path class="life" d="M1340,52 V847"/>
-          <text class="phase" x="288" y="255" text-anchor="end">Agreement</text>
-          <path class="grp" d="M310,85 h-12 V414 h12"/>
-          <path class="grp" d="M310,249 h-14"/>
-          <text class="phase" x="288" y="574" text-anchor="end">Signing material</text>
-          <path class="grp" d="M310,470 h-12 V666 h12"/>
-          <path class="grp" d="M310,568 h-14"/>
-          <text class="phase" x="288" y="741" text-anchor="end">Recovery</text>
-          <path class="grp" d="M310,735 h-14"/>
-          <text class="phase risk" x="288" y="821" text-anchor="end">Funds move last</text>
-          <path class="grp" d="M310,815 h-14"/>
-          <text class="title halo" x="880" y="97" text-anchor="middle">Unsigned draft</text>
-          <text class="sub halo" x="880" y="116" text-anchor="middle">roles · direction · assets · chain identities</text>
-          <path class="msg purple" d="M430,135 H1328" marker-end="url(#m1-p)"/>
-          <rect class="callout" x="650" y="142" width="460" height="27" rx="8"/>
-          <text class="callout-text" x="880" y="160" text-anchor="middle">swap_id = SHA-256(domain ‖ offer_commitment ‖ reservation_id)</text>
-          <text class="title halo" x="880" y="209" text-anchor="middle">Maker-signed proposal</text>
-          <text class="sub halo" x="880" y="228" text-anchor="middle">checked against the live signed offer, then signed</text>
-          <path class="msg purple" d="M1330,247 H432" marker-end="url(#m1-p)"/>
-          <rect class="callout" x="689" y="254" width="382" height="27" rx="8"/>
-          <text class="callout-text" x="880" y="272" text-anchor="middle">BIP-340 Schnorr over SHA-256(domain ‖ borsh(body))</text>
-          <text class="title halo" x="880" y="321" text-anchor="middle">Countersigned agreement</text>
-          <text class="sub halo" x="880" y="340" text-anchor="middle">complete() re-runs the full wire validation on both signatures</text>
-          <path class="msg purple" d="M430,359 H1328" marker-end="url(#m1-p)"/>
-          <rect class="callout" x="555" y="366" width="650" height="56" rx="8"/>
-          <text class="callout-text" x="880" y="384" text-anchor="middle">schema pin · fixed body · wire size bound even in-memory · commitment recomputed (ct_eq)</text>
-          <text class="callout-text" x="880" y="405" text-anchor="middle">maker + taker BIP-340 verified · P2TR contract, cooperative claim and refund rebuilt</text>
-          <text class="title halo" x="880" y="482" text-anchor="middle">Nonce commitments</text>
-          <text class="sub halo" x="880" y="501" text-anchor="middle">committed before either public nonce is revealed</text>
-          <path class="msg purple" d="M432,520 H1328" marker-start="url(#m1-p)" marker-end="url(#m1-p)"/>
-          <rect class="callout" x="668" y="527" width="424" height="27" rx="8"/>
-          <text class="callout-text" x="880" y="545" text-anchor="middle">SHA-256(domain ‖ role ‖ session_id ‖ keys ‖ msg ‖ T ‖ R)</text>
-          <text class="title halo" x="880" y="594" text-anchor="middle">Nonces, partials, pre-signatures</text>
-          <text class="sub halo" x="880" y="613" text-anchor="middle">MuSig2 contexts · adaptor point T</text>
-          <path class="msg purple" d="M432,632 H1328" marker-start="url(#m1-p)" marker-end="url(#m1-p)"/>
-          <rect class="callout" x="672" y="639" width="417" height="27" rx="8"/>
-          <text class="callout-text" x="880" y="657" text-anchor="middle">66-byte nonce · 32-byte partial · 65-byte pre-signature</text>
-          <rect class="note" x="340" y="707" width="1080" height="56" rx="13"/>
-          <text class="sub" x="370" y="741">signed deadlines · exact refund paths · a refund needing no counterparty signature</text>
-          <rect class="note risk" x="340" y="787" width="1080" height="56" rx="13"/>
-          <rect class="persist" x="370" y="807" width="17" height="17" rx="5"/>
-          <text class="sub" x="404" y="821">persist before send · canonical observation · bounded authority</text>
+          <path class="life" d="M420,52 V852"/><path class="life" d="M1340,52 V852"/>
+          <text class="phase" x="288" y="240" text-anchor="end">Agreement</text>
+          <path class="grp" d="M310,70 h-12 V399 h12"/>
+          <path class="grp" d="M310,234 h-14"/>
+          <text class="phase" x="288" y="595" text-anchor="end">Signing material</text>
+          <path class="grp" d="M310,470 h-12 V709 h12"/>
+          <path class="grp" d="M310,589 h-14"/>
+          <text class="phase" x="288" y="776" text-anchor="end">Recovery</text>
+          <path class="grp" d="M310,770 h-14"/>
+          <text class="phase risk" x="288" y="852" text-anchor="end">Funds move last</text>
+          <path class="grp" d="M310,846 h-14"/>
+          <text class="title halo" x="880" y="82" text-anchor="middle">Unsigned draft</text>
+          <text class="sub halo" x="880" y="101" text-anchor="middle">roles · direction · assets · chain identities</text>
+          <path class="msg purple" d="M430,120 H1328" marker-end="url(#m1-p)"/>
+          <rect class="callout" x="635" y="127" width="491" height="27" rx="8"/>
+          <text class="callout-text" x="880" y="145" text-anchor="middle">swap_id = SHA-256(domain ‖ offer_commitment ‖ reservation_id)</text>
+          <text class="title halo" x="880" y="194" text-anchor="middle">Maker-signed proposal</text>
+          <text class="sub halo" x="880" y="213" text-anchor="middle">checked against the live signed offer, then signed</text>
+          <path class="msg purple" d="M1330,232 H432" marker-end="url(#m1-p)"/>
+          <rect class="callout" x="676" y="239" width="409" height="27" rx="8"/>
+          <text class="callout-text" x="880" y="257" text-anchor="middle">BIP-340 Schnorr over SHA-256(domain ‖ borsh(body))</text>
+          <text class="title halo" x="880" y="306" text-anchor="middle">Countersigned agreement</text>
+          <text class="sub halo" x="880" y="325" text-anchor="middle">complete() re-runs the full wire validation on both signatures</text>
+          <path class="msg purple" d="M430,344 H1328" marker-end="url(#m1-p)"/>
+          <rect class="callout" x="533" y="351" width="694" height="56" rx="8"/>
+          <text class="callout-text" x="880" y="369" text-anchor="middle">schema pin · fixed body · wire size bound even in-memory · commitment recomputed (ct_eq)</text>
+          <text class="callout-text" x="880" y="390" text-anchor="middle">maker + taker BIP-340 verified · P2TR contract, cooperative claim and refund rebuilt</text>
+          <text class="round halo" x="880" y="486" text-anchor="middle">1 · NONCE COMMITMENTS</text>
+          <path class="msg purple" d="M430,500 H1328" marker-end="url(#m1-p)"/>
+          <path class="msg purple" d="M1330,518 H432" marker-end="url(#m1-p)"/>
+          <text class="round halo" x="880" y="552" text-anchor="middle">2 · PUBLIC NONCES REVEALED</text>
+          <path class="msg purple" d="M430,566 H1328" marker-end="url(#m1-p)"/>
+          <path class="msg purple" d="M1330,584 H432" marker-end="url(#m1-p)"/>
+          <text class="round halo" x="880" y="618" text-anchor="middle">3 · PARTIAL SIGNATURES</text>
+          <path class="msg purple" d="M430,632 H1328" marker-end="url(#m1-p)"/>
+          <path class="msg purple" d="M1330,650 H432" marker-end="url(#m1-p)"/>
+          <text class="gate halo" x="1420" y="552" text-anchor="start">only after both commitments are held</text>
+          <rect class="callout" x="582" y="668" width="596" height="56" rx="8"/>
+          <text class="callout-text" x="880" y="686" text-anchor="middle">nonce commitment = SHA-256(domain ‖ role ‖ session_id ‖ keys ‖ msg ‖ T ‖ R)</text>
+          <text class="callout-text" x="880" y="707" text-anchor="middle">66-byte nonce · 32-byte partial · 65-byte pre-signature</text>
+          <rect class="note" x="340" y="744" width="1080" height="52" rx="13"/>
+          <text class="sub" x="370" y="776">signed deadlines · exact refund paths · a refund needing no counterparty signature</text>
+          <rect class="note risk" x="340" y="820" width="1080" height="52" rx="13"/>
+          <rect class="persist" x="370" y="838" width="17" height="17" rx="5"/>
+          <text class="sub" x="404" y="852">persist before send · canonical observation · bounded authority</text>
         </svg>
       </div>
       <footer class="source-line">Review entry · <code>docs/milestone-1/README.md</code> · 8 design docs · 13 foundation ADRs · 42 traced requirement IDs</footer>
