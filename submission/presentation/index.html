@@ -416,10 +416,13 @@ lez_presignature:     [u8; 65],                                   <span class="n
         <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>Taker locks BTC</span><i>→</i><span>Maker seeds the LEZ escrow</span><i>→</i><span>Taker verifies LEZ</span><i>→</i><span class="here">Taker claims LEZ</span><i>→</i><span>Maker claims BTC</span></div>
       <div class="xray">
         <div class="code-stack">
-          <div class="xray-code callouts"><div class="xray-file">1 · escrow/src/lib.rs — what the escrow demands</div><pre><span class="k">pub fn</span> <span class="f">claim_native_witnessed</span>(_ctx, metadata, custody,
+          <div class="xray-code callouts"><div class="xray-file">1 · escrow/src/lib.rs — what the escrow demands, and where the LEZ moves</div><pre><span class="k">pub fn</span> <span class="f">claim_native_witnessed</span>(_ctx, metadata, custody,
     <span class="a">#[account(mut)]</span> claimant,
     <span class="hl">#[account(signer)] aggregate_authority</span>: AccountWithMetadata, …)   <span class="n">1</span>
-<span class="c">// no signature parameter · no secret parameter · no knowledge of T</span></pre></div>
+<span class="k">let</span> transfer = <span class="hl">native_transfer_call</span>(state.asset_program, custody.clone(),
+        <span class="hl">claimant.clone()</span>, <span class="hl">state.amount</span>, <span class="k">true</span>, &amp;swap_id);   <span class="c">// ← the money</span>  <span class="n">8</span>
+Ok(SpelOutput::execute(vec![metadata, custody, claimant, aggregate_authority],
+                       vec![transfer]))</pre></div>
           <div class="xray-code callouts"><div class="xray-file">2 · btc-swap-sdk/src/sdk.rs — the Taker spends the LEZ leg (ClaimLeg::Lez)</div><pre><span class="k">let</span> context   = agreement.claim_adaptor_session_context(<span class="hl">Lez</span>)?;
 <span class="k">let</span> signature = <span class="hl">adapt_presignature</span>(&amp;context,
         prepared.claim_effects().<span class="hl">lez_presignature</span>,
@@ -444,6 +447,7 @@ verify_final_signature(&amp;context, <span class="hl">observed.signature</span>)
           <article><h3><span class="n">4</span>The Maker verifies before subtracting</h3><p>It rebuilds the same session from the agreement and checks the observed signature is genuinely valid, so it never subtracts against noise.</p></article>
           <article><h3><span class="n">5</span><em>t</em> comes back out</h3><p><code>extract_adaptor_secret</code> subtracts the <code>s′_lez</code> it has held since the signing rounds. Same nonce in both, so the difference is exactly the scalar.</p></article>
           <article><h3><span class="n">6</span>The same <em>t</em>, the other chain</h3><p>Now it completes <code>s′_btc</code> — the pre-signature armed for the Bitcoin leg back at creation, against the same <em>T</em>.</p></article>
+          <article><h3><span class="n">8</span>Where the LEZ actually moves</h3><p><code>materialize</code> only splices <em>s</em> into a template. The balance leaves custody here, when the sequencer executes the instruction and the escrow emits <code>native_transfer_call</code> from the vault to the claimant.</p></article>
           <article><h3><span class="n">7</span>Into the one transaction it can sign</h3><p><code>cooperative_claim()</code> is the exact payout fixed in the agreement. The signature completes it and cannot redirect it.</p></article>
         </aside>
       </div>
@@ -543,46 +547,149 @@ state.status = EscrowStatus::Refunded;                                       <sp
       <footer class="source-line">LEZ refund · <code>escrow/src/lib.rs:973, 1021</code> · Bitcoin leaf · <code>btc-swap-sdk/src/p2tr.rs:234-240</code></footer>
     </section>
 
-    <section class="slide xray-slide" data-title="P2TR custody" data-duration="9">
+    <section class="slide xray-slide" data-title="Creation" data-duration="10">
       <header class="slide-header">
-        <p class="eyebrow amber tag">M3</p>
-        <h2>One output, two ways to spend it.</h2>
+        <p class="eyebrow amber">M3 · BITCOIN CUSTODY DESIGN</p>
+        <h2>Creation</h2>
       </header>
+        <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span class="here">Taker locks BTC</span><i>→</i><span>Maker seeds the LEZ escrow</span><i>→</i><span>Taker verifies LEZ</span><i>→</i><span>Taker claims LEZ</span><i>→</i><span>Maker claims BTC</span></div>
       <div class="xray">
-        <div class="xray-code">
-          <div class="xray-file">crates/btc-swap-sdk/src/p2tr.rs</div>
-          <pre><span class="c">// The refund branch is one script: wait, then a single signature.</span>
-<span class="k">let</span> refund_script = Builder::new()
-    .push_sequence(refund_delay.bitcoin_sequence())
-    .push_opcode(<span class="hl">OP_CSV</span>)
-    .push_opcode(OP_DROP)
-    .push_x_only_key(&amp;refund_key.0)
-    .push_opcode(OP_CHECKSIG)
-    .into_script();
-
-<span class="c">// One leaf, tweaked onto the two-party aggregate internal key P.</span>
-<span class="k">let</span> spend_info = TaprootBuilder::new()
-    .add_leaf(0, refund_script.clone())?
-    .finalize(&amp;secp, UntweakedPublicKey::from(<span class="hl">aggregate_key.0</span>))?;
-
-<span class="k">let</span> merkle_root      = spend_info.merkle_root()?;
-<span class="k">let</span> output_key       = spend_info.output_key();
-<span class="k">let</span> output_key_parity = spend_info.output_key_parity().into();
-
-<span class="c">// Refuse to build an output whose commitment does not verify.</span>
-<span class="k">if</span> !control_block.<span class="f">verify_taproot_commitment</span>(
-        &amp;secp, output_key.to_x_only_public_key(), &amp;refund_script) {
-    <span class="k">return</span> Err(P2trSwapOutputError::InvalidControlBlock);
-}
-<span class="k">let</span> script_pubkey = ScriptBuf::new_p2tr_tweaked(output_key);</pre>
+        <div class="code-stack">
+          <div class="xray-code callouts"><div class="xray-file">1 · btc-swap-sdk/src/p2tr.rs — the refund branch, then the output</div><pre><span class="k">let</span> refund_script = Builder::new()
+    .push_sequence(refund_delay.bitcoin_sequence()).push_opcode(<span class="hl">OP_CSV</span>)
+    .push_opcode(OP_DROP).push_x_only_key(&amp;refund_key.0).push_opcode(OP_CHECKSIG)
+    .into_script();                                                    <span class="n">1</span>
+<span class="k">let</span> spend_info = TaprootBuilder::new().add_leaf(0, refund_script.clone())?
+    .finalize(&amp;secp, UntweakedPublicKey::from(<span class="hl">aggregate_key.0</span>))?;       <span class="n">2</span>
+<span class="k">if</span> !control_block.<span class="hl">verify_taproot_commitment</span>(&amp;secp, output_key…, &amp;refund_script)
+    { <span class="k">return</span> Err(P2trSwapOutputError::InvalidControlBlock); }             <span class="n">3</span>
+<span class="k">let</span> script_pubkey = ScriptBuf::new_p2tr_tweaked(output_key);</pre></div>
+          <div class="xray-code callouts"><div class="xray-file">2 · btc-swap-sdk/src/transaction.rs — the exact payout, and the message it commits to</div><pre><span class="k">let</span> unsigned_transaction = Transaction { version: TWO, lock_time: ZERO,
+    input:  vec![TxIn { previous_output: <span class="hl">funding_outpoint</span>, … }],
+    output: <span class="hl">outputs</span> };                    <span class="c">// fixed by the agreement</span>   <span class="n">4</span>
+<span class="k">let</span> sighash = SighashCache::new(&amp;unsigned_transaction)
+    .<span class="hl">taproot_key_spend_signature_hash</span>(0, &amp;Prevouts::All(&amp;prevouts),
+        TapSighashType::Default)?;                                     <span class="n">5</span></pre></div>
+          <div class="xray-code callouts"><div class="xray-file">3 · btc-swap-sdk/src/sdk.rs — and the pre-signature armed against that message</div><pre><span class="k">let</span> bitcoin = agreement.claim_adaptor_session_context(<span class="hl">Bitcoin</span>)?;
+<span class="hl">verify_adaptor_presignature</span>(&amp;bitcoin, self.bitcoin_presignature)?;      <span class="n">6</span>
+<span class="c">// s′_btc: 65 bytes, valid pre-signature, invalid signature</span></pre></div>
         </div>
-        <aside class="xray-notes">
-          <article><h3>Key path — the normal case</h3><p>Both parties sign once under the MuSig2 aggregate. On chain it is a single Schnorr signature against one key: no script, no branch, nothing that says "swap". The refund leaf is never published.</p></article>
-          <article><h3>Script path — the recovery case</h3><p>Only if cooperation fails. <code>OP_CSV</code> enforces a relative block delay against the funding output, then one signature from the funder's own refund key. Revealing the leaf also reveals the control block.</p></article>
-          <article><h3>Parity is load-bearing</h3><p><code>output_key_parity</code> is carried into the signing context and into the durable binding. It is exactly the field that silently flips and produces a signature that fails much later, so it is committed early and compared on resume.</p></article>
+        <aside class="xray-notes numbered amber">
+          <article><h3><span class="n">1</span>The only script in the design</h3><p>Wait <em>n</em> blocks, then one signature from the funder's key. Nothing about swaps, secrets or the other chain appears in it.</p></article>
+          <article><h3><span class="n">2</span>One leaf, tweaked onto the joint key</h3><p>The aggregate MuSig2 key is the internal key; the refund leaf is the only branch. Cooperative spends never reveal that the branch exists.</p></article>
+          <article><h3><span class="n">3</span>It refuses to build a broken output</h3><p>If the control block does not verify against the output key and script, construction fails rather than producing an unspendable address.</p></article>
+          <article><h3><span class="n">4</span>The payout is fixed now, not later</h3><p>Inputs and outputs are set at construction. Whatever signature arrives can only authorise <em>this</em> transaction.</p></article>
+          <article><h3><span class="n">5</span>This hash is what gets pre-signed</h3><p>The BIP-341 key-spend sighash is the message the adaptor session signs — the Bitcoin twin of the LEZ <code>claim_message_hash</code>.</p></article>
+          <article><h3><span class="n">6</span>Armed, and verified before use</h3><p>Same shape as the LEZ side: a 65-byte pre-signature, checked against a session rebuilt from the agreement, short by exactly <em>t</em>.</p></article>
         </aside>
       </div>
-      <footer class="source-line">Taproot construction · <code>crates/btc-swap-sdk/src/p2tr.rs:229-277</code> · one leaf, BIP-341 tweak</footer>
+      <footer class="source-line">Output · <code>btc-swap-sdk/src/p2tr.rs:229-277</code> · payout and sighash · <code>transaction.rs:129-165</code></footer>
+    </section>
+
+    <section class="slide xray-slide" data-title="Happy path" data-duration="10">
+      <header class="slide-header">
+        <p class="eyebrow amber">M3 · BITCOIN CUSTODY DESIGN</p>
+        <h2>Happy path</h2>
+      </header>
+        <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>Taker locks BTC</span><i>→</i><span>Maker seeds the LEZ escrow</span><i>→</i><span>Taker verifies LEZ</span><i>→</i><span>Taker claims LEZ</span><i>→</i><span class="here">Maker claims BTC</span></div>
+      <div class="xray">
+        <div class="code-stack">
+          <div class="xray-code callouts"><div class="xray-file">1 · btc-swap-sdk/src/sdk.rs — the Maker completes the pre-signature with the recovered t</div><pre><span class="k">let</span> signature = <span class="hl">adapt_presignature</span>(&amp;context,
+    prepared.claim_effects().<span class="hl">bitcoin_presignature</span>,
+    Zeroizing::new(*material.adaptor_secret))?;         <span class="c">// s = s′ + t</span>  <span class="n">1</span></pre></div>
+          <div class="xray-code callouts"><div class="xray-file">2 · btc-swap-sdk/src/transaction.rs — the witness is attached, and the coin moves</div><pre><span class="k">pub fn</span> <span class="f">finalize</span>(<span class="k">mut</span> self, signature_bytes: [u8; 64]) -&gt; Result&lt;Transaction&gt; {
+    Secp256k1::verification_only().verify_schnorr(&amp;signature.signature,
+        &amp;message, &amp;self.<span class="hl">output_key</span>.to_x_only_public_key())?;             <span class="n">2</span>
+    self.unsigned_transaction.input[0].witness =
+        <span class="hl">Witness::p2tr_key_spend(&amp;signature)</span>;                            <span class="n">3</span>
+    Ok(self.unsigned_transaction)      <span class="c">// spendable: broadcast it</span>       <span class="n">4</span>
+}</pre></div>
+          <div class="xray-code callouts"><div class="xray-file">3 · where the value actually leaves the custody output</div><pre><span class="c">// input[0]  spends  <span class="hl">funding_outpoint</span>   — the joint P2TR output</span>
+<span class="c">// output[]  pays    <span class="hl">the Maker's claim_destination_script_pubkey</span></span>
+<span class="c">// both were fixed in the countersigned agreement, before any lock</span>   <span class="n">5</span></pre></div>
+        </div>
+        <aside class="xray-notes numbered amber">
+          <article><h3><span class="n">1</span>The same <em>t</em> from the LEZ claim</h3><p>Recovered by subtraction moments earlier. The Bitcoin leg needs no new secret and no new round of messages.</p></article>
+          <article><h3><span class="n">2</span>Verified against the tweaked output key</h3><p><code>finalize</code> refuses a signature that does not verify for the exact sighash and the exact key path. A wrong scalar cannot be broadcast by accident.</p></article>
+          <article><h3><span class="n">3</span>A single-key witness</h3><p>One 64-byte Schnorr signature. No script, no control block, no branch — indistinguishable on chain from an ordinary Taproot payment.</p></article>
+          <article><h3><span class="n">4</span>This is the spendable transaction</h3><p>From here it is bytes anyone can relay. Broadcasting it is what moves the coin; the SDK does not custody anything.</p></article>
+          <article><h3><span class="n">5</span>Into the destination fixed at agreement time</h3><p>The output script came from <code>claim_destination_script_pubkey</code> in the signed body. The signature completes the payout; it cannot redirect it.</p></article>
+        </aside>
+      </div>
+      <div class="reveal-band">
+        <div class="reveal-lead"><b>Both legs, one scalar.</b><span>The LEZ claim published <em>t</em>; the Bitcoin claim spends it.</span></div>
+        <div class="reveal-math">
+          <div class="rv secret"><code>t = s − s′_lez</code><span>recovered from the<br>LEZ claim signature</span></div>
+          <i class="arr">→</i>
+          <div class="rv onchain"><code>s′_btc + t → s</code><span><b>adapt_presignature</b><br>then <b>finalize</b></span></div>
+          <i class="arr">→</i>
+          <div class="rv extract"><code>0.01 BTC → Maker</code><span>key-path spend of the<br>joint custody output</span></div>
+        </div>
+      </div>
+      <footer class="source-line">Adapt · <code>btc-swap-sdk/src/sdk.rs:2762-2778</code> · witness · <code>transaction.rs:210-227</code></footer>
+    </section>
+
+    <section class="slide xray-slide" data-title="Permissionless methods" data-duration="9">
+      <header class="slide-header">
+        <p class="eyebrow amber">M3 · BITCOIN CUSTODY DESIGN</p>
+        <h2>Permissionless methods</h2>
+      </header>
+        <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>one or both legs locked</span><i>→</i><span>no reveal</span><i>→</i><span class="here">CSV matures</span><i>→</i><span>refund</span></div>
+      <div class="xray">
+        <div class="code-stack">
+          <div class="xray-code callouts"><div class="xray-file">1 · btc-swap-sdk/src/transaction.rs — finalize returns a plain Transaction</div><pre><span class="k">pub fn</span> <span class="f">finalize</span>(<span class="k">mut</span> self, signature_bytes: [u8; 64]) -&gt; Result&lt;<span class="hl">Transaction</span>&gt;
+<span class="c">// …no node handle, no wallet, no broadcaster. Just consensus-valid bytes.</span>  <span class="n">1</span></pre></div>
+          <div class="xray-code callouts"><div class="xray-file">2 · the refund transaction can be built and signed long before it is usable</div><pre><span class="k">let</span> refund = RefundScriptPathSpend::new(&amp;contract, funding_outpoint,
+        funding_value, outputs)?;
+<span class="k">let</span> signed = refund.<span class="hl">finalize</span>(funder_signature)?;   <span class="c">// valid bytes, held</span>  <span class="n">2</span>
+<span class="c">// input[0].sequence = <span class="hl">CSV delay</span> ⇒ relay refuses it until maturity</span>    <span class="n">3</span></pre></div>
+          <div class="xray-code callouts"><div class="xray-file">3 · what an outsider can and cannot do</div><pre><span class="c">// CAN : relay either signed transaction — anyone, any node        </span><span class="n">4</span>
+<span class="c">// CANNOT: alter destination or amount — both are inside the sighash</span>
+<span class="c">// CANNOT: produce a signature — needs the joint key, or the funder's</span>  <span class="n">5</span></pre></div>
+        </div>
+        <aside class="xray-notes numbered amber">
+          <article><h3><span class="n">1</span>Broadcast is not privileged</h3><p>Bitcoin has no notion of a submitter. A fully signed transaction is public bytes that any node will relay, so no party has to be online to publish one.</p></article>
+          <article><h3><span class="n">2</span>The refund can be pre-signed and parked</h3><p>Built and signed at agreement time, then handed to a watchtower or simply kept. It is inert until the delay elapses.</p></article>
+          <article><h3><span class="n">3</span>Consensus does the gating</h3><p><code>sequence</code> carries the CSV delay, so the network itself rejects the refund early. Nobody has to enforce the deadline in software.</p></article>
+          <article><h3><span class="n">4</span>So an outage is survivable</h3><p>Funder offline at maturity: whoever holds the signed refund relays it. Maker offline after the reveal: the claim it already signed can be relayed by anyone.</p></article>
+          <article><h3><span class="n">5</span>But nothing new can be authorised</h3><p>An outsider can only publish what was already signed. Redirecting either spend needs a signature over a different sighash, which needs a key they do not have.</p></article>
+        </aside>
+      </div>
+      <footer class="source-line">Spend construction · <code>btc-swap-sdk/src/transaction.rs:112-227, 287-414</code></footer>
+    </section>
+
+    <section class="slide xray-slide" data-title="Refunds" data-duration="10">
+      <header class="slide-header">
+        <p class="eyebrow amber">M3 · BITCOIN CUSTODY DESIGN</p>
+        <h2>Refunds</h2>
+      </header>
+        <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>one or both legs locked</span><i>→</i><span>no reveal</span><i>→</i><span>CSV matures</span><i>→</i><span class="here">refund</span></div>
+      <div class="xray">
+        <div class="code-stack">
+          <div class="xray-code callouts"><div class="xray-file">1 · btc-swap-sdk/src/p2tr.rs — the leaf that makes it possible</div><pre><span class="k">let</span> refund_script = Builder::new()
+    .push_sequence(refund_delay.bitcoin_sequence())      <span class="c">// relative, in blocks</span> <span class="n">1</span>
+    .push_opcode(OP_CSV).push_opcode(OP_DROP)
+    .push_x_only_key(&amp;<span class="hl">refund_key</span>.0).push_opcode(OP_CHECKSIG);              <span class="n">2</span></pre></div>
+          <div class="xray-code callouts"><div class="xray-file">2 · btc-swap-sdk/src/transaction.rs — the spend commits to the delay and the leaf</div><pre>input: vec![TxIn { previous_output: funding_outpoint,
+    sequence: <span class="hl">contract.refund_delay().bitcoin_sequence()</span>, … }],           <span class="n">3</span>
+<span class="k">let</span> sighash = SighashCache::new(&amp;unsigned_transaction)
+    .<span class="hl">taproot_script_spend_signature_hash</span>(0, &amp;Prevouts::All(&amp;prevouts),
+        contract.<span class="hl">tapleaf_hash()</span>, TapSighashType::Default)?;               <span class="n">4</span></pre></div>
+          <div class="xray-code callouts"><div class="xray-file">3 · btc-swap-sdk/src/transaction.rs — and the witness reveals the branch</div><pre>Secp256k1::verification_only()
+    .verify_schnorr(&amp;signature.signature, &amp;message, &amp;self.<span class="hl">refund_key</span>)?;
+self.unsigned_transaction.input[0].witness = Witness::from_slice(&amp;[
+    signature_bytes.as_slice(), self.<span class="hl">refund_script</span>.as_bytes(),
+    self.<span class="hl">refund_control_block</span>.as_slice() ]);                             <span class="n">5</span></pre></div>
+        </div>
+        <aside class="xray-notes numbered amber">
+          <article><h3><span class="n">1</span>A relative delay, not a date</h3><p><code>OP_CSV</code> counts blocks from the funding output's confirmation. It cannot be gamed by clock skew, and it starts only once the lock is real.</p></article>
+          <article><h3><span class="n">2</span>One key, one signature</h3><p>The funder's own refund key, alone. No joint signature, no counterparty, nothing to negotiate at the point of recovery.</p></article>
+          <article><h3><span class="n">3</span>The delay is in the transaction too</h3><p>The script checks it, and the input's <code>sequence</code> asserts it. Both must agree or the spend is invalid — the delay cannot be shortened by rebuilding the transaction.</p></article>
+          <article><h3><span class="n">4</span>A different digest from the happy path</h3><p>Script-path spends commit to the tapleaf hash, so a key-path signature can never satisfy this branch and vice versa.</p></article>
+          <article><h3><span class="n">5</span>Recovery is what reveals the branch</h3><p>The witness carries signature, script and control block. Until a refund happens, nobody watching the chain learns the output had a refund path at all.</p></article>
+        </aside>
+      </div>
+      <footer class="source-line">Refund leaf · <code>btc-swap-sdk/src/p2tr.rs:234-240</code> · script-path spend · <code>transaction.rs:309-414</code></footer>
     </section>
 
     <section class="slide" data-title="Both directions" data-duration="7">

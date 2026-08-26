@@ -896,3 +896,6 @@ code {
 .code-stack .xray-code { flex: none; }
 .code-stack .xray-file { padding: .5em 1.1em; }
 .code-stack .xray-code pre { padding: .8em 1.2em; }
+.xray-notes.numbered.amber article { border-left-color: rgba(247,199,102,.5); }
+.xray-notes.numbered.amber .n, .xray-code .n { }
+.xray-slide .eyebrow.amber ~ * .n { }
