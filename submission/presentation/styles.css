@@ -767,3 +767,5 @@ code {
 .m1-seq .title { font-size: 17px; }
 .m1-seq .sub { font-size: 13px; }
 .m1-seq .head-label { font-size: 16px; }
+.m1-seq .phase { fill: #cdd7e6; font: 650 17px Inter, sans-serif; }
+.m1-seq .phase.risk { fill: var(--amber); }
