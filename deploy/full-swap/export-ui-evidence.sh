@@ -29,41 +29,13 @@ lez_init="$evidence_dir/${direction}-lez-initialization-finality.json"
 lez_funding="$evidence_dir/${direction}-lez-funding-finality.json"
 
 if [[ "$direction" == "taker_sells_foreign" ]]; then
-  first_label="Taker first lock"
-  first_chain="Bitcoin"
-  first_file="$btc_lock"
-  first_btc=1
-  second_label="Escrow initialization"
-  second_file="$lez_init"
-  third_label="Maker second lock"
-  third_file="$lez_funding"
   btc_claim="$evidence_dir/${direction}-bitcoin-followup-claim-confirmed.json"
   lez_claim="$evidence_dir/${direction}-lez-revealing-claim-finality.json"
-  reveal_label="Taker revealing claim"
-  reveal_file="$lez_claim"
-  reveal_is_bitcoin=0
-  followup_label="Maker follow-up claim"
-  followup_file="$btc_claim"
-  followup_is_bitcoin=1
 else
   # Taker sells LEZ: the Taker locks LEZ first, the Maker locks Bitcoin
   # second, the Taker reveals on Bitcoin, and the Maker follows up on LEZ.
-  first_label="Taker first lock"
-  first_chain="LEZ"
-  first_file="$lez_funding"
-  first_btc=0
-  second_label="Escrow initialization"
-  second_file="$lez_init"
-  third_label="Maker second lock"
-  third_file="$btc_lock"
   btc_claim="$evidence_dir/${direction}-bitcoin-revealing-claim-confirmed.json"
   lez_claim="$evidence_dir/${direction}-lez-followup-claim-finality.json"
-  reveal_label="Taker revealing claim"
-  reveal_file="$btc_claim"
-  reveal_is_bitcoin=1
-  followup_label="Maker follow-up claim"
-  followup_file="$lez_claim"
-  followup_is_bitcoin=0
 fi
 
 for file in "$main" "$effects" "$btc_lock" "$btc_anchor" "$btc_claim" \

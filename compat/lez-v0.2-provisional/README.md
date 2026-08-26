@@ -58,13 +58,13 @@ packaging recipe. The contracted recipe builds both binaries from the locked
 v0.2 graph with upstream Rust 1.94.0 and two jobs. It also binds the locked
 `rust-rapidsnark` revision, native v0.0.8 release archive, and all four static
 library hashes used by the offline build. The resulting services are packaged
-with the verified r0vm 3.0.5 artifact on a digest-pinned distroless nonroot
-runtime. One fresh-target clean-source locked offline build produced bound
+with the verified r0vm 3.0.5 artifact on a digest-pinned Chainguard
+`glibc-dynamic` nonroot runtime. One fresh-target clean-source locked offline build produced bound
 sequencer/indexer SHA-256 values; a warm locked offline no-op rerun left those
 outputs unchanged. This is not evidence of independent bit-reproducibility.
-Both binaries plus r0vm returned their versions inside that runtime
-as uid 65532 with no network, a read-only root, no capabilities, and
-no-new-privileges. The CLI smoke remains separate evidence. Run `v02-stack-20260713n` then executed all three services as a numeric non-root UID/GID with read-only roots, dropped capabilities, `no-new-privileges`, and resource limits.
+The replacement runtime base is vulnerability-scanned fail-hard in CI; a fresh
+service smoke remains required before claiming parity with the earlier
+distroless execution evidence.
 
 Verify a clean source checkout, the local artifacts, and the already-cached
 Bedrock image without starting a container:

@@ -1,6 +1,6 @@
 {
   "name": "lez_atomic_swap_taker",
-  "display_name": "LEZ / BTC Taker",
+  "display_name": "LEZ Atomic Swap Taker",
   "version": "0.1.0",
   "type": "ui_qml",
   "category": "finance",

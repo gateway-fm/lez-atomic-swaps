@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 deck="$script_dir/index.html"
 output=${1:-"$repo_root/media/lez-btc-m1-m3-m6-submission-silent.mp4"}
 poster="$repo_root/media/screenshots/lez-btc-m1-m3-m6-submission-cover.png"
@@ -76,7 +76,7 @@ done
 previous="v0"
 for transition in $(seq 1 $((${#durations[@]} - 1))); do
   offset=${offsets[$((transition - 1))]}
-  filter+="[$previous][v$transition]xfade=transition=fade:duration=0.5:offset=$offset[x$transition];"
+  filter+="[${previous}][v${transition}]xfade=transition=fade:duration=0.5:offset=${offset}[x${transition}];"
   previous="x$transition"
 done
 

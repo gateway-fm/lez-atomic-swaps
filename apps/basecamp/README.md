@@ -5,14 +5,14 @@ The Maker desk publishes wallet-owned local BTC/LEZ inventory and performs only
 Maker actions. The Taker desk browses that order book, takes offers into its
 selected wallet, and performs only Taker actions. Together they gate the fixed
 local M3 LEZ/Bitcoin runner at the four real actor boundaries and present its
-completed transaction and balance evidence. The older prepared-corridor
-controls remain available as an advanced lane. Each QML view is
-unprivileged. Its process-isolated C++ backend calls a fixed role allowlist over
+completed transaction and balance evidence. Each QML view is unprivileged. Its
+process-isolated C++ backend calls a fixed role allowlist over
 an owner-only Unix socket. The negotiation path uses pinned Logos Chat `v0.2.2`
 and its pinned Delivery runtime for signed public offer broadcasts plus the
 peer-to-peer E2EE transport; the Rust
 stores, signatures, role contributions, and chain-identity checks remain the
-protocol authority.
+protocol authority. The public release exposes only the Bitcoin corridor;
+future asset corridors return with their own milestone releases.
 
 ## Prerequisites and external resources
 
@@ -190,21 +190,6 @@ the intervening Maker actions. After the fourth action, verify terminal revision
 `4 · completed`, two Bitcoin plus three LEZ transaction hashes, and the wallet
 balance proof showing opening → closing balances, signed deltas, and BTC fees.
 
-For the separate optional prepared Zcash service lane:
-
-1. click **Service health**, choose `Zcash / TakerSellsLez`, and click
-   **Browse authenticated offers**;
-2. review the automatically selected newest offer; its ID, compressed Maker
-   identity, signed-envelope SHA-256, foreign units, and expected LEZ units are
-   populated into the exact review form without manual transcription, while
-   the exact signed live announcement is retained as admission proof;
-3. click **Confirm and initiate** once and retain the returned swap ID;
-4. repeat the unchanged click to observe exact durable replay;
-5. use the automatically adopted current swap ID and click **Monitor**;
-6. use **Claim** or **Refund** only when monitor advertises that exact action and
-   generation. For transparent ZEC claims, follow the displayed shielding
-   reminder in the wallet after the swap.
-
 Production Basecamp initiation re-verifies that exact live signed Delivery
 proof; the filesystem source remains a legacy CLI/offline seam. Initiation
 commits registry authority before Chat/Delivery effects. A lost
@@ -231,7 +216,7 @@ framework, one role install tree, and one real owner socket. It covers:
 - Maker health, atomic route save, and history through `lez-maker-daemon`;
 - wallet-indexed Maker inventory and the Taker order book;
 - Taker completed M3 BTC evidence, including all five unique transaction IDs;
-- Taker health plus optional browsing through the gateway's live signed Delivery index;
+- Taker health plus BTC browsing through the gateway's live signed Delivery index;
 - prepared Taker initiation, exact replay, list, monitor, and a durable registry
   assertion for the digest-derived `taker-ui-initiate-*` request.
 
@@ -241,11 +226,8 @@ obtained from the Maker snapshot RPC. The harness admits that exact proof throug
 `LEZ_LOGOS_CHAT_GATEWAY_SOCKET` before browsing, so confirm-time refresh tests
 the production live index without internet access or a filesystem offer fixture.
 
-The optional prepared-service Basecamp run stops at admitted/monitored ZEC swap
-composition. Its terminal Claim and Refund remain separate service/actor
-certificates. The Dockerized BTC microapp is different: its four role-owned
-actions gate the actual-node M3 workflow and publish that fresh run's
-transaction and balance proofs.
+The Dockerized BTC microapp's four role-owned actions gate the actual-node M3
+workflow and publish that fresh run's transaction and balance proofs.
 See [ADR 0147](../../docs/architecture/0147-isolate-basecamp-role-packages-over-owner-services.md)
 and the [M6 package evidence](../../docs/evidence/m6-basecamp-role-packages-20260804.json).
 

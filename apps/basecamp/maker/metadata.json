@@ -1,6 +1,6 @@
 {
   "name": "lez_atomic_swap_maker",
-  "display_name": "LEZ / BTC Maker",
+  "display_name": "LEZ Atomic Swap Maker",
   "version": "0.1.0",
   "type": "ui_qml",
   "category": "finance",

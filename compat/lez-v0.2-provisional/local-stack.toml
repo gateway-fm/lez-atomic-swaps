@@ -59,7 +59,7 @@ cargo_build_jobs = 2
 cargo_profile = "release"
 cargo_toolchain_channel = "1.94.0"
 cargo_build_command = "cargo +1.94.0 build --locked --release --jobs 2 --package sequencer_service --package indexer_service"
-runtime_base_reference = "gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7"
+runtime_base_reference = "cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b"
 r0vm_version = "3.0.5"
 r0vm_sha256 = "36c016a5bb2ded5bd1f8f92cc487e6ffaeb1e95ec05850c983081a0f716b515b"
 # These exact lower-hex digests bind the locally executed service artifacts.
@@ -69,7 +69,7 @@ indexer_binary_sha256 = "6ed54f04ae018f3554898a9f0aef6decd6930c4e8609326d146ca16
 sequencer_binary_version = "sequencer_service 0.1.0"
 indexer_binary_version = "indexer_service 0.1.0"
 binary_runtime_dependency_status = "ldd_standard_cc_runtime_only"
-runtime_smoke_status = "distroless_services_executed_isolated_service_readiness_green"
+runtime_smoke_status = "minimal_runtime_base_digest_pinned_ci_service_smoke_required"
 cli_smoke_security = [
   "uid_65532",
   "network_none",

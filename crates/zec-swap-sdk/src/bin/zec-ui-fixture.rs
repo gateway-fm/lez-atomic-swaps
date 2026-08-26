@@ -80,43 +80,69 @@ fn sign(commitment: [u8; 32], secret: &SecretKey) -> [u8; 64] {
     signature.serialize_compact()
 }
 
-fn main() -> Result<()> {
-    let arguments = Arguments::parse();
-    let root = &arguments.output_root;
-    if root.exists() {
-        bail!("refusing to replace {}", root.display());
-    }
-    let basis_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let maker_root = root.join("maker");
-    let taker_root = root.join("taker");
-    let shared = root.join("shared");
-    fs::DirBuilder::new().mode(0o700).create(root)?;
-    for directory in [&maker_root, &taker_root, &shared] {
-        fs::DirBuilder::new().mode(0o700).create(directory)?;
-    }
+struct FixturePaths {
+    maker: PathBuf,
+    taker: PathBuf,
+    shared: PathBuf,
+}
 
-    let secp = Secp256k1::signing_only();
-    let maker_secret = SecretKey::from_slice(&[8u8; 32]).unwrap();
-    let taker_secret = SecretKey::from_slice(&[2u8; 32]).unwrap();
-    let maker_public = PublicKey::from_secret_key(&secp, &maker_secret);
-    let taker_public = PublicKey::from_secret_key(&secp, &taker_secret);
-    let maker_hash = pubkey_hash(&maker_public);
-    let taker_hash = pubkey_hash(&taker_public);
+impl FixturePaths {
+    fn create(root: &Path) -> Result<Self> {
+        if root.exists() {
+            bail!("refusing to replace {}", root.display());
+        }
+        let paths = Self {
+            maker: root.join("maker"),
+            taker: root.join("taker"),
+            shared: root.join("shared"),
+        };
+        fs::DirBuilder::new().mode(0o700).create(root)?;
+        for directory in [&paths.maker, &paths.taker, &paths.shared] {
+            fs::DirBuilder::new().mode(0o700).create(directory)?;
+        }
+        Ok(paths)
+    }
+}
 
-    // maker claim authority + zcash key + taker zcash key (deterministic, local-only)
-    write_raw_key(&maker_root.join("claim-recovery.key"), 0x7a)?;
-    write_private(&maker_root.join("claim-preimage.key"), &CLAIM_PREIMAGE)?;
-    write_raw_key(&maker_root.join("zcash.key"), 8)?;
-    write_raw_key(&taker_root.join("zcash.key"), 2)?;
+struct FixtureKeys {
+    maker_secret: SecretKey,
+    taker_secret: SecretKey,
+    maker_public: PublicKey,
+    taker_public: PublicKey,
+    maker_hash: [u8; 20],
+    taker_hash: [u8; 20],
+}
+
+impl FixtureKeys {
+    fn deterministic() -> Self {
+        let secp = Secp256k1::signing_only();
+        let maker_secret = SecretKey::from_slice(&[8u8; 32]).unwrap();
+        let taker_secret = SecretKey::from_slice(&[2u8; 32]).unwrap();
+        let maker_public = PublicKey::from_secret_key(&secp, &maker_secret);
+        let taker_public = PublicKey::from_secret_key(&secp, &taker_secret);
+        Self {
+            maker_hash: pubkey_hash(&maker_public),
+            taker_hash: pubkey_hash(&taker_public),
+            maker_secret,
+            taker_secret,
+            maker_public,
+            taker_public,
+        }
+    }
+}
+
+fn write_authority_material(paths: &FixturePaths) -> Result<()> {
+    write_raw_key(&paths.maker.join("claim-recovery.key"), 0x7a)?;
+    write_private(&paths.maker.join("claim-preimage.key"), &CLAIM_PREIMAGE)?;
+    write_raw_key(&paths.maker.join("zcash.key"), 8)?;
+    write_raw_key(&paths.taker.join("zcash.key"), 2)?;
     write_private(
-        &maker_root.join("bridge.capability"),
+        &paths.maker.join("bridge.capability"),
         b"ui_fixture_capability_0123456789",
-    )?;
+    )
+}
 
-    // countersigned agreement wire (same placeholder chain facts as the test)
+fn create_agreement(arguments: &Arguments, basis_time: u64, keys: &FixtureKeys) -> Result<Vec<u8>> {
     let escrow_program = [1u32; 8];
     let onchain_swap_id = derive_lez_swap_id_v1(arguments.swap_id.as_bytes());
     let secret_digest: [u8; 32] = Sha256::digest(CLAIM_PREIMAGE).into();
@@ -126,7 +152,7 @@ fn main() -> Result<()> {
             NetworkType::Regtest,
             BranchId::Nu6_2,
             Zatoshis::from_u64(10_000)?,
-            Bip199Contract::new(120, maker_hash, secret_digest, taker_hash),
+            Bip199Contract::new(120, keys.maker_hash, secret_digest, keys.taker_hash),
         ),
     )?;
     let body = ZecAgreementBodyV1::new(
@@ -134,8 +160,8 @@ fn main() -> Result<()> {
         SwapDirection::TakerSellsLez,
         ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
         ZecParticipantsV1::new(
-            ZecParticipantIdentityV1::new([3; 32], maker_public.serialize()),
-            ZecParticipantIdentityV1::new([4; 32], taker_public.serialize()),
+            ZecParticipantIdentityV1::new([3; 32], keys.maker_public.serialize()),
+            ZecParticipantIdentityV1::new([4; 32], keys.taker_public.serialize()),
         ),
         secret_digest,
         ZecLezTermsV1::new(
@@ -151,12 +177,12 @@ fn main() -> Result<()> {
         ZecSwapBindingRecordV1::from_binding(&binding),
         ZecTransactionPolicyV1::new(
             [12; 32],
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            ZcashTransparentDestinationV1::p2pkh(keys.maker_hash),
             1,
             1,
-            ZcashTransparentDestinationV1::p2pkh(taker_hash),
+            ZcashTransparentDestinationV1::p2pkh(keys.taker_hash),
             1,
-            ZcashTransparentDestinationV1::p2pkh(maker_hash),
+            ZcashTransparentDestinationV1::p2pkh(keys.maker_hash),
             1,
             40,
         ),
@@ -168,32 +194,35 @@ fn main() -> Result<()> {
         ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
         body,
         commitment,
-        sign(commitment, &maker_secret),
-        sign(commitment, &taker_secret),
+        sign(commitment, &keys.maker_secret),
+        sign(commitment, &keys.taker_secret),
     );
-    let agreement =
-        ZecAgreementV1::validate_at(record, UnixSeconds::new(basis_time))?.encode_wire()?;
-    write_private(&shared.join("agreement-v2.borsh"), &agreement)?;
-    let agreement_sha = Sha256::digest(&agreement).to_vec();
+    Ok(ZecAgreementV1::validate_at(record, UnixSeconds::new(basis_time))?.encode_wire()?)
+}
 
-    let config: Value = json!({
+fn create_maker_config(
+    arguments: &Arguments,
+    paths: &FixturePaths,
+    agreement_sha256: &str,
+) -> Value {
+    json!({
         "schema_version": 3,
         "role": "maker",
         "run_id": "ui-fixture-authority",
         "swap_id": arguments.swap_id,
-        "signed_agreement_file": shared.join("agreement-v2.borsh"),
-        "signed_agreement_sha256": agreement_sha.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-        "role_state_db": maker_root.join("unused-source-state.sqlite3"),
+        "signed_agreement_file": paths.shared.join("agreement-v2.borsh"),
+        "signed_agreement_sha256": agreement_sha256,
+        "role_state_db": paths.maker.join("unused-source-state.sqlite3"),
         "claim_recovery": {
             "key_id": "ui-zec-claim",
-            "key_file": maker_root.join("claim-recovery.key")
+            "key_file": paths.maker.join("claim-recovery.key")
         },
-        "claim_preimage_file": maker_root.join("claim-preimage.key"),
-        "zcash_key_file": maker_root.join("zcash.key"),
+        "claim_preimage_file": paths.maker.join("claim-preimage.key"),
+        "zcash_key_file": paths.maker.join("zcash.key"),
         "bridge": {
             "endpoint": "http://127.0.0.1:19001",
-            "journal_db": maker_root.join("unused-source-bridge.sqlite3"),
-            "capability_file": maker_root.join("bridge.capability"),
+            "journal_db": paths.maker.join("unused-source-bridge.sqlite3"),
+            "capability_file": paths.maker.join("bridge.capability"),
             "runtime": {
                 "sidecar_role": "maker",
                 "compatibility": "lee_v0_2_0",
@@ -224,34 +253,51 @@ fn main() -> Result<()> {
             "transaction_id": "aa".repeat(32),
             "output_index": 0
         }]
-    });
-    write_private(
-        &maker_root.join("actor-config.json"),
-        &serde_json::to_vec_pretty(&config)?,
-    )?;
+    })
+}
 
-    // Taker source actor config: start from the shared corridor facts, then
-    // replace every role-specific authority and remove Maker-only inputs.
-    let taker_claim_key = taker_root.join("actor-claim-recovery.key");
-    let taker_capability = taker_root.join("actor-bridge.capability");
+fn create_taker_config(paths: &FixturePaths, maker_config: &Value) -> Result<Value> {
+    let taker_claim_key = paths.taker.join("actor-claim-recovery.key");
+    let taker_capability = paths.taker.join("actor-bridge.capability");
     write_raw_key(&taker_claim_key, 0x7b)?;
     write_private(&taker_capability, b"m5_taker_actor_capability_0123456789")?;
-    let mut taker_config = config.clone();
-    taker_config["role"] = json!("taker");
-    taker_config["role_state_db"] = json!(taker_root.join("unused-taker-source-state.sqlite3"));
-    taker_config["claim_recovery"]["key_id"] = json!("ui-zec-taker-claim");
-    taker_config["claim_recovery"]["key_file"] = json!(taker_claim_key);
-    taker_config["claim_preimage_file"] = Value::Null;
-    taker_config["zcash_key_file"] = json!(taker_root.join("zcash.key"));
-    taker_config["bridge"]["endpoint"] = json!("http://127.0.0.1:19002");
-    taker_config["bridge"]["journal_db"] =
-        json!(taker_root.join("unused-taker-source-bridge.sqlite3"));
-    taker_config["bridge"]["capability_file"] = json!(taker_capability);
-    taker_config["bridge"]["runtime"]["sidecar_role"] = json!("taker");
-    taker_config["bridge"]["runtime"]["signer_account_id"] = json!("04".repeat(32));
-    taker_config["zcash_funding_outpoints"] = json!([]);
+    let mut config = maker_config.clone();
+    config["role"] = json!("taker");
+    config["role_state_db"] = json!(paths.taker.join("unused-taker-source-state.sqlite3"));
+    config["claim_recovery"]["key_id"] = json!("ui-zec-taker-claim");
+    config["claim_recovery"]["key_file"] = json!(taker_claim_key);
+    config["claim_preimage_file"] = Value::Null;
+    config["zcash_key_file"] = json!(paths.taker.join("zcash.key"));
+    config["bridge"]["endpoint"] = json!("http://127.0.0.1:19002");
+    config["bridge"]["journal_db"] = json!(paths.taker.join("unused-taker-source-bridge.sqlite3"));
+    config["bridge"]["capability_file"] = json!(taker_capability);
+    config["bridge"]["runtime"]["sidecar_role"] = json!("taker");
+    config["bridge"]["runtime"]["signer_account_id"] = json!("04".repeat(32));
+    config["zcash_funding_outpoints"] = json!([]);
+    Ok(config)
+}
+
+fn main() -> Result<()> {
+    let arguments = Arguments::parse();
+    let basis_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let paths = FixturePaths::create(&arguments.output_root)?;
+    let keys = FixtureKeys::deterministic();
+    write_authority_material(&paths)?;
+
+    let agreement = create_agreement(&arguments, basis_time, &keys)?;
+    write_private(&paths.shared.join("agreement-v2.borsh"), &agreement)?;
+    let agreement_sha256 = hex::encode(Sha256::digest(&agreement));
+    let maker_config = create_maker_config(&arguments, &paths, &agreement_sha256);
     write_private(
-        &taker_root.join("actor-config.json"),
+        &paths.maker.join("actor-config.json"),
+        &serde_json::to_vec_pretty(&maker_config)?,
+    )?;
+    let taker_config = create_taker_config(&paths, &maker_config)?;
+    write_private(
+        &paths.taker.join("actor-config.json"),
         &serde_json::to_vec_pretty(&taker_config)?,
     )?;
 
@@ -259,10 +305,10 @@ fn main() -> Result<()> {
         "{}",
         json!({
             "schema_version": 1,
-            "agreement_file": shared.join("agreement-v2.borsh"),
-            "maker_config": maker_root.join("actor-config.json"),
-            "taker_config": taker_root.join("actor-config.json"),
-            "taker_zcash_key": taker_root.join("zcash.key"),
+            "agreement_file": paths.shared.join("agreement-v2.borsh"),
+            "maker_config": paths.maker.join("actor-config.json"),
+            "taker_config": paths.taker.join("actor-config.json"),
+            "taker_zcash_key": paths.taker.join("zcash.key"),
             "private_material_disclosed": false
         })
     );

@@ -1,4 +1,4 @@
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b
 
 LABEL org.opencontainers.image.source="https://github.com/logos-blockchain/logos-execution-zone"
 LABEL org.opencontainers.image.version="v0.2.0"

@@ -256,7 +256,8 @@ readonly lez_ata_program_id="95841cc8bd2c87d7111bc5c7f3aa2a85d35e90f7217e82a397a
 if [[ "$m7_btc_accepted_concurrency" == 1 ]]; then
   readonly -a directions=(taker_sells_foreign taker_sells_lez)
 elif [[ -n "$direction_selection" ]]; then
-  readonly -a directions=($direction_selection)
+  read -r -a directions <<<"$direction_selection"
+  readonly directions
 elif [[ "$m5_btc_application_mode" == 1 ]]; then
   readonly -a directions=(taker_sells_foreign)
 else
@@ -692,10 +693,10 @@ expected_phase_timings_json() {
           {phase_id:("direction_" + . + "_reserve_funding"), direction:.},
           {phase_id:("direction_" + . + "_stage_two"), direction:.},
           {phase_id:("direction_" + . + "_actor_flow"), direction:.},
-          {phase_id:("direction_" + . + "_terminal_replay"), direction:.}
-          + (if $asset_mode == "custom_token" then
-              {phase_id:("direction_" + . + "_terminal_balances")}
-            else {} end)))
+          {phase_id:("direction_" + . + "_terminal_replay"), direction:.},
+          (if $asset_mode == "custom_token" then
+              {phase_id:("direction_" + . + "_terminal_balances"), direction:.}
+            else empty end)))
       end)
     + [{phase_id:"effect_validation",direction:null}]
   '
@@ -2256,7 +2257,7 @@ provision_actor_identities() {
       src="$maker_src"; [[ "$role" == taker ]] && src="$taker_src"
       [[ -f "$src/identity.json" && -f "$src/lez-signer.key" ]] ||
         fail "persistent ${role} identity is incomplete: ${src}"
-      mkdir -m 0700 -p "${identities_dir}/${role}"
+      install -d -m 0700 "${identities_dir}/${role}"
       install -m 0600 "$src/identity.json" "${identities_dir}/${role}/identity.json"
       install -m 0600 "$src/lez-signer.key" "${identities_dir}/${role}/lez-signer.key"
       install -m 0600 "$src/identity.json" "${evidence_dir}/${role}-lez-identity.json"

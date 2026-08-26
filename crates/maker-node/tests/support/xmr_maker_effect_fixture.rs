@@ -159,6 +159,7 @@ pub fn provision_maker_tag17(fixture: &XmrChatFixture, root: &Path) -> MakerReco
     provision_maker_recovery(fixture, root, MakerRecoveryKind::Tag17)
 }
 
+#[cfg(feature = "test-crash-hooks")]
 pub fn provision_maker_claim(fixture: &XmrChatFixture, root: &Path) -> MakerRecoveryEffectFixture {
     provision_maker_recovery(fixture, root, MakerRecoveryKind::Claim)
 }

@@ -644,7 +644,7 @@ docker image rm "lez-atomic-swaps-bitcoin-core:${RUN_ID}"
 
 Runtime uses no public RPC, faucet, public funds, public peers, or public chain.
 Cold setup does use signed assets from bitcoincore.org, the Bitcoin source tag
-and Guix attestations from GitHub, a digest-pinned `gcr.io` distroless base, and
+and Guix attestations from GitHub, a digest-pinned Chainguard `glibc-dynamic` base, and
 locked Cargo registry artifacts. DNS/TLS failures, registry or host
 availability, rate limits, signature-service changes, and vulnerability-
 database outages in CI can therefore make setup or scanning flaky without
@@ -1229,7 +1229,7 @@ printf "%s  %s\n" \
   "$LEZ_V02_R0VM" | sha256sum --check --strict
 ```
 
-Keep the three resulting absolute paths for the runner. A cold host also needs the exact Bedrock GHCR digest and distroless GCR digest.
+Keep the three resulting absolute paths for the runner. A cold host also needs the exact Bedrock GHCR digest and Chainguard runtime digest.
 The runner may pull those immutable images if they are absent. The exact clone, native-library verification, locked build, and r0vm provisioning commands above produce those inputs; the runtime runner never floats source or artifact versions.
 
 ```sh
@@ -2138,7 +2138,7 @@ Cold setup and CI do use external software-distribution services:
 | GHCR Logos Blockchain image | Local LEZ v0.2 Bedrock node and source/binary contract | Exact digest `sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f`; verifier checks OCI source revision `d8711bbc...` and license | Registry outage can block a cold pull; the manual contract verifier never pulls and fails if the exact cached image is absent. Public-testnet parity remains an upstream production question |
 | GitHub Rapisnark v0.0.8 release asset | Exact LEZ v0.2 service and sidecar builds | Revision, archive name, SHA-256, and all four extracted static-library hashes are contract-bound | Release/CDN outage blocks an uncached build; implicit build-script download is rejected in favor of the preverified local directory |
 | Docker Hub `zfnd/zebra` and `risczero/risc0-guest-builder` | Cold Zebra image build and Risc0 guest build | Zebra `5.2.0` source image and guest builder are digest-pinned | Registry outage, throttling, or authentication policy can block a cold pull; local images reduce but do not guarantee offline BuildKit resolution |
-| Google Container Registry distroless image | Cold minimal Zebra and LEZ v0.2 service image builds | Exact `cc-debian13:nonroot` digest | Registry/DNS outage can block a cold pull; no moving tag is accepted |
+| Chainguard `glibc-dynamic` image | Cold minimal Bitcoin Core and LEZ v0.2 service image builds | Exact multi-architecture digest | Registry/DNS outage can block a cold pull; no moving tag is accepted |
 | GitHub release asset for `logos-blockchain-circuits v0.4.2` | First LEZ run | Exact release URL plus required SHA-256 before extraction | Release/CDN outage can fail after retries; a verified run-specific cache avoids redownload |
 | `rzup`-managed Risc0 release endpoint | First install of `r0vm`/`cargo-risczero` 3.0.5 | Runner checks exact tool versions and the final ELF digest/ImageID | Upstream release availability can block cold setup; keep the verified `LEZ_E2E_TOOL_DIR` cache |
 | RustSec advisory database and Trivy vulnerability database | cargo-deny locally/CI; Trivy in CI | Scanner actions are commit-pinned; databases intentionally update | Network outage can prevent refresh, and a new advisory/CVE can make a previously green commit fail; this is a security signal, not a flaky test to bypass |

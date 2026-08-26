@@ -25,9 +25,9 @@ use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
 
 use xmr_chat_fixture::XmrChatFixture;
-use xmr_maker_effect_fixture::{
-    provision_maker_claim, provision_maker_refund, provision_maker_tag17,
-};
+#[cfg(feature = "test-crash-hooks")]
+use xmr_maker_effect_fixture::provision_maker_claim;
+use xmr_maker_effect_fixture::{provision_maker_refund, provision_maker_tag17};
 
 #[test]
 #[allow(

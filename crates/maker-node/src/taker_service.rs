@@ -1160,35 +1160,7 @@ async fn initiate(
         return Err(InitiationError::SelectionMismatch);
     }
 
-    let offer_request = TakerOfferListRequestV1 {
-        schema_version: 1,
-        route: Some(request.route),
-    };
-    let now = state
-        .backend
-        .trusted_now_for_offer_list(&offer_request)
-        .map_err(InitiationError::Backend)?;
-    let live_match = match live_broadcast_offer_matches(&request, now)? {
-        Some(matches) => matches,
-        None => state
-            .backend
-            .offer_list_at(&offer_request, now)
-            .await
-            .map_err(InitiationError::Backend)?
-            .offers
-            .iter()
-            .any(|candidate| {
-                candidate.offer.id() == &request.offer_id
-                    && candidate.offer.route() == request.route
-                    && candidate.maker_identity == request.maker_identity
-                    && candidate.signed_envelope_sha256 == request.signed_envelope_sha256
-                    && candidate
-                        .offer
-                        .quote_foreign_amount(request.foreign_units)
-                        .ok()
-                        == Some(request.expected_lez_units)
-            }),
-    };
+    let (now, live_match) = selected_offer_is_live(&state, &request).await?;
     if !live_match {
         return Err(InitiationError::SelectionMismatch);
     }
@@ -1218,6 +1190,42 @@ async fn initiate(
         TakerSwapStateV1::Initiating
     };
     Ok(commit_from_admission(&admission, progress))
+}
+
+async fn selected_offer_is_live(
+    state: &TakerServiceState,
+    request: &TakerSwapInitiateRequestV1,
+) -> Result<(u64, bool), InitiationError> {
+    let offer_request = TakerOfferListRequestV1 {
+        schema_version: 1,
+        route: Some(request.route),
+    };
+    let now = state
+        .backend
+        .trusted_now_for_offer_list(&offer_request)
+        .map_err(InitiationError::Backend)?;
+    let live_match = match live_broadcast_offer_matches(request, now)? {
+        Some(matches) => matches,
+        None => state
+            .backend
+            .offer_list_at(&offer_request, now)
+            .await
+            .map_err(InitiationError::Backend)?
+            .offers
+            .iter()
+            .any(|candidate| {
+                candidate.offer.id() == &request.offer_id
+                    && candidate.offer.route() == request.route
+                    && candidate.maker_identity == request.maker_identity
+                    && candidate.signed_envelope_sha256 == request.signed_envelope_sha256
+                    && candidate
+                        .offer
+                        .quote_foreign_amount(request.foreign_units)
+                        .ok()
+                        == Some(request.expected_lez_units)
+            }),
+    };
+    Ok((now, live_match))
 }
 
 fn live_broadcast_offer_matches(

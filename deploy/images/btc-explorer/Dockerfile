@@ -1,5 +1,6 @@
 FROM node:20-bookworm-slim
 
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 make g++ libkrb5-dev \
     && rm -rf /var/lib/apt/lists/*

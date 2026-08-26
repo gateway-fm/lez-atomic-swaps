@@ -12,7 +12,6 @@ readonly RUNTIME
 readonly LEZ_SOURCE="$DEPLOY_ROOT/assets/lez-source"
 
 readonly channel_id="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
-readonly bedrock_signing_key_hex="0ab865b8054be13810889714c1f1d82c3d8bb2e4510c26d0edc35cc653f306c2"
 readonly maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
 readonly taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
 readonly maker_genesis_allocation=100000
@@ -27,7 +26,6 @@ readonly wallet_zurich_account_id="4vDRakzuvKqJFJZ6k4ig3ybzds6fTLv1xDpwU283SwBM"
 readonly wallet_limmat_account_id="5A8bRmav5wjYQex6z7SpuuNNyhesqHwweAqjc3eWfchH"
 readonly wallet_maker_allocation=100000
 readonly wallet_taker_allocation=200000
-readonly slot_duration_seconds="1.0"
 readonly upstream_genesis_time_hex="2c04626900000000"
 
 umask 077

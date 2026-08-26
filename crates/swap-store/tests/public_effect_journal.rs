@@ -1,4 +1,4 @@
-use std::{sync::Arc, thread};
+use std::thread;
 
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{
@@ -513,19 +513,21 @@ fn accepted_result_requires_and_replays_the_exact_expected_effect_id() {
 #[test]
 fn competing_processes_receive_exactly_one_submit_once_decision() {
     let directory = tempdir().unwrap();
-    let path = Arc::new(directory.path().join("effects.sqlite3"));
+    let path = directory.path().join("effects.sqlite3");
     let candidate = prepared();
-    let _ = SqlitePublicEffectJournal::open(path.as_ref())
+    let _ = SqlitePublicEffectJournal::open(&path)
         .unwrap()
         .record_prepared(&candidate)
         .unwrap();
+    let journals = (0..8)
+        .map(|_| SqlitePublicEffectJournal::open(&path).unwrap())
+        .collect::<Vec<_>>();
 
-    let workers = (0..8)
-        .map(|_| {
-            let path = Arc::clone(&path);
+    let workers = journals
+        .into_iter()
+        .map(|mut journal| {
             let key = candidate.key().clone();
             thread::spawn(move || {
-                let mut journal = SqlitePublicEffectJournal::open(path.as_ref()).unwrap();
                 journal
                     .reconcile(&key, PublicEffectObservation::Absent)
                     .unwrap()
@@ -555,19 +557,21 @@ fn competing_processes_receive_exactly_one_submit_once_decision() {
 #[test]
 fn competing_refund_eligibility_observers_receive_exactly_one_attempt() {
     let directory = tempdir().unwrap();
-    let path = Arc::new(directory.path().join("refund-race.sqlite3"));
+    let path = directory.path().join("refund-race.sqlite3");
     let candidate = prepared_refund();
-    let _ = SqlitePublicEffectJournal::open(path.as_ref())
+    let _ = SqlitePublicEffectJournal::open(&path)
         .unwrap()
         .record_prepared(&candidate)
         .unwrap();
+    let journals = (0..8)
+        .map(|_| SqlitePublicEffectJournal::open(&path).unwrap())
+        .collect::<Vec<_>>();
 
-    let workers = (0..8)
-        .map(|_| {
-            let path = Arc::clone(&path);
+    let workers = journals
+        .into_iter()
+        .map(|mut journal| {
             let key = candidate.key().clone();
             thread::spawn(move || {
-                let mut journal = SqlitePublicEffectJournal::open(path.as_ref()).unwrap();
                 journal
                     .reconcile(&key, PublicEffectObservation::EligibleToAttempt)
                     .unwrap()

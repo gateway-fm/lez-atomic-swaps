@@ -35,7 +35,8 @@ expected_files=(
 )
 
 mapfile -t actual_files < <(
-  find "$vector_root" -type f -printf '%P\n' | LC_ALL=C sort
+  cd "$vector_root"
+  find . -type f -print | sed 's#^\./##' | LC_ALL=C sort
 )
 mapfile -t sorted_expected < <(
   printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort
@@ -50,7 +51,7 @@ done < <(printf '%s\n' "${expected_files[@]}")
 
 (
   cd "$vector_root"
-  sha256sum --check --strict SHA256SUMS >/dev/null
+  sha256sum -c SHA256SUMS >/dev/null
 ) || fail "immutable vector checksum mismatch"
 
 for path in "${vector_root}"/bip-0327/*.json; do
@@ -70,7 +71,7 @@ rg -Fq 'BIP-340: BSD-2-Clause' "$provenance" ||
   fail "provenance is missing the BIP-340 license"
 
 printf '%s  %s\n' "$adaptor_fixture_sha256" "$adaptor_fixture" |
-  sha256sum --check --strict >/dev/null || fail "swap-specific adaptor fixture checksum mismatch"
+  sha256sum -c - >/dev/null || fail "swap-specific adaptor fixture checksum mismatch"
 jq -e '
   .schema_version == 1
   and .fixture_id == "lez-btc-taproot-adaptor-v1"

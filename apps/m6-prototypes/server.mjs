@@ -21,7 +21,6 @@ const files = new Set([
   "/assets/lez-orbit.svg",
   "/assets/maker-console.svg",
   "/assets/taker-route.svg",
-  "/assets/shield-after.svg",
 ]);
 const contentTypes = {
   ".html": "text/html; charset=utf-8",

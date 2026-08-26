@@ -47,9 +47,9 @@
           <section id="maker-overview" class="app-view active" aria-labelledby="view-title">
             <div class="metric-grid">
               <article class="metric-card accent"><span>Active swaps</span><strong>2</strong><small>1 awaiting confirmation</small></article>
-              <article class="metric-card"><span>Published offers</span><strong>3</strong><small>Across BTC, XMR, ZEC</small></article>
+              <article class="metric-card"><span>Published offers</span><strong>2</strong><small>BTC-only release scope</small></article>
               <article class="metric-card"><span>Completed volume</span><strong>42,800 <em>LEZ</em></strong><small>Sample total · 30 days</small></article>
-              <article class="metric-card"><span>Service health</span><strong class="healthy">Ready</strong><small>All sample routes available</small></article>
+              <article class="metric-card"><span>Service health</span><strong class="healthy">Ready</strong><small>BTC sample route available</small></article>
             </div>
 
             <div class="content-grid wide-left">
@@ -60,8 +60,6 @@
               <article class="panel route-panel">
                 <div class="panel-head"><div><div class="eyebrow">Liquidity</div><h2>Enabled routes</h2></div></div>
                 <div class="route-summary"><span class="asset-icon btc">₿</span><div><strong>LEZ / BTC</strong><small>1 BTC = 1,540,000 LEZ</small></div><span class="tag good-tag">Live</span></div>
-                <div class="route-summary"><span class="asset-icon xmr">ɱ</span><div><strong>LEZ / XMR</strong><small>1 XMR = 4,240 LEZ</small></div><span class="tag good-tag">Live</span></div>
-                <div class="route-summary"><span class="asset-icon zec">Z</span><div><strong>LEZ / ZEC</strong><small>1 ZEC = 910 LEZ</small></div><span class="tag good-tag">Live</span></div>
                 <button class="button secondary full" type="button" data-view-jump="maker-config">Configure routes</button>
               </article>
             </div>
@@ -73,7 +71,7 @@
               <form class="panel form-panel" id="maker-config-form">
                 <div class="form-section"><span class="step-badge">1</span><div><h2>Choose the market</h2><p>Each direction has independent limits and pricing.</p></div></div>
                 <div class="field-grid">
-                  <label class="field"><span>Pair</span><select id="maker-pair"><option value="bitcoin">LEZ / Bitcoin</option><option value="monero">LEZ / Monero</option><option value="zcash">LEZ / Zcash</option></select></label>
+                  <label class="field"><span>Pair</span><select id="maker-pair"><option value="bitcoin">LEZ / Bitcoin</option></select></label>
                   <label class="field"><span>Direction</span><select id="maker-direction"><option value="sell-lez">Maker sells LEZ</option><option value="sell-foreign">Maker sells foreign asset</option></select></label>
                 </div>
                 <hr>

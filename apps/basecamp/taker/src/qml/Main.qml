@@ -1447,14 +1447,14 @@ Item {
                                 ColumnLayout {
                                     Layout.fillWidth: true; spacing: 2
                                     Label { text: "Explore another corridor"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                    Label { text: "Bitcoin opens the completed M3 proof; other pairs use prepared offers"; color: "#7F8A9B"; font.pixelSize: 11 }
+                                    Label { text: "This release exposes only the completed Bitcoin M3 corridor"; color: "#7F8A9B"; font.pixelSize: 11 }
                                 }
                             }
                             GridLayout {
                                 Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 7
                                 FieldLabel { text: "ASSET YOU RECEIVE" }
                                 FieldLabel { text: "YOUR SIDE" }
-                                LuxeCombo { id: pair; objectName: "takerPair"; model: ["Bitcoin", "Zcash", "Monero"]; Layout.fillWidth: true }
+                                LuxeCombo { id: pair; objectName: "takerPair"; model: ["Bitcoin"]; Layout.fillWidth: true }
                                 LuxeCombo { id: direction; objectName: "takerDirection"; model: ["TakerSellsForeign", "TakerSellsLez"]; Layout.fillWidth: true }
                             }
                             LuxeButton {
@@ -1673,7 +1673,7 @@ Item {
                                 Label { text: "PRIVACY"; color: "#FA50C1"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
                                 Label {
                                     objectName: "takerShielding"
-                                    text: "After a transparent ZEC claim, move funds to a shielded wallet address."
+                                    text: "Bitcoin amounts and transaction linkage are public; use fresh wallet addresses."
                                     color: "#A8AFBB"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
                                 }
                             }

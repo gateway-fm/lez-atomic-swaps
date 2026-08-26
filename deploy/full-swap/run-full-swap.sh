@@ -18,7 +18,8 @@ export LEZ_V02_R0VM=/provision/tools-arm/bin/r0vm
 export LEZ_V02_ARTIFACT_TARGET_DIR=/tmp/lez-m3-artifact-arm
 export RAPIDSNARK_LIB_DIR=/provision/rapidsnark-arm
 export BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/aarch64-linux-gnu/13/include
-export M5_LEZ_DEPLOYER_SHA256="$(sha256sum "$LEZ_V02_ARTIFACT_TARGET_DIR/debug/lez-zec-escrow-v02-deployer" | cut -d' ' -f1)"
+M5_LEZ_DEPLOYER_SHA256="$(sha256sum "$LEZ_V02_ARTIFACT_TARGET_DIR/debug/lez-zec-escrow-v02-deployer" | cut -d' ' -f1)"
+export M5_LEZ_DEPLOYER_SHA256
 export M5_BTC_APPLICATION_MODE=1
 export M3_ACTOR_POC_JOURNEY=claim
 export M3_ACTOR_POC_ASSET_MODE=native

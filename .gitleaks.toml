@@ -14,6 +14,7 @@ regexTarget = "line"
 paths = [
   '''^crates/btc-swap-sdk/tests/vectors/lez-btc-adaptor-v1\.json$''',
   '''^scripts/check-lez-v02-docker-isolation\.sh$''',
+  # Retained for the full-history scan after this deferred release checker was removed.
   '''^scripts/check-monero-isolation\.sh$''',
   '''^scripts/run-bitcoin-core-e2e\.sh$''',
   '''^scripts/run-lez-v02-stack\.sh$''',

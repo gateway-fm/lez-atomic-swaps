@@ -4,6 +4,7 @@ ARG UID=501
 ARG GID=20
 
 ENV DEBIAN_FRONTEND=noninteractive
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git gnupg jq ripgrep python3 unzip tar xz-utils bzip2 \
         openssh-client pkg-config build-essential clang libssl-dev perl cmake \
@@ -11,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # docker CLI (talks to the mounted host socket; daemon stays on the host)
+# hadolint ignore=DL3008
 RUN install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -20,7 +22,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -g ${GID} hostgroup 2>/dev/null || true; \
-    useradd -m -u ${UID} -g ${GID} -s /bin/bash lez \
+    useradd -l -m -u ${UID} -g ${GID} -s /bin/bash lez \
     && echo "lez ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/lez
 
 USER lez

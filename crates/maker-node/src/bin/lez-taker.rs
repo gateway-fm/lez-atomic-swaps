@@ -1096,6 +1096,9 @@ fn execute_xmr_taker_effect(
                 mark_xmr_effect_unknown(execution, step)?;
                 return Err(anyhow::anyhow!("XMR Taker effect invocation is ambiguous"));
             }
+            #[cfg(not(feature = "test-crash-hooks"))]
+            pause_xmr_taker_after_invoked(step);
+            #[cfg(feature = "test-crash-hooks")]
             pause_xmr_taker_after_invoked(step)?;
             ("invoked_unreconciled", tool_plan_identity_sha256, false)
         }
@@ -1130,9 +1133,7 @@ fn execute_xmr_taker_effect(
 }
 
 #[cfg(not(feature = "test-crash-hooks"))]
-fn pause_xmr_taker_after_invoked(_step: XmrWorkflowStep) -> anyhow::Result<()> {
-    Ok(())
-}
+fn pause_xmr_taker_after_invoked(_step: XmrWorkflowStep) {}
 
 #[cfg(feature = "test-crash-hooks")]
 fn pause_xmr_taker_after_invoked(step: XmrWorkflowStep) -> anyhow::Result<()> {

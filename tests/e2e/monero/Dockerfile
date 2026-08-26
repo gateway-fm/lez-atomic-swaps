@@ -1,4 +1,4 @@
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512
 
 LABEL org.opencontainers.image.source="https://github.com/monero-project/monero"
 LABEL org.opencontainers.image.version="0.18.5.1"
