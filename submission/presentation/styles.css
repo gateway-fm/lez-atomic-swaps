@@ -755,7 +755,7 @@ code {
 
 /* ── M1 sequence diagram + design-evidence strip ──────────────────────── */
 
-.seq-diagram.m1-seq { height: min(74vh, 782px); min-height: 460px; }
+.seq-diagram.m1-seq { height: min(76vh, 820px); min-height: 470px; }
 .m1-seq .msg.purple { stroke: var(--purple); }
 .m1-seq .note { fill: rgba(156,255,87,.045); stroke: rgba(156,255,87,.28); stroke-width: 1.5; }
 .m1-seq .persist { fill: #0a1018; stroke: var(--lime); stroke-width: 2; }
