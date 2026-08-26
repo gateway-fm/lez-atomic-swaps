@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-14",
+  "classification": "m2_current_schema_two_direction_actual_local_node_certification",
+  "runtime_implementation_base_commit": "2d0999712d49d010ec23dcfe0b4f0d7f9329c8cf",
+  "actor_config_schema_version": 3,
+  "isolated_local_environments": {
+    "lez": {
+      "version": "v0.2.0",
+      "source_commit": "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a",
+      "chain_id": "b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748",
+      "genesis_hash": "e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9",
+      "escrow_program_id": "f8385049e93a319b44d868e0d0cf805b058eddcf92141a186ffd69e4596c0fbe",
+      "transport": "ephemeral_literal_loopback"
+    },
+    "zebra": {
+      "version": "5.2.0",
+      "network": "regtest",
+      "transport": "ephemeral_literal_loopback"
+    }
+  },
+  "corridors": [
+    {
+      "run_id": "m2cert-schema3-forward-2d09997-20260714a",
+      "direction": "taker_sells_lez",
+      "result": "completed",
+      "maker_status": "completed",
+      "taker_status": "completed",
+      "effect_owners": {
+        "zcash_funder": "maker",
+        "lez_claimant": "maker",
+        "zcash_claimant": "taker"
+      },
+      "atomic_order_observed": [
+        "zcash_funded_and_confirmed",
+        "lez_revealing_claim_submitted",
+        "zcash_followup_claim_submitted_and_confirmed"
+      ],
+      "drive_rounds": 46,
+      "same_run_drive_retries": 0,
+      "elapsed_milliseconds_from_provisioning": 35410,
+      "zebra_tip": {
+        "initial": 115,
+        "final": 118
+      },
+      "zebra_generated_blocks": 3,
+      "public_rpc_or_faucet_used": false,
+      "private_result_sha256": "c897b143cd306c48e597daf1796c422ad9e74917c277791f39c747305a36ab21"
+    },
+    {
+      "run_id": "m2cert-schema3-reverse-2d09997-20260714a",
+      "direction": "taker_sells_foreign",
+      "result": "completed",
+      "maker_status": "completed",
+      "taker_status": "completed",
+      "effect_owners": {
+        "zcash_funder": "taker",
+        "lez_claimant": "taker",
+        "zcash_claimant": "maker"
+      },
+      "atomic_order_observed": [
+        "zcash_funded_and_confirmed",
+        "lez_revealing_claim_submitted",
+        "zcash_followup_claim_submitted_and_confirmed"
+      ],
+      "drive_rounds": 33,
+      "same_run_drive_retries": 2,
+      "elapsed_milliseconds_from_provisioning": 31830,
+      "zebra_tip": {
+        "initial": 118,
+        "final": 121
+      },
+      "zebra_generated_blocks": 3,
+      "public_rpc_or_faucet_used": false,
+      "private_result_sha256": "62586bc0d76ebb75983bbb46ef8cd3b9a88532637f12f9320031cf0eb354a112"
+    }
+  ],
+  "assertions": {
+    "both_supported_directions_completed": true,
+    "both_independent_role_processes_terminal": true,
+    "direction_derived_effect_owners_correct": true,
+    "required_atomic_order_observed": true,
+    "same_current_schema_crossed_actual_nodes": true,
+    "public_rpc_or_faucet_used": false
+  },
+  "resource_and_secret_boundary": {
+    "funding_source": "deterministic_local_lez_vault_allocations_and_zebra_regtest_outputs",
+    "private_keys_or_capabilities_recorded": false,
+    "preimage_recorded": false,
+    "private_run_roots_committed": false,
+    "runner_started_or_removed_docker_resources": false
+  },
+  "limitations": [
+    "The replay reused an already-running isolated pinned local-node tuple; it is not a clean-host reproduction.",
+    "Fresh Vault onboarding and checked escrow deployment were not automated by these two replay commands.",
+    "Refund, restart, reorg, concurrency, chaos, and production-readiness expansion remain owner-gated post-PoC work.",
+    "Public-testnet deployment and execution remain intentionally deferred under ADR 0023."
+  ]
+}

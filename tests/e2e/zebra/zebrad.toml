@@ -1,0 +1,32 @@
+# Test-only Regtest node. RPC has no cookie because Compose publishes it only on
+# an ephemeral 127.0.0.1 port and deletes all state with the project.
+[mining]
+miner_address = "tmNAP26Sw5Ra2jepAoTr1kqdkggawba6Akd"
+
+[network]
+network = "Regtest"
+listen_addr = "127.0.0.1:0"
+cache_dir = false
+initial_testnet_peers = []
+
+[network.testnet_parameters.activation_heights]
+"NU6.2" = 1
+
+[state]
+ephemeral = true
+
+[rpc]
+listen_addr = "0.0.0.0:18232"
+debug_force_finished_sync = true
+enable_cookie_auth = false
+parallel_cpu_threads = 2
+
+[sync]
+download_concurrency_limit = 2
+checkpoint_verify_concurrency_limit = 2
+full_verify_concurrency_limit = 2
+parallel_cpu_threads = 2
+
+[tracing]
+force_use_color = false
+use_color = false

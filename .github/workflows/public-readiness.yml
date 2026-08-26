@@ -3,7 +3,7 @@ name: public-readiness
 on:
   pull_request:
   push:
-    branches: [m3-plus]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -15,12 +15,13 @@ concurrency:
 
 jobs:
   repository-contract:
-    name: repository and reconstruction contract
+    name: repository and direct-source contract
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - run: ./scripts/verify-public-repository.sh
 
   dco:
@@ -31,6 +32,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Require an author-matching sign-off on every commit
         env:
@@ -66,6 +68,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Install checksum-pinned Gitleaks 8.30.1
         env:
           ARCHIVE_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -82,27 +85,24 @@ jobs:
           "$install_dir/gitleaks" git . --no-banner --redact --exit-code 1
 
   dependency-policy:
-    name: reconstructed dependency vulnerabilities and licences
+    name: dependency vulnerabilities and licences
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24.18.0
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: 1.96.0
-      - name: Reconstruct exact source
-        run: ./scripts/reconstruct-source.sh "${RUNNER_TEMP}/source"
       - name: Audit Node dependency and licence policy
-        working-directory: ${{ runner.temp }}/source
         run: |
           npm audit --audit-level=moderate
           npm run audit:licenses
       - name: Audit Rust advisories, bans, licences, and sources
-        working-directory: ${{ runner.temp }}/source
         env:
           ARCHIVE_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
         run: |
@@ -157,19 +157,18 @@ jobs:
             compat/lez-v0_2-xmr-release-service/deny.toml all
 
   chat-delivery:
-    name: reconstructed Chat and Delivery tests
+    name: Chat and Delivery tests
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: 1.96.0
-      - run: ./scripts/reconstruct-source.sh "${RUNNER_TEMP}/source"
       - name: Test independent-role Chat, Delivery discovery, and conflict resolution
-        working-directory: ${{ runner.temp }}/source
         run: >-
           cargo test --locked -p lez-maker-node
           --lib

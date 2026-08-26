@@ -1,0 +1,89 @@
+[package]
+name = "xmr-reference-actor"
+version = "0.1.0"
+description = "Role-fixed reference material actor for LEZ and Monero atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["sessions"]
+sessions = [
+    "dep:lez-adaptor-role-runner",
+    "dep:lez-adaptor-signature",
+    "dep:lez-bridge-adapter",
+    "dep:lez-bridge-client",
+    "dep:lez-bridge-protocol",
+    "dep:lez-swap-core",
+    "dep:lez-swap-store",
+    "dep:lez-xmr-release-authority",
+    "dep:lez-xmr-monero-adapter",
+    "dep:monero",
+]
+
+[dependencies]
+anyhow = "=1.0.103"
+clap = { version = "=4.6.1", features = ["derive"] }
+hex = "=0.4.3"
+lez-adaptor-role-runner = { version = "=0.1.0", path = "../adaptor-role-runner", optional = true }
+lez-adaptor-signature = { version = "=0.1.0", path = "../adaptor-signature", optional = true }
+lez-bridge-adapter = { version = "=0.1.0", path = "../lez-bridge-adapter", optional = true }
+lez-bridge-client = { version = "=0.1.0", path = "../lez-bridge-client", optional = true }
+lez-bridge-protocol = { version = "=0.1.0", path = "../lez-bridge-protocol", optional = true }
+lez-swap-core = { version = "=0.1.0", path = "../swap-core", optional = true }
+lez-swap-store = { version = "=0.1.0", path = "../swap-store", optional = true }
+lez-xmr-release-authority = { version = "=0.1.0", path = "../xmr-release-authority", optional = true }
+lez-xmr-monero-adapter = { version = "=0.1.0", path = "../xmr-monero-adapter", optional = true }
+lez-xmr-swap-sdk = { version = "=0.1.0", path = "../xmr-swap-sdk" }
+monero = { version = "=0.22.0", default-features = false, optional = true }
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
+secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc", "rand-std"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.10.9"
+tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread"] }
+url = "=2.5.8"
+zeroize = "=1.9.0"
+
+[[bin]]
+name = "xmr-reference-tag15"
+path = "src/bin/xmr-reference-tag15.rs"
+required-features = ["sessions"]
+
+[[bin]]
+name = "xmr-reference-tag16"
+path = "src/bin/xmr-reference-tag16.rs"
+required-features = ["sessions"]
+
+[[bin]]
+name = "xmr-reference-tag17"
+path = "src/bin/xmr-reference-tag17.rs"
+required-features = ["sessions"]
+
+[[bin]]
+name = "xmr-reference-monero-refund"
+path = "src/bin/xmr-reference-monero-refund.rs"
+required-features = ["sessions"]
+
+[[bin]]
+name = "xmr-reference-monero-verify"
+path = "src/bin/xmr-reference-monero-verify.rs"
+required-features = ["sessions"]
+
+[[bin]]
+name = "xmr-reference-finalized-classifier"
+path = "src/bin/xmr-reference-finalized-classifier.rs"
+required-features = ["sessions"]
+
+[dev-dependencies]
+command-fds = "=0.3.3"
+jsonrpsee = { version = "0.26.0", features = ["server"] }
+rand_chacha = "=0.3.1"
+rusqlite = { version = "=0.40.1", features = ["bundled"] }
+tempfile = "=3.27.0"
+tower = "0.5.2"
+tower-http = { version = "0.7.0", features = ["auth"] }

@@ -28,21 +28,19 @@ checkpoint; they do not widen the current claim.
 
 ## Source and Gateway portability
 
-- `m3-plus` is a curated orphan-branch snapshot. It contains milestone
-  documents/evidence, Basecamp packages, the integrated deployment, and a
-  38-patch runner delta; it does not contain the complete historical M1/M3 Rust
-  workspace as ordinary branch ancestry.
+- Gateway's default `main` branch contains the complete Rust workspace,
+  compatibility packages, Basecamp source, tests, manifests, and build scripts
+  at their conventional paths. A clean Gateway clone needs no source
+  reconstruction or external source repository.
 - Historical checkpoint tags `m1-complete.1`, `m3-complete`, and
   `m6-poc-complete` are named by commit identity but are not currently
   published on the Gateway remote.
-- The full runner patch series requires base commit
-  `5c384a5` from an external source checkout. Until equivalent immutable source
-  refs are published by Gateway, a full clean-clone reproduction is not
-  Gateway-only.
-- [`apps/basecamp/README.md`](../apps/basecamp/README.md) is historical build
-  documentation and still names a root npm script and a launch wrapper not
-  present in this curated branch. The Nix package definitions and evidence are
-  included; the integrated BTC runtime path is `deploy/`.
+- Cold builds may still require network access for upstream crates, Nix inputs,
+  node images, or toolchains. The certified offline lane requires the documented
+  caches to be populated first.
+- The integrated BTC runtime path remains [`deploy/`](../deploy/); generated
+  binaries, node data, Docker volumes, and private evidence roots are not source
+  artifacts and are intentionally excluded.
 
 ## M3 media and evidence boundary
 

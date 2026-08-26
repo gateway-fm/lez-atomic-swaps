@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "kind": "rfp003_m1_m3_m6_submission_pack",
-  "generated_at": "2026-08-26T16:00:01Z",
+  "generated_at": "2026-08-26T16:58:20Z",
   "repository": {
     "remote": "git@github.com:gateway-fm/lez-atomic-swaps.git",
-    "branch": "m3-plus",
-    "package_base_commit": "ef585e0c93180ee55f3833b06d1e42100edb4d0c",
-    "history_shape": "curated_orphan_submission_snapshot"
+    "branch": "main",
+    "previous_public_commit": "be2fe8b2629318eb1212a00cd0002aaa641153aa",
+    "history_shape": "standard_default_branch_with_direct_source"
   },
   "upstream_milestones": [
     {
@@ -51,20 +51,20 @@
       "commit": "93dd323ca01b396e30bdc04a75073419c737ea2c"
     },
     "application_runner": {
-      "base_commit": "5c384a5",
-      "result_commit": "e67522c8d27c274bcb94b92f90420983c83d0f5b",
-      "result_tree": "ae28b574b925e2555b47dd255e6d8565f8cbd7d9",
-      "ordered_patch_count": 37,
-      "gateway_owned_base_ref_at_generation": false
+      "provenance_commit": "e67522c8d27c274bcb94b92f90420983c83d0f5b",
+      "workspace_manifest": "Cargo.toml",
+      "published_layout": "direct_workspace"
     }
   },
-  "public_source_reconstruction": {
-    "base_commit": "5c384a5151f59bef1a2f19421ef6ab2b004db3d4",
-    "milestone_result_commit": "e67522c8d27c274bcb94b92f90420983c83d0f5b",
-    "milestone_result_tree": "ae28b574b925e2555b47dd255e6d8565f8cbd7d9",
-    "ordered_patch_count": 38,
-    "advisory_fix_patch": "deploy/full-swap/patches/0038-chore-deps-update-h2-to-0.4.16.patch",
-    "result_tree": "c747dafbdf39ed4615d92b005e63552a32bb60bf"
+  "public_source_layout": {
+    "workspace_manifest": "Cargo.toml",
+    "workspace_lock": "Cargo.lock",
+    "rust_crates": "crates/",
+    "compatibility_packages": "compat/",
+    "basecamp_sources": "apps/basecamp/",
+    "integration_tests": "tests/",
+    "requires_reconstruction": false,
+    "requires_external_source_remote": false
   },
   "matching_product_run": {
     "run_id": "m5arm-0820121736",
@@ -177,12 +177,12 @@
     "docker_network": "none",
     "cargo_net_offline": true,
     "tests": "52/52",
-    "reconstructed_tree": "c747dafbdf39ed4615d92b005e63552a32bb60bf"
+    "source_layout": "direct_workspace"
   },
   "release": {
-    "tag": "v0.1.0",
+    "tag": "v0.1.1",
     "repository": "gateway-fm/lez-atomic-swaps",
-    "evidence_map": "submission/RELEASE-v0.1.0.md",
+    "evidence_map": "submission/RELEASE-v0.1.1.md",
     "gateway_only": true
   },
   "claim_boundary": {

@@ -1,1 +1,2 @@
-deploy/full-swap/patches/*.patch -whitespace
+# Preserve the immutable upstream BIP340 corpus byte-for-byte (including CRLF).
+crates/btc-swap-sdk/tests/vectors/bitcoin-bips-8c369ac8/bip-0340/test-vectors.csv binary

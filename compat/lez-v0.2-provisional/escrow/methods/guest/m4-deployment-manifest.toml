@@ -1,0 +1,69 @@
+format_version = 1
+milestone = "M4"
+program = "zec_escrow_v02"
+artifact_status = "local-checked-artifact"
+public_deployment = false
+
+[source]
+lez_tag = "v0.2.0"
+lez_commit = "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+spel_commit = "df17acd98436be4f09c55877dae1fe2e73cbcdca"
+contract_sha256 = "ee3bf98ee33f39071db3ae56c2efdc629370744274b6bdc4f79e11d3bfd56f34"
+guest_manifest_sha256 = "ad2d8d2c16d7c785c813c11e8a4fa96ede4d94de8acbe2684779d1e8d1d3a412"
+guest_lock_sha256 = "bfe0509a33cfefd748c2b90fdb0fc2e1dfc187999b51a0f71658ac2bf6ad0b05"
+guest_entrypoint_sha256 = "8266638301f2179a808d0dd295e9c0e946e13ad12fbaf6a0321182299e1e49df"
+methods_manifest_sha256 = "b837b231477f79d3a765d95d8760dc3466726183d2a8bd63e889f0d9aafe02f9"
+methods_lock_sha256 = "93596182ff1405f172bdd7064f0260f17a54c593766bc0b1d88489a69becce96"
+methods_build_sha256 = "ad63e5ee71b2173785a241e5f565313155b96c92e37e9d7ea6e42537f80e0ddc"
+recursive_test_sha256 = "0e127c21a387c17fa7f221cfbf4759c44d818786f5707c9051531ade1c515f27"
+artifact_runner_sha256 = "5a937105c71a522a5fc1a5365360a654397b4c637539dbd98d777903c4389a94"
+
+[supply_chain]
+risc0_version = "3.0.5"
+risc0_rust_version = "1.94.1"
+rzup_version = "0.5.1"
+risc0_guest_builder = "risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"
+circuits_version = "v0.4.2"
+circuits_sha256 = "e9131ffac8b08a80e1a7152b34fdd5d5c52674d4cb396e8162131ca5dd7c858d"
+
+[artifact]
+elf_sha256 = "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
+image_id = "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+fresh_docker_embedding_required = true
+run_owned_target_required = true
+
+[interface]
+instruction_count = 18
+initialize_native_xmr_variant = 13
+authorize_native_xmr_claim_variant = 14
+claim_native_xmr_variant = 15
+refund_native_xmr_variant = 16
+punish_native_xmr_variant = 17
+
+[test]
+target = "recursive_witnessed_claim"
+test_count = 5
+serial = true
+fresh_embedded_elf_required = true
+
+[historical_boundary]
+deployment_manifest = "compat/lez-v0.2-provisional/escrow/methods/guest/deployment-manifest.toml"
+deployment_manifest_sha256 = "432fc4c1b81ffb5fa88d1afddd9d4be0c3da184442d141ef22777c3f14ee194a"
+m3_bootstrap = "scripts/run-m3-lez-bootstrap.sh"
+m3_bootstrap_sha256 = "9ef12e113d9f64d62015c0fcb5138b06a9870d74a3bca28f7e2b3719288ce6a8"
+certified_artifacts_are_not_reused = true
+
+[external_resources]
+runtime_external_resources = []
+cold_setup_external_resources = [
+  "https://github.com/logos-blockchain/logos-blockchain-circuits/releases/tag/v0.4.2",
+  "https://crates.io and pinned Git dependency sources when Cargo caches are cold",
+  "Docker registry for the digest-pinned risczero/risc0-guest-builder image when absent locally",
+  "Risc0 release endpoints used by rzup when exact tools are absent",
+]
+cold_setup_flakiness = "Cold-cache DNS, registry, GitHub, crates.io, rate-limit, or availability failures can block setup; checked-test runtime uses no RPC, faucet, public chain, or other external resource."
+
+[deployment]
+transaction_hash = "local-only"
+inclusion_block_id = 0
+inclusion_block_hash = "local-only"

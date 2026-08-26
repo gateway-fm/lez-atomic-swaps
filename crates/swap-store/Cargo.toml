@@ -1,0 +1,40 @@
+[package]
+name = "lez-swap-store"
+version = "0.1.0"
+description = "Crash-safe SQLite persistence for LEZ atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+command-fds = "=0.3.3"
+getrandom = "=0.3.4"
+lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
+lez-btc-swap-sdk = { version = "0.1.0", path = "../btc-swap-sdk" }
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-swap-sdk-core = { version = "0.1.0", path = "../swap-sdk-core" }
+lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk" }
+lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+rustix = { version = "1.1.4", features = ["fs", "process"] }
+secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["arbitrary_precision"] }
+sha2 = "=0.10.9"
+thiserror = "2.0.18"
+zeroize = "=1.9.0"
+
+[dev-dependencies]
+lez-adaptor-signature = { version = "0.1.0", path = "../adaptor-signature" }
+bitcoin = "=0.32.101"
+rand_chacha = "=0.3.1"
+tempfile = "3.27.0"
+tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread"] }
+zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
+zcash_protocol = { version = "=0.9.0", default-features = false }
+zcash_transparent = { version = "=0.8.0", default-features = false, features = ["transparent-inputs"] }

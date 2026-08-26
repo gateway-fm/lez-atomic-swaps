@@ -16,7 +16,7 @@ from an uncommitted worktree.
 | M3 Bitcoin PoC | `m3-complete` | `f7fb250f0491b9c33ed56f2ee02cdbc5ea5dcbb2` | Review, operator guide, ADRs 0029–0052, both-direction happy paths/refunds, first-lock recovery, one fresh-process continuation, and one opposite-direction overlap run |
 | M6 product work | `m6-poc-complete` | `78f9842465462715a913dde37105b77c4fd880b2` | Review, ADRs 0128–0147, evidence, prototype contract, and isolated UI test |
 | M3+ UI/deployment | branch baseline | `93dd323ca01b396e30bdc04a75073419c737ea2c` | Updated Basecamp BTC UX, Docker stack, explorers, and evidence exporter |
-| Buildable application runner | 38 patches over `5c384a5` | ordered public source delta | Exact application runner used by the live stack; reconstructed tree `c747dafbdf39ed4615d92b005e63552a32bb60bf` |
+| Buildable application runner | `Cargo.toml`, `crates/`, `compat/`, `apps/` | direct public source tree | Exact application and protocol sources used by the live stack are checked in normally |
 
 The M3+ Basecamp files intentionally remain at the branch's integrated state;
 they were not replaced with the older M6 snapshot. Historical milestone

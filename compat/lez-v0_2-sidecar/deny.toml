@@ -1,0 +1,80 @@
+[graph]
+# The sidecar deployment artifact is Linux GNU. This excludes target-only EFI
+# dependencies that are not compiled into the artifact.
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+
+[advisories]
+unmaintained = "workspace"
+yanked = "deny"
+unused-ignored-advisory = "deny"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "Exact LEZ v0.2.0 forces rsa 0.9.10 through upstream RISC0/rzup. This sidecar invokes no rzup API; rzup uses RSA-PSS signing and verification while this advisory affects RSA decryption. Treat as a Logos-owned production blocker and re-audit before deployment or any pin/feature change." },
+    { id = "RUSTSEC-2025-0055", reason = "Exact LEZ v0.2.0 forces tracing-subscriber 0.2.25 through ark-relations, but its vulnerable fmt and ansi features are not activated in this graph. Re-audit before deployment or any pin/feature change." },
+    { id = "RUSTSEC-2026-0118", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos libp2p. The vulnerable DNSSEC features are not activated, and this sidecar uses an explicit loopback IP HTTP sequencer endpoint rather than DNS/libp2p. Treat as a Logos-owned production blocker and re-audit before any transport/pin/feature change." },
+    { id = "RUSTSEC-2026-0119", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through Logos libp2p. This sidecar does not instantiate the transitive DNS/libp2p stack or encode DNS messages; it uses an explicit loopback IP HTTP sequencer endpoint. Treat as a Logos-owned production blocker and re-audit before any transport/pin/feature change." },
+]
+
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.93
+exceptions = [
+    { crate = "webpki-roots@1.0.8", allow = ["CDLA-Permissive-2.0"] },
+]
+
+[[licenses.clarify]]
+crate = "spel-framework@0.5.0"
+expression = "MIT OR Apache-2.0"
+license-files = [
+    { path = "../LICENSE-MIT", hash = 0x6193b12d },
+    { path = "../LICENSE-APACHE-v2", hash = 0x0b75c107 },
+]
+
+[[licenses.clarify]]
+crate = "spel-framework-core@0.5.0"
+expression = "MIT OR Apache-2.0"
+license-files = [
+    { path = "../LICENSE-MIT", hash = 0x6193b12d },
+    { path = "../LICENSE-APACHE-v2", hash = 0x0b75c107 },
+]
+
+[[licenses.clarify]]
+crate = "spel-framework-macros@0.5.0"
+expression = "MIT OR Apache-2.0"
+license-files = [
+    { path = "../LICENSE-MIT", hash = 0x6193b12d },
+    { path = "../LICENSE-APACHE-v2", hash = 0x0b75c107 },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    "https://github.com/EspressoSystems/jellyfish",
+    "https://github.com/arkworks-rs/spongefish.git",
+    "https://github.com/logos-blockchain/logos-blockchain-circuits.git",
+    "https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark.git",
+    "https://github.com/logos-blockchain/logos-blockchain.git",
+    "https://github.com/logos-blockchain/logos-execution-zone.git",
+    "https://github.com/logos-co/Overwatch",
+    "https://github.com/logos-co/spel.git",
+]

@@ -91,8 +91,7 @@ docker exec \
 
 Each run attaches with `LEZ_M3_ATTACH=1` plus `LEZ_ATTACH_BTC_RUN`,
 `LEZ_ATTACH_LEZ_RUN`, the two `LEZ_ATTACH_*_IDENTITY_DIR` wallet directories,
-and `LEZ_ATTACH_BOOTSTRAP_MANIFEST` (patches `0017`/`0018` in
-`full-swap/patches/`). Attached chains are never torn down: the run's cleanup
+and `LEZ_ATTACH_BOOTSTRAP_MANIFEST`. Attached chains are never torn down: the run's cleanup
 attestation records `cleanup_scope:
 secure_state_root_only_attached_chains_retained`. Wallet identities and the
 bootstrap manifest live in `runner-work/market/`; deleting them would strand the

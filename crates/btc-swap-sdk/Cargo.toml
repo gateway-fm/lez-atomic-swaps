@@ -1,0 +1,30 @@
+[package]
+name = "lez-btc-swap-sdk"
+version = "0.1.0"
+description = "Bitcoin Taproot protocol adapter for LEZ atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "=0.1.89"
+bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
+borsh = { version = "=1.7.0", features = ["derive"] }
+lez-adaptor-signature = { version = "0.1.0", path = "../adaptor-signature" }
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-swap-sdk-core = { version = "0.1.0", path = "../swap-sdk-core" }
+musig2 = { version = "=0.4.1", default-features = false, features = ["secp256k1"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.10.9"
+subtle = "=2.6.1"
+thiserror = "2.0.18"
+zeroize = "=1.9.0"
+
+[dev-dependencies]
+k256 = { version = "=0.13.4", default-features = false, features = ["schnorr"] }
+tokio = { version = "=1.52.3", features = ["macros", "rt"] }

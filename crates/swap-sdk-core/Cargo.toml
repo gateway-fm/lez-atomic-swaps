@@ -1,0 +1,22 @@
+[package]
+name = "lez-swap-sdk-core"
+version = "0.1.0"
+description = "Adapter-independent lifecycle contracts for LEZ atomic-swap SDKs"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+serde = { version = "1.0.228", features = ["derive"] }
+sha2 = "=0.10.9"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+serde_json = "1.0.150"
+tokio = { version = "1.52.0", features = ["macros", "rt"] }

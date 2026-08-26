@@ -22,7 +22,7 @@ https://www.contributor-covenant.org/version/2/1/code_of_conduct/
 Upstream software and test data
 -------------------------------
 
-The reconstructable source tree contains dependencies and test-vector data
+The public source tree contains dependencies and test-vector data
 from upstream projects, including Bitcoin, RustCrypto, Zcash, Monero, RISC
 Zero, and Logos projects. Their copyright and licence files remain with the
 corresponding material and are not replaced by this repository's dual licence.

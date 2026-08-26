@@ -1,0 +1,17 @@
+{
+  "private": true,
+  "scripts": {
+    "audit:dependencies": "npm audit --audit-level=moderate",
+    "audit:licenses": "node scripts/check-node-tooling-licenses.mjs",
+    "test:mermaid": "./scripts/test-mermaid-github-compatibility.sh && ./scripts/render-mermaid-diagrams.sh",
+    "test:m6:prototype:contract": "node scripts/check-m6-prototype-contract.mjs",
+    "test:m6:prototype:e2e": "node --test --test-concurrency=1 tests/ui/m6-prototype.e2e.test.mjs",
+    "test:m6:prototype": "npm run test:m6:prototype:contract && npm run test:m6:prototype:e2e",
+    "test:m6:basecamp:contract": "node scripts/check-m6-basecamp-package-contract.mjs"
+  },
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "11.16.0",
+    "puppeteer": "25.3.0",
+    "yauzl": "3.4.0"
+  }
+}

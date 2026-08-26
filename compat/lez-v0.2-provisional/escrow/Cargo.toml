@@ -1,0 +1,17 @@
+[package]
+name = "lez-zec-escrow-v02"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.94"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ata_core = { package = "associated_token_account_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+authenticated_transfer_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+borsh = { version = "=1.7.0", features = ["derive"] }
+nssa_core = { package = "lee_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["host"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+sha2 = "=0.10.9"
+spel-framework = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "df17acd98436be4f09c55877dae1fe2e73cbcdca" }
+token_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }

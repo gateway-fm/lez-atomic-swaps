@@ -1,0 +1,18 @@
+[package]
+name = "lez-adaptor-signature"
+version = "0.1.0"
+description = "Pair-neutral role-separated MuSig2 adaptor-signature boundary"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+getrandom = "=0.3.4"
+musig2 = { version = "=0.4.1", default-features = false, features = ["secp256k1"] }
+sha2 = "=0.10.9"
+thiserror = "=2.0.18"
+zeroize = "=1.9.0"

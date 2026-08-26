@@ -58,24 +58,25 @@ and discloses no private material. It carries the source replay count into the
 exported record; the interactive controller separately validates and attaches
 wallet-balance and fee reconciliation.
 
-## Source and branch layout
+## Source layout
 
-`m3-plus` is the intended public default branch and the reviewer-facing
-submission snapshot. It intentionally keeps the runnable implementation as an
-auditable ordered patch series instead of duplicating a second mutable source
-tree.
+`main` is the public default branch and contains the complete buildable source
+tree directly. The Rust workspace starts at [`Cargo.toml`](Cargo.toml), with
+protocol and application crates under [`crates/`](crates/), isolated upstream
+compatibility packages under [`compat/`](compat/), Basecamp applications under
+[`apps/`](apps/), and integration tests under [`tests/`](tests/).
 
-Reconstruct the complete buildable workspace, without contacting a network:
+No source reconstruction or external repository checkout is required:
 
 ```sh
-./scripts/reconstruct-source.sh /tmp/lez-atomic-swaps-source
+cargo metadata --locked --no-deps
+./scripts/run-public-offline-e2e.sh
 ```
 
-The script checks out the reachable base commit `5c384a5`, applies all 38
-patches in order, and refuses a result whose tree object is not
-`c747dafbdf39ed4615d92b005e63552a32bb60bf`. See the
-[patch-series contract](deploy/full-swap/patches/README.md) and
-[contribution guide](CONTRIBUTING.md).
+The offline E2E runs the Linux-only process-hardening code in a one-off Docker
+container with networking disabled, including on macOS. See the
+[contribution guide](CONTRIBUTING.md) for native-Linux and focused security
+gates.
 
 ## Run the local stack
 
@@ -147,7 +148,7 @@ The live BTC demo also integrates M5-derived daemon, service, persistence, and
 runner components. It is not presented here as proof that the complete M5
 scope is delivered. Start with the reviewer-facing
 [submission pack](submission/README.md), then see
-[the `v0.1.0` release evidence map](submission/RELEASE-v0.1.0.md) and
+[the `v0.1.1` release evidence map](submission/RELEASE-v0.1.1.md) and
 [submission scope and provenance](docs/submission.md) for exact source
 checkpoints and nonclaims.
 

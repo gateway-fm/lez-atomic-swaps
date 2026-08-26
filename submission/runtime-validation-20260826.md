@@ -9,7 +9,7 @@ uniquely named offer, leaving the long-running Compose services online.
 | Field | Value |
 |---|---|
 | Observed at | `2026-08-26T16:00:01Z` |
-| Release candidate | `v0.1.0` on `m3-plus` |
+| Release candidate | `v0.1.1` on `main` |
 | Validated branch base | `ef585e0c93180ee55f3833b06d1e42100edb4d0c` |
 | Bitcoin | Core 31.1 regtest |
 | LEZ | v0.2 private local devnet |
@@ -53,9 +53,8 @@ Basecamp Chat transport is unavailable.
 
 ## Public-source and offline gates
 
-The public patch series reconstructed exact tree
-`c747dafbdf39ed4615d92b005e63552a32bb60bf`. The Chat/Delivery E2E then ran in
-a task-unique read-only Docker container with `--network none` and
+The complete source workspace is present directly in the public tree. The
+Chat/Delivery E2E ran in a task-unique read-only Docker container with `--network none` and
 `CARGO_NET_OFFLINE=true`: 40 Maker-node unit tests, 3 BTC Chat process tests,
 4 signed offer-discovery tests, and 5 local Delivery tests passed (52/52).
 

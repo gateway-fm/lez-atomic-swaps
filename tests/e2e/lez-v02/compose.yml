@@ -1,0 +1,118 @@
+services:
+  bedrock:
+    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f"
+    entrypoint: ["/usr/bin/logos-blockchain-node"]
+    command:
+      - "/opt/lez-v0.2-source/bedrock/node-config.yaml"
+      - "--deployment"
+      - "/run-config/deployment-settings.yaml"
+    environment:
+      HOME: /tmp
+      POL_PROOF_DEV_MODE: "true"
+    working_dir: /work
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
+      org.logos-co.atomic-swaps.component: bedrock
+    expose: ["18080"]
+    ports:
+      - target: 18080
+        published: "0"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
+    volumes:
+      - "${LEZ_V02_SOURCE_DIR:?LEZ_V02_SOURCE_DIR is required}/bedrock:/opt/lez-v0.2-source/bedrock:ro"
+      - "${LEZ_V02_SOURCE_DIR:?LEZ_V02_SOURCE_DIR is required}/bedrock/kzgrs_test_params:/kzgrs_test_params:ro"
+      - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/config/deployment-settings.yaml:/run-config/deployment-settings.yaml:ro"
+      - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/bedrock:/work/state"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    networks: [lez_v02_private]
+    user: "${LEZ_V02_UID:?LEZ_V02_UID is required}:${LEZ_V02_GID:?LEZ_V02_GID is required}"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    cpus: 2.0
+    mem_limit: 4g
+    stop_grace_period: 20s
+
+  indexer:
+    image: "${LEZ_V02_IMAGE:?LEZ_V02_IMAGE is required}"
+    entrypoint: ["/usr/local/bin/indexer_service"]
+    command:
+      - "/run-config/indexer_config.json"
+      - "--port"
+      - "8779"
+      - "--data-dir"
+      - "/var/lib/indexer_service"
+    environment:
+      HOME: /tmp
+      RUST_LOG: info
+      RISC0_SERVER_PATH: /usr/local/bin/r0vm
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
+      org.logos-co.atomic-swaps.component: indexer
+    expose: ["8779"]
+    ports:
+      - target: 8779
+        published: "0"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
+    volumes:
+      - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/config/indexer_config.json:/run-config/indexer_config.json:ro"
+      - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/indexer:/var/lib/indexer_service"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    networks: [lez_v02_private]
+    user: "${LEZ_V02_UID:?LEZ_V02_UID is required}:${LEZ_V02_GID:?LEZ_V02_GID is required}"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    cpus: 2.0
+    mem_limit: 2g
+    stop_grace_period: 20s
+
+  sequencer:
+    image: "${LEZ_V02_IMAGE:?LEZ_V02_IMAGE is required}"
+    entrypoint: ["/usr/local/bin/sequencer_service"]
+    command: ["/run-config/sequencer_config.json", "--port", "3040"]
+    environment:
+      HOME: /tmp
+      RUST_LOG: info
+      RISC0_SERVER_PATH: /usr/local/bin/r0vm
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
+      org.logos-co.atomic-swaps.component: sequencer
+    expose: ["3040"]
+    ports:
+      - target: 3040
+        published: "0"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
+    volumes:
+      - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/config/sequencer_config.json:/run-config/sequencer_config.json:ro"
+      - "${LEZ_V02_RUN_DIR:?LEZ_V02_RUN_DIR is required}/sequencer:/var/lib/sequencer_service"
+    tmpfs:
+      - /tmp:rw,nosuid,size=2g,mode=1777
+    networks: [lez_v02_private]
+    user: "${LEZ_V02_UID:?LEZ_V02_UID is required}:${LEZ_V02_GID:?LEZ_V02_GID is required}"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 1024
+    cpus: 4.0
+    mem_limit: 8g
+    stop_grace_period: 30s
+
+networks:
+  lez_v02_private:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"

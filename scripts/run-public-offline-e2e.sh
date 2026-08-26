@@ -36,14 +36,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$repo_root/scripts/reconstruct-source.sh" "$task_tmp/source"
 mkdir -p "$task_tmp/cargo-home/registry/src" "$task_tmp/target"
 
 docker run --rm --pull never --name "$container_name" \
   --user "$(id -u):$(id -g)" \
   --network none --cap-drop ALL --security-opt no-new-privileges \
   --read-only --tmpfs /tmp:rw,exec,nosuid,nodev,size=1g \
-  -v "$task_tmp/source:/workspace:ro" \
+  -v "$repo_root:/workspace:ro" \
   -v "$task_tmp/cargo-home:/cargo-home" \
   -v "$cargo_registry/cache:/cargo-home/registry/cache:ro" \
   -v "$cargo_registry/index:/cargo-home/registry/index:ro" \

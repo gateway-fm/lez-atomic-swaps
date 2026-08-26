@@ -10,7 +10,7 @@ service state.
 | Field | Value |
 |---|---|
 | Observed at | `2026-08-20T18:01:15Z` |
-| Submission branch base | `m3-plus` |
+| Submission branch base | historical M3+ integration snapshot |
 | Git commit at validation | `049fb475a5d340ab76a9255fc875f5795a656660` |
 | Bitcoin | Core 31.1 regtest |
 | LEZ | v0.2 private local devnet |
