@@ -106,6 +106,57 @@
       <footer class="source-line">Design + threat model · <code>docs/milestone-1/protocol-design.md</code> · <code>threat-model.md</code></footer>
     </section>
 
+    <section class="slide transport-slide" data-title="Discovery and negotiation transport" data-duration="9">
+      <header class="slide-header">
+        <p class="eyebrow lime">M1 · TRANSPORT BOUNDARY</p>
+        <h2>Broadcast to discover. Chat to negotiate.</h2>
+      </header>
+      <div class="transport-diagram">
+        <svg viewBox="0 0 1400 500" role="img" aria-labelledby="transport-title transport-description">
+          <title id="transport-title">Logos Delivery discovery and direct Chat negotiation</title>
+          <desc id="transport-description">A Maker signs and broadcasts a leased offer through Delivery to multiple Takers. Two Takers open separate encrypted Chat conversations, but one atomic Maker reservation accepts only the first and returns busy to the other.</desc>
+          <defs>
+            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#43d7b4"/></marker>
+            <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#9d6cff"/></marker>
+            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#ffbe5c"/></marker>
+          </defs>
+          <rect class="lane" x="1" y="1" width="1398" height="200" rx="22"/>
+          <text class="lane-label accent-green" x="28" y="33">PUBLIC DISCOVERY · SIGNED + LEASED</text>
+          <circle class="node" cx="105" cy="112" r="42"/><text class="title" x="105" y="108" text-anchor="middle">MAKER</text><text class="micro" x="105" y="129" text-anchor="middle">10 s ↻</text>
+          <path class="link broadcast" d="M148 112 H225" marker-end="url(#arrow-green)"/>
+          <rect class="offer" x="236" y="70" width="178" height="84" rx="11"/>
+          <path d="M255 91h74M255 108h116M255 125h82" stroke="#73849a" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="379" cy="132" r="13" fill="#9cff57"/><path d="m373 132 4 4 8-10" fill="none" stroke="#08120a" stroke-width="3"/>
+          <text class="micro accent-lime" x="325" y="176" text-anchor="middle">SIGNED OFFER · 30 s</text>
+          <path class="link broadcast" d="M414 112 H518" marker-end="url(#arrow-green)"/>
+          <circle class="delivery-ring" cx="594" cy="112" r="68"/><circle class="delivery-ring" cx="594" cy="112" r="54"/><circle class="delivery-core" cx="594" cy="112" r="39"/>
+          <text class="title" x="594" y="108" text-anchor="middle">LOGOS</text><text class="micro accent-green" x="594" y="126" text-anchor="middle">DELIVERY</text>
+          <path class="link broadcast" d="M663 90 C740 45 795 54 860 76" marker-end="url(#arrow-green)"/>
+          <path class="link broadcast" d="M663 134 C740 179 795 171 860 149" marker-end="url(#arrow-green)"/>
+          <rect class="node" x="875" y="47" width="152" height="57" rx="28"/><circle cx="905" cy="75" r="17" fill="#182738"/><text class="title" x="905" y="81" text-anchor="middle">A</text><text class="label" x="936" y="80">TAKER</text>
+          <rect class="node" x="875" y="121" width="152" height="57" rx="28"/><circle cx="905" cy="149" r="17" fill="#182738"/><text class="title" x="905" y="155" text-anchor="middle">B</text><text class="label" x="936" y="154">TAKER</text>
+          <text class="micro" x="1120" y="102">VERIFY BOTH SIGNATURES</text><text class="micro" x="1120" y="125">BOUNDED LIVE INDEX</text>
+          <rect class="lane private" x="1" y="218" width="1398" height="281" rx="22"/>
+          <text class="lane-label accent-purple" x="28" y="251">PRIVATE NEGOTIATION · DIRECT E2EE CHAT</text>
+          <circle class="node" cx="105" cy="315" r="32"/><text class="title" x="105" y="321" text-anchor="middle">A</text>
+          <circle class="node" cx="105" cy="415" r="32"/><text class="title" x="105" y="421" text-anchor="middle">B</text>
+          <path class="link chat" d="M138 315 H238" marker-end="url(#arrow-purple)"/><path class="link chat" d="M138 415 H238" marker-end="url(#arrow-purple)"/>
+          <rect class="chat-tunnel" x="251" y="285" width="245" height="60" rx="30"/><text class="title" x="373" y="311" text-anchor="middle">E2EE CHAT</text><text class="micro accent-purple" x="373" y="330" text-anchor="middle">CONVERSATION A</text>
+          <rect class="chat-tunnel" x="251" y="385" width="245" height="60" rx="30"/><text class="title" x="373" y="411" text-anchor="middle">E2EE CHAT</text><text class="micro accent-purple" x="373" y="430" text-anchor="middle">CONVERSATION B</text>
+          <path class="link chat" d="M496 315 L595 346" marker-end="url(#arrow-purple)"/><path class="link chat" d="M496 415 L595 384" marker-end="url(#arrow-purple)"/>
+          <rect class="reserve" x="608" y="309" width="214" height="112" rx="16"/>
+          <path d="M691 348v-10a24 24 0 0 1 48 0v10M681 348h68v48h-68z" fill="none" stroke="#9cff57" stroke-width="4"/>
+          <text class="micro accent-lime" x="715" y="410" text-anchor="middle">ATOMIC RESERVE</text>
+          <path class="link broadcast" d="M822 342 H934" marker-end="url(#arrow-green)"/><path class="link busy" d="M822 388 H934" marker-end="url(#arrow-amber)"/>
+          <rect class="result-win" x="949" y="285" width="247" height="75" rx="13"/><text class="title accent-lime" x="1072" y="315" text-anchor="middle">ACCEPTED</text><text class="micro" x="1072" y="338" text-anchor="middle">COUNTERSIGNED AGREEMENT</text>
+          <rect class="result-busy" x="949" y="378" width="247" height="75" rx="13"/><text class="title accent-amber" x="1072" y="408" text-anchor="middle">OFFER BUSY</text><text class="micro" x="1072" y="431" text-anchor="middle">HIDE · REBROADCAST CONVERGES</text>
+          <text class="micro" x="1285" y="319">FIRST DURABLE</text><text class="micro" x="1285" y="337">WRITE WINS</text>
+          <text class="micro accent-lime" x="715" y="476" text-anchor="middle">SIGN  →  RESERVE  →  COUNTERSIGN  →  FUND</text>
+        </svg>
+      </div>
+      <footer class="source-line">Implementation boundary · ADRs 0210–0211 · topic <code>/lez-atomic-swaps/1/offers/json</code></footer>
+    </section>
+
     <section class="slide" data-title="M1 foundation" data-duration="8">
       <header class="slide-header split-heading">
         <div>
@@ -475,7 +526,7 @@
 
   <nav class="deck-controls" aria-label="Presentation controls">
     <button type="button" data-action="previous" aria-label="Previous slide">←</button>
-    <div class="deck-status"><span class="current">01</span><i></i><span class="total">17</span></div>
+    <div class="deck-status"><span class="current">01</span><i></i><span class="total">19</span></div>
     <button type="button" data-action="next" aria-label="Next slide">→</button>
     <button type="button" class="autoplay" data-action="autoplay" aria-label="Toggle autoplay">AUTO</button>
     <button type="button" data-action="fullscreen" aria-label="Toggle fullscreen">⛶</button>

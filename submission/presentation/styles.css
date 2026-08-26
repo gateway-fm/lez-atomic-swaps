@@ -706,3 +706,28 @@ code {
 .property-card strong { position: absolute; left: 3.1%; right: 3.1%; bottom: 5.5%; padding-top: 1.1em; border-top: 1px solid #22303f; color: #7f8da1; font-size: clamp(9px, .68vw, 13px); font-weight: 600; }
 .property-note { border-left-color: var(--lime); background: rgba(156,255,87,.045); }
 .property-note b { color: var(--lime); }
+/* ── Discovery and negotiation transport diagram ────────────────────── */
+.transport-diagram { height: min(52vh, 500px); min-height: 390px; margin-top: .4%; }
+.transport-diagram svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.transport-diagram .lane { fill: #0c131c; stroke: #273548; stroke-width: 1.5; }
+.transport-diagram .lane.private { fill: rgba(157,108,255,.035); stroke: rgba(157,108,255,.3); }
+.transport-diagram .lane-label { fill: #718096; font: 800 13px "SFMono-Regular", monospace; letter-spacing: 2px; }
+.transport-diagram .node { fill: #111b27; stroke: #34465e; stroke-width: 2; }
+.transport-diagram .offer { fill: #111b21; stroke: var(--lime); stroke-width: 2; }
+.transport-diagram .delivery-ring { fill: none; stroke: var(--green); stroke-width: 2; opacity: .32; }
+.transport-diagram .delivery-core { fill: #10231f; stroke: var(--green); stroke-width: 2.5; }
+.transport-diagram .chat-tunnel { fill: rgba(157,108,255,.12); stroke: var(--purple); stroke-width: 2; }
+.transport-diagram .reserve { fill: #151d16; stroke: var(--lime); stroke-width: 2.5; }
+.transport-diagram .result-win { fill: rgba(156,255,87,.09); stroke: var(--lime); stroke-width: 2; }
+.transport-diagram .result-busy { fill: rgba(255,190,92,.08); stroke: var(--amber); stroke-width: 2; }
+.transport-diagram .link { fill: none; stroke: #66758b; stroke-width: 2.5; }
+.transport-diagram .link.broadcast { stroke: var(--green); }
+.transport-diagram .link.chat { stroke: var(--purple); }
+.transport-diagram .link.busy { stroke: var(--amber); }
+.transport-diagram .title { fill: #e8eef6; font: 750 16px Inter, sans-serif; }
+.transport-diagram .label { fill: #9aa8ba; font: 650 13px Inter, sans-serif; }
+.transport-diagram .micro { fill: #748399; font: 700 11px "SFMono-Regular", monospace; letter-spacing: .7px; }
+.transport-diagram .accent-green { fill: var(--green); }
+.transport-diagram .accent-lime { fill: var(--lime); }
+.transport-diagram .accent-purple { fill: var(--purple); }
+.transport-diagram .accent-amber { fill: var(--amber); }
