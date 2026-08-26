@@ -899,3 +899,15 @@ code {
 .xray-notes.numbered.amber article { border-left-color: rgba(247,199,102,.5); }
 .xray-notes.numbered.amber .n, .xray-code .n { }
 .xray-slide .eyebrow.amber ~ * .n { }
+
+/* ── Direction comparison ─────────────────────────────────────────────── */
+.dir-code { display: grid; grid-template-columns: 1fr 1fr; gap: 1.6%; margin-bottom: 1.8%; }
+.dir-table { border: 1px solid #26344a; border-radius: 14px; overflow: hidden; }
+.dir-row { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; border-top: 1px solid #1c2735; }
+.dir-row:first-child { border-top: 0; }
+.dir-row span { padding: .85em 1.5em; color: #8795a9; font-size: clamp(9px, .74vw, 14px); }
+.dir-row b { padding: .85em 1.5em; border-left: 1px solid #1c2735; color: #dde5ef; font-size: clamp(9px, .74vw, 14px); font-weight: 650; }
+.dir-row.head { background: #0d131c; }
+.dir-row.head b { color: #93a1b4; font: 800 clamp(8px, .64vw, 12px) "SFMono-Regular", monospace; letter-spacing: .09em; text-transform: uppercase; }
+.dir-row b.lez { color: var(--green); }
+.dir-row b.btc { color: var(--amber); }

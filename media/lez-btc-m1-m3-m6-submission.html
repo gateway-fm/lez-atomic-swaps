@@ -909,6 +909,18 @@ code {
 .xray-notes.numbered.amber .n, .xray-code .n { }
 .xray-slide .eyebrow.amber ~ * .n { }
 
+/* ── Direction comparison ─────────────────────────────────────────────── */
+.dir-code { display: grid; grid-template-columns: 1fr 1fr; gap: 1.6%; margin-bottom: 1.8%; }
+.dir-table { border: 1px solid #26344a; border-radius: 14px; overflow: hidden; }
+.dir-row { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; border-top: 1px solid #1c2735; }
+.dir-row:first-child { border-top: 0; }
+.dir-row span { padding: .85em 1.5em; color: #8795a9; font-size: clamp(9px, .74vw, 14px); }
+.dir-row b { padding: .85em 1.5em; border-left: 1px solid #1c2735; color: #dde5ef; font-size: clamp(9px, .74vw, 14px); font-weight: 650; }
+.dir-row.head { background: #0d131c; }
+.dir-row.head b { color: #93a1b4; font: 800 clamp(8px, .64vw, 12px) "SFMono-Regular", monospace; letter-spacing: .09em; text-transform: uppercase; }
+.dir-row b.lez { color: var(--green); }
+.dir-row b.btc { color: var(--amber); }
+
   </style>
 </head>
 <body>
@@ -1317,6 +1329,45 @@ code {
       <footer class="source-line">Direction switch · <code>btc-swap-sdk/src/sdk.rs:3161</code> · funded chain · <code>swap-core/src/lib.rs:867-879</code></footer>
     </section>
 
+    <section class="slide xray-slide" data-title="Direction" data-duration="9">
+      <header class="slide-header">
+        <p class="eyebrow purple">M3 · SWAP ALGORITHM</p>
+        <h2>What the direction decides</h2>
+      </header>
+      <div class="dir-code">
+        <div class="xray-code callouts">
+          <div class="xray-file">btc-swap-sdk/src/sdk.rs:3161 — which chain reveals</div>
+          <pre><span class="k">const fn</span> <span class="f">claim_order</span>(direction: SwapDirection) -&gt; ClaimOrder {
+    <span class="k">match</span> direction {
+        SwapDirection::TakerSellsForeign =&gt; ClaimOrder::<span class="hl">LEZ_THEN_FOREIGN</span>,
+        SwapDirection::TakerSellsLez     =&gt; ClaimOrder::<span class="hl">FOREIGN_THEN_LEZ</span>,
+    }
+}</pre>
+        </div>
+        <div class="xray-code callouts">
+          <div class="xray-file">swap-core/src/lib.rs:867 — which party funds which chain</div>
+          <pre><span class="k">pub const fn</span> <span class="f">funded_chain</span>(&amp;self, participant: Participant) -&gt; Chain {
+    <span class="k">match</span> (self.direction, participant) {
+        (TakerSellsForeign, <span class="hl">Taker</span>) | (TakerSellsLez, <span class="hl">Maker</span>) =&gt; foreign,
+        (TakerSellsForeign, <span class="hl">Maker</span>) | (TakerSellsLez, <span class="hl">Taker</span>) =&gt; Chain::Lez,
+    }
+}</pre>
+        </div>
+      </div>
+      <div class="dir-table">
+          <div class="dir-row head"><span></span><b>Direction A · Taker sells BTC</b><b>Direction B · Taker sells LEZ</b></div>
+          <div class="dir-row"><span>Taker funds</span><b class="btc">Bitcoin</b><b class="lez">LEZ</b></div>
+          <div class="dir-row"><span>Maker funds</span><b class="lez">LEZ</b><b class="btc">Bitcoin</b></div>
+          <div class="dir-row"><span>Escrow depositor</span><b class="">Maker</b><b class="">Taker</b></div>
+          <div class="dir-row"><span>Escrow claimant</span><b class="">Taker</b><b class="">Maker</b></div>
+          <div class="dir-row"><span>Reveals <em>t</em> on</span><b class="lez">LEZ</b><b class="btc">Bitcoin</b></div>
+          <div class="dir-row"><span>Follow-up claim on</span><b class="btc">Bitcoin</b><b class="lez">LEZ</b></div>
+          <div class="dir-row"><span>Refunds earlier</span><b class="lez">LEZ · maker-funded</b><b class="btc">Bitcoin · maker-funded</b></div>
+      </div>
+      <div class="atomic-note"><b>The invariant does not flip:</b> the Taker funds first, the Maker funds second, and the maker-funded leg always carries the earlier refund deadline — so whichever party moved first is always the last one able to recover. Everything else in the table follows from two match arms.</div>
+      <footer class="source-line">Direction · <code>btc-swap-sdk/src/sdk.rs:3161</code> · funded chain · <code>swap-core/src/lib.rs:867-879</code></footer>
+    </section>
+
     <section class="slide xray-slide" data-title="Creation" data-duration="10">
       <header class="slide-header">
         <p class="eyebrow purple">M3 · LEZ ESCROW DESIGN</p>
@@ -1657,40 +1708,6 @@ self.unsigned_transaction.input[0].witness = Witness::from_slice(&amp;[
         </aside>
       </div>
       <footer class="source-line">Refund leaf · <code>btc-swap-sdk/src/p2tr.rs:234-240</code> · script-path spend · <code>transaction.rs:309-414</code></footer>
-    </section>
-
-    <section class="slide" data-title="Both directions" data-duration="7">
-      <header class="slide-header">
-        <p class="eyebrow purple tag">M3</p>
-        <h2>Both directions, same funding order.</h2>
-      </header>
-      <div class="direction-grid">
-        <article class="direction-card">
-          <div class="direction-title"><span>TAKER SELLS BTC</span><b>BTC → LEZ</b></div>
-          <div class="direction-track">
-            <div class="asset btc"><i>₿</i><strong>Taker lock</strong><small>first / later refund</small></div>
-            <span>→</span>
-            <div class="asset lez"><i>L</i><strong>Maker lock</strong><small>second / earlier refund</small></div>
-            <span class="reveal-arrow">⇢</span>
-            <div class="asset outcome"><strong>Reveal on LEZ</strong><small>Maker follows on BTC</small></div>
-          </div>
-        </article>
-        <article class="direction-card reverse">
-          <div class="direction-title"><span>TAKER SELLS LEZ</span><b>LEZ → BTC</b></div>
-          <div class="direction-track">
-            <div class="asset lez"><i>L</i><strong>Taker lock</strong><small>first / later refund</small></div>
-            <span>→</span>
-            <div class="asset btc"><i>₿</i><strong>Maker lock</strong><small>second / earlier refund</small></div>
-            <span class="reveal-arrow">⇢</span>
-            <div class="asset outcome"><strong>Reveal on BTC</strong><small>Maker follows on LEZ</small></div>
-          </div>
-        </article>
-      </div>
-      <div class="invariant-banner">
-        <b>INVARIANT</b>
-        <span>Taker funds first</span><i>·</i><span>Maker funds second</span><i>·</i><span>Maker-funded leg refunds earlier</span>
-      </div>
-      <footer class="source-line">Both-direction actual-node record · <code>m3-local-two-direction-poc-20260715.json</code></footer>
     </section>
 
     <section class="slide" data-title="Refunds and atomicity" data-duration="9">
