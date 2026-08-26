@@ -11,9 +11,9 @@ seeds.
 | Field | Value |
 |---|---|
 | Video | [`lez-btc-ui-swap-demo.mp4`](../media/lez-btc-ui-swap-demo.mp4) |
-| Record | [`m3-btc-ui-run-m5arm-0825141508.json`](../docs/evidence/m3-btc-ui-run-m5arm-0825141508.json) |
+| Record | [`m3-btc-ui-run-m5arm-0825151914.json`](../docs/evidence/m3-btc-ui-run-m5arm-0825151914.json) |
 | Result | `passed` |
-| Run | `m5arm-0825141508` |
+| Run | `m5arm-0825151914` |
 | Direction | `TakerSellsForeign` / BTC → LEZ |
 | Terms | 0.01000000 BTC for 1,000 LEZ |
 | Terminal state | revision 4 / `completed` |
@@ -88,16 +88,17 @@ be execution footage of every recovery case.
 
 ## Dated live validation
 
-[`runtime-validation-20260820.md`](runtime-validation-20260820.md) records the
-successful read-only verification run used in the presentation:
+[`runtime-validation-20260826.md`](runtime-validation-20260826.md) records the
+successful non-settlement release-candidate verification:
 
 - 11 compose services up;
 - Bitcoin and LEZ chain heads readable;
-- explorer transaction display 110/110;
+- explorer transaction display 120/120 across 22 certified runs;
 - wallet market controller 31/31;
 - Basecamp Maker checks 3/3;
 - Basecamp Taker checks 4/4;
-- Maker health `ready=true`, `degraded=false`.
+- Maker health `ready=true`, `degraded=false`;
+- public-source Chat/Delivery E2E 52/52 with Docker networking disabled.
 
 Chain heights are observations, not stable identifiers. Exact transaction and
 block identities live in the JSON records.

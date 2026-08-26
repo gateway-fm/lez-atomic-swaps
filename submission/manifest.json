@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "kind": "rfp003_m1_m3_m6_submission_pack",
-  "generated_at": "2026-08-26T11:53:34Z",
+  "generated_at": "2026-08-26T16:00:01Z",
   "repository": {
     "remote": "git@github.com:gateway-fm/lez-atomic-swaps.git",
     "branch": "m3-plus",
-    "package_base_commit": "049fb475a5d340ab76a9255fc875f5795a656660",
+    "package_base_commit": "ef585e0c93180ee55f3833b06d1e42100edb4d0c",
     "history_shape": "curated_orphan_submission_snapshot"
   },
   "upstream_milestones": [
@@ -120,7 +120,7 @@
   },
   "presentation": {
     "html_entry": "submission/presentation/index.html",
-    "slides": 24,
+    "slides": 28,
     "external_runtime_dependencies": 0,
     "controls": [
       "keyboard",
@@ -130,9 +130,16 @@
     ],
     "standalone_html": {
       "path": "media/lez-btc-m1-m3-m6-submission.html",
-      "size_bytes": 1886599,
+      "size_bytes": 1913996,
       "external_runtime_dependencies": 0,
-      "sha256": "054fee42dfe8ff1f70cb0b9b14608bd9a5810a645dd2a14d56d6bb8494ce91ea"
+      "sha256": "5c90bfa301d43c7aadb072ad5e8e87e0476666d449af33aee199f37ca09ef233"
+    },
+    "pdf": {
+      "path": "media/lez-btc-m1-m3-m6-submission.pdf",
+      "pages": 28,
+      "page_size_points": "960x540",
+      "size_bytes": 8852325,
+      "sha256": "d084df2cec8d23cb9982c0e237f81d9c882554b78d059b308f0d001c17454637"
     },
     "poster": {
       "path": "media/screenshots/lez-btc-m1-m3-m6-submission-cover.png",
@@ -141,19 +148,20 @@
       "sha256": "cc6fcae71fffe6d7b44ddc912c824c2421ac823ba73d01a8845a6988c579a3c2"
     },
     "source_hashes": {
-      "index_html": "cc16cb5b290f901d4b4601114cb95078752036ab3727e0b7de159791b6d1279e",
-      "styles_css": "021cdd5d981f852a3c056cec8f389936bf676f37b0bfde76f6c6dec3547d6594",
+      "index_html": "6e26825e900c5b00889e7247de57e54653c34aea4767fda1edee4e8a5b73fe3b",
+      "styles_css": "3c6aa53f0617b07e376c3eae0cfb7a3106ec777649c72a3bf9636c7222f9cbc8",
       "deck_js": "86e04da5713207532ff682079ec0201e1c0bbcdb7bc9c57bc7c2214f1e458dc1",
       "standalone_builder": "43b33578d51a9acae81ffacda6a7b972e3a88bd4a66a3a8ea7653f309b8f30d9",
-      "render_script": "8763c038ea97a86c0e0e35fa25961a623619983e24a32293987a19bd3f0eb427"
+      "render_script": "8763c038ea97a86c0e0e35fa25961a623619983e24a32293987a19bd3f0eb427",
+      "pdf_render_script": "bbb3873572327c7906f229c4f411250d66dc1fdd820382df2f9724bf41a6bf90"
     }
   },
   "live_validation": {
-    "observed_at": "2026-08-20T18:01:15Z",
-    "summary": "submission/runtime-validation-20260820.md",
+    "observed_at": "2026-08-26T16:00:01Z",
+    "summary": "submission/runtime-validation-20260826.md",
     "all_stages_passed": true,
     "compose_services_up": 11,
-    "explorer_checks": "110/110",
+    "explorer_checks": "120/120",
     "market_controller_checks": "31/31",
     "basecamp_maker_checks": "3/3",
     "basecamp_taker_checks": "4/4",
@@ -163,6 +171,19 @@
       "delivery": "available",
       "chat": "disabled"
     }
+  },
+  "offline_e2e": {
+    "all_stages_passed": true,
+    "docker_network": "none",
+    "cargo_net_offline": true,
+    "tests": "52/52",
+    "reconstructed_tree": "c747dafbdf39ed4615d92b005e63552a32bb60bf"
+  },
+  "release": {
+    "tag": "v0.1.0",
+    "repository": "gateway-fm/lez-atomic-swaps",
+    "evidence_map": "submission/RELEASE-v0.1.0.md",
+    "gateway_only": true
   },
   "claim_boundary": {
     "environment": "private_local_functional",

@@ -616,10 +616,15 @@ code {
   .source-line { bottom: 1.5%; }
 }
 
+@page {
+  size: 13.333333in 7.5in;
+  margin: 0;
+}
+
 @media print {
   html, body { overflow: visible; height: auto; background: white; }
   .stage { display: block; width: 100%; height: auto; box-shadow: none; }
-  .slide { position: relative; width: 100vw; height: 56.25vw; opacity: 1; visibility: visible; transform: none; break-after: page; }
+  .slide { position: relative; width: 13.333333in; height: 7.5in; opacity: 1; visibility: visible; transform: none; break-after: page; }
   .deck-controls, .progress, .key-hint { display: none; }
 }
 

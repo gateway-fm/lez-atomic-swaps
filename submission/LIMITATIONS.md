@@ -9,7 +9,7 @@ checkpoint; they do not widen the current claim.
 - Upstream issues [#121](https://github.com/logos-co/rfp/issues/121),
   [#123](https://github.com/logos-co/rfp/issues/123), and
   [#126](https://github.com/logos-co/rfp/issues/126) remain open and their
-  deliverable checkboxes remain unchecked as of 2026-08-20.
+  deliverable checkboxes remain unchecked as of 2026-08-26.
 - This branch is **submitted for review**. `Included`, `passed`, and historical
   repository-owner approval do not mean Logos has formally accepted a
   milestone.
@@ -30,7 +30,7 @@ checkpoint; they do not widen the current claim.
 
 - `m3-plus` is a curated orphan-branch snapshot. It contains milestone
   documents/evidence, Basecamp packages, the integrated deployment, and a
-  34-patch runner delta; it does not contain the complete historical M1/M3 Rust
+  38-patch runner delta; it does not contain the complete historical M1/M3 Rust
   workspace as ordinary branch ancestry.
 - Historical checkpoint tags `m1-complete.1`, `m3-complete`, and
   `m6-poc-complete` are named by commit identity but are not currently
@@ -50,10 +50,10 @@ checkpoint; they do not widen the current claim.
   direction. The repository evidence covers the reverse direction, refunds,
   first-lock recovery, restart survival, and overlap, but those cases are not
   all shown as public execution footage.
-- The historical D1 set of happy/refund/concurrent MP4s is retained privately
-  and represented publicly by hashes in the M3 review. The new silent overview
-  is a reviewer presentation; it does not silently redefine that literal D1
-  deliverable.
+- The public happy-path walkthrough is paired with passed actual-node refund
+  and opposite-direction overlap records plus their detailed reproduction
+  procedures. Those two recovery/concurrency cases are not presented as public
+  execution footage.
 - The committed screenshots and matching JSON belong to run
   `m5arm-0820121736`. The two older `m5arm-08180005` JSON files under
   `deploy/full-swap/` are a separate passed run with different transaction IDs.

@@ -54,6 +54,19 @@ The Delivery timestamp and network path are advisory. Trusted local time
 applies the lease; the nested signed offer digest remains the agreement
 commitment; and the Maker SQLite store remains the only reservation authority.
 
+```mermaid
+flowchart LR
+    MakerStore["Maker SQLite<br/>authoritative offer state"] --> Snapshot["Signed, leased<br/>offer projection"]
+    Snapshot -->|broadcast topic| Delivery["Logos Delivery"]
+    Delivery --> Verify["Taker verifies<br/>signatures, lease, revision"]
+    Verify --> Index["Bounded app-lifetime<br/>offer index"]
+    Index -->|selected Chat address| Chat["Private Logos Chat<br/>negotiation"]
+    Chat --> Reserve["Maker staging transaction"]
+    Reserve -->|one winner| MakerStore
+    Reserve -->|conflict| Loser["Explicit unavailable result"]
+    MakerStore -->|newer reserved/consumed projection| Snapshot
+```
+
 ## Conflict semantics
 
 Several Takers can receive the same active rebroadcast and begin concurrently.

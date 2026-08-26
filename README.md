@@ -10,12 +10,13 @@ cross-chain bridge controls settlement.
 [![LEZ and Bitcoin M1, M3, and M6 submission presentation](media/screenshots/lez-btc-m1-m3-m6-submission-cover.png)](media/lez-btc-m1-m3-m6-submission.html)
 
 *[Open the single-file HTML presentation →](media/lez-btc-m1-m3-m6-submission.html) ·
+[Download the PDF deck →](media/lez-btc-m1-m3-m6-submission.pdf) ·
 [Watch the 1:53 actual UI swap →](media/lez-btc-ui-swap-demo.mp4) ·
 [Watch the 1:42 narrated product cut →](media/lez-btc-rfp003-proposal-vertical.mp4)*
 
 The fresh actual-UI run has two Bitcoin effects, three LEZ effects,
 reconciled wallet balances, and zero replay submissions. Its
-[secret-safe evidence record](docs/evidence/m3-btc-ui-run-m5arm-0825141508.json)
+[secret-safe evidence record](docs/evidence/m3-btc-ui-run-m5arm-0825151914.json)
 contains the exact public transaction and block identities shown in the media.
 The presentation screenshots and narrated cut remain bound to the separate
 [`m5arm-0820121736` record](docs/evidence/m3-btc-ui-run-m5arm-0820121736.json).
@@ -146,6 +147,7 @@ The live BTC demo also integrates M5-derived daemon, service, persistence, and
 runner components. It is not presented here as proof that the complete M5
 scope is delivered. Start with the reviewer-facing
 [submission pack](submission/README.md), then see
+[the `v0.1.0` release evidence map](submission/RELEASE-v0.1.0.md) and
 [submission scope and provenance](docs/submission.md) for exact source
 checkpoints and nonclaims.
 

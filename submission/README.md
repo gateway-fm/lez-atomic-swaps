@@ -9,7 +9,9 @@ and the M6 product surface without claiming unrelated milestone completion.
 | Artifact | Purpose |
 |---|---|
 | [Actual UI swap demo](../media/lez-btc-ui-swap-demo.mp4) | 1:53.2 Basecamp walkthrough with click ripples, role handoffs, both independent chain checks, captions, and CC BY 4.0 music |
-| [Single-file HTML presentation](../media/lez-btc-m1-m3-m6-submission.html) | The current 24-slide story, including the Delivery/Chat transport diagram, the four code x-rays, and the two sequence diagrams, with all CSS, JavaScript, SVGs, and screenshots embedded for sharing |
+| [Single-file HTML presentation](../media/lez-btc-m1-m3-m6-submission.html) | The current 28-slide story, including the Delivery/Chat transport diagram, code x-rays, and both direction sequence diagrams, with all CSS, JavaScript, SVGs, and screenshots embedded for sharing |
+| [PDF presentation](../media/lez-btc-m1-m3-m6-submission.pdf) | Print-ready 28-page offline export of the same deck |
+| [`v0.1.0` release evidence map](RELEASE-v0.1.0.md) | Release assets, D1 happy/refund/concurrency evidence, verification gates, and issue-review links |
 | [Editable presentation source](presentation/index.html) | Dependency-free source deck with keyboard, touch, fullscreen, and autoplay controls |
 | [Milestone map](MILESTONES.md) | Every current issue #121/#123/#126 deliverable mapped to repository artifacts and its submission status |
 | [Evidence index](EVIDENCE.md) | Human-readable map of M3 scenarios, the matching UI run, explorers, and M6 certificates |
@@ -74,6 +76,12 @@ Rebuild the standalone HTML with:
 
 ```sh
 node submission/presentation/build-standalone.mjs
+```
+
+Rebuild the PDF after rebuilding the standalone HTML with:
+
+```sh
+./submission/presentation/render-pdf.sh
 ```
 
 The checked-in MP4 predates the code x-ray slides; rebuilding it produces a

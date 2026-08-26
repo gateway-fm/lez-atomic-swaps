@@ -12,8 +12,9 @@ Open these files directly:
 2. [`MILESTONES.md`](MILESTONES.md)
 3. [`EVIDENCE.md`](EVIDENCE.md)
 4. [`lez-btc-m1-m3-m6-submission.html`](../media/lez-btc-m1-m3-m6-submission.html), the single-file offline deck
-5. [`presentation/index.html`](presentation/index.html), the editable source deck
-6. [`lez-btc-ui-swap-demo.mp4`](../media/lez-btc-ui-swap-demo.mp4), the actual Basecamp swap walkthrough, with its exact [`m5arm-0825151914` evidence](../docs/evidence/m3-btc-ui-run-m5arm-0825151914.json)
+5. [`lez-btc-m1-m3-m6-submission.pdf`](../media/lez-btc-m1-m3-m6-submission.pdf), the print-ready 28-page deck
+6. [`presentation/index.html`](presentation/index.html), the editable source deck
+7. [`lez-btc-ui-swap-demo.mp4`](../media/lez-btc-ui-swap-demo.mp4), the actual Basecamp swap walkthrough, with its exact [`m5arm-0825151914` evidence](../docs/evidence/m3-btc-ui-run-m5arm-0825151914.json)
 
 Check the actual UI recording and fully decode it:
 
@@ -102,6 +103,15 @@ node submission/presentation/build-standalone.mjs
 The builder embeds the source CSS, JavaScript, SVGs, and PNGs as local data
 URIs. The resulting `media/lez-btc-m1-m3-m6-submission.html` has no external
 runtime dependency.
+
+Build the PDF from that standalone export with local Chrome/Chromium:
+
+```sh
+./submission/presentation/render-pdf.sh
+pdfinfo media/lez-btc-m1-m3-m6-submission.pdf
+```
+
+Expected PDF properties: 28 pages, 960 × 540 pt (16:9), with no network fetch.
 
 ## Lane 5 — full private-local BTC/LEZ product stack
 
