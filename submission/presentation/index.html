@@ -387,16 +387,16 @@ lez_presignature:     [u8; 65],                                   <span class="n
 }</pre></div>
         </div>
         <aside class="xray-notes numbered">
-          <article><h3><span class="n">1</span><em>T</em> is folded in here</h3><p>The adaptor point from the countersigned agreement enters the aggregation. This is the moment the signature becomes deliberately short by exactly <em>t</em>.</p></article>
-          <article><h3><span class="n">2</span>One 65-byte object, armed and inert</h3><p>Both partials combine into a pre-signature: bound to its message, its nonce and the joint key, and rejected by the chain as-is. Adding <em>t</em> is the only completion.</p></article>
-          <article><h3><span class="n">3</span>Two of them, one per chain</h3><p>Same <em>t</em>, two messages. <code>s′_lez</code> is armed for the Taker; <code>s′_btc</code> is armed for the Maker. Neither can fire without the scalar.</p></article>
-          <article><h3><span class="n">4</span>Each re-verified against the agreement</h3><p>The session is rebuilt from the agreement commitment, so a pre-signature can only be accepted for the swap whose terms both roles signed.</p></article>
-          <article><h3><span class="n">5</span>Only now does anyone fund</h3><p>This is the ordering that matters: the Maker will not seed the escrow until it holds a verified <code>s′_btc</code>. Value moves last, into a trap that is already set.</p></article>
-          <article><h3><span class="n">6</span>And the escrow knows none of it</h3><p>It records the joint key. Not <em>T</em>, not <code>s′</code>, not the message. Its only rule is that the joint account must sign.</p></article>
+          <article><h3><span class="n">1</span>The adaptor point enters the aggregation</h3><p>The adaptor point from the countersigned agreement enters the aggregation. This is the moment the signature becomes deliberately short by exactly <em>t</em>.</p></article>
+          <article><h3><span class="n">2</span>65 bytes, and not a valid signature</h3><p>Both partials combine into a pre-signature: bound to its message, its nonce and the joint key, and rejected by the chain as-is. Adding <em>t</em> is the only completion.</p></article>
+          <article><h3><span class="n">3</span>One pre-signature per chain</h3><p>Same <em>t</em>, two messages. <code>s′_lez</code> is armed for the Taker; <code>s′_btc</code> is armed for the Maker. Neither can fire without the scalar.</p></article>
+          <article><h3><span class="n">4</span>Each verified against the agreement session</h3><p>The session is rebuilt from the agreement commitment, so a pre-signature can only be accepted for the swap whose terms both roles signed.</p></article>
+          <article><h3><span class="n">5</span>Funding comes after arming</h3><p>This is the ordering that matters: the Maker will not seed the escrow until it holds a verified <code>s′_btc</code>. The escrow is funded only after both pre-signatures verify.</p></article>
+          <article><h3><span class="n">6</span>The escrow records only the joint key</h3><p>It records the joint key. Not <em>T</em>, not <code>s′</code>, not the message. Its only rule is that the joint account must sign.</p></article>
         </aside>
       </div>
       <div class="reveal-band">
-        <div class="reveal-lead"><b>Armed before funded.</b><span>Both pre-signatures exist and verify before either chain moves.</span></div>
+        <div class="reveal-lead"><b>Pre-signatures first, funding second.</b><span>Both pre-signatures exist and verify before either chain moves.</span></div>
         <div class="reveal-math">
           <div class="rv secret"><code>s′_lez</code><span>armed for the Taker<br>completing it emits <em>t</em></span></div>
           <i class="arr">+</i>
@@ -441,18 +441,18 @@ verify_final_signature(&amp;context, <span class="hl">observed.signature</span>)
         .<span class="hl">finalize</span>(signature)?;                <span class="c">// the fixed BTC payout</span>  <span class="n">7</span></pre></div>
         </div>
         <aside class="xray-notes numbered">
-          <article><h3><span class="n">1</span>The escrow only wants a joint signature</h3><p>It takes no signature argument and no secret. The whole reveal happens because of what the Taker must build to satisfy this one attribute.</p></article>
-          <article><h3><span class="n">2</span><em>t</em> is used here, first</h3><p><code>adapt_presignature</code> adds the scalar to <code>s′_lez</code>. This is the only place the Taker's copy of <em>t</em> is consumed, and it happens locally.</p></article>
-          <article><h3><span class="n">3</span>…and immediately becomes public</h3><p><code>materialize</code> puts <em>s</em> into the LEZ claim transaction. Submitting it is what pays the Taker — and what publishes the completed signature.</p></article>
-          <article><h3><span class="n">4</span>The Maker verifies before subtracting</h3><p>It rebuilds the same session from the agreement and checks the observed signature is genuinely valid, so it never subtracts against noise.</p></article>
-          <article><h3><span class="n">5</span><em>t</em> comes back out</h3><p><code>extract_adaptor_secret</code> subtracts the <code>s′_lez</code> it has held since the signing rounds. Same nonce in both, so the difference is exactly the scalar.</p></article>
-          <article><h3><span class="n">6</span>The same <em>t</em>, the other chain</h3><p>Now it completes <code>s′_btc</code> — the pre-signature armed for the Bitcoin leg back at creation, against the same <em>T</em>.</p></article>
-          <article><h3><span class="n">8</span>Where the LEZ actually moves</h3><p><code>materialize</code> only splices <em>s</em> into a template. The balance leaves custody here, when the sequencer executes the instruction and the escrow emits <code>native_transfer_call</code> from the vault to the claimant.</p></article>
-          <article><h3><span class="n">7</span>Into the one transaction it can sign</h3><p><code>cooperative_claim()</code> is the exact payout fixed in the agreement. The signature completes it and cannot redirect it.</p></article>
+          <article><h3><span class="n">1</span>The escrow takes no signature parameter</h3><p>It takes no signature argument and no secret. The reveal follows from what the Taker must build to satisfy that one attribute.</p></article>
+          <article><h3><span class="n">2</span>First use of <em>t</em></h3><p><code>adapt_presignature</code> adds the scalar to <code>s′_lez</code>. This is the only place the Taker's copy of <em>t</em> is consumed, and it happens locally.</p></article>
+          <article><h3><span class="n">3</span><em>s</em> enters the claim transaction</h3><p><code>materialize</code> puts <em>s</em> into the LEZ claim transaction. Submitting it is what pays the Taker — and what publishes the completed signature.</p></article>
+          <article><h3><span class="n">4</span>Verification precedes subtraction</h3><p>It rebuilds the same session from the agreement and checks the observed signature is genuinely valid, so it never subtracts against noise.</p></article>
+          <article><h3><span class="n">5</span><em>t</em> recovered by subtraction</h3><p><code>extract_adaptor_secret</code> subtracts the <code>s′_lez</code> it has held since the signing rounds. Same nonce in both, so the difference is exactly the scalar.</p></article>
+          <article><h3><span class="n">6</span>The same <em>t</em> completes <code>s′_btc</code></h3><p>Now it completes <code>s′_btc</code> — the pre-signature armed for the Bitcoin leg back at creation, against the same <em>T</em>.</p></article>
+          <article><h3><span class="n">8</span>Where the LEZ leaves custody</h3><p><code>materialize</code> only splices <em>s</em> into a template. The balance leaves custody here, when the sequencer executes the instruction and the escrow emits <code>native_transfer_call</code> from the vault to the claimant.</p></article>
+          <article><h3><span class="n">7</span>The payout transaction is fixed</h3><p><code>cooperative_claim()</code> is the exact payout fixed in the agreement. The signature completes it and cannot redirect it.</p></article>
         </aside>
       </div>
       <div class="reveal-band">
-        <div class="reveal-lead"><b>One scalar, two firings.</b><span>The Taker's payment is the Maker's authorisation.</span></div>
+        <div class="reveal-lead"><b>One scalar, both legs.</b><span>The Taker's payment is the Maker's authorisation.</span></div>
         <div class="reveal-math">
           <div class="rv secret"><code>s′_lez + t → s</code><span>Taker paid in LEZ<br><b>adapt_presignature</b></span></div>
           <i class="arr">→</i>
@@ -496,11 +496,11 @@ verify_final_signature(&amp;context, <span class="hl">observed.signature</span>)
 }</pre>
         </div>
         <aside class="xray-notes numbered">
-          <article><h3><span class="n">1</span>No registry to consult</h3><p>Both addresses derive from the swap id, so a watchtower computes them itself — no API key, no index, no cooperation from either party.</p></article>
-          <article><h3><span class="n">2</span>No signer anywhere</h3><p>The only instruction in the program without <code>#[account(signer)]</code>. Anyone holding the swap id can submit it.</p></article>
-          <article><h3><span class="n">3</span>Still bound to the depositor</h3><p>Permissionless is not unrestricted. A stranger who submits it pays the fee and moves nobody else's money.</p></article>
-          <article><h3><span class="n">4</span>And only after the deadline</h3><p>Consensus will not include it earlier, so an outsider cannot pre-empt a live swap. The claim stays closed to outsiders — it needs the joint signature.</p></article>
-          <article><h3><span class="n">5</span>What that survives</h3><p>Taker offline: anyone recovers its deposit for it. Maker daemon down: the same. Neither outage strands funds, because the recovering transaction needs nothing either party holds.</p></article>
+          <article><h3><span class="n">1</span>Addresses derive from the swap id</h3><p>Both addresses derive from the swap id, so a watchtower computes them itself — no API key, no index, no cooperation from either party.</p></article>
+          <article><h3><span class="n">2</span>No signer on the refund</h3><p>The only instruction in the program without <code>#[account(signer)]</code>. Anyone holding the swap id can submit it.</p></article>
+          <article><h3><span class="n">3</span>The depositor binding holds</h3><p>Permissionless is not unrestricted. A stranger who submits it pays the fee and moves nobody else's money.</p></article>
+          <article><h3><span class="n">4</span>Valid only after <code>refund_at</code></h3><p>Consensus will not include it earlier, so an outsider cannot pre-empt a live swap. The claim stays closed to outsiders — it needs the joint signature.</p></article>
+          <article><h3><span class="n">5</span>Outage cases</h3><p>Taker offline: anyone recovers its deposit for it. Maker daemon down: the same. Neither outage strands funds, because the recovering transaction needs nothing either party holds.</p></article>
         </aside>
       </div>
       <footer class="source-line">Refund instruction · <code>escrow/src/lib.rs:977-1021</code> · claim signer <code>:949</code></footer>
@@ -536,12 +536,12 @@ state.status = EscrowStatus::Refunded;                                       <sp
     .into_script();                                                         <span class="n">6</span></pre>
         </div>
         <aside class="xray-notes numbered">
-          <article><h3><span class="n">1</span>Disjoint and exhaustive</h3><p><code>..refund_at</code> and <code>refund_at..</code> leave no overlap and no gap, so the LEZ side has no claim-versus-refund race at all.</p></article>
-          <article><h3><span class="n">2</span>Full amount, one recipient</h3><p>No partial refunds exist. Exactly what was recorded goes back to exactly the account that funded it.</p></article>
-          <article><h3><span class="n">3</span>One-way</h3><p>Replaying the instruction is not a second refund.</p></article>
-          <article><h3><span class="n">4</span>The deadline cannot move</h3><p>Validated non-zero at creation and never rewritten. Neither party can extend or shorten it afterwards.</p></article>
-          <article><h3><span class="n">5</span>Bitcoin: a relative delay</h3><p><code>OP_CSV</code> counts blocks from the funding output, not wall-clock. Different mechanism, same job.</p></article>
-          <article><h3><span class="n">6</span>…and a single key</h3><p>The funder's own refund key signs alone. Revealing this leaf also reveals the control block, which is why the cooperative path never touches it.</p></article>
+          <article><h3><span class="n">1</span>Disjoint, exhaustive windows</h3><p><code>..refund_at</code> and <code>refund_at..</code> leave no overlap and no gap, so the LEZ side has no claim-versus-refund race at all.</p></article>
+          <article><h3><span class="n">2</span>Full amount to the depositor</h3><p>No partial refunds exist. Exactly what was recorded goes back to exactly the account that funded it.</p></article>
+          <article><h3><span class="n">3</span>One-way status change</h3><p>Replaying the instruction is not a second refund.</p></article>
+          <article><h3><span class="n">4</span><code>refund_at</code> is fixed at creation</h3><p>Validated non-zero at creation and never rewritten. Neither party can extend or shorten it afterwards.</p></article>
+          <article><h3><span class="n">5</span><code>OP_CSV</code> counts blocks</h3><p><code>OP_CSV</code> counts blocks from the funding output, not wall-clock. Different mechanism, same job.</p></article>
+          <article><h3><span class="n">6</span>The funder's key signs alone</h3><p>The funder's own refund key signs alone. Revealing this leaf also reveals the control block, which is why the cooperative path never touches it.</p></article>
         </aside>
       </div>
       <footer class="source-line">LEZ refund · <code>escrow/src/lib.rs:973, 1021</code> · Bitcoin leaf · <code>btc-swap-sdk/src/p2tr.rs:234-240</code></footer>
@@ -575,12 +575,12 @@ state.status = EscrowStatus::Refunded;                                       <sp
 <span class="c">// s′_btc: 65 bytes, valid pre-signature, invalid signature</span></pre></div>
         </div>
         <aside class="xray-notes numbered amber">
-          <article><h3><span class="n">1</span>The only script in the design</h3><p>Wait <em>n</em> blocks, then one signature from the funder's key. Nothing about swaps, secrets or the other chain appears in it.</p></article>
-          <article><h3><span class="n">2</span>One leaf, tweaked onto the joint key</h3><p>The aggregate MuSig2 key is the internal key; the refund leaf is the only branch. Cooperative spends never reveal that the branch exists.</p></article>
-          <article><h3><span class="n">3</span>It refuses to build a broken output</h3><p>If the control block does not verify against the output key and script, construction fails rather than producing an unspendable address.</p></article>
-          <article><h3><span class="n">4</span>The payout is fixed now, not later</h3><p>Inputs and outputs are set at construction. Whatever signature arrives can only authorise <em>this</em> transaction.</p></article>
-          <article><h3><span class="n">5</span>This hash is what gets pre-signed</h3><p>The BIP-341 key-spend sighash is the message the adaptor session signs — the Bitcoin twin of the LEZ <code>claim_message_hash</code>.</p></article>
-          <article><h3><span class="n">6</span>Armed, and verified before use</h3><p>Same shape as the LEZ side: a 65-byte pre-signature, checked against a session rebuilt from the agreement, short by exactly <em>t</em>.</p></article>
+          <article><h3><span class="n">1</span>The only script in the output</h3><p>Wait <em>n</em> blocks, then one signature from the funder's key. Nothing about swaps, secrets or the other chain appears in it.</p></article>
+          <article><h3><span class="n">2</span>One leaf on the joint internal key</h3><p>The aggregate MuSig2 key is the internal key; the refund leaf is the only branch. Cooperative spends never reveal that the branch exists.</p></article>
+          <article><h3><span class="n">3</span>Construction fails on a bad commitment</h3><p>If the control block does not verify against the output key and script, construction fails rather than producing an unspendable address.</p></article>
+          <article><h3><span class="n">4</span>Inputs and outputs fixed at construction</h3><p>Inputs and outputs are set at construction. Whatever signature arrives can only authorise <em>this</em> transaction.</p></article>
+          <article><h3><span class="n">5</span>The key-spend sighash is the signed message</h3><p>The BIP-341 key-spend sighash is the message the adaptor session signs — the Bitcoin twin of the LEZ <code>claim_message_hash</code>.</p></article>
+          <article><h3><span class="n">6</span><code>s′_btc</code> verified before use</h3><p>Same shape as the LEZ side: a 65-byte pre-signature, checked against a session rebuilt from the agreement, short by exactly <em>t</em>.</p></article>
         </aside>
       </div>
       <footer class="source-line">Output · <code>btc-swap-sdk/src/p2tr.rs:229-277</code> · payout and sighash · <code>transaction.rs:129-165</code></footer>
@@ -609,15 +609,15 @@ state.status = EscrowStatus::Refunded;                                       <sp
 <span class="c">// both were fixed in the countersigned agreement, before any lock</span>   <span class="n">5</span></pre></div>
         </div>
         <aside class="xray-notes numbered amber">
-          <article><h3><span class="n">1</span>The same <em>t</em> from the LEZ claim</h3><p>Recovered by subtraction moments earlier. The Bitcoin leg needs no new secret and no new round of messages.</p></article>
-          <article><h3><span class="n">2</span>Verified against the tweaked output key</h3><p><code>finalize</code> refuses a signature that does not verify for the exact sighash and the exact key path. A wrong scalar cannot be broadcast by accident.</p></article>
-          <article><h3><span class="n">3</span>A single-key witness</h3><p>One 64-byte Schnorr signature. No script, no control block, no branch — indistinguishable on chain from an ordinary Taproot payment.</p></article>
-          <article><h3><span class="n">4</span>This is the spendable transaction</h3><p>From here it is bytes anyone can relay. Broadcasting it is what moves the coin; the SDK does not custody anything.</p></article>
-          <article><h3><span class="n">5</span>Into the destination fixed at agreement time</h3><p>The output script came from <code>claim_destination_script_pubkey</code> in the signed body. The signature completes the payout; it cannot redirect it.</p></article>
+          <article><h3><span class="n">1</span>The <em>t</em> recovered from the LEZ claim</h3><p>Recovered by subtraction moments earlier. The Bitcoin leg needs no new secret and no new round of messages.</p></article>
+          <article><h3><span class="n">2</span>Checked against the tweaked output key</h3><p><code>finalize</code> refuses a signature that does not verify for the exact sighash and the exact key path. A wrong scalar cannot be broadcast by accident.</p></article>
+          <article><h3><span class="n">3</span>Single-key witness</h3><p>One 64-byte Schnorr signature. No script, no control block, no branch — indistinguishable on chain from an ordinary Taproot payment.</p></article>
+          <article><h3><span class="n">4</span>Relayable bytes</h3><p>From here it is bytes anyone can relay. Broadcasting it is what moves the coin; the SDK does not custody anything.</p></article>
+          <article><h3><span class="n">5</span>Destination fixed in the agreement</h3><p>The output script came from <code>claim_destination_script_pubkey</code> in the signed body. The signature completes the payout; it cannot redirect it.</p></article>
         </aside>
       </div>
       <div class="reveal-band">
-        <div class="reveal-lead"><b>Both legs, one scalar.</b><span>The LEZ claim published <em>t</em>; the Bitcoin claim spends it.</span></div>
+        <div class="reveal-lead"><b>The same scalar completes both legs.</b><span>The LEZ claim published <em>t</em>; the Bitcoin claim spends it.</span></div>
         <div class="reveal-math">
           <div class="rv secret"><code>t = s − s′_lez</code><span>recovered from the<br>LEZ claim signature</span></div>
           <i class="arr">→</i>
@@ -648,11 +648,11 @@ state.status = EscrowStatus::Refunded;                                       <sp
 <span class="c">// CANNOT: produce a signature — needs the joint key, or the funder's</span>  <span class="n">5</span></pre></div>
         </div>
         <aside class="xray-notes numbered amber">
-          <article><h3><span class="n">1</span>Broadcast is not privileged</h3><p>Bitcoin has no notion of a submitter. A fully signed transaction is public bytes that any node will relay, so no party has to be online to publish one.</p></article>
-          <article><h3><span class="n">2</span>The refund can be pre-signed and parked</h3><p>Built and signed at agreement time, then handed to a watchtower or simply kept. It is inert until the delay elapses.</p></article>
-          <article><h3><span class="n">3</span>Consensus does the gating</h3><p><code>sequence</code> carries the CSV delay, so the network itself rejects the refund early. Nobody has to enforce the deadline in software.</p></article>
-          <article><h3><span class="n">4</span>So an outage is survivable</h3><p>Funder offline at maturity: whoever holds the signed refund relays it. Maker offline after the reveal: the claim it already signed can be relayed by anyone.</p></article>
-          <article><h3><span class="n">5</span>But nothing new can be authorised</h3><p>An outsider can only publish what was already signed. Redirecting either spend needs a signature over a different sighash, which needs a key they do not have.</p></article>
+          <article><h3><span class="n">1</span>Broadcast requires no permission</h3><p>Bitcoin has no notion of a submitter. A fully signed transaction is public bytes that any node will relay, so no party has to be online to publish one.</p></article>
+          <article><h3><span class="n">2</span>The refund can be signed in advance</h3><p>Built and signed at agreement time, then handed to a watchtower or retained. It is invalid until the delay elapses.</p></article>
+          <article><h3><span class="n">3</span><code>sequence</code> gates it at consensus</h3><p><code>sequence</code> carries the CSV delay, so the network itself rejects the refund early. Nobody has to enforce the deadline in software.</p></article>
+          <article><h3><span class="n">4</span>Outage cases</h3><p>Funder offline at maturity: whoever holds the signed refund relays it. Maker offline after the reveal: the claim it already signed can be relayed by anyone.</p></article>
+          <article><h3><span class="n">5</span>No new authorisation is possible</h3><p>An outsider can only publish what was already signed. Redirecting either spend needs a signature over a different sighash, which needs a key they do not have.</p></article>
         </aside>
       </div>
       <footer class="source-line">Spend construction · <code>btc-swap-sdk/src/transaction.rs:112-227, 287-414</code></footer>
@@ -682,11 +682,11 @@ self.unsigned_transaction.input[0].witness = Witness::from_slice(&amp;[
     self.<span class="hl">refund_control_block</span>.as_slice() ]);                             <span class="n">5</span></pre></div>
         </div>
         <aside class="xray-notes numbered amber">
-          <article><h3><span class="n">1</span>A relative delay, not a date</h3><p><code>OP_CSV</code> counts blocks from the funding output's confirmation. It cannot be gamed by clock skew, and it starts only once the lock is real.</p></article>
-          <article><h3><span class="n">2</span>One key, one signature</h3><p>The funder's own refund key, alone. No joint signature, no counterparty, nothing to negotiate at the point of recovery.</p></article>
-          <article><h3><span class="n">3</span>The delay is in the transaction too</h3><p>The script checks it, and the input's <code>sequence</code> asserts it. Both must agree or the spend is invalid — the delay cannot be shortened by rebuilding the transaction.</p></article>
-          <article><h3><span class="n">4</span>A different digest from the happy path</h3><p>Script-path spends commit to the tapleaf hash, so a key-path signature can never satisfy this branch and vice versa.</p></article>
-          <article><h3><span class="n">5</span>Recovery is what reveals the branch</h3><p>The witness carries signature, script and control block. Until a refund happens, nobody watching the chain learns the output had a refund path at all.</p></article>
+          <article><h3><span class="n">1</span>Relative delay, counted in blocks</h3><p><code>OP_CSV</code> counts blocks from the funding output's confirmation. It cannot be gamed by clock skew, and it starts only once the lock is real.</p></article>
+          <article><h3><span class="n">2</span>The funder's key alone</h3><p>The funder's own refund key, alone. No joint signature, no counterparty, nothing to negotiate at the point of recovery.</p></article>
+          <article><h3><span class="n">3</span><code>sequence</code> must match the leaf</h3><p>The script checks it, and the input's <code>sequence</code> asserts it. Both must agree or the spend is invalid — the delay cannot be shortened by rebuilding the transaction.</p></article>
+          <article><h3><span class="n">4</span>Script-path digest differs</h3><p>Script-path spends commit to the tapleaf hash, so a key-path signature can never satisfy this branch and vice versa.</p></article>
+          <article><h3><span class="n">5</span>The branch is revealed only on use</h3><p>The witness carries signature, script and control block. Until a refund happens, nobody watching the chain learns the output had a refund path at all.</p></article>
         </aside>
       </div>
       <footer class="source-line">Refund leaf · <code>btc-swap-sdk/src/p2tr.rs:234-240</code> · script-path spend · <code>transaction.rs:309-414</code></footer>
