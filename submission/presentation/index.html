@@ -355,37 +355,21 @@
         <p class="eyebrow purple">M3 · LEZ ESCROW DESIGN</p>
         <h2>The adaptor secret</h2>
       </header>
-      <div class="xray">
-        <div class="xray-code">
-          <div class="xray-file">the claim path, in order · escrow/src/lib.rs → adaptor-signature/src/lib.rs</div>
-          <pre><span class="c">// 1 — The escrow takes no signature argument. It requires the transaction</span>
-<span class="c">//     itself to be signed by the aggregate account.</span>
-<span class="k">pub fn</span> <span class="f">claim_native_witnessed</span>(_ctx, metadata, custody,
-    <span class="a">#[account(mut)]</span> claimant: AccountWithMetadata,
-    <span class="hl">#[account(signer)] aggregate_authority: AccountWithMetadata,</span>
-    swap_id: [u8; 32]) -&gt; SpelResult { … }
-
-<span class="c">// 2 — …and that signer must be the exact key recorded at initialize.</span>
-<span class="k">if</span> witnessed_account_id(&amp;x_only_public_key) != account_id
-    || <span class="hl">account_id != aggregate_authority</span> { <span class="k">return</span> Err(ERROR_ACCOUNT_BINDING) }
-
-<span class="c">// 3 — That key is 2-of-2. The Taker cannot sign alone; it finishes the</span>
-<span class="c">//     pre-signature both parties built in the M1 rounds.</span>
-<span class="k">let</span> final_signature = <span class="hl">presignature.adapt(secret)</span>;    <span class="c">// s = s′ + t</span>
-verify_final_signature(context, bytes)?;
-
-<span class="c">// 4 — s authorised the transaction, so s is in the block. The Maker</span>
-<span class="c">//     already holds s′ and subtracts.</span>
-<span class="k">let</span> extracted = <span class="hl">presignature.reveal_secret(&amp;final_signature)</span>;  <span class="c">// t = s − s′</span>
-<span class="k">if</span> extracted.base_point_mul() != context.adaptor_point_value()? {
-    <span class="k">return</span> Err(AdaptorSessionError::ExtractedScalarPointMismatch);
-}</pre>
+      <div class="blame-panel">
+        <div class="xray-file">where t comes from, and where it becomes public · provision → escrow → adaptor-signature</div>
+        <div class="blame">
+          <div class="blame-row "><div class="blame-note">t is born here, inside the revealing actor's owner-private secrets. Nothing sends it.</div><pre class="blame-code"><span class="k">let</span> <span class="hl">adaptor_secret</span> = secret_key(&amp;secrets.adaptor, <span class="s">"adaptor scalar"</span>)?;</pre></div>
+          <div class="blame-row "><div class="blame-note">T = t·G. This is the only value derived from t that is ever published.</div><pre class="blame-code"><span class="k">let</span> <span class="hl">adaptor_point</span> = PublicKey::from_secret_key(&amp;secp, &amp;adaptor_secret).serialize();</pre></div>
+          <div class="blame-row "><div class="blame-note">T travels inside the agreement body and is countersigned by both roles. Now both sides know which secret opens the swap — and neither knows t but one.</div><pre class="blame-code">BtcAgreementBodyV1 { <span class="hl">adaptor_point: [u8; 33]</span>, … }</pre></div>
+          <div class="blame-row "><div class="blame-note">The escrow refuses to run unless the joint account signed the transaction. It never receives t, or any signature, as an argument.</div><pre class="blame-code"><span class="hl">#[account(signer)] aggregate_authority</span>: AccountWithMetadata,</pre></div>
+          <div class="blame-row "><div class="blame-note">…and that signer must be the key recorded at initialize.</div><pre class="blame-code"><span class="k">if</span> witnessed_account_id(&amp;x_only) != account_id
+    || account_id != aggregate_authority { <span class="k">return</span> Err(…) }</pre></div>
+          <div class="blame-row "><div class="blame-note">t is added to the pre-signature here, on the claimant's own machine. Still private.</div><pre class="blame-code"><span class="k">let</span> final_signature = <span class="hl">presignature.adapt(secret)</span>;   <span class="c">// s = s′ + t</span></pre></div>
+          <div class="blame-row "><div class="blame-note">s must verify under the joint key before it is worth submitting.</div><pre class="blame-code">verify_final_signature(context, bytes)?;</pre></div>
+          <div class="blame-row pub"><div class="blame-note">This is where t becomes public. Not as a message — folded into the signature the chain stores to prove the claim was authorised.</div><pre class="blame-code"><span class="pub-line">tx.signature = s</span>   <span class="c">// the LEZ claim, now in a block</span></pre></div>
+          <div class="blame-row "><div class="blame-note">The follower subtracts the pre-signature it has held since the signing rounds.</div><pre class="blame-code"><span class="k">let</span> extracted = <span class="hl">presignature.reveal_secret(&amp;final_signature)</span>;  <span class="c">// t = s − s′</span></pre></div>
+          <div class="blame-row "><div class="blame-note">Checked against the same T frozen two steps up. A different signature yields no scalar, never a wrong one.</div><pre class="blame-code"><span class="k">if</span> extracted.base_point_mul() != context.<span class="hl">adaptor_point_value()</span>? { <span class="k">return</span> Err(…) }</pre></div>
         </div>
-        <aside class="xray-notes">
-          <article><h3>There is no "reveal" step</h3><p>The Taker never sends <em>t</em> to anyone. It signs a transaction it wanted to send anyway. The signature that made the escrow pay out is the same object the Maker subtracts from — publication is a side effect of getting paid.</p></article>
-          <article><h3>Why the Taker cannot sign alone</h3><p>The aggregate authority is a 2-of-2 MuSig2 key. The Taker holds one partial, never the other. The pre-signature from the signing rounds plus <em>t</em> is the <em>only</em> route to a complete signature under that key.</p></article>
-          <article><h3>And it cannot be faked</h3><p>Extraction returns a scalar only when <em>t·G = T</em> against the <em>T</em> the agreement froze. A different signature yields no scalar or a point mismatch — never a wrong secret that looks usable.</p></article>
-        </aside>
       </div>
       <div class="reveal-band">
         <div class="reveal-lead"><b>Nothing is transmitted.</b><span>The Taker gets paid; the Maker reads the receipt.</span></div>
@@ -400,10 +384,10 @@ verify_final_signature(context, bytes)?;
       <footer class="source-line">Claim instruction · <code>escrow/src/lib.rs:943-973</code> · gate <code>:181-188</code> · arithmetic <code>adaptor-signature/src/lib.rs:813, 846</code></footer>
     </section>
 
-    <section class="slide xray-slide" data-title="Escrow happy path" data-duration="10">
+    <section class="slide xray-slide" data-title="Claim validation" data-duration="10">
       <header class="slide-header">
         <p class="eyebrow purple">M3 · LEZ ESCROW DESIGN</p>
-        <h2>Happy path</h2>
+        <h2>Claim validation</h2>
       </header>
       <div class="xray">
         <div class="xray-code">

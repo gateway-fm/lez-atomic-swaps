@@ -870,3 +870,14 @@ code {
 .rv.onchain { border-color: rgba(107,184,255,.4); } .rv.onchain > code { color: var(--blue); }
 .rv.extract { flex: 1.35; border-color: rgba(239,103,199,.45); background: rgba(239,103,199,.05); } .rv.extract > code { color: var(--pink); }
 .rv span b { color: var(--blue); font-weight: 700; font-family: "SFMono-Regular", monospace; }
+
+/* ── Blame-style code panel ───────────────────────────────────────────── */
+.blame-panel { border: 1px solid #26344a; border-radius: 16px; background: #0a0f17; overflow: hidden; }
+.blame { display: flex; flex-direction: column; }
+.blame-row { display: grid; grid-template-columns: .40fr .60fr; border-top: 1px solid #18212e; }
+.blame-row:first-child { border-top: 0; }
+.blame-note { padding: .85em 1.2em; border-right: 1px solid #1e2937; background: #0c121b; color: #7d8b9e; font: 500 clamp(8px, .68vw, 13px)/1.5 Inter, sans-serif; }
+.blame-code { margin: 0; padding: .85em 1.3em; color: #b8c4d3; font: clamp(8px, .68vw, 13px)/1.55 "SFMono-Regular", monospace; white-space: pre; overflow: hidden; }
+.blame-row.pub { background: rgba(156,255,87,.06); }
+.blame-row.pub .blame-note { background: rgba(156,255,87,.05); color: #b9c8d8; border-right-color: rgba(156,255,87,.28); }
+.blame-row.pub .pub-line { color: var(--lime); font-weight: 700; }
