@@ -367,7 +367,7 @@ async fn transfer_one(
         "logos_chat_ingest_v1",
         &LogosChatGatewayIngestRequestV1 {
             schema_version: LOCAL_RELAY_SCHEMA_VERSION,
-            conversation_id: "local-e2e-conversation-v1".into(),
+            conversation_id: frame.conversation_id.clone(),
             sender_address: sender_address.into(),
             content: frame.content,
         },
@@ -379,6 +379,7 @@ async fn transfer_one(
         &LogosChatGatewayOutboxAckRequestV1 {
             schema_version: LOCAL_RELAY_SCHEMA_VERSION,
             frame_id: frame.frame_id,
+            conversation_id: frame.conversation_id,
         },
     )
     .await?;

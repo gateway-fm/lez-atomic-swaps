@@ -6,12 +6,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Phase, SwapId};
 use lez_swap_store::{
-    MakerActorHeldLock, TakerActionAdmissionV1, TakerFacadeActionV1, TakerFacadeStoreError,
-    TakerInitiationAdmissionV1, TakerInitiationFactsV1,
+    MakerActorHeldLock, MakerOfferStatus, TakerActionAdmissionV1, TakerFacadeActionV1,
+    TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1,
 };
 use lez_zec_swap_sdk::ZecLifecycleAction;
 use secp256k1::PublicKey;
@@ -28,7 +29,9 @@ use crate::{
     TakerHealthRequestV1, TakerInitiationCommitV1, TakerOfferListRequestV1, TakerRefundRequestV1,
     TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
     TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1,
+    run_local_delivery::MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES,
     secure_file::read_private_file_snapshot,
+    verify_logos_offer_announcement,
     zec_taker_accept::{
         ZecTakeInput, load_taker_actor_from_receipt_for_monitor,
         take_zec_with_authenticated_offer_and_actor_config,
@@ -1165,22 +1168,27 @@ async fn initiate(
         .backend
         .trusted_now_for_offer_list(&offer_request)
         .map_err(InitiationError::Backend)?;
-    let offers = state
-        .backend
-        .offer_list_at(&offer_request, now)
-        .await
-        .map_err(InitiationError::Backend)?;
-    let live_match = offers.offers.iter().any(|candidate| {
-        candidate.offer.id() == &request.offer_id
-            && candidate.offer.route() == request.route
-            && candidate.maker_identity == request.maker_identity
-            && candidate.signed_envelope_sha256 == request.signed_envelope_sha256
-            && candidate
-                .offer
-                .quote_foreign_amount(request.foreign_units)
-                .ok()
-                == Some(request.expected_lez_units)
-    });
+    let live_match = match live_broadcast_offer_matches(&request, now)? {
+        Some(matches) => matches,
+        None => state
+            .backend
+            .offer_list_at(&offer_request, now)
+            .await
+            .map_err(InitiationError::Backend)?
+            .offers
+            .iter()
+            .any(|candidate| {
+                candidate.offer.id() == &request.offer_id
+                    && candidate.offer.route() == request.route
+                    && candidate.maker_identity == request.maker_identity
+                    && candidate.signed_envelope_sha256 == request.signed_envelope_sha256
+                    && candidate
+                        .offer
+                        .quote_foreign_amount(request.foreign_units)
+                        .ok()
+                        == Some(request.expected_lez_units)
+            }),
+    };
     if !live_match {
         return Err(InitiationError::SelectionMismatch);
     }
@@ -1210,6 +1218,38 @@ async fn initiate(
         TakerSwapStateV1::Initiating
     };
     Ok(commit_from_admission(&admission, progress))
+}
+
+fn live_broadcast_offer_matches(
+    request: &TakerSwapInitiateRequestV1,
+    now_unix_seconds: u64,
+) -> Result<Option<bool>, InitiationError> {
+    let Some(proof_base64) = request.logos_offer_announcement_base64.as_deref() else {
+        return Ok(None);
+    };
+    if proof_base64.is_empty() || proof_base64.len() > MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES
+    {
+        return Err(InitiationError::SelectionMismatch);
+    }
+    let encoded = BASE64_STANDARD
+        .decode(proof_base64.as_bytes())
+        .map_err(|_| InitiationError::SelectionMismatch)?;
+    if BASE64_STANDARD.encode(&encoded) != proof_base64 {
+        return Err(InitiationError::SelectionMismatch);
+    }
+    let announcement = verify_logos_offer_announcement(&encoded, now_unix_seconds)
+        .map_err(|_| InitiationError::SelectionMismatch)?;
+    let authenticated = announcement.offer();
+    let offer = authenticated.offer();
+    Ok(Some(
+        announcement.status() == MakerOfferStatus::Active
+            && offer.id() == &request.offer_id
+            && offer.route() == request.route
+            && authenticated.maker_identity() == request.maker_identity.as_bytes()
+            && authenticated.commitment() == request.signed_envelope_sha256
+            && offer.quote_foreign_amount(request.foreign_units).ok()
+                == Some(request.expected_lez_units),
+    ))
 }
 
 async fn lookup_replay(

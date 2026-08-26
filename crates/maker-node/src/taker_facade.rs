@@ -152,6 +152,13 @@ pub struct TakerSwapInitiateRequestV1 {
     pub foreign_units: u64,
     /// Exact integer LEZ quote reviewed by the user without rounding.
     pub expected_lez_units: u128,
+    /// Exact signed live Delivery announcement selected by Basecamp.
+    ///
+    /// Legacy CLI callers may omit this and retain the configured filesystem
+    /// discovery seam. Production Basecamp supplies it so initiation does not
+    /// depend on that compatibility path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logos_offer_announcement_base64: Option<Box<str>>,
 }
 
 /// Parameters for reading one receipt-bound lifecycle projection.

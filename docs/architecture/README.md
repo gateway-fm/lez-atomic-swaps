@@ -434,3 +434,6 @@ flowchart TB
 | [0206](0206-give-concurrent-takers-distinct-lez-identities.md) | Give concurrent accepted XMR Takers distinct LEZ signers, Vaults, and nonce domains | Accepted and actual-node F3 GREEN on `m7xmrconc-d8efb7ca` |
 | [0207](0207-certify-literal-reliability-acceptance.md) | Bind R1/R2/R6/R7 to their literal RFP criteria and retained executable evidence | Accepted; all four private-local functional Reliability gates GREEN, production calibration remains explicit |
 | [0208](0208-bind-private-m7-demos-to-actual-node-evidence.md) | Render six private M7 demos only from hash-bound executable evidence, preserving the layered ZEC concurrency limit | Accepted; six-scenario contract and exact pushed-source live bundle GREEN |
+| [0209](0209-bind-btc-chat-to-independent-role-contributions.md) | Bind BTC Chat to independently generated role contributions before either role effect begins | Accepted for the pre-effect application boundary |
+| [0210](0210-route-role-agreement-chat-over-logos-chat.md) | Route private role-agreement negotiation over app-lifetime Logos Chat sessions | Accepted for the Basecamp PoC |
+| [0211](0211-discover-offers-over-logos-delivery.md) | Broadcast signed leased offers over Logos Delivery and preserve store-authoritative one-winner admission | Accepted for the Basecamp PoC |

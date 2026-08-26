@@ -7,6 +7,7 @@ Item {
     readonly property var backend: logos.module("lez_atomic_swap_taker")
     property bool ready: false
     property string output: "Browse authenticated offers to begin"
+    property string selectedAnnouncementBase64: ""
 
     Connections {
         target: logos
@@ -27,6 +28,53 @@ Item {
         logos.watch(operation,
             function(value) { root.output = String(value) },
             function(error) { root.output = "Backend failure: " + String(error) })
+    }
+
+    function browseOffers() {
+        if (!root.ready) return
+        root.output = "Waiting for signed Delivery broadcasts..."
+        logos.watch(root.backend.listOffers(pair.currentText, direction.currentText),
+            function(value) {
+                var envelope
+                try { envelope = JSON.parse(String(value)) }
+                catch (error) { root.output = "Offer index returned invalid JSON"; return }
+                if (envelope.ok !== true) {
+                    root.selectedAnnouncementBase64 = ""
+                    root.output = "Offer index unavailable: " + String(envelope.code ?? "gateway_error")
+                    return
+                }
+                var offers = envelope.result.offers ?? []
+                if (offers.length === 0) {
+                    root.selectedAnnouncementBase64 = ""
+                    var unavailable = Number(envelope.result.unavailable_offers ?? 0)
+                        + Number(envelope.result.locally_contended_offers ?? 0)
+                    root.output = unavailable > 0
+                        ? String(unavailable) + " offer(s) are already negotiating, taken, or unavailable"
+                        : "No live signed offers; Maker rebroadcasts repair missed messages"
+                    return
+                }
+                var selected = offers[0]
+                var offer = selected.offer
+                root.selectedAnnouncementBase64 = String(selected.announcement_base64 ?? "")
+                offerId.text = String(offer.id)
+                makerIdentity.text = String(selected.maker_identity)
+                envelopeDigest.text = (selected.signed_envelope_sha256 ?? []).map(function(byte) {
+                    return Number(byte).toString(16).padStart(2, "0")
+                }).join("")
+                foreignUnits.text = String(offer.pair_configuration.minimum_foreign_units)
+                var price = offer.price
+                var numerator = Number(foreignUnits.text) * Number(price.lez_units_per_lot)
+                var divisor = Number(price.foreign_units_per_lot)
+                lezUnits.text = Number.isSafeInteger(numerator) && Number.isSafeInteger(divisor)
+                    && divisor > 0 && numerator % divisor === 0
+                    && Number.isSafeInteger(numerator / divisor)
+                    ? String(numerator / divisor) : ""
+                root.output = "Authenticated live offer selected; connecting its signed Chat address"
+                logos.watch(root.backend.connectOffer(makerIdentity.text, offerId.text),
+                    function(connection) { root.output = String(connection) },
+                    function(error) { root.output = "Chat connection failed: " + String(error) })
+            },
+            function(error) { root.output = "Offer index failure: " + String(error) })
     }
 
     Rectangle {
@@ -52,7 +100,7 @@ Item {
                         objectName: "takerOffers"
                         text: "Browse authenticated offers"
                         enabled: root.ready
-                        onClicked: root.invoke(root.backend.listOffers(pair.currentText, direction.currentText))
+                        onClicked: root.browseOffers()
                     }
                     Button { text: "Service health"; onClicked: root.invoke(root.backend.health()) }
                 }
@@ -138,9 +186,11 @@ Item {
                             enabled: root.ready
                             Layout.columnSpan: 2
                             onClicked: root.invoke(root.backend.initiate(
-                                "taker-ui-initiate-001", offerId.text, pair.currentText,
+                                "taker-ui-initiate-" + envelopeDigest.text.slice(0, 32),
+                                offerId.text, pair.currentText,
                                 direction.currentText, makerIdentity.text, envelopeDigest.text,
-                                foreignUnits.text, lezUnits.text))
+                                foreignUnits.text, lezUnits.text,
+                                root.selectedAnnouncementBase64))
                         }
                     }
                 }

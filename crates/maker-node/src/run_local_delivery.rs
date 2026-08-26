@@ -9,7 +9,9 @@ use std::{
 
 use async_trait::async_trait;
 use lez_swap_sdk_core::OfferDiscovery;
-use lez_swap_store::{MakerOfferError, MakerOfferV1, MakerRouteV1};
+use lez_swap_store::{
+    MakerOfferError, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerRouteV1,
+};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, ecdsa::Signature};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -18,9 +20,26 @@ use thiserror::Error;
 
 const DELIVERY_OFFER_SCHEMA_V1: u16 = 1;
 const DELIVERY_OFFER_DOMAIN_V1: &[u8] = b"lez-atomic-swaps/run-local-delivery/offer/v1";
+const LOGOS_OFFER_ANNOUNCEMENT_SCHEMA_V1: u16 = 1;
+const LOGOS_OFFER_ANNOUNCEMENT_DOMAIN_V1: &[u8] =
+    b"lez-atomic-swaps/logos-delivery/offer-announcement/v1";
 const MAXIMUM_ENVELOPE_BYTES: u64 = 65_536;
+// Keep the canonical bytes small enough that standard Base64 plus JSON framing
+// always fits one 48 KiB snapshot page on the 64 KiB owner-local RPC.
+pub(crate) const MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES: usize = 32 * 1024;
+pub(crate) const MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES: usize =
+    4 * MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES.div_ceil(3);
+const MAXIMUM_CHAT_ADDRESS_BYTES: usize = 1024;
+const MAXIMUM_ANNOUNCEMENT_CLOCK_SKEW_SECONDS: u64 = 5;
 const MAXIMUM_DISCOVERY_ENTRIES: usize = 1_024;
 const OFFER_FILE_SUFFIX: &str = ".offer.json";
+
+/// Exact LIP-23-style content topic used by the Basecamp offer index.
+pub const LOGOS_OFFER_CONTENT_TOPIC_V1: &str = "/lez-atomic-swaps/1/offers/json";
+/// Maker refresh interval; live announcements expire if three refreshes are missed.
+pub const LOGOS_OFFER_REBROADCAST_SECONDS_V1: u64 = 10;
+/// Signed app-lifetime availability lease carried by each announcement.
+pub const LOGOS_OFFER_ANNOUNCEMENT_TTL_SECONDS_V1: u64 = 30;
 
 /// One store-produced offer plus the publisher's trusted local timestamp.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -110,6 +129,83 @@ struct SignedOfferEnvelopeV1 {
     signature: Vec<u8>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LogosOfferAnnouncementBodyV1 {
+    schema_version: u16,
+    maker_public_key: Vec<u8>,
+    maker_chat_address: Box<str>,
+    offer_revision: u64,
+    status: MakerOfferStatus,
+    announced_at_unix_seconds: u64,
+    valid_until_unix_seconds: u64,
+    signed_offer_envelope: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SignedLogosOfferAnnouncementV1 {
+    #[serde(flatten)]
+    body: LogosOfferAnnouncementBodyV1,
+    signature: Vec<u8>,
+}
+
+/// Authenticated Delivery announcement retained by the Taker app-lifetime index.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthenticatedLogosOfferAnnouncementV1 {
+    offer: AuthenticatedOfferRefV1,
+    maker_chat_address: Box<str>,
+    offer_revision: u64,
+    status: MakerOfferStatus,
+    announced_at_unix_seconds: u64,
+    valid_until_unix_seconds: u64,
+    encoded: Vec<u8>,
+}
+
+impl AuthenticatedLogosOfferAnnouncementV1 {
+    /// Exact immutable offer and its original signed offer envelope.
+    #[must_use]
+    pub const fn offer(&self) -> &AuthenticatedOfferRefV1 {
+        &self.offer
+    }
+
+    /// Current app-lifetime direct Chat address signed by the offer Maker.
+    #[must_use]
+    pub const fn maker_chat_address(&self) -> &str {
+        &self.maker_chat_address
+    }
+
+    /// Monotonic durable offer revision advertised by the Maker store.
+    #[must_use]
+    pub const fn offer_revision(&self) -> u64 {
+        self.offer_revision
+    }
+
+    /// Advisory lifecycle projection; the Maker store remains authoritative.
+    #[must_use]
+    pub const fn status(&self) -> MakerOfferStatus {
+        self.status
+    }
+
+    /// Maker timestamp covered by the signature.
+    #[must_use]
+    pub const fn announced_at_unix_seconds(&self) -> u64 {
+        self.announced_at_unix_seconds
+    }
+
+    /// Exclusive local-index lease boundary covered by the signature.
+    #[must_use]
+    pub const fn valid_until_unix_seconds(&self) -> u64 {
+        self.valid_until_unix_seconds
+    }
+
+    /// Exact canonical announcement bytes received from Delivery.
+    #[must_use]
+    pub fn encoded(&self) -> &[u8] {
+        &self.encoded
+    }
+}
+
 /// Failure at the owner-private run-local Delivery boundary.
 #[derive(Debug, Error)]
 pub enum RunLocalDeliveryError {
@@ -137,6 +233,11 @@ pub enum RunLocalDeliveryError {
     /// An envelope exceeded its explicit wire/storage bound.
     #[error("Delivery envelope exceeds the {MAXIMUM_ENVELOPE_BYTES}-byte bound")]
     OversizedEnvelope,
+    /// A live Delivery announcement exceeded its explicit wire bound.
+    #[error(
+        "Logos Delivery announcement exceeds the {MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES}-byte bound"
+    )]
+    OversizedAnnouncement,
     /// An envelope was malformed, non-canonical, or used an unsupported schema.
     #[error("Delivery envelope is malformed or unsupported")]
     MalformedEnvelope,
@@ -240,6 +341,74 @@ impl RunLocalDelivery {
             return Err(RunLocalDeliveryError::OversizedEnvelope);
         }
         verify_envelope(encoded, &self.expected_maker)
+    }
+
+    /// Signs one canonical, short-lived Logos Delivery announcement from the
+    /// durable offer record and binds it to the Maker app's current Chat address.
+    ///
+    /// The nested offer envelope remains the immutable agreement commitment;
+    /// the outer signature prevents substitution of Chat address, revision, or
+    /// availability state. Reservation and swap identifiers are never exposed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects discovery-only instances, malformed records or addresses, time
+    /// overflow, and oversized/noncanonical signed output.
+    pub fn sign_logos_offer_announcement(
+        &self,
+        record: &MakerOfferRecordV1,
+        maker_chat_address: &str,
+        now_unix_seconds: u64,
+    ) -> Result<Vec<u8>, RunLocalDeliveryError> {
+        let signing_key = self
+            .signing_key
+            .as_ref()
+            .ok_or(RunLocalDeliveryError::DiscoveryOnly)?;
+        validate_chat_address(maker_chat_address)?;
+        record.offer().validate()?;
+        if record.revision() == 0 || now_unix_seconds > i64::MAX as u64 {
+            return Err(RunLocalDeliveryError::InvalidOffer);
+        }
+        let mut valid_until_unix_seconds = now_unix_seconds
+            .checked_add(LOGOS_OFFER_ANNOUNCEMENT_TTL_SECONDS_V1)
+            .ok_or(RunLocalDeliveryError::InvalidOffer)?;
+        if record.status() == MakerOfferStatus::Active {
+            if now_unix_seconds < record.offer().created_at_unix_seconds()
+                || now_unix_seconds >= record.offer().expires_at_unix_seconds()
+            {
+                return Err(RunLocalDeliveryError::InvalidOffer);
+            }
+            valid_until_unix_seconds =
+                valid_until_unix_seconds.min(record.offer().expires_at_unix_seconds());
+        }
+        let signed_offer_envelope =
+            signed_offer_envelope(record.offer(), &self.expected_maker, signing_key)?;
+        let body = LogosOfferAnnouncementBodyV1 {
+            schema_version: LOGOS_OFFER_ANNOUNCEMENT_SCHEMA_V1,
+            maker_public_key: self.expected_maker.serialize().to_vec(),
+            maker_chat_address: maker_chat_address.into(),
+            offer_revision: record.revision(),
+            status: record.status(),
+            announced_at_unix_seconds: now_unix_seconds,
+            valid_until_unix_seconds,
+            signed_offer_envelope,
+        };
+        let signature = Secp256k1::signing_only()
+            .sign_ecdsa(
+                &Message::from_digest(logos_offer_announcement_digest(&body)?),
+                signing_key,
+            )
+            .serialize_compact();
+        let envelope = SignedLogosOfferAnnouncementV1 {
+            body,
+            signature: signature.to_vec(),
+        };
+        let encoded =
+            serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
+        if encoded.len() > MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES {
+            return Err(RunLocalDeliveryError::OversizedAnnouncement);
+        }
+        Ok(encoded)
     }
 
     /// Publishes an offer or verifies that a prior crash/restart published the exact same offer.
@@ -419,24 +588,7 @@ impl RunLocalDelivery {
             return Err(RunLocalDeliveryError::InvalidOffer);
         }
 
-        let offer_json = serde_json::to_vec(&publication.offer)
-            .map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
-        let maker_public_key = self.expected_maker.serialize();
-        let digest = offer_digest(&maker_public_key, &offer_json);
-        let signature = Secp256k1::signing_only()
-            .sign_ecdsa(&Message::from_digest(digest), signing_key)
-            .serialize_compact();
-        let envelope = SignedOfferEnvelopeV1 {
-            schema_version: DELIVERY_OFFER_SCHEMA_V1,
-            maker_public_key: maker_public_key.to_vec(),
-            offer_json,
-            signature: signature.to_vec(),
-        };
-        let encoded =
-            serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
-        if encoded.len() as u64 > MAXIMUM_ENVELOPE_BYTES {
-            return Err(RunLocalDeliveryError::OversizedEnvelope);
-        }
+        let encoded = signed_offer_envelope(&publication.offer, &self.expected_maker, signing_key)?;
         let destination = offer_path(&self.directory, publication.offer.id().as_str());
         if destination.exists() {
             return Err(RunLocalDeliveryError::AlreadyExists);
@@ -518,13 +670,144 @@ impl OfferDiscovery for RunLocalDelivery {
     }
 }
 
+/// Verifies one exact canonical Delivery announcement at trusted local time.
+///
+/// Maker identities are self-authenticating at discovery time: the outer key
+/// must authenticate both the live Chat binding and the nested immutable offer
+/// envelope. The same identity and signed-offer digest are then reviewed and
+/// bound into negotiation, so Delivery routing never becomes protocol authority.
+///
+/// # Errors
+///
+/// Rejects malformed, noncanonical, oversized, expired, far-future, wrongly
+/// signed, address-substituted, or internally inconsistent announcements.
+pub fn verify_logos_offer_announcement(
+    encoded: &[u8],
+    now_unix_seconds: u64,
+) -> Result<AuthenticatedLogosOfferAnnouncementV1, RunLocalDeliveryError> {
+    if encoded.len() > MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES {
+        return Err(RunLocalDeliveryError::OversizedAnnouncement);
+    }
+    let envelope: SignedLogosOfferAnnouncementV1 =
+        serde_json::from_slice(encoded).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
+    if serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?
+        != encoded
+        || envelope.body.schema_version != LOGOS_OFFER_ANNOUNCEMENT_SCHEMA_V1
+        || envelope.body.offer_revision == 0
+    {
+        return Err(RunLocalDeliveryError::MalformedEnvelope);
+    }
+    validate_chat_address(&envelope.body.maker_chat_address)?;
+    let maximum_future = now_unix_seconds
+        .checked_add(MAXIMUM_ANNOUNCEMENT_CLOCK_SKEW_SECONDS)
+        .ok_or(RunLocalDeliveryError::InvalidOffer)?;
+    if envelope.body.announced_at_unix_seconds > maximum_future
+        || envelope.body.valid_until_unix_seconds <= now_unix_seconds
+        || envelope.body.valid_until_unix_seconds <= envelope.body.announced_at_unix_seconds
+        || envelope.body.valid_until_unix_seconds - envelope.body.announced_at_unix_seconds
+            > LOGOS_OFFER_ANNOUNCEMENT_TTL_SECONDS_V1
+    {
+        return Err(RunLocalDeliveryError::InvalidOffer);
+    }
+    if envelope.body.maker_public_key.len() != 33 {
+        return Err(RunLocalDeliveryError::Authentication);
+    }
+    let public_key = PublicKey::from_slice(&envelope.body.maker_public_key)
+        .map_err(|_| RunLocalDeliveryError::Authentication)?;
+    let signature = Signature::from_compact(&envelope.signature)
+        .map_err(|_| RunLocalDeliveryError::Authentication)?;
+    let mut normalized = signature;
+    normalized.normalize_s();
+    if normalized != signature {
+        return Err(RunLocalDeliveryError::Authentication);
+    }
+    Secp256k1::verification_only()
+        .verify_ecdsa(
+            &Message::from_digest(logos_offer_announcement_digest(&envelope.body)?),
+            &signature,
+            &public_key,
+        )
+        .map_err(|_| RunLocalDeliveryError::Authentication)?;
+    let offer = verify_envelope(&envelope.body.signed_offer_envelope, &public_key)?;
+    if envelope.body.status == MakerOfferStatus::Active
+        && (offer.offer().created_at_unix_seconds() > now_unix_seconds
+            || now_unix_seconds >= offer.offer().expires_at_unix_seconds()
+            || envelope.body.valid_until_unix_seconds > offer.offer().expires_at_unix_seconds())
+    {
+        return Err(RunLocalDeliveryError::InvalidOffer);
+    }
+    Ok(AuthenticatedLogosOfferAnnouncementV1 {
+        offer,
+        maker_chat_address: envelope.body.maker_chat_address,
+        offer_revision: envelope.body.offer_revision,
+        status: envelope.body.status,
+        announced_at_unix_seconds: envelope.body.announced_at_unix_seconds,
+        valid_until_unix_seconds: envelope.body.valid_until_unix_seconds,
+        encoded: encoded.to_vec(),
+    })
+}
+
+fn signed_offer_envelope(
+    offer: &MakerOfferV1,
+    maker: &PublicKey,
+    signing_key: &SecretKey,
+) -> Result<Vec<u8>, RunLocalDeliveryError> {
+    offer.validate()?;
+    let offer_json =
+        serde_json::to_vec(offer).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
+    let maker_public_key = maker.serialize();
+    let signature = Secp256k1::signing_only()
+        .sign_ecdsa(
+            &Message::from_digest(offer_digest(&maker_public_key, &offer_json)),
+            signing_key,
+        )
+        .serialize_compact();
+    let envelope = SignedOfferEnvelopeV1 {
+        schema_version: DELIVERY_OFFER_SCHEMA_V1,
+        maker_public_key: maker_public_key.to_vec(),
+        offer_json,
+        signature: signature.to_vec(),
+    };
+    let encoded =
+        serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
+    if encoded.len() as u64 > MAXIMUM_ENVELOPE_BYTES {
+        return Err(RunLocalDeliveryError::OversizedEnvelope);
+    }
+    Ok(encoded)
+}
+
+fn logos_offer_announcement_digest(
+    body: &LogosOfferAnnouncementBodyV1,
+) -> Result<[u8; 32], RunLocalDeliveryError> {
+    let encoded = serde_json::to_vec(body).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
+    let mut hasher = Sha256::new();
+    hasher.update(LOGOS_OFFER_ANNOUNCEMENT_DOMAIN_V1);
+    hasher.update(LOGOS_OFFER_ANNOUNCEMENT_SCHEMA_V1.to_be_bytes());
+    hasher.update((encoded.len() as u64).to_be_bytes());
+    hasher.update(encoded);
+    Ok(hasher.finalize().into())
+}
+
+fn validate_chat_address(value: &str) -> Result<(), RunLocalDeliveryError> {
+    if value.is_empty()
+        || value.len() > MAXIMUM_CHAT_ADDRESS_BYTES
+        || value.chars().any(char::is_control)
+    {
+        Err(RunLocalDeliveryError::MalformedEnvelope)
+    } else {
+        Ok(())
+    }
+}
+
 fn verify_envelope(
     encoded: &[u8],
     expected_maker: &PublicKey,
 ) -> Result<AuthenticatedOfferRefV1, RunLocalDeliveryError> {
     let envelope: SignedOfferEnvelopeV1 =
         serde_json::from_slice(encoded).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
-    if envelope.schema_version != DELIVERY_OFFER_SCHEMA_V1
+    if serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?
+        != encoded
+        || envelope.schema_version != DELIVERY_OFFER_SCHEMA_V1
         || envelope.maker_public_key.as_slice() != expected_maker.serialize()
     {
         return Err(RunLocalDeliveryError::Authentication);

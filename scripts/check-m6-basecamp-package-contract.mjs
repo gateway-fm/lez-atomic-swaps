@@ -54,14 +54,13 @@ const packages = [
     environment: "LEZ_TAKER_RPC_SOCKET",
     methods: [
       "taker_health",
-      "taker_offer_list_v1",
       "taker_swap_initiate_v1",
       "taker_swap_list_v1",
       "taker_swap_monitor_v1",
       "taker_swap_claim_v1",
       "taker_swap_refund_v1",
     ],
-    slots: ["health", "chatStatus", "connectChat", "resetChat", "listOffers", "initiate", "listSwaps", "monitor", "claim", "refund"],
+    slots: ["health", "chatStatus", "connectChat", "connectOffer", "resetChat", "listOffers", "initiate", "listSwaps", "monitor", "claim", "refund"],
     objects: [
       "takerConnection",
       "takerChat",
@@ -237,8 +236,19 @@ for (const [pattern, message] of [
   [/logos_chat_bind_session_v1/, "must pin the owner-local gateway session"],
   [/logos_chat_outbox_peek_v1/, "must read only the fixed gateway outbox"],
   [/logos_chat_outbox_ack_v1/, "must acknowledge only an accepted Chat send"],
+  [/logos_chat_outbox_defer_v1/, "must prevent one unavailable Maker conversation from blocking the others"],
   [/logos_chat_ingest_v1/, "must submit inbound frames to the fixed gateway method"],
   [/logos_chat_reset_session_v1/, "must expose an owner-local recovery from an unintended peer binding"],
+  [/delivery\.subscribe\s*\(/, "must subscribe to the signed Delivery offer topic"],
+  [/delivery\.send\s*\(/, "must rebroadcast signed offer announcements through Delivery"],
+  [/maker_offer_announcement_snapshot_v1/, "must obtain announcements from the Maker signer and durable store"],
+  [/next_after_offer_id/, "must page Maker snapshots within the owner RPC response bound"],
+  [/offerBroadcastCursor_/, "must continue bounded rebroadcast sweeps across timer cycles"],
+  [/QScopedValueRollback/, "must prevent overlapping synchronous Maker rebroadcast loops"],
+  [/kMaximumPendingOfferIngests/, "must bound deferred inbound Delivery work"],
+  [/logos_offer_ingest_v1/, "must authenticate Delivery payloads in the Taker gateway"],
+  [/logos_offer_list_v1/, "must browse the bounded live Delivery index"],
+  [/logos_offer_select_v1/, "must resolve the signed Chat address without transcription"],
   [/QTimer::singleShot/, "must defer inbound processing out of the Chat event callback"],
 ]) {
   requirePattern(chatSource, chatContractText, pattern, message);
@@ -344,6 +354,7 @@ for (const pkg of packages) {
     "must inherit the generated QtRO source and LogosUiPluginContext",
   );
   requirePattern(backendSource, source, /modules\(\)\.chat_module/, "must use the generated Chat module wrapper");
+  requirePattern(backendSource, source, /modules\(\)\.delivery_module/, "must use the generated Delivery module wrapper");
   requirePattern(
     backendSource,
     source,
@@ -356,6 +367,32 @@ for (const pkg of packages) {
       source,
       new RegExp(`["']${method}["']`),
       `must delegate through fixed RPC method ${method}`,
+    );
+  }
+  if (pkg.directory === "taker") {
+    requirePattern(
+      backendSource,
+      source,
+      /logos_offer_announcement_base64/,
+      "must carry the exact signed Delivery proof into Taker admission",
+    );
+    requirePattern(
+      backendSource,
+      source,
+      /selectOffer\s*\(\s*makerIdentity\s*,\s*offerId\s*\)/,
+      "must refresh the short-lived signed proof when the user confirms initiation",
+    );
+    requirePattern(
+      backendSource,
+      source,
+      /offer_unavailable/,
+      "must fail closed when the live selected proof cannot be refreshed",
+    );
+    rejectPattern(
+      backendSource,
+      source,
+      /taker_offer_list_v1/,
+      "must not use the filesystem offer index for Basecamp discovery",
     );
   }
   for (const [pattern, message] of [
@@ -383,6 +420,14 @@ for (const pkg of packages) {
       `missing actor-test objectName ${objectName}`,
     );
   }
+  if (pkg.directory === "taker") {
+    requirePattern(
+      qmlFile,
+      qml,
+      /"taker-ui-initiate-"\s*\+\s*envelopeDigest\.text\.slice\(0,\s*32\)/,
+      "must derive a stable replay id within the 64-byte RequestId bound",
+    );
+  }
   for (const [pattern, message] of [
     [/XMLHttpRequest|WebSocket|QtWebSockets|QtNetwork/, "must not open transport from QML"],
     [/LocalStorage|Settings\s*\{|Qt\.labs\.settings/, "must not persist authority in QML"],
@@ -402,6 +447,38 @@ for (const pkg of packages) {
 }
 
 read(resolve(basecampRoot, "README.md"), "Basecamp package build and operator guide");
+const productTestFile = resolve(basecampRoot, "tests/basecamp-role-product.mjs");
+const productTest = read(productTestFile, "official Basecamp product test");
+requirePattern(
+  productTestFile,
+  productTest,
+  /gatewayRpc\(\s*"logos_offer_ingest_v1"/,
+  "must seed the live Delivery index before exercising prepared Taker initiation",
+);
+requirePattern(
+  productTestFile,
+  productTest,
+  /logos_offer_announcement_base64/,
+  "must carry the exact short-lived signed announcement in the Taker fixture",
+);
+requirePattern(
+  productTestFile,
+  productTest,
+  /expectService\s*&&\s*!takerFixture/,
+  "must not silently skip the prepared Taker discovery journey",
+);
+requirePattern(
+  productTestFile,
+  productTest,
+  /gatewayRpc\(\s*"logos_offer_list_v1"/,
+  "must prove the exact fixture was projected by the live index",
+);
+requirePattern(
+  productTestFile,
+  productTest,
+  /request\.setTimeout\(/,
+  "must bound direct gateway calls made by the product harness",
+);
 
 if (errors.length > 0) {
   process.stderr.write(
@@ -411,6 +488,6 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   process.stdout.write(
-    "M6 Basecamp package contract: GREEN (2 ui_qml packages, 18 typed slots, pinned E2EE Chat plus owner-local gateway)\n",
+    "M6 Basecamp package contract: GREEN (2 ui_qml packages, 19 typed slots, pinned E2EE Chat plus signed Delivery discovery)\n",
   );
 }

@@ -57,9 +57,10 @@ Only these application methods can cross the bridge:
 - `zec_chat_propose_v1` and `zec_chat_complete_v1`;
 - `xmr_chat_stage_a_v1` and `xmr_chat_activate_v1`.
 
-One gateway process pins exactly one direct conversation, one local address,
-one peer address, and one role direction. An exact repeated bind is a replay;
-a different bind conflicts. The Maker learns an incoming peer address only
+The Taker gateway pins exactly one direct conversation. The Maker gateway pins
+up to 32 independent direct conversations under one local address so competing
+Takers receive their own correlated result. An exact repeated bind is a replay;
+conversation/peer aliasing conflicts. The Maker learns an incoming peer address only
 from the authenticated `message_received.sender` event. It does not treat
 Chat's `peer_label` as an address because Chat `v0.2.2` uses a shortened
 conversation label there.
@@ -141,7 +142,8 @@ task-owned builder from Docker networking.
 
 The PoC now exercises real Logos Chat APIs and E2EE in Basecamp while retaining
 the independently signed application protocol. The local relay is test-only;
-it cannot become production actor authority. Offer discovery remains the
-existing signed Delivery/filesystem mechanism in this change. Chat sessions
-are not resumable across app restarts, which is accepted for this PoC and must
-be reconsidered before production use.
+it cannot become production actor authority. ADR 0211 subsequently replaces
+the production filesystem offer index with signed Delivery broadcasts while
+retaining the filesystem adapter only as an offline compatibility/test seam.
+Chat sessions are not resumable across app restarts, which is accepted for this
+PoC and must be reconsidered before production use.

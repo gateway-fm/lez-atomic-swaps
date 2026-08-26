@@ -38,15 +38,18 @@ pub use logos_chat_gateway::{
     LogosChatGatewayBindRequestV1, LogosChatGatewayError, LogosChatGatewayIngestRequestV1,
     LogosChatGatewayOutboxAckRequestV1, LogosChatGatewayOutboxItemV1,
     LogosChatGatewayOutboxRequestV1, LogosChatGatewayResetRequestV1, LogosChatGatewayRoleV1,
-    LogosChatGatewayStatusRequestV1, LogosChatGatewayStatusV1,
-    logos_chat_gateway_control_rpc_module, logos_chat_gateway_proxy_rpc_module,
+    LogosChatGatewayStatusRequestV1, LogosChatGatewayStatusV1, LogosOfferIngestRequestV1,
+    LogosOfferListRequestV1, LogosOfferListV1, LogosOfferSelectRequestV1, LogosOfferSelectionV1,
+    LogosOfferViewV1, logos_chat_gateway_control_rpc_module, logos_chat_gateway_proxy_rpc_module,
 };
 pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
 pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
 pub use run_local_delivery::{
-    AuthenticatedOfferRefV1, DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery,
-    RunLocalDeliveryError,
+    AuthenticatedLogosOfferAnnouncementV1, AuthenticatedOfferRefV1, DeliveryOfferQueryV1,
+    DeliveryPublicationV1, LOGOS_OFFER_ANNOUNCEMENT_TTL_SECONDS_V1, LOGOS_OFFER_CONTENT_TOPIC_V1,
+    LOGOS_OFFER_REBROADCAST_SECONDS_V1, RunLocalDelivery, RunLocalDeliveryError,
+    verify_logos_offer_announcement,
 };
 pub use service_control::{
     MakerServiceAction, MakerServiceControlError, MakerServiceControlV1, control_maker_service,
@@ -88,6 +91,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use btc_reference_actor::{
     ActorConfig as BtcActorConfig, ActorRole as BtcActorRole, provision_btc_maker_actor_from_config,
 };
@@ -132,9 +136,17 @@ use sha2::{Digest as _, Sha256};
 use zec_reference_actor::{ActorConfig, ActorRole, provision_zec_maker_actor_from_config};
 const NOT_FOUND: i32 = -32_004;
 const CONFLICT: i32 = -32_009;
+const RESULT_LIMIT_EXCEEDED: i32 = -32_011;
+const OFFER_UNAVAILABLE: i32 = -32_018;
 const INTERNAL_ERROR: i32 = -32_603;
 
 const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
+const MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES: usize = 128;
+const MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES: usize = 48 * 1024;
+const _: () = assert!(
+    run_local_delivery::MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES + 3
+        <= MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES
+);
 /// RPC context owned by one maker daemon.
 #[derive(Clone)]
 pub struct MakerRpc {
@@ -142,6 +154,7 @@ pub struct MakerRpc {
     route_health_probe: Option<Arc<dyn MakerRouteHealthProbe>>,
     logos_price_source: Option<Arc<ProcessLogosPriceSource>>,
     delivery: Option<Arc<RunLocalDelivery>>,
+    offer_snapshot_clock: Option<Arc<dyn Fn() -> RpcResult<u64> + Send + Sync>>,
     chat_socket: Option<Arc<PathBuf>>,
     chat_signing_key: Option<Arc<SecretKey>>,
     btc_chat_signing_key: Option<Arc<SecretKey>>,
@@ -167,6 +180,10 @@ impl std::fmt::Debug for MakerRpc {
                 &self.logos_price_source.as_ref().map(|_| "configured"),
             )
             .field("delivery", &self.delivery)
+            .field(
+                "offer_snapshot_clock",
+                &self.offer_snapshot_clock.as_ref().map(|_| "configured"),
+            )
             .field("chat_socket", &self.chat_socket)
             .field(
                 "chat_signing_key",
@@ -216,6 +233,7 @@ impl MakerRpc {
             route_health_probe: None,
             logos_price_source: None,
             delivery: None,
+            offer_snapshot_clock: None,
             chat_socket: None,
             chat_signing_key: None,
             zec_completion_store: None,
@@ -257,6 +275,7 @@ impl MakerRpc {
             route_health_probe: None,
             logos_price_source: None,
             delivery: Some(Arc::new(delivery)),
+            offer_snapshot_clock: None,
             chat_socket: None,
             chat_signing_key: Some(Arc::new(chat_signing_key)),
             btc_chat_signing_key: None,
@@ -267,6 +286,18 @@ impl MakerRpc {
             maker_claim_preimage: None,
             zec_actor_provisioner: None,
         }
+    }
+
+    /// Injects the trusted time used only for signed offer snapshots.
+    /// Production daemons retain the host clock; deterministic local tests use this seam.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_offer_snapshot_clock<F>(mut self, clock: F) -> Self
+    where
+        F: Fn() -> RpcResult<u64> + Send + Sync + 'static,
+    {
+        self.offer_snapshot_clock = Some(Arc::new(clock));
+        self
     }
 
     /// Attaches ZEC agreement acceptance and Maker actor authority.
@@ -896,6 +927,35 @@ pub struct OfferWithdrawRequest {
     pub offer_id: MakerOfferId,
     /// Current offer revision.
     pub expected_revision: u64,
+}
+
+/// Owner-local request for one signed Delivery rebroadcast snapshot.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogosOfferAnnouncementSnapshotRequestV1 {
+    /// Must be one for this DTO shape.
+    pub schema_version: u16,
+    /// Current app-lifetime Chat address returned by `chat_module.get_address`.
+    pub maker_chat_address: Box<str>,
+    /// Last offer identifier returned by the preceding page, if any.
+    #[serde(default)]
+    pub after_offer_id: Option<MakerOfferId>,
+}
+
+/// Bounded signed announcements ready for exact `delivery_module.send` calls.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogosOfferAnnouncementSnapshotV1 {
+    /// This response schema version.
+    pub schema_version: u16,
+    /// Exact content topic that the Taker index subscribes to.
+    pub content_topic: Box<str>,
+    /// Maker refresh cadence; each announcement carries a longer signed lease.
+    pub rebroadcast_after_seconds: u64,
+    /// Canonical signed announcement bytes encoded as standard Base64.
+    pub announcements_base64: Vec<Box<str>>,
+    /// Cursor for the next transport-bounded page, absent on the final page.
+    pub next_after_offer_id: Option<MakerOfferId>,
 }
 
 /// Versioned untrusted taker request for one maker-first ZEC proposal.
@@ -2012,6 +2072,88 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
                 .map_err(application_store_error)
         },
     )?;
+    module.register_blocking_method::<RpcResult<LogosOfferAnnouncementSnapshotV1>, _>(
+        "maker_offer_announcement_snapshot_v1",
+        |params, context, _| {
+            let request: LogosOfferAnnouncementSnapshotRequestV1 = params.one()?;
+            if request.schema_version != 1 {
+                return Err(invalid_request("unsupported offer announcement snapshot"));
+            }
+            let delivery = context
+                .delivery
+                .as_ref()
+                .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker Delivery signer is unavailable"))?;
+            let now_unix_seconds = if let Some(clock) = context.offer_snapshot_clock.as_ref() {
+                clock()?
+            } else {
+                trusted_now_unix_seconds()?
+            };
+            let mut records = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?
+                .list_retryable_maker_offers(now_unix_seconds)
+                .map_err(application_store_error)?;
+            records
+                .sort_by(|left, right| left.offer().id().as_str().cmp(right.offer().id().as_str()));
+            let records = records
+                .iter()
+                .filter(|record| {
+                    (record.status() != MakerOfferStatus::Active
+                        || record.offer().created_at_unix_seconds() <= now_unix_seconds)
+                        && request
+                            .after_offer_id
+                            .as_ref()
+                            .is_none_or(|cursor| record.offer().id().as_str() > cursor.as_str())
+                })
+                .collect::<Vec<_>>();
+            let mut announcements_base64 = Vec::new();
+            let mut payload_bytes = 0_usize;
+            for record in records
+                .iter()
+                .take(MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES)
+            {
+                let encoded = delivery
+                    .sign_logos_offer_announcement(
+                        record,
+                        &request.maker_chat_address,
+                        now_unix_seconds,
+                    )
+                    .map_err(|error| delivery_error(&error))?;
+                let announcement = BASE64_STANDARD.encode(encoded).into_boxed_str();
+                let next_payload_bytes = payload_bytes
+                    .checked_add(announcement.len())
+                    .and_then(|bytes| bytes.checked_add(3))
+                    .ok_or_else(|| {
+                        rpc_error(RESULT_LIMIT_EXCEEDED, "offer snapshot page exceeds limit")
+                    })?;
+                if next_payload_bytes > MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES {
+                    if announcements_base64.is_empty() {
+                        return Err(rpc_error(
+                            RESULT_LIMIT_EXCEEDED,
+                            "one signed offer announcement exceeds the owner RPC page budget",
+                        ));
+                    }
+                    break;
+                }
+                payload_bytes = next_payload_bytes;
+                announcements_base64.push(announcement);
+            }
+            let next_after_offer_id = if announcements_base64.len() < records.len() {
+                let last_index = announcements_base64.len().saturating_sub(1);
+                Some(records[last_index].offer().id().clone())
+            } else {
+                None
+            };
+            Ok(LogosOfferAnnouncementSnapshotV1 {
+                schema_version: 1,
+                content_topic: LOGOS_OFFER_CONTENT_TOPIC_V1.into(),
+                rebroadcast_after_seconds: LOGOS_OFFER_REBROADCAST_SECONDS_V1,
+                announcements_base64,
+                next_after_offer_id,
+            })
+        },
+    )?;
     module.register_blocking_method::<RpcResult<MakerOfferCommit>, _>(
         "maker_offer_withdraw",
         |params, context, _| {
@@ -2611,6 +2753,11 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
         | StoreError::MakerPriceRevisionConflict
         | StoreError::StaleMakerOffer { .. } => rpc_error(CONFLICT, error.to_string()),
         StoreError::MissingMakerOffer => rpc_error(NOT_FOUND, error.to_string()),
+        StoreError::MakerOfferExpired
+        | StoreError::MakerOfferUnavailable
+        | StoreError::MakerOfferReservationConflict => {
+            rpc_error(OFFER_UNAVAILABLE, error.to_string())
+        }
         StoreError::MakerConfiguration(_)
         | StoreError::MakerOffer(_)
         | StoreError::MissingMakerPair
@@ -2618,10 +2765,7 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
         | StoreError::MakerLocalRouteMismatch
         | StoreError::MakerPriceSourceMismatch
         | StoreError::MakerRouteDisabled
-        | StoreError::MakerOfferExpired
-        | StoreError::MakerOfferUnavailable
-        | StoreError::MakerOfferSwapMismatch
-        | StoreError::MakerOfferReservationConflict => invalid_request(error),
+        | StoreError::MakerOfferSwapMismatch => invalid_request(error),
         other => internal_store_error(other),
     }
 }

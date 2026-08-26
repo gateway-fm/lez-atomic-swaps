@@ -8,6 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use jsonrpsee::RpcModule;
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
@@ -145,6 +146,42 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
 }
 
 #[tokio::test]
+async fn signed_broadcast_proof_admits_without_the_filesystem_offer_index() {
+    let fixture = Fixture::new();
+    let module =
+        taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
+    fs::remove_file(&fixture.delivery_offer).unwrap();
+
+    let mut request = fixture.request("m6-live-broadcast-initiation-001");
+    request.logos_offer_announcement_base64 = Some(fixture.announcement_base64.clone());
+    let commit: TakerInitiationCommitV1 = module
+        .call("taker_swap_initiate_v1", [request.clone()])
+        .await
+        .expect("the exact live signed broadcast replaces filesystem discovery");
+    assert!(!commit.was_replay);
+
+    let mut tampered = fixture.request("m6-live-broadcast-initiation-tampered");
+    let mut proof = BASE64_STANDARD
+        .decode(fixture.announcement_base64.as_bytes())
+        .unwrap();
+    let last = proof.len() - 1;
+    proof[last] ^= 1;
+    tampered.logos_offer_announcement_base64 = Some(BASE64_STANDARD.encode(proof).into_boxed_str());
+    let response = rpc_response(
+        &module,
+        "taker_swap_initiate_v1",
+        serde_json::to_value([tampered]).unwrap(),
+    )
+    .await;
+    assert_rpc_error(
+        &response,
+        INVALID_PARAMS,
+        "Invalid params",
+        "initiation_selection_mismatch",
+    );
+}
+
+#[tokio::test]
 async fn replay_rejects_same_byte_signing_key_inode_drift() {
     let fixture = Fixture::new();
     let request = fixture.request("m6-replay-authority-drift-001");
@@ -268,6 +305,7 @@ struct Fixture {
     route: MakerRouteV1,
     maker: [u8; 33],
     commitment: [u8; 32],
+    announcement_base64: Box<str>,
 }
 
 impl Fixture {
@@ -286,11 +324,18 @@ impl Fixture {
         let maker =
             PublicKey::from_secret_key(&Secp256k1::signing_only(), &maker_secret).serialize();
         let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
-        let offer = prepared_offer(&root, route, now);
+        let (offer, record) = prepared_offer(&root, route, now);
         let publisher = RunLocalDelivery::publisher(delivery.clone(), maker_secret).unwrap();
         let authenticated = publisher
             .publish_or_verify(&DeliveryPublicationV1::new(offer, now))
             .unwrap();
+        let announcement_base64 = BASE64_STANDARD
+            .encode(
+                publisher
+                    .sign_logos_offer_announcement(&record, "logos://maker-test-session", now)
+                    .unwrap(),
+            )
+            .into_boxed_str();
         let commitment = authenticated.commitment();
         let delivery_offer = delivery.join("m6-zec-offer-001.offer.json");
 
@@ -340,6 +385,7 @@ impl Fixture {
             route,
             maker,
             commitment,
+            announcement_base64,
         }
     }
 
@@ -353,6 +399,7 @@ impl Fixture {
             signed_envelope_sha256: self.commitment,
             foreign_units: 42,
             expected_lez_units: 84,
+            logos_offer_announcement_base64: None,
         }
     }
 }
@@ -400,7 +447,14 @@ fn assert_redacted(response: &Value, fixture: &Fixture) {
     }
 }
 
-fn prepared_offer(root: &Path, route: MakerRouteV1, now: u64) -> lez_swap_store::MakerOfferV1 {
+fn prepared_offer(
+    root: &Path,
+    route: MakerRouteV1,
+    now: u64,
+) -> (
+    lez_swap_store::MakerOfferV1,
+    lez_swap_store::MakerOfferRecordV1,
+) {
     let mut store = SqliteSwapStore::open(root.join("offer.sqlite3")).unwrap();
     let disabled =
         MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 1, 10_000, 300)
@@ -437,9 +491,8 @@ fn prepared_offer(root: &Path, route: MakerRouteV1, now: u64) -> lez_swap_store:
             now,
         )
         .unwrap();
-    store.list_discoverable_maker_offers(now).unwrap()[0]
-        .offer()
-        .clone()
+    let record = store.list_discoverable_maker_offers(now).unwrap().remove(0);
+    (record.offer().clone(), record)
 }
 
 fn digest_binding(path: &Path) -> Value {

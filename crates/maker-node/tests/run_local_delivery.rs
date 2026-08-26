@@ -5,6 +5,7 @@ use std::{fs, os::unix::fs::PermissionsExt as _, process::Command};
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery, RunLocalDeliveryError,
+    verify_logos_offer_announcement,
 };
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
@@ -60,6 +61,47 @@ fn offer() -> lez_swap_store::MakerOfferV1 {
         .clone()
 }
 
+fn active_record(
+    now: u64,
+) -> (
+    tempfile::TempDir,
+    SqliteSwapStore,
+    lez_swap_store::MakerOfferRecordV1,
+) {
+    let run = tempdir().expect("isolated announcement store");
+    let mut store = SqliteSwapStore::open(run.path().join("announcement.sqlite3")).unwrap();
+    let route = zec_route();
+    let disabled =
+        MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 10, 10_000, 300)
+            .unwrap();
+    store
+        .configure_maker_pair(&request("announcement-pair-create-001"), None, &disabled)
+        .unwrap();
+    store
+        .set_local_price(
+            &request("announcement-price-create-001"),
+            None,
+            &LocalPriceV1::new(route, 5, 2).unwrap(),
+        )
+        .unwrap();
+    let enabled =
+        MakerPairConfigurationV1::new(route, true, MakerPriceSourceKind::Local, 10, 10_000, 300)
+            .unwrap();
+    store
+        .configure_maker_pair(&request("announcement-pair-enable-001"), Some(1), &enabled)
+        .unwrap();
+    store
+        .publish_local_offer(
+            &request("announcement-offer-publish-001"),
+            &MakerOfferId::new("announcement-offer-001").unwrap(),
+            route,
+            now,
+        )
+        .unwrap();
+    let record = store.list_maker_offer_history(now).unwrap().remove(0);
+    (run, store, record)
+}
+
 fn signing_key(byte: u8) -> SecretKey {
     SecretKey::from_slice(&[byte; 32]).expect("valid deterministic test key")
 }
@@ -104,6 +146,38 @@ async fn maker_publishes_and_taker_discovers_an_authenticated_expiring_offer() {
             .publish(DeliveryPublicationV1::new(expected_offer, 1_001))
             .await,
         Err(RunLocalDeliveryError::DiscoveryOnly)
+    ));
+}
+
+#[test]
+fn logos_announcement_binds_offer_state_and_current_chat_address() {
+    let run = tempdir().unwrap();
+    let publisher =
+        RunLocalDelivery::publisher(run.path().join("delivery"), signing_key(31)).unwrap();
+    let (_store_root, _store, record) = active_record(10_000);
+    let encoded = publisher
+        .sign_logos_offer_announcement(&record, "logos://maker-session-1", 10_001)
+        .unwrap();
+    let verified = verify_logos_offer_announcement(&encoded, 10_001).unwrap();
+    assert_eq!(verified.offer().offer(), record.offer());
+    assert_eq!(verified.offer_revision(), 1);
+    assert_eq!(verified.status(), lez_swap_store::MakerOfferStatus::Active);
+    assert_eq!(verified.maker_chat_address(), "logos://maker-session-1");
+
+    let mut substituted = encoded.clone();
+    let marker = b"logos://maker-session-1";
+    let offset = substituted
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .unwrap();
+    substituted[offset + marker.len() - 1] = b'2';
+    assert!(matches!(
+        verify_logos_offer_announcement(&substituted, 10_001),
+        Err(RunLocalDeliveryError::Authentication)
+    ));
+    assert!(matches!(
+        verify_logos_offer_announcement(&encoded, 10_031),
+        Err(RunLocalDeliveryError::InvalidOffer)
     ));
 }
 

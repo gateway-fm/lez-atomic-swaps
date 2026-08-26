@@ -6,7 +6,7 @@ The Taker route browses authenticated offers, admits a prepared swap, monitors
 it, and exposes the generation-fenced terminal controls. Each QML view is
 unprivileged. Its process-isolated C++ backend calls a fixed role allowlist over
 an owner-only Unix socket. Negotiation messages use pinned Logos Chat `v0.2.2`
-and its followed Delivery runtime for peer-to-peer E2EE transport; the Rust
+and its followed Delivery runtime for signed offer broadcasts plus peer-to-peer E2EE transport; the Rust
 stores, signatures, role contributions, and chain-identity checks remain the
 protocol authority.
 
@@ -167,9 +167,10 @@ In Basecamp:
 1. open **LEZ Atomic Swap Taker** and confirm **Backend connected**;
 2. click **Service health**, choose the pair/direction, and click
    **Browse authenticated offers**;
-3. copy the chosen offer ID, compressed Maker identity, signed-envelope
-   SHA-256, foreign atomic units, and expected LEZ atomic units into the exact
-   review form;
+3. review the automatically populated offer ID, compressed Maker identity,
+   signed-envelope SHA-256, foreign atomic units, and expected LEZ atomic
+   units; Basecamp retains the exact signed live announcement as admission
+   proof without exposing private actor material;
 4. click **Confirm and initiate** once and retain the returned swap ID;
 5. repeat the unchanged click to observe exact durable replay;
 6. click **List my swaps**, enter the swap ID, and click **Monitor**;
@@ -177,7 +178,9 @@ In Basecamp:
    generation. For transparent ZEC claims, follow the displayed shielding
    reminder in the wallet after the swap.
 
-Initiation commits registry authority before Chat/filesystem effects. A lost
+Production Basecamp initiation re-verifies the exact live signed Delivery proof;
+the filesystem source remains a legacy CLI/offline seam. Initiation commits
+registry authority before Chat/Delivery effects. A lost
 response is recovered by the same request ID and immutable payload; changing a
 field conflicts. Claim and Refund are mutually exclusive at the registry and
 actor-journal layers.
@@ -199,9 +202,15 @@ framework, one role install tree, and one real owner socket. It covers:
 
 - both missing-service fail-closed paths;
 - Maker health, atomic route save, and history through `lez-maker-daemon`;
-- Taker health and offer list through `lez-taker-service`;
+- Taker health plus browsing through the gateway's live signed Delivery index;
 - prepared Taker initiation, exact replay, list, monitor, and a durable registry
-  assertion for request `taker-ui-initiate-001`.
+  assertion for the digest-derived `taker-ui-initiate-*` request.
+
+For the prepared Taker case, `M6_TAKER_FIXTURE_JSON` also carries
+`logos_offer_announcement_base64`: a freshly signed, unexpired announcement
+obtained from the Maker snapshot RPC. The harness admits that exact proof through
+`LEZ_LOGOS_CHAT_GATEWAY_SOCKET` before browsing, so confirm-time refresh tests
+the production live index without internet access or a filesystem offer fixture.
 
 This Basecamp run stops at admitted/monitored swap composition. Terminal
 actual-node Claim and Refund are retained as separate service/actor certificates

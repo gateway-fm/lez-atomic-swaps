@@ -521,6 +521,7 @@ impl ProcessInitiationFixture {
             signed_envelope_sha256: self.commitment,
             foreign_units: 42,
             expected_lez_units: 84,
+            logos_offer_announcement_base64: None,
         }
     }
 }
