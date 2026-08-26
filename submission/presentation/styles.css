@@ -780,3 +780,11 @@ code {
 .m1-seq .cm-card.risk { stroke: rgba(247,199,102,.42); fill: rgba(247,199,102,.05); }
 .m1-seq .cm-head.safe { fill: var(--green); }
 .m1-seq .cm-head.risk { fill: var(--amber); }
+.seq-diagram.swap-seq { height: min(64vh, 680px); min-height: 400px; }
+.swap-seq .title { font-size: 16px; }
+.swap-seq .cm-card { fill: #151d2a; stroke: #33445c; stroke-width: 1.5; }
+.swap-seq .cm-head { fill: #e8eef6; font: 700 14.5px Inter, sans-serif; }
+.swap-seq .cm-body { fill: #93a1b4; font: 500 12.5px Inter, sans-serif; }
+.swap-seq .cm-link { fill: none; stroke: #33445c; stroke-width: 1.5; stroke-dasharray: 3 4; }
+.swap-seq .cm-dot { fill: #33445c; }
+.swap-seq .phase { fill: #cdd7e6; font: 650 16px Inter, sans-serif; }
