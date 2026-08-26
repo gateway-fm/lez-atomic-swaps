@@ -755,7 +755,7 @@ code {
 
 /* ── M1 sequence diagram + design-evidence strip ──────────────────────── */
 
-.seq-diagram.m1-seq { height: min(80vh, 870px); min-height: 470px; }
+.seq-diagram.m1-seq { height: min(78vh, 828px); min-height: 470px; }
 .m1-seq .msg.purple { stroke: var(--purple); }
 .m1-seq .note { fill: rgba(156,255,87,.045); stroke: rgba(156,255,87,.28); stroke-width: 1.5; }
 .m1-seq .persist { fill: #0a1018; stroke: var(--lime); stroke-width: 2; }
@@ -780,7 +780,7 @@ code {
 .m1-seq .cm-card.risk { stroke: rgba(247,199,102,.42); fill: rgba(247,199,102,.05); }
 .m1-seq .cm-head.safe { fill: var(--green); }
 .m1-seq .cm-head.risk { fill: var(--amber); }
-.seq-diagram.swap-seq { height: min(64vh, 680px); min-height: 400px; }
+.seq-diagram.swap-seq { height: min(78vh, 828px); min-height: 400px; }
 .swap-seq .title { font-size: 16px; }
 .swap-seq .cm-card { fill: #151d2a; stroke: #33445c; stroke-width: 1.5; }
 .swap-seq .cm-head { fill: #e8eef6; font: 700 14.5px Inter, sans-serif; }
@@ -788,3 +788,45 @@ code {
 .swap-seq .cm-link { fill: none; stroke: #33445c; stroke-width: 1.5; stroke-dasharray: 3 4; }
 .swap-seq .cm-dot { fill: #33445c; }
 .swap-seq .phase { fill: #cdd7e6; font: 650 16px Inter, sans-serif; }
+.swap-seq .amt { font-weight: 700; }
+.swap-seq .amt.btc { fill: var(--amber); }
+.swap-seq .amt.lez { fill: var(--green); }
+.swap-seq .cm-card.rule { stroke: rgba(156,255,87,.4); fill: rgba(156,255,87,.05); }
+.swap-seq .cm-head.rule { fill: var(--lime); font-size: 13.5px; }
+
+/* The sequence diagrams are the subject of their slides; give them the stage. */
+.seq-slide .slide-header { margin-bottom: 1.4%; }
+
+/* ── Post-quantum slide: quantum-realm field ──────────────────────────── */
+/* .slide is already position:absolute — do not override it, or the section
+   collapses to content height and the full-bleed field is cut off. */
+.pq-slide { isolation: isolate; }
+.pq-slide > *:not(.quantum-bg) { position: relative; z-index: 1; }
+.quantum-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.quantum-bg i { position: absolute; inset: -20%; display: block; }
+.q-swirl {
+  background:
+    conic-gradient(from 200deg at 64% 44%, rgba(239,103,199,.13), transparent 22%, rgba(107,184,255,.10) 52%, transparent 76%, rgba(157,108,255,.12)),
+    radial-gradient(ellipse 46% 52% at 64% 44%, rgba(157,108,255,.20), transparent 70%),
+    radial-gradient(ellipse 34% 40% at 22% 74%, rgba(71,215,166,.10), transparent 72%),
+    radial-gradient(ellipse 30% 34% at 88% 82%, rgba(239,103,199,.10), transparent 74%);
+  filter: blur(28px);
+}
+.q-rings {
+  background:
+    repeating-radial-gradient(circle at 64% 44%, transparent 0 46px, rgba(157,108,255,.055) 46px 47px),
+    repeating-radial-gradient(circle at 64% 44%, transparent 0 173px, rgba(239,103,199,.05) 173px 175px);
+  mask-image: radial-gradient(ellipse 62% 68% at 64% 44%, #000 25%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 62% 68% at 64% 44%, #000 25%, transparent 78%);
+}
+.q-motes {
+  background-image:
+    radial-gradient(circle, rgba(239,103,199,.85) 0 1.4px, transparent 1.8px),
+    radial-gradient(circle, rgba(107,184,255,.7) 0 1.2px, transparent 1.6px),
+    radial-gradient(circle, rgba(156,255,87,.55) 0 1px, transparent 1.4px);
+  background-size: 211px 197px, 149px 263px, 317px 173px;
+  background-position: 14px 31px, 83px 7px, 41px 119px;
+  mask-image: radial-gradient(ellipse 70% 78% at 64% 44%, #000 10%, transparent 82%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 78% at 64% 44%, #000 10%, transparent 82%);
+  opacity: .55;
+}

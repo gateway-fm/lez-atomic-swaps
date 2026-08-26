@@ -764,7 +764,7 @@ code {
 
 /* ── M1 sequence diagram + design-evidence strip ──────────────────────── */
 
-.seq-diagram.m1-seq { height: min(80vh, 870px); min-height: 470px; }
+.seq-diagram.m1-seq { height: min(78vh, 828px); min-height: 470px; }
 .m1-seq .msg.purple { stroke: var(--purple); }
 .m1-seq .note { fill: rgba(156,255,87,.045); stroke: rgba(156,255,87,.28); stroke-width: 1.5; }
 .m1-seq .persist { fill: #0a1018; stroke: var(--lime); stroke-width: 2; }
@@ -789,7 +789,7 @@ code {
 .m1-seq .cm-card.risk { stroke: rgba(247,199,102,.42); fill: rgba(247,199,102,.05); }
 .m1-seq .cm-head.safe { fill: var(--green); }
 .m1-seq .cm-head.risk { fill: var(--amber); }
-.seq-diagram.swap-seq { height: min(64vh, 680px); min-height: 400px; }
+.seq-diagram.swap-seq { height: min(78vh, 828px); min-height: 400px; }
 .swap-seq .title { font-size: 16px; }
 .swap-seq .cm-card { fill: #151d2a; stroke: #33445c; stroke-width: 1.5; }
 .swap-seq .cm-head { fill: #e8eef6; font: 700 14.5px Inter, sans-serif; }
@@ -797,6 +797,48 @@ code {
 .swap-seq .cm-link { fill: none; stroke: #33445c; stroke-width: 1.5; stroke-dasharray: 3 4; }
 .swap-seq .cm-dot { fill: #33445c; }
 .swap-seq .phase { fill: #cdd7e6; font: 650 16px Inter, sans-serif; }
+.swap-seq .amt { font-weight: 700; }
+.swap-seq .amt.btc { fill: var(--amber); }
+.swap-seq .amt.lez { fill: var(--green); }
+.swap-seq .cm-card.rule { stroke: rgba(156,255,87,.4); fill: rgba(156,255,87,.05); }
+.swap-seq .cm-head.rule { fill: var(--lime); font-size: 13.5px; }
+
+/* The sequence diagrams are the subject of their slides; give them the stage. */
+.seq-slide .slide-header { margin-bottom: 1.4%; }
+
+/* ── Post-quantum slide: quantum-realm field ──────────────────────────── */
+/* .slide is already position:absolute — do not override it, or the section
+   collapses to content height and the full-bleed field is cut off. */
+.pq-slide { isolation: isolate; }
+.pq-slide > *:not(.quantum-bg) { position: relative; z-index: 1; }
+.quantum-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.quantum-bg i { position: absolute; inset: -20%; display: block; }
+.q-swirl {
+  background:
+    conic-gradient(from 200deg at 64% 44%, rgba(239,103,199,.13), transparent 22%, rgba(107,184,255,.10) 52%, transparent 76%, rgba(157,108,255,.12)),
+    radial-gradient(ellipse 46% 52% at 64% 44%, rgba(157,108,255,.20), transparent 70%),
+    radial-gradient(ellipse 34% 40% at 22% 74%, rgba(71,215,166,.10), transparent 72%),
+    radial-gradient(ellipse 30% 34% at 88% 82%, rgba(239,103,199,.10), transparent 74%);
+  filter: blur(28px);
+}
+.q-rings {
+  background:
+    repeating-radial-gradient(circle at 64% 44%, transparent 0 46px, rgba(157,108,255,.055) 46px 47px),
+    repeating-radial-gradient(circle at 64% 44%, transparent 0 173px, rgba(239,103,199,.05) 173px 175px);
+  mask-image: radial-gradient(ellipse 62% 68% at 64% 44%, #000 25%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 62% 68% at 64% 44%, #000 25%, transparent 78%);
+}
+.q-motes {
+  background-image:
+    radial-gradient(circle, rgba(239,103,199,.85) 0 1.4px, transparent 1.8px),
+    radial-gradient(circle, rgba(107,184,255,.7) 0 1.2px, transparent 1.6px),
+    radial-gradient(circle, rgba(156,255,87,.55) 0 1px, transparent 1.4px);
+  background-size: 211px 197px, 149px 263px, 317px 173px;
+  background-position: 14px 31px, 83px 7px, 41px 119px;
+  mask-image: radial-gradient(ellipse 70% 78% at 64% 44%, #000 10%, transparent 82%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 78% at 64% 44%, #000 10%, transparent 82%);
+  opacity: .55;
+}
 
   </style>
 </head>
@@ -949,7 +991,7 @@ code {
       <footer class="source-line">Implementation boundary · ADRs 0210–0211 · topic <code>/lez-atomic-swaps/1/offers/json</code></footer>
     </section>
 
-    <section class="slide" data-title="M1 foundation" data-duration="8">
+    <section class="slide seq-slide" data-title="M1 foundation" data-duration="8">
       <header class="slide-header split-heading">
         <div>
           <p class="eyebrow lime tag">M1</p>
@@ -1045,11 +1087,10 @@ code {
       <span class="divider-rule"></span>
     </section>
 
-    <section class="slide" data-title="Swap algorithm" data-duration="9">
+    <section class="slide seq-slide" data-title="Swap algorithm" data-duration="9">
       <header class="slide-header">
-        <p class="eyebrow purple tag">M3</p>
+        <p class="eyebrow purple">M3 · TAKER SELLS 0.01 BTC FOR 1,000 LEZ</p>
         <h2>Each side checks the other chain itself.</h2>
-        <p class="lede">Taker sells 0.01 BTC for 1,000 LEZ.</p>
       </header>
       <div class="seq-diagram swap-seq">
         <svg viewBox="0 0 1700 810" role="img" aria-label="Sequence diagram of the swap algorithm across Taker, Bitcoin, LEZ and Maker">
@@ -1082,26 +1123,26 @@ code {
           <text class="title" x="214" y="84">Countersigned agreement</text>
           <text class="sub" x="214" y="102">freezes the BTC lock and payout, the LEZ escrow, adaptor point <tspan class="em">T</tspan>, deadlines and refunds</text>
           <text class="title halo" x="430" y="170" text-anchor="middle">Lock BTC</text>
-          <text class="sub halo" x="430" y="188" text-anchor="middle">0.01 BTC into the joint P2TR custody output</text>
+          <text class="sub halo" x="430" y="188" text-anchor="middle"><tspan class="amt btc">0.01 BTC</tspan> into the joint P2TR custody output</text>
           <path class="msg amber" d="M290,206 H568" marker-end="url(#sq-a)"/>
           <text class="title halo" x="880" y="272" text-anchor="middle">Maker verifies on its own node</text>
           <text class="sub halo" x="880" y="290" text-anchor="middle">network · outpoint · value · output key · unspent · depth</text>
           <path class="msg amber obs" d="M590,308 H1168" marker-end="url(#sq-a)"/>
           <text class="fail halo" x="1220" y="328" text-anchor="end">mismatch → stop; no LEZ</text>
           <text class="title halo" x="1030" y="372" text-anchor="middle">Fund the LEZ escrow</text>
-          <text class="sub halo" x="1030" y="390" text-anchor="middle">1,000 LEZ, bound to the agreement</text>
+          <text class="sub halo" x="1030" y="390" text-anchor="middle"><tspan class="amt lez">1,000 LEZ</tspan>, bound to the agreement</text>
           <path class="msg green" d="M1170,408 H892" marker-end="url(#sq-g)"/>
           <text class="title halo" x="580" y="474" text-anchor="middle">Taker verifies on its own node</text>
           <text class="sub halo" x="580" y="492" text-anchor="middle">program · swap · asset · amount · parties · custody · finality</text>
           <path class="msg green obs" d="M870,510 H292" marker-end="url(#sq-g)"/>
           <text class="fail halo" x="240" y="530" text-anchor="start">mismatch → stop; no claim, no t</text>
           <text class="title halo" x="580" y="574" text-anchor="middle">Claim LEZ — publishes <tspan class="em">t</tspan></text>
-          <text class="sub halo" x="580" y="592" text-anchor="middle">the adaptor secret becomes public the moment the Taker is paid</text>
+          <text class="sub halo" x="580" y="592" text-anchor="middle"><tspan class="amt lez">1,000 LEZ</tspan> to the Taker; the adaptor secret becomes public</text>
           <path class="msg green" d="M290,610 H868" marker-end="url(#sq-g)"/>
           <text class="title halo" x="1030" y="676" text-anchor="middle">Maker extracts <tspan class="em">t</tspan>, requires <tspan class="em">t·G = T</tspan></text>
           <path class="msg pink obs" d="M890,712 H1168" marker-end="url(#sq-p)"/>
           <text class="title halo" x="880" y="756" text-anchor="middle">Complete the fixed payout</text>
-          <text class="sub halo" x="880" y="774" text-anchor="middle">adapts the pre-signature; pays the Maker and nobody else</text>
+          <text class="sub halo" x="880" y="774" text-anchor="middle">adapts the pre-signature; the locked <tspan class="amt btc">0.01 BTC</tspan> pays the Maker and nobody else</text>
           <path class="msg amber" d="M1170,792 H592" marker-end="url(#sq-a)"/>
           <path class="cm-link" d="M1186,206 H1215 V133 H1250"/>
           <circle class="cm-dot" cx="1186" cy="206" r="4"/>
@@ -1132,11 +1173,13 @@ code {
           <text class="cm-body" x="1270" y="520">from LEZ to Bitcoin.</text>
           <path class="msg legend-line" d="M190,806 h28"/><text class="legend" x="224" y="810">TRANSACTION</text>
           <path class="msg legend-line obs" d="M400,806 h28"/><text class="legend" x="434" y="810">OBSERVATION</text>
+          <rect class="cm-card rule" x="1250" y="563" width="440" height="124" rx="12"/>
+          <text class="cm-head rule" x="1270" y="589">Peer messages are hints, never proof</text>
+          <text class="cm-body" x="1270" y="611">Reject means do not advance, and existing locks follow</text>
+          <text class="cm-body" x="1270" y="630">ordered refunds. The joint P2TR key controls temporary</text>
+          <text class="cm-body" x="1270" y="649">custody only — it cannot redirect the agreement-bound</text>
+          <text class="cm-body" x="1270" y="668">BTC payout.</text>
         </svg>
-      </div>
-      <div class="protocol-rule">
-        <span class="rule-mark">✓</span>
-        <div><strong>Peer messages are hints, never proof; reject means do not advance, and existing locks follow ordered refunds.</strong><br><small>The joint P2TR key controls temporary custody—it cannot redirect the agreement-bound BTC payout.</small></div>
       </div>
       <footer class="source-line">Threats TM-0005, TM-0012, TM-0016 · ADRs 0030, 0037, 0043, 0050</footer>
     </section>
@@ -1210,7 +1253,8 @@ code {
       <footer class="source-line">Refund evidence · <code>m3-local-two-direction-refund-poc-20260716.json</code></footer>
     </section>
 
-    <section class="slide" data-title="Post-quantum posture" data-duration="9">
+    <section class="slide pq-slide" data-title="Post-quantum posture" data-duration="9">
+      <div class="quantum-bg" aria-hidden="true"><i class="q-swirl"></i><i class="q-rings"></i><i class="q-motes"></i></div>
       <header class="slide-header no-eyebrow">
         <h2>What a quantum computer breaks.</h2>
       </header>
